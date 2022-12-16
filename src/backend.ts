@@ -324,6 +324,7 @@ async function start() {
   const now = new Date();
   await transactions();
   await nfts();
+  await memesExtendedData();
   await owners();
   await ownerTags();
   await discoverEns(now);
