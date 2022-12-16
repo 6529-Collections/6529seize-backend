@@ -316,20 +316,21 @@ async function refreshEns() {
 }
 
 async function start() {
+  const now = new Date();
   console.log(
-    new Date(),
+    now,
     `[CONFIG ${process.env.NODE_ENV}]`,
     `[STARTING ${STARTING}]`
   );
-  const now = new Date();
-  await transactions();
-  await nfts();
-  await memesExtendedData();
-  await owners();
-  await ownerTags();
-  await discoverEns(now);
-  await tdh();
-  await nftTdh();
+  // Uncomment to call on start
+  // await transactions();
+  // await nfts();
+  // await memesExtendedData();
+  // await owners();
+  // await ownerTags();
+  // await discoverEns(now);
+  // await tdh();
+  // await nftTdh();
   STARTING = false;
   console.log(new Date(), `[STARTING ${STARTING}]`);
 }

@@ -471,5 +471,10 @@ app.get(`${BASE_PATH}`, function (req: any, res: any, next: any) {
 });
 
 app.listen(3000, function () {
-  console.log(new Date(), `[API]`, 'SERVER RUNNING ON localhost:3000');
+  console.log(
+    new Date(),
+    `[API]`,
+    `[CONFIG ${process.env.NODE_ENV}]`,
+    '[SERVER RUNNING ON PORT 3000]'
+  );
 });
