@@ -68,7 +68,7 @@ cron.schedule('1 0 * * *', async function () {
 });
 
 // CALCULATE TDH AT 00:30
-cron.schedule('1 0 * * *', async function () {
+cron.schedule('30 0 * * *', async function () {
   await nftTdh();
 });
 
@@ -327,14 +327,14 @@ async function start() {
     `[STARTING ${STARTING}]`
   );
   // Uncomment to call on start
-  // await transactions();
-  // await nfts();
-  // await memesExtendedData();
-  // await owners();
-  // await ownerTags();
-  // await discoverEns(now);
-  // await tdh();
-  // await nftTdh();
+  await transactions();
+  await discoverEns(now);
+  await nfts();
+  await owners();
+  await ownerTags();
+  await memesExtendedData();
+  await tdh();
+  await nftTdh();
   STARTING = false;
   console.log(new Date(), `[STARTING ${STARTING}]`);
 }
