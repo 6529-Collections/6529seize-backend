@@ -11,10 +11,64 @@ import {
   TRANSACTIONS_TABLE,
   WALLETS_TDH_TABLE
 } from './constants';
-import * as db from './db';
 import { areEqualAddresses } from './helpers';
 
+const config = require('./config');
 const mysql = require('mysql');
+
+console.log(new Date(), '[DATABASE API]', `[DB HOST ${config.db_api.DB_HOST}]`);
+
+export const dbcon = mysql.createConnection({
+  host: config.db_api.DB_HOST,
+  port: config.db_api.port,
+  user: config.db_api.DB_USER,
+  password: config.db_api.DB_PASS,
+  charset: 'utf8mb4'
+});
+
+function connect() {
+  dbcon.connect((err: any) => {
+    if (err) throw err;
+    console.log(new Date(), '[DATABASE]', `DATABASE CONNECTION SUCCESS`);
+  });
+}
+
+dbcon.on('error', function (err: any) {
+  console.error(
+    new Date(),
+    '[DATABASE]',
+    `[DISCONNECTED][ERROR CODE ${err.code}]`
+  );
+  if (err.code === 'PROTOCOL_CONNECTION_LOST') {
+    connect();
+  } else {
+    throw err;
+  }
+});
+
+dbcon.query(`USE ${config.db.DB_NAME}`, (err: any) => {
+  if (err) throw err;
+  console.log(
+    new Date(),
+    '[DATABASE]',
+    `[DATABASE SELECTED ${config.db.DB_NAME}]`
+  );
+});
+
+export function execSQL(sql: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    dbcon.query(sql, (err: any, result: any[]) => {
+      if (err) return reject(err);
+      resolve(Object.values(JSON.parse(JSON.stringify(result))));
+    });
+  });
+}
+
+export async function fetchLatestTDHBlockNumber() {
+  let sql = `SELECT block_number FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
+  const r = await execSQL(sql);
+  return r.length > 0 ? r[0].block_number : 0;
+}
 
 export interface DBResponse {
   count: number;
@@ -40,8 +94,8 @@ async function fetchPaginated(
     const offset = pageSize * (page - 1);
     sql2 += ` OFFSET ${offset}`;
   }
-  const r1 = await db.execSQL(sql1);
-  const r2 = await db.execSQL(sql2);
+  const r1 = await execSQL(sql1);
+  const r2 = await execSQL(sql2);
 
   // console.log(sql1);
   // console.log(sql2);
@@ -280,7 +334,7 @@ export async function fetchTransactions(
 }
 
 export async function fetchGradientTdh(pageSize: number, page: number) {
-  const tdhBlock = await db.fetchLatestTDHBlockNumber();
+  const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = `WHERE block=${tdhBlock} `;
   filters += ` AND gradients_balance > 0`;
 
@@ -304,7 +358,7 @@ export async function fetchNftTdh(
   contract: string,
   nftId: number
 ) {
-  const tdhBlock = await db.fetchLatestTDHBlockNumber();
+  const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = `WHERE block=${tdhBlock} AND j.id=${nftId}`;
   let joins;
 
@@ -344,7 +398,7 @@ export async function fetchTDH(
   sort: string,
   sortDir: string
 ) {
-  const tdhBlock = await db.fetchLatestTDHBlockNumber();
+  const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = `WHERE block=${tdhBlock}`;
   if (wallets) {
     filters += `  and ${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(
@@ -379,5 +433,5 @@ export async function fetchEns(address: string) {
   const sql = `SELECT * FROM ${ENS_TABLE} WHERE wallet=${mysql.escape(
     address
   )}`;
-  return db.execSQL(sql);
+  return execSQL(sql);
 }

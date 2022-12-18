@@ -7,6 +7,7 @@ if (!process.env.NODE_ENV) {
   console.log(new Date(), '[ENVIRONMENT]', `[NODE_ENV MISSING`, '[EXITING]');
   process.exit();
 }
+
 if (!envs.includes(process.env.NODE_ENV)) {
   console.log(
     new Date(),
@@ -23,9 +24,17 @@ dotenv.config({
 
 export const db = {
   DB_HOST: process.env.DB_HOST,
-  DB_PORT: process.env.DB_HOST,
   DB_USER: process.env.DB_USER,
   DB_PASS: process.env.DB_PASS,
+  DB_PORT: process.env.DB_PORT,
+  DB_NAME: process.env.DB_NAME
+};
+
+export const db_api = {
+  DB_HOST: process.env.DB_HOST_READ,
+  DB_USER: process.env.DB_USER_READ,
+  DB_PASS: process.env.DB_PASS_READ,
+  DB_PORT: process.env.DB_PORT,
   DB_NAME: process.env.DB_NAME
 };
 
