@@ -65,6 +65,10 @@ cron.schedule('29 6 * * *', async function () {
 // CALCULATE TDH AT 00:01
 cron.schedule('1 0 * * *', async function () {
   await tdh();
+});
+
+// CALCULATE TDH AT 00:30
+cron.schedule('1 0 * * *', async function () {
   await nftTdh();
 });
 

@@ -174,9 +174,9 @@ export async function fetchOwners(
 ) {
   let filters = '';
   if (wallets) {
-    filters = `WHERE ${OWNERS_TABLE}.wallet in (${mysql.escape(
+    filters = `WHERE (${OWNERS_TABLE}.wallet in (${mysql.escape(
       wallets.split(',')
-    )}) OR ${ENS_TABLE}.display in (${mysql.escape(wallets.split(','))})`;
+    )}) OR ${ENS_TABLE}.display in (${mysql.escape(wallets.split(','))}))`;
   }
   if (contracts) {
     if (wallets) {
