@@ -32,9 +32,9 @@ export const findTDH = async (nfts: NFT[], transactions: Transaction[]) => {
       lastTDHCalc.getTime() > new Date(t.transaction_date).getTime()
   );
 
-  const block = cleanedTransactions
-    .sort((a, b) => (a.block > b.block ? 1 : -1))
-    .at(-1)!.block;
+  const block = cleanedTransactions.sort((a, b) =>
+    a.block > b.block ? 1 : -1
+  )[cleanedTransactions.length - 1].block;
 
   const timestamp = new Date(
     (await alchemy.core.getBlock(block)).timestamp * 1000
