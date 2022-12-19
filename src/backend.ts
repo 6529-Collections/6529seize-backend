@@ -327,14 +327,14 @@ async function start() {
     `[STARTING ${STARTING}]`
   );
   // Uncomment to call on start
-  await transactions();
-  await discoverEns(now);
-  await nfts();
-  await owners();
-  await ownerTags();
-  await memesExtendedData();
-  await tdh();
-  await nftTdh();
+  // await transactions();
+  // await discoverEns(now);
+  // await nfts();
+  // await owners();
+  // await ownerTags();
+  // await memesExtendedData();
+  // await tdh();
+  // await nftTdh();
   STARTING = false;
   console.log(new Date(), `[STARTING ${STARTING}]`);
 }
