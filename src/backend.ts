@@ -44,17 +44,17 @@ cron.schedule('*/3 * * * *', async function () {
   }
 });
 
+// PULL EVERY 7 MINUTES
+cron.schedule('*/7 * * * *', async function () {
+  if (!STARTING) {
+    ownerMetrics();
+  }
+});
+
 // PULL EVERY 8 MINUTES
 cron.schedule('*/8 * * * *', async function () {
   if (!STARTING) {
     marketStats(MEMES_CONTRACT);
-  }
-});
-
-// PULL EVERY 10 MINUTES
-cron.schedule('*/10 * * * *', async function () {
-  if (!STARTING) {
-    ownerMetrics();
   }
 });
 
