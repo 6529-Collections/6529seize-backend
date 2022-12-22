@@ -2,7 +2,6 @@ import * as db from './db-api';
 
 const express = require('express');
 const cors = require('cors');
-const url = require('url');
 
 const app = express();
 app.use(cors());
@@ -11,8 +10,21 @@ const BASE_PATH = '/api';
 const CONTENT_TYPE_HEADER = 'Content-Type';
 const JSON_HEADER_VALUE = 'application/json';
 const DEFAULT_PAGE_SIZE = 50;
-const DEFAULT_PAGE_SIZE_EXTENDED = 100;
-const TOKENS_PAGE_SIZE = 100;
+const SORT_DIRECTIONS = ['ASC', 'DESC'];
+const TDH_SORT = [
+  'boosted_tdh',
+  'tdh',
+  'tdh__raw',
+  'tdh_rank',
+  'memes_tdh_season1',
+  'memes_balance_season1',
+  'gradients_tdh',
+  'gradients_balance',
+  'balance',
+  'purchases_value',
+  'sales_value',
+  'sales_count'
+];
 
 function fullUrl(req: any, next: boolean) {
   let url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
@@ -115,7 +127,7 @@ app.get(`${BASE_PATH}/nfts`, function (req: any, res: any, next: any) {
 
     const sortDir =
       req.query.sort_direction &&
-      ['ASC', 'DESC'].includes(req.query.sort_direction.toUpperCase())
+      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
         ? req.query.sort_direction
         : 'desc';
 
@@ -415,24 +427,13 @@ app.get(`${BASE_PATH}/tdh`, function (req: any, res: any, next: any) {
 
     const wallets = req.query.wallet;
     const sort =
-      req.query.sort &&
-      [
-        'boosted_tdh',
-        'tdh',
-        'tdh__raw',
-        'tdh_rank',
-        'memes_tdh_season1',
-        'memes_balance_season1',
-        'gradients_tdh',
-        'gradients_balance',
-        'balance'
-      ].includes(req.query.sort)
+      req.query.sort && TDH_SORT.includes(req.query.sort)
         ? req.query.sort
         : 'boosted_tdh';
 
     const sortDir =
       req.query.sort_direction &&
-      ['ASC', 'DESC'].includes(req.query.sort_direction.toUpperCase())
+      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
         ? req.query.sort_direction
         : 'desc';
 
@@ -451,6 +452,54 @@ app.get(`${BASE_PATH}/tdh`, function (req: any, res: any, next: any) {
       });
       returnPaginatedResult(result, req, res);
     });
+  } catch (e) {
+    console.log(
+      new Date(),
+      `[API]`,
+      '[TDH]',
+      `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+    );
+    return;
+  }
+});
+
+app.get(`${BASE_PATH}/owner_metrics`, function (req: any, res: any, next: any) {
+  try {
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+    const wallets = req.query.wallet;
+    const sort =
+      req.query.sort && TDH_SORT.includes(req.query.sort)
+        ? req.query.sort
+        : 'boosted_tdh';
+
+    const sortDir =
+      req.query.sort_direction &&
+      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+        ? req.query.sort_direction
+        : 'desc';
+
+    console.log(
+      new Date(),
+      `[API]`,
+      '[OWNER METRICS]',
+      `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+    );
+    db.fetchOwnerMetrics(pageSize, page, wallets, sort, sortDir).then(
+      (result) => {
+        result.data.map((d: any) => {
+          d.memes = JSON.parse(d.memes);
+          d.memes_ranks = JSON.parse(d.memes_ranks);
+          d.gradients = JSON.parse(d.gradients);
+          d.gradients_ranks = JSON.parse(d.gradients_ranks);
+        });
+        returnPaginatedResult(result, req, res);
+      }
+    );
   } catch (e) {
     console.log(
       new Date(),

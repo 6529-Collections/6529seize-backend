@@ -5,6 +5,7 @@ import {
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   NFTS_TABLE,
+  OWNERS_METRICS_TABLE,
   OWNERS_TABLE,
   OWNERS_TAGS_TABLE,
   TDH_BLOCKS_TABLE,
@@ -408,6 +409,36 @@ export async function fetchTDH(
 
   const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
   const joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet`;
+
+  return fetchPaginated(
+    WALLETS_TDH_TABLE,
+    `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
+    pageSize,
+    page,
+    filters,
+    fields,
+    joins
+  );
+}
+
+export async function fetchOwnerMetrics(
+  pageSize: number,
+  page: number,
+  wallets: string,
+  sort: string,
+  sortDir: string
+) {
+  const tdhBlock = await fetchLatestTDHBlockNumber();
+  let filters = `WHERE block=${tdhBlock}`;
+  if (wallets) {
+    filters += `  and ${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(
+      wallets.split(',')
+    )})`;
+  }
+
+  const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, ${OWNERS_METRICS_TABLE}.* `;
+  let joins = ` LEFT JOIN ${OWNERS_METRICS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet `;
+  joins += ` LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
   return fetchPaginated(
     WALLETS_TDH_TABLE,
