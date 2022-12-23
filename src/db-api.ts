@@ -440,6 +440,9 @@ export async function fetchOwnerMetrics(
   let joins = ` INNER JOIN ${OWNERS_METRICS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet `;
   joins += ` LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
+  if (sort == 'balance') {
+    sort = `${WALLETS_TDH_TABLE}.balance`;
+  }
   return fetchPaginated(
     WALLETS_TDH_TABLE,
     `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
