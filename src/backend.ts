@@ -17,6 +17,7 @@ import { findOwnerTags } from './owners_tags';
 import { findOwnerMetrics } from './owner_metrics';
 import { persistS3 } from './s3';
 import { findTDH } from './tdh';
+import { uploadTDH } from './tdh_upload';
 import { findTransactions } from './transactions';
 import { findTransactionValues } from './transaction_values';
 
@@ -78,6 +79,11 @@ cron.schedule('1 0 * * *', async function () {
 // CALCULATE TDH AT 00:30
 cron.schedule('30 0 * * *', async function () {
   await nftTdh();
+});
+
+// UPLOAD TDH AT 01:01
+cron.schedule('1 1 * * *', async function () {
+  tdhUpload();
 });
 
 async function transactions(
@@ -337,6 +343,12 @@ async function refreshEns() {
   }
 }
 
+async function tdhUpload() {
+  const tdh = await db.fetchAllTDH();
+  const ownerMetrics = await db.fetchAllOwnerMetrics();
+  uploadTDH(tdh, ownerMetrics, db);
+}
+
 async function start() {
   const now = new Date();
   console.log(
@@ -354,6 +366,7 @@ async function start() {
   // await tdh();
   // await nftTdh();
   // await ownerMetrics();
+  tdhUpload();
   STARTING = false;
   console.log(new Date(), `[STARTING ${STARTING}]`);
 }

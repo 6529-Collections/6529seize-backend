@@ -28,3 +28,7 @@ export interface TDH {
   gradients: any;
   gradients_ranks: any;
 }
+
+export interface TDHENS extends TDH {
+  ens: string;
+}

@@ -83,6 +83,34 @@ app.get(`${BASE_PATH}/blocks`, function (req: any, res: any, next: any) {
   }
 });
 
+app.get(`${BASE_PATH}/uploads`, function (req: any, res: any, next: any) {
+  try {
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+    console.log(
+      new Date(),
+      `[API]`,
+      '[UPLOADS]',
+      `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+    );
+    db.fetchUploads(pageSize, page).then((result) => {
+      returnPaginatedResult(result, req, res);
+    });
+  } catch (e) {
+    console.log(
+      new Date(),
+      `[API]`,
+      '[BLOCKS]',
+      `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+    );
+    next(e);
+  }
+});
+
 app.get(`${BASE_PATH}/artists`, function (req: any, res: any, next: any) {
   try {
     const pageSize: number =

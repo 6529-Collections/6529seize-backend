@@ -10,6 +10,7 @@ import {
   OWNERS_TAGS_TABLE,
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
+  UPLOADS_TABLE,
   WALLETS_TDH_TABLE
 } from './constants';
 import { areEqualAddresses } from './helpers';
@@ -118,6 +119,10 @@ export async function fetchBlocks(pageSize: number, page: number) {
     '',
     ''
   );
+}
+
+export async function fetchUploads(pageSize: number, page: number) {
+  return fetchPaginated(UPLOADS_TABLE, 'block desc', pageSize, page, '', '');
 }
 
 export async function fetchArtists(

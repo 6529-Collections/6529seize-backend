@@ -7,6 +7,7 @@ import {
   OWNERS_TABLE,
   OWNERS_TAGS_TABLE,
   WALLETS_TDH_TABLE,
+  UPLOADS_TABLE,
   ENS_TABLE,
   TRANSACTIONS_REMAKE_TABLE,
   OWNERS_METRICS_TABLE,
@@ -359,6 +360,14 @@ dbcon.query(
   }
 );
 
+dbcon.query(
+  `CREATE TABLE IF NOT EXISTS ${UPLOADS_TABLE} (date VARCHAR(8) NOT NULL , block INT NOT NULL , tdh TEXT NOT NULL, PRIMARY KEY (date)) ENGINE = InnoDB;`,
+  (err: any) => {
+    if (err) throw err;
+    console.log(new Date(), '[DATABASE]', `[TABLE CREATED ${UPLOADS_TABLE}]`);
+  }
+);
+
 export function execSQL(sql: string): Promise<any> {
   return new Promise((resolve, reject) => {
     dbcon.query(sql, (err: any, result: any[]) => {
@@ -419,7 +428,7 @@ export async function fetchAllNFTs() {
 
 export async function fetchAllTDH() {
   const tdhBlock = await fetchLatestTDHBlockNumber();
-  let sql = `SELECT * FROM ${WALLETS_TDH_TABLE} WHERE block=${tdhBlock};`;
+  let sql = `SELECT ${ENS_TABLE}.display as ens, ${WALLETS_TDH_TABLE}.* FROM ${WALLETS_TDH_TABLE} LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet WHERE block=${tdhBlock};`;
   const results = await execSQL(sql);
   results.map((r: any) => (r.memes = JSON.parse(r.memes)));
   results.map((r: any) => (r.gradients = JSON.parse(r.gradients)));
@@ -835,6 +844,20 @@ export async function persistNftTdh(nftTdh: NftTDH[]) {
     '[NFT TDH]',
     `PERSISTED ALL NFTS TDH [${nftTdh.length}]`
   );
+}
+
+export async function persistTdhUpload(
+  block: number,
+  dateString: string,
+  location: string
+) {
+  const sql = `REPLACE INTO ${UPLOADS_TABLE} SET 
+    date = ${mysql.escape(dateString)},
+    block = ${block},
+    tdh = ${mysql.escape(location)}`;
+  await execSQL(sql);
+
+  console.log(new Date(), '[TDH UPLOAD PERSISTED]');
 }
 
 export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
