@@ -445,8 +445,14 @@ export async function fetchOwnerMetrics(
   let joins = ` INNER JOIN ${OWNERS_METRICS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet `;
   joins += ` LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
-  if (sort == 'balance') {
-    sort = `${WALLETS_TDH_TABLE}.balance`;
+  if (
+    sort == 'balance' ||
+    sort == 'memes_balance' ||
+    sort == 'memes_balance_season1' ||
+    sort == 'memes_balance_season2' ||
+    sort == 'gradients_balance'
+  ) {
+    sort = `${OWNERS_METRICS_TABLE}.${sort}`;
   }
   return fetchPaginated(
     WALLETS_TDH_TABLE,

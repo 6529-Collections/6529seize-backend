@@ -20,6 +20,10 @@ export interface OwnerMetric {
   created_at: Date;
   wallet: string;
   balance: number;
+  memes_balance: number;
+  memes_balance_season1: number;
+  memes_balance_season2: number;
+  gradients_balance: number;
   purchases_value: number;
   purchases_count: number;
   purchases_value_primary: number;

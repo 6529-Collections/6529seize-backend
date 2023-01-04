@@ -1,5 +1,10 @@
 import { Alchemy } from 'alchemy-sdk';
-import { ALCHEMY_SETTINGS, MEMES_CONTRACT, SIX529_MUSEUM } from './constants';
+import {
+  ALCHEMY_SETTINGS,
+  MEMES_CONTRACT,
+  NULL_ADDRESS,
+  SIX529_MUSEUM
+} from './constants';
 import { MemesExtendedData, NFT } from './entities/INFT';
 import { Owner } from './entities/IOwner';
 import { areEqualAddresses } from './helpers';
@@ -14,9 +19,13 @@ export const findMemesExtendedData = async (nfts: NFT[], owners: Owner[]) => {
   const memesMeta: MemesExtendedData[] = [];
 
   nfts.map((nft) => {
-    const tokenWallets = [...owners].filter(
+    const allTokenWallets = [...owners].filter(
       (o) =>
         o.token_id == nft.id && areEqualAddresses(o.contract, MEMES_CONTRACT)
+    );
+
+    const tokenWallets = allTokenWallets.filter(
+      (tw) => !areEqualAddresses(NULL_ADDRESS, tw.wallet)
     );
 
     let edition_size = 0;

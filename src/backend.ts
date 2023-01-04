@@ -66,7 +66,12 @@ cron.schedule('*/30 * * * *', async function () {
   }
 });
 
-// PROCESS ENS AT 6:29
+// DISCOVER ENS AT 5:29
+cron.schedule('29 5 * * *', async function () {
+  discoverEns();
+});
+
+// REFRESH ENS AT 6:29
 cron.schedule('29 6 * * *', async function () {
   refreshEns();
 });
@@ -215,10 +220,15 @@ async function owners() {
   await db.persistOwners(newOwners);
 }
 
-async function ownerMetrics() {
+async function ownerMetrics(reset?: boolean) {
   const owners = await db.fetchAllOwnersAddresses();
   const ownerMetrics = await db.fetchAllOwnerMetrics();
-  const newOwnerMetrics = await findOwnerMetrics(owners, ownerMetrics, db);
+  const newOwnerMetrics = await findOwnerMetrics(
+    owners,
+    ownerMetrics,
+    db,
+    reset
+  );
   await db.persistOwnerMetrics(newOwnerMetrics);
 }
 
@@ -299,7 +309,7 @@ async function nftS3() {
   }
 }
 
-async function discoverEns(datetime: Date) {
+async function discoverEns(datetime?: Date) {
   try {
     const missingEns = await db.fetchMissingEns(datetime);
     if (missingEns.length > 0) {
@@ -366,7 +376,9 @@ async function start() {
   // await tdh();
   // await nftTdh();
   // await ownerMetrics();
-  tdhUpload();
+  // tdhUpload();
+  await ownerMetrics(true);
+  discoverEns();
   STARTING = false;
   console.log(new Date(), `[STARTING ${STARTING}]`);
 }

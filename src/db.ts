@@ -280,6 +280,20 @@ dbcon.query(
 );
 
 dbcon.query(
+  `ALTER TABLE ${OWNERS_METRICS_TABLE} ADD COLUMN gradients_balance INT NOT NULL AFTER balance, ADD COLUMN memes_balance_season2 INT NOT NULL AFTER balance, ADD COLUMN memes_balance_season1 INT NOT NULL AFTER balance, ADD COLUMN memes_balance INT NOT NULL AFTER balance;`,
+  (err: any) => {
+    if (!err) {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE UPDATED ${OWNERS_METRICS_TABLE}]`,
+        `[NEW COLUMN ADDED]`
+      );
+    }
+  }
+);
+
+dbcon.query(
   `CREATE TABLE IF NOT EXISTS ${ENS_TABLE} (created_at DATETIME NOT NULL DEFAULT now(), wallet VARCHAR(50) NOT NULL , display varchar(150) CHARACTER SET utf8mb4 , PRIMARY KEY (wallet)) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4;`,
   (err: any) => {
     if (err) throw err;
@@ -484,13 +498,21 @@ export async function fetchEnsRefresh() {
   return results;
 }
 
-export async function fetchMissingEns(datetime: Date) {
+export async function fetchMissingEns(datetime?: Date) {
   let sql1 = `SELECT DISTINCT from_address as address FROM ${TRANSACTIONS_TABLE} WHERE from_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
-  sql1 += ` AND ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(datetime)}`;
-
+  if (datetime) {
+    sql1 += ` AND ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(datetime)}`;
+  } else {
+    sql1 += ` LIMIT 75`;
+  }
   const results1 = await execSQL(sql1);
+
   let sql2 = `SELECT DISTINCT to_address as address FROM ${TRANSACTIONS_TABLE} WHERE to_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
-  sql2 += ` AND ${TRANSACTIONS_TABLE}.created_at > ${datetime}`;
+  if (datetime) {
+    sql2 += ` AND ${TRANSACTIONS_TABLE}.created_at > ${datetime}`;
+  } else {
+    sql2 += ` LIMIT 75`;
+  }
   const results2 = await execSQL(sql2);
 
   const results = results1
@@ -691,6 +713,14 @@ export async function persistOwnerMetrics(ownerMetrics: OwnerMetric[]) {
             new Date()
           )}, wallet=${mysql.escape(ownerMetric.wallet)}, balance=${
             ownerMetric.balance
+          }, memes_balance=${
+            ownerMetric.memes_balance
+          }, memes_balance_season1=${
+            ownerMetric.memes_balance_season1
+          }, memes_balance_season2=${
+            ownerMetric.memes_balance_season2
+          }, gradients_balance=${
+            ownerMetric.gradients_balance
           }, purchases_value=${ownerMetric.purchases_value}, purchases_count=${
             ownerMetric.purchases_count
           }, purchases_value_primary=${
