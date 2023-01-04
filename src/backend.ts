@@ -377,7 +377,7 @@ async function start() {
   // await nftTdh();
   // await ownerMetrics();
   // tdhUpload();
-  await ownerMetrics(true);
+  // await ownerMetrics(true);
   discoverEns();
   STARTING = false;
   console.log(new Date(), `[STARTING ${STARTING}]`);
