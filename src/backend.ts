@@ -378,7 +378,7 @@ async function start() {
   // await ownerMetrics();
   // tdhUpload();
   // await ownerMetrics(true);
-  discoverEns();
+  // discoverEns();
   STARTING = false;
   console.log(new Date(), `[STARTING ${STARTING}]`);
 }
