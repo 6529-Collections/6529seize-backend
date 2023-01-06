@@ -7,15 +7,17 @@ import { ENS } from './entities/IENS';
 import { NFT, NFTWithTDH } from './entities/INFT';
 import { Owner, OwnerTags } from './entities/IOwner';
 import { Transaction } from './entities/ITransaction';
-import { delay } from './helpers';
+import { delay, getLastTDH } from './helpers';
 import { findMemesExtendedData } from './memes_extended_data';
 import { findNFTs } from './nfts';
 import { findNftMarketStats } from './nft_market_stats';
 import { findNftTDH } from './nft_tdh';
 import { findOwners } from './owners';
 import { findOwnerTags } from './owners_tags';
+import { findOwnerMetrics } from './owner_metrics';
 import { persistS3 } from './s3';
 import { findTDH } from './tdh';
+import { uploadTDH } from './tdh_upload';
 import { findTransactions } from './transactions';
 import { findTransactionValues } from './transaction_values';
 
@@ -39,7 +41,14 @@ cron.schedule('*/3 * * * *', async function () {
   if (!STARTING) {
     const now = new Date();
     await transactions();
-    await discoverEns(now);
+    discoverEns(now);
+  }
+});
+
+// PULL EVERY 7 MINUTES
+cron.schedule('*/7 * * * *', async function () {
+  if (!STARTING) {
+    ownerMetrics();
   }
 });
 
@@ -57,7 +66,12 @@ cron.schedule('*/30 * * * *', async function () {
   }
 });
 
-// PROCESS ENS AT 6:29
+// DISCOVER ENS AT 5:29
+cron.schedule('29 5 * * *', async function () {
+  discoverEns();
+});
+
+// REFRESH ENS AT 6:29
 cron.schedule('29 6 * * *', async function () {
   refreshEns();
 });
@@ -70,6 +84,11 @@ cron.schedule('1 0 * * *', async function () {
 // CALCULATE TDH AT 00:30
 cron.schedule('30 0 * * *', async function () {
   await nftTdh();
+});
+
+// UPLOAD TDH AT 01:01
+cron.schedule('1 1 * * *', async function () {
+  tdhUpload();
 });
 
 async function transactions(
@@ -201,6 +220,18 @@ async function owners() {
   await db.persistOwners(newOwners);
 }
 
+async function ownerMetrics(reset?: boolean) {
+  const owners = await db.fetchAllOwnersAddresses();
+  const ownerMetrics = await db.fetchAllOwnerMetrics();
+  const newOwnerMetrics = await findOwnerMetrics(
+    owners,
+    ownerMetrics,
+    db,
+    reset
+  );
+  await db.persistOwnerMetrics(newOwnerMetrics);
+}
+
 async function ownerTags() {
   const nfts = await db.fetchAllNFTs();
   const owners: Owner[] = await db.fetchAllOwners();
@@ -217,10 +248,13 @@ async function memesExtendedData() {
 }
 
 async function tdh() {
-  const nfts = await db.fetchAllNFTs();
-  const transactions: Transaction[] = await db.fetchAllTransactions();
+  const lastTDHCalc = getLastTDH();
 
-  const tdhResponse = await findTDH(nfts, transactions);
+  const block = await db.fetchLatestTransactionsBlockNumber(lastTDHCalc);
+  const nfts = await db.fetchAllNFTs();
+  const owners = await db.fetchAllOwnersAddresses();
+
+  const tdhResponse = await findTDH(block, lastTDHCalc, nfts, owners, db);
   await db.persistTDH(
     tdhResponse.block,
     tdhResponse.timestamp,
@@ -275,7 +309,7 @@ async function nftS3() {
   }
 }
 
-async function discoverEns(datetime: Date) {
+async function discoverEns(datetime?: Date) {
   try {
     const missingEns = await db.fetchMissingEns(datetime);
     if (missingEns.length > 0) {
@@ -319,6 +353,12 @@ async function refreshEns() {
   }
 }
 
+async function tdhUpload() {
+  const tdh = await db.fetchAllTDH();
+  const ownerMetrics = await db.fetchAllOwnerMetrics();
+  uploadTDH(tdh, ownerMetrics, db);
+}
+
 async function start() {
   const now = new Date();
   console.log(
@@ -335,6 +375,10 @@ async function start() {
   // await memesExtendedData();
   // await tdh();
   // await nftTdh();
+  // await ownerMetrics();
+  // tdhUpload();
+  // await ownerMetrics(true);
+  // discoverEns();
   STARTING = false;
   console.log(new Date(), `[STARTING ${STARTING}]`);
 }

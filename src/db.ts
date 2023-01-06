@@ -7,13 +7,17 @@ import {
   OWNERS_TABLE,
   OWNERS_TAGS_TABLE,
   WALLETS_TDH_TABLE,
+  UPLOADS_TABLE,
   ENS_TABLE,
-  TRANSACTIONS_REMAKE_TABLE
+  TRANSACTIONS_REMAKE_TABLE,
+  OWNERS_METRICS_TABLE,
+  NULL_ADDRESS,
+  MANIFOLD
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
 import { MemesExtendedData, NFT, NftTDH, NFTWithTDH } from './entities/INFT';
-import { Owner, OwnerTags } from './entities/IOwner';
+import { Owner, OwnerMetric, OwnerTags } from './entities/IOwner';
 import { TDH } from './entities/ITDH';
 import { Transaction } from './entities/ITransaction';
 
@@ -264,6 +268,32 @@ dbcon.query(
 );
 
 dbcon.query(
+  `CREATE TABLE IF NOT EXISTS ${OWNERS_METRICS_TABLE} (created_at DATETIME NOT NULL DEFAULT now(), wallet VARCHAR(50) NOT NULL , balance INT NOT NULL, purchases_value DOUBLE NOT NULL, purchases_count INT NOT NULL, purchases_value_primary DOUBLE NOT NULL, purchases_count_primary INT NOT NULL, purchases_value_secondary DOUBLE NOT NULL, purchases_count_secondary INT NOT NULL, sales_value DOUBLE NOT NULL, sales_count INT NOT NULL, transfers_in INT NOT NULL, transfers_out INT NOT NULL, PRIMARY KEY (wallet)) ENGINE = InnoDB;`,
+  (err: any) => {
+    if (err) throw err;
+    console.log(
+      new Date(),
+      '[DATABASE]',
+      `[TABLE CREATED ${OWNERS_METRICS_TABLE}]`
+    );
+  }
+);
+
+dbcon.query(
+  `ALTER TABLE ${OWNERS_METRICS_TABLE} ADD COLUMN gradients_balance INT NOT NULL AFTER balance, ADD COLUMN memes_balance_season2 INT NOT NULL AFTER balance, ADD COLUMN memes_balance_season1 INT NOT NULL AFTER balance, ADD COLUMN memes_balance INT NOT NULL AFTER balance;`,
+  (err: any) => {
+    if (!err) {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE UPDATED ${OWNERS_METRICS_TABLE}]`,
+        `[NEW COLUMN ADDED]`
+      );
+    }
+  }
+);
+
+dbcon.query(
   `CREATE TABLE IF NOT EXISTS ${ENS_TABLE} (created_at DATETIME NOT NULL DEFAULT now(), wallet VARCHAR(50) NOT NULL , display varchar(150) CHARACTER SET utf8mb4 , PRIMARY KEY (wallet)) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4;`,
   (err: any) => {
     if (err) throw err;
@@ -344,6 +374,14 @@ dbcon.query(
   }
 );
 
+dbcon.query(
+  `CREATE TABLE IF NOT EXISTS ${UPLOADS_TABLE} (date VARCHAR(8) NOT NULL , block INT NOT NULL , tdh TEXT NOT NULL, PRIMARY KEY (date)) ENGINE = InnoDB;`,
+  (err: any) => {
+    if (err) throw err;
+    console.log(new Date(), '[DATABASE]', `[TABLE CREATED ${UPLOADS_TABLE}]`);
+  }
+);
+
 export function execSQL(sql: string): Promise<any> {
   return new Promise((resolve, reject) => {
     dbcon.query(sql, (err: any, result: any[]) => {
@@ -353,8 +391,14 @@ export function execSQL(sql: string): Promise<any> {
   });
 }
 
-export async function fetchLatestTransactionsBlockNumber() {
-  let sql = `SELECT block FROM ${TRANSACTIONS_TABLE} order by block desc limit 1;`;
+export async function fetchLatestTransactionsBlockNumber(beforeDate?: Date) {
+  let sql = `SELECT block FROM ${TRANSACTIONS_TABLE}`;
+  if (beforeDate) {
+    sql += ` WHERE UNIX_TIMESTAMP(transaction_date) <= ${
+      beforeDate.getTime() / 1000
+    }`;
+  }
+  sql += ` order by block desc limit 1;`;
   const r = await execSQL(sql);
   return r.length > 0 ? r[0].block : 0;
 }
@@ -398,7 +442,7 @@ export async function fetchAllNFTs() {
 
 export async function fetchAllTDH() {
   const tdhBlock = await fetchLatestTDHBlockNumber();
-  let sql = `SELECT * FROM ${WALLETS_TDH_TABLE} WHERE block=${tdhBlock};`;
+  let sql = `SELECT ${ENS_TABLE}.display as ens, ${WALLETS_TDH_TABLE}.* FROM ${WALLETS_TDH_TABLE} LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet WHERE block=${tdhBlock};`;
   const results = await execSQL(sql);
   results.map((r: any) => (r.memes = JSON.parse(r.memes)));
   results.map((r: any) => (r.gradients = JSON.parse(r.gradients)));
@@ -417,6 +461,31 @@ export async function fetchAllOwners() {
   return results;
 }
 
+export async function fetchAllOwnersAddresses() {
+  let sql = `SELECT distinct wallet FROM ${OWNERS_TABLE} WHERE wallet != ${mysql.escape(
+    NULL_ADDRESS
+  )} AND wallet != ${mysql.escape(MANIFOLD)};`;
+  const results = await execSQL(sql);
+  return results;
+}
+
+export async function fetchAllOwnerMetrics() {
+  let sql = `SELECT * FROM ${OWNERS_METRICS_TABLE};`;
+  const results = await execSQL(sql);
+  return results;
+}
+
+export async function fetchWalletTransactions(wallet: string, block?: number) {
+  let sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE (from_address = ${mysql.escape(
+    wallet
+  )} OR to_address = ${mysql.escape(wallet)})`;
+  if (block) {
+    sql += ` AND block <= ${block}`;
+  }
+  const results = await execSQL(sql);
+  return results;
+}
+
 export async function fetchAllOwnerTags() {
   let sql = `SELECT * FROM ${OWNERS_TAGS_TABLE};`;
   const results = await execSQL(sql);
@@ -429,13 +498,21 @@ export async function fetchEnsRefresh() {
   return results;
 }
 
-export async function fetchMissingEns(datetime: Date) {
+export async function fetchMissingEns(datetime?: Date) {
   let sql1 = `SELECT DISTINCT from_address as address FROM ${TRANSACTIONS_TABLE} WHERE from_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
-  sql1 += ` AND ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(datetime)}`;
-
+  if (datetime) {
+    sql1 += ` AND ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(datetime)}`;
+  } else {
+    sql1 += ` LIMIT 75`;
+  }
   const results1 = await execSQL(sql1);
+
   let sql2 = `SELECT DISTINCT to_address as address FROM ${TRANSACTIONS_TABLE} WHERE to_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
-  sql2 += ` AND ${TRANSACTIONS_TABLE}.created_at > ${datetime}`;
+  if (datetime) {
+    sql2 += ` AND ${TRANSACTIONS_TABLE}.created_at > ${datetime}`;
+  } else {
+    sql2 += ` LIMIT 75`;
+  }
   const results2 = await execSQL(sql2);
 
   const results = results1
@@ -616,12 +693,69 @@ export async function persistOwners(owners: Owner[]) {
   }
 }
 
+export async function persistOwnerMetrics(ownerMetrics: OwnerMetric[]) {
+  if (ownerMetrics.length > 0) {
+    console.log(
+      new Date(),
+      '[OWNERS METRICS]',
+      `[PERSISTING ${ownerMetrics.length} WALLETS]`
+    );
+
+    await Promise.all(
+      ownerMetrics.map(async (ownerMetric) => {
+        let sql;
+        if (0 >= ownerMetric.balance) {
+          sql = `DELETE FROM ${OWNERS_METRICS_TABLE} WHERE wallet=${mysql.escape(
+            ownerMetric.wallet
+          )}`;
+        } else {
+          sql = `REPLACE INTO ${OWNERS_METRICS_TABLE} SET created_at=${mysql.escape(
+            new Date()
+          )}, wallet=${mysql.escape(ownerMetric.wallet)}, balance=${
+            ownerMetric.balance
+          }, memes_balance=${
+            ownerMetric.memes_balance
+          }, memes_balance_season1=${
+            ownerMetric.memes_balance_season1
+          }, memes_balance_season2=${
+            ownerMetric.memes_balance_season2
+          }, gradients_balance=${
+            ownerMetric.gradients_balance
+          }, purchases_value=${ownerMetric.purchases_value}, purchases_count=${
+            ownerMetric.purchases_count
+          }, purchases_value_primary=${
+            ownerMetric.purchases_value_primary
+          }, purchases_count_primary=${
+            ownerMetric.purchases_count_primary
+          }, purchases_value_secondary=${
+            ownerMetric.purchases_value_secondary
+          }, purchases_count_secondary=${
+            ownerMetric.purchases_count_secondary
+          }, sales_value=${ownerMetric.sales_value}, sales_count=${
+            ownerMetric.sales_count
+          }, transfers_in=${ownerMetric.transfers_in}, transfers_out=${
+            ownerMetric.transfers_out
+          }`;
+        }
+
+        await execSQL(sql);
+      })
+    );
+
+    console.log(
+      new Date(),
+      '[OWNERS METRICS]',
+      `[ALL ${ownerMetrics.length} WALLETS PERSISTED]`
+    );
+  }
+}
+
 export async function persistOwnerTags(ownersTags: OwnerTags[]) {
   if (ownersTags.length > 0) {
     console.log(
       new Date(),
       '[OWNERS TAGS]',
-      `[PERSISTING ${ownersTags.length} OWNERS]`
+      `[PERSISTING ${ownersTags.length} WALLETS]`
     );
 
     await Promise.all(
@@ -649,8 +783,8 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
 
     console.log(
       new Date(),
-      '[OWNERS]',
-      `[ALL ${ownersTags.length} OWNERS PERSISTED]`
+      '[OWNERS TAGS]',
+      `[ALL ${ownersTags.length} WALLETS PERSISTED]`
     );
   }
 }
@@ -740,6 +874,20 @@ export async function persistNftTdh(nftTdh: NftTDH[]) {
     '[NFT TDH]',
     `PERSISTED ALL NFTS TDH [${nftTdh.length}]`
   );
+}
+
+export async function persistTdhUpload(
+  block: number,
+  dateString: string,
+  location: string
+) {
+  const sql = `REPLACE INTO ${UPLOADS_TABLE} SET 
+    date = ${mysql.escape(dateString)},
+    block = ${block},
+    tdh = ${mysql.escape(location)}`;
+  await execSQL(sql);
+
+  console.log(new Date(), '[TDH UPLOAD PERSISTED]');
 }
 
 export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {

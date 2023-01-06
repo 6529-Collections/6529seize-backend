@@ -8,8 +8,10 @@ export const NFTS_TABLE = 'nfts';
 export const ARTISTS_TABLE = 'artists';
 export const OWNERS_TABLE = 'owners';
 export const OWNERS_TAGS_TABLE = 'owners_tags';
+export const OWNERS_METRICS_TABLE = 'owners_metrics';
 export const MEMES_EXTENDED_DATA_TABLE = 'memes_extended_data';
 export const WALLETS_TDH_TABLE = 'tdh';
+export const UPLOADS_TABLE = 'uploads';
 export const ENS_TABLE = 'ens';
 
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';

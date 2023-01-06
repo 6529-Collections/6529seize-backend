@@ -219,36 +219,38 @@ async function processGradients(
 
       const rawMeta = fullMetadata.rawMetadata;
 
-      const tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.${rawMeta!
-        .image!.split('.')
-        .pop()}`;
+      if (rawMeta && rawMeta.image) {
+        const tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.${rawMeta!
+          .image!.split('.')
+          .pop()}`;
 
-      const nft: NFTWithTDH = {
-        id: tokenId,
-        contract: GRADIENT_CONTRACT,
-        created_at: new Date(),
-        mint_date: new Date(createdTransactions[0].transaction_date),
-        mint_price: 0,
-        supply: supply,
-        name: rawMeta?.name,
-        collection: '6529 Gradient',
-        token_type: tokenContract.tokenType,
-        hodl_rate: 0,
-        description: fullMetadata.description,
-        artist: '6529er',
-        uri: fullMetadata.tokenUri?.raw,
-        thumbnail: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPath}`,
-        image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPath}`,
-        animation: undefined,
-        metadata: rawMeta,
-        tdh: startingNft ? startingNft.tdh : 0,
-        tdh__raw: startingNft ? startingNft.tdh__raw : 0,
-        tdh_rank: startingNft ? startingNft.tdh_rank : 0,
-        floor_price: startingNft ? startingNft.floor_price : 0,
-        market_cap: startingNft ? startingNft.market_cap : 0
-      };
+        const nft: NFTWithTDH = {
+          id: tokenId,
+          contract: GRADIENT_CONTRACT,
+          created_at: new Date(),
+          mint_date: new Date(createdTransactions[0].transaction_date),
+          mint_price: 0,
+          supply: supply,
+          name: rawMeta?.name,
+          collection: '6529 Gradient',
+          token_type: tokenContract.tokenType,
+          hodl_rate: 0,
+          description: fullMetadata.description,
+          artist: '6529er',
+          uri: fullMetadata.tokenUri?.raw,
+          thumbnail: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPath}`,
+          image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPath}`,
+          animation: undefined,
+          metadata: rawMeta,
+          tdh: startingNft ? startingNft.tdh : 0,
+          tdh__raw: startingNft ? startingNft.tdh__raw : 0,
+          tdh_rank: startingNft ? startingNft.tdh_rank : 0,
+          floor_price: startingNft ? startingNft.floor_price : 0,
+          market_cap: startingNft ? startingNft.market_cap : 0
+        };
 
-      newNFTS.push(nft);
+        newNFTS.push(nft);
+      }
     })
   );
   console.log(

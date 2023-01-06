@@ -5,10 +5,12 @@ import {
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   NFTS_TABLE,
+  OWNERS_METRICS_TABLE,
   OWNERS_TABLE,
   OWNERS_TAGS_TABLE,
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
+  UPLOADS_TABLE,
   WALLETS_TDH_TABLE
 } from './constants';
 import { areEqualAddresses } from './helpers';
@@ -117,6 +119,10 @@ export async function fetchBlocks(pageSize: number, page: number) {
     '',
     ''
   );
+}
+
+export async function fetchUploads(pageSize: number, page: number) {
+  return fetchPaginated(UPLOADS_TABLE, 'block desc', pageSize, page, '', '');
 }
 
 export async function fetchArtists(
@@ -409,6 +415,45 @@ export async function fetchTDH(
   const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
   const joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
+  return fetchPaginated(
+    WALLETS_TDH_TABLE,
+    `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
+    pageSize,
+    page,
+    filters,
+    fields,
+    joins
+  );
+}
+
+export async function fetchOwnerMetrics(
+  pageSize: number,
+  page: number,
+  wallets: string,
+  sort: string,
+  sortDir: string
+) {
+  const tdhBlock = await fetchLatestTDHBlockNumber();
+  let filters = `WHERE block=${tdhBlock}`;
+  if (wallets) {
+    filters += `  and ${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(
+      wallets.split(',')
+    )})`;
+  }
+
+  const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, ${OWNERS_METRICS_TABLE}.* `;
+  let joins = ` INNER JOIN ${OWNERS_METRICS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet `;
+  joins += ` LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet`;
+
+  if (
+    sort == 'balance' ||
+    sort == 'memes_balance' ||
+    sort == 'memes_balance_season1' ||
+    sort == 'memes_balance_season2' ||
+    sort == 'gradients_balance'
+  ) {
+    sort = `${OWNERS_METRICS_TABLE}.${sort}`;
+  }
   return fetchPaginated(
     WALLETS_TDH_TABLE,
     `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
