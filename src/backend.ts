@@ -52,19 +52,53 @@ cron.schedule('*/7 * * * *', async function () {
   }
 });
 
-// PULL EVERY 8 MINUTES
-cron.schedule('*/8 * * * *', async function () {
-  if (!STARTING) {
-    marketStats(MEMES_CONTRACT);
-  }
-});
+// MARKET STATS MEMES
+// - PULL at 21:08 IN STAGING
+// - PULL EVERY 8 MINUTES IN PROD
+let memesMarketStatsCron;
+if (process.env.NODE_ENV == 'development') {
+  memesMarketStatsCron = '8 21 * * *';
+} else if (process.env.NODE_ENV == 'production') {
+  memesMarketStatsCron = '*/8 * * * *';
+}
 
-// PULL EVERY 30 MINUTES
-cron.schedule('*/30 * * * *', async function () {
-  if (!STARTING) {
-    marketStats(GRADIENT_CONTRACT);
-  }
-});
+if (memesMarketStatsCron) {
+  cron.schedule(memesMarketStatsCron, async function () {
+    if (!STARTING) {
+      marketStats(MEMES_CONTRACT);
+    }
+  });
+} else {
+  console.log(
+    new Date(),
+    `[CONFIG ${process.env.NODE_ENV}]`,
+    '[SKIPPING MARKET STATS MEMES]'
+  );
+}
+
+// MARKET STATS GRADIENTS
+// - PULL at 21:38 IN STAGING
+// - PULL EVERY 30 MINUTES IN PROD
+let gradientsMarketStatsCron;
+if (process.env.NODE_ENV == 'development') {
+  gradientsMarketStatsCron = '38 21 * * *';
+} else if (process.env.NODE_ENV == 'production') {
+  gradientsMarketStatsCron = '*/30 * * * *';
+}
+
+if (gradientsMarketStatsCron) {
+  cron.schedule(gradientsMarketStatsCron, async function () {
+    if (!STARTING) {
+      marketStats(GRADIENT_CONTRACT);
+    }
+  });
+} else {
+  console.log(
+    new Date(),
+    `[CONFIG ${process.env.NODE_ENV}]`,
+    '[SKIPPING MARKET STATS GRADIENTS]'
+  );
+}
 
 // DISCOVER ENS AT 5:29
 cron.schedule('29 5 * * *', async function () {
@@ -200,18 +234,9 @@ async function nfts(reset = false) {
 }
 
 async function marketStats(contract: string) {
-  if (process.env.NODE_ENV == 'production') {
-    const nfts: NFT[] = await db.fetchNftsForContract(contract);
-    const stats = await findNftMarketStats(contract, nfts);
-    await db.persistNftMarketStats(stats);
-  } else {
-    console.log(
-      new Date(),
-      '[NFT MARKET STATS]',
-      '[SKIPPING]',
-      `[CONFIG ${process.env.NODE_ENV}]`
-    );
-  }
+  const nfts: NFT[] = await db.fetchNftsForContract(contract);
+  const stats = await findNftMarketStats(contract, nfts);
+  await db.persistNftMarketStats(stats);
 }
 
 async function owners() {
