@@ -402,7 +402,8 @@ export async function fetchTDH(
   page: number,
   wallets: string,
   sort: string,
-  sortDir: string
+  sortDir: string,
+  tdh_filter: string
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = `WHERE block=${tdhBlock}`;
@@ -410,6 +411,19 @@ export async function fetchTDH(
     filters += `  and ${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(
       wallets.split(',')
     )})`;
+  }
+  if (tdh_filter) {
+    switch (tdh_filter) {
+      case 'memes_set':
+        filters += ` and ${WALLETS_TDH_TABLE}.memes_cards_sets > 0`;
+        break;
+      case 'memes_set':
+        filters += ` and ${WALLETS_TDH_TABLE}.genesis > 0`;
+        break;
+      case 'memes_set':
+        filters += ` and ${WALLETS_TDH_TABLE}.gradients_balance > 0`;
+        break;
+    }
   }
 
   const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
@@ -431,7 +445,8 @@ export async function fetchOwnerMetrics(
   page: number,
   wallets: string,
   sort: string,
-  sortDir: string
+  sortDir: string,
+  metrics_filter: string
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = `WHERE block=${tdhBlock}`;
@@ -440,9 +455,23 @@ export async function fetchOwnerMetrics(
       wallets.split(',')
     )})`;
   }
+  if (metrics_filter) {
+    switch (metrics_filter) {
+      case 'memes_set':
+        filters += ` and ${OWNERS_TAGS_TABLE}.memes_cards_sets > 0`;
+        break;
+      case 'memes_genesis':
+        filters += ` and ${OWNERS_TAGS_TABLE}.genesis > 0`;
+        break;
+      case 'gradients':
+        filters += ` and ${OWNERS_TAGS_TABLE}.gradients_balance > 0`;
+        break;
+    }
+  }
 
-  const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, ${OWNERS_METRICS_TABLE}.* `;
+  const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, ${OWNERS_METRICS_TABLE}.*, ${OWNERS_TAGS_TABLE}.* `;
   let joins = ` INNER JOIN ${OWNERS_METRICS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet `;
+  joins += ` INNER JOIN ${OWNERS_TAGS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet `;
   joins += ` LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
   if (

@@ -11,28 +11,53 @@ const CONTENT_TYPE_HEADER = 'Content-Type';
 const JSON_HEADER_VALUE = 'application/json';
 const DEFAULT_PAGE_SIZE = 50;
 const SORT_DIRECTIONS = ['ASC', 'DESC'];
+
 const TDH_SORT = [
   'boosted_tdh',
   'tdh',
   'tdh__raw',
   'tdh_rank',
+  'boosted_memes_tdh',
   'memes_tdh',
   'memes_tdh__raw',
+  'boosted_memes_tdh_season1',
   'memes_tdh_season1',
   'memes_tdh_season1__raw',
+  'boosted_memes_tdh_season2',
   'memes_tdh_season2',
   'memes_tdh_season2__raw',
   'memes_balance',
   'memes_balance_season1',
   'memes_balance_season2',
+  'boosted_gradients_tdh',
   'gradients_tdh',
   'gradients_tdh__raw',
   'gradients_balance',
   'balance',
   'purchases_value',
   'sales_value',
-  'sales_count'
+  'sales_count',
+  'purchases_value_memes',
+  'purchases_value_memes_season1',
+  'purchases_value_memes_season2',
+  'purchases_value_gradients',
+  'sales_value_memes',
+  'sales_value_memes_season1',
+  'sales_value_memes_season2',
+  'sales_value_gradients',
+  'transfers_in',
+  'transfers_in_memes',
+  'transfers_in_memes_season1',
+  'transfers_in_memes_season2',
+  'transfers_in_gradients',
+  'transfers_out',
+  'transfers_out_memes',
+  'transfers_out_memes_season1',
+  'transfers_out_memes_season2',
+  'transfers_out_gradients'
 ];
+
+const TAGS_FILTERS = ['memes_set', 'memes_genesis', 'gradients'];
 
 function fullUrl(req: any, next: boolean) {
   let url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
@@ -473,21 +498,28 @@ app.get(`${BASE_PATH}/tdh`, function (req: any, res: any, next: any) {
         ? req.query.sort_direction
         : 'desc';
 
+    const filter =
+      req.query.filter && TAGS_FILTERS.includes(req.query.filter)
+        ? req.query.filter
+        : null;
+
     console.log(
       new Date(),
       `[API]`,
       '[TDH]',
       `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
     );
-    db.fetchTDH(pageSize, page, wallets, sort, sortDir).then((result) => {
-      result.data.map((d: any) => {
-        d.memes = JSON.parse(d.memes);
-        d.memes_ranks = JSON.parse(d.memes_ranks);
-        d.gradients = JSON.parse(d.gradients);
-        d.gradients_ranks = JSON.parse(d.gradients_ranks);
-      });
-      returnPaginatedResult(result, req, res);
-    });
+    db.fetchTDH(pageSize, page, wallets, sort, sortDir, filter).then(
+      (result) => {
+        result.data.map((d: any) => {
+          d.memes = JSON.parse(d.memes);
+          d.memes_ranks = JSON.parse(d.memes_ranks);
+          d.gradients = JSON.parse(d.gradients);
+          d.gradients_ranks = JSON.parse(d.gradients_ranks);
+        });
+        returnPaginatedResult(result, req, res);
+      }
+    );
   } catch (e) {
     console.log(
       new Date(),
@@ -519,13 +551,18 @@ app.get(`${BASE_PATH}/owner_metrics`, function (req: any, res: any, next: any) {
         ? req.query.sort_direction
         : 'desc';
 
+    const filter =
+      req.query.filter && TAGS_FILTERS.includes(req.query.filter)
+        ? req.query.filter
+        : null;
+
     console.log(
       new Date(),
       `[API]`,
       '[OWNER METRICS]',
       `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
     );
-    db.fetchOwnerMetrics(pageSize, page, wallets, sort, sortDir).then(
+    db.fetchOwnerMetrics(pageSize, page, wallets, sort, sortDir, filter).then(
       (result) => {
         result.data.map((d: any) => {
           d.memes = JSON.parse(d.memes);

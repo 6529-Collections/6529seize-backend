@@ -201,17 +201,21 @@ export const findTDH = async (
           memes_cards_sets: memesCardSets,
           genesis: genesis,
           unique_memes: walletMemes.length,
+          boosted_memes_tdh: 0,
           memes_tdh: memesTDH,
           memes_tdh__raw: memesTDH__raw,
           memes_balance: memesBalance,
+          boosted_memes_tdh_season1: 0,
           memes_tdh_season1: memes_tdh_season1,
           memes_tdh_season1__raw: memes_tdh_season1__raw,
           memes_balance_season1: memes_balance_season1,
+          boosted_memes_tdh_season2: 0,
           memes_tdh_season2: memes_tdh_season2,
           memes_tdh_season2__raw: memes_tdh_season2__raw,
           memes_balance_season2: memes_balance_season2,
           memes: walletMemes,
           memes_ranks: [],
+          boosted_gradients_tdh: 0,
           gradients_tdh: gradientsTDH,
           gradients_tdh__raw: gradientsTDH__raw,
           gradients_balance: gradientsBalance,
@@ -320,6 +324,10 @@ export const findTDH = async (
     );
     w.boost = boost;
     w.boosted_tdh = w.tdh * boost;
+    w.boosted_memes_tdh = w.memes_tdh * boost;
+    w.boosted_memes_tdh_season1 = w.memes_tdh_season1 * boost;
+    w.boosted_memes_tdh_season2 = w.memes_tdh_season2 * boost;
+    w.boosted_gradients_tdh = w.gradients_tdh * boost;
     boostedTDH.push(w);
   });
 

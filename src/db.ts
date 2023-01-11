@@ -287,7 +287,41 @@ dbcon.query(
         new Date(),
         '[DATABASE]',
         `[TABLE UPDATED ${OWNERS_METRICS_TABLE}]`,
-        `[NEW COLUMN ADDED]`
+        `[NEW COLUMNS ADDED]`
+      );
+    }
+  }
+);
+
+dbcon.query(
+  `ALTER TABLE ${OWNERS_METRICS_TABLE}
+  ADD COLUMN purchases_value_memes DOUBLE NOT NULL, ADD COLUMN purchases_count_memes INT NOT NULL,
+  ADD COLUMN purchases_value_memes_season1 DOUBLE NOT NULL, ADD COLUMN purchases_count_memes_season1 INT NOT NULL, 
+  ADD COLUMN purchases_value_memes_season2 DOUBLE NOT NULL, ADD COLUMN purchases_count_memes_season2 INT NOT NULL, 
+  ADD COLUMN purchases_value_gradients DOUBLE NOT NULL, ADD COLUMN purchases_count_gradients INT NOT NULL, 
+  ADD COLUMN purchases_value_primary_memes DOUBLE NOT NULL, ADD COLUMN purchases_count_primary_memes INT NOT NULL,
+  ADD COLUMN purchases_value_primary_memes_season1 DOUBLE NOT NULL, ADD COLUMN purchases_count_primary_memes_season1 INT NOT NULL, 
+  ADD COLUMN purchases_value_primary_memes_season2 DOUBLE NOT NULL, ADD COLUMN purchases_count_primary_memes_season2 INT NOT NULL, 
+  ADD COLUMN purchases_value_primary_gradients DOUBLE NOT NULL, ADD COLUMN purchases_count_primary_gradients INT NOT NULL, 
+  ADD COLUMN purchases_value_secondary_memes DOUBLE NOT NULL, ADD COLUMN purchases_count_secondary_memes INT NOT NULL,
+  ADD COLUMN purchases_value_secondary_memes_season1 DOUBLE NOT NULL, ADD COLUMN purchases_count_secondary_memes_season1 INT NOT NULL, 
+  ADD COLUMN purchases_value_secondary_memes_season2 DOUBLE NOT NULL, ADD COLUMN purchases_count_secondary_memes_season2 INT NOT NULL, 
+  ADD COLUMN purchases_value_secondary_gradients DOUBLE NOT NULL, ADD COLUMN purchases_count_secondary_gradients INT NOT NULL, 
+  ADD COLUMN sales_value_memes DOUBLE NOT NULL, ADD COLUMN sales_count_memes INT NOT NULL,
+  ADD COLUMN sales_value_memes_season1 DOUBLE NOT NULL, ADD COLUMN sales_count_memes_season1 INT NOT NULL, 
+  ADD COLUMN sales_value_memes_season2 DOUBLE NOT NULL, ADD COLUMN sales_count_memes_season2 INT NOT NULL, 
+  ADD COLUMN sales_value_gradients DOUBLE NOT NULL, ADD COLUMN sales_count_gradients INT NOT NULL, 
+  ADD COLUMN transfers_in_memes INT NOT NULL, ADD COLUMN transfers_out_memes INT NOT NULL,
+  ADD COLUMN transfers_in_memes_season1 INT NOT NULL, ADD COLUMN transfers_out_memes_season1 INT NOT NULL,
+  ADD COLUMN transfers_in_memes_season2 INT NOT NULL, ADD COLUMN transfers_out_memes_season2 INT NOT NULL,
+  ADD COLUMN transfers_in_gradients INT NOT NULL, ADD COLUMN transfers_out_gradients INT NOT NULL;`,
+  (err: any) => {
+    if (!err) {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE UPDATED ${OWNERS_METRICS_TABLE}]`,
+        `[NEW COLUMNS ADDED]`
       );
     }
   }
@@ -340,6 +374,24 @@ dbcon.query(
       '[DATABASE]',
       `[TABLE CREATED ${WALLETS_TDH_TABLE}]`
     );
+  }
+);
+
+dbcon.query(
+  `ALTER TABLE ${WALLETS_TDH_TABLE}
+  ADD COLUMN boosted_memes_tdh DOUBLE NOT NULL, 
+  ADD COLUMN boosted_memes_tdh_season1 DOUBLE NOT NULL,
+  ADD COLUMN boosted_memes_tdh_season2 DOUBLE NOT NULL, 
+  ADD COLUMN boosted_gradients_tdh DOUBLE NOT NULL;`,
+  (err: any) => {
+    if (!err) {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE UPDATED ${WALLETS_TDH_TABLE}]`,
+        `[NEW COLUMNS ADDED]`
+      );
+    }
   }
 );
 
@@ -723,19 +775,97 @@ export async function persistOwnerMetrics(ownerMetrics: OwnerMetric[]) {
             ownerMetric.gradients_balance
           }, purchases_value=${ownerMetric.purchases_value}, purchases_count=${
             ownerMetric.purchases_count
+          }, purchases_value_memes=${
+            ownerMetric.purchases_value_memes
+          }, purchases_count_memes=${
+            ownerMetric.purchases_count_memes
+          }, purchases_value_memes_season1=${
+            ownerMetric.purchases_value_memes_season1
+          }, purchases_count_memes_season1=${
+            ownerMetric.purchases_count_memes_season1
+          }, purchases_value_memes_season2=${
+            ownerMetric.purchases_value_memes_season2
+          }, purchases_count_memes_season2=${
+            ownerMetric.purchases_count_memes_season2
+          }, purchases_value_gradients=${
+            ownerMetric.purchases_value_gradients
+          }, purchases_count_gradients=${
+            ownerMetric.purchases_count_gradients
           }, purchases_value_primary=${
             ownerMetric.purchases_value_primary
           }, purchases_count_primary=${
             ownerMetric.purchases_count_primary
+          }, purchases_value_primary_memes=${
+            ownerMetric.purchases_value_primary_memes
+          }, purchases_count_primary_memes=${
+            ownerMetric.purchases_count_primary_memes
+          }, purchases_value_primary_memes_season1=${
+            ownerMetric.purchases_value_primary_memes_season1
+          }, purchases_count_primary_memes_season1=${
+            ownerMetric.purchases_count_primary_memes_season1
+          }, purchases_value_primary_memes_season2=${
+            ownerMetric.purchases_value_primary_memes_season2
+          }, purchases_count_primary_memes_season2=${
+            ownerMetric.purchases_count_primary_memes_season2
+          }, purchases_value_primary_gradients=${
+            ownerMetric.purchases_value_primary_gradients
+          }, purchases_count_primary_gradients=${
+            ownerMetric.purchases_count_primary_gradients
           }, purchases_value_secondary=${
             ownerMetric.purchases_value_secondary
           }, purchases_count_secondary=${
             ownerMetric.purchases_count_secondary
+          }, purchases_value_secondary_memes=${
+            ownerMetric.purchases_value_secondary_memes
+          }, purchases_count_secondary_memes=${
+            ownerMetric.purchases_count_secondary_memes
+          }, purchases_value_secondary_memes_season1=${
+            ownerMetric.purchases_value_secondary_memes_season1
+          }, purchases_count_secondary_memes_season1=${
+            ownerMetric.purchases_count_secondary_memes_season1
+          }, purchases_value_secondary_memes_season2=${
+            ownerMetric.purchases_value_secondary_memes_season2
+          }, purchases_count_secondary_memes_season2=${
+            ownerMetric.purchases_count_secondary_memes_season2
+          }, purchases_value_secondary_gradients=${
+            ownerMetric.purchases_value_secondary_gradients
+          }, purchases_count_secondary_gradients=${
+            ownerMetric.purchases_count_secondary_gradients
           }, sales_value=${ownerMetric.sales_value}, sales_count=${
             ownerMetric.sales_count
+          }, sales_value_memes=${
+            ownerMetric.sales_value_memes
+          }, sales_count_memes=${
+            ownerMetric.sales_count_memes
+          }, sales_value_memes_season1=${
+            ownerMetric.sales_value_memes_season1
+          }, sales_count_memes_season1=${
+            ownerMetric.sales_count_memes_season1
+          }, sales_value_memes_season2=${
+            ownerMetric.sales_value_memes_season2
+          }, sales_count_memes_season2=${
+            ownerMetric.sales_count_memes_season2
+          }, sales_value_gradients=${
+            ownerMetric.sales_value_gradients
+          }, sales_count_gradients=${
+            ownerMetric.sales_count_gradients
           }, transfers_in=${ownerMetric.transfers_in}, transfers_out=${
             ownerMetric.transfers_out
-          }`;
+          }, transfers_in_memes=${
+            ownerMetric.transfers_in_memes
+          }, transfers_out_memes=${
+            ownerMetric.transfers_out_memes
+          }, transfers_in_memes_season1=${
+            ownerMetric.transfers_in_memes_season1
+          }, transfers_out_memes_season1=${
+            ownerMetric.transfers_out_memes_season1
+          }, transfers_in_memes_season2=${
+            ownerMetric.transfers_in_memes_season2
+          }, transfers_out_memes_season2=${
+            ownerMetric.transfers_out_memes_season2
+          }, transfers_in_gradients=${
+            ownerMetric.transfers_in_gradients
+          }, transfers_out_gradients=${ownerMetric.transfers_out_gradients}`;
         }
 
         await execSQL(sql);
@@ -914,17 +1044,21 @@ export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
       const memes_cards_sets = t.memes_cards_sets;
       const genesis = t.genesis;
       const unique_memes = t.unique_memes;
+      const boosted_memes_tdh = t.boosted_memes_tdh;
       const memes_tdh = t.memes_tdh;
       const memes_tdh__raw = t.memes_tdh__raw;
       const memes_balance = t.memes_balance;
+      const boosted_memes_tdh_season1 = t.boosted_memes_tdh_season1;
       const memes_tdh_season1 = t.memes_tdh_season1;
       const memes_tdh_season1__raw = t.memes_tdh_season1__raw;
       const memes_balance_season1 = t.memes_balance_season1;
+      const boosted_memes_tdh_season2 = t.boosted_memes_tdh_season2;
       const memes_tdh_season2 = t.memes_tdh_season2;
       const memes_tdh_season2__raw = t.memes_tdh_season2__raw;
       const memes_balance_season2 = t.memes_balance_season2;
       const memes = mysql.escape(JSON.stringify(t.memes));
       const memes_ranks = mysql.escape(JSON.stringify(t.memes_ranks));
+      const boosted_gradients_tdh = t.boosted_gradients_tdh;
       const gradients_tdh = t.gradients_tdh;
       const gradients_tdh__raw = t.gradients_tdh__raw;
       const gradients_balance = t.gradients_balance;
@@ -942,18 +1076,22 @@ export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
           balance = ${balance}, 
           memes_cards_sets = ${memes_cards_sets}, 
           genesis = ${genesis}, 
-          unique_memes = ${unique_memes}, 
+          unique_memes = ${unique_memes},
+          boosted_memes_tdh = ${boosted_memes_tdh}, 
           memes_tdh = ${memes_tdh}, 
           memes_tdh__raw = ${memes_tdh__raw}, 
           memes_balance=${memes_balance}, 
+          boosted_memes_tdh_season1 = ${boosted_memes_tdh_season1}, 
           memes_tdh_season1 = ${memes_tdh_season1}, 
           memes_tdh_season1__raw = ${memes_tdh_season1__raw}, 
           memes_balance_season1=${memes_balance_season1}, 
+          boosted_memes_tdh_season2 = ${boosted_memes_tdh_season2}, 
           memes_tdh_season2 = ${memes_tdh_season2}, 
           memes_tdh_season2__raw = ${memes_tdh_season2__raw}, 
           memes_balance_season2=${memes_balance_season2}, 
           memes = ${memes}, 
           memes_ranks = ${memes_ranks}, 
+          boosted_gradients_tdh = ${boosted_gradients_tdh}, 
           gradients_tdh = ${gradients_tdh}, 
           gradients_tdh__raw = ${gradients_tdh__raw}, 
           gradients_balance = ${gradients_balance}, 
