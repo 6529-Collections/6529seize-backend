@@ -396,13 +396,13 @@ async function start() {
   // await discoverEns(now);
   // await nfts();
   // await owners();
-  await ownerTags();
+  // await ownerTags();
   // await memesExtendedData();
   // await tdh();
   // await nftTdh();
   // await ownerMetrics();
   // tdhUpload();
-  // await ownerMetrics(true);
+  await ownerMetrics(true);
   // discoverEns();
   STARTING = false;
   console.log(new Date(), `[STARTING ${STARTING}]`);
