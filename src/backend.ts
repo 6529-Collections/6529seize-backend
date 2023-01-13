@@ -28,22 +28,32 @@ let STARTING = true;
 // PULL EVERY 2 MINUTES
 cron.schedule('*/2 * * * *', async function () {
   if (!STARTING) {
-    await nfts();
-    await owners();
-    await ownerTags();
-    await memesExtendedData();
-    nftS3();
+    nftsLoop();
   }
 });
+
+async function nftsLoop() {
+  console.log(new Date(), '[RUNNING NFTS LOOP]');
+  await nfts();
+  await owners();
+  await ownerTags();
+  await memesExtendedData();
+  nftS3();
+}
 
 // PULL EVERY 3 MINUTES
 cron.schedule('*/3 * * * *', async function () {
   if (!STARTING) {
-    const now = new Date();
-    await transactions();
-    discoverEns(now);
+    transactionsLoop();
   }
 });
+
+async function transactionsLoop() {
+  const now = new Date();
+  console.log(now, '[RUNNING TRANSACTIONS LOOP]');
+  await transactions();
+  discoverEns(now);
+}
 
 // PULL EVERY 7 MINUTES
 cron.schedule('*/7 * * * *', async function () {
@@ -53,11 +63,11 @@ cron.schedule('*/7 * * * *', async function () {
 });
 
 // MARKET STATS MEMES
-// - PULL at 21:08 IN STAGING
+// - PULL EVERY 2 HOURS IN STAGING
 // - PULL EVERY 8 MINUTES IN PROD
 let memesMarketStatsCron;
 if (process.env.NODE_ENV == 'development') {
-  memesMarketStatsCron = '8 21 * * *';
+  memesMarketStatsCron = '8 */2 * * *';
 } else if (process.env.NODE_ENV == 'production') {
   memesMarketStatsCron = '*/8 * * * *';
 }
@@ -77,11 +87,11 @@ if (memesMarketStatsCron) {
 }
 
 // MARKET STATS GRADIENTS
-// - PULL at 21:38 IN STAGING
+// - PULL EVERY 4 HOURS IN STAGING
 // - PULL EVERY 30 MINUTES IN PROD
 let gradientsMarketStatsCron;
 if (process.env.NODE_ENV == 'development') {
-  gradientsMarketStatsCron = '38 21 * * *';
+  gradientsMarketStatsCron = '38 */4 * * *';
 } else if (process.env.NODE_ENV == 'production') {
   gradientsMarketStatsCron = '*/30 * * * *';
 }
@@ -112,12 +122,12 @@ cron.schedule('29 6 * * *', async function () {
 
 // CALCULATE TDH AT 00:01
 cron.schedule('1 0 * * *', async function () {
-  await tdh();
+  tdh();
 });
 
 // CALCULATE TDH AT 00:30
 cron.schedule('30 0 * * *', async function () {
-  await nftTdh();
+  nftTdh();
 });
 
 // UPLOAD TDH AT 01:01
