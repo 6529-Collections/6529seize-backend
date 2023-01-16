@@ -414,6 +414,7 @@ async function start() {
   // tdhUpload();
   // await ownerMetrics(true);
   // discoverEns();
+  // marketStats(GRADIENT_CONTRACT);
   STARTING = false;
   console.log(new Date(), `[STARTING ${STARTING}]`);
 }
