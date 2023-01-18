@@ -12,8 +12,13 @@ export interface OwnerTags {
   memes_balance: number;
   unique_memes: number;
   gradients_balance: number;
-  genesis: boolean;
+  genesis: number;
+  nakamoto: number;
   memes_cards_sets: number;
+  memes_cards_sets_minus1: number;
+  memes_cards_sets_minus2: number;
+  memes_cards_sets_szn1: number;
+  memes_cards_sets_szn2: number;
 }
 
 export interface OwnerMetric {

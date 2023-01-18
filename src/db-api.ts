@@ -417,10 +417,10 @@ export async function fetchTDH(
       case 'memes_set':
         filters += ` and ${WALLETS_TDH_TABLE}.memes_cards_sets > 0`;
         break;
-      case 'memes_set':
+      case 'memes_genesis':
         filters += ` and ${WALLETS_TDH_TABLE}.genesis > 0`;
         break;
-      case 'memes_set':
+      case 'gradients':
         filters += ` and ${WALLETS_TDH_TABLE}.gradients_balance > 0`;
         break;
     }
@@ -466,6 +466,15 @@ export async function fetchOwnerMetrics(
       case 'gradients':
         filters += ` and ${OWNERS_TAGS_TABLE}.gradients_balance > 0`;
         break;
+      case 'memes_set_minus1':
+        filters += ` and ${OWNERS_TAGS_TABLE}.memes_cards_sets_minus1 > 0`;
+        break;
+      case 'memes_set_szn1':
+        filters += ` and ${OWNERS_TAGS_TABLE}.memes_cards_sets_szn1 > 0`;
+        break;
+      case 'memes_set_szn2':
+        filters += ` and ${OWNERS_TAGS_TABLE}.memes_cards_sets_szn2 > 0`;
+        break;
     }
   }
 
@@ -483,9 +492,19 @@ export async function fetchOwnerMetrics(
   ) {
     sort = `${OWNERS_METRICS_TABLE}.${sort}`;
   }
+  if (
+    sort == 'memes_cards_sets' ||
+    sort == 'memes_cards_sets_szn1' ||
+    sort == 'memes_cards_sets_szn2' ||
+    sort == 'memes_cards_sets_minus1' ||
+    sort == 'genesis'
+  ) {
+    sort = `${OWNERS_TAGS_TABLE}.${sort}`;
+  }
+
   return fetchPaginated(
     WALLETS_TDH_TABLE,
-    `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
+    `${sort} ${sortDir}, ${OWNERS_METRICS_TABLE}.balance ${sortDir}, boosted_tdh ${sortDir}`,
     pageSize,
     page,
     filters,
@@ -508,4 +527,18 @@ export async function fetchEns(address: string) {
     address
   )}`;
   return execSQL(sql);
+}
+
+export async function fetchRanksForWallet(address: string) {
+  const tdhBlock = await fetchLatestTDHBlockNumber();
+  const sqlTags = `SELECT * FROM ${OWNERS_TAGS_TABLE} WHERE wallet=${mysql.escape(
+    address
+  )}`;
+  const sqlTdh = `SELECT * FROM ${WALLETS_TDH_TABLE} WHERE block=${tdhBlock} and wallet=${mysql.escape(
+    address
+  )}`;
+  const ownerTags = await execSQL(sqlTags);
+  const ownerTdh = await execSQL(sqlTdh);
+
+  return ownerTdh;
 }

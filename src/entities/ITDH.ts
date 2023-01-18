@@ -7,6 +7,10 @@ export interface TDH {
   boosted_tdh: number;
   tdh__raw: number;
   tdh_rank: number;
+  tdh_rank_memes: number;
+  tdh_rank_memes_szn1: number;
+  tdh_rank_memes_szn2: number;
+  tdh_rank_gradients: number;
   balance: number;
   genesis: boolean;
   memes_cards_sets: number;

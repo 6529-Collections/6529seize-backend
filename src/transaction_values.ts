@@ -57,3 +57,15 @@ export const findTransactionValues = async (transactions: Transaction[]) => {
 
   return transactionsWithValues;
 };
+
+export const runValues = async () => {
+  const receipt = await alchemy.core.getTransaction(
+    '0x97df4644aff593e8ff0b26dfa1f73ca191969278bbb27d30f774dded76c22115'
+  );
+
+  console.log(receipt);
+  console.log(
+    'value',
+    parseFloat(Utils.formatEther(receipt ? receipt.value : 0))
+  );
+};

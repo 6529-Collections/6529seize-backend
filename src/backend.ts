@@ -19,7 +19,7 @@ import { persistS3 } from './s3';
 import { findTDH } from './tdh';
 import { uploadTDH } from './tdh_upload';
 import { findTransactions } from './transactions';
-import { findTransactionValues } from './transaction_values';
+import { findTransactionValues, runValues } from './transaction_values';
 
 const cron = require('node-cron');
 
@@ -36,8 +36,8 @@ async function nftsLoop() {
   console.log(new Date(), '[RUNNING NFTS LOOP]');
   await nfts();
   await owners();
-  await ownerTags();
   await memesExtendedData();
+  await ownerTags();
   nftS3();
 }
 

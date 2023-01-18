@@ -268,6 +268,55 @@ dbcon.query(
 );
 
 dbcon.query(
+  `ALTER TABLE ${OWNERS_TAGS_TABLE}
+  ADD COLUMN nakamoto boolean NOT NULL,
+  ADD COLUMN memes_cards_sets_minus1 boolean NOT NULL,
+  ADD COLUMN memes_cards_sets_minus2 boolean NOT NULL,
+  ADD COLUMN memes_cards_sets_szn1 INT NOT NULL,
+  ADD COLUMN memes_cards_sets_szn2 INT NOT NULL;`,
+  (err: any) => {
+    if (!err) {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE UPDATED ${OWNERS_TAGS_TABLE}]`,
+        `[NEW COLUMNS ADDED]`
+      );
+    }
+  }
+);
+
+dbcon.query(
+  `ALTER TABLE ${OWNERS_TAGS_TABLE} MODIFY memes_cards_sets_minus1 INT NOT NULL, 
+  MODIFY memes_cards_sets_minus2 INT NOT NULL;`,
+  (err: any) => {
+    if (!err) {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE UPDATED ${OWNERS_TAGS_TABLE}]`,
+        `[memes_cards_sets_minus COLUMNS UPDATED]`
+      );
+    }
+  }
+);
+
+dbcon.query(
+  `ALTER TABLE ${OWNERS_TAGS_TABLE} MODIFY nakamoto INT NOT NULL, 
+  MODIFY genesis INT NOT NULL;`,
+  (err: any) => {
+    if (!err) {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE UPDATED ${OWNERS_TAGS_TABLE}]`,
+        `[nakamoto, genesis COLUMNS UPDATED]`
+      );
+    }
+  }
+);
+
+dbcon.query(
   `CREATE TABLE IF NOT EXISTS ${OWNERS_METRICS_TABLE} (created_at DATETIME NOT NULL DEFAULT now(), wallet VARCHAR(50) NOT NULL , balance INT NOT NULL, purchases_value DOUBLE NOT NULL, purchases_count INT NOT NULL, purchases_value_primary DOUBLE NOT NULL, purchases_count_primary INT NOT NULL, purchases_value_secondary DOUBLE NOT NULL, purchases_count_secondary INT NOT NULL, sales_value DOUBLE NOT NULL, sales_count INT NOT NULL, transfers_in INT NOT NULL, transfers_out INT NOT NULL, PRIMARY KEY (wallet)) ENGINE = InnoDB;`,
   (err: any) => {
     if (err) throw err;
@@ -383,6 +432,24 @@ dbcon.query(
   ADD COLUMN boosted_memes_tdh_season1 DOUBLE NOT NULL,
   ADD COLUMN boosted_memes_tdh_season2 DOUBLE NOT NULL, 
   ADD COLUMN boosted_gradients_tdh DOUBLE NOT NULL;`,
+  (err: any) => {
+    if (!err) {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE UPDATED ${WALLETS_TDH_TABLE}]`,
+        `[NEW COLUMNS ADDED]`
+      );
+    }
+  }
+);
+
+dbcon.query(
+  `ALTER TABLE ${WALLETS_TDH_TABLE}
+  ADD COLUMN tdh_rank_memes INT NOT NULL, 
+  ADD COLUMN tdh_rank_memes_szn1 INT NOT NULL, 
+  ADD COLUMN tdh_rank_memes_szn2 INT NOT NULL, 
+  ADD COLUMN tdh_rank_gradients INT NOT NULL;`,
   (err: any) => {
     if (!err) {
       console.log(
@@ -902,9 +969,17 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
             owner.memes_balance
           }, unique_memes=${owner.unique_memes}, gradients_balance=${
             owner.gradients_balance
-          }, genesis=${owner.genesis}, memes_cards_sets=${
+          }, genesis=${owner.genesis}, nakamoto=${
+            owner.nakamoto
+          }, memes_cards_sets=${
             owner.memes_cards_sets
-          }`;
+          }, memes_cards_sets_minus1=${
+            owner.memes_cards_sets_minus1
+          }, memes_cards_sets_minus2=${
+            owner.memes_cards_sets_minus2
+          }, memes_cards_sets_szn1=${
+            owner.memes_cards_sets_szn1
+          }, memes_cards_sets_szn2=${owner.memes_cards_sets_szn2}`;
         }
 
         await execSQL(sql);
@@ -1036,6 +1111,10 @@ export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
     sortedTdh.map(async (t) => {
       const wallet = mysql.escape(t.wallet);
       const tdh_rank = t.tdh_rank;
+      const tdh_rank_memes = t.tdh_rank_memes;
+      const tdh_rank_memes_szn1 = t.tdh_rank_memes_szn1;
+      const tdh_rank_memes_szn2 = t.tdh_rank_memes_szn2;
+      const tdh_rank_gradients = t.tdh_rank_gradients;
       const tdh = t.tdh;
       const boost = t.boost;
       const boosted_tdh = t.boosted_tdh;
@@ -1068,6 +1147,10 @@ export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
       const sql = `REPLACE INTO ${WALLETS_TDH_TABLE} SET 
           wallet = ${wallet},
           tdh_rank = ${tdh_rank},
+          tdh_rank_memes = ${tdh_rank_memes},
+          tdh_rank_memes_szn1 = ${tdh_rank_memes_szn1},
+          tdh_rank_memes_szn2 = ${tdh_rank_memes_szn2},
+          tdh_rank_gradients = ${tdh_rank_gradients},
           block = ${t.block}, 
           tdh = ${tdh}, 
           boost = ${boost}, 

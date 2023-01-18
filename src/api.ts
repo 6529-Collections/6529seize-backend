@@ -54,10 +54,22 @@ const TDH_SORT = [
   'transfers_out_memes',
   'transfers_out_memes_season1',
   'transfers_out_memes_season2',
-  'transfers_out_gradients'
+  'transfers_out_gradients',
+  'memes_cards_sets',
+  'memes_cards_sets_szn1',
+  'memes_cards_sets_szn2',
+  'memes_cards_sets_minus1',
+  'genesis'
 ];
 
-const TAGS_FILTERS = ['memes_set', 'memes_genesis', 'gradients'];
+const TAGS_FILTERS = [
+  'memes_set',
+  'memes_set_minus1',
+  'memes_set_szn1',
+  'memes_set_szn2',
+  'memes_genesis',
+  'gradients'
+];
 
 function fullUrl(req: any, next: boolean) {
   let url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
