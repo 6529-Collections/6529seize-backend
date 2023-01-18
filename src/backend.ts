@@ -408,8 +408,8 @@ async function start() {
   // await owners();
   // await ownerTags();
   // await memesExtendedData();
-  await tdh();
-  await nftTdh();
+  // await tdh();
+  // await nftTdh();
   // await ownerMetrics();
   // tdhUpload();
   // await ownerMetrics(true);
