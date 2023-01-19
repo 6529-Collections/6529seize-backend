@@ -135,6 +135,45 @@ cron.schedule('1 1 * * *', async function () {
   tdhUpload();
 });
 
+async function replayTransactionValues(
+  transactionHashes?: string[],
+  transactions?: Transaction[],
+  index?: number
+) {
+  if (!transactionHashes || !transactions || !index) {
+    transactionHashes = await db.findDuplicateTransactionHashes();
+    transactions = await db.findTransactionsByHash(transactionHashes);
+    index = 0;
+  }
+
+  try {
+    const chunkSize = 100;
+    console.log(
+      new Date(),
+      '[TRANSACTIONS REPLAY]',
+      `[CHUNK ${index / chunkSize + 1} / ${Math.ceil(
+        transactions.length / chunkSize
+      )}]`
+    );
+    const chunk = transactions!.slice(index, index + chunkSize);
+    const transactionsWithValues = await findTransactionValues(chunk);
+    await db.persistTransactions(transactionsWithValues);
+    await replayTransactionValues(
+      transactionHashes,
+      transactions,
+      index + chunkSize
+    );
+  } catch {
+    console.log(
+      new Date(),
+      '[TRANSACTIONS REPLAY]',
+      `[EXCEPTION AT ${index}]`,
+      `[RETRYING]`
+    );
+    await replayTransactionValues(transactionHashes, transactions, index);
+  }
+}
+
 async function transactions(
   startingBlock?: number,
   latestBlock?: number,
@@ -415,6 +454,8 @@ async function start() {
   // await ownerMetrics(true);
   // discoverEns();
   // marketStats(GRADIENT_CONTRACT);
+  // runValues();
+  replayTransactionValues();
   STARTING = false;
   console.log(new Date(), `[STARTING ${STARTING}]`);
 }

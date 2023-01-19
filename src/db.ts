@@ -510,6 +510,23 @@ export function execSQL(sql: string): Promise<any> {
   });
 }
 
+export async function findDuplicateTransactionHashes(): Promise<string[]> {
+  let sql = `SELECT transaction FROM ${TRANSACTIONS_TABLE} GROUP BY transaction HAVING COUNT(*) > 1;`;
+  const results = await execSQL(sql);
+  const hashes: string[] = results.map((r: Transaction) => r.transaction);
+  return hashes;
+}
+
+export async function findTransactionsByHash(
+  hashes: string[]
+): Promise<Transaction[]> {
+  let sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE transaction in (${mysql.escape(
+    hashes
+  )}) ORDER BY transaction_date DESC;`;
+  const results = await execSQL(sql);
+  return results;
+}
+
 export async function fetchLatestTransactionsBlockNumber(beforeDate?: Date) {
   let sql = `SELECT block FROM ${TRANSACTIONS_TABLE}`;
   if (beforeDate) {
