@@ -1,13 +1,13 @@
 import { Alchemy, fromHex, toHex, Utils } from 'alchemy-sdk';
-import web3 from 'web3';
 import { ALCHEMY_SETTINGS } from './constants';
 import { Transaction } from './entities/ITransaction';
-import InputDataDecoder from 'ethereum-input-data-decoder';
 import { areEqualAddresses } from './helpers';
-const seaportDecoder = new InputDataDecoder(
-  `${__dirname}/abis/seaportabi.json`
-);
+import { ethers } from 'ethers';
+// import { SEAPORT_ABI } from './abis/seaportabi';
 
+const abi = require('./abis/seaportabi.json');
+
+const SEAPORT_IFACE = new ethers.utils.Interface(abi);
 const alchemy = new Alchemy(ALCHEMY_SETTINGS);
 
 export const findTransactionValues = async (transactions: Transaction[]) => {
@@ -70,9 +70,12 @@ export async function resolveValue(
     }
   }
   if (receipt?.data.includes('0xed98a574')) {
-    const result = seaportDecoder.decodeData(receipt?.data);
+    const result = SEAPORT_IFACE.parseTransaction({
+      data: receipt.data,
+      value: receipt.value
+    });
     let newValue = 0;
-    result.inputs[0].map((r: any) => {
+    result.args[0].map((r: any) => {
       const from = r[0][0];
       const token_id = r[0][2][0][2].toString();
 
