@@ -446,9 +446,9 @@ async function start() {
   // await transactions();
   // await discoverEns(now);
   // await nfts();
+  // await memesExtendedData();
   // await owners();
   // await ownerTags();
-  // await memesExtendedData();
   // await tdh();
   // await nftTdh();
   // await ownerMetrics();
@@ -457,7 +457,7 @@ async function start() {
   // discoverEns();
   // marketStats(GRADIENT_CONTRACT);
   // runValues();
-  // replayTransactionValues();
+  // await replayTransactionValues();
   STARTING = false;
   console.log(new Date(), `[STARTING ${STARTING}]`);
 }

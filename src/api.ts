@@ -35,16 +35,25 @@ const TDH_SORT = [
   'gradients_balance',
   'balance',
   'purchases_value',
+  'purchases_count',
   'sales_value',
   'sales_count',
   'purchases_value_memes',
   'purchases_value_memes_season1',
   'purchases_value_memes_season2',
   'purchases_value_gradients',
+  'purchases_count_memes',
+  'purchases_count_memes_season1',
+  'purchases_count_memes_season2',
+  'purchases_count_gradients',
   'sales_value_memes',
   'sales_value_memes_season1',
   'sales_value_memes_season2',
   'sales_value_gradients',
+  'sales_count_memes',
+  'sales_count_memes_season1',
+  'sales_count_memes_season2',
+  'sales_count_gradients',
   'transfers_in',
   'transfers_in_memes',
   'transfers_in_memes_season1',
@@ -59,7 +68,9 @@ const TDH_SORT = [
   'memes_cards_sets_szn1',
   'memes_cards_sets_szn2',
   'memes_cards_sets_minus1',
-  'genesis'
+  'memes_cards_sets_minus2',
+  'genesis',
+  'unique_memes'
 ];
 
 const TAGS_FILTERS = [
@@ -70,6 +81,8 @@ const TAGS_FILTERS = [
   'memes_genesis',
   'gradients'
 ];
+
+const TRANSACTION_FILTERS = ['sales', 'transfers', 'airdrops'];
 
 function fullUrl(req: any, next: boolean) {
   let url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
@@ -371,13 +384,18 @@ app.get(`${BASE_PATH}/transactions`, function (req: any, res: any, next: any) {
     const contracts = req.query.contract;
     const nfts = req.query.id;
 
+    const filter =
+      req.query.filter && TRANSACTION_FILTERS.includes(req.query.filter)
+        ? req.query.filter
+        : null;
+
     console.log(
       new Date(),
       `[API]`,
       '[TRANSACTIONS]',
       `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
     );
-    db.fetchTransactions(pageSize, page, wallets, contracts, nfts).then(
+    db.fetchTransactions(pageSize, page, wallets, contracts, nfts, filter).then(
       (result) => {
         returnPaginatedResult(result, req, res);
       }

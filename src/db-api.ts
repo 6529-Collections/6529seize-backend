@@ -5,6 +5,7 @@ import {
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   NFTS_TABLE,
+  NULL_ADDRESS,
   OWNERS_METRICS_TABLE,
   OWNERS_TABLE,
   OWNERS_TAGS_TABLE,
@@ -300,7 +301,8 @@ export async function fetchTransactions(
   page: number,
   wallets: string,
   contracts: string,
-  nfts: string
+  nfts: string,
+  type_filter: string
 ) {
   let filters = '';
   if (wallets) {
@@ -323,6 +325,30 @@ export async function fetchTransactions(
       filters += ' WHERE';
     }
     filters += ` token_id in (${nfts})`;
+  }
+  if (type_filter) {
+    let newTypeFilter = '';
+    switch (type_filter) {
+      case 'sales':
+        newTypeFilter += 'value > 0';
+        break;
+      case 'airdrops':
+        newTypeFilter += `from_address = ${mysql.escape(NULL_ADDRESS)}`;
+        break;
+      case 'transfers':
+        newTypeFilter += `value = 0 and from_address != ${mysql.escape(
+          NULL_ADDRESS
+        )}`;
+        break;
+    }
+    if (newTypeFilter) {
+      if (contracts || wallets || nfts) {
+        filters += ' AND ';
+      } else {
+        filters += ' WHERE ';
+      }
+      filters += newTypeFilter;
+    }
   }
 
   const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
@@ -497,7 +523,8 @@ export async function fetchOwnerMetrics(
     sort == 'memes_cards_sets_szn1' ||
     sort == 'memes_cards_sets_szn2' ||
     sort == 'memes_cards_sets_minus1' ||
-    sort == 'genesis'
+    sort == 'genesis' ||
+    sort == 'unique_memes'
   ) {
     sort = `${OWNERS_TAGS_TABLE}.${sort}`;
   }
