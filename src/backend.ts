@@ -158,11 +158,13 @@ async function replayTransactionValues(
     const chunk = transactions!.slice(index, index + chunkSize);
     const transactionsWithValues = await findTransactionValues(chunk);
     await db.persistTransactions(transactionsWithValues);
-    await replayTransactionValues(
-      transactionHashes,
-      transactions,
-      index + chunkSize
-    );
+    if (transactions.length / chunkSize > index / chunkSize + 1) {
+      await replayTransactionValues(
+        transactionHashes,
+        transactions,
+        index + chunkSize
+      );
+    }
   } catch {
     console.log(
       new Date(),
@@ -455,7 +457,7 @@ async function start() {
   // discoverEns();
   // marketStats(GRADIENT_CONTRACT);
   // runValues();
-  replayTransactionValues();
+  // replayTransactionValues();
   STARTING = false;
   console.log(new Date(), `[STARTING ${STARTING}]`);
 }
