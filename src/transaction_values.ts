@@ -4,7 +4,8 @@ import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
 
-const SEAPORT_ABI = require('./abis/seaportabi');
+import { SEAPORT_ABI } from './abis/seaportabi';
+
 const SEAPORT_IFACE = new ethers.utils.Interface(SEAPORT_ABI);
 const alchemy = new Alchemy(ALCHEMY_SETTINGS);
 

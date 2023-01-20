@@ -1,4 +1,4 @@
-[
+export const SEAPORT_ABI = JSON.stringify([
   {
     inputs: [
       {
@@ -1964,4 +1964,4 @@
     stateMutability: 'nonpayable',
     type: 'function'
   }
-];
+]);
