@@ -3,7 +3,6 @@ import { ALCHEMY_SETTINGS } from './constants';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
-// import { SEAPORT_ABI } from './abis/seaportabi';
 
 const SEAPORT_ABI = require('./abis/seaportabi');
 const SEAPORT_IFACE = new ethers.utils.Interface(SEAPORT_ABI);
