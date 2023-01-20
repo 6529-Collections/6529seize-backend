@@ -1,10 +1,8 @@
 import { Alchemy, fromHex, toHex, Utils } from 'alchemy-sdk';
-import { ALCHEMY_SETTINGS } from './constants';
+import { ALCHEMY_SETTINGS, SEAPORT_ABI } from './constants';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
-
-import { SEAPORT_ABI } from './abis/seaportabi';
 
 const SEAPORT_IFACE = new ethers.utils.Interface(SEAPORT_ABI);
 const alchemy = new Alchemy(ALCHEMY_SETTINGS);
