@@ -5,9 +5,8 @@ import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
 // import { SEAPORT_ABI } from './abis/seaportabi';
 
-const abi = require('./abis/seaportabi.json');
-
-const SEAPORT_IFACE = new ethers.utils.Interface(abi);
+const SEAPORT_ABI = require('./abis/seaportabi');
+const SEAPORT_IFACE = new ethers.utils.Interface(SEAPORT_ABI);
 const alchemy = new Alchemy(ALCHEMY_SETTINGS);
 
 export const findTransactionValues = async (transactions: Transaction[]) => {
