@@ -434,7 +434,7 @@ export async function fetchTDH(
   if (wallets) {
     filters = constructFilters(
       filters,
-      `${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(wallets.split(','))}`
+      `${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(wallets.split(','))})`
     );
   }
   if (tdh_filter) {
