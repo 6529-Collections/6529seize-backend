@@ -1,10 +1,25 @@
+import { ServerResponse } from 'http';
 import * as db from './db-api';
+
+const requireLogin = (req: any, res: ServerResponse, next: any) => {
+  if (process.env.NODE_ENV == 'local') {
+    const auth = req.headers['x-6529-auth'];
+    if (!auth) {
+      // res.statusCode = 401;
+      // res.end();
+      next();
+    } else {
+      next();
+    }
+  }
+};
 
 const express = require('express');
 const cors = require('cors');
 
 const app = express();
 app.use(cors());
+app.all('/*', requireLogin);
 
 const BASE_PATH = '/api';
 const CONTENT_TYPE_HEADER = 'Content-Type';
@@ -70,7 +85,9 @@ const TDH_SORT = [
   'memes_cards_sets_minus1',
   'memes_cards_sets_minus2',
   'genesis',
-  'unique_memes'
+  'unique_memes',
+  'unique_memes_szn1',
+  'unique_memes_szn2'
 ];
 
 const TAGS_FILTERS = [
@@ -533,23 +550,34 @@ app.get(`${BASE_PATH}/tdh`, function (req: any, res: any, next: any) {
         ? req.query.filter
         : null;
 
+    const hideMuseum =
+      req.query.hide_museum && ['true', 'false'].includes(req.query.hide_museum)
+        ? req.query.hide_museum
+        : false;
+
     console.log(
       new Date(),
       `[API]`,
       '[TDH]',
       `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
     );
-    db.fetchTDH(pageSize, page, wallets, sort, sortDir, filter).then(
-      (result) => {
-        result.data.map((d: any) => {
-          d.memes = JSON.parse(d.memes);
-          d.memes_ranks = JSON.parse(d.memes_ranks);
-          d.gradients = JSON.parse(d.gradients);
-          d.gradients_ranks = JSON.parse(d.gradients_ranks);
-        });
-        returnPaginatedResult(result, req, res);
-      }
-    );
+    db.fetchTDH(
+      pageSize,
+      page,
+      wallets,
+      sort,
+      sortDir,
+      filter,
+      hideMuseum
+    ).then((result) => {
+      result.data.map((d: any) => {
+        d.memes = JSON.parse(d.memes);
+        d.memes_ranks = JSON.parse(d.memes_ranks);
+        d.gradients = JSON.parse(d.gradients);
+        d.gradients_ranks = JSON.parse(d.gradients_ranks);
+      });
+      returnPaginatedResult(result, req, res);
+    });
   } catch (e) {
     console.log(
       new Date(),
@@ -586,23 +614,34 @@ app.get(`${BASE_PATH}/owner_metrics`, function (req: any, res: any, next: any) {
         ? req.query.filter
         : null;
 
+    const hideMuseum =
+      req.query.hide_museum && ['true', 'false'].includes(req.query.hide_museum)
+        ? req.query.hide_museum
+        : false;
+
     console.log(
       new Date(),
       `[API]`,
       '[OWNER METRICS]',
       `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
     );
-    db.fetchOwnerMetrics(pageSize, page, wallets, sort, sortDir, filter).then(
-      (result) => {
-        result.data.map((d: any) => {
-          d.memes = JSON.parse(d.memes);
-          d.memes_ranks = JSON.parse(d.memes_ranks);
-          d.gradients = JSON.parse(d.gradients);
-          d.gradients_ranks = JSON.parse(d.gradients_ranks);
-        });
-        returnPaginatedResult(result, req, res);
-      }
-    );
+    db.fetchOwnerMetrics(
+      pageSize,
+      page,
+      wallets,
+      sort,
+      sortDir,
+      filter,
+      hideMuseum
+    ).then((result) => {
+      result.data.map((d: any) => {
+        d.memes = JSON.parse(d.memes);
+        d.memes_ranks = JSON.parse(d.memes_ranks);
+        d.gradients = JSON.parse(d.gradients);
+        d.gradients_ranks = JSON.parse(d.gradients_ranks);
+      });
+      returnPaginatedResult(result, req, res);
+    });
   } catch (e) {
     console.log(
       new Date(),

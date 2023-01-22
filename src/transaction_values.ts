@@ -93,9 +93,14 @@ export async function resolveValue(
 
 export const runValues = async () => {
   const receipt = await alchemy.core.getTransaction(
-    '0x97df4644aff593e8ff0b26dfa1f73ca191969278bbb27d30f774dded76c22115'
-    // '0xb1a74e8908ec700918e95f090c7678df08cfbd72eea8dd19576b047211bd275a'
+    // '0x97df4644aff593e8ff0b26dfa1f73ca191969278bbb27d30f774dded76c22115'
+    // '0xb1a74e8908ec700918e95f090c7678df08cfbd72eea8dd19576b047211bd275a',
+    '0x935d546c77d0d76b06c4c5abb0108de14d7a15d92977cb2e9c7e581ac0e3a907'
   );
 
-  console.log(receipt);
+  if (receipt?.data.includes('0xa3486bf1')) {
+    const result =
+      receipt?.data.replace('0xa3486bf1', '').match(/.{1,64}/g) ?? [];
+    console.log(result);
+  }
 };

@@ -9,6 +9,7 @@ import {
   OWNERS_METRICS_TABLE,
   OWNERS_TABLE,
   OWNERS_TAGS_TABLE,
+  SIX529_MUSEUM,
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
@@ -429,10 +430,16 @@ export async function fetchTDH(
   wallets: string,
   sort: string,
   sortDir: string,
-  tdh_filter: string
+  tdh_filter: string,
+  hideMuseum: boolean
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = `WHERE block=${tdhBlock}`;
+  if (hideMuseum) {
+    filters += `  and ${WALLETS_TDH_TABLE}.wallet != ${mysql.escape(
+      SIX529_MUSEUM
+    )}`;
+  }
   if (wallets) {
     filters += `  and ${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(
       wallets.split(',')
@@ -472,10 +479,16 @@ export async function fetchOwnerMetrics(
   wallets: string,
   sort: string,
   sortDir: string,
-  metrics_filter: string
+  metrics_filter: string,
+  hideMuseum: boolean
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = `WHERE block=${tdhBlock}`;
+  if (hideMuseum) {
+    filters += `  and ${WALLETS_TDH_TABLE}.wallet != ${mysql.escape(
+      SIX529_MUSEUM
+    )}`;
+  }
   if (wallets) {
     filters += `  and ${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(
       wallets.split(',')
@@ -524,7 +537,9 @@ export async function fetchOwnerMetrics(
     sort == 'memes_cards_sets_szn2' ||
     sort == 'memes_cards_sets_minus1' ||
     sort == 'genesis' ||
-    sort == 'unique_memes'
+    sort == 'unique_memes' ||
+    sort == 'unique_memes_szn1' ||
+    sort == 'unique_memes_szn2'
   ) {
     sort = `${OWNERS_TAGS_TABLE}.${sort}`;
   }

@@ -448,12 +448,12 @@ async function start() {
   // await nfts();
   // await memesExtendedData();
   // await owners();
-  // await ownerTags();
+  await ownerTags();
   // await tdh();
   // await nftTdh();
   // await ownerMetrics();
   // tdhUpload();
-  // await ownerMetrics(true);
+  await ownerMetrics(true);
   // discoverEns();
   // marketStats(GRADIENT_CONTRACT);
   // runValues();

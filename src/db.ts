@@ -287,6 +287,22 @@ dbcon.query(
 );
 
 dbcon.query(
+  `ALTER TABLE ${OWNERS_TAGS_TABLE}
+  ADD COLUMN unique_memes_szn1 INT NOT NULL,
+  ADD COLUMN unique_memes_szn2 INT NOT NULL;`,
+  (err: any) => {
+    if (!err) {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE UPDATED ${OWNERS_TAGS_TABLE}]`,
+        `[NEW COLUMNS ADDED unique_memes_szn1, unique_memes_szn2]`
+      );
+    }
+  }
+);
+
+dbcon.query(
   `ALTER TABLE ${OWNERS_TAGS_TABLE} MODIFY memes_cards_sets_minus1 INT NOT NULL, 
   MODIFY memes_cards_sets_minus2 INT NOT NULL;`,
   (err: any) => {
@@ -984,7 +1000,9 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
             new Date()
           )}, wallet=${mysql.escape(owner.wallet)}, memes_balance=${
             owner.memes_balance
-          }, unique_memes=${owner.unique_memes}, gradients_balance=${
+          }, unique_memes=${owner.unique_memes}, unique_memes_szn1=${
+            owner.unique_memes_szn1
+          }, unique_memes_szn2=${owner.unique_memes_szn2}, gradients_balance=${
             owner.gradients_balance
           }, genesis=${owner.genesis}, nakamoto=${
             owner.nakamoto

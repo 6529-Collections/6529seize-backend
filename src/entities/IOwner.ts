@@ -11,6 +11,8 @@ export interface OwnerTags {
   wallet: string;
   memes_balance: number;
   unique_memes: number;
+  unique_memes_szn1: number;
+  unique_memes_szn2: number;
   gradients_balance: number;
   genesis: number;
   nakamoto: number;

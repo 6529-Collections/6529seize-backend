@@ -1,4 +1,9 @@
-import { GRADIENT_CONTRACT, MANIFOLD, MEMES_CONTRACT } from './constants';
+import {
+  GRADIENT_CONTRACT,
+  MANIFOLD,
+  MEMES_CONTRACT,
+  PUNK_6529
+} from './constants';
 import { OwnerMetric, OwnerTags } from './entities/IOwner';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
@@ -113,7 +118,9 @@ export const findOwnerMetrics = async (
         areEqualAddresses(t.contract, GRADIENT_CONTRACT)
       );
 
-      const sales = [...transactionsOut].filter((t) => t.value > 0);
+      const sales = [...transactionsOut].filter(
+        (t) => t.value > 0 && !isPunkGradient(t)
+      );
       const salesMemes = [...sales].filter((t) =>
         areEqualAddresses(t.contract, MEMES_CONTRACT)
       );
@@ -137,7 +144,9 @@ export const findOwnerMetrics = async (
         areEqualAddresses(t.contract, GRADIENT_CONTRACT)
       );
 
-      const transfersOut = [...transactionsOut].filter((t) => t.value == 0);
+      const transfersOut = [...transactionsOut].filter(
+        (t) => t.value == 0 || isPunkGradient(t)
+      );
       const transfersOutMemes = [...transfersOut].filter((t) =>
         areEqualAddresses(t.contract, MEMES_CONTRACT)
       );
@@ -266,4 +275,11 @@ function getCount(arr: any[]) {
 
 function getValue(arr: any[]) {
   return [...arr].reduce((sum, transaction) => sum + transaction.value, 0);
+}
+
+function isPunkGradient(t: Transaction) {
+  return (
+    areEqualAddresses(t.from_address, PUNK_6529) &&
+    areEqualAddresses(t.contract, GRADIENT_CONTRACT)
+  );
 }

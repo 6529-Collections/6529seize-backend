@@ -55,6 +55,8 @@ export const findOwnerTags = async (
     let memesCardSets = 0;
     let memesCardSetsMinus1 = 0;
     let memesCardSetsMinus2 = 0;
+    let walletMemesSet1 = [];
+    let walletMemesSet2 = [];
     if (walletMemes.length == memesNFTs.length) {
       memesCardSets = Math.min.apply(
         Math,
@@ -62,22 +64,34 @@ export const findOwnerTags = async (
           return o.balance;
         })
       );
-    }
-    if (walletMemes.length >= memesNFTs.length - 1) {
-      memesCardSetsMinus1 = Math.min.apply(
-        Math,
-        [...walletMemes].map(function (o) {
-          return o.balance;
-        })
+      walletMemesSet1 = [...walletMemes].filter(
+        (n) => n.balance > memesCardSets
       );
+    } else {
+      walletMemesSet1 = [...walletMemes];
     }
-    if (walletMemes.length >= memesNFTs.length - 2) {
-      memesCardSetsMinus2 = Math.min.apply(
-        Math,
-        [...walletMemes].map(function (o) {
-          return o.balance;
-        })
+    if (walletMemesSet1.length == memesNFTs.length - 1) {
+      memesCardSetsMinus1 =
+        Math.min.apply(
+          Math,
+          [...walletMemesSet1].map(function (o) {
+            return o.balance;
+          })
+        ) - memesCardSets;
+      walletMemesSet2 = [...walletMemesSet1].filter(
+        (n) => n.balance > memesCardSetsMinus1
       );
+    } else {
+      walletMemesSet2 = [...walletMemesSet1];
+    }
+    if (walletMemesSet2.length == memesNFTs.length - 2) {
+      memesCardSetsMinus2 =
+        Math.min.apply(
+          Math,
+          [...walletMemesSet2].map(function (o) {
+            return o.balance;
+          })
+        ) - memesCardSetsMinus1;
     }
 
     let memesCardSetsSzn1 = 0;
@@ -129,6 +143,8 @@ export const findOwnerTags = async (
       wallet: owner,
       memes_balance: memesBalance,
       unique_memes: walletMemes.length,
+      unique_memes_szn1: walletMemesSzn1.length,
+      unique_memes_szn2: walletMemesSzn2.length,
       gradients_balance: walletGradients.length,
       genesis: genesis,
       nakamoto: nakamoto,
@@ -150,6 +166,8 @@ export const findOwnerTags = async (
         existingTags.memes_balance != ownerTags.memes_balance ||
         existingTags.gradients_balance != ownerTags.gradients_balance ||
         existingTags.unique_memes != ownerTags.unique_memes ||
+        existingTags.unique_memes_szn1 != ownerTags.unique_memes_szn1 ||
+        existingTags.unique_memes_szn2 != ownerTags.unique_memes_szn2 ||
         existingTags.memes_cards_sets != ownerTags.memes_cards_sets ||
         existingTags.memes_cards_sets_szn1 != ownerTags.memes_cards_sets_szn1 ||
         existingTags.memes_cards_sets_szn2 != ownerTags.memes_cards_sets_szn2 ||
