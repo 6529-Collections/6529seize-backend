@@ -213,7 +213,7 @@ export async function fetchMemesExtended(
   let filters = '';
 
   if (nfts) {
-    filters = constructFilters(filters, `WHERE id in (${nfts})`);
+    filters = constructFilters(filters, `id in (${nfts})`);
   }
   if (seasons) {
     filters = constructFilters(filters, `season in (${seasons})`);
@@ -238,7 +238,7 @@ export async function fetchOwners(
   if (wallets) {
     filters = constructFilters(
       filters,
-      `WHERE (${OWNERS_TABLE}.wallet in (${mysql.escape(
+      `(${OWNERS_TABLE}.wallet in (${mysql.escape(
         wallets.split(',')
       )}) OR ${ENS_TABLE}.display in (${mysql.escape(wallets.split(','))}))`
     );
@@ -276,7 +276,7 @@ export async function fetchOwnersTags(
   if (wallets) {
     filters = constructFilters(
       filters,
-      `WHERE ${OWNERS_TAGS_TABLE}.wallet in (${mysql.escape(
+      `${OWNERS_TAGS_TABLE}.wallet in (${mysql.escape(
         wallets.split(',')
       )}) OR ${ENS_TABLE}.display in (${mysql.escape(wallets.split(','))})`
     );
@@ -308,7 +308,7 @@ export async function fetchTransactions(
   if (wallets) {
     filters = constructFilters(
       filters,
-      `WHERE (from_address in (${mysql.escape(
+      `(from_address in (${mysql.escape(
         wallets.split(',')
       )}) OR to_address in (${mysql.escape(wallets.split(','))}))`
     );
@@ -358,7 +358,7 @@ export async function fetchTransactions(
 
 export async function fetchGradientTdh(pageSize: number, page: number) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
-  let filters = constructFilters('', `WHERE block=${tdhBlock}`);
+  let filters = constructFilters('', `block=${tdhBlock}`);
   filters = constructFilters(filters, `gradients_balance > 0`);
 
   const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
