@@ -485,13 +485,13 @@ export async function fetchOwnerMetrics(
   if (hideMuseum) {
     filters = constructFilters(
       filters,
-      `${WALLETS_TDH_TABLE}.wallet != ${mysql.escape(SIX529_MUSEUM)}`
+      `${OWNERS_METRICS_TABLE}.wallet != ${mysql.escape(SIX529_MUSEUM)}`
     );
   }
   if (wallets) {
     filters = constructFilters(
       filters,
-      `${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(wallets.split(','))})`
+      `${OWNERS_METRICS_TABLE}.wallet in (${mysql.escape(wallets.split(','))})`
     );
   }
   if (metrics_filter) {
