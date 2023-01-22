@@ -12,6 +12,7 @@ const requireLogin = (req: any, res: ServerResponse, next: any) => {
       next();
     }
   }
+  next();
 };
 
 const express = require('express');
