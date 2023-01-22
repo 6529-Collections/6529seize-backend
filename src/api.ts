@@ -11,8 +11,9 @@ const requireLogin = (req: any, res: ServerResponse, next: any) => {
     } else {
       next();
     }
+  } else {
+    next();
   }
-  next();
 };
 
 const express = require('express');
