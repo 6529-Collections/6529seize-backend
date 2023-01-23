@@ -664,12 +664,24 @@ app.get(`${BASE_PATH}/owner_metrics`, function (req: any, res: any, next: any) {
   }
 });
 
-app.get(`/`, function (req: any, res: any, next: any) {
-  res.send('For Seize 6529 API go to /api');
+app.get(`/`, async function (req: any, res: any, next: any) {
+  const image = await db.fetchRandomImage();
+  res.send(
+    JSON.stringify({
+      message: 'For 6529 SEIZE API go to /api',
+      image: image[0].image
+    })
+  );
 });
 
-app.get(`${BASE_PATH}`, function (req: any, res: any, next: any) {
-  res.send('Seize 6529 API');
+app.get(`${BASE_PATH}`, async function (req: any, res: any, next: any) {
+  const image = await db.fetchRandomImage();
+  res.send(
+    JSON.stringify({
+      message: '6529 SEIZE API',
+      image: image[0].image
+    })
+  );
 });
 
 app.listen(3000, function () {
