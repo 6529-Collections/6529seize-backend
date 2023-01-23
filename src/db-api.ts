@@ -573,7 +573,23 @@ export async function fetchOwnerMetrics(
     dense_table.dense_rank_balance_gradients`;
   }
 
-  const fields = ` ${ownerMetricsSelect},${ENS_TABLE}.display as wallet_display, ${WALLETS_TDH_TABLE}.*, ${OWNERS_TAGS_TABLE}.* `;
+  const walletsTdhTableSelect = `
+    ${WALLETS_TDH_TABLE}.tdh_rank, 
+    ${WALLETS_TDH_TABLE}.tdh_rank_memes, 
+    ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn1, 
+    ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn2, 
+    ${WALLETS_TDH_TABLE}.tdh_rank_gradients, 
+    ${WALLETS_TDH_TABLE}.boosted_tdh, 
+    ${WALLETS_TDH_TABLE}.boosted_memes_tdh, 
+    ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season1, 
+    ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season2, 
+    ${WALLETS_TDH_TABLE}.boosted_gradients_tdh, 
+    ${WALLETS_TDH_TABLE}.memes,
+    ${WALLETS_TDH_TABLE}.memes_ranks, 
+    ${WALLETS_TDH_TABLE}.gradients, 
+    ${WALLETS_TDH_TABLE}.gradients_ranks`;
+
+  const fields = ` ${ownerMetricsSelect},${ENS_TABLE}.display as wallet_display, ${walletsTdhTableSelect} , ${OWNERS_TAGS_TABLE}.* `;
   let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
   joins += ` LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet `;
   joins += ` LEFT JOIN ${ENS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${ENS_TABLE}.wallet `;

@@ -457,7 +457,7 @@ async function start() {
   // discoverEns();
   // runValues();
   // await replayTransactionValues();
-  await ownerMetrics(true);
+  // await ownerMetrics(true);
   STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
 }
