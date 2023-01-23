@@ -1,13 +1,17 @@
 import { ServerResponse } from 'http';
 import * as db from './db-api';
 
-const requireLogin = (req: any, res: ServerResponse, next: any) => {
+const requireLogin = async (req: any, res: ServerResponse, next: any) => {
   if (process.env.NODE_ENV == 'local') {
     const auth = req.headers['x-6529-auth'];
-    if (!auth) {
-      // res.statusCode = 401;
-      // res.end();
-      next();
+    const now = new Date();
+    const key = `${now.getUTCFullYear()}${
+      now.getUTCMonth() + 1
+    }${now.getUTCDate()}`;
+    if (!auth || auth != `DeltaMemeSquad${key}`) {
+      res.statusCode = 401;
+      const image = await db.fetchRandomImage();
+      res.end(JSON.stringify({ image: image[0].image }));
     } else {
       next();
     }
@@ -93,6 +97,7 @@ const TDH_SORT = [
 ];
 
 const TAGS_FILTERS = [
+  'memes',
   'memes_set',
   'memes_set_minus1',
   'memes_set_szn1',
@@ -500,21 +505,25 @@ app.get(
           : DEFAULT_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
+      const wallets = req.query.wallet;
+
       console.log(
         new Date(),
         `[API]`,
         '[NFT TDH]',
         `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
       );
-      db.fetchNftTdh(pageSize, page, contract, nftId).then((result) => {
-        result.data.map((d: any) => {
-          d.memes = JSON.parse(d.memes);
-          d.memes_ranks = JSON.parse(d.memes_ranks);
-          d.gradients = JSON.parse(d.gradients);
-          d.gradients_ranks = JSON.parse(d.gradients_ranks);
-        });
-        returnPaginatedResult(result, req, res);
-      });
+      db.fetchNftTdh(pageSize, page, contract, nftId, wallets).then(
+        (result) => {
+          result.data.map((d: any) => {
+            d.memes = JSON.parse(d.memes);
+            d.memes_ranks = JSON.parse(d.memes_ranks);
+            d.gradients = JSON.parse(d.gradients);
+            d.gradients_ranks = JSON.parse(d.gradients_ranks);
+          });
+          returnPaginatedResult(result, req, res);
+        }
+      );
     } catch (e) {
       console.log(
         new Date(),

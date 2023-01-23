@@ -24,9 +24,11 @@ export const findTransactionValues = async (transactions: Transaction[]) => {
 
       const receipt = await alchemy.core.getTransaction(t.transaction);
       const value = await resolveValue(t, receipt, transferEvents);
-      t.value = value;
-      t.transaction_date = new Date(t.transaction_date);
-      transactionsWithValues.push(t);
+      if (!t.value || t.value != value) {
+        t.value = value;
+        t.transaction_date = new Date(t.transaction_date);
+        transactionsWithValues.push(t);
+      }
     })
   );
 
@@ -67,12 +69,12 @@ export async function resolveValue(
     }
   }
   if (receipt?.data.includes('0xed98a574')) {
-    const result = SEAPORT_IFACE.parseTransaction({
+    const seaResult = SEAPORT_IFACE.parseTransaction({
       data: receipt.data,
       value: receipt.value
     });
     let newValue = 0;
-    result.args[0].map((r: any) => {
+    seaResult.args[0].map((r: any) => {
       const from = r[0][0];
       const token_id = r[0][2][0][2].toString();
 
@@ -88,6 +90,21 @@ export async function resolveValue(
     }
   }
 
+  if (receipt?.data.includes('0xfb0f3ee1')) {
+    const seaResult = SEAPORT_IFACE.parseTransaction({
+      data: receipt.data
+    });
+    seaResult.args.map((a) => {
+      const tokenid = a[1].toString();
+      const count = a[2].toString();
+      const amount = parseFloat(Utils.formatEther(a[7].toString()));
+      const tokenPrice = amount / count;
+      if (t.token_id == tokenid) {
+        value = Math.round(tokenPrice * t.token_count * 10000) / 10000;
+      }
+    });
+  }
+
   return value;
 }
 
@@ -95,12 +112,28 @@ export const runValues = async () => {
   const receipt = await alchemy.core.getTransaction(
     // '0x97df4644aff593e8ff0b26dfa1f73ca191969278bbb27d30f774dded76c22115'
     // '0xb1a74e8908ec700918e95f090c7678df08cfbd72eea8dd19576b047211bd275a',
-    '0x935d546c77d0d76b06c4c5abb0108de14d7a15d92977cb2e9c7e581ac0e3a907'
+    // '0x935d546c77d0d76b06c4c5abb0108de14d7a15d92977cb2e9c7e581ac0e3a907'
+    // '0x97a3fd74fa1efaebd0f1114964f5c0d7f931eee3642ec3588933511b6ce6ee2a'
+    '0x0056031ca441aa574f008004f8e56480d30efbc68bd9c0e98d3257c051f05e0a'
   );
-
-  if (receipt?.data.includes('0xa3486bf1')) {
-    const result =
-      receipt?.data.replace('0xa3486bf1', '').match(/.{1,64}/g) ?? [];
-    console.log(result);
+  let value = receipt ? parseFloat(Utils.formatEther(receipt.value)) : 0;
+  console.log('value', value);
+  const tokensPurchases = 1;
+  const tokenId = 42;
+  if (receipt?.data.includes('0xfb0f3ee1')) {
+    const seaResult = SEAPORT_IFACE.parseTransaction({
+      data: receipt.data
+    });
+    seaResult.args.map((a) => {
+      const tokenid = a[1].toString();
+      const count = a[2].toString();
+      const amount = parseFloat(Utils.formatEther(a[7].toString()));
+      const tokenPrice = amount / count;
+      if (tokenId == tokenid) {
+        value = tokenPrice * tokensPurchases;
+      }
+    });
   }
+
+  console.log(value);
 };

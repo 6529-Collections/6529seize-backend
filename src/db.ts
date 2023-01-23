@@ -526,6 +526,14 @@ export function execSQL(sql: string): Promise<any> {
   });
 }
 
+export async function findReplayTransactions(): Promise<Transaction[]> {
+  let sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE value=0 AND from_address != ${mysql.escape(
+    NULL_ADDRESS
+  )};`;
+  const results = await execSQL(sql);
+  return results;
+}
+
 export async function findDuplicateTransactionHashes(): Promise<string[]> {
   let sql = `SELECT transaction FROM ${TRANSACTIONS_TABLE} GROUP BY transaction HAVING COUNT(*) > 1;`;
   const results = await execSQL(sql);

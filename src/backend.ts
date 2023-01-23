@@ -142,7 +142,8 @@ async function replayTransactionValues(
 ) {
   if (!transactionHashes || !transactions || !index) {
     transactionHashes = await db.findDuplicateTransactionHashes();
-    transactions = await db.findTransactionsByHash(transactionHashes);
+    // transactions = await db.findTransactionsByHash(transactionHashes);
+    transactions = await db.findReplayTransactions();
     index = 0;
   }
 
@@ -150,7 +151,7 @@ async function replayTransactionValues(
     const chunkSize = 100;
     console.log(
       new Date(),
-      '[TRANSACTIONS REPLAY]',
+      `[TRANSACTIONS REPLAY ${transactions.length}]`,
       `[CHUNK ${index / chunkSize + 1} / ${Math.ceil(
         transactions.length / chunkSize
       )}]`
@@ -165,12 +166,13 @@ async function replayTransactionValues(
         index + chunkSize
       );
     }
-  } catch {
+  } catch (err: any) {
     console.log(
       new Date(),
       '[TRANSACTIONS REPLAY]',
       `[EXCEPTION AT ${index}]`,
-      `[RETRYING]`
+      `[RETRYING]`,
+      `[${err}]`
     );
     await replayTransactionValues(transactionHashes, transactions, index);
   }
@@ -451,13 +453,11 @@ async function start() {
   // await ownerTags();
   // await tdh();
   // await nftTdh();
-  // await ownerMetrics();
-  // tdhUpload();
   // await ownerMetrics(true);
+  // tdhUpload();
   // discoverEns();
-  // marketStats(GRADIENT_CONTRACT);
   // runValues();
-  // await replayTransactionValues();
+  await replayTransactionValues();
   STARTING = false;
   console.log(new Date(), `[STARTING ${STARTING}]`);
 }

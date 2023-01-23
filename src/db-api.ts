@@ -119,6 +119,13 @@ async function fetchPaginated(
   };
 }
 
+export async function fetchRandomImage() {
+  const sql = `SELECT image from ${NFTS_TABLE} WHERE CONTRACT=${mysql.escape(
+    MEMES_CONTRACT
+  )} ORDER BY RAND() LIMIT 1;`;
+  return execSQL(sql);
+}
+
 export async function fetchBlocks(pageSize: number, page: number) {
   return fetchPaginated(
     TDH_BLOCKS_TABLE,
@@ -379,12 +386,18 @@ export async function fetchNftTdh(
   pageSize: number,
   page: number,
   contract: string,
-  nftId: number
+  nftId: number,
+  wallets: string
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
-  let filters = `WHERE block=${tdhBlock} AND j.id=${nftId}`;
-  let joins;
+  let filters = `WHERE block=${tdhBlock} AND j.id=${nftId} `;
+  if (wallets) {
+    filters += ` AND ${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(
+      wallets.split(',')
+    )})`;
+  }
 
+  let joins;
   if (areEqualAddresses(contract, MEMES_CONTRACT)) {
     joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet CROSS JOIN JSON_TABLE(memes, '$[*]' COLUMNS ( 
         id INT PATH '$.id', 
@@ -401,7 +414,11 @@ export async function fetchNftTdh(
     return returnEmpty();
   }
 
-  const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
+  joins += ` JOIN (SELECT wallet, DENSE_RANK() OVER(ORDER BY ${OWNERS_TABLE}.balance DESC) AS dense_rank_balance from ${OWNERS_TABLE} where ${OWNERS_TABLE}.contract=${mysql.escape(
+    contract
+  )} and ${OWNERS_TABLE}.token_id=${nftId}) as dense_table ON ${WALLETS_TDH_TABLE}.wallet = dense_table.wallet`;
+
+  const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, dense_table.dense_rank_balance `;
 
   return fetchPaginated(
     WALLETS_TDH_TABLE,
@@ -496,6 +513,12 @@ export async function fetchOwnerMetrics(
   }
   if (metrics_filter) {
     switch (metrics_filter) {
+      case 'memes':
+        filters = constructFilters(
+          filters,
+          `${OWNERS_TAGS_TABLE}.memes_balance > 0`
+        );
+        break;
       case 'memes_set':
         filters = constructFilters(
           filters,
@@ -532,10 +555,32 @@ export async function fetchOwnerMetrics(
     }
   }
 
-  const fields = ` ${OWNERS_METRICS_TABLE}.*,${ENS_TABLE}.display as wallet_display, ${WALLETS_TDH_TABLE}.*, ${OWNERS_TAGS_TABLE}.* `;
-  let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock} `;
+  let ownerMetricsSelect;
+
+  if (!wallets) {
+    ownerMetricsSelect = ` ${OWNERS_METRICS_TABLE}.*, 
+    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, 
+    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, 
+    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
+    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,
+    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients`;
+  } else {
+    ownerMetricsSelect = ` ${OWNERS_METRICS_TABLE}.*, 
+    dense_table.dense_rank_balance, 
+    dense_table.dense_rank_balance_memes, 
+    dense_table.dense_rank_balance_memes_season1, 
+    dense_table.dense_rank_balance_memes_season2,
+    dense_table.dense_rank_balance_gradients`;
+  }
+
+  const fields = ` ${ownerMetricsSelect},${ENS_TABLE}.display as wallet_display, ${WALLETS_TDH_TABLE}.*, ${OWNERS_TAGS_TABLE}.* `;
+  let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
   joins += ` LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet `;
-  joins += ` LEFT JOIN ${ENS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${ENS_TABLE}.wallet`;
+  joins += ` LEFT JOIN ${ENS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${ENS_TABLE}.wallet `;
+
+  if (wallets) {
+    joins += ` JOIN (SELECT wallet, DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients FROM ${OWNERS_METRICS_TABLE}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
+  }
 
   if (
     sort == 'balance' ||
