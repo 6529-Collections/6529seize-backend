@@ -442,7 +442,7 @@ async function start() {
   console.log(
     now,
     `[CONFIG ${process.env.NODE_ENV}]`,
-    `[STARTING ${STARTING}]`
+    `[EXECUTING START SCRIPT...]`
   );
   // Uncomment to call on start
   // await transactions();
@@ -453,13 +453,13 @@ async function start() {
   // await ownerTags();
   // await tdh();
   // await nftTdh();
-  // await ownerMetrics(true);
   // tdhUpload();
   // discoverEns();
   // runValues();
-  await replayTransactionValues();
+  // await replayTransactionValues();
+  await ownerMetrics(true);
   STARTING = false;
-  console.log(new Date(), `[STARTING ${STARTING}]`);
+  console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
 }
 
 start();
