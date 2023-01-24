@@ -25,6 +25,7 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 app.all('/*', requireLogin);
+app.enable('trust proxy');
 
 const BASE_PATH = '/api';
 const CONTENT_TYPE_HEADER = 'Content-Type';
@@ -108,7 +109,9 @@ const TAGS_FILTERS = [
 const TRANSACTION_FILTERS = ['sales', 'transfers', 'airdrops'];
 
 function fullUrl(req: any, next: boolean) {
-  let url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+  let url = `${req.secure ? 'https' : 'http'}://${req.get('host')}${
+    req.originalUrl
+  }`;
 
   if (!next) {
     return null;
