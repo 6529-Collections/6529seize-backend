@@ -217,52 +217,6 @@ async function transactions(
   }
 }
 
-async function transactionsREMAKE(
-  startingBlock: number,
-  latestBlock?: number,
-  pagKey?: string
-) {
-  try {
-    let startingBlockResolved;
-    if (startingBlock == undefined) {
-      startingBlockResolved = await db.fetchLatestTransactionsBlockNumber();
-    } else {
-      startingBlockResolved = startingBlock;
-    }
-
-    const response = await findTransactions(
-      startingBlockResolved,
-      latestBlock,
-      pagKey
-    );
-
-    const transactionsWithValues = await findTransactionValues(
-      response.transactions
-    );
-
-    await db.persistTransactionsREMAKE(transactionsWithValues);
-
-    if (response.pageKey) {
-      await transactionsREMAKE(
-        startingBlockResolved,
-        response.latestBlock,
-        response.pageKey
-      );
-    } else {
-      console.log(new Date(), '[TRANSACTIONS REMAKE]', '[DONE!]');
-    }
-  } catch (e: any) {
-    console.log(
-      new Date(),
-      '[TRANSACTIONS REMAKE]',
-      '[ETIMEDOUT!]',
-      e,
-      '[RETRYING PROCESS]'
-    );
-    await transactionsREMAKE(startingBlock, latestBlock, pagKey);
-  }
-}
-
 async function nfts(reset = false) {
   const nfts: NFTWithTDH[] = await db.fetchAllNFTs();
   const transactions: Transaction[] = await db.fetchAllTransactions();
@@ -333,31 +287,6 @@ async function tdh() {
     tdhResponse.timestamp,
     tdhResponse.tdh
   );
-}
-
-async function refetchTransactionValues(page: number) {
-  try {
-    const transactions: Transaction[] = await db.fetchTransactionsWithoutValue(
-      200,
-      page
-    );
-    const transactionsWithValues = await findTransactionValues(transactions);
-    await db.persistTransactions(transactionsWithValues);
-    if (transactions.length == 200) {
-      await refetchTransactionValues(page + 1);
-    } else {
-      console.log(new Date(), '[TRANSACTION VALUES]', '[ALL REFETCHED!]');
-    }
-  } catch (e: any) {
-    console.log(
-      new Date(),
-      '[TRANSACTION VALUES]',
-      '[CRASH!]',
-      `[RESTARTING FROM PAGE ${page} IN 5 SECONDS]`
-    );
-    await delay(5000);
-    await refetchTransactionValues(page);
-  }
 }
 
 async function nftTdh() {
