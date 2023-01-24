@@ -5,9 +5,11 @@ import {
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   NFTS_TABLE,
+  NULL_ADDRESS,
   OWNERS_METRICS_TABLE,
   OWNERS_TABLE,
   OWNERS_TAGS_TABLE,
+  SIX529_MUSEUM,
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
@@ -79,6 +81,13 @@ export interface DBResponse {
   data: any[];
 }
 
+function constructFilters(f: string, newF: string) {
+  if (f.trim().toUpperCase().startsWith('WHERE')) {
+    return ` ${f} AND ${newF} `;
+  }
+  return ` WHERE ${newF} `;
+}
+
 async function fetchPaginated(
   table: string,
   orderBy: string,
@@ -108,6 +117,13 @@ async function fetchPaginated(
     next: r1[0]?.count > pageSize * page,
     data: r2
   };
+}
+
+export async function fetchRandomImage() {
+  const sql = `SELECT image from ${NFTS_TABLE} WHERE CONTRACT=${mysql.escape(
+    MEMES_CONTRACT
+  )} ORDER BY RAND() LIMIT 1;`;
+  return execSQL(sql);
 }
 
 export async function fetchBlocks(pageSize: number, page: number) {
@@ -156,15 +172,13 @@ export async function fetchNFTs(
 ) {
   let filters = '';
   if (contracts) {
-    filters = `WHERE contract in (${mysql.escape(contracts.split(','))})`;
+    filters = constructFilters(
+      filters,
+      `contract in (${mysql.escape(contracts.split(','))})`
+    );
   }
   if (nfts) {
-    if (contracts) {
-      filters += ' AND';
-    } else {
-      filters += ' WHERE';
-    }
-    filters += ` id in (${nfts})`;
+    filters = constructFilters(filters, `id in (${nfts})`);
   }
   return fetchPaginated(
     NFTS_TABLE,
@@ -206,15 +220,10 @@ export async function fetchMemesExtended(
   let filters = '';
 
   if (nfts) {
-    filters += ` WHERE id in (${nfts})`;
+    filters = constructFilters(filters, `id in (${nfts})`);
   }
   if (seasons) {
-    if (nfts) {
-      filters += ' AND';
-    } else {
-      filters += ' WHERE';
-    }
-    filters += ` season in (${seasons})`;
+    filters = constructFilters(filters, `season in (${seasons})`);
   }
   return fetchPaginated(
     MEMES_EXTENDED_DATA_TABLE,
@@ -234,25 +243,21 @@ export async function fetchOwners(
 ) {
   let filters = '';
   if (wallets) {
-    filters = `WHERE (${OWNERS_TABLE}.wallet in (${mysql.escape(
-      wallets.split(',')
-    )}) OR ${ENS_TABLE}.display in (${mysql.escape(wallets.split(','))}))`;
+    filters = constructFilters(
+      filters,
+      `(${OWNERS_TABLE}.wallet in (${mysql.escape(
+        wallets.split(',')
+      )}) OR ${ENS_TABLE}.display in (${mysql.escape(wallets.split(','))}))`
+    );
   }
   if (contracts) {
-    if (wallets) {
-      filters += ' AND';
-    } else {
-      filters += ' WHERE';
-    }
-    filters += ` contract in (${mysql.escape(contracts.split(','))})`;
+    filters = constructFilters(
+      filters,
+      `contract in (${mysql.escape(contracts.split(','))})`
+    );
   }
   if (nfts) {
-    if (contracts || wallets) {
-      filters += ' AND';
-    } else {
-      filters += ' WHERE';
-    }
-    filters += ` token_id in (${nfts})`;
+    filters = constructFilters(filters, `token_id in (${nfts})`);
   }
 
   const fields = ` ${OWNERS_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
@@ -276,9 +281,12 @@ export async function fetchOwnersTags(
 ) {
   let filters = '';
   if (wallets) {
-    filters = `WHERE ${OWNERS_TAGS_TABLE}.wallet in (${mysql.escape(
-      wallets.split(',')
-    )}) OR ${ENS_TABLE}.display in (${mysql.escape(wallets.split(','))})`;
+    filters = constructFilters(
+      filters,
+      `${OWNERS_TAGS_TABLE}.wallet in (${mysql.escape(
+        wallets.split(',')
+      )}) OR ${ENS_TABLE}.display in (${mysql.escape(wallets.split(','))})`
+    );
   }
 
   const fields = ` ${OWNERS_TAGS_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
@@ -300,29 +308,45 @@ export async function fetchTransactions(
   page: number,
   wallets: string,
   contracts: string,
-  nfts: string
+  nfts: string,
+  type_filter: string
 ) {
   let filters = '';
   if (wallets) {
-    filters = `WHERE (from_address in (${mysql.escape(
-      wallets.split(',')
-    )}) OR to_address in (${mysql.escape(wallets.split(','))}))`;
+    filters = constructFilters(
+      filters,
+      `(from_address in (${mysql.escape(
+        wallets.split(',')
+      )}) OR to_address in (${mysql.escape(wallets.split(','))}))`
+    );
   }
   if (contracts) {
-    if (wallets) {
-      filters += ' AND';
-    } else {
-      filters += ' WHERE';
-    }
-    filters += ` contract in (${mysql.escape(contracts.split(','))})`;
+    filters = constructFilters(
+      filters,
+      `contract in (${mysql.escape(contracts.split(','))})`
+    );
   }
   if (nfts) {
-    if (contracts || wallets) {
-      filters += ' AND';
-    } else {
-      filters += ' WHERE';
+    filters = constructFilters(filters, `token_id in (${nfts})`);
+  }
+  if (type_filter) {
+    let newTypeFilter = '';
+    switch (type_filter) {
+      case 'sales':
+        newTypeFilter += 'value > 0';
+        break;
+      case 'airdrops':
+        newTypeFilter += `from_address = ${mysql.escape(NULL_ADDRESS)}`;
+        break;
+      case 'transfers':
+        newTypeFilter += `value = 0 and from_address != ${mysql.escape(
+          NULL_ADDRESS
+        )}`;
+        break;
     }
-    filters += ` token_id in (${nfts})`;
+    if (newTypeFilter) {
+      filters = constructFilters(filters, newTypeFilter);
+    }
   }
 
   const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
@@ -341,8 +365,8 @@ export async function fetchTransactions(
 
 export async function fetchGradientTdh(pageSize: number, page: number) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
-  let filters = `WHERE block=${tdhBlock} `;
-  filters += ` AND gradients_balance > 0`;
+  let filters = constructFilters('', `block=${tdhBlock}`);
+  filters = constructFilters(filters, `gradients_balance > 0`);
 
   const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
   const joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet`;
@@ -362,12 +386,18 @@ export async function fetchNftTdh(
   pageSize: number,
   page: number,
   contract: string,
-  nftId: number
+  nftId: number,
+  wallets: string
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
-  let filters = `WHERE block=${tdhBlock} AND j.id=${nftId}`;
-  let joins;
+  let filters = `WHERE block=${tdhBlock} AND j.id=${nftId} `;
+  if (wallets) {
+    filters += ` AND ${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(
+      wallets.split(',')
+    )})`;
+  }
 
+  let joins;
   if (areEqualAddresses(contract, MEMES_CONTRACT)) {
     joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet CROSS JOIN JSON_TABLE(memes, '$[*]' COLUMNS ( 
         id INT PATH '$.id', 
@@ -384,7 +414,11 @@ export async function fetchNftTdh(
     return returnEmpty();
   }
 
-  const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
+  joins += ` JOIN (SELECT wallet, DENSE_RANK() OVER(ORDER BY ${OWNERS_TABLE}.balance DESC) AS dense_rank_balance from ${OWNERS_TABLE} where ${OWNERS_TABLE}.contract=${mysql.escape(
+    contract
+  )} and ${OWNERS_TABLE}.token_id=${nftId}) as dense_table ON ${WALLETS_TDH_TABLE}.wallet = dense_table.wallet`;
+
+  const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, dense_table.dense_rank_balance `;
 
   return fetchPaginated(
     WALLETS_TDH_TABLE,
@@ -402,14 +436,42 @@ export async function fetchTDH(
   page: number,
   wallets: string,
   sort: string,
-  sortDir: string
+  sortDir: string,
+  tdh_filter: string,
+  hideMuseum: boolean
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = `WHERE block=${tdhBlock}`;
+  if (hideMuseum) {
+    filters = constructFilters(
+      filters,
+      `${WALLETS_TDH_TABLE}.wallet != ${mysql.escape(SIX529_MUSEUM)}`
+    );
+  }
   if (wallets) {
-    filters += `  and ${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(
-      wallets.split(',')
-    )})`;
+    filters = constructFilters(
+      filters,
+      `${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(wallets.split(','))})`
+    );
+  }
+  if (tdh_filter) {
+    switch (tdh_filter) {
+      case 'memes_set':
+        filters = constructFilters(
+          filters,
+          `${WALLETS_TDH_TABLE}.memes_cards_sets > 0`
+        );
+        break;
+      case 'memes_genesis':
+        filters = constructFilters(filters, `${WALLETS_TDH_TABLE}.genesis > 0`);
+        break;
+      case 'gradients':
+        filters = constructFilters(
+          filters,
+          `${WALLETS_TDH_TABLE}.gradients_balance > 0`
+        );
+        break;
+    }
   }
 
   const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
@@ -431,19 +493,110 @@ export async function fetchOwnerMetrics(
   page: number,
   wallets: string,
   sort: string,
-  sortDir: string
+  sortDir: string,
+  metrics_filter: string,
+  hideMuseum: boolean
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
-  let filters = `WHERE block=${tdhBlock}`;
+  let filters = '';
+  if (hideMuseum) {
+    filters = constructFilters(
+      filters,
+      `${OWNERS_METRICS_TABLE}.wallet != ${mysql.escape(SIX529_MUSEUM)}`
+    );
+  }
   if (wallets) {
-    filters += `  and ${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(
-      wallets.split(',')
-    )})`;
+    filters = constructFilters(
+      filters,
+      `${OWNERS_METRICS_TABLE}.wallet in (${mysql.escape(wallets.split(','))})`
+    );
+  }
+  if (metrics_filter) {
+    switch (metrics_filter) {
+      case 'memes':
+        filters = constructFilters(
+          filters,
+          `${OWNERS_TAGS_TABLE}.memes_balance > 0`
+        );
+        break;
+      case 'memes_set':
+        filters = constructFilters(
+          filters,
+          `${OWNERS_TAGS_TABLE}.memes_cards_sets > 0`
+        );
+        break;
+      case 'memes_genesis':
+        filters = constructFilters(filters, `${OWNERS_TAGS_TABLE}.genesis > 0`);
+        break;
+      case 'gradients':
+        filters = constructFilters(
+          filters,
+          `${OWNERS_TAGS_TABLE}.gradients_balance > 0`
+        );
+        break;
+      case 'memes_set_minus1':
+        filters = constructFilters(
+          filters,
+          `${OWNERS_TAGS_TABLE}.memes_cards_sets_minus1 > 0`
+        );
+        break;
+      case 'memes_set_szn1':
+        filters = constructFilters(
+          filters,
+          `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn1 > 0`
+        );
+        break;
+      case 'memes_set_szn2':
+        filters = constructFilters(
+          filters,
+          `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn2 > 0`
+        );
+        break;
+    }
   }
 
-  const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, ${OWNERS_METRICS_TABLE}.* `;
-  let joins = ` INNER JOIN ${OWNERS_METRICS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet `;
-  joins += ` LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet`;
+  let ownerMetricsSelect;
+
+  if (!wallets) {
+    ownerMetricsSelect = ` ${OWNERS_METRICS_TABLE}.*, 
+    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, 
+    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, 
+    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
+    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,
+    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients`;
+  } else {
+    ownerMetricsSelect = ` ${OWNERS_METRICS_TABLE}.*, 
+    dense_table.dense_rank_balance, 
+    dense_table.dense_rank_balance_memes, 
+    dense_table.dense_rank_balance_memes_season1, 
+    dense_table.dense_rank_balance_memes_season2,
+    dense_table.dense_rank_balance_gradients`;
+  }
+
+  const walletsTdhTableSelect = `
+    ${WALLETS_TDH_TABLE}.tdh_rank, 
+    ${WALLETS_TDH_TABLE}.tdh_rank_memes, 
+    ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn1, 
+    ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn2, 
+    ${WALLETS_TDH_TABLE}.tdh_rank_gradients, 
+    ${WALLETS_TDH_TABLE}.boosted_tdh, 
+    ${WALLETS_TDH_TABLE}.boosted_memes_tdh, 
+    ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season1, 
+    ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season2, 
+    ${WALLETS_TDH_TABLE}.boosted_gradients_tdh, 
+    ${WALLETS_TDH_TABLE}.memes,
+    ${WALLETS_TDH_TABLE}.memes_ranks, 
+    ${WALLETS_TDH_TABLE}.gradients, 
+    ${WALLETS_TDH_TABLE}.gradients_ranks`;
+
+  const fields = ` ${ownerMetricsSelect},${ENS_TABLE}.display as wallet_display, ${walletsTdhTableSelect} , ${OWNERS_TAGS_TABLE}.* `;
+  let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
+  joins += ` LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet `;
+  joins += ` LEFT JOIN ${ENS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${ENS_TABLE}.wallet `;
+
+  if (wallets) {
+    joins += ` JOIN (SELECT wallet, DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients FROM ${OWNERS_METRICS_TABLE}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
+  }
 
   if (
     sort == 'balance' ||
@@ -454,9 +607,22 @@ export async function fetchOwnerMetrics(
   ) {
     sort = `${OWNERS_METRICS_TABLE}.${sort}`;
   }
+  if (
+    sort == 'memes_cards_sets' ||
+    sort == 'memes_cards_sets_szn1' ||
+    sort == 'memes_cards_sets_szn2' ||
+    sort == 'memes_cards_sets_minus1' ||
+    sort == 'genesis' ||
+    sort == 'unique_memes' ||
+    sort == 'unique_memes_szn1' ||
+    sort == 'unique_memes_szn2'
+  ) {
+    sort = `${OWNERS_TAGS_TABLE}.${sort}`;
+  }
+
   return fetchPaginated(
-    WALLETS_TDH_TABLE,
-    `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
+    OWNERS_METRICS_TABLE,
+    `${sort} ${sortDir}, ${OWNERS_METRICS_TABLE}.balance ${sortDir}, boosted_tdh ${sortDir}`,
     pageSize,
     page,
     filters,
@@ -479,4 +645,18 @@ export async function fetchEns(address: string) {
     address
   )}`;
   return execSQL(sql);
+}
+
+export async function fetchRanksForWallet(address: string) {
+  const tdhBlock = await fetchLatestTDHBlockNumber();
+  const sqlTags = `SELECT * FROM ${OWNERS_TAGS_TABLE} WHERE wallet=${mysql.escape(
+    address
+  )}`;
+  const sqlTdh = `SELECT * FROM ${WALLETS_TDH_TABLE} WHERE block=${tdhBlock} and wallet=${mysql.escape(
+    address
+  )}`;
+  const ownerTags = await execSQL(sqlTags);
+  const ownerTdh = await execSQL(sqlTdh);
+
+  return ownerTdh;
 }
