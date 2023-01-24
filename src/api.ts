@@ -109,6 +109,12 @@ const TAGS_FILTERS = [
 const TRANSACTION_FILTERS = ['sales', 'transfers', 'airdrops'];
 
 function fullUrl(req: any, next: boolean) {
+  console.log(
+    `req.headers['x-forwarded-proto']`,
+    req.headers['x-forwarded-proto']
+  );
+  console.log(`req.protocol`, req.protocol);
+  console.log(`req.secure`, req.secure);
   const protocol =
     req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
 
