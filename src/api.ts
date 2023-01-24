@@ -109,9 +109,10 @@ const TAGS_FILTERS = [
 const TRANSACTION_FILTERS = ['sales', 'transfers', 'airdrops'];
 
 function fullUrl(req: any, next: boolean) {
-  let url = `${req.secure ? 'https' : 'http'}://${req.get('host')}${
-    req.originalUrl
-  }`;
+  const protocol =
+    req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+
+  let url = `${protocol}://${req.get('host')}${req.originalUrl}`;
 
   if (!next) {
     return null;
