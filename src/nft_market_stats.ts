@@ -1,7 +1,8 @@
 import { Utils } from 'alchemy-sdk';
 import fetch from 'node-fetch';
+import { MEMES_CONTRACT } from './constants';
 import { NFT } from './entities/INFT';
-import { delay } from './helpers';
+import { areEqualAddresses, delay } from './helpers';
 
 const config = require('./config');
 
@@ -16,7 +17,12 @@ async function getResult(url: string) {
 }
 
 const findFloorPrice = async (stat: any): Promise<number> => {
-  const url = `https://api.opensea.io/v2/orders/ethereum/seaport/listings?asset_contract_address=${stat.contract}&limit=1&token_ids=${stat.id}&order_by=eth_price&order_direction=asc`;
+  let url;
+  if (areEqualAddresses(stat.contract, MEMES_CONTRACT)) {
+    url = `https://api.opensea.io/v2/orders/ethereum/seaport/listings?asset_contract_address=${stat.contract}&limit=1&token_ids=${stat.id}&order_by=eth_price&order_direction=asc`;
+  } else {
+    url = `https://api.opensea.io/v2/orders/ethereum/seaport/offers?asset_contract_address=${stat.contract}&limit=1&token_ids=${stat.id}&order_by=eth_price&order_direction=desc`;
+  }
 
   const res = await getResult(url);
 

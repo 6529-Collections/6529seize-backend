@@ -19,7 +19,7 @@ import { persistS3 } from './s3';
 import { findTDH } from './tdh';
 import { uploadTDH } from './tdh_upload';
 import { findTransactions } from './transactions';
-import { findTransactionValues } from './transaction_values';
+import { findTransactionValues, runValues } from './transaction_values';
 
 const cron = require('node-cron');
 
@@ -28,22 +28,32 @@ let STARTING = true;
 // PULL EVERY 2 MINUTES
 cron.schedule('*/2 * * * *', async function () {
   if (!STARTING) {
-    await nfts();
-    await owners();
-    await ownerTags();
-    await memesExtendedData();
-    nftS3();
+    nftsLoop();
   }
 });
+
+async function nftsLoop() {
+  console.log(new Date(), '[RUNNING NFTS LOOP]');
+  await nfts();
+  await owners();
+  await memesExtendedData();
+  await ownerTags();
+  nftS3();
+}
 
 // PULL EVERY 3 MINUTES
 cron.schedule('*/3 * * * *', async function () {
   if (!STARTING) {
-    const now = new Date();
-    await transactions();
-    discoverEns(now);
+    transactionsLoop();
   }
 });
+
+async function transactionsLoop() {
+  const now = new Date();
+  console.log(now, '[RUNNING TRANSACTIONS LOOP]');
+  await transactions();
+  discoverEns(now);
+}
 
 // PULL EVERY 7 MINUTES
 cron.schedule('*/7 * * * *', async function () {
@@ -52,19 +62,53 @@ cron.schedule('*/7 * * * *', async function () {
   }
 });
 
-// PULL EVERY 8 MINUTES
-cron.schedule('*/8 * * * *', async function () {
-  if (!STARTING) {
-    marketStats(MEMES_CONTRACT);
-  }
-});
+// MARKET STATS MEMES
+// - PULL EVERY 2 HOURS IN STAGING
+// - PULL EVERY 8 MINUTES IN PROD
+let memesMarketStatsCron;
+if (process.env.NODE_ENV == 'development') {
+  memesMarketStatsCron = '8 */2 * * *';
+} else if (process.env.NODE_ENV == 'production') {
+  memesMarketStatsCron = '*/8 * * * *';
+}
 
-// PULL EVERY 30 MINUTES
-cron.schedule('*/30 * * * *', async function () {
-  if (!STARTING) {
-    marketStats(GRADIENT_CONTRACT);
-  }
-});
+if (memesMarketStatsCron) {
+  cron.schedule(memesMarketStatsCron, async function () {
+    if (!STARTING) {
+      marketStats(MEMES_CONTRACT);
+    }
+  });
+} else {
+  console.log(
+    new Date(),
+    `[CONFIG ${process.env.NODE_ENV}]`,
+    '[SKIPPING MARKET STATS MEMES]'
+  );
+}
+
+// MARKET STATS GRADIENTS
+// - PULL EVERY 4 HOURS IN STAGING
+// - PULL EVERY 30 MINUTES IN PROD
+let gradientsMarketStatsCron;
+if (process.env.NODE_ENV == 'development') {
+  gradientsMarketStatsCron = '38 */4 * * *';
+} else if (process.env.NODE_ENV == 'production') {
+  gradientsMarketStatsCron = '*/30 * * * *';
+}
+
+if (gradientsMarketStatsCron) {
+  cron.schedule(gradientsMarketStatsCron, async function () {
+    if (!STARTING) {
+      marketStats(GRADIENT_CONTRACT);
+    }
+  });
+} else {
+  console.log(
+    new Date(),
+    `[CONFIG ${process.env.NODE_ENV}]`,
+    '[SKIPPING MARKET STATS GRADIENTS]'
+  );
+}
 
 // DISCOVER ENS AT 5:29
 cron.schedule('29 5 * * *', async function () {
@@ -78,18 +122,61 @@ cron.schedule('29 6 * * *', async function () {
 
 // CALCULATE TDH AT 00:01
 cron.schedule('1 0 * * *', async function () {
-  await tdh();
+  tdh();
 });
 
 // CALCULATE TDH AT 00:30
 cron.schedule('30 0 * * *', async function () {
-  await nftTdh();
+  nftTdh();
 });
 
 // UPLOAD TDH AT 01:01
 cron.schedule('1 1 * * *', async function () {
   tdhUpload();
 });
+
+async function replayTransactionValues(
+  transactionHashes?: string[],
+  transactions?: Transaction[],
+  index?: number
+) {
+  if (!transactionHashes || !transactions || !index) {
+    transactionHashes = await db.findDuplicateTransactionHashes();
+    // transactions = await db.findTransactionsByHash(transactionHashes);
+    transactions = await db.findReplayTransactions();
+    index = 0;
+  }
+
+  try {
+    const chunkSize = 100;
+    console.log(
+      new Date(),
+      `[TRANSACTIONS REPLAY ${transactions.length}]`,
+      `[CHUNK ${index / chunkSize + 1} / ${Math.ceil(
+        transactions.length / chunkSize
+      )}]`
+    );
+    const chunk = transactions!.slice(index, index + chunkSize);
+    const transactionsWithValues = await findTransactionValues(chunk);
+    await db.persistTransactions(transactionsWithValues);
+    if (transactions.length / chunkSize > index / chunkSize + 1) {
+      await replayTransactionValues(
+        transactionHashes,
+        transactions,
+        index + chunkSize
+      );
+    }
+  } catch (err: any) {
+    console.log(
+      new Date(),
+      '[TRANSACTIONS REPLAY]',
+      `[EXCEPTION AT ${index}]`,
+      `[RETRYING]`,
+      `[${err}]`
+    );
+    await replayTransactionValues(transactionHashes, transactions, index);
+  }
+}
 
 async function transactions(
   startingBlock?: number,
@@ -200,18 +287,9 @@ async function nfts(reset = false) {
 }
 
 async function marketStats(contract: string) {
-  if (process.env.NODE_ENV == 'production') {
-    const nfts: NFT[] = await db.fetchNftsForContract(contract);
-    const stats = await findNftMarketStats(contract, nfts);
-    await db.persistNftMarketStats(stats);
-  } else {
-    console.log(
-      new Date(),
-      '[NFT MARKET STATS]',
-      '[SKIPPING]',
-      `[CONFIG ${process.env.NODE_ENV}]`
-    );
-  }
+  const nfts: NFT[] = await db.fetchNftsForContract(contract);
+  const stats = await findNftMarketStats(contract, nfts);
+  await db.persistNftMarketStats(stats);
 }
 
 async function owners() {
@@ -364,23 +442,24 @@ async function start() {
   console.log(
     now,
     `[CONFIG ${process.env.NODE_ENV}]`,
-    `[STARTING ${STARTING}]`
+    `[EXECUTING START SCRIPT...]`
   );
   // Uncomment to call on start
   // await transactions();
   // await discoverEns(now);
   // await nfts();
+  // await memesExtendedData();
   // await owners();
   // await ownerTags();
-  // await memesExtendedData();
   // await tdh();
   // await nftTdh();
-  // await ownerMetrics();
   // tdhUpload();
-  // await ownerMetrics(true);
   // discoverEns();
+  // runValues();
+  // await replayTransactionValues();
+  // await ownerMetrics(true);
   STARTING = false;
-  console.log(new Date(), `[STARTING ${STARTING}]`);
+  console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
 }
 
 start();
