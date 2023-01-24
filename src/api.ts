@@ -2,13 +2,12 @@ import { ServerResponse } from 'http';
 import * as db from './db-api';
 
 const requireLogin = async (req: any, res: ServerResponse, next: any) => {
-  if (process.env.NODE_ENV == 'local') {
+  if (
+    process.env.ACTIVATE_API_PASSWORD &&
+    process.env.ACTIVATE_API_PASSWORD === 'true'
+  ) {
     const auth = req.headers['x-6529-auth'];
-    const now = new Date();
-    const key = `${now.getUTCFullYear()}${
-      now.getUTCMonth() + 1
-    }${now.getUTCDate()}`;
-    if (!auth || auth != `DeltaMemeSquad${key}`) {
+    if (!auth || auth != process.env.API_PASSWORD) {
       res.statusCode = 401;
       const image = await db.fetchRandomImage();
       res.end(JSON.stringify({ image: image[0].image }));

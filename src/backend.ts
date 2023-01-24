@@ -136,14 +136,13 @@ cron.schedule('1 1 * * *', async function () {
 });
 
 async function replayTransactionValues(
-  transactionHashes?: string[],
   transactions?: Transaction[],
   index?: number
 ) {
-  if (!transactionHashes || !transactions || !index) {
-    transactionHashes = await db.findDuplicateTransactionHashes();
-    // transactions = await db.findTransactionsByHash(transactionHashes);
-    transactions = await db.findReplayTransactions();
+  if (!transactions || !index) {
+    const transactionHashes = await db.findDuplicateTransactionHashes();
+    transactions = await db.findTransactionsByHash(transactionHashes);
+    // transactions = await db.findReplayTransactions();
     index = 0;
   }
 
@@ -160,11 +159,7 @@ async function replayTransactionValues(
     const transactionsWithValues = await findTransactionValues(chunk);
     await db.persistTransactions(transactionsWithValues);
     if (transactions.length / chunkSize > index / chunkSize + 1) {
-      await replayTransactionValues(
-        transactionHashes,
-        transactions,
-        index + chunkSize
-      );
+      await replayTransactionValues(transactions, index + chunkSize);
     }
   } catch (err: any) {
     console.log(
@@ -174,7 +169,7 @@ async function replayTransactionValues(
       `[RETRYING]`,
       `[${err}]`
     );
-    await replayTransactionValues(transactionHashes, transactions, index);
+    await replayTransactionValues(transactions, index);
   }
 }
 
