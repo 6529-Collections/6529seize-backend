@@ -25,6 +25,7 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 app.all('/*', requireLogin);
+app.enable('trust proxy');
 
 const BASE_PATH = '/api';
 const CONTENT_TYPE_HEADER = 'Content-Type';
