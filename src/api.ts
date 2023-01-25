@@ -1,5 +1,12 @@
 import { ServerResponse } from 'http';
 import * as db from './db-api';
+import mcache from 'memory-cache';
+
+const CACHE_TIME_MS = 2 * 60 * 1000;
+
+function cacheKey(req: any) {
+  return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
+}
 
 const requireLogin = async (req: any, res: ServerResponse, next: any) => {
   if (
@@ -19,12 +26,24 @@ const requireLogin = async (req: any, res: ServerResponse, next: any) => {
   }
 };
 
+const checkCache = function (req: any, res: any, next: any) {
+  const key = cacheKey(req);
+
+  let cachedBody = mcache.get(key);
+  if (cachedBody) {
+    returnPaginatedResult(cachedBody, req, res, false);
+  } else {
+    next();
+  }
+};
+
 const express = require('express');
 const cors = require('cors');
 
 const app = express();
 app.use(cors());
-app.all('/*', requireLogin);
+app.all('/api/*', requireLogin);
+app.all('/*', checkCache);
 app.enable('trust proxy');
 
 const BASE_PATH = '/api';
@@ -32,6 +51,15 @@ const CONTENT_TYPE_HEADER = 'Content-Type';
 const JSON_HEADER_VALUE = 'application/json';
 const DEFAULT_PAGE_SIZE = 50;
 const SORT_DIRECTIONS = ['ASC', 'DESC'];
+
+const NFT_TDH_SORT = [
+  'card_tdh',
+  'card_tdh__raw',
+  'card_balance',
+  'total_tdh',
+  'total_balance',
+  'total_tdh__raw'
+];
 
 const TDH_SORT = [
   'boosted_tdh',
@@ -131,8 +159,17 @@ function fullUrl(req: any, next: boolean) {
   }
 }
 
-function returnPaginatedResult(result: db.DBResponse, req: any, res: any) {
+function returnPaginatedResult(
+  result: db.DBResponse,
+  req: any,
+  res: any,
+  skipCache?: boolean
+) {
   result.next = fullUrl(req, result.next);
+
+  if (!skipCache) {
+    mcache.put(cacheKey(req), result, CACHE_TIME_MS);
+  }
   res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
   res.end(JSON.stringify(result));
 }
@@ -505,6 +542,17 @@ app.get(
           : DEFAULT_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
+      const sort =
+        req.query.sort && NFT_TDH_SORT.includes(req.query.sort)
+          ? req.query.sort
+          : 'card_tdh';
+
+      const sortDir =
+        req.query.sort_direction &&
+        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+          ? req.query.sort_direction
+          : 'desc';
+
       const wallets = req.query.wallet;
 
       console.log(
@@ -513,17 +561,23 @@ app.get(
         '[NFT TDH]',
         `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
       );
-      db.fetchNftTdh(pageSize, page, contract, nftId, wallets).then(
-        (result) => {
-          result.data.map((d: any) => {
-            d.memes = JSON.parse(d.memes);
-            d.memes_ranks = JSON.parse(d.memes_ranks);
-            d.gradients = JSON.parse(d.gradients);
-            d.gradients_ranks = JSON.parse(d.gradients_ranks);
-          });
-          returnPaginatedResult(result, req, res);
-        }
-      );
+      db.fetchNftTdh(
+        pageSize,
+        page,
+        contract,
+        nftId,
+        wallets,
+        sort,
+        sortDir
+      ).then((result) => {
+        result.data.map((d: any) => {
+          d.memes = JSON.parse(d.memes);
+          d.memes_ranks = JSON.parse(d.memes_ranks);
+          d.gradients = JSON.parse(d.gradients);
+          d.gradients_ranks = JSON.parse(d.gradients_ranks);
+        });
+        returnPaginatedResult(result, req, res);
+      });
     } catch (e) {
       console.log(
         new Date(),
