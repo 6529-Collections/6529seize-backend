@@ -34,3 +34,9 @@ export function getLastTDH() {
 export function delay(time: number) {
   return new Promise((resolve) => setTimeout(resolve, time));
 }
+
+export function getHoursAgo(date: Date) {
+  const now = new Date();
+  const msBetweenDates = Math.abs(date.getTime() - now.getTime());
+  return msBetweenDates / (60 * 60 * 1000);
+}

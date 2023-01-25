@@ -7,7 +7,7 @@ import { ENS } from './entities/IENS';
 import { NFT, NFTWithTDH } from './entities/INFT';
 import { Owner, OwnerTags } from './entities/IOwner';
 import { Transaction } from './entities/ITransaction';
-import { delay, getLastTDH } from './helpers';
+import { delay, getHoursAgo, getLastTDH } from './helpers';
 import { findMemesExtendedData } from './memes_extended_data';
 import { findNFTs } from './nfts';
 import { findNftMarketStats } from './nft_market_stats';
@@ -120,15 +120,16 @@ cron.schedule('29 6 * * *', async function () {
   refreshEns();
 });
 
-// CALCULATE TDH AT 00:01
-cron.schedule('1 0 * * *', async function () {
-  tdh();
+// CALCULATE TDH AT 00:01,00:15,00:30,00:45
+cron.schedule('1,15,30,45 0 * * *', async function () {
+  tdhLoop();
 });
 
-// CALCULATE TDH AT 00:30
-cron.schedule('30 0 * * *', async function () {
-  nftTdh();
-});
+async function tdhLoop() {
+  console.log(new Date(), '[RUNNING NFTS LOOP]');
+  await tdh();
+  await nftTdh();
+}
 
 // UPLOAD TDH AT 01:01
 cron.schedule('1 1 * * *', async function () {
@@ -277,16 +278,28 @@ async function memesExtendedData() {
 async function tdh() {
   const lastTDHCalc = getLastTDH();
 
-  const block = await db.fetchLatestTransactionsBlockNumber(lastTDHCalc);
-  const nfts = await db.fetchAllNFTs();
-  const owners = await db.fetchAllOwnersAddresses();
+  const lastTdhDB = await db.fetchLatestTDHBDate();
+  const hoursAgo = getHoursAgo(new Date(lastTdhDB));
 
-  const tdhResponse = await findTDH(block, lastTDHCalc, nfts, owners, db);
-  await db.persistTDH(
-    tdhResponse.block,
-    tdhResponse.timestamp,
-    tdhResponse.tdh
-  );
+  if (hoursAgo > 24) {
+    const block = await db.fetchLatestTransactionsBlockNumber(lastTDHCalc);
+    const nfts = await db.fetchAllNFTs();
+    const owners = await db.fetchAllOwnersAddresses();
+
+    const tdhResponse = await findTDH(block, lastTDHCalc, nfts, owners, db);
+    await db.persistTDH(
+      tdhResponse.block,
+      tdhResponse.timestamp,
+      tdhResponse.tdh
+    );
+  } else {
+    console.log(
+      new Date(),
+      `[TDH]`,
+      `[TODAY'S TDH ALREADY CALCULATED ${Math.floor(hoursAgo)} hrs ago]`,
+      `[SKIPPING...]`
+    );
+  }
 }
 
 async function nftTdh() {

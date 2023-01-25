@@ -272,7 +272,10 @@ export const findNFTs = async (
   reset: boolean
 ) => {
   const newMemes = await processMemes(startingNFTS, transactions);
-  const newGradients = await processGradients(startingNFTS, transactions);
+  // const newGradients = await processGradients(startingNFTS, transactions);
+  const newGradients = [...startingNFTS].filter((nft) =>
+    areEqualAddresses(nft.contract, GRADIENT_CONTRACT)
+  );
 
   const allNewNFTS = newMemes.concat(newGradients);
 

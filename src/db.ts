@@ -563,6 +563,12 @@ export async function fetchLatestTransactionsBlockNumber(beforeDate?: Date) {
   return r.length > 0 ? r[0].block : 0;
 }
 
+export async function fetchLatestTDHBDate() {
+  let sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
+  const r = await execSQL(sql);
+  return r.length > 0 ? r[0].timestamp : 0;
+}
+
 export async function fetchLatestTDHBlockNumber() {
   let sql = `SELECT block_number FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await execSQL(sql);
