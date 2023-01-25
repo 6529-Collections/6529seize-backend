@@ -139,7 +139,11 @@ async function processMemes(
         id: tokenId,
         contract: MEMES_CONTRACT,
         created_at: new Date(),
-        mint_date: new Date(createdTransactions[0].transaction_date),
+        mint_date: new Date(
+          createdTransactions[0]
+            ? createdTransactions[0].transaction_date
+            : new Date()
+        ),
         mint_price: mintPrice,
         supply: supply,
         name: fullMetadata.rawMetadata?.name,

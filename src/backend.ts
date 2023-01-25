@@ -372,8 +372,8 @@ async function start() {
   // await transactions();
   // await discoverEns(now);
   // await nfts();
-  // await memesExtendedData();
   // await owners();
+  // await memesExtendedData();
   // await ownerTags();
   // await tdh();
   // await nftTdh();

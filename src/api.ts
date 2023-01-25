@@ -2,7 +2,7 @@ import { ServerResponse } from 'http';
 import * as db from './db-api';
 import mcache from 'memory-cache';
 
-const CACHE_TIME_MS = 2 * 60 * 1000;
+const CACHE_TIME_MS = 3 * 60 * 1000;
 
 function cacheKey(req: any) {
   return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
