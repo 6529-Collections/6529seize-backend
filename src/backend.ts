@@ -126,7 +126,7 @@ cron.schedule('1,15,30,45 0 * * *', async function () {
 });
 
 async function tdhLoop() {
-  console.log(new Date(), '[RUNNING NFTS LOOP]');
+  console.log(new Date(), '[RUNNING TDH LOOP]');
   await tdh();
   await nftTdh();
 }
@@ -388,7 +388,7 @@ async function start() {
   // await owners();
   // await memesExtendedData();
   // await ownerTags();
-  await tdh();
+  // await tdh();
   // await nftTdh();
   // tdhUpload();
   // discoverEns();
