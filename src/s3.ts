@@ -319,12 +319,10 @@ export const persistS3 = async (nfts: NFT[]) => {
               `[${err}]`
             );
           });
-          const writeStream = new Stream.PassThrough();
-          const ffstream = resizedVideoStream.pipe(writeStream, {
-            end: true
-          });
+          const ffstream = new Stream.PassThrough();
+          resizedVideoStream.writeToStream(ffstream);
 
-          const buffers: any[] = [];
+          const buffers: any = [];
           ffstream.on('data', function (buf) {
             buffers.push(buf);
           });
