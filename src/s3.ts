@@ -321,11 +321,12 @@ export const persistS3 = async (nfts: NFT[]) => {
           });
           const ffstream = new Stream.PassThrough();
           resizedVideoStream.writeToStream(ffstream);
+          resizedVideoStream.run();
 
           const buffers: any = [];
           ffstream.on('data', function (buf) {
             if (buf.length > 0) {
-              console.log(n.id, `[ADDED CHUNK ${buf.length}]`);
+              console.log(n.id, `[ADDED CHUNK - SIZE: ${buf.length}]`);
               buffers.push(buf);
             } else {
               console.log(n.id, `[CHUNK EMPTY]`);
