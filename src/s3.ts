@@ -14,6 +14,8 @@ import ffmpeg from 'fluent-ffmpeg';
 const imagescript = require('imagescript');
 
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+console.log('ffmpeg', ffmpegPath);
+
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 const THUMBNAIL_HEIGHT = 450;
@@ -343,20 +345,22 @@ export const persistS3 = async (nfts: NFT[]) => {
               `[COMPRESSION FINISHED ${compressedVideoKey}]`
             );
 
-            const uploadedCompressedVideo = await s3
-              .upload({
-                Bucket: myBucket,
-                Key: compressedVideoKey,
-                Body: Buffer.from(outputBuffer),
-                ContentType: `video/${videoFormat.toLowerCase()}`
-              })
-              .promise();
+            if (outputBuffer.length > 0) {
+              const uploadedCompressedVideo = await s3
+                .upload({
+                  Bucket: myBucket,
+                  Key: compressedVideoKey,
+                  Body: Buffer.from(outputBuffer),
+                  ContentType: `video/${videoFormat.toLowerCase()}`
+                })
+                .promise();
 
-            console.log(
-              new Date(),
-              '[S3]',
-              `[COMPRESSED ${videoFormat} PERSISTED AT ${uploadedCompressedVideo.Location}`
-            );
+              console.log(
+                new Date(),
+                '[S3]',
+                `[COMPRESSED ${videoFormat} PERSISTED AT ${uploadedCompressedVideo.Location}`
+              );
+            }
           });
         }
       }
@@ -422,12 +426,11 @@ async function resizeVideo(
   format: string
 ): Promise<ffmpeg.FfmpegCommand> {
   return ffmpeg({ source: url })
-    .addOption('-crf 35')
     .videoCodec('libx264')
     .audioCodec('aac')
     .inputFormat(format)
+    .addOption('-crf 35')
     .outputFormat(format)
-    .native()
     .outputOptions(['-movflags frag_keyframe+empty_moov']);
 }
 
