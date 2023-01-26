@@ -311,6 +311,15 @@ export const persistS3 = async (nfts: NFT[]) => {
             videoURL,
             videoFormat.toLowerCase()
           );
+          resizedVideoStream.on('error', function (err) {
+            console.log(
+              new Date(),
+              '[S3]',
+              `[resizedVideoStream]`,
+              `[COMPRESSION FAILED ${compressedVideoKey}]`,
+              `[${err}]`
+            );
+          });
 
           const ffstream = new Stream.PassThrough();
           resizedVideoStream.writeToStream(ffstream);
