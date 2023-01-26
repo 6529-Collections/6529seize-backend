@@ -733,7 +733,7 @@ app.get(`${BASE_PATH}`, async function (req: any, res: any, next: any) {
   res.send(
     JSON.stringify({
       message: '6529 SEIZE API',
-      image: image[0].image
+      image: image[0].scaled ? image[0].scaled : image[0].image
     })
   );
 });

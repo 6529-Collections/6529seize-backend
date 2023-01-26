@@ -25,8 +25,8 @@ const cron = require('node-cron');
 
 let STARTING = true;
 
-// PULL EVERY 2 MINUTES
-cron.schedule('*/2 * * * *', async function () {
+// PULL EVERY 4 MINUTES
+cron.schedule('*/4 * * * *', async function () {
   if (!STARTING) {
     nftsLoop();
   }
@@ -38,13 +38,19 @@ async function nftsLoop() {
   await owners();
   await memesExtendedData();
   await ownerTags();
-  nftS3();
 }
 
 // PULL EVERY 3 MINUTES
 cron.schedule('*/3 * * * *', async function () {
   if (!STARTING) {
     transactionsLoop();
+  }
+});
+
+// PULL EVERY 5 MINUTES
+cron.schedule('*/3 * * * *', async function () {
+  if (!STARTING) {
+    nftS3();
   }
 });
 
@@ -304,14 +310,12 @@ async function tdh() {
 
 async function nftTdh() {
   const tdh = await db.fetchAllTDH();
-
   const nftTdh = await findNftTDH(tdh);
-
   await db.persistNftTdh(nftTdh);
 }
 
 async function nftS3() {
-  if (process.env.NODE_ENV == 'production') {
+  if (process.env.NODE_ENV == 'development') {
     const nfts = await db.fetchAllNFTs();
     persistS3(nfts);
   } else {
@@ -381,20 +385,23 @@ async function start() {
     `[CONFIG ${process.env.NODE_ENV}]`,
     `[EXECUTING START SCRIPT...]`
   );
+
   // Uncomment to call on start
-  // await transactions();
+
+  // await transactionsLoop();
+  // await nftsLoop();
+  // await tdhLoop();
+
   // await discoverEns(now);
-  // await nfts();
-  // await owners();
-  // await memesExtendedData();
-  // await ownerTags();
-  // await tdh();
-  // await nftTdh();
   // tdhUpload();
   // discoverEns();
   // runValues();
   // await replayTransactionValues();
   // await ownerMetrics(true);
+
+  // await nfts(true);
+  nftS3();
+
   STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
 }

@@ -7,9 +7,17 @@ import {
 } from './constants';
 import AWS from 'aws-sdk';
 import fetch from 'node-fetch';
-import jimp from 'jimp';
+import sharp from 'sharp';
+import { Stream } from 'stream';
+import ffmpeg from 'fluent-ffmpeg';
 
-const MAX_HEIGHT = 450;
+const imagescript = require('imagescript');
+
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+ffmpeg.setFfmpegPath(ffmpegPath);
+
+const THUMBNAIL_HEIGHT = 450;
+const SCALED_HEIGHT = 1000;
 const config = require('./config');
 
 const s3 = new AWS.S3({
@@ -17,7 +25,7 @@ const s3 = new AWS.S3({
   secretAccessKey: config.aws.AWS_SECRET_ACCESS_KEY
 });
 
-export const persistS3 = (nfts: NFT[]) => {
+export const persistS3 = async (nfts: NFT[]) => {
   console.log(
     new Date(),
     '[S3]',
@@ -41,7 +49,9 @@ export const persistS3 = (nfts: NFT[]) => {
       const imageKey = `images/original/${n.contract}/${n.id}.${format}`;
 
       try {
-        await s3.headObject({ Bucket: myBucket, Key: imageKey }).promise();
+        const a = await s3
+          .headObject({ Bucket: myBucket, Key: imageKey })
+          .promise();
       } catch (error: any) {
         if (error.code === 'NotFound') {
           console.log(
@@ -88,8 +98,75 @@ export const persistS3 = (nfts: NFT[]) => {
         }
       }
 
-      if (n.thumbnail && n.thumbnail.includes('scaled')) {
-        const thumbnailKey = `images/scaled_x450/${n.contract}/${n.id}.${format}`;
+      if (n.scaled) {
+        let scaledFormat = 'WEBP';
+        if (format.toUpperCase() == 'GIF') {
+          scaledFormat = 'GIF';
+        }
+        const scaledKey = `images/scaled_x1000/${n.contract}/${n.id}.${scaledFormat}`;
+
+        try {
+          await s3.headObject({ Bucket: myBucket, Key: scaledKey }).promise();
+        } catch (error: any) {
+          if (error.code === 'NotFound') {
+            console.log(
+              new Date(),
+              '[S3]',
+              `[MISSING SCALED]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
+            );
+
+            console.log(
+              new Date(),
+              '[S3]',
+              `[FETCHING IMAGE FOR SCALED]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
+            );
+
+            const scaledURL = `${NFT_ORIGINAL_IMAGE_LINK}${n.contract}/${n.id}.${format}`;
+            const res = await fetch(scaledURL);
+            const blob = await res.arrayBuffer();
+            console.log(
+              new Date(),
+              '[S3]',
+              `[IMAGE FOR SCALED DOWNLOADED]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
+            );
+
+            const scaledBuffer = await resizeImage(
+              n,
+              scaledFormat == 'WEBP' ? true : false,
+              Buffer.from(blob),
+              SCALED_HEIGHT
+            );
+
+            const uploadedScaledImage = await s3
+              .upload({
+                Bucket: myBucket,
+                Key: scaledKey,
+                Body: scaledBuffer,
+                ContentType: `image/${scaledFormat}`
+              })
+              .promise();
+
+            console.log(
+              new Date(),
+              '[S3]',
+              `[SCALED PERSISTED AT ${uploadedScaledImage.Location}`
+            );
+          }
+        }
+      }
+
+      if (n.thumbnail) {
+        let thumbnailFormat = 'WEBP';
+        if (format.toUpperCase() == 'GIF') {
+          thumbnailFormat = 'GIF';
+        }
+        const thumbnailKey = `images/scaled_x450/${n.contract}/${n.id}.${thumbnailFormat}`;
 
         try {
           await s3
@@ -124,13 +201,11 @@ export const persistS3 = (nfts: NFT[]) => {
               `[ID ${n.id}]`
             );
 
-            const thumbnail = await resize(
+            const thumbBuffer = await resizeImage(
+              n,
+              thumbnailFormat == 'WEBP' ? true : false,
               Buffer.from(blob),
-              n.metadata.image_details
-            );
-
-            const thumbBuffer = await thumbnail.getBufferAsync(
-              thumbnail.getMIME()
+              THUMBNAIL_HEIGHT
             );
 
             const uploadedThumbnail = await s3
@@ -138,7 +213,7 @@ export const persistS3 = (nfts: NFT[]) => {
                 Bucket: myBucket,
                 Key: thumbnailKey,
                 Body: thumbBuffer,
-                ContentType: `image/${format.toLowerCase()}`
+                ContentType: `image/${thumbnailFormat}`
               })
               .promise();
 
@@ -205,6 +280,86 @@ export const persistS3 = (nfts: NFT[]) => {
           );
         }
       }
+
+      const compressedVideoKey = `videos/${n.contract}/compressed/${n.id}.${videoFormat}`;
+
+      try {
+        await s3
+          .headObject({ Bucket: myBucket, Key: compressedVideoKey })
+          .promise();
+      } catch (error: any) {
+        if (error.code === 'NotFound') {
+          console.log(
+            new Date(),
+            '[S3]',
+            `[MISSING COMPRESSED ${videoFormat}]`,
+            `[CONTRACT ${n.contract}]`,
+            `[ID ${n.id}]`
+          );
+
+          console.log(
+            new Date(),
+            '[S3]',
+            `[COMPRESSING ${compressedVideoKey}]`
+          );
+
+          const videoURL = n.metadata.animation;
+
+          const resizedVideoStream = await resizeVideo(
+            videoURL,
+            videoFormat.toLowerCase()
+          );
+          resizedVideoStream.on('error', function (err) {
+            console.log(
+              new Date(),
+              '[S3]',
+              `[COMPRESSION FAILED ${compressedVideoKey}]`,
+              `[${err}]`
+            );
+          });
+          const writeStream = new Stream.PassThrough();
+          const ffstream = resizedVideoStream.pipe(writeStream, {
+            end: true
+          });
+
+          const buffers: any[] = [];
+          ffstream.on('data', function (buf) {
+            buffers.push(buf);
+          });
+          ffstream.on('error', function (err) {
+            console.log(
+              new Date(),
+              '[S3]',
+              `[COMPRESSION FAILED ${compressedVideoKey}]`,
+              `[${err}]`
+            );
+          });
+          ffstream.on('end', async function () {
+            const outputBuffer = Buffer.concat(buffers);
+
+            console.log(
+              new Date(),
+              '[S3]',
+              `[COMPRESSION FINISHED ${compressedVideoKey}]`
+            );
+
+            const uploadedCompressedVideo = await s3
+              .upload({
+                Bucket: myBucket,
+                Key: compressedVideoKey,
+                Body: Buffer.from(outputBuffer),
+                ContentType: `video/${videoFormat.toLowerCase()}`
+              })
+              .promise();
+
+            console.log(
+              new Date(),
+              '[S3]',
+              `[COMPRESSED ${videoFormat} PERSISTED AT ${uploadedCompressedVideo.Location}`
+            );
+          });
+        }
+      }
     }
 
     if (animationDetails && animationDetails.format == 'HTML') {
@@ -262,8 +417,45 @@ export const persistS3 = (nfts: NFT[]) => {
   });
 };
 
-async function resize(buffer: Buffer, image_details: any) {
-  const image = await jimp.read(buffer);
-  const resized = image.resize(jimp.AUTO, MAX_HEIGHT);
-  return resized;
+async function resizeVideo(
+  url: string,
+  format: string
+): Promise<ffmpeg.FfmpegCommand> {
+  return ffmpeg({ source: url })
+    .addOption('-crf 35')
+    .videoCodec('libx264')
+    .audioCodec('aac')
+    .inputFormat(format)
+    .outputFormat(format)
+    .outputOptions(['-movflags frag_keyframe+empty_moov']);
+}
+
+async function resizeImage(
+  nft: NFT,
+  toWEBP: boolean,
+  buffer: Buffer,
+  height: number
+) {
+  console.log(
+    new Date(),
+    `[RESIZING FOR ${nft.contract} #${nft.id} (WEBP: ${toWEBP})]`,
+    `[TO TARGET HEIGHT ${height}]`
+  );
+  try {
+    if (toWEBP) {
+      return await sharp(buffer).resize({ height: height }).webp().toBuffer();
+    } else {
+      const gif = await imagescript.GIF.decode(buffer);
+      const scaleFactor = gif.height / height;
+      gif.resize(gif.width / scaleFactor, height);
+      return gif.encode();
+    }
+  } catch {
+    console.log(
+      new Date(),
+      `[RESIZING FOR ${nft.contract} #${nft.id}]`,
+      `[TO TARGET HEIGHT ${height}]`,
+      `[FAILED!]`
+    );
+  }
 }

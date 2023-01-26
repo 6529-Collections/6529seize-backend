@@ -120,7 +120,7 @@ async function fetchPaginated(
 }
 
 export async function fetchRandomImage() {
-  const sql = `SELECT image from ${NFTS_TABLE} WHERE CONTRACT=${mysql.escape(
+  const sql = `SELECT scaled,image from ${NFTS_TABLE} WHERE CONTRACT=${mysql.escape(
     MEMES_CONTRACT
   )} ORDER BY RAND() LIMIT 1;`;
   return execSQL(sql);

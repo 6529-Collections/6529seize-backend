@@ -36,7 +36,10 @@ export const INFURA_KEY = 'b496145d088a4fe5a5861a6db9ee2034';
 export const NFT_ORIGINAL_IMAGE_LINK =
   'https://d3lqz0a4bldqgf.cloudfront.net/images/original/';
 
-export const NFT_SCALED_IMAGE_LINK =
+export const NFT_SCALED1000_IMAGE_LINK =
+  'https://d3lqz0a4bldqgf.cloudfront.net/images/scaled_x1000/';
+
+export const NFT_SCALED450_IMAGE_LINK =
   'https://d3lqz0a4bldqgf.cloudfront.net/images/scaled_x450/';
 
 export const NFT_VIDEO_LINK = 'https://d3lqz0a4bldqgf.cloudfront.net/videos/';
