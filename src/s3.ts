@@ -311,14 +311,7 @@ export const persistS3 = async (nfts: NFT[]) => {
             videoURL,
             videoFormat.toLowerCase()
           );
-          resizedVideoStream.on('error', function (err) {
-            console.log(
-              new Date(),
-              '[S3]',
-              `[COMPRESSION FAILED ${compressedVideoKey}]`,
-              `[${err}]`
-            );
-          });
+
           const ffstream = new Stream.PassThrough();
           resizedVideoStream.writeToStream(ffstream);
           resizedVideoStream.run();
@@ -436,7 +429,7 @@ async function resizeVideo(
     .audioCodec('aac')
     .inputFormat(format)
     .addOption('-crf 35')
-    .addOutputOption('-f', 'segment', '-segment_time', '60')
+    .addOutputOption('-f segment')
     .outputFormat(format)
     .outputOptions(['-movflags frag_keyframe+empty_moov']);
 }
