@@ -5,9 +5,9 @@
   "scripts": {
     "backend:local": "NODE_ENV=local nodemon src/backend.ts",
     "api:local": "NODE_ENV=local nodemon src/api.ts",
-    "backend:dev": "NODE_ENV=development node --max-old-space-size=5120 build/backend.js",
+    "backend:dev": "NODE_ENV=development NODE_OPTIONS=--max-old-space-size=5120 node build/backend.js",
     "api:dev": "NODE_ENV=development node build/api.js",
-    "backend:prod": "NODE_ENV=production node --max-old-space-size=5120 build/backend.js",
+    "backend:prod": "NODE_ENV=production NODE_OPTIONS=--max-old-space-size=5120 node build/backend.js",
     "api:prod": "NODE_ENV=production node build/api.js",
     "build": "rimraf ./build && tsc"
   },
