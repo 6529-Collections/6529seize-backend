@@ -436,6 +436,7 @@ async function resizeVideo(
     .audioCodec('aac')
     .inputFormat(format)
     .addOption('-crf 35')
+    .addOutputOption('-f', 'segment', '-segment_time', '60')
     .outputFormat(format)
     .outputOptions(['-movflags frag_keyframe+empty_moov']);
 }
