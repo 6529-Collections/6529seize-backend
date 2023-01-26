@@ -324,7 +324,12 @@ export const persistS3 = async (nfts: NFT[]) => {
 
           const buffers: any = [];
           ffstream.on('data', function (buf) {
-            buffers.push(buf);
+            if (buf.length > 0) {
+              console.log(n.id, `[ADDED CHUNK ${buf.length}]`);
+              buffers.push(buf);
+            } else {
+              console.log(n.id, `[CHUNK EMPTY]`);
+            }
           });
           ffstream.on('error', function (err) {
             console.log(
@@ -335,29 +340,31 @@ export const persistS3 = async (nfts: NFT[]) => {
             );
           });
           ffstream.on('end', async function () {
-            const outputBuffer = Buffer.concat(buffers);
-
-            console.log(
-              new Date(),
-              '[S3]',
-              `[COMPRESSION FINISHED ${compressedVideoKey}]`
-            );
-
-            if (outputBuffer.length > 0) {
-              const uploadedCompressedVideo = await s3
-                .upload({
-                  Bucket: myBucket,
-                  Key: compressedVideoKey,
-                  Body: outputBuffer,
-                  ContentType: `video/${videoFormat.toLowerCase()}`
-                })
-                .promise();
+            if (buffers.length > 0) {
+              const outputBuffer = Buffer.concat(buffers);
 
               console.log(
                 new Date(),
                 '[S3]',
-                `[COMPRESSED ${videoFormat} PERSISTED AT ${uploadedCompressedVideo.Location}`
+                `[COMPRESSION FINISHED ${compressedVideoKey}]`
               );
+
+              if (outputBuffer.length > 0) {
+                const uploadedCompressedVideo = await s3
+                  .upload({
+                    Bucket: myBucket,
+                    Key: compressedVideoKey,
+                    Body: outputBuffer,
+                    ContentType: `video/${videoFormat.toLowerCase()}`
+                  })
+                  .promise();
+
+                console.log(
+                  new Date(),
+                  '[S3]',
+                  `[COMPRESSED ${videoFormat} PERSISTED AT ${uploadedCompressedVideo.Location}`
+                );
+              }
             }
           });
         }
