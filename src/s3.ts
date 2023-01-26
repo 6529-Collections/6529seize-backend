@@ -350,7 +350,7 @@ export const persistS3 = async (nfts: NFT[]) => {
                 .upload({
                   Bucket: myBucket,
                   Key: compressedVideoKey,
-                  Body: Buffer.from(outputBuffer),
+                  Body: outputBuffer,
                   ContentType: `video/${videoFormat.toLowerCase()}`
                 })
                 .promise();
