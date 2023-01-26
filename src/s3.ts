@@ -427,6 +427,7 @@ async function resizeVideo(
     .audioCodec('aac')
     .inputFormat(format)
     .outputFormat(format)
+    .native()
     .outputOptions(['-movflags frag_keyframe+empty_moov']);
 }
 
