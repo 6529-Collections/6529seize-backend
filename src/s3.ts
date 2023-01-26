@@ -13,11 +13,6 @@ import ffmpeg from 'fluent-ffmpeg';
 
 const imagescript = require('imagescript');
 
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
-console.log('ffmpeg', ffmpegPath);
-
-ffmpeg.setFfmpegPath(ffmpegPath);
-
 const THUMBNAIL_HEIGHT = 450;
 const SCALED_HEIGHT = 1000;
 const config = require('./config');
