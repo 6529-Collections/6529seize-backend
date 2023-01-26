@@ -340,14 +340,14 @@ export const persistS3 = async (nfts: NFT[]) => {
             );
           });
           ffstream.on('end', async function () {
+            console.log(
+              new Date(),
+              '[S3]',
+              `[COMPRESSION FINISHED ${compressedVideoKey}]`
+            );
+
             if (buffers.length > 0) {
               const outputBuffer = Buffer.concat(buffers);
-
-              console.log(
-                new Date(),
-                '[S3]',
-                `[COMPRESSION FINISHED ${compressedVideoKey}]`
-              );
 
               if (outputBuffer.length > 0) {
                 const uploadedCompressedVideo = await s3
