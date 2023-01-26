@@ -303,7 +303,7 @@ export const persistS3 = async (nfts: NFT[]) => {
             `[COMPRESSING ${compressedVideoKey}]`
           );
 
-          const videoURL = n.metadata.animation;
+          const videoURL = n.animation ? n.animation : n.metadata.animation;
 
           const resizedVideoStream = await resizeVideo(
             videoURL,
