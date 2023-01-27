@@ -375,6 +375,12 @@ async function handleVideoCompression(n: NFT, videoFormat: any, myBucket: any) {
 
     const buffers: any = [];
     ffstream.on('data', function (buf) {
+      console.log(
+        new Date(),
+        `[S3]`,
+        `[${compressedVideoKey}]`,
+        `[ADDING CHUNK OF LENGTH ${buf.length}]`
+      );
       if (buf.length > 0) {
         buffers.push(buf);
       }
