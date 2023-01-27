@@ -315,9 +315,9 @@ async function nftTdh() {
 }
 
 async function nftS3() {
-  if (process.env.NODE_ENV == 'development') {
+  if (process.env.NODE_ENV == 'local') {
     const nfts = await db.fetchAllNFTs();
-    persistS3(nfts);
+    await persistS3(nfts);
   } else {
     console.log(
       new Date(),
@@ -400,9 +400,9 @@ async function start() {
   // await ownerMetrics(true);
 
   // await nfts(true);
-  nftS3();
+  await nftS3();
 
-  STARTING = false;
+  // STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
 }
 

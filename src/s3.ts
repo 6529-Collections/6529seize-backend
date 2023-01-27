@@ -13,6 +13,11 @@ import ffmpeg from 'fluent-ffmpeg';
 
 const imagescript = require('imagescript');
 
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg');
+console.log('ffmpeg', ffmpegPath.path, ffmpegPath.version);
+
+ffmpeg.setFfmpegPath(ffmpegPath.path);
+
 const THUMBNAIL_HEIGHT = 450;
 const SCALED_HEIGHT = 1000;
 const config = require('./config');
@@ -317,16 +322,12 @@ export const persistS3 = async (nfts: NFT[]) => {
           });
 
           const ffstream = new Stream.PassThrough();
-          resizedVideoStream.writeToStream(ffstream);
-          resizedVideoStream.run();
+          resizedVideoStream.pipe(ffstream, { end: true });
 
           const buffers: any = [];
           ffstream.on('data', function (buf) {
             if (buf.length > 0) {
-              console.log(n.id, `[ADDED CHUNK - SIZE: ${buf.length}]`);
               buffers.push(buf);
-            } else {
-              console.log(n.id, `[CHUNK EMPTY]`);
             }
           });
           ffstream.on('error', function (err) {
@@ -433,7 +434,6 @@ async function resizeVideo(
     .audioCodec('aac')
     .inputFormat(format)
     .addOption('-crf 35')
-    .addOutputOption('-f segment')
     .outputFormat(format)
     .outputOptions(['-movflags frag_keyframe+empty_moov']);
 }

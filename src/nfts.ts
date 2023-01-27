@@ -1,4 +1,5 @@
 import { Alchemy, Nft, Utils } from 'alchemy-sdk';
+import { format } from 'path';
 import {
   ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
@@ -114,7 +115,14 @@ async function processMemes(
 
       const tokenContract = fullMetadata.contract;
 
-      const tokenPath = `${MEMES_CONTRACT}/${tokenId}.WEBP`;
+      const format = fullMetadata.rawMetadata?.image_details.format;
+      let tokenPath;
+      if (format.toUpperCase() == 'GIF') {
+        tokenPath = `${MEMES_CONTRACT}/${tokenId}.${format}`;
+      } else {
+        tokenPath = `${MEMES_CONTRACT}/${tokenId}.WEBP`;
+      }
+      const tokenPathOriginal = `${MEMES_CONTRACT}/${tokenId}.${format}`;
 
       let animation = fullMetadata.rawMetadata?.animation;
       const animationDetails = fullMetadata.rawMetadata?.animation_details;
@@ -158,7 +166,7 @@ async function processMemes(
         uri: fullMetadata.tokenUri?.raw,
         thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
         scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
-        image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPath}`,
+        image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
         animation: animation,
         metadata: fullMetadata.rawMetadata,
         tdh: startingNft ? startingNft.tdh : 0,
@@ -226,7 +234,14 @@ async function processGradients(
       const rawMeta = fullMetadata.rawMetadata;
 
       if (rawMeta && rawMeta.image) {
-        const tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.WEBP`;
+        const format = rawMeta!.image!.split('.').pop();
+        let tokenPath;
+        if (format!.toUpperCase() == 'GIF') {
+          tokenPath = `${MEMES_CONTRACT}/${tokenId}.${format}`;
+        } else {
+          tokenPath = `${MEMES_CONTRACT}/${tokenId}.WEBP`;
+        }
+        const tokenPathOriginal = `${MEMES_CONTRACT}/${tokenId}.${format}`;
 
         const nft: NFTWithTDH = {
           id: tokenId,
@@ -244,7 +259,7 @@ async function processGradients(
           uri: fullMetadata.tokenUri?.raw,
           thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
           scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
-          image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPath}`,
+          image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
           animation: undefined,
           metadata: rawMeta,
           tdh: startingNft ? startingNft.tdh : 0,

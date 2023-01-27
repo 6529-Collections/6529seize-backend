@@ -17,7 +17,11 @@ const requireLogin = async (req: any, res: ServerResponse, next: any) => {
     if (!auth || auth != process.env.API_PASSWORD) {
       res.statusCode = 401;
       const image = await db.fetchRandomImage();
-      res.end(JSON.stringify({ image: image[0].image }));
+      res.end(
+        JSON.stringify({
+          image: image[0].scaled ? image[0].scaled : image[0].image
+        })
+      );
     } else {
       next();
     }
