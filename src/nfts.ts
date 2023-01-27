@@ -237,7 +237,7 @@ async function processGradients(
         const format = rawMeta!.image!.split('.').pop();
         let tokenPath;
         if (format!.toUpperCase() == 'GIF') {
-          tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.${format}`;
+          tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.${format!.toUpperCase()}`;
         } else {
           tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.WEBP`;
         }
