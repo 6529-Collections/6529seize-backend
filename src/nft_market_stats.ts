@@ -7,13 +7,17 @@ import { areEqualAddresses, delay } from './helpers';
 const config = require('./config');
 
 async function getResult(url: string) {
-  const response = await fetch(url, {
-    headers: {
-      'X-API-KEY': config.opensea.OPENSEA_API_KEY,
-      accept: 'application/json'
-    }
-  });
-  return response;
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'X-API-KEY': config.opensea.OPENSEA_API_KEY,
+        accept: 'application/json'
+      }
+    });
+    return response;
+  } catch (err: any) {
+    return null;
+  }
 }
 
 const findFloorPrice = async (stat: any): Promise<number> => {
@@ -26,7 +30,7 @@ const findFloorPrice = async (stat: any): Promise<number> => {
 
   const res = await getResult(url);
 
-  if (res.status === 200) {
+  if (res && res.status === 200) {
     const response = await res.json();
     let floorPrice = 0;
     if (response.orders && response.orders.length > 0) {
