@@ -400,7 +400,7 @@ async function start() {
   // await replayTransactionValues();
   // await ownerMetrics(true);
 
-  await nfts(true);
+  // await nfts(true);
   // await nftS3();
 
   STARTING = false;

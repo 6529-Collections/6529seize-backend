@@ -27,8 +27,7 @@ export const persistS3 = async (nfts: NFT[]) => {
   console.log(
     new Date(),
     '[S3]',
-    `[PROCESSING ASSETS FOR ${nfts.length} NFTS]`,
-    `[ASYNC]`
+    `[PROCESSING ASSETS FOR ${nfts.length} NFTS]`
   );
 
   const myBucket = config.aws.AWS_IMAGES_BUCKET_NAME;
@@ -464,7 +463,7 @@ async function scaleVideo(
   url: string,
   format: string
 ): Promise<ffmpeg.FfmpegCommand> {
-  return ffmpeg({ source: url })
+  const ff = ffmpeg({ source: url })
     .videoCodec('libx264')
     .audioCodec('aac')
     .inputFormat(format)
@@ -474,6 +473,11 @@ async function scaleVideo(
       '-crf 25',
       '-movflags frag_keyframe+empty_moov'
     ]);
+  if (url.endsWith('30.MP4')) {
+    console.log(new Date(), '[S3]', `[SPECIAL CASE 30.MP4`);
+    ff.outputOptions(['-filter:v scale=750:-1']);
+  }
+  return ff;
 }
 
 async function resizeImage(
