@@ -3,7 +3,8 @@ import { areEqualAddresses } from './helpers';
 import {
   GRADIENT_CONTRACT,
   MEMES_CONTRACT,
-  NFT_ORIGINAL_IMAGE_LINK
+  NFT_ORIGINAL_IMAGE_LINK,
+  NFT_SCALED1000_IMAGE_LINK
 } from './constants';
 import AWS from 'aws-sdk';
 import fetch from 'node-fetch';
@@ -101,7 +102,6 @@ export const persistS3 = async (nfts: NFT[]) => {
           scaledFormat = 'GIF';
         }
         const scaledKey = `images/scaled_x1000/${n.contract}/${n.id}.${scaledFormat}`;
-
         try {
           await s3.headObject({ Bucket: myBucket, Key: scaledKey }).promise();
         } catch (error: any) {
@@ -278,7 +278,7 @@ export const persistS3 = async (nfts: NFT[]) => {
         }
       }
 
-      await handleVideoCompression(n, videoFormat, myBucket);
+      await handleVideoScaling(n, videoFormat, myBucket);
     }
 
     if (animationDetails && animationDetails.format == 'HTML') {
@@ -336,36 +336,36 @@ export const persistS3 = async (nfts: NFT[]) => {
   });
 };
 
-async function handleVideoCompression(n: NFT, videoFormat: any, myBucket: any) {
-  const compressedVideoKey = `videos/${n.contract}/compressed/${n.id}.${videoFormat}`;
+async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
+  const scaledVideoKey = `videos/${n.contract}/scaledx750/${n.id}.${videoFormat}`;
 
-  const exists = await compressedVideoExists(myBucket, compressedVideoKey);
+  const exists = await objectExists(myBucket, scaledVideoKey);
   if (!exists) {
     console.log(
       new Date(),
       '[S3]',
-      `[MISSING COMPRESSED ${videoFormat}]`,
+      `[MISSING SCALED ${videoFormat}]`,
       `[CONTRACT ${n.contract}]`,
       `[ID ${n.id}]`
     );
 
-    console.log(new Date(), '[S3]', `[COMPRESSING ${compressedVideoKey}]`);
+    console.log(new Date(), '[S3]', `[SCALING ${scaledVideoKey}]`);
 
-    await createTempFile(myBucket, compressedVideoKey, videoFormat);
+    await createTempFile(myBucket, scaledVideoKey);
 
     const videoURL = n.animation ? n.animation : n.metadata.animation;
 
-    const resizedVideoStream = await resizeVideo(
+    const resizedVideoStream = await scaleVideo(
       videoURL,
       videoFormat.toLowerCase()
     );
     resizedVideoStream.on('error', async function (err) {
-      await deleteTempFile(myBucket, compressedVideoKey);
+      await deleteTempFile(myBucket, scaledVideoKey);
       console.log(
         new Date(),
         '[S3]',
         `[resizedVideoStream]`,
-        `[COMPRESSION FAILED ${compressedVideoKey}]`,
+        `[SCALING FAILED ${scaledVideoKey}]`,
         `[${err}]`
       );
     });
@@ -378,37 +378,33 @@ async function handleVideoCompression(n: NFT, videoFormat: any, myBucket: any) {
       console.log(
         new Date(),
         `[S3]`,
-        `[${compressedVideoKey}]`,
-        `[ADDING CHUNK OF LENGTH ${buf.length}]`
+        `[${scaledVideoKey}]`,
+        `[ADDING CHUNK LENGTH ${buf.length}]`
       );
       if (buf.length > 0) {
         buffers.push(buf);
       }
     });
     ffstream.on('error', async function (err) {
-      await deleteTempFile(myBucket, compressedVideoKey);
+      await deleteTempFile(myBucket, scaledVideoKey);
       console.log(
         new Date(),
         '[S3]',
-        `[COMPRESSION FAILED ${compressedVideoKey}]`,
+        `[SCALING FAILED ${scaledVideoKey}]`,
         `[${err}]`
       );
     });
     ffstream.on('end', async function () {
-      console.log(
-        new Date(),
-        '[S3]',
-        `[COMPRESSION FINISHED ${compressedVideoKey}]`
-      );
+      console.log(new Date(), '[S3]', `[SCALING FINISHED ${scaledVideoKey}]`);
 
       if (buffers.length > 0) {
         const outputBuffer = Buffer.concat(buffers);
 
         if (outputBuffer.length > 0) {
-          const uploadedCompressedVideo = await s3
+          const uploadedScaleddVideo = await s3
             .upload({
               Bucket: myBucket,
-              Key: compressedVideoKey,
+              Key: scaledVideoKey,
               Body: outputBuffer,
               ContentType: `video/${videoFormat.toLowerCase()}`
             })
@@ -417,19 +413,16 @@ async function handleVideoCompression(n: NFT, videoFormat: any, myBucket: any) {
           console.log(
             new Date(),
             '[S3]',
-            `[COMPRESSED ${videoFormat} PERSISTED AT ${uploadedCompressedVideo.Location}`
+            `[SCALED ${videoFormat} PERSISTED AT ${uploadedScaleddVideo.Location}`
           );
         }
       }
-      await deleteTempFile(myBucket, compressedVideoKey);
+      await deleteTempFile(myBucket, scaledVideoKey);
     });
   }
 }
 
-async function compressedVideoExists(
-  myBucket: any,
-  key: any
-): Promise<boolean> {
+async function objectExists(myBucket: any, key: any): Promise<boolean> {
   try {
     await s3.headObject({ Bucket: myBucket, Key: key }).promise();
     return true;
@@ -448,13 +441,12 @@ async function compressedVideoExists(
   return false;
 }
 
-async function createTempFile(myBucket: any, key: any, videoFormat: string) {
+async function createTempFile(myBucket: any, key: any) {
   await s3
     .upload({
       Bucket: myBucket,
       Key: `${key}__temp`,
-      Body: Buffer.from('temp'),
-      ContentType: `video/${videoFormat.toLowerCase()}`
+      Body: Buffer.from('temp')
     })
     .promise();
 }
@@ -468,7 +460,7 @@ async function deleteTempFile(myBucket: any, key: any) {
     .promise();
 }
 
-async function resizeVideo(
+async function scaleVideo(
   url: string,
   format: string
 ): Promise<ffmpeg.FfmpegCommand> {
@@ -476,9 +468,12 @@ async function resizeVideo(
     .videoCodec('libx264')
     .audioCodec('aac')
     .inputFormat(format)
-    .addOption('-crf 35')
     .outputFormat(format)
-    .outputOptions(['-movflags frag_keyframe+empty_moov']);
+    .outputOptions([
+      '-filter:v scale=-1:750,scale=trunc(iw/2)*2:750',
+      '-crf 25',
+      '-movflags frag_keyframe+empty_moov'
+    ]);
 }
 
 async function resizeImage(

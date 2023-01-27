@@ -48,7 +48,7 @@ cron.schedule('*/3 * * * *', async function () {
 });
 
 // PULL EVERY 5 MINUTES
-cron.schedule('*/3 * * * *', async function () {
+cron.schedule('*/5 * * * *', async function () {
   if (!STARTING) {
     nftS3();
   }
@@ -134,7 +134,6 @@ cron.schedule('1,15,30,45 0 * * *', async function () {
 async function tdhLoop() {
   console.log(new Date(), '[RUNNING TDH LOOP]');
   await tdh();
-  await nftTdh();
 }
 
 // UPLOAD TDH AT 01:01
@@ -306,6 +305,8 @@ async function tdh() {
       `[SKIPPING...]`
     );
   }
+
+  await nftTdh();
 }
 
 async function nftTdh() {
@@ -317,7 +318,7 @@ async function nftTdh() {
 async function nftS3() {
   if (process.env.NODE_ENV == 'development') {
     const nfts = await db.fetchAllNFTs();
-    await persistS3(nfts);
+    persistS3(nfts);
   } else {
     console.log(
       new Date(),
@@ -399,7 +400,7 @@ async function start() {
   // await replayTransactionValues();
   // await ownerMetrics(true);
 
-  // await nfts(true);
+  await nfts(true);
   // await nftS3();
 
   STARTING = false;
