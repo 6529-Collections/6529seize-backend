@@ -278,91 +278,7 @@ export const persistS3 = async (nfts: NFT[]) => {
         }
       }
 
-      const compressedVideoKey = `videos/${n.contract}/compressed/${n.id}.${videoFormat}`;
-
-      try {
-        await s3
-          .headObject({ Bucket: myBucket, Key: compressedVideoKey })
-          .promise();
-      } catch (error: any) {
-        if (error.code === 'NotFound') {
-          console.log(
-            new Date(),
-            '[S3]',
-            `[MISSING COMPRESSED ${videoFormat}]`,
-            `[CONTRACT ${n.contract}]`,
-            `[ID ${n.id}]`
-          );
-
-          console.log(
-            new Date(),
-            '[S3]',
-            `[COMPRESSING ${compressedVideoKey}]`
-          );
-
-          const videoURL = n.animation ? n.animation : n.metadata.animation;
-
-          const resizedVideoStream = await resizeVideo(
-            videoURL,
-            videoFormat.toLowerCase()
-          );
-          resizedVideoStream.on('error', function (err) {
-            console.log(
-              new Date(),
-              '[S3]',
-              `[resizedVideoStream]`,
-              `[COMPRESSION FAILED ${compressedVideoKey}]`,
-              `[${err}]`
-            );
-          });
-
-          const ffstream = new Stream.PassThrough();
-          resizedVideoStream.pipe(ffstream, { end: true });
-
-          const buffers: any = [];
-          ffstream.on('data', function (buf) {
-            if (buf.length > 0) {
-              buffers.push(buf);
-            }
-          });
-          ffstream.on('error', function (err) {
-            console.log(
-              new Date(),
-              '[S3]',
-              `[COMPRESSION FAILED ${compressedVideoKey}]`,
-              `[${err}]`
-            );
-          });
-          ffstream.on('end', async function () {
-            console.log(
-              new Date(),
-              '[S3]',
-              `[COMPRESSION FINISHED ${compressedVideoKey}]`
-            );
-
-            if (buffers.length > 0) {
-              const outputBuffer = Buffer.concat(buffers);
-
-              if (outputBuffer.length > 0) {
-                const uploadedCompressedVideo = await s3
-                  .upload({
-                    Bucket: myBucket,
-                    Key: compressedVideoKey,
-                    Body: outputBuffer,
-                    ContentType: `video/${videoFormat.toLowerCase()}`
-                  })
-                  .promise();
-
-                console.log(
-                  new Date(),
-                  '[S3]',
-                  `[COMPRESSED ${videoFormat} PERSISTED AT ${uploadedCompressedVideo.Location}`
-                );
-              }
-            }
-          });
-        }
-      }
+      await handleVideoCompression(n, videoFormat, myBucket);
     }
 
     if (animationDetails && animationDetails.format == 'HTML') {
@@ -419,6 +335,132 @@ export const persistS3 = async (nfts: NFT[]) => {
     }
   });
 };
+
+async function handleVideoCompression(n: NFT, videoFormat: any, myBucket: any) {
+  const compressedVideoKey = `videos/${n.contract}/compressed/${n.id}.${videoFormat}`;
+
+  const exists = await compressedVideoExists(myBucket, compressedVideoKey);
+  if (!exists) {
+    console.log(
+      new Date(),
+      '[S3]',
+      `[MISSING COMPRESSED ${videoFormat}]`,
+      `[CONTRACT ${n.contract}]`,
+      `[ID ${n.id}]`
+    );
+
+    console.log(new Date(), '[S3]', `[COMPRESSING ${compressedVideoKey}]`);
+
+    await createTempFile(myBucket, compressedVideoKey, videoFormat);
+
+    const videoURL = n.animation ? n.animation : n.metadata.animation;
+
+    const resizedVideoStream = await resizeVideo(
+      videoURL,
+      videoFormat.toLowerCase()
+    );
+    resizedVideoStream.on('error', async function (err) {
+      await deleteTempFile(myBucket, compressedVideoKey);
+      console.log(
+        new Date(),
+        '[S3]',
+        `[resizedVideoStream]`,
+        `[COMPRESSION FAILED ${compressedVideoKey}]`,
+        `[${err}]`
+      );
+    });
+
+    const ffstream = new Stream.PassThrough();
+    resizedVideoStream.pipe(ffstream, { end: true });
+
+    const buffers: any = [];
+    ffstream.on('data', function (buf) {
+      if (buf.length > 0) {
+        buffers.push(buf);
+      }
+    });
+    ffstream.on('error', async function (err) {
+      await deleteTempFile(myBucket, compressedVideoKey);
+      console.log(
+        new Date(),
+        '[S3]',
+        `[COMPRESSION FAILED ${compressedVideoKey}]`,
+        `[${err}]`
+      );
+    });
+    ffstream.on('end', async function () {
+      console.log(
+        new Date(),
+        '[S3]',
+        `[COMPRESSION FINISHED ${compressedVideoKey}]`
+      );
+
+      if (buffers.length > 0) {
+        const outputBuffer = Buffer.concat(buffers);
+
+        if (outputBuffer.length > 0) {
+          const uploadedCompressedVideo = await s3
+            .upload({
+              Bucket: myBucket,
+              Key: compressedVideoKey,
+              Body: outputBuffer,
+              ContentType: `video/${videoFormat.toLowerCase()}`
+            })
+            .promise();
+
+          console.log(
+            new Date(),
+            '[S3]',
+            `[COMPRESSED ${videoFormat} PERSISTED AT ${uploadedCompressedVideo.Location}`
+          );
+        }
+      }
+      await deleteTempFile(myBucket, compressedVideoKey);
+    });
+  }
+}
+
+async function compressedVideoExists(
+  myBucket: any,
+  key: any
+): Promise<boolean> {
+  try {
+    await s3.headObject({ Bucket: myBucket, Key: key }).promise();
+    return true;
+  } catch (error: any) {
+    if (error.code === 'NotFound') {
+      try {
+        await s3
+          .headObject({ Bucket: myBucket, Key: `${key}__temp` })
+          .promise();
+        return true;
+      } catch (error: any) {
+        return false;
+      }
+    }
+  }
+  return false;
+}
+
+async function createTempFile(myBucket: any, key: any, videoFormat: string) {
+  await s3
+    .upload({
+      Bucket: myBucket,
+      Key: `${key}__temp`,
+      Body: Buffer.from('temp'),
+      ContentType: `video/${videoFormat.toLowerCase()}`
+    })
+    .promise();
+}
+
+async function deleteTempFile(myBucket: any, key: any) {
+  await s3
+    .deleteObject({
+      Bucket: myBucket,
+      Key: `${key}__temp`
+    })
+    .promise();
+}
 
 async function resizeVideo(
   url: string,
