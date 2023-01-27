@@ -3,8 +3,7 @@ import { areEqualAddresses } from './helpers';
 import {
   GRADIENT_CONTRACT,
   MEMES_CONTRACT,
-  NFT_ORIGINAL_IMAGE_LINK,
-  NFT_SCALED1000_IMAGE_LINK
+  NFT_ORIGINAL_IMAGE_LINK
 } from './constants';
 import AWS from 'aws-sdk';
 import fetch from 'node-fetch';
