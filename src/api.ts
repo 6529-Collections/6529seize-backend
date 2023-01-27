@@ -35,7 +35,7 @@ const checkCache = function (req: any, res: any, next: any) {
 
   let cachedBody = mcache.get(key);
   if (cachedBody) {
-    returnPaginatedResult(cachedBody, req, res, false);
+    returnPaginatedResult(cachedBody, req, res, true);
   } else {
     next();
   }
