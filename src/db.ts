@@ -240,6 +240,48 @@ dbcon.query(
 );
 
 dbcon.query(
+  `ALTER TABLE ${NFTS_TABLE} ADD COLUMN scaled TEXT NOT NULL;`,
+  (err: any) => {
+    if (err) {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE ${NFTS_TABLE}]`,
+        `[COLUMN EXISTS scaled]`
+      );
+    } else {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE UPDATED ${NFTS_TABLE}]`,
+        `[NEW COLUMN scaled]`
+      );
+    }
+  }
+);
+
+dbcon.query(
+  `ALTER TABLE ${NFTS_TABLE} ADD COLUMN compressed_animation TEXT;`,
+  (err: any) => {
+    if (err) {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE ${NFTS_TABLE}]`,
+        `[COLUMN EXISTS compressed_animation]`
+      );
+    } else {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE UPDATED ${NFTS_TABLE}]`,
+        `[NEW COLUMN scaled]`
+      );
+    }
+  }
+);
+
+dbcon.query(
   `CREATE TABLE IF NOT EXISTS ${ARTISTS_TABLE} (name VARCHAR(100) NOT NULL unique , created_at DATETIME NOT NULL DEFAULT now(), memes JSON, gradients JSON, bio TEXT, pfp TEXT, work JSON, social_links JSON, PRIMARY KEY (name)) ENGINE = InnoDB;`,
   (err: any) => {
     if (err) throw err;
@@ -563,6 +605,12 @@ export async function fetchLatestTransactionsBlockNumber(beforeDate?: Date) {
   return r.length > 0 ? r[0].block : 0;
 }
 
+export async function fetchLatestTDHBDate() {
+  let sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
+  const r = await execSQL(sql);
+  return r.length > 0 ? r[0].timestamp : 0;
+}
+
 export async function fetchLatestTDHBlockNumber() {
   let sql = `SELECT block_number FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await execSQL(sql);
@@ -769,11 +817,13 @@ export async function persistNFTS(nfts: NFTWithTDH[]) {
           nft.artist
         )}, uri=${mysql.escape(nft.uri)}, thumbnail=${mysql.escape(
           nft.thumbnail
-        )}, image=${mysql.escape(nft.image)}, animation=${mysql.escape(
-          nft.animation
-        )}, metadata=${mysql.escape(JSON.stringify(nft.metadata))}, tdh = ${
-          nft.tdh
-        }, tdh_rank = ${nft.tdh_rank}, tdh__raw = ${
+        )}, scaled=${mysql.escape(nft.scaled)}, image=${mysql.escape(
+          nft.image
+        )}, compressed_animation=${mysql.escape(
+          nft.compressed_animation
+        )}, animation=${mysql.escape(nft.animation)}, metadata=${mysql.escape(
+          JSON.stringify(nft.metadata)
+        )}, tdh = ${nft.tdh}, tdh_rank = ${nft.tdh_rank}, tdh__raw = ${
           nft.tdh__raw
         }, market_cap = ${nft.market_cap}, floor_price = ${nft.floor_price}`;
         await execSQL(sql);

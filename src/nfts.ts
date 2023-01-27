@@ -1,4 +1,5 @@
 import { Alchemy, Nft, Utils } from 'alchemy-sdk';
+import { format } from 'path';
 import {
   ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
@@ -6,7 +7,8 @@ import {
   MEMES_CONTRACT,
   NFT_HTML_LINK,
   NFT_ORIGINAL_IMAGE_LINK,
-  NFT_SCALED_IMAGE_LINK,
+  NFT_SCALED1000_IMAGE_LINK,
+  NFT_SCALED450_IMAGE_LINK,
   NFT_VIDEO_LINK,
   NULL_ADDRESS
 } from './constants';
@@ -113,21 +115,27 @@ async function processMemes(
 
       const tokenContract = fullMetadata.contract;
 
-      const tokenPath = `${MEMES_CONTRACT}/${tokenId}.${fullMetadata.rawMetadata?.image_details.format}`;
+      const format = fullMetadata.rawMetadata?.image_details.format;
+      let tokenPath;
+      if (format.toUpperCase() == 'GIF') {
+        tokenPath = `${MEMES_CONTRACT}/${tokenId}.${format}`;
+      } else {
+        tokenPath = `${MEMES_CONTRACT}/${tokenId}.WEBP`;
+      }
+      const tokenPathOriginal = `${MEMES_CONTRACT}/${tokenId}.${format}`;
 
       let animation = fullMetadata.rawMetadata?.animation;
       const animationDetails = fullMetadata.rawMetadata?.animation_details;
 
+      let compressedAnimation;
+
       if (animationDetails) {
-        let animationLink;
         if (animationDetails.format == 'MP4') {
-          animationLink = NFT_VIDEO_LINK;
+          animation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
+          compressedAnimation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/compressed/${tokenId}.${animationDetails.format}`;
         }
         if (animationDetails.format == 'HTML') {
-          animationLink = NFT_HTML_LINK;
-        }
-        if (animationLink) {
-          animation = `${animationLink}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
+          animation = `${NFT_HTML_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
         }
       }
 
@@ -155,8 +163,10 @@ async function processMemes(
           (a) => a.trait_type === 'Artist'
         )?.value,
         uri: fullMetadata.tokenUri?.raw,
-        thumbnail: `${NFT_SCALED_IMAGE_LINK}${tokenPath}`,
-        image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPath}`,
+        thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
+        scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
+        image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
+        compressed_animation: compressedAnimation,
         animation: animation,
         metadata: fullMetadata.rawMetadata,
         tdh: startingNft ? startingNft.tdh : 0,
@@ -224,9 +234,14 @@ async function processGradients(
       const rawMeta = fullMetadata.rawMetadata;
 
       if (rawMeta && rawMeta.image) {
-        const tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.${rawMeta!
-          .image!.split('.')
-          .pop()}`;
+        const format = rawMeta!.image!.split('.').pop();
+        let tokenPath;
+        if (format!.toUpperCase() == 'GIF') {
+          tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.${format!.toUpperCase()}`;
+        } else {
+          tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.WEBP`;
+        }
+        const tokenPathOriginal = `${GRADIENT_CONTRACT}/${tokenId}.${format}`;
 
         const nft: NFTWithTDH = {
           id: tokenId,
@@ -242,8 +257,9 @@ async function processGradients(
           description: fullMetadata.description,
           artist: '6529er',
           uri: fullMetadata.tokenUri?.raw,
-          thumbnail: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPath}`,
-          image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPath}`,
+          thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
+          scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
+          image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
           animation: undefined,
           metadata: rawMeta,
           tdh: startingNft ? startingNft.tdh : 0,
@@ -272,7 +288,14 @@ export const findNFTs = async (
   reset: boolean
 ) => {
   const newMemes = await processMemes(startingNFTS, transactions);
-  const newGradients = await processGradients(startingNFTS, transactions);
+  let newGradients;
+  if (reset) {
+    newGradients = await processGradients(startingNFTS, transactions);
+  } else {
+    newGradients = [...startingNFTS].filter((nft) =>
+      areEqualAddresses(nft.contract, GRADIENT_CONTRACT)
+    );
+  }
 
   const allNewNFTS = newMemes.concat(newGradients);
 

@@ -17,7 +17,11 @@ const requireLogin = async (req: any, res: ServerResponse, next: any) => {
     if (!auth || auth != process.env.API_PASSWORD) {
       res.statusCode = 401;
       const image = await db.fetchRandomImage();
-      res.end(JSON.stringify({ image: image[0].image }));
+      res.end(
+        JSON.stringify({
+          image: image[0].scaled ? image[0].scaled : image[0].image
+        })
+      );
     } else {
       next();
     }
@@ -31,7 +35,7 @@ const checkCache = function (req: any, res: any, next: any) {
 
   let cachedBody = mcache.get(key);
   if (cachedBody) {
-    returnPaginatedResult(cachedBody, req, res, false);
+    returnPaginatedResult(cachedBody, req, res, true);
   } else {
     next();
   }
@@ -733,7 +737,7 @@ app.get(`${BASE_PATH}`, async function (req: any, res: any, next: any) {
   res.send(
     JSON.stringify({
       message: '6529 SEIZE API',
-      image: image[0].image
+      image: image[0].scaled ? image[0].scaled : image[0].image
     })
   );
 });

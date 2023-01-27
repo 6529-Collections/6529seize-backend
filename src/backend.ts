@@ -7,7 +7,7 @@ import { ENS } from './entities/IENS';
 import { NFT, NFTWithTDH } from './entities/INFT';
 import { Owner, OwnerTags } from './entities/IOwner';
 import { Transaction } from './entities/ITransaction';
-import { delay, getLastTDH } from './helpers';
+import { delay, getHoursAgo, getLastTDH } from './helpers';
 import { findMemesExtendedData } from './memes_extended_data';
 import { findNFTs } from './nfts';
 import { findNftMarketStats } from './nft_market_stats';
@@ -25,8 +25,8 @@ const cron = require('node-cron');
 
 let STARTING = true;
 
-// PULL EVERY 2 MINUTES
-cron.schedule('*/2 * * * *', async function () {
+// PULL EVERY 4 MINUTES
+cron.schedule('*/4 * * * *', async function () {
   if (!STARTING) {
     nftsLoop();
   }
@@ -38,13 +38,19 @@ async function nftsLoop() {
   await owners();
   await memesExtendedData();
   await ownerTags();
-  nftS3();
 }
 
 // PULL EVERY 3 MINUTES
 cron.schedule('*/3 * * * *', async function () {
   if (!STARTING) {
     transactionsLoop();
+  }
+});
+
+// PULL EVERY 5 MINUTES
+cron.schedule('*/5 * * * *', async function () {
+  if (!STARTING) {
+    nftS3();
   }
 });
 
@@ -120,15 +126,15 @@ cron.schedule('29 6 * * *', async function () {
   refreshEns();
 });
 
-// CALCULATE TDH AT 00:01
-cron.schedule('1 0 * * *', async function () {
-  tdh();
+// CALCULATE TDH AT 00:01,00:15,00:30,00:45
+cron.schedule('1,15,30,45 0 * * *', async function () {
+  tdhLoop();
 });
 
-// CALCULATE TDH AT 00:30
-cron.schedule('30 0 * * *', async function () {
-  nftTdh();
-});
+async function tdhLoop() {
+  console.log(new Date(), '[RUNNING TDH LOOP]');
+  await tdh();
+}
 
 // UPLOAD TDH AT 01:01
 cron.schedule('1 1 * * *', async function () {
@@ -277,23 +283,35 @@ async function memesExtendedData() {
 async function tdh() {
   const lastTDHCalc = getLastTDH();
 
-  const block = await db.fetchLatestTransactionsBlockNumber(lastTDHCalc);
-  const nfts = await db.fetchAllNFTs();
-  const owners = await db.fetchAllOwnersAddresses();
+  const lastTdhDB = await db.fetchLatestTDHBDate();
+  const hoursAgo = getHoursAgo(new Date(lastTdhDB));
 
-  const tdhResponse = await findTDH(block, lastTDHCalc, nfts, owners, db);
-  await db.persistTDH(
-    tdhResponse.block,
-    tdhResponse.timestamp,
-    tdhResponse.tdh
-  );
+  if (hoursAgo > 24) {
+    const block = await db.fetchLatestTransactionsBlockNumber(lastTDHCalc);
+    const nfts = await db.fetchAllNFTs();
+    const owners = await db.fetchAllOwnersAddresses();
+
+    const tdhResponse = await findTDH(block, lastTDHCalc, nfts, owners, db);
+    await db.persistTDH(
+      tdhResponse.block,
+      tdhResponse.timestamp,
+      tdhResponse.tdh
+    );
+  } else {
+    console.log(
+      new Date(),
+      `[TDH]`,
+      `[TODAY'S TDH ALREADY CALCULATED ${Math.floor(hoursAgo)} hrs ago]`,
+      `[SKIPPING...]`
+    );
+  }
+
+  await nftTdh();
 }
 
 async function nftTdh() {
   const tdh = await db.fetchAllTDH();
-
   const nftTdh = await findNftTDH(tdh);
-
   await db.persistNftTdh(nftTdh);
 }
 
@@ -368,20 +386,23 @@ async function start() {
     `[CONFIG ${process.env.NODE_ENV}]`,
     `[EXECUTING START SCRIPT...]`
   );
+
   // Uncomment to call on start
-  // await transactions();
+
+  // await transactionsLoop();
+  // await nftsLoop();
+  // await tdhLoop();
+
   // await discoverEns(now);
-  // await nfts();
-  // await owners();
-  // await memesExtendedData();
-  // await ownerTags();
-  // await tdh();
-  // await nftTdh();
   // tdhUpload();
   // discoverEns();
   // runValues();
   // await replayTransactionValues();
   // await ownerMetrics(true);
+
+  // await nfts(true);
+  // await nftS3();
+
   STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
 }

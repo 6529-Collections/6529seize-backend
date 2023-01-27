@@ -16,6 +16,12 @@ npm i
 npm run build
 ```
 
+## Additional Setup
+
+s3.tsx video compression requires ffmpeg installed on the running machine
+
+Download instructions at: https://ffmpeg.org/
+
 # Services
 
 ## LOCAL
