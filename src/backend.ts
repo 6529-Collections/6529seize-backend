@@ -316,7 +316,7 @@ async function nftTdh() {
 }
 
 async function nftS3() {
-  if (process.env.NODE_ENV == 'development') {
+  if (process.env.NODE_ENV == 'production') {
     const nfts = await db.fetchAllNFTs();
     persistS3(nfts);
   } else {
