@@ -261,6 +261,27 @@ dbcon.query(
 );
 
 dbcon.query(
+  `ALTER TABLE ${NFTS_TABLE} ADD COLUMN compressed_animation TEXT;`,
+  (err: any) => {
+    if (err) {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE ${NFTS_TABLE}]`,
+        `[COLUMN EXISTS compressed_animation]`
+      );
+    } else {
+      console.log(
+        new Date(),
+        '[DATABASE]',
+        `[TABLE UPDATED ${NFTS_TABLE}]`,
+        `[NEW COLUMN scaled]`
+      );
+    }
+  }
+);
+
+dbcon.query(
   `CREATE TABLE IF NOT EXISTS ${ARTISTS_TABLE} (name VARCHAR(100) NOT NULL unique , created_at DATETIME NOT NULL DEFAULT now(), memes JSON, gradients JSON, bio TEXT, pfp TEXT, work JSON, social_links JSON, PRIMARY KEY (name)) ENGINE = InnoDB;`,
   (err: any) => {
     if (err) throw err;
@@ -798,6 +819,8 @@ export async function persistNFTS(nfts: NFTWithTDH[]) {
           nft.thumbnail
         )}, scaled=${mysql.escape(nft.scaled)}, image=${mysql.escape(
           nft.image
+        )}, compressed_animation=${mysql.escape(
+          nft.compressed_animation
         )}, animation=${mysql.escape(nft.animation)}, metadata=${mysql.escape(
           JSON.stringify(nft.metadata)
         )}, tdh = ${nft.tdh}, tdh_rank = ${nft.tdh_rank}, tdh__raw = ${

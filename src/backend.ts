@@ -399,8 +399,8 @@ async function start() {
   // await replayTransactionValues();
   // await ownerMetrics(true);
 
-  // await nfts(true);
-  await nftS3();
+  await nfts(true);
+  // await nftS3();
 
   STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);

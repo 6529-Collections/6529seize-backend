@@ -127,16 +127,15 @@ async function processMemes(
       let animation = fullMetadata.rawMetadata?.animation;
       const animationDetails = fullMetadata.rawMetadata?.animation_details;
 
+      let compressedAnimation;
+
       if (animationDetails) {
-        let animationLink;
         if (animationDetails.format == 'MP4') {
-          animationLink = NFT_VIDEO_LINK;
+          animation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
+          compressedAnimation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/compressed/${tokenId}.${animationDetails.format}`;
         }
         if (animationDetails.format == 'HTML') {
-          animationLink = NFT_HTML_LINK;
-        }
-        if (animationLink) {
-          animation = `${animationLink}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
+          animation = `${NFT_HTML_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
         }
       }
 
@@ -167,6 +166,7 @@ async function processMemes(
         thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
         scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
         image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
+        compressed_animation: compressedAnimation,
         animation: animation,
         metadata: fullMetadata.rawMetadata,
         tdh: startingNft ? startingNft.tdh : 0,

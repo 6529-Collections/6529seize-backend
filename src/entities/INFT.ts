@@ -15,6 +15,7 @@ export interface NFT {
   thumbnail?: string;
   scaled?: string;
   image?: string;
+  compressed_animation?: string;
   animation?: string;
   metadata?: any;
   market_cap: number;
