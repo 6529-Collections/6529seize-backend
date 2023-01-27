@@ -400,9 +400,9 @@ async function start() {
   // await ownerMetrics(true);
 
   // await nfts(true);
-  await nftS3();
+  // await nftS3();
 
-  // STARTING = false;
+  STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
 }
 
