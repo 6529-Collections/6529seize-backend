@@ -237,11 +237,11 @@ async function processGradients(
         const format = rawMeta!.image!.split('.').pop();
         let tokenPath;
         if (format!.toUpperCase() == 'GIF') {
-          tokenPath = `${MEMES_CONTRACT}/${tokenId}.${format}`;
+          tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.${format}`;
         } else {
-          tokenPath = `${MEMES_CONTRACT}/${tokenId}.WEBP`;
+          tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.WEBP`;
         }
-        const tokenPathOriginal = `${MEMES_CONTRACT}/${tokenId}.${format}`;
+        const tokenPathOriginal = `${GRADIENT_CONTRACT}/${tokenId}.${format}`;
 
         const nft: NFTWithTDH = {
           id: tokenId,
