@@ -21,12 +21,7 @@ async function getResult(url: string) {
 }
 
 const findFloorPrice = async (stat: any): Promise<number> => {
-  let url;
-  if (areEqualAddresses(stat.contract, MEMES_CONTRACT)) {
-    url = `https://api.opensea.io/v2/orders/ethereum/seaport/listings?asset_contract_address=${stat.contract}&limit=1&token_ids=${stat.id}&order_by=eth_price&order_direction=asc`;
-  } else {
-    url = `https://api.opensea.io/v2/orders/ethereum/seaport/offers?asset_contract_address=${stat.contract}&limit=1&token_ids=${stat.id}&order_by=eth_price&order_direction=desc`;
-  }
+  const url = `https://api.opensea.io/v2/orders/ethereum/seaport/listings?asset_contract_address=${stat.contract}&limit=1&token_ids=${stat.id}&order_by=eth_price&order_direction=asc`;
 
   const res = await getResult(url);
 

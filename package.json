@@ -7,8 +7,8 @@
     "api:local": "NODE_ENV=local nodemon src/api.ts",
     "backend:dev": "NODE_ENV=development node build/backend.js",
     "api:dev": "NODE_ENV=development node build/api.js",
-    "backend:prod": "NODE_ENV=production node build/backend.js",
-    "api:prod": "NODE_ENV=production node build/api.js",
+    "backend:prod": "NODE_ENV=production NODE_OPTIONS=--max_old_space_size=10240 node build/backend.js",
+    "api:prod": "NODE_ENV=production NODE_OPTIONS=--max_old_space_size=10240 node build/api.js",
     "build": "rimraf ./build && tsc"
   },
   "keywords": [],
@@ -29,6 +29,7 @@
   "dependencies": {
     "@alch/alchemy-web3": "^1.4.7",
     "alchemy-sdk": "^2.2.3",
+    "arweave": "^1.12.4",
     "aws-sdk": "^2.1270.0",
     "cors": "^2.8.5",
     "cross-env": "^7.0.3",

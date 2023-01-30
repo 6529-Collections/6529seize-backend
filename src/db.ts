@@ -568,6 +568,12 @@ export function execSQL(sql: string): Promise<any> {
   });
 }
 
+export async function findLastUpload(): Promise<Transaction[]> {
+  let sql = `SELECT * FROM ${UPLOADS_TABLE} ORDER BY date DESC LIMIT 1;`;
+  const results = await execSQL(sql);
+  return results ? results[0] : [];
+}
+
 export async function findReplayTransactions(): Promise<Transaction[]> {
   let sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE value=0 AND from_address != ${mysql.escape(
     NULL_ADDRESS

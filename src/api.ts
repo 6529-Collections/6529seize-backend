@@ -171,7 +171,7 @@ function returnPaginatedResult(
 ) {
   result.next = fullUrl(req, result.next);
 
-  if (!skipCache) {
+  if (!skipCache && result.count > 0) {
     mcache.put(cacheKey(req), result, CACHE_TIME_MS);
   }
   res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);

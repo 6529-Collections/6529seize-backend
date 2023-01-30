@@ -134,12 +134,8 @@ cron.schedule('1,15,30,45 0 * * *', async function () {
 async function tdhLoop() {
   console.log(new Date(), '[RUNNING TDH LOOP]');
   await tdh();
-}
-
-// UPLOAD TDH AT 01:01
-cron.schedule('1 1 * * *', async function () {
   tdhUpload();
-});
+}
 
 async function replayTransactionValues(
   transactions?: Transaction[],
@@ -374,9 +370,18 @@ async function refreshEns() {
 }
 
 async function tdhUpload() {
-  const tdh = await db.fetchAllTDH();
-  const ownerMetrics = await db.fetchAllOwnerMetrics();
-  uploadTDH(tdh, ownerMetrics, db);
+  if (process.env.NODE_ENV != 'local') {
+    const tdh = await db.fetchAllTDH();
+    const ownerMetrics = await db.fetchAllOwnerMetrics();
+    await uploadTDH(tdh, ownerMetrics, db);
+  } else {
+    console.log(
+      new Date(),
+      '[TDH UPLOAD]',
+      '[SKIPPING]',
+      `[CONFIG ${process.env.NODE_ENV}]`
+    );
+  }
 }
 
 async function start() {
