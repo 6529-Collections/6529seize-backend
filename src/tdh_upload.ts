@@ -2,7 +2,8 @@ import { TDHENS } from './entities/ITDH';
 import { OwnerMetric } from './entities/IOwner';
 import { areEqualAddresses } from './helpers';
 import { SIX529_MUSEUM } from './constants';
-import Arweave from 'arweave/node';
+
+const Arweave = require('arweave');
 
 const arweave = Arweave.init({
   host: 'arweave.net',
