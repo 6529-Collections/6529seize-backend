@@ -33,14 +33,14 @@ const findFloorPrice = async (stat: any): Promise<number> => {
     }
     return parseFloat(Utils.formatEther(floorPrice));
   } else {
-    console.log(
-      new Date(),
-      '[NFT MARKET STATS]',
-      `[THROTTLED!]`,
-      `[CONTRACT ${stat.contract}]`,
-      `[ID ${stat.id}]`,
-      '[RETRYING IN 2500ms]'
-    );
+    // console.log(
+    //   new Date(),
+    //   '[NFT MARKET STATS]',
+    //   `[THROTTLED!]`,
+    //   `[CONTRACT ${stat.contract}]`,
+    //   `[ID ${stat.id}]`,
+    //   '[RETRYING IN 2500ms]'
+    // );
     await delay(2500);
     return findFloorPrice(stat);
   }
