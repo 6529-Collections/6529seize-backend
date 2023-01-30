@@ -51,3 +51,9 @@ export const opensea = {
 export const alchemy = {
   ALCHEMY_API_KEY: process.env.ALCHEMY_API_KEY
 };
+
+export const arweave = {
+  ARWEAVE_KEY: process.env.ARWEAVE_KEY
+    ? JSON.parse(process.env.ARWEAVE_KEY)
+    : {}
+};

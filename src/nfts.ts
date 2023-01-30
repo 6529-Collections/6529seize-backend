@@ -301,21 +301,24 @@ export const findNFTs = async (
 
   let GLOBAL_HODL_INDEX_TOKEN = startingNFTS.find((a) => a.hodl_rate == 1);
   const NEW_TOKENS_HODL_INDEX = Math.max(...allNewNFTS.map((o) => o.supply));
-  const mintChanged = allNewNFTS.some((n) => {
+  const nftChanged = allNewNFTS.some((n) => {
     const m = startingNFTS.find(
       (s) => areEqualAddresses(s.contract, n.contract) && s.id == n.id
     );
     if (m?.mint_price != n.mint_price) {
       return true;
     }
+    if (m?.supply != n.supply) {
+      return true;
+    }
     return false;
   });
 
-  console.log(new Date(), '[NFTS]', '[MINT PRICE]', `[CHANGED ${mintChanged}]`);
+  console.log(new Date(), '[NFTS]', '[MINT PRICE]', `[CHANGED ${nftChanged}]`);
 
   if (
     reset ||
-    mintChanged ||
+    nftChanged ||
     allNewNFTS.length > startingNFTS.length ||
     !GLOBAL_HODL_INDEX_TOKEN ||
     NEW_TOKENS_HODL_INDEX > GLOBAL_HODL_INDEX_TOKEN.supply
@@ -342,7 +345,7 @@ export const findNFTs = async (
     );
     allNFTS.map((t) => {
       const hodl = GLOBAL_HODL_INDEX_TOKEN!.supply / t.supply;
-      t.hodl_rate = hodl;
+      t.hodl_rate = isFinite(hodl) ? hodl : 1;
     });
     console.log(new Date(), '[NFTS]', `[HODL INDEX UPDATED]`);
     return allNFTS;
