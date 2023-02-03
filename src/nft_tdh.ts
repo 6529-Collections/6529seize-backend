@@ -1,16 +1,12 @@
-import { Alchemy } from 'alchemy-sdk';
-import {
-  ALCHEMY_SETTINGS,
-  GRADIENT_CONTRACT,
-  MEMES_CONTRACT
-} from './constants';
+import { GRADIENT_CONTRACT, MEMES_CONTRACT } from './constants';
 import { NftTDH } from './entities/INFT';
-import { TDH } from './entities/ITDH';
 import { areEqualAddresses } from './helpers';
+import { fetchAllTDH, persistNftTdh } from './db';
+import { TDH } from './entities/ITDH';
 
-const alchemy = new Alchemy(ALCHEMY_SETTINGS);
+export const findNftTDH = async () => {
+  const tdhs: TDH[] = await fetchAllTDH();
 
-export const findNftTDH = async (tdhs: TDH[]) => {
   console.log(new Date(), '[NFT TDH]', `[WALLETS ${tdhs.length}]`);
 
   const nftTDH: NftTDH[] = [];
@@ -73,6 +69,8 @@ export const findNftTDH = async (tdhs: TDH[]) => {
   nftTDH
     .sort((a, b) => (a.tdh > b.tdh ? -1 : a.tdh > 0 ? 1 : -1))
     .map((n, index) => (n.tdh_rank = index + 1));
+
+  await persistNftTdh(nftTDH);
 
   return nftTDH;
 };

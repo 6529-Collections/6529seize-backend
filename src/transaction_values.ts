@@ -5,9 +5,14 @@ import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
 
 const SEAPORT_IFACE = new ethers.utils.Interface(SEAPORT_ABI);
-const alchemy = new Alchemy(ALCHEMY_SETTINGS);
+let alchemy: Alchemy;
 
 export const findTransactionValues = async (transactions: Transaction[]) => {
+  alchemy = new Alchemy({
+    ...ALCHEMY_SETTINGS,
+    apiKey: process.env.ALCHEMY_API_KEY
+  });
+
   console.log(
     new Date(),
     '[TRANSACTION VALUES]',
@@ -41,11 +46,7 @@ export const findTransactionValues = async (transactions: Transaction[]) => {
   return transactionsWithValues;
 };
 
-export async function resolveValue(
-  t: Transaction,
-  receipt: any,
-  events: number
-) {
+async function resolveValue(t: Transaction, receipt: any, events: number) {
   let value = receipt
     ? parseFloat(Utils.formatEther(receipt.value)) / events
     : 0;
@@ -109,6 +110,13 @@ export async function resolveValue(
 }
 
 export const runValues = async () => {
+  if (!alchemy) {
+    alchemy = new Alchemy({
+      ...ALCHEMY_SETTINGS,
+      apiKey: process.env.ALCHEMY_API_KEY
+    });
+  }
+
   const receipt = await alchemy.core.getTransaction(
     // '0x97df4644aff593e8ff0b26dfa1f73ca191969278bbb27d30f774dded76c22115'
     // '0xb1a74e8908ec700918e95f090c7678df08cfbd72eea8dd19576b047211bd275a',

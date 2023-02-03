@@ -6,8 +6,9 @@ import {
 import { Owner } from './entities/IOwner';
 import { Alchemy, fromHex, NftContractOwner } from 'alchemy-sdk';
 import { areEqualAddresses } from './helpers';
+import { persistOwners, fetchAllOwners } from './db';
 
-const alchemy = new Alchemy(ALCHEMY_SETTINGS);
+let alchemy: Alchemy;
 
 function ownersMatch(o1: Owner, o2: Owner) {
   if (o1.token_id != o2.token_id) return false;
@@ -40,7 +41,14 @@ async function getAllOwners(
   return owners;
 }
 
-export const findOwners = async (startingOwners: Owner[]) => {
+export const findOwners = async () => {
+  alchemy = new Alchemy({
+    ...ALCHEMY_SETTINGS,
+    apiKey: process.env.ALCHEMY_API_KEY
+  });
+
+  const startingOwners: Owner[] = await fetchAllOwners();
+
   console.log(new Date(), '[OWNERS]', `[DB ${startingOwners.length}]`);
 
   const memesOwners = await getAllOwners(MEMES_CONTRACT);
@@ -109,6 +117,8 @@ export const findOwners = async (startingOwners: Owner[]) => {
   });
 
   console.log(new Date(), '[OWNERS]', `[DELTA ${ownersDelta.length}]`);
+
+  await persistOwners(ownersDelta);
 
   return ownersDelta;
 };

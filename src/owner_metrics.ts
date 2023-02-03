@@ -4,32 +4,32 @@ import {
   MEMES_CONTRACT,
   PUNK_6529
 } from './constants';
-import { OwnerMetric, OwnerTags } from './entities/IOwner';
+import { OwnerMetric } from './entities/IOwner';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
+import {
+  fetchLastOwnerMetrics,
+  fetchWalletsFromTransactions,
+  fetchAllOwnersAddresses,
+  fetchAllOwnerMetrics,
+  persistOwnerMetrics,
+  fetchWalletTransactions
+} from './db';
 
-export const findOwnerMetrics = async (
-  owners: { wallet: string }[],
-  startingOwnerMetrics: OwnerMetric[],
-  db: any,
-  reset?: boolean
-) => {
-  let outdatedMetrics: any[];
-  if (reset) {
-    outdatedMetrics = owners;
-  } else {
-    outdatedMetrics = [...startingOwnerMetrics].filter((ownerMetric) => {
-      return !owners.find((o) =>
-        areEqualAddresses(o.wallet, ownerMetric.wallet)
-      );
-    });
-  }
+export const findOwnerMetrics = async (reset?: boolean) => {
+  const lastMetrics = await fetchLastOwnerMetrics();
+  const lastMetricsDate = lastMetrics ? new Date(lastMetrics) : undefined;
+
+  console.log('[OWNERS METRICS]', `[LAST METRICS ${lastMetricsDate}]`);
+
+  const owners: { wallet: string }[] = await fetchWalletsFromTransactions(
+    lastMetricsDate
+  );
 
   console.log(
     new Date(),
-    '[OWNERS METRICS START]',
-    `[UNIQUE OWNERS ${owners.length}]`,
-    `[OUTDATED OWNER METRICS ${outdatedMetrics.length}]`
+    '[OWNERS METRICS]',
+    `[OWNERS DELTA ${owners.length}]`
   );
 
   const ownerMetrics: OwnerMetric[] = [];
@@ -38,8 +38,9 @@ export const findOwnerMetrics = async (
     owners.map(async (owner) => {
       const wallet = owner.wallet;
 
-      const walletTransactions: Transaction[] =
-        await db.fetchWalletTransactions(wallet);
+      const walletTransactions: Transaction[] = await fetchWalletTransactions(
+        wallet
+      );
 
       const transactionsIn = [...walletTransactions].filter((wt) =>
         areEqualAddresses(wt.to_address, wallet)
@@ -250,18 +251,7 @@ export const findOwnerMetrics = async (
     })
   );
 
-  if (!reset) {
-    outdatedMetrics.map((m) => {
-      m.balance = 0;
-      ownerMetrics.push(m);
-    });
-  }
-
-  console.log(
-    new Date(),
-    '[OWNERS METRICS END]',
-    `[UNIQUE METRICS ${ownerMetrics.length}]`
-  );
+  await persistOwnerMetrics(ownerMetrics);
 
   return ownerMetrics;
 };

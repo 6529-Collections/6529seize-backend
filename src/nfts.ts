@@ -1,5 +1,4 @@
 import { Alchemy, Nft, Utils } from 'alchemy-sdk';
-import { format } from 'path';
 import {
   ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
@@ -15,8 +14,17 @@ import {
 import { NFTWithTDH } from './entities/INFT';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
+import {
+  fetchAllNFTs,
+  fetchAllTransactions,
+  fetchAllArtists,
+  persistNFTS,
+  persistArtists
+} from './db';
+import { findArtists } from './artists';
+import { Artist } from './entities/IArtist';
 
-const alchemy = new Alchemy(ALCHEMY_SETTINGS);
+let alchemy: Alchemy;
 
 async function getNFTResponse(contract: string, key: any) {
   const settings = {
@@ -132,7 +140,7 @@ async function processMemes(
       if (animationDetails) {
         if (animationDetails.format == 'MP4') {
           animation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
-          compressedAnimation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/compressed/${tokenId}.${animationDetails.format}`;
+          compressedAnimation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/scaledx750/${tokenId}.${animationDetails.format}`;
         }
         if (animationDetails.format == 'HTML') {
           animation = `${NFT_HTML_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
@@ -285,7 +293,7 @@ async function processGradients(
 export const findNFTs = async (
   startingNFTS: NFTWithTDH[],
   transactions: Transaction[],
-  reset: boolean
+  reset?: boolean
 ) => {
   const newMemes = await processMemes(startingNFTS, transactions);
   let newGradients;
@@ -358,3 +366,23 @@ export const findNFTs = async (
     return startingNFTS;
   }
 };
+
+export async function nfts(reset?: boolean) {
+  alchemy = new Alchemy({
+    ...ALCHEMY_SETTINGS,
+    apiKey: process.env.ALCHEMY_API_KEY
+  });
+
+  const nfts: NFTWithTDH[] = await fetchAllNFTs();
+  const transactions: Transaction[] = await fetchAllTransactions();
+  const artists: Artist[] = await fetchAllArtists();
+  artists.map((a: any) => {
+    a.memes = JSON.parse(a.memes);
+    a.gradients = JSON.parse(a.gradients);
+  });
+
+  const newNfts = await findNFTs(nfts, transactions, reset);
+  const newArtists = await findArtists(artists, newNfts);
+  await persistNFTS(newNfts);
+  await persistArtists(newArtists);
+}

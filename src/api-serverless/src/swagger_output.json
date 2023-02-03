@@ -1,0 +1,607 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "version": "1.0.0",
+    "title": "SEIZE REST API",
+    "description": "SEIZE REST API"
+  },
+  "paths": {
+    "/api/blocks": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "BASE_PATH",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    },
+    "/api/uploads": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "BASE_PATH",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    },
+    "/api/artists": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "BASE_PATH",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "meme_id",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    },
+    "/api/nfts": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "BASE_PATH",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "sort_direction",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "contract",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    },
+    "/api/memes_extended_data": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "BASE_PATH",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    },
+    "/api/{address}/nfts": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "BASE_PATH",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    },
+    "/api/owners": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "BASE_PATH",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "wallet",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "contract",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    },
+    "/api/owners_tags": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "BASE_PATH",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "wallet",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    },
+    "/api/transactions": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "BASE_PATH",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "wallet",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "contract",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    },
+    "/api/tdh/gradients/": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "BASE_PATH",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    },
+    "/api/ens/{address}/": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "BASE_PATH",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    },
+    "/api/tdh/{contract}/{nft_id}": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "BASE_PATH",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "contract",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "nft_id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "sort_direction",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "wallet",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    },
+    "/api/tdh": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "BASE_PATH",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "wallet",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "sort_direction",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "hide_museum",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    },
+    "/api/owner_metrics": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "BASE_PATH",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "wallet",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "sort_direction",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "hide_museum",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "description": "",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "UNAUTHORIZED"
+          }
+        }
+      }
+    }
+  }
+}

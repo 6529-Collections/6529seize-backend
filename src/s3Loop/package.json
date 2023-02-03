@@ -1,0 +1,21 @@
+{
+  "name": "nftsloop",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "prebuild": "rm -rf dist",
+    "build": "esbuild index.ts --bundle --external:sharp --sourcemap --platform=node --target=es2020 --outfile=dist/index.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffmpeg-installer/linux-x64": "^4.1.0",
+    "detect-libc": "^2.0.1",
+    "esbuild": "^0.17.5",
+    "fluent-ffmpeg": "^2.1.2",
+    "imagescript": "^1.2.15",
+    "sharp": "^0.31.3"
+  }
+}

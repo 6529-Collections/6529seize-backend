@@ -1,5 +1,4 @@
 import { Network } from 'alchemy-sdk';
-const config = require('./config');
 
 export const TDH_BLOCKS_TABLE = 'tdh_blocks';
 export const TRANSACTIONS_TABLE = 'transactions';
@@ -26,7 +25,6 @@ export const SIX529_MUSEUM = '0xc6400A5584db71e41B0E5dFbdC769b54B91256CD';
 export const ENS_ADDRESS = '0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85';
 
 export const ALCHEMY_SETTINGS = {
-  apiKey: config.alchemy.ALCHEMY_API_KEY,
   network: Network.ETH_MAINNET,
   maxRetries: 10
 };
