@@ -14,6 +14,8 @@ loadEnv(true).then(async (e) => {
 
   await db.connect();
 
+  app.use(cors());
+
   app.use(function (req: any, res: any, next: any) {
     res.setHeader('Access-Control-Allow-Methods', 'OPTIONS,POST,GET,HEAD');
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -48,7 +50,6 @@ loadEnv(true).then(async (e) => {
     }
   };
 
-  app.use(cors());
   app.all('/api', requireLogin);
   app.all();
   app.enable('trust proxy');
