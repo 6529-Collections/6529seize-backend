@@ -3,7 +3,6 @@ import { loadEnv } from '../../secrets';
 
 const express = require('express');
 const app = express();
-const cors = require('cors');
 
 loadEnv(true).then(async (e) => {
   console.log(
@@ -13,8 +12,6 @@ loadEnv(true).then(async (e) => {
   );
 
   await db.connect();
-
-  app.use(cors());
 
   app.use(function (req: any, res: any, next: any) {
     res.setHeader('Access-Control-Allow-Methods', 'OPTIONS,POST,GET,HEAD');
