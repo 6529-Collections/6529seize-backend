@@ -56,7 +56,9 @@ async function loadSecrets() {
 }
 
 async function loadLocalConfig() {
+  const envPath = path.join(__dirname, '..', `.env.${process.env.NODE_ENV}`);
+  console.log(`[LOADING FROM .env.${process.env.NODE_ENV}]`);
   dotenv.config({
-    path: path.join(__dirname, '..', `.env.${process.env.NODE_ENV}`)
+    path: envPath
   });
 }

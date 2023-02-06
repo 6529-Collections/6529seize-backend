@@ -48,7 +48,6 @@ async function start() {
   await nfts.handler();
   await tdh.handler();
   await ownerMetrics.handler();
-  await myS3.handler();
 
   STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);

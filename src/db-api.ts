@@ -19,42 +19,43 @@ import { areEqualAddresses } from './helpers';
 
 const mysql = require('mysql');
 
-let dbcon: any;
+let mysql_pool: any;
 
 export async function connect() {
-  dbcon = mysql.createConnection({
+  mysql_pool = mysql.createPool({
+    connectionLimit: 10,
+    connectTimeout: 30 * 1000,
+    acquireTimeout: 30 * 1000,
+    timeout: 30 * 1000,
     host: process.env.DB_HOST_READ,
     port: process.env.DB_PORT,
     user: process.env.DB_USER_READ,
     password: process.env.DB_PASS_READ,
-    database: process.env.DB_NAME,
-    charset: 'utf8mb4'
+    charset: 'utf8mb4',
+    database: process.env.DB_NAME
   });
 
-  dbcon.connect((err: any) => {
-    if (err) throw err;
-    console.log('[DATABASE]', `[DATABASE CONNECTION SUCCESS]`);
-  });
-
-  dbcon.on('error', function (err: any) {
-    console.error(
-      new Date(),
-      '[DATABASE]',
-      `[DISCONNECTED][ERROR CODE ${err.code}]`
-    );
-    if (err.code === 'PROTOCOL_CONNECTION_LOST') {
-      connect();
-    } else {
-      throw err;
-    }
-  });
+  console.log('[API]', `[CONNECTION POOL CREATED]`);
 }
 
 export function execSQL(sql: string): Promise<any> {
   return new Promise((resolve, reject) => {
-    dbcon.query(sql, (err: any, result: any[]) => {
-      if (err) return reject(err);
-      resolve(Object.values(JSON.parse(JSON.stringify(result))));
+    mysql_pool.getConnection(function (err: any, dbcon: any) {
+      if (err) {
+        console.log('custom err', err);
+        if (dbcon) {
+          dbcon.release();
+        }
+        throw err;
+      }
+      dbcon.query(sql, (err: any, result: any[]) => {
+        dbcon.release();
+        if (err) {
+          console.log('custom err', err);
+          return reject(err);
+        }
+        resolve(Object.values(JSON.parse(JSON.stringify(result))));
+      });
     });
   });
 }

@@ -4,10 +4,14 @@ import { loadEnv } from '../../secrets';
 const express = require('express');
 const app = express();
 
-loadEnv(true).then(() => {
-  console.log('[API]', `[DB HOST ${process.env.DB_HOST}]`);
+loadEnv(true).then(async (e) => {
+  console.log(
+    '[API]',
+    `[DB HOST ${process.env.DB_HOST_READ}]`,
+    `[API PASSWORD ACTIVE ${process.env.ACTIVATE_API_PASSWORD}]`
+  );
 
-  db.connect();
+  await db.connect();
 
   app.use(function (req, res, next) {
     res.setHeader('Access-Control-Allow-Methods', 'OPTIONS,POST,GET,HEAD');
@@ -43,7 +47,7 @@ loadEnv(true).then(() => {
     }
   };
 
-  app.all('/api/*', requireLogin);
+  app.all('/api', requireLogin);
   app.enable('trust proxy');
 
   const BASE_PATH = '/api';
@@ -520,7 +524,6 @@ loadEnv(true).then(() => {
       try {
         const address = req.params.address;
 
-        console.log(`[API]`, '[ENS]', `[ADDRESS ${address}]`);
         db.fetchEns(address).then((result) => {
           res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
           res.end(JSON.stringify(result[0]));
@@ -753,6 +756,7 @@ loadEnv(true).then(() => {
 
   app.listen(3000, function () {
     console.log(
+      new Date(),
       `[API]`,
       `[CONFIG ${process.env.NODE_ENV}]`,
       '[SERVER RUNNING ON PORT 3000]'

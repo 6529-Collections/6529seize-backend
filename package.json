@@ -4,12 +4,12 @@
   "main": "backend.js",
   "scripts": {
     "backend:local": "NODE_ENV=local nodemon src/backend.ts",
-    "api:local": "NODE_ENV=local nodemon src/api.ts",
+    "api:local": "NODE_ENV=local node src/api-serverless/dist/index.js",
     "backend:dev": "NODE_ENV=development node build/backend.js",
-    "api:dev": "NODE_ENV=development node build/api.js",
+    "api:dev": "NODE_ENV=development node src/api-serverless/dist/index.js",
     "backend:prod": "NODE_ENV=production NODE_OPTIONS=--max_old_space_size=10240 node build/backend.js",
-    "api:prod": "NODE_ENV=production NODE_OPTIONS=--max_old_space_size=10240 node build/api.js",
-    "build": "rimraf ./build && tsc"
+    "api:prod": "NODE_ENV=production NODE_OPTIONS=--max_old_space_size=10240 node src/api-serverless/dist/index.js",
+    "build": "rimraf ./build && tsc -p tsconfig.json"
   },
   "keywords": [],
   "author": "",
