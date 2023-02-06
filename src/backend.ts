@@ -1,7 +1,7 @@
 import { MEMES_CONTRACT } from './constants';
 
 const transactions = require('./transactionsLoop');
-const nfts = require('./nftsloop');
+const nfts = require('./nftsLoop');
 const tdh = require('./tdhLoop');
 const ownerMetrics = require('./ownerMetricsLoop');
 const { memeStats } = require('./marketStatsLoop');
