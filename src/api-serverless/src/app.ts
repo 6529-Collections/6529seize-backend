@@ -3,6 +3,7 @@ import { loadEnv } from '../../secrets';
 
 const express = require('express');
 const app = express();
+const cors = require('cors');
 
 loadEnv(true).then(async (e) => {
   console.log(
@@ -47,7 +48,9 @@ loadEnv(true).then(async (e) => {
     }
   };
 
+  app.use(cors());
   app.all('/api', requireLogin);
+  app.all();
   app.enable('trust proxy');
 
   const BASE_PATH = '/api';
