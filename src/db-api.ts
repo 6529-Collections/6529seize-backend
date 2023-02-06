@@ -17,53 +17,45 @@ import {
 } from './constants';
 import { areEqualAddresses } from './helpers';
 
-const config = require('./config');
 const mysql = require('mysql');
 
-console.log(new Date(), '[DATABASE API]', `[DB HOST ${config.db_api.DB_HOST}]`);
+let mysql_pool: any;
 
-export const dbcon = mysql.createConnection({
-  host: config.db_api.DB_HOST,
-  port: config.db_api.port,
-  user: config.db_api.DB_USER,
-  password: config.db_api.DB_PASS,
-  charset: 'utf8mb4'
-});
-
-function connect() {
-  dbcon.connect((err: any) => {
-    if (err) throw err;
-    console.log(new Date(), '[DATABASE]', `DATABASE CONNECTION SUCCESS`);
+export async function connect() {
+  mysql_pool = mysql.createPool({
+    connectionLimit: 10,
+    connectTimeout: 30 * 1000,
+    acquireTimeout: 30 * 1000,
+    timeout: 30 * 1000,
+    host: process.env.DB_HOST_READ,
+    port: process.env.DB_PORT,
+    user: process.env.DB_USER_READ,
+    password: process.env.DB_PASS_READ,
+    charset: 'utf8mb4',
+    database: process.env.DB_NAME
   });
+
+  console.log('[API]', `[CONNECTION POOL CREATED]`);
 }
-
-dbcon.on('error', function (err: any) {
-  console.error(
-    new Date(),
-    '[DATABASE]',
-    `[DISCONNECTED][ERROR CODE ${err.code}]`
-  );
-  if (err.code === 'PROTOCOL_CONNECTION_LOST') {
-    connect();
-  } else {
-    throw err;
-  }
-});
-
-dbcon.query(`USE ${config.db.DB_NAME}`, (err: any) => {
-  if (err) throw err;
-  console.log(
-    new Date(),
-    '[DATABASE]',
-    `[DATABASE SELECTED ${config.db.DB_NAME}]`
-  );
-});
 
 export function execSQL(sql: string): Promise<any> {
   return new Promise((resolve, reject) => {
-    dbcon.query(sql, (err: any, result: any[]) => {
-      if (err) return reject(err);
-      resolve(Object.values(JSON.parse(JSON.stringify(result))));
+    mysql_pool.getConnection(function (err: any, dbcon: any) {
+      if (err) {
+        console.log('custom err', err);
+        if (dbcon) {
+          dbcon.release();
+        }
+        throw err;
+      }
+      dbcon.query(sql, (err: any, result: any[]) => {
+        dbcon.release();
+        if (err) {
+          console.log('custom err', err);
+          return reject(err);
+        }
+        resolve(Object.values(JSON.parse(JSON.stringify(result))));
+      });
     });
   });
 }

@@ -21,557 +21,61 @@ import { Owner, OwnerMetric, OwnerTags } from './entities/IOwner';
 import { TDH } from './entities/ITDH';
 import { Transaction } from './entities/ITransaction';
 
-const config = require('./config');
 const mysql = require('mysql');
 
-console.log(new Date(), '[DATABASE]', `[DB HOST ${config.db.DB_HOST}]`);
+let mysql_pool: any;
 
-export const dbcon = mysql.createConnection({
-  host: config.db.DB_HOST,
-  port: config.db.port,
-  user: config.db.DB_USER,
-  password: config.db.DB_PASS,
-  charset: 'utf8mb4'
-});
+export async function connect() {
+  console.log('[DATABASE]', `[DB HOST ${process.env.DB_HOST}]`);
 
-function connect() {
-  dbcon.connect((err: any) => {
-    if (err) throw err;
-    console.log(new Date(), '[DATABASE]', `DATABASE CONNECTION SUCCESS`);
+  mysql_pool = mysql.createPool({
+    connectionLimit: 10,
+    connectTimeout: 30 * 1000,
+    acquireTimeout: 30 * 1000,
+    timeout: 30 * 1000,
+    host: process.env.DB_HOST,
+    port: process.env.DB_PORT,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASS,
+    charset: 'utf8mb4',
+    database: process.env.DB_NAME
   });
+
+  console.log('[DATABASE]', `[CONNECTION POOL CREATED]`);
 }
-
-dbcon.on('error', function (err: any) {
-  console.error(
-    new Date(),
-    '[DATABASE]',
-    `[DISCONNECTED][ERROR CODE ${err.code}]`
-  );
-  if (err.code === 'PROTOCOL_CONNECTION_LOST') {
-    connect();
-  } else {
-    throw err;
-  }
-});
-
-dbcon.query(
-  `CREATE DATABASE IF NOT EXISTS ${config.db.DB_NAME}`,
-  (err: any) => {
-    if (err) throw err;
-    console.log(new Date(), '[DATABASE]', `[DATABASE CREATED]`);
-  }
-);
-
-dbcon.query(`USE ${config.db.DB_NAME}`, (err: any) => {
-  if (err) throw err;
-  console.log(
-    new Date(),
-    '[DATABASE]',
-    `[DATABASE SELECTED ${config.db.DB_NAME}]`
-  );
-});
-
-dbcon.query(
-  `CREATE TABLE IF NOT EXISTS ${TDH_BLOCKS_TABLE} (block_number INT NOT NULL unique , created_at DATETIME NOT NULL DEFAULT now(), PRIMARY KEY (block_number)) ENGINE = InnoDB;`,
-  (err: any) => {
-    if (err) throw err;
-    console.log(
-      new Date(),
-      '[DATABASE]',
-      `[TABLE CREATED ${TDH_BLOCKS_TABLE}]`
-    );
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${TDH_BLOCKS_TABLE} ADD COLUMN timestamp TIMESTAMP;`,
-  (err: any) => {
-    if (err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE ${TDH_BLOCKS_TABLE}]`,
-        `[COLUMN EXISTS timestamp]`
-      );
-    } else {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${TDH_BLOCKS_TABLE}]`,
-        `[NEW COLUMN timestamp]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `CREATE TABLE IF NOT EXISTS ${TRANSACTIONS_TABLE} (created_at DATETIME NOT NULL DEFAULT now() , transaction VARCHAR(100) NOT NULL, block INT NOT NULL , transaction_date DATETIME NOT NULL , from_address TEXT NOT NULL , to_address VARCHAR(50) NOT NULL , contract VARCHAR(50) NOT NULL , token_id INT NOT NULL , token_count INT NOT NULL , value DOUBLE NOT NULL , PRIMARY KEY (transaction, contract, token_id, to_address)) ENGINE = InnoDB;`,
-  (err: any) => {
-    if (err) throw err;
-    console.log(
-      new Date(),
-      '[DATABASE]',
-      `[TABLE CREATED ${TRANSACTIONS_TABLE}]`
-    );
-  }
-);
-
-dbcon.query(
-  `CREATE TABLE IF NOT EXISTS ${TRANSACTIONS_REMAKE_TABLE} (created_at DATETIME NOT NULL DEFAULT now() , transaction VARCHAR(100) NOT NULL, block INT NOT NULL , transaction_date DATETIME NOT NULL , from_address VARCHAR(50) NOT NULL , to_address VARCHAR(50) NOT NULL , contract VARCHAR(50) NOT NULL , token_id INT NOT NULL , token_count INT NOT NULL , value DOUBLE NOT NULL , PRIMARY KEY (transaction, contract, token_id, from_address, to_address)) ENGINE = InnoDB;`,
-  (err: any) => {
-    if (err) throw err;
-    console.log(
-      new Date(),
-      '[DATABASE]',
-      `[TABLE CREATED ${TRANSACTIONS_REMAKE_TABLE}]`
-    );
-  }
-);
-
-dbcon.query(
-  `CREATE TABLE IF NOT EXISTS ${NFTS_TABLE} (id INT NOT NULL , contract VARCHAR(50) NOT NULL , created_at DATETIME NOT NULL DEFAULT now(), mint_date DATETIME NOT NULL , mint_price DOUBLE NOT NULL , supply INT NOT NULL , name TEXT NOT NULL , collection TEXT NOT NULL , token_type TEXT NOT NULL , hodl_rate DOUBLE NOT NULL , description TEXT NOT NULL , artist TEXT NOT NULL , uri TEXT NOT NULL , thumbnail TEXT NOT NULL , image TEXT NOT NULL , animation TEXT , metadata JSON NOT NULL , PRIMARY KEY (id, contract)) ENGINE = InnoDB;`,
-  (err: any) => {
-    if (err) throw err;
-    console.log(new Date(), '[DATABASE]', `[TABLE CREATED ${NFTS_TABLE}]`);
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${NFTS_TABLE} ADD COLUMN tdh INT NOT NULL DEFAULT 0;`,
-  (err: any) => {
-    if (err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE ${NFTS_TABLE}]`,
-        `[COLUMN EXISTS tdh]`
-      );
-    } else {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${NFTS_TABLE}]`,
-        `[NEW COLUMN tdh]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${NFTS_TABLE} ADD COLUMN tdh__raw INT NOT NULL DEFAULT 0;`,
-  (err: any) => {
-    if (err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE ${NFTS_TABLE}]`,
-        `[COLUMN EXISTS tdh__raw]`
-      );
-    } else {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${NFTS_TABLE}]`,
-        `[NEW COLUMN tdh__raw]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${NFTS_TABLE} ADD COLUMN tdh_rank INT NOT NULL DEFAULT 0;`,
-  (err: any) => {
-    if (err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE ${NFTS_TABLE}]`,
-        `[COLUMN EXISTS tdh_rank]`
-      );
-    } else {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${NFTS_TABLE}]`,
-        `[NEW COLUMN tdh_rank]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${NFTS_TABLE} ADD COLUMN market_cap DOUBLE NOT NULL DEFAULT 0;`,
-  (err: any) => {
-    if (err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE ${NFTS_TABLE}]`,
-        `[COLUMN EXISTS market_cap]`
-      );
-    } else {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${NFTS_TABLE}][NEW COLUMN market_cap]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${NFTS_TABLE} ADD COLUMN floor_price DOUBLE NOT NULL DEFAULT 0;`,
-  (err: any) => {
-    if (err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE ${NFTS_TABLE}]`,
-        `[COLUMN EXISTS floor_price]`
-      );
-    } else {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${NFTS_TABLE}][NEW COLUMN floor_price]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${NFTS_TABLE} ADD COLUMN scaled TEXT NOT NULL;`,
-  (err: any) => {
-    if (err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE ${NFTS_TABLE}]`,
-        `[COLUMN EXISTS scaled]`
-      );
-    } else {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${NFTS_TABLE}]`,
-        `[NEW COLUMN scaled]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${NFTS_TABLE} ADD COLUMN compressed_animation TEXT;`,
-  (err: any) => {
-    if (err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE ${NFTS_TABLE}]`,
-        `[COLUMN EXISTS compressed_animation]`
-      );
-    } else {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${NFTS_TABLE}]`,
-        `[NEW COLUMN scaled]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `CREATE TABLE IF NOT EXISTS ${ARTISTS_TABLE} (name VARCHAR(100) NOT NULL unique , created_at DATETIME NOT NULL DEFAULT now(), memes JSON, gradients JSON, bio TEXT, pfp TEXT, work JSON, social_links JSON, PRIMARY KEY (name)) ENGINE = InnoDB;`,
-  (err: any) => {
-    if (err) throw err;
-    console.log(new Date(), '[DATABASE]', `[TABLE CREATED ${ARTISTS_TABLE}]`);
-  }
-);
-
-dbcon.query(
-  `CREATE TABLE IF NOT EXISTS ${OWNERS_TABLE} (created_at DATETIME NOT NULL DEFAULT now(), wallet VARCHAR(50) NOT NULL , token_id INT NOT NULL, contract VARCHAR(50) NOT NULL, balance INT NOT NULL, PRIMARY KEY (wallet, contract, token_id)) ENGINE = InnoDB;`,
-  (err: any) => {
-    if (err) throw err;
-    console.log(new Date(), '[DATABASE]', `[TABLE CREATED ${OWNERS_TABLE}]`);
-  }
-);
-
-dbcon.query(
-  `CREATE TABLE IF NOT EXISTS ${OWNERS_TAGS_TABLE} (created_at DATETIME NOT NULL DEFAULT now(), wallet VARCHAR(50) NOT NULL , memes_balance INT NOT NULL, unique_memes INT NOT NULL, gradients_balance  INT NOT NULL, genesis boolean NOT NULL, memes_cards_sets INT NOT NULL, PRIMARY KEY (wallet)) ENGINE = InnoDB;`,
-  (err: any) => {
-    if (err) throw err;
-    console.log(
-      new Date(),
-      '[DATABASE]',
-      `[TABLE CREATED ${OWNERS_TAGS_TABLE}]`
-    );
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${OWNERS_TAGS_TABLE}
-  ADD COLUMN nakamoto boolean NOT NULL,
-  ADD COLUMN memes_cards_sets_minus1 boolean NOT NULL,
-  ADD COLUMN memes_cards_sets_minus2 boolean NOT NULL,
-  ADD COLUMN memes_cards_sets_szn1 INT NOT NULL,
-  ADD COLUMN memes_cards_sets_szn2 INT NOT NULL;`,
-  (err: any) => {
-    if (!err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${OWNERS_TAGS_TABLE}]`,
-        `[NEW COLUMNS ADDED]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${OWNERS_TAGS_TABLE}
-  ADD COLUMN unique_memes_szn1 INT NOT NULL,
-  ADD COLUMN unique_memes_szn2 INT NOT NULL;`,
-  (err: any) => {
-    if (!err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${OWNERS_TAGS_TABLE}]`,
-        `[NEW COLUMNS ADDED unique_memes_szn1, unique_memes_szn2]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${OWNERS_TAGS_TABLE} MODIFY memes_cards_sets_minus1 INT NOT NULL, 
-  MODIFY memes_cards_sets_minus2 INT NOT NULL;`,
-  (err: any) => {
-    if (!err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${OWNERS_TAGS_TABLE}]`,
-        `[memes_cards_sets_minus COLUMNS UPDATED]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${OWNERS_TAGS_TABLE} MODIFY nakamoto INT NOT NULL, 
-  MODIFY genesis INT NOT NULL;`,
-  (err: any) => {
-    if (!err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${OWNERS_TAGS_TABLE}]`,
-        `[nakamoto, genesis COLUMNS UPDATED]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `CREATE TABLE IF NOT EXISTS ${OWNERS_METRICS_TABLE} (created_at DATETIME NOT NULL DEFAULT now(), wallet VARCHAR(50) NOT NULL , balance INT NOT NULL, purchases_value DOUBLE NOT NULL, purchases_count INT NOT NULL, purchases_value_primary DOUBLE NOT NULL, purchases_count_primary INT NOT NULL, purchases_value_secondary DOUBLE NOT NULL, purchases_count_secondary INT NOT NULL, sales_value DOUBLE NOT NULL, sales_count INT NOT NULL, transfers_in INT NOT NULL, transfers_out INT NOT NULL, PRIMARY KEY (wallet)) ENGINE = InnoDB;`,
-  (err: any) => {
-    if (err) throw err;
-    console.log(
-      new Date(),
-      '[DATABASE]',
-      `[TABLE CREATED ${OWNERS_METRICS_TABLE}]`
-    );
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${OWNERS_METRICS_TABLE} ADD COLUMN gradients_balance INT NOT NULL AFTER balance, ADD COLUMN memes_balance_season2 INT NOT NULL AFTER balance, ADD COLUMN memes_balance_season1 INT NOT NULL AFTER balance, ADD COLUMN memes_balance INT NOT NULL AFTER balance;`,
-  (err: any) => {
-    if (!err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${OWNERS_METRICS_TABLE}]`,
-        `[NEW COLUMNS ADDED]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${OWNERS_METRICS_TABLE}
-  ADD COLUMN purchases_value_memes DOUBLE NOT NULL, ADD COLUMN purchases_count_memes INT NOT NULL,
-  ADD COLUMN purchases_value_memes_season1 DOUBLE NOT NULL, ADD COLUMN purchases_count_memes_season1 INT NOT NULL, 
-  ADD COLUMN purchases_value_memes_season2 DOUBLE NOT NULL, ADD COLUMN purchases_count_memes_season2 INT NOT NULL, 
-  ADD COLUMN purchases_value_gradients DOUBLE NOT NULL, ADD COLUMN purchases_count_gradients INT NOT NULL, 
-  ADD COLUMN purchases_value_primary_memes DOUBLE NOT NULL, ADD COLUMN purchases_count_primary_memes INT NOT NULL,
-  ADD COLUMN purchases_value_primary_memes_season1 DOUBLE NOT NULL, ADD COLUMN purchases_count_primary_memes_season1 INT NOT NULL, 
-  ADD COLUMN purchases_value_primary_memes_season2 DOUBLE NOT NULL, ADD COLUMN purchases_count_primary_memes_season2 INT NOT NULL, 
-  ADD COLUMN purchases_value_primary_gradients DOUBLE NOT NULL, ADD COLUMN purchases_count_primary_gradients INT NOT NULL, 
-  ADD COLUMN purchases_value_secondary_memes DOUBLE NOT NULL, ADD COLUMN purchases_count_secondary_memes INT NOT NULL,
-  ADD COLUMN purchases_value_secondary_memes_season1 DOUBLE NOT NULL, ADD COLUMN purchases_count_secondary_memes_season1 INT NOT NULL, 
-  ADD COLUMN purchases_value_secondary_memes_season2 DOUBLE NOT NULL, ADD COLUMN purchases_count_secondary_memes_season2 INT NOT NULL, 
-  ADD COLUMN purchases_value_secondary_gradients DOUBLE NOT NULL, ADD COLUMN purchases_count_secondary_gradients INT NOT NULL, 
-  ADD COLUMN sales_value_memes DOUBLE NOT NULL, ADD COLUMN sales_count_memes INT NOT NULL,
-  ADD COLUMN sales_value_memes_season1 DOUBLE NOT NULL, ADD COLUMN sales_count_memes_season1 INT NOT NULL, 
-  ADD COLUMN sales_value_memes_season2 DOUBLE NOT NULL, ADD COLUMN sales_count_memes_season2 INT NOT NULL, 
-  ADD COLUMN sales_value_gradients DOUBLE NOT NULL, ADD COLUMN sales_count_gradients INT NOT NULL, 
-  ADD COLUMN transfers_in_memes INT NOT NULL, ADD COLUMN transfers_out_memes INT NOT NULL,
-  ADD COLUMN transfers_in_memes_season1 INT NOT NULL, ADD COLUMN transfers_out_memes_season1 INT NOT NULL,
-  ADD COLUMN transfers_in_memes_season2 INT NOT NULL, ADD COLUMN transfers_out_memes_season2 INT NOT NULL,
-  ADD COLUMN transfers_in_gradients INT NOT NULL, ADD COLUMN transfers_out_gradients INT NOT NULL;`,
-  (err: any) => {
-    if (!err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${OWNERS_METRICS_TABLE}]`,
-        `[NEW COLUMNS ADDED]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `CREATE TABLE IF NOT EXISTS ${ENS_TABLE} (created_at DATETIME NOT NULL DEFAULT now(), wallet VARCHAR(50) NOT NULL , display varchar(150) CHARACTER SET utf8mb4 , PRIMARY KEY (wallet)) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4;`,
-  (err: any) => {
-    if (err) throw err;
-    console.log(new Date(), '[DATABASE]', `[TABLE CREATED ${ENS_TABLE}]`);
-  }
-);
-
-dbcon.query(
-  `CREATE TABLE IF NOT EXISTS ${WALLETS_TDH_TABLE} (
-    date DATETIME NOT NULL DEFAULT now(), 
-    wallet VARCHAR(50) NOT NULL , 
-    block INT NOT NULL , 
-    tdh_rank INT NOT NULL , 
-    tdh INT NOT NULL, 
-    boost DOUBLE NOT NULL, 
-    boosted_tdh INT NOT NULL, 
-    tdh__raw INT NOT NULL, 
-    balance INT NOT NULL, 
-    memes_cards_sets INT NOT NULL, 
-    genesis INT NOT NULL, 
-    unique_memes INT NOT NULL, 
-    memes_tdh INT NOT NULL, 
-    memes_tdh__raw INT NOT NULL, 
-    memes_balance INT NOT NULL, 
-    memes_tdh_season1 INT NOT NULL , 
-    memes_tdh_season1__raw INT NOT NULL , 
-    memes_balance_season1 INT NOT NULL , 
-    memes_tdh_season2 INT NOT NULL ,
-    memes_tdh_season2__raw INT NOT NULL ,
-    memes_balance_season2 INT NOT NULL , 
-    memes JSON , 
-    memes_ranks JSON , 
-    gradients_tdh INT NOT NULL , 
-    gradients_tdh__raw INT NOT NULL , 
-    gradients_balance INT NOT NULL , 
-    gradients JSON, 
-    gradients_ranks JSON , 
-    PRIMARY KEY (wallet, block)
-  ) ENGINE = InnoDB;`,
-  (err: any) => {
-    if (err) throw err;
-    console.log(
-      new Date(),
-      '[DATABASE]',
-      `[TABLE CREATED ${WALLETS_TDH_TABLE}]`
-    );
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${WALLETS_TDH_TABLE}
-  ADD COLUMN boosted_memes_tdh DOUBLE NOT NULL, 
-  ADD COLUMN boosted_memes_tdh_season1 DOUBLE NOT NULL,
-  ADD COLUMN boosted_memes_tdh_season2 DOUBLE NOT NULL, 
-  ADD COLUMN boosted_gradients_tdh DOUBLE NOT NULL;`,
-  (err: any) => {
-    if (!err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${WALLETS_TDH_TABLE}]`,
-        `[NEW COLUMNS ADDED]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `ALTER TABLE ${WALLETS_TDH_TABLE}
-  ADD COLUMN tdh_rank_memes INT NOT NULL, 
-  ADD COLUMN tdh_rank_memes_szn1 INT NOT NULL, 
-  ADD COLUMN tdh_rank_memes_szn2 INT NOT NULL, 
-  ADD COLUMN tdh_rank_gradients INT NOT NULL;`,
-  (err: any) => {
-    if (!err) {
-      console.log(
-        new Date(),
-        '[DATABASE]',
-        `[TABLE UPDATED ${WALLETS_TDH_TABLE}]`,
-        `[NEW COLUMNS ADDED]`
-      );
-    }
-  }
-);
-
-dbcon.query(
-  `CREATE TABLE IF NOT EXISTS ${MEMES_EXTENDED_DATA_TABLE} (
-    id INT NOT NULL, 
-    created_at DATETIME NOT NULL DEFAULT now(), 
-    season INT NOT NULL, 
-    meme INT NOT NULL, 
-    meme_name TEXT NOT NULL, 
-    collection_size INT NOT NULL, 
-    edition_size INT NOT NULL,
-    edition_size_rank INT NOT NULL,
-    museum_holdings INT NOT NULL,
-    museum_holdings_rank INT NOT NULL,
-    edition_size_cleaned INT NOT NULL,
-    edition_size_cleaned_rank INT NOT NULL,
-    hodlers INT NOT NULL,
-    hodlers_rank INT NOT NULL,
-    percent_unique DOUBLE NOT NULL,
-    percent_unique_rank INT NOT NULL,
-    percent_unique_cleaned DOUBLE NOT NULL,
-    percent_unique_cleaned_rank INT NOT NULL, PRIMARY KEY (id)
-  ) ENGINE = InnoDB;`,
-  (err: any) => {
-    if (err) throw err;
-    console.log(
-      new Date(),
-      '[DATABASE]',
-      `[TABLE CREATED ${MEMES_EXTENDED_DATA_TABLE}]`
-    );
-  }
-);
-
-dbcon.query(
-  `CREATE TABLE IF NOT EXISTS ${UPLOADS_TABLE} (date VARCHAR(8) NOT NULL , block INT NOT NULL , tdh TEXT NOT NULL, PRIMARY KEY (date)) ENGINE = InnoDB;`,
-  (err: any) => {
-    if (err) throw err;
-    console.log(new Date(), '[DATABASE]', `[TABLE CREATED ${UPLOADS_TABLE}]`);
-  }
-);
 
 export function execSQL(sql: string): Promise<any> {
   return new Promise((resolve, reject) => {
-    dbcon.query(sql, (err: any, result: any[]) => {
-      if (err) return reject(err);
-      resolve(Object.values(JSON.parse(JSON.stringify(result))));
+    mysql_pool.getConnection(function (err: any, dbcon: any) {
+      if (err) {
+        console.log('custom err', err);
+        if (dbcon) {
+          dbcon.release();
+        }
+        throw err;
+      }
+      dbcon.query(sql, (err: any, result: any[]) => {
+        dbcon.release();
+        if (err) {
+          console.log('custom err', err);
+          return reject(err);
+        }
+        resolve(Object.values(JSON.parse(JSON.stringify(result))));
+      });
     });
   });
 }
 
-export async function findLastUpload(): Promise<Transaction[]> {
+export async function fetchLastUpload(): Promise<any> {
   let sql = `SELECT * FROM ${UPLOADS_TABLE} ORDER BY date DESC LIMIT 1;`;
   const results = await execSQL(sql);
   return results ? results[0] : [];
+}
+
+export async function fetchLastOwnerMetrics(): Promise<any> {
+  let sql = `SELECT created_at FROM ${OWNERS_METRICS_TABLE} ORDER BY created_at DESC LIMIT 1;`;
+  const results = await execSQL(sql);
+  return results ? results[0].created_at : [];
 }
 
 export async function findReplayTransactions(): Promise<Transaction[]> {
@@ -629,10 +133,13 @@ export async function fetchAllTransactions() {
   return results;
 }
 
-export async function fetchNftsForContract(contract: string) {
-  const sql = `SELECT * from ${NFTS_TABLE} WHERE contract=${mysql.escape(
+export async function fetchNftsForContract(contract: string, orderBy?: string) {
+  let sql = `SELECT * from ${NFTS_TABLE} WHERE contract=${mysql.escape(
     contract
-  )};`;
+  )}`;
+  if (orderBy) {
+    sql += ` order by ${orderBy}`;
+  }
   const results = await execSQL(sql);
   return results;
 }
@@ -675,6 +182,17 @@ export async function fetchAllOwners() {
   return results;
 }
 
+export async function fetchWalletsFromTransactions(datetime: Date | undefined) {
+  let sql = `SELECT DISTINCT COALESCE(from_address, to_address) AS wallet FROM ${TRANSACTIONS_TABLE} `;
+  if (datetime) {
+    sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(
+      datetime
+    )}`;
+  }
+  const results = await execSQL(sql);
+  return results;
+}
+
 export async function fetchAllOwnersAddresses() {
   let sql = `SELECT distinct wallet FROM ${OWNERS_TABLE} WHERE wallet != ${mysql.escape(
     NULL_ADDRESS
@@ -707,37 +225,23 @@ export async function fetchAllOwnerTags() {
 }
 
 export async function fetchEnsRefresh() {
-  let sql = `SELECT * FROM ${ENS_TABLE} WHERE created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR) LIMIT 200;`;
+  let sql = `SELECT * FROM ${ENS_TABLE} WHERE created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY created_at ASC LIMIT 200;`;
   const results = await execSQL(sql);
   return results;
 }
 
 export async function fetchMissingEns(datetime?: Date) {
-  let sql1 = `SELECT DISTINCT from_address as address FROM ${TRANSACTIONS_TABLE} WHERE from_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
+  let sql = `SELECT DISTINCT COALESCE(from_address, to_address) AS address  FROM ${TRANSACTIONS_TABLE} WHERE COALESCE(from_address, to_address) NOT IN (SELECT wallet FROM ${ENS_TABLE}) `;
   if (datetime) {
-    sql1 += ` AND ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(datetime)}`;
-  } else {
-    sql1 += ` LIMIT 75`;
+    sql += ` AND ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(datetime)}`;
   }
-  const results1 = await execSQL(sql1);
+  sql += ` LIMIT 200`;
 
-  let sql2 = `SELECT DISTINCT to_address as address FROM ${TRANSACTIONS_TABLE} WHERE to_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
-  if (datetime) {
-    sql2 += ` AND ${TRANSACTIONS_TABLE}.created_at > ${datetime}`;
-  } else {
-    sql2 += ` LIMIT 75`;
-  }
-  const results2 = await execSQL(sql2);
+  const results = await execSQL(sql);
 
-  const results = results1
-    .map((r1: any) => r1.address)
-    .concat(results2.map((r2: any) => r2.address));
+  const structuredResults = results.map((r: any) => r.address);
 
-  const filteredResults = results.filter(
-    (item: any, index: any) => results.indexOf(item) === index
-  );
-
-  return filteredResults;
+  return structuredResults;
 }
 
 export async function persistTransactions(transactions: Transaction[]) {
@@ -804,7 +308,7 @@ export async function persistTransactionsREMAKE(transactions: Transaction[]) {
 
 export async function persistNFTS(nfts: NFTWithTDH[]) {
   if (nfts.length > 0) {
-    console.log(new Date(), '[NFTS]', `[PERSISTING ${nfts.length} NFTS]`);
+    console.log('[NFTS]', `[PERSISTING ${nfts.length} NFTS]`);
     await Promise.all(
       nfts.map(async (nft) => {
         let sql = `REPLACE INTO ${NFTS_TABLE} SET id=${
@@ -876,7 +380,7 @@ export async function persistArtists(artists: Artist[]) {
 
 export async function persistOwners(owners: Owner[]) {
   if (owners.length > 0) {
-    console.log(new Date(), '[OWNERS]', `[PERSISTING ${owners.length} OWNERS]`);
+    console.log('[OWNERS]', `[PERSISTING ${owners.length} OWNERS]`);
 
     await Promise.all(
       owners.map(async (owner) => {
@@ -1135,11 +639,6 @@ export async function persistMemesExtendedData(data: MemesExtendedData[]) {
 }
 
 export async function persistNftMarketStats(stats: any[]) {
-  console.log(
-    new Date(),
-    '[NFT MARKET STATS]',
-    `PERSISTING NFTS STATS [${stats.length}]`
-  );
   await Promise.all(
     stats.map(async (s) => {
       const sql = `UPDATE ${NFTS_TABLE} SET 
@@ -1148,12 +647,6 @@ export async function persistNftMarketStats(stats: any[]) {
       } WHERE contract=${mysql.escape(s.contract)} AND id=${s.id}`;
       await execSQL(sql);
     })
-  );
-
-  console.log(
-    new Date(),
-    '[NFT MARKET STATS]',
-    `PERSISTED ALL NFTS STATS [${stats.length}]`
   );
 }
 
@@ -1191,11 +684,11 @@ export async function persistTdhUpload(
     tdh = ${mysql.escape(location)}`;
   await execSQL(sql);
 
-  console.log(new Date(), '[TDH UPLOAD PERSISTED]');
+  console.log('[TDH UPLOAD PERSISTED]');
 }
 
 export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
-  console.log(new Date(), '[TDH]', `PERSISTING WALLETS TDH [${tdh.length}]`);
+  console.log('[TDH]', `PERSISTING WALLETS TDH [${tdh.length}]`);
 
   const sortedTdh = tdh.sort((a: TDH, b: TDH) => {
     if (a.tdh > b.tdh) return -1;
@@ -1282,7 +775,7 @@ export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
       await execSQL(sql);
     })
   );
-  console.log(new Date(), '[TDH]', `PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+  console.log('[TDH]', `PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 
   const sqlBlock = `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block_number=${block}, timestamp=${mysql.escape(
     timestamp
@@ -1291,18 +784,21 @@ export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
 }
 
 export async function persistENS(ens: ENS[]) {
-  console.log(new Date(), '[ENS]', `PERSISTING ENS [${ens.length}]`);
+  console.log('[ENS]', `PERSISTING ENS [${ens.length}]`);
 
   await Promise.all(
     ens.map(async (t) => {
-      const wallet = mysql.escape(t.wallet);
-      const display = mysql.escape(t.display);
+      if ((t.display && t.display.length < 150) || !t.display) {
+        const wallet = mysql.escape(t.wallet);
+        const display = mysql.escape(t.display);
 
-      const sql = `REPLACE INTO ${ENS_TABLE} SET 
+        const sql = `REPLACE INTO ${ENS_TABLE} SET 
           wallet = ${wallet},
           display = ${display}`;
-      await execSQL(sql);
+        await execSQL(sql);
+      }
     })
   );
-  console.log(new Date(), '[ENS]', `PERSISTED ALL [${ens.length}]`);
+
+  console.log('[ENS]', `PERSISTED ALL [${ens.length}]`);
 }

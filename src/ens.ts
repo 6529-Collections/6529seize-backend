@@ -1,10 +1,11 @@
 import { Alchemy } from 'alchemy-sdk';
 import { ALCHEMY_SETTINGS, ENS_ADDRESS, PUNK_6529 } from './constants';
 import { ENS } from './entities/IENS';
+import { fetchMissingEns, fetchEnsRefresh, persistENS } from './db';
 
-const alchemy = new Alchemy(ALCHEMY_SETTINGS);
+let alchemy: Alchemy;
 
-export const findExistingEns = async (ens: ENS[]) => {
+async function findExistingEns(ens: ENS[]) {
   console.log(
     new Date(),
     '[ENS EXISTING]',
@@ -32,9 +33,9 @@ export const findExistingEns = async (ens: ENS[]) => {
   );
 
   return deltaEns;
-};
+}
 
-export const findNewEns = async (wallets: string[]) => {
+async function findNewEns(wallets: string[]) {
   console.log(
     new Date(),
     '[ENS NEW]',
@@ -58,4 +59,59 @@ export const findNewEns = async (wallets: string[]) => {
   console.log(new Date(), '[ENS NEW]', `[FOUND ${finalEns.length} NEW ENS]`);
 
   return finalEns;
-};
+}
+
+export async function discoverEns(datetime?: Date) {
+  alchemy = new Alchemy({
+    ...ALCHEMY_SETTINGS,
+    apiKey: process.env.ALCHEMY_API_KEY
+  });
+
+  try {
+    const missingEns = await fetchMissingEns(datetime);
+    if (missingEns.length > 0) {
+      const newEns = await findNewEns(missingEns);
+      await persistENS(newEns);
+      await discoverEns(datetime);
+    }
+  } catch (e: any) {
+    console.log(e);
+    if (e.message.includes('ETIMEDOUT') || e.message.includes('429')) {
+      console.log(
+        new Date(),
+        '[ENS NEW]',
+        '[ETIMEDOUT!]',
+        '[RETRYING PROCESS]'
+      );
+      await discoverEns(datetime);
+    }
+  }
+}
+
+export async function refreshEns() {
+  alchemy = new Alchemy({
+    ...ALCHEMY_SETTINGS,
+    apiKey: process.env.ALCHEMY_API_KEY
+  });
+
+  try {
+    const startingEns: ENS[] = await fetchEnsRefresh();
+    if (startingEns.length > 0) {
+      const deltaEns = await findExistingEns(startingEns);
+      await persistENS(deltaEns);
+      await refreshEns();
+    } else {
+      console.log(new Date(), '[ENS REFRESH]', '[DONE!]');
+    }
+  } catch (e: any) {
+    if (e.message.includes('ETIMEDOUT') || e.message.includes('429')) {
+      console.log(
+        new Date(),
+        '[ENS EXISTING]',
+        '[ETIMEDOUT!]',
+        '[RETRYING PROCESS]'
+      );
+      await refreshEns();
+    }
+  }
+}

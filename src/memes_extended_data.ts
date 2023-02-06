@@ -1,17 +1,13 @@
-import { Alchemy } from 'alchemy-sdk';
-import {
-  ALCHEMY_SETTINGS,
-  MEMES_CONTRACT,
-  NULL_ADDRESS,
-  SIX529_MUSEUM
-} from './constants';
+import { MEMES_CONTRACT, NULL_ADDRESS, SIX529_MUSEUM } from './constants';
 import { MemesExtendedData, NFT } from './entities/INFT';
 import { Owner } from './entities/IOwner';
 import { areEqualAddresses } from './helpers';
+import { fetchAllNFTs, fetchAllOwners, persistMemesExtendedData } from './db';
 
-const alchemy = new Alchemy(ALCHEMY_SETTINGS);
+export const findMemesExtendedData = async () => {
+  let nfts: NFT[] = await fetchAllNFTs();
+  let owners: Owner[] = await fetchAllOwners();
 
-export const findMemesExtendedData = async (nfts: NFT[], owners: Owner[]) => {
   nfts = [...nfts].filter((t) => areEqualAddresses(t.contract, MEMES_CONTRACT));
 
   console.log(new Date(), '[MEMES EXTENDED DATA]', `[NFTS ${nfts.length}]`);
@@ -143,6 +139,8 @@ export const findMemesExtendedData = async (nfts: NFT[], owners: Owner[]) => {
         }
       }).length + 1;
   });
+
+  await persistMemesExtendedData(memesMeta);
 
   return memesMeta;
 };

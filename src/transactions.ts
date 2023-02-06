@@ -12,7 +12,7 @@ import {
 } from './constants';
 import { Transaction } from './entities/ITransaction';
 
-const alchemy = new Alchemy(ALCHEMY_SETTINGS);
+let alchemy: Alchemy;
 
 async function getAllTransactions(
   startingBlock: number,
@@ -46,6 +46,11 @@ export const findTransactions = async (
   latestBlock?: number,
   pageKey?: string
 ) => {
+  alchemy = new Alchemy({
+    ...ALCHEMY_SETTINGS,
+    apiKey: process.env.ALCHEMY_API_KEY
+  });
+
   if (!latestBlock) {
     latestBlock = await alchemy.core.getBlockNumber();
     console.log(

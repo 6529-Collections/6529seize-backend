@@ -2,28 +2,30 @@ import { TDHENS } from './entities/ITDH';
 import { OwnerMetric } from './entities/IOwner';
 import { areEqualAddresses } from './helpers';
 import { SIX529_MUSEUM } from './constants';
+import converter from 'json-2-csv';
+import {
+  fetchAllTDH,
+  fetchAllOwnerMetrics,
+  fetchLastUpload,
+  persistTdhUpload
+} from './db';
 
 const Arweave = require('arweave');
 
-const arweave = Arweave.init({
+const myarweave = Arweave.init({
   host: 'arweave.net',
   port: 443,
   protocol: 'https'
 });
 
-const converter = require('json-2-csv');
+export async function uploadTDH() {
+  const tdh: TDHENS[] = await fetchAllTDH();
+  const ownerMetrics: OwnerMetric[] = await fetchAllOwnerMetrics();
 
-const config = require('./config');
-
-export const uploadTDH = async (
-  tdh: TDHENS[],
-  ownerMetrics: OwnerMetric[],
-  db: any
-) => {
   const block = tdh[0].block;
   const dateString = formatDate(new Date());
 
-  const lastUpload = await db.findLastUpload(dateString);
+  const lastUpload = await fetchLastUpload();
 
   const exists = lastUpload && lastUpload.date == dateString;
 
@@ -74,42 +76,48 @@ export const uploadTDH = async (
 
     combinedArray.sort((a, b) => a.tdh_rank - b.tdh_rank);
 
-    converter.json2csv(combinedArray, async (err: any, csv: any) => {
-      if (err) throw err;
+    console.log(new Date(), `[TDH UPLOAD]`, `[CREATING CSV]`);
 
-      let transaction = await arweave.createTransaction(
-        { data: Buffer.from(csv) },
-        config.arweave.ARWEAVE_KEY
-      );
-      transaction.addTag('Content-Type', 'text/csv');
+    const csv = await converter.json2csvAsync(combinedArray);
 
-      await arweave.transactions.sign(transaction, config.arweave.ARWEAVE_KEY);
+    console.log(new Date(), `[TDH UPLOAD]`, `[CSV CREATED]`);
 
-      let uploader = await arweave.transactions.getUploader(transaction);
+    const arweaveKey = process.env.ARWEAVE_KEY
+      ? JSON.parse(process.env.ARWEAVE_KEY)
+      : {};
 
-      while (!uploader.isComplete) {
-        await uploader.uploadChunk();
-        console.log(
-          new Date(),
-          '[TDH UPLOAD]',
-          `${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
-        );
-      }
-
-      await db.persistTdhUpload(
-        block,
-        dateString,
-        `https://arweave.net/${transaction.id}`
-      );
-    });
-  } else {
-    console.log(
-      new Date(),
-      '[TDH UPLOAD]',
-      `[BLOCK ${block}]`,
-      `[TDH ${tdh.length}]`,
-      `[OWNER METRICS ${ownerMetrics.length}]`
+    let transaction = await myarweave.createTransaction(
+      { data: Buffer.from(csv) },
+      arweaveKey
     );
+
+    transaction.addTag('Content-Type', 'text/csv');
+
+    console.log(new Date(), `[TDH UPLOAD]`, `[SIGNING ARWEAVE TRANSACTION]`);
+
+    await myarweave.transactions.sign(transaction, arweaveKey);
+
+    let uploader = await myarweave.transactions.getUploader(transaction);
+
+    while (!uploader.isComplete) {
+      await uploader.uploadChunk();
+      console.log(
+        new Date(),
+        '[TDH UPLOAD]',
+        `${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
+      );
+    }
+
+    const url = `https://arweave.net/${transaction.id}`;
+
+    await persistTdhUpload(
+      block,
+      dateString,
+      `https://arweave.net/${transaction.id}`
+    );
+
+    console.log(new Date(), `[TDH UPLOAD]`, `[ARWEAVE LINK ${url}]`);
+  } else {
     console.log(
       new Date(),
       `[TDH UPLOAD]`,
@@ -117,7 +125,7 @@ export const uploadTDH = async (
       `[SKIPPING...]`
     );
   }
-};
+}
 
 function padTo2Digits(num: number) {
   return num.toString().padStart(2, '0');
