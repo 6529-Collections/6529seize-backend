@@ -13,7 +13,7 @@ loadEnv(true).then(async (e) => {
 
   await db.connect();
 
-  app.use(function (req, res, next) {
+  app.use(function (req: any, res: any, next: any) {
     res.setHeader('Access-Control-Allow-Methods', 'OPTIONS,POST,GET,HEAD');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader(

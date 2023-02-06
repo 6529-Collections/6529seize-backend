@@ -1,8 +1,10 @@
+import { MEMES_CONTRACT } from './constants';
+
 const transactions = require('./transactionsLoop');
 const nfts = require('./nftsloop');
 const tdh = require('./tdhLoop');
 const ownerMetrics = require('./ownerMetricsLoop');
-const myS3 = require('./s3Loop');
+const { memeStats } = require('./marketStatsLoop');
 
 const cron = require('node-cron');
 
@@ -22,10 +24,17 @@ cron.schedule('*/3 * * * *', async function () {
   }
 });
 
-// PULL EVERY 7 MINUTES
-cron.schedule('*/7 * * * *', async function () {
+// PULL EVERY 4 MINUTES
+cron.schedule('*/4 * * * *', async function () {
   if (!STARTING) {
     ownerMetrics.handler();
+  }
+});
+
+// PULL EVERY HOUR
+cron.schedule('0 * * * *', async function () {
+  if (!STARTING) {
+    memeStats();
   }
 });
 
@@ -44,10 +53,11 @@ async function start() {
 
   // Uncomment to call on start
 
-  await transactions.handler();
-  await nfts.handler();
-  await tdh.handler();
-  await ownerMetrics.handler();
+  // await transactions.handler();
+  // await nfts.handler();
+  // await tdh.handler();
+  // await ownerMetrics.handler();
+  // memeStats();
 
   STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);

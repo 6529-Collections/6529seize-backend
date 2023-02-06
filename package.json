@@ -7,8 +7,6 @@
     "api:local": "NODE_ENV=local node src/api-serverless/dist/index.js",
     "backend:dev": "NODE_ENV=development node build/backend.js",
     "api:dev": "NODE_ENV=development node src/api-serverless/dist/index.js",
-    "backend:prod": "NODE_ENV=production NODE_OPTIONS=--max_old_space_size=10240 node build/backend.js",
-    "api:prod": "NODE_ENV=production NODE_OPTIONS=--max_old_space_size=10240 node src/api-serverless/dist/index.js",
     "build": "rimraf ./build && tsc -p tsconfig.json"
   },
   "keywords": [],
@@ -42,7 +40,7 @@
     "memory-cache": "^0.2.0",
     "mysql": "^2.18.1",
     "node-cron": "^3.0.2",
-    "node-fetch": "^3.3.0",
+    "node-fetch": "^2.6.9",
     "sharp": "^0.31.3"
   }
 }

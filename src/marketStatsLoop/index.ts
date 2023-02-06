@@ -1,3 +1,4 @@
+import { MEMES_CONTRACT } from '../constants';
 import { findNftMarketStats } from '../nft_market_stats';
 import { loadEnv } from '../secrets';
 
@@ -10,4 +11,9 @@ export const handler = async (event?: any, context?: any) => {
     console.log('[MISSING process.env.CONTRACT]');
   }
   console.log(new Date(), '[NFT MARKET STATS COMPLETE]');
+};
+
+export const memeStats = async () => {
+  await loadEnv();
+  await findNftMarketStats(MEMES_CONTRACT);
 };
