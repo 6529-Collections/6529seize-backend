@@ -1,16 +1,14 @@
 import { Utils } from 'alchemy-sdk';
 import fetch from 'node-fetch';
-import { MEMES_CONTRACT } from './constants';
 import { NFT } from './entities/INFT';
-import { areEqualAddresses, delay } from './helpers';
-
-const config = require('./config');
+import { delay } from './helpers';
+import { persistNftMarketStats, fetchNftsForContract } from './db';
 
 async function getResult(url: string) {
   try {
     const response = await fetch(url, {
       headers: {
-        'X-API-KEY': config.opensea.OPENSEA_API_KEY,
+        'X-API-KEY': process.env.OPENSEA_API_KEY!,
         accept: 'application/json'
       }
     });
@@ -26,7 +24,7 @@ const findFloorPrice = async (stat: any): Promise<number> => {
   const res = await getResult(url);
 
   if (res && res.status === 200) {
-    const response = await res.json();
+    const response: any = await res.json();
     let floorPrice = 0;
     if (response.orders && response.orders.length > 0) {
       floorPrice = response.orders[0].current_price;
@@ -41,12 +39,14 @@ const findFloorPrice = async (stat: any): Promise<number> => {
     //   `[ID ${stat.id}]`,
     //   '[RETRYING IN 2500ms]'
     // );
-    await delay(2500);
-    return findFloorPrice(stat);
+    await delay(500);
+    return await findFloorPrice(stat);
   }
 };
 
-export const findNftMarketStats = async (contract: string, nfts: NFT[]) => {
+export const findNftMarketStats = async (contract: string) => {
+  const nfts: NFT[] = await fetchNftsForContract(contract, 'id desc');
+
   console.log(
     new Date(),
     '[NFT MARKET STATS]',
@@ -62,7 +62,13 @@ export const findNftMarketStats = async (contract: string, nfts: NFT[]) => {
     const floorPrice = await findFloorPrice(nft);
     nft.floor_price = floorPrice;
     nft.market_cap = floorPrice * nft.supply;
-    processedStats.push(nft);
+    await persistNftMarketStats([nft]);
+    console.log(
+      new Date(),
+      '[NFT MARKET STATS]',
+      `[CONTRACT ${contract}]`,
+      `[PROCESSED FOR ID ${nft.id}]`
+    );
   }
 
   console.log(

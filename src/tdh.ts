@@ -9,16 +9,26 @@ import { TDH } from './entities/ITDH';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses, getDaysDiff } from './helpers';
 import { Alchemy } from 'alchemy-sdk';
+import {
+  fetchLatestTransactionsBlockNumber,
+  fetchAllNFTs,
+  fetchAllOwnersAddresses,
+  fetchWalletTransactions,
+  persistTDH
+} from './db';
 
-const alchemy = new Alchemy(ALCHEMY_SETTINGS);
+let alchemy: Alchemy;
 
-export const findTDH = async (
-  block: number,
-  lastTDHCalc: Date,
-  nfts: NFT[],
-  owners: { wallet: string }[],
-  db: any
-) => {
+export const findTDH = async (lastTDHCalc: Date) => {
+  alchemy = new Alchemy({
+    ...ALCHEMY_SETTINGS,
+    apiKey: process.env.ALCHEMY_API_KEY
+  });
+
+  const block = await fetchLatestTransactionsBlockNumber(lastTDHCalc);
+  const nfts = await fetchAllNFTs();
+  const owners: { wallet: string }[] = await fetchAllOwnersAddresses();
+
   const ADJUSTED_NFTS = [...nfts].filter(
     (nft) =>
       lastTDHCalc.getTime() - 28 * 60 * 60 * 1000 >
@@ -73,8 +83,10 @@ export const findTDH = async (
       let gradientsTDH = 0;
       let gradientsTDH__raw = 0;
 
-      const walletTransactions: Transaction[] =
-        await db.fetchWalletTransactions(wallet, block);
+      const walletTransactions: Transaction[] = await fetchWalletTransactions(
+        wallet,
+        block
+      );
       const memesTransactions = [...walletTransactions].filter((t) =>
         areEqualAddresses(t.contract, MEMES_CONTRACT)
       );
@@ -441,6 +453,8 @@ export const findTDH = async (
     `[WALLETS ${walletsTDH.length}]`,
     '[CALCULATING TDH - END]'
   );
+
+  await persistTDH(block, timestamp, sortedTdh);
 
   return {
     block: block,

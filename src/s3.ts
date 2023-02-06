@@ -5,174 +5,61 @@ import {
   MEMES_CONTRACT,
   NFT_ORIGINAL_IMAGE_LINK
 } from './constants';
-import AWS from 'aws-sdk';
-import fetch from 'node-fetch';
+import S3 from 'aws-sdk/clients/s3';
 import sharp from 'sharp';
 import { Stream } from 'stream';
-import ffmpeg from 'fluent-ffmpeg';
+import { RequestInfo, RequestInit } from 'node-fetch';
+import { fetchAllNFTs } from './db';
+
+const fetch = (url: RequestInfo, init?: RequestInit) =>
+  import('node-fetch').then(({ default: fetch }) => fetch(url, init));
+
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+const ffmpeg = require('fluent-ffmpeg');
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 const imagescript = require('imagescript');
 
 const THUMBNAIL_HEIGHT = 450;
 const SCALED_HEIGHT = 1000;
-const config = require('./config');
 
-const s3 = new AWS.S3({
-  accessKeyId: config.aws.AWS_ACCESS_KEY_ID,
-  secretAccessKey: config.aws.AWS_SECRET_ACCESS_KEY
-});
+const s3 = new S3();
 
-export const persistS3 = async (nfts: NFT[]) => {
+export const persistS3 = async () => {
+  const nfts: NFT[] = await fetchAllNFTs();
+
   console.log(
     new Date(),
     '[S3]',
     `[PROCESSING ASSETS FOR ${nfts.length} NFTS]`
   );
 
-  const myBucket = config.aws.AWS_IMAGES_BUCKET_NAME;
+  const myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
 
-  nfts.map(async (n) => {
-    let format: any;
+  await Promise.all(
+    nfts.map(async (n) => {
+      let format: any;
 
-    if (areEqualAddresses(n.contract, MEMES_CONTRACT)) {
-      format = n.metadata.image_details.format;
-    }
-    if (areEqualAddresses(n.contract, GRADIENT_CONTRACT)) {
-      format = n.metadata.image.split('.').pop();
-    }
-
-    if (format) {
-      const imageKey = `images/original/${n.contract}/${n.id}.${format}`;
-
-      try {
-        const a = await s3
-          .headObject({ Bucket: myBucket, Key: imageKey })
-          .promise();
-      } catch (error: any) {
-        if (error.code === 'NotFound') {
-          console.log(
-            new Date(),
-            '[S3]',
-            `[MISSING IMAGE]`,
-            `[CONTRACT ${n.contract}]`,
-            `[ID ${n.id}]`
-          );
-
-          console.log(
-            new Date(),
-            '[S3]',
-            `[FETCHING IMAGE]`,
-            `[CONTRACT ${n.contract}]`,
-            `[ID ${n.id}]`
-          );
-
-          const imageURL = n.metadata.image;
-          const res = await fetch(imageURL);
-          const blob = await res.arrayBuffer();
-          console.log(
-            new Date(),
-            '[S3]',
-            `[IMAGE DOWNLOADED]`,
-            `[CONTRACT ${n.contract}]`,
-            `[ID ${n.id}]`
-          );
-
-          const uploadedImage = await s3
-            .upload({
-              Bucket: myBucket,
-              Key: imageKey,
-              Body: Buffer.from(blob),
-              ContentType: `image/${format.toLowerCase()}`
-            })
-            .promise();
-
-          console.log(
-            new Date(),
-            '[S3]',
-            `[IMAGE PERSISTED AT ${uploadedImage.Location}`
-          );
-        }
+      if (areEqualAddresses(n.contract, MEMES_CONTRACT)) {
+        format = n.metadata.image_details.format;
+      }
+      if (areEqualAddresses(n.contract, GRADIENT_CONTRACT)) {
+        format = n.metadata.image.split('.').pop();
       }
 
-      if (n.scaled) {
-        let scaledFormat = 'WEBP';
-        if (format.toUpperCase() == 'GIF') {
-          scaledFormat = 'GIF';
-        }
-        const scaledKey = `images/scaled_x1000/${n.contract}/${n.id}.${scaledFormat}`;
-        try {
-          await s3.headObject({ Bucket: myBucket, Key: scaledKey }).promise();
-        } catch (error: any) {
-          if (error.code === 'NotFound') {
-            console.log(
-              new Date(),
-              '[S3]',
-              `[MISSING SCALED]`,
-              `[CONTRACT ${n.contract}]`,
-              `[ID ${n.id}]`
-            );
-
-            console.log(
-              new Date(),
-              '[S3]',
-              `[FETCHING IMAGE FOR SCALED]`,
-              `[CONTRACT ${n.contract}]`,
-              `[ID ${n.id}]`
-            );
-
-            const scaledURL = `${NFT_ORIGINAL_IMAGE_LINK}${n.contract}/${n.id}.${format}`;
-            const res = await fetch(scaledURL);
-            const blob = await res.arrayBuffer();
-            console.log(
-              new Date(),
-              '[S3]',
-              `[IMAGE FOR SCALED DOWNLOADED]`,
-              `[CONTRACT ${n.contract}]`,
-              `[ID ${n.id}]`
-            );
-
-            const scaledBuffer = await resizeImage(
-              n,
-              scaledFormat == 'WEBP' ? true : false,
-              Buffer.from(blob),
-              SCALED_HEIGHT
-            );
-
-            const uploadedScaledImage = await s3
-              .upload({
-                Bucket: myBucket,
-                Key: scaledKey,
-                Body: scaledBuffer,
-                ContentType: `image/${scaledFormat}`
-              })
-              .promise();
-
-            console.log(
-              new Date(),
-              '[S3]',
-              `[SCALED PERSISTED AT ${uploadedScaledImage.Location}`
-            );
-          }
-        }
-      }
-
-      if (n.thumbnail) {
-        let thumbnailFormat = 'WEBP';
-        if (format.toUpperCase() == 'GIF') {
-          thumbnailFormat = 'GIF';
-        }
-        const thumbnailKey = `images/scaled_x450/${n.contract}/${n.id}.${thumbnailFormat}`;
+      if (format) {
+        const imageKey = `images/original/${n.contract}/${n.id}.${format}`;
 
         try {
-          await s3
-            .headObject({ Bucket: myBucket, Key: thumbnailKey })
+          const a = await s3
+            .headObject({ Bucket: myBucket, Key: imageKey })
             .promise();
         } catch (error: any) {
           if (error.code === 'NotFound') {
             console.log(
               new Date(),
               '[S3]',
-              `[MISSING THUMBNAIL]`,
+              `[MISSING IMAGE]`,
               `[CONTRACT ${n.contract}]`,
               `[ID ${n.id}]`
             );
@@ -180,158 +67,278 @@ export const persistS3 = async (nfts: NFT[]) => {
             console.log(
               new Date(),
               '[S3]',
-              `[FETCHING IMAGE FOR THUMBNAIL]`,
+              `[FETCHING IMAGE]`,
               `[CONTRACT ${n.contract}]`,
               `[ID ${n.id}]`
             );
 
-            const thumbnailURL = `${NFT_ORIGINAL_IMAGE_LINK}${n.contract}/${n.id}.${format}`;
-            const res = await fetch(thumbnailURL);
+            const imageURL = n.metadata.image;
+            const res = await fetch(imageURL);
             const blob = await res.arrayBuffer();
             console.log(
               new Date(),
               '[S3]',
-              `[IMAGE FOR THUMBNAIL DOWNLOADED]`,
+              `[IMAGE DOWNLOADED]`,
               `[CONTRACT ${n.contract}]`,
               `[ID ${n.id}]`
             );
 
-            const thumbBuffer = await resizeImage(
-              n,
-              thumbnailFormat == 'WEBP' ? true : false,
-              Buffer.from(blob),
-              THUMBNAIL_HEIGHT
-            );
-
-            const uploadedThumbnail = await s3
+            const uploadedImage = await s3
               .upload({
                 Bucket: myBucket,
-                Key: thumbnailKey,
-                Body: thumbBuffer,
-                ContentType: `image/${thumbnailFormat}`
+                Key: imageKey,
+                Body: Buffer.from(blob),
+                ContentType: `image/${format.toLowerCase()}`
               })
               .promise();
 
             console.log(
               new Date(),
               '[S3]',
-              `[THUMBNAIL PERSISTED AT ${uploadedThumbnail.Location}`
+              `[IMAGE PERSISTED AT ${uploadedImage.Location}`
+            );
+          }
+        }
+
+        if (n.scaled) {
+          let scaledFormat = 'WEBP';
+          if (format.toUpperCase() == 'GIF') {
+            scaledFormat = 'GIF';
+          }
+          const scaledKey = `images/scaled_x1000/${n.contract}/${n.id}.${scaledFormat}`;
+          try {
+            await s3.headObject({ Bucket: myBucket, Key: scaledKey }).promise();
+          } catch (error: any) {
+            if (error.code === 'NotFound') {
+              console.log(
+                new Date(),
+                '[S3]',
+                `[MISSING SCALED]`,
+                `[CONTRACT ${n.contract}]`,
+                `[ID ${n.id}]`
+              );
+
+              console.log(
+                new Date(),
+                '[S3]',
+                `[FETCHING IMAGE FOR SCALED]`,
+                `[CONTRACT ${n.contract}]`,
+                `[ID ${n.id}]`
+              );
+
+              const scaledURL = `${NFT_ORIGINAL_IMAGE_LINK}${n.contract}/${n.id}.${format}`;
+              const res = await fetch(scaledURL);
+              const blob = await res.arrayBuffer();
+              console.log(
+                new Date(),
+                '[S3]',
+                `[IMAGE FOR SCALED DOWNLOADED]`,
+                `[CONTRACT ${n.contract}]`,
+                `[ID ${n.id}]`
+              );
+
+              const scaledBuffer = await resizeImage(
+                n,
+                scaledFormat == 'WEBP' ? true : false,
+                Buffer.from(blob),
+                SCALED_HEIGHT
+              );
+
+              const uploadedScaledImage = await s3
+                .upload({
+                  Bucket: myBucket,
+                  Key: scaledKey,
+                  Body: scaledBuffer,
+                  ContentType: `image/${scaledFormat}`
+                })
+                .promise();
+
+              console.log(
+                new Date(),
+                '[S3]',
+                `[SCALED PERSISTED AT ${uploadedScaledImage.Location}`
+              );
+            }
+          }
+        }
+
+        if (n.thumbnail) {
+          let thumbnailFormat = 'WEBP';
+          if (format.toUpperCase() == 'GIF') {
+            thumbnailFormat = 'GIF';
+          }
+          const thumbnailKey = `images/scaled_x450/${n.contract}/${n.id}.${thumbnailFormat}`;
+
+          try {
+            await s3
+              .headObject({ Bucket: myBucket, Key: thumbnailKey })
+              .promise();
+          } catch (error: any) {
+            if (error.code === 'NotFound') {
+              console.log(
+                new Date(),
+                '[S3]',
+                `[MISSING THUMBNAIL]`,
+                `[CONTRACT ${n.contract}]`,
+                `[ID ${n.id}]`
+              );
+
+              console.log(
+                new Date(),
+                '[S3]',
+                `[FETCHING IMAGE FOR THUMBNAIL]`,
+                `[CONTRACT ${n.contract}]`,
+                `[ID ${n.id}]`
+              );
+
+              const thumbnailURL = `${NFT_ORIGINAL_IMAGE_LINK}${n.contract}/${n.id}.${format}`;
+              const res = await fetch(thumbnailURL);
+              const blob = await res.arrayBuffer();
+              console.log(
+                new Date(),
+                '[S3]',
+                `[IMAGE FOR THUMBNAIL DOWNLOADED]`,
+                `[CONTRACT ${n.contract}]`,
+                `[ID ${n.id}]`
+              );
+
+              const thumbBuffer = await resizeImage(
+                n,
+                thumbnailFormat == 'WEBP' ? true : false,
+                Buffer.from(blob),
+                THUMBNAIL_HEIGHT
+              );
+
+              const uploadedThumbnail = await s3
+                .upload({
+                  Bucket: myBucket,
+                  Key: thumbnailKey,
+                  Body: thumbBuffer,
+                  ContentType: `image/${thumbnailFormat}`
+                })
+                .promise();
+
+              console.log(
+                new Date(),
+                '[S3]',
+                `[THUMBNAIL PERSISTED AT ${uploadedThumbnail.Location}`
+              );
+            }
+          }
+        }
+      }
+
+      const animationDetails = n.metadata.animation_details;
+
+      if (animationDetails && animationDetails.format?.toUpperCase() == 'MP4') {
+        const videoFormat = animationDetails.format.toUpperCase();
+        const videoKey = `videos/${n.contract}/${n.id}.${videoFormat}`;
+
+        try {
+          await s3.headObject({ Bucket: myBucket, Key: videoKey }).promise();
+        } catch (error: any) {
+          if (error.code === 'NotFound') {
+            console.log(
+              new Date(),
+              '[S3]',
+              `[MISSING ${videoFormat}]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
+            );
+
+            console.log(
+              new Date(),
+              '[S3]',
+              `[FETCHING ${videoFormat}]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
+            );
+
+            const videoURL = n.metadata.animation;
+            const res = await fetch(videoURL);
+            const blob = await res.arrayBuffer();
+            console.log(
+              new Date(),
+              '[S3]',
+              `[DOWNLOADED ${videoFormat}]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
+            );
+
+            const uploadedVideo = await s3
+              .upload({
+                Bucket: myBucket,
+                Key: videoKey,
+                Body: Buffer.from(blob),
+                ContentType: `video/mp4`
+              })
+              .promise();
+
+            console.log(
+              new Date(),
+              '[S3]',
+              `[${videoFormat} PERSISTED AT ${uploadedVideo.Location}`
+            );
+          }
+        }
+
+        await handleVideoScaling(n, videoFormat, myBucket);
+      }
+
+      if (animationDetails && animationDetails.format == 'HTML') {
+        const htmlFormat = animationDetails.format;
+        const htmlKey = `html/${n.contract}/${n.id}.${htmlFormat}`;
+
+        try {
+          await s3.headObject({ Bucket: myBucket, Key: htmlKey }).promise();
+        } catch (error: any) {
+          if (error.code === 'NotFound') {
+            console.log(
+              new Date(),
+              '[S3]',
+              `[MISSING ${htmlFormat}]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
+            );
+
+            console.log(
+              new Date(),
+              '[S3]',
+              `[FETCHING ${htmlFormat}]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
+            );
+
+            const htmlUrl = n.metadata.animation;
+            const res = await fetch(htmlUrl);
+            const blob = await res.arrayBuffer();
+            console.log(
+              new Date(),
+              '[S3]',
+              `[DOWNLOADED ${htmlFormat}]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
+            );
+
+            const uploadedHTML = await s3
+              .upload({
+                Bucket: myBucket,
+                Key: htmlKey,
+                Body: Buffer.from(blob),
+                ContentType: `text/html; charset=utf-8;`
+              })
+              .promise();
+
+            console.log(
+              new Date(),
+              '[S3]',
+              `[${htmlFormat} PERSISTED AT ${uploadedHTML.Location}`
             );
           }
         }
       }
-    }
-
-    const animationDetails = n.metadata.animation_details;
-
-    if (animationDetails && animationDetails.format?.toUpperCase() == 'MP4') {
-      const videoFormat = animationDetails.format.toUpperCase();
-      const videoKey = `videos/${n.contract}/${n.id}.${videoFormat}`;
-
-      try {
-        await s3.headObject({ Bucket: myBucket, Key: videoKey }).promise();
-      } catch (error: any) {
-        if (error.code === 'NotFound') {
-          console.log(
-            new Date(),
-            '[S3]',
-            `[MISSING ${videoFormat}]`,
-            `[CONTRACT ${n.contract}]`,
-            `[ID ${n.id}]`
-          );
-
-          console.log(
-            new Date(),
-            '[S3]',
-            `[FETCHING ${videoFormat}]`,
-            `[CONTRACT ${n.contract}]`,
-            `[ID ${n.id}]`
-          );
-
-          const videoURL = n.metadata.animation;
-          const res = await fetch(videoURL);
-          const blob = await res.arrayBuffer();
-          console.log(
-            new Date(),
-            '[S3]',
-            `[DOWNLOADED ${videoFormat}]`,
-            `[CONTRACT ${n.contract}]`,
-            `[ID ${n.id}]`
-          );
-
-          const uploadedVideo = await s3
-            .upload({
-              Bucket: myBucket,
-              Key: videoKey,
-              Body: Buffer.from(blob),
-              ContentType: `video/mp4`
-            })
-            .promise();
-
-          console.log(
-            new Date(),
-            '[S3]',
-            `[${videoFormat} PERSISTED AT ${uploadedVideo.Location}`
-          );
-        }
-      }
-
-      await handleVideoScaling(n, videoFormat, myBucket);
-    }
-
-    if (animationDetails && animationDetails.format == 'HTML') {
-      const htmlFormat = animationDetails.format;
-      const htmlKey = `html/${n.contract}/${n.id}.${htmlFormat}`;
-
-      try {
-        await s3.headObject({ Bucket: myBucket, Key: htmlKey }).promise();
-      } catch (error: any) {
-        if (error.code === 'NotFound') {
-          console.log(
-            new Date(),
-            '[S3]',
-            `[MISSING ${htmlFormat}]`,
-            `[CONTRACT ${n.contract}]`,
-            `[ID ${n.id}]`
-          );
-
-          console.log(
-            new Date(),
-            '[S3]',
-            `[FETCHING ${htmlFormat}]`,
-            `[CONTRACT ${n.contract}]`,
-            `[ID ${n.id}]`
-          );
-
-          const htmlUrl = n.metadata.animation;
-          const res = await fetch(htmlUrl);
-          const blob = await res.arrayBuffer();
-          console.log(
-            new Date(),
-            '[S3]',
-            `[DOWNLOADED ${htmlFormat}]`,
-            `[CONTRACT ${n.contract}]`,
-            `[ID ${n.id}]`
-          );
-
-          const uploadedHTML = await s3
-            .upload({
-              Bucket: myBucket,
-              Key: htmlKey,
-              Body: Buffer.from(blob),
-              ContentType: `text/html; charset=utf-8;`
-            })
-            .promise();
-
-          console.log(
-            new Date(),
-            '[S3]',
-            `[${htmlFormat} PERSISTED AT ${uploadedHTML.Location}`
-          );
-        }
-      }
-    }
-  });
+    })
+  );
 };
 
 async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
@@ -351,13 +358,22 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
 
     await createTempFile(myBucket, scaledVideoKey);
 
+    console.log(new Date(), '[S3]', `[TEMP CREATED ${scaledVideoKey}]`);
+
     const videoURL = n.animation ? n.animation : n.metadata.animation;
 
     const resizedVideoStream = await scaleVideo(
       videoURL,
       videoFormat.toLowerCase()
     );
-    resizedVideoStream.on('error', async function (err) {
+
+    console.log(
+      new Date(),
+      '[S3]',
+      `[ACQUIRED SCALED STREAM ${scaledVideoKey}]`
+    );
+
+    resizedVideoStream.on('error', async function (err: any) {
       await deleteTempFile(myBucket, scaledVideoKey);
       console.log(
         new Date(),
@@ -371,51 +387,53 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
     const ffstream = new Stream.PassThrough();
     resizedVideoStream.pipe(ffstream, { end: true });
 
-    const buffers: any = [];
-    ffstream.on('data', function (buf) {
-      console.log(
-        new Date(),
-        `[S3]`,
-        `[${scaledVideoKey}]`,
-        `[ADDING CHUNK LENGTH ${buf.length}]`
-      );
-      if (buf.length > 0) {
-        buffers.push(buf);
-      }
-    });
-    ffstream.on('error', async function (err) {
-      await deleteTempFile(myBucket, scaledVideoKey);
-      console.log(
-        new Date(),
-        '[S3]',
-        `[SCALING FAILED ${scaledVideoKey}]`,
-        `[${err}]`
-      );
-    });
-    ffstream.on('end', async function () {
-      console.log(new Date(), '[S3]', `[SCALING FINISHED ${scaledVideoKey}]`);
-
-      if (buffers.length > 0) {
-        const outputBuffer = Buffer.concat(buffers);
-
-        if (outputBuffer.length > 0) {
-          const uploadedScaleddVideo = await s3
-            .upload({
-              Bucket: myBucket,
-              Key: scaledVideoKey,
-              Body: outputBuffer,
-              ContentType: `video/${videoFormat.toLowerCase()}`
-            })
-            .promise();
-
-          console.log(
-            new Date(),
-            '[S3]',
-            `[SCALED ${videoFormat} PERSISTED AT ${uploadedScaleddVideo.Location}`
-          );
+    await new Promise((resolve, reject) => {
+      const buffers: any = [];
+      ffstream.on('data', function (buf) {
+        console.log(
+          new Date(),
+          `[S3]`,
+          `[${scaledVideoKey}]`,
+          `[ADDING CHUNK LENGTH ${buf.length}]`
+        );
+        if (buf.length > 0) {
+          buffers.push(buf);
         }
-      }
-      await deleteTempFile(myBucket, scaledVideoKey);
+      });
+      ffstream.on('error', async function (err) {
+        await deleteTempFile(myBucket, scaledVideoKey);
+        console.log(
+          new Date(),
+          '[S3]',
+          `[SCALING FAILED ${scaledVideoKey}]`,
+          `[${err}]`
+        );
+      });
+      ffstream.on('end', async function () {
+        console.log(new Date(), '[S3]', `[SCALING FINISHED ${scaledVideoKey}]`);
+
+        if (buffers.length > 0) {
+          const outputBuffer = Buffer.concat(buffers);
+
+          if (outputBuffer.length > 0) {
+            const uploadedScaleddVideo = await s3
+              .upload({
+                Bucket: myBucket,
+                Key: scaledVideoKey,
+                Body: outputBuffer,
+                ContentType: `video/${videoFormat.toLowerCase()}`
+              })
+              .promise();
+
+            console.log(
+              new Date(),
+              '[S3]',
+              `[SCALED ${videoFormat} PERSISTED AT ${uploadedScaleddVideo.Location}`
+            );
+          }
+        }
+        await deleteTempFile(myBucket, scaledVideoKey);
+      });
     });
   }
 }
@@ -425,6 +443,8 @@ async function objectExists(myBucket: any, key: any): Promise<boolean> {
     await s3.headObject({ Bucket: myBucket, Key: key }).promise();
     return true;
   } catch (error: any) {
+    console.log(new Date(), '[S3]', `[ERROR]`, `[${error}]`);
+
     if (error.code === 'NotFound') {
       try {
         await s3
@@ -458,10 +478,7 @@ async function deleteTempFile(myBucket: any, key: any) {
     .promise();
 }
 
-async function scaleVideo(
-  url: string,
-  format: string
-): Promise<ffmpeg.FfmpegCommand> {
+async function scaleVideo(url: string, format: string): Promise<any> {
   const ff = ffmpeg({ source: url })
     .videoCodec('libx264')
     .audioCodec('aac')

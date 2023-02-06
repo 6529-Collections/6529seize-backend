@@ -2,12 +2,18 @@ import { GRADIENT_CONTRACT, MEMES_CONTRACT } from './constants';
 import { NFT } from './entities/INFT';
 import { Owner, OwnerTags } from './entities/IOwner';
 import { areEqualAddresses } from './helpers';
+import {
+  fetchAllNFTs,
+  fetchAllOwners,
+  fetchAllOwnerTags,
+  persistOwnerTags
+} from './db';
 
-export const findOwnerTags = async (
-  nfts: NFT[],
-  startingOwners: Owner[],
-  startingOwnerTags: OwnerTags[]
-) => {
+export const findOwnerTags = async () => {
+  const nfts = await fetchAllNFTs();
+  const startingOwners: Owner[] = await fetchAllOwners();
+  const startingOwnerTags: OwnerTags[] = await fetchAllOwnerTags();
+
   const uniqueOwners = Array.from(
     new Set([...startingOwners].map((item) => item.wallet))
   );
@@ -188,6 +194,8 @@ export const findOwnerTags = async (
     '[OWNERS TAGS]',
     `[UNIQUE TAGS DELTA ${ownersTagsDelta.length}]`
   );
+
+  await persistOwnerTags(ownersTagsDelta);
 
   return ownersTagsDelta;
 };
