@@ -1,6 +1,7 @@
 import { MEMES_CONTRACT } from './constants';
 
 const transactions = require('./transactionsLoop');
+const transactionsReplay = require('./transactionsReplayLoop');
 const nfts = require('./nftsLoop');
 const tdh = require('./tdhLoop');
 const ownerMetrics = require('./ownerMetricsLoop');
@@ -53,10 +54,11 @@ async function start() {
 
   // Uncomment to call on start
 
+  // await transactionsReplay.handler();
   // await transactions.handler();
   // await nfts.handler();
-  // await tdh.handler();
   // await ownerMetrics.handler();
+  // await tdh.handler();
   // memeStats();
 
   STARTING = false;

@@ -1,10 +1,8 @@
 import {
   ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
-  MEMES_CONTRACT,
-  NULL_ADDRESS
+  MEMES_CONTRACT
 } from './constants';
-import { NFT } from './entities/INFT';
 import { TDH } from './entities/ITDH';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses, getDaysDiff } from './helpers';
