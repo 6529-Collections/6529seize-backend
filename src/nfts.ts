@@ -388,11 +388,6 @@ export async function nfts(reset?: boolean) {
   const nfts: NFTWithTDH[] = await fetchAllNFTs();
   const transactions: Transaction[] = await fetchAllTransactions();
   const artists: Artist[] = await fetchAllArtists();
-  artists.map((a: any) => {
-    a.memes = JSON.parse(a.memes);
-    a.memelab = JSON.parse(a.memelab);
-    a.gradients = JSON.parse(a.gradients);
-  });
 
   const newNfts = await findNFTs(nfts, transactions, reset);
   const newArtists = await findArtists(artists, newNfts);

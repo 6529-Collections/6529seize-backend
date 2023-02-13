@@ -15,12 +15,13 @@ import {
   MANIFOLD,
   NFTS_MEME_LAB_TABLE,
   TRANSACTIONS_MEME_LAB_TABLE,
-  OWNERS_MEME_LAB_TABLE
+  OWNERS_MEME_LAB_TABLE,
+  MEMES_CONTRACT
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
 import {
-  BaseNFT,
+  LabNFT,
   MemesExtendedData,
   NFT,
   NftTDH,
@@ -101,6 +102,7 @@ export async function createMemeLabNftsTable() {
     image TEXT NOT NULL , 
     animation TEXT , 
     metadata JSON NOT NULL , 
+    meme_references JSON NOT NULL,
     PRIMARY KEY (id, contract)
   ) ENGINE = InnoDB;`;
   await execSQL(sql);
@@ -247,6 +249,18 @@ export async function fetchTransactionsWithoutValue(
 export async function fetchAllMemeLabNFTs() {
   let sql = `SELECT * FROM ${NFTS_MEME_LAB_TABLE};`;
   const results = await execSQL(sql);
+  results.map((r: any) => {
+    r.metadata = JSON.parse(r.metadata);
+    r.meme_references = JSON.parse(r.meme_references);
+  });
+  return results;
+}
+
+export async function fetchMemesWithSeason() {
+  let sql = `SELECT * FROM ${NFTS_TABLE} LEFT JOIN ${MEMES_EXTENDED_DATA_TABLE} ON ${NFTS_TABLE}.id= ${MEMES_EXTENDED_DATA_TABLE}.id WHERE contract = ${mysql.escape(
+    MEMES_CONTRACT
+  )};`;
+  const results = await execSQL(sql);
   results.map((r: any) => (r.metadata = JSON.parse(r.metadata)));
   return results;
 }
@@ -270,6 +284,13 @@ export async function fetchAllTDH() {
 export async function fetchAllArtists() {
   let sql = `SELECT * FROM ${ARTISTS_TABLE};`;
   const results = await execSQL(sql);
+  results.map((a: any) => {
+    a.memes = JSON.parse(a.memes);
+    a.memelab = JSON.parse(a.memelab);
+    a.gradients = JSON.parse(a.gradients);
+    a.work = JSON.parse(a.work);
+    a.social_links = JSON.parse(a.social_links);
+  });
   return results;
 }
 
@@ -414,7 +435,7 @@ export async function persistTransactionsREMAKE(transactions: Transaction[]) {
   }
 }
 
-export async function persistLabNFTS(nfts: BaseNFT[]) {
+export async function persistLabNFTS(nfts: LabNFT[]) {
   if (nfts.length > 0) {
     console.log('[NFTS]', `[PERSISTING ${nfts.length} NFTS]`);
     await Promise.all(
@@ -443,6 +464,8 @@ export async function persistLabNFTS(nfts: BaseNFT[]) {
           nft.compressed_animation
         )}, animation=${mysql.escape(nft.animation)}, metadata=${mysql.escape(
           JSON.stringify(nft.metadata)
+        )}, meme_references=${mysql.escape(
+          JSON.stringify(nft.meme_references)
         )}`;
         await execSQL(sql);
       })

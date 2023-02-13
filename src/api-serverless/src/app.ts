@@ -43,7 +43,7 @@ loadEnv(true).then(async (e) => {
     ) {
       const auth = req.headers['x-6529-auth'];
       if (!auth || auth != process.env.API_PASSWORD) {
-        console.log(`Unauthorized request for ${req.path}`);
+        console.log(`Unauthorized request for ${req.path} auth: ${auth}`);
         res.statusCode = 401;
         const image = await db.fetchRandomImage();
         res.end(
@@ -276,10 +276,12 @@ loadEnv(true).then(async (e) => {
         `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
       );
       db.fetchArtists(pageSize, page, meme_nfts).then((result) => {
-        result.data.map((d: any) => {
-          d.memes = JSON.parse(d.memes);
-          d.gradients = JSON.parse(d.gradients);
-          d.memelab = JSON.parse(d.memelab);
+        result.data.map((a: any) => {
+          a.memes = JSON.parse(a.memes);
+          a.memelab = JSON.parse(a.memelab);
+          a.gradients = JSON.parse(a.gradients);
+          a.work = JSON.parse(a.work);
+          a.social_links = JSON.parse(a.social_links);
         });
         returnPaginatedResult(result, req, res);
       });
@@ -352,7 +354,7 @@ loadEnv(true).then(async (e) => {
 
         const contracts = req.query.contract;
         const nfts = req.query.id;
-        const artists = req.query.artist;
+        const memeIds = req.query.meme_id;
 
         console.log(
           new Date(),
@@ -360,7 +362,7 @@ loadEnv(true).then(async (e) => {
           '[NFTS MEMELAB]',
           `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
-        db.fetchLabNFTs(artists, pageSize, page, contracts, nfts, sortDir).then(
+        db.fetchLabNFTs(memeIds, pageSize, page, contracts, nfts, sortDir).then(
           (result) => {
             result.data.map((d: any) => {
               d.metadata = JSON.parse(d.metadata);

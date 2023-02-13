@@ -20,6 +20,10 @@ export interface BaseNFT {
   metadata?: any;
 }
 
+export interface LabNFT extends BaseNFT {
+  meme_references: number[];
+}
+
 export interface NFT extends BaseNFT {
   hodl_rate: number;
   market_cap: number;
@@ -56,3 +60,5 @@ export interface MemesExtendedData {
   percent_unique_cleaned: number;
   percent_unique_cleaned_rank: number;
 }
+
+export interface NFTWithExtendedData extends NFT, MemesExtendedData {}

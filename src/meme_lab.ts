@@ -15,7 +15,7 @@ import {
   NFT_VIDEO_LINK,
   NULL_ADDRESS
 } from './constants';
-import { BaseNFT } from './entities/INFT';
+import { LabNFT, NFTWithExtendedData } from './entities/INFT';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 import {
@@ -31,7 +31,8 @@ import {
   addMemeLabColumnToArtists,
   fetchAllLabOwners,
   createMemeLabOwnersTable,
-  persistOwners
+  persistOwners,
+  fetchMemesWithSeason
 } from './db';
 import { Artist } from './entities/IArtist';
 import { findArtists } from './artists';
@@ -65,7 +66,7 @@ async function getAllNFTs(nfts: Nft[] = [], key: string = ''): Promise<Nft[]> {
 }
 
 async function processNFTs(
-  startingNFTS: BaseNFT[],
+  startingNFTS: LabNFT[],
   startingTransactions: Transaction[]
 ) {
   const allNFTS = await getAllNFTs();
@@ -75,7 +76,7 @@ async function processNFTs(
     `[DB ${startingNFTS.length}][CONTRACT ${allNFTS.length}]`
   );
 
-  const newNFTS: BaseNFT[] = [];
+  const newNFTS: LabNFT[] = [];
 
   await Promise.all(
     allNFTS.map(async (mnft) => {
@@ -150,15 +151,10 @@ async function processNFTs(
         }
       }
 
-      const startingNft = startingNFTS.find(
-        (s) =>
-          s.id == tokenId && areEqualAddresses(s.contract, MEMELAB_CONTRACT)
-      );
-
       const artists: string[] = [];
       fullMetadata.rawMetadata?.attributes?.map((a) => {
         if (
-          a.trait_type.startsWith('Artist') &&
+          a.trait_type.toUpperCase().startsWith('ARTIST') &&
           a.value &&
           a.value.toUpperCase() != 'NONE'
         ) {
@@ -166,7 +162,36 @@ async function processNFTs(
         }
       });
 
-      const nft: BaseNFT = {
+      const memeReferences: number[] = [];
+      const memeNFTs: NFTWithExtendedData[] = await fetchMemesWithSeason();
+
+      fullMetadata.rawMetadata?.attributes?.map((a) => {
+        if (
+          a.trait_type.toUpperCase().startsWith('MEME CARD REFERENCE') &&
+          a.value &&
+          a.value.toUpperCase() != 'NONE'
+        ) {
+          const ref = a.value;
+          if (ref.toUpperCase() == 'ALL') {
+            memeReferences.push(...[...memeNFTs].map((m) => m.id));
+          } else if (ref.toUpperCase() == 'ALL SZN1') {
+            memeReferences.push(
+              ...[...memeNFTs].filter((m) => m.season == 1).map((m) => m.id)
+            );
+          } else if (ref.toUpperCase() == 'ALL SZN2') {
+            memeReferences.push(
+              ...[...memeNFTs].filter((m) => m.season == 2).map((m) => m.id)
+            );
+          } else {
+            const memeRef = memeNFTs.find((m) => m.name == ref);
+            if (memeRef) {
+              memeReferences.push(memeRef.id);
+            }
+          }
+        }
+      });
+
+      const nft: LabNFT = {
         id: tokenId,
         contract: MEMELAB_CONTRACT,
         created_at: new Date(),
@@ -187,7 +212,8 @@ async function processNFTs(
         image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
         compressed_animation: compressedAnimation,
         animation: animation,
-        metadata: fullMetadata.rawMetadata
+        metadata: fullMetadata.rawMetadata,
+        meme_references: memeReferences
       };
 
       newNFTS.push(nft);
@@ -198,7 +224,7 @@ async function processNFTs(
 }
 
 export const findNFTs = async (
-  startingNFTS: BaseNFT[],
+  startingNFTS: LabNFT[],
   startingTransactions: Transaction[],
   reset?: boolean
 ) => {
@@ -219,12 +245,7 @@ export const findNFTs = async (
 
   console.log(`[NFTS]`, `[CHANGED ${nftChanged}]`, `[RESET ${reset}]`);
 
-  if (reset || nftChanged || allNFTs.length > startingNFTS.length) {
-    return allNFTs;
-  } else {
-    console.log('[NFTS]', `[NO NEW NFTS]`);
-    return startingNFTS;
-  }
+  return allNFTs;
 };
 
 export async function memeLabNfts(reset?: boolean) {
@@ -236,14 +257,9 @@ export async function memeLabNfts(reset?: boolean) {
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const nfts: BaseNFT[] = await fetchAllMemeLabNFTs();
+  const nfts: LabNFT[] = await fetchAllMemeLabNFTs();
   const transactions: Transaction[] = await fetchAllMemeLabTransactions();
   const artists: Artist[] = await fetchAllArtists();
-  artists.map((a: any) => {
-    a.memes = JSON.parse(a.memes);
-    a.memelab = JSON.parse(a.memelab);
-    a.gradients = JSON.parse(a.gradients);
-  });
 
   const newNfts = await findNFTs(nfts, transactions, reset);
   const newArtists = await findArtists(artists, newNfts);

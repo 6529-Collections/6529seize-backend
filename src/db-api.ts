@@ -158,7 +158,7 @@ export async function fetchArtists(
 }
 
 export async function fetchLabNFTs(
-  artists: string,
+  memeIds: string,
   pageSize: number,
   page: number,
   contracts: string,
@@ -166,27 +166,13 @@ export async function fetchLabNFTs(
   sortDir: string
 ) {
   let filters = '';
-  if (artists) {
-    const sqlArtist = `SELECT memelab FROM ${ARTISTS_TABLE} WHERE name in (${mysql.escape(
-      artists.split(',')
-    )})`;
-    const memeLabArtists = await execSQL(sqlArtist);
-    const memeLabNFTIds: number[] = [];
-    memeLabArtists.map((r: any) => {
-      r.memelab = JSON.parse(r.memelab);
-      if (r.memelab) {
-        r.memelab.map((m: any) => {
-          if (!memeLabNFTIds.some((n) => n == m.id)) {
-            memeLabNFTIds.push(m.id);
-          }
-        });
-      }
+  if (memeIds) {
+    memeIds.split(',').map((nft_id) => {
+      filters = constructFilters(
+        filters,
+        `JSON_CONTAINS(meme_references, '${nft_id}','$')`
+      );
     });
-    if (memeLabNFTIds.length) {
-      filters = constructFilters(filters, `id in (${memeLabNFTIds})`);
-    } else {
-      return returnEmpty();
-    }
   }
   if (contracts) {
     filters = constructFilters(

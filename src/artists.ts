@@ -62,11 +62,13 @@ export const findArtists = async (
         const gradients = areEqualAddresses(nft.contract, GRADIENT_CONTRACT)
           ? [nft.id]
           : [];
-        const artist = {
+        const artist: Artist = {
           name: artistName,
           memes: memes,
           memelab: memelab,
-          gradients: gradients
+          gradients: gradients,
+          work: [],
+          social_links: []
         };
         artists.push(artist);
       } else {

@@ -15,6 +15,6 @@ export interface Artist {
   gradients: number[];
   bio?: string;
   pfp?: string;
-  work?: ArtistWork;
-  social_links?: any[];
+  work: ArtistWork[];
+  social_links: any[];
 }
