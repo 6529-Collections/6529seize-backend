@@ -174,13 +174,19 @@ export async function fetchLabNFTs(
     const memeLabNFTIds: number[] = [];
     memeLabArtists.map((r: any) => {
       r.memelab = JSON.parse(r.memelab);
-      r.memelab.map((m: any) => {
-        if (!memeLabNFTIds.some((n) => n == m.id)) {
-          memeLabNFTIds.push(m.id);
-        }
-      });
+      if (r.memelab) {
+        r.memelab.map((m: any) => {
+          if (!memeLabNFTIds.some((n) => n == m.id)) {
+            memeLabNFTIds.push(m.id);
+          }
+        });
+      }
     });
-    filters = constructFilters(filters, `id in (${memeLabNFTIds})`);
+    if (memeLabNFTIds.length) {
+      filters = constructFilters(filters, `id in (${memeLabNFTIds})`);
+    } else {
+      return returnEmpty();
+    }
   }
   if (contracts) {
     filters = constructFilters(
