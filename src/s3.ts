@@ -2,6 +2,7 @@ import { NFT } from './entities/INFT';
 import { areEqualAddresses } from './helpers';
 import {
   GRADIENT_CONTRACT,
+  MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   NFT_ORIGINAL_IMAGE_LINK
 } from './constants';
@@ -20,19 +21,23 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 
 const imagescript = require('imagescript');
 
+const ICON_HEIGHT = 60;
 const THUMBNAIL_HEIGHT = 450;
 const SCALED_HEIGHT = 1000;
 
-const s3 = new S3();
+let s3: S3;
 
-export const persistS3 = async () => {
-  const nfts: NFT[] = await fetchAllNFTs();
+export const persistS3 = async (nfts: NFT[]) => {
+  if (process.env.NODE_ENV == 'local') {
+    s3 = new S3({
+      accessKeyId: process.env.AWS_6529_ACCESS_KEY_ID,
+      secretAccessKey: process.env.AWS_6529_SECRET_ACCESS_KEY
+    });
+  } else {
+    s3 = new S3();
+  }
 
-  console.log(
-    new Date(),
-    '[S3]',
-    `[PROCESSING ASSETS FOR ${nfts.length} NFTS]`
-  );
+  console.log('[S3]', `[PROCESSING ASSETS FOR ${nfts.length} NFTS]`);
 
   const myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
 
@@ -40,7 +45,10 @@ export const persistS3 = async () => {
     nfts.map(async (n) => {
       let format: any;
 
-      if (areEqualAddresses(n.contract, MEMES_CONTRACT)) {
+      if (
+        areEqualAddresses(n.contract, MEMES_CONTRACT) ||
+        areEqualAddresses(n.contract, MEMELAB_CONTRACT)
+      ) {
         format = n.metadata.image_details.format;
       }
       if (areEqualAddresses(n.contract, GRADIENT_CONTRACT)) {
@@ -57,7 +65,6 @@ export const persistS3 = async () => {
         } catch (error: any) {
           if (error.code === 'NotFound') {
             console.log(
-              new Date(),
               '[S3]',
               `[MISSING IMAGE]`,
               `[CONTRACT ${n.contract}]`,
@@ -65,7 +72,6 @@ export const persistS3 = async () => {
             );
 
             console.log(
-              new Date(),
               '[S3]',
               `[FETCHING IMAGE]`,
               `[CONTRACT ${n.contract}]`,
@@ -76,7 +82,6 @@ export const persistS3 = async () => {
             const res = await fetch(imageURL);
             const blob = await res.arrayBuffer();
             console.log(
-              new Date(),
               '[S3]',
               `[IMAGE DOWNLOADED]`,
               `[CONTRACT ${n.contract}]`,
@@ -93,7 +98,6 @@ export const persistS3 = async () => {
               .promise();
 
             console.log(
-              new Date(),
               '[S3]',
               `[IMAGE PERSISTED AT ${uploadedImage.Location}`
             );
@@ -111,7 +115,6 @@ export const persistS3 = async () => {
           } catch (error: any) {
             if (error.code === 'NotFound') {
               console.log(
-                new Date(),
                 '[S3]',
                 `[MISSING SCALED]`,
                 `[CONTRACT ${n.contract}]`,
@@ -119,7 +122,6 @@ export const persistS3 = async () => {
               );
 
               console.log(
-                new Date(),
                 '[S3]',
                 `[FETCHING IMAGE FOR SCALED]`,
                 `[CONTRACT ${n.contract}]`,
@@ -130,7 +132,6 @@ export const persistS3 = async () => {
               const res = await fetch(scaledURL);
               const blob = await res.arrayBuffer();
               console.log(
-                new Date(),
                 '[S3]',
                 `[IMAGE FOR SCALED DOWNLOADED]`,
                 `[CONTRACT ${n.contract}]`,
@@ -154,7 +155,6 @@ export const persistS3 = async () => {
                 .promise();
 
               console.log(
-                new Date(),
                 '[S3]',
                 `[SCALED PERSISTED AT ${uploadedScaledImage.Location}`
               );
@@ -176,7 +176,6 @@ export const persistS3 = async () => {
           } catch (error: any) {
             if (error.code === 'NotFound') {
               console.log(
-                new Date(),
                 '[S3]',
                 `[MISSING THUMBNAIL]`,
                 `[CONTRACT ${n.contract}]`,
@@ -184,7 +183,6 @@ export const persistS3 = async () => {
               );
 
               console.log(
-                new Date(),
                 '[S3]',
                 `[FETCHING IMAGE FOR THUMBNAIL]`,
                 `[CONTRACT ${n.contract}]`,
@@ -195,7 +193,6 @@ export const persistS3 = async () => {
               const res = await fetch(thumbnailURL);
               const blob = await res.arrayBuffer();
               console.log(
-                new Date(),
                 '[S3]',
                 `[IMAGE FOR THUMBNAIL DOWNLOADED]`,
                 `[CONTRACT ${n.contract}]`,
@@ -219,11 +216,69 @@ export const persistS3 = async () => {
                 .promise();
 
               console.log(
-                new Date(),
                 '[S3]',
                 `[THUMBNAIL PERSISTED AT ${uploadedThumbnail.Location}`
               );
             }
+          }
+        }
+
+        if (n.icon) {
+          let iconFormat = 'WEBP';
+          if (format.toUpperCase() == 'GIF') {
+            iconFormat = 'GIF';
+          }
+
+          const iconKey = `images/scaled_x60/${n.contract}/${n.id}.${iconFormat}`;
+
+          const exists = await objectExists(myBucket, iconKey);
+
+          if (!exists) {
+            console.log(
+              '[S3]',
+              `[MISSING ICON]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
+            );
+
+            await createTempFile(myBucket, iconKey);
+
+            console.log(
+              '[S3]',
+              `[FETCHING IMAGE FOR ICON]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
+            );
+
+            const iconURL = `${NFT_ORIGINAL_IMAGE_LINK}${n.contract}/${n.id}.${format}`;
+            const res = await fetch(iconURL);
+            const blob = await res.arrayBuffer();
+            console.log(
+              '[S3]',
+              `[IMAGE FOR ICON DOWNLOADED]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
+            );
+
+            const iconBuffer = await resizeImage(
+              n,
+              iconFormat == 'WEBP' ? true : false,
+              Buffer.from(blob),
+              ICON_HEIGHT
+            );
+
+            const uploadedIcon = await s3
+              .upload({
+                Bucket: myBucket,
+                Key: iconKey,
+                Body: iconBuffer,
+                ContentType: `image/${iconFormat}`
+              })
+              .promise();
+
+            await deleteTempFile(myBucket, iconKey);
+
+            console.log('[S3]', `[ICON PERSISTED AT ${uploadedIcon.Location}`);
           }
         }
       }
@@ -239,7 +294,6 @@ export const persistS3 = async () => {
         } catch (error: any) {
           if (error.code === 'NotFound') {
             console.log(
-              new Date(),
               '[S3]',
               `[MISSING ${videoFormat}]`,
               `[CONTRACT ${n.contract}]`,
@@ -247,7 +301,6 @@ export const persistS3 = async () => {
             );
 
             console.log(
-              new Date(),
               '[S3]',
               `[FETCHING ${videoFormat}]`,
               `[CONTRACT ${n.contract}]`,
@@ -258,7 +311,6 @@ export const persistS3 = async () => {
             const res = await fetch(videoURL);
             const blob = await res.arrayBuffer();
             console.log(
-              new Date(),
               '[S3]',
               `[DOWNLOADED ${videoFormat}]`,
               `[CONTRACT ${n.contract}]`,
@@ -275,7 +327,6 @@ export const persistS3 = async () => {
               .promise();
 
             console.log(
-              new Date(),
               '[S3]',
               `[${videoFormat} PERSISTED AT ${uploadedVideo.Location}`
             );
@@ -294,7 +345,6 @@ export const persistS3 = async () => {
         } catch (error: any) {
           if (error.code === 'NotFound') {
             console.log(
-              new Date(),
               '[S3]',
               `[MISSING ${htmlFormat}]`,
               `[CONTRACT ${n.contract}]`,
@@ -302,7 +352,6 @@ export const persistS3 = async () => {
             );
 
             console.log(
-              new Date(),
               '[S3]',
               `[FETCHING ${htmlFormat}]`,
               `[CONTRACT ${n.contract}]`,
@@ -313,7 +362,6 @@ export const persistS3 = async () => {
             const res = await fetch(htmlUrl);
             const blob = await res.arrayBuffer();
             console.log(
-              new Date(),
               '[S3]',
               `[DOWNLOADED ${htmlFormat}]`,
               `[CONTRACT ${n.contract}]`,
@@ -330,7 +378,6 @@ export const persistS3 = async () => {
               .promise();
 
             console.log(
-              new Date(),
               '[S3]',
               `[${htmlFormat} PERSISTED AT ${uploadedHTML.Location}`
             );
@@ -347,18 +394,17 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
   const exists = await objectExists(myBucket, scaledVideoKey);
   if (!exists) {
     console.log(
-      new Date(),
       '[S3]',
       `[MISSING SCALED ${videoFormat}]`,
       `[CONTRACT ${n.contract}]`,
       `[ID ${n.id}]`
     );
 
-    console.log(new Date(), '[S3]', `[SCALING ${scaledVideoKey}]`);
+    console.log('[S3]', `[SCALING ${scaledVideoKey}]`);
 
     await createTempFile(myBucket, scaledVideoKey);
 
-    console.log(new Date(), '[S3]', `[TEMP CREATED ${scaledVideoKey}]`);
+    console.log('[S3]', `[TEMP CREATED ${scaledVideoKey}]`);
 
     const videoURL = n.animation ? n.animation : n.metadata.animation;
 
@@ -367,16 +413,11 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
       videoFormat.toLowerCase()
     );
 
-    console.log(
-      new Date(),
-      '[S3]',
-      `[ACQUIRED SCALED STREAM ${scaledVideoKey}]`
-    );
+    console.log('[S3]', `[ACQUIRED SCALED STREAM ${scaledVideoKey}]`);
 
     resizedVideoStream.on('error', async function (err: any) {
       await deleteTempFile(myBucket, scaledVideoKey);
       console.log(
-        new Date(),
         '[S3]',
         `[resizedVideoStream]`,
         `[SCALING FAILED ${scaledVideoKey}]`,
@@ -391,7 +432,6 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
       const buffers: any = [];
       ffstream.on('data', function (buf) {
         console.log(
-          new Date(),
           `[S3]`,
           `[${scaledVideoKey}]`,
           `[ADDING CHUNK LENGTH ${buf.length}]`
@@ -402,15 +442,10 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
       });
       ffstream.on('error', async function (err) {
         await deleteTempFile(myBucket, scaledVideoKey);
-        console.log(
-          new Date(),
-          '[S3]',
-          `[SCALING FAILED ${scaledVideoKey}]`,
-          `[${err}]`
-        );
+        console.log('[S3]', `[SCALING FAILED ${scaledVideoKey}]`, `[${err}]`);
       });
       ffstream.on('end', async function () {
-        console.log(new Date(), '[S3]', `[SCALING FINISHED ${scaledVideoKey}]`);
+        console.log('[S3]', `[SCALING FINISHED ${scaledVideoKey}]`);
 
         if (buffers.length > 0) {
           const outputBuffer = Buffer.concat(buffers);
@@ -426,7 +461,6 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
               .promise();
 
             console.log(
-              new Date(),
               '[S3]',
               `[SCALED ${videoFormat} PERSISTED AT ${uploadedScaleddVideo.Location}`
             );
@@ -443,8 +477,6 @@ async function objectExists(myBucket: any, key: any): Promise<boolean> {
     await s3.headObject({ Bucket: myBucket, Key: key }).promise();
     return true;
   } catch (error: any) {
-    console.log(new Date(), '[S3]', `[ERROR]`, `[${error}]`);
-
     if (error.code === 'NotFound') {
       try {
         await s3
@@ -490,7 +522,7 @@ async function scaleVideo(url: string, format: string): Promise<any> {
       '-movflags frag_keyframe+empty_moov'
     ]);
   if (url.endsWith('30.MP4')) {
-    console.log(new Date(), '[S3]', `[SPECIAL CASE 30.MP4`);
+    console.log('[S3]', `[SPECIAL CASE 30.MP4`);
     ff.outputOptions(['-filter:v scale=750:-1']);
   }
   return ff;
@@ -503,7 +535,6 @@ async function resizeImage(
   height: number
 ) {
   console.log(
-    new Date(),
     `[RESIZING FOR ${nft.contract} #${nft.id} (WEBP: ${toWEBP})]`,
     `[TO TARGET HEIGHT ${height}]`
   );
@@ -516,12 +547,12 @@ async function resizeImage(
       gif.resize(gif.width / scaleFactor, height);
       return gif.encode();
     }
-  } catch {
+  } catch (err: any) {
     console.log(
-      new Date(),
       `[RESIZING FOR ${nft.contract} #${nft.id}]`,
       `[TO TARGET HEIGHT ${height}]`,
-      `[FAILED!]`
+      `[FAILED!]`,
+      `[${err}]`
     );
   }
 }

@@ -1,6 +1,15 @@
 import * as db from '../../db-api';
 import { loadEnv } from '../../secrets';
 
+const mcache = require('memory-cache');
+
+const CACHE_TIME_MS = 1 * 60 * 1000;
+
+function cacheKey(req: any) {
+  return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
+}
+
+const compression = require('compression');
 const express = require('express');
 const app = express();
 
@@ -12,6 +21,8 @@ loadEnv(true).then(async (e) => {
   );
 
   await db.connect();
+
+  app.use(compression());
 
   app.use(function (req: any, res: any, next: any) {
     res.setHeader('Access-Control-Allow-Methods', 'OPTIONS,POST,GET,HEAD');
@@ -48,7 +59,19 @@ loadEnv(true).then(async (e) => {
     }
   };
 
+  const checkCache = function (req: any, res: any, next: any) {
+    const key = cacheKey(req);
+
+    let cachedBody = mcache.get(key);
+    if (cachedBody) {
+      returnPaginatedResult(cachedBody, req, res, true);
+    } else {
+      next();
+    }
+  };
+
   app.all('/api*', requireLogin);
+  app.all('/api*', checkCache);
   app.enable('trust proxy');
 
   const BASE_PATH = '/api';
@@ -164,8 +187,17 @@ loadEnv(true).then(async (e) => {
     }
   }
 
-  function returnPaginatedResult(result: db.DBResponse, req: any, res: any) {
+  function returnPaginatedResult(
+    result: db.DBResponse,
+    req: any,
+    res: any,
+    skipCache?: boolean
+  ) {
     result.next = fullUrl(req, result.next);
+
+    if (!skipCache && result.count > 0) {
+      mcache.put(cacheKey(req), result, CACHE_TIME_MS);
+    }
 
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
     res.end(JSON.stringify(result));
@@ -247,6 +279,7 @@ loadEnv(true).then(async (e) => {
         result.data.map((d: any) => {
           d.memes = JSON.parse(d.memes);
           d.gradients = JSON.parse(d.gradients);
+          d.memelab = JSON.parse(d.memelab);
         });
         returnPaginatedResult(result, req, res);
       });
@@ -300,6 +333,52 @@ loadEnv(true).then(async (e) => {
       next(e);
     }
   });
+
+  app.get(
+    `${BASE_PATH}/nfts_memelab`,
+    function (req: any, res: any, next: any) {
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        const sortDir =
+          req.query.sort_direction &&
+          SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+            ? req.query.sort_direction
+            : 'desc';
+
+        const contracts = req.query.contract;
+        const nfts = req.query.id;
+        const artists = req.query.artist;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NFTS MEMELAB]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchLabNFTs(artists, pageSize, page, contracts, nfts, sortDir).then(
+          (result) => {
+            result.data.map((d: any) => {
+              d.metadata = JSON.parse(d.metadata);
+            });
+            returnPaginatedResult(result, req, res);
+          }
+        );
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NFTS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
 
   app.get(
     `${BASE_PATH}/memes_extended_data`,

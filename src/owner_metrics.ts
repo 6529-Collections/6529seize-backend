@@ -24,8 +24,6 @@ export const findOwnerMetrics = async (reset?: boolean) => {
     lastMetricsDate
   );
 
-  owners.push({ wallet: MANIFOLD });
-
   console.log(
     new Date(),
     '[OWNERS METRICS]',
@@ -163,6 +161,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
       );
 
       if (areEqualAddresses(owner.wallet, MANIFOLD)) {
+        console.log(`[MANIFOLD BALANCES]`, `[${MANIFOLD}]`);
         for (let i = 1; i <= 63; i++) {
           const maniIn = [...transactionsIn].filter((a) => a.token_id == i);
           const maniOut = [...transactionsOut].filter((a) => a.token_id == i);

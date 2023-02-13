@@ -8,6 +8,7 @@ import {
   NFT_ORIGINAL_IMAGE_LINK,
   NFT_SCALED1000_IMAGE_LINK,
   NFT_SCALED450_IMAGE_LINK,
+  NFT_SCALED60_IMAGE_LINK,
   NFT_VIDEO_LINK,
   NULL_ADDRESS
 } from './constants';
@@ -19,7 +20,8 @@ import {
   fetchAllTransactions,
   fetchAllArtists,
   persistNFTS,
-  persistArtists
+  persistArtists,
+  addIconColumnToNfts
 } from './db';
 import { findArtists } from './artists';
 import { Artist } from './entities/IArtist';
@@ -171,6 +173,7 @@ async function processMemes(
           (a) => a.trait_type === 'Artist'
         )?.value,
         uri: fullMetadata.tokenUri?.raw,
+        icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
         thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
         scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
         image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
@@ -265,6 +268,7 @@ async function processGradients(
           description: fullMetadata.description,
           artist: '6529er',
           uri: fullMetadata.tokenUri?.raw,
+          icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
           thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
           scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
           image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
@@ -322,7 +326,13 @@ export const findNFTs = async (
     return false;
   });
 
-  console.log(new Date(), '[NFTS]', '[MINT PRICE]', `[CHANGED ${nftChanged}]`);
+  console.log(
+    new Date(),
+    '[NFTS]',
+    '[MINT PRICE]',
+    `[CHANGED ${nftChanged}]`,
+    `[RESET ${reset}]`
+  );
 
   if (
     reset ||
@@ -368,6 +378,8 @@ export const findNFTs = async (
 };
 
 export async function nfts(reset?: boolean) {
+  // await addIconColumnToNfts();
+
   alchemy = new Alchemy({
     ...ALCHEMY_SETTINGS,
     apiKey: process.env.ALCHEMY_API_KEY
@@ -378,6 +390,7 @@ export async function nfts(reset?: boolean) {
   const artists: Artist[] = await fetchAllArtists();
   artists.map((a: any) => {
     a.memes = JSON.parse(a.memes);
+    a.memelab = JSON.parse(a.memelab);
     a.gradients = JSON.parse(a.gradients);
   });
 

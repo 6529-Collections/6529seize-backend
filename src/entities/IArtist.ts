@@ -11,6 +11,7 @@ export interface ArtistWork {
 export interface Artist {
   name: string;
   memes: ArtistMemesNfts[];
+  memelab: ArtistMemesNfts[];
   gradients: number[];
   bio?: string;
   pfp?: string;

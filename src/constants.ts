@@ -2,10 +2,13 @@ import { Network } from 'alchemy-sdk';
 
 export const TDH_BLOCKS_TABLE = 'tdh_blocks';
 export const TRANSACTIONS_TABLE = 'transactions';
+export const TRANSACTIONS_MEME_LAB_TABLE = 'transactions_meme_lab';
 export const TRANSACTIONS_REMAKE_TABLE = 'transactions_remake';
 export const NFTS_TABLE = 'nfts';
+export const NFTS_MEME_LAB_TABLE = 'nfts_meme_lab';
 export const ARTISTS_TABLE = 'artists';
 export const OWNERS_TABLE = 'owners';
+export const OWNERS_MEME_LAB_TABLE = 'owners_meme_lab';
 export const OWNERS_TAGS_TABLE = 'owners_tags';
 export const OWNERS_METRICS_TABLE = 'owners_metrics';
 export const MEMES_EXTENDED_DATA_TABLE = 'memes_extended_data';
@@ -15,6 +18,7 @@ export const ENS_TABLE = 'ens';
 
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
 export const GRADIENT_CONTRACT = '0x0c58ef43ff3032005e472cb5709f8908acb00205';
+export const MEMELAB_CONTRACT = '0x4db52a61dc491e15a2f78f5ac001c14ffe3568cb';
 export const NULL_ADDRESS = '0x0000000000000000000000000000000000000000';
 export const MANIFOLD = '0x3A3548e060Be10c2614d0a4Cb0c03CC9093fD799';
 export const PUNK_6529 = '0xfd22004806a6846ea67ad883356be810f0428793';
@@ -39,6 +43,9 @@ export const NFT_SCALED1000_IMAGE_LINK =
 
 export const NFT_SCALED450_IMAGE_LINK =
   'https://d3lqz0a4bldqgf.cloudfront.net/images/scaled_x450/';
+
+export const NFT_SCALED60_IMAGE_LINK =
+  'https://d3lqz0a4bldqgf.cloudfront.net/images/scaled_x60/';
 
 export const NFT_VIDEO_LINK = 'https://d3lqz0a4bldqgf.cloudfront.net/videos/';
 export const NFT_HTML_LINK = 'https://d3lqz0a4bldqgf.cloudfront.net/html/';

@@ -1,4 +1,4 @@
-export interface NFT {
+export interface BaseNFT {
   id: number;
   contract: string;
   created_at: Date;
@@ -8,16 +8,20 @@ export interface NFT {
   name?: string;
   collection: string;
   token_type: string;
-  hodl_rate: number;
   description: string;
   artist: string;
   uri?: string;
+  icon?: string;
   thumbnail?: string;
   scaled?: string;
   image?: string;
   compressed_animation?: string;
   animation?: string;
   metadata?: any;
+}
+
+export interface NFT extends BaseNFT {
+  hodl_rate: number;
   market_cap: number;
   floor_price: number;
 }

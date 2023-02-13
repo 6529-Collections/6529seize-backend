@@ -1,11 +1,11 @@
 {
-  "name": "nftsloop",
+  "name": "s3loop",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
   "scripts": {
     "prebuild": "rm -rf dist",
-    "build": "esbuild index.ts --bundle --external:sharp --sourcemap --platform=node --target=es2020 --outfile=dist/index.js"
+    "build": "esbuild index.ts --bundle --external:sharp --external:imagescript --sourcemap --platform=node --target=es2020 --outfile=dist/index.js"
   },
   "author": "",
   "license": "ISC",

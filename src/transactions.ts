@@ -8,6 +8,7 @@ import {
 import {
   ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
+  MEMELAB_CONTRACT,
   MEMES_CONTRACT
 } from './constants';
 import { Transaction } from './entities/ITransaction';
@@ -17,7 +18,8 @@ let alchemy: Alchemy;
 async function getAllTransactions(
   startingBlock: number,
   latestBlock: number,
-  key: any
+  key: any,
+  contracts?: string[]
 ) {
   console.log(
     new Date(),
@@ -29,7 +31,9 @@ async function getAllTransactions(
 
   const settings: AssetTransfersWithMetadataParams = {
     category: [AssetTransfersCategory.ERC1155, AssetTransfersCategory.ERC721],
-    contractAddresses: [MEMES_CONTRACT, GRADIENT_CONTRACT],
+    contractAddresses: contracts
+      ? contracts
+      : [MEMES_CONTRACT, GRADIENT_CONTRACT],
     withMetadata: true,
     maxCount: 250,
     fromBlock: toHex(startingBlock),
@@ -44,7 +48,8 @@ async function getAllTransactions(
 export const findTransactions = async (
   startingBlock: number,
   latestBlock?: number,
-  pageKey?: string
+  pageKey?: string,
+  contracts?: string[]
 ) => {
   alchemy = new Alchemy({
     ...ALCHEMY_SETTINGS,
@@ -66,7 +71,8 @@ export const findTransactions = async (
   const transactions = await getAllTransactions(
     startingBlock,
     latestBlock,
-    pageKey
+    pageKey,
+    contracts
   );
 
   console.log(
