@@ -1,9 +1,42 @@
-export interface Owner {
-  created_at: Date;
-  wallet: string;
-  token_id: number;
-  contract: string;
-  balance: number;
+import { Entity, Column, PrimaryGeneratedColumn, PrimaryColumn } from 'typeorm';
+
+@Entity()
+export class Photo {
+  @PrimaryGeneratedColumn()
+  id!: number;
+
+  @Column({ type: 'text' })
+  name!: string;
+
+  @Column({ type: 'text' })
+  description!: string;
+
+  @Column({ type: 'text' })
+  filename!: string;
+
+  @Column({ type: 'int' })
+  views!: number;
+
+  @Column({ type: 'boolean' })
+  isPublished!: boolean;
+}
+
+@Entity()
+export class Owner {
+  @Column({ type: 'datetime' })
+  created_at!: Date;
+
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  wallet!: string;
+
+  @PrimaryColumn({ type: 'int' })
+  token_id!: number;
+
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  contract!: string;
+
+  @Column({ type: 'int' })
+  balance!: number;
 }
 
 export interface OwnerTags {

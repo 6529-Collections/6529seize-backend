@@ -1,3 +1,6 @@
+import 'reflect-metadata';
+import { DataSource } from 'typeorm';
+
 import {
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
@@ -27,31 +30,31 @@ import {
   NftTDH,
   NFTWithTDH
 } from './entities/INFT';
-import { Owner, OwnerMetric, OwnerTags } from './entities/IOwner';
+import { Owner, OwnerMetric, OwnerTags, Photo } from './entities/IOwner';
 import { TDH } from './entities/ITDH';
 import { Transaction } from './entities/ITransaction';
 
 const mysql = require('mysql');
 
-let mysql_pool: any;
+let AppDataSource: DataSource;
 
 export async function connect() {
   console.log('[DATABASE]', `[DB HOST ${process.env.DB_HOST}]`);
 
-  mysql_pool = mysql.createPool({
-    connectionLimit: 10,
-    connectTimeout: 30 * 1000,
-    acquireTimeout: 30 * 1000,
-    timeout: 30 * 1000,
+  AppDataSource = new DataSource({
+    type: 'mysql',
     host: process.env.DB_HOST,
-    port: process.env.DB_PORT,
-    user: process.env.DB_USER,
+    port: parseInt(process.env.DB_PORT!),
+    username: process.env.DB_USER,
     password: process.env.DB_PASS,
-    charset: 'utf8mb4',
-    database: process.env.DB_NAME
+    database: process.env.DB_NAME,
+    entities: [Photo, Owner],
+    synchronize: true,
+    logging: false
   });
 
-  console.log('[DATABASE]', `[CONNECTION POOL CREATED]`);
+  await AppDataSource.initialize().catch((error) => console.log(error));
+  console.log('[DATABASE]', `[CONNECTION CREATED]`);
 }
 
 export async function addColumnToTable(
@@ -119,24 +122,16 @@ export async function createMemeLabOwnersTable() {
 }
 
 export function execSQL(sql: string): Promise<any> {
-  return new Promise((resolve, reject) => {
-    mysql_pool.getConnection(function (err: any, dbcon: any) {
-      if (err) {
-        console.log('custom err', err);
-        if (dbcon) {
-          dbcon.release();
-        }
-        throw err;
+  return new Promise(async (resolve, reject) => {
+    try {
+      if (!AppDataSource.isInitialized) {
+        console.log('i am not initi');
       }
-      dbcon.query(sql, (err: any, result: any[]) => {
-        dbcon.release();
-        if (err) {
-          console.log('custom err', err);
-          return reject(err);
-        }
-        resolve(Object.values(JSON.parse(JSON.stringify(result))));
-      });
-    });
+      const r = await AppDataSource.manager.query(sql);
+      resolve(Object.values(JSON.parse(JSON.stringify(r))));
+    } catch (err: any) {
+      return reject(err);
+    }
   });
 }
 
