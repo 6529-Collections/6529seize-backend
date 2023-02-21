@@ -69,7 +69,8 @@ async function getAllNFTs(nfts: Nft[] = [], key: string = ''): Promise<Nft[]> {
 
 async function processNFTs(
   startingNFTS: LabNFT[],
-  startingTransactions: Transaction[]
+  startingTransactions: Transaction[],
+  owners: Owner[]
 ) {
   const allNFTS = await getAllNFTs();
 
@@ -83,6 +84,11 @@ async function processNFTs(
   await Promise.all(
     allNFTS.map(async (mnft) => {
       const tokenId = parseInt(mnft.tokenId);
+
+      const tokenWallets = owners.filter(
+        (tw) =>
+          !areEqualAddresses(NULL_ADDRESS, tw.wallet) && tw.token_id == tokenId
+      );
 
       const fullMetadata = await alchemy.nft.getNftMetadata(
         MEMELAB_CONTRACT,
@@ -110,6 +116,11 @@ async function processNFTs(
           areEqualAddresses(MANIFOLD, t.from_address)
       );
 
+      let editionSize = 0;
+      tokenWallets.map((tw) => {
+        editionSize += tw.balance;
+      });
+
       let mintPrice = 0;
       if (firstMintTransaction) {
         const mintTransaction = await alchemy.core.getTransaction(
@@ -119,13 +130,6 @@ async function processNFTs(
           ? parseFloat(Utils.formatEther(mintTransaction.value))
           : 0;
       }
-      let supply = 0;
-      createdTransactions.map((mint) => {
-        supply += mint.token_count;
-      });
-      burntTransactions.map((burn) => {
-        supply -= burn.token_count;
-      });
 
       const tokenContract = fullMetadata.contract;
 
@@ -201,7 +205,7 @@ async function processNFTs(
           ? new Date(createdTransactions[0].transaction_date)
           : new Date(),
         mint_price: mintPrice,
-        supply: supply,
+        supply: editionSize,
         name: fullMetadata.rawMetadata?.name,
         collection: 'Meme Lab by 6529',
         token_type: tokenContract.tokenType,
@@ -228,9 +232,10 @@ async function processNFTs(
 export const findNFTs = async (
   startingNFTS: LabNFT[],
   startingTransactions: Transaction[],
+  owners: Owner[],
   reset?: boolean
 ) => {
-  const allNFTs = await processNFTs(startingNFTS, startingTransactions);
+  const allNFTs = await processNFTs(startingNFTS, startingTransactions, owners);
 
   const nftChanged = allNFTs.some((n) => {
     const m = startingNFTS.find(
@@ -261,9 +266,10 @@ export async function memeLabNfts(reset?: boolean) {
 
   const nfts: LabNFT[] = await fetchAllMemeLabNFTs();
   const transactions: Transaction[] = await fetchAllMemeLabTransactions();
+  let owners: Owner[] = await fetchAllLabOwners();
   const artists: Artist[] = await fetchAllArtists();
 
-  const newNfts = await findNFTs(nfts, transactions, reset);
+  const newNfts = await findNFTs(nfts, transactions, owners, reset);
   const newArtists = await findArtists(artists, newNfts);
   await persistLabNFTS(newNfts);
   await persistArtists(newArtists);

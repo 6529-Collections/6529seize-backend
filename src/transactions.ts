@@ -8,7 +8,6 @@ import {
 import {
   ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
-  MEMELAB_CONTRACT,
   MEMES_CONTRACT
 } from './constants';
 import { Transaction } from './entities/ITransaction';
