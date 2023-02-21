@@ -1,4 +1,9 @@
-import { memeLabNfts, memeLabTransactions, memeLabOwners, memeLabExtendedData } from '../meme_lab';
+import {
+  memeLabNfts,
+  memeLabTransactions,
+  memeLabOwners,
+  memeLabExtendedData
+} from '../meme_lab';
 import { loadEnv } from '../secrets';
 
 export const handler = async (event?: any, context?: any) => {
@@ -10,7 +15,7 @@ export const handler = async (event?: any, context?: any) => {
 
 async function memeLabLoop() {
   await memeLabTransactions();
-  await memeLabNfts();
   await memeLabOwners();
+  await memeLabNfts();
   await memeLabExtendedData();
 }
