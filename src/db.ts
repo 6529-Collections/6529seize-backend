@@ -244,7 +244,7 @@ export async function fetchAllMemeLabNFTs() {
   const results = await execSQL(sql);
   results.map((r: any) => {
     r.metadata = JSON.parse(r.metadata);
-    r.meme_references = JSON.parse(r.meme_references);
+    r.meme_references = r.meme_references ? JSON.parse(r.meme_references) : [];
   });
   return results;
 }
