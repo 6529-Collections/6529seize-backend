@@ -12,6 +12,7 @@ export const OWNERS_MEME_LAB_TABLE = 'owners_meme_lab';
 export const OWNERS_TAGS_TABLE = 'owners_tags';
 export const OWNERS_METRICS_TABLE = 'owners_metrics';
 export const MEMES_EXTENDED_DATA_TABLE = 'memes_extended_data';
+export const LAB_EXTENDED_DATA_TABLE = 'lab_extended_data';
 export const WALLETS_TDH_TABLE = 'tdh';
 export const UPLOADS_TABLE = 'uploads';
 export const ENS_TABLE = 'ens';

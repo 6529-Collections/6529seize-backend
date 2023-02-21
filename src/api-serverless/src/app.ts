@@ -89,6 +89,8 @@ loadEnv(true).then(async (e) => {
     'total_tdh__raw'
   ];
 
+  const MEME_LAB_OWNERS_SORT = ['balance'];
+
   const TDH_SORT = [
     'boosted_tdh',
     'tdh',
@@ -365,6 +367,7 @@ loadEnv(true).then(async (e) => {
         db.fetchLabNFTs(memeIds, pageSize, page, contracts, nfts, sortDir).then(
           (result) => {
             result.data.map((d: any) => {
+              d.meme_references = JSON.parse(d.meme_references);
               d.metadata = JSON.parse(d.metadata);
             });
             returnPaginatedResult(result, req, res);
@@ -417,6 +420,40 @@ loadEnv(true).then(async (e) => {
   );
 
   app.get(
+    `${BASE_PATH}/lab_extended_data`,
+    function (req: any, res: any, next: any) {
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        const nfts = req.query.id;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[MEMES EXTENDED]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+
+        db.fetchLabExtended(pageSize, page, nfts).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[MEMES EXTENDED]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
+
+  app.get(
     `${BASE_PATH}/:address/nfts`,
     function (req: any, res: any, next: any) {
       try {
@@ -445,6 +482,53 @@ loadEnv(true).then(async (e) => {
           new Date(),
           `[API]`,
           '[NFTS FOR ADDRESS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
+
+  app.get(
+    `${BASE_PATH}/owners_memelab`,
+    function (req: any, res: any, next: any) {
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        const sort =
+          req.query.sort && MEME_LAB_OWNERS_SORT.includes(req.query.sort)
+            ? req.query.sort
+            : 'balance';
+
+        const sortDir =
+          req.query.sort_direction &&
+          SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+            ? req.query.sort_direction
+            : 'desc';
+
+        const wallets = req.query.wallet;
+        const nfts = req.query.id;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[OWNERS]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchLabOwners(pageSize, page, wallets, nfts, sort, sortDir).then(
+          (result) => {
+            returnPaginatedResult(result, req, res);
+          }
+        );
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[OWNERS]',
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         next(e);
@@ -551,6 +635,47 @@ loadEnv(true).then(async (e) => {
         ).then((result) => {
           returnPaginatedResult(result, req, res);
         });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[TRANSACTIONS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
+
+  app.get(
+    `${BASE_PATH}/transactions_memelab`,
+    function (req: any, res: any, next: any) {
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        const wallets = req.query.wallet;
+        const nfts = req.query.id;
+
+        const filter =
+          req.query.filter && TRANSACTION_FILTERS.includes(req.query.filter)
+            ? req.query.filter
+            : null;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[TRANSACTIONS]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchLabTransactions(pageSize, page, wallets, nfts, filter).then(
+          (result) => {
+            returnPaginatedResult(result, req, res);
+          }
+        );
       } catch (e) {
         console.log(
           new Date(),
