@@ -13,9 +13,10 @@ import {
   NFT_SCALED450_IMAGE_LINK,
   NFT_SCALED60_IMAGE_LINK,
   NFT_VIDEO_LINK,
-  NULL_ADDRESS
+  NULL_ADDRESS,
+  SIX529_MUSEUM
 } from './constants';
-import { LabNFT, NFTWithExtendedData } from './entities/INFT';
+import { LabExtendedData, LabNFT, NFTWithExtendedData } from './entities/INFT';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 import {
@@ -32,7 +33,8 @@ import {
   fetchAllLabOwners,
   createMemeLabOwnersTable,
   persistOwners,
-  fetchMemesWithSeason
+  fetchMemesWithSeason,
+  persistLabExtendedData
 } from './db';
 import { Artist } from './entities/IArtist';
 import { findArtists } from './artists';
@@ -368,4 +370,126 @@ export async function memeLabOwners() {
   await persistOwners(ownersDelta, true);
 
   return ownersDelta;
+}
+
+export async function memeLabExtendedData() {
+  let nfts: LabNFT[] = await fetchAllMemeLabNFTs();
+  let owners: Owner[] = await fetchAllLabOwners();
+
+  console.log('[MEMES EXTENDED DATA]', `[NFTS ${nfts.length}]`);
+
+  const labMeta: LabExtendedData[] = [];
+
+  nfts.map((nft) => {
+    const tokenWallets = owners.filter(
+      (tw) =>
+        !areEqualAddresses(NULL_ADDRESS, tw.wallet) && tw.token_id == nft.id
+    );
+
+    let edition_size = 0;
+    let museum_holdings = 0;
+    let edition_size_cleaned = 0;
+    tokenWallets.map((tw) => {
+      if (!areEqualAddresses(tw.wallet, SIX529_MUSEUM.toUpperCase())) {
+        edition_size_cleaned += tw.balance;
+      } else {
+        museum_holdings += tw.balance;
+      }
+      edition_size += tw.balance;
+    });
+
+    const meta: LabExtendedData = {
+      id: nft.id,
+      created_at: new Date(),
+      name: nft.name!,
+      meme_references: nft.meme_references,
+      collection_size: nfts.length,
+      edition_size: edition_size,
+      edition_size_cleaned: edition_size_cleaned,
+      museum_holdings: museum_holdings,
+      museum_holdings_rank: -1,
+      hodlers: tokenWallets.length,
+      percent_unique: tokenWallets.length / edition_size,
+      percent_unique_cleaned: tokenWallets.length / edition_size_cleaned,
+      edition_size_rank: -1,
+      edition_size_cleaned_rank: -1,
+      hodlers_rank: -1,
+      percent_unique_rank: -1,
+      percent_unique_cleaned_rank: -1
+    };
+    labMeta.push(meta);
+  });
+
+  labMeta.map((lm) => {
+    lm.edition_size_rank =
+      labMeta.filter((m) => {
+        if (lm.edition_size > m.edition_size) {
+          return m;
+        }
+        if (m.edition_size == lm.edition_size) {
+          if (lm.id > m.id) {
+            return m;
+          }
+        }
+      }).length + 1;
+    lm.museum_holdings_rank =
+      labMeta.filter((m) => {
+        if (lm.museum_holdings > m.museum_holdings) {
+          return m;
+        }
+        if (m.museum_holdings == lm.museum_holdings) {
+          if (lm.id > m.id) {
+            return m;
+          }
+        }
+      }).length + 1;
+    lm.edition_size_cleaned_rank =
+      labMeta.filter((m) => {
+        if (lm.edition_size_cleaned > m.edition_size_cleaned) {
+          return m;
+        }
+        if (m.edition_size_cleaned == lm.edition_size_cleaned) {
+          if (lm.id > m.id) {
+            return m;
+          }
+        }
+      }).length + 1;
+    lm.hodlers_rank =
+      labMeta.filter((m) => {
+        if (m.hodlers > lm.hodlers) {
+          return m;
+        }
+        if (m.hodlers == lm.hodlers) {
+          if (lm.id > m.id) {
+            return m;
+          }
+        }
+      }).length + 1;
+    lm.percent_unique_rank =
+      labMeta.filter((m) => {
+        if (m.percent_unique > lm.percent_unique) {
+          return m;
+        }
+        if (m.percent_unique == lm.percent_unique) {
+          if (lm.id > m.id) {
+            return m;
+          }
+        }
+      }).length + 1;
+    lm.percent_unique_cleaned_rank =
+      labMeta.filter((m) => {
+        if (m.percent_unique_cleaned > lm.percent_unique_cleaned) {
+          return m;
+        }
+        if (m.percent_unique_cleaned == lm.percent_unique_cleaned) {
+          if (lm.id > m.id) {
+            return m;
+          }
+        }
+      }).length + 1;
+  });
+
+  await persistLabExtendedData(labMeta);
+
+  return labMeta;
 }

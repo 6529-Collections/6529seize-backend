@@ -1,64 +1,60 @@
+import { DataSource, In } from 'typeorm';
 import {
   ARTISTS_TABLE,
   ENS_TABLE,
   GRADIENT_CONTRACT,
+  LAB_EXTENDED_DATA_TABLE,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
   NULL_ADDRESS,
+  OWNERS_MEME_LAB_TABLE,
   OWNERS_METRICS_TABLE,
   OWNERS_TABLE,
   OWNERS_TAGS_TABLE,
   SIX529_MUSEUM,
   TDH_BLOCKS_TABLE,
+  TRANSACTIONS_MEME_LAB_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE
 } from './constants';
-import { Artist, ArtistMemesNfts } from './entities/IArtist';
+import { LabExtendedData } from './entities/INFT';
+import { Owner } from './entities/IOwner';
 import { areEqualAddresses } from './helpers';
 
 const mysql = require('mysql');
 
-let mysql_pool: any;
+let AppDataSource: DataSource;
 
 export async function connect() {
-  mysql_pool = mysql.createPool({
-    connectionLimit: 10,
-    connectTimeout: 30 * 1000,
-    acquireTimeout: 30 * 1000,
-    timeout: 30 * 1000,
+  console.log('[DATABASE]', `[DB HOST ${process.env.DB_HOST_READ}]`);
+
+  AppDataSource = new DataSource({
+    type: 'mysql',
     host: process.env.DB_HOST_READ,
-    port: process.env.DB_PORT,
-    user: process.env.DB_USER_READ,
+    port: parseInt(process.env.DB_PORT!),
+    username: process.env.DB_USER_READ,
     password: process.env.DB_PASS_READ,
-    charset: 'utf8mb4',
-    database: process.env.DB_NAME
+    database: process.env.DB_NAME,
+    entities: [Owner, LabExtendedData],
+    synchronize: true,
+    logging: false
   });
 
-  console.log('[API]', `[CONNECTION POOL CREATED]`);
+  await AppDataSource.initialize().catch((error) => console.log(error));
+  console.log('[DATABASE]', `[CONNECTION CREATED]`);
 }
 
 export function execSQL(sql: string): Promise<any> {
-  return new Promise((resolve, reject) => {
-    mysql_pool.getConnection(function (err: any, dbcon: any) {
-      if (err) {
-        console.log('custom err', err);
-        if (dbcon) {
-          dbcon.release();
-        }
-        throw err;
-      }
-      dbcon.query(sql, (err: any, result: any[]) => {
-        dbcon.release();
-        if (err) {
-          console.log('custom err', err);
-          return reject(err);
-        }
-        resolve(Object.values(JSON.parse(JSON.stringify(result))));
-      });
-    });
+  return new Promise(async (resolve, reject) => {
+    try {
+      const r = await AppDataSource.manager.query(sql);
+      resolve(Object.values(JSON.parse(JSON.stringify(r))));
+    } catch (err: any) {
+      return reject(err);
+    }
   });
 }
 
@@ -194,6 +190,41 @@ export async function fetchLabNFTs(
   );
 }
 
+export async function fetchLabOwners(
+  pageSize: number,
+  page: number,
+  wallets: string,
+  nfts: string,
+  sort: string,
+  sortDir: string
+) {
+  let filters = '';
+  if (wallets) {
+    filters = constructFilters(
+      filters,
+      `(${OWNERS_MEME_LAB_TABLE}.wallet in (${mysql.escape(
+        wallets.split(',')
+      )}) OR ${ENS_TABLE}.display in (${mysql.escape(wallets.split(','))}))`
+    );
+  }
+  if (nfts) {
+    filters = constructFilters(filters, `token_id in (${nfts})`);
+  }
+
+  const fields = ` ${OWNERS_MEME_LAB_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
+  const joins = `LEFT JOIN ${ENS_TABLE} ON ${OWNERS_MEME_LAB_TABLE}.wallet=${ENS_TABLE}.wallet`;
+
+  return fetchPaginated(
+    OWNERS_MEME_LAB_TABLE,
+    `${sort} ${sortDir}, token_id asc, created_at desc`,
+    pageSize,
+    page,
+    filters,
+    fields,
+    joins
+  );
+}
+
 export async function fetchNFTs(
   pageSize: number,
   page: number,
@@ -326,6 +357,59 @@ export async function fetchOwnersTags(
   return fetchPaginated(
     OWNERS_TAGS_TABLE,
     'memes_balance desc, gradients_balance desc',
+    pageSize,
+    page,
+    filters,
+    fields,
+    joins
+  );
+}
+
+export async function fetchLabTransactions(
+  pageSize: number,
+  page: number,
+  wallets: string,
+  nfts: string,
+  type_filter: string
+) {
+  let filters = '';
+  if (wallets) {
+    filters = constructFilters(
+      filters,
+      `(from_address in (${mysql.escape(
+        wallets.split(',')
+      )}) OR to_address in (${mysql.escape(wallets.split(','))}))`
+    );
+  }
+  if (nfts) {
+    filters = constructFilters(filters, `token_id in (${nfts})`);
+  }
+  if (type_filter) {
+    let newTypeFilter = '';
+    switch (type_filter) {
+      case 'sales':
+        newTypeFilter += 'value > 0';
+        break;
+      case 'airdrops':
+        newTypeFilter += `from_address = ${mysql.escape(NULL_ADDRESS)}`;
+        break;
+      case 'transfers':
+        newTypeFilter += `value = 0 and from_address != ${mysql.escape(
+          NULL_ADDRESS
+        )}`;
+        break;
+    }
+    if (newTypeFilter) {
+      filters = constructFilters(filters, newTypeFilter);
+    }
+  }
+
+  const fields = `${TRANSACTIONS_MEME_LAB_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_MEME_LAB_TABLE}.to_address=ens2.wallet`;
+
+  return fetchPaginated(
+    TRANSACTIONS_MEME_LAB_TABLE,
+    'transaction_date desc',
     pageSize,
     page,
     filters,
@@ -733,4 +817,29 @@ export async function fetchRanksForWallet(address: string) {
   const ownerTdh = await execSQL(sqlTdh);
 
   return ownerTdh;
+}
+
+export async function fetchLabExtended(
+  pageSize: number,
+  page: number,
+  nfts: string
+) {
+  const qb = AppDataSource.getRepository(LabExtendedData)
+    .createQueryBuilder(LAB_EXTENDED_DATA_TABLE)
+    .take(pageSize)
+    .skip(pageSize * (page - 1));
+
+  if (nfts) {
+    qb.where({ id: In(nfts.split(',')) });
+  }
+
+  const results = await qb.getMany();
+  const total = await qb.getCount();
+
+  return {
+    count: total,
+    page: page,
+    next: results.length > pageSize * page,
+    data: results
+  };
 }

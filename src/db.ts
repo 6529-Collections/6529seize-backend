@@ -24,13 +24,14 @@ import {
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
 import {
+  LabExtendedData,
   LabNFT,
   MemesExtendedData,
   NFT,
   NftTDH,
   NFTWithTDH
 } from './entities/INFT';
-import { Owner, OwnerMetric, OwnerTags, Photo } from './entities/IOwner';
+import { Owner, OwnerMetric, OwnerTags } from './entities/IOwner';
 import { TDH } from './entities/ITDH';
 import { Transaction } from './entities/ITransaction';
 
@@ -48,7 +49,7 @@ export async function connect() {
     username: process.env.DB_USER,
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
-    entities: [Photo, Owner],
+    entities: [Owner, LabExtendedData],
     synchronize: true,
     logging: false
   });
@@ -124,9 +125,6 @@ export async function createMemeLabOwnersTable() {
 export function execSQL(sql: string): Promise<any> {
   return new Promise(async (resolve, reject) => {
     try {
-      if (!AppDataSource.isInitialized) {
-        console.log('i am not initi');
-      }
       const r = await AppDataSource.manager.query(sql);
       resolve(Object.values(JSON.parse(JSON.stringify(r))));
     } catch (err: any) {
@@ -972,4 +970,8 @@ export async function persistENS(ens: ENS[]) {
   );
 
   console.log('[ENS]', `PERSISTED ALL [${ens.length}]`);
+}
+
+export async function persistLabExtendedData(labMeta: LabExtendedData[]) {
+  await AppDataSource.getRepository(LabExtendedData).save(labMeta);
 }

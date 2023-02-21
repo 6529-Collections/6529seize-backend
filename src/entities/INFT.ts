@@ -1,3 +1,4 @@
+import { Entity, Column, PrimaryColumn, BaseEntity } from 'typeorm';
 export interface BaseNFT {
   id: number;
   contract: string;
@@ -62,3 +63,57 @@ export interface MemesExtendedData {
 }
 
 export interface NFTWithExtendedData extends NFT, MemesExtendedData {}
+
+@Entity()
+export class LabExtendedData {
+  @PrimaryColumn({ type: 'int' })
+  id!: number;
+
+  @Column({ type: 'datetime' })
+  created_at!: Date;
+
+  @Column({ type: 'json' })
+  meme_references!: number[];
+
+  @Column({ type: 'text' })
+  name!: string;
+
+  @Column({ type: 'int' })
+  collection_size!: number;
+
+  @Column({ type: 'int' })
+  edition_size!: number;
+
+  @Column({ type: 'int' })
+  edition_size_rank!: number;
+
+  @Column({ type: 'int' })
+  museum_holdings!: number;
+
+  @Column({ type: 'int' })
+  museum_holdings_rank!: number;
+
+  @Column({ type: 'int' })
+  edition_size_cleaned!: number;
+
+  @Column({ type: 'int' })
+  edition_size_cleaned_rank!: number;
+
+  @Column({ type: 'int' })
+  hodlers!: number;
+
+  @Column({ type: 'int' })
+  hodlers_rank!: number;
+
+  @Column({ type: 'double' })
+  percent_unique!: number;
+
+  @Column({ type: 'int' })
+  percent_unique_rank!: number;
+
+  @Column({ type: 'double' })
+  percent_unique_cleaned!: number;
+
+  @Column({ type: 'int' })
+  percent_unique_cleaned_rank!: number;
+}

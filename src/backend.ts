@@ -64,11 +64,11 @@ async function start() {
   // Uncomment to call on start
 
   // await transactionsReplay.handler();
-  await transactions.handler();
-  await nfts.handler();
+  // await transactions.handler();
+  // await nfts.handler();
   await memeLab.handler();
-  await ownerMetrics.handler();
-  await tdh.handler();
+  // await ownerMetrics.handler();
+  // await tdh.handler();
   // memeStats();
   // await s3.handler();
 
