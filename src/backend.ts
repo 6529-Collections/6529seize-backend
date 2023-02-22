@@ -7,7 +7,7 @@ const memeLab = require('./memeLabLoop');
 const tdh = require('./tdhLoop');
 const ownerMetrics = require('./ownerMetricsLoop');
 const s3 = require('./s3Loop');
-const { memeStats } = require('./marketStatsLoop');
+const { memeStats, memeLabStats } = require('./marketStatsLoop');
 
 const cron = require('node-cron');
 
@@ -66,10 +66,11 @@ async function start() {
   // await transactionsReplay.handler();
   // await transactions.handler();
   // await nfts.handler();
-  // await memeLab.handler();
+  await memeLab.handler();
   // await ownerMetrics.handler();
   // await tdh.handler();
   // memeStats();
+  // memeLabStats()
   // await s3.handler();
 
   STARTING = false;

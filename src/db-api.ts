@@ -20,7 +20,7 @@ import {
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE
 } from './constants';
-import { LabExtendedData } from './entities/INFT';
+import { LabExtendedData, LabNFT } from './entities/INFT';
 import { Owner } from './entities/IOwner';
 import { areEqualAddresses } from './helpers';
 
@@ -38,7 +38,7 @@ export async function connect() {
     username: process.env.DB_USER_READ,
     password: process.env.DB_PASS_READ,
     database: process.env.DB_NAME,
-    entities: [Owner, LabExtendedData],
+    entities: [Owner, LabNFT, LabExtendedData],
     synchronize: true,
     logging: false
   });
@@ -822,7 +822,8 @@ export async function fetchRanksForWallet(address: string) {
 export async function fetchLabExtended(
   pageSize: number,
   page: number,
-  nfts: string
+  nfts: string,
+  collections: string
 ) {
   const qb = AppDataSource.getRepository(LabExtendedData)
     .createQueryBuilder(LAB_EXTENDED_DATA_TABLE)
@@ -831,6 +832,10 @@ export async function fetchLabExtended(
 
   if (nfts) {
     qb.where({ id: In(nfts.split(',')) });
+  }
+
+  if (collections) {
+    qb.where({ metadata_collection: In(collections.split(',')) });
   }
 
   const results = await qb.getMany();

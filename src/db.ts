@@ -49,7 +49,7 @@ export async function connect() {
     username: process.env.DB_USER,
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
-    entities: [Owner, LabExtendedData],
+    entities: [Owner, LabNFT, LabExtendedData],
     synchronize: true,
     logging: false
   });
@@ -239,8 +239,11 @@ export async function fetchTransactionsWithoutValue(
   return results;
 }
 
-export async function fetchAllMemeLabNFTs() {
-  let sql = `SELECT * FROM ${NFTS_MEME_LAB_TABLE};`;
+export async function fetchAllMemeLabNFTs(orderBy?: string) {
+  let sql = `SELECT * FROM ${NFTS_MEME_LAB_TABLE} `;
+  if (orderBy) {
+    sql += ` order by ${orderBy}`;
+  }
   const results = await execSQL(sql);
   results.map((r: any) => {
     r.metadata = JSON.parse(r.metadata);
@@ -424,49 +427,6 @@ export async function persistTransactionsREMAKE(transactions: Transaction[]) {
       new Date(),
       '[TRANSACTIONS REMAKE]',
       `[ALL ${transactions.length} TRANSACTIONS PERSISTED]`
-    );
-  }
-}
-
-export async function persistLabNFTS(nfts: LabNFT[]) {
-  if (nfts.length > 0) {
-    console.log('[NFTS]', `[PERSISTING ${nfts.length} NFTS]`);
-    await Promise.all(
-      nfts.map(async (nft) => {
-        let sql = `REPLACE INTO ${NFTS_MEME_LAB_TABLE} SET id=${
-          nft.id
-        }, created_at=${mysql.escape(new Date())}, contract=${mysql.escape(
-          nft.contract
-        )}, mint_date=${mysql.escape(new Date(nft.mint_date))}, mint_price=${
-          nft.mint_price
-        }, supply=${nft.supply}, name=${mysql.escape(
-          nft.name
-        )}, collection=${mysql.escape(
-          nft.collection
-        )}, token_type=${mysql.escape(
-          nft.token_type
-        )}, description=${mysql.escape(nft.description)}, artist=${mysql.escape(
-          nft.artist
-        )}, uri=${mysql.escape(nft.uri)}, icon=${mysql.escape(
-          nft.icon
-        )}, thumbnail=${mysql.escape(nft.thumbnail)}, scaled=${mysql.escape(
-          nft.scaled
-        )}, image=${mysql.escape(
-          nft.image
-        )}, compressed_animation=${mysql.escape(
-          nft.compressed_animation
-        )}, animation=${mysql.escape(nft.animation)}, metadata=${mysql.escape(
-          JSON.stringify(nft.metadata)
-        )}, meme_references=${mysql.escape(
-          JSON.stringify(nft.meme_references)
-        )}`;
-        await execSQL(sql);
-      })
-    );
-    console.log(
-      new Date(),
-      '[NFTS]',
-      `[ALL ${nfts.length} NEW NFTS PERSISTED]`
     );
   }
 }
@@ -970,6 +930,10 @@ export async function persistENS(ens: ENS[]) {
   );
 
   console.log('[ENS]', `PERSISTED ALL [${ens.length}]`);
+}
+
+export async function persistLabNFTS(labnfts: LabNFT[]) {
+  await AppDataSource.getRepository(LabNFT).save(labnfts);
 }
 
 export async function persistLabExtendedData(labMeta: LabExtendedData[]) {

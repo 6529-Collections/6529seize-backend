@@ -18,7 +18,7 @@ import {
 } from './constants';
 import { LabExtendedData, LabNFT, NFTWithExtendedData } from './entities/INFT';
 import { Transaction } from './entities/ITransaction';
-import { areEqualAddresses } from './helpers';
+import { areEqualAddresses, areEqualObjects } from './helpers';
 import {
   createMemeLabNftsTable,
   createMemeLabTransactionsTable,
@@ -95,25 +95,16 @@ async function processNFTs(
         tokenId
       );
 
-      const createdTransactions = startingTransactions.filter(
-        (t) =>
-          t.token_id == tokenId &&
-          areEqualAddresses(t.contract, MEMELAB_CONTRACT) &&
-          areEqualAddresses(NULL_ADDRESS, t.from_address)
+      const tokenTransactions = [...startingTransactions]
+        .filter((t) => t.token_id == tokenId)
+        .sort((a, b) => (a.transaction_date > b.transaction_date ? 1 : -1));
+
+      const createdTransactions = [...tokenTransactions].filter((t) =>
+        areEqualAddresses(NULL_ADDRESS, t.from_address)
       );
 
-      const burntTransactions = startingTransactions.filter(
-        (t) =>
-          t.token_id == tokenId &&
-          areEqualAddresses(t.contract, MEMELAB_CONTRACT) &&
-          areEqualAddresses(NULL_ADDRESS, t.to_address)
-      );
-
-      const firstMintTransaction = startingTransactions.find(
-        (t) =>
-          t.token_id == tokenId &&
-          areEqualAddresses(t.contract, MEMELAB_CONTRACT) &&
-          areEqualAddresses(MANIFOLD, t.from_address)
+      const firstMintNull = tokenTransactions.find(
+        (t) => areEqualAddresses(NULL_ADDRESS, t.from_address) && t.value > 0
       );
 
       let editionSize = 0;
@@ -122,13 +113,25 @@ async function processNFTs(
       });
 
       let mintPrice = 0;
-      if (firstMintTransaction) {
+      if (firstMintNull) {
         const mintTransaction = await alchemy.core.getTransaction(
-          firstMintTransaction?.transaction
+          firstMintNull?.transaction
         );
         mintPrice = mintTransaction
           ? parseFloat(Utils.formatEther(mintTransaction.value))
           : 0;
+      } else {
+        const firstMintManifold = tokenTransactions.find(
+          (t) => areEqualAddresses(MANIFOLD, t.from_address) && t.value > 0
+        );
+        if (firstMintManifold) {
+          const mintTransaction = await alchemy.core.getTransaction(
+            firstMintManifold?.transaction
+          );
+          mintPrice = mintTransaction
+            ? parseFloat(Utils.formatEther(mintTransaction.value))
+            : 0;
+        }
       }
 
       const tokenContract = fullMetadata.contract;
@@ -219,7 +222,9 @@ async function processNFTs(
         compressed_animation: compressedAnimation,
         animation: animation,
         metadata: fullMetadata.rawMetadata,
-        meme_references: memeReferences
+        meme_references: memeReferences,
+        floor_price: 0,
+        market_cap: 0
       };
 
       newNFTS.push(nft);
@@ -237,22 +242,44 @@ export const findNFTs = async (
 ) => {
   const allNFTs = await processNFTs(startingNFTS, startingTransactions, owners);
 
-  const nftChanged = allNFTs.some((n) => {
+  const delta: LabNFT[] = [];
+  allNFTs.map((n) => {
     const m = startingNFTS.find(
       (s) => areEqualAddresses(s.contract, n.contract) && s.id == n.id
     );
-    if (m?.mint_price != n.mint_price) {
-      return true;
+    let changed = false;
+    if (!m) {
+      changed = true;
+    } else if (
+      new Date(n.mint_date).getTime() != new Date(m.mint_date).getTime()
+    ) {
+      changed = true;
+    } else {
+      const nClone: any = { ...n };
+      const mClone: any = { ...m };
+      delete nClone.floor_price;
+      delete nClone.market_cap;
+      delete nClone.created_at;
+      delete nClone.mint_date;
+      delete mClone.floor_price;
+      delete mClone.market_cap;
+      delete mClone.created_at;
+      delete mClone.mint_date;
+
+      if (!areEqualObjects(nClone, mClone)) {
+        changed = true;
+      }
     }
-    if (m?.supply != n.supply) {
-      return true;
+    if (changed || reset) {
+      n.floor_price = m ? m.floor_price : n.floor_price;
+      n.market_cap = m ? m.market_cap : n.market_cap;
+      delta.push(n);
     }
-    return false;
   });
 
-  console.log(`[NFTS]`, `[CHANGED ${nftChanged}]`, `[RESET ${reset}]`);
+  console.log(`[NFTS]`, `[CHANGED ${delta.length}]`, `[RESET ${reset}]`);
 
-  return allNFTs;
+  return delta;
 };
 
 export async function memeLabNfts(reset?: boolean) {
@@ -404,10 +431,19 @@ export async function memeLabExtendedData() {
       edition_size += tw.balance;
     });
 
+    let metaCollection = '';
+    const metaCollectionTrait = nft.metadata.attributes.find(
+      (a: any) => a.trait_type.toUpperCase() == 'COLLECTION'
+    );
+    if (metaCollectionTrait) {
+      metaCollection = metaCollectionTrait.value;
+    }
+
     const meta: LabExtendedData = {
       id: nft.id,
       created_at: new Date(),
       name: nft.name!,
+      metadata_collection: metaCollection,
       meme_references: nft.meme_references,
       collection_size: nfts.length,
       edition_size: edition_size,

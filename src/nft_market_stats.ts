@@ -1,8 +1,14 @@
 import { Utils } from 'alchemy-sdk';
 import fetch from 'node-fetch';
-import { NFT } from './entities/INFT';
-import { delay } from './helpers';
-import { persistNftMarketStats, fetchNftsForContract } from './db';
+import { LabNFT, NFT } from './entities/INFT';
+import { areEqualAddresses, delay } from './helpers';
+import {
+  persistNftMarketStats,
+  fetchNftsForContract,
+  fetchAllMemeLabNFTs,
+  persistLabNFTS
+} from './db';
+import { MEMELAB_CONTRACT } from './constants';
 
 async function getResult(url: string) {
   try {
@@ -45,6 +51,14 @@ const findFloorPrice = async (stat: any): Promise<number> => {
 };
 
 export const findNftMarketStats = async (contract: string) => {
+  if (areEqualAddresses(contract, MEMELAB_CONTRACT)) {
+    await findNftMarketStatsLab();
+  } else {
+    await findNftMarketStatsMain(contract);
+  }
+};
+
+const findNftMarketStatsMain = async (contract: string) => {
   const nfts: NFT[] = await fetchNftsForContract(contract, 'id desc');
 
   console.log(
@@ -54,7 +68,7 @@ export const findNftMarketStats = async (contract: string) => {
     `[PROCESSING STATS FOR ${nfts.length} NFTS]`
   );
 
-  const processedStats: any[] = [];
+  const processedStats: NFT[] = [];
 
   for (let i = 0; i < nfts.length; i++) {
     const nft = nfts[i];
@@ -69,6 +83,44 @@ export const findNftMarketStats = async (contract: string) => {
       `[CONTRACT ${contract}]`,
       `[PROCESSED FOR ID ${nft.id}]`
     );
+    processedStats.push(nft);
+  }
+
+  console.log(
+    new Date(),
+    '[NFT MARKET STATS]',
+    `[PROCESSED ASSETS FOR ${processedStats.length} NFTS]`
+  );
+
+  return processedStats;
+};
+
+const findNftMarketStatsLab = async () => {
+  const nfts: LabNFT[] = await fetchAllMemeLabNFTs('id desc');
+
+  console.log(
+    new Date(),
+    '[NFT MARKET STATS]',
+    `[MEME LAB]`,
+    `[PROCESSING STATS FOR ${nfts.length} NFTS]`
+  );
+
+  const processedStats: LabNFT[] = [];
+
+  for (let i = 0; i < nfts.length; i++) {
+    const nft = nfts[i];
+
+    const floorPrice = await findFloorPrice(nft);
+    nft.floor_price = floorPrice;
+    nft.market_cap = floorPrice * nft.supply;
+    await persistLabNFTS([nft]);
+    console.log(
+      new Date(),
+      '[NFT MARKET STATS]',
+      `[MEME LAB]`,
+      `[PROCESSED FOR ID ${nft.id}]`
+    );
+    processedStats.push(nft);
   }
 
   console.log(

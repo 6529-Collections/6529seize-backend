@@ -21,8 +21,73 @@ export interface BaseNFT {
   metadata?: any;
 }
 
-export interface LabNFT extends BaseNFT {
-  meme_references: number[];
+@Entity('nfts_meme_lab')
+export class LabNFT {
+  @PrimaryColumn({ type: 'int' })
+  id!: number;
+
+  @Column({ type: 'varchar', length: 50 })
+  contract!: string;
+
+  @Column({ type: 'timestamp' })
+  created_at!: Date;
+
+  @Column({ type: 'timestamp' })
+  mint_date!: Date;
+
+  @Column({ type: 'double' })
+  mint_price!: number;
+
+  @Column({ type: 'int' })
+  supply!: number;
+
+  @Column({ nullable: true, type: 'text' })
+  name?: string;
+
+  @Column({ type: 'text' })
+  collection!: string;
+
+  @Column({ type: 'text' })
+  token_type!: string;
+
+  @Column({ type: 'text' })
+  description!: string;
+
+  @Column({ type: 'text' })
+  artist!: string;
+
+  @Column({ nullable: true, type: 'text' })
+  uri?: string;
+
+  @Column({ nullable: true, type: 'text' })
+  icon?: string;
+
+  @Column({ nullable: true, type: 'text' })
+  thumbnail?: string;
+
+  @Column({ nullable: true, type: 'text' })
+  scaled?: string;
+
+  @Column({ nullable: true, type: 'text' })
+  image?: string;
+
+  @Column({ nullable: true, type: 'text' })
+  compressed_animation?: string;
+
+  @Column({ nullable: true, type: 'text' })
+  animation?: string;
+
+  @Column({ type: 'json', nullable: true })
+  metadata?: any;
+
+  @Column({ type: 'json' })
+  meme_references!: number[];
+
+  @Column({ type: 'double' })
+  floor_price!: number;
+
+  @Column({ type: 'double' })
+  market_cap!: number;
 }
 
 export interface NFT extends BaseNFT {
@@ -77,6 +142,9 @@ export class LabExtendedData {
 
   @Column({ type: 'text' })
   name!: string;
+
+  @Column({ type: 'text' })
+  metadata_collection!: string;
 
   @Column({ type: 'int' })
   collection_size!: number;

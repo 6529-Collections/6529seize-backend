@@ -430,22 +430,27 @@ loadEnv(true).then(async (e) => {
         const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
         const nfts = req.query.id;
+        const collections = req.query.collection;
+
+        console.log('collections', collections);
 
         console.log(
           new Date(),
           `[API]`,
-          '[MEMES EXTENDED]',
+          '[LAB EXTENDED]',
           `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
 
-        db.fetchLabExtended(pageSize, page, nfts).then((result) => {
-          returnPaginatedResult(result, req, res);
-        });
+        db.fetchLabExtended(pageSize, page, nfts, collections).then(
+          (result) => {
+            returnPaginatedResult(result, req, res);
+          }
+        );
       } catch (e) {
         console.log(
           new Date(),
           `[API]`,
-          '[MEMES EXTENDED]',
+          '[LAB EXTENDED]',
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         next(e);
