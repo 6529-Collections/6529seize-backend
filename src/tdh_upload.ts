@@ -18,7 +18,7 @@ const myarweave = Arweave.init({
   protocol: 'https'
 });
 
-export async function uploadTDH() {
+export async function uploadTDH(force?: boolean) {
   const tdh: TDHENS[] = await fetchAllTDH();
   const ownerMetrics: OwnerMetric[] = await fetchAllOwnerMetrics();
 
@@ -29,7 +29,7 @@ export async function uploadTDH() {
 
   const exists = lastUpload && lastUpload.date == dateString;
 
-  if (!exists) {
+  if (!exists || force) {
     console.log(
       new Date(),
       '[TDH UPLOAD]',

@@ -10,14 +10,14 @@ import { persistOwners, fetchAllOwners } from './db';
 
 let alchemy: Alchemy;
 
-function ownersMatch(o1: Owner, o2: Owner) {
+export function ownersMatch(o1: Owner, o2: Owner) {
   if (o1.token_id != o2.token_id) return false;
   if (!areEqualAddresses(o1.wallet, o2.wallet)) return false;
   if (!areEqualAddresses(o1.contract, o2.contract)) return false;
   return true;
 }
 
-async function getOwnersResponse(contract: string, key: any) {
+async function getOwnersResponse(alchemy: Alchemy, contract: string, key: any) {
   const response = await alchemy.nft.getOwnersForContract(contract, {
     withTokenBalances: true,
     pageKey: key ? key : undefined
@@ -25,17 +25,18 @@ async function getOwnersResponse(contract: string, key: any) {
   return response;
 }
 
-async function getAllOwners(
+export async function getAllOwners(
+  alchemy: Alchemy,
   contract: string,
   owners: any[] = [],
   key: string = ''
 ): Promise<NftContractOwner[]> {
-  const response = await getOwnersResponse(contract, key);
+  const response = await getOwnersResponse(alchemy, contract, key);
   const newKey = response.pageKey;
   owners = owners.concat(response.owners);
 
   if (newKey) {
-    return getAllOwners(contract, owners, newKey);
+    return getAllOwners(alchemy, contract, owners, newKey);
   }
 
   return owners;
@@ -51,9 +52,9 @@ export const findOwners = async () => {
 
   console.log(new Date(), '[OWNERS]', `[DB ${startingOwners.length}]`);
 
-  const memesOwners = await getAllOwners(MEMES_CONTRACT);
+  const memesOwners = await getAllOwners(alchemy, MEMES_CONTRACT);
 
-  const gradientsOwners = await getAllOwners(GRADIENT_CONTRACT);
+  const gradientsOwners = await getAllOwners(alchemy, GRADIENT_CONTRACT);
 
   console.log(
     new Date(),

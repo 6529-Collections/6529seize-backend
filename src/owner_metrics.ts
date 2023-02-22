@@ -10,8 +10,6 @@ import { areEqualAddresses } from './helpers';
 import {
   fetchLastOwnerMetrics,
   fetchWalletsFromTransactions,
-  fetchAllOwnersAddresses,
-  fetchAllOwnerMetrics,
   persistOwnerMetrics,
   fetchWalletTransactions
 } from './db';
@@ -148,6 +146,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
       const transfersOut = [...transactionsOut].filter(
         (t) => t.value == 0 || isPunkGradient(t)
       );
+
       const transfersOutMemes = [...transfersOut].filter((t) =>
         areEqualAddresses(t.contract, MEMES_CONTRACT)
       );
@@ -160,6 +159,17 @@ export const findOwnerMetrics = async (reset?: boolean) => {
       const transfersOutGradients = [...transfersOut].filter((t) =>
         areEqualAddresses(t.contract, GRADIENT_CONTRACT)
       );
+
+      if (areEqualAddresses(owner.wallet, MANIFOLD)) {
+        console.log(`[MANIFOLD BALANCES]`, `[${MANIFOLD}]`);
+        for (let i = 1; i <= 63; i++) {
+          const maniIn = [...transactionsIn].filter((a) => a.token_id == i);
+          const maniOut = [...transactionsOut].filter((a) => a.token_id == i);
+          const countIn = getCount(maniIn);
+          const countOut = getCount(maniOut);
+          console.log(i, countIn, countOut, countIn != countOut);
+        }
+      }
 
       const ownerMetric: OwnerMetric = {
         created_at: new Date(),

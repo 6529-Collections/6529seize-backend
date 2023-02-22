@@ -40,3 +40,19 @@ export function getHoursAgo(date: Date) {
   const msBetweenDates = Math.abs(date.getTime() - now.getTime());
   return msBetweenDates / (60 * 60 * 1000);
 }
+
+export function areEqualObjects(obj1: any, obj2: any) {
+  for (const property in obj1) {
+    const value1 = obj1[property];
+    const value2 = obj2[property];
+    if (typeof value1 === 'object' && value1 !== null) {
+      if (!areEqualObjects(value1, value2)) {
+        return false;
+      }
+    } else if (value1 != value2) {
+      console.log(property, obj1[property], obj2[property]);
+      return false;
+    }
+  }
+  return true;
+}

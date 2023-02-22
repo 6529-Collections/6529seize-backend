@@ -1,62 +1,60 @@
+import { DataSource, In } from 'typeorm';
 import {
   ARTISTS_TABLE,
   ENS_TABLE,
   GRADIENT_CONTRACT,
+  LAB_EXTENDED_DATA_TABLE,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
+  NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
   NULL_ADDRESS,
+  OWNERS_MEME_LAB_TABLE,
   OWNERS_METRICS_TABLE,
   OWNERS_TABLE,
   OWNERS_TAGS_TABLE,
   SIX529_MUSEUM,
   TDH_BLOCKS_TABLE,
+  TRANSACTIONS_MEME_LAB_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE
 } from './constants';
+import { LabExtendedData, LabNFT } from './entities/INFT';
+import { Owner } from './entities/IOwner';
 import { areEqualAddresses } from './helpers';
 
 const mysql = require('mysql');
 
-let mysql_pool: any;
+let AppDataSource: DataSource;
 
 export async function connect() {
-  mysql_pool = mysql.createPool({
-    connectionLimit: 10,
-    connectTimeout: 30 * 1000,
-    acquireTimeout: 30 * 1000,
-    timeout: 30 * 1000,
+  console.log('[DATABASE]', `[DB HOST ${process.env.DB_HOST_READ}]`);
+
+  AppDataSource = new DataSource({
+    type: 'mysql',
     host: process.env.DB_HOST_READ,
-    port: process.env.DB_PORT,
-    user: process.env.DB_USER_READ,
+    port: parseInt(process.env.DB_PORT!),
+    username: process.env.DB_USER_READ,
     password: process.env.DB_PASS_READ,
-    charset: 'utf8mb4',
-    database: process.env.DB_NAME
+    database: process.env.DB_NAME,
+    entities: [Owner, LabNFT, LabExtendedData],
+    synchronize: true,
+    logging: false
   });
 
-  console.log('[API]', `[CONNECTION POOL CREATED]`);
+  await AppDataSource.initialize().catch((error) => console.log(error));
+  console.log('[DATABASE]', `[CONNECTION CREATED]`);
 }
 
 export function execSQL(sql: string): Promise<any> {
-  return new Promise((resolve, reject) => {
-    mysql_pool.getConnection(function (err: any, dbcon: any) {
-      if (err) {
-        console.log('custom err', err);
-        if (dbcon) {
-          dbcon.release();
-        }
-        throw err;
-      }
-      dbcon.query(sql, (err: any, result: any[]) => {
-        dbcon.release();
-        if (err) {
-          console.log('custom err', err);
-          return reject(err);
-        }
-        resolve(Object.values(JSON.parse(JSON.stringify(result))));
-      });
-    });
+  return new Promise(async (resolve, reject) => {
+    try {
+      const r = await AppDataSource.manager.query(sql);
+      resolve(Object.values(JSON.parse(JSON.stringify(r))));
+    } catch (err: any) {
+      return reject(err);
+    }
   });
 }
 
@@ -152,6 +150,78 @@ export async function fetchArtists(
     pageSize,
     page,
     filters
+  );
+}
+
+export async function fetchLabNFTs(
+  memeIds: string,
+  pageSize: number,
+  page: number,
+  contracts: string,
+  nfts: string,
+  sortDir: string
+) {
+  let filters = '';
+  if (memeIds) {
+    memeIds.split(',').map((nft_id) => {
+      filters = constructFilters(
+        filters,
+        `JSON_CONTAINS(meme_references, '${nft_id}','$')`
+      );
+    });
+  }
+  if (contracts) {
+    filters = constructFilters(
+      filters,
+      `contract in (${mysql.escape(contracts.split(','))})`
+    );
+  }
+  if (nfts) {
+    filters = constructFilters(filters, `id in (${nfts})`);
+  }
+  return fetchPaginated(
+    NFTS_MEME_LAB_TABLE,
+    `id ${sortDir}`,
+    pageSize,
+    page,
+    filters,
+    '',
+    ''
+  );
+}
+
+export async function fetchLabOwners(
+  pageSize: number,
+  page: number,
+  wallets: string,
+  nfts: string,
+  sort: string,
+  sortDir: string
+) {
+  let filters = '';
+  if (wallets) {
+    filters = constructFilters(
+      filters,
+      `(${OWNERS_MEME_LAB_TABLE}.wallet in (${mysql.escape(
+        wallets.split(',')
+      )}) OR ${ENS_TABLE}.display in (${mysql.escape(wallets.split(','))}))`
+    );
+  }
+  if (nfts) {
+    filters = constructFilters(filters, `token_id in (${nfts})`);
+  }
+
+  const fields = ` ${OWNERS_MEME_LAB_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
+  const joins = `LEFT JOIN ${ENS_TABLE} ON ${OWNERS_MEME_LAB_TABLE}.wallet=${ENS_TABLE}.wallet`;
+
+  return fetchPaginated(
+    OWNERS_MEME_LAB_TABLE,
+    `${sort} ${sortDir}, token_id asc, created_at desc`,
+    pageSize,
+    page,
+    filters,
+    fields,
+    joins
   );
 }
 
@@ -295,6 +365,59 @@ export async function fetchOwnersTags(
   );
 }
 
+export async function fetchLabTransactions(
+  pageSize: number,
+  page: number,
+  wallets: string,
+  nfts: string,
+  type_filter: string
+) {
+  let filters = '';
+  if (wallets) {
+    filters = constructFilters(
+      filters,
+      `(from_address in (${mysql.escape(
+        wallets.split(',')
+      )}) OR to_address in (${mysql.escape(wallets.split(','))}))`
+    );
+  }
+  if (nfts) {
+    filters = constructFilters(filters, `token_id in (${nfts})`);
+  }
+  if (type_filter) {
+    let newTypeFilter = '';
+    switch (type_filter) {
+      case 'sales':
+        newTypeFilter += 'value > 0';
+        break;
+      case 'airdrops':
+        newTypeFilter += `from_address = ${mysql.escape(NULL_ADDRESS)}`;
+        break;
+      case 'transfers':
+        newTypeFilter += `value = 0 and from_address != ${mysql.escape(
+          NULL_ADDRESS
+        )}`;
+        break;
+    }
+    if (newTypeFilter) {
+      filters = constructFilters(filters, newTypeFilter);
+    }
+  }
+
+  const fields = `${TRANSACTIONS_MEME_LAB_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_MEME_LAB_TABLE}.to_address=ens2.wallet`;
+
+  return fetchPaginated(
+    TRANSACTIONS_MEME_LAB_TABLE,
+    'transaction_date desc',
+    pageSize,
+    page,
+    filters,
+    fields,
+    joins
+  );
+}
+
 export async function fetchTransactions(
   pageSize: number,
   page: number,
@@ -412,7 +535,7 @@ export async function fetchNftTdh(
     return returnEmpty();
   }
 
-  joins += ` JOIN (SELECT wallet, DENSE_RANK() OVER(ORDER BY ${OWNERS_TABLE}.balance DESC) AS dense_rank_balance from ${OWNERS_TABLE} where ${OWNERS_TABLE}.contract=${mysql.escape(
+  joins += ` JOIN (SELECT wallet, RANK() OVER(ORDER BY ${OWNERS_TABLE}.balance DESC) AS dense_rank_balance from ${OWNERS_TABLE} where ${OWNERS_TABLE}.contract=${mysql.escape(
     contract
   )} and ${OWNERS_TABLE}.token_id=${nftId}) as dense_table ON ${WALLETS_TDH_TABLE}.wallet = dense_table.wallet`;
   joins += ` LEFT JOIN ${OWNERS_METRICS_TABLE} on ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet`;
@@ -575,22 +698,27 @@ export async function fetchOwnerMetrics(
     }
   }
 
-  let ownerMetricsSelect;
+  let ownerMetricsSelect: string;
 
   if (!wallets) {
     ownerMetricsSelect = ` ${OWNERS_METRICS_TABLE}.*, 
-    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, 
-    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, 
-    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
-    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,
-    DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients`;
+    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance,
+    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, 
+    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
+    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,
+    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients`;
   } else {
     ownerMetricsSelect = ` ${OWNERS_METRICS_TABLE}.*, 
-    dense_table.dense_rank_balance, 
+    dense_table.dense_rank_balance,
+    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.balance = ${OWNERS_METRICS_TABLE}2.balance) AS dense_rank_balance__ties,
     dense_table.dense_rank_balance_memes, 
-    dense_table.dense_rank_balance_memes_season1, 
+    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance = ${OWNERS_METRICS_TABLE}2.memes_balance) AS dense_rank_balance_memes__ties,
+    dense_table.dense_rank_balance_memes_season1,
+    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season1 = ${OWNERS_METRICS_TABLE}2.memes_balance_season1) AS dense_rank_balance_memes_season1__ties, 
     dense_table.dense_rank_balance_memes_season2,
-    dense_table.dense_rank_balance_gradients`;
+    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season2 = ${OWNERS_METRICS_TABLE}2.memes_balance_season2) AS dense_rank_balance_memes_season2__ties,
+    dense_table.dense_rank_balance_gradients,
+    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.gradients_balance = ${OWNERS_METRICS_TABLE}2.gradients_balance) AS dense_rank_balance_gradients__ties `;
   }
 
   const walletsTdhTableSelect = `
@@ -625,7 +753,7 @@ export async function fetchOwnerMetrics(
   joins += ` LEFT JOIN ${ENS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${ENS_TABLE}.wallet `;
 
   if (wallets) {
-    joins += ` JOIN (SELECT wallet, DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,DENSE_RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients FROM ${OWNERS_METRICS_TABLE}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
+    joins += ` JOIN (SELECT wallet, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients FROM ${OWNERS_METRICS_TABLE}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
   }
 
   if (
@@ -689,4 +817,34 @@ export async function fetchRanksForWallet(address: string) {
   const ownerTdh = await execSQL(sqlTdh);
 
   return ownerTdh;
+}
+
+export async function fetchLabExtended(
+  pageSize: number,
+  page: number,
+  nfts: string,
+  collections: string
+) {
+  const qb = AppDataSource.getRepository(LabExtendedData)
+    .createQueryBuilder(LAB_EXTENDED_DATA_TABLE)
+    .take(pageSize)
+    .skip(pageSize * (page - 1));
+
+  if (nfts) {
+    qb.where({ id: In(nfts.split(',')) });
+  }
+
+  if (collections) {
+    qb.where({ metadata_collection: In(collections.split(',')) });
+  }
+
+  const results = await qb.getMany();
+  const total = await qb.getCount();
+
+  return {
+    count: total,
+    page: page,
+    next: results.length > pageSize * page,
+    data: results
+  };
 }

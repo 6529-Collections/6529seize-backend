@@ -1,3 +1,6 @@
+import 'reflect-metadata';
+import { DataSource } from 'typeorm';
+
 import {
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
@@ -12,57 +15,121 @@ import {
   TRANSACTIONS_REMAKE_TABLE,
   OWNERS_METRICS_TABLE,
   NULL_ADDRESS,
-  MANIFOLD
+  MANIFOLD,
+  NFTS_MEME_LAB_TABLE,
+  TRANSACTIONS_MEME_LAB_TABLE,
+  OWNERS_MEME_LAB_TABLE,
+  MEMES_CONTRACT
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
-import { MemesExtendedData, NFT, NftTDH, NFTWithTDH } from './entities/INFT';
+import {
+  LabExtendedData,
+  LabNFT,
+  MemesExtendedData,
+  NFT,
+  NftTDH,
+  NFTWithTDH
+} from './entities/INFT';
 import { Owner, OwnerMetric, OwnerTags } from './entities/IOwner';
 import { TDH } from './entities/ITDH';
 import { Transaction } from './entities/ITransaction';
 
 const mysql = require('mysql');
 
-let mysql_pool: any;
+let AppDataSource: DataSource;
 
 export async function connect() {
   console.log('[DATABASE]', `[DB HOST ${process.env.DB_HOST}]`);
 
-  mysql_pool = mysql.createPool({
-    connectionLimit: 10,
-    connectTimeout: 30 * 1000,
-    acquireTimeout: 30 * 1000,
-    timeout: 30 * 1000,
+  AppDataSource = new DataSource({
+    type: 'mysql',
     host: process.env.DB_HOST,
-    port: process.env.DB_PORT,
-    user: process.env.DB_USER,
+    port: parseInt(process.env.DB_PORT!),
+    username: process.env.DB_USER,
     password: process.env.DB_PASS,
-    charset: 'utf8mb4',
-    database: process.env.DB_NAME
+    database: process.env.DB_NAME,
+    entities: [Owner, LabNFT, LabExtendedData],
+    synchronize: true,
+    logging: false
   });
 
-  console.log('[DATABASE]', `[CONNECTION POOL CREATED]`);
+  await AppDataSource.initialize().catch((error) => console.log(error));
+  console.log('[DATABASE]', `[CONNECTION CREATED]`);
+}
+
+export async function addColumnToTable(
+  table: string,
+  column: string,
+  type: string
+) {
+  const sql1 = `SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = ${mysql.escape(
+    table
+  )} AND COLUMN_NAME = ${mysql.escape(column)} `;
+  const r1 = await execSQL(sql1);
+
+  if (r1.length > 0) {
+    console.log(`[DB]`, `[COLUMN EXISTS ${table}.${column}]`);
+  } else {
+    const sql2 = `ALTER TABLE ${table} ADD COLUMN ${column} ${type}`;
+    await execSQL(sql2);
+    console.log(`[DB]`, `[COLUMN CREATED ${table}.${column}]`);
+  }
+}
+
+export async function addIconColumnToNfts() {
+  await addColumnToTable(NFTS_TABLE, 'icon', 'TEXT NOT NULL');
+}
+
+export async function addMemeLabColumnToArtists() {
+  await addColumnToTable(ARTISTS_TABLE, 'memelab', 'JSON');
+}
+
+export async function createMemeLabNftsTable() {
+  const sql = `CREATE TABLE IF NOT EXISTS ${NFTS_MEME_LAB_TABLE} (
+    id INT NOT NULL , 
+    contract VARCHAR(50) NOT NULL , 
+    created_at DATETIME NOT NULL DEFAULT now(), 
+    mint_date DATETIME NOT NULL , 
+    mint_price DOUBLE NOT NULL , 
+    supply INT NOT NULL , 
+    name TEXT NOT NULL , 
+    collection TEXT NOT NULL , 
+    token_type TEXT NOT NULL , 
+    description TEXT NOT NULL , 
+    artist TEXT NOT NULL , 
+    uri TEXT NOT NULL , 
+    icon TEXT NOT NULL , 
+    thumbnail TEXT NOT NULL , 
+    scaled TEXT NOT NULL , 
+    compressed_animation TEXT ,
+    image TEXT NOT NULL , 
+    animation TEXT , 
+    metadata JSON NOT NULL , 
+    meme_references JSON NOT NULL,
+    PRIMARY KEY (id, contract)
+  ) ENGINE = InnoDB;`;
+  await execSQL(sql);
+}
+
+export async function createMemeLabTransactionsTable() {
+  const sql = `CREATE TABLE IF NOT EXISTS ${TRANSACTIONS_MEME_LAB_TABLE} LIKE ${TRANSACTIONS_TABLE};`;
+  await execSQL(sql);
+}
+
+export async function createMemeLabOwnersTable() {
+  const sql = `CREATE TABLE IF NOT EXISTS ${OWNERS_MEME_LAB_TABLE} LIKE ${OWNERS_TABLE};`;
+  await execSQL(sql);
 }
 
 export function execSQL(sql: string): Promise<any> {
-  return new Promise((resolve, reject) => {
-    mysql_pool.getConnection(function (err: any, dbcon: any) {
-      if (err) {
-        console.log('custom err', err);
-        if (dbcon) {
-          dbcon.release();
-        }
-        throw err;
-      }
-      dbcon.query(sql, (err: any, result: any[]) => {
-        dbcon.release();
-        if (err) {
-          console.log('custom err', err);
-          return reject(err);
-        }
-        resolve(Object.values(JSON.parse(JSON.stringify(result))));
-      });
-    });
+  return new Promise(async (resolve, reject) => {
+    try {
+      const r = await AppDataSource.manager.query(sql);
+      resolve(Object.values(JSON.parse(JSON.stringify(r))));
+    } catch (err: any) {
+      return reject(err);
+    }
   });
 }
 
@@ -103,6 +170,18 @@ export async function findTransactionsByHash(
   return results;
 }
 
+export async function fetchLatestLabTransactionsBlockNumber(beforeDate?: Date) {
+  let sql = `SELECT block FROM ${TRANSACTIONS_MEME_LAB_TABLE}`;
+  if (beforeDate) {
+    sql += ` WHERE UNIX_TIMESTAMP(transaction_date) <= ${
+      beforeDate.getTime() / 1000
+    }`;
+  }
+  sql += ` order by block desc limit 1;`;
+  const r = await execSQL(sql);
+  return r.length > 0 ? r[0].block : 0;
+}
+
 export async function fetchLatestTransactionsBlockNumber(beforeDate?: Date) {
   let sql = `SELECT block FROM ${TRANSACTIONS_TABLE}`;
   if (beforeDate) {
@@ -133,6 +212,12 @@ export async function fetchAllTransactions() {
   return results;
 }
 
+export async function fetchAllMemeLabTransactions() {
+  let sql = `SELECT * FROM ${TRANSACTIONS_MEME_LAB_TABLE};`;
+  const results = await execSQL(sql);
+  return results;
+}
+
 export async function fetchNftsForContract(contract: string, orderBy?: string) {
   let sql = `SELECT * from ${NFTS_TABLE} WHERE contract=${mysql.escape(
     contract
@@ -151,6 +236,28 @@ export async function fetchTransactionsWithoutValue(
   const offset = pageSize * (page - 1);
   let sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE value=0 LIMIT ${pageSize} OFFSET ${offset};`;
   const results = await execSQL(sql);
+  return results;
+}
+
+export async function fetchAllMemeLabNFTs(orderBy?: string) {
+  let sql = `SELECT * FROM ${NFTS_MEME_LAB_TABLE} `;
+  if (orderBy) {
+    sql += ` order by ${orderBy}`;
+  }
+  const results = await execSQL(sql);
+  results.map((r: any) => {
+    r.metadata = JSON.parse(r.metadata);
+    r.meme_references = r.meme_references ? JSON.parse(r.meme_references) : [];
+  });
+  return results;
+}
+
+export async function fetchMemesWithSeason() {
+  let sql = `SELECT * FROM ${NFTS_TABLE} LEFT JOIN ${MEMES_EXTENDED_DATA_TABLE} ON ${NFTS_TABLE}.id= ${MEMES_EXTENDED_DATA_TABLE}.id WHERE contract = ${mysql.escape(
+    MEMES_CONTRACT
+  )};`;
+  const results = await execSQL(sql);
+  results.map((r: any) => (r.metadata = JSON.parse(r.metadata)));
   return results;
 }
 
@@ -173,6 +280,19 @@ export async function fetchAllTDH() {
 export async function fetchAllArtists() {
   let sql = `SELECT * FROM ${ARTISTS_TABLE};`;
   const results = await execSQL(sql);
+  results.map((a: any) => {
+    a.memes = JSON.parse(a.memes);
+    a.memelab = JSON.parse(a.memelab);
+    a.gradients = JSON.parse(a.gradients);
+    a.work = JSON.parse(a.work);
+    a.social_links = JSON.parse(a.social_links);
+  });
+  return results;
+}
+
+export async function fetchAllLabOwners() {
+  let sql = `SELECT * FROM ${OWNERS_MEME_LAB_TABLE};`;
+  const results = await execSQL(sql);
   return results;
 }
 
@@ -185,7 +305,7 @@ export async function fetchAllOwners() {
 export async function fetchWalletsFromTransactions(datetime: Date | undefined) {
   let sql = `SELECT DISTINCT COALESCE(from_address, to_address) AS wallet FROM ${TRANSACTIONS_TABLE} `;
   if (datetime) {
-    sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(
+    sql += ` WHERE ${TRANSACTIONS_TABLE}.transaction_date >= ${mysql.escape(
       datetime
     )}`;
   }
@@ -244,7 +364,10 @@ export async function fetchMissingEns(datetime?: Date) {
   return structuredResults;
 }
 
-export async function persistTransactions(transactions: Transaction[]) {
+export async function persistTransactions(
+  transactions: Transaction[],
+  isLab?: boolean
+) {
   if (transactions.length > 0) {
     console.log(
       new Date(),
@@ -253,9 +376,11 @@ export async function persistTransactions(transactions: Transaction[]) {
     );
     await Promise.all(
       transactions.map(async (t) => {
-        let sql = `REPLACE INTO ${TRANSACTIONS_TABLE} SET transaction=${mysql.escape(
-          t.transaction
-        )}, block=${t.block}, transaction_date=${mysql.escape(
+        let sql = `REPLACE INTO ${
+          isLab ? TRANSACTIONS_MEME_LAB_TABLE : TRANSACTIONS_TABLE
+        } SET transaction=${mysql.escape(t.transaction)}, block=${
+          t.block
+        }, transaction_date=${mysql.escape(
           t.transaction_date
         )}, from_address=${mysql.escape(
           t.from_address
@@ -325,9 +450,11 @@ export async function persistNFTS(nfts: NFTWithTDH[]) {
           nft.hodl_rate
         }, description=${mysql.escape(nft.description)}, artist=${mysql.escape(
           nft.artist
-        )}, uri=${mysql.escape(nft.uri)}, thumbnail=${mysql.escape(
-          nft.thumbnail
-        )}, scaled=${mysql.escape(nft.scaled)}, image=${mysql.escape(
+        )}, uri=${mysql.escape(nft.uri)}, icon=${mysql.escape(
+          nft.icon
+        )}, thumbnail=${mysql.escape(nft.thumbnail)}, scaled=${mysql.escape(
+          nft.scaled
+        )}, image=${mysql.escape(
           nft.image
         )}, compressed_animation=${mysql.escape(
           nft.compressed_animation
@@ -362,6 +489,8 @@ export async function persistArtists(artists: Artist[]) {
           JSON.stringify(artist.memes)
         )}, gradients=${mysql.escape(
           JSON.stringify(artist.gradients)
+        )}, memelab=${mysql.escape(
+          JSON.stringify(artist.memelab)
         )}, bio=${mysql.escape(artist.bio)}, pfp=${mysql.escape(
           artist.pfp
         )}, work=${mysql.escape(
@@ -378,7 +507,7 @@ export async function persistArtists(artists: Artist[]) {
   }
 }
 
-export async function persistOwners(owners: Owner[]) {
+export async function persistOwners(owners: Owner[], isLab?: boolean) {
   if (owners.length > 0) {
     console.log('[OWNERS]', `[PERSISTING ${owners.length} OWNERS]`);
 
@@ -386,19 +515,19 @@ export async function persistOwners(owners: Owner[]) {
       owners.map(async (owner) => {
         let sql;
         if (0 >= owner.balance) {
-          sql = `DELETE FROM ${OWNERS_TABLE} WHERE wallet=${mysql.escape(
-            owner.wallet
-          )} AND token_id=${owner.token_id} AND contract=${mysql.escape(
-            owner.contract
-          )}`;
-        } else {
-          sql = `REPLACE INTO ${OWNERS_TABLE} SET created_at=${mysql.escape(
-            new Date()
-          )}, wallet=${mysql.escape(owner.wallet)}, token_id=${
+          sql = `DELETE FROM ${
+            isLab ? OWNERS_MEME_LAB_TABLE : OWNERS_TABLE
+          } WHERE wallet=${mysql.escape(owner.wallet)} AND token_id=${
             owner.token_id
-          }, contract=${mysql.escape(owner.contract)}, balance=${
-            owner.balance
-          }`;
+          } AND contract=${mysql.escape(owner.contract)}`;
+        } else {
+          sql = `REPLACE INTO ${
+            isLab ? OWNERS_MEME_LAB_TABLE : OWNERS_TABLE
+          } SET created_at=${mysql.escape(new Date())}, wallet=${mysql.escape(
+            owner.wallet
+          )}, token_id=${owner.token_id}, contract=${mysql.escape(
+            owner.contract
+          )}, balance=${owner.balance}`;
         }
 
         await execSQL(sql);
@@ -801,4 +930,12 @@ export async function persistENS(ens: ENS[]) {
   );
 
   console.log('[ENS]', `PERSISTED ALL [${ens.length}]`);
+}
+
+export async function persistLabNFTS(labnfts: LabNFT[]) {
+  await AppDataSource.getRepository(LabNFT).save(labnfts);
+}
+
+export async function persistLabExtendedData(labMeta: LabExtendedData[]) {
+  await AppDataSource.getRepository(LabExtendedData).save(labMeta);
 }
