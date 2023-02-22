@@ -41,10 +41,17 @@ cron.schedule('*/4 * * * *', async function () {
   }
 });
 
-// PULL EVERY HOUR
+// PULL EVERY HOUR AT MIN 0
 cron.schedule('0 * * * *', async function () {
   if (!STARTING) {
     memeStats();
+  }
+});
+
+// PULL EVERY HOUR AT MIN 30
+cron.schedule('30 * * * *', async function () {
+  if (!STARTING) {
+    memeLabStats();
   }
 });
 
