@@ -31,6 +31,7 @@ loadEnv(true).then(async (e) => {
 
   app.use(compression());
   app.use(cors(corsOptions));
+  app.enable('trust proxy');
 
   const requireLogin = async (req: any, res: any, next: any) => {
     if (req.method == 'OPTIONS') {
