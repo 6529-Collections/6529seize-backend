@@ -8,27 +8,15 @@ import { OwnerMetric } from './entities/IOwner';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 import {
-  fetchLastOwnerMetrics,
-  fetchWalletsFromTransactions,
   persistOwnerMetrics,
-  fetchWalletTransactions
+  fetchWalletTransactions,
+  fetchDistinctOwnerWallets
 } from './db';
 
-export const findOwnerMetrics = async (reset?: boolean) => {
-  const lastMetrics = await fetchLastOwnerMetrics();
-  const lastMetricsDate = lastMetrics ? new Date(lastMetrics) : undefined;
+export const findOwnerMetrics = async () => {
+  const owners: { wallet: string }[] = await fetchDistinctOwnerWallets();
 
-  console.log('[OWNERS METRICS]', `[LAST METRICS ${lastMetricsDate}]`);
-
-  const owners: { wallet: string }[] = await fetchWalletsFromTransactions(
-    lastMetricsDate
-  );
-
-  console.log(
-    new Date(),
-    '[OWNERS METRICS]',
-    `[OWNERS DELTA ${owners.length}]`
-  );
+  console.log('[OWNERS METRICS]', `[OWNERS ${owners.length}]`);
 
   const ownerMetrics: OwnerMetric[] = [];
 

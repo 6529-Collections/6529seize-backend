@@ -74,7 +74,7 @@ async function start() {
   // await transactions.handler();
   // await nfts.handler();
   // await memeLab.handler();
-  // await ownerMetrics.handler();
+  await ownerMetrics.handler();
   // await tdh.handler();
   // memeStats();
   // memeLabStats()

@@ -99,7 +99,7 @@ async function fetchPaginated(
   const r2 = await execSQL(sql2);
 
   // console.log(sql1);
-  // console.log(sql2);
+  console.log(sql2);
 
   return {
     count: r1[0]?.count,

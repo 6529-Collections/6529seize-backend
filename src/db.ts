@@ -302,10 +302,16 @@ export async function fetchAllOwners() {
   return results;
 }
 
+export async function fetchDistinctOwnerWallets() {
+  let sql = `SELECT DISTINCT wallet FROM ${OWNERS_TABLE};`;
+  const results = await execSQL(sql);
+  return results;
+}
+
 export async function fetchWalletsFromTransactions(datetime: Date | undefined) {
   let sql = `SELECT DISTINCT COALESCE(from_address, to_address) AS wallet FROM ${TRANSACTIONS_TABLE} `;
   if (datetime) {
-    sql += ` WHERE ${TRANSACTIONS_TABLE}.transaction_date >= ${mysql.escape(
+    sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at >= ${mysql.escape(
       datetime
     )}`;
   }
