@@ -1,4 +1,4 @@
-import { loadEnv } from '../secrets';
+import { loadEnv, unload } from '../secrets';
 import { transactions } from '../transactionsLoop/index';
 import { findOwnerMetrics } from '../owner_metrics';
 import { tdhLoop } from '../tdhLoop/index';
@@ -15,5 +15,6 @@ export const handler = async (event?: any, context?: any) => {
   // await transactions(fromBlock, toBlock);
   // await findOwnerMetrics();
   await tdhLoop(true);
+  await unload();
   console.log('[REPLAY-TRANSACTIONS LOOP COMPLETE]');
 };

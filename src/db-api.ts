@@ -1,4 +1,3 @@
-import { DataSource, In } from 'typeorm';
 import {
   ARTISTS_TABLE,
   ENS_TABLE,
@@ -22,39 +21,49 @@ import {
 } from './constants';
 import { LabExtendedData, LabNFT } from './entities/INFT';
 import { Owner } from './entities/IOwner';
+import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 
 const mysql = require('mysql');
 
-let AppDataSource: DataSource;
+let mysql_pool: any;
 
 export async function connect() {
-  console.log('[DATABASE]', `[DB HOST ${process.env.DB_HOST_READ}]`);
-
-  AppDataSource = new DataSource({
-    type: 'mysql',
+  mysql_pool = mysql.createPool({
+    connectionLimit: 10,
+    connectTimeout: 30 * 1000,
+    acquireTimeout: 30 * 1000,
+    timeout: 30 * 1000,
     host: process.env.DB_HOST_READ,
-    port: parseInt(process.env.DB_PORT!),
-    username: process.env.DB_USER_READ,
+    port: process.env.DB_PORT,
+    user: process.env.DB_USER_READ,
     password: process.env.DB_PASS_READ,
-    database: process.env.DB_NAME,
-    entities: [Owner, LabNFT, LabExtendedData],
-    synchronize: true,
-    logging: false
+    charset: 'utf8mb4',
+    database: process.env.DB_NAME
   });
 
-  await AppDataSource.initialize().catch((error) => console.log(error));
-  console.log('[DATABASE]', `[CONNECTION CREATED]`);
+  console.log('[API]', `[CONNECTION POOL CREATED]`);
 }
 
 export function execSQL(sql: string): Promise<any> {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const r = await AppDataSource.manager.query(sql);
-      resolve(Object.values(JSON.parse(JSON.stringify(r))));
-    } catch (err: any) {
-      return reject(err);
-    }
+  return new Promise((resolve, reject) => {
+    mysql_pool.getConnection(function (err: any, dbcon: any) {
+      if (err) {
+        console.log('custom err', err);
+        if (dbcon) {
+          dbcon.release();
+        }
+        throw err;
+      }
+      dbcon.query(sql, (err: any, result: any[]) => {
+        dbcon.release();
+        if (err) {
+          console.log('custom err', err);
+          return reject(err);
+        }
+        resolve(Object.values(JSON.parse(JSON.stringify(result))));
+      });
+    });
   });
 }
 
@@ -807,13 +816,9 @@ export async function fetchEns(address: string) {
 
 export async function fetchRanksForWallet(address: string) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
-  const sqlTags = `SELECT * FROM ${OWNERS_TAGS_TABLE} WHERE wallet=${mysql.escape(
-    address
-  )}`;
   const sqlTdh = `SELECT * FROM ${WALLETS_TDH_TABLE} WHERE block=${tdhBlock} and wallet=${mysql.escape(
     address
   )}`;
-  const ownerTags = await execSQL(sqlTags);
   const ownerTdh = await execSQL(sqlTdh);
 
   return ownerTdh;
@@ -825,26 +830,16 @@ export async function fetchLabExtended(
   nfts: string,
   collections: string
 ) {
-  const qb = AppDataSource.getRepository(LabExtendedData)
-    .createQueryBuilder(LAB_EXTENDED_DATA_TABLE)
-    .take(pageSize)
-    .skip(pageSize * (page - 1));
+  let filters = '';
 
   if (nfts) {
-    qb.where({ id: In(nfts.split(',')) });
+    filters = constructFilters(filters, `id in (${nfts})`);
   }
-
   if (collections) {
-    qb.where({ metadata_collection: In(collections.split(',')) });
+    filters = constructFilters(
+      filters,
+      `metadata_collection in (${mysql.escape(collections.split(','))})`
+    );
   }
-
-  const results = await qb.getMany();
-  const total = await qb.getCount();
-
-  return {
-    count: total,
-    page: page,
-    next: results.length > pageSize * page,
-    data: results
-  };
+  return fetchPaginated(LAB_EXTENDED_DATA_TABLE, 'id', pageSize, page, filters);
 }

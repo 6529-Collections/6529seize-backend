@@ -49,13 +49,18 @@ export async function connect() {
     username: process.env.DB_USER,
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
-    entities: [Owner, LabNFT, LabExtendedData],
+    entities: [Owner, LabNFT, LabExtendedData, Transaction, OwnerMetric],
     synchronize: true,
     logging: false
   });
 
   await AppDataSource.initialize().catch((error) => console.log(error));
   console.log('[DATABASE]', `[CONNECTION CREATED]`);
+}
+
+export async function disconnect() {
+  await AppDataSource.destroy();
+  console.log('[DATABASE]', `[DISCONNECTED]`);
 }
 
 export async function addColumnToTable(
@@ -140,9 +145,10 @@ export async function fetchLastUpload(): Promise<any> {
 }
 
 export async function fetchLastOwnerMetrics(): Promise<any> {
-  let sql = `SELECT created_at FROM ${OWNERS_METRICS_TABLE} ORDER BY created_at DESC LIMIT 1;`;
+  let sql = `SELECT transaction_reference FROM ${OWNERS_METRICS_TABLE} ORDER BY transaction_reference DESC LIMIT 1;`;
   const results = await execSQL(sql);
-  return results ? results[0].created_at : [];
+  console.log(sql);
+  return results ? results[0].transaction_reference : null;
 }
 
 export async function findReplayTransactions(): Promise<Transaction[]> {
@@ -302,13 +308,22 @@ export async function fetchAllOwners() {
   return results;
 }
 
-export async function fetchWalletsFromTransactions(datetime: Date | undefined) {
+export async function fetchDistinctOwnerWallets() {
+  let sql = `SELECT DISTINCT ${OWNERS_TABLE}.wallet, 
+    ${OWNERS_METRICS_TABLE}.created_at 
+    FROM ${OWNERS_TABLE} LEFT JOIN ${OWNERS_METRICS_TABLE} 
+    ON ${OWNERS_TABLE}.wallet = ${OWNERS_METRICS_TABLE}.wallet 
+    WHERE ${OWNERS_TABLE}.wallet != ${mysql.escape(NULL_ADDRESS)};`;
+  const results = await execSQL(sql);
+  return results;
+}
+
+export async function fetchWalletsFromTransactions(date: Date | undefined) {
   let sql = `SELECT DISTINCT COALESCE(from_address, to_address) AS wallet FROM ${TRANSACTIONS_TABLE} `;
-  if (datetime) {
-    sql += ` WHERE ${TRANSACTIONS_TABLE}.transaction_date >= ${mysql.escape(
-      datetime
-    )}`;
+  if (date) {
+    sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(date)}`;
   }
+  console.log(sql);
   const results = await execSQL(sql);
   return results;
 }
@@ -327,14 +342,32 @@ export async function fetchAllOwnerMetrics() {
   return results;
 }
 
-export async function fetchWalletTransactions(wallet: string, block?: number) {
-  let sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE (from_address = ${mysql.escape(
-    wallet
-  )} OR to_address = ${mysql.escape(wallet)})`;
+export async function fetchWalletTransactions(
+  wallet: string,
+  datetime?: Date,
+  block?: number
+) {
+  const sql = `SELECT * FROM ${TRANSACTIONS_TABLE}`;
+
+  let filters = constructFilters(
+    'filters',
+    `(from_address = ${mysql.escape(wallet)} OR to_address = ${mysql.escape(
+      wallet
+    )})`
+  );
   if (block) {
-    sql += ` AND block <= ${block}`;
+    filters = constructFilters(filters, `block <= ${block}`);
   }
-  const results = await execSQL(sql);
+  if (datetime) {
+    filters = constructFilters(
+      filters,
+      `transaction_date >= ${mysql.escape(datetime)}`
+    );
+  }
+
+  const fullSql = `${sql} ${filters}`;
+
+  const results = await execSQL(fullSql);
   return results;
 }
 
@@ -662,7 +695,11 @@ export async function persistOwnerMetrics(ownerMetrics: OwnerMetric[]) {
             ownerMetric.transfers_out_memes_season2
           }, transfers_in_gradients=${
             ownerMetric.transfers_in_gradients
-          }, transfers_out_gradients=${ownerMetric.transfers_out_gradients}`;
+          }, transfers_out_gradients=${
+            ownerMetric.transfers_out_gradients
+          }, transaction_reference=${mysql.escape(
+            ownerMetric.transaction_reference
+          )}`;
         }
 
         await execSQL(sql);
@@ -938,4 +975,11 @@ export async function persistLabNFTS(labnfts: LabNFT[]) {
 
 export async function persistLabExtendedData(labMeta: LabExtendedData[]) {
   await AppDataSource.getRepository(LabExtendedData).save(labMeta);
+}
+
+function constructFilters(f: string, newF: string) {
+  if (f.trim().toUpperCase().startsWith('WHERE')) {
+    return ` ${f} AND ${newF} `;
+  }
+  return ` WHERE ${newF} `;
 }

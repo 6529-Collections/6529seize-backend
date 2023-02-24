@@ -35,62 +35,179 @@ export interface OwnerTags {
   memes_cards_sets_szn2: number;
 }
 
-export interface OwnerMetric {
-  created_at: Date;
-  wallet: string;
-  balance: number;
-  memes_balance: number;
-  memes_balance_season1: number;
-  memes_balance_season2: number;
-  gradients_balance: number;
-  purchases_value: number;
-  purchases_count: number;
-  purchases_value_memes: number;
-  purchases_count_memes: number;
-  purchases_value_memes_season1: number;
-  purchases_count_memes_season1: number;
-  purchases_value_memes_season2: number;
-  purchases_count_memes_season2: number;
-  purchases_value_gradients: number;
-  purchases_count_gradients: number;
-  purchases_value_primary: number;
-  purchases_count_primary: number;
-  purchases_value_primary_memes: number;
-  purchases_count_primary_memes: number;
-  purchases_value_primary_memes_season1: number;
-  purchases_count_primary_memes_season1: number;
-  purchases_value_primary_memes_season2: number;
-  purchases_count_primary_memes_season2: number;
-  purchases_value_primary_gradients: number;
-  purchases_count_primary_gradients: number;
-  purchases_value_secondary: number;
-  purchases_count_secondary: number;
-  purchases_value_secondary_memes: number;
-  purchases_count_secondary_memes: number;
-  purchases_value_secondary_memes_season1: number;
-  purchases_count_secondary_memes_season1: number;
-  purchases_value_secondary_memes_season2: number;
-  purchases_count_secondary_memes_season2: number;
-  purchases_value_secondary_gradients: number;
-  purchases_count_secondary_gradients: number;
-  sales_value: number;
-  sales_count: number;
-  sales_value_memes: number;
-  sales_count_memes: number;
-  sales_value_memes_season1: number;
-  sales_count_memes_season1: number;
-  sales_value_memes_season2: number;
-  sales_count_memes_season2: number;
-  sales_value_gradients: number;
-  sales_count_gradients: number;
-  transfers_in: number;
-  transfers_in_memes: number;
-  transfers_in_memes_season1: number;
-  transfers_in_memes_season2: number;
-  transfers_in_gradients: number;
-  transfers_out: number;
-  transfers_out_memes: number;
-  transfers_out_memes_season1: number;
-  transfers_out_memes_season2: number;
-  transfers_out_gradients: number;
+@Entity({ name: 'owners_metrics' })
+export class OwnerMetric {
+  @Column({ type: 'datetime' })
+  created_at!: Date;
+
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  wallet!: string;
+
+  @Column({ type: 'int', nullable: false })
+  balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_balance_season1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_balance_season2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  gradients_balance!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_primary!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_primary!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_secondary!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_secondary!: number;
+
+  @Column({ type: 'double', nullable: false })
+  sales_value!: number;
+
+  @Column({ type: 'int', nullable: false })
+  sales_count!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_in!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_out!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_memes!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_memes!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_memes_season1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_memes_season1!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_memes_season2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_memes_season2!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_gradients!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_gradients!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_primary_memes!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_primary_memes!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_primary_memes_season1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_primary_memes_season1!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_primary_memes_season2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_primary_memes_season2!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_primary_gradients!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_primary_gradients!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_secondary_memes!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_secondary_memes!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_secondary_memes_season1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_secondary_memes_season1!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_secondary_memes_season2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_secondary_memes_season2!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_secondary_gradients!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_secondary_gradients!: number;
+
+  @Column({ type: 'double', nullable: false })
+  sales_value_memes!: number;
+
+  @Column({ type: 'int', nullable: false })
+  sales_count_memes!: number;
+
+  @Column({ type: 'double', nullable: false })
+  sales_value_memes_season1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  sales_count_memes_season1!: number;
+
+  @Column({ type: 'double', nullable: false })
+  sales_value_memes_season2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  sales_count_memes_season2!: number;
+
+  @Column({ type: 'double', nullable: false })
+  sales_value_gradients!: number;
+
+  @Column({ type: 'int', nullable: false })
+  sales_count_gradients!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_in_memes!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_out_memes!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_in_memes_season1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_out_memes_season1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_in_memes_season2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_out_memes_season2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_in_gradients!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_out_gradients!: number;
+
+  @Column({ type: 'datetime', nullable: true })
+  transaction_reference!: Date;
 }

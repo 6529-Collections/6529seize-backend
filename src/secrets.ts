@@ -1,5 +1,5 @@
 import SecretsManager = require('aws-sdk/clients/secretsmanager');
-import { connect } from './db';
+import { connect, disconnect } from './db';
 
 const envs = ['local', 'development', 'production'];
 
@@ -18,6 +18,10 @@ export async function loadEnv(disableConnect?: boolean) {
   if (!disableConnect) {
     await connect();
   }
+}
+
+export async function unload() {
+  await disconnect();
 }
 
 async function loadSecrets() {

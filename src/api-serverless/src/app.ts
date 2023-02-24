@@ -11,7 +11,21 @@ function cacheKey(req: any) {
 
 const compression = require('compression');
 const express = require('express');
+const cors = require('cors');
+
 const app = express();
+
+const corsOptions = {
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS', 'HEAD'],
+  allowedHeaders: [
+    'Content-Type',
+    'x-6529-auth',
+    'Origin',
+    'Accept',
+    'X-Requested-With'
+  ]
+};
 
 loadEnv(true).then(async (e) => {
   console.log(
@@ -23,16 +37,8 @@ loadEnv(true).then(async (e) => {
   await db.connect();
 
   app.use(compression());
-
-  app.use(function (req: any, res: any, next: any) {
-    res.setHeader('Access-Control-Allow-Methods', 'OPTIONS,POST,GET,HEAD');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader(
-      'Access-Control-Allow-Headers',
-      'Origin, X-Requested-With, Content-Type, Accept, x-6529-auth'
-    );
-    next();
-  });
+  app.use(cors(corsOptions));
+  app.enable('trust proxy');
 
   const requireLogin = async (req: any, res: any, next: any) => {
     if (req.method == 'OPTIONS') {
@@ -72,7 +78,6 @@ loadEnv(true).then(async (e) => {
 
   app.all('/api*', requireLogin);
   app.all('/api*', checkCache);
-  app.enable('trust proxy');
 
   const BASE_PATH = '/api';
   const CONTENT_TYPE_HEADER = 'Content-Type';
@@ -431,8 +436,6 @@ loadEnv(true).then(async (e) => {
 
         const nfts = req.query.id;
         const collections = req.query.collection;
-
-        console.log('collections', collections);
 
         console.log(
           new Date(),
