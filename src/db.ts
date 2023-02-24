@@ -147,7 +147,6 @@ export async function fetchLastUpload(): Promise<any> {
 export async function fetchLastOwnerMetrics(): Promise<any> {
   let sql = `SELECT transaction_reference FROM ${OWNERS_METRICS_TABLE} ORDER BY transaction_reference DESC LIMIT 1;`;
   const results = await execSQL(sql);
-  console.log(sql);
   return results ? results[0].transaction_reference : null;
 }
 
@@ -323,7 +322,6 @@ export async function fetchWalletsFromTransactions(date: Date | undefined) {
   if (date) {
     sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(date)}`;
   }
-  console.log(sql);
   const results = await execSQL(sql);
   return results;
 }
@@ -342,11 +340,7 @@ export async function fetchAllOwnerMetrics() {
   return results;
 }
 
-export async function fetchWalletTransactions(
-  wallet: string,
-  datetime?: Date,
-  block?: number
-) {
+export async function fetchWalletTransactions(wallet: string, block?: number) {
   const sql = `SELECT * FROM ${TRANSACTIONS_TABLE}`;
 
   let filters = constructFilters(
@@ -357,12 +351,6 @@ export async function fetchWalletTransactions(
   );
   if (block) {
     filters = constructFilters(filters, `block <= ${block}`);
-  }
-  if (datetime) {
-    filters = constructFilters(
-      filters,
-      `transaction_date >= ${mysql.escape(datetime)}`
-    );
   }
 
   const fullSql = `${sql} ${filters}`;
@@ -575,134 +563,37 @@ export async function persistOwners(owners: Owner[], isLab?: boolean) {
   }
 }
 
-export async function persistOwnerMetrics(ownerMetrics: OwnerMetric[]) {
+export async function persistOwnerMetrics(
+  ownerMetrics: OwnerMetric[],
+  reset?: boolean
+) {
   if (ownerMetrics.length > 0) {
     console.log(
-      new Date(),
       '[OWNERS METRICS]',
       `[PERSISTING ${ownerMetrics.length} WALLETS]`
     );
 
+    if (reset) {
+      const walletIds = ownerMetrics.map((metric) => metric.wallet);
+
+      const result = await AppDataSource.createQueryBuilder()
+        .delete()
+        .from(OwnerMetric)
+        .where('wallet NOT IN (:...walletIds)', { walletIds })
+        .execute();
+
+      console.log(result);
+
+      console.log('[OWNERS METRICS]', '[RESET]', `[${result}]`);
+    }
+
     await Promise.all(
       ownerMetrics.map(async (ownerMetric) => {
-        let sql;
         if (0 >= ownerMetric.balance) {
-          sql = `DELETE FROM ${OWNERS_METRICS_TABLE} WHERE wallet=${mysql.escape(
-            ownerMetric.wallet
-          )}`;
+          await AppDataSource.getRepository(OwnerMetric).remove(ownerMetric);
         } else {
-          sql = `REPLACE INTO ${OWNERS_METRICS_TABLE} SET created_at=${mysql.escape(
-            new Date()
-          )}, wallet=${mysql.escape(ownerMetric.wallet)}, balance=${
-            ownerMetric.balance
-          }, memes_balance=${
-            ownerMetric.memes_balance
-          }, memes_balance_season1=${
-            ownerMetric.memes_balance_season1
-          }, memes_balance_season2=${
-            ownerMetric.memes_balance_season2
-          }, gradients_balance=${
-            ownerMetric.gradients_balance
-          }, purchases_value=${ownerMetric.purchases_value}, purchases_count=${
-            ownerMetric.purchases_count
-          }, purchases_value_memes=${
-            ownerMetric.purchases_value_memes
-          }, purchases_count_memes=${
-            ownerMetric.purchases_count_memes
-          }, purchases_value_memes_season1=${
-            ownerMetric.purchases_value_memes_season1
-          }, purchases_count_memes_season1=${
-            ownerMetric.purchases_count_memes_season1
-          }, purchases_value_memes_season2=${
-            ownerMetric.purchases_value_memes_season2
-          }, purchases_count_memes_season2=${
-            ownerMetric.purchases_count_memes_season2
-          }, purchases_value_gradients=${
-            ownerMetric.purchases_value_gradients
-          }, purchases_count_gradients=${
-            ownerMetric.purchases_count_gradients
-          }, purchases_value_primary=${
-            ownerMetric.purchases_value_primary
-          }, purchases_count_primary=${
-            ownerMetric.purchases_count_primary
-          }, purchases_value_primary_memes=${
-            ownerMetric.purchases_value_primary_memes
-          }, purchases_count_primary_memes=${
-            ownerMetric.purchases_count_primary_memes
-          }, purchases_value_primary_memes_season1=${
-            ownerMetric.purchases_value_primary_memes_season1
-          }, purchases_count_primary_memes_season1=${
-            ownerMetric.purchases_count_primary_memes_season1
-          }, purchases_value_primary_memes_season2=${
-            ownerMetric.purchases_value_primary_memes_season2
-          }, purchases_count_primary_memes_season2=${
-            ownerMetric.purchases_count_primary_memes_season2
-          }, purchases_value_primary_gradients=${
-            ownerMetric.purchases_value_primary_gradients
-          }, purchases_count_primary_gradients=${
-            ownerMetric.purchases_count_primary_gradients
-          }, purchases_value_secondary=${
-            ownerMetric.purchases_value_secondary
-          }, purchases_count_secondary=${
-            ownerMetric.purchases_count_secondary
-          }, purchases_value_secondary_memes=${
-            ownerMetric.purchases_value_secondary_memes
-          }, purchases_count_secondary_memes=${
-            ownerMetric.purchases_count_secondary_memes
-          }, purchases_value_secondary_memes_season1=${
-            ownerMetric.purchases_value_secondary_memes_season1
-          }, purchases_count_secondary_memes_season1=${
-            ownerMetric.purchases_count_secondary_memes_season1
-          }, purchases_value_secondary_memes_season2=${
-            ownerMetric.purchases_value_secondary_memes_season2
-          }, purchases_count_secondary_memes_season2=${
-            ownerMetric.purchases_count_secondary_memes_season2
-          }, purchases_value_secondary_gradients=${
-            ownerMetric.purchases_value_secondary_gradients
-          }, purchases_count_secondary_gradients=${
-            ownerMetric.purchases_count_secondary_gradients
-          }, sales_value=${ownerMetric.sales_value}, sales_count=${
-            ownerMetric.sales_count
-          }, sales_value_memes=${
-            ownerMetric.sales_value_memes
-          }, sales_count_memes=${
-            ownerMetric.sales_count_memes
-          }, sales_value_memes_season1=${
-            ownerMetric.sales_value_memes_season1
-          }, sales_count_memes_season1=${
-            ownerMetric.sales_count_memes_season1
-          }, sales_value_memes_season2=${
-            ownerMetric.sales_value_memes_season2
-          }, sales_count_memes_season2=${
-            ownerMetric.sales_count_memes_season2
-          }, sales_value_gradients=${
-            ownerMetric.sales_value_gradients
-          }, sales_count_gradients=${
-            ownerMetric.sales_count_gradients
-          }, transfers_in=${ownerMetric.transfers_in}, transfers_out=${
-            ownerMetric.transfers_out
-          }, transfers_in_memes=${
-            ownerMetric.transfers_in_memes
-          }, transfers_out_memes=${
-            ownerMetric.transfers_out_memes
-          }, transfers_in_memes_season1=${
-            ownerMetric.transfers_in_memes_season1
-          }, transfers_out_memes_season1=${
-            ownerMetric.transfers_out_memes_season1
-          }, transfers_in_memes_season2=${
-            ownerMetric.transfers_in_memes_season2
-          }, transfers_out_memes_season2=${
-            ownerMetric.transfers_out_memes_season2
-          }, transfers_in_gradients=${
-            ownerMetric.transfers_in_gradients
-          }, transfers_out_gradients=${
-            ownerMetric.transfers_out_gradients
-          }, transaction_reference=${mysql.escape(
-            ownerMetric.transaction_reference
-          )}`;
+          await AppDataSource.getRepository(OwnerMetric).save(ownerMetric);
         }
-
-        await execSQL(sql);
       })
     );
 

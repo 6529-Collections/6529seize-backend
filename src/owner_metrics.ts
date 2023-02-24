@@ -20,13 +20,21 @@ export const findOwnerMetrics = async (reset?: boolean) => {
 
   let owners: { wallet: string }[];
 
+  const transactionReference = new Date();
+
   if (!lastMetricsDate || reset) {
     owners = await fetchDistinctOwnerWallets();
   } else {
     owners = await fetchWalletsFromTransactions(new Date(lastMetricsDate));
   }
 
-  console.log('[OWNERS METRICS]', `[OWNERS ${owners.length}]`);
+  console.log(
+    '[OWNERS METRICS]',
+    `[OWNERS ${owners.length}]`,
+    `[lastMetricsDate ${lastMetricsDate}]`,
+    `[transactionReference ${transactionReference}]`,
+    `[RESET ${reset}]`
+  );
 
   const ownerMetrics: OwnerMetric[] = [];
 
@@ -39,15 +47,6 @@ export const findOwnerMetrics = async (reset?: boolean) => {
       );
 
       if (walletTransactions.length > 0) {
-        const latestTransactionBlock = [...walletTransactions].reduce(
-          (acc: Transaction, cur: Transaction) => {
-            if (!acc || cur.block > acc.block) {
-              return cur;
-            }
-            return acc;
-          }
-        );
-
         const transactionsIn = [...walletTransactions].filter((wt) =>
           areEqualAddresses(wt.to_address, wallet)
         );
@@ -257,7 +256,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
           transfers_out_memes_season1: getCount(transfersOutMemesS1),
           transfers_out_memes_season2: getCount(transfersOutMemesS2),
           transfers_out_gradients: getCount(transfersOutGradients),
-          transaction_reference: new Date(latestTransactionBlock.created_at)
+          transaction_reference: transactionReference
         };
         ownerMetrics.push(ownerMetric);
       }
@@ -266,7 +265,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
 
   console.log('[OWNERS METRICS]', `[DELTA ${ownerMetrics.length}]`);
 
-  await persistOwnerMetrics(ownerMetrics);
+  await persistOwnerMetrics(ownerMetrics, reset);
   return ownerMetrics;
 };
 
