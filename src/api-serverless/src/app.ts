@@ -17,7 +17,14 @@ const app = express();
 
 const corsOptions = {
   origin: '*',
-  exposedHeaders: ['x-6529-auth']
+  methods: ['GET', 'POST', 'OPTIONS', 'HEAD'],
+  allowedHeaders: [
+    'Content-Type',
+    'x-6529-auth',
+    'Origin',
+    'Accept',
+    'X-Requested-With'
+  ]
 };
 
 loadEnv(true).then(async (e) => {
@@ -429,8 +436,6 @@ loadEnv(true).then(async (e) => {
 
         const nfts = req.query.id;
         const collections = req.query.collection;
-
-        console.log('collections', collections);
 
         console.log(
           new Date(),

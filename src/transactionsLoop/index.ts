@@ -2,12 +2,13 @@ import { fetchLatestTransactionsBlockNumber, persistTransactions } from '../db';
 import { findTransactions } from '../transactions';
 import { findTransactionValues } from '../transaction_values';
 import { discoverEns } from '../ens';
-import { loadEnv } from '../secrets';
+import { loadEnv, unload } from '../secrets';
 
 export const handler = async (event?: any, context?: any) => {
   console.log(new Date(), '[RUNNING TRANSACTIONS LOOP]');
   await loadEnv();
   await transactionsLoop();
+  await unload();
   console.log(new Date(), '[TRANSACTIONS LOOP COMPLETE]');
 };
 
