@@ -21,7 +21,7 @@ export async function loadEnv(disableConnect?: boolean) {
 }
 
 export async function unload() {
-  await disconnect();
+  // await disconnect();
 }
 
 async function loadSecrets() {
