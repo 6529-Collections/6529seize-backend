@@ -12,7 +12,7 @@ import {
   fetchWalletTransactions,
   fetchDistinctOwnerWallets,
   fetchLastOwnerMetrics,
-  fetchWalletsFromTransactions
+  fetchTransactionsFromDate
 } from './db';
 
 export const findOwnerMetrics = async (reset?: boolean) => {
@@ -25,7 +25,17 @@ export const findOwnerMetrics = async (reset?: boolean) => {
   if (!lastMetricsDate || reset) {
     owners = await fetchDistinctOwnerWallets();
   } else {
-    owners = await fetchWalletsFromTransactions(new Date(lastMetricsDate));
+    const allWallets: { from_address: string; to_address: string }[] =
+      await fetchTransactionsFromDate(new Date(lastMetricsDate));
+    const addresses = new Set<string>();
+    allWallets.forEach((wallet) => {
+      addresses.add(wallet.from_address);
+      addresses.add(wallet.to_address);
+    });
+
+    owners = Array.from(addresses).map((address) => {
+      return { wallet: address };
+    });
   }
 
   console.log(

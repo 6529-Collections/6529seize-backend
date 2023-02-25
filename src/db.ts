@@ -317,11 +317,12 @@ export async function fetchDistinctOwnerWallets() {
   return results;
 }
 
-export async function fetchWalletsFromTransactions(date: Date | undefined) {
-  let sql = `SELECT DISTINCT COALESCE(from_address, to_address) AS wallet FROM ${TRANSACTIONS_TABLE} `;
+export async function fetchTransactionsFromDate(date: Date | undefined) {
+  let sql = `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE} `;
   if (date) {
-    sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(date)}`;
+    sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at >= ${mysql.escape(date)}`;
   }
+
   const results = await execSQL(sql);
   return results;
 }
@@ -590,6 +591,10 @@ export async function persistOwnerMetrics(
     await Promise.all(
       ownerMetrics.map(async (ownerMetric) => {
         if (0 >= ownerMetric.balance) {
+          console.log(
+            '[OWNERS METRICS]',
+            `[DELETING ${ownerMetric.wallet} BALANCE ${ownerMetric.balance}]`
+          );
           await AppDataSource.getRepository(OwnerMetric).remove(ownerMetric);
         } else {
           await AppDataSource.getRepository(OwnerMetric).save(ownerMetric);

@@ -77,7 +77,7 @@ async function start() {
   // await ownerMetrics.handler();
   // await tdh.handler();
   // memeStats();
-  // memeLabStats()
+  // memeLabStats();
   // await s3.handler();
 
   STARTING = false;
