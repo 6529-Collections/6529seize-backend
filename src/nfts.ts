@@ -12,16 +12,15 @@ import {
   NFT_VIDEO_LINK,
   NULL_ADDRESS
 } from './constants';
-import { NFTWithTDH } from './entities/INFT';
+import { NFT } from './entities/INFT';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 import {
   fetchAllNFTs,
   fetchAllTransactions,
   fetchAllArtists,
-  persistNFTS,
   persistArtists,
-  addIconColumnToNfts
+  persistNFTs
 } from './db';
 import { findArtists } from './artists';
 import { Artist } from './entities/IArtist';
@@ -57,10 +56,7 @@ async function getAllNFTs(
   return nfts;
 }
 
-async function processMemes(
-  startingNFTS: NFTWithTDH[],
-  transactions: Transaction[]
-) {
+async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
   const startingMemes = [...startingNFTS].filter((nft) =>
     areEqualAddresses(nft.contract, MEMES_CONTRACT)
   );
@@ -74,7 +70,7 @@ async function processMemes(
     `[DB ${startingMemes.length}][CONTRACT ${allMemesNFTS.length}]`
   );
 
-  const newNFTS: NFTWithTDH[] = [];
+  const newNFTS: NFT[] = [];
 
   await Promise.all(
     allMemesNFTS.map(async (mnft) => {
@@ -153,7 +149,7 @@ async function processMemes(
         (s) => s.id == tokenId && areEqualAddresses(s.contract, MEMES_CONTRACT)
       );
 
-      const nft: NFTWithTDH = {
+      const nft: NFT = {
         id: tokenId,
         contract: MEMES_CONTRACT,
         created_at: new Date(),
@@ -184,7 +180,17 @@ async function processMemes(
         tdh__raw: startingNft ? startingNft.tdh__raw : 0,
         tdh_rank: startingNft ? startingNft.tdh_rank : 0,
         floor_price: startingNft ? startingNft.floor_price : 0,
-        market_cap: startingNft ? startingNft.market_cap : 0
+        market_cap: startingNft ? startingNft.market_cap : 0,
+        total_volume_last_24_hours: startingNft
+          ? startingNft.total_volume_last_24_hours
+          : 0,
+        total_volume_last_7_days: startingNft
+          ? startingNft.total_volume_last_7_days
+          : 0,
+        total_volume_last_1_month: startingNft
+          ? startingNft.total_volume_last_1_month
+          : 0,
+        total_volume: startingNft ? startingNft.total_volume : 0
       };
 
       newNFTS.push(nft);
@@ -200,7 +206,7 @@ async function processMemes(
 }
 
 async function processGradients(
-  startingNFTS: NFTWithTDH[],
+  startingNFTS: NFT[],
   transactions: Transaction[]
 ) {
   const startingGradients = [...startingNFTS].filter((nft) =>
@@ -216,7 +222,7 @@ async function processGradients(
     `[DB ${startingGradients.length}][CONTRACT ${allGradientsNFTS.length}]`
   );
 
-  const newNFTS: NFTWithTDH[] = [];
+  const newNFTS: NFT[] = [];
 
   await Promise.all(
     allGradientsNFTS.map(async (gnft) => {
@@ -254,7 +260,7 @@ async function processGradients(
         }
         const tokenPathOriginal = `${GRADIENT_CONTRACT}/${tokenId}.${format}`;
 
-        const nft: NFTWithTDH = {
+        const nft: NFT = {
           id: tokenId,
           contract: GRADIENT_CONTRACT,
           created_at: new Date(),
@@ -278,7 +284,17 @@ async function processGradients(
           tdh__raw: startingNft ? startingNft.tdh__raw : 0,
           tdh_rank: startingNft ? startingNft.tdh_rank : 0,
           floor_price: startingNft ? startingNft.floor_price : 0,
-          market_cap: startingNft ? startingNft.market_cap : 0
+          market_cap: startingNft ? startingNft.market_cap : 0,
+          total_volume_last_24_hours: startingNft
+            ? startingNft.total_volume_last_24_hours
+            : 0,
+          total_volume_last_7_days: startingNft
+            ? startingNft.total_volume_last_7_days
+            : 0,
+          total_volume_last_1_month: startingNft
+            ? startingNft.total_volume_last_1_month
+            : 0,
+          total_volume: startingNft ? startingNft.total_volume : 0
         };
 
         newNFTS.push(nft);
@@ -295,19 +311,12 @@ async function processGradients(
 }
 
 export const findNFTs = async (
-  startingNFTS: NFTWithTDH[],
+  startingNFTS: NFT[],
   transactions: Transaction[],
   reset?: boolean
 ) => {
   const newMemes = await processMemes(startingNFTS, transactions);
-  let newGradients;
-  if (reset) {
-    newGradients = await processGradients(startingNFTS, transactions);
-  } else {
-    newGradients = [...startingNFTS].filter((nft) =>
-      areEqualAddresses(nft.contract, GRADIENT_CONTRACT)
-    );
-  }
+  const newGradients = await processGradients(startingNFTS, transactions);
 
   const allNewNFTS = newMemes.concat(newGradients);
 
@@ -323,13 +332,15 @@ export const findNFTs = async (
     if (m?.supply != n.supply) {
       return true;
     }
+    if (new Date(m?.mint_date).getTime() != new Date(n.mint_date).getTime()) {
+      return true;
+    }
     return false;
   });
 
   console.log(
     new Date(),
     '[NFTS]',
-    '[MINT PRICE]',
     `[CHANGED ${nftChanged}]`,
     `[RESET ${reset}]`
   );
@@ -385,12 +396,12 @@ export async function nfts(reset?: boolean) {
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const nfts: NFTWithTDH[] = await fetchAllNFTs();
+  const nfts: NFT[] = await fetchAllNFTs();
   const transactions: Transaction[] = await fetchAllTransactions();
   const artists: Artist[] = await fetchAllArtists();
 
   const newNfts = await findNFTs(nfts, transactions, reset);
   const newArtists = await findArtists(artists, newNfts);
-  await persistNFTS(newNfts);
+  await persistNFTs(newNfts);
   await persistArtists(newArtists);
 }

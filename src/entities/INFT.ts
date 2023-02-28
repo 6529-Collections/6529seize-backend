@@ -88,23 +88,109 @@ export class LabNFT {
 
   @Column({ type: 'double' })
   market_cap!: number;
+
+  @Column({ type: 'double' })
+  total_volume_last_24_hours!: number;
+
+  @Column({ type: 'double' })
+  total_volume_last_7_days!: number;
+
+  @Column({ type: 'double' })
+  total_volume_last_1_month!: number;
+
+  @Column({ type: 'double' })
+  total_volume!: number;
 }
 
-export interface NFT extends BaseNFT {
-  hodl_rate: number;
-  market_cap: number;
-  floor_price: number;
-}
+@Entity('nfts')
+export class NFT {
+  @PrimaryColumn({ type: 'int' })
+  id!: number;
 
-export interface NftTDH {
-  id: number;
-  tdh_rank: number;
-  contract: string;
-  tdh: number;
-  tdh__raw: number;
-}
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  contract!: string;
 
-export interface NFTWithTDH extends NFT, NftTDH {}
+  @Column({ type: 'timestamp' })
+  created_at!: Date;
+
+  @Column({ type: 'timestamp' })
+  mint_date!: Date;
+
+  @Column({ type: 'double' })
+  mint_price!: number;
+
+  @Column({ type: 'int' })
+  supply!: number;
+
+  @Column({ nullable: true, type: 'text' })
+  name?: string;
+
+  @Column({ type: 'text' })
+  collection!: string;
+
+  @Column({ type: 'text' })
+  token_type!: string;
+
+  @Column({ type: 'double' })
+  hodl_rate!: number;
+
+  @Column({ type: 'text' })
+  description!: string;
+
+  @Column({ type: 'text' })
+  artist!: string;
+
+  @Column({ nullable: true, type: 'text' })
+  uri?: string;
+
+  @Column({ nullable: true, type: 'text' })
+  icon?: string;
+
+  @Column({ nullable: true, type: 'text' })
+  thumbnail?: string;
+
+  @Column({ nullable: true, type: 'text' })
+  scaled?: string;
+
+  @Column({ nullable: true, type: 'text' })
+  image?: string;
+
+  @Column({ nullable: true, type: 'text' })
+  compressed_animation?: string;
+
+  @Column({ nullable: true, type: 'text' })
+  animation?: string;
+
+  @Column({ type: 'json', nullable: true })
+  metadata?: any;
+
+  @Column({ type: 'int' })
+  tdh!: number;
+
+  @Column({ type: 'int' })
+  tdh__raw!: number;
+
+  @Column({ type: 'int' })
+  tdh_rank!: number;
+
+  @Column({ type: 'double' })
+  floor_price!: number;
+
+  @Column({ type: 'double' })
+  market_cap!: number;
+
+  @Column({ type: 'double' })
+  total_volume_last_24_hours!: number;
+
+  @Column({ type: 'double' })
+  total_volume_last_7_days!: number;
+
+  @Column({ type: 'double' })
+  total_volume_last_1_month!: number;
+
+  @Column({ type: 'double' })
+  total_volume!: number;
+}
 
 export interface MemesExtendedData {
   id: number;

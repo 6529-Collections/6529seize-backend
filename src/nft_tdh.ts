@@ -1,7 +1,7 @@
 import { GRADIENT_CONTRACT, MEMES_CONTRACT } from './constants';
-import { NftTDH } from './entities/INFT';
+import { NFT } from './entities/INFT';
 import { areEqualAddresses } from './helpers';
-import { fetchAllTDH, persistNftTdh } from './db';
+import { fetchAllNFTs, fetchAllTDH, persistNFTs } from './db';
 import { TDH } from './entities/ITDH';
 
 export const findNftTDH = async () => {
@@ -9,7 +9,8 @@ export const findNftTDH = async () => {
 
   console.log(new Date(), '[NFT TDH]', `[WALLETS ${tdhs.length}]`);
 
-  const nftTDH: NftTDH[] = [];
+  const nfts: NFT[] = await fetchAllNFTs();
+  const nftTDH: NFT[] = [];
 
   tdhs.map((tdh) => {
     tdh.memes.map((meme: any) => {
@@ -26,14 +27,15 @@ export const findNftTDH = async () => {
             n.id == meme.id && areEqualAddresses(n.contract, MEMES_CONTRACT)
         )!.tdh__raw += meme.tdh__raw;
       } else {
-        const nTdh: NftTDH = {
-          id: meme.id,
-          tdh: meme.tdh,
-          tdh__raw: meme.tdh__raw,
-          contract: MEMES_CONTRACT,
-          tdh_rank: 0 // assigned later
-        };
-        nftTDH.push(nTdh);
+        const nft = nfts.find(
+          (n) =>
+            n.id == meme.id && areEqualAddresses(n.contract, MEMES_CONTRACT)
+        );
+        if (nft) {
+          nft.tdh = meme.tdh;
+          nft.tdh__raw = meme.tdh__raw;
+          nftTDH.push(nft);
+        }
       }
     });
     tdh.gradients.map((gradient: any) => {
@@ -54,14 +56,16 @@ export const findNftTDH = async () => {
             areEqualAddresses(n.contract, GRADIENT_CONTRACT)
         )!.tdh__raw += gradient.tdh__raw;
       } else {
-        const nTdh: NftTDH = {
-          id: gradient.id,
-          tdh: gradient.tdh,
-          tdh__raw: gradient.tdh__raw,
-          contract: GRADIENT_CONTRACT,
-          tdh_rank: 0 // assigned later
-        };
-        nftTDH.push(nTdh);
+        const nft = nfts.find(
+          (n) =>
+            n.id == gradient.id &&
+            areEqualAddresses(n.contract, GRADIENT_CONTRACT)
+        );
+        if (nft) {
+          nft.tdh = gradient.tdh;
+          nft.tdh__raw = gradient.tdh__raw;
+          nftTDH.push(nft);
+        }
       }
     });
   });
@@ -70,7 +74,7 @@ export const findNftTDH = async () => {
     .sort((a, b) => (a.tdh > b.tdh ? -1 : a.tdh > 0 ? 1 : -1))
     .map((n, index) => (n.tdh_rank = index + 1));
 
-  await persistNftTdh(nftTDH);
+  await persistNFTs(nftTDH);
 
   return nftTDH;
 };

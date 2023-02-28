@@ -660,7 +660,9 @@ export async function fetchOwnerMetrics(
   if (wallets) {
     filters = constructFilters(
       filters,
-      `${OWNERS_METRICS_TABLE}.wallet in (${mysql.escape(wallets.split(','))})`
+      `${OWNERS_METRICS_TABLE}.wallet in (${mysql.escape(
+        wallets.split(',')
+      )}) OR ${ENS_TABLE}.display in (${mysql.escape(wallets.split(','))})`
     );
   }
   if (metrics_filter) {
@@ -718,6 +720,7 @@ export async function fetchOwnerMetrics(
     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients`;
   } else {
     ownerMetricsSelect = ` ${OWNERS_METRICS_TABLE}.*, 
+    dense_rank_sort,
     dense_table.dense_rank_balance,
     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.balance = ${OWNERS_METRICS_TABLE}2.balance) AS dense_rank_balance__ties,
     dense_table.dense_rank_balance_memes, 
@@ -761,10 +764,6 @@ export async function fetchOwnerMetrics(
   joins += ` LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet `;
   joins += ` LEFT JOIN ${ENS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${ENS_TABLE}.wallet `;
 
-  if (wallets) {
-    joins += ` JOIN (SELECT wallet, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients FROM ${OWNERS_METRICS_TABLE}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
-  }
-
   if (
     sort == 'balance' ||
     sort == 'memes_balance' ||
@@ -785,6 +784,10 @@ export async function fetchOwnerMetrics(
     sort == 'unique_memes_szn2'
   ) {
     sort = `${OWNERS_TAGS_TABLE}.${sort}`;
+  }
+
+  if (wallets) {
+    joins += ` JOIN (SELECT ${OWNERS_METRICS_TABLE}.wallet, RANK() OVER(ORDER BY ${sort} DESC) AS dense_rank_sort, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients FROM ${OWNERS_METRICS_TABLE} LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock} LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
   }
 
   return fetchPaginated(

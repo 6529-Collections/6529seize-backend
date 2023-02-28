@@ -3,10 +3,12 @@ import fetch from 'node-fetch';
 import { LabNFT, NFT } from './entities/INFT';
 import { areEqualAddresses, delay } from './helpers';
 import {
-  persistNftMarketStats,
   fetchNftsForContract,
   fetchAllMemeLabNFTs,
-  persistLabNFTS
+  persistLabNFTS,
+  findVolumeNFTs,
+  findVolumeLab,
+  persistNFTs
 } from './db';
 import { MEMELAB_CONTRACT } from './constants';
 
@@ -74,9 +76,16 @@ const findNftMarketStatsMain = async (contract: string) => {
     const nft = nfts[i];
 
     const floorPrice = await findFloorPrice(nft);
+    const volumes = await findVolumeNFTs(nft);
+
     nft.floor_price = floorPrice;
     nft.market_cap = floorPrice * nft.supply;
-    await persistNftMarketStats([nft]);
+    nft.total_volume_last_24_hours = volumes.total_volume_last_24_hours;
+    nft.total_volume_last_7_days = volumes.total_volume_last_7_days;
+    nft.total_volume_last_1_month = volumes.total_volume_last_1_month;
+    nft.total_volume = volumes.total_volume;
+
+    await persistNFTs([nft]);
     console.log(
       new Date(),
       '[NFT MARKET STATS]',
@@ -111,8 +120,15 @@ const findNftMarketStatsLab = async () => {
     const nft = nfts[i];
 
     const floorPrice = await findFloorPrice(nft);
+    const volumes = await findVolumeLab(nft);
+
     nft.floor_price = floorPrice;
     nft.market_cap = floorPrice * nft.supply;
+    nft.total_volume_last_24_hours = volumes.total_volume_last_24_hours;
+    nft.total_volume_last_7_days = volumes.total_volume_last_7_days;
+    nft.total_volume_last_1_month = volumes.total_volume_last_1_month;
+    nft.total_volume = volumes.total_volume;
+
     await persistLabNFTS([nft]);
     console.log(
       new Date(),

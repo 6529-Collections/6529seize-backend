@@ -90,6 +90,11 @@ async function processNFTs(
           !areEqualAddresses(NULL_ADDRESS, tw.wallet) && tw.token_id == tokenId
       );
 
+      const startingNft = startingNFTS.find(
+        (s) =>
+          s.id == tokenId && areEqualAddresses(s.contract, MEMELAB_CONTRACT)
+      );
+
       const fullMetadata = await alchemy.nft.getNftMetadata(
         MEMELAB_CONTRACT,
         tokenId
@@ -223,8 +228,18 @@ async function processNFTs(
         animation: animation,
         metadata: fullMetadata.rawMetadata,
         meme_references: memeReferences,
-        floor_price: 0,
-        market_cap: 0
+        floor_price: startingNft ? startingNft.floor_price : 0,
+        market_cap: startingNft ? startingNft.market_cap : 0,
+        total_volume_last_24_hours: startingNft
+          ? startingNft.total_volume_last_24_hours
+          : 0,
+        total_volume_last_7_days: startingNft
+          ? startingNft.total_volume_last_7_days
+          : 0,
+        total_volume_last_1_month: startingNft
+          ? startingNft.total_volume_last_1_month
+          : 0,
+        total_volume: startingNft ? startingNft.total_volume : 0
       };
 
       newNFTS.push(nft);
