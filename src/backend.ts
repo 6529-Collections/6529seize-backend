@@ -78,17 +78,17 @@ async function start() {
   // Uncomment to call on start
 
   // await transactionsReplay.handler();
-  // await transactions.handler();
-  // await nfts.handler();
-  // await memeLab.handler();
-  // await ownerMetrics.handler();
+  await transactions.handler();
+  await nfts.handler();
+  await memeLab.handler();
+  await ownerMetrics.handler();
   // await tdh.handler();
   // await memeStats();
   // await gradientStats();
   // await memeLabStats();
   // await s3.handler();
 
-  // STARTING = false;
+  STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
 }
 
