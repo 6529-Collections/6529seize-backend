@@ -8,6 +8,7 @@
     "backend:dev": "NODE_ENV=development node build/backend.js",
     "api:dev": "NODE_ENV=development node src/api-serverless/dist/index.js",
     "build": "rimraf ./build && tsc -p tsconfig.json",
+    "postbuild": "cp src/teamLoop/team.csv build/teamLoop",
     "tsc": "./node_modules/typescript/bin/tsc"
   },
   "keywords": [],
