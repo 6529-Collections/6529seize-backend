@@ -934,10 +934,18 @@ loadEnv(true).then(async (e) => {
           hideTeam
         ).then((result) => {
           result.data.map((d: any) => {
-            d.memes = JSON.parse(d.memes);
-            d.memes_ranks = JSON.parse(d.memes_ranks);
-            d.gradients = JSON.parse(d.gradients);
-            d.gradients_ranks = JSON.parse(d.gradients_ranks);
+            if (d.memes) {
+              d.memes = JSON.parse(d.memes);
+            }
+            if (d.memes_ranks) {
+              d.memes_ranks = JSON.parse(d.memes_ranks);
+            }
+            if (d.gradients) {
+              d.gradients = JSON.parse(d.gradients);
+            }
+            if (d.gradients_ranks) {
+              d.gradients_ranks = JSON.parse(d.gradients_ranks);
+            }
           });
           returnPaginatedResult(result, req, res);
         });
