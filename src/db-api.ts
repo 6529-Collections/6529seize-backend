@@ -88,7 +88,7 @@ function constructFilters(f: string, newF: string) {
 async function getTeamWallets() {
   const sql = `SELECT wallet FROM ${TEAM_TABLE}`;
   let results = await execSQL(sql);
-  results = results.map((r) => r.wallet);
+  results = results.map((r: { wallet: string }) => r.wallet);
   return results;
 }
 
