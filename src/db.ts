@@ -1,4 +1,3 @@
-import { BaseNft } from 'alchemy-sdk';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 
@@ -32,6 +31,7 @@ import {
 } from './entities/INFT';
 import { Owner, OwnerMetric, OwnerTags } from './entities/IOwner';
 import { TDH } from './entities/ITDH';
+import { Team } from './entities/ITeam';
 import { Transaction } from './entities/ITransaction';
 
 const mysql = require('mysql');
@@ -48,7 +48,15 @@ export async function connect() {
     username: process.env.DB_USER,
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
-    entities: [Owner, LabNFT, LabExtendedData, Transaction, OwnerMetric, NFT],
+    entities: [
+      Owner,
+      LabNFT,
+      LabExtendedData,
+      Transaction,
+      OwnerMetric,
+      NFT,
+      Team
+    ],
     synchronize: true,
     logging: false
   });
@@ -840,4 +848,10 @@ function constructFilters(f: string, newF: string) {
     return ` ${f} AND ${newF} `;
   }
   return ` WHERE ${newF} `;
+}
+
+export async function replaceTeam(team: Team[]) {
+  const repo = AppDataSource.getRepository(Team);
+  await repo.clear();
+  await repo.save(team);
 }

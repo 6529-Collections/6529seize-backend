@@ -14,14 +14,12 @@ import {
   OWNERS_TAGS_TABLE,
   SIX529_MUSEUM,
   TDH_BLOCKS_TABLE,
+  TEAM_TABLE,
   TRANSACTIONS_MEME_LAB_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE
 } from './constants';
-import { LabExtendedData, LabNFT } from './entities/INFT';
-import { Owner } from './entities/IOwner';
-import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 
 const mysql = require('mysql');
@@ -85,6 +83,13 @@ function constructFilters(f: string, newF: string) {
     return ` ${f} AND ${newF} `;
   }
   return ` WHERE ${newF} `;
+}
+
+async function getTeamWallets() {
+  const sql = `SELECT wallet FROM ${TEAM_TABLE}`;
+  let results = await execSQL(sql);
+  results = results.map((r) => r.wallet);
+  return results;
 }
 
 async function fetchPaginated(
@@ -590,7 +595,8 @@ export async function fetchTDH(
   sort: string,
   sortDir: string,
   tdh_filter: string,
-  hideMuseum: boolean
+  hideMuseum: boolean,
+  hideTeam: boolean
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = `WHERE block=${tdhBlock}`;
@@ -598,6 +604,14 @@ export async function fetchTDH(
     filters = constructFilters(
       filters,
       `${WALLETS_TDH_TABLE}.wallet != ${mysql.escape(SIX529_MUSEUM)}`
+    );
+  }
+  if (hideTeam) {
+    const team: string[] = await getTeamWallets();
+    console.log(team);
+    filters = constructFilters(
+      filters,
+      `${OWNERS_METRICS_TABLE}.wallet NOT IN (${mysql.escape(team)})`
     );
   }
   if (wallets) {
@@ -647,16 +661,26 @@ export async function fetchOwnerMetrics(
   sort: string,
   sortDir: string,
   metrics_filter: string,
-  hideMuseum: boolean
+  hideMuseum: boolean,
+  hideTeam: boolean
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = '';
+  let hideWalletFilters = '';
   if (hideMuseum) {
     filters = constructFilters(
       filters,
       `${OWNERS_METRICS_TABLE}.wallet != ${mysql.escape(SIX529_MUSEUM)}`
     );
   }
+  if (hideTeam) {
+    const team: string[] = await getTeamWallets();
+    filters = constructFilters(
+      filters,
+      `${OWNERS_METRICS_TABLE}.wallet NOT IN (${mysql.escape(team)})`
+    );
+  }
+  hideWalletFilters = filters;
   if (wallets) {
     filters = constructFilters(
       filters,
@@ -787,7 +811,7 @@ export async function fetchOwnerMetrics(
   }
 
   if (wallets) {
-    joins += ` JOIN (SELECT ${OWNERS_METRICS_TABLE}.wallet, RANK() OVER(ORDER BY ${sort} DESC) AS dense_rank_sort, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients FROM ${OWNERS_METRICS_TABLE} LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock} LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
+    joins += ` JOIN (SELECT ${OWNERS_METRICS_TABLE}.wallet, RANK() OVER(ORDER BY ${sort} DESC) AS dense_rank_sort, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients FROM ${OWNERS_METRICS_TABLE} LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock} LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet ${hideWalletFilters}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
   }
 
   return fetchPaginated(

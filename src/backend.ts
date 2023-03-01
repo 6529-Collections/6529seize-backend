@@ -1,10 +1,9 @@
-import { MEMES_CONTRACT } from './constants';
-
 const transactions = require('./transactionsLoop');
 const transactionsReplay = require('./transactionsReplayLoop');
 const nfts = require('./nftsLoop');
 const memeLab = require('./memeLabLoop');
 const tdh = require('./tdhLoop');
+const team = require('./teamLoop');
 const ownerMetrics = require('./ownerMetricsLoop');
 const s3 = require('./s3Loop');
 const { memeStats, memeLabStats, gradientStats } = require('./marketStatsLoop');
@@ -87,6 +86,7 @@ async function start() {
   // await gradientStats();
   // await memeLabStats();
   // await s3.handler();
+  // await team.handler();
 
   STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);

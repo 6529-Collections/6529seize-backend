@@ -842,10 +842,10 @@ loadEnv(true).then(async (e) => {
           : null;
 
       const hideMuseum =
-        req.query.hide_museum &&
-        ['true', 'false'].includes(req.query.hide_museum)
-          ? req.query.hide_museum
-          : false;
+        req.query.hide_museum && req.query.hide_museum == 'true' ? true : false;
+
+      const hideTeam =
+        req.query.hide_team && req.query.hide_team == 'true' ? true : false;
 
       console.log(
         new Date(),
@@ -860,7 +860,8 @@ loadEnv(true).then(async (e) => {
         sort,
         sortDir,
         filter,
-        hideMuseum
+        hideMuseum,
+        hideTeam
       ).then((result) => {
         result.data.map((d: any) => {
           d.memes = JSON.parse(d.memes);
@@ -909,10 +910,12 @@ loadEnv(true).then(async (e) => {
             : null;
 
         const hideMuseum =
-          req.query.hide_museum &&
-          ['true', 'false'].includes(req.query.hide_museum)
-            ? req.query.hide_museum
+          req.query.hide_museum && req.query.hide_museum == 'true'
+            ? true
             : false;
+
+        const hideTeam =
+          req.query.hide_team && req.query.hide_team == 'true' ? true : false;
 
         console.log(
           new Date(),
@@ -927,7 +930,8 @@ loadEnv(true).then(async (e) => {
           sort,
           sortDir,
           filter,
-          hideMuseum
+          hideMuseum,
+          hideTeam
         ).then((result) => {
           result.data.map((d: any) => {
             d.memes = JSON.parse(d.memes);
