@@ -125,6 +125,9 @@ async function processNFTs(
         mintPrice = mintTransaction
           ? parseFloat(Utils.formatEther(mintTransaction.value))
           : 0;
+        if (mintPrice) {
+          mintPrice = mintPrice / firstMintNull.token_count;
+        }
       } else {
         const firstMintManifold = tokenTransactions.find(
           (t) => areEqualAddresses(MANIFOLD, t.from_address) && t.value > 0
@@ -136,6 +139,9 @@ async function processNFTs(
           mintPrice = mintTransaction
             ? parseFloat(Utils.formatEther(mintTransaction.value))
             : 0;
+          if (mintPrice) {
+            mintPrice = mintPrice / firstMintManifold.token_count;
+          }
         }
       }
 
@@ -279,7 +285,6 @@ export const findNFTs = async (
       delete mClone.floor_price;
       delete mClone.market_cap;
       delete mClone.created_at;
-      delete mClone.mint_date;
 
       if (!areEqualObjects(nClone, mClone)) {
         changed = true;
@@ -298,9 +303,6 @@ export const findNFTs = async (
 };
 
 export async function memeLabNfts(reset?: boolean) {
-  await createMemeLabNftsTable();
-  await addMemeLabColumnToArtists();
-
   alchemy = new Alchemy({
     ...ALCHEMY_SETTINGS,
     apiKey: process.env.ALCHEMY_API_KEY

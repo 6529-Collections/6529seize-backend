@@ -110,6 +110,9 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
         mintPrice = mintTransaction
           ? parseFloat(Utils.formatEther(mintTransaction.value))
           : 0;
+        if (mintPrice) {
+          mintPrice = mintPrice / firstMintTransaction.token_count;
+        }
       }
       let supply = 0;
       createdTransactions.map((mint) => {
