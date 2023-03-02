@@ -842,10 +842,10 @@ loadEnv(true).then(async (e) => {
           : null;
 
       const hideMuseum =
-        req.query.hide_museum &&
-        ['true', 'false'].includes(req.query.hide_museum)
-          ? req.query.hide_museum
-          : false;
+        req.query.hide_museum && req.query.hide_museum == 'true' ? true : false;
+
+      const hideTeam =
+        req.query.hide_team && req.query.hide_team == 'true' ? true : false;
 
       console.log(
         new Date(),
@@ -860,7 +860,8 @@ loadEnv(true).then(async (e) => {
         sort,
         sortDir,
         filter,
-        hideMuseum
+        hideMuseum,
+        hideTeam
       ).then((result) => {
         result.data.map((d: any) => {
           d.memes = JSON.parse(d.memes);
@@ -909,10 +910,12 @@ loadEnv(true).then(async (e) => {
             : null;
 
         const hideMuseum =
-          req.query.hide_museum &&
-          ['true', 'false'].includes(req.query.hide_museum)
-            ? req.query.hide_museum
+          req.query.hide_museum && req.query.hide_museum == 'true'
+            ? true
             : false;
+
+        const hideTeam =
+          req.query.hide_team && req.query.hide_team == 'true' ? true : false;
 
         console.log(
           new Date(),
@@ -927,13 +930,22 @@ loadEnv(true).then(async (e) => {
           sort,
           sortDir,
           filter,
-          hideMuseum
+          hideMuseum,
+          hideTeam
         ).then((result) => {
           result.data.map((d: any) => {
-            d.memes = JSON.parse(d.memes);
-            d.memes_ranks = JSON.parse(d.memes_ranks);
-            d.gradients = JSON.parse(d.gradients);
-            d.gradients_ranks = JSON.parse(d.gradients_ranks);
+            if (d.memes) {
+              d.memes = JSON.parse(d.memes);
+            }
+            if (d.memes_ranks) {
+              d.memes_ranks = JSON.parse(d.memes_ranks);
+            }
+            if (d.gradients) {
+              d.gradients = JSON.parse(d.gradients);
+            }
+            if (d.gradients_ranks) {
+              d.gradients_ranks = JSON.parse(d.gradients_ranks);
+            }
           });
           returnPaginatedResult(result, req, res);
         });
@@ -948,6 +960,34 @@ loadEnv(true).then(async (e) => {
       }
     }
   );
+
+  app.get(`${BASE_PATH}/team`, function (req: any, res: any, next: any) {
+    try {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+      console.log(
+        new Date(),
+        `[API]`,
+        '[TEAM]',
+        `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+      );
+      db.fetchTeam(pageSize, page).then((result) => {
+        returnPaginatedResult(result, req, res);
+      });
+    } catch (e) {
+      console.log(
+        new Date(),
+        `[API]`,
+        '[TEAM]',
+        `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+      );
+      return;
+    }
+  });
 
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();

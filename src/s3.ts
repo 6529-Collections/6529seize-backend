@@ -307,7 +307,9 @@ export const persistS3 = async (nfts: NFT[]) => {
               `[ID ${n.id}]`
             );
 
-            const videoURL = n.metadata.animation;
+            const videoURL = n.metadata.animation
+              ? n.metadata.animation
+              : n.metadata.animation_url;
             const res = await fetch(videoURL);
             const blob = await res.arrayBuffer();
             console.log(
@@ -358,7 +360,9 @@ export const persistS3 = async (nfts: NFT[]) => {
               `[ID ${n.id}]`
             );
 
-            const htmlUrl = n.metadata.animation;
+            const htmlUrl = n.metadata.animation
+              ? n.metadata.animation
+              : n.metadata.animation_url;
             const res = await fetch(htmlUrl);
             const blob = await res.arrayBuffer();
             console.log(
@@ -406,7 +410,11 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
 
     console.log('[S3]', `[TEMP CREATED ${scaledVideoKey}]`);
 
-    const videoURL = n.animation ? n.animation : n.metadata.animation;
+    const videoURL = n.animation
+      ? n.animation
+      : n.metadata.animation
+      ? n.metadata.animation
+      : n.metadata.animation_url;
 
     const resizedVideoStream = await scaleVideo(
       videoURL,

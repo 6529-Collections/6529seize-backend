@@ -1,4 +1,8 @@
-import { MEMELAB_CONTRACT, MEMES_CONTRACT } from '../constants';
+import {
+  GRADIENT_CONTRACT,
+  MEMELAB_CONTRACT,
+  MEMES_CONTRACT
+} from '../constants';
 import { findNftMarketStats } from '../nft_market_stats';
 import { loadEnv, unload } from '../secrets';
 
@@ -23,5 +27,11 @@ export const memeStats = async () => {
 export const memeLabStats = async () => {
   await loadEnv();
   await findNftMarketStats(MEMELAB_CONTRACT);
+  await unload();
+};
+
+export const gradientStats = async () => {
+  await loadEnv();
+  await findNftMarketStats(GRADIENT_CONTRACT);
   await unload();
 };

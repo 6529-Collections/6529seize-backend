@@ -2,10 +2,14 @@ import { MEMES_CONTRACT, NULL_ADDRESS, SIX529_MUSEUM } from './constants';
 import { MemesExtendedData, NFT } from './entities/INFT';
 import { Owner } from './entities/IOwner';
 import { areEqualAddresses } from './helpers';
-import { fetchAllNFTs, fetchAllOwners, persistMemesExtendedData } from './db';
+import {
+  fetchAllOwners,
+  fetchNftsForContract,
+  persistMemesExtendedData
+} from './db';
 
 export const findMemesExtendedData = async () => {
-  let nfts: NFT[] = await fetchAllNFTs();
+  let nfts: NFT[] = await fetchNftsForContract(MEMES_CONTRACT, 'id desc');
   let owners: Owner[] = await fetchAllOwners();
 
   nfts = [...nfts].filter((t) => areEqualAddresses(t.contract, MEMES_CONTRACT));

@@ -90,6 +90,11 @@ async function processNFTs(
           !areEqualAddresses(NULL_ADDRESS, tw.wallet) && tw.token_id == tokenId
       );
 
+      const startingNft = startingNFTS.find(
+        (s) =>
+          s.id == tokenId && areEqualAddresses(s.contract, MEMELAB_CONTRACT)
+      );
+
       const fullMetadata = await alchemy.nft.getNftMetadata(
         MEMELAB_CONTRACT,
         tokenId
@@ -120,6 +125,9 @@ async function processNFTs(
         mintPrice = mintTransaction
           ? parseFloat(Utils.formatEther(mintTransaction.value))
           : 0;
+        if (mintPrice) {
+          mintPrice = mintPrice / firstMintNull.token_count;
+        }
       } else {
         const firstMintManifold = tokenTransactions.find(
           (t) => areEqualAddresses(MANIFOLD, t.from_address) && t.value > 0
@@ -131,6 +139,9 @@ async function processNFTs(
           mintPrice = mintTransaction
             ? parseFloat(Utils.formatEther(mintTransaction.value))
             : 0;
+          if (mintPrice) {
+            mintPrice = mintPrice / firstMintManifold.token_count;
+          }
         }
       }
 
@@ -223,8 +234,18 @@ async function processNFTs(
         animation: animation,
         metadata: fullMetadata.rawMetadata,
         meme_references: memeReferences,
-        floor_price: 0,
-        market_cap: 0
+        floor_price: startingNft ? startingNft.floor_price : 0,
+        market_cap: startingNft ? startingNft.market_cap : 0,
+        total_volume_last_24_hours: startingNft
+          ? startingNft.total_volume_last_24_hours
+          : 0,
+        total_volume_last_7_days: startingNft
+          ? startingNft.total_volume_last_7_days
+          : 0,
+        total_volume_last_1_month: startingNft
+          ? startingNft.total_volume_last_1_month
+          : 0,
+        total_volume: startingNft ? startingNft.total_volume : 0
       };
 
       newNFTS.push(nft);
@@ -264,7 +285,6 @@ export const findNFTs = async (
       delete mClone.floor_price;
       delete mClone.market_cap;
       delete mClone.created_at;
-      delete mClone.mint_date;
 
       if (!areEqualObjects(nClone, mClone)) {
         changed = true;
@@ -283,9 +303,6 @@ export const findNFTs = async (
 };
 
 export async function memeLabNfts(reset?: boolean) {
-  await createMemeLabNftsTable();
-  await addMemeLabColumnToArtists();
-
   alchemy = new Alchemy({
     ...ALCHEMY_SETTINGS,
     apiKey: process.env.ALCHEMY_API_KEY

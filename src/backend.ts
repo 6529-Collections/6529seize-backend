@@ -1,13 +1,14 @@
-import { MEMES_CONTRACT } from './constants';
-
 const transactions = require('./transactionsLoop');
 const transactionsReplay = require('./transactionsReplayLoop');
 const nfts = require('./nftsLoop');
 const memeLab = require('./memeLabLoop');
 const tdh = require('./tdhLoop');
+const team = require('./teamLoop');
 const ownerMetrics = require('./ownerMetricsLoop');
 const s3 = require('./s3Loop');
-const { memeStats, memeLabStats } = require('./marketStatsLoop');
+const discoverEnsLoop = require('./discoverEnsLoop');
+
+const { memeStats, memeLabStats, gradientStats } = require('./marketStatsLoop');
 
 const cron = require('node-cron');
 
@@ -48,6 +49,13 @@ cron.schedule('0 * * * *', async function () {
   }
 });
 
+// PULL EVERY 2 HOURS AT MIN 15
+cron.schedule('15 */2 * * *', async function () {
+  if (!STARTING) {
+    gradientStats();
+  }
+});
+
 // PULL EVERY HOUR AT MIN 30
 cron.schedule('30 * * * *', async function () {
   if (!STARTING) {
@@ -76,9 +84,12 @@ async function start() {
   // await memeLab.handler();
   // await ownerMetrics.handler();
   // await tdh.handler();
-  // memeStats();
-  // memeLabStats()
+  // await memeStats();
+  // await gradientStats();
+  // await memeLabStats();
   // await s3.handler();
+  // await team.handler();
+  // await discoverEnsLoop.handler();
 
   STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);

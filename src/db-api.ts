@@ -14,14 +14,12 @@ import {
   OWNERS_TAGS_TABLE,
   SIX529_MUSEUM,
   TDH_BLOCKS_TABLE,
+  TEAM_TABLE,
   TRANSACTIONS_MEME_LAB_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE
 } from './constants';
-import { LabExtendedData, LabNFT } from './entities/INFT';
-import { Owner } from './entities/IOwner';
-import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 
 const mysql = require('mysql');
@@ -85,6 +83,13 @@ function constructFilters(f: string, newF: string) {
     return ` ${f} AND ${newF} `;
   }
   return ` WHERE ${newF} `;
+}
+
+async function getTeamWallets() {
+  const sql = `SELECT wallet FROM ${TEAM_TABLE}`;
+  let results = await execSQL(sql);
+  results = results.map((r: { wallet: string }) => r.wallet);
+  return results;
 }
 
 async function fetchPaginated(
@@ -231,6 +236,18 @@ export async function fetchLabOwners(
     filters,
     fields,
     joins
+  );
+}
+
+export async function fetchTeam(pageSize: number, page: number) {
+  return fetchPaginated(
+    TEAM_TABLE,
+    `created_at desc`,
+    pageSize,
+    page,
+    '',
+    '',
+    ''
   );
 }
 
@@ -427,6 +444,16 @@ export async function fetchLabTransactions(
   );
 }
 
+async function resolveEns(walletsStr: string) {
+  const wallets = walletsStr.split(',');
+  const sql = `SELECT wallet FROM ${ENS_TABLE} WHERE wallet IN (${mysql.escape(
+    wallets
+  )}) OR display IN (${mysql.escape(wallets)})`;
+  let results = await execSQL(sql);
+  results = results.map((r: any) => r.wallet);
+  return results;
+}
+
 export async function fetchTransactions(
   pageSize: number,
   page: number,
@@ -437,11 +464,15 @@ export async function fetchTransactions(
 ) {
   let filters = '';
   if (wallets) {
+    const resolvedWallets = await resolveEns(wallets);
+    if (resolvedWallets.length == 0) {
+      return returnEmpty();
+    }
     filters = constructFilters(
       filters,
       `(from_address in (${mysql.escape(
-        wallets.split(',')
-      )}) OR to_address in (${mysql.escape(wallets.split(','))}))`
+        resolvedWallets
+      )}) OR to_address in (${mysql.escape(resolvedWallets)}))`
     );
   }
   if (contracts) {
@@ -553,10 +584,10 @@ export async function fetchNftTdh(
 
   switch (sort) {
     case 'card_tdh':
-      sort = 'j.tdh';
+      sort = 'CAST(j.tdh AS DECIMAL)';
       break;
     case 'card_tdh__raw':
-      sort = 'j.tdh__raw';
+      sort = 'CAST(j.tdh__raw AS DECIMAL)';
       break;
     case 'card_balance':
       sort = 'j.balance';
@@ -590,7 +621,8 @@ export async function fetchTDH(
   sort: string,
   sortDir: string,
   tdh_filter: string,
-  hideMuseum: boolean
+  hideMuseum: boolean,
+  hideTeam: boolean
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = `WHERE block=${tdhBlock}`;
@@ -598,6 +630,14 @@ export async function fetchTDH(
     filters = constructFilters(
       filters,
       `${WALLETS_TDH_TABLE}.wallet != ${mysql.escape(SIX529_MUSEUM)}`
+    );
+  }
+  if (hideTeam) {
+    const team: string[] = await getTeamWallets();
+    console.log(team);
+    filters = constructFilters(
+      filters,
+      `${OWNERS_METRICS_TABLE}.wallet NOT IN (${mysql.escape(team)})`
     );
   }
   if (wallets) {
@@ -647,20 +687,32 @@ export async function fetchOwnerMetrics(
   sort: string,
   sortDir: string,
   metrics_filter: string,
-  hideMuseum: boolean
+  hideMuseum: boolean,
+  hideTeam: boolean
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = '';
+  let hideWalletFilters = '';
   if (hideMuseum) {
     filters = constructFilters(
       filters,
       `${OWNERS_METRICS_TABLE}.wallet != ${mysql.escape(SIX529_MUSEUM)}`
     );
   }
+  if (hideTeam) {
+    const team: string[] = await getTeamWallets();
+    filters = constructFilters(
+      filters,
+      `${OWNERS_METRICS_TABLE}.wallet NOT IN (${mysql.escape(team)})`
+    );
+  }
+  hideWalletFilters = filters;
   if (wallets) {
     filters = constructFilters(
       filters,
-      `${OWNERS_METRICS_TABLE}.wallet in (${mysql.escape(wallets.split(','))})`
+      `${OWNERS_METRICS_TABLE}.wallet in (${mysql.escape(
+        wallets.split(',')
+      )}) OR ${ENS_TABLE}.display in (${mysql.escape(wallets.split(','))})`
     );
   }
   if (metrics_filter) {
@@ -718,6 +770,7 @@ export async function fetchOwnerMetrics(
     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients`;
   } else {
     ownerMetricsSelect = ` ${OWNERS_METRICS_TABLE}.*, 
+    dense_rank_sort,
     dense_table.dense_rank_balance,
     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.balance = ${OWNERS_METRICS_TABLE}2.balance) AS dense_rank_balance__ties,
     dense_table.dense_rank_balance_memes, 
@@ -761,10 +814,6 @@ export async function fetchOwnerMetrics(
   joins += ` LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet `;
   joins += ` LEFT JOIN ${ENS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${ENS_TABLE}.wallet `;
 
-  if (wallets) {
-    joins += ` JOIN (SELECT wallet, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients FROM ${OWNERS_METRICS_TABLE}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
-  }
-
   if (
     sort == 'balance' ||
     sort == 'memes_balance' ||
@@ -787,7 +836,11 @@ export async function fetchOwnerMetrics(
     sort = `${OWNERS_TAGS_TABLE}.${sort}`;
   }
 
-  return fetchPaginated(
+  if (wallets) {
+    joins += ` JOIN (SELECT ${OWNERS_METRICS_TABLE}.wallet, RANK() OVER(ORDER BY ${sort} DESC) AS dense_rank_sort, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients FROM ${OWNERS_METRICS_TABLE} LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock} LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet ${hideWalletFilters}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
+  }
+
+  const results = await fetchPaginated(
     OWNERS_METRICS_TABLE,
     `${sort} ${sortDir}, ${OWNERS_METRICS_TABLE}.balance ${sortDir}, boosted_tdh ${sortDir}`,
     pageSize,
@@ -796,6 +849,45 @@ export async function fetchOwnerMetrics(
     fields,
     joins
   );
+
+  if (results.data.length == 0 && wallets) {
+    const resolvedWallets = await resolveEns(wallets);
+    if (resolvedWallets.length > 0) {
+      const sql = `SELECT 
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0) AS transfers_out,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0) AS transfers_in,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0) AS purchases_count,
+    (SELECT SUM(value) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0) AS purchases_value,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0) AS sales_count,
+    (SELECT SUM(value) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0) AS sales_value`;
+      const results2 = await execSQL(sql);
+      return {
+        count: results2.length,
+        page: 1,
+        next: null,
+        data: results2
+      };
+    }
+  }
+  return results;
 }
 
 function returnEmpty() {

@@ -27,12 +27,11 @@ import {
   LabExtendedData,
   LabNFT,
   MemesExtendedData,
-  NFT,
-  NftTDH,
-  NFTWithTDH
+  NFT
 } from './entities/INFT';
 import { Owner, OwnerMetric, OwnerTags } from './entities/IOwner';
 import { TDH } from './entities/ITDH';
+import { Team } from './entities/ITeam';
 import { Transaction } from './entities/ITransaction';
 
 const mysql = require('mysql');
@@ -49,7 +48,15 @@ export async function connect() {
     username: process.env.DB_USER,
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
-    entities: [Owner, LabNFT, LabExtendedData, Transaction, OwnerMetric],
+    entities: [
+      Owner,
+      LabNFT,
+      LabExtendedData,
+      Transaction,
+      OwnerMetric,
+      NFT,
+      Team
+    ],
     synchronize: true,
     logging: false
   });
@@ -231,6 +238,9 @@ export async function fetchNftsForContract(contract: string, orderBy?: string) {
     sql += ` order by ${orderBy}`;
   }
   const results = await execSQL(sql);
+  results.map((r: any) => {
+    r.metadata = JSON.parse(r.metadata);
+  });
   return results;
 }
 
@@ -317,11 +327,12 @@ export async function fetchDistinctOwnerWallets() {
   return results;
 }
 
-export async function fetchWalletsFromTransactions(date: Date | undefined) {
-  let sql = `SELECT DISTINCT COALESCE(from_address, to_address) AS wallet FROM ${TRANSACTIONS_TABLE} `;
+export async function fetchTransactionsFromDate(date: Date | undefined) {
+  let sql = `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE} `;
   if (date) {
-    sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(date)}`;
+    sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at >= ${mysql.escape(date)}`;
   }
+
   const results = await execSQL(sql);
   return results;
 }
@@ -452,49 +463,6 @@ export async function persistTransactionsREMAKE(transactions: Transaction[]) {
   }
 }
 
-export async function persistNFTS(nfts: NFTWithTDH[]) {
-  if (nfts.length > 0) {
-    console.log('[NFTS]', `[PERSISTING ${nfts.length} NFTS]`);
-    await Promise.all(
-      nfts.map(async (nft) => {
-        let sql = `REPLACE INTO ${NFTS_TABLE} SET id=${
-          nft.id
-        }, created_at=${mysql.escape(new Date())}, contract=${mysql.escape(
-          nft.contract
-        )}, mint_date=${mysql.escape(new Date(nft.mint_date))}, mint_price=${
-          nft.mint_price
-        }, supply=${nft.supply}, name=${mysql.escape(
-          nft.name
-        )}, collection=${mysql.escape(
-          nft.collection
-        )}, token_type=${mysql.escape(nft.token_type)}, hodl_rate=${
-          nft.hodl_rate
-        }, description=${mysql.escape(nft.description)}, artist=${mysql.escape(
-          nft.artist
-        )}, uri=${mysql.escape(nft.uri)}, icon=${mysql.escape(
-          nft.icon
-        )}, thumbnail=${mysql.escape(nft.thumbnail)}, scaled=${mysql.escape(
-          nft.scaled
-        )}, image=${mysql.escape(
-          nft.image
-        )}, compressed_animation=${mysql.escape(
-          nft.compressed_animation
-        )}, animation=${mysql.escape(nft.animation)}, metadata=${mysql.escape(
-          JSON.stringify(nft.metadata)
-        )}, tdh = ${nft.tdh}, tdh_rank = ${nft.tdh_rank}, tdh__raw = ${
-          nft.tdh__raw
-        }, market_cap = ${nft.market_cap}, floor_price = ${nft.floor_price}`;
-        await execSQL(sql);
-      })
-    );
-    console.log(
-      new Date(),
-      '[NFTS]',
-      `[ALL ${nfts.length} NEW NFTS PERSISTED]`
-    );
-  }
-}
-
 export async function persistArtists(artists: Artist[]) {
   if (artists.length > 0) {
     console.log(
@@ -590,6 +558,10 @@ export async function persistOwnerMetrics(
     await Promise.all(
       ownerMetrics.map(async (ownerMetric) => {
         if (0 >= ownerMetric.balance) {
+          console.log(
+            '[OWNERS METRICS]',
+            `[DELETING ${ownerMetric.wallet} BALANCE ${ownerMetric.balance}]`
+          );
           await AppDataSource.getRepository(OwnerMetric).remove(ownerMetric);
         } else {
           await AppDataSource.getRepository(OwnerMetric).save(ownerMetric);
@@ -695,39 +667,42 @@ export async function persistMemesExtendedData(data: MemesExtendedData[]) {
   }
 }
 
-export async function persistNftMarketStats(stats: any[]) {
-  await Promise.all(
-    stats.map(async (s) => {
-      const sql = `UPDATE ${NFTS_TABLE} SET 
-            market_cap = ${s.market_cap}, floor_price=${
-        s.floor_price
-      } WHERE contract=${mysql.escape(s.contract)} AND id=${s.id}`;
-      await execSQL(sql);
-    })
-  );
+export async function findVolumeNFTs(nft: NFT): Promise<{
+  total_volume_last_24_hours: number;
+  total_volume_last_7_days: number;
+  total_volume_last_1_month: number;
+  total_volume: number;
+}> {
+  const sql = `SELECT
+      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN value ELSE 0 END) AS total_volume_last_24_hours,
+      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN value ELSE 0 END) AS total_volume_last_7_days,
+      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH) THEN value ELSE 0 END) AS total_volume_last_1_month,
+      SUM(value) AS total_volume
+    FROM ${TRANSACTIONS_TABLE}
+    WHERE token_id = ${nft.id} and contract = ${mysql.escape(nft.contract)};`;
+  const results = await execSQL(sql);
+  return results[0];
 }
 
-export async function persistNftTdh(nftTdh: NftTDH[]) {
-  console.log(
-    new Date(),
-    '[NFT TDH]',
-    `PERSISTING NFTS TDH [${nftTdh.length}]`
-  );
-  await Promise.all(
-    nftTdh.map(async (n) => {
-      const sql = `UPDATE ${NFTS_TABLE} SET 
-            tdh = ${n.tdh}, tdh_rank = ${n.tdh_rank}, tdh__raw = ${
-        n.tdh__raw
-      } WHERE contract=${mysql.escape(n.contract)} AND id=${n.id}`;
-      await execSQL(sql);
-    })
-  );
+export async function findVolumeLab(nft: LabNFT): Promise<{
+  total_volume_last_24_hours: number;
+  total_volume_last_7_days: number;
+  total_volume_last_1_month: number;
+  total_volume: number;
+}> {
+  const sql = `SELECT
+      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) THEN value ELSE 0 END) AS total_volume_last_24_hours,
+      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN value ELSE 0 END) AS total_volume_last_7_days,
+      SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH) THEN value ELSE 0 END) AS total_volume_last_1_month,
+      SUM(value) AS total_volume
+    FROM ${TRANSACTIONS_MEME_LAB_TABLE}
+    WHERE token_id = ${nft.id} and contract = ${mysql.escape(nft.contract)};`;
+  const results = await execSQL(sql);
+  return results[0];
+}
 
-  console.log(
-    new Date(),
-    '[NFT TDH]',
-    `PERSISTED ALL NFTS TDH [${nftTdh.length}]`
-  );
+export async function persistNFTs(nfts: NFT[]) {
+  await AppDataSource.getRepository(NFT).save(nfts);
 }
 
 export async function persistTdhUpload(
@@ -873,4 +848,10 @@ function constructFilters(f: string, newF: string) {
     return ` ${f} AND ${newF} `;
   }
   return ` WHERE ${newF} `;
+}
+
+export async function replaceTeam(team: Team[]) {
+  const repo = AppDataSource.getRepository(Team);
+  await repo.clear();
+  await repo.save(team);
 }
