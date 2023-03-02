@@ -267,8 +267,27 @@ export const findTDH = async (lastTDHCalc: Date) => {
       return a;
     });
 
+  const boostedTDH: TDH[] = [];
+
+  walletsTDH.map((w) => {
+    const boost = calculateBoost(
+      MEMES_COUNT,
+      w.memes_cards_sets,
+      w.genesis,
+      w.memes,
+      w.gradients
+    );
+    w.boost = boost;
+    w.boosted_tdh = w.tdh * boost;
+    w.boosted_memes_tdh = w.memes_tdh * boost;
+    w.boosted_memes_tdh_season1 = w.memes_tdh_season1 * boost;
+    w.boosted_memes_tdh_season2 = w.memes_tdh_season2 * boost;
+    w.boosted_gradients_tdh = w.gradients_tdh * boost;
+    boostedTDH.push(w);
+  });
+
   ADJUSTED_NFTS.map((nft) => {
-    walletsTDH
+    boostedTDH
       .filter(
         (w) =>
           (areEqualAddresses(nft.contract, MEMES_CONTRACT) &&
@@ -286,8 +305,14 @@ export const findTDH = async (lastTDHCalc: Date) => {
 
         if (aNftBalance > bNftBalance) {
           return -1;
+        } else if (aNftBalance < bNftBalance) {
+          return 1;
+        } else {
+          if (a.boosted_tdh > b.boosted_tdh) {
+            return -1;
+          }
+          return 1;
         }
-        return 1;
       })
       .map((w, index) => {
         if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
@@ -321,28 +346,18 @@ export const findTDH = async (lastTDHCalc: Date) => {
         if (aNftBalance > bNftBalance) {
           return -1;
         }
-        return 1;
-      }).map;
+        if (aNftBalance > bNftBalance) {
+          return -1;
+        } else if (aNftBalance < bNftBalance) {
+          return 1;
+        } else {
+          if (a.boosted_tdh > b.boosted_tdh) {
+            return -1;
+          }
+          return 1;
+        }
+      });
     }
-  });
-
-  const boostedTDH: TDH[] = [];
-
-  walletsTDH.map((w) => {
-    const boost = calculateBoost(
-      MEMES_COUNT,
-      w.memes_cards_sets,
-      w.genesis,
-      w.memes,
-      w.gradients
-    );
-    w.boost = boost;
-    w.boosted_tdh = w.tdh * boost;
-    w.boosted_memes_tdh = w.memes_tdh * boost;
-    w.boosted_memes_tdh_season1 = w.memes_tdh_season1 * boost;
-    w.boosted_memes_tdh_season2 = w.memes_tdh_season2 * boost;
-    w.boosted_gradients_tdh = w.gradients_tdh * boost;
-    boostedTDH.push(w);
   });
 
   let sortedTdh = boostedTDH

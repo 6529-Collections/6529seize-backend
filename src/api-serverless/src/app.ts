@@ -961,6 +961,34 @@ loadEnv(true).then(async (e) => {
     }
   );
 
+  app.get(`${BASE_PATH}/team`, function (req: any, res: any, next: any) {
+    try {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+      console.log(
+        new Date(),
+        `[API]`,
+        '[TEAM]',
+        `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+      );
+      db.fetchTeam(pageSize, page).then((result) => {
+        returnPaginatedResult(result, req, res);
+      });
+    } catch (e) {
+      console.log(
+        new Date(),
+        `[API]`,
+        '[TEAM]',
+        `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+      );
+      return;
+    }
+  });
+
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();
     res.send(

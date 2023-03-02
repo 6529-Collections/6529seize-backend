@@ -239,6 +239,18 @@ export async function fetchLabOwners(
   );
 }
 
+export async function fetchTeam(pageSize: number, page: number) {
+  return fetchPaginated(
+    TEAM_TABLE,
+    `created_at desc`,
+    pageSize,
+    page,
+    '',
+    '',
+    ''
+  );
+}
+
 export async function fetchNFTs(
   pageSize: number,
   page: number,
@@ -438,7 +450,7 @@ async function resolveEns(walletsStr: string) {
     wallets
   )}) OR display IN (${mysql.escape(wallets)})`;
   let results = await execSQL(sql);
-  results = results.map((r) => r.wallet);
+  results = results.map((r: any) => r.wallet);
   return results;
 }
 
@@ -453,6 +465,9 @@ export async function fetchTransactions(
   let filters = '';
   if (wallets) {
     const resolvedWallets = await resolveEns(wallets);
+    if (resolvedWallets.length == 0) {
+      return returnEmpty();
+    }
     filters = constructFilters(
       filters,
       `(from_address in (${mysql.escape(
@@ -569,10 +584,10 @@ export async function fetchNftTdh(
 
   switch (sort) {
     case 'card_tdh':
-      sort = 'j.tdh';
+      sort = 'CAST(j.tdh AS DECIMAL)';
       break;
     case 'card_tdh__raw':
-      sort = 'j.tdh__raw';
+      sort = 'CAST(j.tdh__raw AS DECIMAL)';
       break;
     case 'card_balance':
       sort = 'j.balance';
@@ -837,7 +852,8 @@ export async function fetchOwnerMetrics(
 
   if (results.data.length == 0 && wallets) {
     const resolvedWallets = await resolveEns(wallets);
-    const sql = `SELECT 
+    if (resolvedWallets.length > 0) {
+      const sql = `SELECT 
     (SELECT COUNT(*) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
@@ -862,13 +878,14 @@ export async function fetchOwnerMetrics(
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0) AS sales_value`;
-    const results2 = await execSQL(sql);
-    return {
-      count: results2.length,
-      page: 1,
-      next: null,
-      data: results2
-    };
+      const results2 = await execSQL(sql);
+      return {
+        count: results2.length,
+        page: 1,
+        next: null,
+        data: results2
+      };
+    }
   }
   return results;
 }
