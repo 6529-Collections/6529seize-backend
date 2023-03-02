@@ -854,15 +854,15 @@ export async function fetchOwnerMetrics(
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length > 0) {
       const sql = `SELECT 
-    (SELECT COUNT(*) FROM transactions 
+    (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value = 0) AS transfers_out,
-    (SELECT COUNT(*) FROM transactions 
+    (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value = 0) AS transfers_in,
-    (SELECT COUNT(*) FROM transactions 
+    (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0) AS purchases_count,
@@ -870,7 +870,7 @@ export async function fetchOwnerMetrics(
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0) AS purchases_value,
-    (SELECT COUNT(*) FROM transactions 
+    (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0) AS sales_count,
