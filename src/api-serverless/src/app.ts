@@ -83,6 +83,7 @@ loadEnv(true).then(async (e) => {
   const CONTENT_TYPE_HEADER = 'Content-Type';
   const JSON_HEADER_VALUE = 'application/json';
   const DEFAULT_PAGE_SIZE = 50;
+  const DISTRIBUTION_PAGE_SIZE = 500;
   const SORT_DIRECTIONS = ['ASC', 'DESC'];
 
   const NFT_TDH_SORT = [
@@ -988,6 +989,78 @@ loadEnv(true).then(async (e) => {
       return;
     }
   });
+
+  app.get(
+    `${BASE_PATH}/distribution_photos/:contract/:nft_id`,
+    function (req: any, res: any, next: any) {
+      try {
+        const contract = req.params.contract;
+        const nftId = req.params.nft_id;
+
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DSITRIBUTION PHOTOS]',
+          `[CONTRACT ${contract}][ID ${nftId}]`,
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchDistributionPhotos(contract, nftId, pageSize, page).then(
+          (result) => {
+            returnPaginatedResult(result, req, res);
+          }
+        );
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DSITRIBUTION PHOTOS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
+  app.get(
+    `${BASE_PATH}/distribution/:contract/:nft_id`,
+    function (req: any, res: any, next: any) {
+      try {
+        const contract = req.params.contract;
+        const nftId = req.params.nft_id;
+
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DISTRIBUTION_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DSITRIBUTION]',
+          `[CONTRACT ${contract}][ID ${nftId}]`,
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchDistribution(contract, nftId, pageSize, page).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DSITRIBUTION]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
 
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();

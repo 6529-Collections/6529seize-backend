@@ -1,7 +1,12 @@
 import { Alchemy } from 'alchemy-sdk';
 import { ALCHEMY_SETTINGS, ENS_ADDRESS, PUNK_6529 } from './constants';
 import { ENS } from './entities/IENS';
-import { fetchMissingEns, fetchEnsRefresh, persistENS } from './db';
+import {
+  fetchEnsRefresh,
+  persistENS,
+  fetchTransactionsFromDate,
+  fetchMissingEns
+} from './db';
 
 let alchemy: Alchemy;
 
@@ -76,15 +81,7 @@ export async function discoverEns(datetime?: Date) {
     }
   } catch (e: any) {
     console.log(e);
-    if (e.message.includes('ETIMEDOUT') || e.message.includes('429')) {
-      console.log(
-        new Date(),
-        '[ENS NEW]',
-        '[ETIMEDOUT!]',
-        '[RETRYING PROCESS]'
-      );
-      await discoverEns(datetime);
-    }
+    await discoverEns(datetime);
   }
 }
 

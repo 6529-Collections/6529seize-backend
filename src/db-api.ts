@@ -1,5 +1,7 @@
 import {
   ARTISTS_TABLE,
+  DISTRIBUTION_PHOTO_TABLE,
+  DISTRIBUTION_TABLE,
   ENS_TABLE,
   GRADIENT_CONTRACT,
   LAB_EXTENDED_DATA_TABLE,
@@ -274,7 +276,7 @@ export async function fetchNFTs(
     pageSize,
     page,
     filters,
-    '',
+    `${NFTS_TABLE}.*, CASE WHEN EXISTS (SELECT 1 FROM distribution d WHERE d.card_id = ${NFTS_TABLE}.id AND d.contract = ${NFTS_TABLE}.contract) THEN TRUE ELSE FALSE END AS has_distribution`,
     ''
   );
 }
@@ -934,4 +936,45 @@ export async function fetchLabExtended(
     );
   }
   return fetchPaginated(LAB_EXTENDED_DATA_TABLE, 'id', pageSize, page, filters);
+}
+
+export async function fetchDistributionPhotos(
+  contract: string,
+  cardId: number,
+  pageSize: number,
+  page: number
+) {
+  let filters = constructFilters('', `contract = ${mysql.escape(contract)}`);
+  filters = constructFilters(filters, `card_id = ${cardId}`);
+
+  return fetchPaginated(
+    DISTRIBUTION_PHOTO_TABLE,
+    `link asc`,
+    pageSize,
+    page,
+    filters,
+    ``,
+    ``
+  );
+}
+
+export async function fetchDistribution(
+  contract: string,
+  cardId: number,
+  pageSize: number,
+  page: number
+) {
+  let filters = constructFilters('', `contract = ${mysql.escape(contract)}`);
+  filters = constructFilters(filters, `card_id = ${cardId}`);
+  const joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
+
+  return fetchPaginated(
+    DISTRIBUTION_TABLE,
+    `phase asc, count desc`,
+    pageSize,
+    page,
+    filters,
+    `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display`,
+    joins
+  );
 }

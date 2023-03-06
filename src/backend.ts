@@ -7,6 +7,7 @@ const team = require('./teamLoop');
 const ownerMetrics = require('./ownerMetricsLoop');
 const s3 = require('./s3Loop');
 const discoverEnsLoop = require('./discoverEnsLoop');
+const refreshEnsLoop = require('./refreshEnsLoop');
 
 const { memeStats, memeLabStats, gradientStats } = require('./marketStatsLoop');
 
@@ -90,6 +91,7 @@ async function start() {
   // await s3.handler();
   // await team.handler();
   // await discoverEnsLoop.handler();
+  // await refreshEnsLoop.handler();
 
   STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);

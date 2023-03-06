@@ -1,6 +1,5 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
-
 import {
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
@@ -33,6 +32,7 @@ import { Owner, OwnerMetric, OwnerTags } from './entities/IOwner';
 import { TDH } from './entities/ITDH';
 import { Team } from './entities/ITeam';
 import { Transaction } from './entities/ITransaction';
+import { areEqualAddresses } from './helpers';
 
 const mysql = require('mysql');
 
@@ -327,10 +327,16 @@ export async function fetchDistinctOwnerWallets() {
   return results;
 }
 
-export async function fetchTransactionsFromDate(date: Date | undefined) {
+export async function fetchTransactionsFromDate(
+  date: Date | undefined,
+  limit?: number
+) {
   let sql = `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE} `;
   if (date) {
     sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at >= ${mysql.escape(date)}`;
+  }
+  if (limit) {
+    sql += ` LIMIT ${limit}`;
   }
 
   const results = await execSQL(sql);
@@ -383,16 +389,26 @@ export async function fetchEnsRefresh() {
 }
 
 export async function fetchMissingEns(datetime?: Date) {
-  let sql = `SELECT DISTINCT COALESCE(from_address, to_address) AS address  FROM ${TRANSACTIONS_TABLE} WHERE COALESCE(from_address, to_address) NOT IN (SELECT wallet FROM ${ENS_TABLE}) `;
+  let sql = `SELECT DISTINCT address
+    FROM (
+      SELECT from_address AS address
+      FROM ${TRANSACTIONS_TABLE}
+      WHERE from_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
   if (datetime) {
     sql += ` AND ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(datetime)}`;
   }
-  sql += ` LIMIT 200`;
+  sql += `UNION
+      SELECT to_address AS address
+      FROM ${TRANSACTIONS_TABLE}
+      WHERE to_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
+  if (datetime) {
+    sql += ` AND ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(datetime)}`;
+  }
+  sql += `) AS addresses LIMIT 200`;
 
   const results = await execSQL(sql);
 
   const structuredResults = results.map((r: any) => r.address);
-
   return structuredResults;
 }
 
@@ -827,7 +843,13 @@ export async function persistENS(ens: ENS[]) {
         const sql = `REPLACE INTO ${ENS_TABLE} SET 
           wallet = ${wallet},
           display = ${display}`;
-        await execSQL(sql);
+        try {
+          await execSQL(sql);
+        } catch {
+          await execSQL(`REPLACE INTO ${ENS_TABLE} SET 
+            wallet = ${wallet},
+            display = ${mysql.escape(null)}`);
+        }
       }
     })
   );
