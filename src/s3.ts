@@ -337,57 +337,6 @@ export const persistS3 = async (nfts: NFT[]) => {
 
         await handleVideoScaling(n, videoFormat, myBucket);
       }
-
-      if (animationDetails && animationDetails.format == 'HTML') {
-        const htmlFormat = animationDetails.format;
-        const htmlKey = `html/${n.contract}/${n.id}.${htmlFormat}`;
-
-        try {
-          await s3.headObject({ Bucket: myBucket, Key: htmlKey }).promise();
-        } catch (error: any) {
-          if (error.code === 'NotFound') {
-            console.log(
-              '[S3]',
-              `[MISSING ${htmlFormat}]`,
-              `[CONTRACT ${n.contract}]`,
-              `[ID ${n.id}]`
-            );
-
-            console.log(
-              '[S3]',
-              `[FETCHING ${htmlFormat}]`,
-              `[CONTRACT ${n.contract}]`,
-              `[ID ${n.id}]`
-            );
-
-            const htmlUrl = n.metadata.animation
-              ? n.metadata.animation
-              : n.metadata.animation_url;
-            const res = await fetch(htmlUrl);
-            const blob = await res.arrayBuffer();
-            console.log(
-              '[S3]',
-              `[DOWNLOADED ${htmlFormat}]`,
-              `[CONTRACT ${n.contract}]`,
-              `[ID ${n.id}]`
-            );
-
-            const uploadedHTML = await s3
-              .upload({
-                Bucket: myBucket,
-                Key: htmlKey,
-                Body: Buffer.from(blob),
-                ContentType: `text/html; charset=utf-8;`
-              })
-              .promise();
-
-            console.log(
-              '[S3]',
-              `[${htmlFormat} PERSISTED AT ${uploadedHTML.Location}`
-            );
-          }
-        }
-      }
     })
   );
 };
