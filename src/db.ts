@@ -32,7 +32,6 @@ import { Owner, OwnerMetric, OwnerTags } from './entities/IOwner';
 import { TDH } from './entities/ITDH';
 import { Team } from './entities/ITeam';
 import { Transaction } from './entities/ITransaction';
-import { areEqualAddresses } from './helpers';
 
 const mysql = require('mysql');
 
@@ -212,6 +211,12 @@ export async function fetchLatestTDHBDate() {
   return r.length > 0 ? r[0].timestamp : 0;
 }
 
+export async function fetchTdhReplayTimestamp() {
+  let sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} WHERE created_at > '2023-03-06' order by block_number asc limit 1;`;
+  const r = await execSQL(sql);
+  return r.length > 0 ? r[0].timestamp : null;
+}
+
 export async function fetchLatestTDHBlockNumber() {
   let sql = `SELECT block_number FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await execSQL(sql);
@@ -339,6 +344,14 @@ export async function fetchTransactionsFromDate(
     sql += ` LIMIT ${limit}`;
   }
 
+  const results = await execSQL(sql);
+  return results;
+}
+
+export async function fetchTdhReplayOwners(datetime: Date) {
+  let sql = `SELECT from_address, to_address from ${TRANSACTIONS_TABLE} WHERE transaction_date <= ${mysql.escape(
+    datetime
+  )};`;
   const results = await execSQL(sql);
   return results;
 }
@@ -876,4 +889,68 @@ export async function replaceTeam(team: Team[]) {
   const repo = AppDataSource.getRepository(Team);
   await repo.clear();
   await repo.save(team);
+}
+
+export async function fetchTDHForBlock(block: number) {
+  let sql = `SELECT ${ENS_TABLE}.display as ens, ${WALLETS_TDH_TABLE}.* FROM ${WALLETS_TDH_TABLE} LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet WHERE block=${block};`;
+  const results = await execSQL(sql);
+  results.map((r: any) => (r.memes = JSON.parse(r.memes)));
+  results.map((r: any) => (r.gradients = JSON.parse(r.gradients)));
+  return results;
+}
+
+export async function fetchOwnerMetricsTdhReplay(
+  wallets: string[],
+  block: number
+) {
+  const results = await Promise.all(
+    wallets.map(async (wallet) => {
+      const sql = `SELECT 
+        (SELECT SUM(token_count) FROM transactions 
+         WHERE block >= ${block}
+         AND from_address = ${mysql.escape(
+           wallet
+         )} AND value = 0) AS transfers_out,
+        (SELECT SUM(token_count) FROM transactions 
+         WHERE block >= ${block}
+         AND to_address = ${mysql.escape(
+           wallet
+         )} AND value = 0) AS transfers_in,
+        (SELECT SUM(token_count) FROM transactions 
+         WHERE block >= ${block}
+         AND to_address = ${mysql.escape(
+           wallet
+         )} AND value > 0) AS purchases_count,
+        (SELECT SUM(value) FROM transactions 
+         WHERE block >= ${block}
+         AND to_address = ${mysql.escape(
+           wallet
+         )} AND value > 0) AS purchases_value,
+        (SELECT SUM(token_count) FROM transactions 
+         WHERE block >= ${block}
+         AND from_address = ${mysql.escape(
+           wallet
+         )} AND value > 0) AS sales_count,
+        (SELECT SUM(value) FROM transactions 
+         WHERE block >= ${block}
+         AND from_address = ${mysql.escape(
+           wallet
+         )} AND value > 0) AS sales_value`;
+
+      const [rows] = await execSQL(sql);
+      if (rows[0]) {
+        return {
+          wallet,
+          transfers_out: rows[0].transfers_out,
+          transfers_in: rows[0].transfers_in,
+          purchases_count: rows[0].purchases_count,
+          purchases_value: rows[0].purchases_value,
+          sales_count: rows[0].sales_count,
+          sales_value: rows[0].sales_value
+        };
+      }
+    })
+  );
+
+  return results;
 }
