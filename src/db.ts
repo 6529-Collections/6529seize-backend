@@ -192,8 +192,10 @@ export async function fetchLatestTDHBDate() {
   return r.length > 0 ? r[0].timestamp : 0;
 }
 
-export async function fetchTdhReplayTimestamp() {
-  let sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} WHERE created_at > '2023-03-06' order by block_number asc limit 1;`;
+export async function fetchTdhReplayTimestamp(date: Date) {
+  let sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} WHERE created_at > '2023-03-06' AND timestamp <= ${mysql.escape(
+    date
+  )} order by block_number asc limit 1;`;
   const r = await execSQL(sql);
   return r.length > 0 ? r[0].timestamp : null;
 }

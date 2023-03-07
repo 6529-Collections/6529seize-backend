@@ -19,8 +19,9 @@ export async function tdhLoop() {
 }
 
 async function tdh() {
-  const replayLatest = await fetchTdhReplayTimestamp();
   let tdhDate: Date = new Date(Date.UTC(2023, 1, 23));
+  const replayLatest = await fetchTdhReplayTimestamp(tdhDate);
+
   if (replayLatest) {
     console.log(`[REPLAY LATEST ${replayLatest}]`);
     const previousDate: Date = new Date(new Date(replayLatest).getTime());
