@@ -964,9 +964,13 @@ export async function fetchDistribution(
   pageSize: number,
   page: number
 ) {
+  const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = constructFilters('', `contract = ${mysql.escape(contract)}`);
   filters = constructFilters(filters, `card_id = ${cardId}`);
-  const joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
+
+  let joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
+  joins += ` LEFT JOIN ${OWNERS_METRICS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet `;
+  joins += ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${WALLETS_TDH_TABLE}.wallet AND ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
 
   return fetchPaginated(
     DISTRIBUTION_TABLE,
@@ -974,7 +978,7 @@ export async function fetchDistribution(
     pageSize,
     page,
     filters,
-    `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display`,
+    `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display, ${OWNERS_METRICS_TABLE}.balance as wallet_balance, ${WALLETS_TDH_TABLE}.tdh as wallet_tdh`,
     joins
   );
 }

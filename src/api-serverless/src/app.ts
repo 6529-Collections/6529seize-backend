@@ -1006,7 +1006,7 @@ loadEnv(true).then(async (e) => {
         console.log(
           new Date(),
           `[API]`,
-          '[DSITRIBUTION PHOTOS]',
+          '[DISTRIBUTION PHOTOS]',
           `[CONTRACT ${contract}][ID ${nftId}]`,
           `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
@@ -1019,7 +1019,7 @@ loadEnv(true).then(async (e) => {
         console.log(
           new Date(),
           `[API]`,
-          '[DSITRIBUTION PHOTOS]',
+          '[DISTRIBUTION PHOTOS]',
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         return;
@@ -1043,7 +1043,7 @@ loadEnv(true).then(async (e) => {
         console.log(
           new Date(),
           `[API]`,
-          '[DSITRIBUTION]',
+          '[DISTRIBUTION]',
           `[CONTRACT ${contract}][ID ${nftId}]`,
           `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
@@ -1054,7 +1054,7 @@ loadEnv(true).then(async (e) => {
         console.log(
           new Date(),
           `[API]`,
-          '[DSITRIBUTION]',
+          '[DISTRIBUTION]',
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         return;
