@@ -392,8 +392,6 @@ export const findNFTs = async (
 };
 
 export async function nfts(reset?: boolean) {
-  // await addIconColumnToNfts();
-
   alchemy = new Alchemy({
     ...ALCHEMY_SETTINGS,
     apiKey: process.env.ALCHEMY_API_KEY

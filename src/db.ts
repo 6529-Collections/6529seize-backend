@@ -18,7 +18,8 @@ import {
   NFTS_MEME_LAB_TABLE,
   TRANSACTIONS_MEME_LAB_TABLE,
   OWNERS_MEME_LAB_TABLE,
-  MEMES_CONTRACT
+  MEMES_CONTRACT,
+  DISTRIBUTION_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -31,7 +32,11 @@ import {
 import { Owner, OwnerMetric, OwnerTags } from './entities/IOwner';
 import { TDH } from './entities/ITDH';
 import { Team } from './entities/ITeam';
-import { Transaction } from './entities/ITransaction';
+import {
+  Transaction,
+  LabTransaction,
+  BaseTransaction
+} from './entities/ITransaction';
 
 const mysql = require('mysql');
 
@@ -54,7 +59,8 @@ export async function connect() {
       Transaction,
       OwnerMetric,
       NFT,
-      Team
+      Team,
+      LabTransaction
     ],
     synchronize: true,
     logging: false
@@ -88,49 +94,24 @@ export async function addColumnToTable(
   }
 }
 
-export async function addIconColumnToNfts() {
-  await addColumnToTable(NFTS_TABLE, 'icon', 'TEXT NOT NULL');
-}
+function consolidateTransactions(
+  transactions: BaseTransaction[]
+): BaseTransaction[] {
+  const consolidatedTransactions: BaseTransaction[] = Object.values(
+    transactions.reduce((acc: any, transaction) => {
+      const primaryKey = `${transaction.transaction}_${transaction.from_address}_${transaction.to_address}_${transaction.contract}_${transaction.token_id}`;
 
-export async function addMemeLabColumnToArtists() {
-  await addColumnToTable(ARTISTS_TABLE, 'memelab', 'JSON');
-}
+      if (acc[primaryKey]) {
+        acc[primaryKey].token_count += transaction.token_count;
+        acc[primaryKey].value += transaction.value;
+      } else {
+        acc[primaryKey] = transaction;
+      }
 
-export async function createMemeLabNftsTable() {
-  const sql = `CREATE TABLE IF NOT EXISTS ${NFTS_MEME_LAB_TABLE} (
-    id INT NOT NULL , 
-    contract VARCHAR(50) NOT NULL , 
-    created_at DATETIME NOT NULL DEFAULT now(), 
-    mint_date DATETIME NOT NULL , 
-    mint_price DOUBLE NOT NULL , 
-    supply INT NOT NULL , 
-    name TEXT NOT NULL , 
-    collection TEXT NOT NULL , 
-    token_type TEXT NOT NULL , 
-    description TEXT NOT NULL , 
-    artist TEXT NOT NULL , 
-    uri TEXT NOT NULL , 
-    icon TEXT NOT NULL , 
-    thumbnail TEXT NOT NULL , 
-    scaled TEXT NOT NULL , 
-    compressed_animation TEXT ,
-    image TEXT NOT NULL , 
-    animation TEXT , 
-    metadata JSON NOT NULL , 
-    meme_references JSON NOT NULL,
-    PRIMARY KEY (id, contract)
-  ) ENGINE = InnoDB;`;
-  await execSQL(sql);
-}
-
-export async function createMemeLabTransactionsTable() {
-  const sql = `CREATE TABLE IF NOT EXISTS ${TRANSACTIONS_MEME_LAB_TABLE} LIKE ${TRANSACTIONS_TABLE};`;
-  await execSQL(sql);
-}
-
-export async function createMemeLabOwnersTable() {
-  const sql = `CREATE TABLE IF NOT EXISTS ${OWNERS_MEME_LAB_TABLE} LIKE ${OWNERS_TABLE};`;
-  await execSQL(sql);
+      return acc;
+    }, {})
+  );
+  return consolidatedTransactions;
 }
 
 export function execSQL(sql: string): Promise<any> {
@@ -426,37 +407,35 @@ export async function fetchMissingEns(datetime?: Date) {
 }
 
 export async function persistTransactions(
-  transactions: Transaction[],
+  transactions: BaseTransaction[],
   isLab?: boolean
 ) {
   if (transactions.length > 0) {
+    const consolidatedTransactions = consolidateTransactions(transactions);
+    if (isLab) {
+      console.log(
+        new Date(),
+        '[LAB TRANSACTIONS]',
+        `[PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
+      );
+      await AppDataSource.getRepository(LabTransaction).save(
+        consolidatedTransactions
+      );
+    } else {
+      console.log(
+        new Date(),
+        '[TRANSACTIONS]',
+        `[PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
+      );
+      await AppDataSource.getRepository(Transaction).save(
+        consolidatedTransactions
+      );
+    }
+
     console.log(
       new Date(),
       '[TRANSACTIONS]',
-      `[PERSISTING ${transactions.length} TRANSACTIONS]`
-    );
-    await Promise.all(
-      transactions.map(async (t) => {
-        let sql = `REPLACE INTO ${
-          isLab ? TRANSACTIONS_MEME_LAB_TABLE : TRANSACTIONS_TABLE
-        } SET transaction=${mysql.escape(t.transaction)}, block=${
-          t.block
-        }, transaction_date=${mysql.escape(
-          t.transaction_date
-        )}, from_address=${mysql.escape(
-          t.from_address
-        )}, to_address=${mysql.escape(t.to_address)}, contract=${mysql.escape(
-          t.contract
-        )}, token_id=${t.token_id}, token_count=${t.token_count}, value=${
-          t.value
-        }`;
-        await execSQL(sql);
-      })
-    );
-    console.log(
-      new Date(),
-      '[TRANSACTIONS]',
-      `[ALL ${transactions.length} TRANSACTIONS PERSISTED]`
+      `[ALL ${consolidatedTransactions.length} TRANSACTIONS PERSISTED]`
     );
   }
 }
@@ -953,4 +932,23 @@ export async function fetchOwnerMetricsTdhReplay(
   );
 
   return results;
+}
+
+export async function persistDistributionMinting(
+  transactions: BaseTransaction[]
+) {
+  await Promise.all(
+    transactions.map(async (t) => {
+      let sql = `UPDATE ${DISTRIBUTION_TABLE}
+        SET mint_count = mint_count + ${t.token_count}
+        WHERE card_id = ${t.token_id}
+        AND contract = ${mysql.escape(t.contract)}
+        AND wallet = ${mysql.escape(t.to_address)};`;
+      await execSQL(sql);
+    })
+  );
+  console.log(
+    '[DISTRIBUTION MINTING]',
+    `PERSISTED ALL TRANSACTIONS [${transactions.length}]`
+  );
 }

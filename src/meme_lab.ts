@@ -17,11 +17,9 @@ import {
   SIX529_MUSEUM
 } from './constants';
 import { LabExtendedData, LabNFT, NFTWithExtendedData } from './entities/INFT';
-import { Transaction } from './entities/ITransaction';
+import { LabTransaction } from './entities/ITransaction';
 import { areEqualAddresses, areEqualObjects } from './helpers';
 import {
-  createMemeLabNftsTable,
-  createMemeLabTransactionsTable,
   fetchAllMemeLabNFTs,
   persistTransactions,
   fetchLatestLabTransactionsBlockNumber,
@@ -29,12 +27,11 @@ import {
   persistLabNFTS,
   fetchAllArtists,
   persistArtists,
-  addMemeLabColumnToArtists,
   fetchAllLabOwners,
-  createMemeLabOwnersTable,
   persistOwners,
   fetchMemesWithSeason,
-  persistLabExtendedData
+  persistLabExtendedData,
+  persistDistributionMinting
 } from './db';
 import { Artist } from './entities/IArtist';
 import { findArtists } from './artists';
@@ -69,7 +66,7 @@ async function getAllNFTs(nfts: Nft[] = [], key: string = ''): Promise<Nft[]> {
 
 async function processNFTs(
   startingNFTS: LabNFT[],
-  startingTransactions: Transaction[],
+  startingTransactions: LabTransaction[],
   owners: Owner[]
 ) {
   const allNFTS = await getAllNFTs();
@@ -257,7 +254,7 @@ async function processNFTs(
 
 export const findNFTs = async (
   startingNFTS: LabNFT[],
-  startingTransactions: Transaction[],
+  startingTransactions: LabTransaction[],
   owners: Owner[],
   reset?: boolean
 ) => {
@@ -309,7 +306,7 @@ export async function memeLabNfts(reset?: boolean) {
   });
 
   const nfts: LabNFT[] = await fetchAllMemeLabNFTs();
-  const transactions: Transaction[] = await fetchAllMemeLabTransactions();
+  const transactions: LabTransaction[] = await fetchAllMemeLabTransactions();
   let owners: Owner[] = await fetchAllLabOwners();
   const artists: Artist[] = await fetchAllArtists();
 
@@ -320,7 +317,6 @@ export async function memeLabNfts(reset?: boolean) {
 }
 
 export async function memeLabTransactions() {
-  await createMemeLabTransactionsTable();
   const now = new Date();
   await transactions();
   await discoverEns(now);
@@ -350,7 +346,19 @@ async function transactions(
       response.transactions
     );
 
-    await persistTransactions(transactionsWithValues, true);
+    const newtransactionsWithValues = transactionsWithValues.filter(
+      (tr) =>
+        tr.transaction ==
+        '0x80e0954e19ab7b8a584295ba4addbe4bef35e4232640dc592c0819e160cd123e'
+    );
+
+    await persistTransactions(newtransactionsWithValues, true);
+
+    const manifoldTransactions = transactionsWithValues.filter((tr) =>
+      areEqualAddresses(tr.from_address, MANIFOLD)
+    );
+
+    await persistDistributionMinting(manifoldTransactions);
 
     if (response.pageKey) {
       await transactions(
@@ -366,8 +374,6 @@ async function transactions(
 }
 
 export async function memeLabOwners() {
-  await createMemeLabOwnersTable();
-
   alchemy = new Alchemy({
     ...ALCHEMY_SETTINGS,
     apiKey: process.env.ALCHEMY_API_KEY

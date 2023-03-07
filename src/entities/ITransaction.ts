@@ -1,7 +1,6 @@
 import { Entity, Column, PrimaryColumn, Index } from 'typeorm';
 
-@Entity()
-export class Transaction {
+export class BaseTransaction {
   @Column({ type: 'datetime' })
   created_at!: Date;
 
@@ -37,6 +36,12 @@ export class Transaction {
   @Column({ type: 'double' })
   value!: number;
 }
+
+@Entity('transactions')
+export class Transaction extends BaseTransaction {}
+
+@Entity('transactions_meme_lab')
+export class LabTransaction extends BaseTransaction {}
 
 export interface TransactionValue {
   transaction: string;

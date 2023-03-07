@@ -1,8 +1,14 @@
-import { fetchLatestTransactionsBlockNumber, persistTransactions } from '../db';
+import {
+  fetchLatestTransactionsBlockNumber,
+  persistDistributionMinting,
+  persistTransactions
+} from '../db';
 import { findTransactions } from '../transactions';
 import { findTransactionValues } from '../transaction_values';
 import { discoverEns } from '../ens';
 import { loadEnv, unload } from '../secrets';
+import { areEqualAddresses } from '../helpers';
+import { MANIFOLD } from '../constants';
 
 export const handler = async (event?: any, context?: any) => {
   console.log(new Date(), '[RUNNING TRANSACTIONS LOOP]');
@@ -42,6 +48,12 @@ export async function transactions(
     );
 
     await persistTransactions(transactionsWithValues);
+
+    const manifoldTransactions = transactionsWithValues.filter((tr) =>
+      areEqualAddresses(tr.from_address, MANIFOLD)
+    );
+
+    await persistDistributionMinting(manifoldTransactions);
 
     if (response.pageKey) {
       await transactions(
