@@ -974,7 +974,7 @@ export async function fetchDistribution(
 
   return fetchPaginated(
     DISTRIBUTION_TABLE,
-    `phase asc, count desc`,
+    `phase asc, count desc, wallet_balance desc, wallet_tdh desc`,
     pageSize,
     page,
     filters,
