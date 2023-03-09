@@ -410,7 +410,9 @@ export async function persistTransactions(
       transactions.map(async (t) => {
         let sql = `REPLACE INTO ${
           isLab ? TRANSACTIONS_MEME_LAB_TABLE : TRANSACTIONS_TABLE
-        } SET transaction=${mysql.escape(t.transaction)}, block=${
+        } SET created_at=${mysql.escape(
+          t.created_at
+        )}, transaction=${mysql.escape(t.transaction)}, block=${
           t.block
         }, transaction_date=${mysql.escape(
           t.transaction_date

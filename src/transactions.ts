@@ -20,11 +20,14 @@ async function getAllTransactions(
   key: any,
   contracts?: string[]
 ) {
+  const startingBlockHex = `0x${startingBlock.toString(16)}`;
+  const latestBlockHex = `0x${latestBlock.toString(16)}`;
+
   console.log(
     new Date(),
     '[TRANSACTIONS]',
-    `[FROM BLOCK ${toHex(startingBlock)}]`,
-    `[TO BLOCK ${toHex(latestBlock)}]`,
+    `[FROM BLOCK ${startingBlockHex}]`,
+    `[TO BLOCK ${latestBlockHex}]`,
     `[PAGE KEY ${key}]`
   );
 
@@ -35,8 +38,8 @@ async function getAllTransactions(
       : [MEMES_CONTRACT, GRADIENT_CONTRACT],
     withMetadata: true,
     maxCount: 250,
-    fromBlock: toHex(startingBlock),
-    toBlock: toHex(latestBlock),
+    fromBlock: startingBlockHex,
+    toBlock: latestBlockHex,
     pageKey: key ? key : undefined
   };
 
