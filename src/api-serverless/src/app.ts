@@ -1033,6 +1033,7 @@ loadEnv(true).then(async (e) => {
       try {
         const contract = req.params.contract;
         const nftId = req.params.nft_id;
+        const wallets = req.query.wallet;
 
         const pageSize: number =
           req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
@@ -1047,9 +1048,11 @@ loadEnv(true).then(async (e) => {
           `[CONTRACT ${contract}][ID ${nftId}]`,
           `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
-        db.fetchDistribution(contract, nftId, pageSize, page).then((result) => {
-          returnPaginatedResult(result, req, res);
-        });
+        db.fetchDistribution(contract, nftId, wallets, pageSize, page).then(
+          (result) => {
+            returnPaginatedResult(result, req, res);
+          }
+        );
       } catch (e) {
         console.log(
           new Date(),

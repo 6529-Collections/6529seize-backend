@@ -961,13 +961,22 @@ export async function fetchDistributionPhotos(
 export async function fetchDistribution(
   contract: string,
   cardId: number,
+  wallets: string,
   pageSize: number,
   page: number
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = constructFilters('', `contract = ${mysql.escape(contract)}`);
   filters = constructFilters(filters, `card_id = ${cardId}`);
-
+  if (wallets) {
+    const resolvedWallets = await resolveEns(wallets);
+    if (resolvedWallets.length == 0) {
+      return returnEmpty();
+    }
+    filters += ` AND ${DISTRIBUTION_TABLE}.wallet in (${mysql.escape(
+      resolvedWallets
+    )})`;
+  }
   let joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
   joins += ` LEFT JOIN ${OWNERS_METRICS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet `;
   joins += ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${WALLETS_TDH_TABLE}.wallet AND ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
