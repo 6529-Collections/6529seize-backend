@@ -86,6 +86,15 @@ loadEnv(true).then(async (e) => {
   const DISTRIBUTION_PAGE_SIZE = 250;
   const SORT_DIRECTIONS = ['ASC', 'DESC'];
 
+  const DISTRIBUTION_SORT = [
+    'phase',
+    'mint_count',
+    'count',
+    'wallet_tdh',
+    'wallet_balance',
+    'wallet_unique_balance'
+  ];
+
   const NFT_TDH_SORT = [
     'card_tdh',
     'card_tdh__raw',
@@ -1070,6 +1079,17 @@ loadEnv(true).then(async (e) => {
             : DISTRIBUTION_PAGE_SIZE;
         const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
+        const sort =
+          req.query.sort && DISTRIBUTION_SORT.includes(req.query.sort)
+            ? req.query.sort
+            : 'phase';
+
+        const sortDir =
+          req.query.sort_direction &&
+          SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+            ? req.query.sort_direction
+            : 'asc';
+
         console.log(
           new Date(),
           `[API]`,
@@ -1083,7 +1103,9 @@ loadEnv(true).then(async (e) => {
           wallets,
           phases,
           pageSize,
-          page
+          page,
+          sort,
+          sortDir
         ).then((result) => {
           returnPaginatedResult(result, req, res);
         });

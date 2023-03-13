@@ -120,8 +120,8 @@ async function fetchPaginated(
   const r1 = await execSQL(sql1);
   const r2 = await execSQL(sql2);
 
-  console.log(sql1);
-  console.log(sql2);
+  // console.log(sql1);
+  // console.log(sql2);
 
   return {
     count: r1[0]?.count,
@@ -988,7 +988,9 @@ export async function fetchDistribution(
   wallets: string,
   phases: string,
   pageSize: number,
-  page: number
+  page: number,
+  sort: string,
+  sortDir: string
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = constructFilters(
@@ -1017,7 +1019,11 @@ export async function fetchDistribution(
 
   return fetchPaginated(
     DISTRIBUTION_TABLE,
-    `phase asc, count desc, wallet_balance desc, wallet_tdh desc`,
+    `${sort} ${
+      sort == 'phase' ? (sortDir == 'asc' ? 'desc' : 'asc') : sortDir
+    }, phase ${
+      sortDir == 'asc' ? 'desc' : 'asc'
+    }, count ${sortDir}, wallet_balance ${sortDir}, wallet_tdh ${sortDir}`,
     pageSize,
     page,
     filters,
