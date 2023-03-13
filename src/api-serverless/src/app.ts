@@ -1088,7 +1088,7 @@ loadEnv(true).then(async (e) => {
           req.query.sort_direction &&
           SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
             ? req.query.sort_direction
-            : 'asc';
+            : 'desc';
 
         console.log(
           new Date(),

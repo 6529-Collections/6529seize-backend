@@ -102,12 +102,10 @@ async function fetchPaginated(
   filters: string,
   fields?: string,
   joins?: string,
-  groups?: string,
-  countSelect?: string
+  groups?: string
 ) {
-  const sql1 = countSelect
-    ? countSelect
-    : `SELECT COUNT(*) as count FROM ${table} ${joins} ${filters}`;
+  const sql1 = `SELECT COUNT(*) as count FROM ${table} ${joins} ${filters}`;
+
   let sql2 = `SELECT ${
     fields ? fields : '*'
   } FROM ${table} ${joins} ${filters} ${
@@ -1013,9 +1011,7 @@ export async function fetchDistribution(
       `phase in (${mysql.escape(phases.split(','))})`
     );
   }
-  let joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
-  joins += ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${WALLETS_TDH_TABLE}.wallet AND ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
-  joins += ` LEFT JOIN ${OWNERS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${OWNERS_TABLE}.wallet`;
+  const joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
 
   return fetchPaginated(
     DISTRIBUTION_TABLE,
@@ -1027,9 +1023,7 @@ export async function fetchDistribution(
     pageSize,
     page,
     filters,
-    `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display, ${WALLETS_TDH_TABLE}.tdh as wallet_tdh, SUM(${OWNERS_TABLE}.balance) as wallet_balance, COUNT(${OWNERS_TABLE}.wallet) as wallet_unique_balance`,
-    joins,
-    `${DISTRIBUTION_TABLE}.id`,
-    `SELECT COUNT(*) as count FROM ${DISTRIBUTION_TABLE} ${filters} `
+    `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display`,
+    joins
   );
 }
