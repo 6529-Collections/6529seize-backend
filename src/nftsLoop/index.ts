@@ -13,7 +13,7 @@ export const handler = async (event?: any, context?: any) => {
 };
 
 async function nftsLoop() {
-  // await nfts();
+  await nfts();
   await findOwners();
   await findMemesExtendedData();
   await findOwnerTags();
