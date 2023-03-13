@@ -101,12 +101,18 @@ async function fetchPaginated(
   page: number,
   filters: string,
   fields?: string,
-  joins?: string
+  joins?: string,
+  groups?: string,
+  countSelect?: string
 ) {
-  const sql1 = `SELECT COUNT(*) as count FROM ${table} ${joins} ${filters}`;
+  const sql1 = countSelect
+    ? countSelect
+    : `SELECT COUNT(*) as count FROM ${table} ${joins} ${filters}`;
   let sql2 = `SELECT ${
     fields ? fields : '*'
-  } FROM ${table} ${joins} ${filters} order by ${orderBy} LIMIT ${pageSize}`;
+  } FROM ${table} ${joins} ${filters} ${
+    groups ? `group by ${groups}` : ``
+  } order by ${orderBy} LIMIT ${pageSize}`;
   if (page > 1) {
     const offset = pageSize * (page - 1);
     sql2 += ` OFFSET ${offset}`;
@@ -114,8 +120,8 @@ async function fetchPaginated(
   const r1 = await execSQL(sql1);
   const r2 = await execSQL(sql2);
 
-  // console.log(sql1);
-  // console.log(sql2);
+  console.log(sql1);
+  console.log(sql2);
 
   return {
     count: r1[0]?.count,
@@ -985,7 +991,10 @@ export async function fetchDistribution(
   page: number
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
-  let filters = constructFilters('', `contract = ${mysql.escape(contract)}`);
+  let filters = constructFilters(
+    '',
+    `${DISTRIBUTION_TABLE}.contract = ${mysql.escape(contract)}`
+  );
   filters = constructFilters(filters, `card_id = ${cardId}`);
   if (wallets) {
     const resolvedWallets = await resolveEns(wallets);
@@ -1003,8 +1012,8 @@ export async function fetchDistribution(
     );
   }
   let joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
-  joins += ` LEFT JOIN ${OWNERS_METRICS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet `;
   joins += ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${WALLETS_TDH_TABLE}.wallet AND ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
+  joins += ` LEFT JOIN ${OWNERS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${OWNERS_TABLE}.wallet`;
 
   return fetchPaginated(
     DISTRIBUTION_TABLE,
@@ -1012,7 +1021,9 @@ export async function fetchDistribution(
     pageSize,
     page,
     filters,
-    `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display, ${OWNERS_METRICS_TABLE}.balance as wallet_balance, ${WALLETS_TDH_TABLE}.tdh as wallet_tdh`,
-    joins
+    `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display, ${WALLETS_TDH_TABLE}.tdh as wallet_tdh, SUM(${OWNERS_TABLE}.balance) as wallet_balance, COUNT(${OWNERS_TABLE}.wallet) as wallet_unique_balance`,
+    joins,
+    `${DISTRIBUTION_TABLE}.id`,
+    `SELECT COUNT(*) as count FROM ${DISTRIBUTION_TABLE} ${filters} `
   );
 }
