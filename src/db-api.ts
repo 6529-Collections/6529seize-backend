@@ -958,10 +958,29 @@ export async function fetchDistributionPhotos(
   );
 }
 
+export async function fetchDistributionPhases(
+  contract: string,
+  cardId: number
+) {
+  const sql = `SELECT DISTINCT phase FROM ${DISTRIBUTION_TABLE} WHERE contract=${mysql.escape(
+    contract
+  )} AND card_id=${cardId} ORDER BY phase ASC`;
+  const results = await execSQL(sql);
+  const phases = results.map((r: any) => r.phase);
+
+  return {
+    count: phases.length,
+    page: 1,
+    next: null,
+    data: phases
+  };
+}
+
 export async function fetchDistribution(
   contract: string,
   cardId: number,
   wallets: string,
+  phases: string,
   pageSize: number,
   page: number
 ) {
@@ -976,6 +995,12 @@ export async function fetchDistribution(
     filters += ` AND ${DISTRIBUTION_TABLE}.wallet in (${mysql.escape(
       resolvedWallets
     )})`;
+  }
+  if (phases) {
+    filters = constructFilters(
+      filters,
+      `phase in (${mysql.escape(phases.split(','))})`
+    );
   }
   let joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
   joins += ` LEFT JOIN ${OWNERS_METRICS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet `;

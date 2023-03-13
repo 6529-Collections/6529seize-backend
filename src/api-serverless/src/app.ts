@@ -83,7 +83,7 @@ loadEnv(true).then(async (e) => {
   const CONTENT_TYPE_HEADER = 'Content-Type';
   const JSON_HEADER_VALUE = 'application/json';
   const DEFAULT_PAGE_SIZE = 50;
-  const DISTRIBUTION_PAGE_SIZE = 500;
+  const DISTRIBUTION_PAGE_SIZE = 250;
   const SORT_DIRECTIONS = ['ASC', 'DESC'];
 
   const NFT_TDH_SORT = [
@@ -1028,12 +1028,41 @@ loadEnv(true).then(async (e) => {
   );
 
   app.get(
+    `${BASE_PATH}/distribution_phases/:contract/:nft_id`,
+    function (req: any, res: any, next: any) {
+      try {
+        const contract = req.params.contract;
+        const nftId = req.params.nft_id;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DISTRIBUTION PHASES]',
+          `[CONTRACT ${contract}][ID ${nftId}]`
+        );
+        db.fetchDistributionPhases(contract, nftId).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DISTRIBUTION]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
+  app.get(
     `${BASE_PATH}/distribution/:contract/:nft_id`,
     function (req: any, res: any, next: any) {
       try {
         const contract = req.params.contract;
         const nftId = req.params.nft_id;
         const wallets = req.query.wallet;
+        const phases = req.query.phase;
 
         const pageSize: number =
           req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
@@ -1048,11 +1077,16 @@ loadEnv(true).then(async (e) => {
           `[CONTRACT ${contract}][ID ${nftId}]`,
           `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
-        db.fetchDistribution(contract, nftId, wallets, pageSize, page).then(
-          (result) => {
-            returnPaginatedResult(result, req, res);
-          }
-        );
+        db.fetchDistribution(
+          contract,
+          nftId,
+          wallets,
+          phases,
+          pageSize,
+          page
+        ).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
       } catch (e) {
         console.log(
           new Date(),
