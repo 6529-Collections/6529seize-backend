@@ -346,13 +346,7 @@ async function transactions(
       response.transactions
     );
 
-    const newtransactionsWithValues = transactionsWithValues.filter(
-      (tr) =>
-        tr.transaction ==
-        '0x80e0954e19ab7b8a584295ba4addbe4bef35e4232640dc592c0819e160cd123e'
-    );
-
-    await persistTransactions(newtransactionsWithValues, true);
+    await persistTransactions(transactionsWithValues, true);
 
     const manifoldTransactions = transactionsWithValues.filter((tr) =>
       areEqualAddresses(tr.from_address, MANIFOLD)

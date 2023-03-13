@@ -414,6 +414,7 @@ export async function persistTransactions(
 ) {
   if (transactions.length > 0) {
     const consolidatedTransactions = consolidateTransactions(transactions);
+
     if (isLab) {
       console.log(
         new Date(),
@@ -951,6 +952,6 @@ export async function persistDistributionMinting(
   );
   console.log(
     '[DISTRIBUTION MINTING]',
-    `PERSISTED ALL TRANSACTIONS [${transactions.length}]`
+    `[PERSISTED ALL TRANSACTIONS ${transactions.length}]`
   );
 }
