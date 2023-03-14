@@ -1,6 +1,5 @@
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
-
 import {
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
@@ -19,7 +18,8 @@ import {
   NFTS_MEME_LAB_TABLE,
   TRANSACTIONS_MEME_LAB_TABLE,
   OWNERS_MEME_LAB_TABLE,
-  MEMES_CONTRACT
+  MEMES_CONTRACT,
+  DISTRIBUTION_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -32,7 +32,11 @@ import {
 import { Owner, OwnerMetric, OwnerTags } from './entities/IOwner';
 import { TDH } from './entities/ITDH';
 import { Team } from './entities/ITeam';
-import { Transaction } from './entities/ITransaction';
+import {
+  Transaction,
+  LabTransaction,
+  BaseTransaction
+} from './entities/ITransaction';
 
 const mysql = require('mysql');
 
@@ -55,7 +59,8 @@ export async function connect() {
       Transaction,
       OwnerMetric,
       NFT,
-      Team
+      Team,
+      LabTransaction
     ],
     synchronize: true,
     logging: false
@@ -89,49 +94,24 @@ export async function addColumnToTable(
   }
 }
 
-export async function addIconColumnToNfts() {
-  await addColumnToTable(NFTS_TABLE, 'icon', 'TEXT NOT NULL');
-}
+function consolidateTransactions(
+  transactions: BaseTransaction[]
+): BaseTransaction[] {
+  const consolidatedTransactions: BaseTransaction[] = Object.values(
+    transactions.reduce((acc: any, transaction) => {
+      const primaryKey = `${transaction.transaction}_${transaction.from_address}_${transaction.to_address}_${transaction.contract}_${transaction.token_id}`;
 
-export async function addMemeLabColumnToArtists() {
-  await addColumnToTable(ARTISTS_TABLE, 'memelab', 'JSON');
-}
+      if (acc[primaryKey]) {
+        acc[primaryKey].token_count += transaction.token_count;
+        acc[primaryKey].value += transaction.value;
+      } else {
+        acc[primaryKey] = transaction;
+      }
 
-export async function createMemeLabNftsTable() {
-  const sql = `CREATE TABLE IF NOT EXISTS ${NFTS_MEME_LAB_TABLE} (
-    id INT NOT NULL , 
-    contract VARCHAR(50) NOT NULL , 
-    created_at DATETIME NOT NULL DEFAULT now(), 
-    mint_date DATETIME NOT NULL , 
-    mint_price DOUBLE NOT NULL , 
-    supply INT NOT NULL , 
-    name TEXT NOT NULL , 
-    collection TEXT NOT NULL , 
-    token_type TEXT NOT NULL , 
-    description TEXT NOT NULL , 
-    artist TEXT NOT NULL , 
-    uri TEXT NOT NULL , 
-    icon TEXT NOT NULL , 
-    thumbnail TEXT NOT NULL , 
-    scaled TEXT NOT NULL , 
-    compressed_animation TEXT ,
-    image TEXT NOT NULL , 
-    animation TEXT , 
-    metadata JSON NOT NULL , 
-    meme_references JSON NOT NULL,
-    PRIMARY KEY (id, contract)
-  ) ENGINE = InnoDB;`;
-  await execSQL(sql);
-}
-
-export async function createMemeLabTransactionsTable() {
-  const sql = `CREATE TABLE IF NOT EXISTS ${TRANSACTIONS_MEME_LAB_TABLE} LIKE ${TRANSACTIONS_TABLE};`;
-  await execSQL(sql);
-}
-
-export async function createMemeLabOwnersTable() {
-  const sql = `CREATE TABLE IF NOT EXISTS ${OWNERS_MEME_LAB_TABLE} LIKE ${OWNERS_TABLE};`;
-  await execSQL(sql);
+      return acc;
+    }, {})
+  );
+  return consolidatedTransactions;
 }
 
 export function execSQL(sql: string): Promise<any> {
@@ -210,6 +190,14 @@ export async function fetchLatestTDHBDate() {
   let sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await execSQL(sql);
   return r.length > 0 ? r[0].timestamp : 0;
+}
+
+export async function fetchTdhReplayTimestamp(date: Date) {
+  let sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} WHERE created_at > '2023-03-06' AND timestamp <= ${mysql.escape(
+    date
+  )} order by block_number asc limit 1;`;
+  const r = await execSQL(sql);
+  return r.length > 0 ? r[0].timestamp : null;
 }
 
 export async function fetchLatestTDHBlockNumber() {
@@ -327,12 +315,26 @@ export async function fetchDistinctOwnerWallets() {
   return results;
 }
 
-export async function fetchTransactionsFromDate(date: Date | undefined) {
+export async function fetchTransactionsFromDate(
+  date: Date | undefined,
+  limit?: number
+) {
   let sql = `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE} `;
   if (date) {
     sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at >= ${mysql.escape(date)}`;
   }
+  if (limit) {
+    sql += ` LIMIT ${limit}`;
+  }
 
+  const results = await execSQL(sql);
+  return results;
+}
+
+export async function fetchTdhReplayOwners(datetime: Date) {
+  let sql = `SELECT from_address, to_address from ${TRANSACTIONS_TABLE} WHERE transaction_date <= ${mysql.escape(
+    datetime
+  )};`;
   const results = await execSQL(sql);
   return results;
 }
@@ -383,53 +385,60 @@ export async function fetchEnsRefresh() {
 }
 
 export async function fetchMissingEns(datetime?: Date) {
-  let sql = `SELECT DISTINCT COALESCE(from_address, to_address) AS address  FROM ${TRANSACTIONS_TABLE} WHERE COALESCE(from_address, to_address) NOT IN (SELECT wallet FROM ${ENS_TABLE}) `;
+  let sql = `SELECT DISTINCT address
+    FROM (
+      SELECT from_address AS address
+      FROM ${TRANSACTIONS_TABLE}
+      WHERE from_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
   if (datetime) {
     sql += ` AND ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(datetime)}`;
   }
-  sql += ` LIMIT 200`;
+  sql += `UNION
+      SELECT to_address AS address
+      FROM ${TRANSACTIONS_TABLE}
+      WHERE to_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
+  if (datetime) {
+    sql += ` AND ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(datetime)}`;
+  }
+  sql += `) AS addresses LIMIT 200`;
 
   const results = await execSQL(sql);
 
   const structuredResults = results.map((r: any) => r.address);
-
   return structuredResults;
 }
 
 export async function persistTransactions(
-  transactions: Transaction[],
+  transactions: BaseTransaction[],
   isLab?: boolean
 ) {
   if (transactions.length > 0) {
+    const consolidatedTransactions = consolidateTransactions(transactions);
+
+    if (isLab) {
+      console.log(
+        new Date(),
+        '[LAB TRANSACTIONS]',
+        `[PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
+      );
+      await AppDataSource.getRepository(LabTransaction).save(
+        consolidatedTransactions
+      );
+    } else {
+      console.log(
+        new Date(),
+        '[TRANSACTIONS]',
+        `[PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
+      );
+      await AppDataSource.getRepository(Transaction).save(
+        consolidatedTransactions
+      );
+    }
+
     console.log(
       new Date(),
       '[TRANSACTIONS]',
-      `[PERSISTING ${transactions.length} TRANSACTIONS]`
-    );
-    await Promise.all(
-      transactions.map(async (t) => {
-        let sql = `REPLACE INTO ${
-          isLab ? TRANSACTIONS_MEME_LAB_TABLE : TRANSACTIONS_TABLE
-        } SET created_at=${mysql.escape(
-          t.created_at
-        )}, transaction=${mysql.escape(t.transaction)}, block=${
-          t.block
-        }, transaction_date=${mysql.escape(
-          t.transaction_date
-        )}, from_address=${mysql.escape(
-          t.from_address
-        )}, to_address=${mysql.escape(t.to_address)}, contract=${mysql.escape(
-          t.contract
-        )}, token_id=${t.token_id}, token_count=${t.token_count}, value=${
-          t.value
-        }`;
-        await execSQL(sql);
-      })
-    );
-    console.log(
-      new Date(),
-      '[TRANSACTIONS]',
-      `[ALL ${transactions.length} TRANSACTIONS PERSISTED]`
+      `[ALL ${consolidatedTransactions.length} TRANSACTIONS PERSISTED]`
     );
   }
 }
@@ -829,7 +838,13 @@ export async function persistENS(ens: ENS[]) {
         const sql = `REPLACE INTO ${ENS_TABLE} SET 
           wallet = ${wallet},
           display = ${display}`;
-        await execSQL(sql);
+        try {
+          await execSQL(sql);
+        } catch {
+          await execSQL(`REPLACE INTO ${ENS_TABLE} SET 
+            wallet = ${wallet},
+            display = ${mysql.escape(null)}`);
+        }
       }
     })
   );
@@ -856,4 +871,87 @@ export async function replaceTeam(team: Team[]) {
   const repo = AppDataSource.getRepository(Team);
   await repo.clear();
   await repo.save(team);
+}
+
+export async function fetchTDHForBlock(block: number) {
+  let sql = `SELECT ${ENS_TABLE}.display as ens, ${WALLETS_TDH_TABLE}.* FROM ${WALLETS_TDH_TABLE} LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet WHERE block=${block};`;
+  const results = await execSQL(sql);
+  results.map((r: any) => (r.memes = JSON.parse(r.memes)));
+  results.map((r: any) => (r.gradients = JSON.parse(r.gradients)));
+  return results;
+}
+
+export async function fetchOwnerMetricsTdhReplay(
+  wallets: string[],
+  block: number
+) {
+  const results = await Promise.all(
+    wallets.map(async (wallet) => {
+      const sql = `SELECT 
+        (SELECT SUM(token_count) FROM transactions 
+         WHERE block >= ${block}
+         AND from_address = ${mysql.escape(
+           wallet
+         )} AND value = 0) AS transfers_out,
+        (SELECT SUM(token_count) FROM transactions 
+         WHERE block >= ${block}
+         AND to_address = ${mysql.escape(
+           wallet
+         )} AND value = 0) AS transfers_in,
+        (SELECT SUM(token_count) FROM transactions 
+         WHERE block >= ${block}
+         AND to_address = ${mysql.escape(
+           wallet
+         )} AND value > 0) AS purchases_count,
+        (SELECT SUM(value) FROM transactions 
+         WHERE block >= ${block}
+         AND to_address = ${mysql.escape(
+           wallet
+         )} AND value > 0) AS purchases_value,
+        (SELECT SUM(token_count) FROM transactions 
+         WHERE block >= ${block}
+         AND from_address = ${mysql.escape(
+           wallet
+         )} AND value > 0) AS sales_count,
+        (SELECT SUM(value) FROM transactions 
+         WHERE block >= ${block}
+         AND from_address = ${mysql.escape(
+           wallet
+         )} AND value > 0) AS sales_value`;
+
+      const [rows] = await execSQL(sql);
+      if (rows[0]) {
+        return {
+          wallet,
+          transfers_out: rows[0].transfers_out,
+          transfers_in: rows[0].transfers_in,
+          purchases_count: rows[0].purchases_count,
+          purchases_value: rows[0].purchases_value,
+          sales_count: rows[0].sales_count,
+          sales_value: rows[0].sales_value
+        };
+      }
+    })
+  );
+
+  return results;
+}
+
+export async function persistDistributionMinting(
+  transactions: BaseTransaction[]
+) {
+  await Promise.all(
+    transactions.map(async (t) => {
+      let sql = `UPDATE ${DISTRIBUTION_TABLE}
+        SET mint_count = mint_count + ${t.token_count}
+        WHERE card_id = ${t.token_id}
+        AND contract = ${mysql.escape(t.contract)}
+        AND wallet = ${mysql.escape(t.to_address)};`;
+      await execSQL(sql);
+    })
+  );
+  console.log(
+    '[DISTRIBUTION MINTING]',
+    `[PERSISTED ALL TRANSACTIONS ${transactions.length}]`
+  );
 }

@@ -17,6 +17,8 @@ export const WALLETS_TDH_TABLE = 'tdh';
 export const UPLOADS_TABLE = 'uploads';
 export const ENS_TABLE = 'ens';
 export const TEAM_TABLE = 'team';
+export const DISTRIBUTION_TABLE = 'distribution';
+export const DISTRIBUTION_PHOTO_TABLE = 'distribution_photo';
 
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
 export const GRADIENT_CONTRACT = '0x0c58ef43ff3032005e472cb5709f8908acb00205';

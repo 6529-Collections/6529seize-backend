@@ -10,7 +10,7 @@ import {
   GRADIENT_CONTRACT,
   MEMES_CONTRACT
 } from './constants';
-import { Transaction } from './entities/ITransaction';
+import { BaseTransaction } from './entities/ITransaction';
 
 let alchemy: Alchemy;
 
@@ -91,7 +91,7 @@ export const findTransactions = async (
     };
   }
 
-  const finalTransactions: Transaction[] = [];
+  const finalTransactions: BaseTransaction[] = [];
 
   await Promise.all(
     transactions.transfers.map(async (t) => {
@@ -99,7 +99,7 @@ export const findTransactions = async (
         const tokenId = parseInt(t.erc721TokenId, 16);
         const tokenCount = 1;
         if (t.to && t.rawContract.address) {
-          const finalTransaction: Transaction = {
+          const finalTransaction: BaseTransaction = {
             created_at: new Date(),
             transaction: t.hash,
             block: fromHex(t.blockNum),
@@ -118,7 +118,7 @@ export const findTransactions = async (
           const tokenId = parseInt(md.tokenId, 16);
           const tokenCount = parseInt(md.value, 16);
           if (t.to && t.rawContract.address) {
-            const finalTransaction: Transaction = {
+            const finalTransaction: BaseTransaction = {
               created_at: new Date(),
               transaction: t.hash,
               block: fromHex(t.blockNum),

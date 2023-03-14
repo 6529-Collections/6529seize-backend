@@ -1,5 +1,7 @@
 import {
   ARTISTS_TABLE,
+  DISTRIBUTION_PHOTO_TABLE,
+  DISTRIBUTION_TABLE,
   ENS_TABLE,
   GRADIENT_CONTRACT,
   LAB_EXTENDED_DATA_TABLE,
@@ -99,12 +101,16 @@ async function fetchPaginated(
   page: number,
   filters: string,
   fields?: string,
-  joins?: string
+  joins?: string,
+  groups?: string
 ) {
   const sql1 = `SELECT COUNT(*) as count FROM ${table} ${joins} ${filters}`;
+
   let sql2 = `SELECT ${
     fields ? fields : '*'
-  } FROM ${table} ${joins} ${filters} order by ${orderBy} LIMIT ${pageSize}`;
+  } FROM ${table} ${joins} ${filters} ${
+    groups ? `group by ${groups}` : ``
+  } order by ${orderBy} LIMIT ${pageSize}`;
   if (page > 1) {
     const offset = pageSize * (page - 1);
     sql2 += ` OFFSET ${offset}`;
@@ -274,7 +280,7 @@ export async function fetchNFTs(
     pageSize,
     page,
     filters,
-    '',
+    `${NFTS_TABLE}.*, CASE WHEN EXISTS (SELECT 1 FROM distribution d WHERE d.card_id = ${NFTS_TABLE}.id AND d.contract = ${NFTS_TABLE}.contract) THEN TRUE ELSE FALSE END AS has_distribution`,
     ''
   );
 }
@@ -934,4 +940,90 @@ export async function fetchLabExtended(
     );
   }
   return fetchPaginated(LAB_EXTENDED_DATA_TABLE, 'id', pageSize, page, filters);
+}
+
+export async function fetchDistributionPhotos(
+  contract: string,
+  cardId: number,
+  pageSize: number,
+  page: number
+) {
+  let filters = constructFilters('', `contract = ${mysql.escape(contract)}`);
+  filters = constructFilters(filters, `card_id = ${cardId}`);
+
+  return fetchPaginated(
+    DISTRIBUTION_PHOTO_TABLE,
+    `link asc`,
+    pageSize,
+    page,
+    filters,
+    ``,
+    ``
+  );
+}
+
+export async function fetchDistributionPhases(
+  contract: string,
+  cardId: number
+) {
+  const sql = `SELECT DISTINCT phase FROM ${DISTRIBUTION_TABLE} WHERE contract=${mysql.escape(
+    contract
+  )} AND card_id=${cardId} ORDER BY phase ASC`;
+  const results = await execSQL(sql);
+  const phases = results.map((r: any) => r.phase);
+
+  return {
+    count: phases.length,
+    page: 1,
+    next: null,
+    data: phases
+  };
+}
+
+export async function fetchDistribution(
+  contract: string,
+  cardId: number,
+  wallets: string,
+  phases: string,
+  pageSize: number,
+  page: number,
+  sort: string,
+  sortDir: string
+) {
+  const tdhBlock = await fetchLatestTDHBlockNumber();
+  let filters = constructFilters(
+    '',
+    `${DISTRIBUTION_TABLE}.contract = ${mysql.escape(contract)}`
+  );
+  filters = constructFilters(filters, `card_id = ${cardId}`);
+  if (wallets) {
+    const resolvedWallets = await resolveEns(wallets);
+    if (resolvedWallets.length == 0) {
+      return returnEmpty();
+    }
+    filters += ` AND ${DISTRIBUTION_TABLE}.wallet in (${mysql.escape(
+      resolvedWallets
+    )})`;
+  }
+  if (phases) {
+    filters = constructFilters(
+      filters,
+      `phase in (${mysql.escape(phases.split(','))})`
+    );
+  }
+  const joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
+
+  return fetchPaginated(
+    DISTRIBUTION_TABLE,
+    `${sort} ${
+      sort == 'phase' ? (sortDir == 'asc' ? 'desc' : 'asc') : sortDir
+    }, phase ${
+      sortDir == 'asc' ? 'desc' : 'asc'
+    }, count ${sortDir}, wallet_balance ${sortDir}, wallet_tdh ${sortDir}`,
+    pageSize,
+    page,
+    filters,
+    `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display`,
+    joins
+  );
 }

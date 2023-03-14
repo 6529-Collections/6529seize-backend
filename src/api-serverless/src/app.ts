@@ -83,7 +83,17 @@ loadEnv(true).then(async (e) => {
   const CONTENT_TYPE_HEADER = 'Content-Type';
   const JSON_HEADER_VALUE = 'application/json';
   const DEFAULT_PAGE_SIZE = 50;
+  const DISTRIBUTION_PAGE_SIZE = 250;
   const SORT_DIRECTIONS = ['ASC', 'DESC'];
+
+  const DISTRIBUTION_SORT = [
+    'phase',
+    'mint_count',
+    'count',
+    'wallet_tdh',
+    'wallet_balance',
+    'wallet_unique_balance'
+  ];
 
   const NFT_TDH_SORT = [
     'card_tdh',
@@ -988,6 +998,128 @@ loadEnv(true).then(async (e) => {
       return;
     }
   });
+
+  app.get(
+    `${BASE_PATH}/distribution_photos/:contract/:nft_id`,
+    function (req: any, res: any, next: any) {
+      try {
+        const contract = req.params.contract;
+        const nftId = req.params.nft_id;
+
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DISTRIBUTION PHOTOS]',
+          `[CONTRACT ${contract}][ID ${nftId}]`,
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchDistributionPhotos(contract, nftId, pageSize, page).then(
+          (result) => {
+            returnPaginatedResult(result, req, res);
+          }
+        );
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DISTRIBUTION PHOTOS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
+  app.get(
+    `${BASE_PATH}/distribution_phases/:contract/:nft_id`,
+    function (req: any, res: any, next: any) {
+      try {
+        const contract = req.params.contract;
+        const nftId = req.params.nft_id;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DISTRIBUTION PHASES]',
+          `[CONTRACT ${contract}][ID ${nftId}]`
+        );
+        db.fetchDistributionPhases(contract, nftId).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DISTRIBUTION]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
+  app.get(
+    `${BASE_PATH}/distribution/:contract/:nft_id`,
+    function (req: any, res: any, next: any) {
+      try {
+        const contract = req.params.contract;
+        const nftId = req.params.nft_id;
+        const wallets = req.query.wallet;
+        const phases = req.query.phase;
+
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DISTRIBUTION_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        const sort =
+          req.query.sort && DISTRIBUTION_SORT.includes(req.query.sort)
+            ? req.query.sort
+            : 'phase';
+
+        const sortDir =
+          req.query.sort_direction &&
+          SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+            ? req.query.sort_direction
+            : 'desc';
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DISTRIBUTION]',
+          `[CONTRACT ${contract}][ID ${nftId}]`,
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchDistribution(
+          contract,
+          nftId,
+          wallets,
+          phases,
+          pageSize,
+          page,
+          sort,
+          sortDir
+        ).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DISTRIBUTION]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
 
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();
