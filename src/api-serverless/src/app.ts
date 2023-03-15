@@ -1097,7 +1097,7 @@ loadEnv(true).then(async (e) => {
           `[CONTRACT ${contract}][ID ${nftId}]`,
           `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
-        db.fetchDistribution(
+        db.fetchDistributionForNFT(
           contract,
           nftId,
           wallets,
@@ -1114,6 +1114,39 @@ loadEnv(true).then(async (e) => {
           new Date(),
           `[API]`,
           '[DISTRIBUTION]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
+  app.get(
+    `${BASE_PATH}/distributions`,
+    function (req: any, res: any, next: any) {
+      try {
+        const wallets = req.query.wallet;
+
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DISTRIBUTIONS]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchDistributions(wallets, pageSize, page).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DISTRIBUTIONS]',
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         return;

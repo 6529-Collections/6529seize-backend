@@ -980,7 +980,7 @@ export async function fetchDistributionPhases(
   };
 }
 
-export async function fetchDistribution(
+export async function fetchDistributionForNFT(
   contract: string,
   cardId: number,
   wallets: string,
@@ -990,7 +990,6 @@ export async function fetchDistribution(
   sort: string,
   sortDir: string
 ) {
-  const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = constructFilters(
     '',
     `${DISTRIBUTION_TABLE}.contract = ${mysql.escape(contract)}`
@@ -1025,5 +1024,33 @@ export async function fetchDistribution(
     filters,
     `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display`,
     joins
+  );
+}
+
+export async function fetchDistributions(
+  wallets: string,
+  pageSize: number,
+  page: number
+) {
+  let filters = '';
+  if (wallets) {
+    const resolvedWallets = await resolveEns(wallets);
+    if (resolvedWallets.length == 0) {
+      return returnEmpty();
+    }
+    filters += constructFilters(
+      filters,
+      `${DISTRIBUTION_TABLE}.wallet in (${mysql.escape(resolvedWallets)})`
+    );
+  }
+
+  return fetchPaginated(
+    DISTRIBUTION_TABLE,
+    `contract desc, card_id desc`,
+    pageSize,
+    page,
+    filters,
+    ``,
+    ``
   );
 }
