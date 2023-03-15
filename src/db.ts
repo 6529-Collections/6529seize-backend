@@ -37,6 +37,7 @@ import {
   LabTransaction,
   BaseTransaction
 } from './entities/ITransaction';
+import { Royalties, RoyaltiesUpload } from './entities/IRoyalties';
 
 const mysql = require('mysql');
 
@@ -60,7 +61,9 @@ export async function connect() {
       OwnerMetric,
       NFT,
       Team,
-      LabTransaction
+      LabTransaction,
+      Royalties,
+      RoyaltiesUpload
     ],
     synchronize: true,
     logging: false
@@ -954,4 +957,29 @@ export async function persistDistributionMinting(
     '[DISTRIBUTION MINTING]',
     `[PERSISTED ALL TRANSACTIONS ${transactions.length}]`
   );
+}
+
+export async function persistRoyalties(royalties: Royalties[]) {
+  const repository = AppDataSource.getRepository(Royalties);
+  const query = repository
+    .createQueryBuilder()
+    .insert()
+    .into(Royalties)
+    .values(royalties)
+    .orUpdate(['id', 'date', 'contract', 'token_id', 'received_royalties']);
+  await query.execute();
+}
+
+export async function persistRoyaltiesUpload(date: Date, url: string) {
+  const upload = new RoyaltiesUpload();
+  upload.date = date;
+  upload.url = url;
+  const repository = AppDataSource.getRepository(RoyaltiesUpload);
+  const query = repository
+    .createQueryBuilder()
+    .insert()
+    .into(RoyaltiesUpload)
+    .values(upload)
+    .orUpdate(['url']);
+  await query.execute();
 }

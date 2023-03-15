@@ -9,6 +9,7 @@ const ownerMetrics = require('./ownerMetricsLoop');
 const s3 = require('./s3Loop');
 const discoverEnsLoop = require('./discoverEnsLoop');
 const refreshEnsLoop = require('./refreshEnsLoop');
+const royaltiesLoop = require('./royaltiesLoop');
 
 const { memeStats, memeLabStats, gradientStats } = require('./marketStatsLoop');
 
@@ -93,6 +94,7 @@ async function start() {
   // await team.handler();
   // await discoverEnsLoop.handler();
   // await refreshEnsLoop.handler();
+  // await royaltiesLoop.handler();
 
   // while (true) {
   //   await tdhReplay.handler();
