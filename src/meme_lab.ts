@@ -30,8 +30,7 @@ import {
   fetchAllLabOwners,
   persistOwners,
   fetchMemesWithSeason,
-  persistLabExtendedData,
-  persistDistributionMinting
+  persistLabExtendedData
 } from './db';
 import { Artist } from './entities/IArtist';
 import { findArtists } from './artists';
@@ -351,8 +350,6 @@ async function transactions(
     const manifoldTransactions = transactionsWithValues.filter((tr) =>
       areEqualAddresses(tr.from_address, MANIFOLD)
     );
-
-    await persistDistributionMinting(manifoldTransactions);
 
     if (response.pageKey) {
       await transactions(

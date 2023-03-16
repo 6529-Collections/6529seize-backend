@@ -1,8 +1,4 @@
-import {
-  fetchLatestTransactionsBlockNumber,
-  persistDistributionMinting,
-  persistTransactions
-} from '../db';
+import { fetchLatestTransactionsBlockNumber, persistTransactions } from '../db';
 import { findTransactions } from '../transactions';
 import { findTransactionValues, runValues } from '../transaction_values';
 import { discoverEns } from '../ens';
@@ -59,8 +55,6 @@ export async function transactions(
     const manifoldTransactions = transactionsWithValues.filter((tr) =>
       areEqualAddresses(tr.from_address, MANIFOLD)
     );
-
-    await persistDistributionMinting(manifoldTransactions);
 
     if (response.pageKey) {
       await transactions(

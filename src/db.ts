@@ -940,25 +940,6 @@ export async function fetchOwnerMetricsTdhReplay(
   return results;
 }
 
-export async function persistDistributionMinting(
-  transactions: BaseTransaction[]
-) {
-  await Promise.all(
-    transactions.map(async (t) => {
-      let sql = `UPDATE ${DISTRIBUTION_TABLE}
-        SET mint_count = mint_count + ${t.token_count}
-        WHERE card_id = ${t.token_id}
-        AND contract = ${mysql.escape(t.contract)}
-        AND wallet = ${mysql.escape(t.to_address)};`;
-      await execSQL(sql);
-    })
-  );
-  console.log(
-    '[DISTRIBUTION MINTING]',
-    `[PERSISTED ALL TRANSACTIONS ${transactions.length}]`
-  );
-}
-
 export async function persistRoyalties(royalties: Royalties[]) {
   const repository = AppDataSource.getRepository(Royalties);
   const query = repository

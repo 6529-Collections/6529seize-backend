@@ -5,6 +5,8 @@ import {
   ENS_TABLE,
   GRADIENT_CONTRACT,
   LAB_EXTENDED_DATA_TABLE,
+  MANIFOLD,
+  MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   NFTS_MEME_LAB_TABLE,
@@ -205,7 +207,7 @@ export async function fetchLabNFTs(
     pageSize,
     page,
     filters,
-    '',
+    `${NFTS_MEME_LAB_TABLE}.*, CASE WHEN EXISTS (SELECT 1 FROM distribution d WHERE d.card_id = ${NFTS_MEME_LAB_TABLE}.id AND d.contract = ${NFTS_MEME_LAB_TABLE}.contract) THEN TRUE ELSE FALSE END AS has_distribution`,
     ''
   );
 }
@@ -1010,7 +1012,17 @@ export async function fetchDistributionForNFT(
       `phase in (${mysql.escape(phases.split(','))})`
     );
   }
-  const joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
+
+  let joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
+
+  let transactionsTable = TRANSACTIONS_TABLE;
+  if (areEqualAddresses(contract, MEMELAB_CONTRACT)) {
+    transactionsTable = TRANSACTIONS_MEME_LAB_TABLE;
+  }
+
+  joins += ` LEFT JOIN ${transactionsTable} ON ${DISTRIBUTION_TABLE}.contract = ${transactionsTable}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${transactionsTable}.token_id AND ${transactionsTable}.from_address=${mysql.escape(
+    MANIFOLD
+  )} AND ${DISTRIBUTION_TABLE}.wallet=${transactionsTable}.to_address`;
 
   return fetchPaginated(
     DISTRIBUTION_TABLE,
@@ -1022,8 +1034,9 @@ export async function fetchDistributionForNFT(
     pageSize,
     page,
     filters,
-    `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display`,
-    joins
+    `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display, SUM(${transactionsTable}.token_count) as card_mint_count`,
+    joins,
+    `${DISTRIBUTION_TABLE}.wallet, ${DISTRIBUTION_TABLE}.created_at, ${DISTRIBUTION_TABLE}.phase`
   );
 }
 
@@ -1044,13 +1057,26 @@ export async function fetchDistributions(
     );
   }
 
+  let joins = `LEFT JOIN ${NFTS_TABLE} ON ${DISTRIBUTION_TABLE}.card_id=${NFTS_TABLE}.id AND ${DISTRIBUTION_TABLE}.contract=${NFTS_TABLE}.contract`;
+  joins += ` LEFT JOIN ${NFTS_MEME_LAB_TABLE} ON ${DISTRIBUTION_TABLE}.card_id=${NFTS_MEME_LAB_TABLE}.id AND ${DISTRIBUTION_TABLE}.contract=${NFTS_MEME_LAB_TABLE}.contract`;
+  joins += ` LEFT JOIN ${TRANSACTIONS_TABLE} ON ${DISTRIBUTION_TABLE}.contract = ${TRANSACTIONS_TABLE}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${TRANSACTIONS_TABLE}.token_id AND ${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
+    MANIFOLD
+  )} AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_TABLE}.to_address`;
+  joins += ` LEFT JOIN ${TRANSACTIONS_MEME_LAB_TABLE} ON ${DISTRIBUTION_TABLE}.contract = ${TRANSACTIONS_MEME_LAB_TABLE}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${TRANSACTIONS_MEME_LAB_TABLE}.token_id AND ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=${mysql.escape(
+    MANIFOLD
+  )} AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_MEME_LAB_TABLE}.to_address`;
+
   return fetchPaginated(
     DISTRIBUTION_TABLE,
-    `contract desc, card_id desc`,
+    `card_mint_date desc`,
     pageSize,
     page,
     filters,
-    ``,
-    ``
+    `${DISTRIBUTION_TABLE}.*, 
+      COALESCE(${NFTS_TABLE}.name, ${NFTS_MEME_LAB_TABLE}.name) AS card_name, 
+      COALESCE(${NFTS_TABLE}.mint_date, ${NFTS_MEME_LAB_TABLE}.mint_date, ${DISTRIBUTION_TABLE}.created_at) AS card_mint_date,
+      COALESCE(SUM(${TRANSACTIONS_TABLE}.token_count), SUM(${TRANSACTIONS_MEME_LAB_TABLE}.token_count), 0) AS card_mint_count`,
+    joins,
+    `${DISTRIBUTION_TABLE}.wallet, ${DISTRIBUTION_TABLE}.created_at, ${DISTRIBUTION_TABLE}.updated_at, ${DISTRIBUTION_TABLE}.phase, ${DISTRIBUTION_TABLE}.id`
   );
 }
