@@ -88,7 +88,7 @@ loadEnv(true).then(async (e) => {
 
   const DISTRIBUTION_SORT = [
     'phase',
-    'mint_count',
+    'card_mint_count',
     'count',
     'wallet_tdh',
     'wallet_balance',
