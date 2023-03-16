@@ -205,7 +205,7 @@ export async function fetchLabNFTs(
     pageSize,
     page,
     filters,
-    '',
+    `${NFTS_MEME_LAB_TABLE}.*, CASE WHEN EXISTS (SELECT 1 FROM distribution d WHERE d.card_id = ${NFTS_MEME_LAB_TABLE}.id AND d.contract = ${NFTS_MEME_LAB_TABLE}.contract) THEN TRUE ELSE FALSE END AS has_distribution`,
     ''
   );
 }
@@ -1044,13 +1044,16 @@ export async function fetchDistributions(
     );
   }
 
+  let joins = `LEFT JOIN ${NFTS_TABLE} ON ${DISTRIBUTION_TABLE}.card_id=${NFTS_TABLE}.id AND ${DISTRIBUTION_TABLE}.contract=${NFTS_TABLE}.contract`;
+  joins += ` LEFT JOIN ${NFTS_MEME_LAB_TABLE} ON ${DISTRIBUTION_TABLE}.card_id=${NFTS_MEME_LAB_TABLE}.id AND ${DISTRIBUTION_TABLE}.contract=${NFTS_MEME_LAB_TABLE}.contract`;
+
   return fetchPaginated(
     DISTRIBUTION_TABLE,
-    `contract desc, card_id desc`,
+    `card_mint_date desc`,
     pageSize,
     page,
     filters,
-    ``,
-    ``
+    `${DISTRIBUTION_TABLE}.*, COALESCE(${NFTS_TABLE}.name, ${NFTS_MEME_LAB_TABLE}.name) AS card_name, COALESCE(${NFTS_TABLE}.mint_date, ${NFTS_MEME_LAB_TABLE}.mint_date, ${DISTRIBUTION_TABLE}.created_at) AS card_mint_date`,
+    joins
   );
 }
