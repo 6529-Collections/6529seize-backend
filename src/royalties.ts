@@ -2,24 +2,72 @@ import {
   ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
   MEMES_CONTRACT,
+  OPENSEA_ADDRESS,
   ROYALTIES_ADDRESS
 } from './constants';
 import {
   Alchemy,
   AssetTransfersCategory,
   AssetTransfersWithMetadataParams,
-  AssetTransfersWithMetadataResult
+  AssetTransfersWithMetadataResult,
+  fromHex,
+  Utils
 } from 'alchemy-sdk';
 import { areEqualAddresses } from './helpers';
 import { Royalties } from './entities/IRoyalties';
 import { NFT } from './entities/INFT';
 import { fetchAllNFTs, persistRoyalties, persistRoyaltiesUpload } from './db';
 import converter from 'json-2-csv';
+import { ethers } from 'ethers';
 
 const EthDater = require('ethereum-block-by-date');
+const fetch = require('node-fetch');
 
 let alchemy: Alchemy;
 const Arweave = require('arweave');
+
+let SEAPORT_IFACE: any = undefined;
+
+function addRoyalty(
+  royalties: Royalties[],
+  nfts: NFT[],
+  royaltiesDate: Date,
+  contract: string,
+  tokenId: number,
+  royaltyValue: number
+) {
+  const rExists = royalties.find(
+    (ro) => areEqualAddresses(ro.contract, contract) && ro.token_id == tokenId
+  );
+  if (rExists) {
+    rExists.received_royalties += royaltyValue;
+  } else {
+    const mynft = nfts.find(
+      (n) => areEqualAddresses(contract, n.contract) && tokenId == n.id
+    );
+    const royalty: Royalties = {
+      date: royaltiesDate,
+      contract: contract,
+      token_id: tokenId,
+      artist: mynft ? mynft.artist : '',
+      received_royalties: royaltyValue
+    };
+    royalties.push(royalty);
+  }
+  return royalties;
+}
+
+async function loadSeaport() {
+  fetch(
+    `https://api.etherscan.io/api?module=contract&action=getabi&address=${OPENSEA_ADDRESS}`
+  ).then(async (res: any) => {
+    const abi = await res.json();
+    SEAPORT_IFACE = new ethers.utils.Interface(abi.result);
+    console.log('[ROYALTIES]', `[SEAPORT LOADED]`);
+  });
+}
+
+loadSeaport();
 
 const myarweave = Arweave.init({
   host: 'arweave.net',
@@ -85,58 +133,6 @@ const findRoyaltiesAddressTransactions = async (
   return transfers;
 };
 
-const findAssetTransfersForPage = async (
-  alchemy: Alchemy,
-  startingBlockHex: string,
-  endingBlockHex: string,
-  pageKey: any
-) => {
-  const settings: AssetTransfersWithMetadataParams = {
-    category: [AssetTransfersCategory.ERC1155, AssetTransfersCategory.ERC721],
-    contractAddresses: [MEMES_CONTRACT, GRADIENT_CONTRACT],
-    withMetadata: true,
-    fromBlock: startingBlockHex,
-    toBlock: endingBlockHex
-  };
-
-  if (pageKey) {
-    settings.pageKey = pageKey;
-  }
-
-  const response = await alchemy.core.getAssetTransfers(settings);
-  return response;
-};
-
-const findAssetTransfers = async (
-  alchemy: Alchemy,
-  startingBlockHex: string,
-  endingBlockHex: string,
-  transfers: AssetTransfersWithMetadataResult[] = [],
-  pageKey: string = ''
-): Promise<AssetTransfersWithMetadataResult[]> => {
-  const response = await findAssetTransfersForPage(
-    alchemy,
-    startingBlockHex,
-    endingBlockHex,
-    pageKey
-  );
-
-  const newKey = response.pageKey;
-  transfers = transfers.concat(response.transfers);
-
-  if (newKey) {
-    return findAssetTransfers(
-      alchemy,
-      startingBlockHex,
-      endingBlockHex,
-      transfers,
-      pageKey
-    );
-  }
-
-  return transfers;
-};
-
 function getDate() {
   const today = new Date();
   const yesterday = new Date(today);
@@ -185,80 +181,169 @@ export const findRoyalties = async () => {
       endingBlockHex
     );
 
-  const assetTransfers: AssetTransfersWithMetadataResult[] =
-    await findAssetTransfers(alchemy, startingBlockHex, endingBlockHex);
-
   console.log(
     '[ROYALTIES]',
-    `[ROYALTIES TRANSACTIONS ${royaltiesTransactions.length}]`,
-    `[ASSET TRANSFERS ${assetTransfers.length}]`
+    `[ROYALTIES TRANSACTIONS ${royaltiesTransactions.length}]`
   );
 
-  const royalties: Royalties[] = [];
+  let royalties: Royalties[] = [];
 
   const nfts: NFT[] = await fetchAllNFTs();
 
-  royaltiesTransactions.map((rt) => {
-    const trf = assetTransfers.find((at) =>
-      areEqualAddresses(rt.hash, at.hash)
-    );
-    if (trf && rt.value) {
-      let tokenId: number | null = null;
-      if (trf.erc721TokenId) {
-        tokenId = parseInt(trf.erc721TokenId, 16);
+  if (!SEAPORT_IFACE) {
+    await loadSeaport();
+  }
 
-        const rExists = royalties.find(
-          (ro) =>
-            areEqualAddresses(ro.contract, trf.rawContract.address!) &&
-            ro.token_id == tokenId
-        );
-        if (rExists) {
-          rExists.received_royalties += rt.value;
-        } else {
-          const mynft = nfts.find(
-            (n) =>
-              areEqualAddresses(trf.rawContract.address!, n.contract) &&
-              tokenId == n.id
-          );
-          const royalty: Royalties = {
-            date: royaltiesDate,
-            contract: trf.rawContract.address!,
-            token_id: tokenId,
-            artist: mynft ? mynft.artist : '',
-            received_royalties: parseFloat(rt.value!.toFixed(10))
-          };
-          royalties.push(royalty);
-        }
-      } else if (trf.erc1155Metadata) {
-        trf.erc1155Metadata.map((md) => {
-          tokenId = parseInt(md.tokenId, 16);
+  await Promise.all(
+    royaltiesTransactions.map(async (rt) => {
+      const receipt = await alchemy.core.getTransaction(rt.hash);
 
-          const rExists = royalties.find(
-            (ro) =>
-              areEqualAddresses(ro.contract, trf.rawContract.address!) &&
-              ro.token_id == tokenId
-          );
-          if (rExists) {
-            rExists.received_royalties += parseFloat(rt.value!.toFixed(10));
-          } else {
-            const mynft = nfts.find(
-              (n) =>
-                areEqualAddresses(trf.rawContract.address!, n.contract) &&
-                tokenId == n.id
+      if (receipt?.data) {
+        try {
+          const seaResult = SEAPORT_IFACE.parseTransaction({
+            data: receipt.data
+          });
+
+          if (seaResult.name.startsWith('fulfillBasic')) {
+            const params = seaResult.args.parameters;
+            const contract = params.considerationToken;
+            const tokenId = fromHex(params.considerationIdentifier);
+            const value = parseFloat(Utils.formatEther(params.offerAmount));
+            params.additionalRecipients
+              .filter((ar: any) =>
+                areEqualAddresses(ar.recipient, ROYALTIES_ADDRESS)
+              )
+              .map((ar: any) => {
+                const royaltyValue = parseFloat(Utils.formatEther(ar.amount));
+                royalties = addRoyalty(
+                  royalties,
+                  nfts,
+                  royaltiesDate,
+                  contract,
+                  tokenId,
+                  royaltyValue
+                );
+              });
+          } else if (seaResult.name.startsWith('fulfillAdvanced') && rt.value) {
+            const seaResult = SEAPORT_IFACE.parseTransaction({
+              data: receipt.data
+            });
+            const args = seaResult.args[0];
+            const offer = args.parameters.offer[0];
+            const contract = offer.token;
+            const tokenId = fromHex(offer.identifierOrCriteria);
+            royalties = addRoyalty(
+              royalties,
+              nfts,
+              royaltiesDate,
+              contract,
+              tokenId,
+              rt.value
             );
-            const royalty: Royalties = {
-              date: royaltiesDate,
-              contract: trf.rawContract.address!,
-              token_id: tokenId,
-              artist: mynft ? mynft.artist : '',
-              received_royalties: parseFloat(rt.value!.toFixed(10))
-            };
-            royalties.push(royalty);
+          } else if (seaResult.name.startsWith('fulfillAvailable')) {
+            const args = seaResult.args[0];
+            args.map((arg: any) => {
+              const contract = arg.parameters.offer[0].token;
+              const tokenId = fromHex(
+                arg.parameters.offer[0].identifierOrCriteria
+              );
+              const considerations = arg.parameters.consideration;
+              let royaltyValue = 0;
+              considerations.map((cons: any) => {
+                if (areEqualAddresses(cons.recipient, ROYALTIES_ADDRESS)) {
+                  royaltyValue += parseFloat(Utils.formatEther(cons.endAmount));
+                }
+              });
+              if (royaltyValue) {
+                royalties = addRoyalty(
+                  royalties,
+                  nfts,
+                  royaltiesDate,
+                  contract,
+                  tokenId,
+                  royaltyValue
+                );
+              }
+            });
+          } else {
+            console.log('i am something else', seaResult.name, rt.hash);
           }
-        });
+        } catch (err: any) {
+          console.log(
+            'i am error',
+            rt.hash,
+            rt.value,
+            receipt.blockNumber,
+            receipt.from,
+            receipt.to
+          );
+          const allTransfers = await alchemy.core.getAssetTransfers({
+            fromAddress: receipt.from,
+            toAddress: receipt.to,
+            withMetadata: true,
+            fromBlock: `0x${receipt.blockNumber!.toString(16)}`,
+            toBlock: `0x${receipt.blockNumber!.toString(16)}`,
+            contractAddresses: [MEMES_CONTRACT, GRADIENT_CONTRACT],
+            category: [
+              AssetTransfersCategory.ERC1155,
+              AssetTransfersCategory.ERC721
+            ]
+          });
+          console.log(allTransfers);
+          const royaltyTransfer = allTransfers.transfers.find((tr) =>
+            areEqualAddresses(tr.hash, rt.hash)
+          );
+          console.log(royaltyTransfer);
+
+          let totalTokenCount = 1;
+          if (royaltyTransfer && royaltyTransfer.erc1155Metadata) {
+            totalTokenCount = [...royaltyTransfer.erc1155Metadata].reduce(
+              (accumulator, object) => {
+                if (object.value) {
+                  return accumulator + fromHex(object.value);
+                }
+                return accumulator;
+              },
+              1
+            );
+          }
+
+          if (
+            royaltyTransfer?.erc721TokenId &&
+            royaltyTransfer.rawContract.address &&
+            rt.value
+          ) {
+            royalties = addRoyalty(
+              royalties,
+              nfts,
+              royaltiesDate,
+              royaltyTransfer.rawContract.address!,
+              fromHex(royaltyTransfer?.erc721TokenId),
+              rt.value / totalTokenCount
+            );
+          }
+
+          if (
+            royaltyTransfer?.erc1155Metadata &&
+            royaltyTransfer.rawContract.address &&
+            rt.value
+          ) {
+            console.log(rt.hash, totalTokenCount, rt.value);
+            royaltyTransfer?.erc1155Metadata.map((meta) => {
+              royalties = addRoyalty(
+                royalties,
+                nfts,
+                royaltiesDate,
+                royaltyTransfer.rawContract.address!,
+                fromHex(meta.tokenId),
+                rt.value! / totalTokenCount
+              );
+            });
+          }
+        }
       }
-    }
-  });
+    })
+  );
 
   await persistRoyalties(royalties);
 

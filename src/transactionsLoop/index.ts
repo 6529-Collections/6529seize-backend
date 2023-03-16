@@ -4,7 +4,7 @@ import {
   persistTransactions
 } from '../db';
 import { findTransactions } from '../transactions';
-import { findTransactionValues } from '../transaction_values';
+import { findTransactionValues, runValues } from '../transaction_values';
 import { discoverEns } from '../ens';
 import { loadEnv, unload } from '../secrets';
 import { areEqualAddresses } from '../helpers';
@@ -16,6 +16,13 @@ export const handler = async (event?: any, context?: any) => {
   await transactionsLoop();
   await unload();
   console.log(new Date(), '[TRANSACTIONS LOOP COMPLETE]');
+};
+
+export const handlerValues = async (event?: any, context?: any) => {
+  console.log(new Date(), '[RUNNING TRANSACTIONS VALUES]');
+  await loadEnv();
+  await runValues();
+  console.log(new Date(), '[TRANSACTIONS VALUES COMPLETE]');
 };
 
 export async function transactionsLoop() {

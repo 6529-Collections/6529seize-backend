@@ -1,10 +1,25 @@
 import { Alchemy, fromHex, toHex, Utils } from 'alchemy-sdk';
-import { ALCHEMY_SETTINGS, SEAPORT_ABI } from './constants';
+import {
+  ALCHEMY_SETTINGS,
+  OPENSEA_ADDRESS,
+  ROYALTIES_ADDRESS
+} from './constants';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
 
-const SEAPORT_IFACE = new ethers.utils.Interface(SEAPORT_ABI);
+let SEAPORT_IFACE: any = undefined;
+const fetch = require('node-fetch');
+
+async function loadSeaport() {
+  const f = await fetch(
+    `https://api.etherscan.io/api?module=contract&action=getabi&address=${OPENSEA_ADDRESS}&apikey=${process.env.ETHERSCAN_API_KEY}`
+  );
+  const abi = await f.json();
+  SEAPORT_IFACE = new ethers.utils.Interface(abi.result);
+  console.log('[ROYALTIES]', `[SEAPORT LOADED ${f.status}]`);
+}
+
 let alchemy: Alchemy;
 
 export const findTransactionValues = async (transactions: Transaction[]) => {
@@ -12,6 +27,10 @@ export const findTransactionValues = async (transactions: Transaction[]) => {
     ...ALCHEMY_SETTINGS,
     apiKey: process.env.ALCHEMY_API_KEY
   });
+
+  if (!SEAPORT_IFACE) {
+    await loadSeaport();
+  }
 
   console.log(
     new Date(),
@@ -95,7 +114,7 @@ async function resolveValue(t: Transaction, receipt: any, events: number) {
     const seaResult = SEAPORT_IFACE.parseTransaction({
       data: receipt.data
     });
-    seaResult.args.map((a) => {
+    seaResult.args.map((a: any) => {
       const tokenid = a[1].toString();
       const count = a[2].toString();
       const amount = parseFloat(Utils.formatEther(a[7].toString()));
@@ -110,6 +129,7 @@ async function resolveValue(t: Transaction, receipt: any, events: number) {
 }
 
 export const runValues = async () => {
+  console.log('hello values');
   if (!alchemy) {
     alchemy = new Alchemy({
       ...ALCHEMY_SETTINGS,
@@ -117,31 +137,36 @@ export const runValues = async () => {
     });
   }
 
+  if (!SEAPORT_IFACE) {
+    await loadSeaport();
+  }
+
   const receipt = await alchemy.core.getTransaction(
     // '0x97df4644aff593e8ff0b26dfa1f73ca191969278bbb27d30f774dded76c22115'
     // '0xb1a74e8908ec700918e95f090c7678df08cfbd72eea8dd19576b047211bd275a',
     // '0x935d546c77d0d76b06c4c5abb0108de14d7a15d92977cb2e9c7e581ac0e3a907'
     // '0x97a3fd74fa1efaebd0f1114964f5c0d7f931eee3642ec3588933511b6ce6ee2a'
-    '0x0056031ca441aa574f008004f8e56480d30efbc68bd9c0e98d3257c051f05e0a'
+    '0xc11ced3274e6f6adbaf42ff81f931aa75f186b01975bfa63c5cd7c5f141392c4'
   );
-  let value = receipt ? parseFloat(Utils.formatEther(receipt.value)) : 0;
-  console.log('value', value);
-  const tokensPurchases = 1;
-  const tokenId = 42;
-  if (receipt?.data.includes('0xfb0f3ee1')) {
-    const seaResult = SEAPORT_IFACE.parseTransaction({
-      data: receipt.data
-    });
-    seaResult.args.map((a) => {
-      const tokenid = a[1].toString();
-      const count = a[2].toString();
-      const amount = parseFloat(Utils.formatEther(a[7].toString()));
-      const tokenPrice = amount / count;
-      if (tokenId == tokenid) {
-        value = tokenPrice * tokensPurchases;
-      }
-    });
-  }
+  // console.log(receipt);
+  // const royaltyPayment = receipt?.logs?.filter((l) =>
+  //   l.data.includes(ROYALTIES_ADDRESS.slice(2))
+  // );
+  // console.log();
+  // console.log(royaltyPayment?.length);
 
-  console.log(value);
+  if (receipt?.data) {
+    try {
+      // const seaResult = SEAPORT_IFACE.parseTransaction({
+      //   data: receipt.data
+      // });
+      // const args = seaResult.args[0];
+      // const offer = args.parameters.offer[0];
+      // const contract = offer.token;
+      // const tokenId = fromHex(offer.identifierOrCriteria);
+      // console.log(contract, tokenId, royaltyValue);
+    } catch (err: any) {
+      console.log(err);
+    }
+  }
 };

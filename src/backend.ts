@@ -94,7 +94,8 @@ async function start() {
   // await team.handler();
   // await discoverEnsLoop.handler();
   // await refreshEnsLoop.handler();
-  // await royaltiesLoop.handler();
+  await royaltiesLoop.handler();
+  // await transactions.handlerValues();
 
   // while (true) {
   //   await tdhReplay.handler();
