@@ -37,7 +37,7 @@ async function getAllTransactions(
       ? contracts
       : [MEMES_CONTRACT, GRADIENT_CONTRACT],
     withMetadata: true,
-    maxCount: 250,
+    maxCount: 150,
     fromBlock: startingBlockHex,
     toBlock: latestBlockHex,
     pageKey: key ? key : undefined
@@ -109,7 +109,12 @@ export const findTransactions = async (
             contract: t.rawContract.address,
             token_id: tokenId,
             token_count: tokenCount,
-            value: 0
+            value: 0,
+            royalties: 0,
+            gas_gwei: 0,
+            gas_price: 0,
+            gas_price_gwei: 0,
+            gas: 0
           };
           finalTransactions.push(finalTransaction);
         }
@@ -128,7 +133,12 @@ export const findTransactions = async (
               contract: t.rawContract.address,
               token_id: tokenId,
               token_count: tokenCount,
-              value: 0
+              value: 0,
+              royalties: 0,
+              gas_gwei: 0,
+              gas_price: 0,
+              gas_price_gwei: 0,
+              gas: 0
             };
             finalTransactions.push(finalTransaction);
           }

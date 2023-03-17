@@ -37,7 +37,7 @@ import {
   LabTransaction,
   BaseTransaction
 } from './entities/ITransaction';
-import { Royalties, RoyaltiesUpload } from './entities/IRoyalties';
+import { RoyaltiesUpload } from './entities/IRoyalties';
 
 const mysql = require('mysql');
 
@@ -62,7 +62,6 @@ export async function connect() {
       NFT,
       Team,
       LabTransaction,
-      Royalties,
       RoyaltiesUpload
     ],
     synchronize: true,
@@ -940,17 +939,6 @@ export async function fetchOwnerMetricsTdhReplay(
   return results;
 }
 
-export async function persistRoyalties(royalties: Royalties[]) {
-  const repository = AppDataSource.getRepository(Royalties);
-  const query = repository
-    .createQueryBuilder()
-    .insert()
-    .into(Royalties)
-    .values(royalties)
-    .orUpdate(['id', 'date', 'contract', 'token_id', 'received_royalties']);
-  await query.execute();
-}
-
 export async function persistRoyaltiesUpload(date: Date, url: string) {
   const upload = new RoyaltiesUpload();
   upload.date = date;
@@ -963,4 +951,24 @@ export async function persistRoyaltiesUpload(date: Date, url: string) {
     .values(upload)
     .orUpdate(['url']);
   await query.execute();
+}
+
+export async function fetchRoyalties(
+  startingBlock: number,
+  endingBlock: number
+) {
+  const sql = `
+  SELECT t.contract, t.token_id, SUM(t.royalties) AS total_royalties,
+      COUNT(DISTINCT t.transaction, t.contract, t.token_id) AS transactions_count,
+      SUM(t.token_count) AS token_count, nfts.artist
+  FROM (
+      SELECT *
+      FROM transactions
+      WHERE royalties > 0 AND block >= ${startingBlock} AND block <= ${endingBlock}
+  ) t
+  JOIN nfts ON nfts.id = t.token_id and nfts.contract = t.contract
+  GROUP BY t.contract, t.token_id, nfts.artist;`;
+
+  const results = await execSQL(sql);
+  return results;
 }

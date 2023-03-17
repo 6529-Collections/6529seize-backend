@@ -71,6 +71,11 @@ cron.schedule('1,15,30,45 0 * * *', async function () {
   tdh.handler();
 });
 
+// UPLOAD ROYALTIES AT 04:01
+cron.schedule('1 4 * * *', async function () {
+  royaltiesLoop.handler();
+});
+
 async function start() {
   const now = new Date();
   console.log(
@@ -94,7 +99,7 @@ async function start() {
   // await team.handler();
   // await discoverEnsLoop.handler();
   // await refreshEnsLoop.handler();
-  await royaltiesLoop.handler();
+  // await royaltiesLoop.handler();
   // await transactions.handlerValues();
 
   // while (true) {

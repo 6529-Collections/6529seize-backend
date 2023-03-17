@@ -35,6 +35,21 @@ export class BaseTransaction {
 
   @Column({ type: 'double' })
   value!: number;
+
+  @Column({ type: 'double' })
+  royalties!: number;
+
+  @Column({ type: 'double' })
+  gas_gwei!: number;
+
+  @Column({ type: 'double' })
+  gas_price!: number;
+
+  @Column({ type: 'double' })
+  gas_price_gwei!: number;
+
+  @Column({ type: 'double' })
+  gas!: number;
 }
 
 @Entity('transactions')
