@@ -12,6 +12,7 @@ function cacheKey(req: any) {
 const compression = require('compression');
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 
 const app = express();
 
@@ -38,6 +39,39 @@ loadEnv(true).then(async (e) => {
 
   app.use(compression());
   app.use(cors(corsOptions));
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'"],
+          fontSrc: ["'self'"],
+          imgSrc: ["'self'"]
+        }
+      },
+      referrerPolicy: {
+        policy: 'same-origin'
+      },
+      frameguard: {
+        action: 'sameorigin'
+      },
+      hsts: {
+        maxAge: 31536000,
+        includeSubDomains: true
+      },
+      nosniff: true,
+      permissionsPolicy: {
+        policy: {
+          accelerometer: "'none'",
+          camera: "'none'",
+          geolocation: "'none'",
+          microphone: "'none'",
+          payment: "'none'"
+        }
+      }
+    })
+  );
   app.enable('trust proxy');
 
   const requireLogin = async (req: any, res: any, next: any) => {
