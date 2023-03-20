@@ -9,6 +9,7 @@ const ownerMetrics = require('./ownerMetricsLoop');
 const s3 = require('./s3Loop');
 const discoverEnsLoop = require('./discoverEnsLoop');
 const refreshEnsLoop = require('./refreshEnsLoop');
+const royaltiesLoop = require('./royaltiesLoop');
 
 const { memeStats, memeLabStats, gradientStats } = require('./marketStatsLoop');
 
@@ -70,6 +71,11 @@ cron.schedule('1,15,30,45 0 * * *', async function () {
   tdh.handler();
 });
 
+// UPLOAD ROYALTIES AT 04:01
+cron.schedule('1 4 * * *', async function () {
+  await royaltiesLoop.handler();
+});
+
 async function start() {
   const now = new Date();
   console.log(
@@ -93,6 +99,8 @@ async function start() {
   // await team.handler();
   // await discoverEnsLoop.handler();
   // await refreshEnsLoop.handler();
+  // await royaltiesLoop.handler();
+  // await transactions.handlerValues();
 
   // while (true) {
   //   await tdhReplay.handler();
