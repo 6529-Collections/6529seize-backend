@@ -14,7 +14,5 @@ export const handler = async (event?: any, context?: any) => {
   console.log('[RUNNING ROYALTIES]');
   await loadEnv();
   await findRoyalties();
-  // await saveTeam();
-  // await uploadTeam();
   console.log('[ROYALTIES COMPLETE]');
 };

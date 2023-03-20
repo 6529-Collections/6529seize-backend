@@ -73,7 +73,7 @@ cron.schedule('1,15,30,45 0 * * *', async function () {
 
 // UPLOAD ROYALTIES AT 04:01
 cron.schedule('1 4 * * *', async function () {
-  royaltiesLoop.handler();
+  await royaltiesLoop.handler();
 });
 
 async function start() {
