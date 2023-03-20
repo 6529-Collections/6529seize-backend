@@ -454,12 +454,24 @@ export async function fetchLabTransactions(
 
 async function resolveEns(walletsStr: string) {
   const wallets = walletsStr.split(',');
-  const sql = `SELECT wallet FROM ${ENS_TABLE} WHERE wallet IN (${mysql.escape(
+  const sql = `SELECT wallet,display FROM ${ENS_TABLE} WHERE wallet IN (${mysql.escape(
     wallets
   )}) OR display IN (${mysql.escape(wallets)})`;
   let results = await execSQL(sql);
-  results = results.map((r: any) => r.wallet);
-  return results;
+  const returnResults: string[] = [];
+  wallets.map((wallet: any) => {
+    const w = results.find(
+      (r: any) =>
+        areEqualAddresses(r.wallet, wallet) ||
+        areEqualAddresses(r.display, wallet)
+    );
+    if (w) {
+      returnResults.push(w.wallet);
+    } else {
+      returnResults.push(wallet);
+    }
+  });
+  return returnResults;
 }
 
 export async function fetchTransactions(
