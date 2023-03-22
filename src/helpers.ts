@@ -1,4 +1,7 @@
 export function areEqualAddresses(w1: string, w2: string) {
+  if (!w1 || !w2) {
+    return false;
+  }
   return w1.toUpperCase() === w2.toUpperCase();
 }
 
