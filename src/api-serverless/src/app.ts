@@ -74,6 +74,8 @@ loadEnv(true).then(async (e) => {
   );
   app.enable('trust proxy');
 
+  const pass = process.env.API_PASSWORD.split(',');
+
   const requireLogin = async (req: any, res: any, next: any) => {
     if (req.method == 'OPTIONS') {
       next();
@@ -82,7 +84,7 @@ loadEnv(true).then(async (e) => {
       process.env.ACTIVATE_API_PASSWORD === 'true'
     ) {
       const auth = req.headers['x-6529-auth'];
-      if (!auth || auth != process.env.API_PASSWORD) {
+      if (!auth || !pass.includes(auth)) {
         console.log(`Unauthorized request for ${req.path} auth: ${auth}`);
         res.statusCode = 401;
         const image = await db.fetchRandomImage();
