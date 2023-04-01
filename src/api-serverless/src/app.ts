@@ -74,7 +74,9 @@ loadEnv(true).then(async (e) => {
   );
   app.enable('trust proxy');
 
-  const pass = process.env.API_PASSWORD.split(',');
+  const pass = process.env.API_PASSWORD
+    ? process.env.API_PASSWORD.split(',')
+    : [];
 
   const requireLogin = async (req: any, res: any, next: any) => {
     if (req.method == 'OPTIONS') {
