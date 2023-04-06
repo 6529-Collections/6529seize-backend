@@ -106,7 +106,7 @@ async function start() {
   //   await tdhReplay.handler();
   // }
 
-  // STARTING = false;
+  STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
 }
 
