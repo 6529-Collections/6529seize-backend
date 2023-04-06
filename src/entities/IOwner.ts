@@ -18,21 +18,55 @@ export class Owner {
   balance!: number;
 }
 
-export interface OwnerTags {
-  created_at: Date;
-  wallet: string;
-  memes_balance: number;
-  unique_memes: number;
-  unique_memes_szn1: number;
-  unique_memes_szn2: number;
-  gradients_balance: number;
-  genesis: number;
-  nakamoto: number;
-  memes_cards_sets: number;
-  memes_cards_sets_minus1: number;
-  memes_cards_sets_minus2: number;
-  memes_cards_sets_szn1: number;
-  memes_cards_sets_szn2: number;
+@Entity({ name: 'owners_tags' })
+export class OwnerTags {
+  @Column({ type: 'datetime' })
+  created_at!: Date;
+
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  wallet!: string;
+
+  @Column({ type: 'int', nullable: false })
+  memes_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn3!: number;
+
+  @Column({ type: 'int', nullable: false })
+  gradients_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  genesis!: number;
+
+  @Column({ type: 'int', nullable: false })
+  nakamoto!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_minus1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_minus2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn3!: number;
 }
 
 @Entity({ name: 'owners_metrics' })
@@ -54,6 +88,9 @@ export class OwnerMetric {
 
   @Column({ type: 'int', nullable: false })
   memes_balance_season2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_balance_season3!: number;
 
   @Column({ type: 'int', nullable: false })
   gradients_balance!: number;
@@ -107,6 +144,12 @@ export class OwnerMetric {
   purchases_count_memes_season2!: number;
 
   @Column({ type: 'double', nullable: false })
+  purchases_value_memes_season3!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_memes_season3!: number;
+
+  @Column({ type: 'double', nullable: false })
   purchases_value_gradients!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -129,6 +172,12 @@ export class OwnerMetric {
 
   @Column({ type: 'int', nullable: false })
   purchases_count_primary_memes_season2!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_primary_memes_season3!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_primary_memes_season3!: number;
 
   @Column({ type: 'double', nullable: false })
   purchases_value_primary_gradients!: number;
@@ -155,6 +204,12 @@ export class OwnerMetric {
   purchases_count_secondary_memes_season2!: number;
 
   @Column({ type: 'double', nullable: false })
+  purchases_value_secondary_memes_season3!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_secondary_memes_season3!: number;
+
+  @Column({ type: 'double', nullable: false })
   purchases_value_secondary_gradients!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -179,6 +234,12 @@ export class OwnerMetric {
   sales_count_memes_season2!: number;
 
   @Column({ type: 'double', nullable: false })
+  sales_value_memes_season3!: number;
+
+  @Column({ type: 'int', nullable: false })
+  sales_count_memes_season3!: number;
+
+  @Column({ type: 'double', nullable: false })
   sales_value_gradients!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -201,6 +262,12 @@ export class OwnerMetric {
 
   @Column({ type: 'int', nullable: false })
   transfers_out_memes_season2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_in_memes_season3!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_out_memes_season3!: number;
 
   @Column({ type: 'int', nullable: false })
   transfers_in_gradients!: number;

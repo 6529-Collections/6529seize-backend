@@ -41,9 +41,9 @@ export async function uploadTDH(force?: boolean) {
     const tdhProcessed = tdh.map((tdh) => {
       const {
         date,
-        memes_tdh_season2,
-        memes_tdh_season2__raw,
+        memes_balance_season1,
         memes_balance_season2,
+        memes_balance_season3,
         ...rest
       } = tdh;
       if (!rest.ens) {

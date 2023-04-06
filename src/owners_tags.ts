@@ -31,8 +31,10 @@ export const findOwnerTags = async () => {
   const memesNftsGenesis = [...memesNFTs].filter(
     (a) => a.id == 1 || a.id == 2 || a.id == 3
   );
+
   const memesNFTsSzn1 = filterSeason(1, memesNFTs);
   const memesNFTsSzn2 = filterSeason(2, memesNFTs);
+  const memesNFTsSzn3 = filterSeason(3, memesNFTs);
 
   const ownersTagsDelta: OwnerTags[] = [];
 
@@ -53,6 +55,9 @@ export const findOwnerTags = async () => {
     const walletMemesSzn2 = [...walletMemes].filter((a) =>
       memesNFTsSzn2.some((n) => n.id == a.token_id)
     );
+    const walletMemesSzn3 = [...walletMemes].filter((a) =>
+      memesNFTsSzn3.some((n) => n.id == a.token_id)
+    );
 
     const walletGradients = [...walletNFTs].filter((n) =>
       areEqualAddresses(n.contract, GRADIENT_CONTRACT)
@@ -61,8 +66,8 @@ export const findOwnerTags = async () => {
     let memesCardSets = 0;
     let memesCardSetsMinus1 = 0;
     let memesCardSetsMinus2 = 0;
-    let walletMemesSet1 = [];
-    let walletMemesSet2 = [];
+    let walletMemesSet1: any[] = [];
+    let walletMemesSet2: any[] = [];
     if (walletMemes.length == memesNFTs.length) {
       memesCardSets = Math.min.apply(
         Math,
@@ -101,7 +106,10 @@ export const findOwnerTags = async () => {
     }
 
     let memesCardSetsSzn1 = 0;
-    if (walletMemesSzn1.length == memesNFTsSzn1.length) {
+    if (
+      memesNFTsSzn1.length > 0 &&
+      walletMemesSzn1.length == memesNFTsSzn1.length
+    ) {
       memesCardSetsSzn1 = Math.min.apply(
         Math,
         [...walletMemesSzn1].map(function (o) {
@@ -110,10 +118,25 @@ export const findOwnerTags = async () => {
       );
     }
     let memesCardSetsSzn2 = 0;
-    if (walletMemesSzn2.length == memesNFTsSzn2.length) {
+    if (
+      memesNFTsSzn2.length > 0 &&
+      walletMemesSzn2.length == memesNFTsSzn2.length
+    ) {
       memesCardSetsSzn2 = Math.min.apply(
         Math,
         [...walletMemesSzn2].map(function (o) {
+          return o.balance;
+        })
+      );
+    }
+    let memesCardSetsSzn3 = 0;
+    if (
+      memesNFTsSzn3.length > 0 &&
+      walletMemesSzn3.length == memesNFTsSzn3.length
+    ) {
+      memesCardSetsSzn3 = Math.min.apply(
+        Math,
+        [...walletMemesSzn3].map(function (o) {
           return o.balance;
         })
       );
@@ -151,6 +174,7 @@ export const findOwnerTags = async () => {
       unique_memes: walletMemes.length,
       unique_memes_szn1: walletMemesSzn1.length,
       unique_memes_szn2: walletMemesSzn2.length,
+      unique_memes_szn3: walletMemesSzn3.length,
       gradients_balance: walletGradients.length,
       genesis: genesis,
       nakamoto: nakamoto,
@@ -158,7 +182,8 @@ export const findOwnerTags = async () => {
       memes_cards_sets_minus1: memesCardSetsMinus1,
       memes_cards_sets_minus2: memesCardSetsMinus2,
       memes_cards_sets_szn1: memesCardSetsSzn1,
-      memes_cards_sets_szn2: memesCardSetsSzn2
+      memes_cards_sets_szn2: memesCardSetsSzn2,
+      memes_cards_sets_szn3: memesCardSetsSzn3
     };
 
     const existingTags = startingOwnerTags.find((o) =>
@@ -174,9 +199,11 @@ export const findOwnerTags = async () => {
         existingTags.unique_memes != ownerTags.unique_memes ||
         existingTags.unique_memes_szn1 != ownerTags.unique_memes_szn1 ||
         existingTags.unique_memes_szn2 != ownerTags.unique_memes_szn2 ||
+        existingTags.unique_memes_szn3 != ownerTags.unique_memes_szn3 ||
         existingTags.memes_cards_sets != ownerTags.memes_cards_sets ||
         existingTags.memes_cards_sets_szn1 != ownerTags.memes_cards_sets_szn1 ||
         existingTags.memes_cards_sets_szn2 != ownerTags.memes_cards_sets_szn2 ||
+        existingTags.memes_cards_sets_szn3 != ownerTags.memes_cards_sets_szn3 ||
         existingTags.memes_cards_sets_minus1 !=
           ownerTags.memes_cards_sets_minus1 ||
         existingTags.memes_cards_sets_minus2 !=

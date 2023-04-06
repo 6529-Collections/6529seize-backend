@@ -62,7 +62,9 @@ export async function connect() {
       NFT,
       Team,
       LabTransaction,
-      RoyaltiesUpload
+      RoyaltiesUpload,
+      OwnerTags,
+      TDH
     ],
     synchronize: true,
     logging: false
@@ -563,10 +565,10 @@ export async function persistOwnerMetrics(
         .where('wallet NOT IN (:...walletIds)', { walletIds })
         .execute();
 
-      console.log(result);
-
-      console.log('[OWNERS METRICS]', '[RESET]', `[${result}]`);
+      console.log('[OWNERS METRICS]', '[RESET]', `[${JSON.stringify(result)}]`);
     }
+
+    const repo = AppDataSource.getRepository(OwnerMetric);
 
     await Promise.all(
       ownerMetrics.map(async (ownerMetric) => {
@@ -575,9 +577,9 @@ export async function persistOwnerMetrics(
             '[OWNERS METRICS]',
             `[DELETING ${ownerMetric.wallet} BALANCE ${ownerMetric.balance}]`
           );
-          await AppDataSource.getRepository(OwnerMetric).remove(ownerMetric);
+          await repo.remove(ownerMetric);
         } else {
-          await AppDataSource.getRepository(OwnerMetric).save(ownerMetric);
+          await repo.save(ownerMetric);
         }
       })
     );
@@ -598,6 +600,8 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
       `[PERSISTING ${ownersTags.length} WALLETS]`
     );
 
+    const repo = AppDataSource.getRepository(OwnerTags);
+
     await Promise.all(
       ownersTags.map(async (owner) => {
         let sql;
@@ -605,29 +609,10 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
           sql = `DELETE FROM ${OWNERS_TAGS_TABLE} WHERE wallet=${mysql.escape(
             owner.wallet
           )}`;
+          await repo.remove(owner);
         } else {
-          sql = `REPLACE INTO ${OWNERS_TAGS_TABLE} SET created_at=${mysql.escape(
-            new Date()
-          )}, wallet=${mysql.escape(owner.wallet)}, memes_balance=${
-            owner.memes_balance
-          }, unique_memes=${owner.unique_memes}, unique_memes_szn1=${
-            owner.unique_memes_szn1
-          }, unique_memes_szn2=${owner.unique_memes_szn2}, gradients_balance=${
-            owner.gradients_balance
-          }, genesis=${owner.genesis}, nakamoto=${
-            owner.nakamoto
-          }, memes_cards_sets=${
-            owner.memes_cards_sets
-          }, memes_cards_sets_minus1=${
-            owner.memes_cards_sets_minus1
-          }, memes_cards_sets_minus2=${
-            owner.memes_cards_sets_minus2
-          }, memes_cards_sets_szn1=${
-            owner.memes_cards_sets_szn1
-          }, memes_cards_sets_szn2=${owner.memes_cards_sets_szn2}`;
+          await repo.save(owner);
         }
-
-        await execSQL(sql);
       })
     );
 
@@ -735,97 +720,14 @@ export async function persistTdhUpload(
 export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
   console.log('[TDH]', `PERSISTING WALLETS TDH [${tdh.length}]`);
 
-  const sortedTdh = tdh.sort((a: TDH, b: TDH) => {
-    if (a.tdh > b.tdh) return -1;
-    else if (a.tdh < b.tdh) return 1;
-    else if (a.memes_tdh_season1 > b.memes_tdh_season1) return -1;
-    else if (a.memes_tdh_season1 < b.memes_tdh_season1) return 1;
-    else if (a.gradients_tdh > b.gradients_tdh) return -1;
-    else if (a.gradients_tdh < b.gradients_tdh) return 1;
-    else return -1;
-  });
-  await Promise.all(
-    sortedTdh.map(async (t) => {
-      const wallet = mysql.escape(t.wallet);
-      const tdh_rank = t.tdh_rank;
-      const tdh_rank_memes = t.tdh_rank_memes;
-      const tdh_rank_memes_szn1 = t.tdh_rank_memes_szn1;
-      const tdh_rank_memes_szn2 = t.tdh_rank_memes_szn2;
-      const tdh_rank_gradients = t.tdh_rank_gradients;
-      const tdh = t.tdh;
-      const boost = t.boost;
-      const boosted_tdh = t.boosted_tdh;
-      const tdh__raw = t.tdh__raw;
-      const balance = t.balance;
-      const memes_cards_sets = t.memes_cards_sets;
-      const genesis = t.genesis;
-      const unique_memes = t.unique_memes;
-      const boosted_memes_tdh = t.boosted_memes_tdh;
-      const memes_tdh = t.memes_tdh;
-      const memes_tdh__raw = t.memes_tdh__raw;
-      const memes_balance = t.memes_balance;
-      const boosted_memes_tdh_season1 = t.boosted_memes_tdh_season1;
-      const memes_tdh_season1 = t.memes_tdh_season1;
-      const memes_tdh_season1__raw = t.memes_tdh_season1__raw;
-      const memes_balance_season1 = t.memes_balance_season1;
-      const boosted_memes_tdh_season2 = t.boosted_memes_tdh_season2;
-      const memes_tdh_season2 = t.memes_tdh_season2;
-      const memes_tdh_season2__raw = t.memes_tdh_season2__raw;
-      const memes_balance_season2 = t.memes_balance_season2;
-      const memes = mysql.escape(JSON.stringify(t.memes));
-      const memes_ranks = mysql.escape(JSON.stringify(t.memes_ranks));
-      const boosted_gradients_tdh = t.boosted_gradients_tdh;
-      const gradients_tdh = t.gradients_tdh;
-      const gradients_tdh__raw = t.gradients_tdh__raw;
-      const gradients_balance = t.gradients_balance;
-      const gradients = mysql.escape(JSON.stringify(t.gradients));
-      const gradients_ranks = mysql.escape(JSON.stringify(t.gradients_ranks));
-
-      const sql = `REPLACE INTO ${WALLETS_TDH_TABLE} SET 
-          wallet = ${wallet},
-          tdh_rank = ${tdh_rank},
-          tdh_rank_memes = ${tdh_rank_memes},
-          tdh_rank_memes_szn1 = ${tdh_rank_memes_szn1},
-          tdh_rank_memes_szn2 = ${tdh_rank_memes_szn2},
-          tdh_rank_gradients = ${tdh_rank_gradients},
-          block = ${t.block}, 
-          tdh = ${tdh}, 
-          boost = ${boost}, 
-          boosted_tdh = ${boosted_tdh}, 
-          tdh__raw = ${tdh__raw}, 
-          balance = ${balance}, 
-          memes_cards_sets = ${memes_cards_sets}, 
-          genesis = ${genesis}, 
-          unique_memes = ${unique_memes},
-          boosted_memes_tdh = ${boosted_memes_tdh}, 
-          memes_tdh = ${memes_tdh}, 
-          memes_tdh__raw = ${memes_tdh__raw}, 
-          memes_balance=${memes_balance}, 
-          boosted_memes_tdh_season1 = ${boosted_memes_tdh_season1}, 
-          memes_tdh_season1 = ${memes_tdh_season1}, 
-          memes_tdh_season1__raw = ${memes_tdh_season1__raw}, 
-          memes_balance_season1=${memes_balance_season1}, 
-          boosted_memes_tdh_season2 = ${boosted_memes_tdh_season2}, 
-          memes_tdh_season2 = ${memes_tdh_season2}, 
-          memes_tdh_season2__raw = ${memes_tdh_season2__raw}, 
-          memes_balance_season2=${memes_balance_season2}, 
-          memes = ${memes}, 
-          memes_ranks = ${memes_ranks}, 
-          boosted_gradients_tdh = ${boosted_gradients_tdh}, 
-          gradients_tdh = ${gradients_tdh}, 
-          gradients_tdh__raw = ${gradients_tdh__raw}, 
-          gradients_balance = ${gradients_balance}, 
-          gradients = ${gradients}, 
-          gradients_ranks = ${gradients_ranks}`;
-      await execSQL(sql);
-    })
-  );
-  console.log('[TDH]', `PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+  await AppDataSource.getRepository(TDH).save(tdh);
 
   const sqlBlock = `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block_number=${block}, timestamp=${mysql.escape(
     timestamp
   )}`;
   await execSQL(sqlBlock);
+
+  console.log('[TDH]', `PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
 
 export async function persistENS(ens: ENS[]) {
