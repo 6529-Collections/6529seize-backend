@@ -163,16 +163,11 @@ export const findTDH = async (lastTDHCalc: Date) => {
           if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
             memesTDH += tdh;
             memesTDH__raw += tdh__raw;
-            const season =
-              nft.id == 85
-                ? 3
-                : nft.id == 86
-                ? 3
-                : parseInt(
-                    nft.metadata.attributes.find(
-                      (a: any) => a.trait_type === 'Type - Season'
-                    )?.value
-                  );
+            const season = parseInt(
+              nft.metadata.attributes.find(
+                (a: any) => a.trait_type === 'Type - Season'
+              )?.value
+            );
             if (season == 1) {
               memes_tdh_season1 += tdh;
               memes_tdh_season1__raw += tdh__raw;
