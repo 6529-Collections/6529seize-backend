@@ -55,3 +55,13 @@ export const NFT_SCALED60_IMAGE_LINK =
 
 export const NFT_VIDEO_LINK = 'https://d3lqz0a4bldqgf.cloudfront.net/videos/';
 export const NFT_HTML_LINK = 'https://d3lqz0a4bldqgf.cloudfront.net/html/';
+
+export const DELEGATION_CONTRACT: {
+  chain_id: number;
+  contract: `0x${string}`;
+} = {
+  chain_id: 11155111,
+  contract: '0xf94423086613c6c1f1d3098d8cad99427b9fd0e7'
+};
+export const DELEGATION_ALL_ADDRESS =
+  '0x8888888888888888888888888888888888888888';

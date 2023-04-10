@@ -9,7 +9,6 @@ import { fetchRoyalties, persistRoyaltiesUpload } from './db';
 import converter from 'json-2-csv';
 
 const EthDater = require('ethereum-block-by-date');
-const fetch = require('node-fetch');
 
 let alchemy: Alchemy;
 const Arweave = require('arweave');

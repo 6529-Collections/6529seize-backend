@@ -1,4 +1,4 @@
-import SecretsManager = require('aws-sdk/clients/secretsmanager');
+import { SecretsManager } from '@aws-sdk/client-secrets-manager';
 import { connect, disconnect } from './db';
 
 const envs = ['local', 'development', 'production'];
@@ -29,9 +29,7 @@ async function loadSecrets() {
 
   const secretsManager = new SecretsManager({ region: 'us-east-1' });
 
-  const secret = await secretsManager
-    .getSecretValue({ SecretId: SECRET })
-    .promise();
+  const secret = await secretsManager.getSecretValue({ SecretId: SECRET });
 
   if (secret.SecretString) {
     const secretValue = JSON.parse(secret.SecretString);

@@ -37,6 +37,11 @@ import {
   LabTransaction,
   BaseTransaction
 } from './entities/ITransaction';
+import {
+  Consolidation,
+  ConsolidationEvent,
+  ConsolidationType
+} from './entities/IDelegation';
 import { RoyaltiesUpload } from './entities/IRoyalties';
 
 const mysql = require('mysql');
@@ -64,7 +69,8 @@ export async function connect() {
       LabTransaction,
       RoyaltiesUpload,
       OwnerTags,
-      TDH
+      TDH,
+      Consolidation
     ],
     synchronize: true,
     logging: false
@@ -176,6 +182,50 @@ export async function fetchLatestLabTransactionsBlockNumber(beforeDate?: Date) {
   sql += ` order by block desc limit 1;`;
   const r = await execSQL(sql);
   return r.length > 0 ? r[0].block : 0;
+}
+
+export async function retrieveWalletConsolidations(wallet: string) {
+  const consolidations = await AppDataSource.getRepository(Consolidation)
+    .createQueryBuilder()
+    .where('wallet1 = :wallet', { wallet })
+    .orWhere('wallet2 = :wallet', { wallet })
+    .orWhere((qb) => {
+      const subQuery = qb
+        .subQuery()
+        .select('wallet1')
+        .from(Consolidation, 'consolidations')
+        .where('wallet2 = :wallet', { wallet })
+        .getQuery();
+      return 'wallet1 IN ' + subQuery;
+    })
+    .orWhere((qb) => {
+      const subQuery = qb
+        .subQuery()
+        .select('wallet2')
+        .from(Consolidation, 'consolidations')
+        .where('wallet2 = :wallet', { wallet })
+        .getQuery();
+      return 'wallet2 IN ' + subQuery;
+    })
+    .getMany();
+
+  if (consolidations.length == 0) {
+    return [wallet];
+  }
+  const wallets = new Set<string>();
+  consolidations.forEach((consolidation) => {
+    wallets.add(consolidation.wallet1);
+    wallets.add(consolidation.wallet2);
+  });
+  return Array.from(wallets);
+}
+
+export async function fetchLatestConsolidationsBlockNumber() {
+  const block = await AppDataSource.getRepository(Consolidation)
+    .createQueryBuilder()
+    .select('MAX(block)', 'maxBlock')
+    .getRawOne();
+  return block.maxBlock;
 }
 
 export async function fetchLatestTransactionsBlockNumber(beforeDate?: Date) {
@@ -873,4 +923,85 @@ export async function fetchRoyalties(
 
   const results = await execSQL(sql);
   return results;
+}
+
+export async function persistConsolidations(
+  consolidations: ConsolidationEvent[]
+) {
+  if (consolidations.length > 0) {
+    console.log(
+      '[CONSOLIDATIONS]',
+      `[PERSISTING ${consolidations.length} RESULTS]`
+    );
+
+    await AppDataSource.transaction(async (manager) => {
+      for (const consolidation of consolidations) {
+        const repo = manager.getRepository(Consolidation);
+
+        if (consolidation.type == ConsolidationType.REGISTER) {
+          const r = await repo.findOne({
+            where: {
+              wallet1: consolidation.wallet1,
+              wallet2: consolidation.wallet2
+            }
+          });
+          if (r) {
+            // do nothing
+          } else {
+            const r2 = await repo.findOne({
+              where: {
+                wallet1: consolidation.wallet2,
+                wallet2: consolidation.wallet1
+              }
+            });
+            if (r2) {
+              r2.confirmed = true;
+              await repo.save(r2);
+            } else {
+              const newConsolidation = new Consolidation();
+              newConsolidation.block = consolidation.block;
+              newConsolidation.wallet1 = consolidation.wallet1;
+              newConsolidation.wallet2 = consolidation.wallet2;
+              await repo.save(newConsolidation);
+            }
+          }
+        } else if (consolidation.type == ConsolidationType.REVOKE) {
+          const r = await repo.findOne({
+            where: {
+              wallet1: consolidation.wallet1,
+              wallet2: consolidation.wallet2
+            }
+          });
+          if (r) {
+            if (r.confirmed) {
+              await repo.delete(r);
+              const newConsolidation = new Consolidation();
+              newConsolidation.block = consolidation.block;
+              newConsolidation.wallet1 = consolidation.wallet2;
+              newConsolidation.wallet2 = consolidation.wallet1;
+              await repo.save(newConsolidation);
+            }
+            await repo.delete(r);
+          } else {
+            const r2 = await repo.findOne({
+              where: {
+                wallet1: consolidation.wallet2,
+                wallet2: consolidation.wallet1
+              }
+            });
+            if (r2) {
+              r2.confirmed = false;
+              await repo.save(r2);
+            }
+          }
+        }
+      }
+    });
+
+    console.log(
+      new Date(),
+      '[OWNERS METRICS]',
+      `[ALL ${consolidations.length} RESULTS PERSISTED]`
+    );
+  }
 }
