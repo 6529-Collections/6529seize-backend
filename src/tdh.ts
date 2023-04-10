@@ -12,8 +12,7 @@ import {
   fetchAllNFTs,
   fetchAllOwnersAddresses,
   fetchWalletTransactions,
-  persistTDH,
-  retrieveWalletConsolidations
+  persistTDH
 } from './db';
 
 let alchemy: Alchemy;
@@ -38,6 +37,8 @@ export const findTDH = async (lastTDHCalc: Date) => {
     areEqualAddresses(nft.contract, MEMES_CONTRACT)
   ).length;
 
+  const walletsTDH: TDH[] = [];
+
   const timestamp = new Date(
     (await alchemy.core.getBlock(block)).timestamp * 1000
   );
@@ -57,18 +58,10 @@ export const findTDH = async (lastTDHCalc: Date) => {
     `[TRANSACTIONS UNIQUE WALLETS ${owners.length}]`
   );
 
-  const walletsTDH: TDH[] = [];
   const allGradientsTDH: any[] = [];
   await Promise.all(
     owners.map(async (owner) => {
       const wallet = owner.wallet;
-
-      const consolidations = await retrieveWalletConsolidations(wallet);
-      const walletValue =
-        consolidations.length == 1
-          ? consolidations[0]
-          : consolidations.join('~|~');
-
       const walletMemes: any[] = [];
       let unique_memes = 0;
       let unique_memes_season1 = 0;
@@ -95,18 +88,10 @@ export const findTDH = async (lastTDHCalc: Date) => {
       let gradientsTDH = 0;
       let gradientsTDH__raw = 0;
 
-      let walletTransactions: Transaction[] = [];
-      await Promise.all(
-        consolidations.map(async (c) => {
-          const txs = await fetchWalletTransactions(c, block);
-          walletTransactions = walletTransactions.concat(txs);
-        })
+      const walletTransactions: Transaction[] = await fetchWalletTransactions(
+        wallet,
+        block
       );
-
-      // const walletTransactions: Transaction[] = await fetchWalletTransactions(
-      //   wallet,
-      //   block
-      // );
       const memesTransactions = [...walletTransactions].filter((t) =>
         areEqualAddresses(t.contract, MEMES_CONTRACT)
       );
@@ -127,12 +112,10 @@ export const findTDH = async (lastTDHCalc: Date) => {
         }
 
         let tokenWalletTransactions = [...tokenTransactions]
-          .filter((tr) =>
-            consolidations.some(
-              (c) =>
-                areEqualAddresses(tr.to_address, c) ||
-                areEqualAddresses(tr.from_address, c)
-            )
+          .filter(
+            (tr) =>
+              areEqualAddresses(tr.to_address, wallet) ||
+              areEqualAddresses(tr.from_address, wallet)
           )
           .sort((a, b) => {
             return (
@@ -144,14 +127,12 @@ export const findTDH = async (lastTDHCalc: Date) => {
         const walletTokens: Date[] = [];
 
         tokenWalletTransactions.map((t) => {
-          if (consolidations.some((c) => areEqualAddresses(t.to_address, c))) {
+          if (areEqualAddresses(t.to_address, wallet)) {
             Array.from({ length: t.token_count }, () => {
               walletTokens.push(new Date(t.transaction_date));
             });
           }
-          if (
-            consolidations.some((c) => areEqualAddresses(t.from_address, c))
-          ) {
+          if (areEqualAddresses(t.from_address, wallet)) {
             Array.from({ length: t.token_count }, () => {
               walletTokens.pop();
             });
@@ -235,7 +216,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
       if (Math.round(totalTDH) > 0) {
         const tdh: TDH = {
           date: new Date(),
-          wallet: walletValue,
+          wallet: wallet,
           tdh_rank: 0, //assigned later
           tdh_rank_memes: 0, //assigned later
           tdh_rank_memes_szn1: 0, //assigned later
@@ -279,17 +260,10 @@ export const findTDH = async (lastTDHCalc: Date) => {
           gradients: walletGradients,
           gradients_ranks: []
         };
-
-        if (
-          !walletsTDH.some((wTdh) =>
-            wTdh.wallet.toUpperCase().includes(wallet.toUpperCase())
-          )
-        ) {
-          walletGradients.map((wg) => {
-            allGradientsTDH.push(wg);
-          });
-          walletsTDH.push(tdh);
-        }
+        walletGradients.map((wg) => {
+          allGradientsTDH.push(wg);
+        });
+        walletsTDH.push(tdh);
       }
     })
   );
