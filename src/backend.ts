@@ -92,7 +92,7 @@ async function start() {
   // await nfts.handler();
   // await memeLab.handler();
   // await ownerMetrics.handler();
-  await tdh.handler();
+  // await tdh.handler();
   // await memeStats();
   // await gradientStats();
   // await memeLabStats();

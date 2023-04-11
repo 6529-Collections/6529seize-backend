@@ -905,20 +905,19 @@ export async function persistRoyaltiesUpload(date: Date, url: string) {
   await query.execute();
 }
 
-export async function fetchRoyalties(
-  startingBlock: number,
-  endingBlock: number
-) {
+export async function fetchRoyalties(startDate: Date, endDate: Date) {
   const sql = `
   SELECT t.contract, t.token_id, SUM(t.royalties) AS total_royalties,
       COUNT(DISTINCT t.transaction, t.contract, t.token_id) AS transactions_count,
       SUM(t.token_count) AS token_count, nfts.artist
   FROM (
-      SELECT *
-      FROM transactions
-      WHERE royalties > 0 AND block >= ${startingBlock} AND block <= ${endingBlock}
+      SELECT * FROM ${TRANSACTIONS_TABLE} 
+      WHERE royalties > 0 AND transaction_date >= ${mysql.escape(
+        startDate
+      )} AND transaction_date <=${mysql.escape(endDate)}
+      ORDER BY transaction_date desc
   ) t
-  JOIN nfts ON nfts.id = t.token_id and nfts.contract = t.contract
+  JOIN ${NFTS_TABLE} ON nfts.id = t.token_id and nfts.contract = t.contract
   GROUP BY t.contract, t.token_id, nfts.artist;`;
 
   const results = await execSQL(sql);
