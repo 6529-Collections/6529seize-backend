@@ -7,12 +7,12 @@ import { findDelegationTransactions } from '../delegations';
 import { loadEnv, unload } from '../secrets';
 
 export const handler = async (event?: any, context?: any) => {
-  console.log(new Date(), '[RUNNING DELEGATIONS LOOP]');
+  console.log('[RUNNING DELEGATIONS LOOP]');
   await loadEnv();
-  await retrieveDelegations();
-  // await delegations();
+  // await retrieveDelegations();
+  await delegations();
   await unload();
-  console.log(new Date(), '[DELEGATIONS LOOP COMPLETE]');
+  console.log('[DELEGATIONS LOOP COMPLETE]');
 };
 
 export async function retrieveDelegations() {

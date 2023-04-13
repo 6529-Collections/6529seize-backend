@@ -19,7 +19,8 @@ import {
   TRANSACTIONS_MEME_LAB_TABLE,
   OWNERS_MEME_LAB_TABLE,
   MEMES_CONTRACT,
-  DISTRIBUTION_TABLE
+  DISTRIBUTION_TABLE,
+  CONSOLIDATIONS_LIMIT
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -29,8 +30,13 @@ import {
   MemesExtendedData,
   NFT
 } from './entities/INFT';
-import { Owner, OwnerMetric, OwnerTags } from './entities/IOwner';
-import { TDH } from './entities/ITDH';
+import {
+  ConsolidatedOwnerMetric,
+  Owner,
+  OwnerMetric,
+  OwnerTags
+} from './entities/IOwner';
+import { ConsolidatedTDH, TDH } from './entities/ITDH';
 import { Team } from './entities/ITeam';
 import {
   Transaction,
@@ -43,6 +49,7 @@ import {
   ConsolidationType
 } from './entities/IDelegation';
 import { RoyaltiesUpload } from './entities/IRoyalties';
+import { areEqualAddresses, formatAddress } from './helpers';
 
 const mysql = require('mysql');
 
@@ -70,7 +77,9 @@ export async function connect() {
       RoyaltiesUpload,
       OwnerTags,
       TDH,
-      Consolidation
+      Consolidation,
+      ConsolidatedTDH,
+      ConsolidatedOwnerMetric
     ],
     synchronize: true,
     logging: false
@@ -104,7 +113,7 @@ export async function addColumnToTable(
   }
 }
 
-function consolidateTransactions(
+export function consolidateTransactions(
   transactions: BaseTransaction[]
 ): BaseTransaction[] {
   const consolidatedTransactions: BaseTransaction[] = Object.values(
@@ -188,13 +197,16 @@ export async function retrieveWalletConsolidations(wallet: string) {
   const consolidations = await AppDataSource.getRepository(Consolidation)
     .createQueryBuilder()
     .where('wallet1 = :wallet', { wallet })
+    .andWhere('confirmed = true')
     .orWhere('wallet2 = :wallet', { wallet })
+    .andWhere('confirmed = true')
     .orWhere((qb) => {
       const subQuery = qb
         .subQuery()
         .select('wallet1')
         .from(Consolidation, 'consolidations')
         .where('wallet2 = :wallet', { wallet })
+        .andWhere('confirmed = true')
         .getQuery();
       return 'wallet1 IN ' + subQuery;
     })
@@ -204,20 +216,34 @@ export async function retrieveWalletConsolidations(wallet: string) {
         .select('wallet2')
         .from(Consolidation, 'consolidations')
         .where('wallet2 = :wallet', { wallet })
+        .andWhere('confirmed = true')
         .getQuery();
       return 'wallet2 IN ' + subQuery;
     })
+    .orderBy('block', 'DESC')
     .getMany();
 
-  if (consolidations.length == 0) {
-    return [wallet];
-  }
-  const wallets = new Set<string>();
-  consolidations.forEach((consolidation) => {
-    wallets.add(consolidation.wallet1);
-    wallets.add(consolidation.wallet2);
+  const uniqueWallets: string[] = [];
+  const seenWallets = new Set();
+
+  consolidations.map((consolidation) => {
+    if (!seenWallets.has(consolidation.wallet1)) {
+      seenWallets.add(consolidation.wallet1);
+      uniqueWallets.push(consolidation.wallet1);
+      if (uniqueWallets.length === CONSOLIDATIONS_LIMIT) return;
+    }
+    if (!seenWallets.has(consolidation.wallet2)) {
+      seenWallets.add(consolidation.wallet2);
+      uniqueWallets.push(consolidation.wallet2);
+      if (uniqueWallets.length === CONSOLIDATIONS_LIMIT) return;
+    }
   });
-  return Array.from(wallets);
+
+  if (uniqueWallets.some((w) => areEqualAddresses(w, wallet))) {
+    return uniqueWallets.sort();
+  }
+
+  return [wallet];
 }
 
 export async function fetchLatestConsolidationsBlockNumber() {
@@ -334,6 +360,43 @@ export async function fetchAllTDH() {
   return results;
 }
 
+export async function fetchConsolidationDisplay(myWallets: string[]) {
+  let sql = `SELECT * FROM ${ENS_TABLE} WHERE wallet in (${mysql.escape(
+    myWallets
+  )})`;
+  const results = await execSQL(sql);
+  const displayArray: string[] = [];
+  myWallets.map((w) => {
+    const result = results.find((r: any) => areEqualAddresses(r.wallet, w));
+    if (result && result.display) {
+      displayArray.push(result.display);
+    } else {
+      displayArray.push(formatAddress(w));
+    }
+  });
+  return results.join(' - ');
+}
+
+export async function fetchAllOwnerMetrics() {
+  const metrics = await AppDataSource.getRepository(OwnerMetric).find();
+  return metrics;
+}
+
+export async function fetchAllConsolidatedOwnerMetrics() {
+  const metrics = await AppDataSource.getRepository(ConsolidatedTDH).find();
+  return metrics;
+}
+
+export async function fetchAllConsolidatedOwnerMetricsCount() {
+  const count = await AppDataSource.getRepository(ConsolidatedTDH).count();
+  return count;
+}
+
+export async function fetchAllConsolidatedTdh() {
+  const tdh = await AppDataSource.getRepository(ConsolidatedTDH).find();
+  return tdh;
+}
+
 export async function fetchAllArtists() {
   let sql = `SELECT * FROM ${ARTISTS_TABLE};`;
   const results = await execSQL(sql);
@@ -397,12 +460,6 @@ export async function fetchAllOwnersAddresses() {
   let sql = `SELECT distinct wallet FROM ${OWNERS_TABLE} WHERE wallet != ${mysql.escape(
     NULL_ADDRESS
   )} AND wallet != ${mysql.escape(MANIFOLD)};`;
-  const results = await execSQL(sql);
-  return results;
-}
-
-export async function fetchAllOwnerMetrics() {
-  let sql = `SELECT * FROM ${OWNERS_METRICS_TABLE};`;
   const results = await execSQL(sql);
   return results;
 }
@@ -471,7 +528,6 @@ export async function persistTransactions(
 
     if (isLab) {
       console.log(
-        new Date(),
         '[LAB TRANSACTIONS]',
         `[PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
       );
@@ -480,7 +536,6 @@ export async function persistTransactions(
       );
     } else {
       console.log(
-        new Date(),
         '[TRANSACTIONS]',
         `[PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
       );
@@ -490,7 +545,6 @@ export async function persistTransactions(
     }
 
     console.log(
-      new Date(),
       '[TRANSACTIONS]',
       `[ALL ${consolidatedTransactions.length} TRANSACTIONS PERSISTED]`
     );
@@ -500,7 +554,6 @@ export async function persistTransactions(
 export async function persistTransactionsREMAKE(transactions: Transaction[]) {
   if (transactions.length > 0) {
     console.log(
-      new Date(),
       '[TRANSACTIONS REMAKE]',
       `[PERSISTING ${transactions.length} TRANSACTIONS]`
     );
@@ -521,7 +574,6 @@ export async function persistTransactionsREMAKE(transactions: Transaction[]) {
       })
     );
     console.log(
-      new Date(),
       '[TRANSACTIONS REMAKE]',
       `[ALL ${transactions.length} TRANSACTIONS PERSISTED]`
     );
@@ -530,11 +582,7 @@ export async function persistTransactionsREMAKE(transactions: Transaction[]) {
 
 export async function persistArtists(artists: Artist[]) {
   if (artists.length > 0) {
-    console.log(
-      new Date(),
-      '[ARTISTS]',
-      `[PERSISTING ${artists.length} ARTISTS]`
-    );
+    console.log('[ARTISTS]', `[PERSISTING ${artists.length} ARTISTS]`);
     await Promise.all(
       artists.map(async (artist) => {
         let sql = `REPLACE INTO ${ARTISTS_TABLE} SET name=${mysql.escape(
@@ -553,11 +601,7 @@ export async function persistArtists(artists: Artist[]) {
         await execSQL(sql);
       })
     );
-    console.log(
-      new Date(),
-      '[ARTISTS]',
-      `[ALL ${artists.length} ARTISTS PERSISTED]`
-    );
+    console.log('[ARTISTS]', `[ALL ${artists.length} ARTISTS PERSISTED]`);
   }
 }
 
@@ -588,11 +632,7 @@ export async function persistOwners(owners: Owner[], isLab?: boolean) {
       })
     );
 
-    console.log(
-      new Date(),
-      '[OWNERS]',
-      `[ALL ${owners.length} OWNERS PERSISTED]`
-    );
+    console.log('[OWNERS]', `[ALL ${owners.length} OWNERS PERSISTED]`);
   }
 }
 
@@ -635,7 +675,6 @@ export async function persistOwnerMetrics(
     );
 
     console.log(
-      new Date(),
       '[OWNERS METRICS]',
       `[ALL ${ownerMetrics.length} WALLETS PERSISTED]`
     );
@@ -644,11 +683,7 @@ export async function persistOwnerMetrics(
 
 export async function persistOwnerTags(ownersTags: OwnerTags[]) {
   if (ownersTags.length > 0) {
-    console.log(
-      new Date(),
-      '[OWNERS TAGS]',
-      `[PERSISTING ${ownersTags.length} WALLETS]`
-    );
+    console.log('[OWNERS TAGS]', `[PERSISTING ${ownersTags.length} WALLETS]`);
 
     const repo = AppDataSource.getRepository(OwnerTags);
 
@@ -667,7 +702,6 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
     );
 
     console.log(
-      new Date(),
       '[OWNERS TAGS]',
       `[ALL ${ownersTags.length} WALLETS PERSISTED]`
     );
@@ -677,7 +711,6 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
 export async function persistMemesExtendedData(data: MemesExtendedData[]) {
   if (data.length > 0) {
     console.log(
-      new Date(),
       '[MEMES EXTENDED DATA]',
       `[PERSISTING ${data.length} MEMES EXTENDED DATA]`
     );
@@ -708,7 +741,6 @@ export async function persistMemesExtendedData(data: MemesExtendedData[]) {
       })
     );
     console.log(
-      new Date(),
       '[MEMES EXTENDED DATA]',
       `[ALL ${data.length} MEMES EXTENDED DATA PERSISTED]`
     );
@@ -778,6 +810,21 @@ export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
   await execSQL(sqlBlock);
 
   console.log('[TDH]', `PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+export async function persistConsolidatedTDH(tdh: ConsolidatedTDH[]) {
+  console.log('[CONSOLIDATED TDH]', `PERSISTING WALLETS TDH [${tdh.length}]`);
+
+  await AppDataSource.transaction(async (manager) => {
+    const repo = manager.getRepository(Consolidation);
+    repo.clear();
+    repo.save(tdh);
+  });
+
+  console.log(
+    '[CONSOLIDATED TDH]',
+    `PERSISTED ALL WALLETS TDH [${tdh.length}]`
+  );
 }
 
 export async function persistENS(ens: ENS[]) {
@@ -998,8 +1045,7 @@ export async function persistConsolidations(
     });
 
     console.log(
-      new Date(),
-      '[OWNERS METRICS]',
+      '[CONSOLIDATIONS]',
       `[ALL ${consolidations.length} RESULTS PERSISTED]`
     );
   }

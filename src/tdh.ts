@@ -12,7 +12,9 @@ import {
   fetchAllNFTs,
   fetchAllOwnersAddresses,
   fetchWalletTransactions,
-  persistTDH
+  persistTDH,
+  retrieveWalletConsolidations,
+  consolidateTransactions
 } from './db';
 
 let alchemy: Alchemy;
@@ -62,6 +64,8 @@ export const findTDH = async (lastTDHCalc: Date) => {
   await Promise.all(
     owners.map(async (owner) => {
       const wallet = owner.wallet;
+      const consolidations = await retrieveWalletConsolidations(wallet);
+
       const walletMemes: any[] = [];
       let unique_memes = 0;
       let unique_memes_season1 = 0;
@@ -88,10 +92,35 @@ export const findTDH = async (lastTDHCalc: Date) => {
       let gradientsTDH = 0;
       let gradientsTDH__raw = 0;
 
-      const walletTransactions: Transaction[] = await fetchWalletTransactions(
-        wallet,
-        block
+      const walletTransactions: Transaction[] = consolidateTransactions(
+        await fetchWalletTransactions(wallet, block)
+      ).sort((a: Transaction, b: Transaction) => {
+        return (
+          new Date(a.transaction_date).getTime() -
+          new Date(b.transaction_date).getTime()
+        );
+      });
+
+      let consolidationTransactions: Transaction[] = [];
+      await Promise.all(
+        consolidations.map(async (c) => {
+          if (!areEqualAddresses(c, wallet)) {
+            const cTransactions = await fetchWalletTransactions(c, block);
+            consolidationTransactions =
+              consolidationTransactions.concat(cTransactions);
+          }
+        })
       );
+
+      consolidationTransactions = consolidateTransactions(
+        consolidationTransactions
+      ).sort((a, b) => {
+        return (
+          new Date(a.transaction_date).getTime() -
+          new Date(b.transaction_date).getTime()
+        );
+      });
+
       const memesTransactions = [...walletTransactions].filter((t) =>
         areEqualAddresses(t.contract, MEMES_CONTRACT)
       );
@@ -111,25 +140,23 @@ export const findTDH = async (lastTDHCalc: Date) => {
           );
         }
 
-        let tokenWalletTransactions = [...tokenTransactions]
-          .filter(
-            (tr) =>
-              areEqualAddresses(tr.to_address, wallet) ||
-              areEqualAddresses(tr.from_address, wallet)
-          )
-          .sort((a, b) => {
-            return (
-              new Date(a.transaction_date).getTime() -
-              new Date(b.transaction_date).getTime()
-            );
-          });
-
         const walletTokens: Date[] = [];
 
-        tokenWalletTransactions.map((t) => {
+        tokenTransactions.map((t) => {
           if (areEqualAddresses(t.to_address, wallet)) {
+            let date = new Date(t.transaction_date);
+            if (
+              t.value == 0 &&
+              consolidations.some((c) => areEqualAddresses(c, t.from_address))
+            ) {
+              date = getTokenDateFromConsolidation(
+                consolidations,
+                t,
+                consolidationTransactions
+              );
+            }
             Array.from({ length: t.token_count }, () => {
-              walletTokens.push(new Date(t.transaction_date));
+              walletTokens.push(date);
             });
           }
           if (areEqualAddresses(t.from_address, wallet)) {
@@ -276,6 +303,102 @@ export const findTDH = async (lastTDHCalc: Date) => {
     '[CALCULATING RANKS]'
   );
 
+  console.log(
+    new Date(),
+    '[TDH]',
+    `[BLOCK ${block}]`,
+    `[WALLETS ${walletsTDH.length}]`,
+    '[CALCULATING TDH - END]'
+  );
+
+  const sortedTdh = ranks(
+    allGradientsTDH,
+    walletsTDH,
+    ADJUSTED_NFTS,
+    MEMES_COUNT
+  );
+
+  await persistTDH(block, timestamp, sortedTdh);
+
+  return {
+    block: block,
+    timestamp: timestamp,
+    tdh: sortedTdh
+  };
+};
+
+function calculateBoost(
+  memesCount: number,
+  cardSets: number,
+  genesis: boolean,
+  memes: any[],
+  gradients: any[]
+) {
+  if (cardSets > 0) {
+    let boost = 1.2;
+    boost += (cardSets - 1) * 0.02;
+    boost += gradients.length * 0.02;
+    return Math.min(1.3, boost);
+  }
+
+  if (memes.length == memesCount - 1) {
+    return 1.05;
+  }
+  if (memes.length == memesCount - 2) {
+    return 1.04;
+  }
+  if (memes.length == memesCount - 3) {
+    return 1.03;
+  }
+  if (memes.length == memesCount - 4) {
+    return 1.02;
+  }
+  if (genesis) {
+    return 1.02;
+  }
+  if (memes.length == memesCount - 5) {
+    return 1.01;
+  }
+  return 1;
+}
+
+function getTokenDateFromConsolidation(
+  consolidations: string[],
+  transaction: Transaction,
+  consolidationTransactions: Transaction[]
+): Date {
+  const incomingWallet = transaction.from_address;
+
+  const incomingTransaction = consolidationTransactions.find(
+    (t) =>
+      areEqualAddresses(t.to_address, incomingWallet) &&
+      t.token_id == transaction.token_id
+  );
+  if (incomingTransaction) {
+    let date = new Date(incomingTransaction.transaction_date);
+    if (
+      incomingTransaction.value == 0 &&
+      consolidations.some((c) =>
+        areEqualAddresses(c, incomingTransaction.from_address)
+      )
+    ) {
+      return getTokenDateFromConsolidation(
+        consolidations,
+        incomingTransaction,
+        consolidationTransactions
+      );
+    }
+    return date;
+  }
+  return new Date(transaction.transaction_date);
+}
+
+export function ranks(
+  allGradientsTDH: any[],
+  walletsTDH: any[],
+  ADJUSTED_NFTS: any[],
+  MEMES_COUNT: number
+) {
   const sortedGradientsTdh = allGradientsTDH
     .sort((a, b) => {
       if (a.tdh > b.tdh) {
@@ -291,7 +414,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
       return a;
     });
 
-  const boostedTDH: TDH[] = [];
+  const boostedTDH: any[] = [];
 
   walletsTDH.map((w) => {
     const boost = calculateBoost(
@@ -509,54 +632,5 @@ export const findTDH = async (lastTDHCalc: Date) => {
       return w;
     });
 
-  console.log(
-    new Date(),
-    '[TDH]',
-    `[BLOCK ${block}]`,
-    `[WALLETS ${walletsTDH.length}]`,
-    '[CALCULATING TDH - END]'
-  );
-
-  await persistTDH(block, timestamp, sortedTdh);
-
-  return {
-    block: block,
-    timestamp: timestamp,
-    tdh: sortedTdh
-  };
-};
-
-function calculateBoost(
-  memesCount: number,
-  cardSets: number,
-  genesis: boolean,
-  memes: any[],
-  gradients: any[]
-) {
-  if (cardSets > 0) {
-    let boost = 1.2;
-    boost += (cardSets - 1) * 0.02;
-    boost += gradients.length * 0.02;
-    return Math.min(1.3, boost);
-  }
-
-  if (memes.length == memesCount - 1) {
-    return 1.05;
-  }
-  if (memes.length == memesCount - 2) {
-    return 1.04;
-  }
-  if (memes.length == memesCount - 3) {
-    return 1.03;
-  }
-  if (memes.length == memesCount - 4) {
-    return 1.02;
-  }
-  if (genesis) {
-    return 1.02;
-  }
-  if (memes.length == memesCount - 5) {
-    return 1.01;
-  }
-  return 1;
+  return sortedTdh;
 }

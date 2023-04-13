@@ -88,10 +88,10 @@ async function start() {
   // Uncomment to call on start
 
   // await transactionsReplay.handler();
-  // await transactions.handler();
-  // await nfts.handler();
-  // await memeLab.handler();
-  // await ownerMetrics.handler();
+  await transactions.handler();
+  await nfts.handler();
+  await memeLab.handler();
+  await ownerMetrics.handler();
   // await tdh.handler();
   // await memeStats();
   // await gradientStats();
@@ -102,7 +102,7 @@ async function start() {
   // await refreshEnsLoop.handler();
   // await royaltiesLoop.handler();
   // await transactions.handlerValues();
-  await delegations.handler();
+  // await delegations.handler();
 
   // while (true) {
   //   await tdhReplay.handler();

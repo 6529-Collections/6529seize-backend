@@ -1,4 +1,4 @@
-import { TDHENS } from './entities/ITDH';
+import { ConsolidatedTDH, TDHENS } from './entities/ITDH';
 import { OwnerMetric } from './entities/IOwner';
 import { areEqualAddresses } from './helpers';
 import { SIX529_MUSEUM } from './constants';
@@ -7,7 +7,8 @@ import {
   fetchAllTDH,
   fetchAllOwnerMetrics,
   fetchLastUpload,
-  persistTdhUpload
+  persistTdhUpload,
+  fetchAllConsolidatedTdh
 } from './db';
 
 const Arweave = require('arweave');
@@ -19,7 +20,7 @@ const myarweave = Arweave.init({
 });
 
 export async function uploadTDH(force?: boolean) {
-  const tdh: TDHENS[] = await fetchAllTDH();
+  const tdh: ConsolidatedTDH[] = await fetchAllConsolidatedTdh();
   const ownerMetrics: OwnerMetric[] = await fetchAllOwnerMetrics();
 
   const block = tdh[0].block;
@@ -46,11 +47,9 @@ export async function uploadTDH(force?: boolean) {
         memes_balance_season3,
         ...rest
       } = tdh;
-      if (!rest.ens) {
-        if (areEqualAddresses(rest.wallet, SIX529_MUSEUM)) {
-          rest.ens = '6529Museum';
-        } else {
-          rest.ens = '';
+      if (!rest.consolidation_display && rest.wallets.length == 1) {
+        if (areEqualAddresses(rest.wallets[0], SIX529_MUSEUM)) {
+          rest.consolidation_display = '6529Museum';
         }
       }
       return rest;
@@ -63,11 +62,13 @@ export async function uploadTDH(force?: boolean) {
 
     const combinedArray = tdhProcessed.reduce(
       (combined: any[], tdhProcessed) => {
-        const ownerMetric = ownerMetricProcessed.find((om) =>
-          areEqualAddresses(om.wallet, tdhProcessed.wallet)
+        const ownerMetrics = [...ownerMetricProcessed].filter((om) =>
+          tdhProcessed.wallets.some((w: string) =>
+            areEqualAddresses(w, om.wallet)
+          )
         );
-        if (ownerMetric) {
-          combined.push({ ...tdhProcessed, ...ownerMetric });
+        if (ownerMetrics.length > 0) {
+          combined.push({ ...tdhProcessed, ...ownerMetrics[0] });
         }
         return combined;
       },

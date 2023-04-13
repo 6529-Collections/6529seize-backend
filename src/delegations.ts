@@ -1,19 +1,17 @@
 import { Alchemy, Network } from 'alchemy-sdk';
 import { ALCHEMY_SETTINGS, DELEGATION_CONTRACT } from './constants';
-import { BaseTransaction } from './entities/ITransaction';
 import { DELEGATIONS_IFACE } from './abis/delegations';
 import { areEqualAddresses } from './helpers';
 import { ConsolidationEvent, ConsolidationType } from './entities/IDelegation';
 
 let alchemy: Alchemy;
 
-async function getAllTransactions(startingBlock: number, latestBlock: number) {
+async function getAllDelegations(startingBlock: number, latestBlock: number) {
   const startingBlockHex = `0x${startingBlock.toString(16)}`;
   const latestBlockHex = `0x${latestBlock.toString(16)}`;
 
   console.log(
-    new Date(),
-    '[TRANSACTIONS]',
+    '[DELEGATIONS]',
     `[FROM BLOCK ${startingBlockHex}]`,
     `[TO BLOCK ${latestBlockHex}]`
   );
@@ -39,8 +37,7 @@ export const findDelegationTransactions = async (
   if (!latestBlock) {
     latestBlock = await alchemy.core.getBlockNumber();
     console.log(
-      new Date(),
-      '[TRANSACTIONS]',
+      '[DELEGATIONS]',
       `[STARTING BLOCK ${startingBlock}]`,
       `[LATEST BLOCK ON CHAIN ${latestBlock}]`
     );
@@ -48,15 +45,14 @@ export const findDelegationTransactions = async (
 
   const timestamp = (await alchemy.core.getBlock(latestBlock)).timestamp;
 
-  const transactions = await getAllTransactions(startingBlock, latestBlock);
+  const delegations = await getAllDelegations(startingBlock, latestBlock);
 
   console.log(
-    new Date(),
-    '[TRANSACTIONS]',
-    `[FOUND ${transactions.length} NEW TRANSACTIONS]`
+    '[DELEGATIONS]',
+    `[FOUND ${delegations.length} NEW TRANSACTIONS]`
   );
 
-  if (transactions.length == 0) {
+  if (delegations.length == 0) {
     return {
       latestBlock: latestBlock,
       latestBlockTimestamp: new Date(timestamp * 1000),
@@ -67,8 +63,8 @@ export const findDelegationTransactions = async (
   const consolidations: ConsolidationEvent[] = [];
 
   await Promise.all(
-    transactions.map(async (t) => {
-      const delResult = DELEGATIONS_IFACE.parseLog(t);
+    delegations.map(async (d) => {
+      const delResult = DELEGATIONS_IFACE.parseLog(d);
       if (delResult.args.useCase == 99) {
         const from = delResult.args.delegator
           ? delResult.args.delegator
@@ -83,7 +79,7 @@ export const findDelegationTransactions = async (
             ].includes(delResult.name)
           ) {
             consolidations.push({
-              block: t.blockNumber,
+              block: d.blockNumber,
               type: ConsolidationType.REGISTER,
               wallet1: from,
               wallet2: to
@@ -94,7 +90,7 @@ export const findDelegationTransactions = async (
             )
           ) {
             consolidations.push({
-              block: t.blockNumber,
+              block: d.blockNumber,
               type: ConsolidationType.REVOKE,
               wallet1: from,
               wallet2: to

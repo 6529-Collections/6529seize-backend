@@ -59,3 +59,12 @@ export function areEqualObjects(obj1: any, obj2: any) {
   }
   return true;
 }
+
+export function formatAddress(address: string) {
+  if (!address || !address.startsWith('0x')) {
+    return address;
+  }
+  return `${address.substring(0, 5)}...${address.substring(
+    address.length - 3
+  )}`;
+}

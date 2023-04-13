@@ -2,6 +2,7 @@ import { fetchLatestTDHBDate } from '../db';
 import { getHoursAgo, getLastTDH } from '../helpers';
 import { findNftTDH } from '../nft_tdh';
 import { findTDH } from '../tdh';
+import { consolidateTDH } from '../tdh_consolidation';
 import { uploadTDH } from '../tdh_upload';
 import { loadEnv, unload } from '../secrets';
 
@@ -27,6 +28,7 @@ async function tdh(force?: boolean) {
 
   if (hoursAgo > 24 || force) {
     await findTDH(lastTDHCalc);
+    await consolidateTDH(lastTDHCalc);
   } else {
     console.log(
       new Date(),

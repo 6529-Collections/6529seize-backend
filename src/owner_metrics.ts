@@ -4,7 +4,7 @@ import {
   MEMES_CONTRACT,
   PUNK_6529
 } from './constants';
-import { OwnerMetric } from './entities/IOwner';
+import { ConsolidatedOwnerMetric, OwnerMetric } from './entities/IOwner';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 import {
@@ -12,8 +12,12 @@ import {
   fetchWalletTransactions,
   fetchDistinctOwnerWallets,
   fetchLastOwnerMetrics,
-  fetchTransactionsFromDate
+  fetchTransactionsFromDate,
+  fetchAllConsolidatedOwnerMetricsCount,
+  retrieveWalletConsolidations,
+  fetchConsolidationDisplay
 } from './db';
+import { fetchAllOwnerMetrics } from './db';
 
 export const findOwnerMetrics = async (reset?: boolean) => {
   const lastMetricsDate = await fetchLastOwnerMetrics();
@@ -316,6 +320,42 @@ export const findOwnerMetrics = async (reset?: boolean) => {
         };
         ownerMetrics.push(ownerMetric);
       }
+    })
+  );
+
+  let ownerMetricsForConsolidation = ownerMetrics;
+  const consolidatedMetrics: ConsolidatedOwnerMetric[] = [];
+  const processedWallets = new Set<string>();
+
+  if (reset || (await fetchAllConsolidatedOwnerMetricsCount()) == 0) {
+    ownerMetricsForConsolidation = await fetchAllOwnerMetrics();
+  }
+
+  Promise.all(
+    ownerMetricsForConsolidation.map(async (om) => {
+      const wallet = om.wallet;
+      const consolidations = await retrieveWalletConsolidations(wallet);
+      if (
+        !Array.from(processedWallets).some((pw) =>
+          consolidations.some((c) => areEqualAddresses(c, pw))
+        )
+      ) {
+        const consolidatedWalletsMetrics = [
+          ...ownerMetricsForConsolidation
+        ].filter((t) =>
+          consolidations.some((c) => areEqualAddresses(c, t.wallet))
+        );
+
+        const display = await fetchConsolidationDisplay(consolidations);
+        console.log('metrics display', om.wallet, display);
+
+        consolidatedWalletsMetrics.map((com) => {});
+        // const consolidation: ConsolidatedOwnerMetric = {};
+        // consolidatedMetrics.push(consolidation);
+      }
+      consolidations.map((c) => {
+        processedWallets.add(c);
+      });
     })
   );
 
