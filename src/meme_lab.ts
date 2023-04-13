@@ -271,6 +271,8 @@ export const findNFTs = async (
       new Date(n.mint_date).getTime() != new Date(m.mint_date).getTime()
     ) {
       changed = true;
+    } else if (n.supply == 0) {
+      changed = true;
     } else {
       const nClone: any = { ...n };
       const mClone: any = { ...m };

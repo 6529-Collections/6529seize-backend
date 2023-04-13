@@ -563,8 +563,6 @@ export async function persistOwnerMetrics(
         .where('wallet NOT IN (:...walletIds)', { walletIds })
         .execute();
 
-      console.log(result);
-
       console.log('[OWNERS METRICS]', '[RESET]', `[${result}]`);
     }
 
@@ -855,7 +853,16 @@ export async function persistENS(ens: ENS[]) {
 }
 
 export async function persistLabNFTS(labnfts: LabNFT[]) {
-  await AppDataSource.getRepository(LabNFT).save(labnfts);
+  const repo = AppDataSource.getRepository(LabNFT);
+  await Promise.all(
+    labnfts.map(async (lnft) => {
+      if (lnft.supply > 0) {
+        await repo.save(lnft);
+      } else {
+        await repo.remove(lnft);
+      }
+    })
+  );
 }
 
 export async function persistLabExtendedData(labMeta: LabExtendedData[]) {
