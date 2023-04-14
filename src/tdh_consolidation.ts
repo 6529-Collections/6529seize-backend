@@ -6,7 +6,7 @@ import {
   persistConsolidatedTDH,
   fetchConsolidationDisplay
 } from './db';
-import { areEqualAddresses, formatAddress } from './helpers';
+import { areEqualAddresses } from './helpers';
 import { ranks } from './tdh';
 import { MEMES_CONTRACT } from './constants';
 
@@ -34,9 +34,11 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
     tdh.map(async (tdhEntry) => {
       const wallet = tdhEntry.wallet;
       const consolidations = await retrieveWalletConsolidations(wallet);
+      const display = await fetchConsolidationDisplay(consolidations);
+
       if (
         !Array.from(processedWallets).some((pw) =>
-          consolidations.some((c) => areEqualAddresses(c, pw))
+          areEqualAddresses(wallet, pw)
         )
       ) {
         const consolidatedWalletsTdh = [...tdh].filter((t) =>
@@ -101,8 +103,6 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
             wTdh.gradients
           );
         });
-
-        const display = await fetchConsolidationDisplay(consolidations);
 
         const consolidation: ConsolidatedTDH = {
           date: new Date(),

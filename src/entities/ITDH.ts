@@ -1,6 +1,10 @@
 import { Column, Entity, PrimaryColumn } from 'typeorm';
+import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  WALLETS_TDH_TABLE
+} from '../constants';
 
-@Entity('tdh')
+@Entity(WALLETS_TDH_TABLE)
 export class TDH {
   @Column({ type: 'datetime' })
   date!: Date;
@@ -139,7 +143,7 @@ export interface TDHENS extends TDH {
   ens: string;
 }
 
-@Entity('tdh_consolidation')
+@Entity(CONSOLIDATED_WALLETS_TDH_TABLE)
 export class ConsolidatedTDH {
   @Column({ type: 'datetime' })
   date!: Date;

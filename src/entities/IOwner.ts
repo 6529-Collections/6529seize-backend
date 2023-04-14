@@ -1,4 +1,10 @@
 import { Entity, Column, PrimaryGeneratedColumn, PrimaryColumn } from 'typeorm';
+import {
+  CONSOLIDATED_OWNERS_METRICS_TABLE,
+  CONSOLIDATED_OWNERS_TAGS_TABLE,
+  OWNERS_METRICS_TABLE,
+  OWNERS_TAGS_TABLE
+} from '../constants';
 
 @Entity()
 export class Owner {
@@ -18,7 +24,7 @@ export class Owner {
   balance!: number;
 }
 
-@Entity({ name: 'owners_tags' })
+@Entity({ name: OWNERS_TAGS_TABLE })
 export class OwnerTags {
   @Column({ type: 'datetime' })
   created_at!: Date;
@@ -69,7 +75,61 @@ export class OwnerTags {
   memes_cards_sets_szn3!: number;
 }
 
-@Entity({ name: 'owners_metrics' })
+@Entity({ name: CONSOLIDATED_OWNERS_TAGS_TABLE })
+export class ConsolidatedOwnerTags {
+  @Column({ type: 'datetime' })
+  created_at!: Date;
+
+  @PrimaryColumn({ type: 'varchar', length: 500 })
+  consolidation_display!: string;
+
+  @Column({ type: 'json', nullable: false })
+  wallets?: any;
+
+  @Column({ type: 'int', nullable: false })
+  memes_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn3!: number;
+
+  @Column({ type: 'int', nullable: false })
+  gradients_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  genesis!: number;
+
+  @Column({ type: 'int', nullable: false })
+  nakamoto!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_minus1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_minus2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn3!: number;
+}
+
+@Entity({ name: OWNERS_METRICS_TABLE })
 export class OwnerMetric {
   @Column({ type: 'datetime' })
   created_at!: Date;
@@ -279,7 +339,7 @@ export class OwnerMetric {
   transaction_reference!: Date;
 }
 
-@Entity({ name: 'owners_metrics_consolidation' })
+@Entity({ name: CONSOLIDATED_OWNERS_METRICS_TABLE })
 export class ConsolidatedOwnerMetric {
   @Column({ type: 'datetime' })
   created_at!: Date;

@@ -32,6 +32,7 @@ import {
 } from './entities/INFT';
 import {
   ConsolidatedOwnerMetric,
+  ConsolidatedOwnerTags,
   Owner,
   OwnerMetric,
   OwnerTags
@@ -79,7 +80,8 @@ export async function connect() {
       TDH,
       Consolidation,
       ConsolidatedTDH,
-      ConsolidatedOwnerMetric
+      ConsolidatedOwnerMetric,
+      ConsolidatedOwnerTags
     ],
     synchronize: true,
     logging: false
@@ -360,7 +362,9 @@ export async function fetchAllTDH() {
   return results;
 }
 
-export async function fetchConsolidationDisplay(myWallets: string[]) {
+export async function fetchConsolidationDisplay(
+  myWallets: string[]
+): Promise<string> {
   let sql = `SELECT * FROM ${ENS_TABLE} WHERE wallet in (${mysql.escape(
     myWallets
   )})`;
@@ -371,10 +375,22 @@ export async function fetchConsolidationDisplay(myWallets: string[]) {
     if (result && result.display) {
       displayArray.push(result.display);
     } else {
-      displayArray.push(formatAddress(w));
+      displayArray.push(w);
     }
   });
-  return results.join(' - ');
+  if (displayArray.length == 1) {
+    return displayArray[0];
+  }
+  const display = displayArray.map((d) => formatAddress(d)).join(' - ');
+  return display;
+}
+
+export async function fetchAllOwnerTags() {
+  const metrics = await AppDataSource.getRepository(OwnerTags)
+    .createQueryBuilder('ot')
+    .innerJoin(OWNERS_TABLE, 'o', 'o.wallet = ot.wallet')
+    .getMany();
+  return metrics;
 }
 
 export async function fetchAllOwnerMetrics() {
@@ -480,12 +496,6 @@ export async function fetchWalletTransactions(wallet: string, block?: number) {
   const fullSql = `${sql} ${filters}`;
 
   const results = await execSQL(fullSql);
-  return results;
-}
-
-export async function fetchAllOwnerTags() {
-  let sql = `SELECT * FROM ${OWNERS_TAGS_TABLE};`;
-  const results = await execSQL(sql);
   return results;
 }
 
@@ -681,6 +691,46 @@ export async function persistOwnerMetrics(
   }
 }
 
+export async function persistConsolidatedOwnerTags(
+  tags: ConsolidatedOwnerTags[]
+) {
+  console.log(
+    '[CONSOLIDATED OWNER TAGS]',
+    `PERSISTING [${tags.length} WALLETS]`
+  );
+
+  await AppDataSource.transaction(async (manager) => {
+    const repo = manager.getRepository(ConsolidatedOwnerTags);
+    await repo.clear();
+    await repo.save(tags);
+  });
+
+  console.log(
+    '[CONSOLIDATED OWNER TAGS]',
+    `PERSISTED [${tags.length} WALLETS]`
+  );
+}
+
+export async function persistConsolidatedOwnerMetrics(
+  metrics: ConsolidatedOwnerMetric[]
+) {
+  console.log(
+    '[CONSOLIDATED OWNER METRICS]',
+    `PERSISTING [${metrics.length} WALLETS]`
+  );
+
+  await AppDataSource.transaction(async (manager) => {
+    const repo = manager.getRepository(ConsolidatedOwnerMetric);
+    await repo.clear();
+    await repo.save(metrics);
+  });
+
+  console.log(
+    '[CONSOLIDATED OWNER METRICS]',
+    `PERSISTED [${metrics.length} WALLETS]`
+  );
+}
+
 export async function persistOwnerTags(ownersTags: OwnerTags[]) {
   if (ownersTags.length > 0) {
     console.log('[OWNERS TAGS]', `[PERSISTING ${ownersTags.length} WALLETS]`);
@@ -689,11 +739,7 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
 
     await Promise.all(
       ownersTags.map(async (owner) => {
-        let sql;
         if (0 >= owner.memes_balance && 0 >= owner.gradients_balance) {
-          sql = `DELETE FROM ${OWNERS_TAGS_TABLE} WHERE wallet=${mysql.escape(
-            owner.wallet
-          )}`;
           await repo.remove(owner);
         } else {
           await repo.save(owner);
@@ -816,7 +862,7 @@ export async function persistConsolidatedTDH(tdh: ConsolidatedTDH[]) {
   console.log('[CONSOLIDATED TDH]', `PERSISTING WALLETS TDH [${tdh.length}]`);
 
   await AppDataSource.transaction(async (manager) => {
-    const repo = manager.getRepository(Consolidation);
+    const repo = manager.getRepository(ConsolidatedTDH);
     repo.clear();
     repo.save(tdh);
   });

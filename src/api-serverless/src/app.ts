@@ -1022,6 +1022,85 @@ loadEnv(true).then(async (e) => {
     }
   );
 
+  app.get(
+    `${BASE_PATH}/consolidated_owner_metrics`,
+    function (req: any, res: any, next: any) {
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        const wallets = req.query.wallet;
+        const sort =
+          req.query.sort && TDH_SORT.includes(req.query.sort)
+            ? req.query.sort
+            : 'boosted_tdh';
+
+        const sortDir =
+          req.query.sort_direction &&
+          SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+            ? req.query.sort_direction
+            : 'desc';
+
+        const filter =
+          req.query.filter && TAGS_FILTERS.includes(req.query.filter)
+            ? req.query.filter
+            : null;
+
+        const hideMuseum =
+          req.query.hide_museum && req.query.hide_museum == 'true'
+            ? true
+            : false;
+
+        const hideTeam =
+          req.query.hide_team && req.query.hide_team == 'true' ? true : false;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATED OWNER METRICS]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchConsolidatedOwnerMetrics(
+          pageSize,
+          page,
+          wallets,
+          sort,
+          sortDir,
+          filter,
+          hideMuseum,
+          hideTeam
+        ).then((result) => {
+          result.data.map((d: any) => {
+            if (d.memes) {
+              d.memes = JSON.parse(d.memes);
+            }
+            if (d.memes_ranks) {
+              d.memes_ranks = JSON.parse(d.memes_ranks);
+            }
+            if (d.gradients) {
+              d.gradients = JSON.parse(d.gradients);
+            }
+            if (d.gradients_ranks) {
+              d.gradients_ranks = JSON.parse(d.gradients_ranks);
+            }
+          });
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATED OWNER METRICS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
   app.get(`${BASE_PATH}/team`, function (req: any, res: any, next: any) {
     try {
       const pageSize: number =
