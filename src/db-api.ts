@@ -776,6 +776,12 @@ export async function fetchOwnerMetrics(
           `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn2 > 0`
         );
         break;
+      case 'memes_set_szn3':
+        filters = constructFilters(
+          filters,
+          `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn3 > 0`
+        );
+        break;
     }
   }
 
@@ -787,20 +793,33 @@ export async function fetchOwnerMetrics(
     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, 
     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,
+    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3, 
     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients`;
   } else {
     ownerMetricsSelect = ` ${OWNERS_METRICS_TABLE}.*, 
-    dense_rank_sort,
+    dense_table.dense_rank_sort,
     dense_table.dense_rank_balance,
     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.balance = ${OWNERS_METRICS_TABLE}2.balance) AS dense_rank_balance__ties,
+    dense_table.dense_rank_unique,
+    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes+${OWNERS_TAGS_TABLE}.gradients_balance = ${OWNERS_TAGS_TABLE}2.unique_memes+${OWNERS_TAGS_TABLE}2.gradients_balance) AS dense_rank_unique__ties,
     dense_table.dense_rank_balance_memes, 
     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance = ${OWNERS_METRICS_TABLE}2.memes_balance) AS dense_rank_balance_memes__ties,
     dense_table.dense_rank_balance_memes_season1,
     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season1 = ${OWNERS_METRICS_TABLE}2.memes_balance_season1) AS dense_rank_balance_memes_season1__ties, 
     dense_table.dense_rank_balance_memes_season2,
     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season2 = ${OWNERS_METRICS_TABLE}2.memes_balance_season2) AS dense_rank_balance_memes_season2__ties,
+    dense_table.dense_rank_balance_memes_season3,
+    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season3 = ${OWNERS_METRICS_TABLE}2.memes_balance_season3) AS dense_rank_balance_memes_season3__ties, 
     dense_table.dense_rank_balance_gradients,
-    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.gradients_balance = ${OWNERS_METRICS_TABLE}2.gradients_balance) AS dense_rank_balance_gradients__ties `;
+    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.gradients_balance = ${OWNERS_METRICS_TABLE}2.gradients_balance) AS dense_rank_balance_gradients__ties,
+    dense_table.dense_rank_unique_memes,
+    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes = ${OWNERS_TAGS_TABLE}2.unique_memes) AS dense_rank_unique_memes__ties,
+    dense_table.dense_rank_unique_memes_season1,
+    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn1 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn1) AS dense_rank_unique_memes_season1__ties,
+    dense_table.dense_rank_unique_memes_season2,
+    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn2 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn2) AS dense_rank_unique_memes_season2__ties,
+    dense_table.dense_rank_unique_memes_season3,
+    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn3 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn3) AS dense_rank_unique_memes_season3__ties `;
   }
 
   const walletsTdhTableSelect = `
@@ -808,21 +827,25 @@ export async function fetchOwnerMetrics(
     ${WALLETS_TDH_TABLE}.tdh_rank_memes, 
     ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn1, 
     ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn2, 
+    ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn3, 
     ${WALLETS_TDH_TABLE}.tdh_rank_gradients, 
     ${WALLETS_TDH_TABLE}.boosted_tdh, 
     ${WALLETS_TDH_TABLE}.boosted_memes_tdh, 
     ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season1, 
     ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season2, 
+    ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season3, 
     ${WALLETS_TDH_TABLE}.boosted_gradients_tdh,
     ${WALLETS_TDH_TABLE}.tdh__raw, 
     ${WALLETS_TDH_TABLE}.memes_tdh__raw, 
     ${WALLETS_TDH_TABLE}.memes_tdh_season1__raw, 
     ${WALLETS_TDH_TABLE}.memes_tdh_season2__raw, 
+    ${WALLETS_TDH_TABLE}.memes_tdh_season3__raw, 
     ${WALLETS_TDH_TABLE}.gradients_tdh__raw, 
     ${WALLETS_TDH_TABLE}.tdh, 
     ${WALLETS_TDH_TABLE}.memes_tdh, 
     ${WALLETS_TDH_TABLE}.memes_tdh_season1, 
     ${WALLETS_TDH_TABLE}.memes_tdh_season2, 
+    ${WALLETS_TDH_TABLE}.memes_tdh_season3, 
     ${WALLETS_TDH_TABLE}.gradients_tdh,
     ${WALLETS_TDH_TABLE}.memes,
     ${WALLETS_TDH_TABLE}.memes_ranks, 
@@ -839,6 +862,7 @@ export async function fetchOwnerMetrics(
     sort == 'memes_balance' ||
     sort == 'memes_balance_season1' ||
     sort == 'memes_balance_season2' ||
+    sort == 'memes_balance_season3' ||
     sort == 'gradients_balance'
   ) {
     sort = `${OWNERS_METRICS_TABLE}.${sort}`;
@@ -847,17 +871,32 @@ export async function fetchOwnerMetrics(
     sort == 'memes_cards_sets' ||
     sort == 'memes_cards_sets_szn1' ||
     sort == 'memes_cards_sets_szn2' ||
+    sort == 'memes_cards_sets_szn3' ||
     sort == 'memes_cards_sets_minus1' ||
     sort == 'genesis' ||
     sort == 'unique_memes' ||
     sort == 'unique_memes_szn1' ||
-    sort == 'unique_memes_szn2'
+    sort == 'unique_memes_szn2' ||
+    sort == 'unique_memes_szn3'
   ) {
     sort = `${OWNERS_TAGS_TABLE}.${sort}`;
   }
 
   if (wallets) {
-    joins += ` JOIN (SELECT ${OWNERS_METRICS_TABLE}.wallet, RANK() OVER(ORDER BY ${sort} DESC) AS dense_rank_sort, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients FROM ${OWNERS_METRICS_TABLE} LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock} LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet ${hideWalletFilters}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
+    joins += ` JOIN (
+      SELECT ${OWNERS_METRICS_TABLE}.wallet, RANK() OVER(ORDER BY ${sort} DESC) AS dense_rank_sort, 
+      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes+${OWNERS_TAGS_TABLE}.gradients_balance DESC) AS dense_rank_unique,
+      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, 
+      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, 
+      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
+      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2, 
+      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3, 
+      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients, 
+      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes DESC) AS dense_rank_unique_memes,
+      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn1 DESC) AS dense_rank_unique_memes_season1,
+      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn2 DESC) AS dense_rank_unique_memes_season2,
+      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn3 DESC) AS dense_rank_unique_memes_season3 
+      FROM ${OWNERS_METRICS_TABLE} LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock} LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet ${hideWalletFilters}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
   }
 
   const results = await fetchPaginated(

@@ -198,6 +198,10 @@ async function processNFTs(
             memeReferences.push(
               ...[...memeNFTs].filter((m) => m.season == 2).map((m) => m.id)
             );
+          } else if (ref.toUpperCase() == 'ALL SZN3') {
+            memeReferences.push(
+              ...[...memeNFTs].filter((m) => m.season == 3).map((m) => m.id)
+            );
           } else {
             const memeRef = memeNFTs.find((m) => m.name == ref);
             if (memeRef) {
