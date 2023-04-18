@@ -936,7 +936,187 @@ export async function fetchOwnerMetrics(
     (SELECT SUM(value) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
-     )}) AND value > 0) AS sales_value`;
+     )}) AND value > 0) AS sales_value,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )}) AS sales_count_memes,
+    (SELECT SUM(value) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )}) AS sales_value_memes,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )}) AS transfers_out_memes,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )}) AS purchases_count_memes,
+    (SELECT SUM(value) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )}) AS purchases_value_memes,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )}) AS transfers_in_memes,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id <= 47) AS sales_count_memes_season1,
+    (SELECT SUM(value) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id <= 47) AS sales_value_memes_season1,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id <= 47) AS transfers_out_memes_season1,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id <= 47) AS purchases_count_memes_season1,
+    (SELECT SUM(value) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id <= 47) AS purchases_value_memes_season1,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id <= 47) AS transfers_in_memes_season1,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > 47 AND token_id <= 86) AS sales_count_memes_season2,
+    (SELECT SUM(value) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > 47 AND token_id <= 86) AS sales_value_memes_season2,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > 47 AND token_id <= 86) AS transfers_out_memes_season2,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > 47 AND token_id <= 86) AS purchases_count_memes_season2,
+    (SELECT SUM(value) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > 47 AND token_id <= 86) AS purchases_value_memes_season2,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > 47 AND token_id <= 86) AS transfers_in_memes_season2,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > 86) AS sales_count_memes_season3,
+    (SELECT SUM(value) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > 86) AS sales_value_memes_season3,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > 86) AS transfers_out_memes_season3,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > 86) AS purchases_count_memes_season3,
+    (SELECT SUM(value) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > 86) AS purchases_value_memes_season3,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > 86) AS transfers_in_memes_season3,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        GRADIENT_CONTRACT
+      )}) AS sales_count_gradients,
+    (SELECT SUM(value) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        GRADIENT_CONTRACT
+      )}) AS sales_value_gradients,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0 AND contract=${mysql.escape(
+        GRADIENT_CONTRACT
+      )}) AS transfers_out_gradients,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        GRADIENT_CONTRACT
+      )}) AS purchases_count_gradients,
+    (SELECT SUM(value) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        GRADIENT_CONTRACT
+      )}) AS purchases_value_gradients,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0 AND contract=${mysql.escape(
+        GRADIENT_CONTRACT
+      )}) AS transfers_in_gradients`;
       const results2 = await execSQL(sql);
       return {
         count: results2.length,
