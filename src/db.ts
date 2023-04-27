@@ -20,7 +20,8 @@ import {
   OWNERS_MEME_LAB_TABLE,
   MEMES_CONTRACT,
   DISTRIBUTION_TABLE,
-  CONSOLIDATIONS_LIMIT
+  CONSOLIDATIONS_LIMIT,
+  CONSOLIDATED_WALLETS_TDH_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -356,6 +357,14 @@ export async function fetchAllNFTs() {
 export async function fetchAllTDH() {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   let sql = `SELECT ${ENS_TABLE}.display as ens, ${WALLETS_TDH_TABLE}.* FROM ${WALLETS_TDH_TABLE} LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet WHERE block=${tdhBlock};`;
+  const results = await execSQL(sql);
+  results.map((r: any) => (r.memes = JSON.parse(r.memes)));
+  results.map((r: any) => (r.gradients = JSON.parse(r.gradients)));
+  return results;
+}
+
+export async function fetchAllConsolidatedTDH() {
+  let sql = `SELECT * FROM ${CONSOLIDATED_WALLETS_TDH_TABLE};`;
   const results = await execSQL(sql);
   results.map((r: any) => (r.memes = JSON.parse(r.memes)));
   results.map((r: any) => (r.gradients = JSON.parse(r.gradients)));
@@ -863,8 +872,8 @@ export async function persistConsolidatedTDH(tdh: ConsolidatedTDH[]) {
 
   await AppDataSource.transaction(async (manager) => {
     const repo = manager.getRepository(ConsolidatedTDH);
-    repo.clear();
-    repo.save(tdh);
+    await repo.clear();
+    await repo.save(tdh);
   });
 
   console.log(

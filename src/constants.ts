@@ -64,9 +64,10 @@ export const DELEGATION_CONTRACT: {
   contract: `0x${string}`;
 } = {
   chain_id: 11155111,
-  contract: '0xf94423086613c6c1f1d3098d8cad99427b9fd0e7'
+  contract: '0x8f86c644f845a077999939c69bc787662377d915'
 };
 export const DELEGATION_ALL_ADDRESS =
   '0x8888888888888888888888888888888888888888';
 
+export const USE_CASE_CONSOLIDATION = 999;
 export const CONSOLIDATIONS_LIMIT = 3;

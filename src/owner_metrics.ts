@@ -13,7 +13,6 @@ import {
   fetchDistinctOwnerWallets,
   fetchLastOwnerMetrics,
   fetchTransactionsFromDate,
-  fetchAllConsolidatedOwnerMetricsCount,
   retrieveWalletConsolidations,
   fetchConsolidationDisplay,
   persistConsolidatedOwnerMetrics

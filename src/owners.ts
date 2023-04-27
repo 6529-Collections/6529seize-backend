@@ -118,8 +118,6 @@ export const findOwners = async () => {
   });
 
   console.log(new Date(), '[OWNERS]', `[DELTA ${ownersDelta.length}]`);
-
   await persistOwners(ownersDelta);
-
   return ownersDelta;
 };

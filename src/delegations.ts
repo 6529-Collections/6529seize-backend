@@ -1,5 +1,9 @@
 import { Alchemy, Network } from 'alchemy-sdk';
-import { ALCHEMY_SETTINGS, DELEGATION_CONTRACT } from './constants';
+import {
+  ALCHEMY_SETTINGS,
+  DELEGATION_CONTRACT,
+  USE_CASE_CONSOLIDATION
+} from './constants';
 import { DELEGATIONS_IFACE } from './abis/delegations';
 import { areEqualAddresses } from './helpers';
 import { ConsolidationEvent, ConsolidationType } from './entities/IDelegation';
@@ -65,7 +69,7 @@ export const findDelegationTransactions = async (
   await Promise.all(
     delegations.map(async (d) => {
       const delResult = DELEGATIONS_IFACE.parseLog(d);
-      if (delResult.args.useCase == 99) {
+      if (delResult.args.useCase == USE_CASE_CONSOLIDATION) {
         const from = delResult.args.delegator
           ? delResult.args.delegator
           : delResult.args.from;

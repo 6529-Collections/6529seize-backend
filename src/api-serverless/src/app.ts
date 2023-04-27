@@ -802,7 +802,11 @@ loadEnv(true).then(async (e) => {
 
         db.fetchEns(address).then((result) => {
           res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-          res.end(JSON.stringify(result[0]));
+          if (result.length == 1) {
+            res.end(JSON.stringify(result[0]));
+          } else {
+            res.end(JSON.stringify({}));
+          }
         });
       } catch (e) {
         console.log(
@@ -862,6 +866,7 @@ loadEnv(true).then(async (e) => {
             d.memes_ranks = JSON.parse(d.memes_ranks);
             d.gradients = JSON.parse(d.gradients);
             d.gradients_ranks = JSON.parse(d.gradients_ranks);
+            d.wallets = JSON.parse(d.wallets);
           });
           returnPaginatedResult(result, req, res);
         });
@@ -1074,6 +1079,9 @@ loadEnv(true).then(async (e) => {
           hideTeam
         ).then((result) => {
           result.data.map((d: any) => {
+            if (d.wallets) {
+              d.wallets = JSON.parse(d.wallets);
+            }
             if (d.memes) {
               d.memes = JSON.parse(d.memes);
             }
