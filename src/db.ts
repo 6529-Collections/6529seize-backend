@@ -381,7 +381,7 @@ export async function fetchConsolidationDisplay(
   const displayArray: string[] = [];
   myWallets.map((w) => {
     const result = results.find((r: any) => areEqualAddresses(r.wallet, w));
-    if (result && result.display) {
+    if (result && result.display && !result.display.includes('?')) {
       displayArray.push(result.display);
     } else {
       displayArray.push(w);

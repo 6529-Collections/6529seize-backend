@@ -24,7 +24,7 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
     areEqualAddresses(nft.contract, MEMES_CONTRACT)
   ).length;
 
-  console.log(new Date(), '[TDH CONSOLIDATION]', `[WALLETS ${tdh.length}]`);
+  console.log('[TDH CONSOLIDATION]', `[WALLETS ${tdh.length}]`);
 
   const consolidatedTdh: ConsolidatedTDH[] = [];
   const processedWallets = new Set<string>();
@@ -172,7 +172,6 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
   await persistConsolidatedTDH(sortedConsolidatedTdh);
 
   console.log(
-    new Date(),
     '[TDH CONSOLIDATION]',
     `[FINAL ENTRIES ${sortedConsolidatedTdh.length}]`
   );
