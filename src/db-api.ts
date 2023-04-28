@@ -793,7 +793,8 @@ export async function fetchOwnerMetrics(
   sortDir: string,
   metrics_filter: string,
   hideMuseum: boolean,
-  hideTeam: boolean
+  hideTeam: boolean,
+  profilePage: boolean
 ) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   let filters = '';
@@ -994,7 +995,7 @@ export async function fetchOwnerMetrics(
     joins
   );
 
-  if (results.data.length == 0 && wallets) {
+  if (results.data.length == 0 && wallets && profilePage) {
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length > 0) {
       const sql = `SELECT 
@@ -1222,7 +1223,8 @@ export async function fetchConsolidatedOwnerMetrics(
   sortDir: string,
   metrics_filter: string,
   hideMuseum: boolean,
-  hideTeam: boolean
+  hideTeam: boolean,
+  profilePage: boolean
 ) {
   let filters = '';
   let hideWalletFilters = '';
@@ -1431,7 +1433,7 @@ export async function fetchConsolidatedOwnerMetrics(
     joins
   );
 
-  if (results.data.length == 0 && wallets) {
+  if (results.data.length == 0 && wallets && profilePage) {
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length > 0) {
       const sql = `SELECT 

@@ -15,9 +15,9 @@ export const handler = async (event?: any, context?: any) => {
 };
 
 export async function tdhLoop(force?: boolean) {
-  // await tdh(force);
+  await tdh(force);
   await findNftTDH();
-  // await uploadTDH(force);
+  await uploadTDH(force);
 }
 
 async function tdh(force?: boolean) {

@@ -983,6 +983,11 @@ loadEnv(true).then(async (e) => {
         const hideTeam =
           req.query.hide_team && req.query.hide_team == 'true' ? true : false;
 
+        const isProfilePage =
+          req.query.profile_page && req.query.profile_page == 'true'
+            ? true
+            : false;
+
         console.log(
           new Date(),
           `[API]`,
@@ -997,7 +1002,8 @@ loadEnv(true).then(async (e) => {
           sortDir,
           filter,
           hideMuseum,
-          hideTeam
+          hideTeam,
+          isProfilePage
         ).then((result) => {
           result.data.map((d: any) => {
             if (d.memes) {
@@ -1062,12 +1068,18 @@ loadEnv(true).then(async (e) => {
         const hideTeam =
           req.query.hide_team && req.query.hide_team == 'true' ? true : false;
 
+        const isProfilePage =
+          req.query.profile_page && req.query.profile_page == 'true'
+            ? true
+            : false;
+
         console.log(
           new Date(),
           `[API]`,
           '[CONSOLIDATED OWNER METRICS]',
           `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
+
         db.fetchConsolidatedOwnerMetrics(
           pageSize,
           page,
@@ -1076,7 +1088,8 @@ loadEnv(true).then(async (e) => {
           sortDir,
           filter,
           hideMuseum,
-          hideTeam
+          hideTeam,
+          isProfilePage
         ).then((result) => {
           result.data.map((d: any) => {
             if (d.wallets) {

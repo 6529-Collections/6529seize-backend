@@ -1,9 +1,5 @@
 import { Alchemy, Network } from 'alchemy-sdk';
-import {
-  ALCHEMY_SETTINGS,
-  DELEGATION_CONTRACT,
-  USE_CASE_CONSOLIDATION
-} from './constants';
+import { DELEGATION_CONTRACT, USE_CASE_CONSOLIDATION } from './constants';
 import { DELEGATIONS_IFACE } from './abis/delegations';
 import { areEqualAddresses } from './helpers';
 import { ConsolidationEvent, ConsolidationType } from './entities/IDelegation';
