@@ -46,6 +46,13 @@ cron.schedule('*/4 * * * *', async function () {
   }
 });
 
+// PULL EVERY 2 MINUTES
+cron.schedule('*/2 * * * *', async function () {
+  if (!STARTING) {
+    await delegations.handler();
+  }
+});
+
 // PULL EVERY HOUR AT MIN 0
 cron.schedule('0 * * * *', async function () {
   if (!STARTING) {
@@ -89,10 +96,10 @@ async function start() {
 
   // await transactionsReplay.handler();
   await delegations.handler();
-  await transactions.handler();
-  await nfts.handler();
-  await memeLab.handler();
-  await ownerMetrics.handler();
+  // await transactions.handler();
+  // await nfts.handler();
+  // await memeLab.handler();
+  // await ownerMetrics.handler();
   await tdh.handler();
   // await memeStats();
   // await gradientStats();
