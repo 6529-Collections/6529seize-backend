@@ -27,6 +27,8 @@ async function getResult(url: string) {
 }
 
 const findFloorPrice = async (stat: any): Promise<number> => {
+  await delay(100);
+
   const url = `https://api.opensea.io/v2/orders/ethereum/seaport/listings?asset_contract_address=${stat.contract}&limit=1&token_ids=${stat.id}&order_by=eth_price&order_direction=asc`;
 
   const res = await getResult(url);
@@ -39,6 +41,14 @@ const findFloorPrice = async (stat: any): Promise<number> => {
     }
     return parseFloat(Utils.formatEther(floorPrice));
   } else {
+    console.log(
+      'error',
+      `[TOKEN ID ${stat.id}]`,
+      url,
+      res?.status,
+      res?.statusText,
+      JSON.stringify(res)
+    );
     // console.log(
     //   new Date(),
     //   '[NFT MARKET STATS]',
@@ -47,7 +57,7 @@ const findFloorPrice = async (stat: any): Promise<number> => {
     //   `[ID ${stat.id}]`,
     //   '[RETRYING IN 2500ms]'
     // );
-    await delay(500);
+    await delay(1000);
     return await findFloorPrice(stat);
   }
 };
