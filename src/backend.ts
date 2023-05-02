@@ -101,6 +101,7 @@ async function start() {
   // await refreshEnsLoop.handler();
   // await royaltiesLoop.handler();
   // await transactions.handlerValues();
+  // await memeStats();
 
   // while (true) {
   //   await tdhReplay.handler();
