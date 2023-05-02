@@ -22,6 +22,7 @@ export const DISTRIBUTION_PHOTO_TABLE = 'distribution_photo';
 export const CONSOLIDATED_OWNERS_METRICS_TABLE = 'owners_metrics_consolidation';
 export const CONSOLIDATED_WALLETS_TDH_TABLE = 'tdh_consolidation';
 export const CONSOLIDATED_OWNERS_TAGS_TABLE = 'owners_tags_consolidation';
+export const CONSOLIDATIONS_TABLE = 'consolidations';
 
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
 export const GRADIENT_CONTRACT = '0x0c58ef43ff3032005e472cb5709f8908acb00205';

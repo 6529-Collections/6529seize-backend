@@ -1305,6 +1305,33 @@ loadEnv(true).then(async (e) => {
     }
   );
 
+  app.get(
+    `${BASE_PATH}/consolidations/:wallet`,
+    function (req: any, res: any, next: any) {
+      try {
+        const wallet = req.params.wallet;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATIONS]',
+          `[WALLET ${wallet}]`
+        );
+        db.fetchConsolidations(wallet).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DISTRIBUTIONS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();
     res.send(

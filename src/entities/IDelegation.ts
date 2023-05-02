@@ -1,6 +1,7 @@
 import { Entity, Column, PrimaryColumn, CreateDateColumn } from 'typeorm';
+import { CONSOLIDATIONS_TABLE } from '../constants';
 
-@Entity('consolidations')
+@Entity(CONSOLIDATIONS_TABLE)
 export class Consolidation {
   @CreateDateColumn()
   created_at!: Date;

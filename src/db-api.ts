@@ -3,6 +3,7 @@ import {
   CONSOLIDATED_OWNERS_METRICS_TABLE,
   CONSOLIDATED_OWNERS_TAGS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  CONSOLIDATIONS_TABLE,
   DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE,
   ENS_TABLE,
@@ -1835,4 +1836,20 @@ export async function fetchDistributions(
     joins,
     `${DISTRIBUTION_TABLE}.wallet, ${DISTRIBUTION_TABLE}.created_at, ${DISTRIBUTION_TABLE}.updated_at, ${DISTRIBUTION_TABLE}.phase, ${DISTRIBUTION_TABLE}.id`
   );
+}
+
+export async function fetchConsolidations(wallet: string) {
+  let walletfilters = constructFiltersOR(
+    '',
+    `wallet1 = ${mysql.escape(wallet)}`
+  );
+  walletfilters = constructFiltersOR(
+    walletfilters,
+    `wallet2 = ${mysql.escape(wallet)}`
+  );
+
+  let filters = constructFilters('', `(${walletfilters})`);
+  filters = constructFilters(filters, `confirmed=true`);
+
+  return fetchPaginated(CONSOLIDATIONS_TABLE, `block desc`, 50, 1, filters);
 }
