@@ -21,7 +21,8 @@ import {
   MEMES_CONTRACT,
   DISTRIBUTION_TABLE,
   CONSOLIDATIONS_LIMIT,
-  CONSOLIDATED_WALLETS_TDH_TABLE
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  CONSOLIDATIONS_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -51,7 +52,12 @@ import {
   ConsolidationType
 } from './entities/IDelegation';
 import { RoyaltiesUpload } from './entities/IRoyalties';
-import { areEqualAddresses, formatAddress } from './helpers';
+import {
+  areEqualAddresses,
+  extractConsolidationWallets,
+  formatAddress,
+  getConsolidationsSql
+} from './helpers';
 
 const mysql = require('mysql');
 
@@ -197,56 +203,9 @@ export async function fetchLatestLabTransactionsBlockNumber(beforeDate?: Date) {
 }
 
 export async function retrieveWalletConsolidations(wallet: string) {
-  const consolidations = await AppDataSource.getRepository(Consolidation)
-    .createQueryBuilder()
-    .where('wallet1 = :wallet', { wallet })
-    .andWhere('confirmed = true')
-    .orWhere('wallet2 = :wallet', { wallet })
-    .andWhere('confirmed = true')
-    .orWhere((qb) => {
-      const subQuery = qb
-        .subQuery()
-        .select('wallet1')
-        .from(Consolidation, 'consolidations')
-        .where('wallet2 = :wallet', { wallet })
-        .andWhere('confirmed = true')
-        .getQuery();
-      return 'wallet1 IN ' + subQuery;
-    })
-    .orWhere((qb) => {
-      const subQuery = qb
-        .subQuery()
-        .select('wallet2')
-        .from(Consolidation, 'consolidations')
-        .where('wallet2 = :wallet', { wallet })
-        .andWhere('confirmed = true')
-        .getQuery();
-      return 'wallet2 IN ' + subQuery;
-    })
-    .orderBy('block', 'DESC')
-    .getMany();
-
-  const uniqueWallets: string[] = [];
-  const seenWallets = new Set();
-
-  consolidations.map((consolidation) => {
-    if (!seenWallets.has(consolidation.wallet1)) {
-      seenWallets.add(consolidation.wallet1);
-      uniqueWallets.push(consolidation.wallet1);
-      if (uniqueWallets.length === CONSOLIDATIONS_LIMIT) return;
-    }
-    if (!seenWallets.has(consolidation.wallet2)) {
-      seenWallets.add(consolidation.wallet2);
-      uniqueWallets.push(consolidation.wallet2);
-      if (uniqueWallets.length === CONSOLIDATIONS_LIMIT) return;
-    }
-  });
-
-  if (uniqueWallets.some((w) => areEqualAddresses(w, wallet))) {
-    return uniqueWallets.sort();
-  }
-
-  return [wallet];
+  const sql = getConsolidationsSql(wallet);
+  const consolidations: any[] = await execSQL(sql);
+  return extractConsolidationWallets(consolidations, wallet);
 }
 
 export async function fetchLatestConsolidationsBlockNumber() {

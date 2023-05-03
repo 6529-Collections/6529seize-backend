@@ -9,13 +9,13 @@ import { loadEnv, unload } from '../secrets';
 export const handler = async (event?: any, context?: any) => {
   console.log('[RUNNING DELEGATIONS LOOP]');
   await loadEnv();
-  // await retrieveDelegations();
+  // await retrieveConsolidations();
   await delegations();
   await unload();
   console.log('[DELEGATIONS LOOP COMPLETE]');
 };
 
-export async function retrieveDelegations() {
+export async function retrieveConsolidations() {
   const a = await retrieveWalletConsolidations(
     '0x7f3774eadae4beb01919dec7f32a72e417ab5de3'
   );
@@ -25,9 +25,13 @@ export async function retrieveDelegations() {
   const c = await retrieveWalletConsolidations(
     '0xfd22004806a6846ea67ad883356be810f0428793'
   );
+  const d = await retrieveWalletConsolidations(
+    '0xFe49A85E98941F1A115aCD4bEB98521023a25802'
+  );
   console.log('prxt', a);
   console.log('coins', b);
   console.log('punk', c);
+  console.log('better_phoebe', d);
 }
 
 export async function delegations(

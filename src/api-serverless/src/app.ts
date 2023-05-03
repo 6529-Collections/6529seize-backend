@@ -866,6 +866,67 @@ loadEnv(true).then(async (e) => {
             d.memes_ranks = JSON.parse(d.memes_ranks);
             d.gradients = JSON.parse(d.gradients);
             d.gradients_ranks = JSON.parse(d.gradients_ranks);
+          });
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NFT TDH]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
+
+  app.get(
+    `${BASE_PATH}/consolidated_tdh/:contract/:nft_id`,
+    function (req: any, res: any, next: any) {
+      const contract = req.params.contract;
+      const nftId = req.params.nft_id;
+
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        const sort =
+          req.query.sort && NFT_TDH_SORT.includes(req.query.sort)
+            ? req.query.sort
+            : 'card_tdh';
+
+        const sortDir =
+          req.query.sort_direction &&
+          SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+            ? req.query.sort_direction
+            : 'desc';
+
+        const wallets = req.query.wallet;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NFT TDH]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchConsolidatedNftTdh(
+          pageSize,
+          page,
+          contract,
+          nftId,
+          wallets,
+          sort,
+          sortDir
+        ).then((result) => {
+          result.data.map((d: any) => {
+            d.memes = JSON.parse(d.memes);
+            d.memes_ranks = JSON.parse(d.memes_ranks);
+            d.gradients = JSON.parse(d.gradients);
+            d.gradients_ranks = JSON.parse(d.gradients_ranks);
             d.wallets = JSON.parse(d.wallets);
           });
           returnPaginatedResult(result, req, res);

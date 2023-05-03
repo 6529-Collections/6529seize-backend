@@ -1,3 +1,7 @@
+import { CONSOLIDATIONS_LIMIT, CONSOLIDATIONS_TABLE } from './constants';
+
+const mysql = require('mysql');
+
 export function areEqualAddresses(w1: string, w2: string) {
   if (!w1 || !w2) {
     return false;
@@ -67,4 +71,83 @@ export function formatAddress(address: string) {
   return `${address.substring(0, 5)}...${address.substring(
     address.length - 3
   )}`;
+}
+
+export function getConsolidationsSql(wallet: string) {
+  const sql = `SELECT * FROM ${CONSOLIDATIONS_TABLE} 
+    WHERE 
+      (wallet1 = ${mysql.escape(wallet)} OR wallet2 = ${mysql.escape(wallet)}
+      OR wallet1 IN (SELECT wallet2 FROM consolidations WHERE wallet1 = ${mysql.escape(
+        wallet
+      )} AND confirmed = true)
+      OR wallet2 IN (SELECT wallet1 FROM consolidations WHERE wallet2 = ${mysql.escape(
+        wallet
+      )} AND confirmed = true)
+      )
+      AND confirmed = true
+    ORDER BY block DESC`;
+  return sql;
+}
+
+function shouldAddConsolidation(
+  uniqueWallets: any[],
+  consolidations: any[],
+  wallet: string
+) {
+  let hasConsolidationsWithAll = true;
+  uniqueWallets.map((w) => {
+    if (
+      !consolidations.some(
+        (c) =>
+          (areEqualAddresses(c.wallet1, w) &&
+            areEqualAddresses(c.wallet2, wallet)) ||
+          (areEqualAddresses(c.wallet2, w) &&
+            areEqualAddresses(c.wallet1, wallet))
+      )
+    ) {
+      hasConsolidationsWithAll = false;
+    }
+  });
+  return hasConsolidationsWithAll;
+}
+
+export function extractConsolidationWallets(
+  consolidations: any[],
+  wallet: string
+) {
+  const uniqueWallets: string[] = [];
+  const seenWallets = new Set();
+
+  consolidations.map((consolidation) => {
+    if (!seenWallets.has(consolidation.wallet1)) {
+      seenWallets.add(consolidation.wallet1);
+      const shouldAdd = shouldAddConsolidation(
+        uniqueWallets,
+        consolidations,
+        consolidation.wallet1
+      );
+      if (shouldAdd) {
+        uniqueWallets.push(consolidation.wallet1);
+        if (uniqueWallets.length === CONSOLIDATIONS_LIMIT) return;
+      }
+    }
+    if (!seenWallets.has(consolidation.wallet2)) {
+      seenWallets.add(consolidation.wallet2);
+      const shouldAdd = shouldAddConsolidation(
+        uniqueWallets,
+        consolidations,
+        consolidation.wallet2
+      );
+      if (shouldAdd) {
+        uniqueWallets.push(consolidation.wallet2);
+        if (uniqueWallets.length === CONSOLIDATIONS_LIMIT) return;
+      }
+    }
+  });
+
+  if (uniqueWallets.some((w) => areEqualAddresses(w, wallet))) {
+    return uniqueWallets.sort();
+  }
+
+  return [wallet];
 }

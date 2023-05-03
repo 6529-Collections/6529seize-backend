@@ -28,7 +28,11 @@ import {
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE
 } from './constants';
-import { areEqualAddresses } from './helpers';
+import {
+  areEqualAddresses,
+  extractConsolidationWallets,
+  getConsolidationsSql
+} from './helpers';
 
 const mysql = require('mysql');
 
@@ -568,83 +572,84 @@ export async function fetchGradientTdh(pageSize: number, page: number) {
   );
 }
 
-// export async function fetchNftTdh(
-//   pageSize: number,
-//   page: number,
-//   contract: string,
-//   nftId: number,
-//   wallets: string,
-//   sort: string,
-//   sortDir: string
-// ) {
-//   const tdhBlock = await fetchLatestTDHBlockNumber();
-//   let filters = `WHERE block=${tdhBlock} AND j.id=${nftId} `;
-//   if (wallets) {
-//     filters += ` AND ${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(
-//       wallets.split(',')
-//     )})`;
-//   }
-
-//   let joins: string;
-//   if (areEqualAddresses(contract, MEMES_CONTRACT)) {
-//     joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet CROSS JOIN JSON_TABLE(memes, '$[*]' COLUMNS (
-//         id INT PATH '$.id',
-//         tdh DOUBLE PATH '$.tdh',
-//         tdh__raw varchar(100) PATH '$.tdh__raw',
-//         balance INT PATH '$.balance'
-//       )
-//     ) AS j`;
-//   } else if (areEqualAddresses(contract, GRADIENT_CONTRACT)) {
-//     joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet CROSS JOIN JSON_TABLE(gradients, '$[*]' COLUMNS (
-//         id varchar(100) PATH '$.id',
-//         tdh varchar(100) PATH '$.tdh',
-//         tdh__raw varchar(100) PATH '$.tdh__raw',
-//         balance INT PATH '$.balance',
-//       )
-//     ) AS j`;
-//   } else {
-//     return returnEmpty();
-//   }
-
-//   joins += ` JOIN (SELECT wallet, RANK() OVER(ORDER BY ${OWNERS_TABLE}.balance DESC) AS dense_rank_balance from ${OWNERS_TABLE} where ${OWNERS_TABLE}.contract=${mysql.escape(
-//     contract
-//   )} and ${OWNERS_TABLE}.token_id=${nftId}) as dense_table ON ${WALLETS_TDH_TABLE}.wallet = dense_table.wallet`;
-//   joins += ` LEFT JOIN ${OWNERS_METRICS_TABLE} on ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet`;
-
-//   const fields = ` ${OWNERS_METRICS_TABLE}.balance, ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, dense_table.dense_rank_balance `;
-
-//   switch (sort) {
-//     case 'card_tdh':
-//       sort = 'CAST(j.tdh AS DECIMAL)';
-//       break;
-//     case 'card_tdh__raw':
-//       sort = 'CAST(j.tdh__raw AS DECIMAL)';
-//       break;
-//     case 'card_balance':
-//       sort = 'j.balance';
-//       break;
-//     case 'total_tdh':
-//       sort = 'boosted_tdh';
-//       break;
-//     case 'total_tdh__raw':
-//       sort = 'tdh__raw';
-//       break;
-//     case 'total_balance':
-//       sort = `${OWNERS_METRICS_TABLE}.balance`;
-//       break;
-//   }
-
-//   return fetchPaginated(
-//     WALLETS_TDH_TABLE,
-//     `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
-//     pageSize,
-//     page,
-//     filters,
-//     fields,
-//     joins
-//   );
-// }
 export async function fetchNftTdh(
+  pageSize: number,
+  page: number,
+  contract: string,
+  nftId: number,
+  wallets: string,
+  sort: string,
+  sortDir: string
+) {
+  const tdhBlock = await fetchLatestTDHBlockNumber();
+  let filters = `WHERE block=${tdhBlock} AND j.id=${nftId} `;
+  if (wallets) {
+    filters += ` AND ${WALLETS_TDH_TABLE}.wallet in (${mysql.escape(
+      wallets.split(',')
+    )})`;
+  }
+
+  let joins: string;
+  if (areEqualAddresses(contract, MEMES_CONTRACT)) {
+    joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet CROSS JOIN JSON_TABLE(memes, '$[*]' COLUMNS (
+        id INT PATH '$.id',
+        tdh DOUBLE PATH '$.tdh',
+        tdh__raw varchar(100) PATH '$.tdh__raw',
+        balance INT PATH '$.balance'
+      )
+    ) AS j`;
+  } else if (areEqualAddresses(contract, GRADIENT_CONTRACT)) {
+    joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet CROSS JOIN JSON_TABLE(gradients, '$[*]' COLUMNS (
+        id varchar(100) PATH '$.id',
+        tdh varchar(100) PATH '$.tdh',
+        tdh__raw varchar(100) PATH '$.tdh__raw',
+        balance INT PATH '$.balance',
+      )
+    ) AS j`;
+  } else {
+    return returnEmpty();
+  }
+
+  joins += ` JOIN (SELECT wallet, RANK() OVER(ORDER BY ${OWNERS_TABLE}.balance DESC) AS dense_rank_balance from ${OWNERS_TABLE} where ${OWNERS_TABLE}.contract=${mysql.escape(
+    contract
+  )} and ${OWNERS_TABLE}.token_id=${nftId}) as dense_table ON ${WALLETS_TDH_TABLE}.wallet = dense_table.wallet`;
+  joins += ` LEFT JOIN ${OWNERS_METRICS_TABLE} on ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet`;
+
+  const fields = ` ${OWNERS_METRICS_TABLE}.balance, ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, dense_table.dense_rank_balance `;
+
+  switch (sort) {
+    case 'card_tdh':
+      sort = 'CAST(j.tdh AS DECIMAL)';
+      break;
+    case 'card_tdh__raw':
+      sort = 'CAST(j.tdh__raw AS DECIMAL)';
+      break;
+    case 'card_balance':
+      sort = 'j.balance';
+      break;
+    case 'total_tdh':
+      sort = 'boosted_tdh';
+      break;
+    case 'total_tdh__raw':
+      sort = 'tdh__raw';
+      break;
+    case 'total_balance':
+      sort = `${OWNERS_METRICS_TABLE}.balance`;
+      break;
+  }
+
+  return fetchPaginated(
+    WALLETS_TDH_TABLE,
+    `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
+    pageSize,
+    page,
+    filters,
+    fields,
+    joins
+  );
+}
+
+export async function fetchConsolidatedNftTdh(
   pageSize: number,
   page: number,
   contract: string,
@@ -1839,17 +1844,14 @@ export async function fetchDistributions(
 }
 
 export async function fetchConsolidations(wallet: string) {
-  let walletfilters = constructFiltersOR(
-    '',
-    `wallet1 = ${mysql.escape(wallet)}`
-  );
-  walletfilters = constructFiltersOR(
-    walletfilters,
-    `wallet2 = ${mysql.escape(wallet)}`
-  );
+  const sql = getConsolidationsSql(wallet);
+  const consolidations: any[] = await execSQL(sql);
+  const wallets = extractConsolidationWallets(consolidations, wallet);
 
-  let filters = constructFilters('', `(${walletfilters})`);
-  filters = constructFilters(filters, `confirmed=true`);
-
-  return fetchPaginated(CONSOLIDATIONS_TABLE, `block desc`, 50, 1, filters);
+  return {
+    count: wallets.length,
+    page: 1,
+    next: null,
+    data: wallets
+  };
 }
