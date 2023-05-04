@@ -3,7 +3,7 @@ import { getHoursAgo, getLastTDH } from '../helpers';
 import { findNftTDH } from '../nft_tdh';
 import { findTDH } from '../tdh';
 import { consolidateTDH } from '../tdh_consolidation';
-import { uploadTDH } from '../tdh_upload';
+import { uploadConsolidatedTDH, uploadTDH } from '../tdh_upload';
 import { loadEnv, unload } from '../secrets';
 
 export const handler = async (event?: any, context?: any) => {
@@ -19,6 +19,7 @@ export async function tdhLoop(force?: boolean) {
   await tdh(force);
   await findNftTDH();
   await uploadTDH(force);
+  await uploadConsolidatedTDH(force);
 }
 
 async function tdh(force?: boolean) {

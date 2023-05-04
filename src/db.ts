@@ -22,7 +22,8 @@ import {
   DISTRIBUTION_TABLE,
   CONSOLIDATIONS_LIMIT,
   CONSOLIDATED_WALLETS_TDH_TABLE,
-  CONSOLIDATIONS_TABLE
+  CONSOLIDATIONS_TABLE,
+  CONSOLIDATED_UPLOADS_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -52,6 +53,7 @@ import {
   ConsolidationType
 } from './entities/IDelegation';
 import { RoyaltiesUpload } from './entities/IRoyalties';
+import { ConsolidatedTDHUpload } from './entities/IUpload';
 import {
   areEqualAddresses,
   extractConsolidationWallets,
@@ -88,7 +90,8 @@ export async function connect() {
       Consolidation,
       ConsolidatedTDH,
       ConsolidatedOwnerMetric,
-      ConsolidatedOwnerTags
+      ConsolidatedOwnerTags,
+      ConsolidatedTDHUpload
     ],
     synchronize: true,
     logging: false
@@ -155,6 +158,12 @@ export function execSQL(sql: string): Promise<any> {
 
 export async function fetchLastUpload(): Promise<any> {
   let sql = `SELECT * FROM ${UPLOADS_TABLE} ORDER BY date DESC LIMIT 1;`;
+  const results = await execSQL(sql);
+  return results ? results[0] : [];
+}
+
+export async function fetchLastConsolidatedUpload(): Promise<any> {
+  let sql = `SELECT * FROM ${CONSOLIDATED_UPLOADS_TABLE} ORDER BY date DESC LIMIT 1;`;
   const results = await execSQL(sql);
   return results ? results[0] : [];
 }
@@ -811,6 +820,20 @@ export async function persistTdhUpload(
   await execSQL(sql);
 
   console.log('[TDH UPLOAD PERSISTED]');
+}
+
+export async function persistConsolidatedTdhUpload(
+  block: number,
+  dateString: string,
+  location: string
+) {
+  const sql = `REPLACE INTO ${CONSOLIDATED_UPLOADS_TABLE} SET 
+    date = ${mysql.escape(dateString)},
+    block = ${block},
+    tdh = ${mysql.escape(location)}`;
+  await execSQL(sql);
+
+  console.log('[CONSOLIDATED TDH UPLOAD PERSISTED]');
 }
 
 export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {

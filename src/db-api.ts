@@ -2,6 +2,7 @@ import {
   ARTISTS_TABLE,
   CONSOLIDATED_OWNERS_METRICS_TABLE,
   CONSOLIDATED_OWNERS_TAGS_TABLE,
+  CONSOLIDATED_UPLOADS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATIONS_TABLE,
   DISTRIBUTION_PHOTO_TABLE,
@@ -166,6 +167,17 @@ export async function fetchBlocks(pageSize: number, page: number) {
 
 export async function fetchUploads(pageSize: number, page: number) {
   return fetchPaginated(UPLOADS_TABLE, 'block desc', pageSize, page, '', '');
+}
+
+export async function fetchConsolidatedUploads(pageSize: number, page: number) {
+  return fetchPaginated(
+    CONSOLIDATED_UPLOADS_TABLE,
+    'block desc',
+    pageSize,
+    page,
+    '',
+    ''
+  );
 }
 
 export async function fetchArtists(

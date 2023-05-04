@@ -320,12 +320,43 @@ loadEnv(true).then(async (e) => {
       console.log(
         new Date(),
         `[API]`,
-        '[BLOCKS]',
+        '[UPLOADS]',
         `SOMETHING WENT WRONG [EXCEPTION ${e}]`
       );
       next(e);
     }
   });
+
+  app.get(
+    `${BASE_PATH}/consolidated_uploads`,
+    function (req: any, res: any, next: any) {
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATED UPLOADS]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchConsolidatedUploads(pageSize, page).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATED UPLOADS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
 
   app.get(`${BASE_PATH}/artists`, function (req: any, res: any, next: any) {
     try {
