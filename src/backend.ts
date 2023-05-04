@@ -56,21 +56,21 @@ cron.schedule('*/2 * * * *', async function () {
 // PULL EVERY HOUR AT MIN 0
 cron.schedule('0 * * * *', async function () {
   if (!STARTING) {
-    memeStats();
+    // memeStats();
   }
 });
 
 // PULL EVERY 2 HOURS AT MIN 15
 cron.schedule('15 */2 * * *', async function () {
   if (!STARTING) {
-    gradientStats();
+    // gradientStats();
   }
 });
 
 // PULL EVERY HOUR AT MIN 30
 cron.schedule('30 * * * *', async function () {
   if (!STARTING) {
-    memeLabStats();
+    // memeLabStats();
   }
 });
 
