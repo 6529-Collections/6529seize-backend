@@ -367,28 +367,21 @@ function getTokenDateFromConsolidation(
   transaction: Transaction,
   consolidationTransactions: Transaction[]
 ): Date {
-  const incomingWallet = transaction.from_address;
+  const firstTransactionInConsolidation = consolidationTransactions
+    .sort(
+      (a, b) =>
+        new Date(a.transaction_date).getTime() -
+        new Date(b.transaction_date).getTime()
+    )
+    .find(
+      (t) =>
+        t.token_id == transaction.token_id &&
+        consolidations.some((c) => areEqualAddresses(c, t.to_address)) &&
+        !consolidations.some((c) => areEqualAddresses(c, t.from_address))
+    );
 
-  const incomingTransaction = consolidationTransactions.find(
-    (t) =>
-      areEqualAddresses(t.to_address, incomingWallet) &&
-      t.token_id == transaction.token_id
-  );
-  if (incomingTransaction) {
-    let date = new Date(incomingTransaction.transaction_date);
-    if (
-      incomingTransaction.value == 0 &&
-      consolidations.some((c) =>
-        areEqualAddresses(c, incomingTransaction.from_address)
-      )
-    ) {
-      return getTokenDateFromConsolidation(
-        consolidations,
-        incomingTransaction,
-        consolidationTransactions
-      );
-    }
-    return date;
+  if (firstTransactionInConsolidation) {
+    return new Date(firstTransactionInConsolidation.transaction_date);
   }
   return new Date(transaction.transaction_date);
 }

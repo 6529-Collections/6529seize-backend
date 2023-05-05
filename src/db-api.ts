@@ -139,6 +139,9 @@ async function fetchPaginated(
   // console.log(sql1);
   // console.log(sql2);
 
+  // console.log(r1)
+  // console.log(r2);
+
   return {
     count: r1[0]?.count,
     page: page,

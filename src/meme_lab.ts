@@ -76,181 +76,184 @@ async function processNFTs(
   );
 
   const newNFTS: LabNFT[] = [];
+  if (allNFTS.length != startingNFTS.length) {
+    await Promise.all(
+      allNFTS.map(async (mnft) => {
+        const tokenId = parseInt(mnft.tokenId);
 
-  await Promise.all(
-    allNFTS.map(async (mnft) => {
-      const tokenId = parseInt(mnft.tokenId);
-
-      const tokenWallets = owners.filter(
-        (tw) =>
-          !areEqualAddresses(NULL_ADDRESS, tw.wallet) && tw.token_id == tokenId
-      );
-
-      const startingNft = startingNFTS.find(
-        (s) =>
-          s.id == tokenId && areEqualAddresses(s.contract, MEMELAB_CONTRACT)
-      );
-
-      const fullMetadata = await alchemy.nft.getNftMetadata(
-        MEMELAB_CONTRACT,
-        tokenId
-      );
-
-      const tokenTransactions = [...startingTransactions]
-        .filter((t) => t.token_id == tokenId)
-        .sort((a, b) => (a.transaction_date > b.transaction_date ? 1 : -1));
-
-      const createdTransactions = [...tokenTransactions].filter((t) =>
-        areEqualAddresses(NULL_ADDRESS, t.from_address)
-      );
-
-      const firstMintNull = tokenTransactions.find(
-        (t) => areEqualAddresses(NULL_ADDRESS, t.from_address) && t.value > 0
-      );
-
-      let editionSize = 0;
-      tokenWallets.map((tw) => {
-        editionSize += tw.balance;
-      });
-
-      let mintPrice = 0;
-      if (firstMintNull) {
-        const mintTransaction = await alchemy.core.getTransaction(
-          firstMintNull?.transaction
+        const tokenWallets = owners.filter(
+          (tw) =>
+            !areEqualAddresses(NULL_ADDRESS, tw.wallet) &&
+            tw.token_id == tokenId
         );
-        mintPrice = mintTransaction
-          ? parseFloat(Utils.formatEther(mintTransaction.value))
-          : 0;
-        if (mintPrice) {
-          mintPrice = mintPrice / firstMintNull.token_count;
-        }
-      } else {
-        const firstMintManifold = tokenTransactions.find(
-          (t) => areEqualAddresses(MANIFOLD, t.from_address) && t.value > 0
+
+        const startingNft = startingNFTS.find(
+          (s) =>
+            s.id == tokenId && areEqualAddresses(s.contract, MEMELAB_CONTRACT)
         );
-        if (firstMintManifold) {
+
+        const fullMetadata = await alchemy.nft.getNftMetadata(
+          MEMELAB_CONTRACT,
+          tokenId,
+          {}
+        );
+
+        const tokenTransactions = [...startingTransactions]
+          .filter((t) => t.token_id == tokenId)
+          .sort((a, b) => (a.transaction_date > b.transaction_date ? 1 : -1));
+
+        const createdTransactions = [...tokenTransactions].filter((t) =>
+          areEqualAddresses(NULL_ADDRESS, t.from_address)
+        );
+
+        const firstMintNull = tokenTransactions.find(
+          (t) => areEqualAddresses(NULL_ADDRESS, t.from_address) && t.value > 0
+        );
+
+        let editionSize = 0;
+        tokenWallets.map((tw) => {
+          editionSize += tw.balance;
+        });
+
+        let mintPrice = 0;
+        if (firstMintNull) {
           const mintTransaction = await alchemy.core.getTransaction(
-            firstMintManifold?.transaction
+            firstMintNull?.transaction
           );
           mintPrice = mintTransaction
             ? parseFloat(Utils.formatEther(mintTransaction.value))
             : 0;
           if (mintPrice) {
-            mintPrice = mintPrice / firstMintManifold.token_count;
+            mintPrice = mintPrice / firstMintNull.token_count;
           }
-        }
-      }
-
-      const tokenContract = fullMetadata.contract;
-
-      const format = fullMetadata.rawMetadata?.image_details.format;
-      let tokenPath;
-      if (format.toUpperCase() == 'GIF') {
-        tokenPath = `${MEMELAB_CONTRACT}/${tokenId}.${format}`;
-      } else {
-        tokenPath = `${MEMELAB_CONTRACT}/${tokenId}.WEBP`;
-      }
-      const tokenPathOriginal = `${MEMELAB_CONTRACT}/${tokenId}.${format}`;
-
-      let animation = fullMetadata.rawMetadata?.animation;
-      const animationDetails = fullMetadata.rawMetadata?.animation_details;
-
-      let compressedAnimation;
-
-      if (animationDetails) {
-        if (animationDetails.format == 'MP4') {
-          animation = `${NFT_VIDEO_LINK}${MEMELAB_CONTRACT}/${tokenId}.${animationDetails.format}`;
-          compressedAnimation = `${NFT_VIDEO_LINK}${MEMELAB_CONTRACT}/scaledx750/${tokenId}.${animationDetails.format}`;
-        }
-        if (animationDetails.format == 'HTML') {
-          animation = `${NFT_HTML_LINK}${MEMELAB_CONTRACT}/${tokenId}.${animationDetails.format}`;
-        }
-      }
-
-      const artists: string[] = [];
-      fullMetadata.rawMetadata?.attributes?.map((a) => {
-        if (
-          a.trait_type.toUpperCase().startsWith('ARTIST') &&
-          a.value &&
-          a.value.toUpperCase() != 'NONE'
-        ) {
-          artists.push(a.value);
-        }
-      });
-
-      const memeReferences: number[] = [];
-      const memeNFTs: NFTWithExtendedData[] = await fetchMemesWithSeason();
-
-      fullMetadata.rawMetadata?.attributes?.map((a) => {
-        if (
-          a.trait_type.toUpperCase().startsWith('MEME CARD REFERENCE') &&
-          a.value &&
-          a.value.toUpperCase() != 'NONE'
-        ) {
-          const ref = a.value;
-          if (ref.toUpperCase() == 'ALL') {
-            memeReferences.push(...[...memeNFTs].map((m) => m.id));
-          } else if (ref.toUpperCase() == 'ALL SZN1') {
-            memeReferences.push(
-              ...[...memeNFTs].filter((m) => m.season == 1).map((m) => m.id)
+        } else {
+          const firstMintManifold = tokenTransactions.find(
+            (t) => areEqualAddresses(MANIFOLD, t.from_address) && t.value > 0
+          );
+          if (firstMintManifold) {
+            const mintTransaction = await alchemy.core.getTransaction(
+              firstMintManifold?.transaction
             );
-          } else if (ref.toUpperCase() == 'ALL SZN2') {
-            memeReferences.push(
-              ...[...memeNFTs].filter((m) => m.season == 2).map((m) => m.id)
-            );
-          } else if (ref.toUpperCase() == 'ALL SZN3') {
-            memeReferences.push(
-              ...[...memeNFTs].filter((m) => m.season == 3).map((m) => m.id)
-            );
-          } else {
-            const memeRef = memeNFTs.find((m) => m.name == ref);
-            if (memeRef) {
-              memeReferences.push(memeRef.id);
+            mintPrice = mintTransaction
+              ? parseFloat(Utils.formatEther(mintTransaction.value))
+              : 0;
+            if (mintPrice) {
+              mintPrice = mintPrice / firstMintManifold.token_count;
             }
           }
         }
-      });
 
-      const nft: LabNFT = {
-        id: tokenId,
-        contract: MEMELAB_CONTRACT,
-        created_at: new Date(),
-        mint_date: createdTransactions[0]
-          ? new Date(createdTransactions[0].transaction_date)
-          : new Date(),
-        mint_price: mintPrice,
-        supply: editionSize,
-        name: fullMetadata.rawMetadata?.name,
-        collection: 'Meme Lab by 6529',
-        token_type: tokenContract.tokenType,
-        description: fullMetadata.description,
-        artist: artists.join(', '),
-        uri: fullMetadata.tokenUri?.raw,
-        icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
-        thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
-        scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
-        image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
-        compressed_animation: compressedAnimation,
-        animation: animation,
-        metadata: fullMetadata.rawMetadata,
-        meme_references: memeReferences,
-        floor_price: startingNft ? startingNft.floor_price : 0,
-        market_cap: startingNft ? startingNft.market_cap : 0,
-        total_volume_last_24_hours: startingNft
-          ? startingNft.total_volume_last_24_hours
-          : 0,
-        total_volume_last_7_days: startingNft
-          ? startingNft.total_volume_last_7_days
-          : 0,
-        total_volume_last_1_month: startingNft
-          ? startingNft.total_volume_last_1_month
-          : 0,
-        total_volume: startingNft ? startingNft.total_volume : 0
-      };
+        const tokenContract = fullMetadata.contract;
 
-      newNFTS.push(nft);
-    })
-  );
+        const format = fullMetadata.rawMetadata?.image_details.format;
+        let tokenPath;
+        if (format.toUpperCase() == 'GIF') {
+          tokenPath = `${MEMELAB_CONTRACT}/${tokenId}.${format}`;
+        } else {
+          tokenPath = `${MEMELAB_CONTRACT}/${tokenId}.WEBP`;
+        }
+        const tokenPathOriginal = `${MEMELAB_CONTRACT}/${tokenId}.${format}`;
+
+        let animation = fullMetadata.rawMetadata?.animation;
+        const animationDetails = fullMetadata.rawMetadata?.animation_details;
+
+        let compressedAnimation;
+
+        if (animationDetails) {
+          if (animationDetails.format == 'MP4') {
+            animation = `${NFT_VIDEO_LINK}${MEMELAB_CONTRACT}/${tokenId}.${animationDetails.format}`;
+            compressedAnimation = `${NFT_VIDEO_LINK}${MEMELAB_CONTRACT}/scaledx750/${tokenId}.${animationDetails.format}`;
+          }
+          if (animationDetails.format == 'HTML') {
+            animation = `${NFT_HTML_LINK}${MEMELAB_CONTRACT}/${tokenId}.${animationDetails.format}`;
+          }
+        }
+
+        const artists: string[] = [];
+        fullMetadata.rawMetadata?.attributes?.map((a) => {
+          if (
+            a.trait_type.toUpperCase().startsWith('ARTIST') &&
+            a.value &&
+            a.value.toUpperCase() != 'NONE'
+          ) {
+            artists.push(a.value);
+          }
+        });
+
+        const memeReferences: number[] = [];
+        const memeNFTs: NFTWithExtendedData[] = await fetchMemesWithSeason();
+
+        fullMetadata.rawMetadata?.attributes?.map((a) => {
+          if (
+            a.trait_type.toUpperCase().startsWith('MEME CARD REFERENCE') &&
+            a.value &&
+            a.value.toUpperCase() != 'NONE'
+          ) {
+            const ref = a.value;
+            if (ref.toUpperCase() == 'ALL') {
+              memeReferences.push(...[...memeNFTs].map((m) => m.id));
+            } else if (ref.toUpperCase() == 'ALL SZN1') {
+              memeReferences.push(
+                ...[...memeNFTs].filter((m) => m.season == 1).map((m) => m.id)
+              );
+            } else if (ref.toUpperCase() == 'ALL SZN2') {
+              memeReferences.push(
+                ...[...memeNFTs].filter((m) => m.season == 2).map((m) => m.id)
+              );
+            } else if (ref.toUpperCase() == 'ALL SZN3') {
+              memeReferences.push(
+                ...[...memeNFTs].filter((m) => m.season == 3).map((m) => m.id)
+              );
+            } else {
+              const memeRef = memeNFTs.find((m) => m.name == ref);
+              if (memeRef) {
+                memeReferences.push(memeRef.id);
+              }
+            }
+          }
+        });
+
+        const nft: LabNFT = {
+          id: tokenId,
+          contract: MEMELAB_CONTRACT,
+          created_at: new Date(),
+          mint_date: createdTransactions[0]
+            ? new Date(createdTransactions[0].transaction_date)
+            : new Date(),
+          mint_price: mintPrice,
+          supply: editionSize,
+          name: fullMetadata.rawMetadata?.name,
+          collection: 'Meme Lab by 6529',
+          token_type: tokenContract.tokenType,
+          description: fullMetadata.description,
+          artist: artists.join(', '),
+          uri: fullMetadata.tokenUri?.raw,
+          icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
+          thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
+          scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
+          image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
+          compressed_animation: compressedAnimation,
+          animation: animation,
+          metadata: fullMetadata.rawMetadata,
+          meme_references: memeReferences,
+          floor_price: startingNft ? startingNft.floor_price : 0,
+          market_cap: startingNft ? startingNft.market_cap : 0,
+          total_volume_last_24_hours: startingNft
+            ? startingNft.total_volume_last_24_hours
+            : 0,
+          total_volume_last_7_days: startingNft
+            ? startingNft.total_volume_last_7_days
+            : 0,
+          total_volume_last_1_month: startingNft
+            ? startingNft.total_volume_last_1_month
+            : 0,
+          total_volume: startingNft ? startingNft.total_volume : 0
+        };
+
+        newNFTS.push(nft);
+      })
+    );
+  }
   console.log(`[NFTS]`, `[PROCESSED ${newNFTS.length} NEW NFTS]`);
   return newNFTS;
 }

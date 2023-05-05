@@ -1,5 +1,6 @@
 import { Alchemy, Network } from 'alchemy-sdk';
 import {
+  ALCHEMY_SETTINGS,
   DELEGATION_ALL_ADDRESS,
   DELEGATION_CONTRACT,
   MEMES_CONTRACT,
@@ -34,8 +35,9 @@ export const findDelegationTransactions = async (
   latestBlock?: number
 ) => {
   alchemy = new Alchemy({
-    network: Network.ETH_SEPOLIA,
-    maxRetries: 10,
+    ...ALCHEMY_SETTINGS,
+    // network: Network.ETH_SEPOLIA,
+    // maxRetries: 10,
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
