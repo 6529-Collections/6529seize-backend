@@ -8,10 +8,6 @@ import {
 import { fetchRoyalties, persistRoyaltiesUpload } from './db';
 import converter from 'json-2-csv';
 
-const EthDater = require('ethereum-block-by-date');
-const fetch = require('node-fetch');
-
-let alchemy: Alchemy;
 const Arweave = require('arweave');
 
 interface Royalty {
@@ -99,41 +95,21 @@ function getDate() {
 }
 
 export const findRoyalties = async () => {
-  alchemy = new Alchemy({
-    ...ALCHEMY_SETTINGS,
-    apiKey: process.env.ALCHEMY_API_KEY
-  });
-
-  const royaltiesDate = getDate();
-
-  const provider = await alchemy.config.getProvider();
-  const dater = new EthDater(provider);
-
-  const date = new Date(royaltiesDate);
-  const start = date.setUTCHours(0, 0, 0);
-  const end = date.setUTCHours(23, 59, 59);
-
-  const startingBlock = await dater.getDate(start, true);
-  const endingBlock = await dater.getDate(end, false);
-
+  const startDate = getDate();
+  startDate.setUTCHours(0, 0, 0, 0);
+  const endDate = getDate();
+  endDate.setUTCHours(23, 59, 59, 999);
   console.log(
     '[ROYALTIES]',
-    `[START BLOCK ${startingBlock.block} - ${new Date(
-      startingBlock.timestamp * 1000
-    ).toUTCString()}]`,
-    `[END BLOCK ${endingBlock.block} - ${new Date(
-      endingBlock.timestamp * 1000
-    ).toUTCString()}]`
+    `[START DATE ${startDate.toUTCString()}]`,
+    `[END DATE ${endDate.toUTCString()}]`
   );
 
-  const royalties = await fetchRoyalties(
-    startingBlock.block,
-    endingBlock.block
-  );
+  const royalties = await fetchRoyalties(startDate, endDate);
 
-  const year = royaltiesDate.getFullYear();
-  const month = ('0' + (royaltiesDate.getMonth() + 1)).slice(-2);
-  const day = ('0' + royaltiesDate.getDate()).slice(-2);
+  const year = startDate.getFullYear();
+  const month = ('0' + (startDate.getMonth() + 1)).slice(-2);
+  const day = ('0' + startDate.getDate()).slice(-2);
   const formattedDate = `${year}-${month}-${day}`;
 
   const myRoyalties: Royalty[] = [];
@@ -152,7 +128,7 @@ export const findRoyalties = async () => {
   });
 
   const url = await uploadRoyalties(formattedDate, myRoyalties);
-  await persistRoyaltiesUpload(royaltiesDate, url);
+  await persistRoyaltiesUpload(startDate, url);
 };
 
 async function uploadRoyalties(formattedDate: String, royalties: Royalty[]) {

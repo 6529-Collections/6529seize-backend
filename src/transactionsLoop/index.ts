@@ -52,10 +52,6 @@ export async function transactions(
 
     await persistTransactions(transactionsWithValues);
 
-    const manifoldTransactions = transactionsWithValues.filter((tr) =>
-      areEqualAddresses(tr.from_address, MANIFOLD)
-    );
-
     if (response.pageKey) {
       await transactions(
         startingBlockResolved,

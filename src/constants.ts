@@ -15,10 +15,15 @@ export const MEMES_EXTENDED_DATA_TABLE = 'memes_extended_data';
 export const LAB_EXTENDED_DATA_TABLE = 'lab_extended_data';
 export const WALLETS_TDH_TABLE = 'tdh';
 export const UPLOADS_TABLE = 'uploads';
+export const CONSOLIDATED_UPLOADS_TABLE = 'uploads_consolidation';
 export const ENS_TABLE = 'ens';
 export const TEAM_TABLE = 'team';
 export const DISTRIBUTION_TABLE = 'distribution';
 export const DISTRIBUTION_PHOTO_TABLE = 'distribution_photo';
+export const CONSOLIDATED_OWNERS_METRICS_TABLE = 'owners_metrics_consolidation';
+export const CONSOLIDATED_WALLETS_TDH_TABLE = 'tdh_consolidation';
+export const CONSOLIDATED_OWNERS_TAGS_TABLE = 'owners_tags_consolidation';
+export const CONSOLIDATIONS_TABLE = 'consolidations';
 
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
 export const GRADIENT_CONTRACT = '0x0c58ef43ff3032005e472cb5709f8908acb00205';
@@ -55,3 +60,23 @@ export const NFT_SCALED60_IMAGE_LINK =
 
 export const NFT_VIDEO_LINK = 'https://d3lqz0a4bldqgf.cloudfront.net/videos/';
 export const NFT_HTML_LINK = 'https://d3lqz0a4bldqgf.cloudfront.net/html/';
+
+// export const DELEGATION_CONTRACT: {
+//   chain_id: number;
+//   contract: `0x${string}`;
+// } = {
+//   chain_id: 11155111,
+//   contract: '0x8f86c644f845a077999939c69bc787662377d915'
+// };
+export const DELEGATION_CONTRACT: {
+  chain_id: number;
+  contract: `0x${string}`;
+} = {
+  chain_id: 1,
+  contract: '0x2202CB9c00487e7e8EF21e6d8E914B32e709f43d'
+};
+export const DELEGATION_ALL_ADDRESS =
+  '0x8888888888888888888888888888888888888888';
+
+export const USE_CASE_CONSOLIDATION = 999;
+export const CONSOLIDATIONS_LIMIT = 3;

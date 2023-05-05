@@ -107,7 +107,6 @@ async function resolveValue(t: Transaction, receipt: any, events: number) {
 }
 
 export const runValues = async () => {
-  console.log('hello values');
   if (!alchemy) {
     alchemy = new Alchemy({
       ...ALCHEMY_SETTINGS,

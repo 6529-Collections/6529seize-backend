@@ -6,11 +6,15 @@ import {
   MEMES_CONTRACT,
   NFT_ORIGINAL_IMAGE_LINK
 } from './constants';
-import S3 from 'aws-sdk/clients/s3';
+import {
+  S3Client,
+  HeadObjectCommand,
+  PutObjectCommand,
+  DeleteObjectCommand
+} from '@aws-sdk/client-s3';
 import sharp from 'sharp';
 import { Stream } from 'stream';
 import { RequestInfo, RequestInit } from 'node-fetch';
-import { fetchAllNFTs } from './db';
 
 const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
@@ -25,17 +29,12 @@ const ICON_HEIGHT = 60;
 const THUMBNAIL_HEIGHT = 450;
 const SCALED_HEIGHT = 1000;
 
-let s3: S3;
+let s3: S3Client;
 
 export const persistS3 = async (nfts: NFT[]) => {
-  if (process.env.NODE_ENV == 'local') {
-    s3 = new S3({
-      accessKeyId: process.env.AWS_6529_ACCESS_KEY_ID,
-      secretAccessKey: process.env.AWS_6529_SECRET_ACCESS_KEY
-    });
-  } else {
-    s3 = new S3();
-  }
+  nfts = [nfts[0]];
+  console.log(nfts[0].id, nfts[0].contract);
+  s3 = new S3Client({ region: 'eu-west-1' });
 
   console.log('[S3]', `[PROCESSING ASSETS FOR ${nfts.length} NFTS]`);
 
@@ -59,9 +58,9 @@ export const persistS3 = async (nfts: NFT[]) => {
         const imageKey = `images/original/${n.contract}/${n.id}.${format}`;
 
         try {
-          const a = await s3
-            .headObject({ Bucket: myBucket, Key: imageKey })
-            .promise();
+          await s3.send(
+            new HeadObjectCommand({ Bucket: myBucket, Key: imageKey })
+          );
         } catch (error: any) {
           if (error.code === 'NotFound') {
             console.log(
@@ -88,19 +87,16 @@ export const persistS3 = async (nfts: NFT[]) => {
               `[ID ${n.id}]`
             );
 
-            const uploadedImage = await s3
-              .upload({
+            const uploadedImage = await s3.send(
+              new PutObjectCommand({
                 Bucket: myBucket,
                 Key: imageKey,
                 Body: Buffer.from(blob),
                 ContentType: `image/${format.toLowerCase()}`
               })
-              .promise();
-
-            console.log(
-              '[S3]',
-              `[IMAGE PERSISTED AT ${uploadedImage.Location}`
             );
+
+            console.log('[S3]', `[IMAGE PERSISTED AT ${uploadedImage.ETag}`);
           }
         }
 
@@ -111,7 +107,9 @@ export const persistS3 = async (nfts: NFT[]) => {
           }
           const scaledKey = `images/scaled_x1000/${n.contract}/${n.id}.${scaledFormat}`;
           try {
-            await s3.headObject({ Bucket: myBucket, Key: scaledKey }).promise();
+            await s3.send(
+              new HeadObjectCommand({ Bucket: myBucket, Key: scaledKey })
+            );
           } catch (error: any) {
             if (error.code === 'NotFound') {
               console.log(
@@ -145,18 +143,18 @@ export const persistS3 = async (nfts: NFT[]) => {
                 SCALED_HEIGHT
               );
 
-              const uploadedScaledImage = await s3
-                .upload({
+              const uploadedScaledImage = await s3.send(
+                new PutObjectCommand({
                   Bucket: myBucket,
                   Key: scaledKey,
                   Body: scaledBuffer,
                   ContentType: `image/${scaledFormat}`
                 })
-                .promise();
+              );
 
               console.log(
                 '[S3]',
-                `[SCALED PERSISTED AT ${uploadedScaledImage.Location}`
+                `[SCALED PERSISTED AT ${uploadedScaledImage.ETag}`
               );
             }
           }
@@ -170,9 +168,9 @@ export const persistS3 = async (nfts: NFT[]) => {
           const thumbnailKey = `images/scaled_x450/${n.contract}/${n.id}.${thumbnailFormat}`;
 
           try {
-            await s3
-              .headObject({ Bucket: myBucket, Key: thumbnailKey })
-              .promise();
+            await s3.send(
+              new HeadObjectCommand({ Bucket: myBucket, Key: thumbnailKey })
+            );
           } catch (error: any) {
             if (error.code === 'NotFound') {
               console.log(
@@ -206,18 +204,18 @@ export const persistS3 = async (nfts: NFT[]) => {
                 THUMBNAIL_HEIGHT
               );
 
-              const uploadedThumbnail = await s3
-                .upload({
+              const uploadedThumbnail = await s3.send(
+                new PutObjectCommand({
                   Bucket: myBucket,
                   Key: thumbnailKey,
                   Body: thumbBuffer,
                   ContentType: `image/${thumbnailFormat}`
                 })
-                .promise();
+              );
 
               console.log(
                 '[S3]',
-                `[THUMBNAIL PERSISTED AT ${uploadedThumbnail.Location}`
+                `[THUMBNAIL PERSISTED AT ${uploadedThumbnail.ETag}`
               );
             }
           }
@@ -267,18 +265,18 @@ export const persistS3 = async (nfts: NFT[]) => {
               ICON_HEIGHT
             );
 
-            const uploadedIcon = await s3
-              .upload({
+            const uploadedIcon = await s3.send(
+              new PutObjectCommand({
                 Bucket: myBucket,
                 Key: iconKey,
                 Body: iconBuffer,
                 ContentType: `image/${iconFormat}`
               })
-              .promise();
+            );
 
             await deleteTempFile(myBucket, iconKey);
 
-            console.log('[S3]', `[ICON PERSISTED AT ${uploadedIcon.Location}`);
+            console.log('[S3]', `[ICON PERSISTED AT ${uploadedIcon.ETag}`);
           }
         }
       }
@@ -290,7 +288,9 @@ export const persistS3 = async (nfts: NFT[]) => {
         const videoKey = `videos/${n.contract}/${n.id}.${videoFormat}`;
 
         try {
-          await s3.headObject({ Bucket: myBucket, Key: videoKey }).promise();
+          await s3.send(
+            new HeadObjectCommand({ Bucket: myBucket, Key: videoKey })
+          );
         } catch (error: any) {
           if (error.code === 'NotFound') {
             console.log(
@@ -319,18 +319,18 @@ export const persistS3 = async (nfts: NFT[]) => {
               `[ID ${n.id}]`
             );
 
-            const uploadedVideo = await s3
-              .upload({
+            const uploadedVideo = await s3.send(
+              new PutObjectCommand({
                 Bucket: myBucket,
                 Key: videoKey,
                 Body: Buffer.from(blob),
                 ContentType: `video/mp4`
               })
-              .promise();
+            );
 
             console.log(
               '[S3]',
-              `[${videoFormat} PERSISTED AT ${uploadedVideo.Location}`
+              `[${videoFormat} PERSISTED AT ${uploadedVideo.ETag}`
             );
           }
         }
@@ -408,18 +408,18 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
           const outputBuffer = Buffer.concat(buffers);
 
           if (outputBuffer.length > 0) {
-            const uploadedScaleddVideo = await s3
-              .upload({
+            const uploadedScaleddVideo = await s3.send(
+              new PutObjectCommand({
                 Bucket: myBucket,
                 Key: scaledVideoKey,
                 Body: outputBuffer,
                 ContentType: `video/${videoFormat.toLowerCase()}`
               })
-              .promise();
+            );
 
             console.log(
               '[S3]',
-              `[SCALED ${videoFormat} PERSISTED AT ${uploadedScaleddVideo.Location}`
+              `[SCALED ${videoFormat} PERSISTED AT ${uploadedScaleddVideo.ETag}`
             );
           }
         }
@@ -431,40 +431,38 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
 
 async function objectExists(myBucket: any, key: any): Promise<boolean> {
   try {
-    await s3.headObject({ Bucket: myBucket, Key: key }).promise();
+    await s3.send(new HeadObjectCommand({ Bucket: myBucket, Key: key }));
     return true;
-  } catch (error: any) {
-    if (error.code === 'NotFound') {
-      try {
-        await s3
-          .headObject({ Bucket: myBucket, Key: `${key}__temp` })
-          .promise();
-        return true;
-      } catch (error: any) {
-        return false;
-      }
+  } catch (error1: any) {
+    try {
+      await s3.send(
+        new HeadObjectCommand({ Bucket: myBucket, Key: `${key}__temp` })
+      );
+      return true;
+    } catch (error2: any) {
+      return false;
     }
   }
   return false;
 }
 
 async function createTempFile(myBucket: any, key: any) {
-  await s3
-    .upload({
+  await s3.send(
+    new PutObjectCommand({
       Bucket: myBucket,
       Key: `${key}__temp`,
       Body: Buffer.from('temp')
     })
-    .promise();
+  );
 }
 
 async function deleteTempFile(myBucket: any, key: any) {
-  await s3
-    .deleteObject({
+  await s3.send(
+    new DeleteObjectCommand({
       Bucket: myBucket,
       Key: `${key}__temp`
     })
-    .promise();
+  );
 }
 
 async function scaleVideo(url: string, format: string): Promise<any> {

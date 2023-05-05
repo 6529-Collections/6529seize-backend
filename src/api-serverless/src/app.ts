@@ -320,12 +320,43 @@ loadEnv(true).then(async (e) => {
       console.log(
         new Date(),
         `[API]`,
-        '[BLOCKS]',
+        '[UPLOADS]',
         `SOMETHING WENT WRONG [EXCEPTION ${e}]`
       );
       next(e);
     }
   });
+
+  app.get(
+    `${BASE_PATH}/consolidated_uploads`,
+    function (req: any, res: any, next: any) {
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATED UPLOADS]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchConsolidatedUploads(pageSize, page).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATED UPLOADS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
 
   app.get(`${BASE_PATH}/artists`, function (req: any, res: any, next: any) {
     try {
@@ -802,7 +833,11 @@ loadEnv(true).then(async (e) => {
 
         db.fetchEns(address).then((result) => {
           res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-          res.end(JSON.stringify(result[0]));
+          if (result.length == 1) {
+            res.end(JSON.stringify(result[0]));
+          } else {
+            res.end(JSON.stringify({}));
+          }
         });
       } catch (e) {
         console.log(
@@ -862,6 +897,68 @@ loadEnv(true).then(async (e) => {
             d.memes_ranks = JSON.parse(d.memes_ranks);
             d.gradients = JSON.parse(d.gradients);
             d.gradients_ranks = JSON.parse(d.gradients_ranks);
+          });
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NFT TDH]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
+
+  app.get(
+    `${BASE_PATH}/consolidated_tdh/:contract/:nft_id`,
+    function (req: any, res: any, next: any) {
+      const contract = req.params.contract;
+      const nftId = req.params.nft_id;
+
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        const sort =
+          req.query.sort && NFT_TDH_SORT.includes(req.query.sort)
+            ? req.query.sort
+            : 'card_tdh';
+
+        const sortDir =
+          req.query.sort_direction &&
+          SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+            ? req.query.sort_direction
+            : 'desc';
+
+        const wallets = req.query.wallet;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NFT TDH]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchConsolidatedNftTdh(
+          pageSize,
+          page,
+          contract,
+          nftId,
+          wallets,
+          sort,
+          sortDir
+        ).then((result) => {
+          result.data.map((d: any) => {
+            d.memes = JSON.parse(d.memes);
+            d.memes_ranks = JSON.parse(d.memes_ranks);
+            d.gradients = JSON.parse(d.gradients);
+            d.gradients_ranks = JSON.parse(d.gradients_ranks);
+            d.wallets = JSON.parse(d.wallets);
           });
           returnPaginatedResult(result, req, res);
         });
@@ -978,6 +1075,11 @@ loadEnv(true).then(async (e) => {
         const hideTeam =
           req.query.hide_team && req.query.hide_team == 'true' ? true : false;
 
+        const isProfilePage =
+          req.query.profile_page && req.query.profile_page == 'true'
+            ? true
+            : false;
+
         console.log(
           new Date(),
           `[API]`,
@@ -992,7 +1094,8 @@ loadEnv(true).then(async (e) => {
           sortDir,
           filter,
           hideMuseum,
-          hideTeam
+          hideTeam,
+          isProfilePage
         ).then((result) => {
           result.data.map((d: any) => {
             if (d.memes) {
@@ -1015,6 +1118,95 @@ loadEnv(true).then(async (e) => {
           new Date(),
           `[API]`,
           '[TDH]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
+  app.get(
+    `${BASE_PATH}/consolidated_owner_metrics`,
+    function (req: any, res: any, next: any) {
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        const wallets = req.query.wallet;
+        const sort =
+          req.query.sort && TDH_SORT.includes(req.query.sort)
+            ? req.query.sort
+            : 'boosted_tdh';
+
+        const sortDir =
+          req.query.sort_direction &&
+          SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+            ? req.query.sort_direction
+            : 'desc';
+
+        const filter =
+          req.query.filter && TAGS_FILTERS.includes(req.query.filter)
+            ? req.query.filter
+            : null;
+
+        const hideMuseum =
+          req.query.hide_museum && req.query.hide_museum == 'true'
+            ? true
+            : false;
+
+        const hideTeam =
+          req.query.hide_team && req.query.hide_team == 'true' ? true : false;
+
+        const isProfilePage =
+          req.query.profile_page && req.query.profile_page == 'true'
+            ? true
+            : false;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATED OWNER METRICS]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+
+        db.fetchConsolidatedOwnerMetrics(
+          pageSize,
+          page,
+          wallets,
+          sort,
+          sortDir,
+          filter,
+          hideMuseum,
+          hideTeam,
+          isProfilePage
+        ).then((result) => {
+          result.data.map((d: any) => {
+            if (d.wallets) {
+              d.wallets = JSON.parse(d.wallets);
+            }
+            if (d.memes) {
+              d.memes = JSON.parse(d.memes);
+            }
+            if (d.memes_ranks) {
+              d.memes_ranks = JSON.parse(d.memes_ranks);
+            }
+            if (d.gradients) {
+              d.gradients = JSON.parse(d.gradients);
+            }
+            if (d.gradients_ranks) {
+              d.gradients_ranks = JSON.parse(d.gradients_ranks);
+            }
+          });
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATED OWNER METRICS]',
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         return;
@@ -1191,6 +1383,33 @@ loadEnv(true).then(async (e) => {
           `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
         db.fetchDistributions(wallets, pageSize, page).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[DISTRIBUTIONS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
+  app.get(
+    `${BASE_PATH}/consolidations/:wallet`,
+    function (req: any, res: any, next: any) {
+      try {
+        const wallet = req.params.wallet;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATIONS]',
+          `[WALLET ${wallet}]`
+        );
+        db.fetchConsolidations(wallet).then((result) => {
           returnPaginatedResult(result, req, res);
         });
       } catch (e) {
