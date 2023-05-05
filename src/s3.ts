@@ -32,8 +32,6 @@ const SCALED_HEIGHT = 1000;
 let s3: S3Client;
 
 export const persistS3 = async (nfts: NFT[]) => {
-  nfts = [nfts[0]];
-  console.log(nfts[0].id, nfts[0].contract);
   s3 = new S3Client({ region: 'eu-west-1' });
 
   console.log('[S3]', `[PROCESSING ASSETS FOR ${nfts.length} NFTS]`);
@@ -61,6 +59,7 @@ export const persistS3 = async (nfts: NFT[]) => {
           await s3.send(
             new HeadObjectCommand({ Bucket: myBucket, Key: imageKey })
           );
+          console.log('exists', imageKey);
         } catch (error: any) {
           if (error.code === 'NotFound') {
             console.log(
@@ -110,6 +109,7 @@ export const persistS3 = async (nfts: NFT[]) => {
             await s3.send(
               new HeadObjectCommand({ Bucket: myBucket, Key: scaledKey })
             );
+            console.log('exists', scaledKey);
           } catch (error: any) {
             if (error.code === 'NotFound') {
               console.log(
@@ -171,6 +171,7 @@ export const persistS3 = async (nfts: NFT[]) => {
             await s3.send(
               new HeadObjectCommand({ Bucket: myBucket, Key: thumbnailKey })
             );
+            console.log('exists', thumbnailKey);
           } catch (error: any) {
             if (error.code === 'NotFound') {
               console.log(
@@ -291,6 +292,7 @@ export const persistS3 = async (nfts: NFT[]) => {
           await s3.send(
             new HeadObjectCommand({ Bucket: myBucket, Key: videoKey })
           );
+          console.log('exists', videoKey);
         } catch (error: any) {
           if (error.code === 'NotFound') {
             console.log(
@@ -432,12 +434,14 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
 async function objectExists(myBucket: any, key: any): Promise<boolean> {
   try {
     await s3.send(new HeadObjectCommand({ Bucket: myBucket, Key: key }));
+    console.log('objectExists', key);
     return true;
   } catch (error1: any) {
     try {
       await s3.send(
         new HeadObjectCommand({ Bucket: myBucket, Key: `${key}__temp` })
       );
+      console.log('objectExists', `${key}__temp`);
       return true;
     } catch (error2: any) {
       return false;

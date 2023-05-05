@@ -17,9 +17,14 @@ async function getResult(url: string) {
     const response = await fetch(url, {
       headers: {
         'X-API-KEY': process.env.OPENSEA_API_KEY!,
-        accept: 'application/json'
+        accept: 'application/json',
+        Origin: 'https://seize.io'
       }
     });
+    if (!response.ok) {
+      console.log('response', JSON.stringify(response));
+      throw new Error(`Request failed with status ${response.status}`);
+    }
     return response;
   } catch (err: any) {
     return null;
