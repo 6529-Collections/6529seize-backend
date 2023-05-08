@@ -95,7 +95,7 @@ async function start() {
   // Uncomment to call on start
 
   // await transactionsReplay.handler();
-  // await delegations.handler();
+  await delegations.handler();
   // await transactions.handler();
   // await nfts.handler();
   // await memeLab.handler();

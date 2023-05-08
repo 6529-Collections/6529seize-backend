@@ -7,7 +7,6 @@ import {
   ARTISTS_TABLE,
   MEMES_EXTENDED_DATA_TABLE,
   OWNERS_TABLE,
-  OWNERS_TAGS_TABLE,
   WALLETS_TDH_TABLE,
   UPLOADS_TABLE,
   ENS_TABLE,
@@ -19,10 +18,7 @@ import {
   TRANSACTIONS_MEME_LAB_TABLE,
   OWNERS_MEME_LAB_TABLE,
   MEMES_CONTRACT,
-  DISTRIBUTION_TABLE,
-  CONSOLIDATIONS_LIMIT,
   CONSOLIDATED_WALLETS_TDH_TABLE,
-  CONSOLIDATIONS_TABLE,
   CONSOLIDATED_UPLOADS_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
@@ -50,7 +46,9 @@ import {
 import {
   Consolidation,
   ConsolidationEvent,
-  ConsolidationType
+  Delegation,
+  DelegationEvent,
+  EventType
 } from './entities/IDelegation';
 import { RoyaltiesUpload } from './entities/IRoyalties';
 import { ConsolidatedTDHUpload } from './entities/IUpload';
@@ -91,7 +89,8 @@ export async function connect() {
       ConsolidatedTDH,
       ConsolidatedOwnerMetric,
       ConsolidatedOwnerTags,
-      ConsolidatedTDHUpload
+      ConsolidatedTDHUpload,
+      Delegation
     ],
     synchronize: true,
     logging: false
@@ -219,6 +218,14 @@ export async function retrieveWalletConsolidations(wallet: string) {
 
 export async function fetchLatestConsolidationsBlockNumber() {
   const block = await AppDataSource.getRepository(Consolidation)
+    .createQueryBuilder()
+    .select('MAX(block)', 'maxBlock')
+    .getRawOne();
+  return block.maxBlock;
+}
+
+export async function fetchLatestDelegationsBlockNumber() {
+  const block = await AppDataSource.getRepository(Delegation)
     .createQueryBuilder()
     .select('MAX(block)', 'maxBlock')
     .getRawOne();
@@ -1030,7 +1037,7 @@ export async function persistConsolidations(
       for (const consolidation of consolidations) {
         const repo = manager.getRepository(Consolidation);
 
-        if (consolidation.type == ConsolidationType.REGISTER) {
+        if (consolidation.type == EventType.REGISTER) {
           const r = await repo.findOne({
             where: {
               wallet1: consolidation.wallet1,
@@ -1057,7 +1064,7 @@ export async function persistConsolidations(
               await repo.save(newConsolidation);
             }
           }
-        } else if (consolidation.type == ConsolidationType.REVOKE) {
+        } else if (consolidation.type == EventType.REVOKE) {
           const r = await repo.findOne({
             where: {
               wallet1: consolidation.wallet1,
@@ -1093,6 +1100,55 @@ export async function persistConsolidations(
     console.log(
       '[CONSOLIDATIONS]',
       `[ALL ${consolidations.length} RESULTS PERSISTED]`
+    );
+  }
+}
+
+export async function persistDelegations(delegations: DelegationEvent[]) {
+  if (delegations.length > 0) {
+    console.log('[DELEGATIONS]', `[PERSISTING ${delegations.length} RESULTS]`);
+
+    await AppDataSource.transaction(async (manager) => {
+      for (const delegation of delegations) {
+        const repo = manager.getRepository(Delegation);
+
+        if (delegation.type == EventType.REGISTER) {
+          const r = await repo.findOne({
+            where: {
+              from_address: delegation.wallet1,
+              to_address: delegation.wallet2,
+              use_case: delegation.use_case,
+              collection: delegation.collection
+            }
+          });
+          if (!r) {
+            const newDelegation = new Delegation();
+            newDelegation.block = delegation.block;
+            newDelegation.from_address = delegation.wallet1;
+            newDelegation.to_address = delegation.wallet2;
+            newDelegation.collection = delegation.collection;
+            newDelegation.use_case = delegation.use_case;
+            await repo.save(newDelegation);
+          }
+        } else if (delegation.type == EventType.REVOKE) {
+          const r = await repo.findOne({
+            where: {
+              from_address: delegation.wallet1,
+              to_address: delegation.wallet2,
+              use_case: delegation.use_case,
+              collection: delegation.collection
+            }
+          });
+          if (r) {
+            await repo.delete(r);
+          }
+        }
+      }
+    });
+
+    console.log(
+      '[DELEGATIONS]',
+      `[ALL ${delegations.length} RESULTS PERSISTED]`
     );
   }
 }
