@@ -80,55 +80,57 @@ export const findDelegationTransactions = async (
     allDelegations.map(async (d) => {
       const delResult = DELEGATIONS_IFACE.parseLog(d);
       const collection = delResult.args.collectionAddress;
-      if ([MEMES_CONTRACT, DELEGATION_ALL_ADDRESS].includes(collection)) {
-        const from = delResult.args.delegator
-          ? delResult.args.delegator
-          : delResult.args.from;
-        const to = delResult.args.delegationAddress;
-        const useCase = delResult.args.useCase.toNumber();
+      const from = delResult.args.delegator
+        ? delResult.args.delegator
+        : delResult.args.from;
+      const to = delResult.args.delegationAddress;
+      const useCase = delResult.args.useCase.toNumber();
 
-        if (!areEqualAddresses(from, to)) {
-          if (
-            [
-              'RegisterDelegation',
-              'RegisterDelegationUsingSubDelegation'
-            ].includes(delResult.name)
-          ) {
-            const e: Event = {
-              block: d.blockNumber,
-              type: EventType.REGISTER,
-              wallet1: from,
-              wallet2: to
-            };
-            if (useCase == USE_CASE_CONSOLIDATION) {
+      if (!areEqualAddresses(from, to)) {
+        if (
+          [
+            'RegisterDelegation',
+            'RegisterDelegationUsingSubDelegation'
+          ].includes(delResult.name)
+        ) {
+          const e: Event = {
+            block: d.blockNumber,
+            type: EventType.REGISTER,
+            wallet1: from,
+            wallet2: to
+          };
+          if (useCase == USE_CASE_CONSOLIDATION) {
+            if ([MEMES_CONTRACT, DELEGATION_ALL_ADDRESS].includes(collection)) {
               consolidations.push(e);
-            } else {
-              delegations.push({
-                ...e,
-                use_case: useCase,
-                collection: collection
-              });
             }
-          } else if (
-            ['RevokeDelegation', 'RevokeDelegationUsingSubDelegation'].includes(
-              delResult.name
-            )
-          ) {
-            const e: Event = {
-              block: d.blockNumber,
-              type: EventType.REVOKE,
-              wallet1: from,
-              wallet2: to
-            };
-            if (useCase == USE_CASE_CONSOLIDATION) {
+          } else {
+            delegations.push({
+              ...e,
+              use_case: useCase,
+              collection: collection
+            });
+          }
+        } else if (
+          ['RevokeDelegation', 'RevokeDelegationUsingSubDelegation'].includes(
+            delResult.name
+          )
+        ) {
+          const e: Event = {
+            block: d.blockNumber,
+            type: EventType.REVOKE,
+            wallet1: from,
+            wallet2: to
+          };
+          if (useCase == USE_CASE_CONSOLIDATION) {
+            if ([MEMES_CONTRACT, DELEGATION_ALL_ADDRESS].includes(collection)) {
               consolidations.push(e);
-            } else {
-              delegations.push({
-                ...e,
-                use_case: useCase,
-                collection: collection
-              });
             }
+          } else {
+            delegations.push({
+              ...e,
+              use_case: useCase,
+              collection: collection
+            });
           }
         }
       }
