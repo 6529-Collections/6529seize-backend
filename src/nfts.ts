@@ -24,6 +24,10 @@ import {
 } from './db';
 import { findArtists } from './artists';
 import { Artist } from './entities/IArtist';
+import { RequestInfo, RequestInit } from 'node-fetch';
+
+const fetch = (url: RequestInfo, init?: RequestInit) =>
+  import('node-fetch').then(({ default: fetch }) => fetch(url, init));
 
 let alchemy: Alchemy;
 
@@ -72,137 +76,127 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
 
   const newNFTS: NFT[] = [];
 
-  if (allMemesNFTS.length != startingMemes.length) {
-    await Promise.all(
-      allMemesNFTS.map(async (mnft) => {
-        const tokenId = parseInt(mnft.tokenId);
+  await Promise.all(
+    allMemesNFTS.map(async (mnft) => {
+      const tokenId = parseInt(mnft.tokenId);
+      const fullMetadata = await (await fetch(mnft.tokenUri!.raw)).json();
 
-        const fullMetadata = await alchemy.nft.getNftMetadata(
-          MEMES_CONTRACT,
-          tokenId,
-          {}
+      const createdTransactions = transactions.filter(
+        (t) =>
+          t.token_id == tokenId &&
+          areEqualAddresses(t.contract, MEMES_CONTRACT) &&
+          areEqualAddresses(NULL_ADDRESS, t.from_address)
+      );
+
+      const burntTransactions = transactions.filter(
+        (t) =>
+          t.token_id == tokenId &&
+          areEqualAddresses(t.contract, MEMES_CONTRACT) &&
+          areEqualAddresses(NULL_ADDRESS, t.to_address)
+      );
+
+      const firstMintTransaction = transactions.find(
+        (t) =>
+          t.token_id == tokenId &&
+          areEqualAddresses(t.contract, MEMES_CONTRACT) &&
+          areEqualAddresses(MANIFOLD, t.from_address)
+      );
+
+      let mintPrice = 0;
+      if (firstMintTransaction) {
+        const mintTransaction = await alchemy.core.getTransaction(
+          firstMintTransaction?.transaction
         );
-
-        const createdTransactions = transactions.filter(
-          (t) =>
-            t.token_id == tokenId &&
-            areEqualAddresses(t.contract, MEMES_CONTRACT) &&
-            areEqualAddresses(NULL_ADDRESS, t.from_address)
-        );
-
-        const burntTransactions = transactions.filter(
-          (t) =>
-            t.token_id == tokenId &&
-            areEqualAddresses(t.contract, MEMES_CONTRACT) &&
-            areEqualAddresses(NULL_ADDRESS, t.to_address)
-        );
-
-        const firstMintTransaction = transactions.find(
-          (t) =>
-            t.token_id == tokenId &&
-            areEqualAddresses(t.contract, MEMES_CONTRACT) &&
-            areEqualAddresses(MANIFOLD, t.from_address)
-        );
-
-        let mintPrice = 0;
-        if (firstMintTransaction) {
-          const mintTransaction = await alchemy.core.getTransaction(
-            firstMintTransaction?.transaction
-          );
-          mintPrice = mintTransaction
-            ? parseFloat(Utils.formatEther(mintTransaction.value))
-            : 0;
-          if (mintPrice) {
-            mintPrice = mintPrice / firstMintTransaction.token_count;
-          }
+        mintPrice = mintTransaction
+          ? parseFloat(Utils.formatEther(mintTransaction.value))
+          : 0;
+        if (mintPrice) {
+          mintPrice = mintPrice / firstMintTransaction.token_count;
         }
-        let supply = 0;
-        createdTransactions.map((mint) => {
-          supply += mint.token_count;
-        });
-        burntTransactions.map((burn) => {
-          supply -= burn.token_count;
-        });
+      }
+      let supply = 0;
+      createdTransactions.map((mint) => {
+        supply += mint.token_count;
+      });
+      burntTransactions.map((burn) => {
+        supply -= burn.token_count;
+      });
 
-        const tokenContract = fullMetadata.contract;
+      const format = fullMetadata.image_details.format;
+      let tokenPath;
+      if (format.toUpperCase() == 'GIF') {
+        tokenPath = `${MEMES_CONTRACT}/${tokenId}.${format}`;
+      } else {
+        tokenPath = `${MEMES_CONTRACT}/${tokenId}.WEBP`;
+      }
+      const tokenPathOriginal = `${MEMES_CONTRACT}/${tokenId}.${format}`;
 
-        const format = fullMetadata.rawMetadata?.image_details.format;
-        let tokenPath;
-        if (format.toUpperCase() == 'GIF') {
-          tokenPath = `${MEMES_CONTRACT}/${tokenId}.${format}`;
-        } else {
-          tokenPath = `${MEMES_CONTRACT}/${tokenId}.WEBP`;
+      let animation = fullMetadata.animation;
+      const animationDetails = fullMetadata.animation_details;
+
+      let compressedAnimation;
+
+      if (animationDetails) {
+        if (animationDetails.format == 'MP4') {
+          animation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
+          compressedAnimation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/scaledx750/${tokenId}.${animationDetails.format}`;
         }
-        const tokenPathOriginal = `${MEMES_CONTRACT}/${tokenId}.${format}`;
-
-        let animation = fullMetadata.rawMetadata?.animation;
-        const animationDetails = fullMetadata.rawMetadata?.animation_details;
-
-        let compressedAnimation;
-
-        if (animationDetails) {
-          if (animationDetails.format == 'MP4') {
-            animation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
-            compressedAnimation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/scaledx750/${tokenId}.${animationDetails.format}`;
-          }
-          if (animationDetails.format == 'HTML') {
-            animation = `${NFT_HTML_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
-          }
+        if (animationDetails.format == 'HTML') {
+          animation = `${NFT_HTML_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
         }
+      }
 
-        const startingNft = startingNFTS.find(
-          (s) =>
-            s.id == tokenId && areEqualAddresses(s.contract, MEMES_CONTRACT)
-        );
+      const startingNft = startingNFTS.find(
+        (s) => s.id == tokenId && areEqualAddresses(s.contract, MEMES_CONTRACT)
+      );
 
-        const nft: NFT = {
-          id: tokenId,
-          contract: MEMES_CONTRACT,
-          created_at: new Date(),
-          mint_date: new Date(
-            createdTransactions[0]
-              ? createdTransactions[0].transaction_date
-              : new Date()
-          ),
-          mint_price: mintPrice,
-          supply: supply,
-          name: fullMetadata.rawMetadata?.name,
-          collection: 'The Memes by 6529',
-          token_type: tokenContract.tokenType,
-          hodl_rate: 0,
-          description: fullMetadata.description,
-          artist: fullMetadata.rawMetadata?.attributes?.find(
-            (a) => a.trait_type === 'Artist'
-          )?.value,
-          uri: fullMetadata.tokenUri?.raw,
-          icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
-          thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
-          scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
-          image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
-          compressed_animation: compressedAnimation,
-          animation: animation,
-          metadata: fullMetadata.rawMetadata,
-          tdh: startingNft ? startingNft.tdh : 0,
-          tdh__raw: startingNft ? startingNft.tdh__raw : 0,
-          tdh_rank: startingNft ? startingNft.tdh_rank : 0,
-          floor_price: startingNft ? startingNft.floor_price : 0,
-          market_cap: startingNft ? startingNft.market_cap : 0,
-          total_volume_last_24_hours: startingNft
-            ? startingNft.total_volume_last_24_hours
-            : 0,
-          total_volume_last_7_days: startingNft
-            ? startingNft.total_volume_last_7_days
-            : 0,
-          total_volume_last_1_month: startingNft
-            ? startingNft.total_volume_last_1_month
-            : 0,
-          total_volume: startingNft ? startingNft.total_volume : 0
-        };
+      const nft: NFT = {
+        id: tokenId,
+        contract: MEMES_CONTRACT,
+        created_at: new Date(),
+        mint_date: new Date(
+          createdTransactions[0]
+            ? createdTransactions[0].transaction_date
+            : new Date()
+        ),
+        mint_price: mintPrice,
+        supply: supply,
+        name: fullMetadata.name,
+        collection: 'The Memes by 6529',
+        token_type: 'ERC1155',
+        hodl_rate: 0,
+        description: fullMetadata.description,
+        artist: fullMetadata.attributes?.find(
+          (a: any) => a.trait_type === 'Artist'
+        )?.value,
+        uri: fullMetadata.tokenUri?.raw,
+        icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
+        thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
+        scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
+        image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
+        compressed_animation: compressedAnimation,
+        animation: animation,
+        metadata: fullMetadata,
+        tdh: startingNft ? startingNft.tdh : 0,
+        tdh__raw: startingNft ? startingNft.tdh__raw : 0,
+        tdh_rank: startingNft ? startingNft.tdh_rank : 0,
+        floor_price: startingNft ? startingNft.floor_price : 0,
+        market_cap: startingNft ? startingNft.market_cap : 0,
+        total_volume_last_24_hours: startingNft
+          ? startingNft.total_volume_last_24_hours
+          : 0,
+        total_volume_last_7_days: startingNft
+          ? startingNft.total_volume_last_7_days
+          : 0,
+        total_volume_last_1_month: startingNft
+          ? startingNft.total_volume_last_1_month
+          : 0,
+        total_volume: startingNft ? startingNft.total_volume : 0
+      };
 
-        newNFTS.push(nft);
-      })
-    );
-  }
+      newNFTS.push(nft);
+    })
+  );
 
   console.log(
     new Date(),
@@ -231,87 +225,77 @@ async function processGradients(
   );
 
   const newNFTS: NFT[] = [];
-  if (allGradientsNFTS.length != startingGradients.length) {
-    await Promise.all(
-      allGradientsNFTS.map(async (gnft) => {
-        const tokenId = parseInt(gnft.tokenId);
+  await Promise.all(
+    allGradientsNFTS.map(async (gnft) => {
+      const tokenId = parseInt(gnft.tokenId);
 
-        const fullMetadata = await alchemy.nft.getNftMetadata(
-          GRADIENT_CONTRACT,
-          tokenId,
-          {}
-        );
+      const fullMetadata = await (await fetch(gnft.tokenUri!.raw)).json();
 
-        const createdTransactions = transactions.filter(
-          (t) =>
-            t.token_id == tokenId &&
-            areEqualAddresses(t.contract, GRADIENT_CONTRACT) &&
-            areEqualAddresses(NULL_ADDRESS, t.from_address)
-        );
+      const createdTransactions = transactions.filter(
+        (t) =>
+          t.token_id == tokenId &&
+          areEqualAddresses(t.contract, GRADIENT_CONTRACT) &&
+          areEqualAddresses(NULL_ADDRESS, t.from_address)
+      );
 
-        const supply = allGradientsNFTS.length;
+      const supply = allGradientsNFTS.length;
 
-        const tokenContract = fullMetadata.contract;
+      const startingNft = startingNFTS.find(
+        (s) => s.id == tokenId && areEqualAddresses(s.contract, MEMES_CONTRACT)
+      );
 
-        const startingNft = startingNFTS.find(
-          (s) =>
-            s.id == tokenId && areEqualAddresses(s.contract, MEMES_CONTRACT)
-        );
-
-        const rawMeta = fullMetadata.rawMetadata;
-
-        if (rawMeta && rawMeta.image) {
-          const format = rawMeta!.image!.split('.').pop();
-          let tokenPath;
-          if (format!.toUpperCase() == 'GIF') {
-            tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.${format!.toUpperCase()}`;
-          } else {
-            tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.WEBP`;
-          }
-          const tokenPathOriginal = `${GRADIENT_CONTRACT}/${tokenId}.${format}`;
-
-          const nft: NFT = {
-            id: tokenId,
-            contract: GRADIENT_CONTRACT,
-            created_at: new Date(),
-            mint_date: new Date(createdTransactions[0].transaction_date),
-            mint_price: 0,
-            supply: supply,
-            name: rawMeta?.name,
-            collection: '6529 Gradient',
-            token_type: tokenContract.tokenType,
-            hodl_rate: 0,
-            description: fullMetadata.description,
-            artist: '6529er',
-            uri: fullMetadata.tokenUri?.raw,
-            icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
-            thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
-            scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
-            image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
-            animation: undefined,
-            metadata: rawMeta,
-            tdh: startingNft ? startingNft.tdh : 0,
-            tdh__raw: startingNft ? startingNft.tdh__raw : 0,
-            tdh_rank: startingNft ? startingNft.tdh_rank : 0,
-            floor_price: startingNft ? startingNft.floor_price : 0,
-            market_cap: startingNft ? startingNft.market_cap : 0,
-            total_volume_last_24_hours: startingNft
-              ? startingNft.total_volume_last_24_hours
-              : 0,
-            total_volume_last_7_days: startingNft
-              ? startingNft.total_volume_last_7_days
-              : 0,
-            total_volume_last_1_month: startingNft
-              ? startingNft.total_volume_last_1_month
-              : 0,
-            total_volume: startingNft ? startingNft.total_volume : 0
-          };
-
-          newNFTS.push(nft);
+      if (fullMetadata && fullMetadata.image) {
+        const format = fullMetadata!.image!.split('.').pop();
+        let tokenPath;
+        if (format!.toUpperCase() == 'GIF') {
+          tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.${format!.toUpperCase()}`;
+        } else {
+          tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.WEBP`;
         }
-      })
-    );
-  }
+        const tokenPathOriginal = `${GRADIENT_CONTRACT}/${tokenId}.${format}`;
+
+        const nft: NFT = {
+          id: tokenId,
+          contract: GRADIENT_CONTRACT,
+          created_at: new Date(),
+          mint_date: new Date(createdTransactions[0].transaction_date),
+          mint_price: 0,
+          supply: supply,
+          name: fullMetadata?.name,
+          collection: '6529 Gradient',
+          token_type: 'ERC721',
+          hodl_rate: 0,
+          description: fullMetadata.description,
+          artist: '6529er',
+          uri: fullMetadata.tokenUri?.raw,
+          icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
+          thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
+          scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
+          image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
+          animation: undefined,
+          metadata: fullMetadata,
+          tdh: startingNft ? startingNft.tdh : 0,
+          tdh__raw: startingNft ? startingNft.tdh__raw : 0,
+          tdh_rank: startingNft ? startingNft.tdh_rank : 0,
+          floor_price: startingNft ? startingNft.floor_price : 0,
+          market_cap: startingNft ? startingNft.market_cap : 0,
+          total_volume_last_24_hours: startingNft
+            ? startingNft.total_volume_last_24_hours
+            : 0,
+          total_volume_last_7_days: startingNft
+            ? startingNft.total_volume_last_7_days
+            : 0,
+          total_volume_last_1_month: startingNft
+            ? startingNft.total_volume_last_1_month
+            : 0,
+          total_volume: startingNft ? startingNft.total_volume : 0
+        };
+
+        newNFTS.push(nft);
+      }
+    })
+  );
+
   console.log(
     new Date(),
     '[NFTS]',

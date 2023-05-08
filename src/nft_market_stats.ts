@@ -1,5 +1,4 @@
 import { Utils } from 'alchemy-sdk';
-import fetch from 'node-fetch';
 import { LabNFT, NFT } from './entities/INFT';
 import { areEqualAddresses, delay } from './helpers';
 import {
@@ -11,6 +10,10 @@ import {
   persistNFTs
 } from './db';
 import { MEMELAB_CONTRACT } from './constants';
+import { RequestInfo, RequestInit } from 'node-fetch';
+
+const fetch = (url: RequestInfo, init?: RequestInit) =>
+  import('node-fetch').then(({ default: fetch }) => fetch(url, init));
 
 async function getResult(url: string) {
   try {
