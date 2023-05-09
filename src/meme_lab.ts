@@ -231,7 +231,7 @@ async function processNFTs(
         image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
         compressed_animation: compressedAnimation,
         animation: animation,
-        metadata: fullMetadata.rawMetadata,
+        metadata: fullMetadata,
         meme_references: memeReferences,
         floor_price: startingNft ? startingNft.floor_price : 0,
         market_cap: startingNft ? startingNft.market_cap : 0,
