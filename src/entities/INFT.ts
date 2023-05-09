@@ -270,4 +270,7 @@ export class LabExtendedData {
 
   @Column({ type: 'int' })
   percent_unique_cleaned_rank!: number;
+
+  @Column({ nullable: true, type: 'text' })
+  secondary_link?: string;
 }

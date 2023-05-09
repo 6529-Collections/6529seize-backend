@@ -459,6 +459,11 @@ export async function memeLabExtendedData() {
       metaCollection = metaCollectionTrait.value;
     }
 
+    let secondaryLink;
+    if (metaCollection == 'Memiotic Table of Elements') {
+      secondaryLink = 'https://www.memelab-elements.net';
+    }
+
     const meta: LabExtendedData = {
       id: nft.id,
       created_at: new Date(),
@@ -477,7 +482,8 @@ export async function memeLabExtendedData() {
       edition_size_cleaned_rank: -1,
       hodlers_rank: -1,
       percent_unique_rank: -1,
-      percent_unique_cleaned_rank: -1
+      percent_unique_cleaned_rank: -1,
+      secondary_link: secondaryLink
     };
     labMeta.push(meta);
   });
