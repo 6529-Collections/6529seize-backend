@@ -461,7 +461,7 @@ export async function memeLabExtendedData() {
 
     let secondaryLink;
     if (metaCollection == 'Memiotic Table of Elements') {
-      secondaryLink = 'https://www.memelab-elements.net';
+      secondaryLink = 'https://memelab-elements.net';
     }
 
     const meta: LabExtendedData = {
