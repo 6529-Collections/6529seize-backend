@@ -272,5 +272,5 @@ export class LabExtendedData {
   percent_unique_cleaned_rank!: number;
 
   @Column({ nullable: true, type: 'text' })
-  secondary_link?: string;
+  website?: string;
 }

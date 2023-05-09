@@ -459,9 +459,12 @@ export async function memeLabExtendedData() {
       metaCollection = metaCollectionTrait.value;
     }
 
-    let secondaryLink;
-    if (metaCollection == 'Memiotic Table of Elements') {
-      secondaryLink = 'https://memelab-elements.net';
+    let website;
+    const metaWebsiteTrait = nft.metadata.attributes.find(
+      (a: any) => a.trait_type.toUpperCase() == 'WEBSITE'
+    );
+    if (metaWebsiteTrait && metaWebsiteTrait.value != 'None') {
+      website = metaWebsiteTrait.value;
     }
 
     const meta: LabExtendedData = {
@@ -483,7 +486,7 @@ export async function memeLabExtendedData() {
       hodlers_rank: -1,
       percent_unique_rank: -1,
       percent_unique_cleaned_rank: -1,
-      secondary_link: secondaryLink
+      website: website
     };
     labMeta.push(meta);
   });
