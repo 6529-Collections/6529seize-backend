@@ -60,7 +60,6 @@ export function areEqualObjects(obj1: any, obj2: any) {
         return false;
       }
     } else if (value1 != value2) {
-      console.log(property, obj1[property], obj2[property]);
       return false;
     }
   }
