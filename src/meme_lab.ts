@@ -452,7 +452,7 @@ export async function memeLabExtendedData() {
     });
 
     let metaCollection = '';
-    const metaCollectionTrait = nft.metadata?.attributes.find(
+    const metaCollectionTrait = nft.metadata.attributes.find(
       (a: any) => a.trait_type.toUpperCase() == 'COLLECTION'
     );
     if (metaCollectionTrait) {
