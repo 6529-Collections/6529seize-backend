@@ -49,6 +49,9 @@ export function getHoursAgo(date: Date) {
 }
 
 export function areEqualObjects(obj1: any, obj2: any) {
+  if (obj1 == null || obj2 == null) {
+    return false;
+  }
   for (const property in obj1) {
     const value1 = obj1[property];
     const value2 = obj2[property];
