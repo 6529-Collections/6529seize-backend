@@ -1893,13 +1893,20 @@ export async function fetchDelegations(
 }
 
 export async function fetchDelegationsByUseCase(
-  useCase: string,
+  collections: string,
+  useCases: string,
   pageSize: number,
   page: number
 ) {
   let filter = '';
-  if (useCase) {
-    filter = constructFilters(filter, `use_case in (${useCase.split(',')})`);
+  if (collections) {
+    filter = constructFilters(
+      filter,
+      `collection in (${mysql.escape(collections.split(','))})`
+    );
+  }
+  if (useCases) {
+    filter = constructFilters(filter, `use_case in (${useCases.split(',')})`);
   }
 
   return fetchPaginated(

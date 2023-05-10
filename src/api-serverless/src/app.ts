@@ -1461,6 +1461,7 @@ loadEnv(true).then(async (e) => {
   app.get(`${BASE_PATH}/delegations`, function (req: any, res: any, next: any) {
     try {
       const use_case = req.query.use_case;
+      const collection = req.query.collection;
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
           ? parseInt(req.query.page_size)
@@ -1474,9 +1475,11 @@ loadEnv(true).then(async (e) => {
         `[USE CASE ${use_case}]`,
         `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
       );
-      db.fetchDelegationsByUseCase(use_case, pageSize, page).then((result) => {
-        returnPaginatedResult(result, req, res);
-      });
+      db.fetchDelegationsByUseCase(collection, use_case, pageSize, page).then(
+        (result) => {
+          returnPaginatedResult(result, req, res);
+        }
+      );
     } catch (e) {
       console.log(
         new Date(),
