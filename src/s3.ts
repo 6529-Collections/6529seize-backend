@@ -54,110 +54,99 @@ export const persistS3 = async (nfts: NFT[]) => {
 
       if (format) {
         const imageKey = `images/original/${n.contract}/${n.id}.${format}`;
+        const imageExists = await objectExists(myBucket, imageKey);
 
-        try {
-          await s3.send(
-            new HeadObjectCommand({ Bucket: myBucket, Key: imageKey })
+        if (!imageExists) {
+          console.log(
+            '[S3]',
+            `[MISSING IMAGE]`,
+            `[CONTRACT ${n.contract}]`,
+            `[ID ${n.id}]`
           );
-          console.log('exists', imageKey);
-        } catch (error: any) {
-          if (error.code === 'NotFound') {
-            console.log(
-              '[S3]',
-              `[MISSING IMAGE]`,
-              `[CONTRACT ${n.contract}]`,
-              `[ID ${n.id}]`
-            );
 
-            console.log(
-              '[S3]',
-              `[FETCHING IMAGE]`,
-              `[CONTRACT ${n.contract}]`,
-              `[ID ${n.id}]`
-            );
+          console.log(
+            '[S3]',
+            `[FETCHING IMAGE]`,
+            `[CONTRACT ${n.contract}]`,
+            `[ID ${n.id}]`
+          );
 
-            const imageURL = n.metadata.image;
-            const res = await fetch(imageURL);
-            const blob = await res.arrayBuffer();
-            console.log(
-              '[S3]',
-              `[IMAGE DOWNLOADED]`,
-              `[CONTRACT ${n.contract}]`,
-              `[ID ${n.id}]`
-            );
+          const imageURL = n.metadata.image;
+          const res = await fetch(imageURL);
+          const blob = await res.arrayBuffer();
+          console.log(
+            '[S3]',
+            `[IMAGE DOWNLOADED]`,
+            `[CONTRACT ${n.contract}]`,
+            `[ID ${n.id}]`
+          );
 
-            const uploadedImage = await s3.send(
-              new PutObjectCommand({
-                Bucket: myBucket,
-                Key: imageKey,
-                Body: Buffer.from(blob),
-                ContentType: `image/${format.toLowerCase()}`
-              })
-            );
+          const uploadedImage = await s3.send(
+            new PutObjectCommand({
+              Bucket: myBucket,
+              Key: imageKey,
+              Body: Buffer.from(blob),
+              ContentType: `image/${format.toLowerCase()}`
+            })
+          );
 
-            console.log('[S3]', `[IMAGE PERSISTED AT ${uploadedImage.ETag}`);
-          }
+          console.log('[S3]', `[IMAGE PERSISTED AT ${uploadedImage.ETag}`);
         }
+      }
 
-        if (n.scaled) {
-          let scaledFormat = 'WEBP';
-          if (format.toUpperCase() == 'GIF') {
-            scaledFormat = 'GIF';
-          }
-          const scaledKey = `images/scaled_x1000/${n.contract}/${n.id}.${scaledFormat}`;
-          try {
-            await s3.send(
-              new HeadObjectCommand({ Bucket: myBucket, Key: scaledKey })
-            );
-            console.log('exists', scaledKey);
-          } catch (error: any) {
-            if (error.code === 'NotFound') {
-              console.log(
-                '[S3]',
-                `[MISSING SCALED]`,
-                `[CONTRACT ${n.contract}]`,
-                `[ID ${n.id}]`
-              );
+      if (n.scaled) {
+        let scaledFormat = 'WEBP';
+        if (format.toUpperCase() == 'GIF') {
+          scaledFormat = 'GIF';
+        }
+        const scaledKey = `images/scaled_x1000/${n.contract}/${n.id}.${scaledFormat}`;
+        const scaledImageExists = await objectExists(myBucket, scaledKey);
 
-              console.log(
-                '[S3]',
-                `[FETCHING IMAGE FOR SCALED]`,
-                `[CONTRACT ${n.contract}]`,
-                `[ID ${n.id}]`
-              );
+        if (!scaledImageExists) {
+          console.log(
+            '[S3]',
+            `[MISSING SCALED]`,
+            `[CONTRACT ${n.contract}]`,
+            `[ID ${n.id}]`
+          );
 
-              const scaledURL = `${NFT_ORIGINAL_IMAGE_LINK}${n.contract}/${n.id}.${format}`;
-              const res = await fetch(scaledURL);
-              const blob = await res.arrayBuffer();
-              console.log(
-                '[S3]',
-                `[IMAGE FOR SCALED DOWNLOADED]`,
-                `[CONTRACT ${n.contract}]`,
-                `[ID ${n.id}]`
-              );
+          console.log(
+            '[S3]',
+            `[FETCHING IMAGE FOR SCALED]`,
+            `[CONTRACT ${n.contract}]`,
+            `[ID ${n.id}]`
+          );
 
-              const scaledBuffer = await resizeImage(
-                n,
-                scaledFormat == 'WEBP' ? true : false,
-                Buffer.from(blob),
-                SCALED_HEIGHT
-              );
+          const scaledURL = `${NFT_ORIGINAL_IMAGE_LINK}${n.contract}/${n.id}.${format}`;
+          const res = await fetch(scaledURL);
+          const blob = await res.arrayBuffer();
+          console.log(
+            '[S3]',
+            `[IMAGE FOR SCALED DOWNLOADED]`,
+            `[CONTRACT ${n.contract}]`,
+            `[ID ${n.id}]`
+          );
 
-              const uploadedScaledImage = await s3.send(
-                new PutObjectCommand({
-                  Bucket: myBucket,
-                  Key: scaledKey,
-                  Body: scaledBuffer,
-                  ContentType: `image/${scaledFormat}`
-                })
-              );
+          const scaledBuffer = await resizeImage(
+            n,
+            scaledFormat == 'WEBP' ? true : false,
+            Buffer.from(blob),
+            SCALED_HEIGHT
+          );
 
-              console.log(
-                '[S3]',
-                `[SCALED PERSISTED AT ${uploadedScaledImage.ETag}`
-              );
-            }
-          }
+          const uploadedScaledImage = await s3.send(
+            new PutObjectCommand({
+              Bucket: myBucket,
+              Key: scaledKey,
+              Body: scaledBuffer,
+              ContentType: `image/${scaledFormat}`
+            })
+          );
+
+          console.log(
+            '[S3]',
+            `[SCALED PERSISTED AT ${uploadedScaledImage.ETag}`
+          );
         }
 
         if (n.thumbnail) {
@@ -166,59 +155,53 @@ export const persistS3 = async (nfts: NFT[]) => {
             thumbnailFormat = 'GIF';
           }
           const thumbnailKey = `images/scaled_x450/${n.contract}/${n.id}.${thumbnailFormat}`;
+          const thumbnailExists = await objectExists(myBucket, thumbnailKey);
 
-          try {
-            await s3.send(
-              new HeadObjectCommand({ Bucket: myBucket, Key: thumbnailKey })
+          if (!thumbnailExists) {
+            console.log(
+              '[S3]',
+              `[MISSING THUMBNAIL]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
             );
-            console.log('exists', thumbnailKey);
-          } catch (error: any) {
-            if (error.code === 'NotFound') {
-              console.log(
-                '[S3]',
-                `[MISSING THUMBNAIL]`,
-                `[CONTRACT ${n.contract}]`,
-                `[ID ${n.id}]`
-              );
 
-              console.log(
-                '[S3]',
-                `[FETCHING IMAGE FOR THUMBNAIL]`,
-                `[CONTRACT ${n.contract}]`,
-                `[ID ${n.id}]`
-              );
+            console.log(
+              '[S3]',
+              `[FETCHING IMAGE FOR THUMBNAIL]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
+            );
 
-              const thumbnailURL = `${NFT_ORIGINAL_IMAGE_LINK}${n.contract}/${n.id}.${format}`;
-              const res = await fetch(thumbnailURL);
-              const blob = await res.arrayBuffer();
-              console.log(
-                '[S3]',
-                `[IMAGE FOR THUMBNAIL DOWNLOADED]`,
-                `[CONTRACT ${n.contract}]`,
-                `[ID ${n.id}]`
-              );
+            const thumbnailURL = `${NFT_ORIGINAL_IMAGE_LINK}${n.contract}/${n.id}.${format}`;
+            const res = await fetch(thumbnailURL);
+            const blob = await res.arrayBuffer();
+            console.log(
+              '[S3]',
+              `[IMAGE FOR THUMBNAIL DOWNLOADED]`,
+              `[CONTRACT ${n.contract}]`,
+              `[ID ${n.id}]`
+            );
 
-              const thumbBuffer = await resizeImage(
-                n,
-                thumbnailFormat == 'WEBP' ? true : false,
-                Buffer.from(blob),
-                THUMBNAIL_HEIGHT
-              );
+            const thumbBuffer = await resizeImage(
+              n,
+              thumbnailFormat == 'WEBP' ? true : false,
+              Buffer.from(blob),
+              THUMBNAIL_HEIGHT
+            );
 
-              const uploadedThumbnail = await s3.send(
-                new PutObjectCommand({
-                  Bucket: myBucket,
-                  Key: thumbnailKey,
-                  Body: thumbBuffer,
-                  ContentType: `image/${thumbnailFormat}`
-                })
-              );
+            const uploadedThumbnail = await s3.send(
+              new PutObjectCommand({
+                Bucket: myBucket,
+                Key: thumbnailKey,
+                Body: thumbBuffer,
+                ContentType: `image/${thumbnailFormat}`
+              })
+            );
 
-              console.log(
-                '[S3]',
-                `[THUMBNAIL PERSISTED AT ${uploadedThumbnail.ETag}`
-              );
-            }
+            console.log(
+              '[S3]',
+              `[THUMBNAIL PERSISTED AT ${uploadedThumbnail.ETag}`
+            );
           }
         }
 
@@ -229,10 +212,9 @@ export const persistS3 = async (nfts: NFT[]) => {
           }
 
           const iconKey = `images/scaled_x60/${n.contract}/${n.id}.${iconFormat}`;
+          const iconExists = await objectExists(myBucket, iconKey);
 
-          const exists = await objectExists(myBucket, iconKey);
-
-          if (!exists) {
+          if (!iconExists) {
             console.log(
               '[S3]',
               `[MISSING ICON]`,
@@ -287,54 +269,48 @@ export const persistS3 = async (nfts: NFT[]) => {
       if (animationDetails && animationDetails.format?.toUpperCase() == 'MP4') {
         const videoFormat = animationDetails.format.toUpperCase();
         const videoKey = `videos/${n.contract}/${n.id}.${videoFormat}`;
+        const videoExists = await objectExists(myBucket, videoKey);
 
-        try {
-          await s3.send(
-            new HeadObjectCommand({ Bucket: myBucket, Key: videoKey })
+        if (!videoExists) {
+          console.log(
+            '[S3]',
+            `[MISSING ${videoFormat}]`,
+            `[CONTRACT ${n.contract}]`,
+            `[ID ${n.id}]`
           );
-          console.log('exists', videoKey);
-        } catch (error: any) {
-          if (error.code === 'NotFound') {
-            console.log(
-              '[S3]',
-              `[MISSING ${videoFormat}]`,
-              `[CONTRACT ${n.contract}]`,
-              `[ID ${n.id}]`
-            );
 
-            console.log(
-              '[S3]',
-              `[FETCHING ${videoFormat}]`,
-              `[CONTRACT ${n.contract}]`,
-              `[ID ${n.id}]`
-            );
+          console.log(
+            '[S3]',
+            `[FETCHING ${videoFormat}]`,
+            `[CONTRACT ${n.contract}]`,
+            `[ID ${n.id}]`
+          );
 
-            const videoURL = n.metadata.animation
-              ? n.metadata.animation
-              : n.metadata.animation_url;
-            const res = await fetch(videoURL);
-            const blob = await res.arrayBuffer();
-            console.log(
-              '[S3]',
-              `[DOWNLOADED ${videoFormat}]`,
-              `[CONTRACT ${n.contract}]`,
-              `[ID ${n.id}]`
-            );
+          const videoURL = n.metadata.animation
+            ? n.metadata.animation
+            : n.metadata.animation_url;
+          const res = await fetch(videoURL);
+          const blob = await res.arrayBuffer();
+          console.log(
+            '[S3]',
+            `[DOWNLOADED ${videoFormat}]`,
+            `[CONTRACT ${n.contract}]`,
+            `[ID ${n.id}]`
+          );
 
-            const uploadedVideo = await s3.send(
-              new PutObjectCommand({
-                Bucket: myBucket,
-                Key: videoKey,
-                Body: Buffer.from(blob),
-                ContentType: `video/mp4`
-              })
-            );
+          const uploadedVideo = await s3.send(
+            new PutObjectCommand({
+              Bucket: myBucket,
+              Key: videoKey,
+              Body: Buffer.from(blob),
+              ContentType: `video/mp4`
+            })
+          );
 
-            console.log(
-              '[S3]',
-              `[${videoFormat} PERSISTED AT ${uploadedVideo.ETag}`
-            );
-          }
+          console.log(
+            '[S3]',
+            `[${videoFormat} PERSISTED AT ${uploadedVideo.ETag}`
+          );
         }
 
         await handleVideoScaling(n, videoFormat, myBucket);
