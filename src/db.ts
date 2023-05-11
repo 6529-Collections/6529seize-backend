@@ -1073,14 +1073,14 @@ export async function persistConsolidations(
           });
           if (r) {
             if (r.confirmed) {
-              await repo.delete(r);
+              await repo.remove(r);
               const newConsolidation = new Consolidation();
               newConsolidation.block = consolidation.block;
               newConsolidation.wallet1 = consolidation.wallet2;
               newConsolidation.wallet2 = consolidation.wallet1;
               await repo.save(newConsolidation);
             }
-            await repo.delete(r);
+            await repo.remove(r);
           } else {
             const r2 = await repo.findOne({
               where: {
@@ -1139,8 +1139,9 @@ export async function persistDelegations(delegations: DelegationEvent[]) {
               collection: delegation.collection
             }
           });
+
           if (r) {
-            await repo.delete(r);
+            await repo.remove(r);
           }
         }
       }
