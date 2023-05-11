@@ -7,9 +7,9 @@ import { uploadConsolidatedTDH, uploadTDH } from '../tdh_upload';
 import { loadEnv, unload } from '../secrets';
 
 export const handler = async (event?: any, context?: any) => {
+  await loadEnv();
   const force = process.env.TDH_RESET == 'true';
   console.log(new Date(), '[RUNNING TDH LOOP]', `[FORCE ${force}]`);
-  await loadEnv();
   await tdhLoop(force);
   await unload();
   console.log(new Date(), '[TDH LOOP COMPLETE]');

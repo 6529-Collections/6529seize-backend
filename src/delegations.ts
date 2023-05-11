@@ -8,7 +8,12 @@ import {
 } from './constants';
 import { DELEGATIONS_IFACE } from './abis/delegations';
 import { areEqualAddresses } from './helpers';
-import { ConsolidationEvent, ConsolidationType } from './entities/IDelegation';
+import {
+  Event,
+  EventType,
+  ConsolidationEvent,
+  DelegationEvent
+} from './entities/IDelegation';
 
 let alchemy: Alchemy;
 
@@ -52,60 +57,79 @@ export const findDelegationTransactions = async (
 
   const timestamp = (await alchemy.core.getBlock(latestBlock)).timestamp;
 
-  const delegations = await getAllDelegations(startingBlock, latestBlock);
+  const allDelegations = await getAllDelegations(startingBlock, latestBlock);
 
   console.log(
     '[DELEGATIONS]',
-    `[FOUND ${delegations.length} NEW TRANSACTIONS]`
+    `[FOUND ${allDelegations.length} NEW TRANSACTIONS]`
   );
 
-  if (delegations.length == 0) {
+  if (allDelegations.length == 0) {
     return {
       latestBlock: latestBlock,
       latestBlockTimestamp: new Date(timestamp * 1000),
-      consolidations: []
+      consolidations: [],
+      delegations: []
     };
   }
 
   const consolidations: ConsolidationEvent[] = [];
+  const delegations: DelegationEvent[] = [];
 
   await Promise.all(
-    delegations.map(async (d) => {
+    allDelegations.map(async (d) => {
       const delResult = DELEGATIONS_IFACE.parseLog(d);
-      if (
-        delResult.args.useCase == USE_CASE_CONSOLIDATION &&
-        [MEMES_CONTRACT, DELEGATION_ALL_ADDRESS].includes(
-          delResult.args.collectionAddress
-        )
-      ) {
-        const from = delResult.args.delegator
-          ? delResult.args.delegator
-          : delResult.args.from;
-        const to = delResult.args.delegationAddress;
+      const collection = delResult.args.collectionAddress;
+      const from = delResult.args.delegator
+        ? delResult.args.delegator
+        : delResult.args.from;
+      const to = delResult.args.delegationAddress;
+      const useCase = delResult.args.useCase.toNumber();
 
-        if (!areEqualAddresses(from, to)) {
-          if (
-            [
-              'RegisterDelegation',
-              'RegisterDelegationUsingSubDelegation'
-            ].includes(delResult.name)
-          ) {
-            consolidations.push({
-              block: d.blockNumber,
-              type: ConsolidationType.REGISTER,
-              wallet1: from,
-              wallet2: to
+      if (!areEqualAddresses(from, to)) {
+        if (
+          [
+            'RegisterDelegation',
+            'RegisterDelegationUsingSubDelegation'
+          ].includes(delResult.name)
+        ) {
+          const e: Event = {
+            block: d.blockNumber,
+            type: EventType.REGISTER,
+            wallet1: from,
+            wallet2: to
+          };
+          if (useCase == USE_CASE_CONSOLIDATION) {
+            if ([MEMES_CONTRACT, DELEGATION_ALL_ADDRESS].includes(collection)) {
+              consolidations.push(e);
+            }
+          } else {
+            delegations.push({
+              ...e,
+              use_case: useCase,
+              collection: collection
             });
-          } else if (
-            ['RevokeDelegation', 'RevokeDelegationUsingSubDelegation'].includes(
-              delResult.name
-            )
-          ) {
-            consolidations.push({
-              block: d.blockNumber,
-              type: ConsolidationType.REVOKE,
-              wallet1: from,
-              wallet2: to
+          }
+        } else if (
+          ['RevokeDelegation', 'RevokeDelegationUsingSubDelegation'].includes(
+            delResult.name
+          )
+        ) {
+          const e: Event = {
+            block: d.blockNumber,
+            type: EventType.REVOKE,
+            wallet1: from,
+            wallet2: to
+          };
+          if (useCase == USE_CASE_CONSOLIDATION) {
+            if ([MEMES_CONTRACT, DELEGATION_ALL_ADDRESS].includes(collection)) {
+              consolidations.push(e);
+            }
+          } else {
+            delegations.push({
+              ...e,
+              use_case: useCase,
+              collection: collection
             });
           }
         }
@@ -116,6 +140,7 @@ export const findDelegationTransactions = async (
   return {
     latestBlock: latestBlock,
     latestBlockTimestamp: new Date(timestamp * 1000),
-    consolidations: consolidations
+    consolidations: consolidations,
+    delegations: delegations
   };
 };

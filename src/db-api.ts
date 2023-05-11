@@ -5,6 +5,7 @@ import {
   CONSOLIDATED_UPLOADS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATIONS_TABLE,
+  DELEGATIONS_TABLE,
   DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE,
   ENS_TABLE,
@@ -1869,4 +1870,52 @@ export async function fetchConsolidations(wallet: string) {
     next: null,
     data: wallets
   };
+}
+
+export async function fetchDelegations(
+  wallet: string,
+  pageSize: number,
+  page: number
+) {
+  const filter = `WHERE from_address = ${mysql.escape(
+    wallet
+  )} OR to_address = ${mysql.escape(wallet)}`;
+
+  return fetchPaginated(
+    DELEGATIONS_TABLE,
+    'block desc',
+    pageSize,
+    page,
+    filter,
+    '',
+    ''
+  );
+}
+
+export async function fetchDelegationsByUseCase(
+  collections: string,
+  useCases: string,
+  pageSize: number,
+  page: number
+) {
+  let filter = '';
+  if (collections) {
+    filter = constructFilters(
+      filter,
+      `collection in (${mysql.escape(collections.split(','))})`
+    );
+  }
+  if (useCases) {
+    filter = constructFilters(filter, `use_case in (${useCases.split(',')})`);
+  }
+
+  return fetchPaginated(
+    DELEGATIONS_TABLE,
+    'block desc',
+    pageSize,
+    page,
+    filter,
+    '',
+    ''
+  );
 }

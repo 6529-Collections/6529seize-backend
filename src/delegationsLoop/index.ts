@@ -1,16 +1,19 @@
 import {
   persistConsolidations,
   fetchLatestConsolidationsBlockNumber,
-  retrieveWalletConsolidations
+  retrieveWalletConsolidations,
+  persistDelegations,
+  fetchLatestDelegationsBlockNumber
 } from '../db';
 import { findDelegationTransactions } from '../delegations';
 import { loadEnv, unload } from '../secrets';
 
 export const handler = async (event?: any, context?: any) => {
-  console.log('[RUNNING DELEGATIONS LOOP]');
   await loadEnv();
   // await retrieveConsolidations();
-  await delegations();
+  const force = process.env.DELEGATIONS_RESET == 'true';
+  console.log('[RUNNING DELEGATIONS LOOP]', `[FORCE ${force}]`);
+  await delegations(force ? 0 : undefined);
   await unload();
   console.log('[DELEGATIONS LOOP COMPLETE]');
 };
@@ -41,8 +44,12 @@ export async function delegations(
   try {
     let startingBlockResolved: number;
     if (startingBlock == undefined) {
-      const dbBlock = await fetchLatestConsolidationsBlockNumber();
-      startingBlockResolved = dbBlock ? dbBlock : 0;
+      const consolidationBlock = await fetchLatestConsolidationsBlockNumber();
+      const delegationBlock = await fetchLatestDelegationsBlockNumber();
+      startingBlockResolved =
+        consolidationBlock && delegationBlock
+          ? Math.min(consolidationBlock, delegationBlock)
+          : 0;
     } else {
       startingBlockResolved = startingBlock;
     }
@@ -53,6 +60,7 @@ export async function delegations(
     );
 
     await persistConsolidations(response.consolidations);
+    await persistDelegations(response.delegations);
   } catch (e: any) {
     console.log(
       new Date(),

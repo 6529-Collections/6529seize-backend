@@ -459,6 +459,14 @@ export async function memeLabExtendedData() {
       metaCollection = metaCollectionTrait.value;
     }
 
+    let website;
+    const metaWebsiteTrait = nft.metadata.attributes.find(
+      (a: any) => a.trait_type.toUpperCase() == 'WEBSITE'
+    );
+    if (metaWebsiteTrait && metaWebsiteTrait.value != 'None') {
+      website = metaWebsiteTrait.value;
+    }
+
     const meta: LabExtendedData = {
       id: nft.id,
       created_at: new Date(),
@@ -477,7 +485,8 @@ export async function memeLabExtendedData() {
       edition_size_cleaned_rank: -1,
       hodlers_rank: -1,
       percent_unique_rank: -1,
-      percent_unique_cleaned_rank: -1
+      percent_unique_cleaned_rank: -1,
+      website: website
     };
     labMeta.push(meta);
   });

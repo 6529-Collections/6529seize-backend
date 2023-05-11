@@ -1406,7 +1406,7 @@ loadEnv(true).then(async (e) => {
         console.log(
           new Date(),
           `[API]`,
-          '[CONSOLIDATIONS]',
+          '[WALLET CONSOLIDATIONS]',
           `[WALLET ${wallet}]`
         );
         db.fetchConsolidations(wallet).then((result) => {
@@ -1416,13 +1416,80 @@ loadEnv(true).then(async (e) => {
         console.log(
           new Date(),
           `[API]`,
-          '[DISTRIBUTIONS]',
+          '[WALLET CONSOLIDATIONS]',
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         return;
       }
     }
   );
+
+  app.get(
+    `${BASE_PATH}/delegations/:wallet`,
+    function (req: any, res: any, next: any) {
+      try {
+        const wallet = req.params.wallet;
+
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[WALLET DELEGATIONS]',
+          `[WALLET ${wallet}]`,
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchDelegations(wallet, pageSize, page).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[WALLET DELEGATIONS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
+  app.get(`${BASE_PATH}/delegations`, function (req: any, res: any, next: any) {
+    try {
+      const use_case = req.query.use_case;
+      const collection = req.query.collection;
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+      console.log(
+        new Date(),
+        `[API]`,
+        '[DELEGATIONS]',
+        `[USE CASE ${use_case}]`,
+        `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+      );
+      db.fetchDelegationsByUseCase(collection, use_case, pageSize, page).then(
+        (result) => {
+          returnPaginatedResult(result, req, res);
+        }
+      );
+    } catch (e) {
+      console.log(
+        new Date(),
+        `[API]`,
+        '[DELEGATIONS]',
+        `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+      );
+      return;
+    }
+  });
 
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();
