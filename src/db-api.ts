@@ -1884,7 +1884,7 @@ export async function fetchConsolidations(pageSize: number, page: number) {
   const filters = constructFilters('', "wallets like '%, %'");
 
   const results = await fetchPaginated(
-    CONSOLIDATED_OWNERS_METRICS_TABLE,
+    CONSOLIDATED_WALLETS_TDH_TABLE,
     'balance desc',
     pageSize,
     page,
