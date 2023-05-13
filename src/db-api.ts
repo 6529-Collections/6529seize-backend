@@ -1859,7 +1859,7 @@ export async function fetchDistributions(
   );
 }
 
-export async function fetchConsolidations(wallet: string) {
+export async function fetchConsolidationsForWallet(wallet: string) {
   const sql = getConsolidationsSql(wallet);
   const consolidations: any[] = await execSQL(sql);
   const wallets = extractConsolidationWallets(consolidations, wallet);
@@ -1870,6 +1870,35 @@ export async function fetchConsolidations(wallet: string) {
     next: null,
     data: wallets
   };
+}
+
+export async function fetchPrimaryWallet(wallets: string[]) {
+  const sql = `SELECT wallet from owners_metrics where wallet in (${mysql.escape(
+    wallets
+  )}) order by balance desc limit 1`;
+  const results: any[] = await execSQL(sql);
+  return results[0].wallet;
+}
+
+export async function fetchConsolidations(pageSize: number, page: number) {
+  const filters = constructFilters('', "wallets like '%, %'");
+
+  const results = await fetchPaginated(
+    CONSOLIDATED_OWNERS_METRICS_TABLE,
+    'balance desc',
+    pageSize,
+    page,
+    filters,
+    'consolidation_display, wallets'
+  );
+
+  await Promise.all(
+    results.data.map(async (d: any) => {
+      d.primary = await fetchPrimaryWallet(JSON.parse(d.wallets));
+    })
+  );
+
+  return results;
 }
 
 export async function fetchDelegations(

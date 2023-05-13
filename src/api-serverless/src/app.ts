@@ -1409,7 +1409,41 @@ loadEnv(true).then(async (e) => {
           '[WALLET CONSOLIDATIONS]',
           `[WALLET ${wallet}]`
         );
-        db.fetchConsolidations(wallet).then((result) => {
+        db.fetchConsolidationsForWallet(wallet).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[WALLET CONSOLIDATIONS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
+  app.get(
+    `${BASE_PATH}/consolidations`,
+    function (req: any, res: any, next: any) {
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATIONS]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchConsolidations(pageSize, page).then((result) => {
+          result.data.map((a: any) => {
+            a.wallets = JSON.parse(a.wallets);
+          });
           returnPaginatedResult(result, req, res);
         });
       } catch (e) {
