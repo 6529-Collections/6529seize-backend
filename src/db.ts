@@ -1033,10 +1033,9 @@ export async function persistConsolidations(
       `[PERSISTING ${consolidations.length} RESULTS]`
     );
 
-    await AppDataSource.transaction(async (manager) => {
-      for (const consolidation of consolidations) {
-        const repo = manager.getRepository(Consolidation);
-
+    const repo = AppDataSource.getRepository(Consolidation);
+    await Promise.all(
+      consolidations.map(async (consolidation) => {
         if (consolidation.type == EventType.REGISTER) {
           const r = await repo.findOne({
             where: {
@@ -1094,8 +1093,72 @@ export async function persistConsolidations(
             }
           }
         }
-      }
-    });
+      })
+    );
+    // await AppDataSource.transaction(async (manager) => {
+    //   for (const consolidation of consolidations) {
+    //     const repo = manager.getRepository(Consolidation);
+
+    //     if (consolidation.type == EventType.REGISTER) {
+    //       const r = await repo.findOne({
+    //         where: {
+    //           wallet1: consolidation.wallet1,
+    //           wallet2: consolidation.wallet2
+    //         }
+    //       });
+    //       if (r) {
+    //         // do nothing
+    //       } else {
+    //         const r2 = await repo.findOne({
+    //           where: {
+    //             wallet1: consolidation.wallet2,
+    //             wallet2: consolidation.wallet1
+    //           }
+    //         });
+    //         if (r2) {
+    //           console.log(r2.wallet1, r2.wallet2);
+    //           r2.confirmed = true;
+    //           await repo.save(r2);
+    //         } else {
+    //           const newConsolidation = new Consolidation();
+    //           newConsolidation.block = consolidation.block;
+    //           newConsolidation.wallet1 = consolidation.wallet1;
+    //           newConsolidation.wallet2 = consolidation.wallet2;
+    //           await repo.save(newConsolidation);
+    //         }
+    //       }
+    //     } else if (consolidation.type == EventType.REVOKE) {
+    //       const r = await repo.findOne({
+    //         where: {
+    //           wallet1: consolidation.wallet1,
+    //           wallet2: consolidation.wallet2
+    //         }
+    //       });
+    //       if (r) {
+    //         if (r.confirmed) {
+    //           await repo.remove(r);
+    //           const newConsolidation = new Consolidation();
+    //           newConsolidation.block = consolidation.block;
+    //           newConsolidation.wallet1 = consolidation.wallet2;
+    //           newConsolidation.wallet2 = consolidation.wallet1;
+    //           await repo.save(newConsolidation);
+    //         }
+    //         await repo.remove(r);
+    //       } else {
+    //         const r2 = await repo.findOne({
+    //           where: {
+    //             wallet1: consolidation.wallet2,
+    //             wallet2: consolidation.wallet1
+    //           }
+    //         });
+    //         if (r2) {
+    //           r2.confirmed = false;
+    //           await repo.save(r2);
+    //         }
+    //       }
+    //     }
+    //   }
+    // });
 
     console.log(
       '[CONSOLIDATIONS]',
@@ -1108,10 +1171,9 @@ export async function persistDelegations(delegations: DelegationEvent[]) {
   if (delegations.length > 0) {
     console.log('[DELEGATIONS]', `[PERSISTING ${delegations.length} RESULTS]`);
 
-    await AppDataSource.transaction(async (manager) => {
-      for (const delegation of delegations) {
-        const repo = manager.getRepository(Delegation);
-
+    const repo = AppDataSource.getRepository(Delegation);
+    await Promise.all(
+      delegations.map(async (delegation) => {
         if (delegation.type == EventType.REGISTER) {
           const r = await repo.findOne({
             where: {
@@ -1144,8 +1206,46 @@ export async function persistDelegations(delegations: DelegationEvent[]) {
             await repo.remove(r);
           }
         }
-      }
-    });
+      })
+    );
+    // await AppDataSource.transaction(async (manager) => {
+    //   for (const delegation of delegations) {
+    //     const repo = manager.getRepository(Delegation);
+
+    //     if (delegation.type == EventType.REGISTER) {
+    //       const r = await repo.findOne({
+    //         where: {
+    //           from_address: delegation.wallet1,
+    //           to_address: delegation.wallet2,
+    //           use_case: delegation.use_case,
+    //           collection: delegation.collection
+    //         }
+    //       });
+    //       if (!r) {
+    //         const newDelegation = new Delegation();
+    //         newDelegation.block = delegation.block;
+    //         newDelegation.from_address = delegation.wallet1;
+    //         newDelegation.to_address = delegation.wallet2;
+    //         newDelegation.collection = delegation.collection;
+    //         newDelegation.use_case = delegation.use_case;
+    //         await repo.save(newDelegation);
+    //       }
+    //     } else if (delegation.type == EventType.REVOKE) {
+    //       const r = await repo.findOne({
+    //         where: {
+    //           from_address: delegation.wallet1,
+    //           to_address: delegation.wallet2,
+    //           use_case: delegation.use_case,
+    //           collection: delegation.collection
+    //         }
+    //       });
+
+    //       if (r) {
+    //         await repo.remove(r);
+    //       }
+    //     }
+    //   }
+    // });
 
     console.log(
       '[DELEGATIONS]',
