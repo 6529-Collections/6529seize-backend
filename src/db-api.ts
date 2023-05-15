@@ -1859,7 +1859,7 @@ export async function fetchDistributions(
   );
 }
 
-export async function fetchConsolidations(wallet: string) {
+export async function fetchConsolidationsForWallet(wallet: string) {
   const sql = getConsolidationsSql(wallet);
   const consolidations: any[] = await execSQL(sql);
   const wallets = extractConsolidationWallets(consolidations, wallet);
@@ -1870,6 +1870,36 @@ export async function fetchConsolidations(wallet: string) {
     next: null,
     data: wallets
   };
+}
+
+export async function fetchPrimaryWallet(wallets: string[]) {
+  const tdhBlock = await fetchLatestTDHBlockNumber();
+  const sql = `SELECT wallet from ${WALLETS_TDH_TABLE} where wallet in (${mysql.escape(
+    wallets
+  )}) AND block=${tdhBlock} order by boosted_tdh desc limit 1`;
+  const results: any[] = await execSQL(sql);
+  return results[0].wallet;
+}
+
+export async function fetchConsolidations(pageSize: number, page: number) {
+  const filters = constructFilters('', "wallets like '%, %'");
+
+  const results = await fetchPaginated(
+    CONSOLIDATED_WALLETS_TDH_TABLE,
+    'boosted_tdh desc',
+    pageSize,
+    page,
+    filters,
+    'consolidation_display, wallets'
+  );
+
+  await Promise.all(
+    results.data.map(async (d: any) => {
+      d.primary = await fetchPrimaryWallet(JSON.parse(d.wallets));
+    })
+  );
+
+  return results;
 }
 
 export async function fetchDelegations(
