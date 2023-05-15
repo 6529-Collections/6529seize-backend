@@ -1873,9 +1873,10 @@ export async function fetchConsolidationsForWallet(wallet: string) {
 }
 
 export async function fetchPrimaryWallet(wallets: string[]) {
-  const sql = `SELECT wallet from owners_metrics where wallet in (${mysql.escape(
+  const tdhBlock = await fetchLatestTDHBlockNumber();
+  const sql = `SELECT wallet from ${WALLETS_TDH_TABLE} where wallet in (${mysql.escape(
     wallets
-  )}) order by boosted_tdh desc limit 1`;
+  )}) AND block=${tdhBlock} order by boosted_tdh desc limit 1`;
   const results: any[] = await execSQL(sql);
   return results[0].wallet;
 }
