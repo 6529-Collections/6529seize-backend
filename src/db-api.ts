@@ -1875,7 +1875,7 @@ export async function fetchConsolidationsForWallet(wallet: string) {
 export async function fetchPrimaryWallet(wallets: string[]) {
   const sql = `SELECT wallet from owners_metrics where wallet in (${mysql.escape(
     wallets
-  )}) order by balance desc limit 1`;
+  )}) order by boosted_tdh desc limit 1`;
   const results: any[] = await execSQL(sql);
   return results[0].wallet;
 }
@@ -1885,7 +1885,7 @@ export async function fetchConsolidations(pageSize: number, page: number) {
 
   const results = await fetchPaginated(
     CONSOLIDATED_WALLETS_TDH_TABLE,
-    'balance desc',
+    'boosted_tdh desc',
     pageSize,
     page,
     filters,
