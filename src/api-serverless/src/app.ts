@@ -1,6 +1,8 @@
 import * as db from '../../db-api';
 import { loadEnv } from '../../secrets';
 
+const converter = require('json-2-csv');
+
 const mcache = require('memory-cache');
 
 const CACHE_TIME_MS = 1 * 60 * 1000;
@@ -1044,11 +1046,18 @@ loadEnv(true).then(async (e) => {
     `${BASE_PATH}/owner_metrics`,
     function (req: any, res: any, next: any) {
       try {
-        const pageSize: number =
+        let pageSize: number =
           req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
             ? parseInt(req.query.page_size)
             : DEFAULT_PAGE_SIZE;
-        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+        let page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        const downloadPage = req.query.download_page;
+        const downloadAll = req.query.download_all;
+        if (downloadAll) {
+          pageSize = Number.MAX_SAFE_INTEGER;
+          page = 1;
+        }
 
         const wallets = req.query.wallet;
         const sort =
@@ -1096,22 +1105,46 @@ loadEnv(true).then(async (e) => {
           hideMuseum,
           hideTeam,
           isProfilePage
-        ).then((result) => {
-          result.data.map((d: any) => {
-            if (d.memes) {
-              d.memes = JSON.parse(d.memes);
-            }
-            if (d.memes_ranks) {
-              d.memes_ranks = JSON.parse(d.memes_ranks);
-            }
-            if (d.gradients) {
-              d.gradients = JSON.parse(d.gradients);
-            }
-            if (d.gradients_ranks) {
-              d.gradients_ranks = JSON.parse(d.gradients_ranks);
-            }
-          });
-          returnPaginatedResult(result, req, res);
+        ).then(async (result) => {
+          if (downloadAll || downloadPage) {
+            result.data.map((d: any) => {
+              delete d.created_at;
+              delete d.memes;
+              delete d.memes_ranks;
+              delete d.gradients;
+              delete d.gradients_ranks;
+            });
+          } else {
+            result.data.map((d: any) => {
+              if (d.memes) {
+                d.memes = JSON.parse(d.memes);
+              }
+              if (d.memes_ranks) {
+                d.memes_ranks = JSON.parse(d.memes_ranks);
+              }
+              if (d.gradients) {
+                d.gradients = JSON.parse(d.gradients);
+              }
+              if (d.gradients_ranks) {
+                d.gradients_ranks = JSON.parse(d.gradients_ranks);
+              }
+            });
+          }
+          if (downloadAll) {
+            const filename = 'consolidated_owner_metrics';
+            const csv = await converter.json2csvAsync(result.data);
+            res.header('Content-Type', 'text/csv');
+            res.attachment(`${filename}.csv`);
+            return res.send(csv);
+          } else if (downloadPage) {
+            const filename = 'consolidated_owner_metrics';
+            const csv = await converter.json2csvAsync(result.data);
+            res.header('Content-Type', 'text/csv');
+            res.attachment(`${filename}.csv`);
+            return res.send(csv);
+          } else {
+            return returnPaginatedResult(result, req, res);
+          }
         });
       } catch (e) {
         console.log(
@@ -1129,13 +1162,22 @@ loadEnv(true).then(async (e) => {
     `${BASE_PATH}/consolidated_owner_metrics`,
     function (req: any, res: any, next: any) {
       try {
-        const pageSize: number =
+        let pageSize: number =
           req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
             ? parseInt(req.query.page_size)
             : DEFAULT_PAGE_SIZE;
-        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+        let page: number = req.query.page ? parseInt(req.query.page) : 1;
+        const includePrimaryWallet =
+          req.query.include_primary_wallet &&
+          req.query.include_primary_wallet == 'true';
 
         const wallets = req.query.wallet;
+        const downloadPage = req.query.download_page;
+        const downloadAll = req.query.download_all;
+        if (downloadAll) {
+          pageSize = Number.MAX_SAFE_INTEGER;
+          page = 1;
+        }
         const sort =
           req.query.sort && TDH_SORT.includes(req.query.sort)
             ? req.query.sort
@@ -1181,26 +1223,53 @@ loadEnv(true).then(async (e) => {
           filter,
           hideMuseum,
           hideTeam,
-          isProfilePage
-        ).then((result) => {
+          isProfilePage,
+          includePrimaryWallet
+        ).then(async (result) => {
           result.data.map((d: any) => {
             if (d.wallets) {
               d.wallets = JSON.parse(d.wallets);
             }
-            if (d.memes) {
-              d.memes = JSON.parse(d.memes);
-            }
-            if (d.memes_ranks) {
-              d.memes_ranks = JSON.parse(d.memes_ranks);
-            }
-            if (d.gradients) {
-              d.gradients = JSON.parse(d.gradients);
-            }
-            if (d.gradients_ranks) {
-              d.gradients_ranks = JSON.parse(d.gradients_ranks);
-            }
           });
-          returnPaginatedResult(result, req, res);
+          if (downloadAll || downloadPage) {
+            result.data.map((d: any) => {
+              delete d.created_at;
+              delete d.memes;
+              delete d.memes_ranks;
+              delete d.gradients;
+              delete d.gradients_ranks;
+            });
+          } else {
+            result.data.map((d: any) => {
+              if (d.memes) {
+                d.memes = JSON.parse(d.memes);
+              }
+              if (d.memes_ranks) {
+                d.memes_ranks = JSON.parse(d.memes_ranks);
+              }
+              if (d.gradients) {
+                d.gradients = JSON.parse(d.gradients);
+              }
+              if (d.gradients_ranks) {
+                d.gradients_ranks = JSON.parse(d.gradients_ranks);
+              }
+            });
+          }
+          if (downloadAll) {
+            const filename = 'consolidated_owner_metrics';
+            const csv = await converter.json2csvAsync(result.data);
+            res.header('Content-Type', 'text/csv');
+            res.attachment(`${filename}.csv`);
+            return res.send(csv);
+          } else if (downloadPage) {
+            const filename = 'consolidated_owner_metrics';
+            const csv = await converter.json2csvAsync(result.data);
+            res.header('Content-Type', 'text/csv');
+            res.attachment(`${filename}.csv`);
+            return res.send(csv);
+          } else {
+            return returnPaginatedResult(result, req, res);
+          }
         });
       } catch (e) {
         console.log(

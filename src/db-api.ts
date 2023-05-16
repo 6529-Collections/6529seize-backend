@@ -1246,7 +1246,8 @@ export async function fetchConsolidatedOwnerMetrics(
   metrics_filter: string,
   hideMuseum: boolean,
   hideTeam: boolean,
-  profilePage: boolean
+  profilePage: boolean,
+  includePrimaryWallet: boolean
 ) {
   let filters = '';
   let hideWalletFilters = '';
@@ -1672,6 +1673,15 @@ export async function fetchConsolidatedOwnerMetrics(
       };
     }
   }
+
+  if (includePrimaryWallet) {
+    await Promise.all(
+      results.data.map(async (d: any) => {
+        d.primary_wallet = await fetchPrimaryWallet(JSON.parse(d.wallets));
+      })
+    );
+  }
+
   return results;
 }
 function returnEmpty() {
@@ -1873,12 +1883,22 @@ export async function fetchConsolidationsForWallet(wallet: string) {
 }
 
 export async function fetchPrimaryWallet(wallets: string[]) {
+  if (!wallets) {
+    return null;
+  }
+  if (wallets.length == 1) {
+    return wallets[0];
+  }
   const tdhBlock = await fetchLatestTDHBlockNumber();
   const sql = `SELECT wallet from ${WALLETS_TDH_TABLE} where wallet in (${mysql.escape(
     wallets
   )}) AND block=${tdhBlock} order by boosted_tdh desc limit 1`;
   const results: any[] = await execSQL(sql);
-  return results[0].wallet;
+  if (results[0]) {
+    return results[0].wallet;
+  } else {
+    return null;
+  }
 }
 
 export async function fetchConsolidations(pageSize: number, page: number) {
