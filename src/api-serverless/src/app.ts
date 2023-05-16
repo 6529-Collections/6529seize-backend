@@ -1052,8 +1052,8 @@ loadEnv(true).then(async (e) => {
             : DEFAULT_PAGE_SIZE;
         let page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-        const downloadPage = req.query.download_page;
-        const downloadAll = req.query.download_all;
+        const downloadPage = req.query.download_page == 'true';
+        const downloadAll = req.query.download_all == 'true';
         if (downloadAll) {
           pageSize = Number.MAX_SAFE_INTEGER;
           page = 1;
@@ -1172,8 +1172,8 @@ loadEnv(true).then(async (e) => {
           req.query.include_primary_wallet == 'true';
 
         const wallets = req.query.wallet;
-        const downloadPage = req.query.download_page;
-        const downloadAll = req.query.download_all;
+        const downloadPage = req.query.download_page == 'true';
+        const downloadAll = req.query.download_all == 'true';
         if (downloadAll) {
           pageSize = Number.MAX_SAFE_INTEGER;
           page = 1;
