@@ -59,8 +59,14 @@ export async function delegations(
       latestBlock
     );
 
-    await persistConsolidations(response.consolidations);
-    await persistDelegations(response.delegations);
+    await persistConsolidations(
+      process.env.DELEGATIONS_RESET == 'true',
+      response.consolidations
+    );
+    await persistDelegations(
+      process.env.DELEGATIONS_RESET == 'true',
+      response.delegations
+    );
   } catch (e: any) {
     console.log(
       new Date(),
