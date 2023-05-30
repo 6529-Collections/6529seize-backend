@@ -30,7 +30,7 @@ const corsOptions = {
   ]
 };
 
-loadEnv(true).then(async (e) => {
+loadEnv([], true).then(async (e) => {
   console.log(
     '[API]',
     `[DB HOST ${process.env.DB_HOST_READ}]`,
@@ -1570,6 +1570,10 @@ loadEnv(true).then(async (e) => {
           ? parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const showExpired =
+        req.query.show_expired && req.query.show_expired == 'true'
+          ? true
+          : false;
 
       console.log(
         new Date(),
@@ -1578,11 +1582,15 @@ loadEnv(true).then(async (e) => {
         `[USE CASE ${use_case}]`,
         `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
       );
-      db.fetchDelegationsByUseCase(collection, use_case, pageSize, page).then(
-        (result) => {
-          returnPaginatedResult(result, req, res);
-        }
-      );
+      db.fetchDelegationsByUseCase(
+        collection,
+        use_case,
+        showExpired,
+        pageSize,
+        page
+      ).then((result) => {
+        returnPaginatedResult(result, req, res);
+      });
     } catch (e) {
       console.log(
         new Date(),

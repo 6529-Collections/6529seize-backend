@@ -5,9 +5,19 @@ import { findTDH } from '../tdh';
 import { consolidateTDH } from '../tdh_consolidation';
 import { uploadConsolidatedTDH, uploadTDH } from '../tdh_upload';
 import { loadEnv, unload } from '../secrets';
+import { ConsolidatedTDHUpload } from '../entities/IUpload';
+import { ConsolidatedTDH, TDH } from '../entities/ITDH';
+import { NFT } from '../entities/INFT';
+import { OwnerMetric } from '../entities/IOwner';
 
 export const handler = async (event?: any, context?: any) => {
-  await loadEnv();
+  await loadEnv([
+    TDH,
+    ConsolidatedTDH,
+    ConsolidatedTDHUpload,
+    NFT,
+    OwnerMetric
+  ]);
   const force = process.env.TDH_RESET == 'true';
   console.log(new Date(), '[RUNNING TDH LOOP]', `[FORCE ${force}]`);
   await tdhLoop(force);

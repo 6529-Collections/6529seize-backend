@@ -8,7 +8,7 @@ const SECRET = 'prod/lambdas';
 const dotenv = require('dotenv');
 const path = require('path');
 
-export async function loadEnv(disableConnect?: boolean) {
+export async function loadEnv(entities: any[] = [], disableConnect?: boolean) {
   if (!process.env.NODE_ENV) {
     await loadSecrets();
   } else {
@@ -16,7 +16,7 @@ export async function loadEnv(disableConnect?: boolean) {
   }
 
   if (!disableConnect) {
-    await connect();
+    await connect(entities);
   }
 }
 

@@ -51,7 +51,6 @@ import {
   EventType
 } from './entities/IDelegation';
 import { RoyaltiesUpload } from './entities/IRoyalties';
-import { ConsolidatedTDHUpload } from './entities/IUpload';
 import {
   areEqualAddresses,
   extractConsolidationWallets,
@@ -63,7 +62,7 @@ const mysql = require('mysql');
 
 let AppDataSource: DataSource;
 
-export async function connect() {
+export async function connect(entities: any[] = []) {
   console.log('[DATABASE]', `[DB HOST ${process.env.DB_HOST}]`);
 
   AppDataSource = new DataSource({
@@ -73,25 +72,7 @@ export async function connect() {
     username: process.env.DB_USER,
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
-    entities: [
-      Owner,
-      LabNFT,
-      LabExtendedData,
-      Transaction,
-      OwnerMetric,
-      NFT,
-      Team,
-      LabTransaction,
-      RoyaltiesUpload,
-      OwnerTags,
-      TDH,
-      Consolidation,
-      ConsolidatedTDH,
-      ConsolidatedOwnerMetric,
-      ConsolidatedOwnerTags,
-      ConsolidatedTDHUpload,
-      Delegation
-    ],
+    entities: entities,
     synchronize: true,
     logging: false
   });
@@ -1153,6 +1134,15 @@ export async function persistDelegations(
           newDelegation.to_address = delegation.wallet2;
           newDelegation.collection = delegation.collection;
           newDelegation.use_case = delegation.use_case;
+          if (delegation.expiry) {
+            newDelegation.expiry = delegation.expiry;
+          }
+          if (delegation.all_tokens) {
+            newDelegation.all_tokens = delegation.all_tokens;
+          }
+          if (delegation.token_id) {
+            newDelegation.token_id = delegation.token_id;
+          }
           await repo.save(newDelegation);
         }
       } else if (delegation.type == EventType.REVOKE) {

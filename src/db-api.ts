@@ -1945,6 +1945,7 @@ export async function fetchDelegations(
 export async function fetchDelegationsByUseCase(
   collections: string,
   useCases: string,
+  showExpired: boolean,
   pageSize: number,
   page: number
 ) {
@@ -1954,6 +1955,9 @@ export async function fetchDelegationsByUseCase(
       filter,
       `collection in (${mysql.escape(collections.split(','))})`
     );
+  }
+  if (!showExpired) {
+    filter = constructFilters(filter, `expiry >= ${Date.now() / 1000}`);
   }
   if (useCases) {
     filter = constructFilters(filter, `use_case in (${useCases.split(',')})`);
