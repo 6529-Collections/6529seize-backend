@@ -146,29 +146,31 @@ const getEditDescription = async (
     //   }
     // }
     if (compareProperties(previousMeta, newMeta, 'name')) {
-      changes.push(`- Name changed\n${previousMeta.name} -> ${newMeta.name}`);
+      changes.push(
+        `- Name changed\n\n${previousMeta.name} -> ${newMeta.name}\n`
+      );
     }
     if (compareProperties(previousMeta, newMeta, 'created_by')) {
       changes.push(
-        `- Created By changed\n${previousMeta.created_by} -> ${newMeta.created_by}`
+        `- Created By changed\n\n${previousMeta.created_by} -> ${newMeta.created_by}\n`
       );
     }
     if (compareProperties(previousMeta, newMeta, 'external_url')) {
       changes.push(
-        `- External URL changed\n${previousMeta.external_url} -> ${newMeta.external_url}`
+        `- External URL changed\n\n${previousMeta.external_url} -> ${newMeta.external_url}\n`
       );
     }
     if (compareProperties(previousMeta, newMeta, 'description')) {
       changes.push(
-        `- Description changed\n${previousMeta.description} -> ${newMeta.description}`
+        `- Description changed\n\n${previousMeta.description} -> ${newMeta.description}\n`
       );
     }
     if (compareProperties(previousMeta, newMeta, 'attributes')) {
-      changes.push(`- Attributes changed`);
+      changes.push(`- Attributes changed\n`);
     }
     if (compareProperties(previousMeta, newMeta, 'animation')) {
       changes.push(
-        `- Animation changed\n${previousMeta.animation} -> ${newMeta.animation}`
+        `- Animation changed\n\n${previousMeta.animation} -> ${newMeta.animation}\n`
       );
     }
     if (
@@ -176,15 +178,15 @@ const getEditDescription = async (
       !compareProperties(previousMeta, newMeta, 'animation')
     ) {
       changes.push(
-        `- Animation URL changed\n${previousMeta.animation_url} -> ${newMeta.animation_url}`
+        `- Animation URL changed\n\n${previousMeta.animation_url} -> ${newMeta.animation_url}\n`
       );
     }
     if (compareProperties(previousMeta, newMeta, 'animation_details')) {
-      changes.push(`- Animation Details changed`);
+      changes.push(`- Animation Details changed\n`);
     }
     if (compareProperties(previousMeta, newMeta, 'image')) {
       changes.push(
-        `- Image changed\n${previousMeta.image} -> ${newMeta.image}`
+        `- Image changed\n\n${previousMeta.image} -> ${newMeta.image}\n`
       );
     }
     if (
@@ -192,11 +194,11 @@ const getEditDescription = async (
       !compareProperties(previousMeta, newMeta, 'image')
     ) {
       changes.push(
-        `- Image URL changed\n${previousMeta.image_url} -> ${newMeta.image_url}`
+        `- Image URL changed\n\n${previousMeta.image_url} -> ${newMeta.image_url}\n`
       );
     }
     if (compareProperties(previousMeta, newMeta, 'image_details')) {
-      changes.push(`- Image Details changed`);
+      changes.push(`- Image Details changed\n`);
     }
     if (changes.length > 0) {
       editDescription += changes.join('\n');
