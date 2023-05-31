@@ -11,6 +11,7 @@ const discoverEnsLoop = require('./discoverEnsLoop');
 const refreshEnsLoop = require('./refreshEnsLoop');
 const royaltiesLoop = require('./royaltiesLoop');
 const delegations = require('./delegationsLoop');
+const nftHistory = require('./nftHistoryLoop');
 
 const { memeStats, memeLabStats, gradientStats } = require('./marketStatsLoop');
 
@@ -50,6 +51,13 @@ cron.schedule('*/4 * * * *', async function () {
 cron.schedule('*/2 * * * *', async function () {
   if (!STARTING) {
     await delegations.handler();
+  }
+});
+
+// PULL EVERY 30 MINUTES
+cron.schedule('*/30 * * * *', async function () {
+  if (!STARTING) {
+    await nftHistory.handler();
   }
 });
 
@@ -94,7 +102,7 @@ async function start() {
 
   // Uncomment to call on start
 
-  // await transactionsReplay.handler();
+  await nftHistory.handler();
   // await delegations.handler();
   // await transactions.handler();
   // await nfts.handler();

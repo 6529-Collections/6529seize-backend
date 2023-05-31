@@ -15,6 +15,7 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
+  NFTS_HISTORY_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
   NULL_ADDRESS,
@@ -1971,5 +1972,25 @@ export async function fetchDelegationsByUseCase(
     filter,
     '',
     ''
+  );
+}
+
+export async function fetchNftHistory(
+  pageSize: number,
+  page: number,
+  contract: string,
+  nftId: number
+) {
+  let filter = constructFilters(
+    '',
+    `contract=${mysql.escape(contract)} AND nft_id=${nftId}`
+  );
+
+  return fetchPaginated(
+    NFTS_HISTORY_TABLE,
+    `transaction_date desc`,
+    pageSize,
+    page,
+    filter
   );
 }

@@ -1602,6 +1602,40 @@ loadEnv([], true).then(async (e) => {
     }
   });
 
+  app.get(
+    `${BASE_PATH}/nft_history/:contract/:nft_id`,
+    function (req: any, res: any, next: any) {
+      const contract = req.params.contract;
+      const nftId = req.params.nft_id;
+
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NFT HISTORY]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchNftHistory(pageSize, page, contract, nftId).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NFT HISTORY]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
+
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();
     res.send(

@@ -11,7 +11,7 @@ export const handler = async (event?: any, context?: any) => {
 };
 
 export async function s3Loop() {
-  if (process.env.NODE_ENV == 'local') {
+  if (process.env.NODE_ENV == 'production') {
     const nfts = await fetchAllNFTs();
     await persistS3(nfts);
     const nftsLab = await fetchAllMemeLabNFTs();
