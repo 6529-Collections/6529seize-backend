@@ -29,6 +29,7 @@ import {
   MemesExtendedData,
   NFT
 } from './entities/INFT';
+import { ConsolidatedTDHUpload } from './entities/IUpload';
 import {
   ConsolidatedOwnerMetric,
   ConsolidatedOwnerTags,
@@ -65,6 +66,30 @@ let AppDataSource: DataSource;
 
 export async function connect(entities: any[] = []) {
   console.log('[DATABASE]', `[DB HOST ${process.env.DB_HOST}]`);
+
+  if (process.env.NODE_ENV != 'production') {
+    entities = [
+      Owner,
+      LabNFT,
+      LabExtendedData,
+      Transaction,
+      OwnerMetric,
+      NFT,
+      Team,
+      LabTransaction,
+      RoyaltiesUpload,
+      OwnerTags,
+      TDH,
+      Consolidation,
+      ConsolidatedTDH,
+      ConsolidatedOwnerMetric,
+      ConsolidatedOwnerTags,
+      ConsolidatedTDHUpload,
+      Delegation,
+      NFTHistory,
+      NFTHistoryBlock
+    ];
+  }
 
   AppDataSource = new DataSource({
     type: 'mysql',
