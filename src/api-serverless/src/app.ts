@@ -1471,16 +1471,23 @@ loadEnv([], true).then(async (e) => {
     function (req: any, res: any, next: any) {
       try {
         const wallet = req.params.wallet;
+        const showIncomplete =
+          req.query.show_incomplete && req.query.show_incomplete == 'true'
+            ? true
+            : false;
 
         console.log(
           new Date(),
           `[API]`,
           '[WALLET CONSOLIDATIONS]',
+          `[SHOW_INCOMPLETE ${showIncomplete}]`,
           `[WALLET ${wallet}]`
         );
-        db.fetchConsolidationsForWallet(wallet).then((result) => {
-          returnPaginatedResult(result, req, res);
-        });
+        db.fetchConsolidationsForWallet(wallet, showIncomplete).then(
+          (result) => {
+            returnPaginatedResult(result, req, res);
+          }
+        );
       } catch (e) {
         console.log(
           new Date(),
@@ -1622,6 +1629,9 @@ loadEnv([], true).then(async (e) => {
           `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
         db.fetchNftHistory(pageSize, page, contract, nftId).then((result) => {
+          result.data.map((a: any) => {
+            a.description = JSON.parse(a.description);
+          });
           returnPaginatedResult(result, req, res);
         });
       } catch (e) {

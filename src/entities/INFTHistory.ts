@@ -39,6 +39,6 @@ export class NFTHistory {
   @Column({ type: 'int' })
   block!: number;
 
-  @Column({ type: 'text' })
-  description!: string;
+  @Column({ type: 'json' })
+  description!: any;
 }

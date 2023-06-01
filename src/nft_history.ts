@@ -124,89 +124,158 @@ const compareProperties = (a: any, b: any, key: string) => {
   return aVal !== bVal;
 };
 
+function getAttributeChanges(oldAttributes: any[], newAttributes: any[]) {
+  const changes: any[] = [];
+
+  const oldAttributesMap = new Map();
+  oldAttributes.forEach((attribute: any) => {
+    oldAttributesMap.set(attribute.trait_type, attribute.value);
+  });
+
+  newAttributes.forEach((attribute: any) => {
+    const traitType = attribute.trait_type;
+    const value = attribute.value;
+
+    if (oldAttributesMap.has(traitType)) {
+      const oldValue = oldAttributesMap.get(traitType);
+      if (oldValue !== value) {
+        changes.push({
+          trait_type: traitType,
+          old_value: oldValue,
+          new_value: value
+        });
+      }
+    }
+  });
+
+  return changes;
+}
+
 const getEditDescription = async (
   tokenId: number,
   contract: string,
   newUri: string
 ) => {
-  let editDescription = '';
   const previousUri = await fetchLatestNftUri(tokenId, contract);
   if (previousUri) {
     const previousMeta = await (await fetch(previousUri)).json();
     const newMeta = await (await fetch(newUri)).json();
-    const changes: string[] = [];
-    // for (const key in previousMeta) {
-    //   if (
-    //     previousMeta.hasOwnProperty(key) &&
-    //     previousMeta[key] !== newMeta[key]
-    //   ) {
-    //     changes.push(
-    //       `Property '${key}' changed\n'${previousMeta[key]}' -> '${newMeta[key]}'`
-    //     );
-    //   }
+    const changes: any[] = [];
+    for (const key in previousMeta) {
+      if (typeof previousMeta[key] != 'object') {
+        if (previousMeta[key] !== newMeta[key]) {
+          changes.push({ key: key, from: previousMeta[key], to: newMeta[key] });
+        }
+      } else {
+        if (key == 'attributes') {
+          const attributeChanges = getAttributeChanges(
+            previousMeta[key],
+            newMeta[key]
+          );
+          attributeChanges.map((change) => {
+            changes.push({
+              key: `${key}::${change.trait_type}`,
+              from: change.old_value,
+              to: change.new_value
+            });
+          });
+        } else {
+          for (const key2 in previousMeta[key]) {
+            if (
+              typeof previousMeta[key][key2] != 'object' &&
+              previousMeta[key][key2] !== newMeta[key][key2]
+            ) {
+              changes.push({
+                key: `${key}::${key2}`,
+                from: previousMeta[key][key2],
+                to: newMeta[key][key2]
+              });
+            }
+          }
+        }
+      }
+    }
+
+    // if (compareProperties(previousMeta, newMeta, 'name')) {
+    //   changes.name = {
+    //     from: previousMeta.name,
+    //     to: newMeta.name
+    //   };
     // }
-    if (compareProperties(previousMeta, newMeta, 'name')) {
-      changes.push(
-        `- Name changed\n\n${previousMeta.name} -> ${newMeta.name}\n`
-      );
-    }
-    if (compareProperties(previousMeta, newMeta, 'created_by')) {
-      changes.push(
-        `- Created By changed\n\n${previousMeta.created_by} -> ${newMeta.created_by}\n`
-      );
-    }
-    if (compareProperties(previousMeta, newMeta, 'external_url')) {
-      changes.push(
-        `- External URL changed\n\n${previousMeta.external_url} -> ${newMeta.external_url}\n`
-      );
-    }
-    if (compareProperties(previousMeta, newMeta, 'description')) {
-      changes.push(
-        `- Description changed\n\n${previousMeta.description} -> ${newMeta.description}\n`
-      );
-    }
-    if (compareProperties(previousMeta, newMeta, 'attributes')) {
-      changes.push(`- Attributes changed\n`);
-    }
-    if (compareProperties(previousMeta, newMeta, 'animation')) {
-      changes.push(
-        `- Animation changed\n\n${previousMeta.animation} -> ${newMeta.animation}\n`
-      );
-    }
-    if (
-      compareProperties(previousMeta, newMeta, 'animation_url') &&
-      !compareProperties(previousMeta, newMeta, 'animation')
-    ) {
-      changes.push(
-        `- Animation URL changed\n\n${previousMeta.animation_url} -> ${newMeta.animation_url}\n`
-      );
-    }
-    if (compareProperties(previousMeta, newMeta, 'animation_details')) {
-      changes.push(`- Animation Details changed\n`);
-    }
-    if (compareProperties(previousMeta, newMeta, 'image')) {
-      changes.push(
-        `- Image changed\n\n${previousMeta.image} -> ${newMeta.image}\n`
-      );
-    }
-    if (
-      compareProperties(previousMeta, newMeta, 'image_url') &&
-      !compareProperties(previousMeta, newMeta, 'image')
-    ) {
-      changes.push(
-        `- Image URL changed\n\n${previousMeta.image_url} -> ${newMeta.image_url}\n`
-      );
-    }
-    if (compareProperties(previousMeta, newMeta, 'image_details')) {
-      changes.push(`- Image Details changed\n`);
-    }
-    if (changes.length > 0) {
-      editDescription += changes.join('\n');
-    }
-  } else {
-    editDescription = 'Edited';
+    // if (compareProperties(previousMeta, newMeta, 'created_by')) {
+    //   changes.created_by = {
+    //     from: previousMeta.created_by,
+    //     to: newMeta.created_by
+    //   };
+    // }
+    // if (compareProperties(previousMeta, newMeta, 'external_url')) {
+    //   changes.external_url = {
+    //     from: previousMeta.external_url,
+    //     to: newMeta.external_url
+    //   };
+    // }
+    // if (compareProperties(previousMeta, newMeta, 'description')) {
+    //   changes.description = {
+    //     from: previousMeta.description,
+    //     to: newMeta.description
+    //   };
+    // }
+    // if (compareProperties(previousMeta, newMeta, 'attributes')) {
+    //   changes.attributes = {
+    //     from: previousMeta.attributes,
+    //     to: newMeta.attributes
+    //   };
+    // }
+    // if (compareProperties(previousMeta, newMeta, 'animation')) {
+    //   changes.animation = {
+    //     from: previousMeta.animation,
+    //     to: newMeta.animation
+    //   };
+    // }
+    // if (
+    //   compareProperties(previousMeta, newMeta, 'animation_url') &&
+    //   !compareProperties(previousMeta, newMeta, 'animation')
+    // ) {
+    //   changes.animation_url = {
+    //     from: previousMeta.animation_url,
+    //     to: newMeta.animation_url
+    //   };
+    // }
+    // if (compareProperties(previousMeta, newMeta, 'animation_details')) {
+    //   changes.animation_details = {
+    //     from: previousMeta.animation_details,
+    //     to: newMeta.animation_details
+    //   };
+    // }
+    // if (compareProperties(previousMeta, newMeta, 'image')) {
+    //   changes.image = {
+    //     from: previousMeta.image,
+    //     to: newMeta.image
+    //   };
+    // }
+    // if (
+    //   compareProperties(previousMeta, newMeta, 'image_url') &&
+    //   !compareProperties(previousMeta, newMeta, 'image')
+    // ) {
+    //   changes.image_url = {
+    //     from: previousMeta.image_url,
+    //     to: newMeta.image_url
+    //   };
+    // }
+    // if (compareProperties(previousMeta, newMeta, 'image_details')) {
+    //   changes.image_details = {
+    //     from: previousMeta.image_details,
+    //     to: newMeta.image_details
+    //   };
+    // }
+    return {
+      event: 'Edit',
+      changes: changes
+    };
   }
-  return editDescription;
+  return {
+    event: 'Edit'
+  };
 };
 
 export const findTransactions = async (
@@ -256,7 +325,10 @@ export const findTransactions = async (
             transaction_date: new Date(t.metadata.blockTimestamp),
             transaction_hash: t.hash,
             block: parseInt(t.blockNum, 16),
-            description: 'Minted'
+            description: {
+              event: 'Mint',
+              changes: []
+            }
           };
           nftMintHistory.push(nftMint);
         }
