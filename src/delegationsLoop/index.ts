@@ -6,10 +6,11 @@ import {
   fetchLatestDelegationsBlockNumber
 } from '../db';
 import { findDelegationTransactions } from '../delegations';
+import { Delegation, Consolidation } from '../entities/IDelegation';
 import { loadEnv, unload } from '../secrets';
 
 export const handler = async (event?: any, context?: any) => {
-  await loadEnv();
+  await loadEnv([Delegation, Consolidation]);
   // await retrieveConsolidations();
   const force = process.env.DELEGATIONS_RESET == 'true';
   console.log('[RUNNING DELEGATIONS LOOP]', `[FORCE ${force}]`);

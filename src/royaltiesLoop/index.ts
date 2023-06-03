@@ -1,3 +1,4 @@
+import { RoyaltiesUpload } from '../entities/IRoyalties';
 import { findRoyalties } from '../royalties';
 import { loadEnv } from '../secrets';
 
@@ -12,7 +13,7 @@ const myarweave = Arweave.init({
 
 export const handler = async (event?: any, context?: any) => {
   console.log('[RUNNING ROYALTIES]');
-  await loadEnv();
+  await loadEnv([RoyaltiesUpload]);
   await findRoyalties();
   console.log('[ROYALTIES COMPLETE]');
 };

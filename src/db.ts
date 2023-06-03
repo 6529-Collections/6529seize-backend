@@ -29,6 +29,7 @@ import {
   MemesExtendedData,
   NFT
 } from './entities/INFT';
+import { ConsolidatedTDHUpload } from './entities/IUpload';
 import {
   ConsolidatedOwnerMetric,
   ConsolidatedOwnerTags,
@@ -51,7 +52,7 @@ import {
   EventType
 } from './entities/IDelegation';
 import { RoyaltiesUpload } from './entities/IRoyalties';
-import { ConsolidatedTDHUpload } from './entities/IUpload';
+import { NFTHistoryBlock, NFTHistory } from './entities/INFTHistory';
 import {
   areEqualAddresses,
   extractConsolidationWallets,
@@ -63,17 +64,11 @@ const mysql = require('mysql');
 
 let AppDataSource: DataSource;
 
-export async function connect() {
+export async function connect(entities: any[] = []) {
   console.log('[DATABASE]', `[DB HOST ${process.env.DB_HOST}]`);
 
-  AppDataSource = new DataSource({
-    type: 'mysql',
-    host: process.env.DB_HOST,
-    port: parseInt(process.env.DB_PORT!),
-    username: process.env.DB_USER,
-    password: process.env.DB_PASS,
-    database: process.env.DB_NAME,
-    entities: [
+  if (process.env.NODE_ENV != 'production') {
+    entities = [
       Owner,
       LabNFT,
       LabExtendedData,
@@ -90,8 +85,20 @@ export async function connect() {
       ConsolidatedOwnerMetric,
       ConsolidatedOwnerTags,
       ConsolidatedTDHUpload,
-      Delegation
-    ],
+      Delegation,
+      NFTHistory,
+      NFTHistoryBlock
+    ];
+  }
+
+  AppDataSource = new DataSource({
+    type: 'mysql',
+    host: process.env.DB_HOST,
+    port: parseInt(process.env.DB_PORT!),
+    username: process.env.DB_USER,
+    password: process.env.DB_PASS,
+    database: process.env.DB_NAME,
+    entities: entities,
     synchronize: true,
     logging: false
   });
@@ -208,6 +215,14 @@ export async function fetchLatestLabTransactionsBlockNumber(beforeDate?: Date) {
   sql += ` order by block desc limit 1;`;
   const r = await execSQL(sql);
   return r.length > 0 ? r[0].block : 0;
+}
+
+export async function fetchLatestNftHistoryBlockNumber() {
+  const block = await AppDataSource.getRepository(NFTHistoryBlock)
+    .createQueryBuilder()
+    .select('MAX(block)', 'maxBlock')
+    .getRawOne();
+  return block.maxBlock;
 }
 
 export async function retrieveWalletConsolidations(wallet: string) {
@@ -1153,6 +1168,15 @@ export async function persistDelegations(
           newDelegation.to_address = delegation.wallet2;
           newDelegation.collection = delegation.collection;
           newDelegation.use_case = delegation.use_case;
+          if (delegation.expiry) {
+            newDelegation.expiry = delegation.expiry;
+          }
+          if (delegation.all_tokens) {
+            newDelegation.all_tokens = delegation.all_tokens;
+          }
+          if (delegation.token_id) {
+            newDelegation.token_id = delegation.token_id;
+          }
           await repo.save(newDelegation);
         }
       } else if (delegation.type == EventType.REVOKE) {
@@ -1184,4 +1208,24 @@ export async function fetchPrimaryWallet(tdhBlock: number, wallets: string[]) {
   )}) AND block=${tdhBlock} order by boosted_tdh desc limit 1`;
   const results: any[] = await execSQL(sql);
   return results[0].wallet;
+}
+
+export async function persistNftHistory(nftHistory: NFTHistory[]) {
+  await AppDataSource.getRepository(NFTHistory).save(nftHistory);
+}
+
+export async function persistNftHistoryBlock(block: number) {
+  await AppDataSource.getRepository(NFTHistoryBlock).save({
+    block
+  });
+}
+
+export async function fetchLatestNftUri(tokenId: number, contract: string) {
+  const latestTransaction = await AppDataSource.getRepository(
+    NFTHistory
+  ).findOne({
+    where: { nft_id: tokenId, contract: contract },
+    order: { transaction_date: 'DESC' }
+  });
+  return latestTransaction ? latestTransaction.uri : null;
 }

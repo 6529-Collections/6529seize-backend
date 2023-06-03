@@ -15,6 +15,7 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
+  NFTS_HISTORY_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
   NULL_ADDRESS,
@@ -1869,17 +1870,35 @@ export async function fetchDistributions(
   );
 }
 
-export async function fetchConsolidationsForWallet(wallet: string) {
-  const sql = getConsolidationsSql(wallet);
-  const consolidations: any[] = await execSQL(sql);
-  const wallets = extractConsolidationWallets(consolidations, wallet);
-
-  return {
-    count: wallets.length,
-    page: 1,
-    next: null,
-    data: wallets
-  };
+export async function fetchConsolidationsForWallet(
+  wallet: string,
+  showIncomplete: boolean
+) {
+  if (!showIncomplete) {
+    const sql = getConsolidationsSql(wallet);
+    const consolidations: any[] = await execSQL(sql);
+    const wallets = extractConsolidationWallets(consolidations, wallet);
+    return {
+      count: wallets.length,
+      page: 1,
+      next: null,
+      data: wallets
+    };
+  } else {
+    let sql = `SELECT ${CONSOLIDATIONS_TABLE}.*, e1.display as wallet1_display, e2.display as wallet2_display FROM ${CONSOLIDATIONS_TABLE}`;
+    sql += ` LEFT JOIN ${ENS_TABLE} e1 ON ${CONSOLIDATIONS_TABLE}.wallet1=e1.wallet`;
+    sql += ` LEFT JOIN ${ENS_TABLE} e2 ON ${CONSOLIDATIONS_TABLE}.wallet2=e2.wallet`;
+    sql += ` WHERE wallet1=${mysql.escape(wallet)} OR wallet2=${mysql.escape(
+      wallet
+    )}`;
+    const results = await execSQL(sql);
+    return {
+      count: results.length,
+      page: 1,
+      next: null,
+      data: results
+    };
+  }
 }
 
 export async function fetchPrimaryWallet(wallets: string[]) {
@@ -1931,20 +1950,24 @@ export async function fetchDelegations(
     wallet
   )} OR to_address = ${mysql.escape(wallet)}`;
 
+  let joins = `LEFT JOIN ${ENS_TABLE} e1 ON ${DELEGATIONS_TABLE}.from_address=e1.wallet`;
+  joins += ` LEFT JOIN ${ENS_TABLE} e2 ON ${DELEGATIONS_TABLE}.to_address=e2.wallet`;
+
   return fetchPaginated(
     DELEGATIONS_TABLE,
     'block desc',
     pageSize,
     page,
     filter,
-    '',
-    ''
+    `${DELEGATIONS_TABLE}.*, e1.display as from_display, e2.display as to_display`,
+    joins
   );
 }
 
 export async function fetchDelegationsByUseCase(
   collections: string,
   useCases: string,
+  showExpired: boolean,
   pageSize: number,
   page: number
 ) {
@@ -1954,6 +1977,9 @@ export async function fetchDelegationsByUseCase(
       filter,
       `collection in (${mysql.escape(collections.split(','))})`
     );
+  }
+  if (!showExpired) {
+    filter = constructFilters(filter, `expiry >= ${Date.now() / 1000}`);
   }
   if (useCases) {
     filter = constructFilters(filter, `use_case in (${useCases.split(',')})`);
@@ -1967,5 +1993,25 @@ export async function fetchDelegationsByUseCase(
     filter,
     '',
     ''
+  );
+}
+
+export async function fetchNftHistory(
+  pageSize: number,
+  page: number,
+  contract: string,
+  nftId: number
+) {
+  let filter = constructFilters(
+    '',
+    `contract=${mysql.escape(contract)} AND nft_id=${nftId}`
+  );
+
+  return fetchPaginated(
+    NFTS_HISTORY_TABLE,
+    `transaction_date desc`,
+    pageSize,
+    page,
+    filter
   );
 }

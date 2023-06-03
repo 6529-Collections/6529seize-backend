@@ -1,10 +1,11 @@
-import { Alchemy, Network } from 'alchemy-sdk';
+import { Alchemy } from 'alchemy-sdk';
 import {
   ALCHEMY_SETTINGS,
   DELEGATION_ALL_ADDRESS,
   DELEGATION_CONTRACT,
   MEMES_CONTRACT,
-  USE_CASE_CONSOLIDATION
+  USE_CASE_CONSOLIDATION,
+  USE_CASE_SUB_DELEGATION
 } from './constants';
 import { DELEGATIONS_IFACE } from './abis/delegations';
 import { areEqualAddresses } from './helpers';
@@ -34,6 +35,27 @@ async function getAllDelegations(startingBlock: number, latestBlock: number) {
   });
   return response;
 }
+
+const getDelegationDetails = async (txHash: string) => {
+  const tx = await alchemy.core.getTransaction(txHash);
+  if (tx) {
+    const data = tx.data;
+    try {
+      const parsed = DELEGATIONS_IFACE.parseTransaction({ data, value: 0 });
+      if (parsed.args._expiryDate) {
+        return {
+          expiry: parsed.args._expiryDate.toNumber(),
+          allTokens: parsed.args._allTokens,
+          tokenId: parsed.args._tokenId.toNumber()
+        };
+      }
+    } catch (e) {
+      console.log('[DELEGATIONS]', `[ERROR PARSING TX ${txHash}]`);
+      return null;
+    }
+  }
+  return null;
+};
 
 export const findDelegationTransactions = async (
   startingBlock: number,
@@ -103,11 +125,23 @@ export const findDelegationTransactions = async (
             if ([MEMES_CONTRACT, DELEGATION_ALL_ADDRESS].includes(collection)) {
               consolidations.push(e);
             }
-          } else {
+          } else if (useCase == USE_CASE_SUB_DELEGATION) {
             delegations.push({
               ...e,
               use_case: useCase,
               collection: collection
+            });
+          } else {
+            const delegationDetails = await getDelegationDetails(
+              d.transactionHash
+            );
+            delegations.push({
+              ...e,
+              use_case: useCase,
+              collection: collection,
+              expiry: delegationDetails?.expiry,
+              all_tokens: delegationDetails?.allTokens,
+              token_id: delegationDetails?.tokenId
             });
           }
         } else if (

@@ -16,7 +16,7 @@ const myarweave = Arweave.init({
 
 export const handler = async (event?: any, context?: any) => {
   console.log(new Date(), '[RUNNING UPLOAD TEAM]');
-  await loadEnv();
+  await loadEnv([Team]);
   await saveTeam();
   await uploadTeam();
   console.log(new Date(), '[UPLOAD TEAM COMPLETE]');

@@ -30,7 +30,7 @@ const corsOptions = {
   ]
 };
 
-loadEnv(true).then(async (e) => {
+loadEnv([], true).then(async (e) => {
   console.log(
     '[API]',
     `[DB HOST ${process.env.DB_HOST_READ}]`,
@@ -1471,16 +1471,23 @@ loadEnv(true).then(async (e) => {
     function (req: any, res: any, next: any) {
       try {
         const wallet = req.params.wallet;
+        const showIncomplete =
+          req.query.show_incomplete && req.query.show_incomplete == 'true'
+            ? true
+            : false;
 
         console.log(
           new Date(),
           `[API]`,
           '[WALLET CONSOLIDATIONS]',
+          `[SHOW_INCOMPLETE ${showIncomplete}]`,
           `[WALLET ${wallet}]`
         );
-        db.fetchConsolidationsForWallet(wallet).then((result) => {
-          returnPaginatedResult(result, req, res);
-        });
+        db.fetchConsolidationsForWallet(wallet, showIncomplete).then(
+          (result) => {
+            returnPaginatedResult(result, req, res);
+          }
+        );
       } catch (e) {
         console.log(
           new Date(),
@@ -1570,6 +1577,10 @@ loadEnv(true).then(async (e) => {
           ? parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const showExpired =
+        req.query.show_expired && req.query.show_expired == 'true'
+          ? true
+          : false;
 
       console.log(
         new Date(),
@@ -1578,11 +1589,15 @@ loadEnv(true).then(async (e) => {
         `[USE CASE ${use_case}]`,
         `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
       );
-      db.fetchDelegationsByUseCase(collection, use_case, pageSize, page).then(
-        (result) => {
-          returnPaginatedResult(result, req, res);
-        }
-      );
+      db.fetchDelegationsByUseCase(
+        collection,
+        use_case,
+        showExpired,
+        pageSize,
+        page
+      ).then((result) => {
+        returnPaginatedResult(result, req, res);
+      });
     } catch (e) {
       console.log(
         new Date(),
@@ -1593,6 +1608,43 @@ loadEnv(true).then(async (e) => {
       return;
     }
   });
+
+  app.get(
+    `${BASE_PATH}/nft_history/:contract/:nft_id`,
+    function (req: any, res: any, next: any) {
+      const contract = req.params.contract;
+      const nftId = req.params.nft_id;
+
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NFT HISTORY]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchNftHistory(pageSize, page, contract, nftId).then((result) => {
+          result.data.map((a: any) => {
+            a.description = JSON.parse(a.description);
+          });
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NFT HISTORY]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
 
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();

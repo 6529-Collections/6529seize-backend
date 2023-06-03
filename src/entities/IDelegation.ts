@@ -1,5 +1,9 @@
 import { Entity, Column, PrimaryColumn, CreateDateColumn } from 'typeorm';
-import { CONSOLIDATIONS_TABLE, DELEGATIONS_TABLE } from '../constants';
+import {
+  CONSOLIDATIONS_TABLE,
+  DELEGATIONS_TABLE,
+  NEVER_DATE
+} from '../constants';
 
 @Entity(CONSOLIDATIONS_TABLE)
 export class Consolidation {
@@ -38,6 +42,15 @@ export class Delegation {
 
   @PrimaryColumn({ type: 'int' })
   use_case!: number;
+
+  @Column({ type: 'bigint', default: NEVER_DATE })
+  expiry!: number;
+
+  @Column({ type: 'boolean', default: true })
+  all_tokens!: boolean;
+
+  @Column({ type: 'int', default: 0 })
+  token_id!: number;
 }
 
 export enum EventType {
@@ -57,4 +70,7 @@ export interface ConsolidationEvent extends Event {}
 export interface DelegationEvent extends ConsolidationEvent {
   collection: string;
   use_case: number;
+  expiry?: number;
+  all_tokens?: boolean;
+  token_id?: number;
 }

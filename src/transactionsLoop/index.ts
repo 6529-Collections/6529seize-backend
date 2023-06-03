@@ -3,12 +3,11 @@ import { findTransactions } from '../transactions';
 import { findTransactionValues, runValues } from '../transaction_values';
 import { discoverEns } from '../ens';
 import { loadEnv, unload } from '../secrets';
-import { areEqualAddresses } from '../helpers';
-import { MANIFOLD } from '../constants';
+import { Transaction } from '../entities/ITransaction';
 
 export const handler = async (event?: any, context?: any) => {
   console.log(new Date(), '[RUNNING TRANSACTIONS LOOP]');
-  await loadEnv();
+  await loadEnv([Transaction]);
   await transactionsLoop();
   await unload();
   console.log(new Date(), '[TRANSACTIONS LOOP COMPLETE]');
