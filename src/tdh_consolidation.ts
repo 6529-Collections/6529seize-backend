@@ -48,7 +48,6 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
         let totalTDH = 0;
         let totalTDH__raw = 0;
         let totalBalance = 0;
-        let memesCardSets = 0;
         let genesis = false;
         let unique_memes = 0;
         let unique_memes_season1 = 0;
@@ -76,7 +75,6 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           totalTDH += wTdh.tdh;
           totalTDH__raw += wTdh.tdh__raw;
           totalBalance += wTdh.balance;
-          memesCardSets += wTdh.memes_cards_sets;
           genesis = genesis || wTdh.genesis;
           unique_memes += wTdh.unique_memes;
           unique_memes_season1 += wTdh.unique_memes_season1;
@@ -103,6 +101,16 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
             wTdh.gradients
           );
         });
+
+        let memesCardSets = 0;
+        if (consolidationMemes.length == MEMES_COUNT) {
+          memesCardSets = Math.min.apply(
+            Math,
+            [...consolidationMemes].map(function (o) {
+              return o.balance;
+            })
+          );
+        }
 
         const consolidation: ConsolidatedTDH = {
           date: new Date(),

@@ -2,25 +2,29 @@ import {
   Alchemy,
   AssetTransfersCategory,
   AssetTransfersWithMetadataParams,
+  AssetTransfersWithMetadataResult,
+  SortingOrder,
   TransactionResponse
 } from 'alchemy-sdk';
 import {
   ALCHEMY_SETTINGS,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
-  MEMES_DEPLOYER
+  MEMES_DEPLOYER,
+  NULL_ADDRESS
 } from './constants';
 import {
   fetchLatestNftHistoryBlockNumber,
   fetchLatestNftUri,
   persistNftHistory,
-  persistNftHistoryBlock
+  persistNftClaims,
+  persistNftHistoryBlock,
+  findClaim
 } from './db';
-import { NFTHistory } from './entities/INFTHistory';
+import { NFTHistory, NFTHistoryClaim } from './entities/INFTHistory';
 import { NFT_HISTORY_IFACE } from './abis/nft_history';
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { areEqualAddresses } from './helpers';
-import { get } from 'http';
 
 const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
@@ -29,8 +33,13 @@ let alchemy: Alchemy;
 
 const MINT_BASE_NEW_METHOD = '0xfeeb5a9a';
 const SET_TOKEN_URI_METHOD = '0x162094c4';
+const INITIALIZE_CLAIM_METHOD_1 = '0xcc3d8ab3';
+const INITIALIZE_CLAIM_METHOD_2 = '0xd670c080';
+const AIRDROP_METHOD = '0xbd04e411';
+const INITIALIZE_BURN_METHOD = '0x38ec8995';
+const UPDATE_CLAIM_METHOD = '0xa310099c';
 
-async function getAllTransactions(
+async function getAllDeployerTransactions(
   startingBlock: number,
   latestBlock: number,
   key: any
@@ -39,8 +48,8 @@ async function getAllTransactions(
   const latestBlockHex = `0x${latestBlock.toString(16)}`;
 
   console.log(
-    new Date(),
     '[NFT HISTORY]',
+    `[DEPLOYER]`,
     `[FROM BLOCK ${startingBlockHex}]`,
     `[TO BLOCK ${latestBlockHex}]`,
     `[PAGE KEY ${key}]`
@@ -54,7 +63,8 @@ async function getAllTransactions(
     toBlock: latestBlockHex,
     pageKey: key ? key : undefined,
     fromAddress: MEMES_DEPLOYER,
-    withMetadata: true
+    withMetadata: true,
+    order: SortingOrder.ASCENDING
   };
 
   const response = await alchemy.core.getAssetTransfers(settings);
@@ -118,12 +128,6 @@ const findDetailsFromTransaction = async (tx: TransactionResponse) => {
   return null;
 };
 
-const compareProperties = (a: any, b: any, key: string) => {
-  const aVal = JSON.stringify(a[key]);
-  const bVal = JSON.stringify(b[key]);
-  return aVal !== bVal;
-};
-
 function getAttributeChanges(oldAttributes: any[], newAttributes: any[]) {
   const changes: any[] = [];
 
@@ -157,6 +161,10 @@ const getEditDescription = async (
   newUri: string
 ) => {
   const previousUri = await fetchLatestNftUri(tokenId, contract);
+  if (tokenId == 1 && areEqualAddresses(contract, MEMELAB_CONTRACT)) {
+    console.log('previousUri', previousUri);
+    console.log('newUri', newUri);
+  }
   if (previousUri) {
     const previousMeta = await (await fetch(previousUri)).json();
     const newMeta = await (await fetch(newUri)).json();
@@ -195,90 +203,18 @@ const getEditDescription = async (
         }
       }
     }
-
-    // if (compareProperties(previousMeta, newMeta, 'name')) {
-    //   changes.name = {
-    //     from: previousMeta.name,
-    //     to: newMeta.name
-    //   };
-    // }
-    // if (compareProperties(previousMeta, newMeta, 'created_by')) {
-    //   changes.created_by = {
-    //     from: previousMeta.created_by,
-    //     to: newMeta.created_by
-    //   };
-    // }
-    // if (compareProperties(previousMeta, newMeta, 'external_url')) {
-    //   changes.external_url = {
-    //     from: previousMeta.external_url,
-    //     to: newMeta.external_url
-    //   };
-    // }
-    // if (compareProperties(previousMeta, newMeta, 'description')) {
-    //   changes.description = {
-    //     from: previousMeta.description,
-    //     to: newMeta.description
-    //   };
-    // }
-    // if (compareProperties(previousMeta, newMeta, 'attributes')) {
-    //   changes.attributes = {
-    //     from: previousMeta.attributes,
-    //     to: newMeta.attributes
-    //   };
-    // }
-    // if (compareProperties(previousMeta, newMeta, 'animation')) {
-    //   changes.animation = {
-    //     from: previousMeta.animation,
-    //     to: newMeta.animation
-    //   };
-    // }
-    // if (
-    //   compareProperties(previousMeta, newMeta, 'animation_url') &&
-    //   !compareProperties(previousMeta, newMeta, 'animation')
-    // ) {
-    //   changes.animation_url = {
-    //     from: previousMeta.animation_url,
-    //     to: newMeta.animation_url
-    //   };
-    // }
-    // if (compareProperties(previousMeta, newMeta, 'animation_details')) {
-    //   changes.animation_details = {
-    //     from: previousMeta.animation_details,
-    //     to: newMeta.animation_details
-    //   };
-    // }
-    // if (compareProperties(previousMeta, newMeta, 'image')) {
-    //   changes.image = {
-    //     from: previousMeta.image,
-    //     to: newMeta.image
-    //   };
-    // }
-    // if (
-    //   compareProperties(previousMeta, newMeta, 'image_url') &&
-    //   !compareProperties(previousMeta, newMeta, 'image')
-    // ) {
-    //   changes.image_url = {
-    //     from: previousMeta.image_url,
-    //     to: newMeta.image_url
-    //   };
-    // }
-    // if (compareProperties(previousMeta, newMeta, 'image_details')) {
-    //   changes.image_details = {
-    //     from: previousMeta.image_details,
-    //     to: newMeta.image_details
-    //   };
-    // }
     return {
       event: 'Edit',
       changes: changes
     };
   }
   return {
-    event: 'Edit'
+    event: 'Edit',
+    changes: []
   };
 };
 
-export const findTransactions = async (
+export const getDeployerTransactions = async (
   startingBlock: number,
   latestBlock?: number,
   pageKey?: string
@@ -291,37 +227,114 @@ export const findTransactions = async (
   if (!latestBlock) {
     latestBlock = await alchemy.core.getBlockNumber();
     console.log(
-      new Date(),
       '[NFT HISTORY]',
       `[STARTING BLOCK ${startingBlock}]`,
       `[LATEST BLOCK ON CHAIN ${latestBlock}]`
     );
   }
 
-  const transactionsResponse = await getAllTransactions(
+  const assetResponse = await getAllDeployerTransactions(
     startingBlock,
     latestBlock,
     pageKey
   );
 
   console.log(
-    new Date(),
     '[NFT HISTORY]',
-    `[FOUND ${transactionsResponse.transfers.length} NEW TRANSACTIONS]`
+    `[DEPLOYER]`,
+    `[FOUND ${assetResponse.transfers.length} NEW TRANSACTIONS]`,
+    `[PARSING...]`
   );
 
-  const nftMintHistory: NFTHistory[] = [];
+  const transactionsResponse: {
+    t: AssetTransfersWithMetadataResult;
+    tx: TransactionResponse;
+  }[] = [];
   await Promise.all(
-    transactionsResponse.transfers.map(async (t) => {
+    assetResponse.transfers.map(async (t) => {
       const tx = await alchemy.core.getTransaction(t.hash);
-      if (tx?.data.startsWith(MINT_BASE_NEW_METHOD)) {
-        const details = await findDetailsFromTransaction(tx);
-        if (details) {
+      if (tx) transactionsResponse.push({ t, tx });
+    })
+  );
+
+  const sortedTransactionsResponse = transactionsResponse.sort((a, b) => {
+    const timestampA = new Date(a.t.metadata.blockTimestamp).getTime();
+    const timestampB = new Date(b.t.metadata.blockTimestamp).getTime();
+    return timestampA - timestampB;
+  });
+
+  console.log(
+    '[NFT HISTORY]',
+    `[DEPLOYER]`,
+    `[PARSED ${sortedTransactionsResponse.length} TRANSACTIONS]`
+  );
+
+  for (const tr of sortedTransactionsResponse) {
+    const t = tr.t;
+    const tx = tr.tx;
+    if (tx?.data.startsWith(MINT_BASE_NEW_METHOD)) {
+      const details = await findDetailsFromTransaction(tx);
+      if (details) {
+        const nftMint: NFTHistory = {
+          created_at: new Date(),
+          nft_id: details.tokenId,
+          contract: details.contract,
+          uri: details.tokenUri,
+          transaction_date: new Date(t.metadata.blockTimestamp),
+          transaction_hash: t.hash,
+          block: parseInt(t.blockNum, 16),
+          description: {
+            event: 'Mint',
+            changes: []
+          }
+        };
+        await persistNftHistory([nftMint]);
+      }
+    } else if (tx?.data.startsWith(INITIALIZE_CLAIM_METHOD_1)) {
+      const data = tx.data;
+      try {
+        const parsed = NFT_HISTORY_IFACE.parseTransaction({
+          data,
+          value: 0
+        });
+        const claimIndex = parsed.args.claimIndex.toNumber();
+        const location = parsed.args.claimParameters.location;
+        const contract = parsed.args.creatorContractAddress;
+        const claim: NFTHistoryClaim = {
+          claimIndex,
+          location,
+          contract
+        };
+        await persistNftClaims([claim]);
+      } catch (e: any) {
+        console.log(
+          '[NFT HISTORY]',
+          `[ERROR PARSING TX ${tx.hash}]`,
+          e.message
+        );
+      }
+    } else if (tx?.data.startsWith(INITIALIZE_CLAIM_METHOD_2)) {
+      const data = tx.data;
+      try {
+        const parsed = NFT_HISTORY_IFACE.parseTransaction({
+          data,
+          value: 0
+        });
+        const location = parsed.args.claimParameters.location;
+        const contract = parsed.args.creatorContractAddress;
+        const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
+        const logData = receipt?.logs[0].data;
+        if (logData && tx.to) {
+          const parsedReceipt = NFT_HISTORY_IFACE.parseLog({
+            topics: receipt?.logs[0].topics,
+            data: logData
+          });
+          const tokenId = parsedReceipt.args.id.toNumber();
           const nftMint: NFTHistory = {
             created_at: new Date(),
-            nft_id: details.tokenId,
-            contract: details.contract,
-            uri: details.tokenUri,
+            nft_id: tokenId,
+            contract: contract,
+            uri: `https://arweave.net/${location}`,
             transaction_date: new Date(t.metadata.blockTimestamp),
             transaction_hash: t.hash,
             block: parseInt(t.blockNum, 16),
@@ -330,51 +343,337 @@ export const findTransactions = async (
               changes: []
             }
           };
-          nftMintHistory.push(nftMint);
+          await persistNftHistory([nftMint]);
         }
+      } catch (e: any) {
+        console.log(
+          '[NFT HISTORY]',
+          `[ERROR PARSING TX ${tx.hash}]`,
+          e.message
+        );
       }
-    })
-  );
-
-  await persistNftHistory(nftMintHistory);
-
-  const nftEditHistory: NFTHistory[] = [];
-  await Promise.all(
-    transactionsResponse.transfers.map(async (t) => {
-      const tx = await alchemy.core.getTransaction(t.hash);
-      if (tx?.data.startsWith(SET_TOKEN_URI_METHOD)) {
-        const details = await findDetailsFromTransaction(tx);
-        if (details) {
-          const editDescription = await getEditDescription(
-            details.tokenId,
-            details.contract,
-            details.tokenUri
-          );
-          const nftEdit: NFTHistory = {
+    } else if (tx?.data.startsWith(INITIALIZE_BURN_METHOD)) {
+      const data = tx.data;
+      try {
+        const parsed = NFT_HISTORY_IFACE.parseTransaction({
+          data,
+          value: 0
+        });
+        const location = parsed.args.burnRedeemParameters.location;
+        const contract = parsed.args.creatorContractAddress;
+        const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
+        const logData = receipt?.logs[1].data;
+        if (logData && tx.to) {
+          const parsedReceipt = NFT_HISTORY_IFACE.parseLog({
+            topics: receipt?.logs[1].topics,
+            data: logData
+          });
+          const tokenId = parsedReceipt.args.id.toNumber();
+          const nftMint: NFTHistory = {
             created_at: new Date(),
-            nft_id: details.tokenId,
-            contract: details.contract,
-            uri: details.tokenUri,
+            nft_id: tokenId,
+            contract: contract,
+            uri: `https://arweave.net/${location}`,
             transaction_date: new Date(t.metadata.blockTimestamp),
             transaction_hash: t.hash,
             block: parseInt(t.blockNum, 16),
-            description: editDescription
+            description: {
+              event: 'Mint',
+              changes: []
+            }
           };
-          nftEditHistory.push(nftEdit);
+          await persistNftHistory([nftMint]);
         }
+      } catch (e: any) {
+        console.log(
+          '[NFT HISTORY]',
+          `[ERROR PARSING TX ${tx.hash}]`,
+          e.message
+        );
       }
-    })
-  );
+    } else if (tx?.data.startsWith(SET_TOKEN_URI_METHOD)) {
+      const details = await findDetailsFromTransaction(tx);
+      if (details) {
+        if (
+          details.tokenId == 1 &&
+          areEqualAddresses(details.contract, MEMELAB_CONTRACT)
+        ) {
+          console.log('time', t.metadata.blockTimestamp);
+        }
+        const editDescription = await getEditDescription(
+          details.tokenId,
+          details.contract,
+          details.tokenUri
+        );
+        const nftEdit: NFTHistory = {
+          created_at: new Date(),
+          nft_id: details.tokenId,
+          contract: details.contract,
+          uri: details.tokenUri,
+          transaction_date: new Date(t.metadata.blockTimestamp),
+          transaction_hash: t.hash,
+          block: parseInt(t.blockNum, 16),
+          description: editDescription
+        };
+        await persistNftHistory([nftEdit]);
+      }
+    } else if (tx?.data.startsWith(AIRDROP_METHOD)) {
+      const data = tx.data;
+      try {
+        const parsed = NFT_HISTORY_IFACE.parseTransaction({
+          data,
+          value: 0
+        });
+        const claimIndex = parsed.args.claimIndex.toNumber();
+        const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
+        const logData = receipt?.logs[0].data;
+        if (logData && tx.to) {
+          const parsedReceipt = NFT_HISTORY_IFACE.parseLog({
+            topics: receipt?.logs[0].topics,
+            data: logData
+          });
+          const claims = await findClaim(claimIndex, -1);
+          for (const claim of claims) {
+            const tokenId = parsedReceipt.args.id.toNumber();
+            claim.nft_id = tokenId;
+            const nftMint: NFTHistory = {
+              created_at: new Date(),
+              nft_id: tokenId,
+              contract: claim.contract,
+              uri: `https://arweave.net/${claim.location}`,
+              transaction_date: new Date(t.metadata.blockTimestamp),
+              transaction_hash: t.hash,
+              block: parseInt(t.blockNum, 16),
+              description: {
+                event: 'Mint',
+                changes: []
+              }
+            };
+            await persistNftClaims([claim]);
+            await persistNftHistory([nftMint]);
+          }
+        }
+      } catch (e: any) {
+        console.log(
+          '[NFT HISTORY]',
+          `[ERROR PARSING TX ${tx.hash}]`,
+          e.message
+        );
+      }
+    } else if (tx?.data.startsWith(UPDATE_CLAIM_METHOD)) {
+      const data = tx.data;
+      try {
+        const parsed = NFT_HISTORY_IFACE.parseTransaction({
+          data,
+          value: 0
+        });
+        const claimIndex = parsed.args.claimIndex.toNumber();
+        const location = parsed.args.claimParameters.location;
+        const contract = parsed.args.creatorContractAddress;
+        const existingClaims = await findClaim(claimIndex);
+        const nftId = existingClaims.find((c) => c.nft_id != -1)?.nft_id;
+        if (existingClaims.length > 0) {
+          if (nftId) {
+            if (!existingClaims.some((c) => c.location == location)) {
+              const editDescription = await getEditDescription(
+                nftId,
+                contract,
+                `https://arweave.net/${location}`
+              );
+              const nftEdit: NFTHistory = {
+                created_at: new Date(),
+                nft_id: nftId,
+                contract: contract,
+                uri: `https://arweave.net/${location}`,
+                transaction_date: new Date(t.metadata.blockTimestamp),
+                transaction_hash: t.hash,
+                block: parseInt(t.blockNum, 16),
+                description: editDescription
+              };
+              await persistNftHistory([nftEdit]);
+            }
+          } else {
+            for (const claim of existingClaims) {
+              claim.location = location;
+              await persistNftClaims([claim]);
+            }
+          }
+        } else {
+          const claim: NFTHistoryClaim = {
+            claimIndex,
+            location,
+            contract
+          };
+          await persistNftClaims([claim]);
+        }
+      } catch (e: any) {
+        console.log(
+          '[NFT HISTORY]',
+          `[ERROR PARSING TX ${tx.hash}]`,
+          e.message
+        );
+      }
+    }
+  }
 
-  await persistNftHistory(nftEditHistory);
+  // for (const tr of transactionsResponse) {
+  //   const t = tr.t;
+  //   const tx = tr.tx;
+  //   if (tx?.data.startsWith(SET_TOKEN_URI_METHOD)) {
+  //     const details = await findDetailsFromTransaction(tx);
+  //     if (details) {
+  //       const editDescription = await getEditDescription(
+  //         details.tokenId,
+  //         details.contract,
+  //         details.tokenUri
+  //       );
+  //       const nftEdit: NFTHistory = {
+  //         created_at: new Date(),
+  //         nft_id: details.tokenId,
+  //         contract: details.contract,
+  //         uri: details.tokenUri,
+  //         transaction_date: new Date(t.metadata.blockTimestamp),
+  //         transaction_hash: t.hash,
+  //         block: parseInt(t.blockNum, 16),
+  //         description: editDescription
+  //       };
+  //       await persistNftHistory([nftEdit]);
+  //     }
+  //   } else if (tx?.data.startsWith(AIRDROP_METHOD)) {
+  //     const data = tx.data;
+  //     try {
+  //       const parsed = NFT_HISTORY_IFACE.parseTransaction({
+  //         data,
+  //         value: 0
+  //       });
+  //       const claimIndex = parsed.args.claimIndex.toNumber();
+  //       const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
+  //       const logData = receipt?.logs[0].data;
+  //       if (logData && tx.to) {
+  //         const parsedReceipt = NFT_HISTORY_IFACE.parseLog({
+  //           topics: receipt?.logs[0].topics,
+  //           data: logData
+  //         });
+  //         const claims = await findClaim(claimIndex, -1);
+  //         for (const claim of claims) {
+  //           const tokenId = parsedReceipt.args.id.toNumber();
+  //           claim.nft_id = tokenId;
+  //           const nftMint: NFTHistory = {
+  //             created_at: new Date(),
+  //             nft_id: tokenId,
+  //             contract: claim.contract,
+  //             uri: `https://arweave.net/${claim.location}`,
+  //             transaction_date: new Date(t.metadata.blockTimestamp),
+  //             transaction_hash: t.hash,
+  //             block: parseInt(t.blockNum, 16),
+  //             description: {
+  //               event: 'Mint',
+  //               changes: []
+  //             }
+  //           };
+  //           await persistNftClaims([claim]);
+  //           await persistNftHistory([nftMint]);
+  //         }
+  //       }
+  //     } catch (e: any) {
+  //       console.log(
+  //         '[NFT HISTORY]',
+  //         `[ERROR PARSING TX ${tx.hash}]`,
+  //         e.message
+  //       );
+  //     }
+  //   }
+  // }
+
+  // for (const tr of transactionsResponse) {
+  //   const t = tr.t;
+  //   const tx = tr.tx;
+  //   if (tx?.data.startsWith(UPDATE_CLAIM_METHOD)) {
+  //     const data = tx.data;
+  //     try {
+  //       const parsed = NFT_HISTORY_IFACE.parseTransaction({
+  //         data,
+  //         value: 0
+  //       });
+  //       const claimIndex = parsed.args.claimIndex.toNumber();
+  //       const location = parsed.args.claimParameters.location;
+  //       const contract = parsed.args.creatorContractAddress;
+  //       const existingClaims = await findClaim(claimIndex);
+  //       const nftId = existingClaims.find((c) => c.nft_id != -1)?.nft_id;
+  //       if (existingClaims.length > 0) {
+  //         if (nftId) {
+  //           if (!existingClaims.some((c) => c.location == location)) {
+  //             const editDescription = await getEditDescription(
+  //               nftId,
+  //               contract,
+  //               `https://arweave.net/${location}`
+  //             );
+  //             const nftEdit: NFTHistory = {
+  //               created_at: new Date(),
+  //               nft_id: nftId,
+  //               contract: contract,
+  //               uri: `https://arweave.net/${location}`,
+  //               transaction_date: new Date(t.metadata.blockTimestamp),
+  //               transaction_hash: t.hash,
+  //               block: parseInt(t.blockNum, 16),
+  //               description: editDescription
+  //             };
+  //             await persistNftHistory([nftEdit]);
+  //           }
+  //         } else {
+  //           for (const claim of existingClaims) {
+  //             claim.location = location;
+  //             await persistNftClaims([claim]);
+  //           }
+  //         }
+  //       } else {
+  //         const claim: NFTHistoryClaim = {
+  //           claimIndex,
+  //           location,
+  //           contract
+  //         };
+  //         await persistNftClaims([claim]);
+  //       }
+  //     } catch (e: any) {
+  //       console.log(
+  //         '[NFT HISTORY]',
+  //         `[ERROR PARSING TX ${tx.hash}]`,
+  //         e.message
+  //       );
+  //     }
+  //   }
+  // }
 
   return {
     latestBlock: latestBlock,
-    pageKey: transactionsResponse.pageKey
+    pageKey: assetResponse.pageKey
   };
 };
 
+export const findDeployerTransactions = async (
+  startingBlock: number,
+  latestBlock?: number,
+  pageKey?: string
+): Promise<number> => {
+  const response = await getDeployerTransactions(
+    startingBlock,
+    latestBlock,
+    pageKey
+  );
+
+  if (response.pageKey) {
+    return await findDeployerTransactions(
+      startingBlock,
+      response.latestBlock,
+      response.pageKey
+    );
+  } else {
+    return response.latestBlock;
+  }
+};
+
 export const findNFTHistory = async (
+  force: boolean,
   startingBlock?: number,
   latestBlock?: number,
   pagKey?: string
@@ -383,30 +682,22 @@ export const findNFTHistory = async (
     let startingBlockResolved: number;
     if (startingBlock == undefined) {
       startingBlockResolved = await fetchLatestNftHistoryBlockNumber();
-      if (!startingBlockResolved) {
+      if (!startingBlockResolved || force) {
         startingBlockResolved = 0;
       }
     } else {
       startingBlockResolved = startingBlock;
     }
 
-    const response = await findTransactions(
+    const deployerTransactionsBlock = await findDeployerTransactions(
       startingBlockResolved,
       latestBlock,
       pagKey
     );
 
-    if (response.pageKey) {
-      await findNFTHistory(
-        startingBlockResolved,
-        response.latestBlock,
-        response.pageKey
-      );
-    } else {
-      await persistNftHistoryBlock(response.latestBlock);
-    }
+    await persistNftHistoryBlock(deployerTransactionsBlock);
   } catch (e: any) {
     console.log('[NFT HISTORY]', '[ETIMEDOUT!]', e, '[RETRYING PROCESS]');
-    await findNFTHistory(startingBlock, latestBlock, pagKey);
+    await findNFTHistory(force, startingBlock, latestBlock, pagKey);
   }
 };
