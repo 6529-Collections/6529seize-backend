@@ -161,10 +161,6 @@ const getEditDescription = async (
   newUri: string
 ) => {
   const previousUri = await fetchLatestNftUri(tokenId, contract);
-  if (tokenId == 1 && areEqualAddresses(contract, MEMELAB_CONTRACT)) {
-    console.log('previousUri', previousUri);
-    console.log('newUri', newUri);
-  }
   if (previousUri) {
     const previousMeta = await (await fetch(previousUri)).json();
     const newMeta = await (await fetch(newUri)).json();
@@ -394,12 +390,6 @@ export const getDeployerTransactions = async (
     } else if (tx?.data.startsWith(SET_TOKEN_URI_METHOD)) {
       const details = await findDetailsFromTransaction(tx);
       if (details) {
-        if (
-          details.tokenId == 1 &&
-          areEqualAddresses(details.contract, MEMELAB_CONTRACT)
-        ) {
-          console.log('time', t.metadata.blockTimestamp);
-        }
         const editDescription = await getEditDescription(
           details.tokenId,
           details.contract,
