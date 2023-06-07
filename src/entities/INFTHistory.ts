@@ -5,7 +5,11 @@ import {
   CreateDateColumn,
   PrimaryGeneratedColumn
 } from 'typeorm';
-import { NFTS_HISTORY_BLOCKS_TABLE, NFTS_HISTORY_TABLE } from '../constants';
+import {
+  NFTS_HISTORY_BLOCKS_TABLE,
+  NFTS_HISTORY_CLAIMS_TABLE,
+  NFTS_HISTORY_TABLE
+} from '../constants';
 
 @Entity(NFTS_HISTORY_BLOCKS_TABLE)
 export class NFTHistoryBlock {
@@ -14,6 +18,24 @@ export class NFTHistoryBlock {
 
   @CreateDateColumn()
   created_at!: Date;
+}
+
+@Entity(NFTS_HISTORY_CLAIMS_TABLE)
+export class NFTHistoryClaim {
+  @PrimaryColumn({ type: 'int' })
+  claimIndex!: number;
+
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  contract!: string;
+
+  @PrimaryColumn({ type: 'varchar', length: 100 })
+  location!: string;
+
+  @CreateDateColumn()
+  created_at?: Date;
+
+  @Column({ type: 'int', default: -1 })
+  nft_id?: number;
 }
 
 @Entity(NFTS_HISTORY_TABLE)

@@ -91,12 +91,14 @@ export const findDelegationTransactions = async (
       latestBlock: latestBlock,
       latestBlockTimestamp: new Date(timestamp * 1000),
       consolidations: [],
-      delegations: []
+      registrations: [],
+      revocation: []
     };
   }
 
   const consolidations: ConsolidationEvent[] = [];
-  const delegations: DelegationEvent[] = [];
+  const registrations: DelegationEvent[] = [];
+  const revocation: DelegationEvent[] = [];
 
   await Promise.all(
     allDelegations.map(async (d) => {
@@ -126,7 +128,7 @@ export const findDelegationTransactions = async (
               consolidations.push(e);
             }
           } else if (useCase == USE_CASE_SUB_DELEGATION) {
-            delegations.push({
+            registrations.push({
               ...e,
               use_case: useCase,
               collection: collection
@@ -135,7 +137,7 @@ export const findDelegationTransactions = async (
             const delegationDetails = await getDelegationDetails(
               d.transactionHash
             );
-            delegations.push({
+            registrations.push({
               ...e,
               use_case: useCase,
               collection: collection,
@@ -160,7 +162,7 @@ export const findDelegationTransactions = async (
               consolidations.push(e);
             }
           } else {
-            delegations.push({
+            revocation.push({
               ...e,
               use_case: useCase,
               collection: collection
@@ -175,6 +177,7 @@ export const findDelegationTransactions = async (
     latestBlock: latestBlock,
     latestBlockTimestamp: new Date(timestamp * 1000),
     consolidations: consolidations,
-    delegations: delegations
+    registrations: registrations,
+    revocation: revocation
   };
 };

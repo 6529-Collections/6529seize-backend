@@ -52,7 +52,11 @@ import {
   EventType
 } from './entities/IDelegation';
 import { RoyaltiesUpload } from './entities/IRoyalties';
-import { NFTHistoryBlock, NFTHistory } from './entities/INFTHistory';
+import {
+  NFTHistoryBlock,
+  NFTHistory,
+  NFTHistoryClaim
+} from './entities/INFTHistory';
 import {
   areEqualAddresses,
   extractConsolidationWallets,
@@ -87,7 +91,8 @@ export async function connect(entities: any[] = []) {
       ConsolidatedTDHUpload,
       Delegation,
       NFTHistory,
-      NFTHistoryBlock
+      NFTHistoryBlock,
+      NFTHistoryClaim
     ];
   }
 
@@ -1214,6 +1219,24 @@ export async function persistNftHistory(nftHistory: NFTHistory[]) {
   await AppDataSource.getRepository(NFTHistory).save(nftHistory);
 }
 
+export async function persistNftClaims(claims: NFTHistoryClaim[]) {
+  await AppDataSource.getRepository(NFTHistoryClaim).save(claims);
+}
+
+export async function findClaim(claimIndex: number, nftId?: number) {
+  let condition;
+  if (nftId != undefined) {
+    condition = { claimIndex: claimIndex, nft_id: nftId };
+  } else {
+    condition = { claimIndex: claimIndex };
+  }
+  const claims = await AppDataSource.getRepository(NFTHistoryClaim).find({
+    where: condition,
+    order: { created_at: 'desc' }
+  });
+  return claims;
+}
+
 export async function persistNftHistoryBlock(block: number) {
   await AppDataSource.getRepository(NFTHistoryBlock).save({
     block
@@ -1221,11 +1244,9 @@ export async function persistNftHistoryBlock(block: number) {
 }
 
 export async function fetchLatestNftUri(tokenId: number, contract: string) {
-  const latestTransaction = await AppDataSource.getRepository(
-    NFTHistory
-  ).findOne({
+  const latestHistory = await AppDataSource.getRepository(NFTHistory).findOne({
     where: { nft_id: tokenId, contract: contract },
     order: { transaction_date: 'DESC' }
   });
-  return latestTransaction ? latestTransaction.uri : null;
+  return latestHistory ? latestHistory.uri : null;
 }
