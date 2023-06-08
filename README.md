@@ -55,12 +55,10 @@ This repository is configured to be runnable through AWS Lambdas. Each 'loop' fo
 - **Database and ORM:** Backend service is using [TYPEORM](https://www.npmjs.com/package/typeorm). When starting a service, if the database is successful then the ORM will take care of synchronising the schema for the database and creating the necessary tables. \* Note: You will need to create the database and user and provide them in the .env file.
 
 - **CRON:** When starting the service, there are several scheduled cron jobs running at specific intervals which will consume data from the chain, process and save the result to the database.
-
-e.g. discovering NFTs - there is a scheduled cron job to run every 3 minutes which detects new nfts minted on the chain or any changes to existing nfts.
+  e.g. discovering NFTs - there is a scheduled cron job to run every 3 minutes which detects new nfts minted on the chain or any changes to existing nfts.
 
 - **S3 and Video Compression:** [S3Loop](https://github.com/6529-Collections/6529seize-backend/tree/dev-1.5.2-cleanup/src/s3Loop). The s3Loop persist compressed versions of the nft images and videos on AWS S3. This loop is configured to only run in `prod` mode. Video compression requires ffmpeg installed on the running machine
-
-Download instructions at: https://ffmpeg.org/
+  Download instructions at: https://ffmpeg.org/
 
 ## 2. API
 
