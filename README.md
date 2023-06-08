@@ -30,13 +30,13 @@ The name of your .env file must include the environment you want to run like `.e
 
 ### 1.4 Run
 
-### 1.4.1 using npm
+#### 1.4.1 using npm
 
 ```
 npm run backend:env
 ```
 
-### 1.4.2 using PM2
+#### 1.4.2 using PM2
 
 ```
 pm2 start npm --name=6529backend -- run backend:env
@@ -44,7 +44,7 @@ pm2 start npm --name=6529backend -- run backend:env
 
 \* Note: env can be one of: `local` / `dev` / `prod`
 
-### 1.4.3 using AWS Lambda
+#### 1.4.3 using AWS Lambda
 
 This repository is configured to be runnable through AWS Lambdas. Each 'loop' folder in the code represents a lambda function and can be built and deployed on AWS individually. \* Note: additional setup is required within AWS in order to configure environment variables and triggers for each lambda.
 
