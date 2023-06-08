@@ -2,9 +2,9 @@
 
 This is a 2-part repository for
 
-1. [6529 Backend](#backend)
+1. [6529 Backend](#user-content-1-backend)
 
-2. [6529 API](#api)
+2. [6529 API](#user-content-2-api)
 
 ## 1. Backend
 
