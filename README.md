@@ -57,14 +57,14 @@ This repository is configured to be runnable through AWS Lambdas. Each 'loop' fo
 - **CRON:** When starting the service, there are several scheduled cron jobs running at specific intervals which will consume data from the chain, process and save the result to the database.
   e.g. discovering NFTs - there is a scheduled cron job to run every 3 minutes which detects new nfts minted on the chain or any changes to existing nfts.
 
-- **S3 and Video Compression:** [S3Loop](https://github.com/6529-Collections/6529seize-backend/tree/dev-1.5.2-cleanup/src/s3Loop). The s3Loop persist compressed versions of the nft images and videos on AWS S3. This loop is configured to only run in `prod` mode. Video compression requires ffmpeg installed on the running machine.
+- **S3 and Video Compression:** [S3Loop](https://github.com/6529-Collections/6529seize-backend/tree/main/src/s3Loop). The s3Loop persist compressed versions of the nft images and videos on AWS S3. This loop is configured to only run in `prod` mode. Video compression requires ffmpeg installed on the running machine.
   Download instructions at: https://ffmpeg.org/
 
 ## 2. API
 
 PORT: 3000
 
-PATH: [src/api-serverless](https://github.com/6529-Collections/6529seize-backend/tree/dev-1.5.2-cleanup/src/api-serverless)
+PATH: [src/api-serverless](https://github.com/6529-Collections/6529seize-backend/tree/main/src/api-serverless)
 
 ### 2.1 Install
 
@@ -86,7 +86,7 @@ To run the project you need a .env file.
 
 The name of your .env file must include the environment you want to run like `.env.local` / `.env.development` / `.env.production`
 
-[Sample .env file](https://github.com/6529-Collections/6529seize-backend/tree/dev-1.5.2-cleanup/src/api-serverless/.env.sample)
+[Sample .env file](https://github.com/6529-Collections/6529seize-backend/tree/main/src/api-serverless/.env.sample)
 
 ### 2.4 Run
 
