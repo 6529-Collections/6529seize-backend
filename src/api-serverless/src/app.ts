@@ -1,3 +1,4 @@
+import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { loadEnv } from '../../secrets';
 
@@ -1646,14 +1647,28 @@ loadEnv([], true).then(async (e) => {
     }
   );
 
-  app.get(`/`, async function (req: any, res: any, next: any) {
-    const image = await db.fetchRandomImage();
-    res.send(
-      JSON.stringify({
-        message: 'For 6529 SEIZE API go to /api',
-        image: image[0].image
-      })
+  app.get(`/floor_price`, async function (req: any, res: any, next: any) {
+    const contract = req.query.contract;
+    const id = req.query.id;
+
+    if (!contract || !id) {
+      res.status(400).send('Missing contract or id');
+      return;
+    }
+    console.log(
+      new Date(),
+      `[API]`,
+      '[FLOOR PRICE]',
+      `[CONTRACT ${contract}][ID ${id}]`
     );
+    const url = `https://api.opensea.io/v2/orders/ethereum/seaport/listings?asset_contract_address=${contract}&limit=1&token_ids=${id}&order_by=eth_price&order_direction=asc`;
+    const response = await fetch(url, {
+      headers: {
+        'X-API-KEY': process.env.OPENSEA_API_KEY!,
+        accept: 'application/json'
+      }
+    });
+    return res.send(await response.json());
   });
 
   app.get(`${BASE_PATH}`, async function (req: any, res: any, next: any) {
