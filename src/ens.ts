@@ -19,8 +19,8 @@ async function findExistingEns(ens: ENS[]) {
 
   const deltaEns: ENS[] = [];
 
-  await Promise.all(
-    ens.map(async (w) => {
+  for (const w of ens) {
+    try {
       const newDisplay = await alchemy.core.lookupAddress(w.wallet);
       const newEns: ENS = {
         created_at: new Date(),
@@ -28,8 +28,20 @@ async function findExistingEns(ens: ENS[]) {
         display: newDisplay
       };
       deltaEns.push(newEns);
-    })
-  );
+    } catch (e: any) {
+      console.log(
+        '[ENS EXISTING]',
+        `[ERROR FOR WALLET ${w.wallet}]`,
+        e.message
+      );
+      const newEns: ENS = {
+        created_at: new Date(),
+        wallet: w.wallet,
+        display: null
+      };
+      deltaEns.push(newEns);
+    }
+  }
 
   console.log(
     new Date(),
@@ -51,13 +63,23 @@ async function findNewEns(wallets: string[]) {
 
   await Promise.all(
     wallets.map(async (w) => {
-      const display = await alchemy.core.lookupAddress(w);
-      const newEns: ENS = {
-        created_at: new Date(),
-        wallet: w,
-        display: display
-      };
-      finalEns.push(newEns);
+      try {
+        const display = await alchemy.core.lookupAddress(w);
+        const newEns: ENS = {
+          created_at: new Date(),
+          wallet: w,
+          display: display
+        };
+        finalEns.push(newEns);
+      } catch (e: any) {
+        console.log('[ENS NEW]', `[ERROR FOR WALLET ${w}]`, e.message);
+        const newEns: ENS = {
+          created_at: new Date(),
+          wallet: w,
+          display: null
+        };
+        finalEns.push(newEns);
+      }
     })
   );
 
@@ -76,12 +98,25 @@ export async function discoverEns(datetime?: Date) {
     const missingEns = await fetchMissingEns(datetime);
     if (missingEns.length > 0) {
       const newEns = await findNewEns(missingEns);
-      await persistENS(newEns);
-      await discoverEns(datetime);
+      if (newEns.length > 0) {
+        await persistENS(newEns);
+        await discoverEns(datetime);
+      }
     }
   } catch (e: any) {
     console.log(e);
     await discoverEns(datetime);
+  }
+}
+
+async function refreshEnsLoop() {
+  const batch: ENS[] = await fetchEnsRefresh();
+  if (batch.length > 0) {
+    const delta = await findExistingEns(batch);
+    await persistENS(delta);
+    return true;
+  } else {
+    return false;
   }
 }
 
@@ -91,24 +126,8 @@ export async function refreshEns() {
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  try {
-    const startingEns: ENS[] = await fetchEnsRefresh();
-    if (startingEns.length > 0) {
-      const deltaEns = await findExistingEns(startingEns);
-      await persistENS(deltaEns);
-      await refreshEns();
-    } else {
-      console.log(new Date(), '[ENS REFRESH]', '[DONE!]');
-    }
-  } catch (e: any) {
-    if (e.message.includes('ETIMEDOUT') || e.message.includes('429')) {
-      console.log(
-        new Date(),
-        '[ENS EXISTING]',
-        '[ETIMEDOUT!]',
-        '[RETRYING PROCESS]'
-      );
-      await refreshEns();
-    }
+  let processing = true;
+  while (processing) {
+    processing = await refreshEnsLoop();
   }
 }
