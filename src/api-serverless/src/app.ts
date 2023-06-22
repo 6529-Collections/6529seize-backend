@@ -124,6 +124,7 @@ loadEnv([], true).then(async (e) => {
   const CONTENT_TYPE_HEADER = 'Content-Type';
   const JSON_HEADER_VALUE = 'application/json';
   const DEFAULT_PAGE_SIZE = 50;
+  const NFTS_PAGE_SIZE = 100;
   const DISTRIBUTION_PAGE_SIZE = 250;
   const SORT_DIRECTIONS = ['ASC', 'DESC'];
 
@@ -309,14 +310,15 @@ loadEnv([], true).then(async (e) => {
           ? parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const date = req.query.date;
 
       console.log(
         new Date(),
         `[API]`,
         '[UPLOADS]',
-        `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        `[PAGE_SIZE ${pageSize}][PAGE ${page}][DATE ${date}]`
       );
-      db.fetchUploads(pageSize, page).then((result) => {
+      db.fetchUploads(pageSize, page, date).then((result) => {
         returnPaginatedResult(result, req, res);
       });
     } catch (e) {
@@ -339,14 +341,15 @@ loadEnv([], true).then(async (e) => {
             ? parseInt(req.query.page_size)
             : DEFAULT_PAGE_SIZE;
         const page: number = req.query.page ? parseInt(req.query.page) : 1;
+        const date = req.query.date;
 
         console.log(
           new Date(),
           `[API]`,
           '[CONSOLIDATED UPLOADS]',
-          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}][DATE ${date}]`
         );
-        db.fetchConsolidatedUploads(pageSize, page).then((result) => {
+        db.fetchConsolidatedUploads(pageSize, page, date).then((result) => {
           returnPaginatedResult(result, req, res);
         });
       } catch (e) {
@@ -401,9 +404,9 @@ loadEnv([], true).then(async (e) => {
   app.get(`${BASE_PATH}/nfts`, function (req: any, res: any, next: any) {
     try {
       const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        req.query.page_size && req.query.page_size < NFTS_PAGE_SIZE
           ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
+          : NFTS_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
       const sortDir =
@@ -490,9 +493,9 @@ loadEnv([], true).then(async (e) => {
     function (req: any, res: any, next: any) {
       try {
         const pageSize: number =
-          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          req.query.page_size && req.query.page_size < NFTS_PAGE_SIZE
             ? parseInt(req.query.page_size)
-            : DEFAULT_PAGE_SIZE;
+            : NFTS_PAGE_SIZE;
         const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
         const nfts = req.query.id;
@@ -1670,6 +1673,35 @@ loadEnv([], true).then(async (e) => {
     });
     return res.send(await response.json());
   });
+
+  app.get(
+    `${BASE_PATH}/gen_memes/:merkle_root/:address`,
+    async function (req: any, res: any, next: any) {
+      const merkleRoot = req.params.merkle_root;
+      const address = req.params.address;
+
+      console.log(
+        new Date(),
+        `[API]`,
+        '[GEN MEMES]',
+        `[MERKLE ${merkleRoot}][ADDRESS ${address}]`
+      );
+      try {
+        db.fetchGenMemesAllowlist(merkleRoot, address).then((result) => {
+          res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+          res.end(JSON.stringify(result));
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NFT HISTORY]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
 
   app.get(`${BASE_PATH}`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();

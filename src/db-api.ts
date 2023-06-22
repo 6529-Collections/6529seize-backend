@@ -9,6 +9,8 @@ import {
   DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE,
   ENS_TABLE,
+  GEN_MEMES_ALLOWLIST,
+  GEN_MEMES_COLLECTIONS,
   GRADIENT_CONTRACT,
   LAB_EXTENDED_DATA_TABLE,
   MANIFOLD,
@@ -36,6 +38,7 @@ import {
   extractConsolidationWallets,
   getConsolidationsSql
 } from './helpers';
+import { getProof } from './merkle_proof';
 
 const mysql = require('mysql');
 
@@ -126,9 +129,9 @@ async function fetchPaginated(
 ) {
   const sql1 = `SELECT COUNT(*) as count FROM ${table} ${joins} ${filters}`;
 
-  let sql2 = `SELECT ${
-    fields ? fields : '*'
-  } FROM ${table} ${joins} ${filters} ${
+  let sql2 = `SELECT ${fields ? fields : '*'} FROM ${table} ${
+    joins ? joins : ''
+  } ${filters} ${
     groups ? `group by ${groups}` : ``
   } order by ${orderBy} LIMIT ${pageSize}`;
   if (page > 1) {
@@ -170,17 +173,48 @@ export async function fetchBlocks(pageSize: number, page: number) {
   );
 }
 
-export async function fetchUploads(pageSize: number, page: number) {
-  return fetchPaginated(UPLOADS_TABLE, 'block desc', pageSize, page, '', '');
+export async function fetchUploads(
+  pageSize: number,
+  page: number,
+  date: string
+) {
+  let filters = '';
+  if (date) {
+    filters = constructFilters(
+      filters,
+      `STR_TO_DATE(date, '%Y%m%d') <= ${mysql.escape(date)}`
+    );
+  }
+
+  return fetchPaginated(
+    UPLOADS_TABLE,
+    'block desc',
+    pageSize,
+    page,
+    filters,
+    ''
+  );
 }
 
-export async function fetchConsolidatedUploads(pageSize: number, page: number) {
+export async function fetchConsolidatedUploads(
+  pageSize: number,
+  page: number,
+  date: string
+) {
+  let filters = '';
+  if (date) {
+    filters = constructFilters(
+      filters,
+      `STR_TO_DATE(date, '%Y%m%d') <= ${mysql.escape(date)}`
+    );
+  }
+
   return fetchPaginated(
     CONSOLIDATED_UPLOADS_TABLE,
     'block desc',
     pageSize,
     page,
-    '',
+    filters,
     ''
   );
 }
@@ -1277,7 +1311,7 @@ export async function fetchConsolidatedOwnerMetrics(
         `LOWER(${CONSOLIDATED_OWNERS_METRICS_TABLE}.wallets) LIKE '%${w.toLowerCase()}%'`
       );
     });
-    filters += constructFilters(filters, `(${walletFilters})`);
+    filters = constructFilters(filters, `(${walletFilters})`);
   }
   if (metrics_filter) {
     switch (metrics_filter) {
@@ -1838,7 +1872,7 @@ export async function fetchDistributions(
     if (resolvedWallets.length == 0) {
       return returnEmpty();
     }
-    filters += constructFilters(
+    filters = constructFilters(
       filters,
       `${DISTRIBUTION_TABLE}.wallet in (${mysql.escape(resolvedWallets)})`
     );
@@ -2014,4 +2048,33 @@ export async function fetchNftHistory(
     page,
     filter
   );
+}
+
+export async function fetchGenMemesAllowlist(
+  merkleRoot: string,
+  address: string
+) {
+  const sql1 = `SELECT * FROM ${GEN_MEMES_COLLECTIONS} WHERE merkle_root=${mysql.escape(
+    merkleRoot
+  )}`;
+  const collection = (await execSQL(sql1))[0];
+
+  const sql2 = `SELECT * FROM ${GEN_MEMES_ALLOWLIST} WHERE merkle_root=${mysql.escape(
+    merkleRoot
+  )} AND address=${mysql.escape(address)}`;
+  const allowlist = (await execSQL(sql2))[0];
+
+  if (collection && allowlist) {
+    const proof = getProof(collection.merkle_tree, allowlist.keccak);
+    return {
+      keccak: allowlist.keccak,
+      spots: allowlist.spots,
+      proof: proof
+    };
+  }
+  return {
+    keccak: null,
+    spots: -1,
+    proof: []
+  };
 }
