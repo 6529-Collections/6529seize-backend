@@ -176,9 +176,13 @@ export async function fetchBlocks(pageSize: number, page: number) {
 export async function fetchUploads(
   pageSize: number,
   page: number,
+  block: number,
   date: string
 ) {
   let filters = '';
+  if (block) {
+    filters = constructFilters(filters, `block <= ${block}`);
+  }
   if (date) {
     filters = constructFilters(
       filters,
@@ -199,9 +203,13 @@ export async function fetchUploads(
 export async function fetchConsolidatedUploads(
   pageSize: number,
   page: number,
+  block: number,
   date: string
 ) {
   let filters = '';
+  if (block) {
+    filters = constructFilters(filters, `block <= ${block}`);
+  }
   if (date) {
     filters = constructFilters(
       filters,

@@ -1,6 +1,7 @@
 import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { loadEnv } from '../../secrets';
+import { isNumber } from '../../helpers';
 
 const converter = require('json-2-csv');
 
@@ -310,15 +311,16 @@ loadEnv([], true).then(async (e) => {
           ? parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
       const date = req.query.date;
 
       console.log(
         new Date(),
         `[API]`,
         '[UPLOADS]',
-        `[PAGE_SIZE ${pageSize}][PAGE ${page}][DATE ${date}]`
+        `[PAGE_SIZE ${pageSize}][PAGE ${page}][BLOCK ${block}][DATE ${date}]`
       );
-      db.fetchUploads(pageSize, page, date).then((result) => {
+      db.fetchUploads(pageSize, page, block, date).then((result) => {
         returnPaginatedResult(result, req, res);
       });
     } catch (e) {
@@ -341,17 +343,20 @@ loadEnv([], true).then(async (e) => {
             ? parseInt(req.query.page_size)
             : DEFAULT_PAGE_SIZE;
         const page: number = req.query.page ? parseInt(req.query.page) : 1;
+        const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
         const date = req.query.date;
 
         console.log(
           new Date(),
           `[API]`,
           '[CONSOLIDATED UPLOADS]',
-          `[PAGE_SIZE ${pageSize}][PAGE ${page}][DATE ${date}]`
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}][BLOCK ${block}][DATE ${date}]`
         );
-        db.fetchConsolidatedUploads(pageSize, page, date).then((result) => {
-          returnPaginatedResult(result, req, res);
-        });
+        db.fetchConsolidatedUploads(pageSize, page, block, date).then(
+          (result) => {
+            returnPaginatedResult(result, req, res);
+          }
+        );
       } catch (e) {
         console.log(
           new Date(),
