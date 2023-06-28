@@ -83,7 +83,12 @@ export async function uploadTDH(force?: boolean) {
 
     const csv = await converter.json2csvAsync(combinedArray);
 
-    console.log(new Date(), `[TDH UPLOAD]`, `[CSV CREATED]`);
+    const size = csv.length / (1024 * 1024);
+    console.log(
+      new Date(),
+      `[TDH UPLOAD]`,
+      `[CSV CREATED - SIZE ${size.toFixed(2)} MB]`
+    );
 
     const arweaveKey = process.env.ARWEAVE_KEY
       ? JSON.parse(process.env.ARWEAVE_KEY)
