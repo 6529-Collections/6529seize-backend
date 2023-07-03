@@ -28,7 +28,7 @@ export class Delegation {
   @CreateDateColumn()
   created_at!: Date;
 
-  @Column({ type: 'int' })
+  @PrimaryColumn({ type: 'int' })
   block!: number;
 
   @PrimaryColumn({ type: 'varchar', length: 50 })

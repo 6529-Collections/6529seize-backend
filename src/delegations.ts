@@ -63,8 +63,6 @@ export const findDelegationTransactions = async (
 ) => {
   alchemy = new Alchemy({
     ...ALCHEMY_SETTINGS,
-    // network: Network.ETH_SEPOLIA,
-    // maxRetries: 10,
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
