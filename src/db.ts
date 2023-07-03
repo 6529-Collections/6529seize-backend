@@ -1141,70 +1141,61 @@ export async function persistConsolidations(
 
 export async function persistDelegations(
   force: boolean,
-  delegations: DelegationEvent[]
+  registrations: DelegationEvent[],
+  revocations: DelegationEvent[]
 ) {
-  if (delegations.length > 0) {
-    console.log(
-      '[DELEGATIONS]',
-      `[FORCE ${force}]`,
-      `[PERSISTING ${delegations.length} RESULTS]`
-    );
+  console.log(
+    '[DELEGATIONS]',
+    `[FORCE ${force}]`,
+    `[PERSISTING ${registrations.length} REGISTRATIONS]`,
+    `[PERSISTING ${revocations.length} REVOCATIONS]`
+  );
 
-    const repo = AppDataSource.getRepository(Delegation);
+  const repo = AppDataSource.getRepository(Delegation);
 
-    if (force) {
-      repo.clear();
-    }
-
-    for (const delegation of delegations) {
-      if (delegation.type == EventType.REGISTER) {
-        const r = await repo.findOne({
-          where: {
-            from_address: delegation.wallet1,
-            to_address: delegation.wallet2,
-            use_case: delegation.use_case,
-            collection: delegation.collection
-          }
-        });
-        if (!r) {
-          const newDelegation = new Delegation();
-          newDelegation.block = delegation.block;
-          newDelegation.from_address = delegation.wallet1;
-          newDelegation.to_address = delegation.wallet2;
-          newDelegation.collection = delegation.collection;
-          newDelegation.use_case = delegation.use_case;
-          if (delegation.expiry) {
-            newDelegation.expiry = delegation.expiry;
-          }
-          if (delegation.all_tokens) {
-            newDelegation.all_tokens = delegation.all_tokens;
-          }
-          if (delegation.token_id) {
-            newDelegation.token_id = delegation.token_id;
-          }
-          await repo.save(newDelegation);
-        }
-      } else if (delegation.type == EventType.REVOKE) {
-        const r = await repo.findOne({
-          where: {
-            from_address: delegation.wallet1,
-            to_address: delegation.wallet2,
-            use_case: delegation.use_case,
-            collection: delegation.collection
-          }
-        });
-
-        if (r) {
-          await repo.remove(r);
-        }
-      }
-    }
-
-    console.log(
-      '[DELEGATIONS]',
-      `[ALL ${delegations.length} RESULTS PERSISTED]`
-    );
+  if (force) {
+    repo.clear();
   }
+
+  for (const registration of registrations) {
+    const newDelegation = new Delegation();
+    newDelegation.block = registration.block;
+    newDelegation.from_address = registration.wallet1;
+    newDelegation.to_address = registration.wallet2;
+    newDelegation.collection = registration.collection;
+    newDelegation.use_case = registration.use_case;
+    if (registration.expiry) {
+      newDelegation.expiry = registration.expiry;
+    }
+    if (registration.all_tokens) {
+      newDelegation.all_tokens = registration.all_tokens;
+    }
+    if (registration.token_id) {
+      newDelegation.token_id = registration.token_id;
+    }
+    await repo.save(newDelegation);
+  }
+
+  for (const revocation of revocations) {
+    const r = await repo.findOne({
+      where: {
+        from_address: revocation.wallet1,
+        to_address: revocation.wallet2,
+        use_case: revocation.use_case,
+        collection: revocation.collection
+      }
+    });
+
+    if (r) {
+      await repo.remove(r);
+    }
+  }
+
+  console.log(
+    '[DELEGATIONS]',
+    `[${registrations.length} REGISTRATIONS PERSISTED]`,
+    `[${revocations.length} REVOCATIONS PERSISTED]`
+  );
 }
 
 export async function fetchPrimaryWallet(tdhBlock: number, wallets: string[]) {

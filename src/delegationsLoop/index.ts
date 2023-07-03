@@ -66,10 +66,7 @@ export async function delegations(
     );
     await persistDelegations(
       process.env.DELEGATIONS_RESET == 'true',
-      response.registrations
-    );
-    await persistDelegations(
-      process.env.DELEGATIONS_RESET == 'true',
+      response.registrations,
       response.revocation
     );
   } catch (e: any) {
