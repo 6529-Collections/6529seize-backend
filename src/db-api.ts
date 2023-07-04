@@ -9,8 +9,8 @@ import {
   DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE,
   ENS_TABLE,
-  GEN_MEMES_ALLOWLIST,
-  GEN_MEMES_COLLECTIONS,
+  NEXT_GEN_ALLOWLIST,
+  NEXT_GEN_COLLECTIONS,
   GRADIENT_CONTRACT,
   LAB_EXTENDED_DATA_TABLE,
   MANIFOLD,
@@ -2058,16 +2058,16 @@ export async function fetchNftHistory(
   );
 }
 
-export async function fetchGenMemesAllowlist(
+export async function fetchNextGenAllowlist(
   merkleRoot: string,
   address: string
 ) {
-  const sql1 = `SELECT * FROM ${GEN_MEMES_COLLECTIONS} WHERE merkle_root=${mysql.escape(
+  const sql1 = `SELECT * FROM ${NEXT_GEN_COLLECTIONS} WHERE merkle_root=${mysql.escape(
     merkleRoot
   )}`;
   const collection = (await execSQL(sql1))[0];
 
-  const sql2 = `SELECT * FROM ${GEN_MEMES_ALLOWLIST} WHERE merkle_root=${mysql.escape(
+  const sql2 = `SELECT * FROM ${NEXT_GEN_ALLOWLIST} WHERE merkle_root=${mysql.escape(
     merkleRoot
   )} AND address=${mysql.escape(address)}`;
   const allowlist = (await execSQL(sql2))[0];

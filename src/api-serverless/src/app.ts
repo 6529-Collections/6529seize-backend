@@ -1680,7 +1680,7 @@ loadEnv([], true).then(async (e) => {
   });
 
   app.get(
-    `${BASE_PATH}/gen_memes/:merkle_root/:address`,
+    `${BASE_PATH}/next_gen/:merkle_root/:address`,
     async function (req: any, res: any, next: any) {
       const merkleRoot = req.params.merkle_root;
       const address = req.params.address;
@@ -1688,11 +1688,11 @@ loadEnv([], true).then(async (e) => {
       console.log(
         new Date(),
         `[API]`,
-        '[GEN MEMES]',
+        '[NEXT GEN]',
         `[MERKLE ${merkleRoot}][ADDRESS ${address}]`
       );
       try {
-        db.fetchGenMemesAllowlist(merkleRoot, address).then((result) => {
+        db.fetchNextGenAllowlist(merkleRoot, address).then((result) => {
           res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
           res.end(JSON.stringify(result));
         });
@@ -1700,7 +1700,7 @@ loadEnv([], true).then(async (e) => {
         console.log(
           new Date(),
           `[API]`,
-          '[NFT HISTORY]',
+          '[NEXT GEN]',
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         next(e);
