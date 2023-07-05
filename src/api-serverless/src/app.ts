@@ -1513,6 +1513,7 @@ loadEnv([], true).then(async (e) => {
     `${BASE_PATH}/consolidations`,
     function (req: any, res: any, next: any) {
       try {
+        const block = req.query.block;
         const pageSize: number =
           req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
             ? parseInt(req.query.page_size)
@@ -1523,9 +1524,9 @@ loadEnv([], true).then(async (e) => {
           new Date(),
           `[API]`,
           '[CONSOLIDATIONS]',
-          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+          `[BLOCK ${block}][PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
-        db.fetchConsolidations(pageSize, page).then((result) => {
+        db.fetchConsolidations(pageSize, page, block).then((result) => {
           result.data.map((a: any) => {
             a.wallets = JSON.parse(a.wallets);
           });
@@ -1579,8 +1580,8 @@ loadEnv([], true).then(async (e) => {
 
   app.get(`${BASE_PATH}/delegations`, function (req: any, res: any, next: any) {
     try {
-      const use_case = req.query.use_case;
-      const collection = req.query.collection;
+      const use_cases = req.query.use_case;
+      const collections = req.query.collection;
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
           ? parseInt(req.query.page_size)
@@ -1590,20 +1591,22 @@ loadEnv([], true).then(async (e) => {
         req.query.show_expired && req.query.show_expired == 'true'
           ? true
           : false;
+      const block = req.query.block;
 
       console.log(
         new Date(),
         `[API]`,
         '[DELEGATIONS]',
-        `[USE CASE ${use_case}]`,
-        `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        `[USE CASE ${use_cases}]`,
+        `[BLOCK ${block}][PAGE_SIZE ${pageSize}][PAGE ${page}]`
       );
       db.fetchDelegationsByUseCase(
-        collection,
-        use_case,
+        collections,
+        use_cases,
         showExpired,
         pageSize,
-        page
+        page,
+        block
       ).then((result) => {
         returnPaginatedResult(result, req, res);
       });

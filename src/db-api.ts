@@ -1962,9 +1962,15 @@ export async function fetchPrimaryWallet(wallets: string[]) {
   }
 }
 
-export async function fetchConsolidations(pageSize: number, page: number) {
-  const filters = constructFilters('', "wallets like '%, %'");
-
+export async function fetchConsolidations(
+  pageSize: number,
+  page: number,
+  block: string
+) {
+  let filters = constructFilters('', "wallets like '%, %'");
+  if (block) {
+    filters = constructFilters(filters, `block <= ${block}`);
+  }
   const results = await fetchPaginated(
     CONSOLIDATED_WALLETS_TDH_TABLE,
     'boosted_tdh desc',
@@ -2011,20 +2017,24 @@ export async function fetchDelegationsByUseCase(
   useCases: string,
   showExpired: boolean,
   pageSize: number,
-  page: number
+  page: number,
+  block: string
 ) {
-  let filter = '';
+  let filters = '';
   if (collections) {
-    filter = constructFilters(
-      filter,
+    filters = constructFilters(
+      filters,
       `collection in (${mysql.escape(collections.split(','))})`
     );
   }
   if (!showExpired) {
-    filter = constructFilters(filter, `expiry >= ${Date.now() / 1000}`);
+    filters = constructFilters(filters, `expiry >= ${Date.now() / 1000}`);
   }
   if (useCases) {
-    filter = constructFilters(filter, `use_case in (${useCases.split(',')})`);
+    filters = constructFilters(filters, `use_case in (${useCases.split(',')})`);
+  }
+  if (block) {
+    filters = constructFilters(filters, `block <= ${block}`);
   }
 
   return fetchPaginated(
@@ -2032,7 +2042,7 @@ export async function fetchDelegationsByUseCase(
     'block desc',
     pageSize,
     page,
-    filter,
+    filters,
     '',
     ''
   );
@@ -2077,12 +2087,14 @@ export async function fetchNextGenAllowlist(
     return {
       keccak: allowlist.keccak,
       spots: allowlist.spots,
+      info: allowlist.info,
       proof: proof
     };
   }
   return {
     keccak: null,
     spots: -1,
+    data: null,
     proof: []
   };
 }
