@@ -86,3 +86,19 @@ export const USE_CASE_SUB_DELEGATION = 998;
 export const USE_CASE_CONSOLIDATION = 999;
 export const CONSOLIDATIONS_LIMIT = 3;
 export const NEVER_DATE = 64060588800;
+
+export const SZN1_INDEX = {
+  start: 1,
+  end: 47
+};
+export const SZN2_INDEX = {
+  start: 48,
+  end: 86
+};
+export const SZN3_INDEX = {
+  start: 87,
+  end: 118
+};
+export const SZN4_INDEX = {
+  start: 119
+};

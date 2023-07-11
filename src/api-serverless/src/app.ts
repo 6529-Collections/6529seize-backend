@@ -218,7 +218,8 @@ loadEnv([], true).then(async (e) => {
     'unique_memes',
     'unique_memes_szn1',
     'unique_memes_szn2',
-    'unique_memes_szn3'
+    'unique_memes_szn3',
+    'unique_memes_szn4'
   ];
 
   const TAGS_FILTERS = [
@@ -228,6 +229,7 @@ loadEnv([], true).then(async (e) => {
     'memes_set_szn1',
     'memes_set_szn2',
     'memes_set_szn3',
+    'memes_set_szn4',
     'memes_genesis',
     'gradients'
   ];

@@ -24,6 +24,9 @@ import {
   OWNERS_TABLE,
   OWNERS_TAGS_TABLE,
   SIX529_MUSEUM,
+  SZN1_INDEX,
+  SZN2_INDEX,
+  SZN3_INDEX,
   TDH_BLOCKS_TABLE,
   TEAM_TABLE,
   TRANSACTIONS_MEME_LAB_TABLE,
@@ -891,6 +894,12 @@ export async function fetchOwnerMetrics(
           `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn3 > 0`
         );
         break;
+      case 'memes_set_szn4':
+        filters = constructFilters(
+          filters,
+          `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn4 > 0`
+        );
+        break;
     }
   }
 
@@ -919,6 +928,8 @@ export async function fetchOwnerMetrics(
     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season2 = ${OWNERS_METRICS_TABLE}2.memes_balance_season2) AS dense_rank_balance_memes_season2__ties,
     dense_table.dense_rank_balance_memes_season3,
     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season3 = ${OWNERS_METRICS_TABLE}2.memes_balance_season3) AS dense_rank_balance_memes_season3__ties, 
+    dense_table.dense_rank_balance_memes_season4,
+    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season4 = ${OWNERS_METRICS_TABLE}2.memes_balance_season4) AS dense_rank_balance_memes_season4__ties, 
     dense_table.dense_rank_balance_gradients,
     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.gradients_balance = ${OWNERS_METRICS_TABLE}2.gradients_balance) AS dense_rank_balance_gradients__ties,
     dense_table.dense_rank_unique_memes,
@@ -928,7 +939,9 @@ export async function fetchOwnerMetrics(
     dense_table.dense_rank_unique_memes_season2,
     (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn2 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn2) AS dense_rank_unique_memes_season2__ties,
     dense_table.dense_rank_unique_memes_season3,
-    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn3 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn3) AS dense_rank_unique_memes_season3__ties `;
+    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn3 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn3) AS dense_rank_unique_memes_season3__ties,
+    dense_table.dense_rank_unique_memes_season4,
+    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn4 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn4) AS dense_rank_unique_memes_season4__ties `;
   }
 
   const walletsTdhTableSelect = `
@@ -937,7 +950,9 @@ export async function fetchOwnerMetrics(
     ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn1, 
     ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn2, 
     ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn3, 
+    ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn4, 
     ${WALLETS_TDH_TABLE}.tdh_rank_gradients, 
+    ${WALLETS_TDH_TABLE}.boost, 
     ${WALLETS_TDH_TABLE}.boosted_tdh, 
     ${WALLETS_TDH_TABLE}.boosted_memes_tdh, 
     ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season1, 
@@ -955,6 +970,7 @@ export async function fetchOwnerMetrics(
     ${WALLETS_TDH_TABLE}.memes_tdh_season1, 
     ${WALLETS_TDH_TABLE}.memes_tdh_season2, 
     ${WALLETS_TDH_TABLE}.memes_tdh_season3, 
+    ${WALLETS_TDH_TABLE}.memes_tdh_season4, 
     ${WALLETS_TDH_TABLE}.gradients_tdh,
     ${WALLETS_TDH_TABLE}.memes,
     ${WALLETS_TDH_TABLE}.memes_ranks, 
@@ -981,12 +997,14 @@ export async function fetchOwnerMetrics(
     sort == 'memes_cards_sets_szn1' ||
     sort == 'memes_cards_sets_szn2' ||
     sort == 'memes_cards_sets_szn3' ||
+    sort == 'memes_cards_sets_szn4' ||
     sort == 'memes_cards_sets_minus1' ||
     sort == 'genesis' ||
     sort == 'unique_memes' ||
     sort == 'unique_memes_szn1' ||
     sort == 'unique_memes_szn2' ||
-    sort == 'unique_memes_szn3'
+    sort == 'unique_memes_szn3' ||
+    sort == 'unique_memes_szn4'
   ) {
     sort = `${OWNERS_TAGS_TABLE}.${sort}`;
   }
@@ -1004,7 +1022,8 @@ export async function fetchOwnerMetrics(
       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes DESC) AS dense_rank_unique_memes,
       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn1 DESC) AS dense_rank_unique_memes_season1,
       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn2 DESC) AS dense_rank_unique_memes_season2,
-      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn3 DESC) AS dense_rank_unique_memes_season3 
+      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn3 DESC) AS dense_rank_unique_memes_season3,
+      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn4 DESC) AS dense_rank_unique_memes_season4  
       FROM ${OWNERS_METRICS_TABLE} LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock} LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet ${hideWalletFilters}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
   }
 
@@ -1087,109 +1106,169 @@ export async function fetchOwnerMetrics(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id <= 47) AS sales_count_memes_season1,
+      )} AND token_id <= ${SZN1_INDEX.end}) AS sales_count_memes_season1,
     (SELECT SUM(value) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id <= 47) AS sales_value_memes_season1,
+      )} AND token_id <= ${SZN1_INDEX.end}) AS sales_value_memes_season1,
     (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value = 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id <= 47) AS transfers_out_memes_season1,
+      )} AND token_id <= ${SZN1_INDEX.end}) AS transfers_out_memes_season1,
     (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id <= 47) AS purchases_count_memes_season1,
+      )} AND token_id <= ${SZN1_INDEX.end}) AS purchases_count_memes_season1,
     (SELECT SUM(value) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id <= 47) AS purchases_value_memes_season1,
+      )} AND token_id <= ${SZN1_INDEX.end}) AS purchases_value_memes_season1,
     (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value = 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id <= 47) AS transfers_in_memes_season1,
+      )} AND token_id <= ${SZN1_INDEX.end}) AS transfers_in_memes_season1,
     (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 47 AND token_id <= 86) AS sales_count_memes_season2,
+      )} AND token_id > ${SZN1_INDEX.end} AND token_id <= ${
+        SZN2_INDEX.end
+      }) AS sales_count_memes_season2,
     (SELECT SUM(value) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 47 AND token_id <= 86) AS sales_value_memes_season2,
+      )} AND token_id > ${SZN1_INDEX.end} AND token_id <= ${
+        SZN2_INDEX.end
+      }) AS sales_value_memes_season2,
     (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value = 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 47 AND token_id <= 86) AS transfers_out_memes_season2,
+      )} AND token_id > ${SZN1_INDEX.end} AND token_id <= ${
+        SZN2_INDEX.end
+      }) AS transfers_out_memes_season2,
     (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 47 AND token_id <= 86) AS purchases_count_memes_season2,
+      )} AND token_id > ${SZN1_INDEX.end} AND token_id <= ${
+        SZN2_INDEX.end
+      }) AS purchases_count_memes_season2,
     (SELECT SUM(value) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 47 AND token_id <= 86) AS purchases_value_memes_season2,
+      )} AND token_id > ${SZN1_INDEX.end} AND token_id <= ${
+        SZN2_INDEX.end
+      }) AS purchases_value_memes_season2,
     (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value = 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 47 AND token_id <= 86) AS transfers_in_memes_season2,
+      )} AND token_id > ${SZN1_INDEX.end} AND token_id <= ${
+        SZN2_INDEX.end
+      }) AS transfers_in_memes_season2,
     (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 86) AS sales_count_memes_season3,
+      )} AND token_id > ${SZN2_INDEX.end} AND token_id <= ${
+        SZN3_INDEX.end
+      }) AS sales_count_memes_season3,
     (SELECT SUM(value) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 86) AS sales_value_memes_season3,
+      )} AND token_id > ${SZN2_INDEX.end} AND token_id <= ${
+        SZN3_INDEX.end
+      }) AS sales_value_memes_season3,
     (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value = 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 86) AS transfers_out_memes_season3,
+      )} AND token_id > ${SZN2_INDEX.end} AND token_id <= ${
+        SZN3_INDEX.end
+      }) AS transfers_out_memes_season3,
     (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 86) AS purchases_count_memes_season3,
+      )} AND token_id > ${SZN2_INDEX.end} AND token_id <= ${
+        SZN3_INDEX.end
+      }) AS purchases_count_memes_season3,
     (SELECT SUM(value) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 86) AS purchases_value_memes_season3,
+      )} AND token_id > ${SZN2_INDEX.end} AND token_id <= ${
+        SZN3_INDEX.end
+      }) AS purchases_value_memes_season3,
     (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value = 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 86) AS transfers_in_memes_season3,
+      )} AND token_id > ${SZN2_INDEX.end} AND token_id <= ${
+        SZN3_INDEX.end
+      }) AS transfers_in_memes_season3,
+      (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > ${SZN3_INDEX.end}) AS sales_count_memes_season4,
+    (SELECT SUM(value) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > ${SZN3_INDEX.end}) AS sales_value_memes_season4,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > ${SZN3_INDEX.end}) AS transfers_out_memes_season4,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > ${SZN3_INDEX.end}) AS purchases_count_memes_season4,
+    (SELECT SUM(value) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > ${SZN3_INDEX.end}) AS purchases_value_memes_season4,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > ${SZN3_INDEX.end}) AS transfers_in_memes_season4,
     (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
@@ -1329,6 +1408,12 @@ export async function fetchConsolidatedOwnerMetrics(
           `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_szn3 > 0`
         );
         break;
+      case 'memes_set_szn4':
+        filters = constructFilters(
+          filters,
+          `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_szn4 > 0`
+        );
+        break;
     }
   }
 
@@ -1357,6 +1442,8 @@ export async function fetchConsolidatedOwnerMetrics(
     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season2 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season2) AS dense_rank_balance_memes_season2__ties,
     dense_table.dense_rank_balance_memes_season3,
     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season3 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season3) AS dense_rank_balance_memes_season3__ties, 
+    dense_table.dense_rank_balance_memes_season4,
+    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season4 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season4) AS dense_rank_balance_memes_season4__ties, 
     dense_table.dense_rank_balance_gradients,
     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.gradients_balance = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.gradients_balance) AS dense_rank_balance_gradients__ties,
     dense_table.dense_rank_unique_memes,
@@ -1366,7 +1453,9 @@ export async function fetchConsolidatedOwnerMetrics(
     dense_table.dense_rank_unique_memes_season2,
     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn2 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn2) AS dense_rank_unique_memes_season2__ties,
     dense_table.dense_rank_unique_memes_season3,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn3 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn3) AS dense_rank_unique_memes_season3__ties `;
+    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn3 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn3) AS dense_rank_unique_memes_season3__ties,
+    dense_table.dense_rank_unique_memes_season4,
+    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn4 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn4) AS dense_rank_unique_memes_season4__ties `;
   }
 
   const walletsTdhTableSelect = `
@@ -1375,24 +1464,29 @@ export async function fetchConsolidatedOwnerMetrics(
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn1, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn2, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn3, 
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn4, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_gradients, 
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boost, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season1, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season2, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season3, 
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season3,
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season4, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_gradients_tdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh__raw, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh__raw, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season1__raw, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season2__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season3__raw, 
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season3__raw,
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season4__raw, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_tdh__raw, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season1, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season2, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season3, 
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season4, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_tdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_ranks, 
@@ -1409,6 +1503,7 @@ export async function fetchConsolidatedOwnerMetrics(
     sort == 'memes_balance_season1' ||
     sort == 'memes_balance_season2' ||
     sort == 'memes_balance_season3' ||
+    sort == 'memes_balance_season4' ||
     sort == 'gradients_balance'
   ) {
     sort = `${CONSOLIDATED_OWNERS_METRICS_TABLE}.${sort}`;
@@ -1418,12 +1513,14 @@ export async function fetchConsolidatedOwnerMetrics(
     sort == 'memes_cards_sets_szn1' ||
     sort == 'memes_cards_sets_szn2' ||
     sort == 'memes_cards_sets_szn3' ||
+    sort == 'memes_cards_sets_szn4' ||
     sort == 'memes_cards_sets_minus1' ||
     sort == 'genesis' ||
     sort == 'unique_memes' ||
     sort == 'unique_memes_szn1' ||
     sort == 'unique_memes_szn2' ||
-    sort == 'unique_memes_szn3'
+    sort == 'unique_memes_szn3' ||
+    sort == 'unique_memes_szn4'
   ) {
     sort = `${CONSOLIDATED_OWNERS_TAGS_TABLE}.${sort}`;
   }
@@ -1437,11 +1534,13 @@ export async function fetchConsolidatedOwnerMetrics(
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2, 
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3, 
+        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season4 DESC) AS dense_rank_balance_memes_season4, 
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients, 
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes DESC) AS dense_rank_unique_memes,
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn1 DESC) AS dense_rank_unique_memes_season1,
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn2 DESC) AS dense_rank_unique_memes_season2,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn3 DESC) AS dense_rank_unique_memes_season3 
+        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn3 DESC) AS dense_rank_unique_memes_season3,
+        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn4 DESC) AS dense_rank_unique_memes_season4 
       FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} 
         LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_display ${hideWalletFilters}) 
       AS dense_table ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display = dense_table.consolidation_display `;
@@ -1526,109 +1625,169 @@ export async function fetchConsolidatedOwnerMetrics(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id <= 47) AS sales_count_memes_season1,
+      )} AND token_id <= ${SZN1_INDEX.end}) AS sales_count_memes_season1,
     (SELECT SUM(value) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id <= 47) AS sales_value_memes_season1,
+      )} AND token_id <= ${SZN1_INDEX.end}) AS sales_value_memes_season1,
     (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value = 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id <= 47) AS transfers_out_memes_season1,
+      )} AND token_id <= ${SZN1_INDEX.end}) AS transfers_out_memes_season1,
     (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id <= 47) AS purchases_count_memes_season1,
+      )} AND token_id <= ${SZN1_INDEX.end}) AS purchases_count_memes_season1,
     (SELECT SUM(value) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id <= 47) AS purchases_value_memes_season1,
+      )} AND token_id <= ${SZN1_INDEX.end}) AS purchases_value_memes_season1,
     (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value = 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id <= 47) AS transfers_in_memes_season1,
+      )} AND token_id <= ${SZN1_INDEX.end}) AS transfers_in_memes_season1,
     (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 47 AND token_id <= 86) AS sales_count_memes_season2,
+      )} AND token_id > ${SZN1_INDEX.end} AND token_id <= ${
+        SZN2_INDEX.end
+      }) AS sales_count_memes_season2,
     (SELECT SUM(value) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 47 AND token_id <= 86) AS sales_value_memes_season2,
+      )} AND token_id > ${SZN1_INDEX.end} AND token_id <= ${
+        SZN2_INDEX.end
+      }) AS sales_value_memes_season2,
     (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value = 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 47 AND token_id <= 86) AS transfers_out_memes_season2,
+      )} AND token_id > ${SZN1_INDEX.end} AND token_id <= ${
+        SZN2_INDEX.end
+      }) AS transfers_out_memes_season2,
     (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 47 AND token_id <= 86) AS purchases_count_memes_season2,
+      )} AND token_id > ${SZN1_INDEX.end} AND token_id <= ${
+        SZN2_INDEX.end
+      }) AS purchases_count_memes_season2,
     (SELECT SUM(value) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 47 AND token_id <= 86) AS purchases_value_memes_season2,
+      )} AND token_id > ${SZN1_INDEX.end} AND token_id <= ${
+        SZN2_INDEX.end
+      }) AS purchases_value_memes_season2,
     (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value = 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 47 AND token_id <= 86) AS transfers_in_memes_season2,
-    (SELECT SUM(token_count) FROM transactions 
+      )} AND token_id > ${SZN1_INDEX.end} AND token_id <= ${
+        SZN2_INDEX.end
+      }) AS transfers_in_memes_season2,
+      (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 86) AS sales_count_memes_season3,
+      )} AND token_id > ${SZN2_INDEX.end} AND token_id <= ${
+        SZN3_INDEX.end
+      }) AS sales_count_memes_season3,
     (SELECT SUM(value) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 86) AS sales_value_memes_season3,
+      )} AND token_id > ${SZN2_INDEX.end} AND token_id <= ${
+        SZN3_INDEX.end
+      }) AS sales_value_memes_season3,
     (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value = 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 86) AS transfers_out_memes_season3,
+      )} AND token_id > ${SZN2_INDEX.end} AND token_id <= ${
+        SZN3_INDEX.end
+      }) AS transfers_out_memes_season3,
     (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 86) AS purchases_count_memes_season3,
+      )} AND token_id > ${SZN2_INDEX.end} AND token_id <= ${
+        SZN3_INDEX.end
+      }) AS purchases_count_memes_season3,
     (SELECT SUM(value) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value > 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 86) AS purchases_value_memes_season3,
+      )} AND token_id > ${SZN2_INDEX.end} AND token_id <= ${
+        SZN3_INDEX.end
+      }) AS purchases_value_memes_season3,
     (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (${mysql.escape(
        resolvedWallets
      )}) AND value = 0 AND contract=${mysql.escape(
         MEMES_CONTRACT
-      )} AND token_id > 86) AS transfers_in_memes_season3,
+      )} AND token_id > ${SZN2_INDEX.end} AND token_id <= ${
+        SZN3_INDEX.end
+      }) AS transfers_in_memes_season3,
+      (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > ${SZN3_INDEX.end}) AS sales_count_memes_season4,
+    (SELECT SUM(value) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > ${SZN3_INDEX.end}) AS sales_value_memes_season4,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE from_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > ${SZN3_INDEX.end}) AS transfers_out_memes_season4,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > ${SZN3_INDEX.end}) AS purchases_count_memes_season4,
+    (SELECT SUM(value) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value > 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > ${SZN3_INDEX.end}) AS purchases_value_memes_season4,
+    (SELECT SUM(token_count) FROM transactions 
+     WHERE to_address IN (${mysql.escape(
+       resolvedWallets
+     )}) AND value = 0 AND contract=${mysql.escape(
+        MEMES_CONTRACT
+      )} AND token_id > ${SZN3_INDEX.end}) AS transfers_in_memes_season4,
     (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (${mysql.escape(
        resolvedWallets
