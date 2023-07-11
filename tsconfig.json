@@ -15,5 +15,6 @@
   },
   "emitDecoratorMetadata": true,
   "experimentalDecorators": true,
-  "strictPropertyInitialization": false
+  "strictPropertyInitialization": false,
+  "exclude": ["jest.config.js"]
 }
