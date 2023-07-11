@@ -3,7 +3,6 @@ const transactionsReplay = require('./transactionsReplayLoop');
 const nfts = require('./nftsLoop');
 const memeLab = require('./memeLabLoop');
 const tdh = require('./tdhLoop');
-const tdhReplay = require('./tdhReplayLoop');
 const team = require('./teamLoop');
 const ownerMetrics = require('./ownerMetricsLoop');
 const s3 = require('./s3Loop');
@@ -108,7 +107,7 @@ async function start() {
   // await nfts.handler();
   // await memeLab.handler();
   // await ownerMetrics.handler();
-  // await tdh.handler();
+  await tdh.handler();
   // await memeStats();
   // await gradientStats();
   // await memeLabStats();
@@ -118,10 +117,6 @@ async function start() {
   // await refreshEnsLoop.handler();
   // await royaltiesLoop.handler();
   // await transactions.handlerValues();
-
-  // while (true) {
-  //   await tdhReplay.handler();
-  // }
 
   STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);

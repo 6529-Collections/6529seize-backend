@@ -53,6 +53,7 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
         let unique_memes_season1 = 0;
         let unique_memes_season2 = 0;
         let unique_memes_season3 = 0;
+        let unique_memes_season4 = 0;
         let memesTDH = 0;
         let memesTDH__raw = 0;
         let memesBalance = 0;
@@ -65,6 +66,9 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
         let memes_tdh_season3 = 0;
         let memes_tdh_season3__raw = 0;
         let memes_balance_season3 = 0;
+        let memes_tdh_season4 = 0;
+        let memes_tdh_season4__raw = 0;
+        let memes_balance_season4 = 0;
         let gradientsTDH = 0;
         let gradientsTDH__raw = 0;
         let gradientsBalance = 0;
@@ -80,6 +84,7 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           unique_memes_season1 += wTdh.unique_memes_season1;
           unique_memes_season2 += wTdh.unique_memes_season2;
           unique_memes_season3 += wTdh.unique_memes_season3;
+          unique_memes_season4 += wTdh.unique_memes_season4;
           memesTDH += wTdh.memes_tdh;
           memesTDH__raw += wTdh.memes_tdh__raw;
           memesBalance += wTdh.memes_balance;
@@ -92,6 +97,9 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           memes_tdh_season3 += wTdh.memes_tdh_season3;
           memes_tdh_season3__raw += wTdh.memes_tdh_season3__raw;
           memes_balance_season3 += wTdh.memes_balance_season3;
+          memes_tdh_season4 += wTdh.memes_tdh_season4;
+          memes_tdh_season4__raw += wTdh.memes_tdh_season4__raw;
+          memes_balance_season4 += wTdh.memes_balance_season4;
           gradientsTDH += wTdh.gradients_tdh;
           gradientsTDH__raw += wTdh.gradients_tdh__raw;
           gradientsBalance += wTdh.gradients_balance;
@@ -121,6 +129,7 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           tdh_rank_memes_szn1: 0, //assigned later
           tdh_rank_memes_szn2: 0, //assigned later
           tdh_rank_memes_szn3: 0, //assigned later
+          tdh_rank_memes_szn4: 0, //assigned later
           tdh_rank_gradients: 0, //assigned later
           block: tdhEntry.block,
           tdh: totalTDH,
@@ -134,6 +143,7 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           unique_memes_season1: unique_memes_season1,
           unique_memes_season2: unique_memes_season2,
           unique_memes_season3: unique_memes_season3,
+          unique_memes_season4: unique_memes_season4,
           boosted_memes_tdh: 0,
           memes_tdh: memesTDH,
           memes_tdh__raw: memesTDH__raw,
@@ -150,6 +160,10 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           memes_tdh_season3: memes_tdh_season3,
           memes_tdh_season3__raw: memes_tdh_season3__raw,
           memes_balance_season3: memes_balance_season3,
+          boosted_memes_tdh_season4: 0,
+          memes_tdh_season4: memes_tdh_season4,
+          memes_tdh_season4__raw: memes_tdh_season4__raw,
+          memes_balance_season4: memes_balance_season4,
           memes: consolidationMemes,
           memes_ranks: [],
           boosted_gradients_tdh: 0,
@@ -170,7 +184,7 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
     })
   );
 
-  const sortedConsolidatedTdh = ranks(
+  const sortedConsolidatedTdh = await ranks(
     allGradientsTDH,
     consolidatedTdh,
     ADJUSTED_NFTS,
