@@ -1,5 +1,5 @@
 {
-  "name": "6529server",
+  "name": "6529backend",
   "version": "1.0.0",
   "main": "backend.js",
   "scripts": {
