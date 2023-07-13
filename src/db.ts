@@ -504,7 +504,7 @@ export async function fetchWalletTransactions(wallet: string, block?: number) {
 }
 
 export async function fetchEnsRefresh() {
-  let sql = `SELECT * FROM ${ENS_TABLE} WHERE created_at < DATE_SUB(NOW(), INTERVAL 24 HOUR) ORDER BY created_at ASC LIMIT 200;`;
+  let sql = `SELECT * FROM ${ENS_TABLE} WHERE created_at < DATE_SUB(NOW(), INTERVAL 6 HOUR) ORDER BY created_at ASC LIMIT 200;`;
   const results = await execSQL(sql);
   return results;
 }
