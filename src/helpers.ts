@@ -159,3 +159,7 @@ export function extractConsolidationWallets(
 
   return [wallet];
 }
+
+export function isNumber(s: string) {
+  return !isNaN(Number(s));
+}

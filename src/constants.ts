@@ -28,6 +28,8 @@ export const DELEGATIONS_TABLE = 'delegations';
 export const NFTS_HISTORY_TABLE = 'nfts_history';
 export const NFTS_HISTORY_BLOCKS_TABLE = 'nfts_history_blocks';
 export const NFTS_HISTORY_CLAIMS_TABLE = 'nfts_history_claims';
+export const NEXT_GEN_ALLOWLIST = 'next_gen_allowlist';
+export const NEXT_GEN_COLLECTIONS = 'next_gen_collections';
 
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
 export const GRADIENT_CONTRACT = '0x0c58ef43ff3032005e472cb5709f8908acb00205';
@@ -86,3 +88,19 @@ export const USE_CASE_SUB_DELEGATION = 998;
 export const USE_CASE_CONSOLIDATION = 999;
 export const CONSOLIDATIONS_LIMIT = 3;
 export const NEVER_DATE = 64060588800;
+
+export const SZN1_INDEX = {
+  start: 1,
+  end: 47
+};
+export const SZN2_INDEX = {
+  start: 48,
+  end: 86
+};
+export const SZN3_INDEX = {
+  start: 87,
+  end: 118
+};
+export const SZN4_INDEX = {
+  start: 119
+};

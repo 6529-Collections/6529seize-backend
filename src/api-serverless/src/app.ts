@@ -1,5 +1,7 @@
+import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { loadEnv } from '../../secrets';
+import { isNumber } from '../../helpers';
 
 const converter = require('json-2-csv');
 
@@ -123,6 +125,7 @@ loadEnv([], true).then(async (e) => {
   const CONTENT_TYPE_HEADER = 'Content-Type';
   const JSON_HEADER_VALUE = 'application/json';
   const DEFAULT_PAGE_SIZE = 50;
+  const NFTS_PAGE_SIZE = 100;
   const DISTRIBUTION_PAGE_SIZE = 250;
   const SORT_DIRECTIONS = ['ASC', 'DESC'];
 
@@ -218,7 +221,8 @@ loadEnv([], true).then(async (e) => {
     'unique_memes',
     'unique_memes_szn1',
     'unique_memes_szn2',
-    'unique_memes_szn3'
+    'unique_memes_szn3',
+    'unique_memes_szn4'
   ];
 
   const TAGS_FILTERS = [
@@ -228,6 +232,7 @@ loadEnv([], true).then(async (e) => {
     'memes_set_szn1',
     'memes_set_szn2',
     'memes_set_szn3',
+    'memes_set_szn4',
     'memes_genesis',
     'gradients'
   ];
@@ -308,14 +313,16 @@ loadEnv([], true).then(async (e) => {
           ? parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
+      const date = req.query.date;
 
       console.log(
         new Date(),
         `[API]`,
         '[UPLOADS]',
-        `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        `[PAGE_SIZE ${pageSize}][PAGE ${page}][BLOCK ${block}][DATE ${date}]`
       );
-      db.fetchUploads(pageSize, page).then((result) => {
+      db.fetchUploads(pageSize, page, block, date).then((result) => {
         returnPaginatedResult(result, req, res);
       });
     } catch (e) {
@@ -338,16 +345,20 @@ loadEnv([], true).then(async (e) => {
             ? parseInt(req.query.page_size)
             : DEFAULT_PAGE_SIZE;
         const page: number = req.query.page ? parseInt(req.query.page) : 1;
+        const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
+        const date = req.query.date;
 
         console.log(
           new Date(),
           `[API]`,
           '[CONSOLIDATED UPLOADS]',
-          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}][BLOCK ${block}][DATE ${date}]`
         );
-        db.fetchConsolidatedUploads(pageSize, page).then((result) => {
-          returnPaginatedResult(result, req, res);
-        });
+        db.fetchConsolidatedUploads(pageSize, page, block, date).then(
+          (result) => {
+            returnPaginatedResult(result, req, res);
+          }
+        );
       } catch (e) {
         console.log(
           new Date(),
@@ -400,9 +411,9 @@ loadEnv([], true).then(async (e) => {
   app.get(`${BASE_PATH}/nfts`, function (req: any, res: any, next: any) {
     try {
       const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        req.query.page_size && req.query.page_size < NFTS_PAGE_SIZE
           ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
+          : NFTS_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
       const sortDir =
@@ -489,9 +500,9 @@ loadEnv([], true).then(async (e) => {
     function (req: any, res: any, next: any) {
       try {
         const pageSize: number =
-          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          req.query.page_size && req.query.page_size < NFTS_PAGE_SIZE
             ? parseInt(req.query.page_size)
-            : DEFAULT_PAGE_SIZE;
+            : NFTS_PAGE_SIZE;
         const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
         const nfts = req.query.id;
@@ -1504,6 +1515,7 @@ loadEnv([], true).then(async (e) => {
     `${BASE_PATH}/consolidations`,
     function (req: any, res: any, next: any) {
       try {
+        const block = req.query.block;
         const pageSize: number =
           req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
             ? parseInt(req.query.page_size)
@@ -1514,9 +1526,9 @@ loadEnv([], true).then(async (e) => {
           new Date(),
           `[API]`,
           '[CONSOLIDATIONS]',
-          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+          `[BLOCK ${block}][PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
-        db.fetchConsolidations(pageSize, page).then((result) => {
+        db.fetchConsolidations(pageSize, page, block).then((result) => {
           result.data.map((a: any) => {
             a.wallets = JSON.parse(a.wallets);
           });
@@ -1570,8 +1582,8 @@ loadEnv([], true).then(async (e) => {
 
   app.get(`${BASE_PATH}/delegations`, function (req: any, res: any, next: any) {
     try {
-      const use_case = req.query.use_case;
-      const collection = req.query.collection;
+      const use_cases = req.query.use_case;
+      const collections = req.query.collection;
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
           ? parseInt(req.query.page_size)
@@ -1581,20 +1593,22 @@ loadEnv([], true).then(async (e) => {
         req.query.show_expired && req.query.show_expired == 'true'
           ? true
           : false;
+      const block = req.query.block;
 
       console.log(
         new Date(),
         `[API]`,
         '[DELEGATIONS]',
-        `[USE CASE ${use_case}]`,
-        `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        `[USE CASE ${use_cases}]`,
+        `[BLOCK ${block}][PAGE_SIZE ${pageSize}][PAGE ${page}]`
       );
       db.fetchDelegationsByUseCase(
-        collection,
-        use_case,
+        collections,
+        use_cases,
         showExpired,
         pageSize,
-        page
+        page,
+        block
       ).then((result) => {
         returnPaginatedResult(result, req, res);
       });
@@ -1646,15 +1660,58 @@ loadEnv([], true).then(async (e) => {
     }
   );
 
-  app.get(`/`, async function (req: any, res: any, next: any) {
-    const image = await db.fetchRandomImage();
-    res.send(
-      JSON.stringify({
-        message: 'For 6529 SEIZE API go to /api',
-        image: image[0].image
-      })
+  app.get(`/floor_price`, async function (req: any, res: any, next: any) {
+    const contract = req.query.contract;
+    const id = req.query.id;
+
+    if (!contract || !id) {
+      res.status(400).send('Missing contract or id');
+      return;
+    }
+    console.log(
+      new Date(),
+      `[API]`,
+      '[FLOOR PRICE]',
+      `[CONTRACT ${contract}][ID ${id}]`
     );
+    const url = `https://api.opensea.io/v2/orders/ethereum/seaport/listings?asset_contract_address=${contract}&limit=1&token_ids=${id}&order_by=eth_price&order_direction=asc`;
+    const response = await fetch(url, {
+      headers: {
+        'X-API-KEY': process.env.OPENSEA_API_KEY!,
+        accept: 'application/json'
+      }
+    });
+    return res.send(await response.json());
   });
+
+  app.get(
+    `${BASE_PATH}/next_gen/:merkle_root/:address`,
+    async function (req: any, res: any, next: any) {
+      const merkleRoot = req.params.merkle_root;
+      const address = req.params.address;
+
+      console.log(
+        new Date(),
+        `[API]`,
+        '[NEXT GEN]',
+        `[MERKLE ${merkleRoot}][ADDRESS ${address}]`
+      );
+      try {
+        db.fetchNextGenAllowlist(merkleRoot, address).then((result) => {
+          res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+          res.end(JSON.stringify(result));
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NEXT GEN]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
 
   app.get(`${BASE_PATH}`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();

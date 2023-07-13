@@ -1241,3 +1241,12 @@ export async function fetchLatestNftUri(tokenId: number, contract: string) {
   });
   return latestHistory ? latestHistory.uri : null;
 }
+
+export async function fetchHasEns(wallets: string[]) {
+  let sql = `SELECT COUNT(*) as ens_count FROM ${ENS_TABLE} WHERE wallet in (${mysql.escape(
+    wallets
+  )}) AND display IS NOT NULL`;
+
+  const results = await execSQL(sql);
+  return parseInt(results[0].ens_count) === wallets.length;
+}

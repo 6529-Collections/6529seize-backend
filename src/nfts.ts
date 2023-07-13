@@ -327,6 +327,9 @@ export const findNFTs = async (
     if (m?.supply != n.supply) {
       return true;
     }
+    if (m.uri != n.uri) {
+      return true;
+    }
     if (new Date(m?.mint_date).getTime() != new Date(n.mint_date).getTime()) {
       return true;
     }

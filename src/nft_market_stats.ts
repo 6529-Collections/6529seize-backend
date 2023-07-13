@@ -35,8 +35,7 @@ async function getResult(url: string) {
 }
 
 const findFloorPrice = async (stat: any): Promise<number> => {
-  const url = `https://api.opensea.io/v2/orders/ethereum/seaport/listings?asset_contract_address=${stat.contract}&limit=1&token_ids=${stat.id}&order_by=eth_price&order_direction=asc`;
-
+  const url = `https://api.staging.seize.io/floor_price?contract=${stat.contract}&id=${stat.id}`;
   const res = await getResult(url);
 
   if (res && res.status === 200) {
@@ -86,22 +85,32 @@ const findNftMarketStatsMain = async (contract: string) => {
     const nft = nfts[i];
 
     const floorPrice = await findFloorPrice(nft);
-    const volumes = await findVolumeNFTs(nft);
+    if (floorPrice) {
+      const volumes = await findVolumeNFTs(nft);
 
-    nft.floor_price = floorPrice;
-    nft.market_cap = floorPrice * nft.supply;
-    nft.total_volume_last_24_hours = volumes.total_volume_last_24_hours;
-    nft.total_volume_last_7_days = volumes.total_volume_last_7_days;
-    nft.total_volume_last_1_month = volumes.total_volume_last_1_month;
-    nft.total_volume = volumes.total_volume;
+      nft.floor_price = floorPrice;
+      nft.market_cap = floorPrice * nft.supply;
+      nft.total_volume_last_24_hours = volumes.total_volume_last_24_hours;
+      nft.total_volume_last_7_days = volumes.total_volume_last_7_days;
+      nft.total_volume_last_1_month = volumes.total_volume_last_1_month;
+      nft.total_volume = volumes.total_volume;
 
-    await persistNFTs([nft]);
-    console.log(
-      new Date(),
-      '[NFT MARKET STATS]',
-      `[CONTRACT ${contract}]`,
-      `[PROCESSED FOR ID ${nft.id}]`
-    );
+      await persistNFTs([nft]);
+      console.log(
+        new Date(),
+        '[NFT MARKET STATS]',
+        `[CONTRACT ${contract}]`,
+        `[PROCESSED FOR ID ${nft.id}]`
+      );
+    } else {
+      console.log(
+        new Date(),
+        '[NFT MARKET STATS]',
+        `[CONTRACT ${contract}]`,
+        `[ID ${nft.id}]`,
+        `[NO RESULTS FOUND]`
+      );
+    }
     processedStats.push(nft);
   }
 
