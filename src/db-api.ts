@@ -953,7 +953,8 @@ export async function fetchOwnerMetrics(
     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, 
     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,
-    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3, 
+    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3,
+    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season4 DESC) AS dense_rank_balance_memes_season4, 
     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients`;
   } else {
     ownerMetricsSelect = ` ${OWNERS_METRICS_TABLE}.*, 
@@ -1000,12 +1001,14 @@ export async function fetchOwnerMetrics(
     ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season1, 
     ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season2, 
     ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season3, 
+    ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season4, 
     ${WALLETS_TDH_TABLE}.boosted_gradients_tdh,
     ${WALLETS_TDH_TABLE}.tdh__raw, 
     ${WALLETS_TDH_TABLE}.memes_tdh__raw, 
     ${WALLETS_TDH_TABLE}.memes_tdh_season1__raw, 
     ${WALLETS_TDH_TABLE}.memes_tdh_season2__raw, 
-    ${WALLETS_TDH_TABLE}.memes_tdh_season3__raw, 
+    ${WALLETS_TDH_TABLE}.memes_tdh_season3__raw,
+    ${WALLETS_TDH_TABLE}.memes_tdh_season4__raw, 
     ${WALLETS_TDH_TABLE}.gradients_tdh__raw, 
     ${WALLETS_TDH_TABLE}.tdh, 
     ${WALLETS_TDH_TABLE}.memes_tdh, 
@@ -1030,6 +1033,7 @@ export async function fetchOwnerMetrics(
     sort == 'memes_balance_season1' ||
     sort == 'memes_balance_season2' ||
     sort == 'memes_balance_season3' ||
+    sort == 'memes_balance_season4' ||
     sort == 'gradients_balance'
   ) {
     sort = `${OWNERS_METRICS_TABLE}.${sort}`;
@@ -1060,6 +1064,7 @@ export async function fetchOwnerMetrics(
       RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
       RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2, 
       RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3, 
+      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season4 DESC) AS dense_rank_balance_memes_season4, 
       RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients, 
       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes DESC) AS dense_rank_unique_memes,
       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn1 DESC) AS dense_rank_unique_memes_season1,
@@ -1468,6 +1473,7 @@ export async function fetchConsolidatedOwnerMetrics(
     RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
     RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,
     RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3, 
+    RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season4 DESC) AS dense_rank_balance_memes_season4, 
     RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients`;
   } else {
     ownerMetricsSelect = ` ${CONSOLIDATED_OWNERS_METRICS_TABLE}.*, 
