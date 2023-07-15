@@ -1,7 +1,10 @@
 import {
   ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
-  MEMES_CONTRACT
+  MEMES_CONTRACT,
+  SZN1_INDEX,
+  SZN2_INDEX,
+  SZN3_INDEX
 } from './constants';
 import { TDH } from './entities/ITDH';
 import { Transaction } from './entities/ITransaction';
@@ -346,10 +349,9 @@ export const findTDH = async (lastTDHCalc: Date) => {
 
 export function calculateBoost(
   cardSets: number,
-  cardSetsS1: number,
-  cardSetsS2: number,
-  cardSetsS3: number,
-  cardSetsS4: number,
+  uniqueS1: number,
+  uniqueS2: number,
+  uniqueS3: number,
   genesis: boolean,
   nakamoto: boolean,
   gradients: any[],
@@ -364,9 +366,13 @@ export function calculateBoost(
     boost += Math.min((cardSets - 1) * 0.02, 0.04);
   }
 
+  const cardSetS1 = uniqueS1 == SZN1_INDEX.count;
+  const cardSetS2 = uniqueS2 == SZN2_INDEX.count;
+  const cardSetS3 = uniqueS3 == SZN3_INDEX.count;
+
   // Category B
   if (cardSets == 0) {
-    if (cardSetsS1 > 0) {
+    if (cardSetS1) {
       boost += 0.05;
     } else {
       if (genesis) {
@@ -377,10 +383,10 @@ export function calculateBoost(
         boost += 0.01;
       }
     }
-    if (cardSetsS2 > 0) {
+    if (cardSetS2) {
       boost += 0.05;
     }
-    if (cardSetsS3 > 0) {
+    if (cardSetS3) {
       boost += 0.05;
     }
   }
@@ -449,10 +455,9 @@ export async function ranks(
 
       const boost = calculateBoost(
         w.memes_cards_sets,
-        w.memesCardSetsSzn1,
-        w.memesCardSetsSzn2,
-        w.memesCardSetsSzn3,
-        w.memesCardSetsSzn4,
+        w.unique_memes_season1,
+        w.unique_memes_season2,
+        w.unique_memes_season3,
         w.genesis,
         w.memes.some((m: any) => m.id == 4),
         w.gradients,

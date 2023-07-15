@@ -91,15 +91,18 @@ export const NEVER_DATE = 64060588800;
 
 export const SZN1_INDEX = {
   start: 1,
-  end: 47
+  end: 47,
+  count: 47
 };
 export const SZN2_INDEX = {
   start: 48,
-  end: 86
+  end: 86,
+  count: 39
 };
 export const SZN3_INDEX = {
   start: 87,
-  end: 118
+  end: 118,
+  count: 32
 };
 export const SZN4_INDEX = {
   start: 119
