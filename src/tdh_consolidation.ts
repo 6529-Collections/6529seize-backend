@@ -8,7 +8,13 @@ import {
 } from './db';
 import { areEqualAddresses } from './helpers';
 import { ranks } from './tdh';
-import { MEMES_CONTRACT } from './constants';
+import {
+  MEMES_CONTRACT,
+  SZN1_INDEX,
+  SZN2_INDEX,
+  SZN3_INDEX,
+  SZN4_INDEX
+} from './constants';
 
 export const consolidateTDH = async (lastTDHCalc: Date) => {
   const tdh: TDHENS[] = await fetchAllTDH();
@@ -49,11 +55,6 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
         let totalTDH__raw = 0;
         let totalBalance = 0;
         let genesis = false;
-        let unique_memes = 0;
-        let unique_memes_season1 = 0;
-        let unique_memes_season2 = 0;
-        let unique_memes_season3 = 0;
-        let unique_memes_season4 = 0;
         let memesTDH = 0;
         let memesTDH__raw = 0;
         let memesBalance = 0;
@@ -80,11 +81,6 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           totalTDH__raw += wTdh.tdh__raw;
           totalBalance += wTdh.balance;
           genesis = genesis || wTdh.genesis;
-          unique_memes += wTdh.unique_memes;
-          unique_memes_season1 += wTdh.unique_memes_season1;
-          unique_memes_season2 += wTdh.unique_memes_season2;
-          unique_memes_season3 += wTdh.unique_memes_season3;
-          unique_memes_season4 += wTdh.unique_memes_season4;
           memesTDH += wTdh.memes_tdh;
           memesTDH__raw += wTdh.memes_tdh__raw;
           memesBalance += wTdh.memes_balance;
@@ -119,6 +115,24 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
             })
           );
         }
+
+        const unique_memes = consolidationMemes.length;
+        const unique_memes_season1 = getUniqueMemesSeason(
+          1,
+          consolidationMemes
+        );
+        const unique_memes_season2 = getUniqueMemesSeason(
+          2,
+          consolidationMemes
+        );
+        const unique_memes_season3 = getUniqueMemesSeason(
+          3,
+          consolidationMemes
+        );
+        const unique_memes_season4 = getUniqueMemesSeason(
+          4,
+          consolidationMemes
+        );
 
         const consolidation: ConsolidatedTDH = {
           date: new Date(),
@@ -220,4 +234,19 @@ function consolidateCards(consolidationTokens: any[], walletTokens: any[]) {
   );
 
   return mergedArray;
+}
+
+function getUniqueMemesSeason(season: number, consolidationTokens: any[]) {
+  const unique = new Set();
+  consolidationTokens.map((c) => {
+    if (
+      (season == 1 && c.id >= SZN1_INDEX.start && c.id <= SZN1_INDEX.end) ||
+      (season == 2 && c.id >= SZN2_INDEX.start && c.id <= SZN2_INDEX.end) ||
+      (season == 3 && c.id >= SZN3_INDEX.start && c.id <= SZN3_INDEX.end) ||
+      (season == 4 && c.id >= SZN4_INDEX.start)
+    ) {
+      unique.add(c.id);
+    }
+  });
+  return unique.size;
 }
