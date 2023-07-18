@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { DataSource } from 'typeorm';
+import { DataSource, LessThan } from 'typeorm';
 import {
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
@@ -285,7 +285,7 @@ export async function fetchLatestTDHBlockNumber() {
 }
 
 export async function fetchAllTransactions() {
-  let sql = `SELECT * FROM ${TRANSACTIONS_TABLE};`;
+  let sql = `SELECT * FROM ${TRANSACTIONS_TABLE} ORDER BY transaction_date ASC;`;
   const results = await execSQL(sql);
   return results;
 }
@@ -1177,12 +1177,13 @@ export async function persistDelegations(
   }
 
   for (const revocation of revocations) {
-    const r = await repo.findOne({
+    const r = await repo.find({
       where: {
         from_address: revocation.wallet1,
         to_address: revocation.wallet2,
         use_case: revocation.use_case,
-        collection: revocation.collection
+        collection: revocation.collection,
+        block: LessThan(revocation.block)
       }
     });
 

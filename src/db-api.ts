@@ -2014,9 +2014,11 @@ export async function fetchDistributionForNFT(
     transactionsTable = TRANSACTIONS_MEME_LAB_TABLE;
   }
 
-  joins += ` LEFT JOIN ${transactionsTable} ON ${DISTRIBUTION_TABLE}.contract = ${transactionsTable}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${transactionsTable}.token_id AND ${transactionsTable}.from_address=${mysql.escape(
+  joins += ` LEFT JOIN ${transactionsTable} ON ${DISTRIBUTION_TABLE}.contract = ${transactionsTable}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${transactionsTable}.token_id AND (${transactionsTable}.from_address=${mysql.escape(
     MANIFOLD
-  )} AND ${DISTRIBUTION_TABLE}.wallet=${transactionsTable}.to_address`;
+  )} OR ${transactionsTable}.from_address=${mysql.escape(
+    NULL_ADDRESS
+  )}) AND ${DISTRIBUTION_TABLE}.wallet=${transactionsTable}.to_address`;
 
   return fetchPaginated(
     DISTRIBUTION_TABLE,
@@ -2053,12 +2055,16 @@ export async function fetchDistributions(
 
   let joins = `LEFT JOIN ${NFTS_TABLE} ON ${DISTRIBUTION_TABLE}.card_id=${NFTS_TABLE}.id AND ${DISTRIBUTION_TABLE}.contract=${NFTS_TABLE}.contract`;
   joins += ` LEFT JOIN ${NFTS_MEME_LAB_TABLE} ON ${DISTRIBUTION_TABLE}.card_id=${NFTS_MEME_LAB_TABLE}.id AND ${DISTRIBUTION_TABLE}.contract=${NFTS_MEME_LAB_TABLE}.contract`;
-  joins += ` LEFT JOIN ${TRANSACTIONS_TABLE} ON ${DISTRIBUTION_TABLE}.contract = ${TRANSACTIONS_TABLE}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${TRANSACTIONS_TABLE}.token_id AND ${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
+  joins += ` LEFT JOIN ${TRANSACTIONS_TABLE} ON ${DISTRIBUTION_TABLE}.contract = ${TRANSACTIONS_TABLE}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${TRANSACTIONS_TABLE}.token_id AND (${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
     MANIFOLD
-  )} AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_TABLE}.to_address`;
-  joins += ` LEFT JOIN ${TRANSACTIONS_MEME_LAB_TABLE} ON ${DISTRIBUTION_TABLE}.contract = ${TRANSACTIONS_MEME_LAB_TABLE}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${TRANSACTIONS_MEME_LAB_TABLE}.token_id AND ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=${mysql.escape(
+  )} OR ${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
+    NULL_ADDRESS
+  )}) AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_TABLE}.to_address`;
+  joins += ` LEFT JOIN ${TRANSACTIONS_MEME_LAB_TABLE} ON ${DISTRIBUTION_TABLE}.contract = ${TRANSACTIONS_MEME_LAB_TABLE}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${TRANSACTIONS_MEME_LAB_TABLE}.token_id AND (${TRANSACTIONS_MEME_LAB_TABLE}.from_address=${mysql.escape(
     MANIFOLD
-  )} AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_MEME_LAB_TABLE}.to_address`;
+  )} OR ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=${mysql.escape(
+    NULL_ADDRESS
+  )}) AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_MEME_LAB_TABLE}.to_address`;
   joins += ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
 
   return fetchPaginated(

@@ -98,8 +98,10 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
       const firstMintTransaction = transactions.find(
         (t) =>
           t.token_id == tokenId &&
+          t.value > 0 &&
           areEqualAddresses(t.contract, MEMES_CONTRACT) &&
-          areEqualAddresses(MANIFOLD, t.from_address)
+          (areEqualAddresses(MANIFOLD, t.from_address) ||
+            areEqualAddresses(NULL_ADDRESS, t.from_address))
       );
 
       let mintPrice = 0;
