@@ -57,6 +57,7 @@ import {
   NFTHistory,
   NFTHistoryClaim
 } from './entities/INFTHistory';
+import { Rememe } from './entities/IRememe';
 import {
   areEqualAddresses,
   extractConsolidationWallets,
@@ -92,7 +93,8 @@ export async function connect(entities: any[] = []) {
       Delegation,
       NFTHistory,
       NFTHistoryBlock,
-      NFTHistoryClaim
+      NFTHistoryClaim,
+      Rememe
     ];
   }
 
@@ -1250,4 +1252,11 @@ export async function fetchHasEns(wallets: string[]) {
 
   const results = await execSQL(sql);
   return parseInt(results[0].ens_count) === wallets.length;
+}
+
+export async function persistRememes(rememes: Rememe[]) {
+  await AppDataSource.transaction(async (manager) => {
+    await manager.clear(Rememe);
+    await manager.insert(Rememe, rememes);
+  });
 }
