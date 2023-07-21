@@ -509,6 +509,12 @@ export async function fetchEnsRefresh() {
   return results;
 }
 
+export async function fetchBrokenEnsRefresh() {
+  let sql = `SELECT * FROM ${ENS_TABLE} WHERE display LIKE '%?%' LIMIT 200;`;
+  const results = await execSQL(sql);
+  return results;
+}
+
 export async function fetchMissingEns(datetime?: Date) {
   let sql = `SELECT DISTINCT address
     FROM (

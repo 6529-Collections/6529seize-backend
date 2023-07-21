@@ -5,7 +5,8 @@ import {
   fetchEnsRefresh,
   persistENS,
   fetchTransactionsFromDate,
-  fetchMissingEns
+  fetchMissingEns,
+  fetchBrokenEnsRefresh
 } from './db';
 
 let alchemy: Alchemy;
@@ -22,10 +23,14 @@ async function findExistingEns(ens: ENS[]) {
   for (const w of ens) {
     try {
       const newDisplay = await alchemy.core.lookupAddress(w.wallet);
+      let newDisplayStr = newDisplay;
+      if (newDisplay) {
+        newDisplayStr = replaceEmojisWithHex(newDisplay);
+      }
       const newEns: ENS = {
         created_at: new Date(),
         wallet: w.wallet,
-        display: newDisplay
+        display: newDisplayStr
       };
       deltaEns.push(newEns);
     } catch (e: any) {
@@ -65,10 +70,14 @@ async function findNewEns(wallets: string[]) {
     wallets.map(async (w) => {
       try {
         const display = await alchemy.core.lookupAddress(w);
+        let displayStr = display;
+        if (display) {
+          displayStr = replaceEmojisWithHex(display);
+        }
         const newEns: ENS = {
           created_at: new Date(),
           wallet: w,
-          display: display
+          display: displayStr
         };
         finalEns.push(newEns);
       } catch (e: any) {
@@ -110,7 +119,14 @@ export async function discoverEns(datetime?: Date) {
 }
 
 async function refreshEnsLoop() {
-  const batch: ENS[] = await fetchEnsRefresh();
+  let batch: ENS[];
+  if (process.env.REFRESH_BROKEN_ENS === 'true') {
+    console.log(`[REFRESH ENS LOOP] [REFRESHING BROKEN ENS]`);
+    batch = await fetchBrokenEnsRefresh();
+  } else {
+    batch = await fetchEnsRefresh();
+  }
+
   if (batch.length > 0) {
     const delta = await findExistingEns(batch);
     await persistENS(delta);
@@ -130,4 +146,15 @@ export async function refreshEns() {
   while (processing) {
     processing = await refreshEnsLoop();
   }
+}
+
+function replaceEmojisWithHex(inputString: string) {
+  return inputString.replace(/[\u{1F300}-\u{1F6FF}]/gu, (match: string) => {
+    const codePoint = match.codePointAt(0);
+    if (codePoint) {
+      const emojiHex = codePoint.toString(16).toUpperCase();
+      return `U+${emojiHex}`;
+    }
+    return match;
+  });
 }

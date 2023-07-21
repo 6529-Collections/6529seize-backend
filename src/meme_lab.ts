@@ -151,7 +151,9 @@ async function processNFTs(
       }
       const tokenPathOriginal = `${MEMELAB_CONTRACT}/${tokenId}.${format}`;
 
-      let animation = fullMetadata.animation;
+      let animation = fullMetadata.animation
+        ? fullMetadata.animation
+        : fullMetadata.animation_url;
       const animationDetails = fullMetadata.animation_details;
 
       let compressedAnimation;
