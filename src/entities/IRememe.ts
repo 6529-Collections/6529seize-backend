@@ -1,5 +1,5 @@
 import { Entity, Column, PrimaryColumn, CreateDateColumn } from 'typeorm';
-import { REMEMES_TABLE } from '../constants';
+import { REMEMES_TABLE, REMEMES_UPLOADS } from '../constants';
 
 @Entity(REMEMES_TABLE)
 export class Rememe {
@@ -38,4 +38,13 @@ export class Rememe {
 
   @Column({ type: 'json' })
   media!: any;
+}
+
+@Entity(REMEMES_UPLOADS)
+export class RememeUpload {
+  @CreateDateColumn()
+  created_at!: Date;
+
+  @PrimaryColumn({ type: 'varchar', length: 150 })
+  url!: string;
 }

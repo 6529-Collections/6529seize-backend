@@ -31,6 +31,7 @@ export const NFTS_HISTORY_CLAIMS_TABLE = 'nfts_history_claims';
 export const NEXT_GEN_ALLOWLIST = 'next_gen_allowlist';
 export const NEXT_GEN_COLLECTIONS = 'next_gen_collections';
 export const REMEMES_TABLE = 'rememes';
+export const REMEMES_UPLOADS = 'uploads_rememes';
 
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
 export const GRADIENT_CONTRACT = '0x0c58ef43ff3032005e472cb5709f8908acb00205';

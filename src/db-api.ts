@@ -35,7 +35,8 @@ import {
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE,
-  REMEMES_TABLE
+  REMEMES_TABLE,
+  REMEMES_UPLOADS
 } from './constants';
 import {
   areEqualAddresses,
@@ -2273,7 +2274,7 @@ export async function fetchNextGenAllowlist(
   };
 }
 
-export async function fetchRemes(
+export async function fetchRememes(
   memeIds: string,
   pageSize: number,
   page: number,
@@ -2296,4 +2297,14 @@ export async function fetchRemes(
     );
   }
   return fetchPaginated(REMEMES_TABLE, ` RAND() `, pageSize, page, filters);
+}
+
+export async function fetchRememesUploads(pageSize: number, page: number) {
+  return fetchPaginated(
+    REMEMES_UPLOADS,
+    ` created_at desc `,
+    pageSize,
+    page,
+    ''
+  );
 }

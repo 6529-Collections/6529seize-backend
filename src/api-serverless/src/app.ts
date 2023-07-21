@@ -1738,7 +1738,7 @@ loadEnv([], true).then(async (e) => {
         '[REMEMES]',
         `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
       );
-      db.fetchRemes(memeIds, pageSize, page, contract, id).then((result) => {
+      db.fetchRememes(memeIds, pageSize, page, contract, id).then((result) => {
         result.data.map((a: any) => {
           a.metadata = JSON.parse(a.metadata);
           a.media = JSON.parse(a.media);
@@ -1757,6 +1757,37 @@ loadEnv([], true).then(async (e) => {
       return;
     }
   });
+
+  app.get(
+    `${BASE_PATH}/rememes_uploads`,
+    function (req: any, res: any, next: any) {
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[REMEMES UPLOADS]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchRememesUploads(pageSize, page).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[REMEMES UPLOADS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
 
   app.get(`${BASE_PATH}`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();

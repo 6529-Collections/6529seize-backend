@@ -1,9 +1,10 @@
 import { readFileSync, createReadStream } from 'fs';
 import { loadEnv } from '../secrets';
-import { Rememe } from '../entities/IRememe';
+import { Rememe, RememeUpload } from '../entities/IRememe';
 import { Alchemy } from 'alchemy-sdk';
 import { ALCHEMY_SETTINGS } from '../constants';
-import { persistRememes } from '../db';
+import { persistRememes, persistRememesUpload } from '../db';
+import converter from 'json-2-csv';
 
 const Arweave = require('arweave');
 const csvParser = require('csv-parser');
@@ -24,11 +25,12 @@ const myarweave = Arweave.init({
 
 export const handler = async (event?: any, context?: any) => {
   console.log('[RUNNING REMEMES]');
-  await loadEnv([Rememe]);
+  await loadEnv([Rememe, RememeUpload]);
   const csvData = await loadRememes();
   const rememes = await processRememes(csvData);
 
   await persistRememes(rememes);
+  await upload(rememes);
 
   console.log('[REMEMES COMPLETE]');
 };
@@ -135,23 +137,23 @@ async function processRememes(csvData: CSVData[]) {
   return rememes;
 }
 
-async function uploadTeam() {
+async function upload(rememes: Rememe[]) {
   const arweaveKey = process.env.ARWEAVE_KEY
     ? JSON.parse(process.env.ARWEAVE_KEY)
     : {};
 
-  const fileData = readFileSync(FILE_DIR);
+  console.log('[REMEMES]', `[UPLOADING TO ARWEAVE]`);
 
-  console.log(new Date(), `[TEAM UPLOAD]`, `[FILE LOADED]`);
+  const csv = await converter.json2csvAsync(rememes);
 
   let transaction = await myarweave.createTransaction(
-    { data: Buffer.from(fileData) },
+    { data: Buffer.from(csv) },
     arweaveKey
   );
 
   transaction.addTag('Content-Type', 'text/csv');
 
-  console.log(new Date(), `[TEAM UPLOAD]`, `[SIGNING ARWEAVE TRANSACTION]`);
+  console.log(`[REMEMES]`, `[SIGNING ARWEAVE TRANSACTION]`);
 
   await myarweave.transactions.sign(transaction, arweaveKey);
 
@@ -161,13 +163,15 @@ async function uploadTeam() {
     await uploader.uploadChunk();
     console.log(
       new Date(),
-      '[TEAM UPLOAD]',
+      '[REMEMES]',
       `${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
     );
   }
 
   const url = `https://arweave.net/${transaction.id}`;
-  console.log(new Date(), `[TEAM UPLOADED]`, `[ARWEAVE LINK ${url}]`);
+  console.log(`[REMEMES]`, `[ARWEAVE LINK ${url}]`);
+
+  await persistRememesUpload(`https://arweave.net/${transaction.id}`);
 }
 
 async function readCsvFile(filePath: string): Promise<any[]> {
