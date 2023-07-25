@@ -256,6 +256,6 @@ async function persistS3() {
     const rememes: Rememe[] = await fetchRememes();
     await persistRememesS3(rememes);
   } else {
-    console.log(`[REMEMES]`, `[SKIPPING S3 UPLOAD]`, `[NOT PRODUCTION]`);
+    console.log(`[REMEMES]`, `[SKIPPING S3 UPLOAD ${process.env.NODE_ENV}]`);
   }
 }
