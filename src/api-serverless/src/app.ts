@@ -1689,7 +1689,18 @@ loadEnv([], true).then(async (e) => {
         accept: 'application/json'
       }
     });
-    return res.send(await response.json());
+    try {
+      const json = await response.json();
+      return res.send(json);
+    } catch (e) {
+      console.log(
+        new Date(),
+        `[API]`,
+        '[FLOOR PRICE]',
+        `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+      );
+      return res.send({ error: e });
+    }
   });
 
   app.get(
