@@ -1261,15 +1261,20 @@ export async function fetchHasEns(wallets: string[]) {
   return parseInt(results[0].ens_count) === wallets.length;
 }
 
-export async function persistRememes(rememes: Rememe[]) {
-  await AppDataSource.transaction(async (manager) => {
-    await manager.clear(Rememe);
-    await manager.insert(Rememe, rememes);
-  });
+export async function deleteRememes(rememes: Rememe[]) {
+  await AppDataSource.getRepository(Rememe).remove(rememes);
+}
+
+export async function persistRememe(rememe: Rememe) {
+  await AppDataSource.getRepository(Rememe).save(rememe);
 }
 
 export async function persistRememesUpload(url: string) {
   await AppDataSource.getRepository(RememeUpload).save({
     url
   });
+}
+
+export async function fetchRememes() {
+  return await AppDataSource.getRepository(Rememe).find();
 }

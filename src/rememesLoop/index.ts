@@ -1,10 +1,17 @@
-import { readFileSync, createReadStream } from 'fs';
+import { createReadStream } from 'fs';
 import { loadEnv } from '../secrets';
 import { Rememe, RememeUpload } from '../entities/IRememe';
 import { Alchemy } from 'alchemy-sdk';
-import { ALCHEMY_SETTINGS } from '../constants';
-import { persistRememes, persistRememesUpload } from '../db';
+import { ALCHEMY_SETTINGS, CLOUDFRONT_LINK } from '../constants';
+import {
+  deleteRememes,
+  fetchRememes,
+  persistRememe,
+  persistRememesUpload
+} from '../db';
 import converter from 'json-2-csv';
+import { persistRememesS3 } from '../s3_rememes';
+import { areEqualAddresses, getContentType } from '../helpers';
 
 const Arweave = require('arweave');
 const csvParser = require('csv-parser');
@@ -25,14 +32,20 @@ const myarweave = Arweave.init({
 
 export const handler = async (event?: any, context?: any) => {
   console.log('[RUNNING REMEMES]');
+  const start = new Date().getTime();
   await loadEnv([Rememe, RememeUpload]);
+  const rememes: Rememe[] = await fetchRememes();
   const csvData = await loadRememes();
-  const rememes = await processRememes(csvData);
+  await processRememes(rememes, csvData);
 
-  await persistRememes(rememes);
   await upload(rememes);
 
-  console.log('[REMEMES COMPLETE]');
+  await persistS3();
+
+  console.log(
+    '[REMEMES COMPLETE]',
+    `[${(new Date().getTime() - start) / 1000} seconds]`
+  );
 };
 
 async function loadRememes() {
@@ -61,16 +74,36 @@ async function loadRememes() {
   return csvData;
 }
 
-async function processRememes(csvData: CSVData[]) {
+async function processRememes(rememes: Rememe[], csvData: CSVData[]) {
   const alchemy = new Alchemy({
     ...ALCHEMY_SETTINGS,
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const rememes: Rememe[] = [];
+  const deleteRememesList = [...rememes].filter(
+    (r) =>
+      !csvData.some(
+        (d) => areEqualAddresses(r.contract, d.contract) && r.id == d.id
+      )
+  );
+
+  const addDataList = [...csvData].filter(
+    (d) =>
+      !rememes.some(
+        (r) => areEqualAddresses(r.contract, d.contract) && r.id == d.id
+      )
+  );
+
+  console.log(
+    `[REMEMES PROCESSING]`,
+    `[EXISTING ${rememes.length}]`,
+    `[FILE ${csvData.length}]`,
+    `[ADD ${addDataList.length}]`,
+    `[DELETE ${deleteRememesList.length}]`
+  );
 
   await Promise.all(
-    csvData.map(async (d) => {
+    addDataList.map(async (d) => {
       try {
         const nftMeta = await alchemy.nft.getNftMetadata(d.contract, d.id, {});
         if (!nftMeta.metadataError) {
@@ -96,6 +129,24 @@ async function processRememes(csvData: CSVData[]) {
               : ''
             : '';
 
+          const originalFormat = await getContentType(image);
+
+          let scaledFormat = 'webp';
+          let s3Original = null;
+          let s3Scaled = null;
+          let s3Thumbnail = null;
+          let s3Icon = null;
+
+          if (originalFormat) {
+            if (originalFormat.toLowerCase() == 'gif') {
+              scaledFormat = 'gif';
+            }
+            s3Original = `${CLOUDFRONT_LINK}/rememes/images/original/${d.contract}-${d.id}.${originalFormat}`;
+            s3Scaled = `${CLOUDFRONT_LINK}/rememes/images/scaled/${d.contract}-${d.id}.${scaledFormat}`;
+            s3Thumbnail = `${CLOUDFRONT_LINK}/rememes/images/thumbnail/${d.contract}-${d.id}.${scaledFormat}`;
+            s3Icon = `${CLOUDFRONT_LINK}/rememes/images/icon/${d.contract}-${d.id}.${scaledFormat}`;
+          }
+
           const r: Rememe = {
             created_at: new Date(),
             contract: d.contract,
@@ -108,9 +159,18 @@ async function processRememes(csvData: CSVData[]) {
             image,
             animation,
             contract_opensea_data: contractOpenseaData,
-            media: media
+            media: media,
+            s3_image_original: s3Original,
+            s3_image_scaled: s3Scaled,
+            s3_image_thumbnail: s3Thumbnail,
+            s3_image_icon: s3Icon
           };
-          rememes.push(r);
+          console.log(
+            '[REMEME PROCESSED]',
+            `[CONTRACT ${d.contract}]`,
+            `[ID ${d.id}]`
+          );
+          await persistRememe(r);
         } else {
           console.log(
             '[REMEMES]',
@@ -122,8 +182,7 @@ async function processRememes(csvData: CSVData[]) {
         }
       } catch (e) {
         console.log(
-          '[REMEMES]',
-          `[ERROR]`,
+          '[REMEMES ERROR]',
           `[CONTRACT ${d.contract}]`,
           `[ID ${d.id}]`,
           `[ERROR ${e}]`
@@ -132,9 +191,13 @@ async function processRememes(csvData: CSVData[]) {
     })
   );
 
-  console.log(`[REMEMES PROCESSED ${rememes.length}]`);
+  await deleteRememes(deleteRememesList);
 
-  return rememes;
+  console.log(
+    `[REMEMES PROCESSED]`,
+    `[ADD ${addDataList.length}]`,
+    `[DELETE ${deleteRememesList.length}]`
+  );
 }
 
 async function upload(rememes: Rememe[]) {
@@ -183,4 +246,9 @@ async function readCsvFile(filePath: string): Promise<any[]> {
       .on('end', () => resolve(results))
       .on('error', reject);
   });
+}
+
+async function persistS3() {
+  const rememes: Rememe[] = await fetchRememes();
+  await persistRememesS3(rememes);
 }

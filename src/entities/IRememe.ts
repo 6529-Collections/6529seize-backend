@@ -38,6 +38,18 @@ export class Rememe {
 
   @Column({ type: 'json' })
   media!: any;
+
+  @Column({ type: 'text', nullable: true, default: null })
+  s3_image_original!: string | null;
+
+  @Column({ type: 'text', nullable: true, default: null })
+  s3_image_scaled!: string | null;
+
+  @Column({ type: 'text', nullable: true, default: null })
+  s3_image_thumbnail!: string | null;
+
+  @Column({ type: 'text', nullable: true, default: null })
+  s3_image_icon!: string | null;
 }
 
 @Entity(REMEMES_UPLOADS)

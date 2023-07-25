@@ -69,6 +69,8 @@ export const NFT_SCALED60_IMAGE_LINK =
 export const NFT_VIDEO_LINK = 'https://d3lqz0a4bldqgf.cloudfront.net/videos/';
 export const NFT_HTML_LINK = 'https://d3lqz0a4bldqgf.cloudfront.net/html/';
 
+export const CLOUDFRONT_LINK = 'https://d3lqz0a4bldqgf.cloudfront.net';
+
 // export const DELEGATION_CONTRACT: {
 //   chain_id: number;
 //   contract: `0x${string}`;

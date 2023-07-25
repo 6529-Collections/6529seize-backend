@@ -1745,7 +1745,7 @@ loadEnv([], true).then(async (e) => {
           a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
           a.meme_references = JSON.parse(a.meme_references);
         });
-        returnPaginatedResult(result, req, res);
+        returnPaginatedResult(result, req, res, true);
       });
     } catch (e) {
       console.log(
