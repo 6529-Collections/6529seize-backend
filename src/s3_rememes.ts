@@ -117,14 +117,12 @@ async function handleImageUpload(
 async function objectExists(myBucket: any, key: any): Promise<boolean> {
   try {
     await s3.send(new HeadObjectCommand({ Bucket: myBucket, Key: key }));
-    console.log('objectExists', key);
     return true;
   } catch (error1: any) {
     try {
       await s3.send(
         new HeadObjectCommand({ Bucket: myBucket, Key: `${key}__temp` })
       );
-      console.log('objectExists', `${key}__temp`);
       return true;
     } catch (error2: any) {
       return false;

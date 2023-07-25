@@ -36,10 +36,9 @@ export const handler = async (event?: any, context?: any) => {
   await loadEnv([Rememe, RememeUpload]);
   const rememes: Rememe[] = await fetchRememes();
   const csvData = await loadRememes();
+
   await processRememes(rememes, csvData);
-
   await upload(rememes);
-
   await persistS3();
 
   console.log(
@@ -101,6 +100,8 @@ async function processRememes(rememes: Rememe[], csvData: CSVData[]) {
     `[ADD ${addDataList.length}]`,
     `[DELETE ${deleteRememesList.length}]`
   );
+
+  let addRememesCount = 0;
 
   await Promise.all(
     addDataList.map(async (d) => {
@@ -171,6 +172,7 @@ async function processRememes(rememes: Rememe[], csvData: CSVData[]) {
             `[ID ${d.id}]`
           );
           await persistRememe(r);
+          addRememesCount++;
         } else {
           console.log(
             '[REMEMES]',
@@ -195,8 +197,8 @@ async function processRememes(rememes: Rememe[], csvData: CSVData[]) {
 
   console.log(
     `[REMEMES PROCESSED]`,
-    `[ADD ${addDataList.length}]`,
-    `[DELETE ${deleteRememesList.length}]`
+    `[ADDED ${addRememesCount}]`,
+    `[DELETED ${deleteRememesList.length}]`
   );
 }
 
