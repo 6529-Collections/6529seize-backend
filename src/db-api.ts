@@ -2296,7 +2296,13 @@ export async function fetchRememes(
       `contract=${mysql.escape(contract)} AND id=${id}`
     );
   }
-  return fetchPaginated(REMEMES_TABLE, ` RAND() `, pageSize, page, filters);
+  return fetchPaginated(
+    REMEMES_TABLE,
+    ` token_type asc, RAND() `,
+    pageSize,
+    page,
+    filters
+  );
 }
 
 export async function fetchRememesUploads(pageSize: number, page: number) {
