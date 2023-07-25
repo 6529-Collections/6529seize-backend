@@ -38,7 +38,7 @@ export const handler = async (event?: any, context?: any) => {
   const csvData = await loadRememes();
 
   await processRememes(rememes, csvData);
-  await uploadRememes();
+  // await uploadRememes();
   await persistS3();
 
   console.log(
@@ -132,20 +132,16 @@ async function processRememes(rememes: Rememe[], csvData: CSVData[]) {
 
           const originalFormat = await getContentType(image);
 
-          let scaledFormat = 'webp';
           let s3Original = null;
           let s3Scaled = null;
           let s3Thumbnail = null;
           let s3Icon = null;
 
           if (originalFormat) {
-            if (originalFormat.toLowerCase() == 'gif') {
-              scaledFormat = 'gif';
-            }
             s3Original = `${CLOUDFRONT_LINK}/rememes/images/original/${d.contract}-${d.id}.${originalFormat}`;
-            s3Scaled = `${CLOUDFRONT_LINK}/rememes/images/scaled/${d.contract}-${d.id}.${scaledFormat}`;
-            s3Thumbnail = `${CLOUDFRONT_LINK}/rememes/images/thumbnail/${d.contract}-${d.id}.${scaledFormat}`;
-            s3Icon = `${CLOUDFRONT_LINK}/rememes/images/icon/${d.contract}-${d.id}.${scaledFormat}`;
+            s3Scaled = `${CLOUDFRONT_LINK}/rememes/images/scaled/${d.contract}-${d.id}.${originalFormat}`;
+            s3Thumbnail = `${CLOUDFRONT_LINK}/rememes/images/thumbnail/${d.contract}-${d.id}.${originalFormat}`;
+            s3Icon = `${CLOUDFRONT_LINK}/rememes/images/icon/${d.contract}-${d.id}.${originalFormat}`;
           }
 
           const r: Rememe = {
