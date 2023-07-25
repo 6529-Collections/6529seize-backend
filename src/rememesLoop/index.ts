@@ -38,7 +38,7 @@ export const handler = async (event?: any, context?: any) => {
   const csvData = await loadRememes();
 
   await processRememes(rememes, csvData);
-  await upload(rememes);
+  await uploadRememes();
   await persistS3();
 
   console.log(
@@ -250,7 +250,16 @@ async function readCsvFile(filePath: string): Promise<any[]> {
   });
 }
 
-async function persistS3() {
+async function uploadRememes() {
   const rememes: Rememe[] = await fetchRememes();
-  await persistRememesS3(rememes);
+  await upload(rememes);
+}
+
+async function persistS3() {
+  if (process.env.NODE_ENV == 'local') {
+    const rememes: Rememe[] = await fetchRememes();
+    await persistRememesS3(rememes);
+  } else {
+    console.log(`[REMEMES]`, `[SKIPPING S3 UPLOAD]`, `[NOT PRODUCTION]`);
+  }
 }
