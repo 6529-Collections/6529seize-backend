@@ -2279,7 +2279,8 @@ export async function fetchRememes(
   pageSize: number,
   page: number,
   contract: string,
-  id: number
+  id: number,
+  tokenType: string
 ) {
   let filters = '';
   if (memeIds) {
@@ -2294,6 +2295,12 @@ export async function fetchRememes(
     filters = constructFilters(
       filters,
       `contract=${mysql.escape(contract)} AND id=${id}`
+    );
+  }
+  if (tokenType) {
+    filters = constructFilters(
+      filters,
+      `token_type=${mysql.escape(tokenType)}`
     );
   }
   return fetchPaginated(

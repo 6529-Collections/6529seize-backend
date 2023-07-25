@@ -1731,6 +1731,7 @@ loadEnv([], true).then(async (e) => {
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
       const contract = req.query.contract;
       const id = req.query.id;
+      const tokenType = req.query.token_type;
 
       console.log(
         new Date(),
@@ -1738,15 +1739,17 @@ loadEnv([], true).then(async (e) => {
         '[REMEMES]',
         `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
       );
-      db.fetchRememes(memeIds, pageSize, page, contract, id).then((result) => {
-        result.data.map((a: any) => {
-          a.metadata = JSON.parse(a.metadata);
-          a.media = JSON.parse(a.media);
-          a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
-          a.meme_references = JSON.parse(a.meme_references);
-        });
-        returnPaginatedResult(result, req, res, true);
-      });
+      db.fetchRememes(memeIds, pageSize, page, contract, id, tokenType).then(
+        (result) => {
+          result.data.map((a: any) => {
+            a.metadata = JSON.parse(a.metadata);
+            a.media = JSON.parse(a.media);
+            a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
+            a.meme_references = JSON.parse(a.meme_references);
+          });
+          returnPaginatedResult(result, req, res, true);
+        }
+      );
     } catch (e) {
       console.log(
         new Date(),
