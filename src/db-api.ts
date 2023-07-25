@@ -34,7 +34,9 @@ import {
   TRANSACTIONS_MEME_LAB_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
-  WALLETS_TDH_TABLE
+  WALLETS_TDH_TABLE,
+  REMEMES_TABLE,
+  REMEMES_UPLOADS
 } from './constants';
 import {
   areEqualAddresses,
@@ -2270,4 +2272,52 @@ export async function fetchNextGenAllowlist(
     data: null,
     proof: []
   };
+}
+
+export async function fetchRememes(
+  memeIds: string,
+  pageSize: number,
+  page: number,
+  contract: string,
+  id: number,
+  tokenType: string
+) {
+  let filters = '';
+  if (memeIds) {
+    memeIds.split(',').map((nft_id) => {
+      filters = constructFilters(
+        filters,
+        `JSON_CONTAINS(meme_references, '${nft_id}','$')`
+      );
+    });
+  }
+  if (contract && id) {
+    filters = constructFilters(
+      filters,
+      `contract=${mysql.escape(contract)} AND id=${id}`
+    );
+  }
+  if (tokenType) {
+    filters = constructFilters(
+      filters,
+      `token_type=${mysql.escape(tokenType)}`
+    );
+  }
+  return fetchPaginated(
+    REMEMES_TABLE,
+    ` token_type asc, RAND() `,
+    pageSize,
+    page,
+    filters
+  );
+}
+
+export async function fetchRememesUploads(pageSize: number, page: number) {
+  return fetchPaginated(
+    REMEMES_UPLOADS,
+    ` created_at desc `,
+    pageSize,
+    page,
+    ''
+  );
 }

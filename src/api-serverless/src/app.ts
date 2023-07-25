@@ -1689,7 +1689,18 @@ loadEnv([], true).then(async (e) => {
         accept: 'application/json'
       }
     });
-    return res.send(await response.json());
+    try {
+      const json = await response.json();
+      return res.send(json);
+    } catch (e) {
+      console.log(
+        new Date(),
+        `[API]`,
+        '[FLOOR PRICE]',
+        `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+      );
+      return res.send({ error: e });
+    }
   });
 
   app.get(
@@ -1717,6 +1728,77 @@ loadEnv([], true).then(async (e) => {
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         next(e);
+      }
+    }
+  );
+
+  app.get(`${BASE_PATH}/rememes`, function (req: any, res: any, next: any) {
+    try {
+      const memeIds = req.query.meme_id;
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const contract = req.query.contract;
+      const id = req.query.id;
+      const tokenType = req.query.token_type;
+
+      console.log(
+        new Date(),
+        `[API]`,
+        '[REMEMES]',
+        `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+      );
+      db.fetchRememes(memeIds, pageSize, page, contract, id, tokenType).then(
+        (result) => {
+          result.data.map((a: any) => {
+            a.metadata = JSON.parse(a.metadata);
+            a.media = JSON.parse(a.media);
+            a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
+            a.meme_references = JSON.parse(a.meme_references);
+          });
+          returnPaginatedResult(result, req, res, true);
+        }
+      );
+    } catch (e) {
+      console.log(
+        new Date(),
+        `[API]`,
+        '[REMEMES]',
+        `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+      );
+      return;
+    }
+  });
+
+  app.get(
+    `${BASE_PATH}/rememes_uploads`,
+    function (req: any, res: any, next: any) {
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[REMEMES UPLOADS]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchRememesUploads(pageSize, page).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[REMEMES UPLOADS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
       }
     }
   );

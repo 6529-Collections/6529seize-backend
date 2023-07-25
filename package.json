@@ -8,7 +8,7 @@
     "backend:dev": "NODE_ENV=development node build/backend.js",
     "api:dev": "NODE_ENV=development node src/api-serverless/dist/index.js",
     "build": "rimraf ./build && jest && NODE_OPTIONS=--max-old-space-size=8192 tsc -p tsconfig.json",
-    "postbuild": "cp src/teamLoop/team.csv build/teamLoop",
+    "postbuild": "cp src/teamLoop/team.csv build/teamLoop && cp src/rememesLoop/rememes.csv build/rememesLoop",
     "tsc": "./node_modules/typescript/bin/tsc",
     "test": "jest"
   },
