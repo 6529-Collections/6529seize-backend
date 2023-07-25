@@ -38,7 +38,7 @@ export const handler = async (event?: any, context?: any) => {
   const csvData = await loadRememes();
 
   await processRememes(rememes, csvData);
-  // await uploadRememes();
+  await uploadRememes();
   await persistS3();
 
   console.log(
