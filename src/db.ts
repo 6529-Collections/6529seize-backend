@@ -1265,8 +1265,8 @@ export async function deleteRememes(rememes: Rememe[]) {
   await AppDataSource.getRepository(Rememe).remove(rememes);
 }
 
-export async function persistRememe(rememe: Rememe) {
-  await AppDataSource.getRepository(Rememe).save(rememe);
+export async function persistRememes(rememes: Rememe[]) {
+  await AppDataSource.getRepository(Rememe).save(rememes);
 }
 
 export async function persistRememesUpload(url: string) {

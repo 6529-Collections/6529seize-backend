@@ -6,7 +6,7 @@ import { ALCHEMY_SETTINGS, CLOUDFRONT_LINK } from '../constants';
 import {
   deleteRememes,
   fetchRememes,
-  persistRememe,
+  persistRememes,
   persistRememesUpload
 } from '../db';
 import converter from 'json-2-csv';
@@ -30,14 +30,28 @@ const myarweave = Arweave.init({
   protocol: 'https'
 });
 
+let alchemy: Alchemy;
+
 export const handler = async (event?: any, context?: any) => {
   console.log('[RUNNING REMEMES]');
   const start = new Date().getTime();
   await loadEnv([Rememe, RememeUpload]);
-  const rememes: Rememe[] = await fetchRememes();
-  const csvData = await loadRememes();
+  const loadFile = process.env.REMEMES_LOAD_FILE == 'true';
 
-  await processRememes(rememes, csvData);
+  alchemy = new Alchemy({
+    ...ALCHEMY_SETTINGS,
+    apiKey: process.env.ALCHEMY_API_KEY
+  });
+
+  const rememes: Rememe[] = await fetchRememes();
+
+  if (loadFile) {
+    const csvData = await loadRememes();
+    await processRememes(rememes, csvData);
+  } else {
+    await refreshRememes(rememes);
+  }
+
   await uploadRememes();
   await persistS3();
 
@@ -74,11 +88,6 @@ async function loadRememes() {
 }
 
 async function processRememes(rememes: Rememe[], csvData: CSVData[]) {
-  const alchemy = new Alchemy({
-    ...ALCHEMY_SETTINGS,
-    apiKey: process.env.ALCHEMY_API_KEY
-  });
-
   const deleteRememesList = [...rememes].filter(
     (r) =>
       !csvData.some(
@@ -106,77 +115,10 @@ async function processRememes(rememes: Rememe[], csvData: CSVData[]) {
   await Promise.all(
     addDataList.map(async (d) => {
       try {
-        const nftMeta = await alchemy.nft.getNftMetadata(d.contract, d.id, {});
-        if (!nftMeta.metadataError) {
-          const contractOpenseaData = nftMeta.contract.openSea;
-          const deployer = nftMeta.contract.contractDeployer;
-          const tokenUri = nftMeta.tokenUri;
-          const tokenType = nftMeta.contract.tokenType;
-          const media = nftMeta.media;
-          const metadata = nftMeta.rawMetadata;
-
-          const image = metadata
-            ? metadata.image
-              ? metadata.image
-              : metadata.image_url
-              ? metadata.image_url
-              : ''
-            : '';
-          const animation = metadata
-            ? metadata.animation
-              ? metadata.animation
-              : metadata.animation_url
-              ? metadata.animation_url
-              : ''
-            : '';
-
-          const originalFormat = await getContentType(image);
-
-          let s3Original = null;
-          let s3Scaled = null;
-          let s3Thumbnail = null;
-          let s3Icon = null;
-
-          if (originalFormat) {
-            s3Original = `${CLOUDFRONT_LINK}/rememes/images/original/${d.contract}-${d.id}.${originalFormat}`;
-            s3Scaled = `${CLOUDFRONT_LINK}/rememes/images/scaled/${d.contract}-${d.id}.${originalFormat}`;
-            s3Thumbnail = `${CLOUDFRONT_LINK}/rememes/images/thumbnail/${d.contract}-${d.id}.${originalFormat}`;
-            s3Icon = `${CLOUDFRONT_LINK}/rememes/images/icon/${d.contract}-${d.id}.${originalFormat}`;
-          }
-
-          const r: Rememe = {
-            created_at: new Date(),
-            contract: d.contract,
-            id: d.id,
-            deployer: deployer,
-            token_uri: tokenUri ? tokenUri.raw : ``,
-            token_type: tokenType,
-            meme_references: d.memes,
-            metadata,
-            image,
-            animation,
-            contract_opensea_data: contractOpenseaData,
-            media: media,
-            s3_image_original: s3Original,
-            s3_image_scaled: s3Scaled,
-            s3_image_thumbnail: s3Thumbnail,
-            s3_image_icon: s3Icon
-          };
-          console.log(
-            '[REMEME PROCESSED]',
-            `[CONTRACT ${d.contract}]`,
-            `[ID ${d.id}]`
-          );
-          await persistRememe(r);
+        const r = await buildRememe(d.contract, d.id, d.memes);
+        if (r) {
+          await persistRememes([r]);
           addRememesCount++;
-        } else {
-          console.log(
-            '[REMEMES]',
-            `[METADATA ERROR]`,
-            `[CONTRACT ${d.contract}]`,
-            `[ID ${d.id}]`,
-            `[ERROR ${nftMeta.metadataError}]`
-          );
         }
       } catch (e) {
         console.log(
@@ -196,6 +138,138 @@ async function processRememes(rememes: Rememe[], csvData: CSVData[]) {
     `[ADDED ${addRememesCount}]`,
     `[DELETED ${deleteRememesList.length}]`
   );
+}
+
+async function refreshRememes(rememes: Rememe[]) {
+  console.log(`[REMEMES REFRESHING]`, `[EXISTING ${rememes.length}]`);
+
+  const updateRememesList: Rememe[] = [];
+  const retryRememesList: Rememe[] = [];
+
+  await Promise.all(
+    rememes.map(async (d) => {
+      try {
+        const r = await buildRememe(d.contract, d.id, d.meme_references);
+        if (r) {
+          updateRememesList.push(r);
+        }
+      } catch (e) {
+        console.log(
+          '[REMEMES ERROR]',
+          `[CONTRACT ${d.contract}]`,
+          `[ID ${d.id}]`,
+          `[ERROR ${e}]`
+        );
+        retryRememesList.push(d);
+      }
+    })
+  );
+
+  console.log(`[REMEMES REFRESHING]`, `[RETRYING ${retryRememesList.length}]`);
+
+  await Promise.all(
+    retryRememesList.map(async (d) => {
+      try {
+        const r = await buildRememe(d.contract, d.id, d.meme_references);
+        if (r) {
+          updateRememesList.push(r);
+        }
+      } catch (e) {
+        console.log(
+          '[REMEMES RETRY ERROR]',
+          `[CONTRACT ${d.contract}]`,
+          `[ID ${d.id}]`,
+          `[ERROR ${e}]`
+        );
+      }
+    })
+  );
+
+  console.log(
+    `[REMEMES REFRESHED]`,
+    `[REFRESHED ${updateRememesList.length}]`,
+    `[PERSISTING...]`
+  );
+
+  await persistRememes(updateRememesList);
+
+  console.log(
+    `[REMEMES REFRESH COMPLETE]`,
+    `[REFRESHED ${updateRememesList.length}]`
+  );
+}
+
+async function buildRememe(contract: string, id: number, memes: number[]) {
+  const nftMeta = await alchemy.nft.getNftMetadata(contract, id, {
+    refreshCache: true
+  });
+  if (!nftMeta.metadataError) {
+    const contractOpenseaData = nftMeta.contract.openSea;
+    const deployer = nftMeta.contract.contractDeployer;
+    const tokenUri = nftMeta.tokenUri;
+    const tokenType = nftMeta.contract.tokenType;
+    const media = nftMeta.media;
+    const metadata = nftMeta.rawMetadata;
+
+    const image = metadata
+      ? metadata.image
+        ? metadata.image
+        : metadata.image_url
+        ? metadata.image_url
+        : ''
+      : '';
+
+    const animation = metadata
+      ? metadata.animation
+        ? metadata.animation
+        : metadata.animation_url
+        ? metadata.animation_url
+        : ''
+      : '';
+
+    const originalFormat = await getContentType(image);
+
+    let s3Original = null;
+    let s3Scaled = null;
+    let s3Thumbnail = null;
+    let s3Icon = null;
+
+    if (originalFormat) {
+      s3Original = `${CLOUDFRONT_LINK}/rememes/images/original/${contract}-${id}.${originalFormat}`;
+      s3Scaled = `${CLOUDFRONT_LINK}/rememes/images/scaled/${contract}-${id}.${originalFormat}`;
+      s3Thumbnail = `${CLOUDFRONT_LINK}/rememes/images/thumbnail/${contract}-${id}.${originalFormat}`;
+      s3Icon = `${CLOUDFRONT_LINK}/rememes/images/icon/${contract}-${id}.${originalFormat}`;
+    }
+
+    const r: Rememe = {
+      created_at: new Date(),
+      contract: contract,
+      id: id,
+      deployer: deployer,
+      token_uri: tokenUri ? tokenUri.raw : ``,
+      token_type: tokenType,
+      meme_references: memes,
+      metadata,
+      image,
+      animation,
+      contract_opensea_data: contractOpenseaData,
+      media: media,
+      s3_image_original: s3Original,
+      s3_image_scaled: s3Scaled,
+      s3_image_thumbnail: s3Thumbnail,
+      s3_image_icon: s3Icon
+    };
+    return r;
+  } else {
+    console.log(
+      '[REMEMES]',
+      `[METADATA ERROR]`,
+      `[CONTRACT ${contract}]`,
+      `[ID ${id}]`,
+      `[ERROR ${nftMeta.metadataError}]`
+    );
+    return undefined;
+  }
 }
 
 async function upload(rememes: Rememe[]) {
