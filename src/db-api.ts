@@ -2284,7 +2284,7 @@ export async function fetchRememes(
 ) {
   let filters = '';
   let joins = '';
-  let fields = '*';
+  let fields = `${REMEMES_TABLE}.*`;
 
   if (memeIds) {
     memeIds.split(',').map((nft_id) => {
