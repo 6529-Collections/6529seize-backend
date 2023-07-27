@@ -1,6 +1,11 @@
 import { Entity, Column, PrimaryColumn, CreateDateColumn } from 'typeorm';
 import { REMEMES_TABLE, REMEMES_UPLOADS } from '../constants';
 
+export enum RememeSource {
+  FILE = 'file',
+  SEIZE = 'seize'
+}
+
 @Entity(REMEMES_TABLE)
 export class Rememe {
   @CreateDateColumn()
@@ -50,6 +55,13 @@ export class Rememe {
 
   @Column({ type: 'text', nullable: true, default: null })
   s3_image_icon!: string | null;
+
+  @Column({
+    type: 'enum',
+    enum: RememeSource,
+    default: RememeSource.FILE // Optional, set a default value if needed
+  })
+  source!: RememeSource;
 }
 
 @Entity(REMEMES_UPLOADS)

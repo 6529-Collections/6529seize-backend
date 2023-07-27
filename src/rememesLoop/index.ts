@@ -1,6 +1,6 @@
 import { createReadStream } from 'fs';
 import { loadEnv } from '../secrets';
-import { Rememe, RememeUpload } from '../entities/IRememe';
+import { Rememe, RememeSource, RememeUpload } from '../entities/IRememe';
 import { Alchemy } from 'alchemy-sdk';
 import { ALCHEMY_SETTINGS, CLOUDFRONT_LINK } from '../constants';
 import {
@@ -257,7 +257,8 @@ async function buildRememe(contract: string, id: number, memes: number[]) {
       s3_image_original: s3Original,
       s3_image_scaled: s3Scaled,
       s3_image_thumbnail: s3Thumbnail,
-      s3_image_icon: s3Icon
+      s3_image_icon: s3Icon,
+      source: RememeSource.FILE
     };
     return r;
   } else {

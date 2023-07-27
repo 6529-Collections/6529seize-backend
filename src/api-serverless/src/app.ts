@@ -1773,6 +1773,29 @@ loadEnv([], true).then(async (e) => {
     }
   });
 
+  app.post(
+    `${BASE_PATH}/rememes/add`,
+    function (req: any, res: any, next: any) {
+      try {
+        console.log(new Date(), `[API]`, '[REMEMES ADD]');
+
+        const body = req.body;
+        console.log(new Date(), `[API]`, '[REMEMES ADD]', `[${body}]`);
+        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+        res.status(201).send(JSON.stringify({ message: 'OK' }));
+        res.end();
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[REMEMES ADD]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
   app.get(
     `${BASE_PATH}/rememes_uploads`,
     function (req: any, res: any, next: any) {
