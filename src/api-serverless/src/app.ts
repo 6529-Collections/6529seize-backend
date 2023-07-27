@@ -1757,6 +1757,7 @@ loadEnv([], true).then(async (e) => {
             a.media = JSON.parse(a.media);
             a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
             a.meme_references = JSON.parse(a.meme_references);
+            a.replicas = a.replicas.split(',');
           });
           returnPaginatedResult(result, req, res, true);
         }

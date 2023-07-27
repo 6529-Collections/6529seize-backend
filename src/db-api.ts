@@ -2328,7 +2328,7 @@ export async function fetchRememes(
      WHERE r2.contract = ${REMEMES_TABLE}.contract 
        AND r2.image = ${REMEMES_TABLE}.image 
        AND r2.meme_references = ${REMEMES_TABLE}.meme_references
-    ) AS replicates`;
+    ) AS replicas`;
 
   return fetchPaginated(
     REMEMES_TABLE,
