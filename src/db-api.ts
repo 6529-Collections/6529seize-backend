@@ -2283,32 +2283,62 @@ export async function fetchRememes(
   tokenType: string
 ) {
   let filters = '';
+  let joins = '';
+  let fields = `${REMEMES_TABLE}.*`;
+
   if (memeIds) {
     memeIds.split(',').map((nft_id) => {
       filters = constructFilters(
         filters,
-        `JSON_CONTAINS(meme_references, '${nft_id}','$')`
+        `JSON_CONTAINS(${REMEMES_TABLE}.meme_references, '${nft_id}','$')`
       );
     });
-  }
-  if (contract && id) {
-    filters = constructFilters(
-      filters,
-      `contract=${mysql.escape(contract)} AND id=${id}`
-    );
   }
   if (tokenType) {
     filters = constructFilters(
       filters,
-      `token_type=${mysql.escape(tokenType)}`
+      `${REMEMES_TABLE}.token_type=${mysql.escape(tokenType)}`
     );
   }
+
+  if (contract && id) {
+    filters = constructFilters(
+      filters,
+      `${REMEMES_TABLE}.contract=${mysql.escape(contract)} AND id=${id}`
+    );
+  } else {
+    filters = constructFilters(
+      filters,
+      'first_occurrences.first_id IS NOT NULL'
+    );
+    joins = `LEFT JOIN (
+          SELECT contract, image, MIN(id) AS first_id, meme_references, token_type
+          FROM ${REMEMES_TABLE}
+          GROUP BY contract, image, meme_references, token_type
+      ) AS first_occurrences
+      ON ${REMEMES_TABLE}.contract = first_occurrences.contract
+        AND ${REMEMES_TABLE}.image = first_occurrences.image
+        AND ${REMEMES_TABLE}.id = first_occurrences.first_id
+        ${filters}`;
+    filters = '';
+  }
+
+  fields += `, (SELECT GROUP_CONCAT(id) 
+     FROM ${REMEMES_TABLE} r2 
+     WHERE r2.contract = ${REMEMES_TABLE}.contract 
+       AND r2.image = ${REMEMES_TABLE}.image 
+       AND r2.meme_references = ${REMEMES_TABLE}.meme_references
+    ) AS replicas`;
+
   return fetchPaginated(
     REMEMES_TABLE,
-    ` token_type asc, RAND() `,
+    ` RAND() `,
     pageSize,
     page,
-    filters
+    filters,
+    fields,
+    joins,
+    ''
   );
 }
 
