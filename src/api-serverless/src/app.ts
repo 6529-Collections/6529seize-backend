@@ -2,7 +2,7 @@ import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { loadEnv } from '../../secrets';
 import { isNumber } from '../../helpers';
-import { validateRememeBody } from './validation';
+import { validateRememe, validateRememeAdd } from './rememes_validation';
 
 const converter = require('json-2-csv');
 
@@ -1776,8 +1776,35 @@ loadEnv([], true).then(async (e) => {
   });
 
   app.post(
+    `${BASE_PATH}/rememes/validate`,
+    validateRememe,
+    function (req: any, res: any, next: any) {
+      try {
+        const body = req.validatedBody;
+        console.log(
+          new Date(),
+          `[API]`,
+          '[REMEMES VALIDATE]',
+          `[VALID ${body.valid}]`
+        );
+        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+        res.status(body.valid ? 200 : 400).send(JSON.stringify(body));
+        res.end();
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[REMEMES VALIDATE]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
+  app.post(
     `${BASE_PATH}/rememes/add`,
-    validateRememeBody,
+    validateRememeAdd,
     function (req: any, res: any, next: any) {
       try {
         console.log(new Date(), `[API]`, '[REMEMES ADD]');

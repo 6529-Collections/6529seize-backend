@@ -2353,3 +2353,11 @@ export async function fetchRememesUploads(pageSize: number, page: number) {
     ''
   );
 }
+
+export async function rememeExists(contract: string, token_id: string) {
+  const sql = `SELECT * FROM ${REMEMES_TABLE} WHERE contract=${mysql.escape(
+    contract
+  )} AND id=${mysql.escape(token_id)}`;
+  const result = await execSQL(sql);
+  return result.length > 0;
+}
