@@ -2279,7 +2279,7 @@ export async function fetchRememes(
   pageSize: number,
   page: number,
   contract: string,
-  id: number,
+  id: string,
   tokenType: string
 ) {
   let filters = '';
@@ -2304,7 +2304,9 @@ export async function fetchRememes(
   if (contract && id) {
     filters = constructFilters(
       filters,
-      `${REMEMES_TABLE}.contract=${mysql.escape(contract)} AND id=${id}`
+      `${REMEMES_TABLE}.contract=${mysql.escape(
+        contract
+      )} AND id=${mysql.escape(id)}`
     );
   } else {
     filters = constructFilters(
