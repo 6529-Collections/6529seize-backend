@@ -5,6 +5,7 @@ import { Alchemy } from 'alchemy-sdk';
 import { ALCHEMY_SETTINGS, CLOUDFRONT_LINK } from '../constants';
 import {
   deleteRememes,
+  fetchLatestRememes,
   fetchRememes,
   persistRememes,
   persistRememesUpload
@@ -20,7 +21,7 @@ const FILE_DIR = `${__dirname}/rememes.csv`;
 
 interface CSVData {
   contract: string;
-  id: number;
+  id: string;
   memes: number[];
 }
 
@@ -67,24 +68,41 @@ async function loadRememes() {
   const csv = await readCsvFile(FILE_DIR);
   csv.map((r) => {
     const contract = r[0].trim();
-    const tokenIdStr = r[1].trim();
+    const tokenIdStr = r[1].trim().replaceAll(' ', '');
     if (tokenIdStr.includes('to')) {
-      const tokenIdArr = tokenIdStr.split(' to ');
-      for (
-        let tokenId = parseInt(tokenIdArr[0]);
-        tokenId <= parseInt(tokenIdArr[1]);
-        tokenId++
-      ) {
+      const range = getRange(tokenIdStr, 'to');
+      for (let tokenId = range.start; tokenId <= range.end; tokenId++) {
         const memes = r[2].split(',').map((m: string) => parseInt(m));
-        csvData.push({ contract, id: tokenId, memes });
+        csvData.push({ contract, id: tokenId.toString(), memes });
       }
+    } else if (tokenIdStr.includes('-')) {
+      const range = getRange(tokenIdStr, '-');
+      for (let tokenId = range.start; tokenId <= range.end; tokenId++) {
+        const memes = r[2].split(',').map((m: string) => parseInt(m));
+        csvData.push({ contract, id: tokenId.toString(), memes });
+      }
+    } else if (tokenIdStr.includes(',')) {
+      const tokens = tokenIdStr.split(',').map((m: string) => parseInt(m));
+      const memes = r[2].split(',').map((m: string) => parseInt(m));
+      tokens.map((tokenId: number) => {
+        csvData.push({ contract, id: tokenId.toString(), memes });
+      });
     } else {
       const id = parseInt(tokenIdStr);
       const memes = r[2].split(',').map((m: string) => parseInt(m));
-      csvData.push({ contract, id, memes });
+      csvData.push({ contract, id: tokenIdStr, memes });
     }
   });
   return csvData;
+}
+
+function getRange(tokenIdStr: string, delim: string) {
+  const tokenIdArr = tokenIdStr.split(delim);
+
+  return {
+    start: parseInt(tokenIdArr[0]),
+    end: parseInt(tokenIdArr[1])
+  };
 }
 
 async function processRememes(rememes: Rememe[], csvData: CSVData[]) {
@@ -199,7 +217,7 @@ async function refreshRememes(rememes: Rememe[]) {
   );
 }
 
-async function buildRememe(contract: string, id: number, memes: number[]) {
+async function buildRememe(contract: string, id: string, memes: number[]) {
   const nftMeta = await alchemy.nft.getNftMetadata(contract, id, {
     refreshCache: true
   });
@@ -328,7 +346,7 @@ async function uploadRememes() {
 
 async function persistS3() {
   if (process.env.NODE_ENV == 'local') {
-    const rememes: Rememe[] = await fetchRememes();
+    const rememes: Rememe[] = await fetchLatestRememes();
     await persistRememesS3(rememes);
   } else {
     console.log(`[REMEMES]`, `[SKIPPING S3 UPLOAD ${process.env.NODE_ENV}]`);

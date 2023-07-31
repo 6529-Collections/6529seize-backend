@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { DataSource, LessThan } from 'typeorm';
+import { DataSource, LessThan, MoreThan } from 'typeorm';
 import {
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
@@ -1277,4 +1277,10 @@ export async function persistRememesUpload(url: string) {
 
 export async function fetchRememes() {
   return await AppDataSource.getRepository(Rememe).find();
+}
+
+export async function fetchLatestRememes() {
+  return await AppDataSource.getRepository(Rememe).find({
+    where: { created_at: MoreThan(new Date(Date.now() - 24 * 60 * 60 * 1000)) }
+  });
 }
