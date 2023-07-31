@@ -9,8 +9,8 @@ export class Rememe {
   @PrimaryColumn({ type: 'varchar', length: 50 })
   contract!: string;
 
-  @PrimaryColumn({ type: 'int' })
-  id!: number;
+  @PrimaryColumn({ type: 'varchar', length: 100 })
+  id!: string;
 
   @Column({ type: 'text' })
   deployer?: string;
