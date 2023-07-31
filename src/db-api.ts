@@ -2011,7 +2011,7 @@ export async function fetchDistributionForNFT(
     );
   }
 
-  let joins = ` LEFT JOIN ${ENS_TABLE} ON LOWER(${DISTRIBUTION_TABLE}.wallet)=LOWER(${ENS_TABLE}.wallet) `;
+  let joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
 
   let transactionsTable = TRANSACTIONS_TABLE;
   if (areEqualAddresses(contract, MEMELAB_CONTRACT)) {
@@ -2022,7 +2022,7 @@ export async function fetchDistributionForNFT(
     MANIFOLD
   )} OR ${transactionsTable}.from_address=${mysql.escape(
     NULL_ADDRESS
-  )}) AND LOWER(${DISTRIBUTION_TABLE}.wallet)=LOWER(${transactionsTable}.to_address)`;
+  )}) AND ${DISTRIBUTION_TABLE}.wallet=${transactionsTable}.to_address`;
 
   return fetchPaginated(
     DISTRIBUTION_TABLE,
