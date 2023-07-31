@@ -2,6 +2,7 @@ import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { loadEnv } from '../../secrets';
 import { isNumber } from '../../helpers';
+import { validateRememeBody } from './validation';
 
 const converter = require('json-2-csv');
 
@@ -43,6 +44,7 @@ loadEnv([], true).then(async (e) => {
 
   app.use(compression());
   app.use(cors(corsOptions));
+  app.use(express.json());
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -1775,12 +1777,18 @@ loadEnv([], true).then(async (e) => {
 
   app.post(
     `${BASE_PATH}/rememes/add`,
+    validateRememeBody,
     function (req: any, res: any, next: any) {
       try {
         console.log(new Date(), `[API]`, '[REMEMES ADD]');
 
-        const body = req.body;
-        console.log(new Date(), `[API]`, '[REMEMES ADD]', `[${body}]`);
+        const body = req.validatedBody;
+        console.log(
+          new Date(),
+          `[API]`,
+          '[REMEMES ADD]',
+          `[FROM ${body.address}]`
+        );
         res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
         res.status(201).send(JSON.stringify({ message: 'OK' }));
         res.end();
