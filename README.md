@@ -109,3 +109,15 @@ pm2 start npm --name=6529api -- run api:env
 ### 2.6 RUN USING AWS Lambda
 
 The API is also configured to run as an AWS lambda and can be built and deployed on AWS on its own. \* Note: additional setup is required within AWS in order to configure environment variables and API Gateway.
+
+## 3. Admin Panel (Optional)
+
+Currently Seize.io uses an Admin Panel to manage:
+
+- distribution lists and presentations
+- team members
+- royalties
+
+The admin panel repo is located [here](https://github.com/6529-Collections/6529seize-admin).
+
+\* Note: Please bear in mind that in the near future the admin panel will be deprecated and all functionality will be moved to the 6529SEIZE-BACKEND repo.
