@@ -313,7 +313,7 @@ export async function fetchLabOwners(
   }
 
   const fields = ` ${OWNERS_MEME_LAB_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
-  const joins = `LEFT JOIN ${ENS_TABLE} ON LOWER(${OWNERS_MEME_LAB_TABLE}.wallet)=LOWER(${ENS_TABLE}.wallet)`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ON ${OWNERS_MEME_LAB_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
   return fetchPaginated(
     OWNERS_MEME_LAB_TABLE,
@@ -436,7 +436,7 @@ export async function fetchOwners(
   }
 
   const fields = ` ${OWNERS_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
-  const joins = `LEFT JOIN ${ENS_TABLE} ON LOWER(${OWNERS_TABLE}.wallet)=LOWER(${ENS_TABLE}.wallet)`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ON ${OWNERS_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
   return fetchPaginated(
     OWNERS_TABLE,
@@ -465,7 +465,7 @@ export async function fetchOwnersTags(
   }
 
   const fields = ` ${OWNERS_TAGS_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
-  const joins = `LEFT JOIN ${ENS_TABLE} ON LOWER(${OWNERS_TAGS_TABLE}.wallet)=LOWER(${ENS_TABLE}.wallet)`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ON ${OWNERS_TAGS_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
   return fetchPaginated(
     OWNERS_TAGS_TABLE,
@@ -518,7 +518,7 @@ export async function fetchLabTransactions(
   }
 
   const fields = `${TRANSACTIONS_MEME_LAB_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
-  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON LOWER(${TRANSACTIONS_MEME_LAB_TABLE}.from_address)=LOWER(ens1.wallet) LEFT JOIN ${ENS_TABLE} ens2 ON LOWER(${TRANSACTIONS_MEME_LAB_TABLE}.to_address)=LOWER(ens2.wallet)`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_MEME_LAB_TABLE}.to_address=ens2.wallet`;
 
   return fetchPaginated(
     TRANSACTIONS_MEME_LAB_TABLE,
@@ -604,7 +604,7 @@ export async function fetchTransactions(
   }
 
   const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
-  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON LOWER(${TRANSACTIONS_TABLE}.from_address)=LOWER(ens1.wallet) LEFT JOIN ${ENS_TABLE} ens2 ON LOWER(${TRANSACTIONS_TABLE}.to_address)=LOWER(ens2.wallet)`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
 
   return fetchPaginated(
     TRANSACTIONS_TABLE,
@@ -623,7 +623,7 @@ export async function fetchGradientTdh(pageSize: number, page: number) {
   filters = constructFilters(filters, `gradients_balance > 0`);
 
   const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
-  const joins = `LEFT JOIN ${ENS_TABLE} ON LOWER(${WALLETS_TDH_TABLE}.wallet)=LOWER(${ENS_TABLE}.wallet)`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
   return fetchPaginated(
     WALLETS_TDH_TABLE,
@@ -655,7 +655,7 @@ export async function fetchNftTdh(
 
   let joins: string;
   if (areEqualAddresses(contract, MEMES_CONTRACT)) {
-    joins = `LEFT JOIN ${ENS_TABLE} ON LOWER(${WALLETS_TDH_TABLE}.wallet)=LOWER(${ENS_TABLE}.wallet) CROSS JOIN JSON_TABLE(memes, '$[*]' COLUMNS (
+    joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet CROSS JOIN JSON_TABLE(memes, '$[*]' COLUMNS (
         id INT PATH '$.id',
         tdh DOUBLE PATH '$.tdh',
         tdh__raw varchar(100) PATH '$.tdh__raw',
@@ -663,7 +663,7 @@ export async function fetchNftTdh(
       )
     ) AS j`;
   } else if (areEqualAddresses(contract, GRADIENT_CONTRACT)) {
-    joins = `LEFT JOIN ${ENS_TABLE} ON LOWER(${WALLETS_TDH_TABLE}.wallet)=LOWER(${ENS_TABLE}.wallet) CROSS JOIN JSON_TABLE(gradients, '$[*]' COLUMNS (
+    joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet CROSS JOIN JSON_TABLE(gradients, '$[*]' COLUMNS (
         id varchar(100) PATH '$.id',
         tdh varchar(100) PATH '$.tdh',
         tdh__raw varchar(100) PATH '$.tdh__raw',
@@ -677,7 +677,7 @@ export async function fetchNftTdh(
   joins += ` JOIN (SELECT wallet, RANK() OVER(ORDER BY ${OWNERS_TABLE}.balance DESC) AS dense_rank_balance from ${OWNERS_TABLE} where ${OWNERS_TABLE}.contract=${mysql.escape(
     contract
   )} and ${OWNERS_TABLE}.token_id=${nftId}) as dense_table ON ${WALLETS_TDH_TABLE}.wallet = dense_table.wallet`;
-  joins += ` LEFT JOIN ${OWNERS_METRICS_TABLE} on LOWER(${WALLETS_TDH_TABLE}.wallet)=LOWER(${OWNERS_METRICS_TABLE}.wallet)`;
+  joins += ` LEFT JOIN ${OWNERS_METRICS_TABLE} on ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet`;
 
   const fields = ` ${OWNERS_METRICS_TABLE}.balance, ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, dense_table.dense_rank_balance `;
 
@@ -842,7 +842,7 @@ export async function fetchTDH(
   }
 
   const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
-  const joins = `LEFT JOIN ${ENS_TABLE} ON LOWER(${WALLETS_TDH_TABLE}.wallet)=LOWER(${ENS_TABLE}.wallet)`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
   return fetchPaginated(
     WALLETS_TDH_TABLE,
@@ -886,9 +886,9 @@ export async function fetchOwnerMetrics(
   if (wallets) {
     filters = constructFilters(
       filters,
-      `LOWER(${OWNERS_METRICS_TABLE}.wallet) in (${mysql.escape(
+      `${OWNERS_METRICS_TABLE}.wallet in (${mysql.escape(
         wallets.split(',').map((w) => w.toLowerCase())
-      )}) OR LOWER(${ENS_TABLE}.display) in (${mysql.escape(
+      )}) OR ${ENS_TABLE}.display in (${mysql.escape(
         wallets.split(',').map((w) => w.toLowerCase())
       )})`
     );
@@ -1027,9 +1027,9 @@ export async function fetchOwnerMetrics(
     ${WALLETS_TDH_TABLE}.gradients_ranks`;
 
   const fields = ` ${ownerMetricsSelect},${ENS_TABLE}.display as wallet_display, ${walletsTdhTableSelect} , ${OWNERS_TAGS_TABLE}.* `;
-  let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON LOWER(${WALLETS_TDH_TABLE}.wallet)=LOWER(${OWNERS_METRICS_TABLE}.wallet) and ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
-  joins += ` LEFT JOIN ${OWNERS_TAGS_TABLE} ON LOWER(${OWNERS_METRICS_TABLE}.wallet)=LOWER(${OWNERS_TAGS_TABLE}.wallet) `;
-  joins += ` LEFT JOIN ${ENS_TABLE} ON LOWER(${OWNERS_METRICS_TABLE}.wallet)=LOWER(${ENS_TABLE}.wallet) `;
+  let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
+  joins += ` LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet `;
+  joins += ` LEFT JOIN ${ENS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${ENS_TABLE}.wallet `;
 
   if (
     sort == 'balance' ||
@@ -1075,7 +1075,7 @@ export async function fetchOwnerMetrics(
       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn2 DESC) AS dense_rank_unique_memes_season2,
       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn3 DESC) AS dense_rank_unique_memes_season3,
       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn4 DESC) AS dense_rank_unique_memes_season4  
-      FROM ${OWNERS_METRICS_TABLE} LEFT JOIN ${WALLETS_TDH_TABLE} ON LOWER(${WALLETS_TDH_TABLE}.wallet)=LOWER(${OWNERS_METRICS_TABLE}.wallet) and ${WALLETS_TDH_TABLE}.block=${tdhBlock} LEFT JOIN ${OWNERS_TAGS_TABLE} ON LOWER(${OWNERS_METRICS_TABLE}.wallet)=LOWER(${OWNERS_TAGS_TABLE}.wallet) ${hideWalletFilters}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
+      FROM ${OWNERS_METRICS_TABLE} LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock} LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet ${hideWalletFilters}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
   }
 
   const results = await fetchPaginated(
@@ -2063,13 +2063,13 @@ export async function fetchDistributions(
     MANIFOLD
   )} OR ${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
     NULL_ADDRESS
-  )}) AND LOWER(${DISTRIBUTION_TABLE}.wallet)=LOWER(${TRANSACTIONS_TABLE}.to_address)`;
+  )}) AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_TABLE}.to_address`;
   joins += ` LEFT JOIN ${TRANSACTIONS_MEME_LAB_TABLE} ON ${DISTRIBUTION_TABLE}.contract = ${TRANSACTIONS_MEME_LAB_TABLE}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${TRANSACTIONS_MEME_LAB_TABLE}.token_id AND (${TRANSACTIONS_MEME_LAB_TABLE}.from_address=${mysql.escape(
     MANIFOLD
   )} OR ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=${mysql.escape(
     NULL_ADDRESS
-  )}) AND LOWER(${DISTRIBUTION_TABLE}.wallet)=LOWER(${TRANSACTIONS_MEME_LAB_TABLE}.to_address)`;
-  joins += ` LEFT JOIN ${ENS_TABLE} ON LOWER(${DISTRIBUTION_TABLE}.wallet)=LOWER(${ENS_TABLE}.wallet) `;
+  )}) AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_MEME_LAB_TABLE}.to_address`;
+  joins += ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
 
   return fetchPaginated(
     DISTRIBUTION_TABLE,
@@ -2103,8 +2103,8 @@ export async function fetchConsolidationsForWallet(
     };
   } else {
     let sql = `SELECT ${CONSOLIDATIONS_TABLE}.*, e1.display as wallet1_display, e2.display as wallet2_display FROM ${CONSOLIDATIONS_TABLE}`;
-    sql += ` LEFT JOIN ${ENS_TABLE} e1 ON LOWER(${CONSOLIDATIONS_TABLE}.wallet1)=LOWER(e1.wallet)`;
-    sql += ` LEFT JOIN ${ENS_TABLE} e2 ON LOWER(${CONSOLIDATIONS_TABLE}.wallet2)=LOWER(e2.wallet)`;
+    sql += ` LEFT JOIN ${ENS_TABLE} e1 ON ${CONSOLIDATIONS_TABLE}.wallet1=e1.wallet`;
+    sql += ` LEFT JOIN ${ENS_TABLE} e2 ON ${CONSOLIDATIONS_TABLE}.wallet2=e2.wallet`;
     sql += ` WHERE wallet1=${mysql.escape(wallet)} OR wallet2=${mysql.escape(
       wallet
     )}`;
@@ -2173,8 +2173,8 @@ export async function fetchDelegations(
     wallet
   )} OR to_address = ${mysql.escape(wallet)}`;
 
-  let joins = `LEFT JOIN ${ENS_TABLE} e1 ON LOWER(${DELEGATIONS_TABLE}.from_address)=LOWER(e1.wallet)`;
-  joins += ` LEFT JOIN ${ENS_TABLE} e2 ON LOWER(${DELEGATIONS_TABLE}.to_address)=LOWER(e2.wallet)`;
+  let joins = `LEFT JOIN ${ENS_TABLE} e1 ON ${DELEGATIONS_TABLE}.from_address=e1.wallet`;
+  joins += ` LEFT JOIN ${ENS_TABLE} e2 ON ${DELEGATIONS_TABLE}.to_address=e2.wallet`;
 
   return fetchPaginated(
     DELEGATIONS_TABLE,
