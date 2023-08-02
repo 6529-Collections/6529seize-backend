@@ -390,7 +390,8 @@ export async function fetchMemesExtended(
   pageSize: number,
   page: number,
   nfts: string,
-  seasons: string
+  seasons: string,
+  sortDir: string
 ) {
   let filters = '';
 
@@ -402,7 +403,7 @@ export async function fetchMemesExtended(
   }
   return fetchPaginated(
     MEMES_EXTENDED_DATA_TABLE,
-    'id',
+    `id ${sortDir}`,
     pageSize,
     page,
     filters
