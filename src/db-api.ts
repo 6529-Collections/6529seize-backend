@@ -2407,8 +2407,10 @@ export async function addRememe(by: string, rememe: any) {
 }
 
 export async function getTdhForAddress(address: string) {
-  console.log('getTdhForAddress', address);
   const sql = `SELECT boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE '%${address.toLowerCase()}%'`;
   const result = await execSQL(sql);
+  if (result.length === 0) {
+    return 0;
+  }
   return result[0].boosted_tdh;
 }
