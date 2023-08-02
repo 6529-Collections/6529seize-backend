@@ -3,6 +3,7 @@ import * as db from '../../db-api';
 import { loadEnv } from '../../secrets';
 import { isNumber } from '../../helpers';
 import { validateRememe, validateRememeAdd } from './rememes_validation';
+import { SEIZE_SETTINGS } from './api-constants';
 
 const converter = require('json-2-csv');
 
@@ -306,6 +307,11 @@ loadEnv([], true).then(async (e) => {
       );
       next(e);
     }
+  });
+
+  app.get(`${BASE_PATH}/settings`, function (req: any, res: any, next: any) {
+    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+    res.end(JSON.stringify(SEIZE_SETTINGS));
   });
 
   app.get(`${BASE_PATH}/uploads`, function (req: any, res: any, next: any) {
@@ -1807,18 +1813,25 @@ loadEnv([], true).then(async (e) => {
     validateRememeAdd,
     function (req: any, res: any, next: any) {
       try {
-        console.log(new Date(), `[API]`, '[REMEMES ADD]');
-
         const body = req.validatedBody;
         console.log(
           new Date(),
           `[API]`,
           '[REMEMES ADD]',
-          `[FROM ${body.address}]`
+          `[VALID ${body.valid}]`,
+          `[FROM ${req.body.address}]`
         );
+        const valid = body.valid;
         res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-        res.status(201).send(JSON.stringify({ message: 'OK' }));
-        res.end();
+        if (valid) {
+          db.addRememe(req.body.address, body).then((result) => {
+            res.status(201).send(JSON.stringify(body));
+            res.end();
+          });
+        } else {
+          res.status(400).send(JSON.stringify(body));
+          res.end();
+        }
       } catch (e) {
         console.log(
           new Date(),

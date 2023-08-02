@@ -7,6 +7,8 @@ import sharp from 'sharp';
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { Rememe } from './entities/IRememe';
 import { getContentType, parseIpfsUrlToCloudflare } from './helpers';
+import { CLOUDFRONT_LINK } from './constants';
+import { persistRememes } from './db';
 
 const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
@@ -30,67 +32,86 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
 
   myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
 
-  for (const r of rememes) {
-    let image = r.media && r.media.gateway ? r.media.gateway : r.image;
-    if (image) {
-      const format = await getContentType(image);
+  await Promise.all(
+    rememes.map(async (r) => {
+      let image = r.media && r.media.gateway ? r.media.gateway : r.image;
+      if (image) {
+        const format = await getContentType(image);
 
-      if (format) {
-        const originalKey = `rememes/images/original/${r.contract}-${r.id}.${format}`;
-        const scaledKey = `rememes/images/scaled/${r.contract}-${r.id}.${format}`;
-        const thumbnailKey = `rememes/images/thumbnail/${r.contract}-${r.id}.${format}`;
-        const iconKey = `rememes/images/icon/${r.contract}-${r.id}.${format}`;
+        if (format) {
+          const originalKey = `rememes/images/original/${r.contract}-${r.id}.${format}`;
+          const scaledKey = `rememes/images/scaled/${r.contract}-${r.id}.${format}`;
+          const thumbnailKey = `rememes/images/thumbnail/${r.contract}-${r.id}.${format}`;
+          const iconKey = `rememes/images/icon/${r.contract}-${r.id}.${format}`;
 
-        const exists = await objectExists(myBucket, originalKey);
+          const exists = await objectExists(myBucket, originalKey);
 
-        if (!exists) {
+          if (!exists) {
+            console.log(
+              '[S3 REMEMES]',
+              `[MISSING IMAGE]`,
+              `[CONTRACT ${r.contract}]`,
+              `[ID ${r.id}]`
+            );
+
+            const res = await fetch(parseIpfsUrlToCloudflare(image));
+            const blob = await res.arrayBuffer();
+
+            await handleImageUpload(originalKey, format, blob);
+
+            let scaledFormat = 'webp';
+            if (format.toLowerCase() == 'gif') {
+              scaledFormat = 'gif';
+            }
+
+            const scaledBuffer = await resizeImage(
+              r,
+              scaledFormat == 'webp' ? true : false,
+              Buffer.from(blob),
+              SCALED_HEIGHT
+            );
+
+            await handleImageUpload(scaledKey, format, scaledBuffer);
+
+            const thumbnailBuffer = await resizeImage(
+              r,
+              scaledFormat == 'webp' ? true : false,
+              Buffer.from(blob),
+              THUMBNAIL_HEIGHT
+            );
+
+            await handleImageUpload(thumbnailKey, format, thumbnailBuffer);
+
+            const iconBuffer = await resizeImage(
+              r,
+              scaledFormat == 'webp' ? true : false,
+              Buffer.from(blob),
+              ICON_HEIGHT
+            );
+
+            await handleImageUpload(iconKey, format, iconBuffer);
+          } else {
+            console.log(
+              '[S3 REMEMES]',
+              `[EXISTS ${r.contract} #${r.id}]`,
+              '[SKIPPING UPLOAD]'
+            );
+          }
+          r.s3_image_original = `${CLOUDFRONT_LINK}/${originalKey}`;
+          r.s3_image_scaled = `${CLOUDFRONT_LINK}/${scaledKey}`;
+          r.s3_image_thumbnail = `${CLOUDFRONT_LINK}/${thumbnailKey}`;
+          r.s3_image_icon = `${CLOUDFRONT_LINK}/${iconKey}`;
+          await persistRememes([r]);
+        } else {
           console.log(
             '[S3 REMEMES]',
-            `[MISSING IMAGE]`,
-            `[CONTRACT ${r.contract}]`,
-            `[ID ${r.id}]`
+            `[ERROR ${r.contract} #${r.id}]`,
+            '[INVALID FORMAT]'
           );
-
-          const res = await fetch(parseIpfsUrlToCloudflare(image));
-          const blob = await res.arrayBuffer();
-
-          await handleImageUpload(originalKey, format, blob);
-
-          let scaledFormat = 'webp';
-          if (format.toLowerCase() == 'gif') {
-            scaledFormat = 'gif';
-          }
-
-          const scaledBuffer = await resizeImage(
-            r,
-            scaledFormat == 'webp' ? true : false,
-            Buffer.from(blob),
-            SCALED_HEIGHT
-          );
-
-          await handleImageUpload(scaledKey, format, scaledBuffer);
-
-          const thumbnailBuffer = await resizeImage(
-            r,
-            scaledFormat == 'webp' ? true : false,
-            Buffer.from(blob),
-            THUMBNAIL_HEIGHT
-          );
-
-          await handleImageUpload(thumbnailKey, format, thumbnailBuffer);
-
-          const iconBuffer = await resizeImage(
-            r,
-            scaledFormat == 'webp' ? true : false,
-            Buffer.from(blob),
-            ICON_HEIGHT
-          );
-
-          await handleImageUpload(iconKey, format, iconBuffer);
         }
       }
-    }
-  }
+    })
+  );
 };
 
 async function handleImageUpload(

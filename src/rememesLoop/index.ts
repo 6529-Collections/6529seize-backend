@@ -5,7 +5,7 @@ import { Alchemy } from 'alchemy-sdk';
 import { ALCHEMY_SETTINGS, CLOUDFRONT_LINK } from '../constants';
 import {
   deleteRememes,
-  fetchLatestRememes,
+  fetchMissingS3Rememes,
   fetchRememes,
   persistRememes,
   persistRememesUpload
@@ -247,10 +247,10 @@ async function buildRememe(contract: string, id: string, memes: number[]) {
 
     const originalFormat = await getContentType(image);
 
-    let s3Original = null;
-    let s3Scaled = null;
-    let s3Thumbnail = null;
-    let s3Icon = null;
+    let s3Original = '';
+    let s3Scaled = '';
+    let s3Thumbnail = '';
+    let s3Icon = '';
 
     if (originalFormat) {
       s3Original = `${CLOUDFRONT_LINK}/rememes/images/original/${contract}-${id}.${originalFormat}`;
@@ -346,7 +346,7 @@ async function uploadRememes() {
 
 async function persistS3() {
   if (process.env.NODE_ENV == 'local') {
-    const rememes: Rememe[] = await fetchLatestRememes();
+    const rememes: Rememe[] = await fetchMissingS3Rememes();
     await persistRememesS3(rememes);
   } else {
     console.log(`[REMEMES]`, `[SKIPPING S3 UPLOAD ${process.env.NODE_ENV}]`);

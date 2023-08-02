@@ -59,9 +59,12 @@ export class Rememe {
   @Column({
     type: 'enum',
     enum: RememeSource,
-    default: RememeSource.FILE // Optional, set a default value if needed
+    default: RememeSource.FILE
   })
   source!: RememeSource;
+
+  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  added_by?: string;
 }
 
 @Entity(REMEMES_UPLOADS)
