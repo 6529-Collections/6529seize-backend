@@ -146,10 +146,7 @@ export function consolidateTransactions(
     transactions.reduce((acc: any, transaction) => {
       const primaryKey = `${transaction.transaction}_${transaction.from_address}_${transaction.to_address}_${transaction.contract}_${transaction.token_id}`;
 
-      if (acc[primaryKey]) {
-        acc[primaryKey].token_count += transaction.token_count;
-        acc[primaryKey].value += transaction.value;
-      } else {
+      if (!acc[primaryKey]) {
         acc[primaryKey] = transaction;
       }
 
