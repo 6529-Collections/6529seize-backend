@@ -109,7 +109,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
         );
       });
 
-      let consolidationTransactions: Transaction[] = [];
+      let consolidationTransactions: Transaction[] = walletTransactions;
       await Promise.all(
         consolidations.map(async (c) => {
           if (!areEqualAddresses(c, wallet)) {
@@ -153,11 +153,10 @@ export const findTDH = async (lastTDHCalc: Date) => {
         tokenTransactions.map((t) => {
           if (areEqualAddresses(t.to_address, wallet)) {
             let date = new Date(t.transaction_date);
-            if (
-              t.value == 0 &&
-              consolidations.some((c) => areEqualAddresses(c, t.from_address))
-            ) {
+
+            if (t.value == 0) {
               date = getTokenDateFromConsolidation(
+                walletTokens.length,
                 consolidations,
                 t,
                 consolidationTransactions
@@ -403,17 +402,24 @@ export function calculateBoost(
 }
 
 function getTokenDateFromConsolidation(
+  tokenIndex: number,
   consolidations: string[],
   transaction: Transaction,
   consolidationTransactions: Transaction[]
 ): Date {
   const sortedTokenTransactions = consolidationTransactions
+    .filter(
+      (t) =>
+        t.token_id == transaction.token_id &&
+        areEqualAddresses(transaction.contract, t.contract)
+    )
     .sort(
       (a, b) =>
         new Date(a.transaction_date).getTime() -
         new Date(b.transaction_date).getTime()
-    )
-    .filter((t) => t.token_id == transaction.token_id);
+    );
+
+  let skipCount = 0;
 
   for (const st of sortedTokenTransactions) {
     if (!consolidations.some((c) => areEqualAddresses(c, st.from_address))) {
@@ -426,7 +432,11 @@ function getTokenDateFromConsolidation(
               new Date(st.transaction_date).getTime()
         )
       ) {
-        return new Date(st.transaction_date);
+        if (skipCount == tokenIndex) {
+          return new Date(st.transaction_date);
+        } else {
+          skipCount++;
+        }
       }
     }
   }
