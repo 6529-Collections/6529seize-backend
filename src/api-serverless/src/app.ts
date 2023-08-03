@@ -545,6 +545,33 @@ loadEnv([], true).then(async (e) => {
   );
 
   app.get(
+    `${BASE_PATH}/memes_seasons`,
+    function (req: any, res: any, next: any) {
+      try {
+        console.log(new Date(), `[API]`, '[MEMES SEASONS]');
+
+        const sortDir =
+          req.query.sort_direction &&
+          SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+            ? req.query.sort_direction
+            : 'asc';
+
+        db.fetchMemesSeasons(sortDir).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[MEMES SEASONS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
+
+  app.get(
     `${BASE_PATH}/lab_extended_data`,
     function (req: any, res: any, next: any) {
       try {
