@@ -523,6 +523,11 @@ loadEnv([], true).then(async (e) => {
 
         const nfts = req.query.id;
         const seasons = req.query.season;
+        const sortDir =
+          req.query.sort_direction &&
+          SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+            ? req.query.sort_direction
+            : 'desc';
 
         console.log(
           new Date(),
@@ -530,9 +535,11 @@ loadEnv([], true).then(async (e) => {
           '[MEMES EXTENDED]',
           `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
-        db.fetchMemesExtended(pageSize, page, nfts, seasons).then((result) => {
-          returnPaginatedResult(result, req, res);
-        });
+        db.fetchMemesExtended(pageSize, page, nfts, seasons, sortDir).then(
+          (result) => {
+            returnPaginatedResult(result, req, res);
+          }
+        );
       } catch (e) {
         console.log(
           new Date(),
