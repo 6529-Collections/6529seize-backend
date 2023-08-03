@@ -411,6 +411,12 @@ export async function fetchMemesExtended(
   );
 }
 
+export async function fetchMemesSeasons(sortDir: string) {
+  const sql = `SELECT season, COUNT(id) as count, GROUP_CONCAT(id) AS token_ids FROM ${MEMES_EXTENDED_DATA_TABLE} GROUP BY season order by season ${sortDir}`;
+  const results = await execSQL(sql);
+  return results;
+}
+
 export async function fetchOwners(
   pageSize: number,
   page: number,
