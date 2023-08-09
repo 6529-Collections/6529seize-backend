@@ -2171,6 +2171,33 @@ export async function fetchConsolidations(
   return results;
 }
 
+export async function fetchConsolidationTransactions(
+  pageSize: number,
+  page: number,
+  block: string,
+  showIncomplete: boolean
+) {
+  let filters = '';
+  if (block) {
+    filters = constructFilters('', `block <= ${block}`);
+  }
+  if (!showIncomplete) {
+    filters = constructFilters(filters, `confirmed=1`);
+  }
+  let joins = `LEFT JOIN ${ENS_TABLE} e1 ON ${CONSOLIDATIONS_TABLE}.wallet1=e1.wallet`;
+  joins += ` LEFT JOIN ${ENS_TABLE} e2 ON ${CONSOLIDATIONS_TABLE}.wallet2=e2.wallet`;
+
+  return fetchPaginated(
+    CONSOLIDATIONS_TABLE,
+    'block desc',
+    pageSize,
+    page,
+    filters,
+    `${CONSOLIDATIONS_TABLE}.*, e1.display as wallet1_display, e2.display as wallet2_display`,
+    joins
+  );
+}
+
 export async function fetchDelegations(
   wallet: string,
   pageSize: number,

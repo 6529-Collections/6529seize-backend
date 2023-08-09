@@ -419,7 +419,23 @@ function getTokenDateFromConsolidation(
         new Date(b.transaction_date).getTime()
     );
 
-  let skipCount = 0;
+  const walletBalances: { wallet: string; balance: number }[] = [];
+  consolidations.map((c) => {
+    const inTrx = [...sortedTokenTransactions].filter((t) =>
+      areEqualAddresses(t.to_address, c)
+    );
+    const inBalance = inTrx.reduce((a, b) => a + b.token_count, 0);
+    const outTrx = [...sortedTokenTransactions].filter((t) =>
+      areEqualAddresses(t.from_address, c)
+    );
+    const outBalance = outTrx.reduce((a, b) => a + b.token_count, 0);
+    walletBalances.push({
+      wallet: c,
+      balance: inBalance - outBalance
+    });
+  });
+
+  const tokenDates: Date[] = [];
 
   for (const st of sortedTokenTransactions) {
     if (!consolidations.some((c) => areEqualAddresses(c, st.from_address))) {
@@ -432,16 +448,37 @@ function getTokenDateFromConsolidation(
               new Date(st.transaction_date).getTime()
         )
       ) {
-        if (skipCount == tokenIndex) {
-          return new Date(st.transaction_date);
-        } else {
-          skipCount++;
-        }
+        tokenDates.push(new Date(st.transaction_date));
       }
     }
   }
 
-  return new Date(transaction.transaction_date);
+  const walletDates: { wallet: string; balance: number; dates: Date[] }[] = [];
+  walletBalances.map((wb) => {
+    const dates: Date[] = [];
+    for (let i = 1; i <= wb.balance; i++) {
+      const date = tokenDates.shift();
+      if (date) {
+        dates.push(date);
+      }
+    }
+    walletDates.push({
+      wallet: wb.wallet,
+      balance: wb.balance,
+      dates: dates
+    });
+  });
+
+  const currentWalletDate = walletDates.find((wd) =>
+    areEqualAddresses(wd.wallet, transaction.to_address)
+  );
+
+  let myDate = new Date(transaction.transaction_date);
+  if (currentWalletDate && currentWalletDate.dates.length - 1 >= tokenIndex) {
+    myDate = currentWalletDate.dates[tokenIndex];
+  }
+
+  return myDate;
 }
 
 export async function ranks(
