@@ -237,7 +237,13 @@ loadEnv([], true).then(async (e) => {
     'gradients'
   ];
 
-  const TRANSACTION_FILTERS = ['sales', 'transfers', 'airdrops'];
+  const TRANSACTION_FILTERS = [
+    'sales',
+    'transfers',
+    'airdrops',
+    'mints',
+    'burns'
+  ];
 
   function fullUrl(req: any, next: boolean) {
     let url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
