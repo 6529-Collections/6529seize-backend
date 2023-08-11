@@ -509,15 +509,27 @@ export async function fetchLabTransactions(
     let newTypeFilter = '';
     switch (type_filter) {
       case 'sales':
-        newTypeFilter += 'value > 0';
+        newTypeFilter += `value > 0 AND from_address != ${mysql.escape(
+          NULL_ADDRESS
+        )} and to_address != ${mysql.escape(NULL_ADDRESS)}`;
         break;
       case 'airdrops':
-        newTypeFilter += `from_address = ${mysql.escape(NULL_ADDRESS)}`;
+        newTypeFilter += `value = 0 AND from_address = ${mysql.escape(
+          NULL_ADDRESS
+        )}`;
+        break;
+      case 'mints':
+        newTypeFilter += `value > 0 AND from_address = ${mysql.escape(
+          NULL_ADDRESS
+        )}`;
         break;
       case 'transfers':
         newTypeFilter += `value = 0 and from_address != ${mysql.escape(
           NULL_ADDRESS
-        )}`;
+        )} and to_address != ${mysql.escape(NULL_ADDRESS)}`;
+        break;
+      case 'burns':
+        newTypeFilter += `to_address = ${mysql.escape(NULL_ADDRESS)}`;
         break;
     }
     if (newTypeFilter) {
@@ -595,15 +607,27 @@ export async function fetchTransactions(
     let newTypeFilter = '';
     switch (type_filter) {
       case 'sales':
-        newTypeFilter += 'value > 0';
+        newTypeFilter += `value > 0 AND from_address != ${mysql.escape(
+          NULL_ADDRESS
+        )} and to_address != ${mysql.escape(NULL_ADDRESS)}`;
         break;
       case 'airdrops':
-        newTypeFilter += `from_address = ${mysql.escape(NULL_ADDRESS)}`;
+        newTypeFilter += `value = 0 AND from_address = ${mysql.escape(
+          NULL_ADDRESS
+        )}`;
+        break;
+      case 'mints':
+        newTypeFilter += `value > 0 AND from_address = ${mysql.escape(
+          NULL_ADDRESS
+        )}`;
         break;
       case 'transfers':
         newTypeFilter += `value = 0 and from_address != ${mysql.escape(
           NULL_ADDRESS
-        )}`;
+        )} and to_address != ${mysql.escape(NULL_ADDRESS)}`;
+        break;
+      case 'burns':
+        newTypeFilter += `to_address = ${mysql.escape(NULL_ADDRESS)}`;
         break;
     }
     if (newTypeFilter) {
@@ -2030,7 +2054,7 @@ export async function fetchDistributionForNFT(
     MANIFOLD
   )} OR ${transactionsTable}.from_address=${mysql.escape(
     NULL_ADDRESS
-  )}) AND ${DISTRIBUTION_TABLE}.wallet=${transactionsTable}.to_address`;
+  )}) AND ${DISTRIBUTION_TABLE}.wallet=${transactionsTable}.to_address and value > 0`;
 
   return fetchPaginated(
     DISTRIBUTION_TABLE,
@@ -2170,6 +2194,33 @@ export async function fetchConsolidations(
   );
 
   return results;
+}
+
+export async function fetchConsolidationTransactions(
+  pageSize: number,
+  page: number,
+  block: string,
+  showIncomplete: boolean
+) {
+  let filters = '';
+  if (block) {
+    filters = constructFilters('', `block <= ${block}`);
+  }
+  if (!showIncomplete) {
+    filters = constructFilters(filters, `confirmed=1`);
+  }
+  let joins = `LEFT JOIN ${ENS_TABLE} e1 ON ${CONSOLIDATIONS_TABLE}.wallet1=e1.wallet`;
+  joins += ` LEFT JOIN ${ENS_TABLE} e2 ON ${CONSOLIDATIONS_TABLE}.wallet2=e2.wallet`;
+
+  return fetchPaginated(
+    CONSOLIDATIONS_TABLE,
+    'block desc',
+    pageSize,
+    page,
+    filters,
+    `${CONSOLIDATIONS_TABLE}.*, e1.display as wallet1_display, e2.display as wallet2_display`,
+    joins
+  );
 }
 
 export async function fetchDelegations(

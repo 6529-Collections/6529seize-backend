@@ -247,10 +247,10 @@ async function buildRememe(contract: string, id: string, memes: number[]) {
 
     const originalFormat = await getContentType(image);
 
-    let s3Original = '';
-    let s3Scaled = '';
-    let s3Thumbnail = '';
-    let s3Icon = '';
+    let s3Original: string | null = null;
+    let s3Scaled: string | null = null;
+    let s3Thumbnail: string | null = null;
+    let s3Icon: string | null = null;
 
     if (originalFormat) {
       s3Original = `${CLOUDFRONT_LINK}/rememes/images/original/${contract}-${id}.${originalFormat}`;

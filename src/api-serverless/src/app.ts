@@ -240,7 +240,13 @@ loadEnv([], true).then(async (e) => {
     'gradients'
   ];
 
-  const TRANSACTION_FILTERS = ['sales', 'transfers', 'airdrops'];
+  const TRANSACTION_FILTERS = [
+    'sales',
+    'transfers',
+    'airdrops',
+    'mints',
+    'burns'
+  ];
 
   function fullUrl(req: any, next: boolean) {
     let url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
@@ -1588,7 +1594,49 @@ loadEnv([], true).then(async (e) => {
         console.log(
           new Date(),
           `[API]`,
-          '[WALLET CONSOLIDATIONS]',
+          '[CONSOLIDATIONS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
+  app.get(
+    `${BASE_PATH}/consolidation_transactions`,
+    function (req: any, res: any, next: any) {
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        const block = req.query.block;
+        const showIncomplete =
+          req.query.show_incomplete && req.query.show_incomplete == 'true'
+            ? true
+            : false;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATION TRANSACTIONS]',
+          `[BLOCK ${block}][PAGE_SIZE ${pageSize}][PAGE ${page}][SHOW_INCOMPLETE ${showIncomplete}]`
+        );
+        db.fetchConsolidationTransactions(
+          pageSize,
+          page,
+          block,
+          showIncomplete
+        ).then((result) => {
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATION TRANSACTIONS]',
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         return;
@@ -1911,9 +1959,19 @@ loadEnv([], true).then(async (e) => {
 
   app.get(`${BASE_PATH}`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();
-    res.send(
+    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE).send(
       JSON.stringify({
         message: '6529 SEIZE API',
+        image: image[0].scaled ? image[0].scaled : image[0].image
+      })
+    );
+  });
+
+  app.get(`/`, async function (req: any, res: any, next: any) {
+    const image = await db.fetchRandomImage();
+    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE).send(
+      JSON.stringify({
+        message: 'FOR 6529 SEIZE API GO TO /api',
         image: image[0].scaled ? image[0].scaled : image[0].image
       })
     );
