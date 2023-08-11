@@ -245,7 +245,8 @@ async function processGradients(
       const supply = allGradientsNFTS.length;
 
       const startingNft = startingNFTS.find(
-        (s) => s.id == tokenId && areEqualAddresses(s.contract, MEMES_CONTRACT)
+        (s) =>
+          s.id == tokenId && areEqualAddresses(s.contract, GRADIENT_CONTRACT)
       );
 
       if (fullMetadata && fullMetadata.image) {
