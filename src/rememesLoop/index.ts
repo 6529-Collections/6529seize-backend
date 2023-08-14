@@ -38,6 +38,7 @@ export const handler = async (event?: any, context?: any) => {
   const start = new Date().getTime();
   await loadEnv([Rememe, RememeUpload]);
   const loadFile = process.env.REMEMES_LOAD_FILE == 'true';
+  const rememesS3 = process.env.REMEMES_S3 == 'true';
 
   alchemy = new Alchemy({
     ...ALCHEMY_SETTINGS,
@@ -46,15 +47,16 @@ export const handler = async (event?: any, context?: any) => {
 
   const rememes: Rememe[] = await fetchRememes();
 
-  if (loadFile) {
+  if (rememesS3) {
+    await persistS3();
+  } else if (loadFile) {
     const csvData = await loadRememes();
     await processRememes(rememes, csvData);
+    await uploadRememes();
   } else {
     await refreshRememes(rememes);
+    await uploadRememes();
   }
-
-  await uploadRememes();
-  await persistS3();
 
   console.log(
     '[REMEMES COMPLETE]',
@@ -121,7 +123,7 @@ async function processRememes(rememes: Rememe[], csvData: CSVData[]) {
   );
 
   console.log(
-    `[REMEMES PROCESSING]`,
+    `[REMEMES FILE PROCESSING]`,
     `[EXISTING ${rememes.length}]`,
     `[FILE ${csvData.length}]`,
     `[ADD ${addDataList.length}]`,
@@ -344,10 +346,6 @@ async function uploadRememes() {
 }
 
 async function persistS3() {
-  if (process.env.NODE_ENV == 'local') {
-    const rememes: Rememe[] = await fetchMissingS3Rememes();
-    await persistRememesS3(rememes);
-  } else {
-    console.log(`[REMEMES]`, `[SKIPPING S3 UPLOAD ${process.env.NODE_ENV}]`);
-  }
+  const rememes: Rememe[] = await fetchMissingS3Rememes();
+  await persistRememesS3(rememes);
 }
