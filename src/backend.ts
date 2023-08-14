@@ -101,13 +101,13 @@ async function start() {
 
   // Uncomment to call on start
 
-  // await nftHistory.handler();
-  // await delegations.handler();
-  // await transactions.handler();
-  // await nfts.handler();
-  // await memeLab.handler();
-  // await ownerMetrics.handler();
-  // await tdh.handler();
+  await nftHistory.handler();
+  await delegations.handler();
+  await transactions.handler();
+  await nfts.handler();
+  await memeLab.handler();
+  await ownerMetrics.handler();
+  await tdh.handler();
   // await memeStats();
   // await gradientStats();
   // await memeLabStats();
@@ -119,7 +119,7 @@ async function start() {
   // await transactions.handlerValues();
   // await rememes.handler();
 
-  STARTING = false;
+  // STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
 }
 

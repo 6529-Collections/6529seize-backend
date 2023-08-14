@@ -6,7 +6,7 @@ import { consolidateTDH } from '../tdh_consolidation';
 import { uploadConsolidatedTDH, uploadTDH } from '../tdh_upload';
 import { loadEnv, unload } from '../secrets';
 import { ConsolidatedTDHUpload } from '../entities/IUpload';
-import { ConsolidatedTDH, TDH } from '../entities/ITDH';
+import { ConsolidatedTDH, TDH, TDHHistory } from '../entities/ITDH';
 import { NFT } from '../entities/INFT';
 import { OwnerMetric } from '../entities/IOwner';
 
@@ -16,7 +16,8 @@ export const handler = async (event?: any, context?: any) => {
     ConsolidatedTDH,
     ConsolidatedTDHUpload,
     NFT,
-    OwnerMetric
+    OwnerMetric,
+    TDHHistory
   ]);
   const force = process.env.TDH_RESET == 'true';
   console.log(new Date(), '[RUNNING TDH LOOP]', `[FORCE ${force}]`);
@@ -27,9 +28,9 @@ export const handler = async (event?: any, context?: any) => {
 
 export async function tdhLoop(force?: boolean) {
   await tdh(force);
-  await findNftTDH();
-  await uploadTDH(force);
-  await uploadConsolidatedTDH(force);
+  // await findNftTDH();
+  // await uploadTDH(force);
+  // await uploadConsolidatedTDH(force);
 }
 
 async function tdh(force?: boolean) {

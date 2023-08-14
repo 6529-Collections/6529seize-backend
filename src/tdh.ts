@@ -6,7 +6,7 @@ import {
   SZN2_INDEX,
   SZN3_INDEX
 } from './constants';
-import { TDH } from './entities/ITDH';
+import { TDH, TDHHistory } from './entities/ITDH';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses, getDaysDiff } from './helpers';
 import { Alchemy } from 'alchemy-sdk';
@@ -18,10 +18,19 @@ import {
   persistTDH,
   retrieveWalletConsolidations,
   consolidateTransactions,
-  fetchHasEns
+  fetchHasEns,
+  fetchConsolidatedTDHForWallet,
+  fetchTDHHistoryForWallet
 } from './db';
 
 let alchemy: Alchemy;
+
+interface TokenTDH {
+  id: string;
+  balance: number;
+  tdh: number;
+  tdh__raw: number;
+}
 
 export const findTDH = async (lastTDHCalc: Date) => {
   alchemy = new Alchemy({
@@ -277,34 +286,35 @@ export const findTDH = async (lastTDHCalc: Date) => {
           unique_memes_season2: unique_memes_season2,
           unique_memes_season3: unique_memes_season3,
           unique_memes_season4: unique_memes_season4,
-          boosted_memes_tdh: 0,
+          boosted_memes_tdh: 0, // assigned later
           memes_tdh: memesTDH,
           memes_tdh__raw: memesTDH__raw,
           memes_balance: memesBalance,
-          boosted_memes_tdh_season1: 0,
+          boosted_memes_tdh_season1: 0, // assigned later
           memes_tdh_season1: memes_tdh_season1,
           memes_tdh_season1__raw: memes_tdh_season1__raw,
           memes_balance_season1: memes_balance_season1,
-          boosted_memes_tdh_season2: 0,
+          boosted_memes_tdh_season2: 0, // assigned later
           memes_tdh_season2: memes_tdh_season2,
           memes_tdh_season2__raw: memes_tdh_season2__raw,
           memes_balance_season2: memes_balance_season2,
-          boosted_memes_tdh_season3: 0,
+          boosted_memes_tdh_season3: 0, // assigned later
           memes_tdh_season3: memes_tdh_season3,
           memes_tdh_season3__raw: memes_tdh_season3__raw,
           memes_balance_season3: memes_balance_season3,
-          boosted_memes_tdh_season4: 0,
+          boosted_memes_tdh_season4: 0, // assigned later
           memes_tdh_season4: memes_tdh_season4,
           memes_tdh_season4__raw: memes_tdh_season4__raw,
           memes_balance_season4: memes_balance_season4,
           memes: walletMemes,
-          memes_ranks: [],
-          boosted_gradients_tdh: 0,
+          memes_ranks: [], // assigned later
+          boosted_gradients_tdh: 0, // assigned later
           gradients_tdh: gradientsTDH,
           gradients_tdh__raw: gradientsTDH__raw,
           gradients_balance: gradientsBalance,
           gradients: walletGradients,
-          gradients_ranks: []
+          gradients_ranks: [], // assigned later
+          day_change: 0 // assigned later
         };
         walletGradients.map((wg) => {
           allGradientsTDH.push(wg);
@@ -322,7 +332,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
     '[CALCULATING RANKS]'
   );
 
-  const sortedTdh = await ranks(
+  const ranksResult = await ranks(
     allGradientsTDH,
     walletsTDH,
     ADJUSTED_NFTS,
@@ -333,16 +343,17 @@ export const findTDH = async (lastTDHCalc: Date) => {
     new Date(),
     '[TDH]',
     `[BLOCK ${block}]`,
-    `[WALLETS ${sortedTdh.length}]`,
+    `[WALLETS ${ranksResult.tdh.length}]`,
+    `[HISTORY ${ranksResult.history.length}]`,
     '[CALCULATING TDH - END]'
   );
 
-  await persistTDH(block, timestamp, sortedTdh);
+  await persistTDH(block, timestamp, ranksResult.tdh);
 
   return {
     block: block,
     timestamp: timestamp,
-    tdh: sortedTdh
+    tdh: ranksResult.tdh
   };
 };
 
@@ -503,10 +514,17 @@ export async function ranks(
     });
 
   const boostedTDH: any[] = [];
+  const tdhHistory: TDHHistory[] = [];
 
   await Promise.all(
     walletsTDH.map(async (w) => {
       const hasENS = await fetchHasEns(w.wallets ? w.wallets : [w.wallet]);
+      const existingTDH = await fetchConsolidatedTDHForWallet(w);
+
+      const existingHistory = await fetchTDHHistoryForWallet(
+        w.wallets ? w.wallets[0] : w.wallet,
+        w.block
+      );
 
       const boost = calculateBoost(
         w.memes_cards_sets,
@@ -519,6 +537,110 @@ export async function ranks(
         hasENS
       );
 
+      // let tdhCreated = 0;
+      // let tdhDestroyed = 0;
+      // let boostedTdhCreated = 0;
+      // let boostedTdhDestroyed = 0;
+      // let rawTdhCreated = 0;
+      // let rawTdhDestroyed = 0;
+      // let balanceCreated = 0;
+      // let balanceDestroyed = 0;
+      let tdhCreated = existingHistory ? existingHistory.created_tdh : 0;
+      let tdhDestroyed = existingHistory ? existingHistory.destroyed_tdh : 0;
+      let boostedTdhCreated = existingHistory
+        ? existingHistory.created_boosted_tdh
+        : 0;
+      let boostedTdhDestroyed = existingHistory
+        ? existingHistory.destroyed_boosted_tdh
+        : 0;
+      let rawTdhCreated = existingHistory
+        ? existingHistory.created_tdh__raw
+        : 0;
+      let rawTdhDestroyed = existingHistory
+        ? existingHistory.destroyed_tdh__raw
+        : 0;
+      let balanceCreated = existingHistory
+        ? existingHistory.created_balance
+        : 0;
+      let balanceDestroyed = existingHistory
+        ? existingHistory.destroyed_balance
+        : 0;
+
+      w.memes.map((m: TokenTDH) => {
+        const existing: TokenTDH = existingTDH
+          ? existingTDH.memes.find((em: TokenTDH) => em.id == m.id)
+          : null;
+
+        let previousTdh: TokenTDH;
+
+        if (existing) {
+          previousTdh = existing;
+        } else {
+          previousTdh = {
+            id: m.id,
+            tdh: 0,
+            tdh__raw: 0,
+            balance: 0
+          };
+        }
+
+        const change = m.tdh - previousTdh.tdh;
+        const previousBoost = existingTDH ? existingTDH.boost : 1;
+
+        if (change > 0) {
+          tdhCreated += m.tdh - previousTdh.tdh;
+          rawTdhCreated += m.tdh__raw - previousTdh.tdh__raw;
+          boostedTdhCreated += m.tdh * boost - previousTdh.tdh * previousBoost;
+          balanceCreated += m.balance - previousTdh.balance;
+        } else {
+          tdhDestroyed += previousTdh.tdh - m.tdh;
+          rawTdhDestroyed += previousTdh.tdh__raw - m.tdh__raw;
+          boostedTdhDestroyed +=
+            previousTdh.tdh * previousBoost - m.tdh * boost;
+          balanceDestroyed += previousTdh.balance - m.balance;
+        }
+      });
+
+      w.gradients.map((m: TokenTDH) => {
+        const existing: TokenTDH = existingTDH
+          ? existingTDH.gradients.find((em: TokenTDH) => em.id == m.id)
+          : null;
+
+        let previousTdh: TokenTDH;
+
+        if (existing) {
+          previousTdh = existing;
+        } else {
+          previousTdh = {
+            id: m.id,
+            tdh: 0,
+            tdh__raw: 0,
+            balance: 0
+          };
+        }
+
+        const change = m.tdh - previousTdh.tdh;
+        const previousBoost = existingTDH ? existingTDH.boost : 1;
+
+        if (change > 0) {
+          tdhCreated += m.tdh - previousTdh.tdh;
+          rawTdhCreated += m.tdh__raw - previousTdh.tdh__raw;
+          boostedTdhCreated += m.tdh * boost - previousTdh.tdh * previousBoost;
+          balanceCreated += m.balance - previousTdh.balance;
+        } else {
+          tdhDestroyed += previousTdh.tdh - m.tdh;
+          rawTdhDestroyed += previousTdh.tdh__raw - m.tdh__raw;
+          boostedTdhDestroyed +=
+            previousTdh.tdh * previousBoost - m.tdh * boost;
+          balanceDestroyed += previousTdh.balance - m.balance;
+        }
+      });
+
+      const tdhNet = tdhCreated - tdhDestroyed;
+      const rawTdhNet = rawTdhCreated - rawTdhDestroyed;
+      const boostedTdhNet = boostedTdhCreated - boostedTdhDestroyed;
+      const balanceNet = balanceCreated - balanceDestroyed;
+
       w.boost = boost;
       w.boosted_tdh = w.tdh * boost;
       w.boosted_memes_tdh = w.memes_tdh * boost;
@@ -527,7 +649,30 @@ export async function ranks(
       w.boosted_memes_tdh_season3 = w.memes_tdh_season3 * boost;
       w.boosted_memes_tdh_season4 = w.memes_tdh_season4 * boost;
       w.boosted_gradients_tdh = w.gradients_tdh * boost;
+      w.day_change = boostedTdhNet;
       boostedTDH.push(w);
+
+      if (w.wallets) {
+        const tdhH = {
+          date: new Date(),
+          consolidation_display: w.consolidation_display,
+          wallets: w.wallets,
+          block: w.block,
+          created_tdh: tdhCreated,
+          destroyed_tdh: tdhDestroyed,
+          net_tdh: tdhNet,
+          created_boosted_tdh: boostedTdhCreated,
+          destroyed_boosted_tdh: boostedTdhDestroyed,
+          net_boosted_tdh: boostedTdhNet,
+          created_tdh__raw: rawTdhCreated,
+          destroyed_tdh__raw: rawTdhDestroyed,
+          net_tdh__raw: rawTdhNet,
+          created_balance: balanceCreated,
+          destroyed_balance: balanceDestroyed,
+          net_balance: balanceNet
+        };
+        tdhHistory.push(tdhH);
+      }
     })
   );
 
@@ -752,5 +897,5 @@ export async function ranks(
       return w;
     });
 
-  return sortedTdh;
+  return { tdh: sortedTdh, history: tdhHistory };
 }

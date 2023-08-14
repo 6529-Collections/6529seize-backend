@@ -1055,7 +1055,8 @@ export async function fetchOwnerMetrics(
     ${WALLETS_TDH_TABLE}.memes,
     ${WALLETS_TDH_TABLE}.memes_ranks, 
     ${WALLETS_TDH_TABLE}.gradients, 
-    ${WALLETS_TDH_TABLE}.gradients_ranks`;
+    ${WALLETS_TDH_TABLE}.gradients_ranks,
+    ${WALLETS_TDH_TABLE}.day_change`;
 
   const fields = ` ${ownerMetricsSelect},${ENS_TABLE}.display as wallet_display, ${walletsTdhTableSelect} , ${OWNERS_TAGS_TABLE}.* `;
   let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
@@ -1574,7 +1575,8 @@ export async function fetchConsolidatedOwnerMetrics(
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_ranks, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_ranks`;
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_ranks,
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.day_change`;
 
   const fields = ` ${ownerMetricsSelect}, ${walletsTdhTableSelect} , ${CONSOLIDATED_OWNERS_TAGS_TABLE}.* `;
   let joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display`;
