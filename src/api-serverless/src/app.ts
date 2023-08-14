@@ -150,6 +150,8 @@ loadEnv([], true).then(async (e) => {
     'total_tdh__raw'
   ];
 
+  const REMEMES_SORT = ['created_at'];
+
   const MEME_LAB_OWNERS_SORT = ['balance'];
 
   const TDH_SORT = [
@@ -1834,24 +1836,42 @@ loadEnv([], true).then(async (e) => {
       const id = req.query.id;
       const tokenType = req.query.token_type;
 
+      const sort =
+        req.query.sort && REMEMES_SORT.includes(req.query.sort)
+          ? req.query.sort
+          : undefined;
+
+      const sortDir =
+        req.query.sort_direction &&
+        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+          ? req.query.sort_direction
+          : 'desc';
+
       console.log(
         new Date(),
         `[API]`,
         '[REMEMES]',
-        `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        `[PAGE_SIZE ${pageSize}][PAGE ${page}][CONTRACT ${contract}][ID ${id}][TOKEN_TYPE ${tokenType}][SORT ${sort}][SORT_DIR ${sortDir}]`
       );
-      db.fetchRememes(memeIds, pageSize, page, contract, id, tokenType).then(
-        (result) => {
-          result.data.map((a: any) => {
-            a.metadata = JSON.parse(a.metadata);
-            a.media = JSON.parse(a.media);
-            a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
-            a.meme_references = JSON.parse(a.meme_references);
-            a.replicas = a.replicas.split(',');
-          });
-          returnPaginatedResult(result, req, res, true);
-        }
-      );
+      db.fetchRememes(
+        memeIds,
+        pageSize,
+        page,
+        contract,
+        id,
+        tokenType,
+        sort,
+        sortDir
+      ).then((result) => {
+        result.data.map((a: any) => {
+          a.metadata = JSON.parse(a.metadata);
+          a.media = JSON.parse(a.media);
+          a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
+          a.meme_references = JSON.parse(a.meme_references);
+          a.replicas = a.replicas.split(',');
+        });
+        returnPaginatedResult(result, req, res, true);
+      });
     } catch (e) {
       console.log(
         new Date(),

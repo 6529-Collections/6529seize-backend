@@ -2339,7 +2339,9 @@ export async function fetchRememes(
   page: number,
   contract: string,
   id: string,
-  tokenType: string
+  tokenType: string,
+  sort: string,
+  sortDirection: string
 ) {
   let filters = '';
   let joins = '';
@@ -2391,9 +2393,14 @@ export async function fetchRememes(
        AND r2.meme_references = ${REMEMES_TABLE}.meme_references
     ) AS replicas`;
 
+  let rememeSort = ` RAND() `;
+  if (sort && sortDirection) {
+    rememeSort = ` ${sort} ${sortDirection} `;
+  }
+
   return fetchPaginated(
     REMEMES_TABLE,
-    ` RAND() `,
+    rememeSort,
     pageSize,
     page,
     filters,

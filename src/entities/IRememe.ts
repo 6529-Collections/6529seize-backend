@@ -1,4 +1,10 @@
-import { Entity, Column, PrimaryColumn, CreateDateColumn } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryColumn,
+  CreateDateColumn,
+  UpdateDateColumn
+} from 'typeorm';
 import { REMEMES_TABLE, REMEMES_UPLOADS } from '../constants';
 
 export enum RememeSource {
@@ -9,7 +15,10 @@ export enum RememeSource {
 @Entity(REMEMES_TABLE)
 export class Rememe {
   @CreateDateColumn()
-  created_at!: Date;
+  created_at?: Date;
+
+  @UpdateDateColumn()
+  updated_at?: Date;
 
   @PrimaryColumn({ type: 'varchar', length: 50 })
   contract!: string;

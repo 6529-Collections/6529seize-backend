@@ -260,7 +260,6 @@ async function buildRememe(contract: string, id: string, memes: number[]) {
     }
 
     const r: Rememe = {
-      created_at: new Date(),
       contract: contract,
       id: id,
       deployer: deployer,
