@@ -173,8 +173,5 @@ async function validateTDH(
   }
 
   const tdh = await getTdhForAddress(address);
-  if (areEqualAddresses(OPENSEA_ADDRESS, contractAddress)) {
-    return tdh >= SEIZE_SETTINGS.rememes_submission_tdh_threshold;
-  }
-  return tdh >= SEIZE_SETTINGS.rememes_submission_tdh_threshold_moderator;
+  return tdh >= SEIZE_SETTINGS.rememes_submission_tdh_threshold;
 }
