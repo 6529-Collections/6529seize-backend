@@ -36,7 +36,8 @@ import {
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE,
   REMEMES_TABLE,
-  REMEMES_UPLOADS
+  REMEMES_UPLOADS,
+  TDH_HISTORY_TABLE
 } from './constants';
 import {
   areEqualAddresses,
@@ -143,11 +144,12 @@ async function fetchPaginated(
     const offset = pageSize * (page - 1);
     sql2 += ` OFFSET ${offset}`;
   }
-  const r1 = await execSQL(sql1);
-  const r2 = await execSQL(sql2);
 
   // console.log(sql1);
   // console.log(sql2);
+
+  const r1 = await execSQL(sql1);
+  const r2 = await execSQL(sql2);
 
   // console.log(r1)
   // console.log(r2);
@@ -2411,5 +2413,31 @@ export async function fetchRememesUploads(pageSize: number, page: number) {
     pageSize,
     page,
     ''
+  );
+}
+
+export async function fetchTDHHistory(
+  wallets: string,
+  pageSize: number,
+  page: number
+) {
+  let filters = '';
+  if (wallets) {
+    wallets.split(',').map((w) => {
+      filters = constructFilters(
+        filters,
+        `LOWER(wallets) LIKE '%${w.toLowerCase()}%'`
+      );
+    });
+  }
+
+  console.log('thefilters', filters);
+
+  return fetchPaginated(
+    TDH_HISTORY_TABLE,
+    ` date desc, block desc, net_boosted_tdh desc `,
+    pageSize,
+    page,
+    filters
   );
 }

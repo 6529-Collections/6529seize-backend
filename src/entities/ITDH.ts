@@ -2,6 +2,7 @@ import { Column, Entity, PrimaryColumn } from 'typeorm';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   TDH_HISTORY_TABLE,
+  TDH_GLOBAL_HISTORY_TABLE,
   WALLETS_TDH_TABLE
 } from '../constants';
 
@@ -324,19 +325,61 @@ export class ConsolidatedTDH {
   day_change!: number;
 }
 
+@Entity(TDH_GLOBAL_HISTORY_TABLE)
+export class GlobalTDHHistory {
+  @PrimaryColumn({ type: 'date' })
+  date!: Date;
+
+  @PrimaryColumn({ type: 'int' })
+  block!: number;
+
+  @Column({ type: 'int' })
+  created_tdh!: number;
+
+  @Column({ type: 'int' })
+  destroyed_tdh!: number;
+
+  @Column({ type: 'int' })
+  net_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  created_boosted_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  destroyed_boosted_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  net_boosted_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  created_tdh__raw!: number;
+
+  @Column({ type: 'int', nullable: false })
+  destroyed_tdh__raw!: number;
+
+  @Column({ type: 'int', nullable: false })
+  net_tdh__raw!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  gradients_balance!: number;
+}
+
 @Entity(TDH_HISTORY_TABLE)
 export class TDHHistory {
-  @Column({ type: 'datetime' })
+  @PrimaryColumn({ type: 'date' })
   date!: Date;
 
   @PrimaryColumn({ type: 'varchar', length: 500 })
   consolidation_display!: string;
 
-  @Column({ type: 'json', nullable: false })
-  wallets?: any;
-
   @PrimaryColumn({ type: 'int' })
   block!: number;
+
+  @Column({ type: 'json', nullable: false })
+  wallets?: any;
 
   @Column({ type: 'int' })
   created_tdh!: number;
