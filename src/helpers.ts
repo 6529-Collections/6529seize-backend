@@ -199,9 +199,9 @@ export function parseIpfsUrl(url: string) {
   return url;
 }
 
-export function parseIpfsUrlToCloudflare(url: string) {
+export function parseIpfsUrlToCloudflare(url: string | undefined) {
   if (!url) {
-    return url;
+    return '';
   }
   if (url.startsWith('ipfs')) {
     return `https://cf-ipfs.com/ipfs/${url.split('://')[1]}`;

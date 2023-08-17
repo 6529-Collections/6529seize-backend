@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { DataSource, LessThan, MoreThan } from 'typeorm';
+import { DataSource, IsNull, LessThan, MoreThan } from 'typeorm';
 import {
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
@@ -1329,9 +1329,11 @@ export async function fetchRememes() {
   return await AppDataSource.getRepository(Rememe).find();
 }
 
-export async function fetchLatestRememes() {
+export async function fetchMissingS3Rememes() {
   return await AppDataSource.getRepository(Rememe).find({
-    where: { created_at: MoreThan(new Date(Date.now() - 24 * 60 * 60 * 1000)) }
+    where: {
+      s3_image_original: IsNull()
+    }
   });
 }
 

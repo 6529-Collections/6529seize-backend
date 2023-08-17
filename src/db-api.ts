@@ -40,6 +40,7 @@ import {
   TDH_HISTORY_TABLE,
   TDH_GLOBAL_HISTORY_TABLE
 } from './constants';
+import { RememeSource } from './entities/IRememe';
 import {
   areEqualAddresses,
   extractConsolidationWallets,
@@ -2343,7 +2344,9 @@ export async function fetchRememes(
   page: number,
   contract: string,
   id: string,
-  tokenType: string
+  tokenType: string,
+  sort: string,
+  sortDirection: string
 ) {
   let filters = '';
   let joins = '';
@@ -2395,9 +2398,14 @@ export async function fetchRememes(
        AND r2.meme_references = ${REMEMES_TABLE}.meme_references
     ) AS replicas`;
 
+  let rememeSort = ` RAND() `;
+  if (sort && sortDirection) {
+    rememeSort = ` ${sort} ${sortDirection} `;
+  }
+
   return fetchPaginated(
     REMEMES_TABLE,
-    ` RAND() `,
+    rememeSort,
     pageSize,
     page,
     filters,
@@ -2415,6 +2423,66 @@ export async function fetchRememesUploads(pageSize: number, page: number) {
     page,
     ''
   );
+}
+
+export async function rememeExists(contract: string, token_id: string) {
+  const sql = `SELECT * FROM ${REMEMES_TABLE} WHERE contract=${mysql.escape(
+    contract
+  )} AND id=${mysql.escape(token_id)}`;
+  const result = await execSQL(sql);
+  return result.length > 0;
+}
+
+export async function addRememe(by: string, rememe: any) {
+  const contract = rememe.contract.address;
+  const openseaData = rememe.contract.openSea;
+  const deployer = rememe.contract.contractDeployer;
+  const tokens = rememe.nfts;
+
+  for (const t of tokens) {
+    const token_id = t.tokenId;
+    const tokenType = t.tokenType;
+    const tokenUri = t.tokenUri ? t.tokenUri.raw : '';
+    const media = t.media;
+    const metadata = t.rawMetadata;
+    const image = metadata
+      ? metadata.image
+        ? metadata.image
+        : metadata.image_url
+        ? metadata.image_url
+        : ''
+      : '';
+
+    const animation = metadata
+      ? metadata.animation
+        ? metadata.animation
+        : metadata.animation_url
+        ? metadata.animation_url
+        : ''
+      : '';
+
+    const sql = `INSERT INTO ${REMEMES_TABLE} (contract, id, deployer, token_uri, token_type, image, animation, meme_references, metadata, contract_opensea_data, media, source, added_by) VALUES (${mysql.escape(
+      contract
+    )}, ${mysql.escape(token_id)}, ${mysql.escape(deployer)}, ${mysql.escape(
+      tokenUri
+    )}, ${mysql.escape(tokenType)}, ${mysql.escape(image)}, ${mysql.escape(
+      animation
+    )}, ${mysql.escape(JSON.stringify(rememe.references))}, ${mysql.escape(
+      JSON.stringify(metadata)
+    )}, ${mysql.escape(JSON.stringify(openseaData))}, ${mysql.escape(
+      JSON.stringify(media)
+    )}, ${mysql.escape(RememeSource.SEIZE)}, ${mysql.escape(by)})`;
+    await execSQL(sql);
+  }
+}
+
+export async function getTdhForAddress(address: string) {
+  const sql = `SELECT boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE '%${address.toLowerCase()}%'`;
+  const result = await execSQL(sql);
+  if (result.length === 0) {
+    return 0;
+  }
+  return result[0].boosted_tdh;
 }
 
 export async function fetchTDHGLOBALHistory(pageSize: number, page: number) {
