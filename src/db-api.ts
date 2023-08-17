@@ -37,7 +37,8 @@ import {
   WALLETS_TDH_TABLE,
   REMEMES_TABLE,
   REMEMES_UPLOADS,
-  TDH_HISTORY_TABLE
+  TDH_HISTORY_TABLE,
+  TDH_GLOBAL_HISTORY_TABLE
 } from './constants';
 import {
   areEqualAddresses,
@@ -2410,6 +2411,16 @@ export async function fetchRememesUploads(pageSize: number, page: number) {
   return fetchPaginated(
     REMEMES_UPLOADS,
     ` created_at desc `,
+    pageSize,
+    page,
+    ''
+  );
+}
+
+export async function fetchTDHGLOBALHistory(pageSize: number, page: number) {
+  return fetchPaginated(
+    TDH_GLOBAL_HISTORY_TABLE,
+    ` date desc `,
     pageSize,
     page,
     ''

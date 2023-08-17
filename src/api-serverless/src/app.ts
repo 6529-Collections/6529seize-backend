@@ -1886,6 +1886,44 @@ loadEnv([], true).then(async (e) => {
     }
   );
 
+  app.get(
+    `${BASE_PATH}/tdh_global_history`,
+    function (req: any, res: any, next: any) {
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[TDH GLOBAL HISTORY]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        );
+        db.fetchTDHGLOBALHistory(pageSize, page).then((result) => {
+          result.data.map((d: any) => {
+            const date = new Date(d.date);
+            const year = date.getUTCFullYear();
+            const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+            const day = String(date.getUTCDate()).padStart(2, '0');
+            d.date = `${year}-${month}-${day}`;
+          });
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[TDH GLOBAL HISTORY]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
   app.get(`${BASE_PATH}/tdh_history`, function (req: any, res: any, next: any) {
     try {
       const pageSize: number =
