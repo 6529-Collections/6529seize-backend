@@ -2,6 +2,8 @@ import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { loadEnv } from '../../secrets';
 import { isNumber } from '../../helpers';
+import { validateRememe, validateRememeAdd } from './rememes_validation';
+import { SEIZE_SETTINGS } from './api-constants';
 
 const converter = require('json-2-csv');
 
@@ -43,6 +45,7 @@ loadEnv([], true).then(async (e) => {
 
   app.use(compression());
   app.use(cors(corsOptions));
+  app.use(express.json());
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -146,6 +149,8 @@ loadEnv([], true).then(async (e) => {
     'total_balance',
     'total_tdh__raw'
   ];
+
+  const REMEMES_SORT = ['created_at'];
 
   const MEME_LAB_OWNERS_SORT = ['balance'];
 
@@ -310,6 +315,11 @@ loadEnv([], true).then(async (e) => {
       );
       next(e);
     }
+  });
+
+  app.get(`${BASE_PATH}/settings`, function (req: any, res: any, next: any) {
+    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+    res.end(JSON.stringify(SEIZE_SETTINGS));
   });
 
   app.get(`${BASE_PATH}/uploads`, function (req: any, res: any, next: any) {
@@ -1826,24 +1836,42 @@ loadEnv([], true).then(async (e) => {
       const id = req.query.id;
       const tokenType = req.query.token_type;
 
+      const sort =
+        req.query.sort && REMEMES_SORT.includes(req.query.sort)
+          ? req.query.sort
+          : undefined;
+
+      const sortDir =
+        req.query.sort_direction &&
+        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+          ? req.query.sort_direction
+          : 'desc';
+
       console.log(
         new Date(),
         `[API]`,
         '[REMEMES]',
-        `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
+        `[PAGE_SIZE ${pageSize}][PAGE ${page}][CONTRACT ${contract}][ID ${id}][TOKEN_TYPE ${tokenType}][SORT ${sort}][SORT_DIR ${sortDir}]`
       );
-      db.fetchRememes(memeIds, pageSize, page, contract, id, tokenType).then(
-        (result) => {
-          result.data.map((a: any) => {
-            a.metadata = JSON.parse(a.metadata);
-            a.media = JSON.parse(a.media);
-            a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
-            a.meme_references = JSON.parse(a.meme_references);
-            a.replicas = a.replicas.split(',');
-          });
-          returnPaginatedResult(result, req, res, true);
-        }
-      );
+      db.fetchRememes(
+        memeIds,
+        pageSize,
+        page,
+        contract,
+        id,
+        tokenType,
+        sort,
+        sortDir
+      ).then((result) => {
+        result.data.map((a: any) => {
+          a.metadata = JSON.parse(a.metadata);
+          a.media = JSON.parse(a.media);
+          a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
+          a.meme_references = JSON.parse(a.meme_references);
+          a.replicas = a.replicas.split(',');
+        });
+        returnPaginatedResult(result, req, res, true);
+      });
     } catch (e) {
       console.log(
         new Date(),
@@ -1854,6 +1882,69 @@ loadEnv([], true).then(async (e) => {
       return;
     }
   });
+
+  app.post(
+    `${BASE_PATH}/rememes/validate`,
+    validateRememe,
+    function (req: any, res: any, next: any) {
+      try {
+        const body = req.validatedBody;
+        console.log(
+          new Date(),
+          `[API]`,
+          '[REMEMES VALIDATE]',
+          `[VALID ${body.valid}]`
+        );
+        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+        res.status(body.valid ? 200 : 400).send(JSON.stringify(body));
+        res.end();
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[REMEMES VALIDATE]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
+  app.post(
+    `${BASE_PATH}/rememes/add`,
+    validateRememeAdd,
+    function (req: any, res: any, next: any) {
+      try {
+        const body = req.validatedBody;
+        console.log(
+          new Date(),
+          `[API]`,
+          '[REMEMES ADD]',
+          `[VALID ${body.valid}]`,
+          `[FROM ${req.body.address}]`
+        );
+        const valid = body.valid;
+        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+        if (valid) {
+          db.addRememe(req.body.address, body).then((result) => {
+            res.status(201).send(JSON.stringify(body));
+            res.end();
+          });
+        } else {
+          res.status(400).send(JSON.stringify(body));
+          res.end();
+        }
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[REMEMES ADD]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
 
   app.get(
     `${BASE_PATH}/rememes_uploads`,
