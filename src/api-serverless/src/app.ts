@@ -286,6 +286,8 @@ loadEnv([], true).then(async (e) => {
     }
 
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+    res.setHeader('Access-Control-Allow-Headers', corsOptions.allowedHeaders);
+
     res.end(JSON.stringify(result));
   }
 
@@ -1896,6 +1898,10 @@ loadEnv([], true).then(async (e) => {
           `[VALID ${body.valid}]`
         );
         res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+        res.setHeader(
+          'Access-Control-Allow-Headers',
+          corsOptions.allowedHeaders
+        );
         res.status(body.valid ? 200 : 400).send(JSON.stringify(body));
         res.end();
       } catch (e) {
@@ -1925,6 +1931,10 @@ loadEnv([], true).then(async (e) => {
         );
         const valid = body.valid;
         res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+        res.setHeader(
+          'Access-Control-Allow-Headers',
+          corsOptions.allowedHeaders
+        );
         if (valid) {
           db.addRememe(req.body.address, body).then((result) => {
             res.status(201).send(JSON.stringify(body));
@@ -1979,22 +1989,28 @@ loadEnv([], true).then(async (e) => {
 
   app.get(`${BASE_PATH}`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();
-    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE).send(
-      JSON.stringify({
-        message: '6529 SEIZE API',
-        image: image[0].scaled ? image[0].scaled : image[0].image
-      })
-    );
+    res
+      .setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE)
+      .setHeader('Access-Control-Allow-Headers', corsOptions.allowedHeaders)
+      .send(
+        JSON.stringify({
+          message: '6529 SEIZE API',
+          image: image[0].scaled ? image[0].scaled : image[0].image
+        })
+      );
   });
 
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();
-    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE).send(
-      JSON.stringify({
-        message: 'FOR 6529 SEIZE API GO TO /api',
-        image: image[0].scaled ? image[0].scaled : image[0].image
-      })
-    );
+    res
+      .setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE)
+      .setHeader('Access-Control-Allow-Headers', corsOptions.allowedHeaders)
+      .send(
+        JSON.stringify({
+          message: 'FOR 6529 SEIZE API GO TO /api',
+          image: image[0].scaled ? image[0].scaled : image[0].image
+        })
+      );
   });
 
   app.listen(3000, function () {
