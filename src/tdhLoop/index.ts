@@ -46,10 +46,9 @@ async function tdh(force?: boolean) {
   const hoursAgo = getHoursAgo(new Date(lastTdhDB));
 
   if (hoursAgo > 24 || force) {
-    // const tdhResult = await findTDH(lastTDHCalc);
-    // await consolidateTDH(lastTDHCalc);
-    // await calculateGlobalTDHHistory(tdhResult.blockNumber);
-    await calculateGlobalTDHHistory(17923408);
+    const tdhResult = await findTDH(lastTDHCalc);
+    await consolidateTDH(lastTDHCalc);
+    await calculateGlobalTDHHistory(tdhResult.block);
   } else {
     console.log(
       new Date(),
