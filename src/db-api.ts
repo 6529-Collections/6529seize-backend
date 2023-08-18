@@ -153,7 +153,7 @@ async function fetchPaginated(
   const r1 = await execSQL(sql1);
   const r2 = await execSQL(sql2);
 
-  // console.log(r1)
+  // console.log(r1);
   // console.log(r2);
 
   return {
@@ -367,6 +367,32 @@ export async function fetchNFTs(
     filters,
     `${NFTS_TABLE}.*, CASE WHEN EXISTS (SELECT 1 FROM distribution d WHERE d.card_id = ${NFTS_TABLE}.id AND d.contract = ${NFTS_TABLE}.contract) THEN TRUE ELSE FALSE END AS has_distribution`,
     ''
+  );
+}
+
+export async function fetchGradients(
+  pageSize: number,
+  page: number,
+  sort: string,
+  sortDir: string
+) {
+  const filters = constructFilters(
+    '',
+    `${NFTS_TABLE}.contract = ${mysql.escape(GRADIENT_CONTRACT)}`
+  );
+
+  let joins = ` INNER JOIN ${OWNERS_TABLE} ON ${NFTS_TABLE}.contract = ${OWNERS_TABLE}.contract AND ${NFTS_TABLE}.id = ${OWNERS_TABLE}.token_id `;
+  joins += ` LEFT JOIN ${ENS_TABLE} ON ${OWNERS_TABLE}.wallet=${ENS_TABLE}.wallet`;
+  const fields = ` ${NFTS_TABLE}.*, RANK() OVER (ORDER BY tdh) AS tdh_rank, ${OWNERS_TABLE}.wallet as owner, ${ENS_TABLE}.display as owner_display `;
+
+  return fetchPaginated(
+    NFTS_TABLE,
+    `${sort} ${sortDir}`,
+    pageSize,
+    page,
+    filters,
+    fields,
+    joins
   );
 }
 

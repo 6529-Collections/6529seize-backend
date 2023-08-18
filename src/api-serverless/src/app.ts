@@ -128,7 +128,7 @@ loadEnv([], true).then(async (e) => {
   const CONTENT_TYPE_HEADER = 'Content-Type';
   const JSON_HEADER_VALUE = 'application/json';
   const DEFAULT_PAGE_SIZE = 50;
-  const NFTS_PAGE_SIZE = 100;
+  const NFTS_PAGE_SIZE = 101;
   const DISTRIBUTION_PAGE_SIZE = 250;
   const SORT_DIRECTIONS = ['ASC', 'DESC'];
 
@@ -429,9 +429,9 @@ loadEnv([], true).then(async (e) => {
   app.get(`${BASE_PATH}/nfts`, function (req: any, res: any, next: any) {
     try {
       const pageSize: number =
-        req.query.page_size && req.query.page_size < NFTS_PAGE_SIZE
+        req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
           ? parseInt(req.query.page_size)
-          : NFTS_PAGE_SIZE;
+          : DEFAULT_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
       const sortDir =
@@ -465,6 +465,51 @@ loadEnv([], true).then(async (e) => {
       next(e);
     }
   });
+
+  app.get(
+    `${BASE_PATH}/nfts/gradients`,
+    function (req: any, res: any, next: any) {
+      try {
+        const pageSize: number =
+          req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
+            ? parseInt(req.query.page_size)
+            : DEFAULT_PAGE_SIZE;
+        const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+        const sortDir =
+          req.query.sort_direction &&
+          SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+            ? req.query.sort_direction
+            : 'asc';
+
+        const sort =
+          req.query.sort && ['id', 'tdh'].includes(req.query.sort)
+            ? req.query.sort
+            : 'id';
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NFTS]',
+          `[PAGE_SIZE ${pageSize}][PAGE ${page}][SORT ${sort}][SORT_DIR ${sortDir}]`
+        );
+        db.fetchGradients(pageSize, page, sort, sortDir).then((result) => {
+          result.data.map((d: any) => {
+            d.metadata = JSON.parse(d.metadata);
+          });
+          returnPaginatedResult(result, req, res);
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NFTS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
 
   app.get(
     `${BASE_PATH}/nfts_memelab`,
@@ -526,9 +571,9 @@ loadEnv([], true).then(async (e) => {
     function (req: any, res: any, next: any) {
       try {
         const pageSize: number =
-          req.query.page_size && req.query.page_size < NFTS_PAGE_SIZE
+          req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
             ? parseInt(req.query.page_size)
-            : NFTS_PAGE_SIZE;
+            : DEFAULT_PAGE_SIZE;
         const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
         const nfts = req.query.id;
