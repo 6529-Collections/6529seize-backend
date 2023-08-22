@@ -97,6 +97,12 @@ export async function fetchLatestTDHBlockNumber() {
   return r.length > 0 ? r[0].block_number : 0;
 }
 
+export async function fetchLatestTDHHistoryBlockNumber() {
+  let sql = `SELECT block FROM ${TDH_HISTORY_TABLE} order by block desc limit 1;`;
+  const r = await execSQL(sql);
+  return r.length > 0 ? r[0].block : 0;
+}
+
 export interface DBResponse {
   count: number;
   page: number;
@@ -1441,8 +1447,6 @@ export async function fetchConsolidatedOwnerMetrics(
   profilePage: boolean,
   includePrimaryWallet: boolean
 ) {
-  const tdhBlock = await fetchLatestTDHBlockNumber();
-
   let filters = '';
   let hideWalletFilters = '';
   if (hideMuseum) {
@@ -1612,7 +1616,10 @@ export async function fetchConsolidatedOwnerMetrics(
   const fields = ` ${ownerMetricsSelect}, ${walletsTdhTableSelect} , ${CONSOLIDATED_OWNERS_TAGS_TABLE}.* `;
   let joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display`;
   joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_display `;
-  joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display=${TDH_HISTORY_TABLE}.consolidation_display and ${TDH_HISTORY_TABLE}.block=${tdhBlock} `;
+
+  const tdhHistoryBlock = await fetchLatestTDHHistoryBlockNumber();
+  console.log('tdhHistoryBlock', tdhHistoryBlock);
+  joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display=${TDH_HISTORY_TABLE}.consolidation_display and ${TDH_HISTORY_TABLE}.block=${tdhHistoryBlock} `;
 
   if (
     sort == 'balance' ||
