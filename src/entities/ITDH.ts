@@ -157,9 +157,6 @@ export class TDH {
 
   @Column({ type: 'json', nullable: true })
   gradients_ranks?: any;
-
-  @Column({ type: 'int', nullable: false })
-  day_change!: number;
 }
 
 export interface TDHENS extends TDH {
@@ -320,9 +317,6 @@ export class ConsolidatedTDH {
 
   @Column({ type: 'json', nullable: true })
   gradients_ranks?: any;
-
-  @Column({ type: 'int', nullable: false })
-  day_change!: number;
 }
 
 @Entity(TDH_GLOBAL_HISTORY_TABLE)
@@ -361,10 +355,52 @@ export class GlobalTDHHistory {
   net_tdh__raw!: number;
 
   @Column({ type: 'int', nullable: false })
+  created_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  destroyed_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  net_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
   memes_balance!: number;
 
   @Column({ type: 'int', nullable: false })
   gradients_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  total_boosted_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  total_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  total_tdh__raw!: number;
+
+  @Column({ type: 'int', nullable: false })
+  gradients_boosted_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  gradients_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  gradients_tdh__raw!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_boosted_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_tdh__raw!: number;
+
+  @Column({ type: 'int', nullable: false })
+  total_consolidated_wallets!: number;
+
+  @Column({ type: 'int', nullable: false })
+  total_wallets!: number;
 }
 
 @Entity(TDH_HISTORY_TABLE)
@@ -416,4 +452,11 @@ export class TDHHistory {
 
   @Column({ type: 'int', nullable: false })
   net_balance!: number;
+}
+
+export interface TokenTDH {
+  id: string;
+  balance: number;
+  tdh: number;
+  tdh__raw: number;
 }

@@ -1345,48 +1345,7 @@ export async function persistTDHHistory(tdhHistory: TDHHistory[]) {
   ]);
 }
 
-export async function calculateGlobalTDHHistory(block: number) {
-  const historyRepo = AppDataSource.getRepository(TDHHistory);
-  const sums = await historyRepo
-    .createQueryBuilder('tdh_history')
-    .select('SUM(created_tdh)', 'created_tdh')
-    .addSelect('SUM(destroyed_tdh)', 'destroyed_tdh')
-    .addSelect('SUM(net_tdh)', 'net_tdh')
-    .addSelect('SUM(created_boosted_tdh)', 'created_boosted_tdh')
-    .addSelect('SUM(destroyed_boosted_tdh)', 'destroyed_boosted_tdh')
-    .addSelect('SUM(net_boosted_tdh)', 'net_boosted_tdh')
-    .addSelect('SUM(created_tdh__raw)', 'created_tdh__raw')
-    .addSelect('SUM(destroyed_tdh__raw)', 'destroyed_tdh__raw')
-    .addSelect('SUM(net_tdh__raw)', 'net_tdh__raw')
-    .where('block = :block', { block })
-    .getRawOne();
-
-  const memesBalance = await execSQL(
-    `SELECT SUM(edition_size) as balance FROM ${MEMES_EXTENDED_DATA_TABLE};`
-  );
-  const gradientsBalance = await execSQL(
-    `SELECT COUNT(*) as balance FROM ${NFTS_TABLE} WHERE contract=${mysql.escape(
-      GRADIENT_CONTRACT
-    )};`
-  );
-
-  const globalHistory: GlobalTDHHistory = {
-    date: new Date(),
-    block,
-    created_tdh: sums.created_tdh,
-    destroyed_tdh: sums.destroyed_tdh,
-    net_tdh: sums.net_tdh,
-    created_boosted_tdh: sums.created_boosted_tdh,
-    destroyed_boosted_tdh: sums.destroyed_boosted_tdh,
-    net_boosted_tdh: sums.net_boosted_tdh,
-    created_tdh__raw: sums.created_tdh__raw,
-    destroyed_tdh__raw: sums.destroyed_tdh__raw,
-    net_tdh__raw: sums.net_tdh__raw,
-    memes_balance: memesBalance[0].balance,
-    gradients_balance: gradientsBalance[0].balance
-  };
-
+export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
   const globalHistoryRepo = AppDataSource.getRepository(GlobalTDHHistory);
   await globalHistoryRepo.upsert(globalHistory, ['date', 'block']);
-  return sums;
 }

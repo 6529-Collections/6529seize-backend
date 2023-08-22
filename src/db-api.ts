@@ -1085,8 +1085,7 @@ export async function fetchOwnerMetrics(
     ${WALLETS_TDH_TABLE}.memes,
     ${WALLETS_TDH_TABLE}.memes_ranks, 
     ${WALLETS_TDH_TABLE}.gradients, 
-    ${WALLETS_TDH_TABLE}.gradients_ranks,
-    ${WALLETS_TDH_TABLE}.day_change`;
+    ${WALLETS_TDH_TABLE}.gradients_ranks`;
 
   const fields = ` ${ownerMetricsSelect},${ENS_TABLE}.display as wallet_display, ${walletsTdhTableSelect} , ${OWNERS_TAGS_TABLE}.* `;
   let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
@@ -1442,6 +1441,8 @@ export async function fetchConsolidatedOwnerMetrics(
   profilePage: boolean,
   includePrimaryWallet: boolean
 ) {
+  const tdhBlock = await fetchLatestTDHBlockNumber();
+
   let filters = '';
   let hideWalletFilters = '';
   if (hideMuseum) {
@@ -1606,11 +1607,12 @@ export async function fetchConsolidatedOwnerMetrics(
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_ranks, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_ranks,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.day_change`;
+    ${TDH_HISTORY_TABLE}.net_boosted_tdh as day_change`;
 
   const fields = ` ${ownerMetricsSelect}, ${walletsTdhTableSelect} , ${CONSOLIDATED_OWNERS_TAGS_TABLE}.* `;
   let joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display`;
   joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_display `;
+  joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display=${TDH_HISTORY_TABLE}.consolidation_display and ${TDH_HISTORY_TABLE}.block=${tdhBlock} `;
 
   if (
     sort == 'balance' ||
@@ -2511,10 +2513,10 @@ export async function getTdhForAddress(address: string) {
   return result[0].boosted_tdh;
 }
 
-export async function fetchTDHGLOBALHistory(pageSize: number, page: number) {
+export async function fetchTDHGlobalHistory(pageSize: number, page: number) {
   return fetchPaginated(
     TDH_GLOBAL_HISTORY_TABLE,
-    ` date desc `,
+    ` date asc `,
     pageSize,
     page,
     ''
@@ -2536,11 +2538,9 @@ export async function fetchTDHHistory(
     });
   }
 
-  console.log('thefilters', filters);
-
   return fetchPaginated(
     TDH_HISTORY_TABLE,
-    ` date desc, block desc, net_boosted_tdh desc `,
+    ` date asc, block asc, net_boosted_tdh desc `,
     pageSize,
     page,
     filters

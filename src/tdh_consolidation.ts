@@ -3,9 +3,8 @@ import {
   retrieveWalletConsolidations,
   fetchAllTDH,
   fetchAllNFTs,
-  fetchConsolidationDisplay,
   persistConsolidatedTDH,
-  persistTDHHistory
+  fetchConsolidationDisplay
 } from './db';
 import { areEqualAddresses } from './helpers';
 import { ranks } from './tdh';
@@ -31,11 +30,7 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
     areEqualAddresses(nft.contract, MEMES_CONTRACT)
   ).length;
 
-  console.log(
-    '[TDH CONSOLIDATION]',
-    `[WALLETS ${tdh.length}]`,
-    `[LAST TDH ${lastTDHCalc.toUTCString()}]`
-  );
+  console.log('[TDH CONSOLIDATION]', `[WALLETS ${tdh.length}]`);
 
   const consolidatedTdh: ConsolidatedTDH[] = [];
   const processedWallets = new Set<string>();
@@ -163,35 +158,34 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           unique_memes_season2: unique_memes_season2,
           unique_memes_season3: unique_memes_season3,
           unique_memes_season4: unique_memes_season4,
-          boosted_memes_tdh: 0, // assigned later
+          boosted_memes_tdh: 0,
           memes_tdh: memesTDH,
           memes_tdh__raw: memesTDH__raw,
           memes_balance: memesBalance,
-          boosted_memes_tdh_season1: 0, // assigned later
+          boosted_memes_tdh_season1: 0,
           memes_tdh_season1: memes_tdh_season1,
           memes_tdh_season1__raw: memes_tdh_season1__raw,
           memes_balance_season1: memes_balance_season1,
-          boosted_memes_tdh_season2: 0, // assigned later
+          boosted_memes_tdh_season2: 0,
           memes_tdh_season2: memes_tdh_season2,
           memes_tdh_season2__raw: memes_tdh_season2__raw,
           memes_balance_season2: memes_balance_season2,
-          boosted_memes_tdh_season3: 0, // assigned later
+          boosted_memes_tdh_season3: 0,
           memes_tdh_season3: memes_tdh_season3,
           memes_tdh_season3__raw: memes_tdh_season3__raw,
           memes_balance_season3: memes_balance_season3,
-          boosted_memes_tdh_season4: 0, // assigned later
+          boosted_memes_tdh_season4: 0,
           memes_tdh_season4: memes_tdh_season4,
           memes_tdh_season4__raw: memes_tdh_season4__raw,
           memes_balance_season4: memes_balance_season4,
           memes: consolidationMemes,
-          memes_ranks: [], // assigned later
-          boosted_gradients_tdh: 0, // assigned later
+          memes_ranks: [],
+          boosted_gradients_tdh: 0,
           gradients_tdh: gradientsTDH,
           gradients_tdh__raw: gradientsTDH__raw,
           gradients_balance: gradientsBalance,
           gradients: consolidationGradients,
-          gradients_ranks: [], // assigned later
-          day_change: 0 // assigned later
+          gradients_ranks: []
         };
         consolidationGradients.map((wg) => {
           allGradientsTDH.push(wg);
@@ -204,26 +198,18 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
     })
   );
 
-  console.log(
-    '[TDH CONSOLIDATION]',
-    `[ENTRIES ${consolidatedTdh.length}]`,
-    '[CALCULATING RANKS]'
-  );
-
-  const ranksResult = await ranks(
+  const sortedConsolidatedTdh = await ranks(
     allGradientsTDH,
     consolidatedTdh,
     ADJUSTED_NFTS,
     MEMES_COUNT
   );
 
-  await persistConsolidatedTDH(ranksResult.tdh);
-  await persistTDHHistory(ranksResult.history);
+  await persistConsolidatedTDH(sortedConsolidatedTdh);
 
   console.log(
     '[TDH CONSOLIDATION]',
-    `[FINAL ENTRIES ${ranksResult.tdh.length}]`,
-    `[HISTORY ${ranksResult.history.length}]`
+    `[FINAL ENTRIES ${sortedConsolidatedTdh.length}]`
   );
 };
 

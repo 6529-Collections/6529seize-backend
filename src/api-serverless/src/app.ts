@@ -227,7 +227,8 @@ loadEnv([], true).then(async (e) => {
     'unique_memes_szn1',
     'unique_memes_szn2',
     'unique_memes_szn3',
-    'unique_memes_szn4'
+    'unique_memes_szn4',
+    'day_change'
   ];
 
   const TAGS_FILTERS = [
@@ -2048,7 +2049,7 @@ loadEnv([], true).then(async (e) => {
           '[TDH GLOBAL HISTORY]',
           `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
-        db.fetchTDHGLOBALHistory(pageSize, page).then((result) => {
+        db.fetchTDHGlobalHistory(pageSize, page).then((result) => {
           result.data.map((d: any) => {
             const date = new Date(d.date);
             const year = date.getUTCFullYear();
@@ -2087,6 +2088,7 @@ loadEnv([], true).then(async (e) => {
       );
       db.fetchTDHHistory(wallets, pageSize, page).then((result) => {
         result.data.map((d: any) => {
+          d.wallets = JSON.parse(d.wallets);
           const date = new Date(d.date);
           const year = date.getUTCFullYear();
           const month = String(date.getUTCMonth() + 1).padStart(2, '0');

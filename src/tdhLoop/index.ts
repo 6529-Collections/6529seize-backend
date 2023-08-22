@@ -1,4 +1,4 @@
-import { fetchLatestTDHBDate, calculateGlobalTDHHistory } from '../db';
+import { fetchLatestTDHBDate } from '../db';
 import { getHoursAgo, getLastTDH } from '../helpers';
 import { findNftTDH } from '../nft_tdh';
 import { findTDH } from '../tdh';
@@ -34,9 +34,9 @@ export const handler = async (event?: any, context?: any) => {
 
 export async function tdhLoop(force?: boolean) {
   await tdh(force);
-  // await findNftTDH();
-  // await uploadTDH(force);
-  // await uploadConsolidatedTDH(force);
+  await findNftTDH();
+  await uploadTDH(force);
+  await uploadConsolidatedTDH(force);
 }
 
 async function tdh(force?: boolean) {
@@ -48,7 +48,6 @@ async function tdh(force?: boolean) {
   if (hoursAgo > 24 || force) {
     const tdhResult = await findTDH(lastTDHCalc);
     await consolidateTDH(lastTDHCalc);
-    await calculateGlobalTDHHistory(tdhResult.block);
   } else {
     console.log(
       new Date(),

@@ -1,6 +1,6 @@
 import { ConsolidatedTDH, TDHENS } from './entities/ITDH';
 import { OwnerMetric } from './entities/IOwner';
-import { areEqualAddresses } from './helpers';
+import { areEqualAddresses, formatDateAsString } from './helpers';
 import { SIX529_MUSEUM } from './constants';
 import converter from 'json-2-csv';
 import {
@@ -26,7 +26,7 @@ export async function uploadTDH(force?: boolean) {
   const ownerMetrics: OwnerMetric[] = await fetchAllOwnerMetrics();
 
   const block = tdh[0].block;
-  const dateString = formatDate(new Date());
+  const dateString = formatDateAsString(new Date());
 
   const lastUpload = await fetchLastUpload();
 
@@ -140,7 +140,7 @@ export async function uploadConsolidatedTDH(force?: boolean) {
   const ownerMetrics: OwnerMetric[] = await fetchAllOwnerMetrics();
 
   const block = tdh[0].block;
-  const dateString = formatDate(new Date());
+  const dateString = formatDateAsString(new Date());
 
   const lastUpload = await fetchLastConsolidatedUpload();
 
@@ -250,16 +250,4 @@ export async function uploadConsolidatedTDH(force?: boolean) {
       `[SKIPPING...]`
     );
   }
-}
-
-function padTo2Digits(num: number) {
-  return num.toString().padStart(2, '0');
-}
-
-function formatDate(date: Date) {
-  return [
-    date.getFullYear(),
-    padTo2Digits(date.getMonth() + 1),
-    padTo2Digits(date.getDate())
-  ].join('');
 }
