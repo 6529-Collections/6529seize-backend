@@ -84,7 +84,8 @@ cron.schedule('30 * * * *', async function () {
 
 // CALCULATE TDH AT 00:01,00:15,00:30,00:45
 cron.schedule('1,15,30,45 0 * * *', async function () {
-  tdh.handler();
+  await tdh.handler();
+  await tdhHistory.handler();
 });
 
 // UPLOAD ROYALTIES AT 04:01
@@ -109,7 +110,7 @@ async function start() {
   // await memeLab.handler();
   // await ownerMetrics.handler();
   // await tdh.handler();
-  await tdhHistory.handler();
+  // await tdhHistory.handler();
   // await memeStats();
   // await gradientStats();
   // await memeLabStats();
