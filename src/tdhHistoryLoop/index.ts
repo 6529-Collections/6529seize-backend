@@ -122,8 +122,10 @@ async function tdhHistory(date: Date) {
     let balanceCreated = 0;
     let balanceDestroyed = 0;
 
-    const yesterdayTdh = yesterdayData.find((y) =>
-      areEqualAddresses(d.consolidation_display, y.consolidation_display)
+    const yesterdayTdh = yesterdayData.find(
+      (y) =>
+        areEqualAddresses(d.consolidation_display, y.consolidation_display) ||
+        d.wallets.some((w: any) => JSON.parse(y.wallets).includes(w))
     );
 
     if (yesterdayTdh) {
