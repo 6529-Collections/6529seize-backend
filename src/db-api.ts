@@ -367,7 +367,7 @@ export async function fetchNFTs(
   }
   return fetchPaginated(
     NFTS_TABLE,
-    `id ${sortDir}`,
+    `contract desc, id ${sortDir}`,
     pageSize,
     page,
     filters,
@@ -1618,7 +1618,6 @@ export async function fetchConsolidatedOwnerMetrics(
   joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_display `;
 
   const tdhHistoryBlock = await fetchLatestTDHHistoryBlockNumber();
-  console.log('tdhHistoryBlock', tdhHistoryBlock);
   joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display=${TDH_HISTORY_TABLE}.consolidation_display and ${TDH_HISTORY_TABLE}.block=${tdhHistoryBlock} `;
 
   if (
@@ -2523,7 +2522,7 @@ export async function getTdhForAddress(address: string) {
 export async function fetchTDHGlobalHistory(pageSize: number, page: number) {
   return fetchPaginated(
     TDH_GLOBAL_HISTORY_TABLE,
-    ` date asc `,
+    ` date desc `,
     pageSize,
     page,
     ''
@@ -2547,7 +2546,7 @@ export async function fetchTDHHistory(
 
   return fetchPaginated(
     TDH_HISTORY_TABLE,
-    ` date asc, block asc, net_boosted_tdh desc `,
+    ` date desc, block desc, net_boosted_tdh desc `,
     pageSize,
     page,
     filters
