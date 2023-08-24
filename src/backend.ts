@@ -110,7 +110,7 @@ async function start() {
   // await memeLab.handler();
   // await ownerMetrics.handler();
   // await tdh.handler();
-  // await tdhHistory.handler();
+  await tdhHistory.handler();
   // await memeStats();
   // await gradientStats();
   // await memeLabStats();

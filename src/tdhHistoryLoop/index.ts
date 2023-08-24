@@ -208,11 +208,14 @@ async function tdhHistory(date: Date) {
     const boostedTdhNet = boostedTdhCreated - boostedTdhDestroyed;
     const balanceNet = balanceCreated - balanceDestroyed;
 
-    const tdhH = {
+    const tdhH: TDHHistory = {
       date: date,
       consolidation_display: d.consolidation_display,
       wallets: d.wallets,
       block: d.block,
+      boosted_tdh: d.boosted_tdh,
+      tdh: d.tdh,
+      tdh__raw: d.tdh__raw,
       created_tdh: tdhCreated,
       destroyed_tdh: tdhDestroyed,
       net_tdh: tdhNet,
@@ -256,111 +259,93 @@ async function calculateGlobalTDHHistory(
     '[CALCULATING GLOBAL TDH HISTORY...]'
   );
 
-  const sums = tdhHistory.reduce(
-    (accumulator, current) => {
-      accumulator.created_tdh += current.created_tdh;
-      accumulator.destroyed_tdh += current.destroyed_tdh;
-      accumulator.net_tdh += current.net_tdh;
+  let totalCreatedTdh = 0;
+  let totalDestroyedTdh = 0;
+  let totalNetTdh = 0;
+  let totalCreatedBoostedTdh = 0;
+  let totalDestroyedBoostedTdh = 0;
+  let totalNetBoostedTdh = 0;
+  let totalCreatedTdhRaw = 0;
+  let totalDestroyedTdhRaw = 0;
+  let totalNetTdhRaw = 0;
+  let totalCreatedBalance = 0;
+  let totalDestroyedBalance = 0;
+  let totalNetBalance = 0;
 
-      accumulator.created_boosted_tdh += current.created_boosted_tdh;
-      accumulator.destroyed_boosted_tdh += current.destroyed_boosted_tdh;
-      accumulator.net_boosted_tdh += current.net_boosted_tdh;
+  tdhHistory.map((h) => {
+    totalCreatedTdh += h.created_tdh;
+    totalDestroyedTdh += h.destroyed_tdh;
+    totalNetTdh += h.net_tdh;
+    totalCreatedBoostedTdh += h.created_boosted_tdh;
+    totalDestroyedBoostedTdh += h.destroyed_boosted_tdh;
+    totalNetBoostedTdh += h.net_boosted_tdh;
+    totalCreatedTdhRaw += h.created_tdh__raw;
+    totalDestroyedTdhRaw += h.destroyed_tdh__raw;
+    totalNetTdhRaw += h.net_tdh__raw;
+    totalCreatedBalance += h.created_balance;
+    totalDestroyedBalance += h.destroyed_balance;
+    totalNetBalance += h.net_balance;
+  });
 
-      accumulator.created_tdh__raw += current.created_tdh__raw;
-      accumulator.destroyed_tdh__raw += current.destroyed_tdh__raw;
-      accumulator.net_tdh__raw += current.net_tdh__raw;
+  let totalBoostedTdh = 0;
+  let totalTdh = 0;
+  let totalTdhRaw = 0;
+  let totalGradientsBoostedTdh = 0;
+  let totalGradientsTdh = 0;
+  let totalGradientsTdhRaw = 0;
+  let totalMemesBoostedTdh = 0;
+  let totalMemesTdh = 0;
+  let totalMemesTdhRaw = 0;
+  let walletsLength = 0;
+  let memesLength = 0;
+  let gradientsLength = 0;
 
-      accumulator.created_balance += current.created_balance;
-      accumulator.destroyed_balance += current.destroyed_balance;
-      accumulator.net_balance += current.net_balance;
+  tdhData.map((h: any) => {
+    totalBoostedTdh += parseFloat(h.boosted_tdh);
+    totalTdh += parseFloat(h.tdh);
+    totalTdhRaw += parseFloat(h.tdh__raw);
+    totalGradientsBoostedTdh += parseFloat(h.boosted_gradients_tdh);
+    totalGradientsTdh += parseFloat(h.gradients_tdh);
+    totalGradientsTdhRaw += parseFloat(h.gradients_tdh__raw);
+    totalMemesBoostedTdh += parseFloat(h.boosted_memes_tdh);
+    totalMemesTdh += parseFloat(h.memes_tdh);
+    totalMemesTdhRaw += parseFloat(h.memes_tdh__raw);
 
-      return accumulator;
-    },
-    {
-      created_tdh: 0,
-      destroyed_tdh: 0,
-      net_tdh: 0,
-      created_boosted_tdh: 0,
-      destroyed_boosted_tdh: 0,
-      net_boosted_tdh: 0,
-      created_tdh__raw: 0,
-      destroyed_tdh__raw: 0,
-      net_tdh__raw: 0,
-      created_balance: 0,
-      destroyed_balance: 0,
-      net_balance: 0
-    }
-  );
-
-  const tdh_sums = tdhData.reduce(
-    (accumulator, current: any) => {
-      accumulator.boosted_tdh += parseFloat(current.boosted_tdh);
-      accumulator.tdh += parseFloat(current.tdh);
-      accumulator.tdh__raw += parseFloat(current.tdh__raw);
-      accumulator.boosted_gradients_tdh += parseFloat(
-        current.boosted_gradients_tdh
-      );
-      accumulator.gradients_tdh += parseFloat(current.gradients_tdh);
-      accumulator.gradients_tdh__raw += parseFloat(current.gradients_tdh__raw);
-      accumulator.boosted_memes_tdh += parseFloat(current.boosted_memes_tdh);
-      accumulator.memes_tdh += parseFloat(current.memes_tdh);
-      accumulator.memes_tdh__raw += parseFloat(current.memes_tdh__raw);
-
-      return accumulator;
-    },
-    {
-      boosted_tdh: 0,
-      tdh: 0,
-      tdh__raw: 0,
-      boosted_gradients_tdh: 0,
-      gradients_tdh: 0,
-      gradients_tdh__raw: 0,
-      boosted_memes_tdh: 0,
-      memes_tdh: 0,
-      memes_tdh__raw: 0
-    }
-  );
+    walletsLength += h.wallets.length;
+    memesLength += h.memes.length;
+    gradientsLength += h.gradients.length;
+  });
 
   const consolidationWallets = tdhData.length;
-
-  const arraysLength = tdhData.reduce(
-    (accumulator, current: any) => {
-      accumulator.wallets += current.wallets.length;
-      accumulator.memes += current.memes.length;
-      accumulator.gradients += current.gradients.length;
-      return accumulator;
-    },
-    { wallets: 0, memes: 0, gradients: 0 }
-  );
 
   const globalHistory: GlobalTDHHistory = {
     date: date,
     block,
-    created_tdh: sums.created_tdh,
-    destroyed_tdh: sums.destroyed_tdh,
-    net_tdh: sums.net_tdh,
-    created_boosted_tdh: sums.created_boosted_tdh,
-    destroyed_boosted_tdh: sums.destroyed_boosted_tdh,
-    net_boosted_tdh: sums.net_boosted_tdh,
-    created_tdh__raw: sums.created_tdh__raw,
-    destroyed_tdh__raw: sums.destroyed_tdh__raw,
-    net_tdh__raw: sums.net_tdh__raw,
-    created_balance: sums.created_balance,
-    destroyed_balance: sums.destroyed_balance,
-    net_balance: sums.net_balance,
-    memes_balance: arraysLength.memes,
-    gradients_balance: arraysLength.gradients,
-    total_boosted_tdh: tdh_sums.boosted_tdh,
-    total_tdh: tdh_sums.tdh,
-    total_tdh__raw: tdh_sums.tdh__raw,
-    gradients_boosted_tdh: tdh_sums.boosted_gradients_tdh,
-    gradients_tdh: tdh_sums.gradients_tdh,
-    gradients_tdh__raw: tdh_sums.gradients_tdh__raw,
-    memes_boosted_tdh: tdh_sums.boosted_memes_tdh,
-    memes_tdh: tdh_sums.memes_tdh,
-    memes_tdh__raw: tdh_sums.memes_tdh__raw,
+    created_tdh: totalCreatedTdh,
+    destroyed_tdh: totalDestroyedTdh,
+    net_tdh: totalNetTdh,
+    created_boosted_tdh: totalCreatedBoostedTdh,
+    destroyed_boosted_tdh: totalDestroyedBoostedTdh,
+    net_boosted_tdh: totalNetBoostedTdh,
+    created_tdh__raw: totalCreatedTdhRaw,
+    destroyed_tdh__raw: totalDestroyedTdhRaw,
+    net_tdh__raw: totalNetTdhRaw,
+    created_balance: totalCreatedBalance,
+    destroyed_balance: totalDestroyedBalance,
+    net_balance: totalNetBalance,
+    memes_balance: memesLength,
+    gradients_balance: gradientsLength,
+    total_boosted_tdh: totalBoostedTdh,
+    total_tdh: totalTdh,
+    total_tdh__raw: totalTdhRaw,
+    gradients_boosted_tdh: totalGradientsBoostedTdh,
+    gradients_tdh: totalGradientsTdh,
+    gradients_tdh__raw: totalGradientsTdhRaw,
+    memes_boosted_tdh: totalMemesBoostedTdh,
+    memes_tdh: totalMemesTdh,
+    memes_tdh__raw: totalMemesTdhRaw,
     total_consolidated_wallets: consolidationWallets,
-    total_wallets: arraysLength.wallets
+    total_wallets: walletsLength
   };
 
   await persistGlobalTDHHistory(globalHistory);

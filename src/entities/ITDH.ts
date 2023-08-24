@@ -418,6 +418,15 @@ export class TDHHistory {
   wallets?: any;
 
   @Column({ type: 'int' })
+  boosted_tdh!: number;
+
+  @Column({ type: 'int' })
+  tdh!: number;
+
+  @Column({ type: 'int' })
+  tdh__raw!: number;
+
+  @Column({ type: 'int' })
   created_tdh!: number;
 
   @Column({ type: 'int' })
