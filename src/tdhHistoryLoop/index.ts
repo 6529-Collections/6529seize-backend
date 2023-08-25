@@ -32,6 +32,7 @@ export const handler = async (event?: any, context?: any) => {
 
 export async function tdhHistoryLoop(iterations: number) {
   for (let i = 0; i < iterations; i++) {
+    const start = new Date().getTime();
     const myDate = new Date();
     myDate.setDate(myDate.getDate() - i);
 
@@ -47,7 +48,8 @@ export async function tdhHistoryLoop(iterations: number) {
     console.log(
       '[TDH HISTORY]',
       `[DATE ${myDate.toISOString().split('T')[0]}]`,
-      '[ALL DONE!]'
+      '[ALL DONE!]',
+      `[${(new Date().getTime() - start) / 1000} seconds]`
     );
   }
 }
@@ -108,10 +110,13 @@ async function tdhHistory(date: Date) {
     '[MAPPING...]'
   );
 
+  const yesterdayEntries: string[] = [];
+
   todayData.map((d) => {
     d.memes = JSON.parse(d.memes);
     d.gradients = JSON.parse(d.gradients);
     d.wallets = JSON.parse(d.wallets);
+    d.consolidation_key = d.wallets.sort().join('-');
 
     let tdhCreated = 0;
     let tdhDestroyed = 0;
@@ -122,83 +127,114 @@ async function tdhHistory(date: Date) {
     let balanceCreated = 0;
     let balanceDestroyed = 0;
 
-    const yesterdayTdh = yesterdayData.find(
-      (y) =>
-        areEqualAddresses(d.consolidation_display, y.consolidation_display) ||
-        d.wallets.some((w: any) => JSON.parse(y.wallets).includes(w))
+    const yesterdayTdh = yesterdayData.filter(
+      (yd) =>
+        areEqualAddresses(d.consolidation_key, yd.consolidation_key) ||
+        areEqualAddresses(
+          d.consolidation_key,
+          JSON.parse(yd.wallets).sort().join('-')
+        ) ||
+        d.wallets.some((dw: string) =>
+          JSON.parse(yd.wallets).some((yw: string) => areEqualAddresses(dw, yw))
+        )
     );
 
-    if (yesterdayTdh) {
-      yesterdayTdh.memes = JSON.parse(yesterdayTdh.memes);
-      yesterdayTdh.gradients = JSON.parse(yesterdayTdh.gradients);
+    if (yesterdayTdh.length > 0) {
+      yesterdayTdh.map((y) => {
+        yesterdayEntries.push(JSON.parse(y.wallets).sort().join('-'));
+        if (!Array.isArray(y.memes)) {
+          y.memes = JSON.parse(y.memes);
+        }
+        if (!Array.isArray(y.gradients)) {
+          y.gradients = JSON.parse(y.gradients);
+        }
+      });
     }
 
     d.memes.map((m: TokenTDH) => {
-      const existing: TokenTDH = yesterdayTdh
-        ? yesterdayTdh.memes.find((em: TokenTDH) => em.id == m.id)
-        : null;
+      const existing: any[] = [];
+      if (yesterdayTdh) {
+        yesterdayTdh.map((y) => {
+          const e = y.memes.find((em: TokenTDH) => em.id == m.id);
+          if (e) {
+            e.boosted_tdh = e.tdh * y.boost;
+            existing.push(e);
+          }
+        });
+      }
 
-      let previousTdh: TokenTDH;
+      let previousTdh = {
+        id: m.id,
+        boosted_tdh: 0,
+        tdh: 0,
+        tdh__raw: 0,
+        balance: 0
+      };
 
       if (existing) {
-        previousTdh = existing;
-      } else {
-        previousTdh = {
-          id: m.id,
-          tdh: 0,
-          tdh__raw: 0,
-          balance: 0
-        };
+        existing.map((e) => {
+          previousTdh.boosted_tdh += e.boosted_tdh;
+          previousTdh.tdh += e.tdh;
+          previousTdh.tdh__raw += e.tdh__raw;
+          previousTdh.balance += e.balance;
+        });
       }
 
       const change = m.tdh - previousTdh.tdh;
-      const previousBoost = yesterdayTdh ? yesterdayTdh.boost : 1;
 
       if (change > 0) {
         tdhCreated += m.tdh - previousTdh.tdh;
         rawTdhCreated += m.tdh__raw - previousTdh.tdh__raw;
-        boostedTdhCreated += m.tdh * d.boost - previousTdh.tdh * previousBoost;
+        boostedTdhCreated += m.tdh * d.boost - previousTdh.boosted_tdh;
         balanceCreated += m.balance - previousTdh.balance;
       } else {
         tdhDestroyed += previousTdh.tdh - m.tdh;
         rawTdhDestroyed += previousTdh.tdh__raw - m.tdh__raw;
-        boostedTdhDestroyed +=
-          previousTdh.tdh * previousBoost - m.tdh * d.boost;
+        boostedTdhDestroyed += previousTdh.boosted_tdh - m.tdh * d.boost;
         balanceDestroyed += previousTdh.balance - m.balance;
       }
     });
 
     d.gradients.map((m: TokenTDH) => {
-      const existing: TokenTDH = yesterdayTdh
-        ? yesterdayTdh.gradients.find((em: TokenTDH) => em.id == m.id)
-        : null;
+      const existing: any[] = [];
+      if (yesterdayTdh) {
+        yesterdayTdh.map((y) => {
+          const e = y.gradients.find((em: TokenTDH) => em.id == m.id);
+          if (e) {
+            e.boosted_tdh = e.tdh * y.boost;
+            existing.push(e);
+          }
+        });
+      }
 
-      let previousTdh: TokenTDH;
+      let previousTdh = {
+        id: m.id,
+        boosted_tdh: 0,
+        tdh: 0,
+        tdh__raw: 0,
+        balance: 0
+      };
 
       if (existing) {
-        previousTdh = existing;
-      } else {
-        previousTdh = {
-          id: m.id,
-          tdh: 0,
-          tdh__raw: 0,
-          balance: 0
-        };
+        existing.map((e) => {
+          previousTdh.boosted_tdh += e.boosted_tdh;
+          previousTdh.tdh += e.tdh;
+          previousTdh.tdh__raw += e.tdh__raw;
+          previousTdh.balance += e.balance;
+        });
       }
 
       const change = m.tdh - previousTdh.tdh;
-      const previousBoost = yesterdayTdh ? yesterdayTdh.boost : 1;
 
       if (change > 0) {
         tdhCreated += m.tdh - previousTdh.tdh;
         rawTdhCreated += m.tdh__raw - previousTdh.tdh__raw;
-        boostedTdhCreated += m.tdh * d.boost - previousTdh.tdh * previousBoost;
+        boostedTdhCreated += m.tdh * d.boost - previousTdh.boosted_tdh;
         balanceCreated += m.balance - previousTdh.balance;
       } else {
         tdhDestroyed += previousTdh.tdh - m.tdh;
         rawTdhDestroyed += previousTdh.tdh__raw - m.tdh__raw;
-        boostedTdhDestroyed +=
-          previousTdh.tdh * previousBoost - m.tdh * d.boost;
+        boostedTdhDestroyed += previousTdh.boosted_tdh - m.tdh * d.boost;
         balanceDestroyed += previousTdh.balance - m.balance;
       }
     });
@@ -211,6 +247,7 @@ async function tdhHistory(date: Date) {
     const tdhH: TDHHistory = {
       date: date,
       consolidation_display: d.consolidation_display,
+      consolidation_key: d.consolidation_key,
       wallets: d.wallets,
       block: d.block,
       boosted_tdh: d.boosted_tdh,
@@ -230,6 +267,46 @@ async function tdhHistory(date: Date) {
       net_balance: balanceNet
     };
     tdhHistory.push(tdhH);
+  });
+
+  yesterdayData.map((yd) => {
+    const key = JSON.parse(yd.wallets).sort().join('-');
+    if (!yesterdayEntries.includes(key)) {
+      console.log(
+        '[TDH HISTORY]',
+        `[DATE ${date.toISOString().split('T')[0]}]`,
+        `[KEY LOST ${key} ${yd.boosted_tdh} TDH]`
+      );
+
+      const ydtdhRaw = parseFloat(yd.tdh__raw as any);
+      const ydtdh = parseFloat(yd.tdh as any);
+      const ydboostedTdh = parseFloat(yd.boosted_tdh as any);
+      const ydbalance = parseFloat(yd.balance as any);
+
+      const tdhH: TDHHistory = {
+        date: date,
+        consolidation_display: yd.consolidation_display,
+        consolidation_key: key,
+        wallets: yd.wallets,
+        block: yd.block,
+        boosted_tdh: 0,
+        tdh: 0,
+        tdh__raw: 0,
+        created_tdh: 0,
+        destroyed_tdh: ydtdh,
+        net_tdh: -ydtdh,
+        created_boosted_tdh: 0,
+        destroyed_boosted_tdh: ydboostedTdh,
+        net_boosted_tdh: -ydboostedTdh,
+        created_tdh__raw: 0,
+        destroyed_tdh__raw: ydtdhRaw,
+        net_tdh__raw: -ydtdhRaw,
+        created_balance: 0,
+        destroyed_balance: ydbalance,
+        net_balance: ydbalance
+      };
+      tdhHistory.push(tdhH);
+    }
   });
 
   console.log(

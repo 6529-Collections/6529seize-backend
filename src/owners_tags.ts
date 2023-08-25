@@ -115,6 +115,7 @@ export const findOwnerTags = async () => {
       const wallet = om.wallet;
       const consolidations = await retrieveWalletConsolidations(wallet);
       const display = await fetchConsolidationDisplay(consolidations);
+      const consolidationKey = [...consolidations].sort().join('-');
 
       if (
         !Array.from(processedWallets).some((pw) =>
@@ -151,6 +152,7 @@ export const findOwnerTags = async () => {
 
         const consolidationTag: ConsolidatedOwnerTags = {
           consolidation_display: display,
+          consolidation_key: consolidationKey,
           wallets: consolidations,
           ...oTags
         };

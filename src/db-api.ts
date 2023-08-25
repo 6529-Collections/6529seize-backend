@@ -1948,6 +1948,7 @@ export async function fetchConsolidatedOwnerMetrics(
         GRADIENT_CONTRACT
       )}) AS transfers_in_gradients`;
       const results2 = await execSQL(sql);
+      results2[0].wallets = resolvedWallets;
       return {
         count: results2.length,
         page: 1,

@@ -1345,7 +1345,9 @@ loadEnv([], true).then(async (e) => {
         ).then(async (result) => {
           result.data.map((d: any) => {
             if (d.wallets) {
-              d.wallets = JSON.parse(d.wallets);
+              if (!Array.isArray(d.wallets)) {
+                d.wallets = JSON.parse(d.wallets);
+              }
             }
           });
           if (downloadAll || downloadPage) {

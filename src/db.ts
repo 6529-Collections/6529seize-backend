@@ -1340,7 +1340,7 @@ export async function fetchMissingS3Rememes() {
 export async function persistTDHHistory(tdhHistory: TDHHistory[]) {
   await AppDataSource.getRepository(TDHHistory).upsert(tdhHistory, [
     'date',
-    'consolidation_display',
+    'consolidation_key',
     'block'
   ]);
 }
