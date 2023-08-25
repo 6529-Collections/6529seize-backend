@@ -31,7 +31,7 @@ export const handler = async (event?: any, context?: any) => {
 };
 
 export async function tdhHistoryLoop(iterations: number) {
-  for (let i = 0; i < iterations; i++) {
+  for (let i = iterations - 1; i >= 0; i--) {
     const start = new Date().getTime();
     const myDate = new Date();
     myDate.setDate(myDate.getDate() - i);
