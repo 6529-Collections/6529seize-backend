@@ -91,7 +91,7 @@ async function tdhHistory(date: Date) {
   const uploads = await fetchUploads(dateString);
 
   console.log(
-    '\n[TDH HISTORY]',
+    '[TDH HISTORY]',
     `[DATE ${date.toISOString().split('T')[0]}]`,
     '[FETCHING UPLOADS...]'
   );
