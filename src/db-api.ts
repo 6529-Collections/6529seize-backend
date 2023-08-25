@@ -2537,7 +2537,8 @@ export async function fetchTDHHistory(
 ) {
   let filters = '';
   if (wallets) {
-    wallets.split(',').map((w) => {
+    const resolvedWallets = await resolveEns(wallets);
+    resolvedWallets.map((w) => {
       filters = constructFilters(
         filters,
         `LOWER(wallets) LIKE '%${w.toLowerCase()}%'`
