@@ -1611,7 +1611,8 @@ export async function fetchConsolidatedOwnerMetrics(
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_ranks, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_ranks,
-    COALESCE(${TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change`;
+    COALESCE(${TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change,
+    COALESCE(${TDH_HISTORY_TABLE}.net_tdh, 0) as day_change_unboosted`;
 
   const fields = ` ${ownerMetricsSelect}, ${walletsTdhTableSelect} , ${CONSOLIDATED_OWNERS_TAGS_TABLE}.* `;
   let joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display`;

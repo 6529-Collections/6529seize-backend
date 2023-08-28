@@ -228,7 +228,8 @@ loadEnv([], true).then(async (e) => {
     'unique_memes_szn2',
     'unique_memes_szn3',
     'unique_memes_szn4',
-    'day_change'
+    'day_change',
+    'day_change_unboosted'
   ];
 
   const TAGS_FILTERS = [
