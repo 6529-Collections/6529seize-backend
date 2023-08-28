@@ -165,6 +165,9 @@ export class NFT {
   metadata?: any;
 
   @Column({ type: 'int' })
+  boosted_tdh!: number;
+
+  @Column({ type: 'int' })
   tdh!: number;
 
   @Column({ type: 'int' })
