@@ -41,6 +41,7 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
       const wallet = tdhEntry.wallet;
       const consolidations = await retrieveWalletConsolidations(wallet);
       const display = await fetchConsolidationDisplay(consolidations);
+      const consolidationKey = [...consolidations].sort().join('-');
 
       if (
         !Array.from(processedWallets).some((pw) =>
@@ -137,6 +138,7 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
         const consolidation: ConsolidatedTDH = {
           date: new Date(),
           consolidation_display: display,
+          consolidation_key: consolidationKey,
           wallets: consolidations,
           tdh_rank: 0, //assigned later
           tdh_rank_memes: 0, //assigned later

@@ -36,7 +36,9 @@ import {
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE,
   REMEMES_TABLE,
-  REMEMES_UPLOADS
+  REMEMES_UPLOADS,
+  TDH_HISTORY_TABLE,
+  TDH_GLOBAL_HISTORY_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
 import {
@@ -95,6 +97,12 @@ export async function fetchLatestTDHBlockNumber() {
   return r.length > 0 ? r[0].block_number : 0;
 }
 
+export async function fetchLatestTDHHistoryBlockNumber() {
+  let sql = `SELECT block FROM ${TDH_HISTORY_TABLE} order by block desc limit 1;`;
+  const r = await execSQL(sql);
+  return r.length > 0 ? r[0].block : 0;
+}
+
 export interface DBResponse {
   count: number;
   page: number;
@@ -144,11 +152,12 @@ async function fetchPaginated(
     const offset = pageSize * (page - 1);
     sql2 += ` OFFSET ${offset}`;
   }
-  const r1 = await execSQL(sql1);
-  const r2 = await execSQL(sql2);
 
   // console.log(sql1);
   // console.log(sql2);
+
+  const r1 = await execSQL(sql1);
+  const r2 = await execSQL(sql2);
 
   // console.log(r1);
   // console.log(r2);
@@ -358,7 +367,7 @@ export async function fetchNFTs(
   }
   return fetchPaginated(
     NFTS_TABLE,
-    `id ${sortDir}`,
+    `contract desc, id ${sortDir}`,
     pageSize,
     page,
     filters,
@@ -1601,11 +1610,15 @@ export async function fetchConsolidatedOwnerMetrics(
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_ranks, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_ranks`;
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_ranks,
+    COALESCE(${TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change`;
 
   const fields = ` ${ownerMetricsSelect}, ${walletsTdhTableSelect} , ${CONSOLIDATED_OWNERS_TAGS_TABLE}.* `;
   let joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display`;
   joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_display `;
+
+  const tdhHistoryBlock = await fetchLatestTDHHistoryBlockNumber();
+  joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display=${TDH_HISTORY_TABLE}.consolidation_display and ${TDH_HISTORY_TABLE}.block=${tdhHistoryBlock} `;
 
   if (
     sort == 'balance' ||
@@ -1935,6 +1948,7 @@ export async function fetchConsolidatedOwnerMetrics(
         GRADIENT_CONTRACT
       )}) AS transfers_in_gradients`;
       const results2 = await execSQL(sql);
+      results2[0].wallets = resolvedWallets;
       return {
         count: results2.length,
         page: 1,
@@ -2504,4 +2518,39 @@ export async function getTdhForAddress(address: string) {
     return 0;
   }
   return result[0].boosted_tdh;
+}
+
+export async function fetchTDHGlobalHistory(pageSize: number, page: number) {
+  return fetchPaginated(
+    TDH_GLOBAL_HISTORY_TABLE,
+    ` date desc `,
+    pageSize,
+    page,
+    ''
+  );
+}
+
+export async function fetchTDHHistory(
+  wallets: string,
+  pageSize: number,
+  page: number
+) {
+  let filters = '';
+  if (wallets) {
+    const resolvedWallets = await resolveEns(wallets);
+    resolvedWallets.map((w) => {
+      filters = constructFilters(
+        filters,
+        `LOWER(wallets) LIKE '%${w.toLowerCase()}%'`
+      );
+    });
+  }
+
+  return fetchPaginated(
+    TDH_HISTORY_TABLE,
+    ` date desc, block desc, net_boosted_tdh desc `,
+    pageSize,
+    page,
+    filters
+  );
 }

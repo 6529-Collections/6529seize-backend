@@ -89,6 +89,9 @@ export class ConsolidatedOwnerTags {
   @PrimaryColumn({ type: 'varchar', length: 500 })
   consolidation_display!: string;
 
+  @Column({ type: 'varchar', length: 200 })
+  consolidation_key!: string;
+
   @Column({ type: 'json', nullable: false })
   wallets?: any;
 
@@ -391,6 +394,9 @@ export class ConsolidatedOwnerMetric {
 
   @PrimaryColumn({ type: 'varchar', length: 500 })
   consolidation_display!: string;
+
+  @Column({ type: 'varchar', length: 200 })
+  consolidation_key!: string;
 
   @Column({ type: 'json', nullable: false })
   wallets?: any;

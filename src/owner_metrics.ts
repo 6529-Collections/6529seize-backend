@@ -414,7 +414,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
       const wallet = om.wallet;
       const consolidations = await retrieveWalletConsolidations(wallet);
       const display = await fetchConsolidationDisplay(consolidations);
-
+      const consolidationKey = [...consolidations].sort().join('-');
       if (
         !Array.from(processedWallets).some((pw) =>
           areEqualAddresses(wallet, pw)
@@ -609,6 +609,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
         const consolidation: ConsolidatedOwnerMetric = {
           created_at: new Date(),
           consolidation_display: display,
+          consolidation_key: consolidationKey,
           wallets: consolidations,
           balance: balance,
           memes_balance: memes_balance,

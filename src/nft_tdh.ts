@@ -21,6 +21,10 @@ export const findNftTDH = async () => {
         nftTDH.find(
           (n) =>
             n.id == meme.id && areEqualAddresses(n.contract, MEMES_CONTRACT)
+        )!.boosted_tdh += meme.tdh * tdh.boost;
+        nftTDH.find(
+          (n) =>
+            n.id == meme.id && areEqualAddresses(n.contract, MEMES_CONTRACT)
         )!.tdh += meme.tdh;
         nftTDH.find(
           (n) =>
@@ -32,6 +36,7 @@ export const findNftTDH = async () => {
             n.id == meme.id && areEqualAddresses(n.contract, MEMES_CONTRACT)
         );
         if (nft) {
+          nft.boosted_tdh = meme.tdh * tdh.boost;
           nft.tdh = meme.tdh;
           nft.tdh__raw = meme.tdh__raw;
           nftTDH.push(nft);
@@ -49,6 +54,11 @@ export const findNftTDH = async () => {
           (n) =>
             n.id == gradient.id &&
             areEqualAddresses(n.contract, GRADIENT_CONTRACT)
+        )!.boosted_tdh += gradient.tdh * tdh.boost;
+        nftTDH.find(
+          (n) =>
+            n.id == gradient.id &&
+            areEqualAddresses(n.contract, GRADIENT_CONTRACT)
         )!.tdh += gradient.tdh;
         nftTDH.find(
           (n) =>
@@ -62,6 +72,7 @@ export const findNftTDH = async () => {
             areEqualAddresses(n.contract, GRADIENT_CONTRACT)
         );
         if (nft) {
+          nft.boosted_tdh = gradient.tdh * tdh.boost;
           nft.tdh = gradient.tdh;
           nft.tdh__raw = gradient.tdh__raw;
           nftTDH.push(nft);

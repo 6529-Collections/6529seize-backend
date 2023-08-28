@@ -19,7 +19,9 @@ import {
   OWNERS_MEME_LAB_TABLE,
   MEMES_CONTRACT,
   CONSOLIDATED_WALLETS_TDH_TABLE,
-  CONSOLIDATED_UPLOADS_TABLE
+  CONSOLIDATED_UPLOADS_TABLE,
+  TDH_HISTORY_TABLE,
+  GRADIENT_CONTRACT
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -37,7 +39,12 @@ import {
   OwnerMetric,
   OwnerTags
 } from './entities/IOwner';
-import { ConsolidatedTDH, TDH } from './entities/ITDH';
+import {
+  ConsolidatedTDH,
+  GlobalTDHHistory,
+  TDH,
+  TDHHistory
+} from './entities/ITDH';
 import { Team } from './entities/ITeam';
 import {
   Transaction,
@@ -95,7 +102,9 @@ export async function connect(entities: any[] = []) {
       NFTHistoryBlock,
       NFTHistoryClaim,
       Rememe,
-      RememeUpload
+      RememeUpload,
+      TDHHistory,
+      GlobalTDHHistory
     ];
   }
 
@@ -364,6 +373,50 @@ export async function fetchAllConsolidatedTDH() {
   results.map((r: any) => (r.memes = JSON.parse(r.memes)));
   results.map((r: any) => (r.gradients = JSON.parse(r.gradients)));
   return results;
+}
+
+export async function fetchConsolidatedTDHForWallet(w: any) {
+  let table;
+  let condition;
+  if (w.wallets) {
+    table = CONSOLIDATED_WALLETS_TDH_TABLE;
+    condition = `${table}.wallets LIKE '%${w.wallets[0]}%'`;
+  } else if (w.wallet) {
+    table = WALLETS_TDH_TABLE;
+    condition = `${table}.wallet=${mysql.escape(w.wallet)}`;
+  }
+
+  if (table) {
+    let sql = `SELECT tdh, boosted_tdh, tdh__raw, boost, memes, gradients FROM ${table} WHERE ${condition} ORDER BY BLOCK DESC LIMIT 1`;
+    const results = await execSQL(sql);
+    if (results.length > 0) {
+      const consolidated = results[0];
+      consolidated.memes = consolidated.memes
+        ? JSON.parse(consolidated.memes)
+        : [];
+      consolidated.gradients = consolidated.gradients
+        ? JSON.parse(consolidated.gradients)
+        : [];
+      return consolidated;
+    }
+  }
+  return null;
+}
+
+export async function fetchTDHHistoryForWallet(wallet: string, block: number) {
+  let sql = `SELECT * FROM ${TDH_HISTORY_TABLE} WHERE LOWER(${TDH_HISTORY_TABLE}.wallets) LIKE '%${wallet.toLowerCase()}%' AND block=${block}`;
+  const results = await execSQL(sql);
+  if (results.length > 0) {
+    const consolidated = results[0];
+    consolidated.memes = consolidated.memes
+      ? JSON.parse(consolidated.memes)
+      : [];
+    consolidated.gradients = consolidated.gradients
+      ? JSON.parse(consolidated.gradients)
+      : [];
+    return consolidated;
+  }
+  return null;
 }
 
 export async function fetchConsolidationDisplay(
@@ -1282,4 +1335,17 @@ export async function fetchMissingS3Rememes() {
       s3_image_original: IsNull()
     }
   });
+}
+
+export async function persistTDHHistory(tdhHistory: TDHHistory[]) {
+  await AppDataSource.getRepository(TDHHistory).upsert(tdhHistory, [
+    'date',
+    'consolidation_key',
+    'block'
+  ]);
+}
+
+export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
+  const globalHistoryRepo = AppDataSource.getRepository(GlobalTDHHistory);
+  await globalHistoryRepo.upsert(globalHistory, ['date', 'block']);
 }
