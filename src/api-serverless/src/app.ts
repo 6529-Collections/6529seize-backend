@@ -220,6 +220,7 @@ loadEnv([], true).then(async (e) => {
     'memes_cards_sets_szn1',
     'memes_cards_sets_szn2',
     'memes_cards_sets_szn3',
+    'memes_cards_sets_szn4',
     'memes_cards_sets_minus1',
     'memes_cards_sets_minus2',
     'genesis',
