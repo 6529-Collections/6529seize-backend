@@ -21,7 +21,8 @@ import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
   TDH_HISTORY_TABLE,
-  GRADIENT_CONTRACT
+  GRADIENT_CONTRACT,
+  DELEGATIONS_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -104,7 +105,8 @@ export async function connect(entities: any[] = []) {
       Rememe,
       RememeUpload,
       TDHHistory,
-      GlobalTDHHistory
+      GlobalTDHHistory,
+      ENS
     ];
   }
 
@@ -577,13 +579,33 @@ export async function fetchMissingEns(datetime?: Date) {
   if (datetime) {
     sql += ` AND ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(datetime)}`;
   }
-  sql += `UNION
+  sql += ` UNION
       SELECT to_address AS address
       FROM ${TRANSACTIONS_TABLE}
       WHERE to_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
   if (datetime) {
     sql += ` AND ${TRANSACTIONS_TABLE}.created_at > ${mysql.escape(datetime)}`;
   }
+  sql += `) AS addresses LIMIT 200`;
+
+  const results = await execSQL(sql);
+
+  const structuredResults = results.map((r: any) => r.address);
+  return structuredResults;
+}
+
+export async function fetchMissingEnsDelegations() {
+  let sql = `SELECT DISTINCT address
+    FROM (
+      SELECT from_address AS address
+      FROM ${DELEGATIONS_TABLE}
+      WHERE from_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
+
+  sql += ` UNION
+      SELECT to_address AS address
+      FROM ${DELEGATIONS_TABLE}
+      WHERE to_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
+
   sql += `) AS addresses LIMIT 200`;
 
   const results = await execSQL(sql);
