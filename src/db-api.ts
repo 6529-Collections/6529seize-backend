@@ -820,8 +820,8 @@ export async function fetchConsolidatedNftTdh(
     return returnEmpty();
   }
 
-  joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_METRICS_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display`;
-  joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_display `;
+  joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_METRICS_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key`;
+  joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key `;
 
   const fields = ` ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance, ${CONSOLIDATED_WALLETS_TDH_TABLE}.* `;
 
@@ -1615,11 +1615,11 @@ export async function fetchConsolidatedOwnerMetrics(
     COALESCE(${TDH_HISTORY_TABLE}.net_tdh, 0) as day_change_unboosted`;
 
   const fields = ` ${ownerMetricsSelect}, ${walletsTdhTableSelect} , ${CONSOLIDATED_OWNERS_TAGS_TABLE}.* `;
-  let joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display`;
-  joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_display `;
+  let joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key`;
+  joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key `;
 
   const tdhHistoryBlock = await fetchLatestTDHHistoryBlockNumber();
-  joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display=${TDH_HISTORY_TABLE}.consolidation_display and ${TDH_HISTORY_TABLE}.block=${tdhHistoryBlock} `;
+  joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${TDH_HISTORY_TABLE}.consolidation_key and ${TDH_HISTORY_TABLE}.block=${tdhHistoryBlock} `;
 
   if (
     sort == 'balance' ||
@@ -1651,7 +1651,7 @@ export async function fetchConsolidatedOwnerMetrics(
 
   if (wallets) {
     joins += ` JOIN (
-      SELECT ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display, RANK() OVER(ORDER BY ${sort} DESC) AS dense_rank_sort, 
+      SELECT ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key, RANK() OVER(ORDER BY ${sort} DESC) AS dense_rank_sort, 
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes+${CONSOLIDATED_OWNERS_TAGS_TABLE}.gradients_balance DESC) AS dense_rank_unique,
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, 
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, 
@@ -1666,8 +1666,8 @@ export async function fetchConsolidatedOwnerMetrics(
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn3 DESC) AS dense_rank_unique_memes_season3,
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn4 DESC) AS dense_rank_unique_memes_season4 
       FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} 
-        LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_display ${hideWalletFilters}) 
-      AS dense_table ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_display = dense_table.consolidation_display `;
+        LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key ${hideWalletFilters}) 
+      AS dense_table ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key = dense_table.consolidation_key `;
   }
 
   const results = await fetchPaginated(
@@ -2225,7 +2225,7 @@ export async function fetchConsolidations(
     pageSize,
     page,
     filters,
-    'consolidation_display, wallets'
+    'consolidation_display, consolidation_key, wallets'
   );
 
   await Promise.all(
