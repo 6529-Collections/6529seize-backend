@@ -947,12 +947,12 @@ loadEnv([], true).then(async (e) => {
   );
 
   app.get(
-    `${BASE_PATH}/ens/:address/`,
+    `${BASE_PATH}/user/:address/`,
     function (req: any, res: any, next: any) {
       try {
         const address = req.params.address;
 
-        db.fetchEns(address).then((result) => {
+        db.fetchUser(address).then((result) => {
           res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
           if (result.length == 1) {
             res.end(JSON.stringify(result[0]));
