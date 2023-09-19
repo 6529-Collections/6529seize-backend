@@ -2,8 +2,12 @@ import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { loadEnv } from '../../secrets';
 import { isNumber } from '../../helpers';
-import { validateRememe, validateRememeAdd } from './rememes_validation';
+import {
+  validateRememe,
+  validateRememeAdd
+} from './validation/rememes_validation';
 import { SEIZE_SETTINGS } from './api-constants';
+import { validateUser } from './validation/user_validation';
 
 const converter = require('json-2-csv');
 
@@ -2124,6 +2128,46 @@ loadEnv([], true).then(async (e) => {
         })
       );
   });
+
+  app.post(
+    `${BASE_PATH}/user`,
+    validateUser,
+    function (req: any, res: any, next: any) {
+      try {
+        const body = req.validatedBody;
+        console.log(
+          new Date(),
+          `[API]`,
+          '[USER]',
+          `[VALID ${body.valid}]`,
+          `[FROM ${req.body.wallet}]`
+        );
+        const valid = body.valid;
+        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+        res.setHeader(
+          'Access-Control-Allow-Headers',
+          corsOptions.allowedHeaders
+        );
+        if (valid) {
+          db.updateUser(body.user).then((result) => {
+            res.status(200).send(JSON.stringify(body));
+            res.end();
+          });
+        } else {
+          res.status(400).send(JSON.stringify(body));
+          res.end();
+        }
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[USER]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
 
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();

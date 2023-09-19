@@ -220,3 +220,12 @@ export function formatDateAsString(date: Date) {
     padTo2Digits(date.getDate())
   ].join('');
 }
+
+export function isValidUrl(url: string) {
+  try {
+    new URL(url);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}

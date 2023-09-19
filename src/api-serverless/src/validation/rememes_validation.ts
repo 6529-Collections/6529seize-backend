@@ -1,11 +1,11 @@
 import { ethers } from 'ethers';
 import * as Joi from 'joi';
 import { hashMessage } from '@ethersproject/hash';
-import { areEqualAddresses } from '../../helpers';
-import { ALCHEMY_SETTINGS, OPENSEA_ADDRESS } from '../../constants';
+import { areEqualAddresses } from '../../../helpers';
+import { ALCHEMY_SETTINGS, OPENSEA_ADDRESS } from '../../../constants';
 import { Alchemy, Nft, NftContract } from 'alchemy-sdk';
-import { getTdhForAddress, rememeExists } from '../../db-api';
-import { SEIZE_SETTINGS } from './api-constants';
+import { getTdhForAddress, rememeExists } from '../../../db-api';
+import { SEIZE_SETTINGS } from '../api-constants';
 
 const rememeSchema = Joi.object({
   contract: Joi.string().required(),
@@ -15,7 +15,7 @@ const rememeSchema = Joi.object({
 
 const rememeAddSchema = Joi.object({
   address: Joi.string().required(),
-  signature: Joi.string().required(), // Add a comma after this line
+  signature: Joi.string().required(),
   rememe: rememeSchema
 });
 

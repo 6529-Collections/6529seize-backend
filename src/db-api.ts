@@ -42,6 +42,7 @@ import {
   USER_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
+import { User } from './entities/IUser';
 import {
   areEqualAddresses,
   extractConsolidationWallets,
@@ -2555,4 +2556,18 @@ export async function fetchTDHHistory(
     page,
     filters
   );
+}
+
+export async function updateUser(user: User) {
+  const sql = `INSERT INTO ${USER_TABLE} (wallet, pfp, banner_1, banner_2, website) VALUES (${mysql.escape(
+    user.wallet
+  )}, ${mysql.escape(user.pfp)}, ${mysql.escape(user.banner_1)}, ${mysql.escape(
+    user.banner_2
+  )}, ${mysql.escape(user.website)}) ON DUPLICATE KEY UPDATE ${
+    user.pfp ? `pfp=${mysql.escape(user.pfp)},` : ``
+  } banner_1=${mysql.escape(user.banner_1)}, banner_2=${mysql.escape(
+    user.banner_2
+  )}, website=${mysql.escape(user.website)}`;
+
+  await execSQL(sql);
 }
