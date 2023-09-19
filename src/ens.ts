@@ -1,12 +1,12 @@
 import { Alchemy } from 'alchemy-sdk';
-import { ALCHEMY_SETTINGS, ENS_ADDRESS, PUNK_6529 } from './constants';
+import { ALCHEMY_SETTINGS } from './constants';
 import { ENS } from './entities/IENS';
 import {
   fetchEnsRefresh,
   persistENS,
-  fetchTransactionsFromDate,
   fetchMissingEns,
-  fetchBrokenEnsRefresh
+  fetchBrokenEnsRefresh,
+  fetchMissingEnsDelegations
 } from './db';
 
 let alchemy: Alchemy;
@@ -115,6 +115,27 @@ export async function discoverEns(datetime?: Date) {
   } catch (e: any) {
     console.log(e);
     await discoverEns(datetime);
+  }
+}
+
+export async function discoverEnsDelegations() {
+  alchemy = new Alchemy({
+    ...ALCHEMY_SETTINGS,
+    apiKey: process.env.ALCHEMY_API_KEY
+  });
+
+  try {
+    const missingEns = await fetchMissingEnsDelegations();
+    if (missingEns.length > 0) {
+      const newEns = await findNewEns(missingEns);
+      if (newEns.length > 0) {
+        await persistENS(newEns);
+        await discoverEnsDelegations();
+      }
+    }
+  } catch (e: any) {
+    console.log(e);
+    await discoverEnsDelegations();
   }
 }
 

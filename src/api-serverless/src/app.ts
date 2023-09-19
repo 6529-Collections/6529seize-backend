@@ -220,6 +220,7 @@ loadEnv([], true).then(async (e) => {
     'memes_cards_sets_szn1',
     'memes_cards_sets_szn2',
     'memes_cards_sets_szn3',
+    'memes_cards_sets_szn4',
     'memes_cards_sets_minus1',
     'memes_cards_sets_minus2',
     'genesis',
@@ -228,7 +229,8 @@ loadEnv([], true).then(async (e) => {
     'unique_memes_szn2',
     'unique_memes_szn3',
     'unique_memes_szn4',
-    'day_change'
+    'day_change',
+    'day_change_unboosted'
   ];
 
   const TAGS_FILTERS = [
