@@ -1,7 +1,8 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
-import * as sharp from 'sharp';
 import * as imagescript from 'imagescript';
+
+const sharp = require('sharp');
 
 const TARGET_HEIGHT = 450;
 
