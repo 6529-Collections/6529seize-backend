@@ -2,8 +2,6 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
 import * as imagescript from 'imagescript';
 
-const sharp = require('sharp');
-
 const TARGET_HEIGHT = 450;
 
 let s3: S3Client;
@@ -53,10 +51,7 @@ async function resizeImage(wallet: string, ext: string, file: any) {
     const buffer = file.buffer;
 
     if (ext != 'gif') {
-      return await sharp(buffer)
-        .resize({ height: TARGET_HEIGHT })
-        .webp()
-        .toBuffer();
+      return buffer;
     } else {
       const gif = await imagescript.GIF.decode(buffer);
       const scaleFactor = gif.height / TARGET_HEIGHT;
