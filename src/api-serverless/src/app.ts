@@ -5,9 +5,9 @@ import { isNumber } from '../../helpers';
 import {
   validateRememe,
   validateRememeAdd
-} from './validation/rememes_validation';
+} from './rememes/rememes_validation';
 import { SEIZE_SETTINGS } from './api-constants';
-import { validateUser } from './validation/user_validation';
+import { validateUser } from './users/user_validation';
 
 const converter = require('json-2-csv');
 
@@ -25,6 +25,10 @@ const cors = require('cors');
 const helmet = require('helmet');
 
 const app = express();
+
+const multer = require('multer');
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
 
 const corsOptions = {
   origin: '*',
@@ -640,6 +644,30 @@ loadEnv([], true).then(async (e) => {
       }
     }
   );
+
+  app.get(`${BASE_PATH}/memes_lite`, function (req: any, res: any, next: any) {
+    try {
+      console.log(new Date(), `[API]`, '[MEMES LITE]');
+
+      const sortDir =
+        req.query.sort_direction &&
+        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+          ? req.query.sort_direction
+          : 'asc';
+
+      db.fetchMemesLite(sortDir).then((result) => {
+        returnPaginatedResult(result, req, res);
+      });
+    } catch (e) {
+      console.log(
+        new Date(),
+        `[API]`,
+        '[MEMES LITE]',
+        `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+      );
+      next(e);
+    }
+  });
 
   app.get(
     `${BASE_PATH}/lab_extended_data`,
@@ -2131,6 +2159,7 @@ loadEnv([], true).then(async (e) => {
 
   app.post(
     `${BASE_PATH}/user`,
+    upload.single('pfp'),
     validateUser,
     function (req: any, res: any, next: any) {
       try {

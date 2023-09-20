@@ -147,9 +147,9 @@ async function fetchPaginated(
 
   let sql2 = `SELECT ${fields ? fields : '*'} FROM ${table} ${
     joins ? joins : ''
-  } ${filters} ${
-    groups ? `group by ${groups}` : ``
-  } order by ${orderBy} LIMIT ${pageSize}`;
+  } ${filters} ${groups ? `group by ${groups}` : ``} order by ${orderBy} ${
+    pageSize > 0 ? `LIMIT ${pageSize}` : ``
+  }`;
   if (page > 1) {
     const offset = pageSize * (page - 1);
     sql2 += ` OFFSET ${offset}`;
@@ -450,8 +450,24 @@ export async function fetchMemesExtended(
 
 export async function fetchMemesSeasons(sortDir: string) {
   const sql = `SELECT season, COUNT(id) as count, GROUP_CONCAT(id) AS token_ids FROM ${MEMES_EXTENDED_DATA_TABLE} GROUP BY season order by season ${sortDir}`;
-  const results = await execSQL(sql);
-  return results;
+  return await execSQL(sql);
+}
+
+export async function fetchMemesLite(sortDir: string) {
+  const filters = constructFilters(
+    '',
+    `${NFTS_TABLE}.contract = ${mysql.escape(MEMES_CONTRACT)}`
+  );
+
+  return fetchPaginated(
+    NFTS_TABLE,
+    `id ${sortDir}`,
+    0,
+    1,
+    filters,
+    'id, name, contract, icon, thumbnail, scaled, image, animation',
+    ''
+  );
 }
 
 export async function fetchOwners(
