@@ -1,7 +1,5 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
-import * as imagescript from 'imagescript';
-
 const TARGET_HEIGHT = 450;
 
 let s3: S3Client;
@@ -49,15 +47,18 @@ export const persistS3 = async (
 async function resizeImage(wallet: string, ext: string, file: any) {
   try {
     const buffer = file.buffer;
-
-    if (ext != 'gif') {
-      return buffer;
-    } else {
-      const gif = await imagescript.GIF.decode(buffer);
-      const scaleFactor = gif.height / TARGET_HEIGHT;
-      gif.resize(gif.width / scaleFactor, TARGET_HEIGHT);
-      return gif.encode();
-    }
+    return buffer;
+    // if (ext != 'gif') {
+    //   return await sharp(buffer)
+    //     .resize({ height: TARGET_HEIGHT })
+    //     .webp()
+    //     .toBuffer();
+    // } else {
+    //   const gif = await imagescript.GIF.decode(buffer);
+    //   const scaleFactor = gif.height / TARGET_HEIGHT;
+    //   gif.resize(gif.width / scaleFactor, TARGET_HEIGHT);
+    //   return gif.encode();
+    // }
   } catch (err: any) {
     console.log(`[RESIZING FOR ${wallet}]`, `[FAILED!]`, `[${err}]`);
   }
