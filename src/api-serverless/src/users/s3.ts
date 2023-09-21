@@ -7,7 +7,7 @@ if (process.env.NODE_ENV == 'local') {
   sharp = require(__dirname + '/native_modules/sharp');
 }
 
-const TARGET_HEIGHT = 450;
+const TARGET_HEIGHT = 500;
 
 let s3: S3Client;
 
