@@ -1,6 +1,6 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
-let sharp;
+let sharp: any;
 if (process.env.NODE_ENV == 'local') {
   sharp = require('sharp');
 } else {
@@ -35,7 +35,7 @@ export const persistS3 = async (
 
   const scaledBuffer = await resizeImage(wallet, keyExtension, file);
 
-  const key = `pfp/${wallet}.${keyExtension}`;
+  const key = `${process.env.NODE_ENV}/pfp/${wallet}.${keyExtension}`;
 
   const uploadedScaledImage = await s3.send(
     new PutObjectCommand({
