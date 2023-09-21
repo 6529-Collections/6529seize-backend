@@ -4,6 +4,8 @@ const TARGET_HEIGHT = 450;
 
 let s3: S3Client;
 
+import sharp from 'sharp';
+
 export const persistS3 = async (
   wallet: string,
   file: any,
@@ -47,18 +49,19 @@ export const persistS3 = async (
 async function resizeImage(wallet: string, ext: string, file: any) {
   try {
     const buffer = file.buffer;
-    return buffer;
-    // if (ext != 'gif') {
-    //   return await sharp(buffer)
-    //     .resize({ height: TARGET_HEIGHT })
-    //     .webp()
-    //     .toBuffer();
-    // } else {
-    //   const gif = await imagescript.GIF.decode(buffer);
-    //   const scaleFactor = gif.height / TARGET_HEIGHT;
-    //   gif.resize(gif.width / scaleFactor, TARGET_HEIGHT);
-    //   return gif.encode();
-    // }
+
+    if (ext != 'gif') {
+      return await sharp(buffer)
+        .resize({ height: TARGET_HEIGHT })
+        .webp()
+        .toBuffer();
+    } else {
+      return buffer;
+      // const gif = await imagescript.GIF.decode(buffer);
+      // const scaleFactor = gif.height / TARGET_HEIGHT;
+      // gif.resize(gif.width / scaleFactor, TARGET_HEIGHT);
+      // return gif.encode();
+    }
   } catch (err: any) {
     console.log(`[RESIZING FOR ${wallet}]`, `[FAILED!]`, `[${err}]`);
   }
