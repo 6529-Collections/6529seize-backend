@@ -1,5 +1,11 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import sharp from 'sharp';
+
+let sharp;
+if (process.env.NODE_ENV == 'local') {
+  sharp = require('sharp');
+} else {
+  sharp = require(__dirname + '/native_modules/sharp');
+}
 
 const TARGET_HEIGHT = 450;
 
