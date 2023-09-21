@@ -1,4 +1,5 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import sharp from 'sharp';
 
 const TARGET_HEIGHT = 450;
 
@@ -49,11 +50,10 @@ async function resizeImage(wallet: string, ext: string, file: any) {
     const buffer = file.buffer;
 
     if (ext != 'gif') {
-      return buffer;
-      //   return await sharp(buffer)
-      //     .resize({ height: TARGET_HEIGHT })
-      //     .webp()
-      //     .toBuffer();
+      return await sharp(buffer)
+        .resize({ height: TARGET_HEIGHT })
+        .webp()
+        .toBuffer();
     } else {
       return buffer;
       //   const gif = await imagescript.GIF.decode(buffer);
