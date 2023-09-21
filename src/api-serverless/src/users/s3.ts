@@ -46,7 +46,7 @@ export const persistS3 = async (
     })
   );
   if (uploadedScaledImage.$metadata.httpStatusCode == 200) {
-    return `https://6529bucket.s3.eu-west-1.amazonaws.com/${key}`;
+    return `https://6529bucket.s3.eu-west-1.amazonaws.com/${key}?d=${Date.now()}`;
   }
   return null;
 };
