@@ -35,7 +35,7 @@ export const persistS3 = async (
 
   const scaledBuffer = await resizeImage(wallet, keyExtension, file);
 
-  const key = `${process.env.NODE_ENV}/pfp/${wallet}.${keyExtension}`;
+  const key = `pfp/${process.env.NODE_ENV}/${wallet}.${keyExtension}`;
 
   const uploadedScaledImage = await s3.send(
     new PutObjectCommand({
