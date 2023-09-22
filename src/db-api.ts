@@ -2403,13 +2403,12 @@ export async function fetchUser(address: string) {
       ${USER_TABLE}.pfp, ${USER_TABLE}.banner_1, ${USER_TABLE}.banner_2, ${USER_TABLE}.website 
     FROM ${ENS_TABLE} 
     LEFT JOIN ${CONSOLIDATED_OWNERS_METRICS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key LIKE CONCAT('%', ${ENS_TABLE}.wallet, '%') 
-    LEFT JOIN (SELECT *
-      FROM ${USER_TABLE}
-      ORDER BY updated_at DESC
-      LIMIT 1
-  ) AS ${USER_TABLE} ON owners_metrics_consolidation.consolidation_key LIKE CONCAT('%', user.wallet, '%') WHERE LOWER(${ENS_TABLE}.wallet)=LOWER(${mysql.escape(
+    LEFT JOIN ${USER_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key LIKE CONCAT('%', ${USER_TABLE}.wallet, '%') 
+    WHERE LOWER(${ENS_TABLE}.wallet)=LOWER(${mysql.escape(
     address
-  )}) OR LOWER(display)=LOWER(${mysql.escape(address)})`;
+  )}) OR LOWER(display)=LOWER(${mysql.escape(
+    address
+  )}) ORDER BY ${USER_TABLE}.updated_at desc limit 1`;
   return execSQL(sql);
 }
 
