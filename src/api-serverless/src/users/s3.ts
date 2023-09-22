@@ -55,9 +55,8 @@ export const persistS3 = async (
 };
 
 async function resizeImage(wallet: string, ext: string, file: any) {
+  const buffer = file.buffer;
   try {
-    const buffer = file.buffer;
-
     if (ext != 'gif') {
       return await sharp(buffer)
         .resize({ height: TARGET_HEIGHT })
@@ -71,5 +70,6 @@ async function resizeImage(wallet: string, ext: string, file: any) {
     }
   } catch (err: any) {
     console.log(`[RESIZING FOR ${wallet}]`, `[FAILED!]`, `[${err}]`);
+    return buffer;
   }
 }
