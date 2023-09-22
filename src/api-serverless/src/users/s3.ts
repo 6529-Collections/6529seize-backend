@@ -1,13 +1,10 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
 let sharp: any;
-let imagescript: any;
 if (process.env.NODE_ENV == 'local') {
   sharp = require('sharp');
-  imagescript = require('imagescript');
 } else {
   sharp = require(__dirname + '/native_modules/sharp');
-  imagescript = require(__dirname + '/native_modules/imagescript');
 }
 
 const TARGET_HEIGHT = 500;
@@ -63,10 +60,9 @@ async function resizeImage(wallet: string, ext: string, file: any) {
         .webp()
         .toBuffer();
     } else {
-      const gif = await imagescript.GIF.decode(buffer);
-      const scaleFactor = gif.height / TARGET_HEIGHT;
-      gif.resize(gif.width / scaleFactor, TARGET_HEIGHT);
-      return gif.encode();
+      return await sharp(buffer, { animated: true })
+        .resize({ height: TARGET_HEIGHT })
+        .toBuffer();
     }
   } catch (err: any) {
     console.log(`[RESIZING FOR ${wallet}]`, `[FAILED!]`, `[${err}]`);
