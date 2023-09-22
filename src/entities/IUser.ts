@@ -1,10 +1,19 @@
-import { Column, CreateDateColumn, Entity, PrimaryColumn } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  PrimaryColumn,
+  UpdateDateColumn
+} from 'typeorm';
 import { USER_TABLE } from '../constants';
 
 @Entity(USER_TABLE)
 export class User {
-  @CreateDateColumn({ type: 'datetime' })
+  @CreateDateColumn()
   created_at!: Date;
+
+  @UpdateDateColumn()
+  updated_at?: Date;
 
   @PrimaryColumn({ type: 'varchar', length: 50 })
   wallet!: string;
