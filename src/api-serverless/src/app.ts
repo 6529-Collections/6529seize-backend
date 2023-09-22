@@ -1336,6 +1336,63 @@ loadEnv([], true).then(async (e) => {
   );
 
   app.get(
+    `${BASE_PATH}/consolidated_owner_metrics/:consolidation_key`,
+    function (req: any, res: any, next: any) {
+      try {
+        const consolidationKey = req.params.consolidation_key;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATED OWNER METRICS]',
+          `[KEY ${consolidationKey}]`
+        );
+
+        db.fetchConsolidatedOwnerMetricsForKey(consolidationKey).then(
+          async (d) => {
+            res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+            res.setHeader(
+              'Access-Control-Allow-Headers',
+              corsOptions.allowedHeaders
+            );
+
+            if (d) {
+              if (d.wallets) {
+                if (!Array.isArray(d.wallets)) {
+                  d.wallets = JSON.parse(d.wallets);
+                }
+              }
+              if (d.memes) {
+                d.memes = JSON.parse(d.memes);
+              }
+              if (d.memes_ranks) {
+                d.memes_ranks = JSON.parse(d.memes_ranks);
+              }
+              if (d.gradients) {
+                d.gradients = JSON.parse(d.gradients);
+              }
+              if (d.gradients_ranks) {
+                d.gradients_ranks = JSON.parse(d.gradients_ranks);
+              }
+              mcache.put(cacheKey(req), d, CACHE_TIME_MS);
+              res.end(JSON.stringify(d));
+            }
+            return res.end('{}');
+          }
+        );
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATED OWNER METRICS FOR KEY]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
+  app.get(
     `${BASE_PATH}/consolidated_owner_metrics`,
     function (req: any, res: any, next: any) {
       try {
