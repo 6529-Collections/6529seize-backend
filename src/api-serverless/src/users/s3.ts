@@ -1,12 +1,13 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
-const imagescript = require('imagescript');
-
 let sharp: any;
+let imagescript: any;
 if (process.env.NODE_ENV == 'local') {
   sharp = require('sharp');
+  imagescript = require('imagescript');
 } else {
   sharp = require(__dirname + '/native_modules/sharp');
+  imagescript = require(__dirname + '/native_modules/imagescript');
 }
 
 const TARGET_HEIGHT = 500;
