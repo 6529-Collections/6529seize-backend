@@ -979,6 +979,32 @@ loadEnv([], true).then(async (e) => {
   );
 
   app.get(
+    `${BASE_PATH}/ens/:address/`,
+    function (req: any, res: any, next: any) {
+      try {
+        const address = req.params.address;
+
+        db.fetchEns(address).then((result) => {
+          res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+          if (result.length == 1) {
+            res.end(JSON.stringify(result[0]));
+          } else {
+            res.end(JSON.stringify({}));
+          }
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[NFT TDH]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
+
+  app.get(
     `${BASE_PATH}/user/:address/`,
     function (req: any, res: any, next: any) {
       try {

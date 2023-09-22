@@ -1996,6 +1996,13 @@ function returnEmpty() {
   };
 }
 
+export async function fetchEns(address: string) {
+  const sql = `SELECT * FROM ${ENS_TABLE} WHERE LOWER(wallet)=LOWER(${mysql.escape(
+    address
+  )}) OR LOWER(display)=LOWER(${mysql.escape(address)})`;
+  return execSQL(sql);
+}
+
 export async function fetchUser(address: string) {
   const sql = `SELECT ${ENS_TABLE}.*, ${USER_TABLE}.pfp, ${USER_TABLE}.banner_1, ${USER_TABLE}.banner_2, ${USER_TABLE}.website FROM ${ENS_TABLE} LEFT JOIN ${USER_TABLE} ON ${ENS_TABLE}.wallet=${USER_TABLE}.wallet WHERE LOWER(${ENS_TABLE}.wallet)=LOWER(${mysql.escape(
     address
