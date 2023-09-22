@@ -1,5 +1,7 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
+const imagescript = require('imagescript');
+
 let sharp: any;
 if (process.env.NODE_ENV == 'local') {
   sharp = require('sharp');
@@ -61,11 +63,10 @@ async function resizeImage(wallet: string, ext: string, file: any) {
         .webp()
         .toBuffer();
     } else {
-      return buffer;
-      //   const gif = await imagescript.GIF.decode(buffer);
-      //   const scaleFactor = gif.height / TARGET_HEIGHT;
-      //   gif.resize(gif.width / scaleFactor, TARGET_HEIGHT);
-      //   return gif.encode();
+      const gif = await imagescript.GIF.decode(buffer);
+      const scaleFactor = gif.height / TARGET_HEIGHT;
+      gif.resize(gif.width / scaleFactor, TARGET_HEIGHT);
+      return gif.encode();
     }
   } catch (err: any) {
     console.log(`[RESIZING FOR ${wallet}]`, `[FAILED!]`, `[${err}]`);
