@@ -1832,8 +1832,11 @@ export async function fetchConsolidatedOwnerMetricsForKey(
       GRADIENT_CONTRACT
     )}) AS transfers_in_gradients`;
     const results2 = await execSQL(sql);
-    if (results2.data.length == 1) {
-      return results2.data[0];
+    if (results2.length == 1) {
+      const r = results2[0];
+      r.consolidation_key = consolidationkey;
+      r.wallets = consolidationkey.split('-');
+      return r;
     } else {
       return null;
     }
@@ -2399,10 +2402,13 @@ export async function fetchEns(address: string) {
 export async function fetchUser(address: string) {
   const sql = `SELECT 
       ${ENS_TABLE}.*, 
-      ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key, 
+      ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key,
+      ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance, 
+      ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
       ${USER_TABLE}.pfp, ${USER_TABLE}.banner_1, ${USER_TABLE}.banner_2, ${USER_TABLE}.website 
     FROM ${ENS_TABLE} 
     LEFT JOIN ${CONSOLIDATED_OWNERS_METRICS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key LIKE CONCAT('%', ${ENS_TABLE}.wallet, '%') 
+    LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key 
     LEFT JOIN ${USER_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key LIKE CONCAT('%', ${USER_TABLE}.wallet, '%') 
     WHERE LOWER(${ENS_TABLE}.wallet)=LOWER(${mysql.escape(
     address

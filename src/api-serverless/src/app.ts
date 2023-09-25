@@ -996,7 +996,7 @@ loadEnv([], true).then(async (e) => {
         console.log(
           new Date(),
           `[API]`,
-          '[NFT TDH]',
+          '[ENS]',
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         next(e);
@@ -1010,6 +1010,8 @@ loadEnv([], true).then(async (e) => {
       try {
         const address = req.params.address;
 
+        console.log(new Date(), `[API]`, '[USER]', `[ADDRESS ${address}]`);
+
         db.fetchUser(address).then((result) => {
           res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
           if (result.length == 1) {
@@ -1022,7 +1024,7 @@ loadEnv([], true).then(async (e) => {
         console.log(
           new Date(),
           `[API]`,
-          '[NFT TDH]',
+          '[USER]',
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         next(e);
