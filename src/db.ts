@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { DataSource, IsNull, LessThan, MoreThan } from 'typeorm';
+import { DataSource, IsNull, LessThan } from 'typeorm';
 import {
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
@@ -21,11 +21,12 @@ import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
   TDH_HISTORY_TABLE,
-  GRADIENT_CONTRACT,
   DELEGATIONS_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
+import { User } from './entities/IUser';
+
 import {
   LabExtendedData,
   LabNFT,
@@ -106,7 +107,8 @@ export async function connect(entities: any[] = []) {
       RememeUpload,
       TDHHistory,
       GlobalTDHHistory,
-      ENS
+      ENS,
+      User
     ];
   }
 

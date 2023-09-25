@@ -2,8 +2,12 @@ import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { loadEnv } from '../../secrets';
 import { isNumber } from '../../helpers';
-import { validateRememe, validateRememeAdd } from './rememes_validation';
+import {
+  validateRememe,
+  validateRememeAdd
+} from './rememes/rememes_validation';
 import { SEIZE_SETTINGS } from './api-constants';
+import { validateUser } from './users/user_validation';
 
 const converter = require('json-2-csv');
 
@@ -21,6 +25,10 @@ const cors = require('cors');
 const helmet = require('helmet');
 
 const app = express();
+
+const multer = require('multer');
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
 
 const corsOptions = {
   origin: '*',
@@ -637,6 +645,30 @@ loadEnv([], true).then(async (e) => {
     }
   );
 
+  app.get(`${BASE_PATH}/memes_lite`, function (req: any, res: any, next: any) {
+    try {
+      console.log(new Date(), `[API]`, '[MEMES LITE]');
+
+      const sortDir =
+        req.query.sort_direction &&
+        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+          ? req.query.sort_direction
+          : 'asc';
+
+      db.fetchMemesLite(sortDir).then((result) => {
+        returnPaginatedResult(result, req, res);
+      });
+    } catch (e) {
+      console.log(
+        new Date(),
+        `[API]`,
+        '[MEMES LITE]',
+        `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+      );
+      next(e);
+    }
+  });
+
   app.get(
     `${BASE_PATH}/lab_extended_data`,
     function (req: any, res: any, next: any) {
@@ -964,7 +996,35 @@ loadEnv([], true).then(async (e) => {
         console.log(
           new Date(),
           `[API]`,
-          '[NFT TDH]',
+          '[ENS]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        next(e);
+      }
+    }
+  );
+
+  app.get(
+    `${BASE_PATH}/user/:address/`,
+    function (req: any, res: any, next: any) {
+      try {
+        const address = req.params.address;
+
+        console.log(new Date(), `[API]`, '[USER]', `[ADDRESS ${address}]`);
+
+        db.fetchUser(address).then((result) => {
+          res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+          if (result.length == 1) {
+            res.end(JSON.stringify(result[0]));
+          } else {
+            res.end(JSON.stringify({}));
+          }
+        });
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[USER]',
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         next(e);
@@ -1270,6 +1330,63 @@ loadEnv([], true).then(async (e) => {
           new Date(),
           `[API]`,
           '[TDH]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
+
+  app.get(
+    `${BASE_PATH}/consolidated_owner_metrics/:consolidation_key`,
+    function (req: any, res: any, next: any) {
+      try {
+        const consolidationKey = req.params.consolidation_key;
+
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATED OWNER METRICS]',
+          `[KEY ${consolidationKey}]`
+        );
+
+        db.fetchConsolidatedOwnerMetricsForKey(consolidationKey).then(
+          async (d) => {
+            res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+            res.setHeader(
+              'Access-Control-Allow-Headers',
+              corsOptions.allowedHeaders
+            );
+
+            if (d) {
+              if (d.wallets) {
+                if (!Array.isArray(d.wallets)) {
+                  d.wallets = JSON.parse(d.wallets);
+                }
+              }
+              if (d.memes) {
+                d.memes = JSON.parse(d.memes);
+              }
+              if (d.memes_ranks) {
+                d.memes_ranks = JSON.parse(d.memes_ranks);
+              }
+              if (d.gradients) {
+                d.gradients = JSON.parse(d.gradients);
+              }
+              if (d.gradients_ranks) {
+                d.gradients_ranks = JSON.parse(d.gradients_ranks);
+              }
+              mcache.put(cacheKey(req), d, CACHE_TIME_MS);
+              res.end(JSON.stringify(d));
+            }
+            return res.end('{}');
+          }
+        );
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[CONSOLIDATED OWNER METRICS FOR KEY]',
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         return;
@@ -2124,6 +2241,47 @@ loadEnv([], true).then(async (e) => {
         })
       );
   });
+
+  app.post(
+    `${BASE_PATH}/user`,
+    upload.single('pfp'),
+    validateUser,
+    function (req: any, res: any, next: any) {
+      try {
+        const body = req.validatedBody;
+        console.log(
+          new Date(),
+          `[API]`,
+          '[USER]',
+          `[VALID ${body.valid}]`,
+          `[FROM ${req.body.wallet}]`
+        );
+        const valid = body.valid;
+        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+        res.setHeader(
+          'Access-Control-Allow-Headers',
+          corsOptions.allowedHeaders
+        );
+        if (valid) {
+          db.updateUser(body.user).then((result) => {
+            res.status(200).send(JSON.stringify(body));
+            res.end();
+          });
+        } else {
+          res.status(400).send(JSON.stringify(body));
+          res.end();
+        }
+      } catch (e) {
+        console.log(
+          new Date(),
+          `[API]`,
+          '[USER]',
+          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+        );
+        return;
+      }
+    }
+  );
 
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();
