@@ -4,10 +4,11 @@ import { findTransactionValues, runValues } from '../transaction_values';
 import { discoverEns } from '../ens';
 import { loadEnv, unload } from '../secrets';
 import { Transaction } from '../entities/ITransaction';
+import { User } from '../entities/IUser';
 
 export const handler = async (event?: any, context?: any) => {
   console.log(new Date(), '[RUNNING TRANSACTIONS LOOP]');
-  await loadEnv([Transaction]);
+  await loadEnv([Transaction, User]);
   await transactionsLoop();
   await unload();
   console.log(new Date(), '[TRANSACTIONS LOOP COMPLETE]');
