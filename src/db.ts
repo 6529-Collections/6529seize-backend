@@ -73,6 +73,7 @@ import {
   formatAddress,
   getConsolidationsSql
 } from './helpers';
+import {Dummy} from "./entities/IDummy";
 
 const mysql = require('mysql');
 
@@ -108,7 +109,8 @@ export async function connect(entities: any[] = []) {
       TDHHistory,
       GlobalTDHHistory,
       ENS,
-      User
+      User,
+      Dummy
     ];
   }
 
@@ -1372,4 +1374,8 @@ export async function persistTDHHistory(tdhHistory: TDHHistory[]) {
 export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
   const globalHistoryRepo = AppDataSource.getRepository(GlobalTDHHistory);
   await globalHistoryRepo.upsert(globalHistory, ['date', 'block']);
+}
+
+export async function persistDummy(dummy: Dummy) {
+  await AppDataSource.getRepository(Dummy).save(dummy);
 }
