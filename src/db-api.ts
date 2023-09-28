@@ -2569,12 +2569,12 @@ export async function fetchDistributions(
     MANIFOLD
   )} OR ${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
     NULL_ADDRESS
-  )}) AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_TABLE}.to_address`;
+  )}) AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_TABLE}.to_address AND ${TRANSACTIONS_TABLE}.value > 0`;
   joins += ` LEFT JOIN ${TRANSACTIONS_MEME_LAB_TABLE} ON ${DISTRIBUTION_TABLE}.contract = ${TRANSACTIONS_MEME_LAB_TABLE}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${TRANSACTIONS_MEME_LAB_TABLE}.token_id AND (${TRANSACTIONS_MEME_LAB_TABLE}.from_address=${mysql.escape(
     MANIFOLD
   )} OR ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=${mysql.escape(
     NULL_ADDRESS
-  )}) AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_MEME_LAB_TABLE}.to_address`;
+  )}) AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_MEME_LAB_TABLE}.to_address AND ${TRANSACTIONS_MEME_LAB_TABLE}.value > 0`;
   joins += ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
 
   return fetchPaginated(
