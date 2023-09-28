@@ -37,7 +37,8 @@ const INITIALIZE_CLAIM_METHOD_1 = '0xcc3d8ab3';
 const INITIALIZE_CLAIM_METHOD_2 = '0xd670c080';
 const AIRDROP_METHOD = '0xbd04e411';
 const INITIALIZE_BURN_METHOD = '0x38ec8995';
-const UPDATE_CLAIM_METHOD = '0xa310099c';
+const UPDATE_CLAIM_METHOD_1 = '0xa310099c';
+const UPDATE_CLAIM_METHOD_2 = '0x0a6330b8';
 
 async function getAllDeployerTransactions(
   startingBlock: number,
@@ -136,6 +137,11 @@ function getAttributeChanges(oldAttributes: any[], newAttributes: any[]) {
     oldAttributesMap.set(attribute.trait_type, attribute.value);
   });
 
+  const newAttributesMap = new Map();
+  newAttributes.forEach((attribute: any) => {
+    newAttributesMap.set(attribute.trait_type, attribute.value);
+  });
+
   newAttributes.forEach((attribute: any) => {
     const traitType = attribute.trait_type;
     const value = attribute.value;
@@ -149,6 +155,25 @@ function getAttributeChanges(oldAttributes: any[], newAttributes: any[]) {
           new_value: value
         });
       }
+    } else {
+      changes.push({
+        trait_type: `${traitType} (Added)`,
+        old_value: '',
+        new_value: value
+      });
+    }
+  });
+
+  oldAttributes.forEach((attribute: any) => {
+    const traitType = attribute.trait_type;
+    const value = attribute.value;
+
+    if (!newAttributesMap.has(traitType)) {
+      changes.push({
+        trait_type: `${traitType} (Removed)`,
+        old_value: value,
+        new_value: ''
+      });
     }
   });
 
@@ -316,6 +341,7 @@ export const getDeployerTransactions = async (
           data,
           value: 0
         });
+        const claimIndex = parsed.args.claimIndex.toNumber();
         const location = parsed.args.claimParameters.location;
         const contract = parsed.args.creatorContractAddress;
         const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
@@ -340,6 +366,13 @@ export const getDeployerTransactions = async (
             }
           };
           await persistNftHistory([nftMint]);
+          const claim: NFTHistoryClaim = {
+            claimIndex,
+            location,
+            contract,
+            nft_id: tokenId
+          };
+          await persistNftClaims([claim]);
         }
       } catch (e: any) {
         console.log(
@@ -450,7 +483,10 @@ export const getDeployerTransactions = async (
           e.message
         );
       }
-    } else if (tx?.data.startsWith(UPDATE_CLAIM_METHOD)) {
+    } else if (
+      tx?.data.startsWith(UPDATE_CLAIM_METHOD_1) ||
+      tx?.data.startsWith(UPDATE_CLAIM_METHOD_2)
+    ) {
       const data = tx.data;
       try {
         const parsed = NFT_HISTORY_IFACE.parseTransaction({
@@ -470,6 +506,10 @@ export const getDeployerTransactions = async (
                 contract,
                 `https://arweave.net/${location}`
               );
+              if (editDescription.changes.length == 0) {
+                console.log('no changes found', tx.hash, location);
+                throw new Error();
+              }
               const nftEdit: NFTHistory = {
                 created_at: new Date(),
                 nft_id: nftId,
@@ -482,19 +522,7 @@ export const getDeployerTransactions = async (
               };
               await persistNftHistory([nftEdit]);
             }
-          } else {
-            for (const claim of existingClaims) {
-              claim.location = location;
-              await persistNftClaims([claim]);
-            }
           }
-        } else {
-          const claim: NFTHistoryClaim = {
-            claimIndex,
-            location,
-            contract
-          };
-          await persistNftClaims([claim]);
         }
       } catch (e: any) {
         console.log(
@@ -505,134 +533,6 @@ export const getDeployerTransactions = async (
       }
     }
   }
-
-  // for (const tr of transactionsResponse) {
-  //   const t = tr.t;
-  //   const tx = tr.tx;
-  //   if (tx?.data.startsWith(SET_TOKEN_URI_METHOD)) {
-  //     const details = await findDetailsFromTransaction(tx);
-  //     if (details) {
-  //       const editDescription = await getEditDescription(
-  //         details.tokenId,
-  //         details.contract,
-  //         details.tokenUri
-  //       );
-  //       const nftEdit: NFTHistory = {
-  //         created_at: new Date(),
-  //         nft_id: details.tokenId,
-  //         contract: details.contract,
-  //         uri: details.tokenUri,
-  //         transaction_date: new Date(t.metadata.blockTimestamp),
-  //         transaction_hash: t.hash,
-  //         block: parseInt(t.blockNum, 16),
-  //         description: editDescription
-  //       };
-  //       await persistNftHistory([nftEdit]);
-  //     }
-  //   } else if (tx?.data.startsWith(AIRDROP_METHOD)) {
-  //     const data = tx.data;
-  //     try {
-  //       const parsed = NFT_HISTORY_IFACE.parseTransaction({
-  //         data,
-  //         value: 0
-  //       });
-  //       const claimIndex = parsed.args.claimIndex.toNumber();
-  //       const receipt = await alchemy.core.getTransactionReceipt(tx.hash);
-  //       const logData = receipt?.logs[0].data;
-  //       if (logData && tx.to) {
-  //         const parsedReceipt = NFT_HISTORY_IFACE.parseLog({
-  //           topics: receipt?.logs[0].topics,
-  //           data: logData
-  //         });
-  //         const claims = await findClaim(claimIndex, -1);
-  //         for (const claim of claims) {
-  //           const tokenId = parsedReceipt.args.id.toNumber();
-  //           claim.nft_id = tokenId;
-  //           const nftMint: NFTHistory = {
-  //             created_at: new Date(),
-  //             nft_id: tokenId,
-  //             contract: claim.contract,
-  //             uri: `https://arweave.net/${claim.location}`,
-  //             transaction_date: new Date(t.metadata.blockTimestamp),
-  //             transaction_hash: t.hash,
-  //             block: parseInt(t.blockNum, 16),
-  //             description: {
-  //               event: 'Mint',
-  //               changes: []
-  //             }
-  //           };
-  //           await persistNftClaims([claim]);
-  //           await persistNftHistory([nftMint]);
-  //         }
-  //       }
-  //     } catch (e: any) {
-  //       console.log(
-  //         '[NFT HISTORY]',
-  //         `[ERROR PARSING TX ${tx.hash}]`,
-  //         e.message
-  //       );
-  //     }
-  //   }
-  // }
-
-  // for (const tr of transactionsResponse) {
-  //   const t = tr.t;
-  //   const tx = tr.tx;
-  //   if (tx?.data.startsWith(UPDATE_CLAIM_METHOD)) {
-  //     const data = tx.data;
-  //     try {
-  //       const parsed = NFT_HISTORY_IFACE.parseTransaction({
-  //         data,
-  //         value: 0
-  //       });
-  //       const claimIndex = parsed.args.claimIndex.toNumber();
-  //       const location = parsed.args.claimParameters.location;
-  //       const contract = parsed.args.creatorContractAddress;
-  //       const existingClaims = await findClaim(claimIndex);
-  //       const nftId = existingClaims.find((c) => c.nft_id != -1)?.nft_id;
-  //       if (existingClaims.length > 0) {
-  //         if (nftId) {
-  //           if (!existingClaims.some((c) => c.location == location)) {
-  //             const editDescription = await getEditDescription(
-  //               nftId,
-  //               contract,
-  //               `https://arweave.net/${location}`
-  //             );
-  //             const nftEdit: NFTHistory = {
-  //               created_at: new Date(),
-  //               nft_id: nftId,
-  //               contract: contract,
-  //               uri: `https://arweave.net/${location}`,
-  //               transaction_date: new Date(t.metadata.blockTimestamp),
-  //               transaction_hash: t.hash,
-  //               block: parseInt(t.blockNum, 16),
-  //               description: editDescription
-  //             };
-  //             await persistNftHistory([nftEdit]);
-  //           }
-  //         } else {
-  //           for (const claim of existingClaims) {
-  //             claim.location = location;
-  //             await persistNftClaims([claim]);
-  //           }
-  //         }
-  //       } else {
-  //         const claim: NFTHistoryClaim = {
-  //           claimIndex,
-  //           location,
-  //           contract
-  //         };
-  //         await persistNftClaims([claim]);
-  //       }
-  //     } catch (e: any) {
-  //       console.log(
-  //         '[NFT HISTORY]',
-  //         `[ERROR PARSING TX ${tx.hash}]`,
-  //         e.message
-  //       );
-  //     }
-  //   }
-  // }
 
   return {
     latestBlock: latestBlock,
