@@ -2548,9 +2548,14 @@ export async function fetchDistributionForNFT(
 
 export async function fetchDistributions(
   wallets: string,
+  cards: string,
+  contracts: string,
   pageSize: number,
   page: number
 ) {
+  if (!wallets && !cards && !contracts) {
+    return returnEmpty();
+  }
   let filters = '';
   if (wallets) {
     const resolvedWallets = await resolveEns(wallets);
@@ -2560,6 +2565,20 @@ export async function fetchDistributions(
     filters = constructFilters(
       filters,
       `${DISTRIBUTION_TABLE}.wallet in (${mysql.escape(resolvedWallets)})`
+    );
+  }
+  if (cards) {
+    filters = constructFilters(
+      filters,
+      `${DISTRIBUTION_TABLE}.card_id in (${cards})`
+    );
+  }
+  if (contracts) {
+    filters = constructFilters(
+      filters,
+      `${DISTRIBUTION_TABLE}.contract in (${mysql.escape(
+        contracts.split(',')
+      )})`
     );
   }
 
@@ -2578,18 +2597,33 @@ export async function fetchDistributions(
   joins += ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
 
   return fetchPaginated(
-    DISTRIBUTION_TABLE,
-    `card_mint_date desc`,
+    `(
+        SELECT wallet, contract, card_id,
+        SUM(CASE WHEN phase = 'Airdrop' THEN count ELSE 0 END) AS airdrop,
+        SUM(CASE WHEN phase = 'Allowlist' THEN count ELSE 0 END) AS allowlist,
+        SUM(CASE WHEN phase = 'Phase1' THEN count ELSE 0 END) AS phase_1,
+        SUM(CASE WHEN phase = 'Phase2' THEN count ELSE 0 END) AS phase_2,
+        SUM(CASE WHEN phase = 'Phase3' THEN count ELSE 0 END) AS phase_3
+        from distribution ${filters} GROUP BY wallet, contract, card_id
+    ) as ${DISTRIBUTION_TABLE}`,
+    `card_mint_date desc, allowlist desc, airdrop desc, phase_1 desc, phase_2 desc, phase_3 desc`,
     pageSize,
     page,
     filters,
-    `${DISTRIBUTION_TABLE}.*,
-      COALESCE(${NFTS_TABLE}.name, ${NFTS_MEME_LAB_TABLE}.name) AS card_name, 
-      COALESCE(${NFTS_TABLE}.mint_date, ${NFTS_MEME_LAB_TABLE}.mint_date, ${DISTRIBUTION_TABLE}.created_at) AS card_mint_date,
-      COALESCE(SUM(${TRANSACTIONS_TABLE}.token_count), SUM(${TRANSACTIONS_MEME_LAB_TABLE}.token_count), 0) AS card_mint_count,
-      ${ENS_TABLE}.display`,
+    `${DISTRIBUTION_TABLE}.wallet,
+    ${ENS_TABLE}.display,
+    ${DISTRIBUTION_TABLE}.contract,
+    ${DISTRIBUTION_TABLE}.card_id,
+    COALESCE(SUM(${TRANSACTIONS_TABLE}.token_count), SUM(${TRANSACTIONS_MEME_LAB_TABLE}.token_count), 0) AS total_minted,
+    COALESCE(${NFTS_TABLE}.name, ${NFTS_MEME_LAB_TABLE}.name) as card_name,
+    COALESCE(${NFTS_TABLE}.mint_date, ${NFTS_MEME_LAB_TABLE}.mint_date, now()) AS card_mint_date,
+    ${DISTRIBUTION_TABLE}.airdrop,
+    ${DISTRIBUTION_TABLE}.allowlist,
+    ${DISTRIBUTION_TABLE}.phase_1,
+    ${DISTRIBUTION_TABLE}.phase_2,
+    ${DISTRIBUTION_TABLE}.phase_3`,
     joins,
-    `${DISTRIBUTION_TABLE}.wallet, ${DISTRIBUTION_TABLE}.created_at, ${DISTRIBUTION_TABLE}.updated_at, ${DISTRIBUTION_TABLE}.phase, ${DISTRIBUTION_TABLE}.id, ${ENS_TABLE}.display`
+    `${DISTRIBUTION_TABLE}.wallet, ${DISTRIBUTION_TABLE}.contract, ${DISTRIBUTION_TABLE}.card_id`
   );
 }
 
