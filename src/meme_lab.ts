@@ -56,7 +56,7 @@ async function getNFTResponse(contract: string, key: any) {
   return response;
 }
 
-async function getAllNFTs(nfts: Nft[] = [], key: string = ''): Promise<Nft[]> {
+async function getAllNFTs(nfts: Nft[] = [], key = ''): Promise<Nft[]> {
   const response = await getNFTResponse(MEMELAB_CONTRACT, key);
   const newKey = response.pageKey;
   nfts = nfts.concat(response.nfts);
@@ -314,7 +314,7 @@ export async function memeLabNfts(reset?: boolean) {
 
   const nfts: LabNFT[] = await fetchAllMemeLabNFTs();
   const transactions: LabTransaction[] = await fetchAllMemeLabTransactions();
-  let owners: Owner[] = await fetchAllLabOwners();
+  const owners: Owner[] = await fetchAllLabOwners();
   const artists: Artist[] = await fetchAllArtists();
 
   const newNfts = await findNFTs(nfts, transactions, owners, reset);
@@ -401,7 +401,7 @@ export async function memeLabOwners() {
 
   console.log(`[OWNERS ${newOwners.length}]`);
 
-  let ownersDelta: Owner[] = [];
+  const ownersDelta: Owner[] = [];
 
   newOwners.map((o) => {
     const existing = startingOwners.find((o1) => ownersMatch(o, o1));
@@ -428,8 +428,8 @@ export async function memeLabOwners() {
 }
 
 export async function memeLabExtendedData() {
-  let nfts: LabNFT[] = await fetchAllMemeLabNFTs();
-  let owners: Owner[] = await fetchAllLabOwners();
+  const nfts: LabNFT[] = await fetchAllMemeLabNFTs();
+  const owners: Owner[] = await fetchAllLabOwners();
 
   console.log('[MEMES EXTENDED DATA]', `[NFTS ${nfts.length}]`);
 

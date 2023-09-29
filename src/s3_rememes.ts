@@ -34,7 +34,7 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
 
   await Promise.all(
     rememes.map(async (r) => {
-      let image =
+      const image =
         r.media && r.media.gateway
           ? r.media.gateway
           : parseIpfsUrlToCloudflare(r.image);

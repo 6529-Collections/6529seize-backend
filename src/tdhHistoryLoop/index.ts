@@ -163,7 +163,7 @@ async function tdhHistory(date: Date) {
         });
       }
 
-      let previousTdh = {
+      const previousTdh = {
         id: m.id,
         boosted_tdh: 0,
         tdh: 0,
@@ -207,7 +207,7 @@ async function tdhHistory(date: Date) {
         });
       }
 
-      let previousTdh = {
+      const previousTdh = {
         id: m.id,
         boosted_tdh: 0,
         tdh: 0,

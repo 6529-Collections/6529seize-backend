@@ -46,7 +46,7 @@ async function uploadTeam() {
 
   console.log(new Date(), `[TEAM UPLOAD]`, `[FILE LOADED]`);
 
-  let transaction = await myarweave.createTransaction(
+  const transaction = await myarweave.createTransaction(
     { data: Buffer.from(fileData) },
     arweaveKey
   );
@@ -57,7 +57,7 @@ async function uploadTeam() {
 
   await myarweave.transactions.sign(transaction, arweaveKey);
 
-  let uploader = await myarweave.transactions.getUploader(transaction);
+  const uploader = await myarweave.transactions.getUploader(transaction);
 
   while (!uploader.isComplete) {
     await uploader.uploadChunk();

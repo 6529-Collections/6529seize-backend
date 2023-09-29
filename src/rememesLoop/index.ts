@@ -301,7 +301,7 @@ async function upload(rememes: Rememe[]) {
 
   const csv = await converter.json2csvAsync(rememes);
 
-  let transaction = await myarweave.createTransaction(
+  const transaction = await myarweave.createTransaction(
     { data: Buffer.from(csv) },
     arweaveKey
   );
@@ -312,7 +312,7 @@ async function upload(rememes: Rememe[]) {
 
   await myarweave.transactions.sign(transaction, arweaveKey);
 
-  let uploader = await myarweave.transactions.getUploader(transaction);
+  const uploader = await myarweave.transactions.getUploader(transaction);
 
   while (!uploader.isComplete) {
     await uploader.uploadChunk();

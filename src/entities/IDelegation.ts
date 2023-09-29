@@ -65,7 +65,7 @@ export interface Event {
   wallet2: string;
 }
 
-export interface ConsolidationEvent extends Event {}
+export type ConsolidationEvent = Event;
 
 export interface DelegationEvent extends ConsolidationEvent {
   collection: string;
