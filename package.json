@@ -11,7 +11,7 @@
     "postbuild": "cp src/teamLoop/team.csv build/teamLoop && cp src/rememesLoop/rememes.csv build/rememesLoop",
     "tsc": "./node_modules/typescript/bin/tsc",
     "test": "jest",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\""
+    "format": "prettier --write \"src/**/*.ts\""
   },
   "keywords": [],
   "author": "",
