@@ -94,7 +94,7 @@ export async function uploadTDH(force?: boolean) {
       ? JSON.parse(process.env.ARWEAVE_KEY)
       : {};
 
-    let transaction = await myarweave.createTransaction(
+    const transaction = await myarweave.createTransaction(
       { data: Buffer.from(csv) },
       arweaveKey
     );
@@ -105,7 +105,7 @@ export async function uploadTDH(force?: boolean) {
 
     await myarweave.transactions.sign(transaction, arweaveKey);
 
-    let uploader = await myarweave.transactions.getUploader(transaction);
+    const uploader = await myarweave.transactions.getUploader(transaction);
 
     while (!uploader.isComplete) {
       await uploader.uploadChunk();
@@ -203,7 +203,7 @@ export async function uploadConsolidatedTDH(force?: boolean) {
       ? JSON.parse(process.env.ARWEAVE_KEY)
       : {};
 
-    let transaction = await myarweave.createTransaction(
+    const transaction = await myarweave.createTransaction(
       { data: Buffer.from(csv) },
       arweaveKey
     );
@@ -218,7 +218,7 @@ export async function uploadConsolidatedTDH(force?: boolean) {
 
     await myarweave.transactions.sign(transaction, arweaveKey);
 
-    let uploader = await myarweave.transactions.getUploader(transaction);
+    const uploader = await myarweave.transactions.getUploader(transaction);
 
     while (!uploader.isComplete) {
       await uploader.uploadChunk();

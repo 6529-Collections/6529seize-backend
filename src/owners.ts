@@ -29,7 +29,7 @@ export async function getAllOwners(
   alchemy: Alchemy,
   contract: string,
   owners: any[] = [],
-  key: string = ''
+  key = ''
 ): Promise<NftContractOwner[]> {
   const response = await getOwnersResponse(alchemy, contract, key);
   const newKey = response.pageKey;
@@ -98,7 +98,7 @@ export const findOwners = async () => {
     `[GRADIENTS ${gradientsOwners.length}]`
   );
 
-  let ownersDelta: Owner[] = [];
+  const ownersDelta: Owner[] = [];
 
   newOwners.map((o) => {
     const existing = startingOwners.find((o1) => ownersMatch(o, o1));

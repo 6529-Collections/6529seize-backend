@@ -47,7 +47,7 @@ async function getNFTResponse(contract: string, key: any) {
 async function getAllNFTs(
   contract: string,
   nfts: Nft[] = [],
-  key: string = ''
+  key = ''
 ): Promise<Nft[]> {
   const response = await getNFTResponse(contract, key);
   const newKey = response.pageKey;

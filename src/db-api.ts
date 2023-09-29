@@ -94,13 +94,13 @@ export function execSQL(sql: string): Promise<any> {
 }
 
 export async function fetchLatestTDHBlockNumber() {
-  let sql = `SELECT block_number FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
+  const sql = `SELECT block_number FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await execSQL(sql);
   return r.length > 0 ? r[0].block_number : 0;
 }
 
 export async function fetchLatestTDHHistoryBlockNumber() {
-  let sql = `SELECT block FROM ${TDH_HISTORY_TABLE} order by block desc limit 1;`;
+  const sql = `SELECT block FROM ${TDH_HISTORY_TABLE} order by block desc limit 1;`;
   const r = await execSQL(sql);
   return r.length > 0 ? r[0].block : 0;
 }
@@ -609,7 +609,7 @@ async function resolveEns(walletsStr: string) {
   const sql = `SELECT wallet,display FROM ${ENS_TABLE} WHERE wallet IN (${mysql.escape(
     wallets
   )}) OR display IN (${mysql.escape(wallets)})`;
-  let results = await execSQL(sql);
+  const results = await execSQL(sql);
   const returnResults: string[] = [];
   wallets.map((wallet: any) => {
     const w = results.find(
@@ -2762,7 +2762,7 @@ export async function fetchNftHistory(
   contract: string,
   nftId: number
 ) {
-  let filter = constructFilters(
+  const filter = constructFilters(
     '',
     `contract=${mysql.escape(contract)} AND nft_id=${nftId}`
   );

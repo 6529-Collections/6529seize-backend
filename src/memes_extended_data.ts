@@ -10,7 +10,7 @@ import {
 
 export const findMemesExtendedData = async () => {
   let nfts: NFT[] = await fetchNftsForContract(MEMES_CONTRACT, 'id desc');
-  let owners: Owner[] = await fetchAllOwners();
+  const owners: Owner[] = await fetchAllOwners();
 
   nfts = [...nfts].filter((t) => areEqualAddresses(t.contract, MEMES_CONTRACT));
 
