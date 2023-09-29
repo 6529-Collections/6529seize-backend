@@ -1,0 +1,72 @@
+service: overvotesRevocationLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-east-1
+  memorySize: 512
+  timeout: 900
+
+functions:
+  overvotesRevocationLoop:
+    handler: index.handler
+    name: overvotesRevocationLoop
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - OvervotesRevocationStartQueue
+              - Arn
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    vpc:
+      securityGroupIds:
+        - sg-033f6ed509ce4c3a4
+        - sg-0b548abc33e4c84a3
+      subnetIds:
+        - subnet-08dbb020dea1a658d
+        - subnet-003b0c8ce57cb67c2
+
+resources:
+  Resources:
+    OvervotesRevocationStartQueue:
+      Type: "AWS::SQS::Queue"
+      Properties:
+        QueueName: "overvotes-revocation-start.fifo"
+        FifoQueue: true
+        VisibilityTimeout: 1000
+        ContentBasedDeduplication: true
+    OvervotesRevocationTDHCalculatedSubscription:
+      Type: AWS::SNS::Subscription
+      Properties:
+        TopicArn: arn:aws:sns:us-east-1:987989283142:tdh-calculation-done.fifo
+        Protocol: sqs
+        Endpoint: !GetAtt
+          - OvervotesRevocationStartQueue
+          - Arn
+        RawMessageDelivery: true
+    OvervotesRevocationStartQueuePolicy:
+      Type: "AWS::SQS::QueuePolicy"
+      Properties:
+        Queues:
+          - Ref: "OvervotesRevocationStartQueue"
+        PolicyDocument:
+          Statement:
+            - Effect: "Allow"
+              Principal:
+                AWS: '*'
+              Action:
+                - sqs:SendMessage
+                - sqs:ReceiveMessage
+                - sqs:DeleteMessage
+                - sqs:GetQueueUrl
+                - sqs:GetQueueAttributes
+                - sqs:ListQueueTags
+                - sqs:ChangeMessageVisibility
+              Resource:
+                - !GetAtt OvervotesRevocationStartQueue.Arn

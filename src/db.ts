@@ -73,7 +73,9 @@ import {
   formatAddress,
   getConsolidationsSql
 } from './helpers';
-import { Dummy } from './entities/IDummy';
+import { VoteEvent } from './entities/IVoteEvent';
+import { setSqlExecutor } from './sql-executor';
+import { VoteMatterCategory } from './entities/IVoteMatter';
 
 const mysql = require('mysql');
 
@@ -110,7 +112,8 @@ export async function connect(entities: any[] = []) {
       GlobalTDHHistory,
       ENS,
       User,
-      Dummy
+      VoteEvent,
+      VoteMatterCategory
     ];
   }
 
@@ -127,6 +130,10 @@ export async function connect(entities: any[] = []) {
   });
 
   await AppDataSource.initialize().catch((error) => console.log(error));
+  setSqlExecutor({
+    execute: (sql: string, params?: Record<string, any>) =>
+      execSQLWithParams(sql, params)
+  });
   console.log('[DATABASE]', `[CONNECTION CREATED]`);
 }
 
@@ -175,6 +182,31 @@ export function execSQL(sql: string): Promise<any> {
   return new Promise(async (resolve, reject) => {
     try {
       const r = await AppDataSource.manager.query(sql);
+      resolve(Object.values(JSON.parse(JSON.stringify(r))));
+    } catch (err: any) {
+      return reject(err);
+    }
+  });
+}
+
+export function execSQLWithParams(
+  sql: string,
+  params?: Record<string, any>
+): Promise<any> {
+  return new Promise(async (resolve, reject) => {
+    try {
+      const r = await AppDataSource.manager.query(
+        sql.replace(/\:(\w+)/g, function (txt: string, key: string) {
+          if (params?.hasOwnProperty(key)) {
+            const val = params[key];
+            if (Array.isArray(val)) {
+              return val.map((v) => mysql.escape(v)).join(', ');
+            }
+            return mysql.escape(val);
+          }
+          return txt;
+        })
+      );
       resolve(Object.values(JSON.parse(JSON.stringify(r))));
     } catch (err: any) {
       return reject(err);
@@ -1374,8 +1406,4 @@ export async function persistTDHHistory(tdhHistory: TDHHistory[]) {
 export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
   const globalHistoryRepo = AppDataSource.getRepository(GlobalTDHHistory);
   await globalHistoryRepo.upsert(globalHistory, ['date', 'block']);
-}
-
-export async function persistDummy(dummy: Dummy) {
-  await AppDataSource.getRepository(Dummy).save(dummy);
 }
