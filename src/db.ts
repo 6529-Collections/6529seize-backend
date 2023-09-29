@@ -73,7 +73,7 @@ import {
   formatAddress,
   getConsolidationsSql
 } from './helpers';
-import {Dummy} from "./entities/IDummy";
+import { Dummy } from './entities/IDummy';
 
 const mysql = require('mysql');
 

@@ -10,7 +10,9 @@
     "build": "rimraf ./build && jest && NODE_OPTIONS=--max-old-space-size=8192 tsc -p tsconfig.json",
     "postbuild": "cp src/teamLoop/team.csv build/teamLoop && cp src/rememesLoop/rememes.csv build/rememesLoop",
     "tsc": "./node_modules/typescript/bin/tsc",
-    "test": "jest"
+    "test": "jest",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "lint": "eslint \"src/**/*.ts\" --fix"
   },
   "keywords": [],
   "author": "",
@@ -32,7 +34,13 @@
     "typeorm": "^0.3.12",
     "typescript": "^4.9.4",
     "serverless": "^3.31.0",
-    "serverless-offline": "^12.0.4"
+    "serverless-offline": "^12.0.4",
+    "@typescript-eslint/eslint-plugin": "^5.0.0",
+    "@typescript-eslint/parser": "^5.0.0",
+    "eslint": "^8.0.1",
+    "eslint-config-prettier": "^8.3.0",
+    "eslint-plugin-prettier": "^4.0.0",
+    "prettier": "^2.3.2"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.309.0",

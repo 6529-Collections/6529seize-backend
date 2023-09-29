@@ -3,7 +3,6 @@ import { DUMMY_TABLE } from '../constants';
 
 @Entity(DUMMY_TABLE)
 export class Dummy {
-
   @PrimaryColumn({ type: 'varchar', length: 50 })
   field_one!: string;
 
