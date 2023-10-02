@@ -12,9 +12,6 @@ import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
 
 let SEAPORT_IFACE: any = undefined;
-let MEMES_IFACE: any = undefined;
-let MEMELAB_IFACE: any = undefined;
-let GRADIENT_IFACE: any = undefined;
 
 const fetch = require('node-fetch');
 

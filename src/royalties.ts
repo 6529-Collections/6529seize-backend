@@ -59,7 +59,7 @@ const findRoyaltiesAddressTransactions = async (
   startingBlockHex: string,
   endingBlockHex: string,
   transfers: AssetTransfersWithMetadataResult[] = [],
-  pageKey: string = ''
+  pageKey = ''
 ): Promise<AssetTransfersWithMetadataResult[]> => {
   const response = await findRoyaltiesAddressTransactionsForPage(
     alchemy,
@@ -131,7 +131,7 @@ export const findRoyalties = async () => {
   await persistRoyaltiesUpload(startDate, url);
 };
 
-async function uploadRoyalties(formattedDate: String, royalties: Royalty[]) {
+async function uploadRoyalties(formattedDate: string, royalties: Royalty[]) {
   const uploadArray: any[] = [];
   royalties.map((r) => {
     const uploadRoyalty: any = r;
@@ -163,7 +163,7 @@ async function uploadRoyalties(formattedDate: String, royalties: Royalty[]) {
     ? JSON.parse(process.env.ARWEAVE_KEY)
     : {};
 
-  let transaction = await myarweave.createTransaction(
+  const transaction = await myarweave.createTransaction(
     { data: Buffer.from(csv) },
     arweaveKey
   );
@@ -178,7 +178,7 @@ async function uploadRoyalties(formattedDate: String, royalties: Royalty[]) {
 
   await myarweave.transactions.sign(transaction, arweaveKey);
 
-  let uploader = await myarweave.transactions.getUploader(transaction);
+  const uploader = await myarweave.transactions.getUploader(transaction);
 
   while (!uploader.isComplete) {
     await uploader.uploadChunk();

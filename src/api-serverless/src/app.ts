@@ -121,7 +121,7 @@ loadEnv([], true).then(async (e) => {
   const checkCache = function (req: any, res: any, next: any) {
     const key = cacheKey(req);
 
-    let cachedBody = mcache.get(key);
+    const cachedBody = mcache.get(key);
     if (cachedBody) {
       returnPaginatedResult(cachedBody, req, res, true);
     } else {
