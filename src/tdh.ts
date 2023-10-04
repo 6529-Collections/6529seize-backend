@@ -153,38 +153,26 @@ export const findTDH = async (lastTDHCalc: Date) => {
           );
         }
 
-        const walletTokens: Date[] = [];
+        const tokenConsolidatedTransactions = [
+          ...consolidationTransactions
+        ].filter(
+          (t) =>
+            t.token_id == nft.id && areEqualAddresses(t.contract, nft.contract)
+        );
 
-        tokenTransactions.map((t) => {
-          if (areEqualAddresses(t.to_address, wallet)) {
-            let date = new Date(t.transaction_date);
-
-            if (t.value == 0) {
-              date = getTokenDateFromConsolidation(
-                walletTokens.length,
-                consolidations,
-                t,
-                consolidationTransactions
-              );
-            }
-            Array.from({ length: t.token_count }, () => {
-              walletTokens.push(date);
-            });
-          }
-          if (areEqualAddresses(t.from_address, wallet)) {
-            Array.from({ length: t.token_count }, () => {
-              walletTokens.pop();
-            });
-          }
-        });
+        const tokenDatesForWallet = getTokenDatesFromConsolidation(
+          wallet,
+          consolidations,
+          tokenConsolidatedTransactions
+        );
 
         let tdh__raw = 0;
-        walletTokens.map((e) => {
+        tokenDatesForWallet.map((e) => {
           const daysDiff = getDaysDiff(lastTDHCalc, e);
           tdh__raw += daysDiff;
         });
 
-        const balance = walletTokens.length;
+        const balance = tokenDatesForWallet.length;
         const tdh = tdh__raw * nft.hodl_rate;
 
         if (tdh > 0 && balance > 0) {
@@ -420,96 +408,66 @@ export function calculateBoost(
   return Math.round(boost * 100) / 100;
 }
 
-function getTokenDateFromConsolidation(
-  tokenIndex: number,
+function getTokenDatesFromConsolidation(
+  currentWallet: string,
   consolidations: string[],
-  transaction: Transaction,
   consolidationTransactions: Transaction[]
-): Date {
-  const sortedTokenTransactions = consolidationTransactions
-    .filter(
-      (t) =>
-        t.token_id == transaction.token_id &&
-        areEqualAddresses(transaction.contract, t.contract)
-    )
+) {
+  const tokenDatesMap: { [wallet: string]: Date[] } = {};
+
+  function addDates(wallet: string, dates: Date[]) {
+    if (!tokenDatesMap[wallet]) {
+      tokenDatesMap[wallet] = [];
+    }
+
+    tokenDatesMap[wallet].push(...dates);
+  }
+
+  function removeDates(wallet: string, count: number) {
+    const removeDates = tokenDatesMap[wallet].splice(
+      tokenDatesMap[wallet].length - count,
+      count
+    );
+    return removeDates;
+  }
+
+  const sortedTransactions = consolidationTransactions
+    .map((c) => {
+      c.transaction_date = new Date(c.transaction_date);
+      c.from_address = c.from_address.toLowerCase();
+      c.to_address = c.to_address.toLowerCase();
+      return c;
+    })
     .sort(
-      (a, b) =>
-        new Date(a.transaction_date).getTime() -
-        new Date(b.transaction_date).getTime()
+      (a, b) => a.transaction_date.getTime() - b.transaction_date.getTime()
     );
 
-  const myconsolidations = sortedTokenTransactions
-    .filter((a) =>
-      consolidations.some((c) => areEqualAddresses(c, a.to_address))
-    )
-    .map((a) => a.to_address);
+  for (const transaction of sortedTransactions) {
+    const { from_address, to_address, token_count, transaction_date } =
+      transaction;
 
-  const sortedConsolidations = Array.from(new Set(myconsolidations));
+    const trDate = new Date(transaction_date);
 
-  const walletBalances: { wallet: string; balance: number }[] = [];
-  sortedConsolidations.map((c) => {
-    const inTrx = [...sortedTokenTransactions].filter((t) =>
-      areEqualAddresses(t.to_address, c)
-    );
-    const inBalance = inTrx.reduce((a, b) => a + b.token_count, 0);
-    const outTrx = [...sortedTokenTransactions].filter((t) =>
-      areEqualAddresses(t.from_address, c)
-    );
-    const outBalance = outTrx.reduce((a, b) => a + b.token_count, 0);
-    walletBalances.push({
-      wallet: c,
-      balance: inBalance - outBalance
-    });
-  });
-
-  const tokenDates: Date[] = [];
-
-  for (const st of sortedTokenTransactions) {
-    if (
-      !sortedConsolidations.some((c) => areEqualAddresses(c, st.from_address))
-    ) {
-      if (
-        !sortedTokenTransactions.some(
-          (ct) =>
-            areEqualAddresses(st.to_address, ct.from_address) &&
-            !sortedConsolidations.some((c) =>
-              areEqualAddresses(c, ct.to_address)
-            ) &&
-            new Date(ct.transaction_date).getTime() >
-              new Date(st.transaction_date).getTime()
-        )
-      ) {
-        tokenDates.push(new Date(st.transaction_date));
+    // inward
+    if (consolidations.some((c) => areEqualAddresses(c, to_address))) {
+      if (!consolidations.some((c) => areEqualAddresses(c, from_address))) {
+        addDates(
+          to_address,
+          Array.from({ length: token_count }, () => trDate)
+        );
+      } else {
+        const removedDates = removeDates(from_address, token_count);
+        addDates(to_address, removedDates);
       }
+    }
+
+    // outward
+    else if (consolidations.some((c) => areEqualAddresses(c, from_address))) {
+      removeDates(from_address, token_count);
     }
   }
 
-  const walletDates: { wallet: string; balance: number; dates: Date[] }[] = [];
-  walletBalances.map((wb) => {
-    const dates: Date[] = [];
-    for (let i = 1; i <= wb.balance; i++) {
-      const date = tokenDates.shift();
-      if (date) {
-        dates.push(date);
-      }
-    }
-    walletDates.push({
-      wallet: wb.wallet,
-      balance: wb.balance,
-      dates: dates
-    });
-  });
-
-  const currentWalletDate = walletDates.find((wd) =>
-    areEqualAddresses(wd.wallet, transaction.to_address)
-  );
-
-  let myDate = new Date(transaction.transaction_date);
-  if (currentWalletDate && currentWalletDate.dates.length - 1 >= tokenIndex) {
-    myDate = currentWalletDate.dates[tokenIndex];
-  }
-
-  return myDate;
+  return tokenDatesMap[currentWallet] || [];
 }
 
 export async function ranks(
