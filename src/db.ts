@@ -70,9 +70,9 @@ import { Rememe, RememeUpload } from './entities/IRememe';
 import {
   areEqualAddresses,
   extractConsolidationWallets,
-  formatAddress,
-  getConsolidationsSql
+  formatAddress
 } from './helpers';
+import { getConsolidationsSql } from './sql_helpers';
 import { Dummy } from './entities/IDummy';
 
 const mysql = require('mysql');
