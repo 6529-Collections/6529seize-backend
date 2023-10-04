@@ -1676,6 +1676,8 @@ loadEnv([], true).then(async (e) => {
     function (req: any, res: any, next: any) {
       try {
         const wallets = req.query.wallet;
+        const cards = req.query.card_id;
+        const contracts = req.query.contract;
 
         const pageSize: number =
           req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
@@ -1689,9 +1691,11 @@ loadEnv([], true).then(async (e) => {
           '[DISTRIBUTIONS]',
           `[PAGE_SIZE ${pageSize}][PAGE ${page}]`
         );
-        db.fetchDistributions(wallets, pageSize, page).then((result) => {
-          returnPaginatedResult(result, req, res);
-        });
+        db.fetchDistributions(wallets, cards, contracts, pageSize, page).then(
+          (result) => {
+            returnPaginatedResult(result, req, res);
+          }
+        );
       } catch (e) {
         console.log(
           new Date(),
