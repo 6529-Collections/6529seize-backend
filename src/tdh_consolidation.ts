@@ -13,7 +13,8 @@ import {
   SZN1_INDEX,
   SZN2_INDEX,
   SZN3_INDEX,
-  SZN4_INDEX
+  SZN4_INDEX,
+  SZN5_INDEX
 } from './constants';
 
 export const consolidateTDH = async (lastTDHCalc: Date) => {
@@ -71,6 +72,9 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
         let memes_tdh_season4 = 0;
         let memes_tdh_season4__raw = 0;
         let memes_balance_season4 = 0;
+        let memes_tdh_season5 = 0;
+        let memes_tdh_season5__raw = 0;
+        let memes_balance_season5 = 0;
         let gradientsTDH = 0;
         let gradientsTDH__raw = 0;
         let gradientsBalance = 0;
@@ -97,6 +101,9 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           memes_tdh_season4 += wTdh.memes_tdh_season4;
           memes_tdh_season4__raw += wTdh.memes_tdh_season4__raw;
           memes_balance_season4 += wTdh.memes_balance_season4;
+          memes_tdh_season5 += wTdh.memes_tdh_season5;
+          memes_tdh_season5__raw += wTdh.memes_tdh_season5__raw;
+          memes_balance_season5 += wTdh.memes_balance_season5;
           gradientsTDH += wTdh.gradients_tdh;
           gradientsTDH__raw += wTdh.gradients_tdh__raw;
           gradientsBalance += wTdh.gradients_balance;
@@ -134,6 +141,10 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           4,
           consolidationMemes
         );
+        const unique_memes_season5 = getUniqueMemesSeason(
+          5,
+          consolidationMemes
+        );
 
         const consolidation: ConsolidatedTDH = {
           date: new Date(),
@@ -146,6 +157,7 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           tdh_rank_memes_szn2: 0, //assigned later
           tdh_rank_memes_szn3: 0, //assigned later
           tdh_rank_memes_szn4: 0, //assigned later
+          tdh_rank_memes_szn5: 0, //assigned later
           tdh_rank_gradients: 0, //assigned later
           block: tdhEntry.block,
           tdh: totalTDH,
@@ -160,6 +172,7 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           unique_memes_season2: unique_memes_season2,
           unique_memes_season3: unique_memes_season3,
           unique_memes_season4: unique_memes_season4,
+          unique_memes_season5: unique_memes_season5,
           boosted_memes_tdh: 0,
           memes_tdh: memesTDH,
           memes_tdh__raw: memesTDH__raw,
@@ -180,6 +193,10 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           memes_tdh_season4: memes_tdh_season4,
           memes_tdh_season4__raw: memes_tdh_season4__raw,
           memes_balance_season4: memes_balance_season4,
+          boosted_memes_tdh_season5: 0,
+          memes_tdh_season5: memes_tdh_season5,
+          memes_tdh_season5__raw: memes_tdh_season5__raw,
+          memes_balance_season5: memes_balance_season5,
           memes: consolidationMemes,
           memes_ranks: [],
           boosted_gradients_tdh: 0,
@@ -245,7 +262,8 @@ function getUniqueMemesSeason(season: number, consolidationTokens: any[]) {
       (season == 1 && c.id >= SZN1_INDEX.start && c.id <= SZN1_INDEX.end) ||
       (season == 2 && c.id >= SZN2_INDEX.start && c.id <= SZN2_INDEX.end) ||
       (season == 3 && c.id >= SZN3_INDEX.start && c.id <= SZN3_INDEX.end) ||
-      (season == 4 && c.id >= SZN4_INDEX.start)
+      (season == 4 && c.id >= SZN4_INDEX.start && c.id <= SZN4_INDEX.end) ||
+      (season == 5 && c.id >= SZN5_INDEX.start)
     ) {
       unique.add(c.id);
     }

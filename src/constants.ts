@@ -113,5 +113,11 @@ export const SZN3_INDEX = {
   count: 32
 };
 export const SZN4_INDEX = {
-  start: 119
+  start: 119,
+  end: 151,
+  count: 33
+};
+
+export const SZN5_INDEX = {
+  start: 152
 };
