@@ -106,7 +106,7 @@ async function start() {
 
   // await nftHistory.handler();
   // await delegations.handler();
-  // await transactions.handler();
+  await transactions.handler();
   // await nfts.handler();
   // await memeLab.handler();
   // await ownerMetrics.handler();
