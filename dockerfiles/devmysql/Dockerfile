@@ -1,3 +1,3 @@
-FROM mariadb:latest
+FROM mysql:latest
 
 ADD init.sql /docker-entrypoint-initdb.d/ddl.sql

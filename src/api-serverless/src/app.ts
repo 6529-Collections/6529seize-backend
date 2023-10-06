@@ -9,6 +9,8 @@ import {
 import { SEIZE_SETTINGS } from './api-constants';
 import { validateUser } from './users/user_validation';
 
+import votesRoutes from './votes.api';
+
 const converter = require('json-2-csv');
 
 const mcache = require('memory-cache');
@@ -38,7 +40,8 @@ const corsOptions = {
     'x-6529-auth',
     'Origin',
     'Accept',
-    'X-Requested-With'
+    'X-Requested-With',
+    'x-auth-wallet'
   ]
 };
 
@@ -2286,6 +2289,8 @@ loadEnv([], true).then(async (e) => {
       }
     }
   );
+
+  app.use(`${BASE_PATH}/votes`, votesRoutes);
 
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();
