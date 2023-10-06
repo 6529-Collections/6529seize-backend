@@ -14,8 +14,9 @@ import {
 } from '../entities/ITDH';
 import { NFT } from '../entities/INFT';
 import { OwnerMetric } from '../entities/IOwner';
+import * as notifier from '../notifier';
 
-export const handler = async (event?: any, context?: any) => {
+export const handler = async () => {
   await loadEnv([
     TDH,
     ConsolidatedTDH,
@@ -37,6 +38,7 @@ export async function tdhLoop(force?: boolean) {
   await findNftTDH();
   await uploadTDH(force);
   await uploadConsolidatedTDH(force);
+  await notifier.notifyTdhCalculationsDone();
 }
 
 async function tdh(force?: boolean) {
@@ -46,7 +48,7 @@ async function tdh(force?: boolean) {
   const hoursAgo = getHoursAgo(new Date(lastTdhDB));
 
   if (hoursAgo > 24 || force) {
-    const tdhResult = await findTDH(lastTDHCalc);
+    await findTDH(lastTDHCalc);
     await consolidateTDH(lastTDHCalc);
   } else {
     console.log(
