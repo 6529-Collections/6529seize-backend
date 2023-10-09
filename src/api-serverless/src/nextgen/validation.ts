@@ -4,11 +4,10 @@ import { hashMessage } from '@ethersproject/hash';
 import { areEqualAddresses, stringToHex } from '../../../helpers';
 import { Readable } from 'stream';
 import { NEXTGEN_ADMIN } from '../../../constants';
-import { NEXTGEN_ADMIN_ABI } from './abi';
+import { NEXTGEN_ADMIN_ABI } from './abis';
 const { keccak256 } = require('@ethersproject/keccak256');
 const { MerkleTree } = require('merkletreejs');
 
-const fs = require('fs');
 const csv = require('csv-parser');
 const path = require('path');
 
@@ -58,7 +57,7 @@ export async function validateNextgen(req: any, res: any, next: any) {
     }
 
     const adminValidation = true;
-    // await validateAdmin(5, value.wallet);
+    //  await validateAdmin(5, value.wallet);
 
     if (!adminValidation) {
       return handleValidationFailure(req, false, 'Invalid admin', next);

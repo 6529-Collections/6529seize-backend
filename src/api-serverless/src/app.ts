@@ -7,10 +7,11 @@ import {
   validateRememeAdd
 } from './rememes/rememes_validation';
 import { SEIZE_SETTINGS } from './api-constants';
-import { validateUser } from './users/user_validation';
 
 import votesRoutes from './votes.api';
+import userRoutes from './users/api';
 import nextGenRoutes from './nextgen/api';
+
 import {
   CONTENT_TYPE_HEADER,
   JSON_HEADER_VALUE,
@@ -44,10 +45,6 @@ const cors = require('cors');
 const helmet = require('helmet');
 
 const app = express();
-
-const multer = require('multer');
-const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
 
 const corsOptions = {
   origin: '*',
@@ -888,34 +885,6 @@ loadEnv([], true).then(async (e) => {
           new Date(),
           `[API]`,
           '[ENS]',
-          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
-        );
-        next(e);
-      }
-    }
-  );
-
-  app.get(
-    `${BASE_PATH}/user/:address/`,
-    function (req: any, res: any, next: any) {
-      try {
-        const address = req.params.address;
-
-        console.log(new Date(), `[API]`, '[USER]', `[ADDRESS ${address}]`);
-
-        db.fetchUser(address).then((result) => {
-          res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-          if (result.length == 1) {
-            res.end(JSON.stringify(result[0]));
-          } else {
-            res.end(JSON.stringify({}));
-          }
-        });
-      } catch (e) {
-        console.log(
-          new Date(),
-          `[API]`,
-          '[USER]',
           `SOMETHING WENT WRONG [EXCEPTION ${e}]`
         );
         next(e);
@@ -2137,48 +2106,8 @@ loadEnv([], true).then(async (e) => {
       );
   });
 
-  app.post(
-    `${BASE_PATH}/user`,
-    upload.single('pfp'),
-    validateUser,
-    function (req: any, res: any, next: any) {
-      try {
-        const body = req.validatedBody;
-        console.log(
-          new Date(),
-          `[API]`,
-          '[USER]',
-          `[VALID ${body.valid}]`,
-          `[FROM ${req.body.wallet}]`
-        );
-        const valid = body.valid;
-        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-        res.setHeader(
-          'Access-Control-Allow-Headers',
-          corsOptions.allowedHeaders
-        );
-        if (valid) {
-          db.updateUser(body.user).then((result) => {
-            res.status(200).send(JSON.stringify(body));
-            res.end();
-          });
-        } else {
-          res.status(400).send(JSON.stringify(body));
-          res.end();
-        }
-      } catch (e) {
-        console.log(
-          new Date(),
-          `[API]`,
-          '[USER]',
-          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
-        );
-        return;
-      }
-    }
-  );
-
   app.use(`${BASE_PATH}/votes`, votesRoutes);
+  app.use(`${BASE_PATH}/user`, userRoutes);
   app.use(`${BASE_PATH}/nextgen`, nextGenRoutes);
 
   app.get(`/`, async function (req: any, res: any, next: any) {

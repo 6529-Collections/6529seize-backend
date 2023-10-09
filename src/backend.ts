@@ -14,6 +14,7 @@ const refreshEnsLoop = require('./refreshEnsLoop');
 const royaltiesLoop = require('./royaltiesLoop');
 const delegations = require('./delegationsLoop');
 const nftHistory = require('./nftHistoryLoop');
+const nextgenLoop = require('./nextgenLoop');
 
 const { memeStats, memeLabStats, gradientStats } = require('./marketStatsLoop');
 
@@ -133,6 +134,7 @@ async function start() {
   // await transactions.handlerValues();
   // await rememes.handler();
   await overvotesRevocation.handler();
+  await nextgenLoop.handler();
 
   STARTING = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);

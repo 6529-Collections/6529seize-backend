@@ -76,6 +76,7 @@ import {
 import { VoteEvent } from './entities/IVoteEvent';
 import { setSqlExecutor } from './sql-executor';
 import { VoteMatterCategory } from './entities/IVoteMatter';
+import { NextGenAllowlist, NextGenCollection } from './entities/INextGen';
 
 const mysql = require('mysql');
 
@@ -113,7 +114,9 @@ export async function connect(entities: any[] = []) {
       ENS,
       User,
       VoteEvent,
-      VoteMatterCategory
+      VoteMatterCategory,
+      NextGenAllowlist,
+      NextGenCollection
     ];
   }
 

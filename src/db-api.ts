@@ -15,8 +15,8 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
-  NEXT_GEN_ALLOWLIST,
-  NEXT_GEN_COLLECTIONS,
+  NEXTGEN_ALLOWLIST_TABLE,
+  NEXTGEN_COLLECTIONS_TABLE,
   NFTS_HISTORY_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
@@ -98,6 +98,50 @@ export function execSQL(sql: string): Promise<any> {
         }
         resolve(Object.values(JSON.parse(JSON.stringify(result))));
       });
+    });
+  });
+}
+
+export function execSQLWithTransaction(queries: string[]): Promise<any> {
+  return new Promise(async (resolve, reject) => {
+    mysql_pool.getConnection(async function (
+      err: mysql.MysqlError,
+      dbcon: mysql.PoolConnection
+    ) {
+      try {
+        dbcon.beginTransaction(async function (err) {
+          if (err) {
+            throw err;
+          }
+          const results: any[] = [];
+          for (const query of queries) {
+            const result = await executeQuery(dbcon, query);
+            results.push(result);
+          }
+
+          dbcon.commit(async function () {
+            dbcon.release();
+            resolve(results);
+          });
+        });
+      } catch (error) {
+        dbcon.rollback(async function () {
+          dbcon.release();
+          reject(error);
+        });
+      }
+    });
+  });
+}
+
+function executeQuery(connection: mysql.PoolConnection, query: string) {
+  return new Promise((resolve, reject) => {
+    connection.query(query, (err, result) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve(Object.values(JSON.parse(JSON.stringify(result))));
+      }
     });
   });
 }
@@ -2862,12 +2906,12 @@ export async function fetchNextGenAllowlist(
   merkleRoot: string,
   address: string
 ) {
-  const sql1 = `SELECT * FROM ${NEXT_GEN_COLLECTIONS} WHERE merkle_root=${mysql.escape(
+  const sql1 = `SELECT * FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE merkle_root=${mysql.escape(
     merkleRoot
   )}`;
   const collection = (await execSQL(sql1))[0];
 
-  const sql2 = `SELECT * FROM ${NEXT_GEN_ALLOWLIST} WHERE merkle_root=${mysql.escape(
+  const sql2 = `SELECT * FROM ${NEXTGEN_ALLOWLIST_TABLE} WHERE merkle_root=${mysql.escape(
     merkleRoot
   )} AND address=${mysql.escape(address)}`;
   const allowlist = (await execSQL(sql2))[0];
