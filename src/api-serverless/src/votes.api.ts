@@ -4,14 +4,9 @@ import * as votes from '../../votes';
 import * as Joi from 'joi';
 import { BadUserVoteError, VoteCategoryInfo } from '../../votes';
 import { VoteMatterTargetType } from '../../entities/IVoteMatter';
+import { getWalletOrNull, needsAuthenticatedUser } from './auth';
 
 const router = Router();
-
-function getAuthenticatedWallet(
-  req: Request<any, any, any, any, any>
-): string | null | undefined {
-  return req.headers['x-auth-wallet'] as string | null | undefined;
-}
 
 router.get(
   `/targets/:matter_target_type/:matter_target_id/matters/:matter`,
@@ -31,7 +26,7 @@ router.get(
   ) {
     const { matter, matter_target_type, matter_target_id } = req.params;
     try {
-      const wallet = getAuthenticatedWallet(req);
+      const wallet = getWalletOrNull(req);
       const { votesLeft, consolidatedWallets } = wallet
         ? await votes.getVotesLeftOnMatterForWallet({
             wallet,
@@ -65,6 +60,7 @@ router.get(
 
 router.post(
   `/targets/:matter_target_type/:matter_target_id/matters/:matter`,
+  needsAuthenticatedUser(),
   async function (
     req: Request<
       {
@@ -79,7 +75,7 @@ router.post(
     >,
     res: Response<ApiResponse<void>>
   ) {
-    const walletFromHeader = getAuthenticatedWallet(req);
+    const walletFromHeader = getWalletOrNull(req);
     const { matter, matter_target_type, matter_target_id } = req.params;
     const { amount, category, voter_wallet } = req.body as ApiVoteRequestBody;
     if (walletFromHeader !== voter_wallet) {
