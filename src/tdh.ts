@@ -395,6 +395,9 @@ export function calculateBoost(
     if (cardSetS3) {
       boost += 0.05;
     }
+    if (cardSetS4) {
+      boost += 0.05;
+    }
   }
 
   // gradients up to 3
