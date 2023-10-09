@@ -10,6 +10,23 @@ import { SEIZE_SETTINGS } from './api-constants';
 import { validateUser } from './users/user_validation';
 
 import votesRoutes from './votes.api';
+import nextGenRoutes from './nextgen/api';
+import {
+  CONTENT_TYPE_HEADER,
+  JSON_HEADER_VALUE,
+  BASE_PATH,
+  DEFAULT_PAGE_SIZE,
+  NFTS_PAGE_SIZE,
+  SORT_DIRECTIONS,
+  MEME_LAB_OWNERS_SORT,
+  TRANSACTION_FILTERS,
+  NFT_TDH_SORT,
+  TDH_SORT,
+  TAGS_FILTERS,
+  DISTRIBUTION_PAGE_SIZE,
+  DISTRIBUTION_SORT,
+  REMEMES_SORT
+} from './options';
 
 const converter = require('json-2-csv');
 
@@ -134,135 +151,6 @@ loadEnv([], true).then(async (e) => {
 
   app.all('/api*', requireLogin);
   app.all('/api*', checkCache);
-
-  const BASE_PATH = '/api';
-  const CONTENT_TYPE_HEADER = 'Content-Type';
-  const JSON_HEADER_VALUE = 'application/json';
-  const DEFAULT_PAGE_SIZE = 50;
-  const NFTS_PAGE_SIZE = 101;
-  const DISTRIBUTION_PAGE_SIZE = 250;
-  const SORT_DIRECTIONS = ['ASC', 'DESC'];
-
-  const DISTRIBUTION_SORT = [
-    'phase',
-    'card_mint_count',
-    'count',
-    'wallet_tdh',
-    'wallet_balance',
-    'wallet_unique_balance'
-  ];
-
-  const NFT_TDH_SORT = [
-    'card_tdh',
-    'card_tdh__raw',
-    'card_balance',
-    'total_tdh',
-    'total_balance',
-    'total_tdh__raw'
-  ];
-
-  const REMEMES_SORT = ['created_at'];
-
-  const MEME_LAB_OWNERS_SORT = ['balance'];
-
-  const TDH_SORT = [
-    'boosted_tdh',
-    'tdh',
-    'tdh__raw',
-    'tdh_rank',
-    'boosted_memes_tdh',
-    'memes_tdh',
-    'memes_tdh__raw',
-    'boosted_memes_tdh_season1',
-    'memes_tdh_season1',
-    'memes_tdh_season1__raw',
-    'boosted_memes_tdh_season2',
-    'memes_tdh_season2',
-    'memes_tdh_season2__raw',
-    'boosted_memes_tdh_season3',
-    'memes_tdh_season3',
-    'memes_tdh_season3__raw',
-    'memes_balance',
-    'memes_balance_season1',
-    'memes_balance_season2',
-    'memes_balance_season3',
-    'boosted_gradients_tdh',
-    'gradients_tdh',
-    'gradients_tdh__raw',
-    'gradients_balance',
-    'balance',
-    'purchases_value',
-    'purchases_count',
-    'sales_value',
-    'sales_count',
-    'purchases_value_memes',
-    'purchases_value_memes_season1',
-    'purchases_value_memes_season2',
-    'purchases_value_memes_season3',
-    'purchases_value_gradients',
-    'purchases_count_memes',
-    'purchases_count_memes_season1',
-    'purchases_count_memes_season2',
-    'purchases_count_memes_season3',
-    'purchases_count_gradients',
-    'sales_value_memes',
-    'sales_value_memes_season1',
-    'sales_value_memes_season2',
-    'sales_value_memes_season3',
-    'sales_value_gradients',
-    'sales_count_memes',
-    'sales_count_memes_season1',
-    'sales_count_memes_season2',
-    'sales_count_memes_season3',
-    'sales_count_gradients',
-    'transfers_in',
-    'transfers_in_memes',
-    'transfers_in_memes_season1',
-    'transfers_in_memes_season2',
-    'transfers_in_memes_season3',
-    'transfers_in_gradients',
-    'transfers_out',
-    'transfers_out_memes',
-    'transfers_out_memes_season1',
-    'transfers_out_memes_season2',
-    'transfers_out_memes_season3',
-    'transfers_out_gradients',
-    'memes_cards_sets',
-    'memes_cards_sets_szn1',
-    'memes_cards_sets_szn2',
-    'memes_cards_sets_szn3',
-    'memes_cards_sets_szn4',
-    'memes_cards_sets_minus1',
-    'memes_cards_sets_minus2',
-    'genesis',
-    'unique_memes',
-    'unique_memes_szn1',
-    'unique_memes_szn2',
-    'unique_memes_szn3',
-    'unique_memes_szn4',
-    'day_change',
-    'day_change_unboosted'
-  ];
-
-  const TAGS_FILTERS = [
-    'memes',
-    'memes_set',
-    'memes_set_minus1',
-    'memes_set_szn1',
-    'memes_set_szn2',
-    'memes_set_szn3',
-    'memes_set_szn4',
-    'memes_genesis',
-    'gradients'
-  ];
-
-  const TRANSACTION_FILTERS = [
-    'sales',
-    'transfers',
-    'airdrops',
-    'mints',
-    'burns'
-  ];
 
   function fullUrl(req: any, next: boolean) {
     let url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
@@ -2291,6 +2179,7 @@ loadEnv([], true).then(async (e) => {
   );
 
   app.use(`${BASE_PATH}/votes`, votesRoutes);
+  app.use(`${BASE_PATH}/nextgen`, nextGenRoutes);
 
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();
