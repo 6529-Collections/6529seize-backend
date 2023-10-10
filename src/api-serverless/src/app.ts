@@ -9,6 +9,16 @@ import {
 import { SEIZE_SETTINGS } from './api-constants';
 import { validateUser } from './users/user_validation';
 
+import votesRoutes from './votes.api';
+import authRoutes from './auth.api';
+import * as passport from 'passport';
+import {
+  ExtractJwt,
+  Strategy as JwtStrategy,
+  VerifiedCallback
+} from 'passport-jwt';
+import { getJwtSecret } from './auth';
+
 const converter = require('json-2-csv');
 
 const mcache = require('memory-cache');
@@ -38,7 +48,8 @@ const corsOptions = {
     'x-6529-auth',
     'Origin',
     'Accept',
-    'X-Requested-With'
+    'X-Requested-With',
+    'Authorization'
   ]
 };
 
@@ -50,6 +61,18 @@ loadEnv([], true).then(async (e) => {
   );
 
   await db.connect();
+
+  passport.use(
+    new JwtStrategy(
+      {
+        jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+        secretOrKey: getJwtSecret()
+      },
+      function ({ sub: wallet }: { sub: string }, cb: VerifiedCallback) {
+        return cb(null, { wallet: wallet });
+      }
+    )
+  );
 
   app.use(compression());
   app.use(cors(corsOptions));
@@ -2309,6 +2332,9 @@ loadEnv([], true).then(async (e) => {
       }
     }
   );
+
+  app.use(`${BASE_PATH}/votes`, votesRoutes);
+  app.use(`${BASE_PATH}/auth`, authRoutes);
 
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();

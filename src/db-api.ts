@@ -9,14 +9,14 @@ import {
   DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE,
   ENS_TABLE,
-  NEXT_GEN_ALLOWLIST,
-  NEXT_GEN_COLLECTIONS,
   GRADIENT_CONTRACT,
   LAB_EXTENDED_DATA_TABLE,
   MANIFOLD,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
+  NEXT_GEN_ALLOWLIST,
+  NEXT_GEN_COLLECTIONS,
   NFTS_HISTORY_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
@@ -25,58 +25,106 @@ import {
   OWNERS_METRICS_TABLE,
   OWNERS_TABLE,
   OWNERS_TAGS_TABLE,
+  REMEMES_TABLE,
+  REMEMES_UPLOADS,
   SIX529_MUSEUM,
   TDH_BLOCKS_TABLE,
+  TDH_GLOBAL_HISTORY_TABLE,
+  TDH_HISTORY_TABLE,
   TEAM_TABLE,
   TRANSACTIONS_MEME_LAB_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
-  WALLETS_TDH_TABLE,
-  REMEMES_TABLE,
-  REMEMES_UPLOADS,
-  TDH_HISTORY_TABLE,
-  TDH_GLOBAL_HISTORY_TABLE,
-  USER_TABLE
+  USER_TABLE,
+  WALLETS_TDH_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
 import { User } from './entities/IUser';
 import { areEqualAddresses, extractConsolidationWallets } from './helpers';
 import { getConsolidationsSql, getProfilePageSql } from './sql_helpers';
 import { getProof } from './merkle_proof';
+import { setSqlExecutor } from './sql-executor';
 
-const mysql = require('mysql');
+import * as mysql from 'mysql';
 
-let mysql_pool: any;
+let mysql_pool: mysql.Pool;
 
 export async function connect() {
+  let port: number | undefined;
+  if (process.env.DB_PORT !== undefined && process.env.DB_PORT !== null) {
+    port = +process.env.DB_PORT;
+  }
   mysql_pool = mysql.createPool({
     connectionLimit: 10,
     connectTimeout: 30 * 1000,
     acquireTimeout: 30 * 1000,
     timeout: 30 * 1000,
     host: process.env.DB_HOST_READ,
-    port: process.env.DB_PORT,
+    port: port,
     user: process.env.DB_USER_READ,
     password: process.env.DB_PASS_READ,
     charset: 'utf8mb4',
     database: process.env.DB_NAME
   });
-
+  setSqlExecutor({
+    execute: (sql: string, params?: Record<string, any>) =>
+      execSQLWithParams(sql, params)
+  });
   console.log('[API]', `[CONNECTION POOL CREATED]`);
 }
 
 export function execSQL(sql: string): Promise<any> {
   return new Promise((resolve, reject) => {
-    mysql_pool.getConnection(function (err: any, dbcon: any) {
+    mysql_pool.getConnection(function (
+      err: mysql.MysqlError,
+      dbcon: mysql.PoolConnection
+    ) {
       if (err) {
         console.log('custom err', err);
-        if (dbcon) {
-          dbcon.release();
-        }
+        dbcon?.release();
         throw err;
       }
       dbcon.query(sql, (err: any, result: any[]) => {
-        dbcon.release();
+        dbcon?.release();
+        if (err) {
+          console.log('custom err', err);
+          return reject(err);
+        }
+        resolve(Object.values(JSON.parse(JSON.stringify(result))));
+      });
+    });
+  });
+}
+
+export function execSQLWithParams(
+  sql: string,
+  params?: Record<string, any>
+): Promise<any> {
+  return new Promise((resolve, reject) => {
+    mysql_pool.getConnection(function (
+      err: mysql.MysqlError,
+      dbcon: mysql.PoolConnection
+    ) {
+      if (err) {
+        console.log('custom err', err);
+        dbcon?.release();
+        throw err;
+      }
+      dbcon.config.queryFormat = function (query, values) {
+        if (!values) return query;
+        return query.replace(/\:(\w+)/g, function (txt: any, key: any) {
+          if (values.hasOwnProperty(key)) {
+            const value = values[key];
+            if (Array.isArray(value)) {
+              return value.map((v) => mysql.escape(v)).join(', ');
+            }
+            return mysql.escape(value);
+          }
+          return txt;
+        });
+      };
+      dbcon.query({ sql, values: params }, (err: any, result: any[]) => {
+        dbcon?.release();
         if (err) {
           console.log('custom err', err);
           return reject(err);

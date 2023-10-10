@@ -18,7 +18,7 @@ export const persistS3 = async (
 ) => {
   s3 = new S3Client({ region: 'eu-west-1' });
 
-  const myBucket = process.env.AWS_IMAGES_BUCKET_NAME!;
+  const myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
 
   console.log(
     '[S3]',

@@ -1,5 +1,5 @@
 {
-  "name": "dummyLoop",
+  "name": "overvotesrevocationloop",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -16,6 +16,5 @@
     "esbuild": "^0.17.5"
   },
   "dependencies": {
-    "alchemy-sdk": "^2.4.1"
   }
 }
