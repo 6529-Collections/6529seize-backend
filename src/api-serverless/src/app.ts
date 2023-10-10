@@ -25,6 +25,14 @@ import {
   DISTRIBUTION_SORT,
   REMEMES_SORT
 } from './options';
+import authRoutes from './auth.api';
+import * as passport from 'passport';
+import {
+  ExtractJwt,
+  Strategy as JwtStrategy,
+  VerifiedCallback
+} from 'passport-jwt';
+import { getJwtSecret } from './auth';
 
 const converter = require('json-2-csv');
 
@@ -52,7 +60,7 @@ const corsOptions = {
     'Origin',
     'Accept',
     'X-Requested-With',
-    'x-auth-wallet'
+    'Authorization'
   ]
 };
 
@@ -64,6 +72,18 @@ loadEnv([], true).then(async (e) => {
   );
 
   await db.connect();
+
+  passport.use(
+    new JwtStrategy(
+      {
+        jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+        secretOrKey: getJwtSecret()
+      },
+      function ({ sub: wallet }: { sub: string }, cb: VerifiedCallback) {
+        return cb(null, { wallet: wallet });
+      }
+    )
+  );
 
   app.use(compression());
   app.use(cors(corsOptions));
@@ -2007,6 +2027,7 @@ loadEnv([], true).then(async (e) => {
   app.use(`${BASE_PATH}/user`, userRoutes);
   app.use(`${BASE_PATH}/rememes`, rememesRoutes);
   app.use(`${BASE_PATH}/nextgen`, nextgenRoutes);
+  app.use(`${BASE_PATH}/auth`, authRoutes);
 
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();
