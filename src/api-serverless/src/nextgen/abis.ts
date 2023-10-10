@@ -1,3 +1,7 @@
+export const NEXTGEN_CHAIN_ID = 5;
+
+export const NEXTGEN_FUNCTION_SELECTOR = '0xb85f97a0';
+
 export const NEXTGEN_ADMIN_ABI = [
   { inputs: [], stateMutability: 'nonpayable', type: 'constructor' },
   {

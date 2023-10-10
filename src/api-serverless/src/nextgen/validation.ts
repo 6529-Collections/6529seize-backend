@@ -4,7 +4,11 @@ import { hashMessage } from '@ethersproject/hash';
 import { areEqualAddresses, stringToHex } from '../../../helpers';
 import { Readable } from 'stream';
 import { NEXTGEN_ADMIN } from '../../../constants';
-import { NEXTGEN_ADMIN_ABI } from './abis';
+import {
+  NEXTGEN_ADMIN_ABI,
+  NEXTGEN_CHAIN_ID,
+  NEXTGEN_FUNCTION_SELECTOR
+} from './abis';
 const { keccak256 } = require('@ethersproject/keccak256');
 const { MerkleTree } = require('merkletreejs');
 
@@ -13,7 +17,9 @@ const path = require('path');
 
 const nextgenSchema = Joi.object({
   wallet: Joi.string().required(),
-  signature: Joi.string().required()
+  signature: Joi.string().required(),
+  collection_id: Joi.number().required(),
+  uuid: Joi.string().required()
 });
 
 interface UploadAllowlist {
@@ -49,15 +55,18 @@ export async function validateNextgen(req: any, res: any, next: any) {
     const signatureValidation = true;
     // validateSignature(
     //   value.wallet,
-    //   value.signature
+    //   value.signature,
+    //   value.uuid
     // );
 
     if (!signatureValidation) {
       return handleValidationFailure(req, false, 'Invalid signature', next);
     }
 
-    const adminValidation = true;
-    //  await validateAdmin(5, value.wallet);
+    const adminValidation = await validateAdmin(
+      value.collection_id,
+      value.wallet
+    );
 
     if (!adminValidation) {
       return handleValidationFailure(req, false, 'Invalid admin', next);
@@ -71,10 +80,10 @@ export async function validateNextgen(req: any, res: any, next: any) {
       `[ALLOWLIST ${allowlist.length} ENTRIES]`
     );
 
-    console.log('allowlist', merkle.allowlist);
-
     req.validatedBody = {
       valid: true,
+      collection_id: value.collection_id,
+      added_by: value.wallet,
       merkle: merkle
     };
 
@@ -97,10 +106,10 @@ function handleValidationFailure(
   return next();
 }
 
-function validateSignature(address: string, signature: string) {
+function validateSignature(address: string, signature: string, uuid: string) {
   try {
     const verifySigner = ethers.utils.recoverAddress(
-      hashMessage(address),
+      hashMessage(uuid),
       signature
     );
     return areEqualAddresses(address, verifySigner);
@@ -168,8 +177,8 @@ async function computeMerkle(allowlist: UploadAllowlist[]): Promise<any> {
   };
 }
 
-async function validateAdmin(chainId: number, address: string) {
-  const rpcUrl = getUrl(chainId);
+async function validateAdmin(collection_id: number, address: string) {
+  const rpcUrl = getUrl(NEXTGEN_CHAIN_ID);
   const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
   const contract = new ethers.Contract(
     NEXTGEN_ADMIN,
@@ -178,10 +187,29 @@ async function validateAdmin(chainId: number, address: string) {
   );
 
   try {
-    const result = await contract.functions.retrieveGlobalAdmin(address);
-    return result[0];
+    const result1 = await contract.functions.retrieveGlobalAdmin(address);
+    const isGlobalAdmin = result1[0];
+
+    const result2 = await contract.functions.retrieveFunctionAdmin(
+      address,
+      NEXTGEN_FUNCTION_SELECTOR
+    );
+    const isFunctionAdmin = result2[0];
+
+    const result3 = await contract.functions.retrieveCollectionAdmin(
+      address,
+      collection_id
+    );
+    const isCollectionAdmin = result3[0];
+    console.log(
+      '[VALIDATE NEXTGEN]',
+      `[GLOBAL ADMIN ${isGlobalAdmin}]`,
+      `[FUNCTION ADMIN ${isFunctionAdmin}]`,
+      `[COLLECTION ADMIN ${isCollectionAdmin}]`
+    );
+    return isGlobalAdmin || isFunctionAdmin || isCollectionAdmin;
   } catch (error) {
-    console.error('Error calling retrieveGlobalAdmin method:', error);
+    console.error('Error calling retrieveGlobalAdmin method:', rpcUrl, error);
     return false;
   }
 }

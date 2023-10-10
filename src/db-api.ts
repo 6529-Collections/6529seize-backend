@@ -108,6 +108,9 @@ export function execSQLWithTransaction(queries: string[]): Promise<any> {
       err: mysql.MysqlError,
       dbcon: mysql.PoolConnection
     ) {
+      if (err) {
+        throw err;
+      }
       try {
         dbcon.beginTransaction(async function (err) {
           if (err) {

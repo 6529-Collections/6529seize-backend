@@ -2,15 +2,12 @@ import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { loadEnv } from '../../secrets';
 import { isNumber } from '../../helpers';
-import {
-  validateRememe,
-  validateRememeAdd
-} from './rememes/rememes_validation';
 import { SEIZE_SETTINGS } from './api-constants';
 
 import votesRoutes from './votes.api';
 import userRoutes from './users/api';
-import nextGenRoutes from './nextgen/api';
+import rememesRoutes from './rememes/api';
+import nextgenRoutes from './nextgen/api';
 
 import {
   CONTENT_TYPE_HEADER,
@@ -1828,35 +1825,6 @@ loadEnv([], true).then(async (e) => {
     }
   });
 
-  app.get(
-    `${BASE_PATH}/next_gen/:merkle_root/:address`,
-    async function (req: any, res: any, next: any) {
-      const merkleRoot = req.params.merkle_root;
-      const address = req.params.address;
-
-      console.log(
-        new Date(),
-        `[API]`,
-        '[NEXT GEN]',
-        `[MERKLE ${merkleRoot}][ADDRESS ${address}]`
-      );
-      try {
-        db.fetchNextGenAllowlist(merkleRoot, address).then((result) => {
-          res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-          res.end(JSON.stringify(result));
-        });
-      } catch (e) {
-        console.log(
-          new Date(),
-          `[API]`,
-          '[NEXT GEN]',
-          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
-        );
-        next(e);
-      }
-    }
-  );
-
   app.get(`${BASE_PATH}/rememes`, function (req: any, res: any, next: any) {
     try {
       const memeIds = req.query.meme_id;
@@ -1915,77 +1883,6 @@ loadEnv([], true).then(async (e) => {
       return;
     }
   });
-
-  app.post(
-    `${BASE_PATH}/rememes/validate`,
-    validateRememe,
-    function (req: any, res: any, next: any) {
-      try {
-        const body = req.validatedBody;
-        console.log(
-          new Date(),
-          `[API]`,
-          '[REMEMES VALIDATE]',
-          `[VALID ${body.valid}]`
-        );
-        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-        res.setHeader(
-          'Access-Control-Allow-Headers',
-          corsOptions.allowedHeaders
-        );
-        res.status(body.valid ? 200 : 400).send(JSON.stringify(body));
-        res.end();
-      } catch (e) {
-        console.log(
-          new Date(),
-          `[API]`,
-          '[REMEMES VALIDATE]',
-          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
-        );
-        return;
-      }
-    }
-  );
-
-  app.post(
-    `${BASE_PATH}/rememes/add`,
-    validateRememeAdd,
-    function (req: any, res: any, next: any) {
-      try {
-        const body = req.validatedBody;
-        console.log(
-          new Date(),
-          `[API]`,
-          '[REMEMES ADD]',
-          `[VALID ${body.valid}]`,
-          `[FROM ${req.body.address}]`
-        );
-        const valid = body.valid;
-        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-        res.setHeader(
-          'Access-Control-Allow-Headers',
-          corsOptions.allowedHeaders
-        );
-        if (valid) {
-          db.addRememe(req.body.address, body).then((result) => {
-            res.status(201).send(JSON.stringify(body));
-            res.end();
-          });
-        } else {
-          res.status(400).send(JSON.stringify(body));
-          res.end();
-        }
-      } catch (e) {
-        console.log(
-          new Date(),
-          `[API]`,
-          '[REMEMES ADD]',
-          `SOMETHING WENT WRONG [EXCEPTION ${e}]`
-        );
-        return;
-      }
-    }
-  );
 
   app.get(
     `${BASE_PATH}/rememes_uploads`,
@@ -2108,7 +2005,8 @@ loadEnv([], true).then(async (e) => {
 
   app.use(`${BASE_PATH}/votes`, votesRoutes);
   app.use(`${BASE_PATH}/user`, userRoutes);
-  app.use(`${BASE_PATH}/nextgen`, nextGenRoutes);
+  app.use(`${BASE_PATH}/rememes`, rememesRoutes);
+  app.use(`${BASE_PATH}/nextgen`, nextgenRoutes);
 
   app.get(`/`, async function (req: any, res: any, next: any) {
     const image = await db.fetchRandomImage();

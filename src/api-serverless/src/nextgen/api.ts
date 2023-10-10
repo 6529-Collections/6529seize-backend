@@ -13,6 +13,12 @@ import {
   extractNextGenCollectionInsert
 } from '../../../entities/INextGen';
 import { execSQLWithTransaction } from '../../../db-api';
+import {
+  NEXTGEN_ALLOWLIST_TABLE,
+  NEXTGEN_COLLECTIONS_TABLE
+} from '../../../constants';
+import * as mysql from 'mysql';
+import * as db from '../../../db-api';
 
 const router = Router();
 const multer = require('multer');
@@ -36,13 +42,13 @@ router.post(
         `[API]`,
         '[NEXTGEN]',
         `[VALID ${body.valid}]`,
-        `[FROM ${req.body.wallet}]`
+        `[FROM ${body.added_by}]`
       );
       const valid = body.valid;
       res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
       res.setHeader('Access-Control-Allow-Headers', corsOptions.allowedHeaders);
       if (valid) {
-        await persistAllowlist(body.merkle);
+        await persistAllowlist(body);
         res
           .status(200)
           .send(JSON.stringify({ merkle_root: body.merkle.merkle_root }));
@@ -63,35 +69,104 @@ router.post(
   }
 );
 
+router.get(
+  `/:merkle_root/:address`,
+  async function (req: any, res: any, next: any) {
+    const merkleRoot = req.params.merkle_root;
+    const address = req.params.address;
+
+    console.log(
+      new Date(),
+      `[API]`,
+      '[NEXT GEN]',
+      `[MERKLE ${merkleRoot}][ADDRESS ${address}]`
+    );
+    try {
+      db.fetchNextGenAllowlist(merkleRoot, address).then((result) => {
+        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+        res.end(JSON.stringify(result));
+      });
+    } catch (e) {
+      console.log(
+        new Date(),
+        `[API]`,
+        '[NEXT GEN]',
+        `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+      );
+      next(e);
+    }
+  }
+);
+
 export default router;
 
-async function persistAllowlist(merkle: {
-  merkle_root: string;
-  merkle_tree: any;
-  allowlist: any[];
+async function persistAllowlist(body: {
+  collection_id: number;
+  added_by: string;
+  merkle: {
+    merkle_root: string;
+    merkle_tree: any;
+    allowlist: any[];
+  };
 }): Promise<void> {
-  const allowlistData: NextGenAllowlist[] = merkle.allowlist.map((entry) => {
-    const al = new NextGenAllowlist();
-    al.address = entry.address;
-    al.spots = entry.spots;
-    al.info = entry.info;
-    al.keccak = entry.keccak;
-    al.merkle_root = merkle.merkle_root;
-    return al;
-  });
+  const allowlistData: NextGenAllowlist[] = body.merkle.allowlist.map(
+    (entry) => {
+      const al = new NextGenAllowlist();
+      al.address = entry.address;
+      al.spots = entry.spots;
+      al.info = entry.info;
+      al.keccak = entry.keccak;
+      al.merkle_root = body.merkle.merkle_root;
+      return al;
+    }
+  );
 
   const collection = new NextGenCollection();
-  collection.merkle_root = merkle.merkle_root;
-  collection.merkle_tree = JSON.stringify(merkle.merkle_tree);
+  collection.collection_id = body.collection_id;
+  collection.added_by = body.added_by;
+  collection.merkle_root = body.merkle.merkle_root;
+  collection.merkle_tree = JSON.stringify(body.merkle.merkle_tree);
 
-  const result = await execSQLWithTransaction([
-    extractNextGenAllowlistInsert(allowlistData),
-    extractNextGenCollectionInsert(collection)
-  ]);
+  try {
+    const sqlOperations = [];
+
+    const existingMerkle = await sqlExecutor.execute(
+      `SELECT * FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE collection_id = :collection_id`,
+      {
+        collection_id: body.collection_id
+      }
+    );
+
+    if (existingMerkle.length > 0) {
+      const existingMerkleRoot = existingMerkle[0].merkle_root;
+      sqlOperations.push(
+        `DELETE FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE merkle_root = ${mysql.escape(
+          existingMerkleRoot
+        )}`
+      );
+      sqlOperations.push(
+        `DELETE FROM ${NEXTGEN_ALLOWLIST_TABLE} WHERE merkle_root = ${mysql.escape(
+          existingMerkleRoot
+        )}`
+      );
+    }
+
+    sqlOperations.push(extractNextGenAllowlistInsert(allowlistData));
+    sqlOperations.push(extractNextGenCollectionInsert(collection));
+    await execSQLWithTransaction(sqlOperations);
+  } catch (e) {
+    console.log(
+      new Date(),
+      `[API]`,
+      '[NEXTGEN]',
+      `SOMETHING WENT WRONG [EXCEPTION ${e}]`
+    );
+    return;
+  }
 
   console.log(
     `[NEXTGEN ALLOWLIST]`,
-    `[Allowlist persisted]`,
-    `[MERKLE ROOT ${merkle.merkle_root}]`
+    `[ALLOWLIST PERSISTED]`,
+    `[COLLECTION ID ${body.collection_id}]`
   );
 }
