@@ -70,9 +70,9 @@ import { Rememe, RememeUpload } from './entities/IRememe';
 import {
   areEqualAddresses,
   extractConsolidationWallets,
-  formatAddress,
-  getConsolidationsSql
+  formatAddress
 } from './helpers';
+import { getConsolidationsSql } from './sql_helpers';
 import { VoteEvent } from './entities/IVoteEvent';
 import { setSqlExecutor } from './sql-executor';
 import { VoteMatterCategory } from './entities/IVoteMatter';

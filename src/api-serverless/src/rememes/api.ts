@@ -3,7 +3,7 @@ import {
   CONTENT_TYPE_HEADER,
   JSON_HEADER_VALUE,
   corsOptions
-} from 'src/options';
+} from '../options';
 import { validateRememe, validateRememeAdd } from './rememes_validation';
 import * as db from '../../../db-api';
 

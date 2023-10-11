@@ -51,6 +51,9 @@ export class OwnerTags {
   unique_memes_szn4!: number;
 
   @Column({ type: 'int', nullable: false })
+  unique_memes_szn5!: number;
+
+  @Column({ type: 'int', nullable: false })
   gradients_balance!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -79,6 +82,9 @@ export class OwnerTags {
 
   @Column({ type: 'int', nullable: false })
   memes_cards_sets_szn4!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn5!: number;
 }
 
 @Entity({ name: CONSOLIDATED_OWNERS_TAGS_TABLE })
@@ -114,6 +120,9 @@ export class ConsolidatedOwnerTags {
   unique_memes_szn4!: number;
 
   @Column({ type: 'int', nullable: false })
+  unique_memes_szn5!: number;
+
+  @Column({ type: 'int', nullable: false })
   gradients_balance!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -142,6 +151,9 @@ export class ConsolidatedOwnerTags {
 
   @Column({ type: 'int', nullable: false })
   memes_cards_sets_szn4!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn5!: number;
 }
 
 @Entity({ name: OWNERS_METRICS_TABLE })
@@ -169,6 +181,9 @@ export class OwnerMetric {
 
   @Column({ type: 'int', nullable: false })
   memes_balance_season4!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_balance_season5!: number;
 
   @Column({ type: 'int', nullable: false })
   gradients_balance!: number;
@@ -234,6 +249,12 @@ export class OwnerMetric {
   purchases_count_memes_season4!: number;
 
   @Column({ type: 'double', nullable: false })
+  purchases_value_memes_season5!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_memes_season5!: number;
+
+  @Column({ type: 'double', nullable: false })
   purchases_value_gradients!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -268,6 +289,12 @@ export class OwnerMetric {
 
   @Column({ type: 'int', nullable: false })
   purchases_count_primary_memes_season4!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_primary_memes_season5!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_primary_memes_season5!: number;
 
   @Column({ type: 'double', nullable: false })
   purchases_value_primary_gradients!: number;
@@ -306,6 +333,12 @@ export class OwnerMetric {
   purchases_count_secondary_memes_season4!: number;
 
   @Column({ type: 'double', nullable: false })
+  purchases_value_secondary_memes_season5!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_secondary_memes_season5!: number;
+
+  @Column({ type: 'double', nullable: false })
   purchases_value_secondary_gradients!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -342,6 +375,12 @@ export class OwnerMetric {
   sales_count_memes_season4!: number;
 
   @Column({ type: 'double', nullable: false })
+  sales_value_memes_season5!: number;
+
+  @Column({ type: 'int', nullable: false })
+  sales_count_memes_season5!: number;
+
+  @Column({ type: 'double', nullable: false })
   sales_value_gradients!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -376,6 +415,12 @@ export class OwnerMetric {
 
   @Column({ type: 'int', nullable: false })
   transfers_out_memes_season4!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_in_memes_season5!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_out_memes_season5!: number;
 
   @Column({ type: 'int', nullable: false })
   transfers_in_gradients!: number;
@@ -420,6 +465,9 @@ export class ConsolidatedOwnerMetric {
   memes_balance_season4!: number;
 
   @Column({ type: 'int', nullable: false })
+  memes_balance_season5!: number;
+
+  @Column({ type: 'int', nullable: false })
   gradients_balance!: number;
 
   @Column({ type: 'double', nullable: false })
@@ -483,6 +531,12 @@ export class ConsolidatedOwnerMetric {
   purchases_count_memes_season4!: number;
 
   @Column({ type: 'double', nullable: false })
+  purchases_value_memes_season5!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_memes_season5!: number;
+
+  @Column({ type: 'double', nullable: false })
   purchases_value_gradients!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -517,6 +571,12 @@ export class ConsolidatedOwnerMetric {
 
   @Column({ type: 'int', nullable: false })
   purchases_count_primary_memes_season4!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_primary_memes_season5!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_primary_memes_season5!: number;
 
   @Column({ type: 'double', nullable: false })
   purchases_value_primary_gradients!: number;
@@ -555,6 +615,12 @@ export class ConsolidatedOwnerMetric {
   purchases_count_secondary_memes_season4!: number;
 
   @Column({ type: 'double', nullable: false })
+  purchases_value_secondary_memes_season5!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_secondary_memes_season5!: number;
+
+  @Column({ type: 'double', nullable: false })
   purchases_value_secondary_gradients!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -591,6 +657,12 @@ export class ConsolidatedOwnerMetric {
   sales_count_memes_season4!: number;
 
   @Column({ type: 'double', nullable: false })
+  sales_value_memes_season5!: number;
+
+  @Column({ type: 'int', nullable: false })
+  sales_count_memes_season5!: number;
+
+  @Column({ type: 'double', nullable: false })
   sales_value_gradients!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -625,6 +697,12 @@ export class ConsolidatedOwnerMetric {
 
   @Column({ type: 'int', nullable: false })
   transfers_out_memes_season4!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_in_memes_season5!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_out_memes_season5!: number;
 
   @Column({ type: 'int', nullable: false })
   transfers_in_gradients!: number;

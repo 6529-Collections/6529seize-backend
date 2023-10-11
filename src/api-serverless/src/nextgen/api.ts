@@ -4,7 +4,7 @@ import {
   CONTENT_TYPE_HEADER,
   JSON_HEADER_VALUE,
   corsOptions
-} from 'src/options';
+} from '../options';
 import { sqlExecutor } from '../../../sql-executor';
 import {
   NextGenAllowlist,

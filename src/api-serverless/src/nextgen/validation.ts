@@ -52,12 +52,11 @@ export async function validateNextgen(req: any, res: any, next: any) {
       return handleValidationFailure(req, false, 'Invalid file', next);
     }
 
-    const signatureValidation = true;
-    // validateSignature(
-    //   value.wallet,
-    //   value.signature,
-    //   value.uuid
-    // );
+    const signatureValidation = validateSignature(
+      value.wallet,
+      value.signature,
+      value.uuid
+    );
 
     if (!signatureValidation) {
       return handleValidationFailure(req, false, 'Invalid signature', next);
@@ -88,7 +87,7 @@ export async function validateNextgen(req: any, res: any, next: any) {
     };
 
     return next();
-  } catch (err) {
+  } catch (err: any) {
     return handleValidationFailure(req, false, err.message, next);
   }
 }
@@ -128,7 +127,7 @@ async function readAllowlist(
   bufferStream.push(allowlistFileBuffer);
   bufferStream.push(null);
 
-  bufferStream.pipe(csv({ headers: false })).on('data', (data) => {
+  bufferStream.pipe(csv({ headers: false })).on('data', (data: any) => {
     allowlist.push({
       address: data[0],
       spots: parseInt(data[1]),
@@ -218,9 +217,7 @@ function getUrl(chainId: number) {
   switch (chainId) {
     case 5:
       return `https://eth-goerli.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
-    case 1:
-      return `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
     default:
-      return null;
+      return `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
   }
 }
