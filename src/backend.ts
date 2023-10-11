@@ -2,6 +2,7 @@ import * as overvotesRevocation from './overvotesRevocationLoop';
 
 const transactions = require('./transactionsLoop');
 const nfts = require('./nftsLoop');
+const owners = require('./ownersLoop');
 const memeLab = require('./memeLabLoop');
 const tdh = require('./tdhLoop');
 const tdhHistory = require('./tdhHistoryLoop');
@@ -29,6 +30,7 @@ function isCronsEnabled() {
 cron.schedule('*/4 * * * *', async function () {
   if (isCronsEnabled()) {
     nfts.handler();
+    owners.handler();
   }
 });
 
@@ -118,6 +120,7 @@ async function start() {
   // await delegations.handler();
   // await transactions.handler();
   // await nfts.handler();
+  // await owners.handler();
   // await memeLab.handler();
   // await ownerMetrics.handler();
   // await tdh.handler();

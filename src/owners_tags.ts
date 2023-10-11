@@ -39,6 +39,7 @@ export const findOwnerTags = async () => {
   const memesNFTsSzn2 = filterSeason(2, memesNFTs);
   const memesNFTsSzn3 = filterSeason(3, memesNFTs);
   const memesNFTsSzn4 = filterSeason(4, memesNFTs);
+  const memesNFTsSzn5 = filterSeason(5, memesNFTs);
 
   const ownersTagsDelta: OwnerTags[] = [];
 
@@ -54,7 +55,8 @@ export const findOwnerTags = async () => {
       memesNFTsSzn1,
       memesNFTsSzn2,
       memesNFTsSzn3,
-      memesNFTsSzn4
+      memesNFTsSzn4,
+      memesNFTsSzn5
     );
 
     const ownerTags: OwnerTags = {
@@ -77,10 +79,13 @@ export const findOwnerTags = async () => {
         existingTags.unique_memes_szn2 != ownerTags.unique_memes_szn2 ||
         existingTags.unique_memes_szn3 != ownerTags.unique_memes_szn3 ||
         existingTags.unique_memes_szn4 != ownerTags.unique_memes_szn4 ||
+        existingTags.unique_memes_szn5 != ownerTags.unique_memes_szn5 ||
         existingTags.memes_cards_sets != ownerTags.memes_cards_sets ||
         existingTags.memes_cards_sets_szn1 != ownerTags.memes_cards_sets_szn1 ||
         existingTags.memes_cards_sets_szn2 != ownerTags.memes_cards_sets_szn2 ||
         existingTags.memes_cards_sets_szn3 != ownerTags.memes_cards_sets_szn3 ||
+        existingTags.memes_cards_sets_szn4 != ownerTags.memes_cards_sets_szn4 ||
+        existingTags.memes_cards_sets_szn5 != ownerTags.memes_cards_sets_szn5 ||
         existingTags.memes_cards_sets_minus1 !=
           ownerTags.memes_cards_sets_minus1 ||
         existingTags.memes_cards_sets_minus2 !=
@@ -147,7 +152,8 @@ export const findOwnerTags = async () => {
           memesNFTsSzn1,
           memesNFTsSzn2,
           memesNFTsSzn3,
-          memesNFTsSzn4
+          memesNFTsSzn4,
+          memesNFTsSzn5
         );
 
         const consolidationTag: ConsolidatedOwnerTags = {
@@ -191,7 +197,8 @@ function buildTagsFromNfts(
   memesNFTsSzn1: NFT[],
   memesNFTsSzn2: NFT[],
   memesNFTsSzn3: NFT[],
-  memesNFTsSzn4: NFT[]
+  memesNFTsSzn4: NFT[],
+  memesNFTsSzn5: NFT[]
 ) {
   const walletMemes = [...walletNFTs].filter((n) =>
     areEqualAddresses(n.contract, MEMES_CONTRACT)
@@ -211,6 +218,9 @@ function buildTagsFromNfts(
   );
   const walletMemesSzn4 = [...walletMemes].filter((a) =>
     memesNFTsSzn4.some((n) => n.id == a.token_id)
+  );
+  const walletMemesSzn5 = [...walletMemes].filter((a) =>
+    memesNFTsSzn5.some((n) => n.id == a.token_id)
   );
 
   const walletGradients = [...walletNFTs].filter((n) =>
@@ -307,6 +317,19 @@ function buildTagsFromNfts(
     );
   }
 
+  let memesCardSetsSzn5 = 0;
+  if (
+    memesNFTsSzn5.length > 0 &&
+    walletMemesSzn5.length == memesNFTsSzn5.length
+  ) {
+    memesCardSetsSzn5 = Math.min.apply(
+      Math,
+      [...walletMemesSzn5].map(function (o) {
+        return o.balance;
+      })
+    );
+  }
+
   let genesis = 0;
   if (walletMemesGenesis.length == memesNftsGenesis.length) {
     genesis = Math.min.apply(
@@ -340,6 +363,7 @@ function buildTagsFromNfts(
     unique_memes_szn2: walletMemesSzn2.length,
     unique_memes_szn3: walletMemesSzn3.length,
     unique_memes_szn4: walletMemesSzn4.length,
+    unique_memes_szn5: walletMemesSzn5.length,
     gradients_balance: walletGradients.length,
     genesis: genesis,
     nakamoto: nakamoto,
@@ -349,7 +373,8 @@ function buildTagsFromNfts(
     memes_cards_sets_szn1: memesCardSetsSzn1,
     memes_cards_sets_szn2: memesCardSetsSzn2,
     memes_cards_sets_szn3: memesCardSetsSzn3,
-    memes_cards_sets_szn4: memesCardSetsSzn4
+    memes_cards_sets_szn4: memesCardSetsSzn4,
+    memes_cards_sets_szn5: memesCardSetsSzn5
   };
   return ownerTags;
 }
