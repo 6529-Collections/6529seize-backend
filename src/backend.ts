@@ -20,10 +20,10 @@ const { memeStats, memeLabStats, gradientStats } = require('./marketStatsLoop');
 
 const cron = require('node-cron');
 
-let STARTING = true;
+let RUNNING_START_SCRIPT = true;
 
 function isCronsEnabled() {
-  return process.env.CRONS_DISABLES !== 'true';
+  return process.env.CRONS_DISABLES !== 'true' && !RUNNING_START_SCRIPT;
 }
 
 // PULL EVERY 4 MINUTES
@@ -137,7 +137,7 @@ async function start() {
   // await rememes.handler();
   await overvotesRevocation.handler();
 
-  STARTING = false;
+  RUNNING_START_SCRIPT = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
 }
 
