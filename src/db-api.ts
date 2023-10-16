@@ -51,9 +51,16 @@ let mysql_pool: mysql.Pool;
 
 export async function connect() {
   let port: number | undefined;
-  if (process.env.DB_PORT !== undefined && process.env.DB_PORT !== null) {
-    port = +process.env.DB_PORT;
+  if (
+    !process.env.DB_HOST_READ ||
+    !process.env.DB_USER_READ ||
+    !process.env.DB_PASS_READ ||
+    !process.env.DB_PORT
+  ) {
+    console.log('[API]', '[MISSING CONFIGURATION FOR READ DB]', '[EXITING]');
+    process.exit();
   }
+  port = +process.env.DB_PORT;
   mysql_pool = mysql.createPool({
     connectionLimit: 10,
     connectTimeout: 30 * 1000,
