@@ -116,12 +116,12 @@ async function start() {
 
   // Uncomment to call on start
 
-  await nftHistory.handler();
-  await delegations.handler();
-  await transactions.handler();
-  await nfts.handler();
-  await owners.handler();
-  await ownerMetrics.handler();
+  // await nftHistory.handler();
+  // await delegations.handler();
+  // await transactions.handler();
+  // await nfts.handler();
+  // await owners.handler();
+  // await ownerMetrics.handler();
   // await tdh.handler();
   // await tdhHistory.handler();
   // await memeLab.handler();
