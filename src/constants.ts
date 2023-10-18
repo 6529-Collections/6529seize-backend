@@ -17,6 +17,7 @@ export const WALLETS_TDH_TABLE = 'tdh';
 export const UPLOADS_TABLE = 'uploads';
 export const CONSOLIDATED_UPLOADS_TABLE = 'uploads_consolidation';
 export const ENS_TABLE = 'ens';
+export const PROFILES_TABLE = 'profiles';
 export const USER_TABLE = 'user';
 export const TEAM_TABLE = 'team';
 export const DISTRIBUTION_TABLE = 'distribution';
@@ -123,3 +124,6 @@ export const SZN4_INDEX = {
 export const SZN5_INDEX = {
   start: 152
 };
+
+export const WALLET_REGEX = /^0x[a-fA-F0-9]{40}$/;
+export const PROFILE_HANDLE_REGEX = /^[a-zA-Z0-9_]{3,15}$/;
