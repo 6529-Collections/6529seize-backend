@@ -1,4 +1,5 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { randomUUID } from 'crypto';
 
 let sharp: any;
 if (process.env.NODE_ENV == 'local') {
@@ -11,8 +12,7 @@ const TARGET_HEIGHT = 500;
 
 let s3: S3Client;
 
-export const persistS3 = async (
-  wallet: string,
+export const scalePfpAndPersistToS3 = async (
   file: any,
   fileExtension: string
 ) => {
@@ -20,22 +20,11 @@ export const persistS3 = async (
 
   const myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
 
-  console.log(
-    '[S3]',
-    `[PROCESSING PFP FOR ${wallet}]`,
-    `[EXTENSION ${fileExtension}]`
-  );
+  const keyExtension: string = fileExtension !== '.gif' ? 'webp' : 'gif';
 
-  let keyExtension: string;
-  if (fileExtension != '.gif') {
-    keyExtension = 'webp';
-  } else {
-    keyExtension = 'gif';
-  }
+  const scaledBuffer = await resizeImage(keyExtension, file);
 
-  const scaledBuffer = await resizeImage(wallet, keyExtension, file);
-
-  const key = `pfp/${process.env.NODE_ENV}/${wallet}.${keyExtension}`;
+  const key = `pfp/${process.env.NODE_ENV}/${randomUUID()}.${keyExtension}`;
 
   const uploadedScaledImage = await s3.send(
     new PutObjectCommand({
@@ -48,24 +37,19 @@ export const persistS3 = async (
   if (uploadedScaledImage.$metadata.httpStatusCode == 200) {
     return `https://6529bucket.s3.eu-west-1.amazonaws.com/${key}?d=${Date.now()}`;
   }
-  return null;
+  throw new Error('Failed to upload image');
 };
 
-async function resizeImage(wallet: string, ext: string, file: any) {
+async function resizeImage(ext: string, file: any) {
   const buffer = file.buffer;
-  try {
-    if (ext != 'gif') {
-      return await sharp(buffer)
-        .resize({ height: TARGET_HEIGHT })
-        .webp()
-        .toBuffer();
-    } else {
-      return await sharp(buffer, { animated: true })
-        .resize({ height: TARGET_HEIGHT })
-        .toBuffer();
-    }
-  } catch (err: any) {
-    console.log(`[RESIZING FOR ${wallet}]`, `[FAILED!]`, `[${err}]`);
-    return buffer;
+  if (ext != 'gif') {
+    return await sharp(buffer)
+      .resize({ height: TARGET_HEIGHT })
+      .webp()
+      .toBuffer();
+  } else {
+    return await sharp(buffer, { animated: true })
+      .resize({ height: TARGET_HEIGHT })
+      .toBuffer();
   }
 }
