@@ -1,7 +1,8 @@
 import { Profile } from './entities/IProfile';
 import * as tdh_consolidation from './tdh_consolidation';
+import * as ens from './ens';
 import { sqlExecutor } from './sql-executor';
-import { PROFILES_TABLE } from './constants';
+import { PROFILES_TABLE, WALLET_REGEX } from './constants';
 import { BadRequestException } from './bad-request.exception';
 
 export interface CreateOrUpdateProfileCommand {
@@ -12,6 +13,77 @@ export interface CreateOrUpdateProfileCommand {
   banner_2_url?: string;
   website?: string;
   creator_or_updater_wallet: string;
+}
+
+export interface ProfileAndConsolidations {
+  readonly profile: Profile | null;
+  readonly consolidation: {
+    wallets: string[];
+    tdh: number;
+  };
+}
+
+async function getProfileByEnsName(query: string) {
+  const wallet = await ens.reverseResolveEnsName(query);
+  if (!wallet) {
+    return null;
+  }
+  const { consolidatedWallets, tdh } =
+    await tdh_consolidation.getWalletTdhAndConsolidatedWallets(wallet);
+  if (consolidatedWallets.length === 0) {
+    return null;
+  }
+  const profile = await getWalletsNewestProfile(wallet);
+  return {
+    profile: profile ?? null,
+    consolidation: {
+      wallets: consolidatedWallets,
+      tdh
+    }
+  };
+}
+
+async function getProfileByWallet(query: string) {
+  const { consolidatedWallets, tdh } =
+    await tdh_consolidation.getWalletTdhAndConsolidatedWallets(query);
+  if (consolidatedWallets.length === 0) {
+    return null;
+  }
+  const profile = await getWalletsNewestProfile(query);
+  return {
+    profile: profile ?? null,
+    consolidation: {
+      wallets: consolidatedWallets,
+      tdh
+    }
+  };
+}
+
+export async function getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+  handleOrEnsOrWalletAddress: string
+): Promise<ProfileAndConsolidations | null> {
+  const query = handleOrEnsOrWalletAddress.toLowerCase();
+  if (query.endsWith('.eth')) {
+    return await getProfileByEnsName(query);
+  } else if (query.match(WALLET_REGEX)) {
+    return await getProfileByWallet(query);
+  } else {
+    const profile = await getProfileByHandle(query);
+    if (!profile) {
+      return null;
+    }
+    const { consolidatedWallets, tdh } =
+      await tdh_consolidation.getWalletTdhAndConsolidatedWallets(
+        profile.primary_wallet.toLowerCase()
+      );
+    return {
+      profile,
+      consolidation: {
+        wallets: consolidatedWallets,
+        tdh
+      }
+    };
+  }
 }
 
 export async function getProfileByHandle(handle: string): Promise<Profile> {
@@ -53,7 +125,7 @@ export async function createOrUpdateProfile({
   banner_2_url,
   website,
   creator_or_updater_wallet
-}: CreateOrUpdateProfileCommand): Promise<Profile> {
+}: CreateOrUpdateProfileCommand): Promise<ProfileAndConsolidations> {
   const { consolidatedWallets: creatorOrUpdaterWalletConsolidatedWallets } =
     await tdh_consolidation.getWalletTdhAndConsolidatedWallets(
       creator_or_updater_wallet
@@ -124,7 +196,9 @@ export async function createOrUpdateProfile({
       }
     });
   }
-  return getProfileByHandle(handle);
+  const updatedProfile =
+    await getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(handle);
+  return updatedProfile!;
 }
 
 async function updateProfileRecord({

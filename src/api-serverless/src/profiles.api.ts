@@ -1,11 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { ApiResponse, INTERNAL_SERVER_ERROR } from './api-response';
-import { Profile } from '../../entities/IProfile';
 import { getWalletOrNull, needsAuthenticatedUser } from './auth';
 import * as Joi from 'joi';
 import { PROFILE_HANDLE_REGEX, WALLET_REGEX } from '../../constants';
 import { getValidatedByJoiOrThrow } from './validation';
-import { CreateOrUpdateProfileCommand } from '../../profiles';
+import {
+  CreateOrUpdateProfileCommand,
+  ProfileAndConsolidations
+} from '../../profiles';
 import * as profiles from '../../profiles';
 import { BadRequestException } from '../../bad-request.exception';
 
@@ -23,32 +25,24 @@ router.get(
       any,
       any
     >,
-    res: Response<ApiResponse<Profile>>
+    res: Response<ApiResponse<ProfileAndConsolidations>>
   ) {
     try {
       const handleOrWallet = req.params.handleOrWallet.toLowerCase();
-      const profile = await profiles
-        .getProfileByHandle(handleOrWallet)
-        .then(
-          (profile) =>
-            profile ?? profiles.getWalletsNewestProfile(handleOrWallet)
-        );
-      if (profile) {
-        res.status(201).send(profile);
-      } else {
-        res.status(404).send({
-          error: 'Profile not found'
+      await profiles
+        .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(handleOrWallet)
+        .then((profileAndConsolidations) => {
+          if (profileAndConsolidations) {
+            res.status(200).send(profileAndConsolidations);
+          } else {
+            res.status(404).send({
+              error: 'Profile not found'
+            });
+          }
         });
-      }
     } catch (err) {
-      if (err instanceof BadRequestException) {
-        res.status(400).send({
-          error: err.message
-        });
-      } else {
-        res.status(500).send(INTERNAL_SERVER_ERROR);
-        throw err;
-      }
+      res.status(500).send(INTERNAL_SERVER_ERROR);
+      throw err;
     } finally {
       res.end();
     }
@@ -60,7 +54,7 @@ router.post(
   needsAuthenticatedUser(),
   async function (
     req: Request<any, any, ApiCreateOrUpdateProfileRequest, any, any>,
-    res: Response<ApiResponse<Profile>>
+    res: Response<ApiResponse<ProfileAndConsolidations>>
   ) {
     try {
       const {
