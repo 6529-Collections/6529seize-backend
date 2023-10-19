@@ -21,18 +21,21 @@ import { sqlExecutor } from './sql-executor';
 
 export async function getWalletTdhAndConsolidatedWallets(
   wallet: string
-): Promise<{ tdh: number; consolidatedWallets: string[] }> {
+): Promise<{ tdh: number; consolidatedWallets: string[]; blockNo: number }> {
   if (!wallet.match(/0x[a-fA-F0-9]{40}/)) {
-    return { tdh: 0, consolidatedWallets: [] };
+    return { tdh: 0, consolidatedWallets: [], blockNo: 0 };
   }
   const tdhSqlResult = await sqlExecutor.execute(
-    `SELECT tdh, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
+    `SELECT block, tdh, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
     { wallet: `%${wallet.toLowerCase()}%` }
   );
   const row = tdhSqlResult?.at(0);
   return {
     tdh: row?.tdh ?? 0,
-    consolidatedWallets: JSON.parse(row?.wallets ?? '[]')
+    consolidatedWallets: JSON.parse(row?.wallets ?? '[]').map((w: string) =>
+      w.toLowerCase()
+    ),
+    blockNo: row?.block ?? 0
   };
 }
 

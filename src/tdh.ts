@@ -5,7 +5,8 @@ import {
   SZN1_INDEX,
   SZN2_INDEX,
   SZN3_INDEX,
-  SZN4_INDEX
+  SZN4_INDEX,
+  WALLETS_TDH_TABLE
 } from './constants';
 import { TDH } from './entities/ITDH';
 import { Transaction } from './entities/ITransaction';
@@ -21,8 +22,38 @@ import {
   consolidateTransactions,
   fetchHasEns
 } from './db';
+import { sqlExecutor } from './sql-executor';
 
 let alchemy: Alchemy;
+
+export async function getWalletsTdhs({
+  wallets,
+  blockNo
+}: {
+  wallets: string[];
+  blockNo: number;
+}): Promise<Record<string, number>> {
+  const normalisedWallets = wallets.map((w) => w.toLowerCase());
+  if (!normalisedWallets.length) {
+    return {};
+  }
+  const result: { wallet: string; tdh: number }[] = await sqlExecutor.execute(
+    `select wallet, tdh from ${WALLETS_TDH_TABLE} where block = :blockNo and lower(wallet) in (:wallets)`,
+    {
+      blockNo,
+      wallets: normalisedWallets
+    }
+  );
+  return normalisedWallets.reduce(
+    (acc: Record<string, number>, wallet: string) => {
+      acc[wallet.toLowerCase()] =
+        result.find((r) => r.wallet.toLowerCase() === wallet.toLowerCase())
+          ?.tdh ?? 0;
+      return acc;
+    },
+    {}
+  );
+}
 
 export const findTDH = async (lastTDHCalc: Date) => {
   alchemy = new Alchemy({
