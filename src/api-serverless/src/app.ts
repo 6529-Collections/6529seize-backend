@@ -10,6 +10,7 @@ import { SEIZE_SETTINGS } from './api-constants';
 import { validateUser } from './users/user_validation';
 
 import votesRoutes from './votes.api';
+import profilesRoutes from './profiles.api';
 import authRoutes from './auth.api';
 import * as passport from 'passport';
 import {
@@ -18,6 +19,9 @@ import {
   VerifiedCallback
 } from 'passport-jwt';
 import { getJwtSecret } from './auth';
+import * as console from 'console';
+import { NextFunction, Request, Response } from 'express';
+import { Time } from '../../time';
 
 const converter = require('json-2-csv');
 
@@ -27,6 +31,22 @@ const CACHE_TIME_MS = 1 * 60 * 1000;
 
 function cacheKey(req: any) {
   return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
+}
+
+function requestLogMiddleware() {
+  return (request: Request, response: Response, next: NextFunction) => {
+    const { method, originalUrl: url } = request;
+    const start = Time.now();
+    response.on('close', () => {
+      const { statusCode } = response;
+
+      console.log(
+        new Date(),
+        `[API] ${method} ${url} - Response status: HTTP_${statusCode} - Running time: ${start.diffFromNow()}`
+      );
+    });
+    next();
+  };
 }
 
 const compression = require('compression');
@@ -74,6 +94,7 @@ loadEnv([], true).then(async (e) => {
     )
   );
 
+  app.use(requestLogMiddleware());
   app.use(compression());
   app.use(cors(corsOptions));
   app.use(express.json());
@@ -2334,6 +2355,7 @@ loadEnv([], true).then(async (e) => {
   );
 
   app.use(`${BASE_PATH}/votes`, votesRoutes);
+  app.use(`${BASE_PATH}/profiles`, profilesRoutes);
   app.use(`${BASE_PATH}/auth`, authRoutes);
 
   app.get(`/`, async function (req: any, res: any, next: any) {
