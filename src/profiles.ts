@@ -4,6 +4,7 @@ import * as ens from './ens';
 import { sqlExecutor } from './sql-executor';
 import { PROFILES_TABLE, WALLET_REGEX } from './constants';
 import { BadRequestException } from './bad-request.exception';
+import * as tdhs from './tdh';
 
 export interface CreateOrUpdateProfileCommand {
   handle: string;
@@ -18,7 +19,7 @@ export interface CreateOrUpdateProfileCommand {
 export interface ProfileAndConsolidations {
   readonly profile: Profile | null;
   readonly consolidation: {
-    wallets: string[];
+    wallets: { wallet: string; tdh: number }[];
     tdh: number;
   };
 }
@@ -28,32 +29,46 @@ async function getProfileByEnsName(query: string) {
   if (!wallet) {
     return null;
   }
-  const { consolidatedWallets, tdh } =
+  const { consolidatedWallets, tdh, blockNo } =
     await tdh_consolidation.getWalletTdhAndConsolidatedWallets(wallet);
   if (consolidatedWallets.length === 0) {
     return null;
   }
   const profile = await getWalletsNewestProfile(wallet);
+  const walletTdhs = await tdhs.getWalletsTdhs({
+    wallets: consolidatedWallets,
+    blockNo
+  });
   return {
     profile: profile ?? null,
     consolidation: {
-      wallets: consolidatedWallets,
+      wallets: consolidatedWallets.map((w) => ({
+        wallet: w,
+        tdh: walletTdhs[w]
+      })),
       tdh
     }
   };
 }
 
 async function getProfileByWallet(query: string) {
-  const { consolidatedWallets, tdh } =
+  const { consolidatedWallets, tdh, blockNo } =
     await tdh_consolidation.getWalletTdhAndConsolidatedWallets(query);
   if (consolidatedWallets.length === 0) {
     return null;
   }
   const profile = await getWalletsNewestProfile(query);
+  const walletTdhs = await tdhs.getWalletsTdhs({
+    wallets: consolidatedWallets,
+    blockNo
+  });
   return {
     profile: profile ?? null,
     consolidation: {
-      wallets: consolidatedWallets,
+      wallets: consolidatedWallets.map((w) => ({
+        wallet: w,
+        tdh: walletTdhs[w]
+      })),
       tdh
     }
   };
@@ -72,14 +87,21 @@ export async function getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
     if (!profile) {
       return null;
     }
-    const { consolidatedWallets, tdh } =
+    const { consolidatedWallets, tdh, blockNo } =
       await tdh_consolidation.getWalletTdhAndConsolidatedWallets(
         profile.primary_wallet.toLowerCase()
       );
+    const walletTdhs = await tdhs.getWalletsTdhs({
+      wallets: consolidatedWallets,
+      blockNo
+    });
     return {
-      profile,
+      profile: profile ?? null,
       consolidation: {
-        wallets: consolidatedWallets,
+        wallets: consolidatedWallets.map((w) => ({
+          wallet: w,
+          tdh: walletTdhs[w]
+        })),
         tdh
       }
     };
