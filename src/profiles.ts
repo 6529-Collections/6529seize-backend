@@ -5,13 +5,15 @@ import { sqlExecutor } from './sql-executor';
 import { PROFILES_TABLE, WALLET_REGEX } from './constants';
 import { BadRequestException } from './bad-request.exception';
 import * as tdhs from './tdh';
+import * as nfts from './nfts';
+import * as path from 'path';
+import { scalePfpAndPersistToS3 } from './api-serverless/src/users/s3';
 
 export interface CreateOrUpdateProfileCommand {
   handle: string;
   primary_wallet: string;
-  pfp_url?: string;
-  banner_1_url?: string;
-  banner_2_url?: string;
+  banner_1?: string;
+  banner_2?: string;
   website?: string;
   creator_or_updater_wallet: string;
 }
@@ -142,9 +144,8 @@ export async function getProfilesByWallets(
 export async function createOrUpdateProfile({
   handle,
   primary_wallet,
-  pfp_url,
-  banner_1_url,
-  banner_2_url,
+  banner_1,
+  banner_2,
   website,
   creator_or_updater_wallet
 }: CreateOrUpdateProfileCommand): Promise<ProfileAndConsolidations> {
@@ -179,9 +180,8 @@ export async function createOrUpdateProfile({
       command: {
         handle,
         primary_wallet,
-        pfp_url,
-        banner_1_url,
-        banner_2_url,
+        banner_1,
+        banner_2,
         website,
         creator_or_updater_wallet
       }
@@ -210,9 +210,8 @@ export async function createOrUpdateProfile({
       command: {
         handle,
         primary_wallet,
-        pfp_url,
-        banner_1_url,
-        banner_2_url,
+        banner_1,
+        banner_2,
         website,
         creator_or_updater_wallet
       }
@@ -237,9 +236,8 @@ async function updateProfileRecord({
          primary_wallet    = :primaryWallet,
          updated_at        = current_time,
          updated_by_wallet = :updatedByWallet,
-         pfp_url           = :pfpUrl,
-         banner_1_url      = :banner1Url,
-         banner_2_url      = :banner2Url,
+         banner_1      = :banner1,
+         banner_2      = :banner2,
          website           = :website
      where normalised_handle = :oldHandle`,
     {
@@ -248,9 +246,8 @@ async function updateProfileRecord({
       normalisedHandle: command.handle.toLowerCase(),
       primaryWallet: command.primary_wallet.toLowerCase(),
       updatedByWallet: command.creator_or_updater_wallet.toLowerCase(),
-      pfpUrl: command.pfp_url ?? null,
-      banner1Url: command.banner_1_url ?? null,
-      banner2Url: command.banner_2_url ?? null,
+      banner1: command.banner_1 ?? null,
+      banner2: command.banner_2 ?? null,
       website: command.website ?? null
     }
   );
@@ -268,28 +265,87 @@ async function insertProfileRecord({
       primary_wallet,
       created_at,
       created_by_wallet,
-      pfp_url,
-      banner_1_url,
-      banner_2_url,
+      banner_1,
+      banner_2,
       website)
      values (:handle,
              :normalisedHandle,
              :primaryWallet,
              current_time,
              :createdByWallet,
-             :pfpUrl,
-             :banner1Url,
-             :banner2Url,
+             :banner1,
+             :banner2,
              :website)`,
     {
       handle: command.handle,
       normalisedHandle: command.handle.toLowerCase(),
       primaryWallet: command.primary_wallet.toLowerCase(),
       createdByWallet: command.creator_or_updater_wallet.toLowerCase(),
-      pfpUrl: command.pfp_url ?? null,
-      banner1Url: command.banner_1_url ?? null,
-      banner2Url: command.banner_2_url ?? null,
+      banner1: command.banner_1 ?? null,
+      banner2: command.banner_2 ?? null,
       website: command.website ?? null
     }
   );
+}
+
+async function getOrCreatePfpFileUri({
+  meme,
+  file
+}: {
+  file?: Express.Multer.File;
+  meme?: number;
+}): Promise<string> {
+  if (meme) {
+    return await nfts.getMemeThumbnailUriById(meme).then((uri) => {
+      if (uri) {
+        return uri;
+      }
+      throw new BadRequestException(`Meme ${meme} not found`);
+    });
+  } else if (file) {
+    const extension = path.extname(file.originalname)?.toLowerCase();
+    if (!['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(extension)) {
+      throw new BadRequestException('Invalid file type');
+    }
+    return await scalePfpAndPersistToS3(file, extension);
+  } else {
+    throw new BadRequestException('No PFP provided');
+  }
+}
+
+export async function updateProfilePfp({
+  authenticatedWallet,
+  handleOrWallet,
+  memeOrFile
+}: {
+  authenticatedWallet: string;
+  handleOrWallet: string;
+  memeOrFile: { file?: Express.Multer.File; meme?: number };
+}): Promise<{ pfp_url: string }> {
+  const { meme, file } = memeOrFile;
+  if (!meme && !file) {
+    throw new BadRequestException('No PFP provided');
+  }
+  const profile = await getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+    handleOrWallet
+  ).then((it) => {
+    if (it?.profile) {
+      if (
+        it.consolidation.wallets.some((it) => it.wallet === authenticatedWallet)
+      ) {
+        return it.profile;
+      }
+      throw new BadRequestException(`Not authorised to update profile`);
+    }
+    throw new BadRequestException(`Profile for ${handleOrWallet} not found`);
+  });
+  const thumbnailUri = await getOrCreatePfpFileUri({ meme, file });
+  await sqlExecutor.execute(
+    `update ${PROFILES_TABLE} set pfp_url = :pfp where normalised_handle = :handle`,
+    {
+      pfp: thumbnailUri,
+      handle: profile.normalised_handle
+    }
+  );
+  return { pfp_url: thumbnailUri };
 }

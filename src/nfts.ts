@@ -10,6 +10,7 @@ import {
   NFT_SCALED450_IMAGE_LINK,
   NFT_SCALED60_IMAGE_LINK,
   NFT_VIDEO_LINK,
+  NFTS_TABLE,
   NULL_ADDRESS
 } from './constants';
 import { NFT } from './entities/INFT';
@@ -25,6 +26,7 @@ import {
 import { findArtists } from './artists';
 import { Artist } from './entities/IArtist';
 import { RequestInfo, RequestInit } from 'node-fetch';
+import { sqlExecutor } from './sql-executor';
 
 const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
@@ -407,4 +409,17 @@ export async function nfts(reset?: boolean) {
   const newArtists = await findArtists(artists, newNfts);
   await persistNFTs(newNfts);
   await persistArtists(newArtists);
+}
+
+export async function getMemeThumbnailUriById(
+  id: number
+): Promise<string | undefined> {
+  const result = await sqlExecutor.execute(
+    `select thumbnail from ${NFTS_TABLE} where id = :id and contract = :contract order by id asc limit 1`,
+    {
+      id,
+      contract: MEMES_CONTRACT
+    }
+  );
+  return result.at(0)?.thumbnail;
 }

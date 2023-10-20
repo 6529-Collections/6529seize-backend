@@ -4,7 +4,7 @@ import { hashMessage } from '@ethersproject/hash';
 import { areEqualAddresses, isValidUrl } from '../../../helpers';
 import { User } from '../../../entities/IUser';
 import { fetchMemesLite } from '../../../db-api';
-import { persistS3 } from './s3';
+import { scalePfpAndPersistToS3 } from './s3';
 
 const path = require('path');
 
@@ -133,7 +133,7 @@ async function resolvePFP(
         success: false
       };
     }
-    const pfpResolution = await persistS3(wallet, file, fileExtension);
+    const pfpResolution = await scalePfpAndPersistToS3(file, fileExtension);
     return {
       success: true,
       pfp: pfpResolution
