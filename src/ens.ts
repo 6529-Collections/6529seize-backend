@@ -11,6 +11,16 @@ import {
 
 let alchemy: Alchemy;
 
+export async function reverseResolveEnsName(
+  ensName: string
+): Promise<string | null> {
+  alchemy = new Alchemy({
+    ...ALCHEMY_SETTINGS,
+    apiKey: process.env.ALCHEMY_API_KEY
+  });
+  return alchemy.core.resolveName(ensName);
+}
+
 async function findExistingEns(ens: ENS[]) {
   console.log(
     new Date(),

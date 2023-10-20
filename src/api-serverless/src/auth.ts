@@ -30,5 +30,5 @@ export function getWalletOrNull(req: Request): string | null {
   if (!user) {
     return null;
   }
-  return user.wallet;
+  return user.wallet.toLowerCase();
 }

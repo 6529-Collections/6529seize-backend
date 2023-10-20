@@ -2,9 +2,11 @@ import { Router, Request, Response } from 'express';
 import { ApiResponse } from './api-response';
 import * as votes from '../../votes';
 import * as Joi from 'joi';
-import { BadUserVoteError, VoteCategoryInfo } from '../../votes';
+import { VoteCategoryInfo } from '../../votes';
 import { VoteMatterTargetType } from '../../entities/IVoteMatter';
 import { getWalletOrNull, needsAuthenticatedUser } from './auth';
+import { WALLET_REGEX } from '../../constants';
+import { BadRequestException } from '../../bad-request.exception';
 
 const router = Router();
 
@@ -104,7 +106,7 @@ router.post(
       await votes.registerUserVote(voteRequest);
       res.status(201).send();
     } catch (err) {
-      if (err instanceof BadUserVoteError) {
+      if (err instanceof BadRequestException) {
         res.status(400).send({
           error: err.message
         });
@@ -128,8 +130,6 @@ interface ApiVoteRequestBody {
   amount: number;
   category: string;
 }
-
-const WALLET_REGEX = /^0x[a-fA-F0-9]{40}$/;
 
 const WalletVoteRequestSchema = Joi.object<{
   voterWallet: string;

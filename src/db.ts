@@ -76,6 +76,7 @@ import { getConsolidationsSql } from './sql_helpers';
 import { VoteEvent } from './entities/IVoteEvent';
 import { setSqlExecutor } from './sql-executor';
 import { VoteMatterCategory } from './entities/IVoteMatter';
+import { Profile } from './entities/IProfile';
 
 const mysql = require('mysql');
 
@@ -113,7 +114,8 @@ export async function connect(entities: any[] = []) {
       ENS,
       User,
       VoteEvent,
-      VoteMatterCategory
+      VoteMatterCategory,
+      Profile
     ];
   }
 
