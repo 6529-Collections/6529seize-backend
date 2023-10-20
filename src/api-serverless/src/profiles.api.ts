@@ -106,7 +106,7 @@ router.post(
       any,
       any
     >,
-    res: Response<ApiResponse<void>>
+    res: Response<ApiResponse<{ pfp_url: string }>>
   ) {
     try {
       const authenticatedWallet = getWalletOrNull(req);
@@ -116,12 +116,12 @@ router.post(
         ApiUploadProfilePictureRequestSchema
       );
       const file = req.file;
-      await profiles.updateProfilePfp({
+      const response = await profiles.updateProfilePfp({
         authenticatedWallet,
         handleOrWallet,
         memeOrFile: { file, meme }
       });
-      res.status(201);
+      res.status(201).send(response);
     } catch (err) {
       if (err instanceof BadRequestException) {
         res.status(400).send({

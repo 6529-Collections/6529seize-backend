@@ -321,7 +321,7 @@ export async function updateProfilePfp({
   authenticatedWallet: string;
   handleOrWallet: string;
   memeOrFile: { file?: Express.Multer.File; meme?: number };
-}) {
+}): Promise<{ pfp_url: string }> {
   const { meme, file } = memeOrFile;
   if (!meme && !file) {
     throw new BadRequestException('No PFP provided');
@@ -347,4 +347,5 @@ export async function updateProfilePfp({
       handle: profile.normalised_handle
     }
   );
+  return { pfp_url: thumbnailUri };
 }
