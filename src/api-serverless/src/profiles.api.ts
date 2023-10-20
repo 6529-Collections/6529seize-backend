@@ -1,6 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { ApiResponse, INTERNAL_SERVER_ERROR } from './api-response';
-import { getWalletOrNull, needsAuthenticatedUser } from './auth';
+import {
+  getWalletOrNull,
+  getWalletOrThrow,
+  needsAuthenticatedUser
+} from './auth';
 import * as Joi from 'joi';
 import { PROFILE_HANDLE_REGEX, WALLET_REGEX } from '../../constants';
 import { getValidatedByJoiOrThrow } from './validation';
@@ -10,11 +14,9 @@ import {
 } from '../../profiles';
 import * as profiles from '../../profiles';
 import { BadRequestException } from '../../bad-request.exception';
-import * as multer from 'multer';
+import { initMulterSingleMiddleware } from './multer-middleware';
 
 const router = Router();
-const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
 
 router.get(
   `/:handleOrWallet`,
@@ -95,7 +97,7 @@ router.post(
 router.post(
   `/:handleOrWallet/pfp`,
   needsAuthenticatedUser(),
-  upload.single('pfp'),
+  initMulterSingleMiddleware('pfp'),
   async function (
     req: Request<
       {
@@ -109,7 +111,7 @@ router.post(
     res: Response<ApiResponse<{ pfp_url: string }>>
   ) {
     try {
-      const authenticatedWallet = getWalletOrNull(req);
+      const authenticatedWallet = getWalletOrThrow(req);
       const handleOrWallet = req.params.handleOrWallet.toLowerCase();
       const { meme } = getValidatedByJoiOrThrow(
         req.body,
