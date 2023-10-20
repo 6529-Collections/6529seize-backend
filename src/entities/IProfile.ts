@@ -28,10 +28,10 @@ export class Profile {
   pfp_url?: string;
 
   @Column({ type: 'text', nullable: true, default: null })
-  banner_1_url?: string;
+  banner_1?: string;
 
   @Column({ type: 'text', nullable: true, default: null })
-  banner_2_url?: string;
+  banner_2?: string;
 
   @Column({ type: 'text', nullable: true, default: null })
   website?: string;
