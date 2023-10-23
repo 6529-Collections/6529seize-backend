@@ -1,8 +1,4 @@
-import {
-  CONSOLIDATED_WALLETS_TDH_TABLE,
-  VOTE_EVENTS_TABLE,
-  VOTE_MATTERS_CATEGORIES_TABLE
-} from './constants';
+import { VOTE_EVENTS_TABLE, VOTE_MATTERS_CATEGORIES_TABLE } from './constants';
 import { sqlExecutor } from './sql-executor';
 
 import { randomUUID } from 'crypto';
@@ -13,12 +9,8 @@ import {
 } from './entities/IVoteMatter';
 import { VoteEvent, VoteEventReason } from './entities/IVoteEvent';
 import { Time } from './time';
-
-export class BadUserVoteError extends Error {
-  constructor(message: string) {
-    super(message);
-  }
-}
+import { BadRequestException } from './bad-request.exception';
+import * as tdh_consolidation from './tdh_consolidation';
 
 async function getCategoriesForMatter({
   matter,
@@ -102,12 +94,12 @@ export async function registerUserVote({
     return;
   }
   if (amount < 0 && Math.abs(amount) > votesSpentOnGivenCategory) {
-    throw new BadUserVoteError(
+    throw new BadRequestException(
       `Wallet tried to revoke ${amount} votes on matter and category but has only historically given ${votesSpentOnGivenCategory} votes`
     );
   }
   if (amount > 0 && votesLeft < amount) {
-    throw new BadUserVoteError(
+    throw new BadRequestException(
       `Wallet tried to give ${amount} votes on matter without enough votes left. Votes left: ${votesLeft}`
     );
   }
@@ -121,7 +113,7 @@ export async function registerUserVote({
     .filter((c) => c.matter_target_type === matterTargetType)
     .find((c) => c.matter_category_tag === category);
   if (!activeCategory) {
-    throw new BadUserVoteError(
+    throw new BadRequestException(
       `Tried to vote on matter with category ${category} but no active category with such tag exists for this matter`
     );
   }
@@ -151,9 +143,8 @@ export async function getVotesLeftOnMatterForWallet({
   votesSpent: number;
   consolidatedWallets: string[];
 }> {
-  const { tdh, consolidatedWallets } = await getWalletTdhAndConsolidatedWallets(
-    wallet
-  );
+  const { tdh, consolidatedWallets } =
+    await tdh_consolidation.getWalletTdhAndConsolidatedWallets(wallet);
   if (
     !consolidatedWallets.find((w) => w.toLowerCase() === wallet.toLowerCase())
   ) {
@@ -168,23 +159,6 @@ export async function getVotesLeftOnMatterForWallet({
     votesLeft: tdh - votesSpent,
     votesSpent,
     consolidatedWallets
-  };
-}
-
-async function getWalletTdhAndConsolidatedWallets(
-  wallet: string
-): Promise<{ tdh: number; consolidatedWallets: string[] }> {
-  if (!wallet.match(/0x[a-fA-F0-9]{40}/)) {
-    return { tdh: 0, consolidatedWallets: [] };
-  }
-  const tdhSqlResult = await sqlExecutor.execute(
-    `SELECT tdh, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
-    { wallet: `%${wallet.toLowerCase()}%` }
-  );
-  const row = tdhSqlResult?.at(0);
-  return {
-    tdh: row?.tdh ?? 0,
-    consolidatedWallets: JSON.parse(row?.wallets ?? '[]')
   };
 }
 
@@ -403,17 +377,6 @@ async function getAllVoteMatterTalliesByWallets() {
   }, {} as Record<string, Record<string, { matter: string; matter_target_type: string; tally: number }>>);
 }
 
-async function getAllTdhs(): Promise<{ tdh: number; wallets: string[] }[]> {
-  return sqlExecutor
-    .execute(`select tdh, wallets from ${CONSOLIDATED_WALLETS_TDH_TABLE}`)
-    .then((rows) =>
-      rows.map((row: any) => ({
-        ...row,
-        wallets: JSON.parse(row.wallets).map((it: string) => it.toLowerCase())
-      }))
-    );
-}
-
 async function createRevocationEvents(
   allOverVotes: {
     tdh: number;
@@ -486,7 +449,7 @@ async function createRevocationEvents(
 export async function revokeOverVotes() {
   const startTime = Time.now();
   console.log(`[VOTE_REVOKE_LOOP] Fetching current TDH's...`);
-  const activeTdhs = await getAllTdhs();
+  const activeTdhs = await tdh_consolidation.getAllTdhs();
   console.log(`[VOTE_REVOKE_LOOP] Fetching current vote tallies...`);
   const talliesByWallets = await getAllVoteMatterTalliesByWallets();
   console.log(`[VOTE_REVOKE_LOOP] Figuring out overvotes...`);

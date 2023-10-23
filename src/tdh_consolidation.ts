@@ -9,6 +9,7 @@ import {
 import { areEqualAddresses } from './helpers';
 import { ranks } from './tdh';
 import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
   MEMES_CONTRACT,
   SZN1_INDEX,
   SZN2_INDEX,
@@ -16,6 +17,40 @@ import {
   SZN4_INDEX,
   SZN5_INDEX
 } from './constants';
+import { sqlExecutor } from './sql-executor';
+
+export async function getWalletTdhAndConsolidatedWallets(
+  wallet: string
+): Promise<{ tdh: number; consolidatedWallets: string[]; blockNo: number }> {
+  if (!wallet.match(/0x[a-fA-F0-9]{40}/)) {
+    return { tdh: 0, consolidatedWallets: [], blockNo: 0 };
+  }
+  const tdhSqlResult = await sqlExecutor.execute(
+    `SELECT block, tdh, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
+    { wallet: `%${wallet.toLowerCase()}%` }
+  );
+  const row = tdhSqlResult?.at(0);
+  return {
+    tdh: row?.tdh ?? 0,
+    consolidatedWallets: JSON.parse(row?.wallets ?? '[]').map((w: string) =>
+      w.toLowerCase()
+    ),
+    blockNo: row?.block ?? 0
+  };
+}
+
+export async function getAllTdhs(): Promise<
+  { tdh: number; wallets: string[] }[]
+> {
+  return sqlExecutor
+    .execute(`select tdh, wallets from ${CONSOLIDATED_WALLETS_TDH_TABLE}`)
+    .then((rows) =>
+      rows.map((row: any) => ({
+        ...row,
+        wallets: JSON.parse(row.wallets).map((it: string) => it.toLowerCase())
+      }))
+    );
+}
 
 export const consolidateTDH = async (lastTDHCalc: Date) => {
   const tdh: TDHENS[] = await fetchAllTDH();

@@ -1,13 +1,8 @@
 import fetch from 'node-fetch';
 import * as db from '../../db-api';
-import { loadEnv } from '../../secrets';
+import { loadLocalConfig, loadSecrets } from '../../secrets';
 import { isNumber } from '../../helpers';
 import { SEIZE_SETTINGS } from './api-constants';
-
-import votesRoutes from './votes.api';
-import userRoutes from './users/api';
-import rememesRoutes from './rememes/api';
-import nextgenRoutes from './nextgen/api';
 
 import {
   CONTENT_TYPE_HEADER,
@@ -25,7 +20,12 @@ import {
   DISTRIBUTION_SORT,
   REMEMES_SORT
 } from './options';
+import profilesRoutes from './profiles.api';
 import authRoutes from './auth.api';
+import votesRoutes from './votes.api';
+import userRoutes from './users/api';
+import rememesRoutes from './rememes/api';
+import nextgenRoutes from './nextgen/api';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -33,6 +33,9 @@ import {
   VerifiedCallback
 } from 'passport-jwt';
 import { getJwtSecret } from './auth';
+import * as console from 'console';
+import { NextFunction, Request, Response } from 'express';
+import { Time } from '../../time';
 
 const converter = require('json-2-csv');
 
@@ -42,6 +45,22 @@ const CACHE_TIME_MS = 1 * 60 * 1000;
 
 function cacheKey(req: any) {
   return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
+}
+
+function requestLogMiddleware() {
+  return (request: Request, response: Response, next: NextFunction) => {
+    const { method, originalUrl: url } = request;
+    const start = Time.now();
+    response.on('close', () => {
+      const { statusCode } = response;
+
+      console.log(
+        new Date(),
+        `[API] ${method} ${url} - Response status: HTTP_${statusCode} - Running time: ${start.diffFromNow()}`
+      );
+    });
+    next();
+  };
 }
 
 const compression = require('compression');
@@ -64,27 +83,40 @@ const corsOptions = {
   ]
 };
 
-loadEnv([], true).then(async (e) => {
+async function loadApiSecrets() {
+  if (process.env.API_LOAD_SECRETS === 'true') {
+    await loadSecrets();
+  }
+}
+
+async function loadApi() {
+  await loadLocalConfig();
+  await db.connect();
+}
+
+loadApi().then(() => {
   console.log(
     '[API]',
     `[DB HOST ${process.env.DB_HOST_READ}]`,
-    `[API PASSWORD ACTIVE ${process.env.ACTIVATE_API_PASSWORD}]`
+    `[API PASSWORD ACTIVE ${process.env.ACTIVATE_API_PASSWORD}]`,
+    `[LOAD SECRETS ENABLED ${process.env.API_LOAD_SECRETS}]`
   );
 
-  await db.connect();
+  loadApiSecrets().then(() => {
+    passport.use(
+      new JwtStrategy(
+        {
+          jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+          secretOrKey: getJwtSecret()
+        },
+        function ({ sub: wallet }: { sub: string }, cb: VerifiedCallback) {
+          return cb(null, { wallet: wallet });
+        }
+      )
+    );
+  });
 
-  passport.use(
-    new JwtStrategy(
-      {
-        jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-        secretOrKey: getJwtSecret()
-      },
-      function ({ sub: wallet }: { sub: string }, cb: VerifiedCallback) {
-        return cb(null, { wallet: wallet });
-      }
-    )
-  );
-
+  app.use(requestLogMiddleware());
   app.use(compression());
   app.use(cors(corsOptions));
   app.use(express.json());
@@ -2027,6 +2059,7 @@ loadEnv([], true).then(async (e) => {
   app.use(`${BASE_PATH}/user`, userRoutes);
   app.use(`${BASE_PATH}/rememes`, rememesRoutes);
   app.use(`${BASE_PATH}/nextgen`, nextgenRoutes);
+  app.use(`${BASE_PATH}/profiles`, profilesRoutes);
   app.use(`${BASE_PATH}/auth`, authRoutes);
 
   app.get(`/`, async function (req: any, res: any, next: any) {

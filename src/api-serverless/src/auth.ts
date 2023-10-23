@@ -30,5 +30,13 @@ export function getWalletOrNull(req: Request): string | null {
   if (!user) {
     return null;
   }
-  return user.wallet;
+  return user.wallet.toLowerCase();
+}
+
+export function getWalletOrThrow(req: Request): string {
+  const wallet = getWalletOrNull(req);
+  if (!wallet) {
+    throw new Error('Wallet not found');
+  }
+  return wallet;
 }
