@@ -211,6 +211,10 @@ export class Time {
     return new Date(this.ms);
   }
 
+  public toIsoString(): string {
+    return this.toDate().toISOString();
+  }
+
   public toString = (): string => {
     return this.formatAsDuration();
   };
