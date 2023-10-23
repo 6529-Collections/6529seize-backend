@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 import * as db from '../../db-api';
-import { loadEnv } from '../../secrets';
+import { loadLocalConfig, loadSecrets } from '../../secrets';
 import { isNumber } from '../../helpers';
 import {
   validateRememe,
@@ -73,26 +73,38 @@ const corsOptions = {
   ]
 };
 
-loadEnv([], true).then(async (e) => {
+async function loadApiSecrets() {
+  if (process.env.API_LOAD_SECRETS === 'true') {
+    await loadSecrets();
+  }
+}
+
+async function loadApi() {
+  await loadLocalConfig();
+  await db.connect();
+}
+
+loadApi().then(() => {
   console.log(
     '[API]',
     `[DB HOST ${process.env.DB_HOST_READ}]`,
-    `[API PASSWORD ACTIVE ${process.env.ACTIVATE_API_PASSWORD}]`
+    `[API PASSWORD ACTIVE ${process.env.ACTIVATE_API_PASSWORD}]`,
+    `[LOAD SECRETS ENABLED ${process.env.API_LOAD_SECRETS}]`
   );
 
-  await db.connect();
-
-  passport.use(
-    new JwtStrategy(
-      {
-        jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-        secretOrKey: getJwtSecret()
-      },
-      function ({ sub: wallet }: { sub: string }, cb: VerifiedCallback) {
-        return cb(null, { wallet: wallet });
-      }
-    )
-  );
+  loadApiSecrets().then(() => {
+    passport.use(
+      new JwtStrategy(
+        {
+          jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+          secretOrKey: getJwtSecret()
+        },
+        function ({ sub: wallet }: { sub: string }, cb: VerifiedCallback) {
+          return cb(null, { wallet: wallet });
+        }
+      )
+    );
+  });
 
   app.use(requestLogMiddleware());
   app.use(compression());

@@ -51,9 +51,16 @@ let mysql_pool: mysql.Pool;
 
 export async function connect() {
   let port: number | undefined;
-  if (process.env.DB_PORT !== undefined && process.env.DB_PORT !== null) {
-    port = +process.env.DB_PORT;
+  if (
+    !process.env.DB_HOST_READ ||
+    !process.env.DB_USER_READ ||
+    !process.env.DB_PASS_READ ||
+    !process.env.DB_PORT
+  ) {
+    console.log('[API]', '[MISSING CONFIGURATION FOR READ DB]', '[EXITING]');
+    process.exit();
   }
+  port = +process.env.DB_PORT;
   mysql_pool = mysql.createPool({
     connectionLimit: 10,
     connectTimeout: 30 * 1000,
@@ -1901,12 +1908,13 @@ export async function fetchDistributions(
         SELECT wallet, contract, card_id,
         SUM(CASE WHEN phase = 'Airdrop' THEN count ELSE 0 END) AS airdrop,
         SUM(CASE WHEN phase = 'Allowlist' THEN count ELSE 0 END) AS allowlist,
+        SUM(CASE WHEN phase = 'Phase0' THEN count ELSE 0 END) AS phase_0,
         SUM(CASE WHEN phase = 'Phase1' THEN count ELSE 0 END) AS phase_1,
         SUM(CASE WHEN phase = 'Phase2' THEN count ELSE 0 END) AS phase_2,
         SUM(CASE WHEN phase = 'Phase3' THEN count ELSE 0 END) AS phase_3
         from distribution ${filters} GROUP BY wallet, contract, card_id
     ) as ${DISTRIBUTION_TABLE}`,
-    `card_mint_date desc, allowlist desc, airdrop desc, phase_1 desc, phase_2 desc, phase_3 desc`,
+    `card_mint_date desc, allowlist desc, airdrop desc, phase_0 desc, phase_1 desc, phase_2 desc, phase_3 desc`,
     pageSize,
     page,
     filters,
@@ -1919,6 +1927,7 @@ export async function fetchDistributions(
     COALESCE(${NFTS_TABLE}.mint_date, ${NFTS_MEME_LAB_TABLE}.mint_date, now()) AS card_mint_date,
     ${DISTRIBUTION_TABLE}.airdrop,
     ${DISTRIBUTION_TABLE}.allowlist,
+    ${DISTRIBUTION_TABLE}.phase_0,
     ${DISTRIBUTION_TABLE}.phase_1,
     ${DISTRIBUTION_TABLE}.phase_2,
     ${DISTRIBUTION_TABLE}.phase_3`,

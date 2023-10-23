@@ -1,3 +1,4 @@
+import { findOwners } from '../owners';
 import { nfts } from '../nfts';
 import { findMemesExtendedData } from '../memes_extended_data';
 import { loadEnv, unload } from '../secrets';
@@ -14,5 +15,6 @@ export const handler = async () => {
 
 async function nftsLoop() {
   await nfts();
+  await findOwners();
   await findMemesExtendedData();
 }

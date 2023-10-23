@@ -8,23 +8,21 @@ const SECRET = 'prod/lambdas';
 const dotenv = require('dotenv');
 const path = require('path');
 
-export async function loadEnv(entities: any[] = [], disableConnect?: boolean) {
+export async function loadEnv(entities: any[] = []) {
   if (!process.env.NODE_ENV) {
     await loadSecrets();
   } else {
     await loadLocalConfig();
   }
 
-  if (!disableConnect) {
-    await connect(entities);
-  }
+  await connect(entities);
 }
 
 export async function unload() {
   // await disconnect();
 }
 
-async function loadSecrets() {
+export async function loadSecrets() {
   console.log(new Date(), '[LOADING SECRETS]');
 
   const secretsManager = new SecretsManager({ region: 'us-east-1' });
@@ -57,10 +55,12 @@ async function loadSecrets() {
   console.log(new Date(), '[SECRETS LOADED]');
 }
 
-async function loadLocalConfig() {
-  const envPath = path.join(__dirname, '..', `.env.${process.env.NODE_ENV}`);
-  console.log(`[LOADING FROM .env.${process.env.NODE_ENV}]`);
-  dotenv.config({
-    path: envPath
-  });
+export async function loadLocalConfig() {
+  if (process.env.NODE_ENV) {
+    const envPath = path.join(__dirname, '..', `.env.${process.env.NODE_ENV}`);
+    console.log(`[LOADING LOCAL CONFIG FROM ${envPath}]`);
+    dotenv.config({
+      path: envPath
+    });
+  }
 }

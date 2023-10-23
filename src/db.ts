@@ -844,13 +844,27 @@ export async function persistConsolidatedOwnerMetrics(
 
   await AppDataSource.transaction(async (manager) => {
     const repo = manager.getRepository(ConsolidatedOwnerMetric);
-    await repo.clear();
+    const consolidationKeys = metrics.map((metric) => metric.consolidation_key);
+
+    const result = await AppDataSource.createQueryBuilder()
+      .delete()
+      .from(ConsolidatedOwnerMetric)
+      .where('consolidation_key NOT IN (:...consolidationKeys)', {
+        consolidationKeys
+      })
+      .execute();
+
+    console.log(
+      '[CONSOLIDATED OWNER METRICS]',
+      `[DELETED ${result.affected} WALLETS]`
+    );
+
     await repo.save(metrics);
   });
 
   console.log(
     '[CONSOLIDATED OWNER METRICS]',
-    `PERSISTED [${metrics.length} WALLETS]`
+    `[PERSISTED ${metrics.length} WALLETS]`
   );
 }
 
