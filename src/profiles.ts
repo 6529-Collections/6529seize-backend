@@ -8,6 +8,7 @@ import * as tdhs from './tdh';
 import * as nfts from './nfts';
 import * as path from 'path';
 import { scalePfpAndPersistToS3 } from './api-serverless/src/users/s3';
+import { Wallet } from './entities/IWallet';
 
 export interface CreateOrUpdateProfileCommand {
   handle: string;
@@ -21,7 +22,7 @@ export interface CreateOrUpdateProfileCommand {
 export interface ProfileAndConsolidations {
   readonly profile: Profile | null;
   readonly consolidation: {
-    wallets: { wallet: string; tdh: number }[];
+    wallets: { wallet: Wallet; tdh: number }[];
     tdh: number;
   };
 }
@@ -41,12 +42,13 @@ async function getProfileByEnsName(query: string) {
     wallets: consolidatedWallets,
     blockNo
   });
+  const wallets = await ens.getPrediscoveredEnsNames(consolidatedWallets);
   return {
     profile: profile ?? null,
     consolidation: {
-      wallets: consolidatedWallets.map((w) => ({
+      wallets: wallets.map((w) => ({
         wallet: w,
-        tdh: walletTdhs[w]
+        tdh: walletTdhs[w.address]
       })),
       tdh
     }
@@ -64,12 +66,13 @@ async function getProfileByWallet(query: string) {
     wallets: consolidatedWallets,
     blockNo
   });
+  const wallets = await ens.getPrediscoveredEnsNames(consolidatedWallets);
   return {
     profile: profile ?? null,
     consolidation: {
-      wallets: consolidatedWallets.map((w) => ({
+      wallets: wallets.map((w) => ({
         wallet: w,
-        tdh: walletTdhs[w]
+        tdh: walletTdhs[w.address]
       })),
       tdh
     }
@@ -97,12 +100,13 @@ export async function getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
       wallets: consolidatedWallets,
       blockNo
     });
+    const wallets = await ens.getPrediscoveredEnsNames(consolidatedWallets);
     return {
       profile: profile ?? null,
       consolidation: {
-        wallets: consolidatedWallets.map((w) => ({
+        wallets: wallets.map((w) => ({
           wallet: w,
-          tdh: walletTdhs[w]
+          tdh: walletTdhs[w.address]
         })),
         tdh
       }
@@ -331,7 +335,9 @@ export async function updateProfilePfp({
   ).then((it) => {
     if (it?.profile) {
       if (
-        it.consolidation.wallets.some((it) => it.wallet === authenticatedWallet)
+        it.consolidation.wallets.some(
+          (it) => it.wallet.address === authenticatedWallet
+        )
       ) {
         return it.profile;
       }
