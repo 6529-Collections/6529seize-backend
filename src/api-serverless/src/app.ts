@@ -22,6 +22,8 @@ import { getJwtSecret } from './auth';
 import * as console from 'console';
 import { NextFunction, Request, Response } from 'express';
 import { Time } from '../../time';
+import * as sentryContext from '../../sentry.context';
+import * as Sentry from '@sentry/serverless';
 import { asyncRouter } from './async.router';
 import { ApiCompliantException } from '../../exceptions';
 
@@ -60,6 +62,14 @@ function customErrorMiddleware() {
       res.status(500).send({ error: 'Something went wrong...' });
       next(err);
     }
+  };
+}
+
+function sentryFlusherMiddleware() {
+  return (err: Error, req: Request, res: Response, next: NextFunction) => {
+    Sentry.flush(Time.seconds(2).toMillis()).then(() => {
+      next(err);
+    });
   };
 }
 
@@ -1575,6 +1585,11 @@ loadApi().then(() => {
   app.use(router);
 
   app.use(customErrorMiddleware());
+
+  if (sentryContext.isConfigured()) {
+    app.use(Sentry.Handlers.errorHandler());
+    app.use(sentryFlusherMiddleware());
+  }
 
   app.listen(3000, function () {
     console.log(
