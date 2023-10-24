@@ -133,7 +133,7 @@ async function persistAllowlist(body: {
     const existingMerkle = await sqlExecutor.execute(
       `SELECT * FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE collection_id = :collection_id`,
       {
-        collection_id: body.collection_id
+        collection_id: collection.collection_id
       }
     );
 
@@ -142,17 +142,20 @@ async function persistAllowlist(body: {
       sqlOperations.push(
         `DELETE FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE merkle_root = ${mysql.escape(
           existingMerkleRoot
-        )}`
+        )} AND collection_id=${collection.collection_id}`
       );
       sqlOperations.push(
         `DELETE FROM ${NEXTGEN_ALLOWLIST_TABLE} WHERE merkle_root = ${mysql.escape(
           existingMerkleRoot
-        )}`
+        )} AND collection_id=${collection.collection_id}`
       );
     }
 
-    sqlOperations.push(extractNextGenAllowlistInsert(allowlistData));
+    sqlOperations.push(
+      extractNextGenAllowlistInsert(collection.collection_id, allowlistData)
+    );
     sqlOperations.push(extractNextGenCollectionInsert(collection));
+    console.log('sqlOperations', sqlOperations);
     await execSQLWithTransaction(sqlOperations);
   } catch (e) {
     console.log(

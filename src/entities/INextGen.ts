@@ -10,6 +10,9 @@ export class NextGenAllowlist {
   @CreateDateColumn({ type: 'datetime' })
   created_at!: Date;
 
+  @PrimaryColumn({ type: 'int' })
+  collection_id!: number;
+
   @PrimaryColumn({ type: 'varchar', length: 100 })
   merkle_root!: string;
 
@@ -47,16 +50,19 @@ export class NextGenCollection {
   phase!: string;
 }
 
-export function extractNextGenAllowlistInsert(nextgen: NextGenAllowlist[]) {
+export function extractNextGenAllowlistInsert(
+  collectionId: number,
+  nextgen: NextGenAllowlist[]
+) {
   const values = nextgen.map((entry) => {
     return `(${mysql.escape(entry.merkle_root)}, ${mysql.escape(
-      entry.address
-    )}, ${entry.spots}, ${mysql.escape(entry.info)}, ${mysql.escape(
-      entry.keccak
-    )})`;
+      collectionId
+    )}, ${mysql.escape(entry.address)}, ${entry.spots}, ${mysql.escape(
+      entry.info
+    )}, ${mysql.escape(entry.keccak)})`;
   });
 
-  return `INSERT INTO ${NEXTGEN_ALLOWLIST_TABLE} (merkle_root, address, spots, info, keccak) VALUES ${values.join(
+  return `INSERT INTO ${NEXTGEN_ALLOWLIST_TABLE} (merkle_root, collection_id, address, spots, info, keccak) VALUES ${values.join(
     ','
   )}`;
 }
