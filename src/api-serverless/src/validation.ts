@@ -1,5 +1,5 @@
 import * as Joi from 'joi';
-import { BadRequestException } from '../../bad-request.exception';
+import { BadRequestException } from '../../exceptions';
 
 export function getValidatedByJoiOrThrow<T>(
   objToValidate: T,

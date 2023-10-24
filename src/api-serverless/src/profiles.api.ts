@@ -1,5 +1,5 @@
-import { Router, Request, Response } from 'express';
-import { ApiResponse, INTERNAL_SERVER_ERROR } from './api-response';
+import { Request, Response } from 'express';
+import { ApiResponse } from './api-response';
 import {
   getWalletOrNull,
   getWalletOrThrow,
@@ -13,10 +13,12 @@ import {
   ProfileAndConsolidations
 } from '../../profiles';
 import * as profiles from '../../profiles';
-import { BadRequestException } from '../../bad-request.exception';
+import { NotFoundException } from '../../exceptions';
 import { initMulterSingleMiddleware } from './multer-middleware';
 
-const router = Router();
+import { asyncRouter } from './async.router';
+
+const router = asyncRouter();
 
 router.get(
   `/:handleOrWallet`,
@@ -32,25 +34,15 @@ router.get(
     >,
     res: Response<ApiResponse<ProfileAndConsolidations>>
   ) {
-    try {
-      const handleOrWallet = req.params.handleOrWallet.toLowerCase();
-      await profiles
-        .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(handleOrWallet)
-        .then((profileAndConsolidations) => {
-          if (profileAndConsolidations) {
-            res.status(200).send(profileAndConsolidations);
-          } else {
-            res.status(404).send({
-              error: 'Profile not found'
-            });
-          }
-        });
-    } catch (err) {
-      res.status(500).send(INTERNAL_SERVER_ERROR);
-      throw err;
-    } finally {
-      res.end();
+    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
+    const profile =
+      await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        handleOrWallet
+      );
+    if (!profile) {
+      throw new NotFoundException('Profile not found');
     }
+    res.status(200).send(profile);
   }
 );
 
@@ -61,36 +53,18 @@ router.post(
     req: Request<any, any, ApiCreateOrUpdateProfileRequest, any, any>,
     res: Response<ApiResponse<ProfileAndConsolidations>>
   ) {
-    try {
-      const { handle, primary_wallet, banner_1, banner_2, website } =
-        getValidatedByJoiOrThrow(
-          req.body,
-          ApiCreateOrUpdateProfileRequestSchema
-        );
-      const createProfileCommand: CreateOrUpdateProfileCommand = {
-        handle,
-        primary_wallet: primary_wallet.toLowerCase(),
-        banner_1,
-        banner_2,
-        website,
-        creator_or_updater_wallet: getWalletOrNull(req)!
-      };
-      const profile = await profiles.createOrUpdateProfile(
-        createProfileCommand
-      );
-      res.status(201).send(profile);
-    } catch (err) {
-      if (err instanceof BadRequestException) {
-        res.status(400).send({
-          error: err.message
-        });
-      } else {
-        res.status(500).send(INTERNAL_SERVER_ERROR);
-        throw err;
-      }
-    } finally {
-      res.end();
-    }
+    const { handle, primary_wallet, banner_1, banner_2, website } =
+      getValidatedByJoiOrThrow(req.body, ApiCreateOrUpdateProfileRequestSchema);
+    const createProfileCommand: CreateOrUpdateProfileCommand = {
+      handle,
+      primary_wallet: primary_wallet.toLowerCase(),
+      banner_1,
+      banner_2,
+      website,
+      creator_or_updater_wallet: getWalletOrNull(req)!
+    };
+    const profile = await profiles.createOrUpdateProfile(createProfileCommand);
+    res.status(201).send(profile);
   }
 );
 
@@ -110,32 +84,19 @@ router.post(
     >,
     res: Response<ApiResponse<{ pfp_url: string }>>
   ) {
-    try {
-      const authenticatedWallet = getWalletOrThrow(req);
-      const handleOrWallet = req.params.handleOrWallet.toLowerCase();
-      const { meme } = getValidatedByJoiOrThrow(
-        req.body,
-        ApiUploadProfilePictureRequestSchema
-      );
-      const file = req.file;
-      const response = await profiles.updateProfilePfp({
-        authenticatedWallet,
-        handleOrWallet,
-        memeOrFile: { file, meme }
-      });
-      res.status(201).send(response);
-    } catch (err) {
-      if (err instanceof BadRequestException) {
-        res.status(400).send({
-          error: err.message
-        });
-      } else {
-        res.status(500).send(INTERNAL_SERVER_ERROR);
-        throw err;
-      }
-    } finally {
-      res.end();
-    }
+    const authenticatedWallet = getWalletOrThrow(req);
+    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
+    const { meme } = getValidatedByJoiOrThrow(
+      req.body,
+      ApiUploadProfilePictureRequestSchema
+    );
+    const file = req.file;
+    const response = await profiles.updateProfilePfp({
+      authenticatedWallet,
+      handleOrWallet,
+      memeOrFile: { file, meme }
+    });
+    res.status(201).send(response);
   }
 );
 

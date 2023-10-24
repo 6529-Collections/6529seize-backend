@@ -3,7 +3,7 @@ import * as tdh_consolidation from './tdh_consolidation';
 import * as ens from './ens';
 import { sqlExecutor } from './sql-executor';
 import { PROFILES_TABLE, WALLET_REGEX } from './constants';
-import { BadRequestException } from './bad-request.exception';
+import { BadRequestException } from './exceptions';
 import * as tdhs from './tdh';
 import * as nfts from './nfts';
 import * as path from 'path';
