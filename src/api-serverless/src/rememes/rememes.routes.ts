@@ -1,4 +1,3 @@
-import { Router } from 'express';
 import {
   ACCESS_CONTROL_ALLOW_HEADER,
   CONTENT_TYPE_HEADER,
@@ -11,7 +10,7 @@ import { asyncRouter } from '../async.router';
 
 const router = asyncRouter();
 
-router.post(`/rememes/validate`, validateRememe, function (req: any, res: any) {
+router.post(`/validate`, validateRememe, function (req: any, res: any) {
   const body = req.validatedBody;
   res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
   res.setHeader(ACCESS_CONTROL_ALLOW_HEADER, corsOptions.allowedHeaders);
@@ -21,7 +20,7 @@ router.post(`/rememes/validate`, validateRememe, function (req: any, res: any) {
     .end();
 });
 
-router.post(`/rememes/add`, validateRememeAdd, function (req: any, res: any) {
+router.post(`/add`, validateRememeAdd, function (req: any, res: any) {
   const body = req.validatedBody;
   const valid = body.valid;
   res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);

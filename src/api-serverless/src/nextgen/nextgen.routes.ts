@@ -1,4 +1,3 @@
-import { Router } from 'express';
 import { validateNextgen } from './validation';
 import {
   ACCESS_CONTROL_ALLOW_HEADER,
@@ -20,15 +19,14 @@ import {
 } from '../../../constants';
 import * as mysql from 'mysql';
 import * as db from '../../../db-api';
+import { asyncRouter } from '../async.router';
+import { initMulterSingleMiddleware } from 'src/multer-middleware';
 
-const router = Router();
-const multer = require('multer');
-const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
+const router = asyncRouter();
 
 router.post(
   '/create_allowlist',
-  upload.single('allowlist'),
+  initMulterSingleMiddleware('allowlist'),
   validateNextgen,
   async (req: any, res: any) => {
     const body = req.validatedBody;
