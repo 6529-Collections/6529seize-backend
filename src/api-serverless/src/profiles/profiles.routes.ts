@@ -17,6 +17,7 @@ import { NotFoundException } from '../../../exceptions';
 import { initMulterSingleMiddleware } from '../multer-middleware';
 
 import { asyncRouter } from '../async.router';
+import { RESERVED_HANDLES } from './profiles.constats';
 
 const router = asyncRouter();
 
@@ -110,11 +111,29 @@ interface ApiCreateOrUpdateProfileRequest {
 
 const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateProfileRequest> =
   Joi.object({
-    handle: Joi.string().min(3).max(15).regex(PROFILE_HANDLE_REGEX).required(),
+    handle: Joi.string()
+      .min(3)
+      .max(15)
+      .regex(PROFILE_HANDLE_REGEX)
+      .lowercase()
+      .custom((value, helpers) => {
+        if (RESERVED_HANDLES.map((h) => h.toLowerCase()).includes(value)) {
+          return helpers.message({
+            custom: `This username is not available. Please choose a different one.`
+          });
+        }
+        return value;
+      })
+      .required()
+      .messages({
+        'string.pattern.base': `Invalid username. Use 3-15 letters, numbers, or underscores.`
+      }),
     primary_wallet: Joi.string().regex(WALLET_REGEX).required(),
     banner_1: Joi.string().optional(),
     banner_2: Joi.string().optional(),
-    website: Joi.string().uri().optional()
+    website: Joi.string().uri().optional().messages({
+      'string.uri': `Please enter a valid website link, starting with 'http://' or 'https://'.`
+    })
   });
 
 interface ApiUploadProfilePictureRequest {
