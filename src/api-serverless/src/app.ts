@@ -9,16 +9,16 @@ import {
 import { SEIZE_SETTINGS } from './api-constants';
 import { validateUser } from './users/user_validation';
 
-import votesRoutes from './votes.api';
-import profilesRoutes from './profiles.api';
-import authRoutes from './auth.api';
+import votesRoutes from './votes/votes.routes';
+import profilesRoutes from './profiles/profiles.routes';
+import authRoutes from './auth/auth.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
   Strategy as JwtStrategy,
   VerifiedCallback
 } from 'passport-jwt';
-import { getJwtSecret } from './auth';
+import { getJwtSecret } from './auth/auth';
 import * as console from 'console';
 import { NextFunction, Request, Response } from 'express';
 import { Time } from '../../time';
@@ -79,7 +79,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 
 const app = express();
-const router = asyncRouter();
+const rootRouter = asyncRouter();
 
 const multer = require('multer');
 const storage = multer.memoryStorage();
@@ -209,10 +209,12 @@ loadApi().then(() => {
     }
   };
 
-  app.all('/api*', requireLogin);
-  app.all('/api*', checkCache);
-
   const BASE_PATH = '/api';
+  const apiRouter = asyncRouter();
+
+  app.all(`${BASE_PATH}*`, requireLogin);
+  app.all(`${BASE_PATH}*`, checkCache);
+
   const CONTENT_TYPE_HEADER = 'Content-Type';
   const JSON_HEADER_VALUE = 'application/json';
   const DEFAULT_PAGE_SIZE = 50;
@@ -405,7 +407,7 @@ loadApi().then(() => {
     res.end(JSON.stringify(result));
   }
 
-  router.get(`${BASE_PATH}/blocks`, function (req: any, res: any) {
+  apiRouter.get(`/blocks`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -416,12 +418,12 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/settings`, function (req: any, res: any) {
+  apiRouter.get(`/settings`, function (_: any, res: any) {
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
     res.end(JSON.stringify(SEIZE_SETTINGS));
   });
 
-  router.get(`${BASE_PATH}/uploads`, function (req: any, res: any) {
+  apiRouter.get(`/uploads`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -434,25 +436,20 @@ loadApi().then(() => {
     });
   });
 
-  router.get(
-    `${BASE_PATH}/consolidated_uploads`,
-    function (req: any, res: any) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
-      const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
-      const date = req.query.date;
-      db.fetchConsolidatedUploads(pageSize, page, block, date).then(
-        (result) => {
-          returnPaginatedResult(result, req, res);
-        }
-      );
-    }
-  );
+  apiRouter.get(`/consolidated_uploads`, function (req: any, res: any) {
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
+    const date = req.query.date;
+    db.fetchConsolidatedUploads(pageSize, page, block, date).then((result) => {
+      returnPaginatedResult(result, req, res);
+    });
+  });
 
-  router.get(`${BASE_PATH}/artists`, function (req: any, res: any) {
+  apiRouter.get(`/artists`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -473,7 +470,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/nfts`, function (req: any, res: any) {
+  apiRouter.get(`/nfts`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -496,7 +493,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/nfts/gradients`, function (req: any, res: any) {
+  apiRouter.get(`/nfts/gradients`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -522,7 +519,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/nfts_memelab`, function (req: any, res: any) {
+  apiRouter.get(`/nfts_memelab`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -558,7 +555,7 @@ loadApi().then(() => {
     );
   });
 
-  router.get(`${BASE_PATH}/memes_extended_data`, function (req: any, res: any) {
+  apiRouter.get(`/memes_extended_data`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -580,7 +577,7 @@ loadApi().then(() => {
     );
   });
 
-  router.get(`${BASE_PATH}/memes_seasons`, function (req: any, res: any) {
+  apiRouter.get(`/memes_seasons`, function (req: any, res: any) {
     const sortDir =
       req.query.sort_direction &&
       SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
@@ -592,7 +589,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/memes_lite`, function (req: any, res: any) {
+  apiRouter.get(`/memes_lite`, function (req: any, res: any) {
     const sortDir =
       req.query.sort_direction &&
       SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
@@ -604,7 +601,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/lab_extended_data`, function (req: any, res: any) {
+  apiRouter.get(`/lab_extended_data`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -619,7 +616,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/:address/nfts`, function (req: any, res: any) {
+  apiRouter.get(`/:address/nfts`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -635,7 +632,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/owners_memelab`, function (req: any, res: any) {
+  apiRouter.get(`/owners_memelab`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -662,7 +659,7 @@ loadApi().then(() => {
     );
   });
 
-  router.get(`${BASE_PATH}/owners`, function (req: any, res: any) {
+  apiRouter.get(`/owners`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -677,7 +674,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/owners_tags`, function (req: any, res: any) {
+  apiRouter.get(`/owners_tags`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -691,7 +688,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/transactions`, function (req: any, res: any) {
+  apiRouter.get(`/transactions`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -713,32 +710,29 @@ loadApi().then(() => {
     );
   });
 
-  router.get(
-    `${BASE_PATH}/transactions_memelab`,
-    function (req: any, res: any) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  apiRouter.get(`/transactions_memelab`, function (req: any, res: any) {
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-      const wallets = req.query.wallet;
-      const nfts = req.query.id;
+    const wallets = req.query.wallet;
+    const nfts = req.query.id;
 
-      const filter =
-        req.query.filter && TRANSACTION_FILTERS.includes(req.query.filter)
-          ? req.query.filter
-          : null;
+    const filter =
+      req.query.filter && TRANSACTION_FILTERS.includes(req.query.filter)
+        ? req.query.filter
+        : null;
 
-      db.fetchLabTransactions(pageSize, page, wallets, nfts, filter).then(
-        (result) => {
-          returnPaginatedResult(result, req, res);
-        }
-      );
-    }
-  );
+    db.fetchLabTransactions(pageSize, page, wallets, nfts, filter).then(
+      (result) => {
+        returnPaginatedResult(result, req, res);
+      }
+    );
+  });
 
-  router.get(`${BASE_PATH}/tdh/gradients/`, function (req: any, res: any) {
+  apiRouter.get(`/tdh/gradients/`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -755,7 +749,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/ens/:address/`, function (req: any, res: any) {
+  apiRouter.get(`/ens/:address/`, function (req: any, res: any) {
     const address = req.params.address;
 
     db.fetchEns(address).then((result) => {
@@ -768,7 +762,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/user/:address/`, function (req: any, res: any) {
+  apiRouter.get(`/user/:address/`, function (req: any, res: any) {
     const address = req.params.address;
 
     db.fetchUser(address).then((result) => {
@@ -781,53 +775,50 @@ loadApi().then(() => {
     });
   });
 
-  router.get(
-    `${BASE_PATH}/tdh/:contract/:nft_id`,
-    function (req: any, res: any) {
-      const contract = req.params.contract;
-      const nftId = req.params.nft_id;
+  apiRouter.get(`/tdh/:contract/:nft_id`, function (req: any, res: any) {
+    const contract = req.params.contract;
+    const nftId = req.params.nft_id;
 
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-      const sort =
-        req.query.sort && NFT_TDH_SORT.includes(req.query.sort)
-          ? req.query.sort
-          : 'card_tdh';
+    const sort =
+      req.query.sort && NFT_TDH_SORT.includes(req.query.sort)
+        ? req.query.sort
+        : 'card_tdh';
 
-      const sortDir =
-        req.query.sort_direction &&
-        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-          ? req.query.sort_direction
-          : 'desc';
+    const sortDir =
+      req.query.sort_direction &&
+      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+        ? req.query.sort_direction
+        : 'desc';
 
-      const wallets = req.query.wallet;
+    const wallets = req.query.wallet;
 
-      db.fetchNftTdh(
-        pageSize,
-        page,
-        contract,
-        nftId,
-        wallets,
-        sort,
-        sortDir
-      ).then((result) => {
-        result.data.map((d: any) => {
-          d.memes = JSON.parse(d.memes);
-          d.memes_ranks = JSON.parse(d.memes_ranks);
-          d.gradients = JSON.parse(d.gradients);
-          d.gradients_ranks = JSON.parse(d.gradients_ranks);
-        });
-        returnPaginatedResult(result, req, res);
+    db.fetchNftTdh(
+      pageSize,
+      page,
+      contract,
+      nftId,
+      wallets,
+      sort,
+      sortDir
+    ).then((result) => {
+      result.data.map((d: any) => {
+        d.memes = JSON.parse(d.memes);
+        d.memes_ranks = JSON.parse(d.memes_ranks);
+        d.gradients = JSON.parse(d.gradients);
+        d.gradients_ranks = JSON.parse(d.gradients_ranks);
       });
-    }
-  );
+      returnPaginatedResult(result, req, res);
+    });
+  });
 
-  router.get(
-    `${BASE_PATH}/consolidated_tdh/:contract/:nft_id`,
+  apiRouter.get(
+    `/consolidated_tdh/:contract/:nft_id`,
     function (req: any, res: any) {
       const contract = req.params.contract;
       const nftId = req.params.nft_id;
@@ -871,7 +862,7 @@ loadApi().then(() => {
     }
   );
 
-  router.get(`${BASE_PATH}/tdh`, function (req: any, res: any) {
+  apiRouter.get(`/tdh`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -921,7 +912,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/owner_metrics`, function (req: any, res: any) {
+  apiRouter.get(`/owner_metrics`, function (req: any, res: any) {
     let pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -1013,8 +1004,8 @@ loadApi().then(() => {
     });
   });
 
-  router.get(
-    `${BASE_PATH}/consolidated_owner_metrics/:consolidation_key`,
+  apiRouter.get(
+    `/consolidated_owner_metrics/:consolidation_key`,
     function (req: any, res: any) {
       const consolidationKey = req.params.consolidation_key;
 
@@ -1053,115 +1044,110 @@ loadApi().then(() => {
     }
   );
 
-  router.get(
-    `${BASE_PATH}/consolidated_owner_metrics`,
-    function (req: any, res: any) {
-      let pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      let page: number = req.query.page ? parseInt(req.query.page) : 1;
-      const includePrimaryWallet =
-        req.query.include_primary_wallet &&
-        req.query.include_primary_wallet == 'true';
+  apiRouter.get(`/consolidated_owner_metrics`, function (req: any, res: any) {
+    let pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    let page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const includePrimaryWallet =
+      req.query.include_primary_wallet &&
+      req.query.include_primary_wallet == 'true';
 
-      const wallets = req.query.wallet;
-      const downloadPage = req.query.download_page == 'true';
-      const downloadAll = req.query.download_all == 'true';
-      if (downloadAll) {
-        pageSize = Number.MAX_SAFE_INTEGER;
-        page = 1;
-      }
-      const sort =
-        req.query.sort && TDH_SORT.includes(req.query.sort)
-          ? req.query.sort
-          : 'boosted_tdh';
+    const wallets = req.query.wallet;
+    const downloadPage = req.query.download_page == 'true';
+    const downloadAll = req.query.download_all == 'true';
+    if (downloadAll) {
+      pageSize = Number.MAX_SAFE_INTEGER;
+      page = 1;
+    }
+    const sort =
+      req.query.sort && TDH_SORT.includes(req.query.sort)
+        ? req.query.sort
+        : 'boosted_tdh';
 
-      const sortDir =
-        req.query.sort_direction &&
-        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-          ? req.query.sort_direction
-          : 'desc';
+    const sortDir =
+      req.query.sort_direction &&
+      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+        ? req.query.sort_direction
+        : 'desc';
 
-      const filter =
-        req.query.filter && TAGS_FILTERS.includes(req.query.filter)
-          ? req.query.filter
-          : null;
+    const filter =
+      req.query.filter && TAGS_FILTERS.includes(req.query.filter)
+        ? req.query.filter
+        : null;
 
-      const hideMuseum =
-        req.query.hide_museum && req.query.hide_museum == 'true' ? true : false;
+    const hideMuseum =
+      req.query.hide_museum && req.query.hide_museum == 'true' ? true : false;
 
-      const hideTeam =
-        req.query.hide_team && req.query.hide_team == 'true' ? true : false;
+    const hideTeam =
+      req.query.hide_team && req.query.hide_team == 'true' ? true : false;
 
-      const isProfilePage =
-        req.query.profile_page && req.query.profile_page == 'true'
-          ? true
-          : false;
+    const isProfilePage =
+      req.query.profile_page && req.query.profile_page == 'true' ? true : false;
 
-      db.fetchConsolidatedOwnerMetrics(
-        pageSize,
-        page,
-        wallets,
-        sort,
-        sortDir,
-        filter,
-        hideMuseum,
-        hideTeam,
-        isProfilePage,
-        includePrimaryWallet
-      ).then(async (result) => {
-        result.data.map((d: any) => {
-          if (d.wallets) {
-            if (!Array.isArray(d.wallets)) {
-              d.wallets = JSON.parse(d.wallets);
-            }
+    db.fetchConsolidatedOwnerMetrics(
+      pageSize,
+      page,
+      wallets,
+      sort,
+      sortDir,
+      filter,
+      hideMuseum,
+      hideTeam,
+      isProfilePage,
+      includePrimaryWallet
+    ).then(async (result) => {
+      result.data.map((d: any) => {
+        if (d.wallets) {
+          if (!Array.isArray(d.wallets)) {
+            d.wallets = JSON.parse(d.wallets);
           }
-        });
-        if (downloadAll || downloadPage) {
-          result.data.map((d: any) => {
-            delete d.created_at;
-            delete d.memes;
-            delete d.memes_ranks;
-            delete d.gradients;
-            delete d.gradients_ranks;
-          });
-        } else {
-          result.data.map((d: any) => {
-            if (d.memes) {
-              d.memes = JSON.parse(d.memes);
-            }
-            if (d.memes_ranks) {
-              d.memes_ranks = JSON.parse(d.memes_ranks);
-            }
-            if (d.gradients) {
-              d.gradients = JSON.parse(d.gradients);
-            }
-            if (d.gradients_ranks) {
-              d.gradients_ranks = JSON.parse(d.gradients_ranks);
-            }
-          });
-        }
-        if (downloadAll) {
-          const filename = 'consolidated_owner_metrics';
-          const csv = await converter.json2csvAsync(result.data);
-          res.header('Content-Type', 'text/csv');
-          res.attachment(`${filename}.csv`);
-          return res.send(csv);
-        } else if (downloadPage) {
-          const filename = 'consolidated_owner_metrics';
-          const csv = await converter.json2csvAsync(result.data);
-          res.header('Content-Type', 'text/csv');
-          res.attachment(`${filename}.csv`);
-          return res.send(csv);
-        } else {
-          return returnPaginatedResult(result, req, res);
         }
       });
-    }
-  );
+      if (downloadAll || downloadPage) {
+        result.data.map((d: any) => {
+          delete d.created_at;
+          delete d.memes;
+          delete d.memes_ranks;
+          delete d.gradients;
+          delete d.gradients_ranks;
+        });
+      } else {
+        result.data.map((d: any) => {
+          if (d.memes) {
+            d.memes = JSON.parse(d.memes);
+          }
+          if (d.memes_ranks) {
+            d.memes_ranks = JSON.parse(d.memes_ranks);
+          }
+          if (d.gradients) {
+            d.gradients = JSON.parse(d.gradients);
+          }
+          if (d.gradients_ranks) {
+            d.gradients_ranks = JSON.parse(d.gradients_ranks);
+          }
+        });
+      }
+      if (downloadAll) {
+        const filename = 'consolidated_owner_metrics';
+        const csv = await converter.json2csvAsync(result.data);
+        res.header('Content-Type', 'text/csv');
+        res.attachment(`${filename}.csv`);
+        return res.send(csv);
+      } else if (downloadPage) {
+        const filename = 'consolidated_owner_metrics';
+        const csv = await converter.json2csvAsync(result.data);
+        res.header('Content-Type', 'text/csv');
+        res.attachment(`${filename}.csv`);
+        return res.send(csv);
+      } else {
+        return returnPaginatedResult(result, req, res);
+      }
+    });
+  });
 
-  router.get(`${BASE_PATH}/team`, function (req: any, res: any) {
+  apiRouter.get(`/team`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -1173,8 +1159,8 @@ loadApi().then(() => {
     });
   });
 
-  router.get(
-    `${BASE_PATH}/distribution_photos/:contract/:nft_id`,
+  apiRouter.get(
+    `/distribution_photos/:contract/:nft_id`,
     function (req: any, res: any) {
       const contract = req.params.contract;
       const nftId = req.params.nft_id;
@@ -1193,8 +1179,8 @@ loadApi().then(() => {
     }
   );
 
-  router.get(
-    `${BASE_PATH}/distribution_phases/:contract/:nft_id`,
+  apiRouter.get(
+    `/distribution_phases/:contract/:nft_id`,
     function (req: any, res: any) {
       const contract = req.params.contract;
       const nftId = req.params.nft_id;
@@ -1204,8 +1190,8 @@ loadApi().then(() => {
     }
   );
 
-  router.get(
-    `${BASE_PATH}/distribution/:contract/:nft_id`,
+  apiRouter.get(
+    `/distribution/:contract/:nft_id`,
     function (req: any, res: any) {
       const contract = req.params.contract;
       const nftId = req.params.nft_id;
@@ -1243,7 +1229,7 @@ loadApi().then(() => {
     }
   );
 
-  router.get(`${BASE_PATH}/distributions`, function (req: any, res: any) {
+  apiRouter.get(`/distributions`, function (req: any, res: any) {
     const wallets = req.query.wallet;
     const cards = req.query.card_id;
     const contracts = req.query.contract;
@@ -1260,21 +1246,18 @@ loadApi().then(() => {
     );
   });
 
-  router.get(
-    `${BASE_PATH}/consolidations/:wallet`,
-    function (req: any, res: any) {
-      const wallet = req.params.wallet;
-      const showIncomplete =
-        req.query.show_incomplete && req.query.show_incomplete == 'true'
-          ? true
-          : false;
-      db.fetchConsolidationsForWallet(wallet, showIncomplete).then((result) => {
-        returnPaginatedResult(result, req, res);
-      });
-    }
-  );
+  apiRouter.get(`/consolidations/:wallet`, function (req: any, res: any) {
+    const wallet = req.params.wallet;
+    const showIncomplete =
+      req.query.show_incomplete && req.query.show_incomplete == 'true'
+        ? true
+        : false;
+    db.fetchConsolidationsForWallet(wallet, showIncomplete).then((result) => {
+      returnPaginatedResult(result, req, res);
+    });
+  });
 
-  router.get(`${BASE_PATH}/consolidations`, function (req: any, res: any) {
+  apiRouter.get(`/consolidations`, function (req: any, res: any) {
     const block = req.query.block;
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
@@ -1290,32 +1273,29 @@ loadApi().then(() => {
     });
   });
 
-  router.get(
-    `${BASE_PATH}/consolidation_transactions`,
-    function (req: any, res: any) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  apiRouter.get(`/consolidation_transactions`, function (req: any, res: any) {
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-      const block = req.query.block;
-      const showIncomplete =
-        req.query.show_incomplete && req.query.show_incomplete == 'true'
-          ? true
-          : false;
-      db.fetchConsolidationTransactions(
-        pageSize,
-        page,
-        block,
-        showIncomplete
-      ).then((result) => {
-        returnPaginatedResult(result, req, res);
-      });
-    }
-  );
+    const block = req.query.block;
+    const showIncomplete =
+      req.query.show_incomplete && req.query.show_incomplete == 'true'
+        ? true
+        : false;
+    db.fetchConsolidationTransactions(
+      pageSize,
+      page,
+      block,
+      showIncomplete
+    ).then((result) => {
+      returnPaginatedResult(result, req, res);
+    });
+  });
 
-  router.get(`${BASE_PATH}/delegations/:wallet`, function (req: any, res: any) {
+  apiRouter.get(`/delegations/:wallet`, function (req: any, res: any) {
     const wallet = req.params.wallet;
 
     const pageSize: number =
@@ -1329,7 +1309,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/delegations`, function (req: any, res: any) {
+  apiRouter.get(`/delegations`, function (req: any, res: any) {
     const use_cases = req.query.use_case;
     const collections = req.query.collection;
     const pageSize: number =
@@ -1353,8 +1333,8 @@ loadApi().then(() => {
     });
   });
 
-  router.get(
-    `${BASE_PATH}/nft_history/:contract/:nft_id`,
+  apiRouter.get(
+    `/nft_history/:contract/:nft_id`,
     function (req: any, res: any) {
       const contract = req.params.contract;
       const nftId = req.params.nft_id;
@@ -1374,7 +1354,7 @@ loadApi().then(() => {
     }
   );
 
-  router.get(`/floor_price`, async function (req: any, res: any) {
+  apiRouter.get(`/floor_price`, async function (req: any, res: any) {
     const contract = req.query.contract;
     const id = req.query.id;
 
@@ -1393,8 +1373,8 @@ loadApi().then(() => {
     return res.send(json);
   });
 
-  router.get(
-    `${BASE_PATH}/next_gen/:merkle_root/:address`,
+  apiRouter.get(
+    `/next_gen/:merkle_root/:address`,
     async function (req: any, res: any) {
       const merkleRoot = req.params.merkle_root;
       const address = req.params.address;
@@ -1406,7 +1386,7 @@ loadApi().then(() => {
     }
   );
 
-  router.get(`${BASE_PATH}/rememes`, function (req: any, res: any) {
+  apiRouter.get(`/rememes`, function (req: any, res: any) {
     const memeIds = req.query.meme_id;
     const pageSize: number =
       req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
@@ -1448,8 +1428,8 @@ loadApi().then(() => {
     });
   });
 
-  router.post(
-    `${BASE_PATH}/rememes/validate`,
+  apiRouter.post(
+    `/rememes/validate`,
     validateRememe,
     function (req: any, res: any) {
       const body = req.validatedBody;
@@ -1462,8 +1442,8 @@ loadApi().then(() => {
     }
   );
 
-  router.post(
-    `${BASE_PATH}/rememes/add`,
+  apiRouter.post(
+    `/rememes/add`,
     validateRememeAdd,
     function (req: any, res: any) {
       const body = req.validatedBody;
@@ -1482,7 +1462,7 @@ loadApi().then(() => {
     }
   );
 
-  router.get(`${BASE_PATH}/rememes_uploads`, function (req: any, res: any) {
+  apiRouter.get(`/rememes_uploads`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -1494,7 +1474,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/tdh_global_history`, function (req: any, res: any) {
+  apiRouter.get(`/tdh_global_history`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -1512,7 +1492,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}/tdh_history`, function (req: any, res: any) {
+  apiRouter.get(`/tdh_history`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -1532,7 +1512,7 @@ loadApi().then(() => {
     });
   });
 
-  router.get(`${BASE_PATH}`, async function (req: any, res: any) {
+  apiRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
     res
       .setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE)
@@ -1545,8 +1525,8 @@ loadApi().then(() => {
       );
   });
 
-  router.post(
-    `${BASE_PATH}/user`,
+  apiRouter.post(
+    `/user`,
     upload.single('pfp'),
     validateUser,
     function (req: any, res: any) {
@@ -1566,7 +1546,7 @@ loadApi().then(() => {
     }
   );
 
-  router.get(`/`, async function (req: any, res: any) {
+  rootRouter.get(``, async function (_: any, res: any) {
     const image = await db.fetchRandomImage();
     res
       .setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE)
@@ -1579,10 +1559,11 @@ loadApi().then(() => {
       );
   });
 
-  app.use(`${BASE_PATH}/votes`, votesRoutes);
-  app.use(`${BASE_PATH}/profiles`, profilesRoutes);
-  app.use(`${BASE_PATH}/auth`, authRoutes);
-  app.use(router);
+  apiRouter.use(`/votes`, votesRoutes);
+  apiRouter.use(`/profiles`, profilesRoutes);
+  apiRouter.use(`/auth`, authRoutes);
+  rootRouter.use(BASE_PATH, apiRouter);
+  app.use(rootRouter);
 
   app.use(customErrorMiddleware());
 

@@ -1,22 +1,22 @@
 import { Request, Response } from 'express';
-import { ApiResponse } from './api-response';
+import { ApiResponse } from '../api-response';
 import {
   getWalletOrNull,
   getWalletOrThrow,
   needsAuthenticatedUser
-} from './auth';
+} from '../auth/auth';
 import * as Joi from 'joi';
-import { PROFILE_HANDLE_REGEX, WALLET_REGEX } from '../../constants';
-import { getValidatedByJoiOrThrow } from './validation';
+import { PROFILE_HANDLE_REGEX, WALLET_REGEX } from '../../../constants';
+import { getValidatedByJoiOrThrow } from '../validation';
 import {
   CreateOrUpdateProfileCommand,
   ProfileAndConsolidations
-} from '../../profiles';
-import * as profiles from '../../profiles';
-import { NotFoundException } from '../../exceptions';
-import { initMulterSingleMiddleware } from './multer-middleware';
+} from '../../../profiles';
+import * as profiles from '../../../profiles';
+import { NotFoundException } from '../../../exceptions';
+import { initMulterSingleMiddleware } from '../multer-middleware';
 
-import { asyncRouter } from './async.router';
+import { asyncRouter } from '../async.router';
 
 const router = asyncRouter();
 
