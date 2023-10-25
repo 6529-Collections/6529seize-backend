@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Request, Response } from 'express';
 import { ApiResponse } from './api-response';
 import * as votes from '../../votes';
 import * as Joi from 'joi';
@@ -6,9 +6,11 @@ import { VoteCategoryInfo } from '../../votes';
 import { VoteMatterTargetType } from '../../entities/IVoteMatter';
 import { getWalletOrNull, needsAuthenticatedUser } from './auth';
 import { WALLET_REGEX } from '../../constants';
-import { BadRequestException } from '../../bad-request.exception';
+import { ForbiddenException } from '../../exceptions';
+import { asyncRouter } from './async.router';
+import { getValidatedByJoiOrThrow } from './validation';
 
-const router = Router();
+const router = asyncRouter();
 
 router.get(
   `/targets/:matter_target_type/:matter_target_id/matters/:matter`,
@@ -27,36 +29,24 @@ router.get(
     res: Response<ApiResponse<WalletStateOnMattersVoting>>
   ) {
     const { matter, matter_target_type, matter_target_id } = req.params;
-    try {
-      const wallet = getWalletOrNull(req);
-      const { votesLeft, consolidatedWallets } = wallet
-        ? await votes.getVotesLeftOnMatterForWallet({
-            wallet,
-            matter,
-            matterTargetType: matter_target_type
-          })
-        : { votesLeft: 0, consolidatedWallets: [] as string[] };
-      const categoriesInfo = await votes.getCategoriesInfoOnMatter({
-        wallets: consolidatedWallets,
-        matter,
-        matterTargetType: matter_target_type,
-        matterTargetId: matter_target_id
-      });
-      res.status(200).send({
-        votes_left: votesLeft,
-        categories: categoriesInfo
-      });
-    } catch (err) {
-      console.error(
-        `[API] [VOTES] Failed to get votes info for entity '${matter_target_type}/${matter_target_id}/${matter} on matter '${matter}'`,
-        err
-      );
-      res.status(500).send({
-        error: `Failed to get votes info for entity '${matter_target_type}/${matter_target_id} on matter '${matter}'`
-      });
-    } finally {
-      res.end();
-    }
+    const wallet = getWalletOrNull(req);
+    const { votesLeft, consolidatedWallets } = wallet
+      ? await votes.getVotesLeftOnMatterForWallet({
+          wallet,
+          matter,
+          matterTargetType: matter_target_type
+        })
+      : { votesLeft: 0, consolidatedWallets: [] as string[] };
+    const categoriesInfo = await votes.getCategoriesInfoOnMatter({
+      wallets: consolidatedWallets,
+      matter,
+      matterTargetType: matter_target_type,
+      matterTargetId: matter_target_id
+    });
+    res.status(200).send({
+      votes_left: votesLeft,
+      categories: categoriesInfo
+    });
   }
 );
 
@@ -84,44 +74,23 @@ router.post(
       console.error(
         `[API] [VOTES] Voter failed to vote on path (target_type=${matter_target_type}; matter=${matter}; category=${category}}) because wallet from auth '${walletFromHeader}' and wallet in body '${voter_wallet}' did not match`
       );
-      res
-        .status(403)
-        .send({ error: 'Something went wrong. You are not allowed to vote.' })
-        .end();
-      return;
-    }
-    const { error, value: voteRequest } = WalletVoteRequestSchema.validate({
-      voterWallet: voter_wallet,
-      matter,
-      matterTargetType: matter_target_type,
-      matterTargetId: matter_target_id,
-      category: category,
-      amount: amount
-    });
-    if (error) {
-      res.status(400).send({ error: error.message }).end();
-      return;
-    }
-    try {
-      await votes.registerUserVote(voteRequest);
-      res.status(201).send();
-    } catch (err) {
-      if (err instanceof BadRequestException) {
-        res.status(400).send({
-          error: err.message
-        });
-      } else {
-        res.status(500).send({
-          error: `Voter ${voter_wallet} failed to vote on path (target_type=${matter_target_type}; matter=${matter}; category=${category}})`
-        });
-      }
-      console.error(
-        `[API] [VOTES] Voter ${voter_wallet} failed to vote on path (target_type=${matter_target_type}; matter=${matter}; category=${category}})`,
-        err
+      throw new ForbiddenException(
+        'Something went wrong. User is not allowed to vote.'
       );
-    } finally {
-      res.end();
     }
+    const voteRequest = getValidatedByJoiOrThrow(
+      {
+        voterWallet: voter_wallet,
+        matter,
+        matterTargetType: matter_target_type,
+        matterTargetId: matter_target_id,
+        category: category,
+        amount: amount
+      },
+      WalletVoteRequestSchema
+    );
+    await votes.registerUserVote(voteRequest);
+    res.status(201).send();
   }
 );
 
