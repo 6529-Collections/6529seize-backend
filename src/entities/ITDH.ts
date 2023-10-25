@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Column, Entity, PrimaryColumn, Index } from 'typeorm';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   TDH_HISTORY_TABLE,
@@ -7,6 +7,9 @@ import {
 } from '../constants';
 
 @Entity(WALLETS_TDH_TABLE)
+@Index('tdh_block_wallet_idx', ['block', 'wallet'], {
+  where: `"wallet" = lower("wallet")`
+})
 export class TDH {
   @Column({ type: 'datetime' })
   date!: Date;
