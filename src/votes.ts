@@ -9,7 +9,7 @@ import {
 } from './entities/IVoteMatter';
 import { VoteEvent, VoteEventReason } from './entities/IVoteEvent';
 import { Time } from './time';
-import { BadRequestException } from './bad-request.exception';
+import { BadRequestException } from './exceptions';
 import * as tdh_consolidation from './tdh_consolidation';
 
 async function getCategoriesForMatter({

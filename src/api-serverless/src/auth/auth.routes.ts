@@ -1,12 +1,15 @@
-import { Request, Response, Router } from 'express';
+import { Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import * as jwt from 'jsonwebtoken';
-import { ApiResponse } from './api-response';
+import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
 import { ethers } from 'ethers';
 import { getJwtExpiry, getJwtSecret } from './auth';
+import { asyncRouter } from '../async.router';
+import { getValidatedByJoiOrThrow } from '../validation';
+import { UnauthorisedException } from '../../../exceptions';
 
-const router = Router();
+const router = asyncRouter();
 
 router.get(
   '/nonce',
@@ -29,17 +32,7 @@ router.post(
     req: Request<ApiLoginRequest, any, any, any, any>,
     res: Response<ApiResponse<ApiLoginResponse>>
   ) {
-    const { error, value: loginRequest } = LoginRequestSchema.validate(
-      req.body
-    );
-    if (error) {
-      console.error(
-        `[API] [AUTH] Invalid login request: ${JSON.stringify(req.body)}`,
-        error
-      );
-      res.status(401).send({ error: error.message }).end();
-      return;
-    }
+    const loginRequest = getValidatedByJoiOrThrow(req.body, LoginRequestSchema);
     const { serverSignature, clientSignature } = loginRequest;
     try {
       const nonce = verifyServerSignature(serverSignature);
@@ -54,20 +47,11 @@ router.post(
           expiresIn: getJwtExpiry()
         }
       );
-      console.log(
-        `[API] [AUTH] Login successful for ${signingAddress}. Released a new JWT`
-      );
       res.status(201).send({
         token
       });
-    } catch (err) {
-      console.error(
-        `[API] [AUTH] Invalid login request: ${JSON.stringify(req.body)}`,
-        err
-      );
-      res.status(401).send({ error: `Authentication failed` });
-    } finally {
-      res.end();
+    } catch (err: any) {
+      throw new UnauthorisedException(`Authentication failed: ${err.message}`);
     }
   }
 );

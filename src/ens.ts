@@ -1,5 +1,5 @@
 import { Alchemy } from 'alchemy-sdk';
-import { ALCHEMY_SETTINGS } from './constants';
+import { ALCHEMY_SETTINGS, ENS_TABLE } from './constants';
 import { ENS } from './entities/IENS';
 import {
   fetchEnsRefresh,
@@ -8,8 +8,30 @@ import {
   fetchBrokenEnsRefresh,
   fetchMissingEnsDelegations
 } from './db';
+import { Wallet } from './entities/IWallet';
+import { sqlExecutor } from './sql-executor';
 
 let alchemy: Alchemy;
+
+export async function getPrediscoveredEnsNames(
+  walletAddresses: string[]
+): Promise<Wallet[]> {
+  if (!walletAddresses.length) {
+    return [];
+  }
+  const results: Wallet[] = await sqlExecutor.execute(
+    `SELECT wallet as address, display as ens FROM ${ENS_TABLE} WHERE LOWER(wallet) IN (:walletAddresses)`,
+    {
+      walletAddresses: walletAddresses.map((walletAddress) =>
+        walletAddress.toLowerCase()
+      )
+    }
+  );
+  return walletAddresses.map((walletAddress) => ({
+    address: walletAddress,
+    ens: results.find((row) => row.address === walletAddress)?.ens
+  }));
+}
 
 export async function reverseResolveEnsName(
   ensName: string

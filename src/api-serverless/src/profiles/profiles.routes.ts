@@ -1,0 +1,130 @@
+import { Request, Response } from 'express';
+import { ApiResponse } from '../api-response';
+import {
+  getWalletOrNull,
+  getWalletOrThrow,
+  needsAuthenticatedUser
+} from '../auth/auth';
+import * as Joi from 'joi';
+import { PROFILE_HANDLE_REGEX, WALLET_REGEX } from '../../../constants';
+import { getValidatedByJoiOrThrow } from '../validation';
+import {
+  CreateOrUpdateProfileCommand,
+  ProfileAndConsolidations
+} from '../../../profiles';
+import * as profiles from '../../../profiles';
+import { NotFoundException } from '../../../exceptions';
+import { initMulterSingleMiddleware } from '../multer-middleware';
+
+import { asyncRouter } from '../async.router';
+
+const router = asyncRouter();
+
+router.get(
+  `/:handleOrWallet`,
+  async function (
+    req: Request<
+      {
+        handleOrWallet: string;
+      },
+      any,
+      any,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ProfileAndConsolidations>>
+  ) {
+    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
+    const profile =
+      await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        handleOrWallet
+      );
+    if (!profile) {
+      throw new NotFoundException('Profile not found');
+    }
+    res.status(200).send(profile);
+  }
+);
+
+router.post(
+  `/`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<any, any, ApiCreateOrUpdateProfileRequest, any, any>,
+    res: Response<ApiResponse<ProfileAndConsolidations>>
+  ) {
+    const { handle, primary_wallet, banner_1, banner_2, website } =
+      getValidatedByJoiOrThrow(req.body, ApiCreateOrUpdateProfileRequestSchema);
+    const createProfileCommand: CreateOrUpdateProfileCommand = {
+      handle,
+      primary_wallet: primary_wallet.toLowerCase(),
+      banner_1,
+      banner_2,
+      website,
+      creator_or_updater_wallet: getWalletOrNull(req)!
+    };
+    const profile = await profiles.createOrUpdateProfile(createProfileCommand);
+    res.status(201).send(profile);
+  }
+);
+
+router.post(
+  `/:handleOrWallet/pfp`,
+  needsAuthenticatedUser(),
+  initMulterSingleMiddleware('pfp'),
+  async function (
+    req: Request<
+      {
+        handleOrWallet: string;
+      },
+      any,
+      ApiUploadProfilePictureRequest,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<{ pfp_url: string }>>
+  ) {
+    const authenticatedWallet = getWalletOrThrow(req);
+    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
+    const { meme } = getValidatedByJoiOrThrow(
+      req.body,
+      ApiUploadProfilePictureRequestSchema
+    );
+    const file = req.file;
+    const response = await profiles.updateProfilePfp({
+      authenticatedWallet,
+      handleOrWallet,
+      memeOrFile: { file, meme }
+    });
+    res.status(201).send(response);
+  }
+);
+
+interface ApiCreateOrUpdateProfileRequest {
+  readonly handle: string;
+  readonly primary_wallet: string;
+  readonly banner_1?: string;
+  readonly banner_2?: string;
+  readonly website?: string;
+}
+
+const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateProfileRequest> =
+  Joi.object({
+    handle: Joi.string().min(3).max(15).regex(PROFILE_HANDLE_REGEX).required(),
+    primary_wallet: Joi.string().regex(WALLET_REGEX).required(),
+    banner_1: Joi.string().optional(),
+    banner_2: Joi.string().optional(),
+    website: Joi.string().uri().optional()
+  });
+
+interface ApiUploadProfilePictureRequest {
+  readonly meme?: number;
+  readonly file?: Express.Multer.File;
+}
+
+const ApiUploadProfilePictureRequestSchema: Joi.ObjectSchema<ApiUploadProfilePictureRequest> =
+  Joi.object({
+    meme: Joi.number().optional()
+  });
+
+export default router;

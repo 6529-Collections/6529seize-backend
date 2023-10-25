@@ -1,5 +1,6 @@
 export const BASE_PATH = '/api';
 export const CONTENT_TYPE_HEADER = 'Content-Type';
+export const ACCESS_CONTROL_ALLOW_HEADER = 'Access-Control-Allow-Headers';
 export const JSON_HEADER_VALUE = 'application/json';
 export const DEFAULT_PAGE_SIZE = 50;
 export const NFTS_PAGE_SIZE = 101;

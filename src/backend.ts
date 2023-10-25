@@ -24,7 +24,7 @@ const cron = require('node-cron');
 let RUNNING_START_SCRIPT = true;
 
 function isCronsEnabled() {
-  return process.env.CRONS_DISABLES !== 'true' && !RUNNING_START_SCRIPT;
+  return process.env.CRONS_DISABLED !== 'true' && !RUNNING_START_SCRIPT;
 }
 
 // PULL EVERY 4 MINUTES
