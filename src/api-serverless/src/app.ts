@@ -34,6 +34,7 @@ import {
   MEME_LAB_OWNERS_SORT,
   NFTS_PAGE_SIZE,
   NFT_TDH_SORT,
+  REMEMES_SORT,
   SORT_DIRECTIONS,
   TAGS_FILTERS,
   TDH_SORT,
@@ -1235,6 +1236,48 @@ loadApi().then(() => {
       });
     }
   );
+
+  apiRouter.get(`/rememes`, function (req: any, res: any) {
+    const memeIds = req.query.meme_id;
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const contract = req.query.contract;
+    const id = req.query.id;
+    const tokenType = req.query.token_type;
+
+    const sort =
+      req.query.sort && REMEMES_SORT.includes(req.query.sort)
+        ? req.query.sort
+        : undefined;
+
+    const sortDir =
+      req.query.sort_direction &&
+      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+        ? req.query.sort_direction
+        : 'desc';
+    db.fetchRememes(
+      memeIds,
+      pageSize,
+      page,
+      contract,
+      id,
+      tokenType,
+      sort,
+      sortDir
+    ).then((result) => {
+      result.data.map((a: any) => {
+        a.metadata = JSON.parse(a.metadata);
+        a.media = JSON.parse(a.media);
+        a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
+        a.meme_references = JSON.parse(a.meme_references);
+        a.replicas = a.replicas.split(',');
+      });
+      returnPaginatedResult(result, req, res, true);
+    });
+  });
 
   apiRouter.get(`/rememes_uploads`, function (req: any, res: any) {
     const pageSize: number =
