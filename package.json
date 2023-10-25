@@ -48,6 +48,7 @@
     "@aws-sdk/client-secrets-manager": "^3.309.0",
     "@aws-sdk/client-sns": "^3.425.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@sentry/serverless": "^7.74.1",
     "@types/multer": "^1.4.9",
     "alchemy-sdk": "^2.7.0",
     "arweave": "1.11.6",

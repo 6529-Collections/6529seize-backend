@@ -1,14 +1,14 @@
 import { Request, Response } from 'express';
-import { ApiResponse } from './api-response';
-import * as votes from '../../votes';
+import { ApiResponse } from '../api-response';
+import * as votes from '../../../votes';
 import * as Joi from 'joi';
-import { VoteCategoryInfo } from '../../votes';
-import { VoteMatterTargetType } from '../../entities/IVoteMatter';
-import { getWalletOrNull, needsAuthenticatedUser } from './auth';
-import { WALLET_REGEX } from '../../constants';
-import { ForbiddenException } from '../../exceptions';
-import { asyncRouter } from './async.router';
-import { getValidatedByJoiOrThrow } from './validation';
+import { VoteCategoryInfo } from '../../../votes';
+import { VoteMatterTargetType } from '../../../entities/IVoteMatter';
+import { getWalletOrNull, needsAuthenticatedUser } from '../auth/auth';
+import { WALLET_REGEX } from '../../../constants';
+import { ForbiddenException } from '../../../exceptions';
+import { asyncRouter } from '../async.router';
+import { getValidatedByJoiOrThrow } from '../validation';
 
 const router = asyncRouter();
 

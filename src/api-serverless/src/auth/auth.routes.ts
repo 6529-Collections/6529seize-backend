@@ -1,13 +1,13 @@
 import { Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import * as jwt from 'jsonwebtoken';
-import { ApiResponse } from './api-response';
+import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
 import { ethers } from 'ethers';
 import { getJwtExpiry, getJwtSecret } from './auth';
-import { asyncRouter } from './async.router';
-import { getValidatedByJoiOrThrow } from './validation';
-import { UnauthorisedException } from '../../exceptions';
+import { asyncRouter } from '../async.router';
+import { getValidatedByJoiOrThrow } from '../validation';
+import { UnauthorisedException } from '../../../exceptions';
 
 const router = asyncRouter();
 
