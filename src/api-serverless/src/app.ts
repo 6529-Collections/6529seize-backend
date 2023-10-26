@@ -26,6 +26,7 @@ import * as sentryContext from '../../sentry.context';
 import * as Sentry from '@sentry/serverless';
 import { asyncRouter } from './async.router';
 import { ApiCompliantException } from '../../exceptions';
+import { Strategy as AnonymousStrategy } from 'passport-anonymous';
 
 const converter = require('json-2-csv');
 
@@ -130,6 +131,7 @@ loadApi().then(() => {
       )
     );
   });
+  passport.use(new AnonymousStrategy());
   app.use(requestLogMiddleware());
   app.use(compression());
   app.use(cors(corsOptions));
