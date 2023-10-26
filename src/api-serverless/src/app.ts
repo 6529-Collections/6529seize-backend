@@ -1205,7 +1205,7 @@ loadApi().then(() => {
     }
   );
 
-  apiRouter.get(`/floor_price`, async function (req: any, res: any) {
+  rootRouter.get(`/floor_price`, async function (req: any, res: any) {
     const contract = req.query.contract;
     const id = req.query.id;
 
