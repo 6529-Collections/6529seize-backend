@@ -3,10 +3,10 @@ import { PROFILES_TABLE } from '../constants';
 
 @Entity(PROFILES_TABLE)
 export class Profile {
-  @PrimaryColumn({ type: 'varchar', length: 15 })
+  @PrimaryColumn({ type: 'varchar', length: 100 })
   normalised_handle!: string;
 
-  @Column({ type: 'varchar', length: 15 })
+  @Column({ type: 'varchar', length: 100 })
   handle!: string;
 
   @Column({ type: 'varchar', length: 50 })
