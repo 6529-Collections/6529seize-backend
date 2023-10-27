@@ -30,11 +30,15 @@ export async function getWalletTdhAndConsolidatedWallets(
     { wallet: `%${wallet.toLowerCase()}%` }
   );
   const row = tdhSqlResult?.at(0);
+  const consolidatedWallets = JSON.parse(row?.wallets ?? '[]').map(
+    (w: string) => w.toLowerCase()
+  );
+  if (!consolidatedWallets.includes(wallet.toLowerCase())) {
+    consolidatedWallets.push(wallet.toLowerCase());
+  }
   return {
     tdh: row?.tdh ?? 0,
-    consolidatedWallets: JSON.parse(row?.wallets ?? '[]').map((w: string) =>
-      w.toLowerCase()
-    ),
+    consolidatedWallets: consolidatedWallets,
     blockNo: row?.block ?? 0
   };
 }
