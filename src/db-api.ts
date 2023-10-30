@@ -40,10 +40,15 @@ import {
 } from './constants';
 import { RememeSource } from './entities/IRememe';
 import { User } from './entities/IUser';
-import { areEqualAddresses, extractConsolidationWallets } from './helpers';
+import {
+  areEqualAddresses,
+  distinct,
+  extractConsolidationWallets
+} from './helpers';
 import { getConsolidationsSql, getProfilePageSql } from './sql_helpers';
 import { getProof } from './merkle_proof';
 import { setSqlExecutor } from './sql-executor';
+import * as profiles from './profiles';
 
 import * as mysql from 'mysql';
 
@@ -1246,7 +1251,8 @@ export async function fetchOwnerMetrics(
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length > 0) {
       const sql = getProfilePageSql(resolvedWallets);
-      const results2 = await execSQL(sql);
+      let results2 = await execSQL(sql);
+      results2 = await enhanceDataWithHandles(results2);
       return {
         count: results2.length,
         page: 1,
@@ -1255,6 +1261,7 @@ export async function fetchOwnerMetrics(
       };
     }
   }
+  results.data = await enhanceDataWithHandles(results.data);
   return results;
 }
 
@@ -1398,6 +1405,36 @@ export async function fetchConsolidatedOwnerMetricsForKey(
   } else {
     return null;
   }
+}
+
+async function enhanceDataWithHandles(
+  data: { wallets?: string; wallet?: string }[]
+) {
+  const resultWallets: string[] = distinct(
+    data
+      .map((d: { wallets?: string; wallet?: string }) =>
+        d.wallet ? [d.wallet] : d.wallets ? JSON.parse(d.wallets) : []
+      )
+      .flat()
+  );
+  const walletsToHandles = await profiles.getProfileHandlesByPrimaryWallets(
+    resultWallets
+  );
+
+  return data.map((d: { wallets?: string; wallet?: string }) => {
+    const parsedWallets = d.wallet
+      ? [d.wallet]
+      : d.wallets
+      ? JSON.parse(d.wallets)
+      : [];
+    const resolvedWallet = parsedWallets.find(
+      (w: string) => walletsToHandles[w.toLowerCase()]
+    );
+    if (!resolvedWallet) {
+      return d;
+    }
+    return { ...d, handle: walletsToHandles[resolvedWallet.toLowerCase()] };
+  });
 }
 
 export async function fetchConsolidatedOwnerMetrics(
@@ -1669,8 +1706,9 @@ export async function fetchConsolidatedOwnerMetrics(
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length > 0) {
       const sql = getProfilePageSql(resolvedWallets);
-      const results2 = await execSQL(sql);
+      let results2 = await execSQL(sql);
       results2[0].wallets = resolvedWallets;
+      results2 = await enhanceDataWithHandles(results2);
       return {
         count: results2.length,
         page: 1,
@@ -1687,6 +1725,7 @@ export async function fetchConsolidatedOwnerMetrics(
       })
     );
   }
+  results.data = await enhanceDataWithHandles(results.data);
 
   return results;
 }

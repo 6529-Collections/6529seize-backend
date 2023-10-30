@@ -971,6 +971,9 @@ loadApi().then(() => {
           delete d.memes_ranks;
           delete d.gradients;
           delete d.gradients_ranks;
+          if (!d.handle) {
+            d.handle = '';
+          }
         });
       } else {
         result.data.map((d: any) => {
@@ -1114,6 +1117,9 @@ loadApi().then(() => {
           delete d.memes_ranks;
           delete d.gradients;
           delete d.gradients_ranks;
+          if (!d.handle) {
+            d.handle = '';
+          }
         });
       } else {
         result.data.map((d: any) => {

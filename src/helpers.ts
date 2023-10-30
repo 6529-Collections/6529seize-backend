@@ -207,3 +207,7 @@ export function isValidUrl(url: string) {
     return false;
   }
 }
+
+export function distinct<T>(arr: T[]): T[] {
+  return Array.from(new Set(arr));
+}
