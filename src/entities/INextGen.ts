@@ -1,9 +1,19 @@
 import { Entity, CreateDateColumn, PrimaryColumn, Column } from 'typeorm';
 import {
   NEXTGEN_ALLOWLIST_TABLE,
-  NEXTGEN_COLLECTIONS_TABLE
+  NEXTGEN_COLLECTIONS_TABLE,
+  NEXTGEN_TRANSACTIONS_BLOCK_TABLE
 } from '../constants';
 import * as mysql from 'mysql';
+
+@Entity(NEXTGEN_TRANSACTIONS_BLOCK_TABLE)
+export class NextGenTransactionsBlock {
+  @PrimaryColumn({ type: 'int' })
+  block_number!: number;
+
+  @CreateDateColumn({ type: 'datetime' })
+  created_at!: Date;
+}
 
 @Entity(NEXTGEN_ALLOWLIST_TABLE)
 export class NextGenAllowlist {

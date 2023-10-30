@@ -32,6 +32,7 @@ export const DELEGATIONS_TABLE = 'delegations';
 export const NFTS_HISTORY_TABLE = 'nfts_history';
 export const NFTS_HISTORY_BLOCKS_TABLE = 'nfts_history_blocks';
 export const NFTS_HISTORY_CLAIMS_TABLE = 'nfts_history_claims';
+export const NEXTGEN_TRANSACTIONS_BLOCK_TABLE = 'nextgen_transactions_block';
 export const NEXTGEN_ALLOWLIST_TABLE = 'nextgen_allowlist';
 export const NEXTGEN_COLLECTIONS_TABLE = 'nextgen_collection';
 export const REMEMES_TABLE = 'rememes';
@@ -54,6 +55,10 @@ export const ROYALTIES_ADDRESS = '0x1b1289e34fe05019511d7b436a5138f361904df0';
 export const OPENSEA_ADDRESS = '0x00000000000001ad428e4906ae43d8f9852d0dd6';
 export const MEMES_DEPLOYER = '0x4B76837F8D8Ad0A28590d06E53dCD44b6B7D4554';
 export const NEXTGEN_ADMIN = '0x1bAe1D145Dd61fBBB62C85f8A6d7B6eDe0D150f5';
+export const NEXTGEN_CONTRACT = {
+  network: Network.ETH_GOERLI,
+  contract: '0xF3ff54B93844B1512C7bDafd2c41B5D228D03f98'
+};
 
 export const ALCHEMY_SETTINGS = {
   network: Network.ETH_MAINNET,

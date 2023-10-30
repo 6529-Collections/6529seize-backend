@@ -1,17 +1,17 @@
 import { NFT } from './entities/INFT';
 import { areEqualAddresses } from './helpers';
 import {
+  objectExists,
+  createTempFile,
+  deleteTempFile
+} from './helpers/s3_helpers';
+import {
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   NFT_ORIGINAL_IMAGE_LINK
 } from './constants';
-import {
-  S3Client,
-  HeadObjectCommand,
-  PutObjectCommand,
-  DeleteObjectCommand
-} from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import sharp from 'sharp';
 import { Stream } from 'stream';
 import { RequestInfo, RequestInit } from 'node-fetch';
@@ -54,7 +54,7 @@ export const persistS3 = async (nfts: NFT[]) => {
 
       if (format) {
         const imageKey = `images/original/${n.contract}/${n.id}.${format}`;
-        const imageExists = await objectExists(myBucket, imageKey);
+        const imageExists = await objectExists(s3, myBucket, imageKey);
 
         if (!imageExists) {
           console.log(
@@ -100,7 +100,7 @@ export const persistS3 = async (nfts: NFT[]) => {
           scaledFormat = 'GIF';
         }
         const scaledKey = `images/scaled_x1000/${n.contract}/${n.id}.${scaledFormat}`;
-        const scaledImageExists = await objectExists(myBucket, scaledKey);
+        const scaledImageExists = await objectExists(s3, myBucket, scaledKey);
 
         if (!scaledImageExists) {
           console.log(
@@ -155,7 +155,11 @@ export const persistS3 = async (nfts: NFT[]) => {
             thumbnailFormat = 'GIF';
           }
           const thumbnailKey = `images/scaled_x450/${n.contract}/${n.id}.${thumbnailFormat}`;
-          const thumbnailExists = await objectExists(myBucket, thumbnailKey);
+          const thumbnailExists = await objectExists(
+            s3,
+            myBucket,
+            thumbnailKey
+          );
 
           if (!thumbnailExists) {
             console.log(
@@ -212,7 +216,7 @@ export const persistS3 = async (nfts: NFT[]) => {
           }
 
           const iconKey = `images/scaled_x60/${n.contract}/${n.id}.${iconFormat}`;
-          const iconExists = await objectExists(myBucket, iconKey);
+          const iconExists = await objectExists(s3, myBucket, iconKey);
 
           if (!iconExists) {
             console.log(
@@ -222,7 +226,7 @@ export const persistS3 = async (nfts: NFT[]) => {
               `[ID ${n.id}]`
             );
 
-            await createTempFile(myBucket, iconKey);
+            await createTempFile(s3, myBucket, iconKey);
 
             console.log(
               '[S3]',
@@ -257,7 +261,7 @@ export const persistS3 = async (nfts: NFT[]) => {
               })
             );
 
-            await deleteTempFile(myBucket, iconKey);
+            await deleteTempFile(s3, myBucket, iconKey);
 
             console.log('[S3]', `[ICON PERSISTED AT ${uploadedIcon.ETag}`);
           }
@@ -269,7 +273,7 @@ export const persistS3 = async (nfts: NFT[]) => {
       if (animationDetails && animationDetails.format?.toUpperCase() == 'MP4') {
         const videoFormat = animationDetails.format.toUpperCase();
         const videoKey = `videos/${n.contract}/${n.id}.${videoFormat}`;
-        const videoExists = await objectExists(myBucket, videoKey);
+        const videoExists = await objectExists(s3, myBucket, videoKey);
 
         if (!videoExists) {
           console.log(
@@ -322,7 +326,7 @@ export const persistS3 = async (nfts: NFT[]) => {
 async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
   const scaledVideoKey = `videos/${n.contract}/scaledx750/${n.id}.${videoFormat}`;
 
-  const exists = await objectExists(myBucket, scaledVideoKey);
+  const exists = await objectExists(s3, myBucket, scaledVideoKey);
   if (!exists) {
     console.log(
       '[S3]',
@@ -333,7 +337,7 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
 
     console.log('[S3]', `[SCALING ${scaledVideoKey}]`);
 
-    await createTempFile(myBucket, scaledVideoKey);
+    await createTempFile(s3, myBucket, scaledVideoKey);
 
     console.log('[S3]', `[TEMP CREATED ${scaledVideoKey}]`);
 
@@ -351,7 +355,7 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
     console.log('[S3]', `[ACQUIRED SCALED STREAM ${scaledVideoKey}]`);
 
     resizedVideoStream.on('error', async function (err: any) {
-      await deleteTempFile(myBucket, scaledVideoKey);
+      await deleteTempFile(s3, myBucket, scaledVideoKey);
       console.log(
         '[S3]',
         `[resizedVideoStream]`,
@@ -376,7 +380,7 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
         }
       });
       ffstream.on('error', async function (err) {
-        await deleteTempFile(myBucket, scaledVideoKey);
+        await deleteTempFile(s3, myBucket, scaledVideoKey);
         console.log('[S3]', `[SCALING FAILED ${scaledVideoKey}]`, `[${err}]`);
       });
       ffstream.on('end', async function () {
@@ -401,48 +405,10 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
             );
           }
         }
-        await deleteTempFile(myBucket, scaledVideoKey);
+        await deleteTempFile(s3, myBucket, scaledVideoKey);
       });
     });
   }
-}
-
-async function objectExists(myBucket: any, key: any): Promise<boolean> {
-  try {
-    await s3.send(new HeadObjectCommand({ Bucket: myBucket, Key: key }));
-    console.log('objectExists', key);
-    return true;
-  } catch (error1: any) {
-    try {
-      await s3.send(
-        new HeadObjectCommand({ Bucket: myBucket, Key: `${key}__temp` })
-      );
-      console.log('objectExists', `${key}__temp`);
-      return true;
-    } catch (error2: any) {
-      return false;
-    }
-  }
-  return false;
-}
-
-async function createTempFile(myBucket: any, key: any) {
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: myBucket,
-      Key: `${key}__temp`,
-      Body: Buffer.from('temp')
-    })
-  );
-}
-
-async function deleteTempFile(myBucket: any, key: any) {
-  await s3.send(
-    new DeleteObjectCommand({
-      Bucket: myBucket,
-      Key: `${key}__temp`
-    })
-  );
 }
 
 async function scaleVideo(url: string, format: string): Promise<any> {
