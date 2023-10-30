@@ -572,7 +572,7 @@ export async function fetchTdhReplayOwners(datetime: Date) {
 export async function fetchAllOwnersAddresses() {
   const sql = `SELECT distinct wallet FROM ${OWNERS_TABLE} WHERE wallet != ${mysql.escape(
     NULL_ADDRESS
-  )} AND wallet != ${mysql.escape(MANIFOLD)};`;
+  )};`;
   const results = await execSQL(sql);
   return results;
 }
