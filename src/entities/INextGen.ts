@@ -57,6 +57,9 @@ export class NextGenCollection {
   merkle_tree!: string;
 
   @Column({ type: 'text', nullable: true })
+  al_type!: string;
+
+  @Column({ type: 'text', nullable: true })
   phase!: string;
 }
 
@@ -78,9 +81,9 @@ export function extractNextGenAllowlistInsert(
 }
 
 export function extractNextGenCollectionInsert(nextgen: NextGenCollection) {
-  return `INSERT INTO ${NEXTGEN_COLLECTIONS_TABLE} (merkle_root, collection_id, added_by, merkle_tree) VALUES (${mysql.escape(
+  return `INSERT INTO ${NEXTGEN_COLLECTIONS_TABLE} (merkle_root, collection_id, added_by, al_type, merkle_tree) VALUES (${mysql.escape(
     nextgen.merkle_root
   )}, ${mysql.escape(nextgen.collection_id)}, ${mysql.escape(
     nextgen.added_by
-  )}, ${mysql.escape(nextgen.merkle_tree)})`;
+  )}, ${mysql.escape(nextgen.al_type)}, ${mysql.escape(nextgen.merkle_tree)})`;
 }

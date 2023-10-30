@@ -70,6 +70,7 @@ router.get(
 async function persistAllowlist(body: {
   collection_id: number;
   added_by: string;
+  al_type: string;
   merkle: {
     merkle_root: string;
     merkle_tree: any;
@@ -91,6 +92,7 @@ async function persistAllowlist(body: {
   const collection = new NextGenCollection();
   collection.collection_id = body.collection_id;
   collection.added_by = body.added_by;
+  collection.al_type = body.al_type;
   collection.merkle_root = body.merkle.merkle_root;
   collection.merkle_tree = JSON.stringify(body.merkle.merkle_tree);
 
@@ -117,10 +119,11 @@ async function persistAllowlist(body: {
     );
   }
 
-  sqlOperations.push(
-    extractNextGenAllowlistInsert(collection.collection_id, allowlistData)
-  );
-  sqlOperations.push(extractNextGenCollectionInsert(collection));
+  // sqlOperations.push(
+  //   extractNextGenAllowlistInsert(collection.collection_id, allowlistData)
+  // );
+  const collectionInsert = extractNextGenCollectionInsert(collection);
+  sqlOperations.push(collectionInsert);
   await execSQLWithTransaction(sqlOperations);
 
   console.log(

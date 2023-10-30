@@ -120,10 +120,10 @@ export async function connect(entities: any[] = []) {
       User,
       VoteEvent,
       VoteMatterCategory,
+      Profile,
       NextGenTransactionsBlock,
       NextGenAllowlist,
-      NextGenCollection,
-      Profile
+      NextGenCollection
     ];
   }
 

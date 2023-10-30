@@ -15,16 +15,26 @@ const { MerkleTree } = require('merkletreejs');
 const csv = require('csv-parser');
 const path = require('path');
 
+const AVAILABLE_TYPES = ['allowlist', 'external_burn'];
+
 const nextgenSchema = Joi.object({
   wallet: Joi.string().required(),
   signature: Joi.string().required(),
   collection_id: Joi.number().required(),
-  uuid: Joi.string().required()
+  uuid: Joi.string().required(),
+  al_type: Joi.string()
+    .valid(...AVAILABLE_TYPES)
+    .required()
 });
 
 interface UploadAllowlist {
   address: string;
   spots: number;
+  info: string;
+}
+
+interface UploadAllowlistBurn {
+  token_id: string;
   info: string;
 }
 
@@ -71,8 +81,16 @@ export async function validateNextgen(req: any, res: any, next: any) {
       return handleValidationFailure(req, false, 'Invalid admin', next);
     }
 
-    const allowlist = await readAllowlist(allowlistFile.buffer);
-    const merkle = await computeMerkle(allowlist);
+    let allowlist: UploadAllowlist[] | UploadAllowlistBurn[];
+    let merkle: any;
+    if (value.al_type === 'allowlist') {
+      allowlist = await readAllowlist(allowlistFile.buffer);
+      merkle = await computeMerkle(allowlist);
+    }
+    if (value.al_type === 'external_burn') {
+      allowlist = await readAllowlistBurn(allowlistFile.buffer);
+      merkle = await computeMerkleBurn(allowlist);
+    }
 
     console.log(
       '[VALIDATE NEXTGEN]',
@@ -83,6 +101,7 @@ export async function validateNextgen(req: any, res: any, next: any) {
       valid: true,
       collection_id: value.collection_id,
       added_by: value.wallet,
+      al_type: value.al_type,
       merkle: merkle
     };
 
@@ -147,6 +166,34 @@ async function readAllowlist(
   return allowlist;
 }
 
+async function readAllowlistBurn(
+  allowlistFileBuffer: Buffer
+): Promise<UploadAllowlistBurn[]> {
+  const allowlist: UploadAllowlistBurn[] = [];
+
+  const bufferStream = new Readable();
+  bufferStream.push(allowlistFileBuffer);
+  bufferStream.push(null);
+
+  bufferStream.pipe(csv({ headers: false })).on('data', (data: any) => {
+    allowlist.push({
+      token_id: data[0],
+      info: data[1]
+    });
+  });
+
+  await new Promise((resolve, reject) => {
+    bufferStream.on('end', () => {
+      resolve(true);
+    });
+    bufferStream.on('error', (err) => {
+      reject(err);
+    });
+  });
+
+  return allowlist;
+}
+
 async function computeMerkle(allowlist: UploadAllowlist[]): Promise<any> {
   const processedAllowlist = allowlist.map((al) => {
     const parsedAddress = al.address.startsWith('0x')
@@ -157,6 +204,33 @@ async function computeMerkle(allowlist: UploadAllowlist[]): Promise<any> {
     const info = al.info;
     const parsedInfo = stringToHex(info);
     const concatenatedData = `${parsedAddress}${parsedSpots}${parsedInfo}`;
+    const bufferData = Buffer.from(concatenatedData, 'hex');
+    const result = keccak256(bufferData).slice(2);
+
+    return {
+      ...al,
+      keccak: result
+    };
+  });
+
+  const leaves = processedAllowlist.map((al) => al.keccak);
+  const merkleTree = new MerkleTree(leaves, keccak256, { sortPairs: true });
+
+  return {
+    merkle_root: merkleTree.getHexRoot(),
+    merkle_tree: merkleTree,
+    allowlist: processedAllowlist
+  };
+}
+
+async function computeMerkleBurn(
+  allowlist: UploadAllowlistBurn[]
+): Promise<any> {
+  const processedAllowlist = allowlist.map((al) => {
+    const tokenId = al.token_id;
+    const info = al.info;
+    const parsedInfo = stringToHex(info);
+    const concatenatedData = `${tokenId}${parsedInfo}`;
     const bufferData = Buffer.from(concatenatedData, 'hex');
     const result = keccak256(bufferData).slice(2);
 

@@ -1,5 +1,6 @@
 import {
   DeleteObjectCommand,
+  GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
   S3Client
@@ -12,7 +13,6 @@ export async function objectExists(
 ): Promise<boolean> {
   try {
     await s3.send(new HeadObjectCommand({ Bucket: myBucket, Key: key }));
-    console.log('objectExists', key);
     return true;
   } catch (error1: any) {
     try {
@@ -25,7 +25,6 @@ export async function objectExists(
       return false;
     }
   }
-  return false;
 }
 
 export async function createTempFile(s3: S3Client, myBucket: any, key: any) {
