@@ -51,11 +51,24 @@ import { setSqlExecutor } from './sql-executor';
 import * as profiles from './profiles';
 
 import * as mysql from 'mysql';
+import { Time } from './time';
 
-let mysql_pool: mysql.Pool;
+let read_pool: mysql.Pool;
+let write_pool: mysql.Pool;
+
+const WRITE_OPERATIONS = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE'];
 
 export async function connect() {
   let port: number | undefined;
+  if (
+    !process.env.DB_HOST ||
+    !process.env.DB_USER ||
+    !process.env.DB_PASS ||
+    !process.env.DB_PORT
+  ) {
+    console.log('[API]', '[MISSING CONFIGURATION FOR WRITE DB]', '[EXITING]');
+    process.exit();
+  }
   if (
     !process.env.DB_HOST_READ ||
     !process.env.DB_USER_READ ||
@@ -66,11 +79,23 @@ export async function connect() {
     process.exit();
   }
   port = +process.env.DB_PORT;
-  mysql_pool = mysql.createPool({
+  write_pool = mysql.createPool({
+    connectionLimit: 5,
+    connectTimeout: Time.seconds(30).toMillis(),
+    acquireTimeout: Time.seconds(30).toMillis(),
+    timeout: Time.seconds(30).toMillis(),
+    host: process.env.DB_HOST,
+    port: port,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASS,
+    charset: 'utf8mb4',
+    database: process.env.DB_NAME
+  });
+  read_pool = mysql.createPool({
     connectionLimit: 10,
-    connectTimeout: 30 * 1000,
-    acquireTimeout: 30 * 1000,
-    timeout: 30 * 1000,
+    connectTimeout: Time.seconds(30).toMillis(),
+    acquireTimeout: Time.seconds(30).toMillis(),
+    timeout: Time.seconds(30).toMillis(),
     host: process.env.DB_HOST_READ,
     port: port,
     user: process.env.DB_USER_READ,
@@ -82,12 +107,20 @@ export async function connect() {
     execute: (sql: string, params?: Record<string, any>) =>
       execSQLWithParams(sql, params)
   });
-  console.log('[API]', `[CONNECTION POOL CREATED]`);
+  console.log('[API]', `[CONNECTION POOLS CREATED]`);
+}
+
+function getPool(sql: string) {
+  if (WRITE_OPERATIONS.some((op) => sql.toUpperCase().startsWith(op))) {
+    return write_pool;
+  }
+  return read_pool;
 }
 
 export function execSQL(sql: string): Promise<any> {
+  const my_pool: mysql.Pool = getPool(sql);
   return new Promise((resolve, reject) => {
-    mysql_pool.getConnection(function (
+    my_pool.getConnection(function (
       err: mysql.MysqlError,
       dbcon: mysql.PoolConnection
     ) {
@@ -112,8 +145,9 @@ export function execSQLWithParams(
   sql: string,
   params?: Record<string, any>
 ): Promise<any> {
+  const my_pool: mysql.Pool = getPool(sql);
   return new Promise((resolve, reject) => {
-    mysql_pool.getConnection(function (
+    my_pool.getConnection(function (
       err: mysql.MysqlError,
       dbcon: mysql.PoolConnection
     ) {
