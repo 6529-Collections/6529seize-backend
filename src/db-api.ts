@@ -381,7 +381,7 @@ export async function fetchLabOwners(
   const fields = ` ${OWNERS_MEME_LAB_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
   const joins = `LEFT JOIN ${ENS_TABLE} ON ${OWNERS_MEME_LAB_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
-  return fetchPaginated(
+  const result = await fetchPaginated(
     OWNERS_MEME_LAB_TABLE,
     `${sort} ${sortDir}, token_id asc, created_at desc`,
     pageSize,
@@ -390,6 +390,8 @@ export async function fetchLabOwners(
     fields,
     joins
   );
+  result.data = await enhanceDataWithHandles(result.data);
+  return result;
 }
 
 export async function fetchTeam(pageSize: number, page: number) {
@@ -918,7 +920,7 @@ export async function fetchConsolidatedNftTdh(
       break;
   }
 
-  return fetchPaginated(
+  const result = await fetchPaginated(
     CONSOLIDATED_WALLETS_TDH_TABLE,
     `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
     pageSize,
@@ -927,6 +929,8 @@ export async function fetchConsolidatedNftTdh(
     fields,
     joins
   );
+  result.data = await enhanceDataWithHandles(result.data);
+  return result;
 }
 
 export async function fetchTDH(
