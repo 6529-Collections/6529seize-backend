@@ -877,7 +877,7 @@ export async function fetchNftTdh(
       break;
   }
 
-  return fetchPaginated(
+  const result = await fetchPaginated(
     WALLETS_TDH_TABLE,
     `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
     pageSize,
@@ -886,6 +886,8 @@ export async function fetchNftTdh(
     fields,
     joins
   );
+  result.data = await enhanceDataWithHandles(result.data);
+  return result;
 }
 
 export async function fetchConsolidatedNftTdh(
