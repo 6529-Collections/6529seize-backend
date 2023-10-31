@@ -52,10 +52,20 @@ import * as profiles from './profiles';
 
 import * as mysql from 'mysql';
 
-let mysql_pool: mysql.Pool;
+let read_pool: mysql.Pool;
+let write_pool: mysql.Pool;
 
 export async function connect() {
   let port: number | undefined;
+  if (
+    !process.env.DB_HOST ||
+    !process.env.DB_USER ||
+    !process.env.DB_PASS ||
+    !process.env.DB_PORT
+  ) {
+    console.log('[API]', '[MISSING CONFIGURATION FOR WRITE DB]', '[EXITING]');
+    process.exit();
+  }
   if (
     !process.env.DB_HOST_READ ||
     !process.env.DB_USER_READ ||
@@ -66,7 +76,19 @@ export async function connect() {
     process.exit();
   }
   port = +process.env.DB_PORT;
-  mysql_pool = mysql.createPool({
+  write_pool = mysql.createPool({
+    connectionLimit: 5,
+    connectTimeout: 30 * 1000,
+    acquireTimeout: 30 * 1000,
+    timeout: 30 * 1000,
+    host: process.env.DB_HOST,
+    port: port,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASS,
+    charset: 'utf8mb4',
+    database: process.env.DB_NAME
+  });
+  read_pool = mysql.createPool({
     connectionLimit: 10,
     connectTimeout: 30 * 1000,
     acquireTimeout: 30 * 1000,
@@ -82,12 +104,19 @@ export async function connect() {
     execute: (sql: string, params?: Record<string, any>) =>
       execSQLWithParams(sql, params)
   });
-  console.log('[API]', `[CONNECTION POOL CREATED]`);
+  console.log('[API]', `[CONNECTION POOLS CREATED]`);
 }
 
-export function execSQL(sql: string): Promise<any> {
+export function execSQL(sql: string) {
+  if (sql.startsWith('SELECT')) {
+    return execSQLWithPool(read_pool, sql);
+  }
+  return execSQLWithPool(write_pool, sql);
+}
+
+function execSQLWithPool(my_pool: mysql.Pool, sql: string): Promise<any> {
   return new Promise((resolve, reject) => {
-    mysql_pool.getConnection(function (
+    my_pool.getConnection(function (
       err: mysql.MysqlError,
       dbcon: mysql.PoolConnection
     ) {
@@ -108,12 +137,20 @@ export function execSQL(sql: string): Promise<any> {
   });
 }
 
-export function execSQLWithParams(
+export function execSQLWithParams(sql: string, params?: Record<string, any>) {
+  if (sql.startsWith('SELECT')) {
+    return execSQLWithParamsAndPool(read_pool, sql, params);
+  }
+  return execSQLWithParamsAndPool(write_pool, sql, params);
+}
+
+function execSQLWithParamsAndPool(
+  my_pool: mysql.Pool,
   sql: string,
   params?: Record<string, any>
 ): Promise<any> {
   return new Promise((resolve, reject) => {
-    mysql_pool.getConnection(function (
+    my_pool.getConnection(function (
       err: mysql.MysqlError,
       dbcon: mysql.PoolConnection
     ) {
