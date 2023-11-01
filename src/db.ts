@@ -999,12 +999,13 @@ export async function persistConsolidatedTdhUpload(
 export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
   console.log('[TDH]', `PERSISTING WALLETS TDH [${tdh.length}]`);
 
-  await AppDataSource.getRepository(TDH).save(tdh);
-
-  const sqlBlock = `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block_number=${block}, timestamp=${mysql.escape(
-    timestamp
-  )}`;
-  await execSQL(sqlBlock);
+  await AppDataSource.transaction(async (manager) => {
+    await manager.getRepository(TDH).save(tdh);
+    await manager.query(
+      `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block_number=?, timestamp=?`,
+      [block, timestamp]
+    );
+  });
 
   console.log('[TDH]', `PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
