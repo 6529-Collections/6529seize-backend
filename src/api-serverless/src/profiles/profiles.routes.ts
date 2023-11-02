@@ -175,9 +175,11 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
       .min(3)
       .max(15)
       .regex(PROFILE_HANDLE_REGEX)
-      .lowercase()
       .custom((value, helpers) => {
-        if (RESERVED_HANDLES.map((h) => h.toLowerCase()).includes(value)) {
+        const lowerCaseValue = value.toLowerCase();
+        if (
+          RESERVED_HANDLES.map((h) => h.toLowerCase()).includes(lowerCaseValue)
+        ) {
           return helpers.message({
             custom: `This username is not available. Please choose a different one.`
           });
