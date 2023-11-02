@@ -231,32 +231,34 @@ async function fetchPaginated(
   joins?: string,
   groups?: string
 ) {
-  const sql1 = `SELECT COUNT(*) as count FROM ${table} ${joins} ${filters}`;
+  const countSql = `SELECT COUNT(1) as count FROM (SELECT 1 FROM ${table} ${joins} ${filters}${
+    groups ? ` GROUP BY ${groups}` : ``
+  }) inner_q`;
 
-  let sql2 = `SELECT ${fields ? fields : '*'} FROM ${table} ${
+  let resultsSql = `SELECT ${fields ? fields : '*'} FROM ${table} ${
     joins ? joins : ''
   } ${filters} ${groups ? `group by ${groups}` : ``} order by ${orderBy} ${
     pageSize > 0 ? `LIMIT ${pageSize}` : ``
   }`;
   if (page > 1) {
     const offset = pageSize * (page - 1);
-    sql2 += ` OFFSET ${offset}`;
+    resultsSql += ` OFFSET ${offset}`;
   }
 
-  // console.log(sql1);
-  // console.log(sql2);
+  // console.log(countSql);
+  // console.log(resultsSql);
 
-  const r1 = await execSQL(sql1);
-  const r2 = await execSQL(sql2);
+  const count = await execSQL(countSql).then((r) => r[0].count);
+  const data = await execSQL(resultsSql);
 
-  // console.log(r1);
-  // console.log(r2);
+  // console.log(count);
+  // console.log(data);
 
   return {
-    count: r1[0]?.count,
-    page: page,
-    next: r1[0]?.count > pageSize * page,
-    data: r2
+    count,
+    page,
+    next: count > pageSize * page,
+    data
   };
 }
 
