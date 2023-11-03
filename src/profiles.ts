@@ -114,12 +114,20 @@ export async function getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
   }
 }
 
-async function getProfileByHandle(handle: string): Promise<Profile> {
+function mapProfilesFromDb(profiles: any[]): Profile[] {
+  return profiles.map((profile) => ({
+    ...profile,
+    created_at: new Date(profile.created_at),
+    updated_at: profile.updated_at ? new Date(profile.updated_at) : null
+  }));
+}
+
+async function getProfileByHandle(handle: string): Promise<Profile | null> {
   const result = await sqlExecutor.execute(
     `select * from ${PROFILES_TABLE} where normalised_handle = :handle`,
     { handle: handle.toLowerCase() }
   );
-  return result.at(0);
+  return mapProfilesFromDb(result).at(0) ?? null;
 }
 
 async function getWalletsNewestProfile(
@@ -139,10 +147,11 @@ export async function getProfilesByWallets(
   if (wallets.length === 0) {
     return [];
   }
-  return sqlExecutor.execute(
+  const result = await sqlExecutor.execute(
     `select * from ${PROFILES_TABLE} where primary_wallet in (:wallets)`,
     { wallets: wallets.map((w) => w.toLowerCase()) }
   );
+  return mapProfilesFromDb(result);
 }
 
 export async function getProfilesByAnyWallets(
@@ -151,10 +160,11 @@ export async function getProfilesByAnyWallets(
   if (wallets.length === 0) {
     return [];
   }
-  return sqlExecutor.execute(
+  const result = await sqlExecutor.execute(
     `select * from ${PROFILES_TABLE} where primary_wallet in (:wallets)`,
     { wallets: wallets.map((w) => w.toLowerCase()) }
   );
+  return mapProfilesFromDb(result);
 }
 
 export async function createOrUpdateProfile({
