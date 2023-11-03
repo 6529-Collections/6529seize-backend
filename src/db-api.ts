@@ -175,7 +175,7 @@ export function execSQLWithParams(
           console.log('custom err', err);
           return reject(err);
         }
-        resolve(Object.values(JSON.parse(JSON.stringify(result))));
+        resolve(result);
       });
     });
   });
