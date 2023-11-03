@@ -114,8 +114,8 @@ export async function connect() {
   console.log('[API]', `[CONNECTION POOLS CREATED]`);
 }
 
-function getPool(sql: string, forcedPoolName?: DbPoolName) {
-  switch (forcedPoolName) {
+function getPool(sql: string, queryOptions?: DbQueryOptions) {
+  switch (queryOptions?.forcePool) {
     case DbPoolName.READ:
       return read_pool;
     case DbPoolName.WRITE:
@@ -128,7 +128,7 @@ function getPool(sql: string, forcedPoolName?: DbPoolName) {
 }
 
 export function execSQL(sql: string, options?: DbQueryOptions): Promise<any> {
-  const my_pool: mysql.Pool = getPool(sql, options?.forcePool);
+  const my_pool: mysql.Pool = getPool(sql, options);
   return new Promise((resolve, reject) => {
     my_pool.getConnection(function (
       err: mysql.MysqlError,
@@ -156,7 +156,7 @@ export function execSQLWithParams(
   params?: Record<string, any>,
   options?: { forcePool?: DbPoolName }
 ): Promise<any> {
-  const my_pool: mysql.Pool = getPool(sql, options?.forcePool);
+  const my_pool: mysql.Pool = getPool(sql, options);
   return new Promise((resolve, reject) => {
     my_pool.getConnection(function (
       err: mysql.MysqlError,
