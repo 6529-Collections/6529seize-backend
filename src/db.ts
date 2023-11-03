@@ -209,7 +209,7 @@ export function execSQLWithParams(
           return txt;
         })
       );
-      resolve(Object.values(JSON.parse(JSON.stringify(r))));
+      resolve(r);
     } catch (err: any) {
       return reject(err);
     }
