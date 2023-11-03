@@ -52,6 +52,7 @@ import * as profiles from './profiles';
 
 import * as mysql from 'mysql';
 import { Time } from './time';
+import { DbPoolName, DbQueryOptions } from './db-query.options';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -104,21 +105,30 @@ export async function connect() {
     database: process.env.DB_NAME
   });
   setSqlExecutor({
-    execute: (sql: string, params?: Record<string, any>) =>
-      execSQLWithParams(sql, params)
+    execute: (
+      sql: string,
+      params?: Record<string, any>,
+      options?: DbQueryOptions
+    ) => execSQLWithParams(sql, params, options)
   });
   console.log('[API]', `[CONNECTION POOLS CREATED]`);
 }
 
-function getPool(sql: string) {
-  if (WRITE_OPERATIONS.some((op) => sql.toUpperCase().startsWith(op))) {
-    return write_pool;
+function getPool(sql: string, forcedPoolName?: DbPoolName) {
+  switch (forcedPoolName) {
+    case DbPoolName.READ:
+      return read_pool;
+    case DbPoolName.WRITE:
+      return write_pool;
+    default:
+      return WRITE_OPERATIONS.some((op) => sql.toUpperCase().startsWith(op))
+        ? write_pool
+        : read_pool;
   }
-  return read_pool;
 }
 
-export function execSQL(sql: string): Promise<any> {
-  const my_pool: mysql.Pool = getPool(sql);
+export function execSQL(sql: string, options?: DbQueryOptions): Promise<any> {
+  const my_pool: mysql.Pool = getPool(sql, options?.forcePool);
   return new Promise((resolve, reject) => {
     my_pool.getConnection(function (
       err: mysql.MysqlError,
@@ -143,9 +153,10 @@ export function execSQL(sql: string): Promise<any> {
 
 export function execSQLWithParams(
   sql: string,
-  params?: Record<string, any>
+  params?: Record<string, any>,
+  options?: { forcePool?: DbPoolName }
 ): Promise<any> {
-  const my_pool: mysql.Pool = getPool(sql);
+  const my_pool: mysql.Pool = getPool(sql, options?.forcePool);
   return new Promise((resolve, reject) => {
     my_pool.getConnection(function (
       err: mysql.MysqlError,
