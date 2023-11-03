@@ -9,6 +9,7 @@ import * as nfts from './nfts';
 import * as path from 'path';
 import { scalePfpAndPersistToS3 } from './api-serverless/src/users/s3';
 import { Wallet } from './entities/IWallet';
+import { DbPoolName } from './db-query.options';
 
 export interface CreateOrUpdateProfileCommand {
   handle: string;
@@ -117,7 +118,8 @@ export async function getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
 async function getProfileByHandle(handle: string): Promise<Profile | null> {
   const result = await sqlExecutor.execute(
     `select * from ${PROFILES_TABLE} where normalised_handle = :handle`,
-    { handle: handle.toLowerCase() }
+    { handle: handle.toLowerCase() },
+    { forcePool: DbPoolName.WRITE }
   );
   return result.at(0) ?? null;
 }
@@ -141,7 +143,8 @@ export async function getProfilesByWallets(
   }
   return sqlExecutor.execute(
     `select * from ${PROFILES_TABLE} where primary_wallet in (:wallets)`,
-    { wallets: wallets.map((w) => w.toLowerCase()) }
+    { wallets: wallets.map((w) => w.toLowerCase()) },
+    { forcePool: DbPoolName.WRITE }
   );
 }
 
@@ -153,7 +156,8 @@ export async function getProfilesByAnyWallets(
   }
   return sqlExecutor.execute(
     `select * from ${PROFILES_TABLE} where primary_wallet in (:wallets)`,
-    { wallets: wallets.map((w) => w.toLowerCase()) }
+    { wallets: wallets.map((w) => w.toLowerCase()) },
+    { forcePool: DbPoolName.WRITE }
   );
 }
 
