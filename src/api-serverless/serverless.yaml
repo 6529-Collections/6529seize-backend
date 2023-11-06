@@ -22,14 +22,14 @@ functions:
       API_LOAD_SECRETS: true
       DB_HOST: ${env:DB_HOST}
       DB_HOST_READ: ${env:DB_HOST_READ}
-      DB_NAME: ${env.DB_NAME}
-      DB_PASS: ${env.DB_PASS}
-      DB_PASS_READ: ${env.DB_PASS_READ}
-      DB_PORT: ${env.DB_PORT}
-      DB_USER: ${env.DB_USER}
-      DB_USER_READ: ${env.DB_USER_READ}
-      SENTRY_DSN: ${env.SENTRY_DSN}
-      SEIZE_API_VERSION: ${env.SEIZE_API_VERSION}
+      DB_NAME: ${env:DB_NAME}
+      DB_PASS: ${env:DB_PASS}
+      DB_PASS_READ: ${env:DB_PASS_READ}
+      DB_PORT: ${env:DB_PORT}
+      DB_USER: ${env:DB_USER}
+      DB_USER_READ: ${env:DB_USER_READ}
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SEIZE_API_VERSION: ${env:SEIZE_API_VERSION}
       SENTRY_ENVIRONMENT: production
     events:
       - http:
