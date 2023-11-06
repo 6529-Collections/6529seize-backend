@@ -31,7 +31,8 @@ const serverlessConfiguration: AWS = {
       DB_USER: process.env.DB_USER,
       DB_USER_READ: process.env.DB_USER_READ,
       SENTRY_DSN: process.env.SENTRY_DSN,
-      SEIZE_API_VERSION: process.env.SEIZE_API_VERSION
+      SEIZE_API_VERSION: process.env.SEIZE_API_VERSION,
+      API_LOAD_SECRETS: 'true'
     }
   },
   // import the function via paths
