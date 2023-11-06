@@ -468,7 +468,13 @@ export async function fetchNFTs(
     );
   }
   if (nfts) {
-    filters = constructFilters(filters, `id in (${nfts})`);
+    filters = constructFilters(
+      filters,
+      `id in (${nfts
+        .split(',')
+        .map((it) => mysql.escape(it))
+        .join(',')})`
+    );
   }
   return fetchPaginated(
     NFTS_TABLE,
