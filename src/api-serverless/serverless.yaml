@@ -1,5 +1,7 @@
 service: seizeApi
 
+useDotenv: true
+
 package:
   individually: true
   artifact: dist/index.zip
@@ -27,10 +29,13 @@ custom:
     minify: false
     sourcemap: true
     concurrency: 10
+    target: 'node14'
+    define:
+      require.resolve: undefined
 
 functions:
   seizeApi:
-    handler: handler.handler
+    handler: src/handler.handler
     name: seizeApi
     environment:
       ACTIVATE_API_PASSWORD: false

@@ -5,7 +5,7 @@
   "main": "serverless.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "NODE_ENV=local serverless offline",
+    "dev": "node ../../node_modules/serverless/bin/serverless.js offline --stage=local",
     "prebuild": "rm -rf dist",
     "build": "esbuild src/handler.ts --bundle --sourcemap --platform=node --target=es2020 --outfile=dist/index.js && mkdir dist/native_modules && cp -r node_modules/sharp dist/native_modules/sharp/ && mkdir dist/node_modules && cp -r node_modules/semver dist/node_modules/semver/ && cp -r node_modules/detect-libc dist/node_modules/detect-libc/ && cp -r node_modules/color dist/node_modules/color/ && cp -r node_modules/color-string dist/node_modules/color-string/ && cp -r node_modules/color-name dist/node_modules/color-name/ && cp -r node_modules/color-convert dist/node_modules/color-convert/ && cp -r node_modules/simple-swizzle dist/node_modules/simple-swizzle/ && cp -r node_modules/is-arrayish dist/node_modules/is-arrayish/",
     "postbuild": "cd dist && zip -r index.zip *",
@@ -52,6 +52,7 @@
     "serverless": "^3.27.0",
     "serverless-esbuild": "^1.23.3",
     "serverless-offline": "^12.0.4",
+    "serverless-dotenv-plugin": "^6.0.0",
     "swagger-autogen": "^2.23.0",
     "ts-node": "^10.4.0",
     "tsconfig-paths": "^3.9.0",
