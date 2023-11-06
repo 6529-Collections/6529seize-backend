@@ -25,9 +25,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Install dependencies
-        run: npm i
+        run: npm i && pushd src/api-serverless && npm i && popd
       - name: Build
-        run: pushd src/api-serverless && npm run build:linux && popd
+        run: pushd src/api-serverless && npm run build && popd
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@13d241b293754004c80624b5567555c4a39ffbe3
         with:
