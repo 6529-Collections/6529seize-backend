@@ -1,12 +1,7 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 
-let sharp: any;
-if (process.env.NODE_ENV == 'local') {
-  sharp = require('sharp');
-} else {
-  sharp = require(__dirname + '/native_modules/sharp');
-}
+const sharp = require('sharp');
 
 const TARGET_HEIGHT = 500;
 

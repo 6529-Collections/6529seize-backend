@@ -1,7 +1,10 @@
 service: seizeApi
 
+useDotenv: true
+
 package:
   artifact: dist/index.zip
+  individually: true
 
 plugins:
   - serverless-offline
