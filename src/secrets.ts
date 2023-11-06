@@ -28,7 +28,7 @@ export async function loadSecrets() {
   const secretsManager = new SecretsManager({ region: 'us-east-1' });
 
   const secret = await secretsManager.getSecretValue({ SecretId: SECRET });
-
+  console.log('secret', secret);
   if (secret.SecretString) {
     const secretValue = JSON.parse(secret.SecretString);
 
