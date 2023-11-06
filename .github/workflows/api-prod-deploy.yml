@@ -1,6 +1,7 @@
 name: Deploy SeizeApi to PRODUCTION
 
-on: workflow_dispatch
+on:
+  pull_request:
 
 env:
   AWS_REGION: us-east-1
