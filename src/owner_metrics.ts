@@ -799,7 +799,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
         };
         consolidatedMetrics.push(consolidation);
       }
-      consolidations.map(async (c) => {
+      consolidations.map((c) => {
         processedWallets.add(c);
       });
     })

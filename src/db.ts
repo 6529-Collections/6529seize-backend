@@ -845,12 +845,18 @@ export async function persistConsolidatedOwnerMetrics(
   await AppDataSource.transaction(async (manager) => {
     const repo = manager.getRepository(ConsolidatedOwnerMetric);
     const consolidationKeys = metrics.map((metric) => metric.consolidation_key);
+    const consolidationDisplays = metrics.map(
+      (metric) => metric.consolidation_display
+    );
 
     const result = await AppDataSource.createQueryBuilder()
       .delete()
       .from(ConsolidatedOwnerMetric)
       .where('consolidation_key NOT IN (:...consolidationKeys)', {
         consolidationKeys
+      })
+      .orWhere('consolidation_display NOT IN (:...consolidationDisplays)', {
+        consolidationDisplays
       })
       .execute();
 
