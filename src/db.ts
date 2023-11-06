@@ -859,6 +859,39 @@ export async function persistConsolidatedOwnerMetrics(
       `[DELETED ${result.affected} WALLETS]`
     );
 
+    const duplicates = await repo
+      .createQueryBuilder('metric')
+      .select('metric.consolidation_key', 'consolidation_key')
+      .addSelect('MAX(metric.created_at)', 'latest')
+      .groupBy('metric.consolidation_key')
+      .having('COUNT(metric.consolidation_key) > 1')
+      .getRawMany();
+
+    console.log(
+      '[CONSOLIDATED OWNER METRICS]',
+      `[FOUND ${duplicates.length} DUPLICATE ENTRIES]`
+    );
+
+    let totalDeleted = 0;
+    for (const duplicate of duplicates) {
+      const r = await repo
+        .createQueryBuilder()
+        .delete()
+        .from(ConsolidatedOwnerMetric)
+        .where('consolidation_key = :key', { key: duplicate.consolidation_key })
+        .andWhere('created_at < :latest', { latest: duplicate.latest })
+        .execute();
+
+      if (r.affected) {
+        totalDeleted += r.affected;
+      }
+    }
+
+    console.log(
+      '[CONSOLIDATED OWNER METRICS]',
+      `[DELETED ${totalDeleted} DUPLICATE ENTRIES]`
+    );
+
     await repo.save(metrics);
   });
 

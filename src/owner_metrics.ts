@@ -466,6 +466,9 @@ export const findOwnerMetrics = async (reset?: boolean) => {
       if (
         !Array.from(processedWallets).some((pw) =>
           areEqualAddresses(wallet, pw)
+        ) &&
+        !consolidatedMetrics.some((cm) =>
+          areEqualAddresses(cm.consolidation_key, consolidationKey)
         )
       ) {
         const consolidatedWalletsMetrics = [
@@ -799,7 +802,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
         };
         consolidatedMetrics.push(consolidation);
       }
-      consolidations.map(async (c) => {
+      consolidations.map((c) => {
         processedWallets.add(c);
       });
     })
