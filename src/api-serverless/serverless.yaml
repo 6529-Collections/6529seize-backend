@@ -30,7 +30,7 @@ custom:
 
 functions:
   seizeApi:
-    handler: index.handler
+    handler: handler.handler
     name: seizeApi
     environment:
       ACTIVATE_API_PASSWORD: false
