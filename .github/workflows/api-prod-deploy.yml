@@ -5,17 +5,19 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  DB_HOST: ${{ secrets.DB_HOST }}
-  DB_HOST_READ: ${{ secrets.DB_HOST_READ }}
-  DB_NAME: ${{ secrets.DB_NAME }}
-  DB_PASS: ${{ secrets.DB_PASS }}
-  DB_PASS_READ: ${{ secrets.DB_PASS_READ }}
-  DB_PORT: ${{ secrets.DB_PORT }}
-  DB_USER: ${{ secrets.DB_USER }}
-  DB_USER_READ: ${{ secrets.DB_USER_READ }}
-  SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
-  SEIZE_API_VERSION: ${{ github.sha }}
-  ACTIVATE_API_PASSWORD: true
+  APP_DB_HOST: ${{ secrets.DB_HOST }}
+  APP_DB_HOST_READ: ${{ secrets.DB_HOST_READ }}
+  APP_DB_NAME: ${{ secrets.DB_NAME }}
+  APP_DB_PASS: ${{ secrets.DB_PASS }}
+  APP_DB_PASS_READ: ${{ secrets.DB_PASS_READ }}
+  APP_DB_PORT: ${{ secrets.DB_PORT }}
+  APP_DB_USER: ${{ secrets.DB_USER }}
+  APP_DB_USER_READ: ${{ secrets.DB_USER_READ }}
+  APP_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+  APP_SEIZE_API_VERSION: ${{ github.sha }}
+  JWT_SECRET: '-'
+  APP_API_LOAD_SECRETS: true
+  APP_ACTIVATE_API_PASSWORD: true
 
 jobs:
   build-and-deploy:

@@ -3,6 +3,15 @@ import type { AWS } from '@serverless/typescript';
 import { handler } from './src/handler';
 import * as process from 'process';
 
+function appVariablesFromEnv(): Record<string, string> {
+  return Object.entries(process.env).reduce((acc, [key, value]) => {
+    if (key.startsWith('APP_')) {
+      acc[key.replace('APP_', '')] = value;
+    }
+    return acc;
+  }, {} as Record<string, string>);
+}
+
 const serverlessConfiguration: AWS = {
   service: 'api-serverless',
   frameworkVersion: '3',
@@ -17,7 +26,7 @@ const serverlessConfiguration: AWS = {
     environment: {
       AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1',
       NODE_OPTIONS: '--enable-source-maps --stack-trace-limit=1000',
-      ...process.env
+      ...appVariablesFromEnv()
     }
   },
   // import the function via paths
