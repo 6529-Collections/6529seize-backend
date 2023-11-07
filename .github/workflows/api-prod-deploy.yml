@@ -1,0 +1,59 @@
+name: Deploy SeizeApi to PRODUCTION
+
+on:
+  pull_request:
+
+env:
+  AWS_REGION: us-east-1
+  DB_HOST: ${{ secrets.DB_HOST }}
+  DB_HOST_READ: ${{ secrets.DB_HOST_READ }}
+  DB_NAME: ${{ secrets.DB_NAME }}
+  DB_PASS: ${{ secrets.DB_PASS }}
+  DB_PASS_READ: ${{ secrets.DB_PASS_READ }}
+  DB_PORT: ${{ secrets.DB_PORT }}
+  DB_USER: ${{ secrets.DB_USER }}
+  DB_USER_READ: ${{ secrets.DB_USER_READ }}
+  SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+  SEIZE_API_VERSION: ${{ github.sha }}
+  ACTIVATE_API_PASSWORD: true
+
+jobs:
+  build-and-deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Install dependencies
+        run: npm i && pushd src/api-serverless && npm i && popd
+      - name: Build
+        run: pushd src/api-serverless && npm run build && popd
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@13d241b293754004c80624b5567555c4a39ffbe3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      - name: Deploy
+        run: pushd src/api-serverless && npm run sls-deploy:prod && popd
+      - name: Notify about failure
+        uses: sarisia/actions-status-discord@v1
+        if: failure()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        with:
+          title: "Seize PROD API DEPLOY: CI pipeline is broken!!!"
+          description: ${{ env.COMMIT_SHA }} - ${{ env.COMMIT_MESSAGE }}
+          content: "@developers"
+          color: 0xff0000
+
+      - name: Notify about success
+        uses: sarisia/actions-status-discord@v1
+        if: success()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        with:
+          title: "Seize PROD API DEPLOY: CI pipeline complete"
+          description: ${{ env.COMMIT_SHA }} - ${{ env.COMMIT_MESSAGE }}
+          color: 0x00ff00
