@@ -15,16 +15,33 @@ const { MerkleTree } = require('merkletreejs');
 const csv = require('csv-parser');
 const path = require('path');
 
-const AVAILABLE_TYPES = ['allowlist', 'external_burn'];
+export enum NextGenAllowlistType {
+  ALLOWLIST = 'allowlist',
+  EXTERNAL_BURN = 'external_burn'
+}
 
 const nextgenSchema = Joi.object({
   wallet: Joi.string().required(),
   signature: Joi.string().required(),
   collection_id: Joi.number().required(),
   uuid: Joi.string().required(),
+  phase: Joi.string().optional(),
   al_type: Joi.string()
-    .valid(...AVAILABLE_TYPES)
+    .valid(...Object.values(NextGenAllowlistType))
     .required()
+});
+
+const nextgenCollectionBurnSchema = Joi.object({
+  wallet: Joi.string().required(),
+  signature: Joi.string().required(),
+  uuid: Joi.string().required(),
+  collection_id: Joi.number().required(),
+  burn_collection: Joi.string().required(),
+  burn_collection_id: Joi.number().required(),
+  min_token_index: Joi.number().required(),
+  max_token_index: Joi.number().required(),
+  burn_address: Joi.string().required(),
+  status: Joi.boolean().required()
 });
 
 interface UploadAllowlist {
@@ -39,7 +56,7 @@ interface UploadAllowlistBurn {
 }
 
 export async function validateNextgen(req: any, res: any, next: any) {
-  console.log('[VALIDATE NEXTGEN]', `[VALIDATING...]`);
+  console.log('[VALIDATE NEXTGEN ALLOWLIST]', `[VALIDATING...]`);
 
   const nextgen = req.body?.nextgen;
   const allowlistFile = req.file;
@@ -83,11 +100,11 @@ export async function validateNextgen(req: any, res: any, next: any) {
 
     let allowlist: UploadAllowlist[] | UploadAllowlistBurn[];
     let merkle: any;
-    if (value.al_type === 'allowlist') {
+    if (value.al_type === NextGenAllowlistType.ALLOWLIST) {
       allowlist = await readAllowlist(allowlistFile.buffer);
       merkle = await computeMerkle(allowlist);
     }
-    if (value.al_type === 'external_burn') {
+    if (value.al_type === NextGenAllowlistType.EXTERNAL_BURN) {
       allowlist = await readAllowlistBurn(allowlistFile.buffer);
       merkle = await computeMerkleBurn(allowlist);
     }
@@ -102,7 +119,61 @@ export async function validateNextgen(req: any, res: any, next: any) {
       collection_id: value.collection_id,
       added_by: value.wallet,
       al_type: value.al_type,
-      merkle: merkle
+      merkle: merkle,
+      phase: value.phase
+    };
+
+    return next();
+  } catch (err: any) {
+    return handleValidationFailure(req, false, err.message, next);
+  }
+}
+
+export async function validateNextgenBurn(req: any, res: any, next: any) {
+  console.log('[VALIDATE NEXTGEN COLLECTION BURN]', `[VALIDATING...]`);
+
+  const collectionBurn = req.body;
+
+  if (!collectionBurn) {
+    return handleValidationFailure(req, false, 'Body missing', next);
+  }
+
+  try {
+    const { error, value } =
+      nextgenCollectionBurnSchema.validate(collectionBurn);
+
+    if (error) {
+      return handleValidationFailure(req, false, error.message, next);
+    }
+
+    const signatureValidation = validateSignature(
+      value.wallet,
+      value.signature,
+      value.uuid
+    );
+
+    if (!signatureValidation) {
+      return handleValidationFailure(req, false, 'Invalid signature', next);
+    }
+
+    const adminValidation = await validateAdmin(
+      value.collection_id,
+      value.wallet
+    );
+
+    if (!adminValidation) {
+      return handleValidationFailure(req, false, 'Invalid admin', next);
+    }
+
+    req.validatedBody = {
+      valid: true,
+      collection_id: value.collection_id,
+      burn_collection: value.burn_collection,
+      burn_collection_id: value.burn_collection_id,
+      min_token_index: value.min_token_index,
+      max_token_index: value.max_token_index,
+      burn_address: value.burn_address,
+      status: value.status
     };
 
     return next();

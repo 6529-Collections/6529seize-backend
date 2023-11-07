@@ -1224,19 +1224,6 @@ loadApi().then(() => {
     return res.send(json);
   });
 
-  apiRouter.get(
-    `/next_gen/:merkle_root/:address`,
-    async function (req: any, res: any) {
-      const merkleRoot = req.params.merkle_root;
-      const address = req.params.address;
-
-      db.fetchNextGenAllowlist(merkleRoot, address).then((result) => {
-        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-        res.end(JSON.stringify(result));
-      });
-    }
-  );
-
   apiRouter.get(`/rememes`, function (req: any, res: any) {
     const memeIds = req.query.meme_id;
     const pageSize: number =

@@ -15,7 +15,9 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
+  NEXTGEN_ALLOWLIST_BURN_TABLE,
   NEXTGEN_ALLOWLIST_TABLE,
+  NEXTGEN_BURN_COLLECTIONS_TABLE,
   NEXTGEN_COLLECTIONS_TABLE,
   NFTS_HISTORY_TABLE,
   NFTS_MEME_LAB_TABLE,
@@ -2167,14 +2169,19 @@ export async function fetchNftHistory(
   );
 }
 
+export async function fetchNextGenCollection(merkleRoot: string) {
+  const sql = `SELECT * FROM ${NEXTGEN_COLLECTIONS_TABLE} LEFT JOIN ${NEXTGEN_BURN_COLLECTIONS_TABLE} ON ${NEXTGEN_COLLECTIONS_TABLE}.collection_id=${NEXTGEN_BURN_COLLECTIONS_TABLE}.collection_id WHERE ${NEXTGEN_COLLECTIONS_TABLE}.merkle_root=${mysql.escape(
+    merkleRoot
+  )}`;
+  const collection = (await execSQL(sql))[0];
+  return collection;
+}
+
 export async function fetchNextGenAllowlist(
   merkleRoot: string,
   address: string
 ) {
-  const sql1 = `SELECT * FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE merkle_root=${mysql.escape(
-    merkleRoot
-  )}`;
-  const collection = (await execSQL(sql1))[0];
+  const collection = await fetchNextGenCollection(merkleRoot);
 
   const sql2 = `SELECT * FROM ${NEXTGEN_ALLOWLIST_TABLE} WHERE merkle_root=${mysql.escape(
     merkleRoot
@@ -2193,6 +2200,32 @@ export async function fetchNextGenAllowlist(
   return {
     keccak: null,
     spots: -1,
+    data: null,
+    proof: []
+  };
+}
+
+export async function fetchNextGenBurnAllowlist(
+  merkleRoot: string,
+  tokenId: number
+) {
+  const collection = await fetchNextGenCollection(merkleRoot);
+
+  const sql2 = `SELECT * FROM ${NEXTGEN_ALLOWLIST_BURN_TABLE} WHERE merkle_root=${mysql.escape(
+    merkleRoot
+  )} AND token_id=${tokenId}`;
+  const allowlist = (await execSQL(sql2))[0];
+
+  if (collection && allowlist) {
+    const proof = getProof(collection.merkle_tree, allowlist.keccak);
+    return {
+      keccak: allowlist.keccak,
+      info: allowlist.info,
+      proof: proof
+    };
+  }
+  return {
+    keccak: null,
     data: null,
     proof: []
   };

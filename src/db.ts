@@ -79,7 +79,9 @@ import { VoteMatterCategory } from './entities/IVoteMatter';
 import {
   NextGenTransactionsBlock,
   NextGenAllowlist,
-  NextGenCollection
+  NextGenAllowlistBurn,
+  NextGenCollection,
+  NextGenCollectionBurn
 } from './entities/INextGen';
 import { Profile } from './entities/IProfile';
 
@@ -123,7 +125,9 @@ export async function connect(entities: any[] = []) {
       Profile,
       NextGenTransactionsBlock,
       NextGenAllowlist,
-      NextGenCollection
+      NextGenAllowlistBurn,
+      NextGenCollection,
+      NextGenCollectionBurn
     ];
   }
 

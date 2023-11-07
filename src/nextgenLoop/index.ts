@@ -2,7 +2,9 @@ import { loadEnv, unload } from '../secrets';
 import {
   NextGenTransactionsBlock,
   NextGenAllowlist,
-  NextGenCollection
+  NextGenCollection,
+  NextGenAllowlistBurn,
+  NextGenCollectionBurn
 } from '../entities/INextGen';
 import { findNextgenTokens, refreshNextgenTokens } from '../nextgen';
 
@@ -11,7 +13,9 @@ export const handler = async () => {
   await loadEnv([
     NextGenTransactionsBlock,
     NextGenAllowlist,
-    NextGenCollection
+    NextGenAllowlistBurn,
+    NextGenCollection,
+    NextGenCollectionBurn
   ]);
   await findNextgenTokens();
   await refreshNextgenTokens();

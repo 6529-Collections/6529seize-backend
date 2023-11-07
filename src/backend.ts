@@ -136,10 +136,10 @@ async function start() {
   // await royaltiesLoop.handler();
   // await transactions.handlerValues();
   // await rememes.handler();
-  // await overvotesRevocation.handler();
+  await overvotesRevocation.handler();
   await nextgenLoop.handler();
 
-  // RUNNING_START_SCRIPT = false;
+  RUNNING_START_SCRIPT = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
 }
 
