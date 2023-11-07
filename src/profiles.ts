@@ -1,4 +1,4 @@
-import { Profile } from './entities/IProfile';
+import { Profile, ProfileClassification } from './entities/IProfile';
 import * as tdh_consolidation from './tdh_consolidation';
 import * as ens from './ens';
 import { sqlExecutor } from './sql-executor';
@@ -18,6 +18,7 @@ export interface CreateOrUpdateProfileCommand {
   banner_2?: string;
   website?: string;
   creator_or_updater_wallet: string;
+  classification: ProfileClassification;
 }
 
 export interface ProfileAndConsolidations {
@@ -167,7 +168,8 @@ export async function createOrUpdateProfile({
   banner_1,
   banner_2,
   website,
-  creator_or_updater_wallet
+  creator_or_updater_wallet,
+  classification
 }: CreateOrUpdateProfileCommand): Promise<ProfileAndConsolidations> {
   const { consolidatedWallets: creatorOrUpdaterWalletConsolidatedWallets } =
     await tdh_consolidation.getWalletTdhAndConsolidatedWallets(
@@ -203,7 +205,8 @@ export async function createOrUpdateProfile({
         banner_1,
         banner_2,
         website,
-        creator_or_updater_wallet
+        creator_or_updater_wallet,
+        classification
       }
     });
   } else {
@@ -233,7 +236,8 @@ export async function createOrUpdateProfile({
         banner_1,
         banner_2,
         website,
-        creator_or_updater_wallet
+        creator_or_updater_wallet,
+        classification
       }
     });
   }
@@ -258,7 +262,8 @@ async function updateProfileRecord({
          updated_by_wallet = :updatedByWallet,
          banner_1      = :banner1,
          banner_2      = :banner2,
-         website           = :website
+         website           = :website,
+         classification = :classification
      where normalised_handle = :oldHandle`,
     {
       oldHandle,
@@ -268,7 +273,8 @@ async function updateProfileRecord({
       updatedByWallet: command.creator_or_updater_wallet.toLowerCase(),
       banner1: command.banner_1 ?? null,
       banner2: command.banner_2 ?? null,
-      website: command.website ?? null
+      website: command.website ?? null,
+      classification: command.classification
     }
   );
 }
@@ -287,7 +293,8 @@ async function insertProfileRecord({
       created_by_wallet,
       banner_1,
       banner_2,
-      website)
+      website,
+      classification)
      values (:handle,
              :normalisedHandle,
              :primaryWallet,
@@ -295,7 +302,9 @@ async function insertProfileRecord({
              :createdByWallet,
              :banner1,
              :banner2,
-             :website)`,
+             :website,
+             :classification
+             )`,
     {
       handle: command.handle,
       normalisedHandle: command.handle.toLowerCase(),
@@ -303,7 +312,8 @@ async function insertProfileRecord({
       createdByWallet: command.creator_or_updater_wallet.toLowerCase(),
       banner1: command.banner_1 ?? null,
       banner2: command.banner_2 ?? null,
-      website: command.website ?? null
+      website: command.website ?? null,
+      classification: command.classification
     }
   );
 }
