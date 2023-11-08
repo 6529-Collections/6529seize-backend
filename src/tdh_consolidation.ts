@@ -26,7 +26,7 @@ export async function getWalletTdhAndConsolidatedWallets(
     return { tdh: 0, consolidatedWallets: [], blockNo: 0 };
   }
   const tdhSqlResult = await sqlExecutor.execute(
-    `SELECT block, tdh, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
+    `SELECT block, boosted_tdh as tdh, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
     { wallet: `%${wallet.toLowerCase()}%` }
   );
   const row = tdhSqlResult?.at(0);

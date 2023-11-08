@@ -12,13 +12,14 @@ import { getValidatedByJoiOrThrow } from '../validation';
 import {
   CreateOrUpdateProfileCommand,
   ProfileAndConsolidations
-} from '../../../profiles';
-import * as profiles from '../../../profiles';
+} from '../../../profiles/profiles';
+import * as profiles from '../../../profiles/profiles';
 import { NotFoundException } from '../../../exceptions';
 import { initMulterSingleMiddleware } from '../multer-middleware';
 
 import { asyncRouter } from '../async.router';
 import { RESERVED_HANDLES } from './profiles.constats';
+import { ProfileClassification } from '../../../entities/IProfile';
 
 const router = asyncRouter();
 
@@ -114,15 +115,25 @@ router.post(
     req: Request<any, any, ApiCreateOrUpdateProfileRequest, any, any>,
     res: Response<ApiResponse<ProfileAndConsolidations>>
   ) {
-    const { handle, primary_wallet, banner_1, banner_2, website } =
-      getValidatedByJoiOrThrow(req.body, ApiCreateOrUpdateProfileRequestSchema);
+    const {
+      handle,
+      primary_wallet,
+      banner_1,
+      banner_2,
+      website,
+      classification
+    } = getValidatedByJoiOrThrow(
+      req.body,
+      ApiCreateOrUpdateProfileRequestSchema
+    );
     const createProfileCommand: CreateOrUpdateProfileCommand = {
       handle,
       primary_wallet: primary_wallet.toLowerCase(),
       banner_1,
       banner_2,
       website,
-      creator_or_updater_wallet: getWalletOrThrow(req)
+      creator_or_updater_wallet: getWalletOrThrow(req),
+      classification
     };
     const profile = await profiles.createOrUpdateProfile(createProfileCommand);
     res.status(201).send(profile);
@@ -167,6 +178,7 @@ interface ApiCreateOrUpdateProfileRequest {
   readonly banner_1?: string;
   readonly banner_2?: string;
   readonly website?: string;
+  readonly classification: ProfileClassification;
 }
 
 const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateProfileRequest> =
@@ -195,7 +207,10 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
     banner_2: Joi.string().optional(),
     website: Joi.string().uri().optional().messages({
       'string.uri': `Please enter a valid website link, starting with 'http://' or 'https://'.`
-    })
+    }),
+    classification: Joi.string()
+      .valid(...Object.values(ProfileClassification))
+      .required()
   });
 
 interface ApiUploadProfilePictureRequest {

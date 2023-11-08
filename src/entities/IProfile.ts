@@ -35,4 +35,16 @@ export class Profile {
 
   @Column({ type: 'text', nullable: true, default: null })
   website?: string;
+
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  classification?: ProfileClassification | null;
+}
+
+export enum ProfileClassification {
+  GOVERNMENT_NAME = 'GOVERNMENT_NAME',
+  PSEUDONYM = 'PSEUDONYM',
+  ORGANIZATION = 'ORGANIZATION',
+  AI = 'AI',
+  BOT = 'BOT',
+  PARODY = 'PARODY'
 }

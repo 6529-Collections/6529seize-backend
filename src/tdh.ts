@@ -38,7 +38,7 @@ export async function getWalletsTdhs({
     return {};
   }
   const result: { wallet: string; tdh: number }[] = await sqlExecutor.execute(
-    `select wallet, tdh from ${WALLETS_TDH_TABLE} where block = :blockNo and lower(wallet) in (:wallets)`,
+    `select wallet, boosted_tdh as tdh from ${WALLETS_TDH_TABLE} where block = :blockNo and lower(wallet) in (:wallets)`,
     {
       blockNo,
       wallets: normalisedWallets
