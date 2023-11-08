@@ -18,7 +18,7 @@ export const handler = async () => {
     NextGenCollectionBurn
   ]);
   await findNextgenTokens();
-  await refreshNextgenTokens();
+  // await refreshNextgenTokens();
   await unload();
   console.log(new Date(), '[NEXTGEN LOOP COMPLETE]');
 };

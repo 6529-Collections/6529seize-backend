@@ -20,7 +20,7 @@ import {
   extractNextGenCollectionBurnInsert,
   extractNextGenCollectionInsert
 } from '../../../entities/INextGen';
-import { execSQLWithTransaction, execSQL } from '../../../db-api';
+import { execSQLWithTransaction } from '../../../db-api';
 import {
   NEXTGEN_ALLOWLIST_BURN_TABLE,
   NEXTGEN_ALLOWLIST_TABLE,
@@ -210,7 +210,9 @@ async function persistAllowlist(body: {
 
   const collectionInsert = extractNextGenCollectionInsert(collection);
   sqlOperations.push(collectionInsert);
-  await execSQLWithTransaction(sqlOperations);
+  await execSQLWithTransaction(sqlOperations).catch((e) => {
+    console.log('i am error', e);
+  });
 
   console.log(
     `[NEXTGEN ALLOWLIST]`,
@@ -239,7 +241,7 @@ export async function persistCollectionBurn(body: {
 
   const collectionBurnInsert =
     extractNextGenCollectionBurnInsert(collectionBurn);
-  await execSQL(collectionBurnInsert);
+  await sqlExecutor.execute(collectionBurnInsert);
 
   console.log(
     `[NEXTGEN COLLECTION BURN]`,
