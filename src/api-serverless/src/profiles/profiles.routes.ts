@@ -12,8 +12,8 @@ import { getValidatedByJoiOrThrow } from '../validation';
 import {
   CreateOrUpdateProfileCommand,
   ProfileAndConsolidations
-} from '../../../profiles';
-import * as profiles from '../../../profiles';
+} from '../../../profiles/profiles';
+import * as profiles from '../../../profiles/profiles';
 import { NotFoundException } from '../../../exceptions';
 import { initMulterSingleMiddleware } from '../multer-middleware';
 
