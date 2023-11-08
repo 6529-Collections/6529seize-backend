@@ -42,17 +42,36 @@ import {
 } from './constants';
 import { RememeSource } from './entities/IRememe';
 import { User } from './entities/IUser';
-import { areEqualAddresses, extractConsolidationWallets } from './helpers';
+import {
+  areEqualAddresses,
+  distinct,
+  extractConsolidationWallets
+} from './helpers';
 import { getConsolidationsSql, getProfilePageSql } from './sql_helpers';
 import { getProof } from './merkle_proof';
 import { setSqlExecutor } from './sql-executor';
+import * as profiles from './profiles';
 
 import * as mysql from 'mysql';
+import { Time } from './time';
+import { DbPoolName, DbQueryOptions } from './db-query.options';
 
-let mysql_pool: mysql.Pool;
+let read_pool: mysql.Pool;
+let write_pool: mysql.Pool;
+
+const WRITE_OPERATIONS = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE'];
 
 export async function connect() {
   let port: number | undefined;
+  if (
+    !process.env.DB_HOST ||
+    !process.env.DB_USER ||
+    !process.env.DB_PASS ||
+    !process.env.DB_PORT
+  ) {
+    console.log('[API]', '[MISSING CONFIGURATION FOR WRITE DB]', '[EXITING]');
+    process.exit();
+  }
   if (
     !process.env.DB_HOST_READ ||
     !process.env.DB_USER_READ ||
@@ -63,11 +82,23 @@ export async function connect() {
     process.exit();
   }
   port = +process.env.DB_PORT;
-  mysql_pool = mysql.createPool({
+  write_pool = mysql.createPool({
+    connectionLimit: 5,
+    connectTimeout: Time.seconds(30).toMillis(),
+    acquireTimeout: Time.seconds(30).toMillis(),
+    timeout: Time.seconds(30).toMillis(),
+    host: process.env.DB_HOST,
+    port: port,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASS,
+    charset: 'utf8mb4',
+    database: process.env.DB_NAME
+  });
+  read_pool = mysql.createPool({
     connectionLimit: 10,
-    connectTimeout: 30 * 1000,
-    acquireTimeout: 30 * 1000,
-    timeout: 30 * 1000,
+    connectTimeout: Time.seconds(30).toMillis(),
+    acquireTimeout: Time.seconds(30).toMillis(),
+    timeout: Time.seconds(30).toMillis(),
     host: process.env.DB_HOST_READ,
     port: port,
     user: process.env.DB_USER_READ,
@@ -76,15 +107,38 @@ export async function connect() {
     database: process.env.DB_NAME
   });
   setSqlExecutor({
-    execute: (sql: string, params?: Record<string, any>) =>
-      execSQLWithParams(sql, params)
+    execute: (
+      sql: string,
+      params?: Record<string, any>,
+      options?: DbQueryOptions
+    ) => execSQLWithParams(sql, params, options)
   });
-  console.log('[API]', `[CONNECTION POOL CREATED]`);
+  console.log('[API]', `[CONNECTION POOLS CREATED]`);
 }
 
-export function execSQL(sql: string): Promise<any> {
+function getPool(sql: string, queryOptions?: DbQueryOptions) {
+  switch (queryOptions?.forcePool) {
+    case DbPoolName.READ:
+      return read_pool;
+    case DbPoolName.WRITE:
+      return write_pool;
+    default:
+      return WRITE_OPERATIONS.some((op) => sql.toUpperCase().startsWith(op))
+        ? write_pool
+        : read_pool;
+  }
+}
+
+function getPoolForTransaction(sqls: string[], queryOptions?: DbQueryOptions) {
+  return sqls.some((s) => getPool(s, queryOptions) == write_pool)
+    ? write_pool
+    : read_pool;
+}
+
+export function execSQL(sql: string, options?: DbQueryOptions): Promise<any> {
+  const my_pool: mysql.Pool = getPool(sql, options);
   return new Promise((resolve, reject) => {
-    mysql_pool.getConnection(function (
+    my_pool.getConnection(function (
       err: mysql.MysqlError,
       dbcon: mysql.PoolConnection
     ) {
@@ -106,8 +160,9 @@ export function execSQL(sql: string): Promise<any> {
 }
 
 export function execSQLWithTransaction(queries: string[]): Promise<any> {
+  const my_pool = getPoolForTransaction(queries);
   return new Promise(async (resolve, reject) => {
-    mysql_pool.getConnection(async function (
+    my_pool.getConnection(async function (
       err: mysql.MysqlError,
       dbcon: mysql.PoolConnection
     ) {
@@ -155,10 +210,12 @@ function executeQuery(connection: mysql.PoolConnection, query: string) {
 
 export function execSQLWithParams(
   sql: string,
-  params?: Record<string, any>
+  params?: Record<string, any>,
+  options?: { forcePool?: DbPoolName }
 ): Promise<any> {
+  const my_pool: mysql.Pool = getPool(sql, options);
   return new Promise((resolve, reject) => {
-    mysql_pool.getConnection(function (
+    my_pool.getConnection(function (
       err: mysql.MysqlError,
       dbcon: mysql.PoolConnection
     ) {
@@ -186,7 +243,7 @@ export function execSQLWithParams(
           console.log('custom err', err);
           return reject(err);
         }
-        resolve(Object.values(JSON.parse(JSON.stringify(result))));
+        resolve(result);
       });
     });
   });
@@ -242,32 +299,34 @@ async function fetchPaginated(
   joins?: string,
   groups?: string
 ) {
-  const sql1 = `SELECT COUNT(*) as count FROM ${table} ${joins} ${filters}`;
+  const countSql = `SELECT COUNT(1) as count FROM (SELECT 1 FROM ${table} ${joins} ${filters}${
+    groups ? ` GROUP BY ${groups}` : ``
+  }) inner_q`;
 
-  let sql2 = `SELECT ${fields ? fields : '*'} FROM ${table} ${
+  let resultsSql = `SELECT ${fields ? fields : '*'} FROM ${table} ${
     joins ? joins : ''
   } ${filters} ${groups ? `group by ${groups}` : ``} order by ${orderBy} ${
     pageSize > 0 ? `LIMIT ${pageSize}` : ``
   }`;
   if (page > 1) {
     const offset = pageSize * (page - 1);
-    sql2 += ` OFFSET ${offset}`;
+    resultsSql += ` OFFSET ${offset}`;
   }
 
-  // console.log(sql1);
-  // console.log(sql2);
+  // console.log(countSql);
+  // console.log(resultsSql);
 
-  const r1 = await execSQL(sql1);
-  const r2 = await execSQL(sql2);
+  const count = await execSQL(countSql).then((r) => r[0].count);
+  const data = await execSQL(resultsSql);
 
-  // console.log(r1);
-  // console.log(r2);
+  // console.log(count);
+  // console.log(data);
 
   return {
-    count: r1[0]?.count,
-    page: page,
-    next: r1[0]?.count > pageSize * page,
-    data: r2
+    count,
+    page,
+    next: count > pageSize * page,
+    data
   };
 }
 
@@ -426,7 +485,7 @@ export async function fetchLabOwners(
   const fields = ` ${OWNERS_MEME_LAB_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
   const joins = `LEFT JOIN ${ENS_TABLE} ON ${OWNERS_MEME_LAB_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
-  return fetchPaginated(
+  const result = await fetchPaginated(
     OWNERS_MEME_LAB_TABLE,
     `${sort} ${sortDir}, token_id asc, created_at desc`,
     pageSize,
@@ -435,6 +494,8 @@ export async function fetchLabOwners(
     fields,
     joins
   );
+  result.data = await enhanceDataWithHandles(result.data);
+  return result;
 }
 
 export async function fetchTeam(pageSize: number, page: number) {
@@ -464,7 +525,13 @@ export async function fetchNFTs(
     );
   }
   if (nfts) {
-    filters = constructFilters(filters, `id in (${nfts})`);
+    filters = constructFilters(
+      filters,
+      `id in (${nfts
+        .split(',')
+        .map((it) => mysql.escape(it))
+        .join(',')})`
+    );
   }
   return fetchPaginated(
     NFTS_TABLE,
@@ -886,7 +953,7 @@ export async function fetchNftTdh(
       break;
   }
 
-  return fetchPaginated(
+  const result = await fetchPaginated(
     WALLETS_TDH_TABLE,
     `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
     pageSize,
@@ -895,6 +962,8 @@ export async function fetchNftTdh(
     fields,
     joins
   );
+  result.data = await enhanceDataWithHandles(result.data);
+  return result;
 }
 
 export async function fetchConsolidatedNftTdh(
@@ -963,7 +1032,7 @@ export async function fetchConsolidatedNftTdh(
       break;
   }
 
-  return fetchPaginated(
+  const result = await fetchPaginated(
     CONSOLIDATED_WALLETS_TDH_TABLE,
     `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
     pageSize,
@@ -972,6 +1041,8 @@ export async function fetchConsolidatedNftTdh(
     fields,
     joins
   );
+  result.data = await enhanceDataWithHandles(result.data);
+  return result;
 }
 
 export async function fetchTDH(
@@ -1296,7 +1367,8 @@ export async function fetchOwnerMetrics(
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length > 0) {
       const sql = getProfilePageSql(resolvedWallets);
-      const results2 = await execSQL(sql);
+      let results2 = await execSQL(sql);
+      results2 = await enhanceDataWithHandles(results2);
       return {
         count: results2.length,
         page: 1,
@@ -1305,6 +1377,7 @@ export async function fetchOwnerMetrics(
       };
     }
   }
+  results.data = await enhanceDataWithHandles(results.data);
   return results;
 }
 
@@ -1448,6 +1521,36 @@ export async function fetchConsolidatedOwnerMetricsForKey(
   } else {
     return null;
   }
+}
+
+async function enhanceDataWithHandles(
+  data: { wallets?: string; wallet?: string }[]
+) {
+  const resultWallets: string[] = distinct(
+    data
+      .map((d: { wallets?: string; wallet?: string }) =>
+        d.wallet ? [d.wallet] : d.wallets ? JSON.parse(d.wallets) : []
+      )
+      .flat()
+  );
+  const walletsToHandles = await profiles.getProfileHandlesByPrimaryWallets(
+    resultWallets
+  );
+
+  return data.map((d: { wallets?: string; wallet?: string }) => {
+    const parsedWallets = d.wallet
+      ? [d.wallet]
+      : d.wallets
+      ? JSON.parse(d.wallets)
+      : [];
+    const resolvedWallet = parsedWallets.find(
+      (w: string) => walletsToHandles[w.toLowerCase()]
+    );
+    if (!resolvedWallet) {
+      return d;
+    }
+    return { ...d, handle: walletsToHandles[resolvedWallet.toLowerCase()] };
+  });
 }
 
 export async function fetchConsolidatedOwnerMetrics(
@@ -1719,8 +1822,9 @@ export async function fetchConsolidatedOwnerMetrics(
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length > 0) {
       const sql = getProfilePageSql(resolvedWallets);
-      const results2 = await execSQL(sql);
+      let results2 = await execSQL(sql);
       results2[0].wallets = resolvedWallets;
+      results2 = await enhanceDataWithHandles(results2);
       return {
         count: results2.length,
         page: 1,
@@ -1737,6 +1841,7 @@ export async function fetchConsolidatedOwnerMetrics(
       })
     );
   }
+  results.data = await enhanceDataWithHandles(results.data);
 
   return results;
 }

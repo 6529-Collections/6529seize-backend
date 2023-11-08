@@ -3,6 +3,7 @@ import { ApiResponse } from '../api-response';
 import {
   getWalletOrNull,
   getWalletOrThrow,
+  maybeAuthenticatedUser,
   needsAuthenticatedUser
 } from '../auth/auth';
 import * as Joi from 'joi';
@@ -47,6 +48,65 @@ router.get(
   }
 );
 
+router.get(
+  `/:handle/availability`,
+  maybeAuthenticatedUser(),
+  async function (
+    req: Request<
+      {
+        handle: string;
+      },
+      any,
+      any,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<{ available: boolean; message: string }>>
+  ) {
+    const maybeAuthenticatedWallet = getWalletOrNull(req);
+    const proposedHandle = req.params.handle.toLowerCase();
+    if (!proposedHandle.match(PROFILE_HANDLE_REGEX)) {
+      return res.status(200).send({
+        available: false,
+        message: `Invalid username. Use 3-15 letters, numbers, or underscores.`
+      });
+    }
+    if (
+      RESERVED_HANDLES.map((h) => h.toLowerCase()).includes(
+        proposedHandle.toLowerCase()
+      )
+    ) {
+      return res.status(200).send({
+        available: false,
+        message: `This username is not available. Please choose a different one.`
+      });
+    }
+    const authenticatedHandle = maybeAuthenticatedWallet
+      ? (
+          await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+            maybeAuthenticatedWallet
+          )
+        )?.profile?.handle
+      : null;
+    if (proposedHandle.toLowerCase() !== authenticatedHandle?.toLowerCase()) {
+      const profile =
+        await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+          proposedHandle
+        );
+      if (profile) {
+        return res.status(200).send({
+          available: false,
+          message: `This username is not available. Please choose a different one.`
+        });
+      }
+    }
+    res.status(200).send({
+      available: true,
+      message: 'Username is available.'
+    });
+  }
+);
+
 router.post(
   `/`,
   needsAuthenticatedUser(),
@@ -62,7 +122,7 @@ router.post(
       banner_1,
       banner_2,
       website,
-      creator_or_updater_wallet: getWalletOrNull(req)!
+      creator_or_updater_wallet: getWalletOrThrow(req)
     };
     const profile = await profiles.createOrUpdateProfile(createProfileCommand);
     res.status(201).send(profile);
@@ -115,9 +175,11 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
       .min(3)
       .max(15)
       .regex(PROFILE_HANDLE_REGEX)
-      .lowercase()
       .custom((value, helpers) => {
-        if (RESERVED_HANDLES.map((h) => h.toLowerCase()).includes(value)) {
+        const lowerCaseValue = value.toLowerCase();
+        if (
+          RESERVED_HANDLES.map((h) => h.toLowerCase()).includes(lowerCaseValue)
+        ) {
           return helpers.message({
             custom: `This username is not available. Please choose a different one.`
           });

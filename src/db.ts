@@ -221,7 +221,7 @@ export function execSQLWithParams(
           return txt;
         })
       );
-      resolve(Object.values(JSON.parse(JSON.stringify(r))));
+      resolve(r);
     } catch (err: any) {
       return reject(err);
     }
@@ -584,7 +584,7 @@ export async function fetchTdhReplayOwners(datetime: Date) {
 export async function fetchAllOwnersAddresses() {
   const sql = `SELECT distinct wallet FROM ${OWNERS_TABLE} WHERE wallet != ${mysql.escape(
     NULL_ADDRESS
-  )} AND wallet != ${mysql.escape(MANIFOLD)};`;
+  )};`;
   const results = await execSQL(sql);
   return results;
 }
@@ -857,12 +857,18 @@ export async function persistConsolidatedOwnerMetrics(
   await AppDataSource.transaction(async (manager) => {
     const repo = manager.getRepository(ConsolidatedOwnerMetric);
     const consolidationKeys = metrics.map((metric) => metric.consolidation_key);
+    const consolidationDisplays = metrics.map(
+      (metric) => metric.consolidation_display
+    );
 
     const result = await AppDataSource.createQueryBuilder()
       .delete()
       .from(ConsolidatedOwnerMetric)
       .where('consolidation_key NOT IN (:...consolidationKeys)', {
         consolidationKeys
+      })
+      .orWhere('consolidation_display NOT IN (:...consolidationDisplays)', {
+        consolidationDisplays
       })
       .execute();
 
@@ -1011,12 +1017,13 @@ export async function persistConsolidatedTdhUpload(
 export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
   console.log('[TDH]', `PERSISTING WALLETS TDH [${tdh.length}]`);
 
-  await AppDataSource.getRepository(TDH).save(tdh);
-
-  const sqlBlock = `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block_number=${block}, timestamp=${mysql.escape(
-    timestamp
-  )}`;
-  await execSQL(sqlBlock);
+  await AppDataSource.transaction(async (manager) => {
+    await manager.getRepository(TDH).save(tdh);
+    await manager.query(
+      `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block_number=?, timestamp=?`,
+      [block, timestamp]
+    );
+  });
 
   console.log('[TDH]', `PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }

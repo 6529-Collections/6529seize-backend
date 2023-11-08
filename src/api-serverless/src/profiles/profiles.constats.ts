@@ -439,5 +439,6 @@ export const RESERVED_HANDLES = [
   'web',
   'tools',
   'statistics',
-  'community'
+  'community',
+  'punk'
 ];

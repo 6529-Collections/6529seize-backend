@@ -216,3 +216,7 @@ export function stringToHex(s: string) {
   }
   return hexString;
 }
+
+export function distinct<T>(arr: T[]): T[] {
+  return Array.from(new Set(arr));
+}

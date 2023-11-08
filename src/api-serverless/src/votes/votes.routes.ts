@@ -4,7 +4,12 @@ import * as votes from '../../../votes';
 import * as Joi from 'joi';
 import { VoteCategoryInfo } from '../../../votes';
 import { VoteMatterTargetType } from '../../../entities/IVoteMatter';
-import { getWalletOrNull, needsAuthenticatedUser } from '../auth/auth';
+import {
+  getWalletOrNull,
+  getWalletOrThrow,
+  maybeAuthenticatedUser,
+  needsAuthenticatedUser
+} from '../auth/auth';
 import { WALLET_REGEX } from '../../../constants';
 import { ForbiddenException } from '../../../exceptions';
 import { asyncRouter } from '../async.router';
@@ -14,6 +19,7 @@ const router = asyncRouter();
 
 router.get(
   `/targets/:matter_target_type/:matter_target_id/matters/:matter`,
+  maybeAuthenticatedUser(),
   async function (
     req: Request<
       {
@@ -67,7 +73,7 @@ router.post(
     >,
     res: Response<ApiResponse<void>>
   ) {
-    const walletFromHeader = getWalletOrNull(req);
+    const walletFromHeader = getWalletOrThrow(req);
     const { matter, matter_target_type, matter_target_id } = req.params;
     const { amount, category, voter_wallet } = req.body as ApiVoteRequestBody;
     if (walletFromHeader !== voter_wallet) {

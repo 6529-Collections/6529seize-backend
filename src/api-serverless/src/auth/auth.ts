@@ -25,6 +25,10 @@ export function needsAuthenticatedUser() {
   return passport.authenticate('jwt', { session: false });
 }
 
+export function maybeAuthenticatedUser() {
+  return passport.authenticate(['jwt', 'anonymous'], { session: false });
+}
+
 export function getWalletOrNull(req: Request): string | null {
   const user = req.user as any;
   if (!user) {

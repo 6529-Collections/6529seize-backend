@@ -9,6 +9,7 @@ import * as nfts from './nfts';
 import * as path from 'path';
 import { scalePfpAndPersistToS3 } from './api-serverless/src/users/s3';
 import { Wallet } from './entities/IWallet';
+import { DbPoolName } from './db-query.options';
 
 export interface CreateOrUpdateProfileCommand {
   handle: string;
@@ -114,15 +115,16 @@ export async function getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
   }
 }
 
-export async function getProfileByHandle(handle: string): Promise<Profile> {
+async function getProfileByHandle(handle: string): Promise<Profile | null> {
   const result = await sqlExecutor.execute(
     `select * from ${PROFILES_TABLE} where normalised_handle = :handle`,
-    { handle: handle.toLowerCase() }
+    { handle: handle.toLowerCase() },
+    { forcePool: DbPoolName.WRITE }
   );
-  return result.at(0);
+  return result.at(0) ?? null;
 }
 
-export async function getWalletsNewestProfile(
+async function getWalletsNewestProfile(
   wallet: string
 ): Promise<Profile | undefined> {
   const { consolidatedWallets } =
@@ -141,7 +143,21 @@ export async function getProfilesByWallets(
   }
   return sqlExecutor.execute(
     `select * from ${PROFILES_TABLE} where primary_wallet in (:wallets)`,
-    { wallets: wallets.map((w) => w.toLowerCase()) }
+    { wallets: wallets.map((w) => w.toLowerCase()) },
+    { forcePool: DbPoolName.WRITE }
+  );
+}
+
+export async function getProfilesByAnyWallets(
+  wallets: string[]
+): Promise<Profile[]> {
+  if (wallets.length === 0) {
+    return [];
+  }
+  return sqlExecutor.execute(
+    `select * from ${PROFILES_TABLE} where primary_wallet in (:wallets)`,
+    { wallets: wallets.map((w) => w.toLowerCase()) },
+    { forcePool: DbPoolName.WRITE }
   );
 }
 
@@ -290,6 +306,24 @@ async function insertProfileRecord({
       website: command.website ?? null
     }
   );
+}
+
+export async function getProfileHandlesByPrimaryWallets(
+  wallets: string[]
+): Promise<Record<string, string>> {
+  if (!wallets.length) {
+    return {};
+  }
+  const profiles = await getProfilesByWallets(wallets);
+  return wallets.reduce((result, wallet) => {
+    const handle = profiles.find(
+      (profile) => profile.primary_wallet.toLowerCase() === wallet.toLowerCase()
+    )?.handle;
+    if (handle) {
+      result[wallet.toLowerCase()] = handle;
+    }
+    return result;
+  }, {} as Record<string, string>);
 }
 
 async function getOrCreatePfpFileUri({

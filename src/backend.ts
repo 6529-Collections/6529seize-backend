@@ -30,29 +30,29 @@ function isCronsEnabled() {
 // PULL EVERY 4 MINUTES
 cron.schedule('*/4 * * * *', async function () {
   if (isCronsEnabled()) {
-    nfts.handler();
-    owners.handler();
+    await nfts.handler();
+    await owners.handler();
   }
 });
 
 // PULL EVERY 3 MINUTES
 cron.schedule('*/3 * * * *', async function () {
   if (isCronsEnabled()) {
-    transactions.handler();
+    await transactions.handler();
   }
 });
 
 // PULL EVERY 5 MINUTES
 cron.schedule('*/5 * * * *', async function () {
   if (isCronsEnabled()) {
-    memeLab.handler();
+    await memeLab.handler();
   }
 });
 
 // PULL EVERY 4 MINUTES
 cron.schedule('*/4 * * * *', async function () {
   if (isCronsEnabled()) {
-    ownerMetrics.handler();
+    await ownerMetrics.handler();
   }
 });
 
@@ -73,21 +73,21 @@ cron.schedule('*/30 * * * *', async function () {
 // PULL EVERY HOUR AT MIN 0
 cron.schedule('0 * * * *', async function () {
   if (isCronsEnabled()) {
-    // memeStats();
+    // await memeStats();
   }
 });
 
 // PULL EVERY 2 HOURS AT MIN 15
 cron.schedule('15 */2 * * *', async function () {
   if (isCronsEnabled()) {
-    // gradientStats();
+    // await gradientStats();
   }
 });
 
 // PULL EVERY HOUR AT MIN 30
 cron.schedule('30 * * * *', async function () {
   if (isCronsEnabled()) {
-    // memeLabStats();
+    // await memeLabStats();
   }
 });
 

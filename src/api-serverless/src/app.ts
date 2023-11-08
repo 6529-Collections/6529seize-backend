@@ -41,6 +41,7 @@ import {
   TRANSACTION_FILTERS,
   corsOptions
 } from './options';
+import { Strategy as AnonymousStrategy } from 'passport-anonymous';
 
 const converter = require('json-2-csv');
 
@@ -132,6 +133,7 @@ loadApi().then(() => {
       )
     );
   });
+  passport.use(new AnonymousStrategy());
   app.use(requestLogMiddleware());
   app.use(compression());
   app.use(cors(corsOptions));
@@ -820,6 +822,9 @@ loadApi().then(() => {
           delete d.memes_ranks;
           delete d.gradients;
           delete d.gradients_ranks;
+          if (!d.handle) {
+            d.handle = '';
+          }
         });
       } else {
         result.data.map((d: any) => {
@@ -963,6 +968,9 @@ loadApi().then(() => {
           delete d.memes_ranks;
           delete d.gradients;
           delete d.gradients_ranks;
+          if (!d.handle) {
+            d.handle = '';
+          }
         });
       } else {
         result.data.map((d: any) => {
