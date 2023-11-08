@@ -1,15 +1,16 @@
-import { Profile } from './entities/IProfile';
-import * as tdh_consolidation from './tdh_consolidation';
-import * as ens from './ens';
-import { sqlExecutor } from './sql-executor';
-import { PROFILES_TABLE, WALLET_REGEX } from './constants';
-import { BadRequestException } from './exceptions';
-import * as tdhs from './tdh';
-import * as nfts from './nfts';
+import { Profile, ProfileClassification } from '../entities/IProfile';
+import * as tdh_consolidation from '../tdh_consolidation';
+import * as ens from '../ens';
+import { sqlExecutor } from '../sql-executor';
+import { PROFILES_TABLE, WALLET_REGEX } from '../constants';
+import { BadRequestException } from '../exceptions';
+import * as tdhs from '../tdh';
+import * as nfts from '../nfts';
 import * as path from 'path';
-import { scalePfpAndPersistToS3 } from './api-serverless/src/users/s3';
-import { Wallet } from './entities/IWallet';
-import { DbPoolName } from './db-query.options';
+import { scalePfpAndPersistToS3 } from '../api-serverless/src/users/s3';
+import { Wallet } from '../entities/IWallet';
+import { DbPoolName } from '../db-query.options';
+import { tdh2Level } from './profile-level';
 
 export interface CreateOrUpdateProfileCommand {
   handle: string;
@@ -18,6 +19,7 @@ export interface CreateOrUpdateProfileCommand {
   banner_2?: string;
   website?: string;
   creator_or_updater_wallet: string;
+  classification: ProfileClassification;
 }
 
 export interface ProfileAndConsolidations {
@@ -26,9 +28,12 @@ export interface ProfileAndConsolidations {
     wallets: { wallet: Wallet; tdh: number }[];
     tdh: number;
   };
+  level: number;
 }
 
-async function getProfileByEnsName(query: string) {
+async function getProfileByEnsName(
+  query: string
+): Promise<ProfileAndConsolidations | null> {
   const wallet = await ens.reverseResolveEnsName(query);
   if (!wallet) {
     return null;
@@ -52,11 +57,14 @@ async function getProfileByEnsName(query: string) {
         tdh: walletTdhs[w.address]
       })),
       tdh
-    }
+    },
+    level: tdh2Level(tdh)
   };
 }
 
-async function getProfileByWallet(query: string) {
+async function getProfileByWallet(
+  query: string
+): Promise<ProfileAndConsolidations | null> {
   const { consolidatedWallets, tdh, blockNo } =
     await tdh_consolidation.getWalletTdhAndConsolidatedWallets(query);
   if (consolidatedWallets.length === 0) {
@@ -76,7 +84,8 @@ async function getProfileByWallet(query: string) {
         tdh: walletTdhs[w.address]
       })),
       tdh
-    }
+    },
+    level: tdh2Level(tdh)
   };
 }
 
@@ -110,7 +119,8 @@ export async function getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
           tdh: walletTdhs[w.address]
         })),
         tdh
-      }
+      },
+      level: tdh2Level(tdh)
     };
   }
 }
@@ -167,7 +177,8 @@ export async function createOrUpdateProfile({
   banner_1,
   banner_2,
   website,
-  creator_or_updater_wallet
+  creator_or_updater_wallet,
+  classification
 }: CreateOrUpdateProfileCommand): Promise<ProfileAndConsolidations> {
   const { consolidatedWallets: creatorOrUpdaterWalletConsolidatedWallets } =
     await tdh_consolidation.getWalletTdhAndConsolidatedWallets(
@@ -203,7 +214,8 @@ export async function createOrUpdateProfile({
         banner_1,
         banner_2,
         website,
-        creator_or_updater_wallet
+        creator_or_updater_wallet,
+        classification
       }
     });
   } else {
@@ -233,7 +245,8 @@ export async function createOrUpdateProfile({
         banner_1,
         banner_2,
         website,
-        creator_or_updater_wallet
+        creator_or_updater_wallet,
+        classification
       }
     });
   }
@@ -258,7 +271,8 @@ async function updateProfileRecord({
          updated_by_wallet = :updatedByWallet,
          banner_1      = :banner1,
          banner_2      = :banner2,
-         website           = :website
+         website           = :website,
+         classification = :classification
      where normalised_handle = :oldHandle`,
     {
       oldHandle,
@@ -268,7 +282,8 @@ async function updateProfileRecord({
       updatedByWallet: command.creator_or_updater_wallet.toLowerCase(),
       banner1: command.banner_1 ?? null,
       banner2: command.banner_2 ?? null,
-      website: command.website ?? null
+      website: command.website ?? null,
+      classification: command.classification
     }
   );
 }
@@ -287,7 +302,8 @@ async function insertProfileRecord({
       created_by_wallet,
       banner_1,
       banner_2,
-      website)
+      website,
+      classification)
      values (:handle,
              :normalisedHandle,
              :primaryWallet,
@@ -295,7 +311,9 @@ async function insertProfileRecord({
              :createdByWallet,
              :banner1,
              :banner2,
-             :website)`,
+             :website,
+             :classification
+             )`,
     {
       handle: command.handle,
       normalisedHandle: command.handle.toLowerCase(),
@@ -303,7 +321,8 @@ async function insertProfileRecord({
       createdByWallet: command.creator_or_updater_wallet.toLowerCase(),
       banner1: command.banner_1 ?? null,
       banner2: command.banner_2 ?? null,
-      website: command.website ?? null
+      website: command.website ?? null,
+      classification: command.classification
     }
   );
 }

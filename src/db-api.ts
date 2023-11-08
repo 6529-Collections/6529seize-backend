@@ -48,7 +48,7 @@ import {
 import { getConsolidationsSql, getProfilePageSql } from './sql_helpers';
 import { getProof } from './merkle_proof';
 import { setSqlExecutor } from './sql-executor';
-import * as profiles from './profiles';
+import * as profiles from './profiles/profiles';
 
 import * as mysql from 'mysql';
 import { Time } from './time';
