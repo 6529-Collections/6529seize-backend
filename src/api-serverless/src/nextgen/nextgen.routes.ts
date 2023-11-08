@@ -29,7 +29,7 @@ import {
 import * as mysql from 'mysql';
 import * as db from '../../../db-api';
 import { asyncRouter } from '../async.router';
-import { initMulterSingleMiddleware } from 'src/multer-middleware';
+import { initMulterSingleMiddleware } from '../multer-middleware';
 
 const router = asyncRouter();
 

@@ -98,8 +98,8 @@ export async function validateNextgen(req: any, res: any, next: any) {
       return handleValidationFailure(req, false, 'Invalid admin', next);
     }
 
-    let allowlist: UploadAllowlist[] | UploadAllowlistBurn[];
-    let merkle: any;
+    let allowlist: UploadAllowlist[] | UploadAllowlistBurn[] = [];
+    let merkle: any = null;
     if (value.al_type === NextGenAllowlistType.ALLOWLIST) {
       allowlist = await readAllowlist(allowlistFile.buffer);
       merkle = await computeMerkle(allowlist);
@@ -107,6 +107,15 @@ export async function validateNextgen(req: any, res: any, next: any) {
     if (value.al_type === NextGenAllowlistType.EXTERNAL_BURN) {
       allowlist = await readAllowlistBurn(allowlistFile.buffer);
       merkle = await computeMerkleBurn(allowlist);
+    }
+
+    if (allowlist.length == 0 || !merkle) {
+      return handleValidationFailure(
+        req,
+        false,
+        'Something went wrong while computing merkle tree',
+        next
+      );
     }
 
     console.log(
