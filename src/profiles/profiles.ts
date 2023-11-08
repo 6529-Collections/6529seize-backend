@@ -1,15 +1,16 @@
-import { Profile, ProfileClassification } from './entities/IProfile';
-import * as tdh_consolidation from './tdh_consolidation';
-import * as ens from './ens';
-import { sqlExecutor } from './sql-executor';
-import { PROFILES_TABLE, WALLET_REGEX } from './constants';
-import { BadRequestException } from './exceptions';
-import * as tdhs from './tdh';
-import * as nfts from './nfts';
+import { Profile, ProfileClassification } from '../entities/IProfile';
+import * as tdh_consolidation from '../tdh_consolidation';
+import * as ens from '../ens';
+import { sqlExecutor } from '../sql-executor';
+import { PROFILES_TABLE, WALLET_REGEX } from '../constants';
+import { BadRequestException } from '../exceptions';
+import * as tdhs from '../tdh';
+import * as nfts from '../nfts';
 import * as path from 'path';
-import { scalePfpAndPersistToS3 } from './api-serverless/src/users/s3';
-import { Wallet } from './entities/IWallet';
-import { DbPoolName } from './db-query.options';
+import { scalePfpAndPersistToS3 } from '../api-serverless/src/users/s3';
+import { Wallet } from '../entities/IWallet';
+import { DbPoolName } from '../db-query.options';
+import { tdh2Level } from './profile-level';
 
 export interface CreateOrUpdateProfileCommand {
   handle: string;
@@ -27,9 +28,12 @@ export interface ProfileAndConsolidations {
     wallets: { wallet: Wallet; tdh: number }[];
     tdh: number;
   };
+  level: number;
 }
 
-async function getProfileByEnsName(query: string) {
+async function getProfileByEnsName(
+  query: string
+): Promise<ProfileAndConsolidations | null> {
   const wallet = await ens.reverseResolveEnsName(query);
   if (!wallet) {
     return null;
@@ -53,11 +57,14 @@ async function getProfileByEnsName(query: string) {
         tdh: walletTdhs[w.address]
       })),
       tdh
-    }
+    },
+    level: tdh2Level(tdh)
   };
 }
 
-async function getProfileByWallet(query: string) {
+async function getProfileByWallet(
+  query: string
+): Promise<ProfileAndConsolidations | null> {
   const { consolidatedWallets, tdh, blockNo } =
     await tdh_consolidation.getWalletTdhAndConsolidatedWallets(query);
   if (consolidatedWallets.length === 0) {
@@ -77,7 +84,8 @@ async function getProfileByWallet(query: string) {
         tdh: walletTdhs[w.address]
       })),
       tdh
-    }
+    },
+    level: tdh2Level(tdh)
   };
 }
 
@@ -111,7 +119,8 @@ export async function getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
           tdh: walletTdhs[w.address]
         })),
         tdh
-      }
+      },
+      level: tdh2Level(tdh)
     };
   }
 }
