@@ -30,7 +30,7 @@ export async function transactionsLoop() {
 export async function transactions(
   startingBlock?: number,
   latestBlock?: number,
-  pagKey?: string
+  pageKey?: string
 ) {
   try {
     let startingBlockResolved;
@@ -43,7 +43,7 @@ export async function transactions(
     const response = await findTransactions(
       startingBlockResolved,
       latestBlock,
-      pagKey
+      pageKey
     );
 
     const transactionsWithValues = await findTransactionValues(
@@ -51,6 +51,12 @@ export async function transactions(
     );
 
     await persistTransactions(transactionsWithValues);
+
+    console.log(
+      '[TRANSACTIONS]',
+      `[pageKey ${response.pageKey}]`,
+      `[latestBlock ${response.latestBlock}]`
+    );
 
     if (response.pageKey) {
       await transactions(
@@ -67,6 +73,6 @@ export async function transactions(
       e,
       '[RETRYING PROCESS]'
     );
-    await transactions(startingBlock, latestBlock, pagKey);
+    await transactions(startingBlock, latestBlock, pageKey);
   }
 }

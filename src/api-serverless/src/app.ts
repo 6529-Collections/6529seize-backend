@@ -1520,6 +1520,37 @@ loadApi().then(() => {
     });
   });
 
+  apiRouter.get(`/royalties_memes`, function (req: any, res: any) {
+    const fromDate: string = req.query.from_date;
+    const toDate: string = req.query.to_date;
+    const download = req.query.download == 'true';
+
+    db.fetchRoyalties(fromDate, toDate).then(async (results) => {
+      if (results.length > 0) {
+        mcache.put(cacheKey(req), results, CACHE_TIME_MS);
+      }
+
+      if (download) {
+        results.map((r: any) => {
+          delete r.thumbnail;
+        });
+        const filename = 'royalties_memes';
+        const csv = await converter.json2csvAsync(results);
+        res.header('Content-Type', 'text/csv');
+        res.attachment(`${filename}.csv`);
+        return res.send(csv);
+      } else {
+        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+        res.setHeader(
+          'Access-Control-Allow-Headers',
+          corsOptions.allowedHeaders
+        );
+
+        res.end(JSON.stringify(results));
+      }
+    });
+  });
+
   apiRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
     res

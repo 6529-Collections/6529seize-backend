@@ -440,5 +440,7 @@ export const RESERVED_HANDLES = [
   'tools',
   'statistics',
   'community',
-  'punk'
+  'punk',
+  'royalties',
+  'gas'
 ];

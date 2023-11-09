@@ -274,7 +274,7 @@ async function fetchPaginated(
 }
 
 export async function fetchRandomImage() {
-  const sql = `SELECT scaled,image from ${NFTS_TABLE} WHERE CONTRACT=${mysql.escape(
+  const sql = `SELECT scaled,image from ${NFTS_TABLE} WHERE contract=${mysql.escape(
     MEMES_CONTRACT
   )} ORDER BY RAND() LIMIT 1;`;
   return execSQL(sql);
@@ -2442,4 +2442,26 @@ export async function updateUser(user: User) {
   )}, website=${mysql.escape(user.website)}`;
 
   await execSQL(sql);
+}
+
+export async function fetchRoyalties(fromDate: string, toDate: string) {
+  let filters = constructFilters(
+    '',
+    `${TRANSACTIONS_TABLE}.contract=${mysql.escape(MEMES_CONTRACT)}`
+  );
+  if (fromDate) {
+    filters = constructFilters(
+      filters,
+      `transaction_date >= ${mysql.escape(fromDate)}`
+    );
+  }
+  if (toDate) {
+    filters = constructFilters(
+      filters,
+      `transaction_date <= ${mysql.escape(toDate)}`
+    );
+  }
+
+  const sql = `SELECT ${TRANSACTIONS_TABLE}.token_id, ${NFTS_TABLE}.name, ${NFTS_TABLE}.artist, ${NFTS_TABLE}.thumbnail, SUM(${TRANSACTIONS_TABLE}.royalties) AS total_royalties, SUM(${TRANSACTIONS_TABLE}.value) as total_volume FROM ${TRANSACTIONS_TABLE} JOIN ${NFTS_TABLE} ON ${TRANSACTIONS_TABLE}.contract=${NFTS_TABLE}.contract AND ${TRANSACTIONS_TABLE}.token_id=${NFTS_TABLE}.id ${filters} GROUP BY ${TRANSACTIONS_TABLE}.token_id, ${TRANSACTIONS_TABLE}.contract ORDER BY ${TRANSACTIONS_TABLE}.contract asc, ${TRANSACTIONS_TABLE}.token_id asc;`;
+  return execSQL(sql);
 }
