@@ -52,12 +52,6 @@ export async function transactions(
 
     await persistTransactions(transactionsWithValues);
 
-    console.log(
-      '[TRANSACTIONS]',
-      `[pageKey ${response.pageKey}]`,
-      `[latestBlock ${response.latestBlock}]`
-    );
-
     if (response.pageKey) {
       await transactions(
         startingBlockResolved,
