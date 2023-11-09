@@ -3,7 +3,7 @@ import { Transaction } from '../entities/ITransaction';
 import { transactions } from '../transactionsLoop/index';
 
 export const handler = async (event?: any, context?: any) => {
-  const fromBlock = 0;
+  const fromBlock = 16318385;
   const toBlock = 16867180;
   console.log(
     '[RUNNING REPLAY-TRANSACTIONS LOOP]',
