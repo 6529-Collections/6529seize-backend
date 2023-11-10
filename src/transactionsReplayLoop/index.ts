@@ -4,7 +4,7 @@ import { transactions } from '../meme_lab';
 
 export const handler = async (event?: any, context?: any) => {
   const fromBlock = 0;
-  const toBlock = 16867180;
+  const toBlock = undefined;
   console.log(
     '[RUNNING REPLAY-TRANSACTIONS LOOP]',
     `[FROM BLOCK ${fromBlock}]`,

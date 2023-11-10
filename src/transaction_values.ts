@@ -1,8 +1,8 @@
-import { Alchemy, fromHex, toHex, Utils } from 'alchemy-sdk';
+import { Alchemy, fromHex, Utils } from 'alchemy-sdk';
 import {
   ALCHEMY_SETTINGS,
-  GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
+  MEMELAB_ROYALTIES_ADDRESS,
   MEMES_CONTRACT,
   OPENSEA_ADDRESS,
   ROYALTIES_ADDRESS
@@ -71,6 +71,13 @@ async function resolveValue(t: Transaction, receipt: any, events: number) {
 
   const transaction = await alchemy.core.getTransaction(t.transaction);
 
+  let royaltiesAddress = ROYALTIES_ADDRESS;
+  let tokenContract = t.contract;
+  if (areEqualAddresses(t.contract, MEMELAB_CONTRACT)) {
+    royaltiesAddress = MEMELAB_ROYALTIES_ADDRESS;
+    tokenContract = MEMELAB_CONTRACT;
+  }
+
   if (transaction) {
     const receipt = await alchemy.core.getTransactionReceipt(transaction?.hash);
     if (receipt?.gasUsed) {
@@ -87,7 +94,11 @@ async function resolveValue(t: Transaction, receipt: any, events: number) {
     }
 
     receipt?.logs.map(async (log) => {
-      const parsedLog = await parseSeaportLog(log);
+      const parsedLog = await parseSeaportLog(
+        tokenContract,
+        royaltiesAddress,
+        log
+      );
 
       if (
         parsedLog &&
@@ -129,6 +140,14 @@ export const runValues = async () => {
         const receipt = await alchemy.core.getTransactionReceipt(
           transaction?.hash
         );
+        let royaltiesAddress = ROYALTIES_ADDRESS;
+        let tokenContract = MEMES_CONTRACT;
+        if (receipt?.contractAddress) {
+          tokenContract = receipt?.contractAddress;
+          if (areEqualAddresses(receipt.contractAddress, MEMELAB_CONTRACT)) {
+            royaltiesAddress = MEMELAB_ROYALTIES_ADDRESS;
+          }
+        }
         if (receipt?.gasUsed) {
           const gasUnits = receipt.gasUsed.toNumber();
           const gasPrice = parseFloat(
@@ -141,7 +160,7 @@ export const runValues = async () => {
         }
 
         receipt?.logs.map(async (log) => {
-          const a = await parseSeaportLog(log);
+          const a = await parseSeaportLog(tokenContract, royaltiesAddress, log);
           if (a) console.log(a);
         });
       }
@@ -149,19 +168,23 @@ export const runValues = async () => {
   );
 };
 
-const parseSeaportLog = async (log: ethers.providers.Log) => {
+const parseSeaportLog = async (
+  tokenContract: string,
+  royaltiesAddress: string,
+  log: ethers.providers.Log
+) => {
   try {
     const seaResult = SEAPORT_IFACE.parseLog(log);
 
     const royaltiesConsideration = seaResult.args.consideration.find((c: any) =>
-      areEqualAddresses(c.recipient, ROYALTIES_ADDRESS)
+      areEqualAddresses(c.recipient, royaltiesAddress)
     );
     let tokenConsideration = seaResult.args.consideration.find((o: any) =>
-      areEqualAddresses(o.token, MEMES_CONTRACT)
+      areEqualAddresses(o.token, tokenContract)
     );
     if (!tokenConsideration) {
       tokenConsideration = seaResult.args.offer.find((o: any) =>
-        areEqualAddresses(o.token, MEMES_CONTRACT)
+        areEqualAddresses(o.token, tokenContract)
       );
     }
     if (royaltiesConsideration && tokenConsideration) {
@@ -180,7 +203,7 @@ const parseSeaportLog = async (log: ethers.providers.Log) => {
 
       seaResult.args.consideration
         .filter((o: any) => !areEqualAddresses(o.token, contract))
-        .filter((o: any) => !areEqualAddresses(o.recipient, ROYALTIES_ADDRESS))
+        .filter((o: any) => !areEqualAddresses(o.recipient, royaltiesAddress))
         .map((o: any) => {
           totalAmount += parseFloat(Utils.formatEther(o.amount));
         });

@@ -355,10 +355,6 @@ export async function transactions(
 
     await persistTransactions(transactionsWithValues, true);
 
-    const manifoldTransactions = transactionsWithValues.filter((tr) =>
-      areEqualAddresses(tr.from_address, MANIFOLD)
-    );
-
     if (response.pageKey) {
       await transactions(
         startingBlockResolved,
