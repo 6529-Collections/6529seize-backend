@@ -10,6 +10,7 @@ import {
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
+import { findTransactionsByHash } from './db';
 
 let SEAPORT_IFACE: any = undefined;
 
@@ -106,7 +107,9 @@ async function resolveValue(t: Transaction, receipt: any, events: number) {
         areEqualAddresses(parsedLog.contract, t.contract)
       ) {
         t.royalties = parsedLog.amount;
-        t.value = parsedLog.totalAmount ? parsedLog.totalAmount : t.value;
+        t.value = parsedLog.totalAmount
+          ? parsedLog.totalAmount + t.royalties
+          : t.value;
       }
     });
   }
@@ -129,41 +132,15 @@ export const runValues = async () => {
   const transactions = [
     // '0x5df5b55e068191871c3bea2230d2a1b6fd22e4a22e5aa365b862fe2d6ce38c86'
     // '0x7ddf171720509499fce0bec78bb0b3c60ab61df277f9e87cad5025b4cbc93049'
-    '0x65826174b35183b4ed557c1aeb036cc8baddfe89b04ae86cdf15ad7979fc7fe7'
+    '0x79597ce842e2970fbf96bc7d4561a18462c854a2403b39296ca2fc7f1b1f3f3c'
   ];
 
   await Promise.all(
     transactions.map(async (transactionHash) => {
-      const transaction = await alchemy.core.getTransaction(transactionHash);
-
-      if (transaction) {
-        const receipt = await alchemy.core.getTransactionReceipt(
-          transaction?.hash
-        );
-        let royaltiesAddress = ROYALTIES_ADDRESS;
-        let tokenContract = MEMES_CONTRACT;
-        if (receipt?.contractAddress) {
-          tokenContract = receipt?.contractAddress;
-          if (areEqualAddresses(receipt.contractAddress, MEMELAB_CONTRACT)) {
-            royaltiesAddress = MEMELAB_ROYALTIES_ADDRESS;
-          }
-        }
-        if (receipt?.gasUsed) {
-          const gasUnits = receipt.gasUsed.toNumber();
-          const gasPrice = parseFloat(
-            Utils.formatEther(receipt.effectiveGasPrice)
-          );
-          const garPriceGwei =
-            Math.round(gasPrice * 1000000000 * 100000000) / 100000000;
-          const gas = Math.round(gasUnits * gasPrice * 100000000) / 100000000;
-          console.log(gasUnits, gasPrice, garPriceGwei, gas);
-        }
-
-        receipt?.logs.map(async (log) => {
-          const a = await parseSeaportLog(tokenContract, royaltiesAddress, log);
-          if (a) console.log(a);
-        });
-      }
+      const receipt = await alchemy.core.getTransaction(transactionHash);
+      const t = (await findTransactionsByHash([transactionHash]))[0];
+      const parsedTransaction = await resolveValue(t, receipt, 1);
+      console.log('parsedTransaction', parsedTransaction);
     })
   );
 };
