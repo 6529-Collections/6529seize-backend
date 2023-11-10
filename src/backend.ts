@@ -139,7 +139,7 @@ async function start() {
   // await overvotesRevocation.handler();
   // await nextgenLoop.handler();
 
-  // RUNNING_START_SCRIPT = false;
+  RUNNING_START_SCRIPT = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
 }
 
