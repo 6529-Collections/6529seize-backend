@@ -138,8 +138,6 @@ async function start() {
   // await rememes.handler();
   // await overvotesRevocation.handler();
   // await nextgenLoop.handler();
-  await transactionsReplay.handler();
-  process.exit(0);
 
   // RUNNING_START_SCRIPT = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
