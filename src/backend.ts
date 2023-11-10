@@ -137,9 +137,10 @@ async function start() {
   // await transactions.handlerValues();
   // await rememes.handler();
   // await overvotesRevocation.handler();
-  // await transactionsReplay.handler();
+  // await nextgenLoop.handler();
+  await transactionsReplay.handler();
 
-  RUNNING_START_SCRIPT = false;
+  // RUNNING_START_SCRIPT = false;
   console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
 }
 

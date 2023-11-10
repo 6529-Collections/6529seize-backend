@@ -329,7 +329,7 @@ export async function memeLabTransactions() {
   await discoverEns(now);
 }
 
-async function transactions(
+export async function transactions(
   startingBlock?: number,
   latestBlock?: number,
   pagKey?: string

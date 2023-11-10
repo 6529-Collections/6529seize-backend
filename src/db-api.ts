@@ -2450,6 +2450,13 @@ export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
     '',
     `${transactionAlias}.contract=${mysql.escape(MEMES_CONTRACT)}`
   );
+  filters = constructFilters(filters, `${transactionAlias}.value > 0`);
+  filters = constructFilters(
+    filters,
+    `${transactionAlias}.from_address NOT IN (${mysql.escape(
+      NULL_ADDRESS
+    )}, ${mysql.escape(MANIFOLD)})`
+  );
   if (fromDate) {
     filters = constructFilters(
       filters,
