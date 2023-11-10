@@ -27,6 +27,7 @@ import {
   OWNERS_TAGS_TABLE,
   REMEMES_TABLE,
   REMEMES_UPLOADS,
+  ROYALTIES_UPLOADS_TABLE,
   SIX529_MUSEUM,
   TDH_BLOCKS_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
@@ -779,9 +780,9 @@ export async function fetchTransactions(
         )}`;
         break;
       case 'mints':
-        newTypeFilter += `value > 0 AND from_address = ${mysql.escape(
+        newTypeFilter += `value > 0 AND (from_address = ${mysql.escape(
           NULL_ADDRESS
-        )}`;
+        )} OR from_address = ${mysql.escape(MANIFOLD)})`;
         break;
       case 'transfers':
         newTypeFilter += `value = 0 and from_address != ${mysql.escape(
@@ -2451,12 +2452,6 @@ export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
     `${transactionAlias}.contract=${mysql.escape(MEMES_CONTRACT)}`
   );
   filters = constructFilters(filters, `${transactionAlias}.value > 0`);
-  filters = constructFilters(
-    filters,
-    `${transactionAlias}.from_address NOT IN (${mysql.escape(
-      NULL_ADDRESS
-    )}, ${mysql.escape(MANIFOLD)})`
-  );
   if (fromDate) {
     filters = constructFilters(
       filters,
@@ -2474,8 +2469,8 @@ export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
     SELECT token_id, 
     ${NFTS_TABLE}.name, ${NFTS_TABLE}.artist, 
     ${NFTS_TABLE}.thumbnail, 
-    SUM(royalties) AS total_royalties, 
-    SUM(value) as total_volume 
+    SUM(value) as total_volume,
+    SUM(royalties) AS total_royalties
     FROM (SELECT DISTINCT 
         token_id,
         contract,
@@ -2539,4 +2534,14 @@ export async function fetchGasMemes(fromDate: string, toDate: string) {
     GROUP BY ${transactionAlias}.token_id, ${transactionAlias}.contract ORDER BY ${transactionAlias}.contract asc, ${transactionAlias}.token_id asc;`;
 
   return execSQL(sql);
+}
+
+export async function fetchRoyaltiesUploads(pageSize: number, page: number) {
+  return fetchPaginated(
+    ROYALTIES_UPLOADS_TABLE,
+    'date desc',
+    pageSize,
+    page,
+    ''
+  );
 }

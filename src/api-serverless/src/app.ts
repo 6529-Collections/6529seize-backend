@@ -27,6 +27,7 @@ import * as Sentry from '@sentry/serverless';
 import { asyncRouter } from './async.router';
 import { ApiCompliantException } from '../../exceptions';
 import { Strategy as AnonymousStrategy } from 'passport-anonymous';
+import { MEMES_ROYALTIES_RATE } from '../../constants';
 
 const converter = require('json-2-csv');
 
@@ -447,6 +448,17 @@ loadApi().then(() => {
     const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
     const date = req.query.date;
     db.fetchConsolidatedUploads(pageSize, page, block, date).then((result) => {
+      returnPaginatedResult(result, req, res);
+    });
+  });
+
+  apiRouter.get(`/royalties_uploads`, function (req: any, res: any) {
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    db.fetchRoyaltiesUploads(pageSize, page).then((result) => {
       returnPaginatedResult(result, req, res);
     });
   });
@@ -1533,6 +1545,7 @@ loadApi().then(() => {
       if (download) {
         results.map((r: any) => {
           delete r.thumbnail;
+          r.artist_split = r.total_royalties * MEMES_ROYALTIES_RATE;
         });
         const filename = 'royalties_memes';
         const csv = await converter.json2csvAsync(results);

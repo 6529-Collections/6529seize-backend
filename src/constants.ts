@@ -37,6 +37,7 @@ export const NEXT_GEN_COLLECTIONS = 'next_gen_collections';
 export const REMEMES_TABLE = 'rememes';
 export const REMEMES_UPLOADS = 'uploads_rememes';
 export const VOTE_EVENTS_TABLE = 'vote_events';
+export const ROYALTIES_UPLOADS_TABLE = 'royalties_upload';
 
 export const VOTE_MATTERS_CATEGORIES_TABLE = 'vote_matters_categories';
 
@@ -129,3 +130,4 @@ export const SZN5_INDEX = {
 
 export const WALLET_REGEX = /^0x[a-fA-F0-9]{40}$/;
 export const PROFILE_HANDLE_REGEX = /^[a-zA-Z0-9_]{3,15}$/;
+export const MEMES_ROYALTIES_RATE = 0.5;
