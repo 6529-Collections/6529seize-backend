@@ -2467,6 +2467,15 @@ export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
     );
   }
 
+  filters = constructFilters(
+    filters,
+    `from_address != ${mysql.escape(NULL_ADDRESS)}`
+  );
+  filters = constructFilters(
+    filters,
+    `from_address != ${mysql.escape(MANIFOLD)}`
+  );
+
   const sql = `
     SELECT 
       aggregated.token_id, 
