@@ -2459,9 +2459,12 @@ export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
     );
   }
   if (toDate) {
+    let toDateObj = new Date(toDate);
+    toDateObj.setDate(toDateObj.getDate() + 1);
+    let nextDay = toDateObj.toISOString().split('T')[0];
     filters = constructFilters(
       filters,
-      `${transactionAlias}.transaction_date <= ${mysql.escape(toDate)}`
+      `${transactionAlias}.transaction_date < ${mysql.escape(nextDay)}`
     );
   }
 
@@ -2498,9 +2501,12 @@ export async function fetchGasMemes(fromDate: string, toDate: string) {
     );
   }
   if (toDate) {
+    let toDateObj = new Date(toDate);
+    toDateObj.setDate(toDateObj.getDate() + 1);
+    let nextDay = toDateObj.toISOString().split('T')[0];
     filters = constructFilters(
       filters,
-      `${transactionAlias}.transaction_date <= ${mysql.escape(toDate)}`
+      `${transactionAlias}.transaction_date < ${mysql.escape(nextDay)}`
     );
   }
 
