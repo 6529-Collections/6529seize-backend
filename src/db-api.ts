@@ -2446,16 +2446,15 @@ export async function updateUser(user: User) {
 }
 
 export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
-  const transactionAlias = `${TRANSACTIONS_TABLE}_alias_royalties`;
   let filters = constructFilters(
     '',
-    `${transactionAlias}.contract=${mysql.escape(MEMES_CONTRACT)}`
+    `${TRANSACTIONS_TABLE}.contract=${mysql.escape(MEMES_CONTRACT)}`
   );
-  filters = constructFilters(filters, `${transactionAlias}.value > 0`);
+  filters = constructFilters(filters, `${TRANSACTIONS_TABLE}.value > 0`);
   if (fromDate) {
     filters = constructFilters(
       filters,
-      `${transactionAlias}.transaction_date >= ${mysql.escape(fromDate)}`
+      `${TRANSACTIONS_TABLE}.transaction_date >= ${mysql.escape(fromDate)}`
     );
   }
   if (toDate) {
@@ -2464,70 +2463,77 @@ export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
     let nextDay = toDateObj.toISOString().split('T')[0];
     filters = constructFilters(
       filters,
-      `${transactionAlias}.transaction_date < ${mysql.escape(nextDay)}`
-    );
-  }
-
-  const sql = `
-    SELECT token_id, 
-    ${NFTS_TABLE}.name, ${NFTS_TABLE}.artist, 
-    ${NFTS_TABLE}.thumbnail, 
-    SUM(value) as total_volume,
-    SUM(royalties) AS total_royalties
-    FROM (SELECT DISTINCT 
-        token_id,
-        contract,
-        royalties,
-        value,
-        transaction,
-        transaction_date
-      FROM 
-        transactions) AS ${transactionAlias}
-    JOIN ${NFTS_TABLE} ON ${transactionAlias}.contract=${NFTS_TABLE}.contract AND ${transactionAlias}.token_id=${NFTS_TABLE}.id ${filters} 
-    GROUP BY ${transactionAlias}.token_id, ${transactionAlias}.contract ORDER BY ${transactionAlias}.contract asc, ${transactionAlias}.token_id asc;`;
-  return execSQL(sql);
-}
-
-export async function fetchGasMemes(fromDate: string, toDate: string) {
-  const transactionAlias = `${TRANSACTIONS_TABLE}_alias_gas`;
-  let filters = constructFilters(
-    '',
-    `${transactionAlias}.contract=${mysql.escape(MEMES_CONTRACT)}`
-  );
-  if (fromDate) {
-    filters = constructFilters(
-      filters,
-      `${transactionAlias}.transaction_date >= ${mysql.escape(fromDate)}`
-    );
-  }
-  if (toDate) {
-    let toDateObj = new Date(toDate);
-    toDateObj.setDate(toDateObj.getDate() + 1);
-    let nextDay = toDateObj.toISOString().split('T')[0];
-    filters = constructFilters(
-      filters,
-      `${transactionAlias}.transaction_date < ${mysql.escape(nextDay)}`
+      `${TRANSACTIONS_TABLE}.transaction_date < ${mysql.escape(nextDay)}`
     );
   }
 
   const sql = `
     SELECT 
-    token_id,
-    ${NFTS_TABLE}.name, 
-    ${NFTS_TABLE}.artist, 
-    ${NFTS_TABLE}.thumbnail,
-    SUM(CASE WHEN from_address = ${mysql.escape(
-      NULL_ADDRESS
-    )} OR from_address = ${mysql.escape(
-    MANIFOLD
-  )} THEN gas ELSE 0 END) AS primary_gas,
-    SUM(CASE WHEN from_address != ${mysql.escape(
-      NULL_ADDRESS
-    )} AND from_address != ${mysql.escape(
-    MANIFOLD
-  )} THEN gas ELSE 0 END) AS secondary_gas
+      aggregated.token_id, 
+      ${NFTS_TABLE}.name, 
+      ${NFTS_TABLE}.artist, 
+      ${NFTS_TABLE}.thumbnail, 
+      aggregated.total_volume,
+      aggregated.total_royalties
     FROM 
-      (SELECT DISTINCT 
+      (SELECT 
+        token_id,
+        contract,
+        SUM(value) AS total_volume,
+        SUM(royalties) AS total_royalties
+      FROM 
+        ${TRANSACTIONS_TABLE}
+      ${filters}
+      GROUP BY 
+        token_id, 
+        contract) AS aggregated
+    JOIN 
+      ${NFTS_TABLE} ON aggregated.contract = ${NFTS_TABLE}.contract AND aggregated.token_id = ${NFTS_TABLE}.id
+    ORDER BY 
+      aggregated.contract ASC, 
+      aggregated.token_id ASC;`;
+  return execSQL(sql);
+}
+
+export async function fetchGasMemes(fromDate: string, toDate: string) {
+  let filters = constructFilters(
+    '',
+    `${TRANSACTIONS_TABLE}.contract=${mysql.escape(MEMES_CONTRACT)}`
+  );
+  if (fromDate) {
+    filters = constructFilters(
+      filters,
+      `${TRANSACTIONS_TABLE}.transaction_date >= ${mysql.escape(fromDate)}`
+    );
+  }
+  if (toDate) {
+    let toDateObj = new Date(toDate);
+    toDateObj.setDate(toDateObj.getDate() + 1);
+    let nextDay = toDateObj.toISOString().split('T')[0];
+    filters = constructFilters(
+      filters,
+      `${TRANSACTIONS_TABLE}.transaction_date < ${mysql.escape(nextDay)}`
+    );
+  }
+
+  const sql = `
+    SELECT 
+      aggregated.token_id, 
+      ${NFTS_TABLE}.name, 
+      ${NFTS_TABLE}.artist, 
+      ${NFTS_TABLE}.thumbnail,
+      SUM(CASE WHEN aggregated.from_address = ${mysql.escape(
+        NULL_ADDRESS
+      )} OR aggregated.from_address = ${mysql.escape(
+    MANIFOLD
+  )} THEN aggregated.gas ELSE 0 END) AS primary_gas,
+      SUM(CASE WHEN aggregated.from_address != ${mysql.escape(
+        NULL_ADDRESS
+      )} AND aggregated.from_address != ${mysql.escape(
+    MANIFOLD
+  )} THEN aggregated.gas ELSE 0 END) AS secondary_gas
+    FROM 
+      (SELECT 
         token_id,
         contract,
         from_address,
@@ -2535,10 +2541,22 @@ export async function fetchGasMemes(fromDate: string, toDate: string) {
         transaction,
         transaction_date
       FROM 
-        transactions) AS ${transactionAlias}
-    JOIN ${NFTS_TABLE} ON ${transactionAlias}.contract=${NFTS_TABLE}.contract AND ${transactionAlias}.token_id=${NFTS_TABLE}.id ${filters} 
-    GROUP BY ${transactionAlias}.token_id, ${transactionAlias}.contract ORDER BY ${transactionAlias}.contract asc, ${transactionAlias}.token_id asc;`;
+        ${TRANSACTIONS_TABLE}
+      ${filters}
+      GROUP BY 
+        token_id, 
+        contract, 
+        from_address) AS aggregated
+    JOIN 
+      ${NFTS_TABLE} ON aggregated.contract = ${NFTS_TABLE}.contract AND aggregated.token_id = ${NFTS_TABLE}.id
+    GROUP BY 
+      aggregated.token_id, 
+      aggregated.contract
+    ORDER BY 
+      aggregated.contract ASC, 
+      aggregated.token_id ASC;`;
 
+  console.log(sql);
   return execSQL(sql);
 }
 
