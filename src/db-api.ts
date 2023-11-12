@@ -2522,31 +2522,32 @@ export async function fetchGasMemes(fromDate: string, toDate: string) {
       ${NFTS_TABLE}.name, 
       ${NFTS_TABLE}.artist, 
       ${NFTS_TABLE}.thumbnail,
-      SUM(CASE WHEN aggregated.from_address = ${mysql.escape(
-        NULL_ADDRESS
-      )} OR aggregated.from_address = ${mysql.escape(
-    MANIFOLD
-  )} THEN aggregated.gas ELSE 0 END) AS primary_gas,
-      SUM(CASE WHEN aggregated.from_address != ${mysql.escape(
-        NULL_ADDRESS
-      )} AND aggregated.from_address != ${mysql.escape(
-    MANIFOLD
-  )} THEN aggregated.gas ELSE 0 END) AS secondary_gas
+      aggregated.primary_gas,
+      aggregated.secondary_gas
     FROM 
       (SELECT 
         token_id,
         contract,
-        from_address,
-        gas,
-        transaction,
-        transaction_date
+        SUM(CASE 
+            WHEN from_address = ${mysql.escape(
+              NULL_ADDRESS
+            )} OR from_address = ${mysql.escape(MANIFOLD)} 
+            THEN gas 
+            ELSE 0 
+            END) AS primary_gas,
+        SUM(CASE 
+            WHEN from_address != ${mysql.escape(
+              NULL_ADDRESS
+            )} AND from_address != ${mysql.escape(MANIFOLD)} 
+            THEN gas 
+            ELSE 0 
+            END) AS secondary_gas
       FROM 
         ${TRANSACTIONS_TABLE}
       ${filters}
       GROUP BY 
         token_id, 
-        contract, 
-        from_address) AS aggregated
+        contract) AS aggregated
     JOIN 
       ${NFTS_TABLE} ON aggregated.contract = ${NFTS_TABLE}.contract AND aggregated.token_id = ${NFTS_TABLE}.id
     GROUP BY 
@@ -2556,7 +2557,6 @@ export async function fetchGasMemes(fromDate: string, toDate: string) {
       aggregated.contract ASC, 
       aggregated.token_id ASC;`;
 
-  console.log(sql);
   return execSQL(sql);
 }
 
