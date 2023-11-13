@@ -19,7 +19,6 @@ import {
   VerifiedCallback
 } from 'passport-jwt';
 import { getJwtSecret } from './auth/auth';
-import * as console from 'console';
 import { NextFunction, Request, Response } from 'express';
 import { Time } from '../../time';
 import * as sentryContext from '../../sentry.context';
@@ -27,12 +26,16 @@ import * as Sentry from '@sentry/serverless';
 import { asyncRouter } from './async.router';
 import { ApiCompliantException } from '../../exceptions';
 import { Strategy as AnonymousStrategy } from 'passport-anonymous';
+import { Logger } from '../../logging';
 
 const converter = require('json-2-csv');
 
 const mcache = require('memory-cache');
 
 const CACHE_TIME_MS = 1 * 60 * 1000;
+
+const requestLogger = Logger.get('API_REQUEST');
+const logger = Logger.get('API');
 
 function cacheKey(req: any) {
   return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
@@ -44,10 +47,8 @@ function requestLogMiddleware() {
     const start = Time.now();
     response.on('close', () => {
       const { statusCode } = response;
-
-      console.log(
-        new Date(),
-        `[API] ${method} ${url} - Response status: HTTP_${statusCode} - Running time: ${start.diffFromNow()}`
+      requestLogger.info(
+        `${method} ${url} - Response status: HTTP_${statusCode} - Running time: ${start.diffFromNow()}`
       );
     });
     next();
@@ -111,11 +112,8 @@ async function loadApi() {
 }
 
 loadApi().then(() => {
-  console.log(
-    '[API]',
-    `[DB HOST ${process.env.DB_HOST_READ}]`,
-    `[API PASSWORD ACTIVE ${process.env.ACTIVATE_API_PASSWORD}]`,
-    `[LOAD SECRETS ENABLED ${process.env.API_LOAD_SECRETS}]`
+  logger.info(
+    `[DB HOST ${process.env.DB_HOST_READ}] [API PASSWORD ACTIVE ${process.env.ACTIVATE_API_PASSWORD}] [LOAD SECRETS ENABLED ${process.env.API_LOAD_SECRETS}]`
   );
 
   loadApiSecrets().then(() => {
@@ -184,7 +182,7 @@ loadApi().then(() => {
     ) {
       const auth = req.headers['x-6529-auth'];
       if (!auth || !pass.includes(auth)) {
-        console.log(`Unauthorized request for ${req.path} auth: ${auth}`);
+        logger.info(`Unauthorized request for ${req.path} auth: ${auth}`);
         res.statusCode = 401;
         const image = await db.fetchRandomImage();
         res.end(
@@ -1581,11 +1579,8 @@ loadApi().then(() => {
   }
 
   app.listen(3000, function () {
-    console.log(
-      new Date(),
-      `[API]`,
-      `[CONFIG ${process.env.NODE_ENV}]`,
-      '[SERVER RUNNING ON PORT 3000]'
+    logger.info(
+      `[CONFIG ${process.env.NODE_ENV}] [SERVER RUNNING ON PORT 3000]`
     );
   });
 });

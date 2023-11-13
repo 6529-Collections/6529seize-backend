@@ -14,8 +14,11 @@ import { WALLET_REGEX } from '../../../constants';
 import { ForbiddenException } from '../../../exceptions';
 import { asyncRouter } from '../async.router';
 import { getValidatedByJoiOrThrow } from '../validation';
+import { Logger } from '../../../logging';
 
 const router = asyncRouter();
+
+const logger = Logger.get('VOTES');
 
 router.get(
   `/targets/:matter_target_type/:matter_target_id/matters/:matter`,
@@ -77,7 +80,7 @@ router.post(
     const { matter, matter_target_type, matter_target_id } = req.params;
     const { amount, category, voter_wallet } = req.body as ApiVoteRequestBody;
     if (walletFromHeader !== voter_wallet) {
-      console.error(
+      logger.error(
         `[API] [VOTES] Voter failed to vote on path (target_type=${matter_target_type}; matter=${matter}; category=${category}}) because wallet from auth '${walletFromHeader}' and wallet in body '${voter_wallet}' did not match`
       );
       throw new ForbiddenException(
