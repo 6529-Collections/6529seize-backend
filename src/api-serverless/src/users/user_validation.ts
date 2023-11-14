@@ -1,12 +1,15 @@
 import { ethers } from 'ethers';
 import * as Joi from 'joi';
 import { hashMessage } from '@ethersproject/hash';
-import { areEqualAddresses, isValidUrl } from '../../../helpers';
+import { areEqualAddresses } from '../../../helpers';
 import { User } from '../../../entities/IUser';
 import { fetchMemesLite } from '../../../db-api';
 import { scalePfpAndPersistToS3 } from './s3';
+import { Logger } from '../../../logging';
 
 const path = require('path');
+
+const logger = Logger.get('VALIDATE_USER');
 
 const ALLOWED_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
 
@@ -23,7 +26,7 @@ const userSchema = Joi.object({
 });
 
 export async function validateUser(req: any, res: any, next: any) {
-  console.log('[VALIDATE USER]', `[VALIDATING...]`);
+  logger.info(`[VALIDATING...]`);
 
   const body = req.body;
   const file = req.file;
@@ -50,8 +53,7 @@ export async function validateUser(req: any, res: any, next: any) {
       );
 
       const pfpResolution = await resolvePFP(body.wallet, file, value.user);
-      console.log(
-        '[VALIDATE USER]',
+      logger.info(
         `[RESOLVED PFP ${pfpResolution.success ? pfpResolution.pfp : `FALSE`}]`
       );
 
@@ -104,7 +106,7 @@ function validateSignature(
     );
     return areEqualAddresses(address, verifySigner);
   } catch (e) {
-    console.log('error', e);
+    logger.error(e);
     return false;
   }
 }
@@ -141,7 +143,7 @@ async function resolvePFP(
   }
 
   if (user.meme) {
-    console.log('[VALIDATE USER]', `[RESOLVING MEME ${user.meme}]`);
+    logger.info(`[RESOLVING MEME ${user.meme}]`);
     const allMemes = await fetchMemesLite('asc');
     const foundMeme = allMemes.data.find((m: any) => m.id === user.meme);
     if (foundMeme) {

@@ -11,6 +11,9 @@ import { VoteEvent, VoteEventReason } from './entities/IVoteEvent';
 import { Time } from './time';
 import { BadRequestException } from './exceptions';
 import * as tdh_consolidation from './tdh_consolidation';
+import { Logger } from './logging';
+
+const logger = Logger.get('VOTES');
 
 async function getCategoriesForMatter({
   matter,
@@ -440,25 +443,23 @@ async function createRevocationEvents(
     for (const reverseVoterEvent of reverseVoteEvents) {
       await insertVoteEvent(reverseVoterEvent);
     }
-    console.log(
-      `[VOTE_REVOKE_LOOP] Created ${reverseVoteEvents.length} vote revocation events on matter ${overVote.matter_target_type}/${overVote.matter}`
+    logger.info(
+      `Created ${reverseVoteEvents.length} vote revocation events on matter ${overVote.matter_target_type}/${overVote.matter}`
     );
   }
 }
 
 export async function revokeOverVotes() {
   const startTime = Time.now();
-  console.log(`[VOTE_REVOKE_LOOP] Fetching current TDH's...`);
+  logger.info(`Fetching current TDH's...`);
   const activeTdhs = await tdh_consolidation.getAllTdhs();
-  console.log(`[VOTE_REVOKE_LOOP] Fetching current vote tallies...`);
+  logger.info(`Fetching current vote tallies...`);
   const talliesByWallets = await getAllVoteMatterTalliesByWallets();
-  console.log(`[VOTE_REVOKE_LOOP] Figuring out overvotes...`);
+  logger.info(`Figuring out overvotes...`);
   const allOverVotes = calculateOvervoteSummaries(activeTdhs, talliesByWallets);
-  console.log(`[VOTE_REVOKE_LOOP] Revoking overvotes...`);
+  logger.info(`Revoking overvotes...`);
   await createRevocationEvents(allOverVotes);
-  console.log(
-    `[VOTE_REVOKE_LOOP] All overvotes revoked in ${startTime.diffFromNow()}`
-  );
+  logger.info(`All overvotes revoked in ${startTime.diffFromNow()}`);
 }
 
 async function getTotalVotesSpentOnMatterByWallets({
