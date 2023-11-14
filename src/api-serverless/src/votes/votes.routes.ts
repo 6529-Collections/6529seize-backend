@@ -18,7 +18,7 @@ import { Logger } from '../../../logging';
 
 const router = asyncRouter();
 
-const logger = Logger.get('VOTES');
+const logger = Logger.get('VOTES_API');
 
 router.get(
   `/targets/:matter_target_type/:matter_target_id/matters/:matter`,
@@ -81,7 +81,7 @@ router.post(
     const { amount, category, voter_wallet } = req.body as ApiVoteRequestBody;
     if (walletFromHeader !== voter_wallet) {
       logger.error(
-        `[API] [VOTES] Voter failed to vote on path (target_type=${matter_target_type}; matter=${matter}; category=${category}}) because wallet from auth '${walletFromHeader}' and wallet in body '${voter_wallet}' did not match`
+        `Voter failed to vote on path (target_type=${matter_target_type}; matter=${matter}; category=${category}}) because wallet from auth '${walletFromHeader}' and wallet in body '${voter_wallet}' did not match`
       );
       throw new ForbiddenException(
         'Something went wrong. User is not allowed to vote.'
