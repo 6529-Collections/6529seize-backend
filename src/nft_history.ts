@@ -25,6 +25,9 @@ import { NFTHistory, NFTHistoryClaim } from './entities/INFTHistory';
 import { NFT_HISTORY_IFACE } from './abis/nft_history';
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { areEqualAddresses } from './helpers';
+import { Logger } from './logging';
+
+const logger = Logger.get('NFT_HISTORY');
 
 const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
@@ -48,12 +51,8 @@ async function getAllDeployerTransactions(
   const startingBlockHex = `0x${startingBlock.toString(16)}`;
   const latestBlockHex = `0x${latestBlock.toString(16)}`;
 
-  console.log(
-    '[NFT HISTORY]',
-    `[DEPLOYER]`,
-    `[FROM BLOCK ${startingBlockHex}]`,
-    `[TO BLOCK ${latestBlockHex}]`,
-    `[PAGE KEY ${key}]`
+  logger.info(
+    `[DEPLOYER] [FROM BLOCK ${startingBlockHex}] [TO BLOCK ${latestBlockHex}] [PAGE KEY ${key}]`
   );
 
   const settings: AssetTransfersWithMetadataParams = {
@@ -123,7 +122,7 @@ const findDetailsFromTransaction = async (tx: TransactionResponse) => {
         }
       }
     } catch (e: any) {
-      console.log('[NFT HISTORY]', `[ERROR PARSING TX ${tx.hash}]`, e.message);
+      logger.error(`[ERROR PARSING TX ${tx.hash}]`, e);
     }
   }
   return null;
@@ -247,10 +246,8 @@ export const getDeployerTransactions = async (
 
   if (!latestBlock) {
     latestBlock = await alchemy.core.getBlockNumber();
-    console.log(
-      '[NFT HISTORY]',
-      `[STARTING BLOCK ${startingBlock}]`,
-      `[LATEST BLOCK ON CHAIN ${latestBlock}]`
+    logger.info(
+      `[STARTING BLOCK ${startingBlock}] [LATEST BLOCK ON CHAIN ${latestBlock}]`
     );
   }
 
@@ -260,11 +257,8 @@ export const getDeployerTransactions = async (
     pageKey
   );
 
-  console.log(
-    '[NFT HISTORY]',
-    `[DEPLOYER]`,
-    `[FOUND ${assetResponse.transfers.length} NEW TRANSACTIONS]`,
-    `[PARSING...]`
+  logger.info(
+    `[DEPLOYER] [FOUND ${assetResponse.transfers.length} NEW TRANSACTIONS] [PARSING...]`
   );
 
   const transactionsResponse: {
@@ -284,10 +278,8 @@ export const getDeployerTransactions = async (
     return timestampA - timestampB;
   });
 
-  console.log(
-    '[NFT HISTORY]',
-    `[DEPLOYER]`,
-    `[PARSED ${sortedTransactionsResponse.length} TRANSACTIONS]`
+  logger.info(
+    `[DEPLOYER] [PARSED ${sortedTransactionsResponse.length} TRANSACTIONS]`
   );
 
   for (const tr of sortedTransactionsResponse) {
@@ -328,11 +320,7 @@ export const getDeployerTransactions = async (
         };
         await persistNftClaims([claim]);
       } catch (e: any) {
-        console.log(
-          '[NFT HISTORY]',
-          `[ERROR PARSING TX ${tx.hash}]`,
-          e.message
-        );
+        logger.info(`[ERROR PARSING TX ${tx.hash}]`, e.message);
       }
     } else if (tx?.data.startsWith(INITIALIZE_CLAIM_METHOD_2)) {
       const data = tx.data;
@@ -375,11 +363,7 @@ export const getDeployerTransactions = async (
           await persistNftClaims([claim]);
         }
       } catch (e: any) {
-        console.log(
-          '[NFT HISTORY]',
-          `[ERROR PARSING TX ${tx.hash}]`,
-          e.message
-        );
+        logger.error(`[ERROR PARSING TX ${tx.hash}]`, e);
       }
     } else if (tx?.data.startsWith(INITIALIZE_BURN_METHOD)) {
       const data = tx.data;
@@ -414,11 +398,7 @@ export const getDeployerTransactions = async (
           await persistNftHistory([nftMint]);
         }
       } catch (e: any) {
-        console.log(
-          '[NFT HISTORY]',
-          `[ERROR PARSING TX ${tx.hash}]`,
-          e.message
-        );
+        logger.error(`[ERROR PARSING TX ${tx.hash}]`, e);
       }
     } else if (tx?.data.startsWith(SET_TOKEN_URI_METHOD)) {
       const details = await findDetailsFromTransaction(tx);
@@ -477,11 +457,7 @@ export const getDeployerTransactions = async (
           }
         }
       } catch (e: any) {
-        console.log(
-          '[NFT HISTORY]',
-          `[ERROR PARSING TX ${tx.hash}]`,
-          e.message
-        );
+        logger.error(`[ERROR PARSING TX ${tx.hash}]`, e);
       }
     } else if (
       tx?.data.startsWith(UPDATE_CLAIM_METHOD_1) ||
@@ -507,8 +483,7 @@ export const getDeployerTransactions = async (
                 `https://arweave.net/${location}`
               );
               if (editDescription.changes.length == 0) {
-                console.log('no changes found', tx.hash, location);
-                throw new Error();
+                throw new Error(`no changes found ${tx.hash} ${location}`);
               }
               const nftEdit: NFTHistory = {
                 created_at: new Date(),
@@ -525,11 +500,7 @@ export const getDeployerTransactions = async (
           }
         }
       } catch (e: any) {
-        console.log(
-          '[NFT HISTORY]',
-          `[ERROR PARSING TX ${tx.hash}]`,
-          e.message
-        );
+        logger.error(`[ERROR PARSING TX ${tx.hash}]`, e);
       }
     }
   }
@@ -587,7 +558,7 @@ export const findNFTHistory = async (
 
     await persistNftHistoryBlock(deployerTransactionsBlock);
   } catch (e: any) {
-    console.log('[NFT HISTORY]', '[ETIMEDOUT!]', e, '[RETRYING PROCESS]');
+    logger.error('[ETIMEDOUT!] [RETRYING PROCESS]', e);
     await findNFTHistory(force, startingBlock, latestBlock, pagKey);
   }
 };

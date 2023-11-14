@@ -6,17 +6,20 @@ import {
 import { LabNFT, NFT } from '../entities/INFT';
 import { findNftMarketStats } from '../nft_market_stats';
 import { loadEnv, unload } from '../secrets';
+import { Logger } from '../logging';
+
+const logger = Logger.get('MARKET_STATS_LOOP');
 
 export const handler = async (event?: any, context?: any) => {
-  console.log(new Date(), '[RUNNING NFT MARKET STATS]');
+  logger.info('[RUNNING]');
   if (process.env.CONTRACT) {
     await loadEnv([NFT, LabNFT]);
     await findNftMarketStats(process.env.CONTRACT);
     await unload();
   } else {
-    console.log('[MISSING process.env.CONTRACT]');
+    logger.info('[MISSING process.env.CONTRACT]');
   }
-  console.log(new Date(), '[NFT MARKET STATS COMPLETE]');
+  logger.info('[COMPLETE]');
 };
 
 export const memeStats = async () => {

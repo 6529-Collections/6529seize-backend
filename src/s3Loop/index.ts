@@ -1,13 +1,16 @@
 import { fetchAllMemeLabNFTs, fetchAllNFTs } from '../db';
 import { persistS3 } from '../s3';
 import { loadEnv, unload } from '../secrets';
+import { Logger } from '../logging';
+
+const logger = Logger.get('S3_LOOP');
 
 export const handler = async (event?: any, context?: any) => {
-  console.log('[RUNNING S3 LOOP]');
+  logger.info('[RUNNING]');
   await loadEnv();
   await s3Loop();
   await unload();
-  console.log('[S3 LOOP COMPLETE]');
+  logger.info('[COMPLETE]');
 };
 
 export async function s3Loop() {
@@ -17,6 +20,6 @@ export async function s3Loop() {
     const nftsLab = await fetchAllMemeLabNFTs();
     await persistS3(nftsLab);
   } else {
-    console.log('[S3]', '[SKIPPING]', `[CONFIG ${process.env.NODE_ENV}]`);
+    logger.info(`[SKIPPING] [CONFIG ${process.env.NODE_ENV}]`);
   }
 }

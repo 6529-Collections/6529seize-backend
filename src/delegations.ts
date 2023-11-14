@@ -15,18 +15,17 @@ import {
   ConsolidationEvent,
   DelegationEvent
 } from './entities/IDelegation';
+import { Logger } from './logging';
 
 let alchemy: Alchemy;
+
+const logger = Logger.get('DELEGATIONS');
 
 async function getAllDelegations(startingBlock: number, latestBlock: number) {
   const startingBlockHex = `0x${startingBlock.toString(16)}`;
   const latestBlockHex = `0x${latestBlock.toString(16)}`;
 
-  console.log(
-    '[DELEGATIONS]',
-    `[FROM BLOCK ${startingBlockHex}]`,
-    `[TO BLOCK ${latestBlockHex}]`
-  );
+  logger.info(`[FROM BLOCK ${startingBlockHex}] [TO BLOCK ${latestBlockHex}]`);
 
   const response = await alchemy.core.getLogs({
     address: DELEGATION_CONTRACT.contract,
@@ -50,7 +49,7 @@ const getDelegationDetails = async (txHash: string) => {
         };
       }
     } catch (e) {
-      console.log('[DELEGATIONS]', `[ERROR PARSING TX ${txHash}]`);
+      logger.info(`[ERROR PARSING TX ${txHash}]`);
       return null;
     }
   }
@@ -68,10 +67,8 @@ export const findDelegationTransactions = async (
 
   if (!latestBlock) {
     latestBlock = await alchemy.core.getBlockNumber();
-    console.log(
-      '[DELEGATIONS]',
-      `[STARTING BLOCK ${startingBlock}]`,
-      `[LATEST BLOCK ON CHAIN ${latestBlock}]`
+    logger.info(
+      `[STARTING BLOCK ${startingBlock}] [LATEST BLOCK ON CHAIN ${latestBlock}]`
     );
   }
 
@@ -79,10 +76,7 @@ export const findDelegationTransactions = async (
 
   const allDelegations = await getAllDelegations(startingBlock, latestBlock);
 
-  console.log(
-    '[DELEGATIONS]',
-    `[FOUND ${allDelegations.length} NEW TRANSACTIONS]`
-  );
+  logger.info(`[FOUND ${allDelegations.length} NEW TRANSACTIONS]`);
 
   if (allDelegations.length == 0) {
     return {

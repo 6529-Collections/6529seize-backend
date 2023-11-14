@@ -10,6 +10,9 @@ import {
 } from './db';
 import { Wallet } from './entities/IWallet';
 import { sqlExecutor } from './sql-executor';
+import { Logger } from './logging';
+
+const logger = Logger.get('ENS');
 
 let alchemy: Alchemy;
 
@@ -44,11 +47,7 @@ export async function reverseResolveEnsName(
 }
 
 async function findExistingEns(ens: ENS[]) {
-  console.log(
-    new Date(),
-    '[ENS EXISTING]',
-    `[PROCESSING EXISTING ENS FOR ${ens.length} WALLETS]`
-  );
+  logger.info(`[PROCESSING EXISTING ENS FOR ${ens.length} WALLETS]`);
 
   const deltaEns: ENS[] = [];
 
@@ -66,11 +65,7 @@ async function findExistingEns(ens: ENS[]) {
       };
       deltaEns.push(newEns);
     } catch (e: any) {
-      console.log(
-        '[ENS EXISTING]',
-        `[ERROR FOR WALLET ${w.wallet}]`,
-        e.message
-      );
+      logger.error(`[ERROR FOR WALLET ${w.wallet}]`, e);
       const newEns: ENS = {
         created_at: new Date(),
         wallet: w.wallet,
@@ -80,21 +75,13 @@ async function findExistingEns(ens: ENS[]) {
     }
   }
 
-  console.log(
-    new Date(),
-    '[ENS EXISTING]',
-    `[FOUND ${deltaEns.length} DELTA ENS]`
-  );
+  logger.info(`[FOUND ${deltaEns.length} DELTA ENS]`);
 
   return deltaEns;
 }
 
 async function findNewEns(wallets: string[]) {
-  console.log(
-    new Date(),
-    '[ENS NEW]',
-    `[PROCESSING NEW ENS FOR ${wallets.length} WALLETS]`
-  );
+  logger.info(`[PROCESSING NEW ENS FOR ${wallets.length} WALLETS]`);
 
   const finalEns: ENS[] = [];
 
@@ -113,7 +100,7 @@ async function findNewEns(wallets: string[]) {
         };
         finalEns.push(newEns);
       } catch (e: any) {
-        console.log('[ENS NEW]', `[ERROR FOR WALLET ${w}]`, e.message);
+        logger.error(`[ERROR FOR WALLET ${w}]`, e);
         const newEns: ENS = {
           created_at: new Date(),
           wallet: w,
@@ -124,7 +111,7 @@ async function findNewEns(wallets: string[]) {
     })
   );
 
-  console.log(new Date(), '[ENS NEW]', `[FOUND ${finalEns.length} NEW ENS]`);
+  logger.info(`[FOUND ${finalEns.length} NEW ENS]`);
 
   return finalEns;
 }
@@ -145,7 +132,7 @@ export async function discoverEns(datetime?: Date) {
       }
     }
   } catch (e: any) {
-    console.log(e);
+    logger.error(e);
     await discoverEns(datetime);
   }
 }
@@ -166,7 +153,7 @@ export async function discoverEnsDelegations() {
       }
     }
   } catch (e: any) {
-    console.log(e);
+    logger.error(e);
     await discoverEnsDelegations();
   }
 }
@@ -174,7 +161,7 @@ export async function discoverEnsDelegations() {
 async function refreshEnsLoop() {
   let batch: ENS[];
   if (process.env.REFRESH_BROKEN_ENS === 'true') {
-    console.log(`[REFRESH ENS LOOP] [REFRESHING BROKEN ENS]`);
+    logger.info(`[REFRESH ENS LOOP] [REFRESHING BROKEN ENS]`);
     batch = await fetchBrokenEnsRefresh();
   } else {
     batch = await fetchEnsRefresh();
