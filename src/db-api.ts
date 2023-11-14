@@ -2505,14 +2505,15 @@ export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
 }
 
 export async function fetchGasMemes(fromDate: string, toDate: string) {
+  const transactionsAlias = 'distinct_transactions';
   let filters = constructFilters(
     '',
-    `${TRANSACTIONS_TABLE}.contract=${mysql.escape(MEMES_CONTRACT)}`
+    `${transactionsAlias}.contract=${mysql.escape(MEMES_CONTRACT)}`
   );
   if (fromDate) {
     filters = constructFilters(
       filters,
-      `${TRANSACTIONS_TABLE}.transaction_date >= ${mysql.escape(fromDate)}`
+      `${transactionsAlias}.transaction_date >= ${mysql.escape(fromDate)}`
     );
   }
   if (toDate) {
@@ -2521,51 +2522,50 @@ export async function fetchGasMemes(fromDate: string, toDate: string) {
     let nextDay = toDateObj.toISOString().split('T')[0];
     filters = constructFilters(
       filters,
-      `${TRANSACTIONS_TABLE}.transaction_date < ${mysql.escape(nextDay)}`
+      `${transactionsAlias}.transaction_date < ${mysql.escape(nextDay)}`
     );
   }
 
   const sql = `
-    SELECT 
-      aggregated.token_id, 
-      ${NFTS_TABLE}.name, 
-      ${NFTS_TABLE}.artist, 
+    SELECT
+      aggregated.token_id,
+      ${NFTS_TABLE}.name,
+      ${NFTS_TABLE}.artist,
       ${NFTS_TABLE}.thumbnail,
       aggregated.primary_gas,
       aggregated.secondary_gas
-    FROM 
-      (SELECT 
+    FROM
+      (SELECT
         token_id,
         contract,
-        SUM(CASE 
+        SUM(CASE
             WHEN from_address = ${mysql.escape(
               NULL_ADDRESS
-            )} OR from_address = ${mysql.escape(MANIFOLD)} 
-            THEN gas 
-            ELSE 0 
+            )} OR from_address = ${mysql.escape(MANIFOLD)}
+            THEN gas
+            ELSE 0
             END) AS primary_gas,
-        SUM(CASE 
+        SUM(CASE
             WHEN from_address != ${mysql.escape(
               NULL_ADDRESS
-            )} AND from_address != ${mysql.escape(MANIFOLD)} 
-            THEN gas 
-            ELSE 0 
+            )} AND from_address != ${mysql.escape(MANIFOLD)}
+            THEN gas
+            ELSE 0
             END) AS secondary_gas
-      FROM 
-        ${TRANSACTIONS_TABLE}
+      FROM
+        (SELECT DISTINCT transaction, token_id, contract, gas, from_address, transaction_date FROM ${TRANSACTIONS_TABLE}) as ${transactionsAlias}
       ${filters}
-      GROUP BY 
-        token_id, 
+      GROUP BY
+        token_id,
         contract) AS aggregated
-    JOIN 
+    JOIN
       ${NFTS_TABLE} ON aggregated.contract = ${NFTS_TABLE}.contract AND aggregated.token_id = ${NFTS_TABLE}.id
-    GROUP BY 
-      aggregated.token_id, 
+    GROUP BY
+      aggregated.token_id,
       aggregated.contract
-    ORDER BY 
-      aggregated.contract ASC, 
+    ORDER BY
+      aggregated.contract ASC,
       aggregated.token_id ASC;`;
-
   return execSQL(sql);
 }
 

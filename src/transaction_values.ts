@@ -1,9 +1,9 @@
-import { Alchemy, fromHex, Utils } from 'alchemy-sdk';
+import { Alchemy, Utils, fromHex } from 'alchemy-sdk';
 import {
   ALCHEMY_SETTINGS,
   MEMELAB_CONTRACT,
   MEMELAB_ROYALTIES_ADDRESS,
-  MEMES_CONTRACT,
+  NULL_ADDRESS,
   OPENSEA_ADDRESS,
   ROYALTIES_ADDRESS
 } from './constants';
@@ -11,10 +11,13 @@ import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
 import { findTransactionsByHash } from './db';
-
-let SEAPORT_IFACE: any = undefined;
-
 const fetch = require('node-fetch');
+
+const TRANSFER_EVENT =
+  '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+let alchemy: Alchemy;
+let SEAPORT_IFACE: any = undefined;
 
 async function loadABIs() {
   const f = await fetch(
@@ -22,11 +25,30 @@ async function loadABIs() {
   );
   const abi = await f.json();
   SEAPORT_IFACE = new ethers.utils.Interface(abi.result);
-
   console.log('[ROYALTIES]', `[ABIs LOADED]`, `[SEAPORT ${f.status}]`);
 }
 
-let alchemy: Alchemy;
+function isZeroAddress(address: string) {
+  return /^0x0+$/.test(address);
+}
+
+function resolveLogAddress(address: string) {
+  if (!address) {
+    return address;
+  }
+  if (isZeroAddress(address)) {
+    return NULL_ADDRESS;
+  }
+  const addressHex = '0x' + address.slice(-40);
+  return ethers.utils.getAddress(addressHex);
+}
+
+function resolveLogValue(data: string) {
+  if (data === '0x') {
+    return 0;
+  }
+  return parseFloat(Utils.formatEther(data));
+}
 
 export const findTransactionValues = async (transactions: Transaction[]) => {
   alchemy = new Alchemy({
@@ -48,12 +70,7 @@ export const findTransactionValues = async (transactions: Transaction[]) => {
 
   await Promise.all(
     transactions.map(async (t) => {
-      const transferEvents = [...transactions].filter(
-        (t1) => t.transaction == t1.transaction
-      ).length;
-
-      const receipt = await alchemy.core.getTransaction(t.transaction);
-      const parsedTransaction = await resolveValue(t, receipt, transferEvents);
+      const parsedTransaction = await resolveValue(t);
       transactionsWithValues.push(parsedTransaction);
     })
   );
@@ -67,20 +84,19 @@ export const findTransactionValues = async (transactions: Transaction[]) => {
   return transactionsWithValues;
 };
 
-async function resolveValue(t: Transaction, receipt: any, events: number) {
-  t.value = receipt ? parseFloat(Utils.formatEther(receipt.value)) / events : 0;
-
+async function resolveValue(t: Transaction) {
   const transaction = await alchemy.core.getTransaction(t.transaction);
+  t.value = transaction ? parseFloat(Utils.formatEther(transaction.value)) : 0;
+  t.royalties = 0;
 
   let royaltiesAddress = ROYALTIES_ADDRESS;
-  let tokenContract = t.contract;
   if (areEqualAddresses(t.contract, MEMELAB_CONTRACT)) {
     royaltiesAddress = MEMELAB_ROYALTIES_ADDRESS;
-    tokenContract = MEMELAB_CONTRACT;
   }
 
   if (transaction) {
     const receipt = await alchemy.core.getTransactionReceipt(transaction?.hash);
+
     if (receipt?.gasUsed) {
       const gasUnits = receipt.gasUsed.toNumber();
       const gasPrice = parseFloat(Utils.formatEther(receipt.effectiveGasPrice));
@@ -94,28 +110,114 @@ async function resolveValue(t: Transaction, receipt: any, events: number) {
       t.gas = gas;
     }
 
-    receipt?.logs.map(async (log) => {
-      const parsedLog = await parseSeaportLog(
-        tokenContract,
-        royaltiesAddress,
-        log
+    if (receipt) {
+      let totalValue = 0;
+      let totalRoyalties = 0;
+      await Promise.all(
+        receipt.logs.map(async (log) => {
+          const parsedLog = await parseSeaportLog(t, royaltiesAddress, log);
+          if (
+            parsedLog &&
+            parsedLog.tokenId == t.token_id &&
+            areEqualAddresses(parsedLog.contract, t.contract)
+          ) {
+            t.royalties = parsedLog.royaltiesAmount;
+            t.value = parsedLog.totalAmount;
+          } else {
+            if (areEqualAddresses(log.topics[0], TRANSFER_EVENT)) {
+              try {
+                const from = resolveLogAddress(log.topics[1]);
+                const to = resolveLogAddress(log.topics[2]);
+                const value = resolveLogValue(log.data);
+                if (areEqualAddresses(from, t.to_address)) {
+                  totalValue += value;
+                  if (areEqualAddresses(to, royaltiesAddress)) {
+                    totalRoyalties += value;
+                  }
+                }
+              } catch (e) {
+                console.log('EXCEPTION', t.transaction, e);
+              }
+            }
+          }
+        })
       );
-
-      if (
-        parsedLog &&
-        parsedLog.tokenId == t.token_id &&
-        areEqualAddresses(parsedLog.contract, t.contract)
-      ) {
-        t.royalties = parsedLog.amount;
-        t.value = parsedLog.totalAmount
-          ? parsedLog.totalAmount + t.royalties
-          : t.value;
+      if (totalValue) {
+        t.value = totalValue;
+        t.royalties = totalRoyalties;
       }
-    });
+    }
   }
 
   return t;
 }
+
+const parseSeaportLog = async (
+  t: Transaction,
+  royaltiesAddress: string,
+  log: ethers.providers.Log
+) => {
+  let seaResult;
+  try {
+    seaResult = SEAPORT_IFACE.parseLog(log);
+  } catch (err: any) {
+    // console.log('sea error', log.address, err);
+    return null;
+  }
+
+  let recipientConsideration = seaResult.args.consideration?.find((c: any) =>
+    areEqualAddresses(c.recipient, t.from_address)
+  );
+  if (!recipientConsideration) {
+    recipientConsideration = seaResult.args.offer?.find((o: any) =>
+      areEqualAddresses(o.recipient, t.from_address)
+    );
+  }
+
+  const royaltiesConsideration = seaResult.args.consideration?.find((c: any) =>
+    areEqualAddresses(c.recipient, royaltiesAddress)
+  );
+
+  let tokenConsideration = seaResult.args.consideration?.find((o: any) =>
+    areEqualAddresses(o.token, t.contract)
+  );
+  if (!tokenConsideration) {
+    tokenConsideration = seaResult.args.offer?.find((o: any) =>
+      areEqualAddresses(o.token, t.contract)
+    );
+  }
+
+  if (tokenConsideration && recipientConsideration) {
+    const contract = tokenConsideration.token;
+    const tokenId = fromHex(tokenConsideration.identifier);
+    const royaltiesAmount = royaltiesConsideration
+      ? parseFloat(Utils.formatEther(royaltiesConsideration.amount))
+      : 0;
+
+    let totalAmount = 0;
+
+    seaResult.args.offer
+      .filter((o: any) => !areEqualAddresses(o.token, t.contract))
+      .map((o: any) => {
+        totalAmount += parseFloat(Utils.formatEther(o.amount));
+      });
+
+    if (totalAmount == 0) {
+      seaResult.args.consideration
+        .filter((o: any) => !areEqualAddresses(o.token, contract))
+        .map((o: any) => {
+          totalAmount += parseFloat(Utils.formatEther(o.amount));
+        });
+    }
+
+    return {
+      contract,
+      tokenId,
+      royaltiesAmount,
+      totalAmount
+    };
+  }
+};
 
 export const runValues = async () => {
   if (!alchemy) {
@@ -124,76 +226,42 @@ export const runValues = async () => {
       apiKey: process.env.ALCHEMY_API_KEY
     });
   }
-
   if (!SEAPORT_IFACE) {
     await loadABIs();
   }
 
   const transactions = [
-    // '0x5df5b55e068191871c3bea2230d2a1b6fd22e4a22e5aa365b862fe2d6ce38c86'
-    // '0x7ddf171720509499fce0bec78bb0b3c60ab61df277f9e87cad5025b4cbc93049'
-    '0x79597ce842e2970fbf96bc7d4561a18462c854a2403b39296ca2fc7f1b1f3f3c'
+    '0x4144495f6932b53d48469b76876a82ffa0172d69dc9fc69f2120444b6df2a1b7'
+    // '0xdf73c5f14da545c5da2d86e9f9b9733541a003609374c456d7c3badad234b16a'
+    // '0x308577a5a108cc64633513215302ad1400b1018a593128fe53552216adc8fc6c'
+    // '0xe7d7748edd1228ca665e40e5b9792e5ef0a7a16606c18ef11851db435f2b43af',
+    // '0x00027d17a0f851a56dca8c469fd70b0d23dca2e3d2b4ebdad2f7e09ccb909405',
   ];
 
   await Promise.all(
     transactions.map(async (transactionHash) => {
-      const receipt = await alchemy.core.getTransaction(transactionHash);
-      const t = (await findTransactionsByHash([transactionHash]))[0];
-      const parsedTransaction = await resolveValue(t, receipt, 1);
-      console.log('parsedTransaction', parsedTransaction);
+      const t = await findTransactionsByHash([transactionHash]);
+
+      let totalValue = 0;
+      let totalRoyalties = 0;
+      for (let i = 0; i < t.length; i++) {
+        const parsedTransaction = await resolveValue(t[i]);
+        console.log(
+          parsedTransaction.from_address,
+          parsedTransaction.to_address,
+          parsedTransaction.value,
+          parsedTransaction.royalties
+        );
+        totalValue += parsedTransaction.value;
+        totalRoyalties += parsedTransaction.royalties;
+      }
+      console.log(
+        transactionHash,
+        'total value',
+        totalValue,
+        'total royalties',
+        totalRoyalties
+      );
     })
   );
-};
-
-const parseSeaportLog = async (
-  tokenContract: string,
-  royaltiesAddress: string,
-  log: ethers.providers.Log
-) => {
-  try {
-    const seaResult = SEAPORT_IFACE.parseLog(log);
-
-    const royaltiesConsideration = seaResult.args.consideration.find((c: any) =>
-      areEqualAddresses(c.recipient, royaltiesAddress)
-    );
-    let tokenConsideration = seaResult.args.consideration.find((o: any) =>
-      areEqualAddresses(o.token, tokenContract)
-    );
-    if (!tokenConsideration) {
-      tokenConsideration = seaResult.args.offer.find((o: any) =>
-        areEqualAddresses(o.token, tokenContract)
-      );
-    }
-    if (royaltiesConsideration && tokenConsideration) {
-      const contract = tokenConsideration.token;
-      const tokenId = fromHex(tokenConsideration.identifier);
-      const amount = parseFloat(
-        Utils.formatEther(royaltiesConsideration.amount)
-      );
-      let totalAmount = 0;
-
-      seaResult.args.offer
-        .filter((o: any) => !areEqualAddresses(o.token, contract))
-        .map((o: any) => {
-          totalAmount += parseFloat(Utils.formatEther(o.amount));
-        });
-
-      seaResult.args.consideration
-        .filter((o: any) => !areEqualAddresses(o.token, contract))
-        .filter((o: any) => !areEqualAddresses(o.recipient, royaltiesAddress))
-        .map((o: any) => {
-          totalAmount += parseFloat(Utils.formatEther(o.amount));
-        });
-
-      return {
-        contract,
-        tokenId,
-        amount,
-        totalAmount
-      };
-    }
-  } catch (err: any) {
-    // console.log('sea error', log.address, err);
-    return null;
-  }
 };
