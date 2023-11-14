@@ -11,6 +11,9 @@ import {
   persistOwnerTags,
   retrieveWalletConsolidations
 } from './db';
+import { Logger } from './logging';
+
+const logger = Logger.get('OWNERS_TAGS');
 
 export const findOwnerTags = async () => {
   const nfts = await fetchAllNFTs();
@@ -21,10 +24,8 @@ export const findOwnerTags = async () => {
     new Set([...startingOwners].map((item) => item.wallet))
   );
 
-  console.log(
-    new Date(),
-    `[OWNERS TAGS ${startingOwnerTags.length}]`,
-    `[UNIQUE OWNERS ${uniqueOwners.length}]`
+  logger.info(
+    `[OWNERS TAGS ${startingOwnerTags.length}] [UNIQUE OWNERS ${uniqueOwners.length}]`
   );
 
   const memesNFTs = [...nfts].filter((n) =>
@@ -98,22 +99,14 @@ export const findOwnerTags = async () => {
     }
   });
 
-  console.log(
-    new Date(),
-    '[OWNERS TAGS]',
-    `[UNIQUE TAGS DELTA ${ownersTagsDelta.length}]`
-  );
+  logger.info(`[UNIQUE TAGS DELTA ${ownersTagsDelta.length}]`);
   await persistOwnerTags(ownersTagsDelta);
 
   const consolidatedTags: ConsolidatedOwnerTags[] = [];
   const processedWallets = new Set<string>();
   const ownerTagsForConsolidation = await fetchAllOwnerTags();
 
-  console.log(
-    new Date(),
-    '[OWNERS TAGS]',
-    `[CONSOLIDATING ${ownerTagsForConsolidation.length} WALLETS]`
-  );
+  logger.info(`[CONSOLIDATING ${ownerTagsForConsolidation.length} WALLETS]`);
 
   await Promise.all(
     ownerTagsForConsolidation.map(async (om) => {
@@ -171,11 +164,10 @@ export const findOwnerTags = async () => {
     })
   );
 
-  console.log(
-    new Date(),
-    '[CONSOLIDATED OWNERS TAGS]',
-    `[DELTA ${consolidatedTags.length}]`,
-    `[PROCESSED ${Array.from(processedWallets).length}]`
+  logger.info(
+    `[DELTA ${consolidatedTags.length}] [PROCESSED ${
+      Array.from(processedWallets).length
+    }]`
   );
   await persistConsolidatedOwnerTags(consolidatedTags);
 

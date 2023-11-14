@@ -8,15 +8,18 @@ import {
 import { findDelegationTransactions } from '../delegations';
 import { Delegation, Consolidation } from '../entities/IDelegation';
 import { loadEnv, unload } from '../secrets';
+import { Logger } from '../logging';
+
+const logger = Logger.get('DELEGATIONS_LOOP');
 
 export const handler = async (event?: any, context?: any) => {
   await loadEnv([Delegation, Consolidation]);
   // await retrieveConsolidations();
   const force = process.env.DELEGATIONS_RESET == 'true';
-  console.log('[RUNNING DELEGATIONS LOOP]', `[FORCE ${force}]`);
+  logger.info(`[RUNNING] [FORCE ${force}]`);
   await delegations(force ? 0 : undefined);
   await unload();
-  console.log('[DELEGATIONS LOOP COMPLETE]');
+  logger.info('[COMPLETE]');
 };
 
 export async function retrieveConsolidations() {
@@ -32,10 +35,10 @@ export async function retrieveConsolidations() {
   const d = await retrieveWalletConsolidations(
     '0xFe49A85E98941F1A115aCD4bEB98521023a25802'
   );
-  console.log('prxt', a);
-  console.log('coins', b);
-  console.log('punk', c);
-  console.log('better_phoebe', d);
+  logger.info(`prxt ${JSON.stringify(a)}`);
+  logger.info(`coins ${JSON.stringify(b)}`);
+  logger.info(`punk ${JSON.stringify(c)}`);
+  logger.info(`better_phoebe ${JSON.stringify(d)}`);
 }
 
 export async function delegations(
@@ -70,13 +73,7 @@ export async function delegations(
       response.revocation
     );
   } catch (e: any) {
-    console.log(
-      new Date(),
-      '[TRANSACTIONS]',
-      '[ETIMEDOUT!]',
-      e,
-      '[RETRYING PROCESS]'
-    );
+    logger.error('[ETIMEDOUT!] [RETRYING PROCESS]', e);
     await delegations(startingBlock, latestBlock);
   }
 }

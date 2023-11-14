@@ -1,4 +1,5 @@
 import * as overvotesRevocation from './overvotesRevocationLoop';
+import { Logger } from './logging';
 
 const transactions = require('./transactionsLoop');
 const nfts = require('./nftsLoop');
@@ -21,6 +22,8 @@ const { memeStats, memeLabStats, gradientStats } = require('./marketStatsLoop');
 const cron = require('node-cron');
 
 let RUNNING_START_SCRIPT = true;
+
+const logger = Logger.get('BACKEND');
 
 function isCronsEnabled() {
   return process.env.CRONS_DISABLED !== 'true' && !RUNNING_START_SCRIPT;
@@ -107,12 +110,7 @@ cron.schedule('1 4 * * *', async function () {
 });
 
 async function start() {
-  const now = new Date();
-  console.log(
-    now,
-    `[CONFIG ${process.env.NODE_ENV}]`,
-    `[EXECUTING START SCRIPT...]`
-  );
+  logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
   // Uncomment to call on start
 
@@ -138,7 +136,7 @@ async function start() {
   await overvotesRevocation.handler();
 
   RUNNING_START_SCRIPT = false;
-  console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
+  logger.info(`[START SCRIPT COMPLETE] [SERVICE STARTED...]`);
 }
 
 start();

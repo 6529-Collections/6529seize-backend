@@ -13,7 +13,6 @@ import {
   TRANSACTIONS_REMAKE_TABLE,
   OWNERS_METRICS_TABLE,
   NULL_ADDRESS,
-  MANIFOLD,
   NFTS_MEME_LAB_TABLE,
   TRANSACTIONS_MEME_LAB_TABLE,
   OWNERS_MEME_LAB_TABLE,
@@ -77,13 +76,16 @@ import { VoteEvent } from './entities/IVoteEvent';
 import { setSqlExecutor } from './sql-executor';
 import { VoteMatterCategory } from './entities/IVoteMatter';
 import { Profile } from './entities/IProfile';
+import { Logger } from './logging';
 
 const mysql = require('mysql');
+
+const logger = Logger.get('DB');
 
 let AppDataSource: DataSource;
 
 export async function connect(entities: any[] = []) {
-  console.log('[DATABASE]', `[DB HOST ${process.env.DB_HOST}]`);
+  logger.info(`[DB HOST ${process.env.DB_HOST}]`);
 
   if (process.env.NODE_ENV != 'production') {
     entities = [
@@ -131,17 +133,17 @@ export async function connect(entities: any[] = []) {
     logging: false
   });
 
-  await AppDataSource.initialize().catch((error) => console.log(error));
+  await AppDataSource.initialize().catch((error) => logger.error(error));
   setSqlExecutor({
     execute: (sql: string, params?: Record<string, any>) =>
       execSQLWithParams(sql, params)
   });
-  console.log('[DATABASE]', `[CONNECTION CREATED]`);
+  logger.info('[CONNECTION CREATED]');
 }
 
 export async function disconnect() {
   await AppDataSource.destroy();
-  console.log('[DATABASE]', `[DISCONNECTED]`);
+  logger.info('[DISCONNECTED]');
 }
 
 export async function addColumnToTable(
@@ -155,11 +157,11 @@ export async function addColumnToTable(
   const r1 = await execSQL(sql1);
 
   if (r1.length > 0) {
-    console.log(`[DB]`, `[COLUMN EXISTS ${table}.${column}]`);
+    logger.info(`[COLUMN EXISTS ${table}.${column}]`);
   } else {
     const sql2 = `ALTER TABLE ${table} ADD COLUMN ${column} ${type}`;
     await execSQL(sql2);
-    console.log(`[DB]`, `[COLUMN CREATED ${table}.${column}]`);
+    logger.info(`[COLUMN CREATED ${table}.${column}]`);
   }
 }
 
@@ -660,35 +662,31 @@ export async function persistTransactions(
     const consolidatedTransactions = consolidateTransactions(transactions);
 
     if (isLab) {
-      console.log(
-        '[LAB TRANSACTIONS]',
-        `[PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
+      logger.info(
+        `[LAB TRANSACTIONS] [PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
       );
       await AppDataSource.getRepository(LabTransaction).save(
         consolidatedTransactions
       );
     } else {
-      console.log(
-        '[TRANSACTIONS]',
-        `[PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
+      logger.info(
+        `[TRANSACTIONS] [PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
       );
       await AppDataSource.getRepository(Transaction).save(
         consolidatedTransactions
       );
     }
 
-    console.log(
-      '[TRANSACTIONS]',
-      `[ALL ${consolidatedTransactions.length} TRANSACTIONS PERSISTED]`
+    logger.info(
+      `[TRANSACTIONS] [ALL ${consolidatedTransactions.length} TRANSACTIONS PERSISTED]`
     );
   }
 }
 
 export async function persistTransactionsREMAKE(transactions: Transaction[]) {
   if (transactions.length > 0) {
-    console.log(
-      '[TRANSACTIONS REMAKE]',
-      `[PERSISTING ${transactions.length} TRANSACTIONS]`
+    logger.info(
+      `[TRANSACTIONS REMAKE] [PERSISTING ${transactions.length} TRANSACTIONS]`
     );
     await Promise.all(
       transactions.map(async (t) => {
@@ -706,16 +704,15 @@ export async function persistTransactionsREMAKE(transactions: Transaction[]) {
         await execSQL(sql);
       })
     );
-    console.log(
-      '[TRANSACTIONS REMAKE]',
-      `[ALL ${transactions.length} TRANSACTIONS PERSISTED]`
+    logger.info(
+      `[TRANSACTIONS REMAKE] [ALL ${transactions.length} TRANSACTIONS PERSISTED]`
     );
   }
 }
 
 export async function persistArtists(artists: Artist[]) {
   if (artists.length > 0) {
-    console.log('[ARTISTS]', `[PERSISTING ${artists.length} ARTISTS]`);
+    logger.info(`[ARTISTS] [PERSISTING ${artists.length} ARTISTS]`);
     await Promise.all(
       artists.map(async (artist) => {
         const sql = `REPLACE INTO ${ARTISTS_TABLE} SET name=${mysql.escape(
@@ -734,13 +731,13 @@ export async function persistArtists(artists: Artist[]) {
         await execSQL(sql);
       })
     );
-    console.log('[ARTISTS]', `[ALL ${artists.length} ARTISTS PERSISTED]`);
+    logger.info(`[ARTISTS] [ALL ${artists.length} ARTISTS PERSISTED]`);
   }
 }
 
 export async function persistOwners(owners: Owner[], isLab?: boolean) {
   if (owners.length > 0) {
-    console.log('[OWNERS]', `[PERSISTING ${owners.length} OWNERS]`);
+    logger.info(`[OWNERS] [PERSISTING ${owners.length} OWNERS]`);
 
     await Promise.all(
       owners.map(async (owner) => {
@@ -765,7 +762,7 @@ export async function persistOwners(owners: Owner[], isLab?: boolean) {
       })
     );
 
-    console.log('[OWNERS]', `[ALL ${owners.length} OWNERS PERSISTED]`);
+    logger.info(`[OWNERS] [ALL ${owners.length} OWNERS PERSISTED]`);
   }
 }
 
@@ -774,10 +771,7 @@ export async function persistOwnerMetrics(
   reset?: boolean
 ) {
   if (ownerMetrics.length > 0) {
-    console.log(
-      '[OWNERS METRICS]',
-      `[PERSISTING ${ownerMetrics.length} WALLETS]`
-    );
+    logger.info(`[OWNERS METRICS] [PERSISTING ${ownerMetrics.length} WALLETS]`);
 
     if (reset) {
       const walletIds = ownerMetrics.map((metric) => metric.wallet);
@@ -788,7 +782,7 @@ export async function persistOwnerMetrics(
         .where('wallet NOT IN (:...walletIds)', { walletIds })
         .execute();
 
-      console.log('[OWNERS METRICS]', '[RESET]', `[${JSON.stringify(result)}]`);
+      logger.info(`[OWNERS METRICS] [RESET] [${JSON.stringify(result)}]`);
     }
 
     const repo = AppDataSource.getRepository(OwnerMetric);
@@ -796,9 +790,8 @@ export async function persistOwnerMetrics(
     await Promise.all(
       ownerMetrics.map(async (ownerMetric) => {
         if (0 >= ownerMetric.balance) {
-          console.log(
-            '[OWNERS METRICS]',
-            `[DELETING ${ownerMetric.wallet} BALANCE ${ownerMetric.balance}]`
+          logger.info(
+            `[OWNERS METRICS] [DELETING ${ownerMetric.wallet} BALANCE ${ownerMetric.balance}]`
           );
           await repo.remove(ownerMetric);
         } else {
@@ -807,9 +800,8 @@ export async function persistOwnerMetrics(
       })
     );
 
-    console.log(
-      '[OWNERS METRICS]',
-      `[ALL ${ownerMetrics.length} WALLETS PERSISTED]`
+    logger.info(
+      `[OWNERS METRICS] [ALL ${ownerMetrics.length} WALLETS PERSISTED]`
     );
   }
 }
@@ -817,10 +809,7 @@ export async function persistOwnerMetrics(
 export async function persistConsolidatedOwnerTags(
   tags: ConsolidatedOwnerTags[]
 ) {
-  console.log(
-    '[CONSOLIDATED OWNER TAGS]',
-    `PERSISTING [${tags.length} WALLETS]`
-  );
+  logger.info(`[CONSOLIDATED OWNER TAGS] PERSISTING [${tags.length} WALLETS]`);
 
   await AppDataSource.transaction(async (manager) => {
     const repo = manager.getRepository(ConsolidatedOwnerTags);
@@ -828,18 +817,14 @@ export async function persistConsolidatedOwnerTags(
     await repo.save(tags);
   });
 
-  console.log(
-    '[CONSOLIDATED OWNER TAGS]',
-    `PERSISTED [${tags.length} WALLETS]`
-  );
+  logger.info(`[CONSOLIDATED OWNER TAGS] PERSISTED [${tags.length} WALLETS]`);
 }
 
 export async function persistConsolidatedOwnerMetrics(
   metrics: ConsolidatedOwnerMetric[]
 ) {
-  console.log(
-    '[CONSOLIDATED OWNER METRICS]',
-    `PERSISTING [${metrics.length} WALLETS]`
+  logger.info(
+    `[CONSOLIDATED OWNER METRICS] PERSISTING [${metrics.length} WALLETS]`
   );
 
   await AppDataSource.transaction(async (manager) => {
@@ -860,23 +845,21 @@ export async function persistConsolidatedOwnerMetrics(
       })
       .execute();
 
-    console.log(
-      '[CONSOLIDATED OWNER METRICS]',
-      `[DELETED ${result.affected} WALLETS]`
+    logger.info(
+      `[CONSOLIDATED OWNER METRICS] [DELETED ${result.affected} WALLETS]`
     );
 
     await repo.save(metrics);
   });
 
-  console.log(
-    '[CONSOLIDATED OWNER METRICS]',
-    `[PERSISTED ${metrics.length} WALLETS]`
+  logger.info(
+    `[CONSOLIDATED OWNER METRICS] [PERSISTED ${metrics.length} WALLETS]`
   );
 }
 
 export async function persistOwnerTags(ownersTags: OwnerTags[]) {
   if (ownersTags.length > 0) {
-    console.log('[OWNERS TAGS]', `[PERSISTING ${ownersTags.length} WALLETS]`);
+    logger.info(`[OWNERS TAGS] [PERSISTING ${ownersTags.length} WALLETS]`);
 
     const repo = AppDataSource.getRepository(OwnerTags);
 
@@ -890,18 +873,14 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
       })
     );
 
-    console.log(
-      '[OWNERS TAGS]',
-      `[ALL ${ownersTags.length} WALLETS PERSISTED]`
-    );
+    logger.info(`[OWNERS TAGS] [ALL ${ownersTags.length} WALLETS PERSISTED]`);
   }
 }
 
 export async function persistMemesExtendedData(data: MemesExtendedData[]) {
   if (data.length > 0) {
-    console.log(
-      '[MEMES EXTENDED DATA]',
-      `[PERSISTING ${data.length} MEMES EXTENDED DATA]`
+    logger.info(
+      `[MEMES EXTENDED DATA] [PERSISTING ${data.length} MEMES EXTENDED DATA]`
     );
     await Promise.all(
       data.map(async (md) => {
@@ -929,9 +908,8 @@ export async function persistMemesExtendedData(data: MemesExtendedData[]) {
         await execSQL(sql);
       })
     );
-    console.log(
-      '[MEMES EXTENDED DATA]',
-      `[ALL ${data.length} MEMES EXTENDED DATA PERSISTED]`
+    logger.info(
+      `[MEMES EXTENDED DATA] [ALL ${data.length} MEMES EXTENDED DATA PERSISTED]`
     );
   }
 }
@@ -985,7 +963,7 @@ export async function persistTdhUpload(
     tdh = ${mysql.escape(location)}`;
   await execSQL(sql);
 
-  console.log('[TDH UPLOAD PERSISTED]');
+  logger.info('[TDH UPLOAD PERSISTED]');
 }
 
 export async function persistConsolidatedTdhUpload(
@@ -999,11 +977,11 @@ export async function persistConsolidatedTdhUpload(
     tdh = ${mysql.escape(location)}`;
   await execSQL(sql);
 
-  console.log('[CONSOLIDATED TDH UPLOAD PERSISTED]');
+  logger.info('[CONSOLIDATED TDH UPLOAD PERSISTED]');
 }
 
 export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
-  console.log('[TDH]', `PERSISTING WALLETS TDH [${tdh.length}]`);
+  logger.info(`[TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
 
   await AppDataSource.transaction(async (manager) => {
     await manager.getRepository(TDH).save(tdh);
@@ -1013,11 +991,11 @@ export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
     );
   });
 
-  console.log('[TDH]', `PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+  logger.info(`[TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
 
 export async function persistConsolidatedTDH(tdh: ConsolidatedTDH[]) {
-  console.log('[CONSOLIDATED TDH]', `PERSISTING WALLETS TDH [${tdh.length}]`);
+  logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
 
   await AppDataSource.transaction(async (manager) => {
     const repo = manager.getRepository(ConsolidatedTDH);
@@ -1025,14 +1003,11 @@ export async function persistConsolidatedTDH(tdh: ConsolidatedTDH[]) {
     await repo.save(tdh);
   });
 
-  console.log(
-    '[CONSOLIDATED TDH]',
-    `PERSISTED ALL WALLETS TDH [${tdh.length}]`
-  );
+  logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
 
 export async function persistENS(ens: ENS[]) {
-  console.log('[ENS]', `PERSISTING ENS [${ens.length}]`);
+  logger.info(`[ENS] PERSISTING ENS [${ens.length}]`);
 
   await Promise.all(
     ens.map(async (t) => {
@@ -1054,7 +1029,7 @@ export async function persistENS(ens: ENS[]) {
     })
   );
 
-  console.log('[ENS]', `PERSISTED ALL [${ens.length}]`);
+  logger.info(`[ENS] PERSISTED ALL [${ens.length}]`);
 }
 
 export async function persistLabNFTS(labnfts: LabNFT[]) {
@@ -1189,10 +1164,8 @@ export async function persistConsolidations(
   consolidations: ConsolidationEvent[]
 ) {
   if (consolidations.length > 0) {
-    console.log(
-      '[CONSOLIDATIONS]',
-      `[FORCE ${force}]`,
-      `[PERSISTING ${consolidations.length} RESULTS]`
+    logger.info(
+      `[CONSOLIDATIONS] [FORCE ${force}] [PERSISTING ${consolidations.length} RESULTS]`
     );
 
     const repo = AppDataSource.getRepository(Consolidation);
@@ -1272,9 +1245,8 @@ export async function persistConsolidations(
       }
     }
 
-    console.log(
-      '[CONSOLIDATIONS]',
-      `[ALL ${consolidations.length} RESULTS PERSISTED]`
+    logger.info(
+      `[CONSOLIDATIONS] [ALL ${consolidations.length} RESULTS PERSISTED]`
     );
   }
 }
@@ -1284,11 +1256,8 @@ export async function persistDelegations(
   registrations: DelegationEvent[],
   revocations: DelegationEvent[]
 ) {
-  console.log(
-    '[DELEGATIONS]',
-    `[FORCE ${force}]`,
-    `[PERSISTING ${registrations.length} REGISTRATIONS]`,
-    `[PERSISTING ${revocations.length} REVOCATIONS]`
+  logger.info(
+    `[DELEGATIONS] [FORCE ${force}] [PERSISTING ${registrations.length} REGISTRATIONS] [PERSISTING ${revocations.length} REVOCATIONS]`
   );
 
   const repo = AppDataSource.getRepository(Delegation);
@@ -1332,10 +1301,8 @@ export async function persistDelegations(
     }
   }
 
-  console.log(
-    '[DELEGATIONS]',
-    `[${registrations.length} REGISTRATIONS PERSISTED]`,
-    `[${revocations.length} REVOCATIONS PERSISTED]`
+  logger.info(
+    `[DELEGATIONS] [${registrations.length} [REGISTRATIONS PERSISTED] [${revocations.length} REVOCATIONS PERSISTED]`
   );
 }
 

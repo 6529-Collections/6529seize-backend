@@ -1,12 +1,15 @@
 import { discoverEns, discoverEnsDelegations } from '../ens';
 import { ENS } from '../entities/IENS';
 import { loadEnv, unload } from '../secrets';
+import { Logger } from '../logging';
+
+const logger = Logger.get('DISCOVER_ENS_LOOP');
 
 export const handler = async (event?: any, context?: any) => {
-  console.log(new Date(), '[RUNNING DISCOVER ENS LOOP]');
+  logger.info('[RUNNING]');
   await loadEnv([ENS]);
   await discoverEns();
   await discoverEnsDelegations();
   await unload();
-  console.log(new Date(), '[DISCOVER ENS LOOP COMPLETE]');
+  logger.info('[COMPLETE]');
 };
