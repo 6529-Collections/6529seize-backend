@@ -16,6 +16,7 @@
   "dependencies": {
     "@types/express": "^4.17.18",
     "async-express-decorator": "^1.1.0",
+    "aws-serverless-express": "^3.4.0",
     "color": "^4.2.3",
     "color-convert": "^2.0.1",
     "color-name": "^2.0.0",
@@ -40,6 +41,7 @@
   },
   "devDependencies": {
     "@serverless/typescript": "^3.0.0",
+    "@types/aws-serverless-express": "^3.3.8",
     "@types/jsonwebtoken": "^9.0.3",
     "@types/memory-cache": "^0.2.2",
     "@types/multer": "^1.4.9",
