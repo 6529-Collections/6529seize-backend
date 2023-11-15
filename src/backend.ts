@@ -134,8 +134,8 @@ async function start() {
   // await royaltiesLoop.handler();
   // await transactions.handlerValues();
   // await rememes.handler();
-  // await overvotesRevocation.handler();
   await transactionsReplay.handler();
+  await overvotesRevocation.handler();
 
   RUNNING_START_SCRIPT = false;
   logger.info(`[START SCRIPT COMPLETE] [SERVICE STARTED...]`);
