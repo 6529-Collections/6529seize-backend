@@ -1,6 +1,7 @@
 import { Alchemy, Utils, fromHex } from 'alchemy-sdk';
 import {
   ALCHEMY_SETTINGS,
+  LOOKS_TOKEN_ADDRESS,
   MEMELAB_CONTRACT,
   MEMELAB_ROYALTIES_ADDRESS,
   NULL_ADDRESS,
@@ -125,13 +126,16 @@ async function resolveValue(t: Transaction) {
           } else {
             if (areEqualAddresses(log.topics[0], TRANSFER_EVENT)) {
               try {
-                const from = resolveLogAddress(log.topics[1]);
-                const to = resolveLogAddress(log.topics[2]);
-                const value = resolveLogValue(log.data);
-                if (areEqualAddresses(from, t.to_address)) {
-                  totalValue += value;
-                  if (areEqualAddresses(to, royaltiesAddress)) {
-                    totalRoyalties += value;
+                const address = log.address;
+                if (!areEqualAddresses(address, LOOKS_TOKEN_ADDRESS)) {
+                  const from = resolveLogAddress(log.topics[1]);
+                  const to = resolveLogAddress(log.topics[2]);
+                  const value = resolveLogValue(log.data);
+                  if (areEqualAddresses(from, t.to_address)) {
+                    totalValue += value;
+                    if (areEqualAddresses(to, royaltiesAddress)) {
+                      totalRoyalties += value;
+                    }
                   }
                 }
               } catch (e) {
@@ -230,7 +234,8 @@ export const runValues = async () => {
   }
 
   const transactions = [
-    '0x4144495f6932b53d48469b76876a82ffa0172d69dc9fc69f2120444b6df2a1b7'
+    '0x0010dcbac1dcdebd2f4186342dda88ec8889bf0ffb9445b7598ec0172d671b07'
+    // '0x4144495f6932b53d48469b76876a82ffa0172d69dc9fc69f2120444b6df2a1b7'
     // '0xdf73c5f14da545c5da2d86e9f9b9733541a003609374c456d7c3badad234b16a'
     // '0x308577a5a108cc64633513215302ad1400b1018a593128fe53552216adc8fc6c'
     // '0xe7d7748edd1228ca665e40e5b9792e5ef0a7a16606c18ef11851db435f2b43af',
@@ -245,7 +250,7 @@ export const runValues = async () => {
       let totalRoyalties = 0;
       for (let i = 0; i < t.length; i++) {
         const parsedTransaction = await resolveValue(t[i]);
-        logger.debug({
+        logger.info({
           from: parsedTransaction.from_address,
           to: parsedTransaction.to_address,
           value: parsedTransaction.value,
