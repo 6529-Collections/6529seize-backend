@@ -132,13 +132,13 @@ async function start() {
   // await discoverEnsLoop.handler();
   // await refreshEnsLoop.handler();
   // await royaltiesLoop.handler();
-  await transactions.handlerValues();
+  // await transactions.handlerValues();
   // await rememes.handler();
   // await overvotesRevocation.handler();
   // await nextgenLoop.handler();
-  // await transactionsReplay.handler();
+  await transactionsReplay.handler();
 
-  // RUNNING_START_SCRIPT = false;
+  RUNNING_START_SCRIPT = false;
   logger.info(`[START SCRIPT COMPLETE] [SERVICE STARTED...]`);
 }
 
