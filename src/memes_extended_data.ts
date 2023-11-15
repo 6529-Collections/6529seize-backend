@@ -7,6 +7,9 @@ import {
   fetchNftsForContract,
   persistMemesExtendedData
 } from './db';
+import { Logger } from './logging';
+
+const logger = Logger.get('MEMES_EXTENDED_DATA');
 
 export const findMemesExtendedData = async () => {
   let nfts: NFT[] = await fetchNftsForContract(MEMES_CONTRACT, 'id desc');
@@ -14,7 +17,7 @@ export const findMemesExtendedData = async () => {
 
   nfts = [...nfts].filter((t) => areEqualAddresses(t.contract, MEMES_CONTRACT));
 
-  console.log(new Date(), '[MEMES EXTENDED DATA]', `[NFTS ${nfts.length}]`);
+  logger.info(`[NFTS ${nfts.length}]`);
 
   const memesMeta: MemesExtendedData[] = [];
 

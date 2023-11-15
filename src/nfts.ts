@@ -27,6 +27,9 @@ import { findArtists } from './artists';
 import { Artist } from './entities/IArtist';
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { sqlExecutor } from './sql-executor';
+import { Logger } from './logging';
+
+const logger = Logger.get('NFTS');
 
 const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
@@ -69,11 +72,8 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
 
   const allMemesNFTS = await getAllNFTs(MEMES_CONTRACT);
 
-  console.log(
-    new Date(),
-    '[NFTS]',
-    '[MEMES]',
-    `[DB ${startingMemes.length}][CONTRACT ${allMemesNFTS.length}]`
+  logger.info(
+    `[MEMES] [DB ${startingMemes.length}] [CONTRACT ${allMemesNFTS.length}]`
   );
 
   const newNFTS: NFT[] = [];
@@ -205,12 +205,7 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
     })
   );
 
-  console.log(
-    new Date(),
-    '[NFTS]',
-    '[MEMES]',
-    `[PROCESSED ${newNFTS.length} NEW NFTS]`
-  );
+  logger.info(`[MEMES] [PROCESSED ${newNFTS.length} NEW NFTS]`);
   return newNFTS;
 }
 
@@ -224,11 +219,8 @@ async function processGradients(
 
   const allGradientsNFTS = await getAllNFTs(GRADIENT_CONTRACT);
 
-  console.log(
-    new Date(),
-    '[NFTS]',
-    '[GRADIENTS]',
-    `[DB ${startingGradients.length}][CONTRACT ${allGradientsNFTS.length}]`
+  logger.info(
+    `[GRADIENTS] [DB ${startingGradients.length}] [CONTRACT ${allGradientsNFTS.length}]`
   );
 
   const newNFTS: NFT[] = [];
@@ -305,12 +297,7 @@ async function processGradients(
     })
   );
 
-  console.log(
-    new Date(),
-    '[NFTS]',
-    '[GRADIENTS]',
-    `[PROCESSED ${newNFTS.length} NEW NFTS]`
-  );
+  logger.info(`[GRADIENTS] [PROCESSED ${newNFTS.length} NEW NFTS]`);
   return newNFTS;
 }
 
@@ -345,12 +332,7 @@ export const findNFTs = async (
     return false;
   });
 
-  console.log(
-    new Date(),
-    '[NFTS]',
-    `[CHANGED ${nftChanged}]`,
-    `[RESET ${reset}]`
-  );
+  logger.info(`[CHANGED ${nftChanged}] [RESET ${reset}]`);
 
   if (
     reset ||
@@ -360,10 +342,8 @@ export const findNFTs = async (
     NEW_TOKENS_HODL_INDEX > GLOBAL_HODL_INDEX_TOKEN.supply
   ) {
     const allNFTS = allNewNFTS;
-    console.log(
-      new Date(),
-      '[NFTS]',
-      `[HODL INDEX CHANGED][DB ${GLOBAL_HODL_INDEX_TOKEN?.supply}][NEW ${NEW_TOKENS_HODL_INDEX}][RECALCULATING]`
+    logger.info(
+      `[HODL INDEX CHANGED] [DB ${GLOBAL_HODL_INDEX_TOKEN?.supply}] [NEW ${NEW_TOKENS_HODL_INDEX}] [RECALCULATING]`
     );
     allNFTS.map((t) => {
       if (!GLOBAL_HODL_INDEX_TOKEN) {
@@ -374,22 +354,18 @@ export const findNFTs = async (
         }
       }
     });
-    console.log(
-      new Date(),
-      '[NFTS]',
+    logger.info(
       `[GLOBAL_HODL_INDEX_TOKEN SUPPLY ${GLOBAL_HODL_INDEX_TOKEN!.supply}]`
     );
     allNFTS.map((t) => {
       const hodl = GLOBAL_HODL_INDEX_TOKEN!.supply / t.supply;
       t.hodl_rate = isFinite(hodl) ? hodl : 1;
     });
-    console.log(new Date(), '[NFTS]', `[HODL INDEX UPDATED]`);
+    logger.info(`[HODL INDEX UPDATED]`);
     return allNFTS;
   } else {
-    console.log(
-      new Date(),
-      '[NFTS]',
-      `[NO NEW NFTS][DB HODL_INDEX ${GLOBAL_HODL_INDEX_TOKEN?.supply}][END]`
+    logger.info(
+      `[NO NEW NFTS] [DB HODL_INDEX ${GLOBAL_HODL_INDEX_TOKEN?.supply}] [END]`
     );
     return startingNFTS;
   }

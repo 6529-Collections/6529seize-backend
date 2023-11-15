@@ -4,13 +4,16 @@ import { findMemesExtendedData } from '../memes_extended_data';
 import { loadEnv, unload } from '../secrets';
 import { NFT } from '../entities/INFT';
 import { ConsolidatedOwnerTags, Owner, OwnerTags } from '../entities/IOwner';
+import { Logger } from '../logging';
+
+const logger = Logger.get('NFTS_LOOP');
 
 export const handler = async () => {
-  console.log(new Date(), '[RUNNING NFTS LOOP]');
+  logger.info(`[RUNNING]`);
   await loadEnv([NFT, Owner, OwnerTags, ConsolidatedOwnerTags]);
   await nftsLoop();
   await unload();
-  console.log(new Date(), '[NFTS LOOP COMPLETE]');
+  logger.info(`[COMPLETE]`);
 };
 
 async function nftsLoop() {

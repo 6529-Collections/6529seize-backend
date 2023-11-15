@@ -1,4 +1,5 @@
 import * as overvotesRevocation from './overvotesRevocationLoop';
+import { Logger } from './logging';
 
 const transactions = require('./transactionsLoop');
 const transactionsReplay = require('./transactionsReplayLoop');
@@ -22,6 +23,8 @@ const { memeStats, memeLabStats, gradientStats } = require('./marketStatsLoop');
 const cron = require('node-cron');
 
 let RUNNING_START_SCRIPT = true;
+
+const logger = Logger.get('BACKEND');
 
 function isCronsEnabled() {
   return process.env.CRONS_DISABLED !== 'true' && !RUNNING_START_SCRIPT;
@@ -108,21 +111,16 @@ cron.schedule('1 4 * * *', async function () {
 });
 
 async function start() {
-  const now = new Date();
-  console.log(
-    now,
-    `[CONFIG ${process.env.NODE_ENV}]`,
-    `[EXECUTING START SCRIPT...]`
-  );
+  logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
   // Uncomment to call on start
 
-  await nftHistory.handler();
-  await delegations.handler();
-  await transactions.handler();
-  await nfts.handler();
-  await owners.handler();
-  await ownerMetrics.handler();
+  // await nftHistory.handler();
+  // await delegations.handler();
+  // await transactions.handler();
+  // await nfts.handler();
+  // await owners.handler();
+  // await ownerMetrics.handler();
   // await tdh.handler();
   // await tdhHistory.handler();
   // await memeLab.handler();
@@ -134,14 +132,14 @@ async function start() {
   // await discoverEnsLoop.handler();
   // await refreshEnsLoop.handler();
   // await royaltiesLoop.handler();
-  // await transactions.handlerValues();
+  await transactions.handlerValues();
   // await rememes.handler();
   // await overvotesRevocation.handler();
   // await nextgenLoop.handler();
   // await transactionsReplay.handler();
 
   // RUNNING_START_SCRIPT = false;
-  console.log(new Date(), `[START SCRIPT COMPLETE]`, `[SERVICE STARTED...]`);
+  logger.info(`[START SCRIPT COMPLETE] [SERVICE STARTED...]`);
 }
 
 start();

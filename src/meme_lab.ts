@@ -37,6 +37,9 @@ import { findArtists } from './artists';
 import { Owner } from './entities/IOwner';
 
 import { RequestInfo, RequestInit } from 'node-fetch';
+import { Logger } from './logging';
+
+const logger = Logger.get('MEME_LAB');
 
 const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
@@ -75,9 +78,8 @@ async function processNFTs(
 ) {
   const allNFTS = await getAllNFTs();
 
-  console.log(
-    '[NFTS]',
-    `[DB ${startingNFTS.length}][CONTRACT ${allNFTS.length}]`
+  logger.info(
+    `[NFTS] [DB ${startingNFTS.length}] [CONTRACT ${allNFTS.length}]`
   );
 
   const newNFTS: LabNFT[] = [];
@@ -253,7 +255,7 @@ async function processNFTs(
     })
   );
 
-  console.log(`[NFTS]`, `[PROCESSED ${newNFTS.length} NEW NFTS]`);
+  logger.info(`[NFTS] [PROCESSED ${newNFTS.length} NEW NFTS]`);
   return newNFTS;
 }
 
@@ -301,7 +303,7 @@ export const findNFTs = async (
     }
   });
 
-  console.log(`[NFTS]`, `[CHANGED ${delta.length}]`, `[RESET ${reset}]`);
+  logger.info(`[NFTS] [CHANGED ${delta.length}] [RESET ${reset}]`);
 
   return delta;
 };
@@ -363,7 +365,7 @@ export async function transactions(
       );
     }
   } catch (e: any) {
-    console.log('[TRANSACTIONS]', '[ETIMEDOUT!]', e, '[RETRYING PROCESS]');
+    logger.error('[TRANSACTIONS] [ETIMEDOUT!] [RETRYING PROCESS]', e);
     await transactions(startingBlock, latestBlock, pagKey);
   }
 }
@@ -376,7 +378,7 @@ export async function memeLabOwners() {
 
   const startingOwners: Owner[] = await fetchAllLabOwners();
 
-  console.log('[OWNERS]', `[DB ${startingOwners.length}]`);
+  logger.info(`[OWNERS] [DB ${startingOwners.length}]`);
 
   const labOwners = await getAllOwners(alchemy, MEMELAB_CONTRACT);
 
@@ -395,7 +397,7 @@ export async function memeLabOwners() {
     });
   });
 
-  console.log(`[OWNERS ${newOwners.length}]`);
+  logger.info(`[OWNERS ${newOwners.length}]`);
 
   const ownersDelta: Owner[] = [];
 
@@ -416,7 +418,7 @@ export async function memeLabOwners() {
     }
   });
 
-  console.log('[OWNERS]', `[DELTA ${ownersDelta.length}]`);
+  logger.info(`[OWNERS] [DELTA ${ownersDelta.length}]`);
 
   await persistOwners(ownersDelta, true);
 
@@ -427,7 +429,7 @@ export async function memeLabExtendedData() {
   const nfts: LabNFT[] = await fetchAllMemeLabNFTs();
   const owners: Owner[] = await fetchAllLabOwners();
 
-  console.log('[MEMES EXTENDED DATA]', `[NFTS ${nfts.length}]`);
+  logger.info(`[MEMES EXTENDED DATA] [NFTS ${nfts.length}]`);
 
   const labMeta: LabExtendedData[] = [];
 

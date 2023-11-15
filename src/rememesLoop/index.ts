@@ -13,9 +13,13 @@ import {
 import converter from 'json-2-csv';
 import { persistRememesS3 } from '../s3_rememes';
 import { areEqualAddresses, getContentType } from '../helpers';
+import { Logger } from '../logging';
+import { Time } from '../time';
 
 const Arweave = require('arweave');
 const csvParser = require('csv-parser');
+
+const logger = Logger.get('REMEMES_LOOP');
 
 const FILE_DIR = `${__dirname}/rememes.csv`;
 
@@ -34,8 +38,8 @@ const myarweave = Arweave.init({
 let alchemy: Alchemy;
 
 export const handler = async (event?: any, context?: any) => {
-  console.log('[RUNNING REMEMES]');
-  const start = new Date().getTime();
+  logger.info('[RUNNING]');
+  const start = Time.now();
   await loadEnv([Rememe, RememeUpload]);
   const loadFile = process.env.REMEMES_LOAD_FILE == 'true';
   const rememesS3 = process.env.REMEMES_S3 == 'true';
@@ -58,10 +62,7 @@ export const handler = async (event?: any, context?: any) => {
     await uploadRememes();
   }
 
-  console.log(
-    '[REMEMES COMPLETE]',
-    `[${(new Date().getTime() - start) / 1000} seconds]`
-  );
+  logger.info(`[COMPLETE in ${start.diffFromNow()}]`);
 };
 
 async function loadRememes() {
@@ -122,12 +123,8 @@ async function processRememes(rememes: Rememe[], csvData: CSVData[]) {
       )
   );
 
-  console.log(
-    `[REMEMES FILE PROCESSING]`,
-    `[EXISTING ${rememes.length}]`,
-    `[FILE ${csvData.length}]`,
-    `[ADD ${addDataList.length}]`,
-    `[DELETE ${deleteRememesList.length}]`
+  logger.info(
+    `[FILE PROCESSING] [EXISTING ${rememes.length}] [FILE ${csvData.length}] [ADD ${addDataList.length}] [DELETE ${deleteRememesList.length}]`
   );
 
   let addRememesCount = 0;
@@ -141,27 +138,20 @@ async function processRememes(rememes: Rememe[], csvData: CSVData[]) {
           addRememesCount++;
         }
       } catch (e) {
-        console.log(
-          '[REMEMES ERROR]',
-          `[CONTRACT ${d.contract}]`,
-          `[ID ${d.id}]`,
-          `[ERROR ${e}]`
-        );
+        logger.error(`[CONTRACT ${d.contract}] [ID ${d.id}]`, e);
       }
     })
   );
 
   await deleteRememes(deleteRememesList);
 
-  console.log(
-    `[REMEMES PROCESSED]`,
-    `[ADDED ${addRememesCount}]`,
-    `[DELETED ${deleteRememesList.length}]`
+  logger.info(
+    `[FILE PROCESSED] [ADDED ${addRememesCount}] [DELETED ${deleteRememesList.length}]`
   );
 }
 
 async function refreshRememes(rememes: Rememe[]) {
-  console.log(`[REMEMES REFRESHING]`, `[EXISTING ${rememes.length}]`);
+  logger.info(`[REFRESHING] [EXISTING ${rememes.length}]`);
 
   const updateRememesList: Rememe[] = [];
   const retryRememesList: Rememe[] = [];
@@ -174,18 +164,13 @@ async function refreshRememes(rememes: Rememe[]) {
           updateRememesList.push(r);
         }
       } catch (e) {
-        console.log(
-          '[REMEMES ERROR]',
-          `[CONTRACT ${d.contract}]`,
-          `[ID ${d.id}]`,
-          `[ERROR ${e}]`
-        );
+        logger.error(`[CONTRACT ${d.contract}] [ID ${d.id}]`, e);
         retryRememesList.push(d);
       }
     })
   );
 
-  console.log(`[REMEMES REFRESHING]`, `[RETRYING ${retryRememesList.length}]`);
+  logger.info(`[REFRESHING] [RETRYING ${retryRememesList.length}]`);
 
   await Promise.all(
     retryRememesList.map(async (d) => {
@@ -195,28 +180,16 @@ async function refreshRememes(rememes: Rememe[]) {
           updateRememesList.push(r);
         }
       } catch (e) {
-        console.log(
-          '[REMEMES RETRY ERROR]',
-          `[CONTRACT ${d.contract}]`,
-          `[ID ${d.id}]`,
-          `[ERROR ${e}]`
-        );
+        logger.error(`[RETRY ERROR] [CONTRACT ${d.contract}] [ID ${d.id}]`, e);
       }
     })
   );
 
-  console.log(
-    `[REMEMES REFRESHED]`,
-    `[REFRESHED ${updateRememesList.length}]`,
-    `[PERSISTING...]`
-  );
+  logger.info(`[REFRESHED ${updateRememesList.length}] [PERSISTING...]`);
 
   await persistRememes(updateRememesList);
 
-  console.log(
-    `[REMEMES REFRESH COMPLETE]`,
-    `[REFRESHED ${updateRememesList.length}]`
-  );
+  logger.info(`[REFRESH COMPLETE] [REFRESHED ${updateRememesList.length}]`);
 }
 
 async function buildRememe(contract: string, id: string, memes: number[]) {
@@ -281,12 +254,8 @@ async function buildRememe(contract: string, id: string, memes: number[]) {
     };
     return r;
   } else {
-    console.log(
-      '[REMEMES]',
-      `[METADATA ERROR]`,
-      `[CONTRACT ${contract}]`,
-      `[ID ${id}]`,
-      `[ERROR ${nftMeta.metadataError}]`
+    logger.error(
+      `[METADATA ERROR] [CONTRACT ${contract}] [ID ${id}] [ERROR ${nftMeta.metadataError}]`
     );
     return undefined;
   }
@@ -297,7 +266,7 @@ async function upload(rememes: Rememe[]) {
     ? JSON.parse(process.env.ARWEAVE_KEY)
     : {};
 
-  console.log('[REMEMES]', `[UPLOADING TO ARWEAVE]`);
+  logger.info(`[UPLOADING TO ARWEAVE]`);
 
   const csv = await converter.json2csvAsync(rememes);
 
@@ -308,7 +277,7 @@ async function upload(rememes: Rememe[]) {
 
   transaction.addTag('Content-Type', 'text/csv');
 
-  console.log(`[REMEMES]`, `[SIGNING ARWEAVE TRANSACTION]`);
+  logger.info(`[SIGNING ARWEAVE TRANSACTION]`);
 
   await myarweave.transactions.sign(transaction, arweaveKey);
 
@@ -316,15 +285,13 @@ async function upload(rememes: Rememe[]) {
 
   while (!uploader.isComplete) {
     await uploader.uploadChunk();
-    console.log(
-      new Date(),
-      '[REMEMES]',
+    logger.info(
       `${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
     );
   }
 
   const url = `https://arweave.net/${transaction.id}`;
-  console.log(`[REMEMES]`, `[ARWEAVE LINK ${url}]`);
+  logger.info(`[ARWEAVE LINK ${url}]`);
 
   await persistRememesUpload(`https://arweave.net/${transaction.id}`);
 }

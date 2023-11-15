@@ -12,6 +12,9 @@ import {
   persistConsolidatedTdhUpload,
   fetchLastConsolidatedUpload
 } from './db';
+import { Logger } from './logging';
+
+const logger = Logger.get('TDH_CONSOLIDATION');
 
 const Arweave = require('arweave');
 
@@ -33,12 +36,8 @@ export async function uploadTDH(force?: boolean) {
   const exists = lastUpload && lastUpload.date == dateString;
 
   if (!exists || force) {
-    console.log(
-      new Date(),
-      '[TDH UPLOAD]',
-      `[BLOCK ${block}]`,
-      `[TDH ${tdh.length}]`,
-      `[OWNER METRICS ${ownerMetrics.length}]`
+    logger.info(
+      `[BLOCK ${block}] [TDH ${tdh.length}] [OWNER METRICS ${ownerMetrics.length}]`
     );
 
     const tdhProcessed = tdh.map((tdh) => {
@@ -79,16 +78,12 @@ export async function uploadTDH(force?: boolean) {
 
     combinedArray.sort((a, b) => a.tdh_rank - b.tdh_rank);
 
-    console.log(new Date(), `[TDH UPLOAD]`, `[CREATING CSV]`);
+    logger.info(`[CREATING CSV]`);
 
     const csv = await converter.json2csvAsync(combinedArray);
 
     const size = csv.length / (1024 * 1024);
-    console.log(
-      new Date(),
-      `[TDH UPLOAD]`,
-      `[CSV CREATED - SIZE ${size.toFixed(2)} MB]`
-    );
+    logger.info(`[CSV CREATED - SIZE ${size.toFixed(2)} MB]`);
 
     const arweaveKey = process.env.ARWEAVE_KEY
       ? JSON.parse(process.env.ARWEAVE_KEY)
@@ -101,7 +96,7 @@ export async function uploadTDH(force?: boolean) {
 
     transaction.addTag('Content-Type', 'text/csv');
 
-    console.log(new Date(), `[TDH UPLOAD]`, `[SIGNING ARWEAVE TRANSACTION]`);
+    logger.info(`[SIGNING ARWEAVE TRANSACTION]`);
 
     await myarweave.transactions.sign(transaction, arweaveKey);
 
@@ -109,9 +104,7 @@ export async function uploadTDH(force?: boolean) {
 
     while (!uploader.isComplete) {
       await uploader.uploadChunk();
-      console.log(
-        new Date(),
-        '[TDH UPLOAD]',
+      logger.info(
         `${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
       );
     }
@@ -124,13 +117,10 @@ export async function uploadTDH(force?: boolean) {
       `https://arweave.net/${transaction.id}`
     );
 
-    console.log(new Date(), `[TDH UPLOAD]`, `[ARWEAVE LINK ${url}]`);
+    logger.info(`[ARWEAVE LINK ${url}]`);
   } else {
-    console.log(
-      new Date(),
-      `[TDH UPLOAD]`,
-      `[TODAY'S UPLOAD ALREADY EXISTS AT ${lastUpload.tdh}]`,
-      `[SKIPPING...]`
+    logger.info(
+      `[TODAY'S UPLOAD ALREADY EXISTS AT ${lastUpload.tdh}] [SKIPPING...]`
     );
   }
 }
@@ -147,12 +137,8 @@ export async function uploadConsolidatedTDH(force?: boolean) {
   const exists = lastUpload && lastUpload.date == dateString;
 
   if (!exists || force) {
-    console.log(
-      new Date(),
-      '[CONSOLIDATED TDH UPLOAD]',
-      `[BLOCK ${block}]`,
-      `[TDH ${tdh.length}]`,
-      `[OWNER METRICS ${ownerMetrics.length}]`
+    logger.info(
+      `[BLOCK ${block}] [TDH ${tdh.length}] [OWNER METRICS ${ownerMetrics.length}]`
     );
 
     const tdhProcessed = tdh.map((tdh) => {
@@ -193,11 +179,11 @@ export async function uploadConsolidatedTDH(force?: boolean) {
 
     combinedArray.sort((a, b) => a.tdh_rank - b.tdh_rank);
 
-    console.log(new Date(), `[CONSOLIDATED TDH UPLOAD]`, `[CREATING CSV]`);
+    logger.info(`[CONSOLIDATED TDH UPLOAD] [CREATING CSV]`);
 
     const csv = await converter.json2csvAsync(combinedArray);
 
-    console.log(new Date(), `[CONSOLIDATED TDH UPLOAD]`, `[CSV CREATED]`);
+    logger.info(`[CONSOLIDATED TDH UPLOAD] [CSV CREATED]`);
 
     const arweaveKey = process.env.ARWEAVE_KEY
       ? JSON.parse(process.env.ARWEAVE_KEY)
@@ -210,11 +196,7 @@ export async function uploadConsolidatedTDH(force?: boolean) {
 
     transaction.addTag('Content-Type', 'text/csv');
 
-    console.log(
-      new Date(),
-      `[CONSOLIDATED TDH UPLOAD]`,
-      `[SIGNING ARWEAVE TRANSACTION]`
-    );
+    logger.info(`[CONSOLIDATED TDH UPLOAD] [SIGNING ARWEAVE TRANSACTION]`);
 
     await myarweave.transactions.sign(transaction, arweaveKey);
 
@@ -222,10 +204,8 @@ export async function uploadConsolidatedTDH(force?: boolean) {
 
     while (!uploader.isComplete) {
       await uploader.uploadChunk();
-      console.log(
-        new Date(),
-        '[CONSOLIDATED TDH UPLOAD]',
-        `${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
+      logger.info(
+        `[CONSOLIDATED TDH UPLOAD] ${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
       );
     }
 
@@ -237,17 +217,10 @@ export async function uploadConsolidatedTDH(force?: boolean) {
       `https://arweave.net/${transaction.id}`
     );
 
-    console.log(
-      new Date(),
-      `[CONSOLIDATED TDH UPLOAD]`,
-      `[ARWEAVE LINK ${url}]`
-    );
+    logger.info(`[CONSOLIDATED TDH UPLOAD] [ARWEAVE LINK ${url}]`);
   } else {
-    console.log(
-      new Date(),
-      `[CONSOLIDATED TDH UPLOAD]`,
-      `[TODAY'S UPLOAD ALREADY EXISTS AT ${lastUpload.tdh}]`,
-      `[SKIPPING...]`
+    logger.info(
+      `[CONSOLIDATED TDH UPLOAD] [TODAY'S UPLOAD ALREADY EXISTS AT ${lastUpload.tdh}] [SKIPPING...]`
     );
   }
 }

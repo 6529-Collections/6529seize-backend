@@ -1,5 +1,8 @@
 import { fetchRoyalties, persistRoyaltiesUpload } from './db';
 import converter from 'json-2-csv';
+import { Logger } from './logging';
+
+const logger = Logger.get('ROYALTIES');
 
 const Arweave = require('arweave');
 
@@ -34,10 +37,8 @@ export const findRoyalties = async () => {
   startDate.setUTCHours(0, 0, 0, 0);
   const endDate = getDate();
   endDate.setUTCHours(23, 59, 59, 999);
-  console.log(
-    '[ROYALTIES]',
-    `[START DATE ${startDate.toUTCString()}]`,
-    `[END DATE ${endDate.toUTCString()}]`
+  logger.info(
+    `[START DATE ${startDate.toUTCString()}] [END DATE ${endDate.toUTCString()}]`
   );
 
   const royalties = await fetchRoyalties(startDate, endDate);
@@ -105,11 +106,7 @@ async function uploadRoyalties(formattedDate: string, royalties: Royalty[]) {
 
   transaction.addTag('Content-Type', 'text/csv');
 
-  console.log(
-    new Date(),
-    `[ROYALTIES UPLOAD]`,
-    `[SIGNING ARWEAVE TRANSACTION]`
-  );
+  logger.info(`[SIGNING ARWEAVE TRANSACTION]`);
 
   await myarweave.transactions.sign(transaction, arweaveKey);
 
@@ -117,8 +114,7 @@ async function uploadRoyalties(formattedDate: string, royalties: Royalty[]) {
 
   while (!uploader.isComplete) {
     await uploader.uploadChunk();
-    console.log(
-      '[ROYALTIES UPLOAD]',
+    logger.info(
       `${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
     );
   }

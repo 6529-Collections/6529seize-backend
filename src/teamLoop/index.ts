@@ -2,9 +2,12 @@ import { readFileSync, createReadStream } from 'fs';
 import { replaceTeam } from '../db';
 import { Team } from '../entities/ITeam';
 import { loadEnv } from '../secrets';
+import { Logger } from '../logging';
 
 const Arweave = require('arweave');
 const csvParser = require('csv-parser');
+
+const logger = Logger.get('TEAM_LOOP');
 
 const FILE_DIR = `${__dirname}/team.csv`;
 
@@ -15,17 +18,17 @@ const myarweave = Arweave.init({
 });
 
 export const handler = async (event?: any, context?: any) => {
-  console.log(new Date(), '[RUNNING UPLOAD TEAM]');
+  logger.info('[RUNNING]');
   await loadEnv([Team]);
   await saveTeam();
   await uploadTeam();
-  console.log(new Date(), '[UPLOAD TEAM COMPLETE]');
+  logger.info('[COMPLETE]');
 };
 
 async function saveTeam() {
   const team: Team[] = [];
   const csv = await readCsvFile(FILE_DIR);
-  console.log(`[TEAM MEMBERS ${csv.length}]`);
+  logger.info(`[TEAM MEMBERS ${csv.length}]`);
   csv.map((t) => {
     const data: any[] = Object.values(t);
     const tm = new Team();
@@ -44,7 +47,7 @@ async function uploadTeam() {
 
   const fileData = readFileSync(FILE_DIR);
 
-  console.log(new Date(), `[TEAM UPLOAD]`, `[FILE LOADED]`);
+  logger.info(`[FILE LOADED]`);
 
   const transaction = await myarweave.createTransaction(
     { data: Buffer.from(fileData) },
@@ -53,7 +56,7 @@ async function uploadTeam() {
 
   transaction.addTag('Content-Type', 'text/csv');
 
-  console.log(new Date(), `[TEAM UPLOAD]`, `[SIGNING ARWEAVE TRANSACTION]`);
+  logger.info(`[SIGNING ARWEAVE TRANSACTION]`);
 
   await myarweave.transactions.sign(transaction, arweaveKey);
 
@@ -61,15 +64,13 @@ async function uploadTeam() {
 
   while (!uploader.isComplete) {
     await uploader.uploadChunk();
-    console.log(
-      new Date(),
-      '[TEAM UPLOAD]',
+    logger.info(
       `${uploader.pctComplete}% complete, ${uploader.uploadedChunks}/${uploader.totalChunks}`
     );
   }
 
   const url = `https://arweave.net/${transaction.id}`;
-  console.log(new Date(), `[TEAM UPLOADED]`, `[ARWEAVE LINK ${url}]`);
+  logger.info(`[ARWEAVE LINK ${url}]`);
 }
 
 async function readCsvFile(filePath: string): Promise<any[]> {

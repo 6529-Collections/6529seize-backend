@@ -1,5 +1,6 @@
 import { SecretsManager } from '@aws-sdk/client-secrets-manager';
-import { connect, disconnect } from './db';
+import { connect } from './db';
+import { Logger } from './logging';
 
 const envs = ['local', 'development', 'production'];
 
@@ -23,7 +24,8 @@ export async function unload() {
 }
 
 export async function loadSecrets() {
-  console.log(new Date(), '[LOADING SECRETS]');
+  const logger = Logger.get('SECRETS');
+  logger.info('[LOADING SECRETS]');
 
   const secretsManager = new SecretsManager({ region: 'us-east-1' });
 
@@ -38,13 +40,12 @@ export async function loadSecrets() {
   }
 
   if (!process.env.NODE_ENV) {
-    console.log(new Date(), '[ENVIRONMENT]', `[NODE_ENV MISSING]`, '[EXITING]');
+    logger.info('[ENVIRONMENT]', `[NODE_ENV MISSING]`, '[EXITING]');
     process.exit();
   }
 
   if (!envs.includes(process.env.NODE_ENV)) {
-    console.log(
-      new Date(),
+    logger.info(
       '[ENVIRONMENT]',
       `[INVALID ENV '${process.env.NODE_ENV}']`,
       '[EXITING]'
@@ -52,13 +53,14 @@ export async function loadSecrets() {
     process.exit();
   }
 
-  console.log(new Date(), '[SECRETS LOADED]');
+  logger.info('[SECRETS LOADED]');
 }
 
 export async function loadLocalConfig() {
+  const logger = Logger.get('ENV_READER');
   if (process.env.NODE_ENV) {
     const envPath = path.join(__dirname, '..', `.env.${process.env.NODE_ENV}`);
-    console.log(`[LOADING LOCAL CONFIG FROM ${envPath}]`);
+    logger.info(`[LOADING LOCAL CONFIG FROM ${envPath}]`);
     dotenv.config({
       path: envPath
     });

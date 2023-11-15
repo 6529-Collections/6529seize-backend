@@ -11,6 +11,10 @@ import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
 import { findTransactionsByHash } from './db';
+import { Logger } from './logging';
+
+const logger = Logger.get('TRANSACTION_VALUES');
+
 const fetch = require('node-fetch');
 
 const TRANSFER_EVENT =
@@ -25,7 +29,8 @@ async function loadABIs() {
   );
   const abi = await f.json();
   SEAPORT_IFACE = new ethers.utils.Interface(abi.result);
-  console.log('[ROYALTIES]', `[ABIs LOADED]`, `[SEAPORT ${f.status}]`);
+
+  logger.info(`[ROYALTIES] [ABIs LOADED] [SEAPORT ${f.status}]`);
 }
 
 function isZeroAddress(address: string) {
@@ -60,11 +65,7 @@ export const findTransactionValues = async (transactions: Transaction[]) => {
     await loadABIs();
   }
 
-  console.log(
-    new Date(),
-    '[TRANSACTION VALUES]',
-    `[PROCESSING VALUES FOR ${transactions.length} TRANSACTIONS]`
-  );
+  logger.info(`[PROCESSING VALUES FOR ${transactions.length} TRANSACTIONS]`);
 
   const transactionsWithValues: Transaction[] = [];
 
@@ -75,9 +76,7 @@ export const findTransactionValues = async (transactions: Transaction[]) => {
     })
   );
 
-  console.log(
-    new Date(),
-    '[TRANSACTION VALUES]',
+  logger.info(
     `[PROCESSED ${transactionsWithValues.length} TRANSACTION VALUES]`
   );
 
@@ -136,7 +135,7 @@ async function resolveValue(t: Transaction) {
                   }
                 }
               } catch (e) {
-                console.log('EXCEPTION', t.transaction, e);
+                logger.error('EXCEPTION', t.transaction, e);
               }
             }
           }
@@ -161,7 +160,7 @@ const parseSeaportLog = async (
   try {
     seaResult = SEAPORT_IFACE.parseLog(log);
   } catch (err: any) {
-    // console.log('sea error', log.address, err);
+    // logger.error('SEAPORT PARSE ERROR', t.transaction, err);
     return null;
   }
 
@@ -246,22 +245,21 @@ export const runValues = async () => {
       let totalRoyalties = 0;
       for (let i = 0; i < t.length; i++) {
         const parsedTransaction = await resolveValue(t[i]);
-        console.log(
-          parsedTransaction.from_address,
-          parsedTransaction.to_address,
-          parsedTransaction.value,
-          parsedTransaction.royalties
-        );
+        logger.debug({
+          from: parsedTransaction.from_address,
+          to: parsedTransaction.to_address,
+          value: parsedTransaction.value,
+          royalties: parsedTransaction.royalties
+        });
         totalValue += parsedTransaction.value;
         totalRoyalties += parsedTransaction.royalties;
       }
-      console.log(
-        transactionHash,
-        'total value',
-        totalValue,
-        'total royalties',
-        totalRoyalties
-      );
+      logger.info({
+        transactionHash: transactionHash,
+        message: 'total value',
+        totalValue: totalValue,
+        totalRoyalties: totalRoyalties
+      });
     })
   );
 };

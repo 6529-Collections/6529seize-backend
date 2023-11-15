@@ -7,13 +7,16 @@ import {
   memeLabExtendedData
 } from '../meme_lab';
 import { loadEnv, unload } from '../secrets';
+import { Logger } from '../logging';
+
+const logger = Logger.get('MEME_LAB_LOOP');
 
 export const handler = async (event?: any, context?: any) => {
-  console.log(new Date(), '[RUNNING MEME LAB LOOP]');
+  logger.info('[RUNNING]');
   await loadEnv([LabTransaction, LabNFT, LabExtendedData]);
   await memeLabLoop();
   await unload();
-  console.log(new Date(), '[MEME LAB LOOP COMPLETE]');
+  logger.info('[COMPLETE]');
 };
 
 async function memeLabLoop() {

@@ -18,6 +18,9 @@ import {
   SZN5_INDEX
 } from './constants';
 import { sqlExecutor } from './sql-executor';
+import { Logger } from './logging';
+
+const logger = Logger.get('TDH_CONSOLIDATION');
 
 export async function getWalletTdhAndConsolidatedWallets(
   wallet: string
@@ -70,7 +73,7 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
     areEqualAddresses(nft.contract, MEMES_CONTRACT)
   ).length;
 
-  console.log('[TDH CONSOLIDATION]', `[WALLETS ${tdh.length}]`);
+  logger.info(`[WALLETS ${tdh.length}]`);
 
   const consolidatedTdh: ConsolidatedTDH[] = [];
   const processedWallets = new Set<string>();
@@ -265,10 +268,7 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
 
   await persistConsolidatedTDH(sortedConsolidatedTdh);
 
-  console.log(
-    '[TDH CONSOLIDATION]',
-    `[FINAL ENTRIES ${sortedConsolidatedTdh.length}]`
-  );
+  logger.info(`[FINAL ENTRIES ${sortedConsolidatedTdh.length}]`);
 };
 
 function consolidateCards(consolidationTokens: any[], walletTokens: any[]) {
