@@ -28,15 +28,16 @@ import { ApiCompliantException } from '../../exceptions';
 import { Strategy as AnonymousStrategy } from 'passport-anonymous';
 import { MEMES_ROYALTIES_RATE } from '../../constants';
 import { Logger } from '../../logging';
+import * as awsServerlessExpressMiddleware from 'aws-serverless-express/middleware';
+import * as process from 'process';
+import * as mcache from 'memory-cache';
 
 const converter = require('json-2-csv');
 
-const mcache = require('memory-cache');
-
-const CACHE_TIME_MS = 1 * 60 * 1000;
-
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
+
+const CACHE_TIME_MS = Time.minutes(1).toMillis();
 
 function cacheKey(req: any) {
   return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
@@ -44,6 +45,7 @@ function cacheKey(req: any) {
 
 function requestLogMiddleware() {
   return (request: Request, response: Response, next: NextFunction) => {
+    Logger.registerAwsRequestId(request.apiGateway?.context?.awsRequestId);
     const { method, originalUrl: url } = request;
     const start = Time.now();
     response.on('close', () => {
@@ -51,6 +53,7 @@ function requestLogMiddleware() {
       requestLogger.info(
         `${method} ${url} - Response status: HTTP_${statusCode} - Running time: ${start.diffFromNow()}`
       );
+      Logger.deregisterRequestId();
     });
     next();
   };
@@ -131,6 +134,10 @@ loadApi().then(() => {
     );
   });
   passport.use(new AnonymousStrategy());
+  if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    // Only enabled in AWS Lambda
+    app.use(awsServerlessExpressMiddleware.eventContext());
+  }
   app.use(requestLogMiddleware());
   app.use(compression());
   app.use(cors(corsOptions));
