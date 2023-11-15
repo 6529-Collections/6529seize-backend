@@ -15,7 +15,7 @@
     "detect-libc": "^2.0.1",
     "esbuild": "^0.17.5",
     "fluent-ffmpeg": "^2.1.2",
-    "imagescript": "^1.2.15",
+    "imagescript": "^1.2.16",
     "sharp": "^0.31.3"
   }
 }
