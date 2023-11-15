@@ -7,9 +7,12 @@ import {
   NextGenCollectionBurn
 } from '../entities/INextGen';
 import { findNextgenTokens, refreshNextgenTokens } from '../nextgen';
+import { Logger } from '../logging';
+
+const logger = Logger.get('NEXTGEN_LOOP');
 
 export const handler = async () => {
-  console.log(new Date(), '[RUNNING NEXTGEN LOOP]');
+  logger.info('[RUNNING NEXTGEN LOOP]');
   await loadEnv([
     NextGenTransactionsBlock,
     NextGenAllowlist,
@@ -20,7 +23,7 @@ export const handler = async () => {
   await findNextgenTokens();
   // await refreshNextgenTokens();
   await unload();
-  console.log(new Date(), '[NEXTGEN LOOP COMPLETE]');
+  logger.info('[NEXTGEN LOOP COMPLETE]');
 };
 
 export const handlerRefresh = async () => {};

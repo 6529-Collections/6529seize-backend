@@ -1,5 +1,8 @@
 import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { randomUUID } from 'crypto';
+import { Logger } from './logging';
+
+const logger = Logger.get('NOTIFIER');
 
 let snsClient: SNSClient;
 
@@ -11,7 +14,7 @@ function getSnsClient(): SNSClient {
 }
 
 export async function notifyTdhCalculationsDone() {
-  console.log(new Date(), '[NOTIFYING TDH CALCULATIONS DONE]');
+  logger.info('[NOTIFYING TDH CALCULATIONS DONE]');
   if (process.env.NODE_ENV == 'production') {
     const uid = randomUUID();
     const input = {
@@ -21,10 +24,10 @@ export async function notifyTdhCalculationsDone() {
       MessageDeduplicationId: uid
     };
     const response = await getSnsClient().send(new PublishCommand(input));
-    console.log(
+    logger.info(
       `Message ${input.Message} sent to SNS topic ${input.TopicArn}. MessageID is ${response.MessageId}`
     );
   } else {
-    console.log('[SNS]', '[SKIPPING]', `[event=TdhCalculationsDone]`);
+    logger.info(`[SNS] [SKIPPING] [event=TdhCalculationsDone]`);
   }
 }

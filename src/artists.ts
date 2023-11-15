@@ -6,6 +6,9 @@ import {
 import { Artist } from './entities/IArtist';
 import { BaseNFT } from './entities/INFT';
 import { areEqualAddresses } from './helpers';
+import { Logger } from './logging';
+
+const logger = Logger.get('ARTISTS');
 
 function splitArtists(artist: string) {
   const a = artist
@@ -25,11 +28,7 @@ export const findArtists = async (
 ) => {
   const artists: Artist[] = [];
 
-  console.log(
-    new Date(),
-    '[ARTISTS]',
-    `[PROCESSING ARTISTS FOR ${nfts.length} NFTS]`
-  );
+  logger.info(`[PROCESSING ARTISTS FOR ${nfts.length} NFTS]`);
 
   nfts.map((nft) => {
     const artistNames = splitArtists(nft.artist);

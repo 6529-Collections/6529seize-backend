@@ -24,6 +24,7 @@ import {
   CreateInvalidationCommand
 } from '@aws-sdk/client-cloudfront';
 import { RequestInfo, RequestInit } from 'node-fetch';
+import { Logger } from './logging';
 
 const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
@@ -32,6 +33,8 @@ let alchemy: Alchemy;
 let cloudfront: CloudFrontClient;
 let s3: S3Client;
 let myBucket: string;
+
+const logger = Logger.get('NEXTGEN');
 
 const NEXTGEN_S3_PATH = 'nextgen/tokens/images';
 
@@ -60,11 +63,11 @@ export const findNextgenTokens = async (pageKey?: string) => {
     startBlock = await fetchLatestNextgenTransactionsBlockNumber();
   }
   const latestBlock = await alchemy.core.getBlockNumber();
-  console.log(
-    '[NEXTGEN TOKEN TRANSACTIONS]',
-    `[START BLOCK ${startBlock}]`,
-    `[LATEST BLOCK ON CHAIN ${latestBlock}]`
-  );
+  logger.info({
+    task: 'FIND NEXTGEN TOKENS',
+    start_block: startBlock,
+    latest_block: latestBlock
+  });
 
   await findTransactions(startBlock, latestBlock, pageKey);
 };
@@ -74,7 +77,7 @@ export const refreshNextgenTokens = async () => {
 
   const enabled = process.env.NEXTGEN_REFRESH_ENABLED === 'true';
   if (!enabled) {
-    console.log('[NEXTGEN TOKEN REFRESH]', `[REFRESH DISABLED]`);
+    logger.info(`[REFRESH TOKENS DISABLED]`);
     return;
   }
 
@@ -86,10 +89,7 @@ export const refreshNextgenTokens = async () => {
   );
 
   if (imageResponse.Contents) {
-    console.log(
-      '[NEXTGEN TOKEN REFRESH]',
-      `[TOKENS TO REFRESH ${imageResponse.Contents.length}]`
-    );
+    logger.info(`[TOKENS TO REFRESH ${imageResponse.Contents.length}]`);
 
     await Promise.all(
       imageResponse.Contents.map(async (i) => {
@@ -98,10 +98,7 @@ export const refreshNextgenTokens = async () => {
       })
     );
   } else {
-    console.log(
-      '[NEXTGEN TOKEN REFRESH]',
-      `[NO TOKENS FOUND ON S3 AT ${NEXTGEN_S3_PATH}]`
-    );
+    logger.info(`[NO TOKENS TO REFRESH]`);
   }
 };
 
@@ -116,11 +113,7 @@ export const findTransactions = async (
     pageKey
   );
 
-  console.log(
-    new Date(),
-    '[NEXTGEN TOKEN TRANSACTIONS]',
-    `[FOUND ${transactionsResponse.transfers.length} NEW TRANSACTIONS]`
-  );
+  logger.info(`[TRANSACTIONS FOUND ${transactionsResponse.transfers.length}]`);
 
   const newTokens: number[] = [];
 
@@ -152,13 +145,12 @@ async function getAllTransactions(
   const startingBlockHex = `0x${startingBlock.toString(16)}`;
   const latestBlockHex = `0x${latestBlock.toString(16)}`;
 
-  console.log(
-    new Date(),
-    '[NEXTGEN TOKEN TRANSACTIONS]',
-    `[FROM BLOCK ${startingBlockHex}]`,
-    `[TO BLOCK ${latestBlockHex}]`,
-    `[PAGE KEY ${key}]`
-  );
+  logger.info({
+    task: 'GET ALL TRANSACTIONS',
+    from_block: startingBlockHex,
+    to_block: latestBlockHex,
+    page_key: key
+  });
 
   const settings: AssetTransfersWithMetadataParams = {
     category: [AssetTransfersCategory.ERC721],
@@ -176,10 +168,7 @@ async function getAllTransactions(
 }
 
 async function persistNewTokens(newTokens: number[]) {
-  console.log(
-    '[NEXTGEN TOKEN TRANSACTIONS]',
-    `[PROCESSING IMAGES FOR ${newTokens.length} NEW TOKENS]`
-  );
+  logger.info(`[PROCESSING IMAGES FOR ${newTokens.length} NEW TOKENS]`);
   await Promise.all(
     newTokens.map(async (tokenId) => {
       await persistImage(tokenId);
@@ -199,19 +188,16 @@ async function persistImage(tokenId: number, url?: string) {
     imageCompare = true;
   }
 
-  console.log(
-    '[S3]',
-    `[TOKEN ${tokenId}]`,
-    `[EXISTS ${imageExists}]`,
-    `[COMPARE ${imageCompare}]`
-  );
+  logger.info({
+    task: 'PERSIST IMAGE',
+    token_id: tokenId,
+    image_exists: imageExists,
+    image_compare: imageCompare
+  });
 
   if (!imageExists || !imageCompare) {
     const blob = await fetchImage(generatorUrl);
-    console.log(
-      '[NEXTGEN TOKEN TRANSACTIONS]',
-      `[IMAGE ${tokenId} DOWNLOADED]`
-    );
+    logger.info(`[IMAGE ${tokenId} DOWNLOADED]`);
 
     const uploadedImage = await s3.send(
       new PutObjectCommand({
@@ -222,10 +208,8 @@ async function persistImage(tokenId: number, url?: string) {
       })
     );
 
-    console.log(
-      '[NEXTGEN TOKEN IMAGE]',
-      `[TOKEN ${tokenId}]`,
-      `[IMAGE PERSISTED AT ${uploadedImage.ETag}`
+    logger.info(
+      `[TOKEN ${tokenId}] [IMAGE PERSISTED AT ${uploadedImage.ETag}]`
     );
 
     if (!imageCompare) {
@@ -242,11 +226,7 @@ async function persistImage(tokenId: number, url?: string) {
         })
       );
 
-      console.log(
-        '[NEXTGEN TOKEN IMAGE]',
-        `[TOKEN ${tokenId}]`,
-        `[IMAGE URL INVALIDATED]`
-      );
+      logger.info(`[TOKEN ${tokenId}] [IMAGE INVALIDATED]`);
     }
   }
 }

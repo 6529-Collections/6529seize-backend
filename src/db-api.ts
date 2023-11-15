@@ -55,21 +55,23 @@ import * as profiles from './profiles/profiles';
 import * as mysql from 'mysql';
 import { Time } from './time';
 import { DbPoolName, DbQueryOptions } from './db-query.options';
+import { Logger } from './logging';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
 
 const WRITE_OPERATIONS = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE'];
 
+const logger = Logger.get('DB_API');
+
 export async function connect() {
-  let port: number | undefined;
   if (
     !process.env.DB_HOST ||
     !process.env.DB_USER ||
     !process.env.DB_PASS ||
     !process.env.DB_PORT
   ) {
-    console.log('[API]', '[MISSING CONFIGURATION FOR WRITE DB]', '[EXITING]');
+    logger.error('[MISSING CONFIGURATION FOR WRITE DB] [EXITING]');
     process.exit();
   }
   if (
@@ -78,10 +80,10 @@ export async function connect() {
     !process.env.DB_PASS_READ ||
     !process.env.DB_PORT
   ) {
-    console.log('[API]', '[MISSING CONFIGURATION FOR READ DB]', '[EXITING]');
+    logger.error('[MISSING CONFIGURATION FOR READ DB] [EXITING]');
     process.exit();
   }
-  port = +process.env.DB_PORT;
+  const port = +process.env.DB_PORT;
   write_pool = mysql.createPool({
     connectionLimit: 5,
     connectTimeout: Time.seconds(30).toMillis(),
@@ -113,7 +115,7 @@ export async function connect() {
       options?: DbQueryOptions
     ) => execSQLWithParams(sql, params, options)
   });
-  console.log('[API]', `[CONNECTION POOLS CREATED]`);
+  logger.info(`[CONNECTION POOLS CREATED]`);
 }
 
 function getPool(sql: string, queryOptions?: DbQueryOptions) {
@@ -143,14 +145,14 @@ export function execSQL(sql: string, options?: DbQueryOptions): Promise<any> {
       dbcon: mysql.PoolConnection
     ) {
       if (err) {
-        console.log('custom err', err);
+        logger.error('custom err', err);
         dbcon?.release();
         throw err;
       }
       dbcon.query(sql, (err: any, result: any[]) => {
         dbcon?.release();
         if (err) {
-          console.log('custom err', err);
+          logger.error('custom err', err);
           return reject(err);
         }
         resolve(Object.values(JSON.parse(JSON.stringify(result))));
@@ -199,7 +201,7 @@ function executeQuery(connection: mysql.PoolConnection, query: string) {
   return new Promise((resolve, reject) => {
     connection.query(query, (err, result) => {
       if (err) {
-        console.log('custom err', err);
+        logger.error('custom err', err);
         reject(err);
       } else {
         resolve(Object.values(JSON.parse(JSON.stringify(result))));
@@ -220,7 +222,7 @@ export function execSQLWithParams(
       dbcon: mysql.PoolConnection
     ) {
       if (err) {
-        console.log('custom err', err);
+        logger.error('custom err', err);
         dbcon?.release();
         throw err;
       }
@@ -240,7 +242,7 @@ export function execSQLWithParams(
       dbcon.query({ sql, values: params }, (err: any, result: any[]) => {
         dbcon?.release();
         if (err) {
-          console.log('custom err', err);
+          logger.error('custom err', err);
           return reject(err);
         }
         resolve(result);
@@ -313,14 +315,11 @@ async function fetchPaginated(
     resultsSql += ` OFFSET ${offset}`;
   }
 
-  // console.log(countSql);
-  // console.log(resultsSql);
-
   const count = await execSQL(countSql).then((r) => r[0].count);
   const data = await execSQL(resultsSql);
 
-  // console.log(count);
-  // console.log(data);
+  logger.debug(`Count sql: '${countSql}', Result: ${count}`);
+  logger.debug(`Result sql: '${resultsSql}', Result: %o`, data);
 
   return {
     count,

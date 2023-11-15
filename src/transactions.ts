@@ -11,6 +11,9 @@ import {
   MEMES_CONTRACT
 } from './constants';
 import { BaseTransaction } from './entities/ITransaction';
+import { Logger } from './logging';
+
+const logger = Logger.get('TRANSACTIONS');
 
 let alchemy: Alchemy;
 
@@ -23,12 +26,8 @@ async function getAllTransactions(
   const startingBlockHex = `0x${startingBlock.toString(16)}`;
   const latestBlockHex = `0x${latestBlock.toString(16)}`;
 
-  console.log(
-    new Date(),
-    '[TRANSACTIONS]',
-    `[FROM BLOCK ${startingBlockHex}]`,
-    `[TO BLOCK ${latestBlockHex}]`,
-    `[PAGE KEY ${key}]`
+  logger.info(
+    `[FROM BLOCK ${startingBlockHex}] [TO BLOCK ${latestBlockHex}] [PAGE KEY ${key}]`
   );
 
   const settings: AssetTransfersWithMetadataParams = {
@@ -60,11 +59,8 @@ export const findTransactions = async (
 
   if (!latestBlock) {
     latestBlock = await alchemy.core.getBlockNumber();
-    console.log(
-      new Date(),
-      '[TRANSACTIONS]',
-      `[STARTING BLOCK ${startingBlock}]`,
-      `[LATEST BLOCK ON CHAIN ${latestBlock}]`
+    logger.info(
+      `[STARTING BLOCK ${startingBlock}] [LATEST BLOCK ON CHAIN ${latestBlock}]`
     );
   }
 
@@ -77,11 +73,7 @@ export const findTransactions = async (
     contracts
   );
 
-  console.log(
-    new Date(),
-    '[TRANSACTIONS]',
-    `[FOUND ${transactions.transfers.length} NEW TRANSACTIONS]`
-  );
+  logger.info(`[FOUND ${transactions.transfers.length} NEW TRANSACTIONS]`);
 
   if (transactions.transfers.length == 0) {
     return {
@@ -147,11 +139,7 @@ export const findTransactions = async (
     })
   );
 
-  console.log(
-    new Date(),
-    '[TRANSACTIONS]',
-    `[PROCESSED ${finalTransactions.length} TRANSACTIONS]`
-  );
+  logger.info(`[PROCESSED ${finalTransactions.length} TRANSACTIONS]`);
 
   return {
     latestBlock: latestBlock,

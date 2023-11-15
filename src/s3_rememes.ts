@@ -9,6 +9,9 @@ import { Rememe } from './entities/IRememe';
 import { getContentType, parseIpfsUrlToCloudflare } from './helpers';
 import { CLOUDFRONT_LINK } from './constants';
 import { persistRememes } from './db';
+import { Logger } from './logging';
+
+const logger = Logger.get('S3_REMEMES');
 
 const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
@@ -25,10 +28,7 @@ let myBucket: string;
 export const persistRememesS3 = async (rememes: Rememe[]) => {
   s3 = new S3Client({ region: 'eu-west-1' });
 
-  console.log(
-    '[S3 REMEMES]',
-    `[PROCESSING ASSETS FOR ${rememes.length} REMEMES]`
-  );
+  logger.info(`[PROCESSING ASSETS FOR ${rememes.length} REMEMES]`);
 
   myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
 
@@ -51,11 +51,8 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
           const exists = await objectExists(myBucket, originalKey);
 
           if (!exists) {
-            console.log(
-              '[S3 REMEMES]',
-              `[MISSING IMAGE]`,
-              `[CONTRACT ${r.contract}]`,
-              `[ID ${r.id}]`
+            logger.info(
+              `[MISSING IMAGE] [CONTRACT ${r.contract}] [ID ${r.id}]`
             );
 
             const res = await fetch(parseIpfsUrlToCloudflare(image));
@@ -95,11 +92,7 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
 
             await handleImageUpload(iconKey, format, iconBuffer);
           } else {
-            console.log(
-              '[S3 REMEMES]',
-              `[EXISTS ${r.contract} #${r.id}]`,
-              '[SKIPPING UPLOAD]'
-            );
+            logger.info(`[EXISTS ${r.contract} #${r.id}] [SKIPPING UPLOAD]`);
           }
           r.s3_image_original = `${CLOUDFRONT_LINK}/${originalKey}`;
           r.s3_image_scaled = `${CLOUDFRONT_LINK}/${scaledKey}`;
@@ -107,10 +100,8 @@ export const persistRememesS3 = async (rememes: Rememe[]) => {
           r.s3_image_icon = `${CLOUDFRONT_LINK}/${iconKey}`;
           await persistRememes([r]);
         } else {
-          console.log(
-            '[S3 REMEMES]',
-            `[ERROR ${r.contract} #${r.id}]`,
-            `[INVALID FORMAT ${image}]`
+          logger.error(
+            `[ERROR ${r.contract} #${r.id}] [INVALID FORMAT ${image}]`
           );
         }
       }
@@ -132,11 +123,7 @@ async function handleImageUpload(
     })
   );
 
-  console.log(
-    '[S3 REMEMES]',
-    `[UPLOADED ${key}]`,
-    `[STATUS ${put.$metadata.httpStatusCode}]`
-  );
+  logger.info(`[UPLOADED ${key}] [STATUS ${put.$metadata.httpStatusCode}]`);
 }
 
 async function objectExists(myBucket: any, key: any): Promise<boolean> {
@@ -161,9 +148,8 @@ async function resizeImage(
   buffer: Buffer,
   height: number
 ) {
-  console.log(
-    `[RESIZING FOR ${rememe.contract} #${rememe.id} (WEBP: ${toWEBP})]`,
-    `[TO TARGET HEIGHT ${height}]`
+  logger.info(
+    `[RESIZING FOR ${rememe.contract} #${rememe.id} (WEBP: ${toWEBP})] [TO TARGET HEIGHT ${height}]`
   );
 
   try {
@@ -176,11 +162,9 @@ async function resizeImage(
       return gif.encode();
     }
   } catch (err: any) {
-    console.log(
-      `[RESIZING FOR ${rememe.contract} #${rememe.id}]`,
-      `[TO TARGET HEIGHT ${height}]`,
-      `[FAILED!]`,
-      `[${err}]`
+    logger.error(
+      `[RESIZING FOR ${rememe.contract} #${rememe.id}] [TO TARGET HEIGHT ${height}] [FAILED!]`,
+      err
     );
   }
 }

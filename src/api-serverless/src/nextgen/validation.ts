@@ -9,11 +9,14 @@ import {
   NEXTGEN_CHAIN_ID,
   NEXTGEN_FUNCTION_SELECTOR
 } from './abis';
+import { Logger } from '../../../logging';
 const { keccak256 } = require('@ethersproject/keccak256');
 const { MerkleTree } = require('merkletreejs');
 
 const csv = require('csv-parser');
 const path = require('path');
+
+const logger = Logger.get('NEXTGEN_VALIDATION');
 
 export enum NextGenAllowlistType {
   ALLOWLIST = 'allowlist',
@@ -56,7 +59,7 @@ interface UploadAllowlistBurn {
 }
 
 export async function validateNextgen(req: any, res: any, next: any) {
-  console.log('[VALIDATE NEXTGEN ALLOWLIST]', `[VALIDATING...]`);
+  logger.info('[VALIDATING NEXTGEN...]');
 
   const nextgen = req.body?.nextgen;
   const allowlistFile = req.file;
@@ -118,10 +121,7 @@ export async function validateNextgen(req: any, res: any, next: any) {
       );
     }
 
-    console.log(
-      '[VALIDATE NEXTGEN]',
-      `[ALLOWLIST ${allowlist.length} ENTRIES]`
-    );
+    logger.info(`[ALLOWLIST ${allowlist.length} ENTRIES]`);
 
     req.validatedBody = {
       valid: true,
@@ -139,7 +139,7 @@ export async function validateNextgen(req: any, res: any, next: any) {
 }
 
 export async function validateNextgenBurn(req: any, res: any, next: any) {
-  console.log('[VALIDATE NEXTGEN COLLECTION BURN]', `[VALIDATING...]`);
+  logger.info('[VALIDATING NEXTGEN COLLECTION BURN...]');
 
   const collectionBurn = req.body;
 
@@ -212,7 +212,7 @@ function validateSignature(address: string, signature: string, uuid: string) {
     );
     return areEqualAddresses(address, verifySigner);
   } catch (e) {
-    console.log('error', e);
+    logger.error('error', e);
     return false;
   }
 }
@@ -354,12 +354,11 @@ async function validateAdmin(collection_id: number, address: string) {
       collection_id
     );
     const isCollectionAdmin = result3[0];
-    console.log(
-      '[VALIDATE NEXTGEN]',
-      `[GLOBAL ADMIN ${isGlobalAdmin}]`,
-      `[FUNCTION ADMIN ${isFunctionAdmin}]`,
-      `[COLLECTION ADMIN ${isCollectionAdmin}]`
-    );
+    logger.info({
+      global_admin: isGlobalAdmin,
+      function_admin: isFunctionAdmin,
+      collection_admin: isCollectionAdmin
+    });
     return isGlobalAdmin || isFunctionAdmin || isCollectionAdmin;
   } catch (error) {
     console.error('Error calling retrieveGlobalAdmin method:', rpcUrl, error);

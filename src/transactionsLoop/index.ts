@@ -5,20 +5,23 @@ import { discoverEns } from '../ens';
 import { loadEnv, unload } from '../secrets';
 import { Transaction } from '../entities/ITransaction';
 import { User } from '../entities/IUser';
+import { Logger } from '../logging';
+
+const logger = Logger.get('TRANSACTIONS_LOOP');
 
 export const handler = async (event?: any, context?: any) => {
-  console.log(new Date(), '[RUNNING TRANSACTIONS LOOP]');
   await loadEnv([Transaction, User]);
+  logger.info('[RUNNING]');
   await transactionsLoop();
   await unload();
-  console.log(new Date(), '[TRANSACTIONS LOOP COMPLETE]');
+  logger.info('[COMPLETE]');
 };
 
 export const handlerValues = async (event?: any, context?: any) => {
-  console.log(new Date(), '[RUNNING TRANSACTIONS VALUES]');
   await loadEnv();
+  logger.info('[RUNNING TRANSACTIONS VALUES]');
   await runValues();
-  console.log(new Date(), '[TRANSACTIONS VALUES COMPLETE]');
+  logger.info('[TRANSACTIONS VALUES COMPLETE]');
 };
 
 export async function transactionsLoop() {
@@ -60,13 +63,7 @@ export async function transactions(
       );
     }
   } catch (e: any) {
-    console.log(
-      new Date(),
-      '[TRANSACTIONS]',
-      '[ETIMEDOUT!]',
-      e,
-      '[RETRYING PROCESS]'
-    );
+    logger.error('[TRANSACTIONS] [ETIMEDOUT!] [RETRYING PROCESS]', e);
     await transactions(startingBlock, latestBlock, pagKey);
   }
 }

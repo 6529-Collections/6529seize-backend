@@ -10,6 +10,9 @@ import {
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
+import { Logger } from './logging';
+
+const logger = Logger.get('TRANSACTION_VALUES');
 
 let SEAPORT_IFACE: any = undefined;
 
@@ -22,7 +25,7 @@ async function loadABIs() {
   const abi = await f.json();
   SEAPORT_IFACE = new ethers.utils.Interface(abi.result);
 
-  console.log('[ROYALTIES]', `[ABIs LOADED]`, `[SEAPORT ${f.status}]`);
+  logger.info(`[ROYALTIES] [ABIs LOADED] [SEAPORT ${f.status}]`);
 }
 
 let alchemy: Alchemy;
@@ -37,11 +40,7 @@ export const findTransactionValues = async (transactions: Transaction[]) => {
     await loadABIs();
   }
 
-  console.log(
-    new Date(),
-    '[TRANSACTION VALUES]',
-    `[PROCESSING VALUES FOR ${transactions.length} TRANSACTIONS]`
-  );
+  logger.info(`[PROCESSING VALUES FOR ${transactions.length} TRANSACTIONS]`);
 
   const transactionsWithValues: Transaction[] = [];
 
@@ -57,9 +56,7 @@ export const findTransactionValues = async (transactions: Transaction[]) => {
     })
   );
 
-  console.log(
-    new Date(),
-    '[TRANSACTION VALUES]',
+  logger.info(
     `[PROCESSED ${transactionsWithValues.length} TRANSACTION VALUES]`
   );
 
@@ -137,12 +134,12 @@ export const runValues = async () => {
           const garPriceGwei =
             Math.round(gasPrice * 1000000000 * 100000000) / 100000000;
           const gas = Math.round(gasUnits * gasPrice * 100000000) / 100000000;
-          console.log(gasUnits, gasPrice, garPriceGwei, gas);
+          logger.info(`${gasUnits} ${gasPrice} ${garPriceGwei} ${gas}`);
         }
 
         receipt?.logs.map(async (log) => {
           const a = await parseSeaportLog(log);
-          if (a) console.log(a);
+          if (a) logger.info(a);
         });
       }
     })
@@ -193,7 +190,6 @@ const parseSeaportLog = async (log: ethers.providers.Log) => {
       };
     }
   } catch (err: any) {
-    // console.log('sea error', log.address, err);
     return null;
   }
 };

@@ -5,6 +5,9 @@ import {
   PutObjectCommand,
   S3Client
 } from '@aws-sdk/client-s3';
+import { Logger } from '../logging';
+
+const logger = Logger.get('S3_HELPERS');
 
 export async function objectExists(
   s3: S3Client,
@@ -19,7 +22,7 @@ export async function objectExists(
       await s3.send(
         new HeadObjectCommand({ Bucket: myBucket, Key: `${key}__temp` })
       );
-      console.log('objectExists', `${key}__temp`);
+      logger.info(`objectExists ${key}__temp`);
       return true;
     } catch (error2: any) {
       return false;

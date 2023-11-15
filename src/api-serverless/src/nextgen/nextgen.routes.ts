@@ -30,6 +30,9 @@ import * as mysql from 'mysql';
 import * as db from '../../../db-api';
 import { asyncRouter } from '../async.router';
 import { initMulterSingleMiddleware } from '../multer-middleware';
+import { Logger } from '../../../logging';
+
+const logger = Logger.get('NEXTGEN_API');
 
 const router = asyncRouter();
 
@@ -39,13 +42,10 @@ router.post(
   validateNextgen,
   async (req: any, res: any) => {
     const body = req.validatedBody;
-    console.log(
-      new Date(),
-      `[API]`,
-      '[NEXTGEN]',
-      `[VALID ${body.valid}]`,
-      `[FROM ${body.added_by}]`
-    );
+    logger.info({
+      valid: body.valid,
+      added_by: body.added_by
+    });
     const valid = body.valid;
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
     res.setHeader(ACCESS_CONTROL_ALLOW_HEADER, corsOptions.allowedHeaders);
@@ -67,13 +67,10 @@ router.post(
   validateNextgenBurn,
   async (req: any, res: any) => {
     const body = req.validatedBody;
-    console.log(
-      new Date(),
-      `[API]`,
-      '[NEXTGEN COLLECTION BURN]',
-      `[VALID ${body.valid}]`
-    );
     const valid = body.valid;
+
+    logger.info(`[VALID ${valid}]`);
+
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
     res.setHeader(ACCESS_CONTROL_ALLOW_HEADER, corsOptions.allowedHeaders);
     if (valid) {
@@ -210,15 +207,9 @@ async function persistAllowlist(body: {
 
   const collectionInsert = extractNextGenCollectionInsert(collection);
   sqlOperations.push(collectionInsert);
-  await execSQLWithTransaction(sqlOperations).catch((e) => {
-    console.log('i am error', e);
-  });
+  await execSQLWithTransaction(sqlOperations);
 
-  console.log(
-    `[NEXTGEN ALLOWLIST]`,
-    `[ALLOWLIST PERSISTED]`,
-    `[COLLECTION ID ${body.collection_id}]`
-  );
+  logger.info(`[ALLOWLIST PERSISTED] [COLLECTION ID ${body.collection_id}]`);
 }
 
 export async function persistCollectionBurn(body: {
@@ -243,10 +234,8 @@ export async function persistCollectionBurn(body: {
     extractNextGenCollectionBurnInsert(collectionBurn);
   await sqlExecutor.execute(collectionBurnInsert);
 
-  console.log(
-    `[NEXTGEN COLLECTION BURN]`,
-    `[COLLECTION BURN PERSISTED]`,
-    `[COLLECTION ID ${body.collection_id}]`
+  logger.info(
+    `[COLLECTION BURN PERSISTED] [COLLECTION ID ${body.collection_id}]`
   );
 }
 

@@ -11,6 +11,9 @@ import {
 } from './db';
 import { MEMELAB_CONTRACT } from './constants';
 import { RequestInfo, RequestInit } from 'node-fetch';
+import { Logger } from './logging';
+
+const logger = Logger.get('NFT_MARKET_STATS');
 
 const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
@@ -25,11 +28,15 @@ async function getResult(url: string) {
       }
     });
     if (!response.ok) {
-      console.log('response', JSON.stringify(response));
-      throw new Error(`Request failed with status ${response.status}`);
+      throw new Error(
+        `Request failed with status ${
+          response.status
+        }. Respone ${JSON.stringify(response)}`
+      );
     }
     return response;
   } catch (err: any) {
+    logger.error(err);
     return null;
   }
 }
@@ -46,17 +53,14 @@ const findFloorPrice = async (stat: any): Promise<number> => {
     }
     return parseFloat(Utils.formatEther(floorPrice));
   } else {
-    console.log(
-      'error',
-      `[TOKEN ID ${stat.id}]`,
-      url,
-      res?.status,
-      res?.statusText,
-      JSON.stringify(res)
+    logger.error(
+      `error [TOKEN ID ${stat.id}] ${url} ${res?.status} ${
+        res?.statusText
+      } ${JSON.stringify(res)}`
     );
-    console.log(stat.id, 'Retrying in 5 seconds....');
+    logger.info(`${stat.id} Retrying in 3 seconds....`);
     await delay(3000);
-    console.log(stat.id, 'Retrying now....');
+    logger.info(`${stat.id} Retrying now....`);
     return await findFloorPrice(stat);
   }
 };
@@ -72,11 +76,8 @@ export const findNftMarketStats = async (contract: string) => {
 const findNftMarketStatsMain = async (contract: string) => {
   const nfts: NFT[] = await fetchNftsForContract(contract, 'id desc');
 
-  console.log(
-    new Date(),
-    '[NFT MARKET STATS]',
-    `[CONTRACT ${contract}]`,
-    `[PROCESSING STATS FOR ${nfts.length} NFTS]`
+  logger.info(
+    `[CONTRACT ${contract}] [PROCESSING STATS FOR ${nfts.length} NFTS]`
   );
 
   const processedStats: NFT[] = [];
@@ -96,29 +97,14 @@ const findNftMarketStatsMain = async (contract: string) => {
       nft.total_volume = volumes.total_volume;
 
       await persistNFTs([nft]);
-      console.log(
-        new Date(),
-        '[NFT MARKET STATS]',
-        `[CONTRACT ${contract}]`,
-        `[PROCESSED FOR ID ${nft.id}]`
-      );
+      logger.info(`[CONTRACT ${contract}] [PROCESSED FOR ID ${nft.id}]`);
     } else {
-      console.log(
-        new Date(),
-        '[NFT MARKET STATS]',
-        `[CONTRACT ${contract}]`,
-        `[ID ${nft.id}]`,
-        `[NO RESULTS FOUND]`
-      );
+      logger.info(`[CONTRACT ${contract}] [ID ${nft.id}] [NO RESULTS FOUND]`);
     }
     processedStats.push(nft);
   }
 
-  console.log(
-    new Date(),
-    '[NFT MARKET STATS]',
-    `[PROCESSED ASSETS FOR ${processedStats.length} NFTS]`
-  );
+  logger.info(`[PROCESSED ASSETS FOR ${processedStats.length} NFTS]`);
 
   return processedStats;
 };
@@ -126,12 +112,7 @@ const findNftMarketStatsMain = async (contract: string) => {
 const findNftMarketStatsLab = async () => {
   const nfts: LabNFT[] = await fetchAllMemeLabNFTs('id desc');
 
-  console.log(
-    new Date(),
-    '[NFT MARKET STATS]',
-    `[MEME LAB]`,
-    `[PROCESSING STATS FOR ${nfts.length} NFTS]`
-  );
+  logger.info(`[MEME LAB] [PROCESSING STATS FOR ${nfts.length} NFTS]`);
 
   const processedStats: LabNFT[] = [];
 
@@ -149,19 +130,10 @@ const findNftMarketStatsLab = async () => {
     nft.total_volume = volumes.total_volume;
 
     await persistLabNFTS([nft]);
-    console.log(
-      new Date(),
-      '[NFT MARKET STATS]',
-      `[MEME LAB]`,
-      `[PROCESSED FOR ID ${nft.id}]`
-    );
+    logger.info(`[MEME LAB] [PROCESSED FOR ID ${nft.id}]`);
     processedStats.push(nft);
   }
 
-  console.log(
-    new Date(),
-    '[NFT MARKET STATS]',
-    `[PROCESSED ASSETS FOR ${processedStats.length} NFTS]`
-  );
+  logger.info(`[PROCESSED ASSETS FOR ${processedStats.length} NFTS]`);
   return processedStats;
 };

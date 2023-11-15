@@ -1,11 +1,14 @@
 import { refreshEns } from '../ens';
 import { ENS } from '../entities/IENS';
 import { loadEnv, unload } from '../secrets';
+import { Logger } from '../logging';
+
+const logger = Logger.get('REFRESH_ENS_LOOP');
 
 export const handler = async (event?: any, context?: any) => {
-  console.log(new Date(), '[RUNNING REFRESH ENS LOOP]');
+  logger.info('[RUNNING]');
   await loadEnv([ENS]);
   await refreshEns();
   await unload();
-  console.log(new Date(), '[REFRESH ENS LOOP COMPLETE]');
+  logger.info('[COMPLETE]');
 };

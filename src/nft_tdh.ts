@@ -3,11 +3,14 @@ import { NFT } from './entities/INFT';
 import { areEqualAddresses } from './helpers';
 import { fetchAllNFTs, fetchAllConsolidatedTDH, persistNFTs } from './db';
 import { TDH } from './entities/ITDH';
+import { Logger } from './logging';
+
+const logger = Logger.get('NFT_TDH');
 
 export const findNftTDH = async () => {
   const tdhs: TDH[] = await fetchAllConsolidatedTDH();
 
-  console.log(new Date(), '[NFT TDH]', `[WALLETS ${tdhs.length}]`);
+  logger.info(`[WALLETS ${tdhs.length}]`);
 
   const nfts: NFT[] = await fetchAllNFTs();
   const nftTDH: NFT[] = [];

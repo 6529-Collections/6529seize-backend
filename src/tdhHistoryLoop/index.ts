@@ -11,8 +11,12 @@ import { loadEnv, unload } from '../secrets';
 import { ConsolidatedTDHUpload } from '../entities/IUpload';
 import axios from 'axios';
 import { Readable } from 'stream';
+import { Logger } from '../logging';
+import { Time } from '../time';
 
 const csvParser = require('csv-parser');
+
+const logger = Logger.get('TDH_HISTORY_LOOP');
 
 const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
@@ -20,19 +24,15 @@ const fetch = (url: RequestInfo, init?: RequestInit) =>
 export const handler = async (event?: any, context?: any) => {
   await loadEnv([TDHHistory, GlobalTDHHistory]);
   const iterations = parseInt(process.env.TDH_HISTORY_ITERATIONS || '1');
-  console.log(
-    new Date(),
-    '[RUNNING TDH HISTORY LOOP]',
-    `[ITERATIONS ${iterations}]`
-  );
+  logger.info(`[RUNNING] [ITERATIONS ${iterations}]`);
   await tdhHistoryLoop(iterations);
   await unload();
-  console.log(new Date(), '[TDH HISTORY LOOP COMPLETE]');
+  logger.info('[COMPLETE]');
 };
 
 export async function tdhHistoryLoop(iterations: number) {
   for (let i = iterations - 1; i >= 0; i--) {
-    const start = new Date().getTime();
+    const start = Time.now();
     const myDate = new Date();
     myDate.setDate(myDate.getDate() - i);
 
@@ -45,11 +45,10 @@ export async function tdhHistoryLoop(iterations: number) {
       historyResult.tdh
     );
 
-    console.log(
-      '[TDH HISTORY]',
-      `[DATE ${myDate.toISOString().split('T')[0]}]`,
-      '[ALL DONE!]',
-      `[${(new Date().getTime() - start) / 1000} seconds]`
+    logger.info(
+      `[DATE ${
+        myDate.toISOString().split('T')[0]
+      }] [ALL DONE!] [${start.diffFromNow()}]`
     );
   }
 }
@@ -90,10 +89,8 @@ async function tdhHistory(date: Date) {
   const dateString = formatDateAsString(date);
   const uploads = await fetchUploads(dateString);
 
-  console.log(
-    '[TDH HISTORY]',
-    `[DATE ${date.toISOString().split('T')[0]}]`,
-    '[FETCHING UPLOADS...]'
+  logger.info(
+    `[DATE ${date.toISOString().split('T')[0]}] [FETCHING UPLOADS...]`
   );
 
   const today = uploads[0];
@@ -104,11 +101,7 @@ async function tdhHistory(date: Date) {
 
   const tdhHistory: TDHHistory[] = [];
 
-  console.log(
-    '[TDH HISTORY]',
-    `[DATE ${date.toISOString().split('T')[0]}]`,
-    '[MAPPING...]'
-  );
+  logger.info(`[DATE ${date.toISOString().split('T')[0]}] [MAPPING...]`);
 
   const yesterdayEntries: string[] = [];
 
@@ -272,10 +265,10 @@ async function tdhHistory(date: Date) {
   yesterdayData.map((yd) => {
     const key = JSON.parse(yd.wallets).sort().join('-');
     if (!yesterdayEntries.includes(key)) {
-      console.log(
-        '[TDH HISTORY]',
-        `[DATE ${date.toISOString().split('T')[0]}]`,
-        `[KEY LOST ${key} ${yd.boosted_tdh} TDH]`
+      logger.info(
+        `[DATE ${date.toISOString().split('T')[0]}] [KEY LOST ${key} ${
+          yd.boosted_tdh
+        } TDH]`
       );
 
       const ydtdhRaw = parseFloat(yd.tdh__raw as any);
@@ -309,11 +302,10 @@ async function tdhHistory(date: Date) {
     }
   });
 
-  console.log(
-    '[TDH HISTORY]',
-    `[DATE ${date.toISOString().split('T')[0]}]`,
-    `[COUNT ${tdhHistory.length}]`,
-    '[PERSISTNG...]'
+  logger.info(
+    `[DATE ${date.toISOString().split('T')[0]}] [COUNT ${
+      tdhHistory.length
+    }] [PERSISTNG...]`
   );
   await persistTDHHistory(tdhHistory);
 
@@ -330,10 +322,10 @@ async function calculateGlobalTDHHistory(
   tdhHistory: TDHHistory[],
   tdhData: ConsolidatedTDH[]
 ) {
-  console.log(
-    '[TDH HISTORY]',
-    `[DATE ${date.toISOString().split('T')[0]}]`,
-    '[CALCULATING GLOBAL TDH HISTORY...]'
+  logger.info(
+    `[DATE ${
+      date.toISOString().split('T')[0]
+    }] [CALCULATING GLOBAL TDH HISTORY...]`
   );
 
   let totalCreatedTdh = 0;

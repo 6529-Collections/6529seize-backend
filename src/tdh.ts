@@ -23,6 +23,9 @@ import {
   fetchHasEns
 } from './db';
 import { sqlExecutor } from './sql-executor';
+import { Logger } from './logging';
+
+const logger = Logger.get('TDH');
 
 let alchemy: Alchemy;
 
@@ -81,20 +84,13 @@ export const findTDH = async (lastTDHCalc: Date) => {
     (await alchemy.core.getBlock(block)).timestamp * 1000
   );
 
-  console.log(
-    new Date(),
-    '[TDH]',
-    `[BLOCK ${block} - ${timestamp.toUTCString()}]`,
-    `[LAST TDH ${lastTDHCalc.toUTCString()}]`,
-    `[ADJUSTED_NFTS ${ADJUSTED_NFTS.length}]`,
-    '[CALCULATING TDH - START]'
+  logger.info(
+    `[BLOCK ${block} - ${timestamp.toUTCString()}] [LAST TDH ${lastTDHCalc.toUTCString()}] [ADJUSTED_NFTS ${
+      ADJUSTED_NFTS.length
+    }] [CALCULATING TDH - START]`
   );
 
-  console.log(
-    new Date(),
-    '[TDH]',
-    `[TRANSACTIONS UNIQUE WALLETS ${owners.length}]`
-  );
+  logger.info(`[TRANSACTIONS UNIQUE WALLETS ${owners.length}]`);
 
   const allGradientsTDH: any[] = [];
   await Promise.all(
@@ -350,12 +346,8 @@ export const findTDH = async (lastTDHCalc: Date) => {
     })
   );
 
-  console.log(
-    new Date(),
-    '[TDH]',
-    `[BLOCK ${block}]`,
-    `[WALLETS ${walletsTDH.length}]`,
-    '[CALCULATING RANKS]'
+  logger.info(
+    `[BLOCK ${block}] [WALLETS ${walletsTDH.length}] [CALCULATING RANKS]`
   );
 
   const sortedTdh = await ranks(
@@ -365,12 +357,8 @@ export const findTDH = async (lastTDHCalc: Date) => {
     MEMES_COUNT
   );
 
-  console.log(
-    new Date(),
-    '[TDH]',
-    `[BLOCK ${block}]`,
-    `[WALLETS ${sortedTdh.length}]`,
-    '[CALCULATING TDH - END]'
+  logger.info(
+    `[BLOCK ${block}] [WALLETS ${sortedTdh.length}] [CALCULATING TDH - END]`
   );
 
   await persistTDH(block, timestamp, sortedTdh);

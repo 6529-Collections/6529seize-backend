@@ -23,6 +23,9 @@ import {
   persistConsolidatedOwnerMetrics
 } from './db';
 import { fetchAllOwnerMetrics } from './db';
+import { Logger } from './logging';
+
+const logger = Logger.get('OWNER_METRICS');
 
 export const findOwnerMetrics = async (reset?: boolean) => {
   const lastMetricsDate = await fetchLastOwnerMetrics();
@@ -47,12 +50,8 @@ export const findOwnerMetrics = async (reset?: boolean) => {
     });
   }
 
-  console.log(
-    '[OWNERS METRICS]',
-    `[OWNERS ${owners.length}]`,
-    `[lastMetricsDate ${lastMetricsDate}]`,
-    `[transactionReference ${transactionReference}]`,
-    `[RESET ${reset}]`
+  logger.info(
+    `[OWNERS ${owners.length}] [lastMetricsDate ${lastMetricsDate}] [transactionReference ${transactionReference}] [RESET ${reset}]`
   );
 
   const ownerMetrics: OwnerMetric[] = [];
@@ -445,16 +444,15 @@ export const findOwnerMetrics = async (reset?: boolean) => {
     })
   );
 
-  console.log('[OWNERS METRICS]', `[DELTA ${ownerMetrics.length}]`);
+  logger.info(`[OWNERS METRICS] [DELTA ${ownerMetrics.length}]`);
   await persistOwnerMetrics(ownerMetrics, reset);
 
   const consolidatedMetrics: ConsolidatedOwnerMetric[] = [];
   const processedWallets = new Set<string>();
   const ownerMetricsForConsolidation = await fetchAllOwnerMetrics();
 
-  console.log(
-    '[OWNERS METRICS]',
-    `[CONSOLIDATING ${ownerMetricsForConsolidation.length} WALLETS]`
+  logger.info(
+    `[OWNERS METRICS] [CONSOLIDATING ${ownerMetricsForConsolidation.length} WALLETS]`
   );
 
   await Promise.all(
@@ -805,10 +803,10 @@ export const findOwnerMetrics = async (reset?: boolean) => {
     })
   );
 
-  console.log(
-    '[CONSOLIDATED OWNERS METRICS]',
-    `[DELTA ${consolidatedMetrics.length}]`,
-    `[PROCESSED ${Array.from(processedWallets).length}]`
+  logger.info(
+    `[DELTA ${consolidatedMetrics.length}] [PROCESSED ${
+      Array.from(processedWallets).length
+    }]`
   );
   await persistConsolidatedOwnerMetrics(consolidatedMetrics);
   return ownerMetrics;

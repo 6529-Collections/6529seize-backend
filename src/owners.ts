@@ -7,6 +7,9 @@ import { Owner } from './entities/IOwner';
 import { Alchemy, fromHex, NftContractOwner } from 'alchemy-sdk';
 import { areEqualAddresses } from './helpers';
 import { persistOwners, fetchAllOwners } from './db';
+import { Logger } from './logging';
+
+const logger = Logger.get('OWNERS');
 
 let alchemy: Alchemy;
 
@@ -50,17 +53,14 @@ export const findOwners = async () => {
 
   const startingOwners: Owner[] = await fetchAllOwners();
 
-  console.log(new Date(), '[OWNERS]', `[DB ${startingOwners.length}]`);
+  logger.info(`[DB ${startingOwners.length}]`);
 
   const memesOwners = await getAllOwners(alchemy, MEMES_CONTRACT);
 
   const gradientsOwners = await getAllOwners(alchemy, GRADIENT_CONTRACT);
 
-  console.log(
-    new Date(),
-    '[OWNERS]',
-    `[MEMES ${memesOwners.length}]`,
-    `[GRADIENTS ${gradientsOwners.length}]`
+  logger.info(
+    `[MEMES ${memesOwners.length}] [GRADIENTS ${gradientsOwners.length}]`
   );
 
   const newOwners: Owner[] = [];
@@ -91,11 +91,8 @@ export const findOwners = async () => {
     });
   });
 
-  console.log(
-    new Date(),
-    `[OWNERS ${newOwners.length}]`,
-    `[MEMES ${memesOwners.length}]`,
-    `[GRADIENTS ${gradientsOwners.length}]`
+  logger.info(
+    `[OWNERS ${newOwners.length}] [MEMES ${memesOwners.length}] [GRADIENTS ${gradientsOwners.length}]`
   );
 
   const ownersDelta: Owner[] = [];
@@ -117,7 +114,7 @@ export const findOwners = async () => {
     }
   });
 
-  console.log(new Date(), '[OWNERS]', `[DELTA ${ownersDelta.length}]`);
+  logger.info(`[DELTA ${ownersDelta.length}]`);
   await persistOwners(ownersDelta);
   return ownersDelta;
 };
