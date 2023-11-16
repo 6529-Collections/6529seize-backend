@@ -32,7 +32,8 @@ function fullUrl(req: any, next: string | null | boolean) {
     if (!url.includes('?')) {
       url += '?';
     }
-    return (url += `&page=2`);
+    url += `&page=2`;
+    return url;
   }
 }
 export function returnJsonResult(response: Response, result: any) {

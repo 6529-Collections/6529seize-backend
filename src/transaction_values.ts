@@ -249,12 +249,12 @@ export const debugValues = async () => {
 
   await Promise.all(
     transactions.map(async (transactionHash) => {
-      const t = await findTransactionsByHash([transactionHash]);
+      const tr = await findTransactionsByHash([transactionHash]);
 
       let totalValue = 0;
       let totalRoyalties = 0;
-      for (let i = 0; i < t.length; i++) {
-        const parsedTransaction = await resolveValue(t[i]);
+      for (const t of tr) {
+        const parsedTransaction = await resolveValue(t);
         logger.info({
           from: parsedTransaction.from_address,
           to: parsedTransaction.to_address,

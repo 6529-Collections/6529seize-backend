@@ -4,13 +4,9 @@ import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 import converter from 'json-2-csv';
 import {
-  ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   CACHE_TIME_MS,
-  CONTENT_TYPE_HEADER,
   DEFAULT_PAGE_SIZE,
-  JSON_HEADER_VALUE,
-  PaginatedResponse,
-  corsOptions
+  PaginatedResponse
 } from '../api-constants';
 import {
   cacheKey,

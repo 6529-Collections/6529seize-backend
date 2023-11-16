@@ -3,13 +3,7 @@ import { fetchGasMemes } from '../../../db-api';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 import converter from 'json-2-csv';
-import {
-  ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-  CACHE_TIME_MS,
-  CONTENT_TYPE_HEADER,
-  JSON_HEADER_VALUE,
-  corsOptions
-} from '../api-constants';
+import { CACHE_TIME_MS } from '../api-constants';
 import { cacheKey, returnJsonResult } from '../api-helpers';
 import * as mcache from 'memory-cache';
 
