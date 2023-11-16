@@ -8,7 +8,8 @@ import {
   PaginatedResponse,
   CACHE_TIME_MS
 } from './api-constants';
-import converter from 'json-2-csv';
+
+const converter = require('json-2-csv');
 
 export function cacheKey(req: Request) {
   return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;

@@ -57,8 +57,6 @@ import {
   DISTRIBUTION_SORT
 } from './api-filters';
 
-const converter = require('json-2-csv');
-
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
 
