@@ -252,6 +252,10 @@ loadApi().then(() => {
     const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
     const date = req.query.date;
     db.fetchUploads(pageSize, page, block, date).then((result) => {
+      result.data.forEach((e: any) => {
+        e.url = e.tdh;
+        delete e.tdh;
+      });
       returnPaginatedResult(result, req, res);
     });
   });
@@ -265,6 +269,10 @@ loadApi().then(() => {
     const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
     const date = req.query.date;
     db.fetchConsolidatedUploads(pageSize, page, block, date).then((result) => {
+      result.data.forEach((e: any) => {
+        e.url = e.tdh;
+        delete e.tdh;
+      });
       returnPaginatedResult(result, req, res);
     });
   });
@@ -1262,6 +1270,10 @@ loadApi().then(() => {
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
     db.fetchRememesUploads(pageSize, page).then((result) => {
+      result.data.forEach((e: any) => {
+        e.date = e.created_at;
+        delete e.created_at;
+      });
       returnPaginatedResult(result, req, res);
     });
   });
