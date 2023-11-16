@@ -3,12 +3,6 @@ import {
   validateNextgen,
   validateNextgenBurn
 } from './validation';
-import {
-  ACCESS_CONTROL_ALLOW_HEADER,
-  CONTENT_TYPE_HEADER,
-  JSON_HEADER_VALUE,
-  corsOptions
-} from '../options';
 import { sqlExecutor } from '../../../sql-executor';
 import {
   NextGenAllowlist,
@@ -31,6 +25,12 @@ import * as db from '../../../db-api';
 import { asyncRouter } from '../async.router';
 import { initMulterSingleMiddleware } from '../multer-middleware';
 import { Logger } from '../../../logging';
+import {
+  CONTENT_TYPE_HEADER,
+  JSON_HEADER_VALUE,
+  ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+  corsOptions
+} from '../api-constants';
 
 const logger = Logger.get('NEXTGEN_API');
 
@@ -48,7 +48,10 @@ router.post(
     });
     const valid = body.valid;
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(ACCESS_CONTROL_ALLOW_HEADER, corsOptions.allowedHeaders);
+    res.setHeader(
+      ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+      corsOptions.allowedHeaders
+    );
     if (valid) {
       await persistAllowlist(body);
       res
@@ -72,7 +75,10 @@ router.post(
     logger.info(`[VALID ${valid}]`);
 
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(ACCESS_CONTROL_ALLOW_HEADER, corsOptions.allowedHeaders);
+    res.setHeader(
+      ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+      corsOptions.allowedHeaders
+    );
     if (valid) {
       await persistCollectionBurn(body);
       res.status(200).send(JSON.stringify({ body }));
@@ -94,7 +100,10 @@ router.get(`/:merkle_root`, async function (req: any, res: any, next: any) {
       result = null;
     }
     res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(ACCESS_CONTROL_ALLOW_HEADER, corsOptions.allowedHeaders);
+    res.setHeader(
+      ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+      corsOptions.allowedHeaders
+    );
     res.end(JSON.stringify(result));
   });
 });
@@ -107,7 +116,10 @@ router.get(
 
     db.fetchNextGenAllowlist(merkleRoot, address).then((result) => {
       res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-      res.setHeader(ACCESS_CONTROL_ALLOW_HEADER, corsOptions.allowedHeaders);
+      res.setHeader(
+        ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+        corsOptions.allowedHeaders
+      );
       res.end(JSON.stringify(result));
     });
   }
@@ -121,7 +133,10 @@ router.get(
 
     db.fetchNextGenBurnAllowlist(merkleRoot, tokenId).then((result) => {
       res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-      res.setHeader(ACCESS_CONTROL_ALLOW_HEADER, corsOptions.allowedHeaders);
+      res.setHeader(
+        ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+        corsOptions.allowedHeaders
+      );
       res.end(JSON.stringify(result));
     });
   }
@@ -146,7 +161,7 @@ async function persistAllowlist(body: {
   collection.phase = body.phase;
   collection.merkle_tree = JSON.stringify(body.merkle.merkle_tree);
 
-  const sqlOperations = [];
+  const sqlOperations: string[] = [];
 
   const existingMerkle = await sqlExecutor.execute(
     `SELECT * FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE collection_id = :collection_id`,

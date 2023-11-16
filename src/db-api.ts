@@ -29,6 +29,7 @@ import {
   OWNERS_TAGS_TABLE,
   REMEMES_TABLE,
   REMEMES_UPLOADS,
+  ROYALTIES_UPLOADS_TABLE,
   SIX529_MUSEUM,
   TDH_BLOCKS_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
@@ -56,6 +57,7 @@ import * as mysql from 'mysql';
 import { Time } from './time';
 import { DbPoolName, DbQueryOptions } from './db-query.options';
 import { Logger } from './logging';
+import { tdh2Level } from './profiles/profile-level';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -263,13 +265,6 @@ export async function fetchLatestTDHHistoryBlockNumber() {
   return r.length > 0 ? r[0].block : 0;
 }
 
-export interface DBResponse {
-  count: number;
-  page: number;
-  next: any;
-  data: any[];
-}
-
 function constructFilters(f: string, newF: string) {
   if (f.trim().toUpperCase().startsWith('WHERE')) {
     return ` ${f} AND ${newF} `;
@@ -330,7 +325,7 @@ async function fetchPaginated(
 }
 
 export async function fetchRandomImage() {
-  const sql = `SELECT scaled,image from ${NFTS_TABLE} WHERE CONTRACT=${mysql.escape(
+  const sql = `SELECT scaled,image from ${NFTS_TABLE} WHERE contract=${mysql.escape(
     MEMES_CONTRACT
   )} ORDER BY RAND() LIMIT 1;`;
   return execSQL(sql);
@@ -493,7 +488,7 @@ export async function fetchLabOwners(
     fields,
     joins
   );
-  result.data = await enhanceDataWithHandles(result.data);
+  result.data = await enhanceDataWithHandlesAndLevel(result.data);
   return result;
 }
 
@@ -835,9 +830,9 @@ export async function fetchTransactions(
         )}`;
         break;
       case 'mints':
-        newTypeFilter += `value > 0 AND from_address = ${mysql.escape(
+        newTypeFilter += `value > 0 AND (from_address = ${mysql.escape(
           NULL_ADDRESS
-        )}`;
+        )} OR from_address = ${mysql.escape(MANIFOLD)})`;
         break;
       case 'transfers':
         newTypeFilter += `value = 0 and from_address != ${mysql.escape(
@@ -961,7 +956,7 @@ export async function fetchNftTdh(
     fields,
     joins
   );
-  result.data = await enhanceDataWithHandles(result.data);
+  result.data = await enhanceDataWithHandlesAndLevel(result.data);
   return result;
 }
 
@@ -1040,7 +1035,7 @@ export async function fetchConsolidatedNftTdh(
     fields,
     joins
   );
-  result.data = await enhanceDataWithHandles(result.data);
+  result.data = await enhanceDataWithHandlesAndLevel(result.data);
   return result;
 }
 
@@ -1367,7 +1362,7 @@ export async function fetchOwnerMetrics(
     if (resolvedWallets.length > 0) {
       const sql = getProfilePageSql(resolvedWallets);
       let results2 = await execSQL(sql);
-      results2 = await enhanceDataWithHandles(results2);
+      results2 = await enhanceDataWithHandlesAndLevel(results2);
       return {
         count: results2.length,
         page: 1,
@@ -1376,7 +1371,7 @@ export async function fetchOwnerMetrics(
       };
     }
   }
-  results.data = await enhanceDataWithHandles(results.data);
+  results.data = await enhanceDataWithHandlesAndLevel(results.data);
   return results;
 }
 
@@ -1522,8 +1517,8 @@ export async function fetchConsolidatedOwnerMetricsForKey(
   }
 }
 
-async function enhanceDataWithHandles(
-  data: { wallets?: string; wallet?: string }[]
+async function enhanceDataWithHandlesAndLevel(
+  data: { wallets?: string; wallet?: string; boostedTdh?: number }[]
 ) {
   const resultWallets: string[] = distinct(
     data
@@ -1536,20 +1531,26 @@ async function enhanceDataWithHandles(
     resultWallets
   );
 
-  return data.map((d: { wallets?: string; wallet?: string }) => {
-    const parsedWallets = d.wallet
-      ? [d.wallet]
-      : d.wallets
-      ? JSON.parse(d.wallets)
-      : [];
-    const resolvedWallet = parsedWallets.find(
-      (w: string) => walletsToHandles[w.toLowerCase()]
-    );
-    if (!resolvedWallet) {
-      return d;
+  return data.map(
+    (d: { wallets?: string; wallet?: string; boosted_tdh?: number }) => {
+      const parsedWallets = d.wallet
+        ? [d.wallet]
+        : d.wallets
+        ? JSON.parse(d.wallets)
+        : [];
+      const resolvedWallet = parsedWallets.find(
+        (w: string) => walletsToHandles[w.toLowerCase()]
+      );
+      (d as any).level = tdh2Level(d.boosted_tdh ?? 0);
+      if (!resolvedWallet) {
+        return d;
+      }
+      return {
+        ...d,
+        handle: walletsToHandles[resolvedWallet.toLowerCase()]
+      };
     }
-    return { ...d, handle: walletsToHandles[resolvedWallet.toLowerCase()] };
-  });
+  );
 }
 
 export async function fetchConsolidatedOwnerMetrics(
@@ -1823,7 +1824,7 @@ export async function fetchConsolidatedOwnerMetrics(
       const sql = getProfilePageSql(resolvedWallets);
       let results2 = await execSQL(sql);
       results2[0].wallets = resolvedWallets;
-      results2 = await enhanceDataWithHandles(results2);
+      results2 = await enhanceDataWithHandlesAndLevel(results2);
       return {
         count: results2.length,
         page: 1,
@@ -1840,7 +1841,7 @@ export async function fetchConsolidatedOwnerMetrics(
       })
     );
   }
-  results.data = await enhanceDataWithHandles(results.data);
+  results.data = await enhanceDataWithHandlesAndLevel(results.data);
 
   return results;
 }
@@ -2529,4 +2530,136 @@ export async function updateUser(user: User) {
   )}, website=${mysql.escape(user.website)}`;
 
   await execSQL(sql);
+}
+
+export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
+  let filters = constructFilters(
+    '',
+    `${TRANSACTIONS_TABLE}.contract=${mysql.escape(MEMES_CONTRACT)}`
+  );
+  filters = constructFilters(filters, `${TRANSACTIONS_TABLE}.value > 0`);
+  if (fromDate) {
+    filters = constructFilters(
+      filters,
+      `${TRANSACTIONS_TABLE}.transaction_date >= ${mysql.escape(fromDate)}`
+    );
+  }
+  if (toDate) {
+    const nextDay = Time.fromString(fromDate).plusDays(1).toIsoDateString();
+
+    filters = constructFilters(
+      filters,
+      `${TRANSACTIONS_TABLE}.transaction_date < ${mysql.escape(nextDay)}`
+    );
+  }
+
+  filters = constructFilters(
+    filters,
+    `from_address != ${mysql.escape(NULL_ADDRESS)}`
+  );
+  filters = constructFilters(
+    filters,
+    `from_address != ${mysql.escape(MANIFOLD)}`
+  );
+
+  const sql = `
+    SELECT 
+      aggregated.token_id, 
+      ${NFTS_TABLE}.name, 
+      ${NFTS_TABLE}.artist, 
+      ${NFTS_TABLE}.thumbnail, 
+      aggregated.total_volume,
+      aggregated.total_royalties
+    FROM 
+      (SELECT 
+        token_id,
+        contract,
+        SUM(value) AS total_volume,
+        SUM(royalties) AS total_royalties
+      FROM 
+        ${TRANSACTIONS_TABLE}
+      ${filters}
+      GROUP BY 
+        token_id, 
+        contract) AS aggregated
+    JOIN 
+      ${NFTS_TABLE} ON aggregated.contract = ${NFTS_TABLE}.contract AND aggregated.token_id = ${NFTS_TABLE}.id
+    ORDER BY 
+      aggregated.contract ASC, 
+      aggregated.token_id ASC;`;
+  return execSQL(sql);
+}
+
+export async function fetchGasMemes(fromDate: string, toDate: string) {
+  const transactionsAlias = 'distinct_transactions';
+  let filters = constructFilters(
+    '',
+    `${transactionsAlias}.contract=${mysql.escape(MEMES_CONTRACT)}`
+  );
+  if (fromDate) {
+    filters = constructFilters(
+      filters,
+      `${transactionsAlias}.transaction_date >= ${mysql.escape(fromDate)}`
+    );
+  }
+  if (toDate) {
+    const nextDay = Time.fromString(fromDate).plusDays(1).toIsoDateString();
+
+    filters = constructFilters(
+      filters,
+      `${transactionsAlias}.transaction_date < ${mysql.escape(nextDay)}`
+    );
+  }
+
+  const sql = `
+    SELECT
+      aggregated.token_id,
+      ${NFTS_TABLE}.name,
+      ${NFTS_TABLE}.artist,
+      ${NFTS_TABLE}.thumbnail,
+      aggregated.primary_gas,
+      aggregated.secondary_gas
+    FROM
+      (SELECT
+        token_id,
+        contract,
+        SUM(CASE
+            WHEN from_address = ${mysql.escape(
+              NULL_ADDRESS
+            )} OR from_address = ${mysql.escape(MANIFOLD)}
+            THEN gas
+            ELSE 0
+            END) AS primary_gas,
+        SUM(CASE
+            WHEN from_address != ${mysql.escape(
+              NULL_ADDRESS
+            )} AND from_address != ${mysql.escape(MANIFOLD)}
+            THEN gas
+            ELSE 0
+            END) AS secondary_gas
+      FROM
+        (SELECT DISTINCT transaction, token_id, contract, gas, from_address, transaction_date FROM ${TRANSACTIONS_TABLE}) as ${transactionsAlias}
+      ${filters}
+      GROUP BY
+        token_id,
+        contract) AS aggregated
+    JOIN
+      ${NFTS_TABLE} ON aggregated.contract = ${NFTS_TABLE}.contract AND aggregated.token_id = ${NFTS_TABLE}.id
+    GROUP BY
+      aggregated.token_id,
+      aggregated.contract
+    ORDER BY
+      aggregated.contract ASC,
+      aggregated.token_id ASC;`;
+  return execSQL(sql);
+}
+
+export async function fetchRoyaltiesUploads(pageSize: number, page: number) {
+  return fetchPaginated(
+    ROYALTIES_UPLOADS_TABLE,
+    'date desc',
+    pageSize,
+    page,
+    ''
+  );
 }

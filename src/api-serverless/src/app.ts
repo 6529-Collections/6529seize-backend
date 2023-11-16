@@ -2,7 +2,7 @@ import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { loadLocalConfig, loadSecrets } from '../../secrets';
 import { isNumber } from '../../helpers';
-import { SEIZE_SETTINGS } from './api-constants';
+
 import { validateUser } from './users/user_validation';
 
 import votesRoutes from './votes/votes.routes';
@@ -10,6 +10,8 @@ import profilesRoutes from './profiles/profiles.routes';
 import authRoutes from './auth/auth.routes';
 import rememesRoutes from './rememes/rememes.routes';
 import nextgenRoutes from './nextgen/nextgen.routes';
+import royaltiesRoutes from './royalties/royalties.routes';
+import gasRoutes from './gas/gas.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -23,41 +25,46 @@ import * as sentryContext from '../../sentry.context';
 import * as Sentry from '@sentry/serverless';
 import { asyncRouter } from './async.router';
 import { ApiCompliantException } from '../../exceptions';
-import {
-  ACCESS_CONTROL_ALLOW_HEADER,
-  CONTENT_TYPE_HEADER,
-  DEFAULT_PAGE_SIZE,
-  DISTRIBUTION_PAGE_SIZE,
-  DISTRIBUTION_SORT,
-  JSON_HEADER_VALUE,
-  MEME_LAB_OWNERS_SORT,
-  NFTS_PAGE_SIZE,
-  NFT_TDH_SORT,
-  REMEMES_SORT,
-  SORT_DIRECTIONS,
-  TAGS_FILTERS,
-  TDH_SORT,
-  TRANSACTION_FILTERS,
-  corsOptions
-} from './options';
+
 import { Strategy as AnonymousStrategy } from 'passport-anonymous';
 import { Logger } from '../../logging';
+import * as awsServerlessExpressMiddleware from 'aws-serverless-express/middleware';
+import * as process from 'process';
+import * as mcache from 'memory-cache';
+import {
+  cacheKey,
+  returnCSVResult,
+  returnJsonResult,
+  returnPaginatedResult
+} from './api-helpers';
+import {
+  corsOptions,
+  DEFAULT_PAGE_SIZE,
+  SEIZE_SETTINGS,
+  NFTS_PAGE_SIZE,
+  SORT_DIRECTIONS,
+  CACHE_TIME_MS,
+  DISTRIBUTION_PAGE_SIZE,
+  CONTENT_TYPE_HEADER,
+  JSON_HEADER_VALUE
+} from './api-constants';
+import {
+  MEME_LAB_OWNERS_SORT,
+  TRANSACTION_FILTERS,
+  NFT_TDH_SORT,
+  TDH_SORT,
+  TAGS_FILTERS,
+  DISTRIBUTION_SORT
+} from './api-filters';
 
 const converter = require('json-2-csv');
-
-const mcache = require('memory-cache');
-
-const CACHE_TIME_MS = 1 * 60 * 1000;
 
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
 
-function cacheKey(req: any) {
-  return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
-}
-
 function requestLogMiddleware() {
   return (request: Request, response: Response, next: NextFunction) => {
+    Logger.registerAwsRequestId(request.apiGateway?.context?.awsRequestId);
     const { method, originalUrl: url } = request;
     const start = Time.now();
     response.on('close', () => {
@@ -65,6 +72,7 @@ function requestLogMiddleware() {
       requestLogger.info(
         `${method} ${url} - Response status: HTTP_${statusCode} - Running time: ${start.diffFromNow()}`
       );
+      Logger.deregisterRequestId();
     });
     next();
   };
@@ -132,6 +140,10 @@ loadApi().then(() => {
     );
   });
   passport.use(new AnonymousStrategy());
+  if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    // Only enabled in AWS Lambda
+    app.use(awsServerlessExpressMiddleware.eventContext());
+  }
   app.use(requestLogMiddleware());
   app.use(compression());
   app.use(cors(corsOptions));
@@ -187,10 +199,12 @@ loadApi().then(() => {
         logger.info(`Unauthorized request for ${req.path} auth: ${auth}`);
         res.statusCode = 401;
         const image = await db.fetchRandomImage();
-        res.end(
-          JSON.stringify({
+        returnJsonResult(
+          {
             image: image[0].scaled ? image[0].scaled : image[0].image
-          })
+          },
+          req,
+          res
         );
       } else {
         next();
@@ -217,47 +231,6 @@ loadApi().then(() => {
   app.all(`${BASE_PATH}*`, requireLogin);
   app.all(`${BASE_PATH}*`, checkCache);
 
-  function fullUrl(req: any, next: boolean) {
-    let url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-
-    if (!next) {
-      return null;
-    }
-
-    const newUrl = new URL(url);
-    const params = newUrl.searchParams;
-
-    if (params.has('page')) {
-      const page = parseInt(params.get('page')!);
-      newUrl.searchParams.delete('page');
-      newUrl.searchParams.append('page', String(page + 1));
-      return newUrl.toString();
-    } else {
-      if (!url.includes('?')) {
-        url += '?';
-      }
-      return (url += `&page=2`);
-    }
-  }
-
-  function returnPaginatedResult(
-    result: db.DBResponse,
-    req: any,
-    res: any,
-    skipCache?: boolean
-  ) {
-    result.next = fullUrl(req, result.next);
-
-    if (!skipCache && result.count > 0) {
-      mcache.put(cacheKey(req), result, CACHE_TIME_MS);
-    }
-
-    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(ACCESS_CONTROL_ALLOW_HEADER, corsOptions.allowedHeaders);
-
-    res.end(JSON.stringify(result));
-  }
-
   apiRouter.get(`/blocks`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
@@ -269,9 +242,8 @@ loadApi().then(() => {
     });
   });
 
-  apiRouter.get(`/settings`, function (_: any, res: any) {
-    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.end(JSON.stringify(SEIZE_SETTINGS));
+  apiRouter.get(`/settings`, function (req: any, res: any) {
+    returnJsonResult(SEIZE_SETTINGS, req, res);
   });
 
   apiRouter.get(`/uploads`, function (req: any, res: any) {
@@ -604,11 +576,10 @@ loadApi().then(() => {
     const address = req.params.address;
 
     db.fetchEns(address).then((result) => {
-      res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
       if (result.length == 1) {
-        res.end(JSON.stringify(result[0]));
+        returnJsonResult(result[0], req, res);
       } else {
-        res.end(JSON.stringify({}));
+        returnJsonResult({}, req, res);
       }
     });
   });
@@ -617,11 +588,10 @@ loadApi().then(() => {
     const address = req.params.address;
 
     db.fetchUser(address).then((result) => {
-      res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
       if (result.length == 1) {
-        res.end(JSON.stringify(result[0]));
+        returnJsonResult(result[0], req, res);
       } else {
-        res.end(JSON.stringify({}));
+        returnJsonResult({}, req, res);
       }
     });
   });
@@ -840,18 +810,8 @@ loadApi().then(() => {
           }
         });
       }
-      if (downloadAll) {
-        const filename = 'consolidated_owner_metrics';
-        const csv = await converter.json2csvAsync(result.data);
-        res.header('Content-Type', 'text/csv');
-        res.attachment(`${filename}.csv`);
-        return res.send(csv);
-      } else if (downloadPage) {
-        const filename = 'consolidated_owner_metrics';
-        const csv = await converter.json2csvAsync(result.data);
-        res.header('Content-Type', 'text/csv');
-        res.attachment(`${filename}.csv`);
-        return res.send(csv);
+      if (downloadAll || downloadPage) {
+        returnCSVResult('consolidated_owner_metrics', result.data, res);
       } else {
         return returnPaginatedResult(result, req, res);
       }
@@ -865,12 +825,6 @@ loadApi().then(() => {
 
       db.fetchConsolidatedOwnerMetricsForKey(consolidationKey).then(
         async (d) => {
-          res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-          res.setHeader(
-            ACCESS_CONTROL_ALLOW_HEADER,
-            corsOptions.allowedHeaders
-          );
-
           if (d) {
             if (d.wallets) {
               if (!Array.isArray(d.wallets)) {
@@ -890,9 +844,10 @@ loadApi().then(() => {
               d.gradients_ranks = JSON.parse(d.gradients_ranks);
             }
             mcache.put(cacheKey(req), d, CACHE_TIME_MS);
-            res.end(JSON.stringify(d));
+            returnJsonResult(d, req, res);
+          } else {
+            returnJsonResult({}, req, res);
           }
-          return res.end('{}');
         }
       );
     }
@@ -986,18 +941,8 @@ loadApi().then(() => {
           }
         });
       }
-      if (downloadAll) {
-        const filename = 'consolidated_owner_metrics';
-        const csv = await converter.json2csvAsync(result.data);
-        res.header('Content-Type', 'text/csv');
-        res.attachment(`${filename}.csv`);
-        return res.send(csv);
-      } else if (downloadPage) {
-        const filename = 'consolidated_owner_metrics';
-        const csv = await converter.json2csvAsync(result.data);
-        res.header('Content-Type', 'text/csv');
-        res.attachment(`${filename}.csv`);
-        return res.send(csv);
+      if (downloadAll || downloadPage) {
+        returnCSVResult('consolidated_owner_metrics', result.data, res);
       } else {
         return returnPaginatedResult(result, req, res);
       }
@@ -1230,48 +1175,6 @@ loadApi().then(() => {
     return res.send(json);
   });
 
-  apiRouter.get(`/rememes`, function (req: any, res: any) {
-    const memeIds = req.query.meme_id;
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    const contract = req.query.contract;
-    const id = req.query.id;
-    const tokenType = req.query.token_type;
-
-    const sort =
-      req.query.sort && REMEMES_SORT.includes(req.query.sort)
-        ? req.query.sort
-        : undefined;
-
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'desc';
-    db.fetchRememes(
-      memeIds,
-      pageSize,
-      page,
-      contract,
-      id,
-      tokenType,
-      sort,
-      sortDir
-    ).then((result) => {
-      result.data.map((a: any) => {
-        a.metadata = JSON.parse(a.metadata);
-        a.media = JSON.parse(a.media);
-        a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
-        a.meme_references = JSON.parse(a.meme_references);
-        a.replicas = a.replicas.split(',');
-      });
-      returnPaginatedResult(result, req, res, true);
-    });
-  });
-
   apiRouter.get(`/rememes_uploads`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
@@ -1324,15 +1227,14 @@ loadApi().then(() => {
 
   apiRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
-    res
-      .setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE)
-      .setHeader(ACCESS_CONTROL_ALLOW_HEADER, corsOptions.allowedHeaders)
-      .send(
-        JSON.stringify({
-          message: '6529 SEIZE API',
-          image: image[0].scaled ? image[0].scaled : image[0].image
-        })
-      );
+    returnJsonResult(
+      {
+        message: 'FOR 6529 SEIZE API GO TO /api',
+        image: image[0].scaled ? image[0].scaled : image[0].image
+      },
+      req,
+      res
+    );
   });
 
   apiRouter.post(
@@ -1342,31 +1244,28 @@ loadApi().then(() => {
     function (req: any, res: any) {
       const body = req.validatedBody;
       const valid = body.valid;
-      res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-      res.setHeader(ACCESS_CONTROL_ALLOW_HEADER, corsOptions.allowedHeaders);
       if (valid) {
         db.updateUser(body.user).then((result) => {
-          res.status(200).send(JSON.stringify(body));
-          res.end();
+          res.status(200);
+          returnJsonResult(body, req, res);
         });
       } else {
-        res.status(400).send(JSON.stringify(body));
-        res.end();
+        res.status(400);
+        returnJsonResult(body, req, res);
       }
     }
   );
 
-  rootRouter.get(``, async function (_: any, res: any) {
+  rootRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
-    res
-      .setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE)
-      .setHeader(ACCESS_CONTROL_ALLOW_HEADER, corsOptions.allowedHeaders)
-      .send(
-        JSON.stringify({
-          message: 'FOR 6529 SEIZE API GO TO /api',
-          image: image[0].scaled ? image[0].scaled : image[0].image
-        })
-      );
+    returnJsonResult(
+      {
+        message: 'FOR 6529 SEIZE API GO TO /api',
+        image: image[0].scaled ? image[0].scaled : image[0].image
+      },
+      req,
+      res
+    );
   });
 
   apiRouter.use(`/votes`, votesRoutes);
@@ -1374,6 +1273,8 @@ loadApi().then(() => {
   apiRouter.use(`/auth`, authRoutes);
   apiRouter.use(`/rememes`, rememesRoutes);
   apiRouter.use(`/nextgen`, nextgenRoutes);
+  apiRouter.use(`/gas`, gasRoutes);
+  apiRouter.use(`/royalties`, royaltiesRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 

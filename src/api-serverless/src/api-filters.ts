@@ -1,25 +1,3 @@
-export const BASE_PATH = '/api';
-export const CONTENT_TYPE_HEADER = 'Content-Type';
-export const ACCESS_CONTROL_ALLOW_HEADER = 'Access-Control-Allow-Headers';
-export const JSON_HEADER_VALUE = 'application/json';
-export const DEFAULT_PAGE_SIZE = 50;
-export const NFTS_PAGE_SIZE = 101;
-export const DISTRIBUTION_PAGE_SIZE = 250;
-export const SORT_DIRECTIONS = ['ASC', 'DESC'];
-
-export const corsOptions = {
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS', 'HEAD'],
-  allowedHeaders: [
-    'Content-Type',
-    'x-6529-auth',
-    'Origin',
-    'Accept',
-    'X-Requested-With',
-    'x-auth-wallet'
-  ]
-};
-
 export const DISTRIBUTION_SORT = [
   'phase',
   'card_mint_count',
@@ -59,10 +37,18 @@ export const TDH_SORT = [
   'boosted_memes_tdh_season3',
   'memes_tdh_season3',
   'memes_tdh_season3__raw',
+  'boosted_memes_tdh_season4',
+  'memes_tdh_season4',
+  'memes_tdh_season4__raw',
+  'boosted_memes_tdh_season5',
+  'memes_tdh_season5',
+  'memes_tdh_season5__raw',
   'memes_balance',
   'memes_balance_season1',
   'memes_balance_season2',
   'memes_balance_season3',
+  'memes_balance_season4',
+  'memes_balance_season5',
   'boosted_gradients_tdh',
   'gradients_tdh',
   'gradients_tdh__raw',
@@ -76,39 +62,52 @@ export const TDH_SORT = [
   'purchases_value_memes_season1',
   'purchases_value_memes_season2',
   'purchases_value_memes_season3',
+  'purchases_value_memes_season4',
+  'purchases_value_memes_season5',
   'purchases_value_gradients',
   'purchases_count_memes',
   'purchases_count_memes_season1',
   'purchases_count_memes_season2',
   'purchases_count_memes_season3',
+  'purchases_count_memes_season4',
+  'purchases_count_memes_season5',
   'purchases_count_gradients',
   'sales_value_memes',
   'sales_value_memes_season1',
   'sales_value_memes_season2',
   'sales_value_memes_season3',
+  'sales_value_memes_season4',
+  'sales_value_memes_season5',
   'sales_value_gradients',
   'sales_count_memes',
   'sales_count_memes_season1',
   'sales_count_memes_season2',
   'sales_count_memes_season3',
+  'sales_count_memes_season4',
+  'sales_count_memes_season5',
   'sales_count_gradients',
   'transfers_in',
   'transfers_in_memes',
   'transfers_in_memes_season1',
   'transfers_in_memes_season2',
   'transfers_in_memes_season3',
+  'transfers_in_memes_season4',
+  'transfers_in_memes_season5',
   'transfers_in_gradients',
   'transfers_out',
   'transfers_out_memes',
   'transfers_out_memes_season1',
   'transfers_out_memes_season2',
   'transfers_out_memes_season3',
+  'transfers_out_memes_season4',
+  'transfers_out_memes_season5',
   'transfers_out_gradients',
   'memes_cards_sets',
   'memes_cards_sets_szn1',
   'memes_cards_sets_szn2',
   'memes_cards_sets_szn3',
   'memes_cards_sets_szn4',
+  'memes_cards_sets_szn5',
   'memes_cards_sets_minus1',
   'memes_cards_sets_minus2',
   'genesis',
@@ -117,6 +116,7 @@ export const TDH_SORT = [
   'unique_memes_szn2',
   'unique_memes_szn3',
   'unique_memes_szn4',
+  'unique_memes_szn5',
   'day_change',
   'day_change_unboosted'
 ];
@@ -129,6 +129,7 @@ export const TAGS_FILTERS = [
   'memes_set_szn2',
   'memes_set_szn3',
   'memes_set_szn4',
+  'memes_set_szn5',
   'memes_genesis',
   'gradients'
 ];

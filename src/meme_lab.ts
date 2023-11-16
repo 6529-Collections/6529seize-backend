@@ -327,11 +327,11 @@ export async function memeLabNfts(reset?: boolean) {
 
 export async function memeLabTransactions() {
   const now = new Date();
-  await transactions();
+  await fetchAndPersistTransactions();
   await discoverEns(now);
 }
 
-async function transactions(
+export async function fetchAndPersistTransactions(
   startingBlock?: number,
   latestBlock?: number,
   pagKey?: string
@@ -357,12 +357,8 @@ async function transactions(
 
     await persistTransactions(transactionsWithValues, true);
 
-    const manifoldTransactions = transactionsWithValues.filter((tr) =>
-      areEqualAddresses(tr.from_address, MANIFOLD)
-    );
-
     if (response.pageKey) {
-      await transactions(
+      await fetchAndPersistTransactions(
         startingBlockResolved,
         response.latestBlock,
         response.pageKey
@@ -370,7 +366,7 @@ async function transactions(
     }
   } catch (e: any) {
     logger.error('[TRANSACTIONS] [ETIMEDOUT!] [RETRYING PROCESS]', e);
-    await transactions(startingBlock, latestBlock, pagKey);
+    await fetchAndPersistTransactions(startingBlock, latestBlock, pagKey);
   }
 }
 
