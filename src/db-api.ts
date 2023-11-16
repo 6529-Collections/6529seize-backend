@@ -55,6 +55,7 @@ import * as mysql from 'mysql';
 import { Time } from './time';
 import { DbPoolName, DbQueryOptions } from './db-query.options';
 import { Logger } from './logging';
+import { tdh2Level } from './profiles/profile-level';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -430,7 +431,7 @@ export async function fetchLabOwners(
     fields,
     joins
   );
-  result.data = await enhanceDataWithHandles(result.data);
+  result.data = await enhanceDataWithHandlesAndLevel(result.data);
   return result;
 }
 
@@ -898,7 +899,7 @@ export async function fetchNftTdh(
     fields,
     joins
   );
-  result.data = await enhanceDataWithHandles(result.data);
+  result.data = await enhanceDataWithHandlesAndLevel(result.data);
   return result;
 }
 
@@ -977,7 +978,7 @@ export async function fetchConsolidatedNftTdh(
     fields,
     joins
   );
-  result.data = await enhanceDataWithHandles(result.data);
+  result.data = await enhanceDataWithHandlesAndLevel(result.data);
   return result;
 }
 
@@ -1304,7 +1305,7 @@ export async function fetchOwnerMetrics(
     if (resolvedWallets.length > 0) {
       const sql = getProfilePageSql(resolvedWallets);
       let results2 = await execSQL(sql);
-      results2 = await enhanceDataWithHandles(results2);
+      results2 = await enhanceDataWithHandlesAndLevel(results2);
       return {
         count: results2.length,
         page: 1,
@@ -1313,7 +1314,7 @@ export async function fetchOwnerMetrics(
       };
     }
   }
-  results.data = await enhanceDataWithHandles(results.data);
+  results.data = await enhanceDataWithHandlesAndLevel(results.data);
   return results;
 }
 
@@ -1459,8 +1460,8 @@ export async function fetchConsolidatedOwnerMetricsForKey(
   }
 }
 
-async function enhanceDataWithHandles(
-  data: { wallets?: string; wallet?: string }[]
+async function enhanceDataWithHandlesAndLevel(
+  data: { wallets?: string; wallet?: string; boostedTdh?: number }[]
 ) {
   const resultWallets: string[] = distinct(
     data
@@ -1473,20 +1474,26 @@ async function enhanceDataWithHandles(
     resultWallets
   );
 
-  return data.map((d: { wallets?: string; wallet?: string }) => {
-    const parsedWallets = d.wallet
-      ? [d.wallet]
-      : d.wallets
-      ? JSON.parse(d.wallets)
-      : [];
-    const resolvedWallet = parsedWallets.find(
-      (w: string) => walletsToHandles[w.toLowerCase()]
-    );
-    if (!resolvedWallet) {
-      return d;
+  return data.map(
+    (d: { wallets?: string; wallet?: string; boosted_tdh?: number }) => {
+      const parsedWallets = d.wallet
+        ? [d.wallet]
+        : d.wallets
+        ? JSON.parse(d.wallets)
+        : [];
+      const resolvedWallet = parsedWallets.find(
+        (w: string) => walletsToHandles[w.toLowerCase()]
+      );
+      (d as any).level = tdh2Level(d.boosted_tdh ?? 0);
+      if (!resolvedWallet) {
+        return d;
+      }
+      return {
+        ...d,
+        handle: walletsToHandles[resolvedWallet.toLowerCase()]
+      };
     }
-    return { ...d, handle: walletsToHandles[resolvedWallet.toLowerCase()] };
-  });
+  );
 }
 
 export async function fetchConsolidatedOwnerMetrics(
@@ -1760,7 +1767,7 @@ export async function fetchConsolidatedOwnerMetrics(
       const sql = getProfilePageSql(resolvedWallets);
       let results2 = await execSQL(sql);
       results2[0].wallets = resolvedWallets;
-      results2 = await enhanceDataWithHandles(results2);
+      results2 = await enhanceDataWithHandlesAndLevel(results2);
       return {
         count: results2.length,
         page: 1,
@@ -1777,7 +1784,7 @@ export async function fetchConsolidatedOwnerMetrics(
       })
     );
   }
-  results.data = await enhanceDataWithHandles(results.data);
+  results.data = await enhanceDataWithHandlesAndLevel(results.data);
 
   return results;
 }
