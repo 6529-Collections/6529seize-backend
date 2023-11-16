@@ -56,8 +56,6 @@ import * as awsServerlessExpressMiddleware from 'aws-serverless-express/middlewa
 import * as process from 'process';
 import * as mcache from 'memory-cache';
 
-const converter = require('json-2-csv');
-
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
 
