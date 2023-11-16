@@ -42,7 +42,7 @@ router.get(
 
     fetchGasMemes(fromDate, toDate).then(async (results: GasResponse[]) => {
       logger.info(
-        `[FROM_DATE ${fromDate} FROM_DATE ${toDate} - Fetched ${results.length}`
+        `[FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${results.length}`
       );
 
       if (results.length > 0) {

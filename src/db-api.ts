@@ -2457,8 +2457,7 @@ export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
     );
   }
   if (toDate) {
-    const nextDay = Time.fromString(fromDate).plusDays(1).toIsoDateString();
-
+    const nextDay = Time.fromString(toDate).plusDays(1).toIsoDateString();
     filters = constructFilters(
       filters,
       `${TRANSACTIONS_TABLE}.transaction_date < ${mysql.escape(nextDay)}`
@@ -2515,8 +2514,7 @@ export async function fetchGasMemes(fromDate: string, toDate: string) {
     );
   }
   if (toDate) {
-    const nextDay = Time.fromString(fromDate).plusDays(1).toIsoDateString();
-
+    const nextDay = Time.fromString(toDate).plusDays(1).toIsoDateString();
     filters = constructFilters(
       filters,
       `${transactionsAlias}.transaction_date < ${mysql.escape(nextDay)}`
