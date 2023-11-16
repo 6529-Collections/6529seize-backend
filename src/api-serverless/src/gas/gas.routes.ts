@@ -2,9 +2,8 @@ import { Request, Response } from 'express';
 import { fetchGasMemes } from '../../../db-api';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
-import converter from 'json-2-csv';
 import { CACHE_TIME_MS } from '../api-constants';
-import { cacheKey, returnJsonResult } from '../api-helpers';
+import { cacheKey, returnCSVResult, returnJsonResult } from '../api-helpers';
 import * as mcache from 'memory-cache';
 
 const router = asyncRouter();
@@ -52,13 +51,9 @@ router.get(
 
       if (download) {
         results.forEach((r) => delete r.thumbnail);
-        const filename = 'gas_memes';
-        const csv = await converter.json2csvAsync(results);
-        res.header('Content-Type', 'text/csv');
-        res.attachment(`${filename}.csv`);
-        return res.send(csv);
+        returnCSVResult('gas_memes', results, res);
       } else {
-        returnJsonResult(res, results);
+        returnJsonResult(results, req, res);
       }
     });
   }

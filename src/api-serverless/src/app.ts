@@ -17,6 +17,7 @@ import {
 } from './api-constants';
 import {
   cacheKey,
+  returnCSVResult,
   returnJsonResult,
   returnPaginatedResult
 } from './api-helpers';
@@ -197,9 +198,13 @@ loadApi().then(() => {
         logger.info(`Unauthorized request for ${req.path} auth: ${auth}`);
         res.statusCode = 401;
         const image = await db.fetchRandomImage();
-        returnJsonResult(res, {
-          image: image[0].scaled ? image[0].scaled : image[0].image
-        });
+        returnJsonResult(
+          {
+            image: image[0].scaled ? image[0].scaled : image[0].image
+          },
+          req,
+          res
+        );
       } else {
         next();
       }
@@ -236,8 +241,8 @@ loadApi().then(() => {
     });
   });
 
-  apiRouter.get(`/settings`, function (_: any, res: any) {
-    returnJsonResult(res, SEIZE_SETTINGS);
+  apiRouter.get(`/settings`, function (req: any, res: any) {
+    returnJsonResult(SEIZE_SETTINGS, req, res);
   });
 
   apiRouter.get(`/uploads`, function (req: any, res: any) {
@@ -571,9 +576,9 @@ loadApi().then(() => {
 
     db.fetchEns(address).then((result) => {
       if (result.length == 1) {
-        returnJsonResult(res, result[0]);
+        returnJsonResult(result[0], req, res);
       } else {
-        returnJsonResult(res, {});
+        returnJsonResult({}, req, res);
       }
     });
   });
@@ -583,9 +588,9 @@ loadApi().then(() => {
 
     db.fetchUser(address).then((result) => {
       if (result.length == 1) {
-        returnJsonResult(res, result[0]);
+        returnJsonResult(result[0], req, res);
       } else {
-        returnJsonResult(res, {});
+        returnJsonResult({}, req, res);
       }
     });
   });
@@ -804,18 +809,8 @@ loadApi().then(() => {
           }
         });
       }
-      if (downloadAll) {
-        const filename = 'consolidated_owner_metrics';
-        const csv = await converter.json2csvAsync(result.data);
-        res.header('Content-Type', 'text/csv');
-        res.attachment(`${filename}.csv`);
-        return res.send(csv);
-      } else if (downloadPage) {
-        const filename = 'consolidated_owner_metrics';
-        const csv = await converter.json2csvAsync(result.data);
-        res.header('Content-Type', 'text/csv');
-        res.attachment(`${filename}.csv`);
-        return res.send(csv);
+      if (downloadAll || downloadPage) {
+        returnCSVResult('consolidated_owner_metrics', result.data, res);
       } else {
         return returnPaginatedResult(result, req, res);
       }
@@ -848,9 +843,9 @@ loadApi().then(() => {
               d.gradients_ranks = JSON.parse(d.gradients_ranks);
             }
             mcache.put(cacheKey(req), d, CACHE_TIME_MS);
-            returnJsonResult(res, d);
+            returnJsonResult(d, req, res);
           } else {
-            returnJsonResult(res, {});
+            returnJsonResult({}, req, res);
           }
         }
       );
@@ -945,18 +940,8 @@ loadApi().then(() => {
           }
         });
       }
-      if (downloadAll) {
-        const filename = 'consolidated_owner_metrics';
-        const csv = await converter.json2csvAsync(result.data);
-        res.header('Content-Type', 'text/csv');
-        res.attachment(`${filename}.csv`);
-        return res.send(csv);
-      } else if (downloadPage) {
-        const filename = 'consolidated_owner_metrics';
-        const csv = await converter.json2csvAsync(result.data);
-        res.header('Content-Type', 'text/csv');
-        res.attachment(`${filename}.csv`);
-        return res.send(csv);
+      if (downloadAll || downloadPage) {
+        returnCSVResult('consolidated_owner_metrics', result.data, res);
       } else {
         return returnPaginatedResult(result, req, res);
       }
@@ -1196,7 +1181,7 @@ loadApi().then(() => {
       const address = req.params.address;
 
       db.fetchNextGenAllowlist(merkleRoot, address).then((result) => {
-        returnJsonResult(res, result);
+        returnJsonResult(result, req, res);
       });
     }
   );
@@ -1249,7 +1234,7 @@ loadApi().then(() => {
     function (req: any, res: any) {
       const body = req.validatedBody;
       res.status(body.valid ? 200 : 400);
-      returnJsonResult(res, body);
+      returnJsonResult(body, req, res);
     }
   );
 
@@ -1262,11 +1247,11 @@ loadApi().then(() => {
       if (valid) {
         db.addRememe(req.body.address, body).then((result) => {
           res.status(201);
-          returnJsonResult(res, body);
+          returnJsonResult(body, req, res);
         });
       } else {
         res.status(400);
-        returnJsonResult(res, body);
+        returnJsonResult(body, req, res);
       }
     }
   );
@@ -1323,10 +1308,14 @@ loadApi().then(() => {
 
   apiRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
-    returnJsonResult(res, {
-      message: '6529 SEIZE API',
-      image: image[0].scaled ? image[0].scaled : image[0].image
-    });
+    returnJsonResult(
+      {
+        message: 'FOR 6529 SEIZE API GO TO /api',
+        image: image[0].scaled ? image[0].scaled : image[0].image
+      },
+      req,
+      res
+    );
   });
 
   apiRouter.post(
@@ -1339,21 +1328,25 @@ loadApi().then(() => {
       if (valid) {
         db.updateUser(body.user).then((result) => {
           res.status(200);
-          returnJsonResult(res, body);
+          returnJsonResult(body, req, res);
         });
       } else {
         res.status(400);
-        returnJsonResult(res, body);
+        returnJsonResult(body, req, res);
       }
     }
   );
 
-  rootRouter.get(``, async function (_: any, res: any) {
+  rootRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
-    returnJsonResult(res, {
-      message: 'FOR 6529 SEIZE API GO TO /api',
-      image: image[0].scaled ? image[0].scaled : image[0].image
-    });
+    returnJsonResult(
+      {
+        message: 'FOR 6529 SEIZE API GO TO /api',
+        image: image[0].scaled ? image[0].scaled : image[0].image
+      },
+      req,
+      res
+    );
   });
 
   apiRouter.use(`/votes`, votesRoutes);

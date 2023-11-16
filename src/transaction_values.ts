@@ -167,7 +167,7 @@ const parseSeaportLog = async (
   try {
     seaResult = SEAPORT_IFACE.parseLog(log);
   } catch (err: any) {
-    // logger.error('SEAPORT PARSE ERROR', t.transaction, err);
+    logger.debug(`SEAPORT PARSE ERROR for transaction ${t.transaction}`, err);
     return null;
   }
 

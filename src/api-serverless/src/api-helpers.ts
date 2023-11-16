@@ -8,12 +8,13 @@ import {
   PaginatedResponse,
   CACHE_TIME_MS
 } from './api-constants';
+import converter from 'json-2-csv';
 
-export function cacheKey(req: any) {
+export function cacheKey(req: Request) {
   return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
 }
 
-function fullUrl(req: any, next: string | null | boolean) {
+function fullUrl(req: Request, next: string | null | boolean) {
   let url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
 
   if (!next) {
@@ -36,7 +37,28 @@ function fullUrl(req: any, next: string | null | boolean) {
     return url;
   }
 }
-export function returnJsonResult(response: Response, result: any) {
+
+export async function returnCSVResult(
+  fileName: string,
+  results: any,
+  response: Response
+) {
+  const csv = await converter.json2csvAsync(results);
+  response.header(CONTENT_TYPE_HEADER, 'text/csv');
+  response.attachment(`${fileName}.csv`);
+  return response.send(csv);
+}
+
+export function returnJsonResult(
+  result: any,
+  request: Request,
+  response: Response,
+  skipCache?: boolean
+) {
+  if (!skipCache && result.count > 0) {
+    mcache.put(cacheKey(request), result, CACHE_TIME_MS);
+  }
+
   response.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
   response.setHeader(
     ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
@@ -47,15 +69,10 @@ export function returnJsonResult(response: Response, result: any) {
 
 export function returnPaginatedResult<T>(
   result: PaginatedResponse<T>,
-  req: Request<any, any, any, any>,
-  res: Response,
+  request: Request<any, any, any, any>,
+  response: Response,
   skipCache?: boolean
 ) {
-  result.next = fullUrl(req, result.next);
-
-  if (!skipCache && result.count > 0) {
-    mcache.put(cacheKey(req), result, CACHE_TIME_MS);
-  }
-
-  returnJsonResult(res, result);
+  result.next = fullUrl(request, result.next);
+  returnJsonResult(result, request, response, skipCache);
 }

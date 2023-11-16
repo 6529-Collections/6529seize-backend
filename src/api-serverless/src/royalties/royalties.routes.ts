@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import { fetchRoyaltiesMemes, fetchRoyaltiesUploads } from '../../../db-api';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
-import converter from 'json-2-csv';
 import {
   CACHE_TIME_MS,
   DEFAULT_PAGE_SIZE,
@@ -10,6 +9,7 @@ import {
 } from '../api-constants';
 import {
   cacheKey,
+  returnCSVResult,
   returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
@@ -67,13 +67,9 @@ router.get(
 
         if (download) {
           results.forEach((r) => delete r.thumbnail);
-          const filename = 'royalties_memes';
-          const csv = await converter.json2csvAsync(results);
-          res.header('Content-Type', 'text/csv');
-          res.attachment(`${filename}.csv`);
-          return res.send(csv);
+          returnCSVResult('royalties_memes', results, res);
         } else {
-          returnJsonResult(res, results);
+          returnJsonResult(results, req, res);
         }
       }
     );
