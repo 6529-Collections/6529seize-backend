@@ -6,12 +6,37 @@ import {
   validateRememe,
   validateRememeAdd
 } from './rememes/rememes_validation';
-import { SEIZE_SETTINGS } from './api-constants';
+import {
+  CACHE_TIME_MS,
+  DEFAULT_PAGE_SIZE,
+  DISTRIBUTION_PAGE_SIZE,
+  NFTS_PAGE_SIZE,
+  SEIZE_SETTINGS,
+  SORT_DIRECTIONS,
+  corsOptions
+} from './api-constants';
+import {
+  cacheKey,
+  returnCSVResult,
+  returnJsonResult,
+  returnPaginatedResult
+} from './api-helpers';
+import {
+  DISTRIBUTION_SORT,
+  MEME_LAB_OWNERS_SORT,
+  NFT_TDH_SORT,
+  REMEMES_SORT,
+  TAGS_FILTERS,
+  TDH_SORT,
+  TRANSACTION_FILTERS
+} from './api-filters';
 import { validateUser } from './users/user_validation';
 
 import votesRoutes from './votes/votes.routes';
 import profilesRoutes from './profiles/profiles.routes';
 import authRoutes from './auth/auth.routes';
+import royaltiesRoutes from './royalties/royalties.routes';
+import gasRoutes from './gas/gas.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -31,16 +56,8 @@ import * as awsServerlessExpressMiddleware from 'aws-serverless-express/middlewa
 import * as process from 'process';
 import * as mcache from 'memory-cache';
 
-const converter = require('json-2-csv');
-
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
-
-const CACHE_TIME_MS = Time.minutes(1).toMillis();
-
-function cacheKey(req: any) {
-  return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
-}
 
 function requestLogMiddleware() {
   return (request: Request, response: Response, next: NextFunction) => {
@@ -89,19 +106,6 @@ const rootRouter = asyncRouter();
 const multer = require('multer');
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
-
-const corsOptions = {
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS', 'HEAD'],
-  allowedHeaders: [
-    'Content-Type',
-    'x-6529-auth',
-    'Origin',
-    'Accept',
-    'X-Requested-With',
-    'Authorization'
-  ]
-};
 
 async function loadApiSecrets() {
   if (process.env.API_LOAD_SECRETS === 'true') {
@@ -192,10 +196,12 @@ loadApi().then(() => {
         logger.info(`Unauthorized request for ${req.path} auth: ${auth}`);
         res.statusCode = 401;
         const image = await db.fetchRandomImage();
-        res.end(
-          JSON.stringify({
+        returnJsonResult(
+          {
             image: image[0].scaled ? image[0].scaled : image[0].image
-          })
+          },
+          req,
+          res
         );
       } else {
         next();
@@ -222,198 +228,6 @@ loadApi().then(() => {
   app.all(`${BASE_PATH}*`, requireLogin);
   app.all(`${BASE_PATH}*`, checkCache);
 
-  const CONTENT_TYPE_HEADER = 'Content-Type';
-  const JSON_HEADER_VALUE = 'application/json';
-  const DEFAULT_PAGE_SIZE = 50;
-  const NFTS_PAGE_SIZE = 101;
-  const DISTRIBUTION_PAGE_SIZE = 250;
-  const SORT_DIRECTIONS = ['ASC', 'DESC'];
-
-  const DISTRIBUTION_SORT = [
-    'phase',
-    'card_mint_count',
-    'count',
-    'wallet_tdh',
-    'wallet_balance',
-    'wallet_unique_balance'
-  ];
-
-  const NFT_TDH_SORT = [
-    'card_tdh',
-    'card_tdh__raw',
-    'card_balance',
-    'total_tdh',
-    'total_balance',
-    'total_tdh__raw'
-  ];
-
-  const REMEMES_SORT = ['created_at'];
-
-  const MEME_LAB_OWNERS_SORT = ['balance'];
-
-  const TDH_SORT = [
-    'boosted_tdh',
-    'tdh',
-    'tdh__raw',
-    'tdh_rank',
-    'boosted_memes_tdh',
-    'memes_tdh',
-    'memes_tdh__raw',
-    'boosted_memes_tdh_season1',
-    'memes_tdh_season1',
-    'memes_tdh_season1__raw',
-    'boosted_memes_tdh_season2',
-    'memes_tdh_season2',
-    'memes_tdh_season2__raw',
-    'boosted_memes_tdh_season3',
-    'memes_tdh_season3',
-    'memes_tdh_season3__raw',
-    'boosted_memes_tdh_season4',
-    'memes_tdh_season4',
-    'memes_tdh_season4__raw',
-    'boosted_memes_tdh_season5',
-    'memes_tdh_season5',
-    'memes_tdh_season5__raw',
-    'memes_balance',
-    'memes_balance_season1',
-    'memes_balance_season2',
-    'memes_balance_season3',
-    'memes_balance_season4',
-    'memes_balance_season5',
-    'boosted_gradients_tdh',
-    'gradients_tdh',
-    'gradients_tdh__raw',
-    'gradients_balance',
-    'balance',
-    'purchases_value',
-    'purchases_count',
-    'sales_value',
-    'sales_count',
-    'purchases_value_memes',
-    'purchases_value_memes_season1',
-    'purchases_value_memes_season2',
-    'purchases_value_memes_season3',
-    'purchases_value_memes_season4',
-    'purchases_value_memes_season5',
-    'purchases_value_gradients',
-    'purchases_count_memes',
-    'purchases_count_memes_season1',
-    'purchases_count_memes_season2',
-    'purchases_count_memes_season3',
-    'purchases_count_memes_season4',
-    'purchases_count_memes_season5',
-    'purchases_count_gradients',
-    'sales_value_memes',
-    'sales_value_memes_season1',
-    'sales_value_memes_season2',
-    'sales_value_memes_season3',
-    'sales_value_memes_season4',
-    'sales_value_memes_season5',
-    'sales_value_gradients',
-    'sales_count_memes',
-    'sales_count_memes_season1',
-    'sales_count_memes_season2',
-    'sales_count_memes_season3',
-    'sales_count_memes_season4',
-    'sales_count_memes_season5',
-    'sales_count_gradients',
-    'transfers_in',
-    'transfers_in_memes',
-    'transfers_in_memes_season1',
-    'transfers_in_memes_season2',
-    'transfers_in_memes_season3',
-    'transfers_in_memes_season4',
-    'transfers_in_memes_season5',
-    'transfers_in_gradients',
-    'transfers_out',
-    'transfers_out_memes',
-    'transfers_out_memes_season1',
-    'transfers_out_memes_season2',
-    'transfers_out_memes_season3',
-    'transfers_out_memes_season4',
-    'transfers_out_memes_season5',
-    'transfers_out_gradients',
-    'memes_cards_sets',
-    'memes_cards_sets_szn1',
-    'memes_cards_sets_szn2',
-    'memes_cards_sets_szn3',
-    'memes_cards_sets_szn4',
-    'memes_cards_sets_szn5',
-    'memes_cards_sets_minus1',
-    'memes_cards_sets_minus2',
-    'genesis',
-    'unique_memes',
-    'unique_memes_szn1',
-    'unique_memes_szn2',
-    'unique_memes_szn3',
-    'unique_memes_szn4',
-    'unique_memes_szn5',
-    'day_change',
-    'day_change_unboosted'
-  ];
-
-  const TAGS_FILTERS = [
-    'memes',
-    'memes_set',
-    'memes_set_minus1',
-    'memes_set_szn1',
-    'memes_set_szn2',
-    'memes_set_szn3',
-    'memes_set_szn4',
-    'memes_set_szn5',
-    'memes_genesis',
-    'gradients'
-  ];
-
-  const TRANSACTION_FILTERS = [
-    'sales',
-    'transfers',
-    'airdrops',
-    'mints',
-    'burns'
-  ];
-
-  function fullUrl(req: any, next: boolean) {
-    let url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-
-    if (!next) {
-      return null;
-    }
-
-    const newUrl = new URL(url);
-    const params = newUrl.searchParams;
-
-    if (params.has('page')) {
-      const page = parseInt(params.get('page')!);
-      newUrl.searchParams.delete('page');
-      newUrl.searchParams.append('page', String(page + 1));
-      return newUrl.toString();
-    } else {
-      if (!url.includes('?')) {
-        url += '?';
-      }
-      return (url += `&page=2`);
-    }
-  }
-
-  function returnPaginatedResult(
-    result: db.DBResponse,
-    req: any,
-    res: any,
-    skipCache?: boolean
-  ) {
-    result.next = fullUrl(req, result.next);
-
-    if (!skipCache && result.count > 0) {
-      mcache.put(cacheKey(req), result, CACHE_TIME_MS);
-    }
-
-    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader('Access-Control-Allow-Headers', corsOptions.allowedHeaders);
-
-    res.end(JSON.stringify(result));
-  }
-
   apiRouter.get(`/blocks`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
@@ -425,9 +239,8 @@ loadApi().then(() => {
     });
   });
 
-  apiRouter.get(`/settings`, function (_: any, res: any) {
-    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.end(JSON.stringify(SEIZE_SETTINGS));
+  apiRouter.get(`/settings`, function (req: any, res: any) {
+    returnJsonResult(SEIZE_SETTINGS, req, res);
   });
 
   apiRouter.get(`/uploads`, function (req: any, res: any) {
@@ -439,6 +252,10 @@ loadApi().then(() => {
     const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
     const date = req.query.date;
     db.fetchUploads(pageSize, page, block, date).then((result) => {
+      result.data.forEach((e: any) => {
+        e.url = e.tdh;
+        delete e.tdh;
+      });
       returnPaginatedResult(result, req, res);
     });
   });
@@ -452,6 +269,10 @@ loadApi().then(() => {
     const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
     const date = req.query.date;
     db.fetchConsolidatedUploads(pageSize, page, block, date).then((result) => {
+      result.data.forEach((e: any) => {
+        e.url = e.tdh;
+        delete e.tdh;
+      });
       returnPaginatedResult(result, req, res);
     });
   });
@@ -760,11 +581,10 @@ loadApi().then(() => {
     const address = req.params.address;
 
     db.fetchEns(address).then((result) => {
-      res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
       if (result.length == 1) {
-        res.end(JSON.stringify(result[0]));
+        returnJsonResult(result[0], req, res);
       } else {
-        res.end(JSON.stringify({}));
+        returnJsonResult({}, req, res);
       }
     });
   });
@@ -773,11 +593,10 @@ loadApi().then(() => {
     const address = req.params.address;
 
     db.fetchUser(address).then((result) => {
-      res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
       if (result.length == 1) {
-        res.end(JSON.stringify(result[0]));
+        returnJsonResult(result[0], req, res);
       } else {
-        res.end(JSON.stringify({}));
+        returnJsonResult({}, req, res);
       }
     });
   });
@@ -996,18 +815,8 @@ loadApi().then(() => {
           }
         });
       }
-      if (downloadAll) {
-        const filename = 'consolidated_owner_metrics';
-        const csv = await converter.json2csvAsync(result.data);
-        res.header('Content-Type', 'text/csv');
-        res.attachment(`${filename}.csv`);
-        return res.send(csv);
-      } else if (downloadPage) {
-        const filename = 'consolidated_owner_metrics';
-        const csv = await converter.json2csvAsync(result.data);
-        res.header('Content-Type', 'text/csv');
-        res.attachment(`${filename}.csv`);
-        return res.send(csv);
+      if (downloadAll || downloadPage) {
+        returnCSVResult('consolidated_owner_metrics', result.data, res);
       } else {
         return returnPaginatedResult(result, req, res);
       }
@@ -1021,12 +830,6 @@ loadApi().then(() => {
 
       db.fetchConsolidatedOwnerMetricsForKey(consolidationKey).then(
         async (d) => {
-          res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-          res.setHeader(
-            'Access-Control-Allow-Headers',
-            corsOptions.allowedHeaders
-          );
-
           if (d) {
             if (d.wallets) {
               if (!Array.isArray(d.wallets)) {
@@ -1046,9 +849,10 @@ loadApi().then(() => {
               d.gradients_ranks = JSON.parse(d.gradients_ranks);
             }
             mcache.put(cacheKey(req), d, CACHE_TIME_MS);
-            res.end(JSON.stringify(d));
+            returnJsonResult(d, req, res);
+          } else {
+            returnJsonResult({}, req, res);
           }
-          return res.end('{}');
         }
       );
     }
@@ -1142,18 +946,8 @@ loadApi().then(() => {
           }
         });
       }
-      if (downloadAll) {
-        const filename = 'consolidated_owner_metrics';
-        const csv = await converter.json2csvAsync(result.data);
-        res.header('Content-Type', 'text/csv');
-        res.attachment(`${filename}.csv`);
-        return res.send(csv);
-      } else if (downloadPage) {
-        const filename = 'consolidated_owner_metrics';
-        const csv = await converter.json2csvAsync(result.data);
-        res.header('Content-Type', 'text/csv');
-        res.attachment(`${filename}.csv`);
-        return res.send(csv);
+      if (downloadAll || downloadPage) {
+        returnCSVResult('consolidated_owner_metrics', result.data, res);
       } else {
         return returnPaginatedResult(result, req, res);
       }
@@ -1393,8 +1187,7 @@ loadApi().then(() => {
       const address = req.params.address;
 
       db.fetchNextGenAllowlist(merkleRoot, address).then((result) => {
-        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-        res.end(JSON.stringify(result));
+        returnJsonResult(result, req, res);
       });
     }
   );
@@ -1446,12 +1239,8 @@ loadApi().then(() => {
     validateRememe,
     function (req: any, res: any) {
       const body = req.validatedBody;
-      res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-      res.setHeader('Access-Control-Allow-Headers', corsOptions.allowedHeaders);
-      res
-        .status(body.valid ? 200 : 400)
-        .send(JSON.stringify(body))
-        .end();
+      res.status(body.valid ? 200 : 400);
+      returnJsonResult(body, req, res);
     }
   );
 
@@ -1461,16 +1250,14 @@ loadApi().then(() => {
     function (req: any, res: any) {
       const body = req.validatedBody;
       const valid = body.valid;
-      res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-      res.setHeader('Access-Control-Allow-Headers', corsOptions.allowedHeaders);
       if (valid) {
         db.addRememe(req.body.address, body).then((result) => {
-          res.status(201).send(JSON.stringify(body));
-          res.end();
+          res.status(201);
+          returnJsonResult(body, req, res);
         });
       } else {
-        res.status(400).send(JSON.stringify(body));
-        res.end();
+        res.status(400);
+        returnJsonResult(body, req, res);
       }
     }
   );
@@ -1483,6 +1270,10 @@ loadApi().then(() => {
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
     db.fetchRememesUploads(pageSize, page).then((result) => {
+      result.data.forEach((e: any) => {
+        e.date = e.created_at;
+        delete e.created_at;
+      });
       returnPaginatedResult(result, req, res);
     });
   });
@@ -1527,15 +1318,14 @@ loadApi().then(() => {
 
   apiRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
-    res
-      .setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE)
-      .setHeader('Access-Control-Allow-Headers', corsOptions.allowedHeaders)
-      .send(
-        JSON.stringify({
-          message: '6529 SEIZE API',
-          image: image[0].scaled ? image[0].scaled : image[0].image
-        })
-      );
+    returnJsonResult(
+      {
+        message: 'FOR 6529 SEIZE API GO TO /api',
+        image: image[0].scaled ? image[0].scaled : image[0].image
+      },
+      req,
+      res
+    );
   });
 
   apiRouter.post(
@@ -1545,36 +1335,35 @@ loadApi().then(() => {
     function (req: any, res: any) {
       const body = req.validatedBody;
       const valid = body.valid;
-      res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-      res.setHeader('Access-Control-Allow-Headers', corsOptions.allowedHeaders);
       if (valid) {
         db.updateUser(body.user).then((result) => {
-          res.status(200).send(JSON.stringify(body));
-          res.end();
+          res.status(200);
+          returnJsonResult(body, req, res);
         });
       } else {
-        res.status(400).send(JSON.stringify(body));
-        res.end();
+        res.status(400);
+        returnJsonResult(body, req, res);
       }
     }
   );
 
-  rootRouter.get(``, async function (_: any, res: any) {
+  rootRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
-    res
-      .setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE)
-      .setHeader('Access-Control-Allow-Headers', corsOptions.allowedHeaders)
-      .send(
-        JSON.stringify({
-          message: 'FOR 6529 SEIZE API GO TO /api',
-          image: image[0].scaled ? image[0].scaled : image[0].image
-        })
-      );
+    returnJsonResult(
+      {
+        message: 'FOR 6529 SEIZE API GO TO /api',
+        image: image[0].scaled ? image[0].scaled : image[0].image
+      },
+      req,
+      res
+    );
   });
 
   apiRouter.use(`/votes`, votesRoutes);
   apiRouter.use(`/profiles`, profilesRoutes);
   apiRouter.use(`/auth`, authRoutes);
+  apiRouter.use(`/gas`, gasRoutes);
+  apiRouter.use(`/royalties`, royaltiesRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 

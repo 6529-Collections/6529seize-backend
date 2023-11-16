@@ -27,6 +27,7 @@ import {
   OWNERS_TAGS_TABLE,
   REMEMES_TABLE,
   REMEMES_UPLOADS,
+  ROYALTIES_UPLOADS_TABLE,
   SIX529_MUSEUM,
   TDH_BLOCKS_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
@@ -207,13 +208,6 @@ export async function fetchLatestTDHHistoryBlockNumber() {
   return r.length > 0 ? r[0].block : 0;
 }
 
-export interface DBResponse {
-  count: number;
-  page: number;
-  next: any;
-  data: any[];
-}
-
 function constructFilters(f: string, newF: string) {
   if (f.trim().toUpperCase().startsWith('WHERE')) {
     return ` ${f} AND ${newF} `;
@@ -274,7 +268,7 @@ async function fetchPaginated(
 }
 
 export async function fetchRandomImage() {
-  const sql = `SELECT scaled,image from ${NFTS_TABLE} WHERE CONTRACT=${mysql.escape(
+  const sql = `SELECT scaled,image from ${NFTS_TABLE} WHERE contract=${mysql.escape(
     MEMES_CONTRACT
   )} ORDER BY RAND() LIMIT 1;`;
   return execSQL(sql);
@@ -779,9 +773,9 @@ export async function fetchTransactions(
         )}`;
         break;
       case 'mints':
-        newTypeFilter += `value > 0 AND from_address = ${mysql.escape(
+        newTypeFilter += `value > 0 AND (from_address = ${mysql.escape(
           NULL_ADDRESS
-        )}`;
+        )} OR from_address = ${mysql.escape(MANIFOLD)})`;
         break;
       case 'transfers':
         newTypeFilter += `value = 0 and from_address != ${mysql.escape(
@@ -2448,4 +2442,134 @@ export async function updateUser(user: User) {
   )}, website=${mysql.escape(user.website)}`;
 
   await execSQL(sql);
+}
+
+export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
+  let filters = constructFilters(
+    '',
+    `${TRANSACTIONS_TABLE}.contract=${mysql.escape(MEMES_CONTRACT)}`
+  );
+  filters = constructFilters(filters, `${TRANSACTIONS_TABLE}.value > 0`);
+  if (fromDate) {
+    filters = constructFilters(
+      filters,
+      `${TRANSACTIONS_TABLE}.transaction_date >= ${mysql.escape(fromDate)}`
+    );
+  }
+  if (toDate) {
+    const nextDay = Time.fromString(toDate).plusDays(1).toIsoDateString();
+    filters = constructFilters(
+      filters,
+      `${TRANSACTIONS_TABLE}.transaction_date < ${mysql.escape(nextDay)}`
+    );
+  }
+
+  filters = constructFilters(
+    filters,
+    `from_address != ${mysql.escape(NULL_ADDRESS)}`
+  );
+  filters = constructFilters(
+    filters,
+    `from_address != ${mysql.escape(MANIFOLD)}`
+  );
+
+  const sql = `
+    SELECT 
+      aggregated.token_id, 
+      ${NFTS_TABLE}.name, 
+      ${NFTS_TABLE}.artist, 
+      ${NFTS_TABLE}.thumbnail, 
+      aggregated.total_volume,
+      aggregated.total_royalties
+    FROM 
+      (SELECT 
+        token_id,
+        contract,
+        SUM(value) AS total_volume,
+        SUM(royalties) AS total_royalties
+      FROM 
+        ${TRANSACTIONS_TABLE}
+      ${filters}
+      GROUP BY 
+        token_id, 
+        contract) AS aggregated
+    JOIN 
+      ${NFTS_TABLE} ON aggregated.contract = ${NFTS_TABLE}.contract AND aggregated.token_id = ${NFTS_TABLE}.id
+    ORDER BY 
+      aggregated.contract ASC, 
+      aggregated.token_id ASC;`;
+  return execSQL(sql);
+}
+
+export async function fetchGasMemes(fromDate: string, toDate: string) {
+  const transactionsAlias = 'distinct_transactions';
+  let filters = constructFilters(
+    '',
+    `${transactionsAlias}.contract=${mysql.escape(MEMES_CONTRACT)}`
+  );
+  if (fromDate) {
+    filters = constructFilters(
+      filters,
+      `${transactionsAlias}.transaction_date >= ${mysql.escape(fromDate)}`
+    );
+  }
+  if (toDate) {
+    const nextDay = Time.fromString(toDate).plusDays(1).toIsoDateString();
+    filters = constructFilters(
+      filters,
+      `${transactionsAlias}.transaction_date < ${mysql.escape(nextDay)}`
+    );
+  }
+
+  const sql = `
+    SELECT
+      aggregated.token_id,
+      ${NFTS_TABLE}.name,
+      ${NFTS_TABLE}.artist,
+      ${NFTS_TABLE}.thumbnail,
+      aggregated.primary_gas,
+      aggregated.secondary_gas
+    FROM
+      (SELECT
+        token_id,
+        contract,
+        SUM(CASE
+            WHEN from_address = ${mysql.escape(
+              NULL_ADDRESS
+            )} OR from_address = ${mysql.escape(MANIFOLD)}
+            THEN gas
+            ELSE 0
+            END) AS primary_gas,
+        SUM(CASE
+            WHEN from_address != ${mysql.escape(
+              NULL_ADDRESS
+            )} AND from_address != ${mysql.escape(MANIFOLD)}
+            THEN gas
+            ELSE 0
+            END) AS secondary_gas
+      FROM
+        (SELECT DISTINCT transaction, token_id, contract, gas, from_address, transaction_date FROM ${TRANSACTIONS_TABLE}) as ${transactionsAlias}
+      ${filters}
+      GROUP BY
+        token_id,
+        contract) AS aggregated
+    JOIN
+      ${NFTS_TABLE} ON aggregated.contract = ${NFTS_TABLE}.contract AND aggregated.token_id = ${NFTS_TABLE}.id
+    GROUP BY
+      aggregated.token_id,
+      aggregated.contract
+    ORDER BY
+      aggregated.contract ASC,
+      aggregated.token_id ASC;`;
+  return execSQL(sql);
+}
+
+export async function fetchRoyaltiesUploads(pageSize: number, page: number) {
+  return fetchPaginated(
+    ROYALTIES_UPLOADS_TABLE,
+    'date desc',
+    pageSize,
+    page,
+    ''
+  );
 }

@@ -2,6 +2,7 @@ import * as overvotesRevocation from './overvotesRevocationLoop';
 import { Logger } from './logging';
 
 const transactions = require('./transactionsLoop');
+const transactionsReplay = require('./transactionsReplayLoop');
 const nfts = require('./nftsLoop');
 const owners = require('./ownersLoop');
 const memeLab = require('./memeLabLoop');
@@ -133,6 +134,7 @@ async function start() {
   // await royaltiesLoop.handler();
   // await transactions.handlerValues();
   // await rememes.handler();
+  // await transactionsReplay.handler();
   await overvotesRevocation.handler();
 
   RUNNING_START_SCRIPT = false;

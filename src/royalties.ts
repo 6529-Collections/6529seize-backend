@@ -1,10 +1,3 @@
-import { ALCHEMY_SETTINGS, ROYALTIES_ADDRESS } from './constants';
-import {
-  Alchemy,
-  AssetTransfersCategory,
-  AssetTransfersWithMetadataParams,
-  AssetTransfersWithMetadataResult
-} from 'alchemy-sdk';
 import { fetchRoyalties, persistRoyaltiesUpload } from './db';
 import converter from 'json-2-csv';
 import { Logger } from './logging';
@@ -28,64 +21,6 @@ const myarweave = Arweave.init({
   port: 443,
   protocol: 'https'
 });
-
-const findRoyaltiesAddressTransactionsForPage = async (
-  alchemy: Alchemy,
-  startingBlockHex: string,
-  endingBlockHex: string,
-  pageKey: any
-) => {
-  const settings: AssetTransfersWithMetadataParams = {
-    category: [
-      AssetTransfersCategory.ERC20,
-      AssetTransfersCategory.INTERNAL,
-      AssetTransfersCategory.EXTERNAL
-    ],
-    excludeZeroValue: true,
-    withMetadata: true,
-    maxCount: 250,
-    fromBlock: startingBlockHex,
-    toBlock: endingBlockHex,
-    toAddress: ROYALTIES_ADDRESS
-  };
-
-  if (pageKey) {
-    settings.pageKey = pageKey;
-  }
-
-  const response = await alchemy.core.getAssetTransfers(settings);
-  return response;
-};
-
-const findRoyaltiesAddressTransactions = async (
-  alchemy: Alchemy,
-  startingBlockHex: string,
-  endingBlockHex: string,
-  transfers: AssetTransfersWithMetadataResult[] = [],
-  pageKey = ''
-): Promise<AssetTransfersWithMetadataResult[]> => {
-  const response = await findRoyaltiesAddressTransactionsForPage(
-    alchemy,
-    startingBlockHex,
-    endingBlockHex,
-    pageKey
-  );
-
-  const newKey = response.pageKey;
-  transfers = transfers.concat(response.transfers);
-
-  if (newKey) {
-    return findRoyaltiesAddressTransactions(
-      alchemy,
-      startingBlockHex,
-      endingBlockHex,
-      transfers,
-      pageKey
-    );
-  }
-
-  return transfers;
-};
 
 function getDate() {
   const today = new Date();

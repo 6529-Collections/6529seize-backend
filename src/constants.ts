@@ -37,6 +37,7 @@ export const NEXT_GEN_COLLECTIONS = 'next_gen_collections';
 export const REMEMES_TABLE = 'rememes';
 export const REMEMES_UPLOADS = 'uploads_rememes';
 export const VOTE_EVENTS_TABLE = 'vote_events';
+export const ROYALTIES_UPLOADS_TABLE = 'royalties_upload';
 
 export const VOTE_MATTERS_CATEGORIES_TABLE = 'vote_matters_categories';
 
@@ -51,8 +52,11 @@ export const SIX529_ER = '0xE359aB04cEC41AC8C62bc5016C10C749c7De5480';
 export const SIX529_MUSEUM = '0xc6400A5584db71e41B0E5dFbdC769b54B91256CD';
 export const ENS_ADDRESS = '0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85';
 export const ROYALTIES_ADDRESS = '0x1b1289e34fe05019511d7b436a5138f361904df0';
-export const OPENSEA_ADDRESS = '0x00000000000001ad428e4906ae43d8f9852d0dd6';
+export const MEMELAB_ROYALTIES_ADDRESS =
+  '0x900b67e6f16291431e469e6ec8208d17de09fc37';
+export const OPENSEA_ADDRESS = '0x00000000000000ADc04C56Bf30aC9d3c0aAF14dC';
 export const MEMES_DEPLOYER = '0x4B76837F8D8Ad0A28590d06E53dCD44b6B7D4554';
+export const LOOKS_TOKEN_ADDRESS = '0xf4d2888d29d722226fafa5d9b24f9164c092421e';
 
 export const ALCHEMY_SETTINGS = {
   network: Network.ETH_MAINNET,
@@ -127,3 +131,4 @@ export const SZN5_INDEX = {
 
 export const WALLET_REGEX = /^0x[a-fA-F0-9]{40}$/;
 export const PROFILE_HANDLE_REGEX = /^[a-zA-Z0-9_]{3,15}$/;
+export const MEMES_ROYALTIES_RATE = 0.5;
