@@ -207,13 +207,6 @@ export async function fetchLatestTDHHistoryBlockNumber() {
   return r.length > 0 ? r[0].block : 0;
 }
 
-export interface DBResponse {
-  count: number;
-  page: number;
-  next: any;
-  data: any[];
-}
-
 function constructFilters(f: string, newF: string) {
   if (f.trim().toUpperCase().startsWith('WHERE')) {
     return ` ${f} AND ${newF} `;
@@ -2457,9 +2450,8 @@ export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
     );
   }
   if (toDate) {
-    const toDateObj = new Date(toDate);
-    toDateObj.setDate(toDateObj.getDate() + 1);
-    const nextDay = toDateObj.toISOString().split('T')[0];
+    const nextDay = Time.fromString(fromDate).plusDays(1).toIsoDateString();
+
     filters = constructFilters(
       filters,
       `${TRANSACTIONS_TABLE}.transaction_date < ${mysql.escape(nextDay)}`
@@ -2516,9 +2508,8 @@ export async function fetchGasMemes(fromDate: string, toDate: string) {
     );
   }
   if (toDate) {
-    const toDateObj = new Date(toDate);
-    toDateObj.setDate(toDateObj.getDate() + 1);
-    const nextDay = toDateObj.toISOString().split('T')[0];
+    const nextDay = Time.fromString(fromDate).plusDays(1).toIsoDateString();
+
     filters = constructFilters(
       filters,
       `${transactionsAlias}.transaction_date < ${mysql.escape(nextDay)}`

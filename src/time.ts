@@ -215,6 +215,10 @@ export class Time {
     return this.toDate().toISOString();
   }
 
+  public toIsoDateString(): string {
+    return this.toIsoString().split('T')[0];
+  }
+
   public toString = (): string => {
     return this.formatAsDuration();
   };

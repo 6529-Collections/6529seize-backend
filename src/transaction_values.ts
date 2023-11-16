@@ -139,7 +139,10 @@ async function resolveValue(t: Transaction) {
                   }
                 }
               } catch (e) {
-                logger.error('EXCEPTION', t.transaction, e);
+                logger.error(
+                  `Error adding royalties for transaction ${t.transaction}`,
+                  e
+                );
               }
             }
           }
@@ -222,7 +225,8 @@ const parseSeaportLog = async (
   }
 };
 
-export const runValues = async () => {
+// HELPER FUNCTION FOR DEBUGGING VALUES USING TRX HASHES FROM DB
+export const debugValues = async () => {
   if (!alchemy) {
     alchemy = new Alchemy({
       ...ALCHEMY_SETTINGS,
@@ -233,13 +237,14 @@ export const runValues = async () => {
     await loadABIs();
   }
 
+  // SAMPLE TRX HASHES
   const transactions = [
-    '0x0010dcbac1dcdebd2f4186342dda88ec8889bf0ffb9445b7598ec0172d671b07'
-    // '0x4144495f6932b53d48469b76876a82ffa0172d69dc9fc69f2120444b6df2a1b7'
-    // '0xdf73c5f14da545c5da2d86e9f9b9733541a003609374c456d7c3badad234b16a'
-    // '0x308577a5a108cc64633513215302ad1400b1018a593128fe53552216adc8fc6c'
-    // '0xe7d7748edd1228ca665e40e5b9792e5ef0a7a16606c18ef11851db435f2b43af',
-    // '0x00027d17a0f851a56dca8c469fd70b0d23dca2e3d2b4ebdad2f7e09ccb909405',
+    '0x0010dcbac1dcdebd2f4186342dda88ec8889bf0ffb9445b7598ec0172d671b07',
+    '0x4144495f6932b53d48469b76876a82ffa0172d69dc9fc69f2120444b6df2a1b7',
+    '0xdf73c5f14da545c5da2d86e9f9b9733541a003609374c456d7c3badad234b16a',
+    '0x308577a5a108cc64633513215302ad1400b1018a593128fe53552216adc8fc6c',
+    '0xe7d7748edd1228ca665e40e5b9792e5ef0a7a16606c18ef11851db435f2b43af',
+    '0x00027d17a0f851a56dca8c469fd70b0d23dca2e3d2b4ebdad2f7e09ccb909405'
   ];
 
   await Promise.all(

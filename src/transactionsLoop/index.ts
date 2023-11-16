@@ -1,6 +1,6 @@
 import { fetchLatestTransactionsBlockNumber, persistTransactions } from '../db';
 import { findTransactions } from '../transactions';
-import { findTransactionValues, runValues } from '../transaction_values';
+import { findTransactionValues, debugValues } from '../transaction_values';
 import { discoverEns } from '../ens';
 import { loadEnv, unload } from '../secrets';
 import { Transaction } from '../entities/ITransaction';
@@ -20,17 +20,17 @@ export const handler = async (event?: any, context?: any) => {
 export const handlerValues = async (event?: any, context?: any) => {
   await loadEnv();
   logger.info('[RUNNING TRANSACTIONS VALUES]');
-  await runValues();
+  await debugValues();
   logger.info('[TRANSACTIONS VALUES COMPLETE]');
 };
 
 export async function transactionsLoop() {
   const now = new Date();
-  await transactions();
+  await fetchAndPersistTransactions();
   await discoverEns(now);
 }
 
-export async function transactions(
+export async function fetchAndPersistTransactions(
   startingBlock?: number,
   latestBlock?: number,
   pageKey?: string
@@ -56,7 +56,7 @@ export async function transactions(
     await persistTransactions(transactionsWithValues);
 
     if (response.pageKey) {
-      await transactions(
+      await fetchAndPersistTransactions(
         startingBlockResolved,
         response.latestBlock,
         response.pageKey
@@ -64,6 +64,6 @@ export async function transactions(
     }
   } catch (e: any) {
     logger.error('[TRANSACTIONS] [ETIMEDOUT!] [RETRYING PROCESS]', e);
-    await transactions(startingBlock, latestBlock, pageKey);
+    await fetchAndPersistTransactions(startingBlock, latestBlock, pageKey);
   }
 }
