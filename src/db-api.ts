@@ -2439,23 +2439,21 @@ export async function updateUser(user: User) {
   await execSQL(sql);
 }
 
-export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
-  const sql = getRoyaltiesSql('memes', fromDate, toDate);
+export async function fetchRoyalties(
+  type: 'memes' | 'memelab',
+  fromDate: string,
+  toDate: string
+) {
+  const sql = getRoyaltiesSql(type, fromDate, toDate);
   return execSQL(sql);
 }
 
-export async function fetchRoyaltiesMemeLab(fromDate: string, toDate: string) {
-  const sql = getRoyaltiesSql('memelab', fromDate, toDate);
-  return execSQL(sql);
-}
-
-export async function fetchGasMemes(fromDate: string, toDate: string) {
-  const sql = getGasSql('memes', fromDate, toDate);
-  return execSQL(sql);
-}
-
-export async function fetchGasMemelab(fromDate: string, toDate: string) {
-  const sql = getGasSql('memelab', fromDate, toDate);
+export async function fetchGas(
+  type: 'memes' | 'memelab',
+  fromDate: string,
+  toDate: string
+) {
+  const sql = getGasSql(type, fromDate, toDate);
   return execSQL(sql);
 }
 
