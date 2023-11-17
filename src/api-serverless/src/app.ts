@@ -254,7 +254,6 @@ loadApi().then(() => {
     db.fetchUploads(pageSize, page, block, date).then((result) => {
       result.data.forEach((e: any) => {
         e.url = e.tdh;
-        delete e.tdh;
       });
       returnPaginatedResult(result, req, res);
     });
@@ -271,7 +270,6 @@ loadApi().then(() => {
     db.fetchConsolidatedUploads(pageSize, page, block, date).then((result) => {
       result.data.forEach((e: any) => {
         e.url = e.tdh;
-        delete e.tdh;
       });
       returnPaginatedResult(result, req, res);
     });
