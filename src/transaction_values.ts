@@ -1,7 +1,7 @@
 import { Alchemy, Utils, fromHex } from 'alchemy-sdk';
 import {
   ALCHEMY_SETTINGS,
-  LOOKS_TOKEN_ADDRESS,
+  WETH_TOKEN_ADDRESS,
   MEMELAB_CONTRACT,
   MEMELAB_ROYALTIES_ADDRESS,
   NULL_ADDRESS,
@@ -127,15 +127,15 @@ async function resolveValue(t: Transaction) {
             if (areEqualAddresses(log.topics[0], TRANSFER_EVENT)) {
               try {
                 const address = log.address;
-                if (!areEqualAddresses(address, LOOKS_TOKEN_ADDRESS)) {
+                if (areEqualAddresses(address, WETH_TOKEN_ADDRESS)) {
                   const from = resolveLogAddress(log.topics[1]);
                   const to = resolveLogAddress(log.topics[2]);
                   const value = resolveLogValue(log.data);
                   if (areEqualAddresses(from, t.to_address)) {
                     totalValue += value;
-                    if (areEqualAddresses(to, royaltiesAddress)) {
-                      totalRoyalties += value;
-                    }
+                  }
+                  if (areEqualAddresses(to, royaltiesAddress)) {
+                    totalRoyalties += value;
                   }
                 }
               } catch (e) {
