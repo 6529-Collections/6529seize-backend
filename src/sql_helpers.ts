@@ -12,10 +12,11 @@ import {
   NFTS_MEME_LAB_TABLE,
   MEMES_ROYALTIES_RATE,
   MEME_LAB_ROYALTIES_TABLE,
-  MEMELAB_CONTRACT
+  MEMELAB_CONTRACT,
+  MANIFOLD,
+  NULL_ADDRESS
 } from './constants';
 import { constructFilters } from './api-serverless/src/api-helpers';
-import { NULL_ADDRESS, MANIFOLD } from './constants';
 import { Time } from './time';
 
 const mysql = require('mysql');
