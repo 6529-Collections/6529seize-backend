@@ -69,7 +69,7 @@ export const findRoyalties = async () => {
 
 async function uploadRoyalties(formattedDate: string, royalties: Royalty[]) {
   const uploadArray: any[] = [];
-  royalties.map((r) => {
+  royalties.forEach((r) => {
     const uploadRoyalty: any = r;
     uploadRoyalty.date = formattedDate;
     delete uploadRoyalty.created_at;

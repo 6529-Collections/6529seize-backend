@@ -119,10 +119,10 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
         }
       }
       let supply = 0;
-      createdTransactions.map((mint) => {
+      createdTransactions.forEach((mint) => {
         supply += mint.token_count;
       });
-      burntTransactions.map((burn) => {
+      burntTransactions.forEach((burn) => {
         supply -= burn.token_count;
       });
 
@@ -345,7 +345,7 @@ export const findNFTs = async (
     logger.info(
       `[HODL INDEX CHANGED] [DB ${GLOBAL_HODL_INDEX_TOKEN?.supply}] [NEW ${NEW_TOKENS_HODL_INDEX}] [RECALCULATING]`
     );
-    allNFTS.map((t) => {
+    allNFTS.forEach((t) => {
       if (!GLOBAL_HODL_INDEX_TOKEN) {
         GLOBAL_HODL_INDEX_TOKEN = t;
       } else {
@@ -357,7 +357,7 @@ export const findNFTs = async (
     logger.info(
       `[GLOBAL_HODL_INDEX_TOKEN SUPPLY ${GLOBAL_HODL_INDEX_TOKEN!.supply}]`
     );
-    allNFTS.map((t) => {
+    allNFTS.forEach((t) => {
       const hodl = GLOBAL_HODL_INDEX_TOKEN!.supply / t.supply;
       t.hodl_rate = isFinite(hodl) ? hodl : 1;
     });

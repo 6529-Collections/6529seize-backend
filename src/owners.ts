@@ -65,7 +65,7 @@ export const findOwners = async () => {
 
   const newOwners: Owner[] = [];
 
-  memesOwners.map((ownerBalances) => {
+  memesOwners.forEach((ownerBalances) => {
     ownerBalances.tokenBalances.map((balance) => {
       const owner: Owner = {
         created_at: new Date(),
@@ -78,7 +78,7 @@ export const findOwners = async () => {
     });
   });
 
-  gradientsOwners.map((ownerBalances) => {
+  gradientsOwners.forEach((ownerBalances) => {
     ownerBalances.tokenBalances.map((balance) => {
       const owner: Owner = {
         created_at: new Date(),
@@ -97,7 +97,7 @@ export const findOwners = async () => {
 
   const ownersDelta: Owner[] = [];
 
-  newOwners.map((o) => {
+  newOwners.forEach((o) => {
     const existing = startingOwners.find((o1) => ownersMatch(o, o1));
 
     if (!existing || o.balance != existing.balance) {
@@ -105,7 +105,7 @@ export const findOwners = async () => {
     }
   });
 
-  startingOwners.map((o) => {
+  startingOwners.forEach((o) => {
     const existing = newOwners.find((o1) => ownersMatch(o, o1));
 
     if (!existing) {

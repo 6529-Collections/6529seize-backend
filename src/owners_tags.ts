@@ -44,7 +44,7 @@ export const findOwnerTags = async () => {
 
   const ownersTagsDelta: OwnerTags[] = [];
 
-  uniqueOwners.map((owner) => {
+  uniqueOwners.forEach((owner) => {
     const walletNFTs = [...startingOwners].filter((o) =>
       areEqualAddresses(o.wallet, owner)
     );
@@ -125,7 +125,7 @@ export const findOwnerTags = async () => {
         );
 
         const processedWalletNfts: Owner[] = [];
-        walletNFTs.map((wNft) => {
+        walletNFTs.forEach((wNft) => {
           const processed = processedWalletNfts.findIndex(
             (pw) =>
               areEqualAddresses(pw.contract, wNft.contract) &&
@@ -158,7 +158,7 @@ export const findOwnerTags = async () => {
 
         consolidatedTags.push(consolidationTag);
       }
-      consolidations.map(async (c) => {
+      consolidations.forEach(async (c) => {
         processedWallets.add(c);
       });
     })
@@ -343,7 +343,7 @@ function buildTagsFromNfts(
   }
 
   let memesBalance = 0;
-  walletMemes.map((a) => {
+  walletMemes.forEach((a) => {
     memesBalance += a.balance;
   });
 

@@ -344,7 +344,7 @@ export async function fetchArtists(
   let filters = '';
   if (meme_nfts) {
     filters = `WHERE `;
-    meme_nfts.split(',').map((nft_id) => {
+    meme_nfts.split(',').forEach((nft_id) => {
       const query = `%\"id\": ${nft_id}%`;
       filters += ` memes LIKE ${mysql.escape(query)}`;
     });
@@ -368,7 +368,7 @@ export async function fetchLabNFTs(
 ) {
   let filters = '';
   if (memeIds) {
-    memeIds.split(',').map((nft_id) => {
+    memeIds.split(',').forEach((nft_id) => {
       filters = constructFilters(
         filters,
         `JSON_CONTAINS(meme_references, '${nft_id}','$')`
@@ -711,7 +711,7 @@ async function resolveEns(walletsStr: string) {
   )}) OR display IN (${mysql.escape(wallets)})`;
   const results = await execSQL(sql);
   const returnResults: string[] = [];
-  wallets.map((wallet: any) => {
+  wallets.forEach((wallet: any) => {
     const w = results.find(
       (r: any) =>
         areEqualAddresses(r.wallet, wallet) ||
@@ -911,7 +911,7 @@ export async function fetchConsolidatedNftTdh(
 ) {
   let filters = `WHERE j.id=${nftId} `;
   if (wallets) {
-    wallets.split(',').map((w) => {
+    wallets.split(',').forEach((w) => {
       filters = constructFilters(
         filters,
         `LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE '%${w.toLowerCase()}%'`
@@ -1515,7 +1515,7 @@ export async function fetchConsolidatedOwnerMetrics(
   }
   if (hideTeam) {
     const team: string[] = await getTeamWallets();
-    team.map((t) => {
+    team.forEach((t) => {
       filters = constructFilters(
         filters,
         `LOWER(${CONSOLIDATED_OWNERS_METRICS_TABLE}.wallets) NOT LIKE '%${t.toLowerCase()}%'`
@@ -1526,7 +1526,7 @@ export async function fetchConsolidatedOwnerMetrics(
   if (wallets) {
     const resolvedWallets = await resolveEns(wallets);
     let walletFilters = '';
-    resolvedWallets.map((w) => {
+    resolvedWallets.forEach((w) => {
       walletFilters = constructFiltersOR(
         walletFilters,
         `LOWER(${CONSOLIDATED_OWNERS_METRICS_TABLE}.wallets) LIKE '%${w.toLowerCase()}%'`
@@ -2260,7 +2260,7 @@ export async function fetchRememes(
   let fields = `${REMEMES_TABLE}.*`;
 
   if (memeIds) {
-    memeIds.split(',').map((nft_id) => {
+    memeIds.split(',').forEach((nft_id) => {
       filters = constructFilters(
         filters,
         `JSON_CONTAINS(${REMEMES_TABLE}.meme_references, '${nft_id}','$')`
@@ -2410,7 +2410,7 @@ export async function fetchTDHHistory(
   let filters = '';
   if (wallets) {
     const resolvedWallets = await resolveEns(wallets);
-    resolvedWallets.map((w) => {
+    resolvedWallets.forEach((w) => {
       filters = constructFilters(
         filters,
         `LOWER(wallets) LIKE '%${w.toLowerCase()}%'`
