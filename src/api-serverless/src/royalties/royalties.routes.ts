@@ -39,10 +39,12 @@ interface RoyaltyUploadResponse {
 }
 
 router.get(
-  `/memes`,
+  `/collection/:collection_type`,
   function (
     req: Request<
-      {},
+      {
+        collection_type: string;
+      },
       {},
       {},
       {
@@ -53,40 +55,19 @@ router.get(
     >,
     res: Response<RoyaltyResponse[] | string>
   ) {
-    return returnRoyalties(
-      'memes',
-      req.query.from_date as string,
-      req.query.to_date as string,
-      req.query.download === 'true',
-      req,
-      res
-    );
-  }
-);
-
-router.get(
-  `/memelab`,
-  function (
-    req: Request<
-      {},
-      {},
-      {},
-      {
-        from_date?: string;
-        to_date?: string;
-        download?: string;
-      }
-    >,
-    res: Response<RoyaltyResponse[] | string>
-  ) {
-    return returnRoyalties(
-      'memelab',
-      req.query.from_date as string,
-      req.query.to_date as string,
-      req.query.download === 'true',
-      req,
-      res
-    );
+    const collectionType = req.params.collection_type;
+    if (collectionType === 'memes' || collectionType === 'memelab') {
+      return returnRoyalties(
+        collectionType,
+        req.query.from_date as string,
+        req.query.to_date as string,
+        req.query.download === 'true',
+        req,
+        res
+      );
+    } else {
+      return res.status(404).send('Not found');
+    }
   }
 );
 
