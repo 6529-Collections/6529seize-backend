@@ -77,3 +77,17 @@ export function returnPaginatedResult<T>(
   result.next = fullUrl(request, result.next);
   returnJsonResult(result, request, response, skipCache);
 }
+
+export function constructFilters(f: string, newF: string) {
+  if (f.trim().toUpperCase().startsWith('WHERE')) {
+    return ` ${f} AND ${newF} `;
+  }
+  return ` WHERE ${newF} `;
+}
+
+export function constructFiltersOR(f: string, newF: string) {
+  if (f.trim() != '') {
+    return ` ${f} OR ${newF} `;
+  }
+  return ` ${newF} `;
+}

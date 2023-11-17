@@ -15,6 +15,8 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
+  MEMES_ROYALTIES_RATE,
+  MEME_LAB_ROYALTIES_TABLE,
   NEXT_GEN_ALLOWLIST,
   NEXT_GEN_COLLECTIONS,
   NFTS_HISTORY_TABLE,
@@ -46,7 +48,12 @@ import {
   distinct,
   extractConsolidationWallets
 } from './helpers';
-import { getConsolidationsSql, getProfilePageSql } from './sql_helpers';
+import {
+  getConsolidationsSql,
+  getGasSql,
+  getProfilePageSql,
+  getRoyaltiesSql
+} from './sql_helpers';
 import { getProof } from './merkle_proof';
 import { setSqlExecutor } from './sql-executor';
 import * as profiles from './profiles/profiles';
@@ -56,6 +63,10 @@ import { Time } from './time';
 import { DbPoolName, DbQueryOptions } from './db-query.options';
 import { Logger } from './logging';
 import { tdh2Level } from './profiles/profile-level';
+import {
+  constructFilters,
+  constructFiltersOR
+} from './api-serverless/src/api-helpers';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -206,20 +217,6 @@ export async function fetchLatestTDHHistoryBlockNumber() {
   const sql = `SELECT block FROM ${TDH_HISTORY_TABLE} order by block desc limit 1;`;
   const r = await execSQL(sql);
   return r.length > 0 ? r[0].block : 0;
-}
-
-function constructFilters(f: string, newF: string) {
-  if (f.trim().toUpperCase().startsWith('WHERE')) {
-    return ` ${f} AND ${newF} `;
-  }
-  return ` WHERE ${newF} `;
-}
-
-function constructFiltersOR(f: string, newF: string) {
-  if (f.trim() != '') {
-    return ` ${f} OR ${newF} `;
-  }
-  return ` ${newF} `;
 }
 
 async function getTeamWallets() {
@@ -2445,122 +2442,22 @@ export async function updateUser(user: User) {
 }
 
 export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
-  let filters = constructFilters(
-    '',
-    `${TRANSACTIONS_TABLE}.contract=${mysql.escape(MEMES_CONTRACT)}`
-  );
-  filters = constructFilters(filters, `${TRANSACTIONS_TABLE}.value > 0`);
-  if (fromDate) {
-    filters = constructFilters(
-      filters,
-      `${TRANSACTIONS_TABLE}.transaction_date >= ${mysql.escape(fromDate)}`
-    );
-  }
-  if (toDate) {
-    const nextDay = Time.fromString(toDate).plusDays(1).toIsoDateString();
-    filters = constructFilters(
-      filters,
-      `${TRANSACTIONS_TABLE}.transaction_date < ${mysql.escape(nextDay)}`
-    );
-  }
+  const sql = getRoyaltiesSql('memes', fromDate, toDate);
+  return execSQL(sql);
+}
 
-  filters = constructFilters(
-    filters,
-    `from_address != ${mysql.escape(NULL_ADDRESS)}`
-  );
-  filters = constructFilters(
-    filters,
-    `from_address != ${mysql.escape(MANIFOLD)}`
-  );
-
-  const sql = `
-    SELECT 
-      aggregated.token_id, 
-      ${NFTS_TABLE}.name, 
-      ${NFTS_TABLE}.artist, 
-      ${NFTS_TABLE}.thumbnail, 
-      aggregated.total_volume,
-      aggregated.total_royalties
-    FROM 
-      (SELECT 
-        token_id,
-        contract,
-        SUM(value) AS total_volume,
-        SUM(royalties) AS total_royalties
-      FROM 
-        ${TRANSACTIONS_TABLE}
-      ${filters}
-      GROUP BY 
-        token_id, 
-        contract) AS aggregated
-    JOIN 
-      ${NFTS_TABLE} ON aggregated.contract = ${NFTS_TABLE}.contract AND aggregated.token_id = ${NFTS_TABLE}.id
-    ORDER BY 
-      aggregated.contract ASC, 
-      aggregated.token_id ASC;`;
+export async function fetchRoyaltiesMemeLab(fromDate: string, toDate: string) {
+  const sql = getRoyaltiesSql('memelab', fromDate, toDate);
   return execSQL(sql);
 }
 
 export async function fetchGasMemes(fromDate: string, toDate: string) {
-  const transactionsAlias = 'distinct_transactions';
-  let filters = constructFilters(
-    '',
-    `${transactionsAlias}.contract=${mysql.escape(MEMES_CONTRACT)}`
-  );
-  if (fromDate) {
-    filters = constructFilters(
-      filters,
-      `${transactionsAlias}.transaction_date >= ${mysql.escape(fromDate)}`
-    );
-  }
-  if (toDate) {
-    const nextDay = Time.fromString(toDate).plusDays(1).toIsoDateString();
-    filters = constructFilters(
-      filters,
-      `${transactionsAlias}.transaction_date < ${mysql.escape(nextDay)}`
-    );
-  }
+  const sql = getGasSql('memes', fromDate, toDate);
+  return execSQL(sql);
+}
 
-  const sql = `
-    SELECT
-      aggregated.token_id,
-      ${NFTS_TABLE}.name,
-      ${NFTS_TABLE}.artist,
-      ${NFTS_TABLE}.thumbnail,
-      aggregated.primary_gas,
-      aggregated.secondary_gas
-    FROM
-      (SELECT
-        token_id,
-        contract,
-        SUM(CASE
-            WHEN from_address = ${mysql.escape(
-              NULL_ADDRESS
-            )} OR from_address = ${mysql.escape(MANIFOLD)}
-            THEN gas
-            ELSE 0
-            END) AS primary_gas,
-        SUM(CASE
-            WHEN from_address != ${mysql.escape(
-              NULL_ADDRESS
-            )} AND from_address != ${mysql.escape(MANIFOLD)}
-            THEN gas
-            ELSE 0
-            END) AS secondary_gas
-      FROM
-        (SELECT DISTINCT transaction, token_id, contract, gas, from_address, transaction_date FROM ${TRANSACTIONS_TABLE}) as ${transactionsAlias}
-      ${filters}
-      GROUP BY
-        token_id,
-        contract) AS aggregated
-    JOIN
-      ${NFTS_TABLE} ON aggregated.contract = ${NFTS_TABLE}.contract AND aggregated.token_id = ${NFTS_TABLE}.id
-    GROUP BY
-      aggregated.token_id,
-      aggregated.contract
-    ORDER BY
-      aggregated.contract ASC,
-      aggregated.token_id ASC;`;
+export async function fetchGasMemelab(fromDate: string, toDate: string) {
+  const sql = getGasSql('memelab', fromDate, toDate);
   return execSQL(sql);
 }
 

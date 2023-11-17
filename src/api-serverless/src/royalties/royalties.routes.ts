@@ -1,5 +1,9 @@
 import { Request, Response } from 'express';
-import { fetchRoyaltiesMemes, fetchRoyaltiesUploads } from '../../../db-api';
+import {
+  fetchRoyaltiesMemes,
+  fetchRoyaltiesUploads,
+  fetchRoyaltiesMemeLab
+} from '../../../db-api';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 import {
@@ -28,6 +32,8 @@ interface RoyaltyResponse {
   thumbnail?: string;
   total_volume: number;
   total_royalties: number;
+  royalty_split: number;
+  artist_take: number;
 }
 
 interface RoyaltyUploadResponse {
@@ -68,6 +74,46 @@ router.get(
         if (download) {
           results.forEach((r) => delete r.thumbnail);
           returnCSVResult('royalties_memes', results, res);
+        } else {
+          returnJsonResult(results, req, res);
+        }
+      }
+    );
+  }
+);
+
+router.get(
+  `/memelab`,
+  function (
+    req: Request<
+      {},
+      {},
+      {},
+      {
+        from_date?: string;
+        to_date?: string;
+        download?: string;
+      }
+    >,
+    res: Response<RoyaltyResponse[] | string>
+  ) {
+    const fromDate: string = req.query.from_date as string;
+    const toDate: string = req.query.to_date as string;
+    const download = req.query.download === 'true';
+
+    fetchRoyaltiesMemeLab(fromDate, toDate).then(
+      async (results: RoyaltyResponse[]) => {
+        logger.info(
+          `[FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${results.length}`
+        );
+
+        if (results.length > 0) {
+          mcache.put(cacheKey(req), results, CACHE_TIME_MS);
+        }
+
+        if (download) {
+          results.forEach((r) => delete r.thumbnail);
+          returnCSVResult('royalties_meme_lab', results, res);
         } else {
           returnJsonResult(results, req, res);
         }
