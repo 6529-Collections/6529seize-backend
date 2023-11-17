@@ -20,7 +20,8 @@ import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
   TDH_HISTORY_TABLE,
-  DELEGATIONS_TABLE
+  DELEGATIONS_TABLE,
+  MEME_LAB_ROYALTIES_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -1043,6 +1044,21 @@ export async function persistLabNFTS(labnfts: LabNFT[]) {
       }
     })
   );
+}
+
+export async function persistLabNFTRoyalties() {
+  const labNfts = await fetchAllMemeLabNFTs();
+  await AppDataSource.createQueryBuilder()
+    .insert()
+    .into(MEME_LAB_ROYALTIES_TABLE)
+    .values(
+      labNfts.map((labNft: LabNFT) => ({
+        token_id: labNft.id,
+        royalty_split: 0
+      }))
+    )
+    .orIgnore()
+    .execute();
 }
 
 export async function persistLabExtendedData(labMeta: LabExtendedData[]) {

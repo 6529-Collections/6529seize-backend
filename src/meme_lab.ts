@@ -30,7 +30,8 @@ import {
   fetchAllLabOwners,
   persistOwners,
   fetchMemesWithSeason,
-  persistLabExtendedData
+  persistLabExtendedData,
+  persistLabNFTRoyalties
 } from './db';
 import { Artist } from './entities/IArtist';
 import { findArtists } from './artists';
@@ -322,6 +323,7 @@ export async function memeLabNfts(reset?: boolean) {
   const newNfts = await findNFTs(nfts, transactions, owners, reset);
   const newArtists = await findArtists(artists, newNfts);
   await persistLabNFTS(newNfts);
+  await persistLabNFTRoyalties();
   await persistArtists(newArtists);
 }
 
