@@ -651,12 +651,29 @@ export async function fetchLabTransactions(
 ) {
   let filters = '';
   if (wallets) {
-    filters = constructFilters(
-      filters,
-      `(from_address in (${mysql.escape(
-        wallets.split(',')
-      )}) OR to_address in (${mysql.escape(wallets.split(','))}))`
-    );
+    const resolvedWallets = await resolveEns(wallets);
+    if (resolvedWallets.length == 0) {
+      return returnEmpty();
+    }
+
+    if (type_filter == 'purchases') {
+      filters = constructFilters(
+        filters,
+        `to_address in (${mysql.escape(resolvedWallets)})`
+      );
+    } else if (type_filter === 'sales') {
+      filters = constructFilters(
+        filters,
+        `from_address in (${mysql.escape(resolvedWallets)})`
+      );
+    } else {
+      filters = constructFilters(
+        filters,
+        `(from_address in (${mysql.escape(
+          resolvedWallets
+        )}) OR to_address in (${mysql.escape(resolvedWallets)}))`
+      );
+    }
   }
   if (nfts) {
     filters = constructFilters(filters, `token_id in (${nfts})`);
@@ -665,8 +682,11 @@ export async function fetchLabTransactions(
     let newTypeFilter = '';
     switch (type_filter) {
       case 'sales':
+      case 'purchases':
         newTypeFilter += `value > 0 AND from_address != ${mysql.escape(
           NULL_ADDRESS
+        )} and from_address != ${mysql.escape(
+          MANIFOLD
         )} and to_address != ${mysql.escape(NULL_ADDRESS)}`;
         break;
       case 'airdrops':
@@ -675,9 +695,9 @@ export async function fetchLabTransactions(
         )}`;
         break;
       case 'mints':
-        newTypeFilter += `value > 0 AND from_address = ${mysql.escape(
+        newTypeFilter += `value > 0 AND (from_address = ${mysql.escape(
           NULL_ADDRESS
-        )}`;
+        )} OR from_address = ${mysql.escape(MANIFOLD)})`;
         break;
       case 'transfers':
         newTypeFilter += `value = 0 and from_address != ${mysql.escape(
