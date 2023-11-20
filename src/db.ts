@@ -21,7 +21,8 @@ import {
   CONSOLIDATED_UPLOADS_TABLE,
   TDH_HISTORY_TABLE,
   DELEGATIONS_TABLE,
-  MEME_LAB_ROYALTIES_TABLE
+  MEME_LAB_ROYALTIES_TABLE,
+  MEME_LAB_ARTIST_ROYALTIES_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -1048,13 +1049,29 @@ export async function persistLabNFTS(labnfts: LabNFT[]) {
 
 export async function persistLabNFTRoyalties() {
   const labNfts = await fetchAllMemeLabNFTs();
+  const artistRoyalties = await AppDataSource.createQueryBuilder()
+    .select('*')
+    .from(MEME_LAB_ARTIST_ROYALTIES_TABLE, 'artist_royalties')
+    .getRawMany();
+
+  const labRoyalties: { id: number; royalty_split: number }[] = [];
+  labNfts.forEach((labNft: LabNFT) => {
+    const artistRoyalty = artistRoyalties.find((ar) =>
+      labNft.artist.includes(ar.artist)
+    );
+    labRoyalties.push({
+      id: labNft.id,
+      royalty_split: artistRoyalty ? artistRoyalty.royalty_split : 0
+    });
+  });
+
   await AppDataSource.createQueryBuilder()
     .insert()
     .into(MEME_LAB_ROYALTIES_TABLE)
     .values(
-      labNfts.map((labNft: LabNFT) => ({
-        token_id: labNft.id,
-        royalty_split: 0
+      labRoyalties.map((labR) => ({
+        token_id: labR.id,
+        royalty_split: labR.royalty_split
       }))
     )
     .orIgnore()
