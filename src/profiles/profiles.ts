@@ -15,6 +15,7 @@ import { scalePfpAndPersistToS3 } from '../api-serverless/src/users/s3';
 import { Wallet } from '../entities/IWallet';
 import { DbPoolName } from '../db-query.options';
 import { tdh2Level } from './profile-level';
+import { randomUUID } from 'crypto';
 
 export interface CreateOrUpdateProfileCommand {
   handle: string;
@@ -136,7 +137,7 @@ async function getProfileByHandle(
   const result = await sqlExecutor.execute(
     `select * from ${PROFILES_TABLE} where normalised_handle = :handle`,
     { handle: handle.toLowerCase() },
-    { forcePool: DbPoolName.WRITE, wrappedConnection: connection?.connection }
+    { forcePool: DbPoolName.WRITE, wrappedConnection: connection }
   );
   return result.at(0) ?? null;
 }
@@ -278,7 +279,8 @@ async function insertProfileArchiveRecord(
       website,
       classification,
       updated_at,
-      updated_by_wallet)
+      updated_by_wallet,
+      external_id)
      values (:handle,
              :normalisedHandle,
              :primaryWallet,
@@ -289,7 +291,8 @@ async function insertProfileArchiveRecord(
              :website,
              :classification,
              :updatedAt,
-             :updatedByWallet
+             :updatedByWallet,
+             :externalId
              )`,
     {
       handle: param.handle,
@@ -302,7 +305,8 @@ async function insertProfileArchiveRecord(
       banner1: param.banner_1 ?? null,
       banner2: param.banner_2 ?? null,
       website: param.website ?? null,
-      classification: param.classification
+      classification: param.classification,
+      externalId: param.external_id!
     },
     { wrappedConnection: connection?.connection }
   );
@@ -364,7 +368,8 @@ async function insertProfileRecord({
       banner_1,
       banner_2,
       website,
-      classification)
+      classification,
+      external_id)
      values (:handle,
              :normalisedHandle,
              :primaryWallet,
@@ -373,7 +378,8 @@ async function insertProfileRecord({
              :banner1,
              :banner2,
              :website,
-             :classification
+             :classification,
+             :externalId
              )`,
       {
         handle: command.handle,
@@ -383,7 +389,8 @@ async function insertProfileRecord({
         banner1: command.banner_1 ?? null,
         banner2: command.banner_2 ?? null,
         website: command.website ?? null,
-        classification: command.classification
+        classification: command.classification,
+        externalId: randomUUID()
       },
       { wrappedConnection: connection }
     );
