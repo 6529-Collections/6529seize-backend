@@ -70,7 +70,7 @@
     "merkletreejs": "^0.3.10",
     "mysql": "^2.18.1",
     "node-cron": "^3.0.2",
-    "node-fetch": "^2.6.9",
+    "node-fetch": "^2.7.0",
     "sharp": "^0.31.3",
     "winston": "^3.11.0"
   }
