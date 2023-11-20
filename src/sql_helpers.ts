@@ -10,22 +10,14 @@ import {
 
 const mysql = require('mysql');
 
-export function getConsolidationsSql(wallet: string) {
+export function getConsolidationsSql() {
   const sql = `SELECT * FROM ${CONSOLIDATIONS_TABLE} 
     WHERE 
-      (wallet1 = ${mysql.escape(wallet)} OR wallet2 = ${mysql.escape(wallet)}
-      OR wallet1 IN (SELECT wallet2 FROM consolidations WHERE wallet1 = ${mysql.escape(
-        wallet
-      )} AND confirmed = true)
-      OR wallet2 IN (SELECT wallet1 FROM consolidations WHERE wallet2 = ${mysql.escape(
-        wallet
-      )} AND confirmed = true)
-      OR wallet2 IN (SELECT wallet2 FROM consolidations WHERE wallet1 = ${mysql.escape(
-        wallet
-      )} AND confirmed = true)
-      OR wallet1 IN (SELECT wallet1 FROM consolidations WHERE wallet2 = ${mysql.escape(
-        wallet
-      )} AND confirmed = true)
+      (wallet1 = ? OR wallet2 = ?
+      OR wallet1 IN (SELECT wallet2 FROM consolidations WHERE wallet1 = ? AND confirmed = true)
+      OR wallet2 IN (SELECT wallet1 FROM consolidations WHERE wallet2 = ? AND confirmed = true)
+      OR wallet2 IN (SELECT wallet2 FROM consolidations WHERE wallet1 = ? AND confirmed = true)
+      OR wallet1 IN (SELECT wallet1 FROM consolidations WHERE wallet2 = ? AND confirmed = true)
       )
       AND confirmed = true
     ORDER BY block DESC`;
