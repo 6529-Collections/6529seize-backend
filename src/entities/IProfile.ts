@@ -2,8 +2,8 @@ import { Column, Entity, PrimaryColumn, PrimaryGeneratedColumn } from 'typeorm';
 import { PROFILES_ARCHIVE_TABLE, PROFILES_TABLE } from '../constants';
 
 class ProfileBase {
-  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
-  external_id?: string;
+  @Column({ type: 'varchar', length: 100 })
+  external_id!: string;
 
   @Column({ type: 'varchar', length: 100 })
   handle!: string;
