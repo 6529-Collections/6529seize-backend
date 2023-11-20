@@ -800,12 +800,25 @@ export async function fetchTransactions(
     if (resolvedWallets.length == 0) {
       return returnEmpty();
     }
-    filters = constructFilters(
-      filters,
-      `(from_address in (${mysql.escape(
-        resolvedWallets
-      )}) OR to_address in (${mysql.escape(resolvedWallets)}))`
-    );
+
+    if (type_filter == 'purchases') {
+      filters = constructFilters(
+        filters,
+        `to_address in (${mysql.escape(resolvedWallets)})`
+      );
+    } else if (type_filter === 'sales') {
+      filters = constructFilters(
+        filters,
+        `from_address in (${mysql.escape(resolvedWallets)})`
+      );
+    } else {
+      filters = constructFilters(
+        filters,
+        `(from_address in (${mysql.escape(
+          resolvedWallets
+        )}) OR to_address in (${mysql.escape(resolvedWallets)}))`
+      );
+    }
   }
   if (contracts) {
     filters = constructFilters(
@@ -820,8 +833,11 @@ export async function fetchTransactions(
     let newTypeFilter = '';
     switch (type_filter) {
       case 'sales':
+      case 'purchases':
         newTypeFilter += `value > 0 AND from_address != ${mysql.escape(
           NULL_ADDRESS
+        )} and from_address != ${mysql.escape(
+          MANIFOLD
         )} and to_address != ${mysql.escape(NULL_ADDRESS)}`;
         break;
       case 'airdrops':
@@ -2545,8 +2561,7 @@ export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
     );
   }
   if (toDate) {
-    const nextDay = Time.fromString(fromDate).plusDays(1).toIsoDateString();
-
+    const nextDay = Time.fromString(toDate).plusDays(1).toIsoDateString();
     filters = constructFilters(
       filters,
       `${TRANSACTIONS_TABLE}.transaction_date < ${mysql.escape(nextDay)}`
@@ -2603,8 +2618,7 @@ export async function fetchGasMemes(fromDate: string, toDate: string) {
     );
   }
   if (toDate) {
-    const nextDay = Time.fromString(fromDate).plusDays(1).toIsoDateString();
-
+    const nextDay = Time.fromString(toDate).plusDays(1).toIsoDateString();
     filters = constructFilters(
       filters,
       `${transactionsAlias}.transaction_date < ${mysql.escape(nextDay)}`

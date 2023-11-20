@@ -136,6 +136,7 @@ export const TAGS_FILTERS = [
 
 export const TRANSACTION_FILTERS = [
   'sales',
+  'purchases',
   'transfers',
   'airdrops',
   'mints',

@@ -58,7 +58,7 @@ router.get(
     fetchRoyaltiesMemes(fromDate, toDate).then(
       async (results: RoyaltyResponse[]) => {
         logger.info(
-          `[FROM_DATE ${fromDate} FROM_DATE ${toDate} - Fetched ${results.length}`
+          `[FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${results.length}`
         );
 
         if (results.length > 0) {

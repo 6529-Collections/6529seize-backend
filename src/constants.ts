@@ -65,6 +65,7 @@ export const NEXTGEN_CONTRACT = {
   contract: '0xF3ff54B93844B1512C7bDafd2c41B5D228D03f98'
 };
 export const LOOKS_TOKEN_ADDRESS = '0xf4d2888d29d722226fafa5d9b24f9164c092421e';
+export const WETH_TOKEN_ADDRESS = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
 
 export const ALCHEMY_SETTINGS = {
   network: Network.ETH_MAINNET,
