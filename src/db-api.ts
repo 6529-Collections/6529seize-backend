@@ -173,7 +173,7 @@ export function execSQLWithParams(
       }
       dbcon.config.queryFormat = function (query, values) {
         if (!values) return query;
-        return query.replace(/\:(\w+)/g, function (txt: any, key: any) {
+        return query.replace(/:(\w+)/g, function (txt: any, key: any) {
           if (values.hasOwnProperty(key)) {
             const value = values[key];
             if (Array.isArray(value)) {
