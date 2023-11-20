@@ -69,7 +69,7 @@ async function loadRememes() {
   const csvData: CSVData[] = [];
 
   const csv = await readCsvFile(FILE_DIR);
-  csv.map((r) => {
+  csv.forEach((r) => {
     const contract = r[0].trim();
     const tokenIdStr = r[1].trim().replaceAll(' ', '');
     if (tokenIdStr.includes('to')) {

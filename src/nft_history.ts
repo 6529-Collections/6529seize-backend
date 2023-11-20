@@ -200,7 +200,7 @@ const getEditDescription = async (
             previousMeta[key],
             newMeta[key]
           );
-          attributeChanges.map((change) => {
+          attributeChanges.forEach((change) => {
             changes.push({
               key: `${key}::${change.trait_type}`,
               from: change.old_value,

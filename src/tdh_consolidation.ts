@@ -123,7 +123,7 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
         let consolidationMemes: any[] = [];
         let consolidationGradients: any[] = [];
 
-        consolidatedWalletsTdh.map((wTdh) => {
+        consolidatedWalletsTdh.forEach((wTdh) => {
           totalTDH += wTdh.tdh;
           totalTDH__raw += wTdh.tdh__raw;
           totalBalance += wTdh.balance;
@@ -248,12 +248,12 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           gradients: consolidationGradients,
           gradients_ranks: []
         };
-        consolidationGradients.map((wg) => {
+        consolidationGradients.forEach((wg) => {
           allGradientsTDH.push(wg);
         });
         consolidatedTdh.push(consolidation);
       }
-      consolidations.map((c) => {
+      consolidations.forEach((c) => {
         processedWallets.add(c);
       });
     })
@@ -296,7 +296,7 @@ function consolidateCards(consolidationTokens: any[], walletTokens: any[]) {
 
 function getUniqueMemesSeason(season: number, consolidationTokens: any[]) {
   const unique = new Set();
-  consolidationTokens.map((c) => {
+  consolidationTokens.forEach((c) => {
     if (
       (season == 1 && c.id >= SZN1_INDEX.start && c.id <= SZN1_INDEX.end) ||
       (season == 2 && c.id >= SZN2_INDEX.start && c.id <= SZN2_INDEX.end) ||

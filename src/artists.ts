@@ -30,10 +30,10 @@ export const findArtists = async (
 
   logger.info(`[PROCESSING ARTISTS FOR ${nfts.length} NFTS]`);
 
-  nfts.map((nft) => {
+  nfts.forEach((nft) => {
     const artistNames = splitArtists(nft.artist);
 
-    artistNames.map((artistName) => {
+    artistNames.forEach((artistName) => {
       if (
         !artists.some((a) => a.name == artistName) &&
         !startingArtists.some((a) => a.name == artistName)
@@ -107,7 +107,7 @@ export const findArtists = async (
           }
 
           if (artists.some((a) => a.name == artistName)) {
-            artists.map((a) => {
+            artists.forEach((a) => {
               if (a.name == artistName) {
                 a = artist!;
               }

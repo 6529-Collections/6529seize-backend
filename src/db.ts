@@ -469,7 +469,7 @@ export async function fetchConsolidationDisplay(
   )})`;
   const results = await execSQL(sql);
   const displayArray: string[] = [];
-  myWallets.map((w) => {
+  myWallets.forEach((w) => {
     const result = results.find((r: any) => areEqualAddresses(r.wallet, w));
     if (result && result.display && !result.display.includes('?')) {
       displayArray.push(result.display);
