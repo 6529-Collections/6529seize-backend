@@ -95,6 +95,14 @@ export const findOwners = async () => {
     `[OWNERS ${newOwners.length}] [MEMES ${memesOwners.length}] [GRADIENTS ${gradientsOwners.length}]`
   );
 
+  const ownersDelta: Owner[] = getOwnersDelta(newOwners, startingOwners);
+
+  logger.info(`[DELTA ${ownersDelta.length}]`);
+  await persistOwners(ownersDelta);
+  return ownersDelta;
+};
+
+export function getOwnersDelta(newOwners: Owner[], startingOwners: Owner[]) {
   const ownersDelta: Owner[] = [];
 
   newOwners.forEach((o) => {
@@ -113,8 +121,5 @@ export const findOwners = async () => {
       ownersDelta.push(o);
     }
   });
-
-  logger.info(`[DELTA ${ownersDelta.length}]`);
-  await persistOwners(ownersDelta);
   return ownersDelta;
-};
+}

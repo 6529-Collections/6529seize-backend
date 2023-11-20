@@ -36,7 +36,7 @@ const fetch = (url: RequestInfo, init?: RequestInit) =>
 
 let alchemy: Alchemy;
 
-async function getNFTResponse(contract: string, key: any) {
+export async function getNFTResponse(contract: string, key: any) {
   const settings = {
     pageKey: undefined
   };
