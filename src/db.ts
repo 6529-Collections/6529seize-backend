@@ -10,7 +10,6 @@ import {
   WALLETS_TDH_TABLE,
   UPLOADS_TABLE,
   ENS_TABLE,
-  TRANSACTIONS_REMAKE_TABLE,
   OWNERS_METRICS_TABLE,
   NULL_ADDRESS,
   NFTS_MEME_LAB_TABLE,
@@ -168,21 +167,8 @@ export function execSQLWithParams(
   params?: Record<string, any>
 ): Promise<any> {
   return new Promise((resolve, reject) => {
-    AppDataSource.manager
-      .query(
-        sql.replace(/\:(\w+)/g, function (txt: string, key: string) {
-          if (params?.hasOwnProperty(key)) {
-            const val = params[key];
-            if (Array.isArray(val)) {
-              return val.map((v) => mysql.escape(v)).join(', ');
-            }
-            return mysql.escape(val);
-          }
-          return txt;
-        })
-      )
-      .then(resolve)
-      .catch(reject);
+    const queryParams = params ? Object.values(params) : [];
+    AppDataSource.manager.query(sql, queryParams).then(resolve).catch(reject);
   });
 }
 
@@ -520,7 +506,7 @@ export async function fetchTransactionsFromDate(
 
   if (date) {
     sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at >= ?`;
-    params.push(date.toISOString()); // Assuming date is a Date object
+    params.push(date.toISOString());
   }
   if (limit) {
     sql += ` LIMIT ?`;
@@ -688,11 +674,9 @@ export async function persistOwners(owners: Owner[], isLab?: boolean) {
         const params: any[] = [];
 
         if (0 >= owner.balance) {
-          // DELETE query
           sql = `DELETE FROM ${table} WHERE wallet=? AND token_id=? AND contract=?`;
           params.push(owner.wallet, owner.token_id, owner.contract);
         } else {
-          // REPLACE query
           sql = `REPLACE INTO ${table} SET created_at=?, wallet=?, token_id=?, contract=?, balance=?`;
           params.push(
             new Date(),
@@ -1009,10 +993,10 @@ function constructFilters(
   newParams: any[]
 ) {
   if (f.trim().toUpperCase().startsWith('WHERE')) {
-    params.push(...newParams); // Append new parameters
+    params.push(...newParams);
     return ` ${f} AND ${newF} `;
   }
-  params.push(...newParams); // Append new parameters
+  params.push(...newParams);
   return ` WHERE ${newF} `;
 }
 
