@@ -1,11 +1,7 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
-import { PROFILES_TABLE } from '../constants';
+import { Column, Entity, PrimaryColumn, PrimaryGeneratedColumn } from 'typeorm';
+import { PROFILES_ARCHIVE_TABLE, PROFILES_TABLE } from '../constants';
 
-@Entity(PROFILES_TABLE)
-export class Profile {
-  @PrimaryColumn({ type: 'varchar', length: 100 })
-  normalised_handle!: string;
-
+class ProfileBase {
   @Column({ type: 'varchar', length: 100 })
   handle!: string;
 
@@ -38,6 +34,21 @@ export class Profile {
 
   @Column({ type: 'varchar', length: 255, nullable: true, default: null })
   classification?: ProfileClassification | null;
+}
+
+@Entity(PROFILES_TABLE)
+export class Profile extends ProfileBase {
+  @PrimaryColumn({ type: 'varchar', length: 100 })
+  normalised_handle!: string;
+}
+
+@Entity(PROFILES_ARCHIVE_TABLE)
+export class ProfileArchived extends ProfileBase {
+  @PrimaryGeneratedColumn('increment', { type: 'bigint' })
+  id!: number;
+
+  @Column({ type: 'varchar', length: 100 })
+  normalised_handle!: string;
 }
 
 export enum ProfileClassification {
