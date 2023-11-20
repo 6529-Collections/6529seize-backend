@@ -158,7 +158,7 @@ export const findOwnerTags = async () => {
 
         consolidatedTags.push(consolidationTag);
       }
-      consolidations.forEach(async (c) => {
+      consolidations.forEach((c) => {
         processedWallets.add(c);
       });
     })
