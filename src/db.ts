@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { DataSource, IsNull, LessThan } from 'typeorm';
+import { DataSource, IsNull, LessThan, QueryRunner } from 'typeorm';
 import {
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
@@ -73,10 +73,11 @@ import {
 } from './helpers';
 import { getConsolidationsSql } from './sql_helpers';
 import { VoteEvent } from './entities/IVoteEvent';
-import { setSqlExecutor } from './sql-executor';
+import { ConnectionWrapper, setSqlExecutor } from './sql-executor';
 import { VoteMatterCategory } from './entities/IVoteMatter';
-import { Profile } from './entities/IProfile';
+import { Profile, ProfileArchived } from './entities/IProfile';
 import { Logger } from './logging';
+import { DbQueryOptions } from './db-query.options';
 
 const mysql = require('mysql');
 
@@ -117,7 +118,8 @@ export async function connect(entities: any[] = []) {
       User,
       VoteEvent,
       VoteMatterCategory,
-      Profile
+      Profile,
+      ProfileArchived
     ];
   }
 
@@ -135,8 +137,14 @@ export async function connect(entities: any[] = []) {
 
   await AppDataSource.initialize().catch((error) => logger.error(error));
   setSqlExecutor({
-    execute: (sql: string, params?: Record<string, any>) =>
-      execSQLWithParams(sql, params)
+    execute: (
+      sql: string,
+      params?: Record<string, any>,
+      options?: DbQueryOptions
+    ) => execSQLWithParams(sql, params, options),
+    executeNativeQueriesInTransaction(executable) {
+      return execNativeTransactionally(executable);
+    }
   });
   logger.info('[CONNECTION CREATED]');
 }
@@ -182,7 +190,16 @@ export function consolidateTransactions(
   return consolidatedTransactions;
 }
 
-export function execSQL(sql: string): Promise<any> {
+export function execSQL(
+  sql: string,
+  options?: { wrappedConnection?: ConnectionWrapper<QueryRunner> }
+): Promise<any> {
+  const givenConnection = options?.wrappedConnection?.connection;
+  if (givenConnection) {
+    return givenConnection
+      .query(sql)
+      .then((result) => Object.values(JSON.parse(JSON.stringify(result))));
+  }
   return new Promise(async (resolve, reject) => {
     try {
       const r = await AppDataSource.manager.query(sql);
@@ -193,29 +210,59 @@ export function execSQL(sql: string): Promise<any> {
   });
 }
 
-export function execSQLWithParams(
-  sql: string,
-  params?: Record<string, any>
-): Promise<any> {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const r = await AppDataSource.manager.query(
-        sql.replace(/\:(\w+)/g, function (txt: string, key: string) {
-          if (params?.hasOwnProperty(key)) {
-            const val = params[key];
-            if (Array.isArray(val)) {
-              return val.map((v) => mysql.escape(v)).join(', ');
-            }
-            return mysql.escape(val);
-          }
-          return txt;
-        })
-      );
-      resolve(r);
-    } catch (err: any) {
-      return reject(err);
+async function execNativeTransactionally<T>(
+  executable: (connectionHolder: ConnectionWrapper<QueryRunner>) => Promise<T>
+): Promise<T> {
+  const queryRunner = AppDataSource.createQueryRunner();
+  await queryRunner.connect();
+  await queryRunner.startTransaction();
+
+  try {
+    const result = await executable({ connection: queryRunner });
+    await queryRunner.commitTransaction();
+    return result;
+  } catch (err: any) {
+    logger.error('Database transaction failed', err);
+    if (queryRunner.isTransactionActive) {
+      await queryRunner.rollbackTransaction();
     }
+    throw err;
+  } finally {
+    queryRunner.release();
+  }
+}
+
+function prepareStatement(
+  sql: string,
+  params: { [p: string]: any } | Record<string, any> | undefined
+) {
+  return sql.replace(/:(\w+)/g, function (txt: string, key: string) {
+    if (params?.hasOwnProperty(key)) {
+      const val = params[key];
+      if (Array.isArray(val)) {
+        return val.map((v) => mysql.escape(v)).join(', ');
+      }
+      return mysql.escape(val);
+    }
+    return txt;
   });
+}
+
+export async function execSQLWithParams(
+  sql: string,
+  params?: Record<string, any>,
+  options?: { wrappedConnection?: ConnectionWrapper<QueryRunner> }
+): Promise<any> {
+  const givenConnection = options?.wrappedConnection?.connection;
+  const preparedStatement = prepareStatement(sql, params);
+  if (givenConnection) {
+    return givenConnection
+      .query(preparedStatement)
+      .then((result) => Object.values(JSON.parse(JSON.stringify(result))));
+  }
+  return AppDataSource.manager
+    .query(preparedStatement)
+    .then((result) => Object.values(JSON.parse(JSON.stringify(result))));
 }
 
 export async function fetchLastUpload(): Promise<any> {
