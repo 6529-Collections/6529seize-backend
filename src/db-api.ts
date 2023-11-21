@@ -280,7 +280,6 @@ async function fetchPaginated(
   const countSql = `SELECT COUNT(1) as count FROM (SELECT 1 FROM ${table} ${joins} ${filters}${
     groups ? ` GROUP BY ${groups}` : ``
   }) inner_q`;
-  console.log(countSql);
 
   let resultsSql = `SELECT ${fields ? fields : '*'} FROM ${table} ${
     joins ? joins : ''
@@ -711,68 +710,6 @@ export async function fetchOwnersTags(
   );
 }
 
-export async function fetchLabTransactions(
-  pageSize: number,
-  page: number,
-  wallets: string,
-  nfts: string,
-  type_filter: string
-) {
-  let filters = '';
-  const params: any = {};
-
-  if (wallets) {
-    filters = constructFilters(
-      filters,
-      `(from_address in (:wallets) OR to_address in (:wallets))`
-    );
-    params.wallets = wallets.split(',');
-  }
-  if (nfts) {
-    filters = constructFilters(filters, `token_id in (:nfts)`);
-    params.nfts = nfts.split(',');
-  }
-
-  if (type_filter) {
-    let newTypeFilter = '';
-    switch (type_filter) {
-      case 'sales':
-        newTypeFilter += `value > 0 AND from_address != :null_address and to_address != :null_address`;
-        break;
-      case 'airdrops':
-        newTypeFilter += `value = 0 AND from_address = :null_address`;
-        break;
-      case 'mints':
-        newTypeFilter += `value > 0 AND from_address = :null_address`;
-        break;
-      case 'transfers':
-        newTypeFilter += `value = 0 and from_address != :null_address and to_address != :null_address`;
-        break;
-      case 'burns':
-        newTypeFilter += `to_address = :null_address`;
-        break;
-    }
-    if (newTypeFilter) {
-      filters = constructFilters(filters, newTypeFilter);
-      params.null_address = NULL_ADDRESS;
-    }
-  }
-
-  const fields = `${TRANSACTIONS_MEME_LAB_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
-  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_MEME_LAB_TABLE}.to_address=ens2.wallet`;
-
-  return fetchPaginated(
-    TRANSACTIONS_MEME_LAB_TABLE,
-    params,
-    'transaction_date desc',
-    pageSize,
-    page,
-    filters,
-    fields,
-    joins
-  );
-}
-
 async function resolveEns(walletsStr: string) {
   const wallets = walletsStr.split(',');
   const sql = `SELECT wallet,display FROM ${ENS_TABLE} WHERE wallet IN (:wallets) OR display IN (:wallets)`;
@@ -795,20 +732,20 @@ async function resolveEns(walletsStr: string) {
   return returnResults;
 }
 
-export async function fetchTransactions(
-  pageSize: number,
-  page: number,
+async function getTransactionFilters(
   wallets: string,
-  contracts: string,
   nfts: string,
   type_filter: string
-) {
+): Promise<{
+  filters: string;
+  params: any;
+} | null> {
   let filters = '';
   const params: any = {};
   if (wallets) {
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length == 0) {
-      return returnEmpty();
+      return null;
     }
 
     if (type_filter == 'purchases') {
@@ -822,10 +759,6 @@ export async function fetchTransactions(
       );
     }
     params.wallets = resolvedWallets;
-  }
-  if (contracts) {
-    filters = constructFilters(filters, `contract in (:contracts)`);
-    params.contracts = contracts.split(',');
   }
   if (nfts) {
     filters = constructFilters(filters, `token_id in (:nfts)`);
@@ -858,16 +791,68 @@ export async function fetchTransactions(
     }
   }
 
+  return {
+    filters,
+    params
+  };
+}
+export async function fetchLabTransactions(
+  pageSize: number,
+  page: number,
+  wallets: string,
+  nfts: string,
+  type_filter: string
+) {
+  const filters = await getTransactionFilters(wallets, nfts, type_filter);
+  if (!filters) {
+    return returnEmpty();
+  }
+
+  const fields = `${TRANSACTIONS_MEME_LAB_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_MEME_LAB_TABLE}.to_address=ens2.wallet`;
+
+  return fetchPaginated(
+    TRANSACTIONS_MEME_LAB_TABLE,
+    filters.params,
+    'transaction_date desc',
+    pageSize,
+    page,
+    filters.filters,
+    fields,
+    joins
+  );
+}
+
+export async function fetchTransactions(
+  pageSize: number,
+  page: number,
+  wallets: string,
+  contracts: string,
+  nfts: string,
+  type_filter: string
+) {
+  let filters = await getTransactionFilters(wallets, nfts, type_filter);
+  if (!filters) {
+    return returnEmpty();
+  }
+
+  if (contracts) {
+    filters.filters = constructFilters(
+      filters.filters,
+      `contract in (${mysql.escape(contracts.split(','))})`
+    );
+  }
+
   const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
   const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
 
   return fetchPaginated(
     TRANSACTIONS_TABLE,
-    params,
+    filters.params,
     'transaction_date desc',
     pageSize,
     page,
-    filters,
+    filters.filters,
     fields,
     joins
   );
@@ -2075,6 +2060,7 @@ export async function fetchDistributions(
   if (!wallets && !cards && !contracts) {
     return returnEmpty();
   }
+
   let filters = '';
   const params: any = {};
 
@@ -2129,8 +2115,8 @@ export async function fetchDistributions(
         SUM(CASE WHEN phase = 'Phase3' THEN count ELSE 0 END) AS phase_3
         from distribution ${filters} GROUP BY wallet, contract, card_id
     ) as ${DISTRIBUTION_TABLE}`,
-    `card_mint_date desc, allowlist desc, airdrop desc, phase_0 desc, phase_1 desc, phase_2 desc, phase_3 desc`,
     params,
+    `card_mint_date desc, allowlist desc, airdrop desc, phase_0 desc, phase_1 desc, phase_2 desc, phase_3 desc`,
     pageSize,
     page,
     filters,
