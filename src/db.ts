@@ -695,6 +695,7 @@ export async function persistOwners(owners: Owner[], isLab?: boolean) {
           params.contract = owner.contract;
         } else {
           sql = `REPLACE INTO ${table} SET created_at=:created_at, wallet=:wallet, token_id=:token_id, contract=:contract, balance=:balance`;
+          params.created_at = new Date();
           params.wallet = owner.wallet;
           params.token_id = owner.token_id;
           params.contract = owner.contract;
