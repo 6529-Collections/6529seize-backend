@@ -160,8 +160,6 @@ async function persistAllowlist(body: {
   collection.phase = body.phase;
   collection.merkle_tree = JSON.stringify(body.merkle.merkle_tree);
 
-  const sqlOperations: string[] = [];
-
   const existingMerkle = await sqlExecutor.execute(
     `SELECT * FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE collection_id = :collection_id`,
     {
@@ -169,64 +167,80 @@ async function persistAllowlist(body: {
     }
   );
 
-  if (existingMerkle.length > 0) {
-    const existingMerkleRoot = existingMerkle[0].merkle_root;
-    sqlOperations.push(
-      `DELETE FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE merkle_root = ${mysql.escape(
-        existingMerkleRoot
-      )} AND collection_id=${collection.collection_id}`
-    );
-    sqlOperations.push(
-      `DELETE FROM ${NEXTGEN_ALLOWLIST_TABLE} WHERE merkle_root = ${mysql.escape(
-        existingMerkleRoot
-      )} AND collection_id=${collection.collection_id}`
-    );
-    sqlOperations.push(
-      `DELETE FROM ${NEXTGEN_ALLOWLIST_BURN_TABLE} WHERE merkle_root = ${mysql.escape(
-        existingMerkleRoot
-      )} AND collection_id=${collection.collection_id}`
-    );
-  }
-
-  if (body.al_type === NextGenAllowlistType.ALLOWLIST) {
-    const allowlistData: NextGenAllowlist[] = body.merkle.allowlist.map(
-      (entry) => {
-        const al = new NextGenAllowlist();
-        al.address = entry.address;
-        al.spots = entry.spots;
-        al.info = entry.info;
-        al.keccak = entry.keccak;
-        al.merkle_root = body.merkle.merkle_root;
-        return al;
-      }
-    );
-    sqlOperations.push(
-      extractNextGenAllowlistInsert(collection.collection_id, allowlistData)
-    );
-  } else if (body.al_type === NextGenAllowlistType.EXTERNAL_BURN) {
-    const allowlistData: NextGenAllowlistBurn[] = body.merkle.allowlist.map(
-      (entry) => {
-        const al = new NextGenAllowlistBurn();
-        al.token_id = entry.token_id;
-        al.info = entry.info;
-        al.keccak = entry.keccak;
-        al.merkle_root = body.merkle.merkle_root;
-        return al;
-      }
-    );
-    sqlOperations.push(
-      extractNextGenAllowlistBurnInsert(collection.collection_id, allowlistData)
-    );
-  }
-
-  const collectionInsert = extractNextGenCollectionInsert(collection);
-  sqlOperations.push(collectionInsert);
   await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
-    sqlOperations.forEach(
-      async (q) =>
-        await sqlExecutor.execute(q, null, { wrappedConnection: connection })
-    );
+    if (existingMerkle.length > 0) {
+      const existingMerkleRoot = existingMerkle[0].merkle_root;
+      await sqlExecutor.execute(
+        `DELETE FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE merkle_root = :merkle_root AND collection_id=:collection_id`,
+        {
+          merkle_root: existingMerkleRoot,
+          collection_id: collection.collection_id
+        },
+        { wrappedConnection: connection }
+      );
+      await sqlExecutor.execute(
+        `DELETE FROM ${NEXTGEN_ALLOWLIST_TABLE} WHERE merkle_root = :merkle_root AND collection_id=:collection_id`,
+        {
+          merkle_root: existingMerkleRoot,
+          collection_id: collection.collection_id
+        },
+        { wrappedConnection: connection }
+      );
+      await sqlExecutor.execute(
+        `DELETE FROM ${NEXTGEN_ALLOWLIST_BURN_TABLE} WHERE merkle_root = :merkle_root AND collection_id=:collection_id`,
+        {
+          merkle_root: existingMerkleRoot,
+          collection_id: collection.collection_id
+        },
+        { wrappedConnection: connection }
+      );
+    }
+
+    if (body.al_type === NextGenAllowlistType.ALLOWLIST) {
+      const allowlistData: NextGenAllowlist[] = body.merkle.allowlist.map(
+        (entry) => {
+          const al = new NextGenAllowlist();
+          al.address = entry.address;
+          al.spots = entry.spots;
+          al.info = entry.info;
+          al.keccak = entry.keccak;
+          al.merkle_root = body.merkle.merkle_root;
+          return al;
+        }
+      );
+      const allowlistInsert = extractNextGenAllowlistInsert(
+        collection.collection_id,
+        allowlistData
+      );
+      await sqlExecutor.execute(allowlistInsert.sql, allowlistInsert.params, {
+        wrappedConnection: connection
+      });
+    } else if (body.al_type === NextGenAllowlistType.EXTERNAL_BURN) {
+      const allowlistData: NextGenAllowlistBurn[] = body.merkle.allowlist.map(
+        (entry) => {
+          const al = new NextGenAllowlistBurn();
+          al.token_id = entry.token_id;
+          al.info = entry.info;
+          al.keccak = entry.keccak;
+          al.merkle_root = body.merkle.merkle_root;
+          return al;
+        }
+      );
+      const allowlistInsert = extractNextGenAllowlistBurnInsert(
+        collection.collection_id,
+        allowlistData
+      );
+      await sqlExecutor.execute(allowlistInsert.sql, allowlistInsert.params, {
+        wrappedConnection: connection
+      });
+    }
+
+    const collectionInsert = extractNextGenCollectionInsert(collection);
+    await sqlExecutor.execute(collectionInsert.sql, collectionInsert.params, {
+      wrappedConnection: connection
+    });
   });
+
   logger.info(`[ALLOWLIST PERSISTED] [COLLECTION ID ${body.collection_id}]`);
 }
 
@@ -250,7 +264,10 @@ export async function persistCollectionBurn(body: {
 
   const collectionBurnInsert =
     extractNextGenCollectionBurnInsert(collectionBurn);
-  await sqlExecutor.execute(collectionBurnInsert);
+  await sqlExecutor.execute(
+    collectionBurnInsert.sql,
+    collectionBurnInsert.params
+  );
 
   logger.info(
     `[COLLECTION BURN PERSISTED] [COLLECTION ID ${body.collection_id}]`
