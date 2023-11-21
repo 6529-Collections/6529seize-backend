@@ -60,6 +60,7 @@ import { Time } from './time';
 import { DbPoolName, DbQueryOptions } from './db-query.options';
 import { Logger } from './logging';
 import { tdh2Level } from './profiles/profile-level';
+import { Nft } from 'alchemy-sdk';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -2479,16 +2480,17 @@ export async function rememeExists(contract: string, token_id: string) {
 
 export async function addRememe(by: string, rememe: any) {
   const contract = rememe.contract.address;
-  const openseaData = rememe.contract.openSea;
   const deployer = rememe.contract.contractDeployer;
-  const tokens = rememe.nfts;
+  const openseaData = rememe.contract.openSeaMetadata;
+
+  const tokens: Nft[] = rememe.nfts;
 
   for (const t of tokens) {
     const token_id = t.tokenId;
     const tokenType = t.tokenType;
-    const tokenUri = t.tokenUri ? t.tokenUri.raw : '';
-    const media = t.media;
-    const metadata = t.rawMetadata;
+    const tokenUri = t.tokenUri ? t.tokenUri : t.raw.tokenUri;
+    const media = t.image;
+    const metadata = t.raw.metadata;
     const image = metadata
       ? metadata.image
         ? metadata.image
@@ -2529,9 +2531,9 @@ export async function addRememe(by: string, rememe: any) {
 }
 
 export async function getTdhForAddress(address: string) {
-  const sql = `SELECT boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE '%:address%'`;
+  const sql = `SELECT boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE :address`;
   const result = await sqlExecutor.execute(sql, {
-    address: address.toLowerCase()
+    address: `%${address.toLowerCase()}%`
   });
   if (result.length === 0) {
     return 0;
