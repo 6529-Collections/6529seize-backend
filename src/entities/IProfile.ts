@@ -3,6 +3,9 @@ import { PROFILES_ARCHIVE_TABLE, PROFILES_TABLE } from '../constants';
 
 class ProfileBase {
   @Column({ type: 'varchar', length: 100 })
+  external_id!: string;
+
+  @Column({ type: 'varchar', length: 100 })
   handle!: string;
 
   @Column({ type: 'varchar', length: 50 })
