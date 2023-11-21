@@ -254,9 +254,10 @@ export async function findDuplicateTransactionHashes(): Promise<string[]> {
 }
 
 export async function findTransactionsByHash(
+  table: string,
   hashes: string[]
 ): Promise<Transaction[]> {
-  const sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE transaction in (${mysql.escape(
+  const sql = `SELECT * FROM ${table} WHERE transaction in (${mysql.escape(
     hashes
   )}) ORDER BY transaction_date DESC;`;
   const results = await execSQL(sql);

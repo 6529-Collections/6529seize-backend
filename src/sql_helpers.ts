@@ -393,15 +393,6 @@ export function getRoyaltiesSql(
     );
   }
 
-  filters = constructFilters(
-    filters,
-    `from_address != ${mysql.escape(NULL_ADDRESS)}`
-  );
-  filters = constructFilters(
-    filters,
-    `from_address != ${mysql.escape(MANIFOLD)}`
-  );
-
   const royaltiesJoinClause =
     type === 'memelab'
       ? `JOIN ${MEME_LAB_ROYALTIES_TABLE} ON aggregated.token_id = ${MEME_LAB_ROYALTIES_TABLE}.token_id`
@@ -412,16 +403,27 @@ export function getRoyaltiesSql(
       aggregated.token_id, 
       ${nftsTable}.name, 
       ${nftsTable}.artist, 
-      ${nftsTable}.thumbnail, 
-      aggregated.total_volume,
-      aggregated.total_royalties,
+      ${nftsTable}.thumbnail,
+      aggregated.primary_total_volume as primary_volume,
+      aggregated.secondary_total_volume as secondary_volume,
+      aggregated.total_royalties as royalties,
       ${royaltySplitSource} as royalty_split,
-      aggregated.total_royalties * ${royaltySplitSource} AS artist_take
+      aggregated.primary_total_volume * ${royaltySplitSource} AS primary_artist_take,
+      aggregated.total_royalties * ${royaltySplitSource} AS secondary_artist_take
     FROM 
       (SELECT 
         token_id,
         contract,
-        SUM(value) AS total_volume,
+        SUM(CASE WHEN from_address IN (${mysql.escape(
+          NULL_ADDRESS
+        )}, ${mysql.escape(
+    MANIFOLD
+  )}) THEN value ELSE 0 END) AS primary_total_volume,
+              SUM(CASE WHEN from_address NOT IN (${mysql.escape(
+                NULL_ADDRESS
+              )}, ${mysql.escape(
+    MANIFOLD
+  )}) THEN value ELSE 0 END) AS secondary_total_volume,
         SUM(royalties) AS total_royalties
       FROM 
         ${transactionsTable}
