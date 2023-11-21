@@ -67,6 +67,8 @@ import {
   constructFilters,
   constructFiltersOR
 } from './api-serverless/src/api-helpers';
+import { RoyaltyResponse } from './api-serverless/src/royalties/royalties.routes';
+import { GasResponse } from './api-serverless/src/gas/gas.routes';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -2593,7 +2595,7 @@ export async function fetchRoyalties(
   type: 'memes' | 'memelab',
   fromDate: string,
   toDate: string
-) {
+): Promise<RoyaltyResponse[]> {
   const sql = getRoyaltiesSql(type, fromDate, toDate);
   return execSQLWithParams(sql.sql, sql.params);
 }
@@ -2602,7 +2604,7 @@ export async function fetchGas(
   type: 'memes' | 'memelab',
   fromDate: string,
   toDate: string
-) {
+): Promise<GasResponse[]> {
   const sql = getGasSql(type, fromDate, toDate);
   return execSQLWithParams(sql.sql, sql.params);
 }

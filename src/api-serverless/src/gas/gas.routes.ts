@@ -12,7 +12,7 @@ const logger = Logger.get('GAS_API');
 
 export default router;
 
-interface GasResponse {
+export interface GasResponse {
   token_id: number;
   name: string;
   artist: string;

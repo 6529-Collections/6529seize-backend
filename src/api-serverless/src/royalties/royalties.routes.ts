@@ -21,7 +21,7 @@ const logger = Logger.get('ROYALTIES_API');
 
 export default router;
 
-interface RoyaltyResponse {
+export interface RoyaltyResponse {
   token_id: number;
   name: string;
   artist: string;
