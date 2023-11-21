@@ -13,6 +13,7 @@ import {
   CreateOrUpdateProfileCommand,
   ProfileAndConsolidations
 } from '../../../profiles/profiles';
+import * as votes from '../../../votes';
 import * as profiles from '../../../profiles/profiles';
 import { NotFoundException } from '../../../exceptions';
 import { initMulterSingleMiddleware } from '../multer-middleware';
@@ -20,6 +21,7 @@ import { initMulterSingleMiddleware } from '../multer-middleware';
 import { asyncRouter } from '../async.router';
 import { RESERVED_HANDLES } from './profiles.constats';
 import { ProfileClassification } from '../../../entities/IProfile';
+import { VoteMatterTargetType } from '../../../entities/IVoteMatter';
 
 const router = asyncRouter();
 
@@ -172,6 +174,50 @@ router.post(
   }
 );
 
+router.post(
+  `/:handleOrWallet/cic/rating`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<
+      {
+        handleOrWallet: string;
+      },
+      any,
+      ApiAddCicRatingToProfileRequest,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ProfileAndConsolidations>>
+  ) {
+    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
+    const voterWallet = getWalletOrThrow(req);
+    const { amount } = getValidatedByJoiOrThrow(
+      req.body,
+      ApiAddCicRatingToProfileRequestSchema
+    );
+    const profile =
+      await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        handleOrWallet
+      );
+    if (!profile?.profile) {
+      throw new NotFoundException(`No profile found for ${handleOrWallet}`);
+    }
+    await votes.registerUserVote({
+      voterWallet: voterWallet.toLowerCase(),
+      matterTargetType: VoteMatterTargetType.PROFILE_ID,
+      matterTargetId: profile.profile.external_id,
+      matter: 'CIC',
+      category: 'CIC',
+      amount
+    });
+    const updatedProfileInfo =
+      await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        handleOrWallet
+      );
+    res.status(201).send(updatedProfileInfo);
+  }
+);
+
 interface ApiCreateOrUpdateProfileRequest {
   readonly handle: string;
   readonly primary_wallet: string;
@@ -221,6 +267,15 @@ interface ApiUploadProfilePictureRequest {
 const ApiUploadProfilePictureRequestSchema: Joi.ObjectSchema<ApiUploadProfilePictureRequest> =
   Joi.object({
     meme: Joi.number().optional()
+  });
+
+interface ApiAddCicRatingToProfileRequest {
+  readonly amount: number;
+}
+
+const ApiAddCicRatingToProfileRequestSchema: Joi.ObjectSchema<ApiAddCicRatingToProfileRequest> =
+  Joi.object({
+    amount: Joi.number().integer().required()
   });
 
 export default router;
