@@ -1,5 +1,5 @@
 import { findTransactions } from './transactions';
-import { getAllOwners, ownersMatch } from './owners';
+import { getAllOwners, getOwnersDelta } from './owners';
 import { findTransactionValues } from './transaction_values';
 import { discoverEns } from './ens';
 import { Alchemy, fromHex, Nft, Utils } from 'alchemy-sdk';
@@ -38,6 +38,7 @@ import { Owner } from './entities/IOwner';
 
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { Logger } from './logging';
+import { getNFTResponse } from './nfts';
 
 const logger = Logger.get('MEME_LAB');
 
@@ -46,21 +47,8 @@ const fetch = (url: RequestInfo, init?: RequestInit) =>
 
 let alchemy: Alchemy;
 
-async function getNFTResponse(contract: string, key: any) {
-  const settings = {
-    pageKey: undefined
-  };
-
-  if (key) {
-    settings.pageKey = key;
-  }
-
-  const response = await alchemy.nft.getNftsForContract(contract, settings);
-  return response;
-}
-
 async function getAllNFTs(nfts: Nft[] = [], key = ''): Promise<Nft[]> {
-  const response = await getNFTResponse(MEMELAB_CONTRACT, key);
+  const response = await getNFTResponse(alchemy, MEMELAB_CONTRACT, key);
   const newKey = response.pageKey;
   nfts = nfts.concat(response.nfts);
 
@@ -97,7 +85,7 @@ async function processNFTs(
           s.id == tokenId && areEqualAddresses(s.contract, MEMELAB_CONTRACT)
       );
 
-      const fullMetadata = await (await fetch(mnft.tokenUri!.raw)).json();
+      const fullMetadata = await (await fetch(mnft.raw.tokenUri!)).json();
 
       const tokenTransactions = [...startingTransactions]
         .filter((t) => t.token_id == tokenId)
@@ -112,7 +100,7 @@ async function processNFTs(
       );
 
       let editionSize = 0;
-      tokenWallets.map((tw) => {
+      tokenWallets.forEach((tw) => {
         editionSize += tw.balance;
       });
 
@@ -268,7 +256,7 @@ export const findNFTs = async (
   const allNFTs = await processNFTs(startingNFTS, startingTransactions, owners);
 
   const delta: LabNFT[] = [];
-  allNFTs.map((n) => {
+  allNFTs.forEach((n) => {
     const m = startingNFTS.find(
       (s) => areEqualAddresses(s.contract, n.contract) && s.id == n.id
     );
@@ -384,14 +372,14 @@ export async function memeLabOwners() {
 
   const newOwners: Owner[] = [];
 
-  labOwners.map((ownerBalances) => {
+  labOwners.forEach((ownerBalances) => {
     ownerBalances.tokenBalances.map((balance) => {
       const owner: Owner = {
         created_at: new Date(),
         wallet: ownerBalances.ownerAddress,
         token_id: fromHex(balance.tokenId),
         contract: MEMELAB_CONTRACT,
-        balance: balance.balance
+        balance: parseInt(balance.balance)
       };
       newOwners.push(owner);
     });
@@ -399,24 +387,7 @@ export async function memeLabOwners() {
 
   logger.info(`[OWNERS ${newOwners.length}]`);
 
-  const ownersDelta: Owner[] = [];
-
-  newOwners.map((o) => {
-    const existing = startingOwners.find((o1) => ownersMatch(o, o1));
-
-    if (!existing || o.balance != existing.balance) {
-      ownersDelta.push(o);
-    }
-  });
-
-  startingOwners.map((o) => {
-    const existing = newOwners.find((o1) => ownersMatch(o, o1));
-
-    if (!existing) {
-      o.balance = 0;
-      ownersDelta.push(o);
-    }
-  });
+  const ownersDelta: Owner[] = getOwnersDelta(newOwners, startingOwners);
 
   logger.info(`[OWNERS] [DELTA ${ownersDelta.length}]`);
 
@@ -433,7 +404,7 @@ export async function memeLabExtendedData() {
 
   const labMeta: LabExtendedData[] = [];
 
-  nfts.map((nft) => {
+  nfts.forEach((nft) => {
     const tokenWallets = owners.filter(
       (tw) =>
         !areEqualAddresses(NULL_ADDRESS, tw.wallet) && tw.token_id == nft.id
@@ -442,7 +413,7 @@ export async function memeLabExtendedData() {
     let edition_size = 0;
     let museum_holdings = 0;
     let edition_size_cleaned = 0;
-    tokenWallets.map((tw) => {
+    tokenWallets.forEach((tw) => {
       if (!areEqualAddresses(tw.wallet, SIX529_MUSEUM.toUpperCase())) {
         edition_size_cleaned += tw.balance;
       } else {
@@ -491,7 +462,7 @@ export async function memeLabExtendedData() {
     labMeta.push(meta);
   });
 
-  labMeta.map((lm) => {
+  labMeta.forEach((lm) => {
     lm.edition_size_rank =
       labMeta.filter((m) => {
         if (lm.edition_size > m.edition_size) {

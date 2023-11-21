@@ -65,27 +65,27 @@ export const findOwners = async () => {
 
   const newOwners: Owner[] = [];
 
-  memesOwners.map((ownerBalances) => {
+  memesOwners.forEach((ownerBalances) => {
     ownerBalances.tokenBalances.map((balance) => {
       const owner: Owner = {
         created_at: new Date(),
         wallet: ownerBalances.ownerAddress,
         token_id: fromHex(balance.tokenId),
         contract: MEMES_CONTRACT,
-        balance: balance.balance
+        balance: parseInt(balance.balance)
       };
       newOwners.push(owner);
     });
   });
 
-  gradientsOwners.map((ownerBalances) => {
+  gradientsOwners.forEach((ownerBalances) => {
     ownerBalances.tokenBalances.map((balance) => {
       const owner: Owner = {
         created_at: new Date(),
         wallet: ownerBalances.ownerAddress,
         token_id: fromHex(balance.tokenId),
         contract: GRADIENT_CONTRACT,
-        balance: balance.balance
+        balance: parseInt(balance.balance)
       };
       newOwners.push(owner);
     });
@@ -95,9 +95,17 @@ export const findOwners = async () => {
     `[OWNERS ${newOwners.length}] [MEMES ${memesOwners.length}] [GRADIENTS ${gradientsOwners.length}]`
   );
 
+  const ownersDelta: Owner[] = getOwnersDelta(newOwners, startingOwners);
+
+  logger.info(`[DELTA ${ownersDelta.length}]`);
+  await persistOwners(ownersDelta);
+  return ownersDelta;
+};
+
+export function getOwnersDelta(newOwners: Owner[], startingOwners: Owner[]) {
   const ownersDelta: Owner[] = [];
 
-  newOwners.map((o) => {
+  newOwners.forEach((o) => {
     const existing = startingOwners.find((o1) => ownersMatch(o, o1));
 
     if (!existing || o.balance != existing.balance) {
@@ -105,7 +113,7 @@ export const findOwners = async () => {
     }
   });
 
-  startingOwners.map((o) => {
+  startingOwners.forEach((o) => {
     const existing = newOwners.find((o1) => ownersMatch(o, o1));
 
     if (!existing) {
@@ -113,8 +121,5 @@ export const findOwners = async () => {
       ownersDelta.push(o);
     }
   });
-
-  logger.info(`[DELTA ${ownersDelta.length}]`);
-  await persistOwners(ownersDelta);
   return ownersDelta;
-};
+}

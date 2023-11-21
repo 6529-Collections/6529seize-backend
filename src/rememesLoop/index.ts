@@ -69,7 +69,7 @@ async function loadRememes() {
   const csvData: CSVData[] = [];
 
   const csv = await readCsvFile(FILE_DIR);
-  csv.map((r) => {
+  csv.forEach((r) => {
     const contract = r[0].trim();
     const tokenIdStr = r[1].trim().replaceAll(' ', '');
     if (tokenIdStr.includes('to')) {
@@ -196,13 +196,13 @@ async function buildRememe(contract: string, id: string, memes: number[]) {
   const nftMeta = await alchemy.nft.getNftMetadata(contract, id, {
     refreshCache: true
   });
-  if (!nftMeta.metadataError) {
-    const contractOpenseaData = nftMeta.contract.openSea;
+  if (!nftMeta.raw.error) {
+    const contractOpenseaData = nftMeta.contract.openSeaMetadata;
     const deployer = nftMeta.contract.contractDeployer;
-    const tokenUri = nftMeta.tokenUri;
+    const tokenUri = nftMeta.tokenUri ? nftMeta.tokenUri : nftMeta.raw.tokenUri;
     const tokenType = nftMeta.contract.tokenType;
-    const media = nftMeta.media;
-    const metadata = nftMeta.rawMetadata;
+    const media = nftMeta.image;
+    const metadata = nftMeta.raw.metadata;
 
     const image = metadata
       ? metadata.image
@@ -238,7 +238,7 @@ async function buildRememe(contract: string, id: string, memes: number[]) {
       contract: contract,
       id: id,
       deployer: deployer,
-      token_uri: tokenUri ? tokenUri.raw : ``,
+      token_uri: tokenUri ? tokenUri : ``,
       token_type: tokenType,
       meme_references: memes,
       metadata,
@@ -255,7 +255,7 @@ async function buildRememe(contract: string, id: string, memes: number[]) {
     return r;
   } else {
     logger.error(
-      `[METADATA ERROR] [CONTRACT ${contract}] [ID ${id}] [ERROR ${nftMeta.metadataError}]`
+      `[METADATA ERROR] [CONTRACT ${contract}] [ID ${id}] [ERROR ${nftMeta.raw.error}]`
     );
     return undefined;
   }

@@ -29,7 +29,7 @@ async function saveTeam() {
   const team: Team[] = [];
   const csv = await readCsvFile(FILE_DIR);
   logger.info(`[TEAM MEMBERS ${csv.length}]`);
-  csv.map((t) => {
+  csv.forEach((t) => {
     const data: any[] = Object.values(t);
     const tm = new Team();
     tm.name = data[0]!;

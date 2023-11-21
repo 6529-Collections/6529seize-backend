@@ -15,7 +15,7 @@ export const findNftTDH = async () => {
   const nfts: NFT[] = await fetchAllNFTs();
   const nftTDH: NFT[] = [];
 
-  tdhs.map((tdh) => {
+  tdhs.forEach((tdh) => {
     tdh.memes.map((meme: any) => {
       const existing = nftTDH.some(
         (n) => n.id == meme.id && areEqualAddresses(n.contract, MEMES_CONTRACT)
@@ -86,7 +86,7 @@ export const findNftTDH = async () => {
 
   nftTDH
     .sort((a, b) => (a.tdh > b.tdh ? -1 : a.tdh > 0 ? 1 : -1))
-    .map((n, index) => (n.tdh_rank = index + 1));
+    .forEach((n, index) => (n.tdh_rank = index + 1));
 
   await persistNFTs(nftTDH);
 

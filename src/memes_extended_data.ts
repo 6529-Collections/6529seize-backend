@@ -21,7 +21,7 @@ export const findMemesExtendedData = async () => {
 
   const memesMeta: MemesExtendedData[] = [];
 
-  nfts.map((nft) => {
+  nfts.forEach((nft) => {
     const allTokenWallets = [...owners].filter(
       (o) =>
         o.token_id == nft.id && areEqualAddresses(o.contract, MEMES_CONTRACT)
@@ -34,7 +34,7 @@ export const findMemesExtendedData = async () => {
     let edition_size = 0;
     let museum_holdings = 0;
     let edition_size_cleaned = 0;
-    tokenWallets.map((tw) => {
+    tokenWallets.forEach((tw) => {
       if (!areEqualAddresses(tw.wallet, SIX529_MUSEUM.toUpperCase())) {
         edition_size_cleaned += tw.balance;
       } else {
@@ -78,7 +78,7 @@ export const findMemesExtendedData = async () => {
     memesMeta.push(meta);
   });
 
-  memesMeta.map((mm) => {
+  memesMeta.forEach((mm) => {
     mm.edition_size_rank =
       memesMeta.filter((m) => {
         if (mm.edition_size > m.edition_size) {

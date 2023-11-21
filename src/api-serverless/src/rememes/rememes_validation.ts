@@ -107,7 +107,7 @@ async function validateRememeBody(body: any) {
     } catch (e: any) {
       return {
         valid: false,
-        error: e.message
+        error: 'Invalid Contract'
       };
     }
 
@@ -123,7 +123,7 @@ async function validateRememeBody(body: any) {
           );
           const exists = await rememeExists(value.contract, token_id);
           if (exists) {
-            nftMeta.metadataError = 'Rememe already exists';
+            nftMeta.raw.error = 'Rememe already exists';
           }
           delete nftMeta.contract;
           return nftMeta;
@@ -136,7 +136,7 @@ async function validateRememeBody(body: any) {
     );
 
     return {
-      valid: myNfts.find((n) => n.metadataError) === undefined,
+      valid: myNfts.find((n) => n.raw.error) === undefined,
       contract: myContract,
       nfts: myNfts
     };
