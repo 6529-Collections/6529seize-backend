@@ -214,7 +214,7 @@ router.post(
       await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
         handleOrWallet
       );
-    res.status(201).send(updatedProfileInfo);
+    res.status(201).send(updatedProfileInfo!);
   }
 );
 
