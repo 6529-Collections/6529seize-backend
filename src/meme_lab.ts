@@ -49,7 +49,7 @@ const fetch = (url: RequestInfo, init?: RequestInit) =>
 let alchemy: Alchemy;
 
 async function getAllNFTs(nfts: Nft[] = [], key = ''): Promise<Nft[]> {
-  const response = await getNFTResponse(MEMELAB_CONTRACT, key);
+  const response = await getNFTResponse(alchemy, MEMELAB_CONTRACT, key);
   const newKey = response.pageKey;
   nfts = nfts.concat(response.nfts);
 

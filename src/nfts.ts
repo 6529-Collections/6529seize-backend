@@ -36,7 +36,11 @@ const fetch = (url: RequestInfo, init?: RequestInit) =>
 
 let alchemy: Alchemy;
 
-export async function getNFTResponse(contract: string, key: any) {
+export async function getNFTResponse(
+  alchemy: Alchemy,
+  contract: string,
+  key: any
+) {
   const settings = {
     pageKey: undefined
   };
@@ -54,7 +58,7 @@ async function getAllNFTs(
   nfts: Nft[] = [],
   key = ''
 ): Promise<Nft[]> {
-  const response = await getNFTResponse(contract, key);
+  const response = await getNFTResponse(alchemy, contract, key);
   const newKey = response.pageKey;
   nfts = nfts.concat(response.nfts);
 
