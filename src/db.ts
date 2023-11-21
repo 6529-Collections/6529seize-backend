@@ -805,17 +805,18 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
   if (ownersTags.length > 0) {
     logger.info(`[OWNERS TAGS] [PERSISTING ${ownersTags.length} WALLETS]`);
 
-    const repo = AppDataSource.getRepository(OwnerTags);
-
-    await Promise.all(
-      ownersTags.map(async (owner) => {
-        if (0 >= owner.memes_balance && 0 >= owner.gradients_balance) {
-          await repo.remove(owner);
-        } else {
-          await repo.save(owner);
-        }
-      })
-    );
+    await AppDataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(OwnerTags);
+      await Promise.all(
+        ownersTags.map(async (owner) => {
+          if (0 >= owner.memes_balance && 0 >= owner.gradients_balance) {
+            await repo.remove(owner);
+          } else {
+            await repo.upsert(owner, ['wallet']);
+          }
+        })
+      );
+    });
 
     logger.info(`[OWNERS TAGS] [ALL ${ownersTags.length} WALLETS PERSISTED]`);
   }
