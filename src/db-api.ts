@@ -701,71 +701,6 @@ export async function fetchOwnersTags(
   );
 }
 
-export async function fetchLabTransactions(
-  pageSize: number,
-  page: number,
-  wallets: string,
-  nfts: string,
-  type_filter: string
-) {
-  let filters = '';
-  if (wallets) {
-    filters = constructFilters(
-      filters,
-      `(from_address in (${mysql.escape(
-        wallets.split(',')
-      )}) OR to_address in (${mysql.escape(wallets.split(','))}))`
-    );
-  }
-  if (nfts) {
-    filters = constructFilters(filters, `token_id in (${nfts})`);
-  }
-  if (type_filter) {
-    let newTypeFilter = '';
-    switch (type_filter) {
-      case 'sales':
-        newTypeFilter += `value > 0 AND from_address != ${mysql.escape(
-          NULL_ADDRESS
-        )} and to_address != ${mysql.escape(NULL_ADDRESS)}`;
-        break;
-      case 'airdrops':
-        newTypeFilter += `value = 0 AND from_address = ${mysql.escape(
-          NULL_ADDRESS
-        )}`;
-        break;
-      case 'mints':
-        newTypeFilter += `value > 0 AND from_address = ${mysql.escape(
-          NULL_ADDRESS
-        )}`;
-        break;
-      case 'transfers':
-        newTypeFilter += `value = 0 and from_address != ${mysql.escape(
-          NULL_ADDRESS
-        )} and to_address != ${mysql.escape(NULL_ADDRESS)}`;
-        break;
-      case 'burns':
-        newTypeFilter += `to_address = ${mysql.escape(NULL_ADDRESS)}`;
-        break;
-    }
-    if (newTypeFilter) {
-      filters = constructFilters(filters, newTypeFilter);
-    }
-  }
-
-  const fields = `${TRANSACTIONS_MEME_LAB_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
-  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_MEME_LAB_TABLE}.to_address=ens2.wallet`;
-
-  return fetchPaginated(
-    TRANSACTIONS_MEME_LAB_TABLE,
-    'transaction_date desc',
-    pageSize,
-    page,
-    filters,
-    fields,
-    joins
-  );
-}
-
 async function resolveEns(walletsStr: string) {
   const wallets = walletsStr.split(',');
   const sql = `SELECT wallet,display FROM ${ENS_TABLE} WHERE wallet IN (${mysql.escape(
@@ -788,19 +723,16 @@ async function resolveEns(walletsStr: string) {
   return returnResults;
 }
 
-export async function fetchTransactions(
-  pageSize: number,
-  page: number,
+async function getTransactionFilters(
   wallets: string,
-  contracts: string,
   nfts: string,
   type_filter: string
-) {
+): Promise<string | null> {
   let filters = '';
   if (wallets) {
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length == 0) {
-      return returnEmpty();
+      return null;
     }
 
     if (type_filter == 'purchases') {
@@ -821,12 +753,6 @@ export async function fetchTransactions(
         )}) OR to_address in (${mysql.escape(resolvedWallets)}))`
       );
     }
-  }
-  if (contracts) {
-    filters = constructFilters(
-      filters,
-      `contract in (${mysql.escape(contracts.split(','))})`
-    );
   }
   if (nfts) {
     filters = constructFilters(filters, `token_id in (${nfts})`);
@@ -864,6 +790,53 @@ export async function fetchTransactions(
     if (newTypeFilter) {
       filters = constructFilters(filters, newTypeFilter);
     }
+  }
+  return filters;
+}
+export async function fetchLabTransactions(
+  pageSize: number,
+  page: number,
+  wallets: string,
+  nfts: string,
+  type_filter: string
+) {
+  const filters = await getTransactionFilters(wallets, nfts, type_filter);
+  if (!filters) {
+    return returnEmpty();
+  }
+
+  const fields = `${TRANSACTIONS_MEME_LAB_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_MEME_LAB_TABLE}.to_address=ens2.wallet`;
+
+  return fetchPaginated(
+    TRANSACTIONS_MEME_LAB_TABLE,
+    'transaction_date desc',
+    pageSize,
+    page,
+    filters,
+    fields,
+    joins
+  );
+}
+
+export async function fetchTransactions(
+  pageSize: number,
+  page: number,
+  wallets: string,
+  contracts: string,
+  nfts: string,
+  type_filter: string
+) {
+  let filters = await getTransactionFilters(wallets, nfts, type_filter);
+  if (!filters) {
+    return returnEmpty();
+  }
+
+  if (contracts) {
+    filters = constructFilters(
+      filters,
+      `contract in (${mysql.escape(contracts.split(','))})`
+    );
   }
 
   const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
