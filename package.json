@@ -62,7 +62,7 @@
     "ethers": "^5.7.2",
     "express": "^4.18.2",
     "fluent-ffmpeg": "^2.1.2",
-    "helmet": "^6.0.1",
+    "helmet": "^6.2.0",
     "imagescript": "^1.2.15",
     "joi": "^17.9.2",
     "json-2-csv": "^3.18.0",
