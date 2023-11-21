@@ -1,8 +1,12 @@
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import * as tdh_consolidation from '../tdh_consolidation';
 import * as ens from '../ens';
-import { sqlExecutor } from '../sql-executor';
-import { PROFILES_TABLE, WALLET_REGEX } from '../constants';
+import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
+import {
+  PROFILES_ARCHIVE_TABLE,
+  PROFILES_TABLE,
+  WALLET_REGEX
+} from '../constants';
 import { BadRequestException } from '../exceptions';
 import * as tdhs from '../tdh';
 import * as nfts from '../nfts';
@@ -11,6 +15,7 @@ import { scalePfpAndPersistToS3 } from '../api-serverless/src/users/s3';
 import { Wallet } from '../entities/IWallet';
 import { DbPoolName } from '../db-query.options';
 import { tdh2Level } from './profile-level';
+import { randomUUID } from 'crypto';
 
 export interface CreateOrUpdateProfileCommand {
   handle: string;
@@ -125,11 +130,14 @@ export async function getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
   }
 }
 
-async function getProfileByHandle(handle: string): Promise<Profile | null> {
+async function getProfileByHandle(
+  handle: string,
+  connection?: ConnectionWrapper<any>
+): Promise<Profile | null> {
   const result = await sqlExecutor.execute(
     `select * from ${PROFILES_TABLE} where normalised_handle = :handle`,
     { handle: handle.toLowerCase() },
-    { forcePool: DbPoolName.WRITE }
+    { forcePool: DbPoolName.WRITE, wrappedConnection: connection }
   );
   return result.at(0) ?? null;
 }
@@ -255,6 +263,55 @@ export async function createOrUpdateProfile({
   return updatedProfile!;
 }
 
+async function insertProfileArchiveRecord(
+  param: Profile,
+  connection: ConnectionWrapper<any>
+) {
+  await sqlExecutor.execute(
+    `insert into ${PROFILES_ARCHIVE_TABLE}
+     (handle,
+      normalised_handle,
+      primary_wallet,
+      created_at,
+      created_by_wallet,
+      banner_1,
+      banner_2,
+      website,
+      classification,
+      updated_at,
+      updated_by_wallet,
+      external_id)
+     values (:handle,
+             :normalisedHandle,
+             :primaryWallet,
+             :createdAt,
+             :createdByWallet,
+             :banner1,
+             :banner2,
+             :website,
+             :classification,
+             :updatedAt,
+             :updatedByWallet,
+             :externalId
+             )`,
+    {
+      handle: param.handle,
+      normalisedHandle: param.normalised_handle,
+      primaryWallet: param.primary_wallet,
+      createdAt: new Date(param.created_at),
+      createdByWallet: param.created_by_wallet,
+      updatedAt: param.updated_at ? new Date(param.updated_at) : null,
+      updatedByWallet: param.updated_by_wallet,
+      banner1: param.banner_1 ?? null,
+      banner2: param.banner_2 ?? null,
+      website: param.website ?? null,
+      classification: param.classification,
+      externalId: param.external_id!
+    },
+    { wrappedConnection: connection?.connection }
+  );
+}
+
 async function updateProfileRecord({
   command,
   oldHandle
@@ -262,8 +319,9 @@ async function updateProfileRecord({
   command: CreateOrUpdateProfileCommand;
   oldHandle: string;
 }) {
-  await sqlExecutor.execute(
-    `update ${PROFILES_TABLE}
+  await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+    await sqlExecutor.execute(
+      `update ${PROFILES_TABLE}
      set handle            = :handle,
          normalised_handle = :normalisedHandle,
          primary_wallet    = :primaryWallet,
@@ -274,18 +332,24 @@ async function updateProfileRecord({
          website           = :website,
          classification = :classification
      where normalised_handle = :oldHandle`,
-    {
-      oldHandle,
-      handle: command.handle,
-      normalisedHandle: command.handle.toLowerCase(),
-      primaryWallet: command.primary_wallet.toLowerCase(),
-      updatedByWallet: command.creator_or_updater_wallet.toLowerCase(),
-      banner1: command.banner_1 ?? null,
-      banner2: command.banner_2 ?? null,
-      website: command.website ?? null,
-      classification: command.classification
+      {
+        oldHandle,
+        handle: command.handle,
+        normalisedHandle: command.handle.toLowerCase(),
+        primaryWallet: command.primary_wallet.toLowerCase(),
+        updatedByWallet: command.creator_or_updater_wallet.toLowerCase(),
+        banner1: command.banner_1 ?? null,
+        banner2: command.banner_2 ?? null,
+        website: command.website ?? null,
+        classification: command.classification
+      },
+      { wrappedConnection: connection }
+    );
+    const profile = await getProfileByHandle(command.handle, connection);
+    if (profile) {
+      await insertProfileArchiveRecord(profile, connection);
     }
-  );
+  });
 }
 
 async function insertProfileRecord({
@@ -293,8 +357,9 @@ async function insertProfileRecord({
 }: {
   command: CreateOrUpdateProfileCommand;
 }) {
-  await sqlExecutor.execute(
-    `insert into ${PROFILES_TABLE}
+  await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+    await sqlExecutor.execute(
+      `insert into ${PROFILES_TABLE}
      (handle,
       normalised_handle,
       primary_wallet,
@@ -303,7 +368,8 @@ async function insertProfileRecord({
       banner_1,
       banner_2,
       website,
-      classification)
+      classification,
+      external_id)
      values (:handle,
              :normalisedHandle,
              :primaryWallet,
@@ -312,19 +378,27 @@ async function insertProfileRecord({
              :banner1,
              :banner2,
              :website,
-             :classification
+             :classification,
+             :externalId
              )`,
-    {
-      handle: command.handle,
-      normalisedHandle: command.handle.toLowerCase(),
-      primaryWallet: command.primary_wallet.toLowerCase(),
-      createdByWallet: command.creator_or_updater_wallet.toLowerCase(),
-      banner1: command.banner_1 ?? null,
-      banner2: command.banner_2 ?? null,
-      website: command.website ?? null,
-      classification: command.classification
+      {
+        handle: command.handle,
+        normalisedHandle: command.handle.toLowerCase(),
+        primaryWallet: command.primary_wallet.toLowerCase(),
+        createdByWallet: command.creator_or_updater_wallet.toLowerCase(),
+        banner1: command.banner_1 ?? null,
+        banner2: command.banner_2 ?? null,
+        website: command.website ?? null,
+        classification: command.classification,
+        externalId: randomUUID()
+      },
+      { wrappedConnection: connection }
+    );
+    const profile = await getProfileByHandle(command.handle, connection);
+    if (profile) {
+      await insertProfileArchiveRecord(profile, connection);
     }
-  );
+  });
 }
 
 export async function getProfileHandlesByPrimaryWallets(
@@ -399,12 +473,22 @@ export async function updateProfilePfp({
     throw new BadRequestException(`Profile for ${handleOrWallet} not found`);
   });
   const thumbnailUri = await getOrCreatePfpFileUri({ meme, file });
-  await sqlExecutor.execute(
-    `update ${PROFILES_TABLE} set pfp_url = :pfp where normalised_handle = :handle`,
-    {
-      pfp: thumbnailUri,
-      handle: profile.normalised_handle
-    }
-  );
+  await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+    await sqlExecutor.execute(
+      `update ${PROFILES_TABLE}
+       set pfp_url = :pfp
+       where normalised_handle = :handle`,
+      {
+        pfp: thumbnailUri,
+        handle: profile.normalised_handle
+      },
+      { wrappedConnection: connection }
+    );
+    await getProfileByHandle(profile.handle, connection).then(async (it) => {
+      if (it) {
+        await insertProfileArchiveRecord(profile, connection);
+      }
+    });
+  });
   return { pfp_url: thumbnailUri };
 }

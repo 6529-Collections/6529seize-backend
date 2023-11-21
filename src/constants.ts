@@ -18,6 +18,7 @@ export const UPLOADS_TABLE = 'uploads';
 export const CONSOLIDATED_UPLOADS_TABLE = 'uploads_consolidation';
 export const ENS_TABLE = 'ens';
 export const PROFILES_TABLE = 'profiles';
+export const PROFILES_ARCHIVE_TABLE = 'profiles_archive';
 export const USER_TABLE = 'user';
 export const TEAM_TABLE = 'team';
 export const DISTRIBUTION_TABLE = 'distribution';

@@ -50,7 +50,7 @@ import {
 } from './helpers';
 import { getConsolidationsSql, getProfilePageSql } from './sql_helpers';
 import { getProof } from './merkle_proof';
-import { setSqlExecutor } from './sql-executor';
+import { ConnectionWrapper, setSqlExecutor } from './sql-executor';
 import * as profiles from './profiles/profiles';
 
 import * as mysql from 'mysql';
@@ -115,95 +115,72 @@ export async function connect() {
       sql: string,
       params?: Record<string, any>,
       options?: DbQueryOptions
-    ) => execSQLWithParams(sql, params, options)
+    ) => execSQLWithParams(sql, params, options),
+    executeNativeQueriesInTransaction(executable) {
+      return execNativeTransactionally(executable);
+    }
   });
   logger.info(`[CONNECTION POOLS CREATED]`);
 }
 
-function getPool(sql: string, queryOptions?: DbQueryOptions) {
-  switch (queryOptions?.forcePool) {
-    case DbPoolName.READ:
-      return read_pool;
-    case DbPoolName.WRITE:
-      return write_pool;
-    default:
-      return WRITE_OPERATIONS.some((op) => sql.toUpperCase().startsWith(op))
-        ? write_pool
-        : read_pool;
+function getPoolNameBySql(sql: string): DbPoolName {
+  return WRITE_OPERATIONS.some((op) => sql.toUpperCase().startsWith(op))
+    ? DbPoolName.WRITE
+    : DbPoolName.READ;
+}
+
+function getDbConnecionForQuery(
+  sql: string,
+  forcePool?: DbPoolName
+): Promise<mysql.PoolConnection> {
+  const poolName = forcePool ?? getPoolNameBySql(sql);
+  return getDbConnectionByPoolName(poolName);
+}
+
+function getPoolByName(poolName: DbPoolName): mysql.Pool {
+  const poolsMap: Record<DbPoolName, mysql.Pool> = {
+    [DbPoolName.READ]: read_pool,
+    [DbPoolName.WRITE]: write_pool
+  };
+  return poolsMap[poolName];
+}
+
+function getDbConnectionByPoolName(
+  poolName: DbPoolName
+): Promise<mysql.PoolConnection> {
+  const pool = getPoolByName(poolName);
+  return new Promise((resolve, reject) => {
+    pool.getConnection(function (
+      err: mysql.MysqlError,
+      dbcon: mysql.PoolConnection
+    ) {
+      if (err) {
+        logger.error(`Failed to establish connection to ${poolName}`, err);
+        reject(err);
+      }
+      resolve(dbcon);
+    });
+  });
+}
+
+export async function execSQL(
+  sql: string,
+  options?: {
+    forcePool?: DbPoolName;
+    wrappedConnection?: ConnectionWrapper<mysql.PoolConnection>;
   }
-}
-
-function getPoolForTransaction(sqls: string[], queryOptions?: DbQueryOptions) {
-  return sqls.some((s) => getPool(s, queryOptions) == write_pool)
-    ? write_pool
-    : read_pool;
-}
-
-export function execSQL(sql: string, options?: DbQueryOptions): Promise<any> {
-  const my_pool: mysql.Pool = getPool(sql, options);
+): Promise<any> {
+  const externallyGivenConnection = options?.wrappedConnection?.connection;
+  const connection =
+    externallyGivenConnection ||
+    (await getDbConnecionForQuery(sql, options?.forcePool));
   return new Promise((resolve, reject) => {
-    my_pool.getConnection(function (
-      err: mysql.MysqlError,
-      dbcon: mysql.PoolConnection
-    ) {
-      if (err) {
-        logger.error('custom err', err);
-        dbcon?.release();
-        throw err;
+    connection.query(sql, (err: any, result: any[]) => {
+      if (!externallyGivenConnection) {
+        connection?.release();
       }
-      dbcon.query(sql, (err: any, result: any[]) => {
-        dbcon?.release();
-        if (err) {
-          logger.error('custom err', err);
-          return reject(err);
-        }
-        resolve(Object.values(JSON.parse(JSON.stringify(result))));
-      });
-    });
-  });
-}
-
-export function execSQLWithTransaction(queries: string[]): Promise<any> {
-  const my_pool = getPoolForTransaction(queries);
-  return new Promise(async (resolve, reject) => {
-    my_pool.getConnection(async function (
-      err: mysql.MysqlError,
-      dbcon: mysql.PoolConnection
-    ) {
       if (err) {
-        throw err;
-      }
-      try {
-        dbcon.beginTransaction(async function (err) {
-          if (err) {
-            throw err;
-          }
-          const results: any[] = [];
-          for (const query of queries) {
-            const result = await executeQuery(dbcon, query);
-            results.push(result);
-          }
-
-          dbcon.commit(async function () {
-            dbcon.release();
-            resolve(results);
-          });
-        });
-      } catch (error) {
-        dbcon.rollback(async function () {
-          dbcon.release();
-          reject(error);
-        });
-      }
-    });
-  });
-}
-
-function executeQuery(connection: mysql.PoolConnection, query: string) {
-  return new Promise((resolve, reject) => {
-    connection.query(query, (err, result) => {
-      if (err) {
-        logger.error('custom err', err);
+        logger.error(`Failed to execute SQL query`, err);
         reject(err);
       } else {
         resolve(Object.values(JSON.parse(JSON.stringify(result))));
@@ -212,43 +189,70 @@ function executeQuery(connection: mysql.PoolConnection, query: string) {
   });
 }
 
-export function execSQLWithParams(
+async function execNativeTransactionally<T>(
+  executable: (connectionWrapper: ConnectionWrapper<any>) => Promise<T>
+): Promise<T> {
+  const connection = await getDbConnectionByPoolName(DbPoolName.WRITE);
+  try {
+    connection.beginTransaction();
+    const result = await executable({ connection: connection });
+    return await new Promise((resolve, reject) => {
+      connection.commit((err: any) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(result);
+        }
+      });
+    });
+  } catch (e) {
+    connection.rollback();
+    throw e;
+  } finally {
+    connection.release();
+  }
+}
+
+function prepareStatemant(query: string, values: Record<string, any>) {
+  return query.replace(/:(\w+)/g, function (txt: any, key: any) {
+    if (values.hasOwnProperty(key)) {
+      const value = values[key];
+      if (Array.isArray(value)) {
+        return value.map((v) => mysql.escape(v)).join(', ');
+      }
+      return mysql.escape(value);
+    }
+    return txt;
+  });
+}
+
+async function execSQLWithParams<T>(
   sql: string,
   params?: Record<string, any>,
-  options?: { forcePool?: DbPoolName }
-): Promise<any> {
-  const my_pool: mysql.Pool = getPool(sql, options);
+  options?: {
+    forcePool?: DbPoolName;
+    wrappedConnection?: ConnectionWrapper<mysql.PoolConnection>;
+  }
+): Promise<T[]> {
+  const externallyGivenConnection = options?.wrappedConnection?.connection;
+  const connection: mysql.PoolConnection =
+    externallyGivenConnection ||
+    (await getDbConnecionForQuery(sql, options?.forcePool));
   return new Promise((resolve, reject) => {
-    my_pool.getConnection(function (
-      err: mysql.MysqlError,
-      dbcon: mysql.PoolConnection
-    ) {
-      if (err) {
-        logger.error('custom err', err);
-        dbcon?.release();
-        throw err;
+    connection.config.queryFormat = function (query, values) {
+      if (!values) return query;
+      return prepareStatemant(query, values);
+    };
+    connection.query({ sql, values: params }, (err: any, result: T[]) => {
+      if (!externallyGivenConnection) {
+        connection?.release();
       }
-      dbcon.config.queryFormat = function (query, values) {
-        if (!values) return query;
-        return query.replace(/\:(\w+)/g, function (txt: any, key: any) {
-          if (values.hasOwnProperty(key)) {
-            const value = values[key];
-            if (Array.isArray(value)) {
-              return value.map((v) => mysql.escape(v)).join(', ');
-            }
-            return mysql.escape(value);
-          }
-          return txt;
-        });
-      };
-      dbcon.query({ sql, values: params }, (err: any, result: any[]) => {
-        dbcon?.release();
-        if (err) {
-          logger.error('custom err', err);
-          return reject(err);
-        }
-        resolve(result);
-      });
+      if (err) {
+        logger.error(`Failed to execute SQL query`, err);
+        reject(err);
+      } else {
+        resolve(Object.values(JSON.parse(JSON.stringify(result))));
+      }
     });
   });
 }
@@ -699,71 +703,6 @@ export async function fetchOwnersTags(
   );
 }
 
-export async function fetchLabTransactions(
-  pageSize: number,
-  page: number,
-  wallets: string,
-  nfts: string,
-  type_filter: string
-) {
-  let filters = '';
-  if (wallets) {
-    filters = constructFilters(
-      filters,
-      `(from_address in (${mysql.escape(
-        wallets.split(',')
-      )}) OR to_address in (${mysql.escape(wallets.split(','))}))`
-    );
-  }
-  if (nfts) {
-    filters = constructFilters(filters, `token_id in (${nfts})`);
-  }
-  if (type_filter) {
-    let newTypeFilter = '';
-    switch (type_filter) {
-      case 'sales':
-        newTypeFilter += `value > 0 AND from_address != ${mysql.escape(
-          NULL_ADDRESS
-        )} and to_address != ${mysql.escape(NULL_ADDRESS)}`;
-        break;
-      case 'airdrops':
-        newTypeFilter += `value = 0 AND from_address = ${mysql.escape(
-          NULL_ADDRESS
-        )}`;
-        break;
-      case 'mints':
-        newTypeFilter += `value > 0 AND from_address = ${mysql.escape(
-          NULL_ADDRESS
-        )}`;
-        break;
-      case 'transfers':
-        newTypeFilter += `value = 0 and from_address != ${mysql.escape(
-          NULL_ADDRESS
-        )} and to_address != ${mysql.escape(NULL_ADDRESS)}`;
-        break;
-      case 'burns':
-        newTypeFilter += `to_address = ${mysql.escape(NULL_ADDRESS)}`;
-        break;
-    }
-    if (newTypeFilter) {
-      filters = constructFilters(filters, newTypeFilter);
-    }
-  }
-
-  const fields = `${TRANSACTIONS_MEME_LAB_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
-  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_MEME_LAB_TABLE}.to_address=ens2.wallet`;
-
-  return fetchPaginated(
-    TRANSACTIONS_MEME_LAB_TABLE,
-    'transaction_date desc',
-    pageSize,
-    page,
-    filters,
-    fields,
-    joins
-  );
-}
-
 async function resolveEns(walletsStr: string) {
   const wallets = walletsStr.split(',');
   const sql = `SELECT wallet,display FROM ${ENS_TABLE} WHERE wallet IN (${mysql.escape(
@@ -786,19 +725,16 @@ async function resolveEns(walletsStr: string) {
   return returnResults;
 }
 
-export async function fetchTransactions(
-  pageSize: number,
-  page: number,
+async function getTransactionFilters(
   wallets: string,
-  contracts: string,
   nfts: string,
   type_filter: string
-) {
+): Promise<string | null> {
   let filters = '';
   if (wallets) {
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length == 0) {
-      return returnEmpty();
+      return null;
     }
 
     if (type_filter == 'purchases') {
@@ -819,12 +755,6 @@ export async function fetchTransactions(
         )}) OR to_address in (${mysql.escape(resolvedWallets)}))`
       );
     }
-  }
-  if (contracts) {
-    filters = constructFilters(
-      filters,
-      `contract in (${mysql.escape(contracts.split(','))})`
-    );
   }
   if (nfts) {
     filters = constructFilters(filters, `token_id in (${nfts})`);
@@ -862,6 +792,53 @@ export async function fetchTransactions(
     if (newTypeFilter) {
       filters = constructFilters(filters, newTypeFilter);
     }
+  }
+  return filters;
+}
+export async function fetchLabTransactions(
+  pageSize: number,
+  page: number,
+  wallets: string,
+  nfts: string,
+  type_filter: string
+) {
+  const filters = await getTransactionFilters(wallets, nfts, type_filter);
+  if (!filters) {
+    return returnEmpty();
+  }
+
+  const fields = `${TRANSACTIONS_MEME_LAB_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_MEME_LAB_TABLE}.to_address=ens2.wallet`;
+
+  return fetchPaginated(
+    TRANSACTIONS_MEME_LAB_TABLE,
+    'transaction_date desc',
+    pageSize,
+    page,
+    filters,
+    fields,
+    joins
+  );
+}
+
+export async function fetchTransactions(
+  pageSize: number,
+  page: number,
+  wallets: string,
+  contracts: string,
+  nfts: string,
+  type_filter: string
+) {
+  let filters = await getTransactionFilters(wallets, nfts, type_filter);
+  if (!filters) {
+    return returnEmpty();
+  }
+
+  if (contracts) {
+    filters = constructFilters(
+      filters,
+      `contract in (${mysql.escape(contracts.split(','))})`
+    );
   }
 
   const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;

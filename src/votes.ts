@@ -1,5 +1,5 @@
 import { VOTE_EVENTS_TABLE, VOTE_MATTERS_CATEGORIES_TABLE } from './constants';
-import { sqlExecutor } from './sql-executor';
+import { ConnectionWrapper, sqlExecutor } from './sql-executor';
 
 import { randomUUID } from 'crypto';
 import {
@@ -30,7 +30,10 @@ async function getCategoriesForMatter({
   );
 }
 
-async function insertVoteEvent(voteEvent: VoteEvent) {
+async function insertVoteEvent(
+  voteEvent: VoteEvent,
+  connectionHolder?: ConnectionWrapper<any>
+) {
   await sqlExecutor.execute(
     `INSERT INTO ${VOTE_EVENTS_TABLE} (id,
                                        voter_wallet,
@@ -59,7 +62,8 @@ async function insertVoteEvent(voteEvent: VoteEvent) {
       matterCategory: voteEvent.matter_category,
       eventReason: voteEvent.event_reason,
       amount: voteEvent.amount
-    }
+    },
+    { wrappedConnection: connectionHolder?.connection }
   );
 }
 
@@ -264,7 +268,7 @@ export async function getCategoriesInfoOnMatter({
       walletsVotesByCategory[c.matter_category_tag] ?? 0,
     category_tag: c.matter_category_tag,
     category_enabled: !c.disabled_time,
-    category_display_name: c.matter_category_displayName,
+    category_display_name: c.matter_category_display_name,
     category_media: JSON.parse(c.matter_category_media || '{}')
   }));
 }
@@ -389,11 +393,13 @@ async function createRevocationEvents(
     voteParticipatingWallets: string[];
   }[]
 ) {
-  for (const overVote of allOverVotes) {
-    const overvoteAmount = overVote.tally - overVote.tdh;
+  await sqlExecutor.executeNativeQueriesInTransaction(
+    async (connectionHolder) => {
+      for (const overVote of allOverVotes) {
+        const overvoteAmount = overVote.tally - overVote.tdh;
 
-    const toBeRevokedEvents: VoteEvent[] = await sqlExecutor.execute(
-      `WITH full_overvotes AS (SELECT NULL AS id, NULL AS total
+        const toBeRevokedEvents: VoteEvent[] = await sqlExecutor.execute(
+          `WITH full_overvotes AS (SELECT NULL AS id, NULL AS total
                                FROM dual
                                WHERE (@total := 0)
                                UNION
@@ -408,45 +414,48 @@ async function createRevocationEvents(
        FROM vote_events
        WHERE id IN (SELECT id FROM full_overvotes)
        ORDER BY created_time DESC`,
-      {
-        matter: overVote.matter,
-        overvoteAmount,
-        voteParticipantsIn: overVote.voteParticipatingWallets.map((it) =>
-          it.toLowerCase()
-        )
-      }
-    );
-    const reverseVoteEventsByKey: Record<string, VoteEvent> = {};
-    let reverseVoteAmount = 0;
-    for (const event of toBeRevokedEvents) {
-      const key = `${event.matter}-${event.matter_target_type}-${event.voter_wallet}-${event.matter_target_id}-${event.matter_category}`;
-      let toAdd = event.amount;
-      if (reverseVoteAmount + toAdd > overvoteAmount) {
-        toAdd = overvoteAmount - reverseVoteAmount;
-      }
-      reverseVoteAmount += toAdd;
-      if (!reverseVoteEventsByKey[key]) {
-        reverseVoteEventsByKey[key] = {
-          ...event,
-          id: randomUUID(),
-          created_time: new Date(),
-          event_reason: VoteEventReason.TDH_CHANGED,
-          amount: -toAdd
-        };
-      } else {
-        reverseVoteEventsByKey[key].amount -= toAdd;
+          {
+            matter: overVote.matter,
+            overvoteAmount,
+            voteParticipantsIn: overVote.voteParticipatingWallets.map((it) =>
+              it.toLowerCase()
+            )
+          },
+          { wrappedConnection: connectionHolder }
+        );
+        const reverseVoteEventsByKey: Record<string, VoteEvent> = {};
+        let reverseVoteAmount = 0;
+        for (const event of toBeRevokedEvents) {
+          const key = `${event.matter}-${event.matter_target_type}-${event.voter_wallet}-${event.matter_target_id}-${event.matter_category}`;
+          let toAdd = event.amount;
+          if (reverseVoteAmount + toAdd > overvoteAmount) {
+            toAdd = overvoteAmount - reverseVoteAmount;
+          }
+          reverseVoteAmount += toAdd;
+          if (!reverseVoteEventsByKey[key]) {
+            reverseVoteEventsByKey[key] = {
+              ...event,
+              id: randomUUID(),
+              created_time: new Date(),
+              event_reason: VoteEventReason.TDH_CHANGED,
+              amount: -toAdd
+            };
+          } else {
+            reverseVoteEventsByKey[key].amount -= toAdd;
+          }
+        }
+        const reverseVoteEvents = Object.values(reverseVoteEventsByKey).filter(
+          (e) => e.amount !== 0
+        );
+        for (const reverseVoterEvent of reverseVoteEvents) {
+          await insertVoteEvent(reverseVoterEvent, connectionHolder);
+        }
+        logger.info(
+          `Created ${reverseVoteEvents.length} vote revocation events on matter ${overVote.matter_target_type}/${overVote.matter}`
+        );
       }
     }
-    const reverseVoteEvents = Object.values(reverseVoteEventsByKey).filter(
-      (e) => e.amount !== 0
-    );
-    for (const reverseVoterEvent of reverseVoteEvents) {
-      await insertVoteEvent(reverseVoterEvent);
-    }
-    logger.info(
-      `Created ${reverseVoteEvents.length} vote revocation events on matter ${overVote.matter_target_type}/${overVote.matter}`
-    );
-  }
+  );
 }
 
 export async function revokeOverVotes() {

@@ -14,7 +14,6 @@ import {
   extractNextGenCollectionBurnInsert,
   extractNextGenCollectionInsert
 } from '../../../entities/INextGen';
-import { execSQLWithTransaction } from '../../../db-api';
 import {
   NEXTGEN_ALLOWLIST_BURN_TABLE,
   NEXTGEN_ALLOWLIST_TABLE,
@@ -222,8 +221,12 @@ async function persistAllowlist(body: {
 
   const collectionInsert = extractNextGenCollectionInsert(collection);
   sqlOperations.push(collectionInsert);
-  await execSQLWithTransaction(sqlOperations);
-
+  await sqlExecutor.executeNativeQueriesInTransaction(async (connection) => {
+    sqlOperations.forEach(
+      async (q) =>
+        await sqlExecutor.execute(q, null, { wrappedConnection: connection })
+    );
+  });
   logger.info(`[ALLOWLIST PERSISTED] [COLLECTION ID ${body.collection_id}]`);
 }
 
