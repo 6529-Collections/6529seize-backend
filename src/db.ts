@@ -18,10 +18,9 @@ import {
   MEMES_CONTRACT,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
-  TDH_HISTORY_TABLE,
   DELEGATIONS_TABLE,
-  MEME_LAB_ROYALTIES_TABLE,
-  MEME_LAB_ARTIST_ROYALTIES_TABLE
+  MEME_LAB_ARTIST_ROYALTIES_TABLE,
+  MEME_LAB_ROYALTIES_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -429,7 +428,6 @@ export async function fetchAllConsolidatedTDH() {
 export async function fetchConsolidationDisplay(
   myWallets: string[]
 ): Promise<string> {
-  const placeholders = myWallets.map(() => '?').join(', ');
   const sql = `SELECT * FROM ${ENS_TABLE} WHERE wallet IN (:wallets)`;
   const results = await sqlExecutor.execute(sql, {
     wallets: myWallets.join(',')
@@ -807,17 +805,18 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
   if (ownersTags.length > 0) {
     logger.info(`[OWNERS TAGS] [PERSISTING ${ownersTags.length} WALLETS]`);
 
-    const repo = AppDataSource.getRepository(OwnerTags);
-
-    await Promise.all(
-      ownersTags.map(async (owner) => {
-        if (0 >= owner.memes_balance && 0 >= owner.gradients_balance) {
-          await repo.remove(owner);
-        } else {
-          await repo.save(owner);
-        }
-      })
-    );
+    await AppDataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(OwnerTags);
+      await Promise.all(
+        ownersTags.map(async (owner) => {
+          if (0 >= owner.memes_balance && 0 >= owner.gradients_balance) {
+            await repo.remove(owner);
+          } else {
+            await repo.upsert(owner, ['wallet']);
+          }
+        })
+      );
+    });
 
     logger.info(`[OWNERS TAGS] [ALL ${ownersTags.length} WALLETS PERSISTED]`);
   }
@@ -1283,7 +1282,6 @@ export async function persistDelegations(
 }
 
 export async function fetchPrimaryWallet(tdhBlock: number, wallets: string[]) {
-  const placeholders = wallets.map(() => '?').join(', ');
   const sql = `SELECT wallet from ${WALLETS_TDH_TABLE} where wallet in (:wallets) AND block=:block order by boosted_tdh desc limit 1`;
   const results: any[] = await sqlExecutor.execute(sql, {
     wallets: wallets.join(','),
@@ -1329,7 +1327,6 @@ export async function fetchLatestNftUri(tokenId: number, contract: string) {
 }
 
 export async function fetchHasEns(wallets: string[]) {
-  const placeholders = wallets.map(() => '?').join(', ');
   const sql = `SELECT COUNT(*) as ens_count FROM ${ENS_TABLE} WHERE wallet IN (:wallets) AND display IS NOT NULL`;
 
   const results = await sqlExecutor.execute(sql, {

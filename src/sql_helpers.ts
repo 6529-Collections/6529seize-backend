@@ -35,8 +35,8 @@ export function getConsolidationsSql() {
   return sql;
 }
 
-export function getProfilePageSql() {
-  return `SELECT 
+export function getProfilePageSql(wallets: string[]) {
+  const sql = `SELECT 
     (SELECT SUM(token_count) FROM transactions 
      WHERE from_address IN (:wallets) AND value = 0) AS transfers_out,
     (SELECT SUM(token_count) FROM transactions 
@@ -225,13 +225,13 @@ export function getProfilePageSql() {
      WHERE to_address IN (:wallets) AND value > 0 AND contract=:gradient_contract AS purchases_value_gradients,
     (SELECT SUM(token_count) FROM transactions 
      WHERE to_address IN (:wallets) AND value = 0 AND contract=:gradient_contract AS transfers_in_gradients`;
-}
-
-export function getProfilePageSqlParams(wallets: string[]) {
   return {
-    wallets: wallets,
-    memes_contract: MEMES_CONTRACT,
-    gradient_contract: GRADIENT_CONTRACT
+    sql,
+    params: {
+      wallets: wallets,
+      memes_contract: MEMES_CONTRACT,
+      gradient_contract: GRADIENT_CONTRACT
+    }
   };
 }
 
