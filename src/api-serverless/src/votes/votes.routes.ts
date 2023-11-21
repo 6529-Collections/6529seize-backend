@@ -118,9 +118,14 @@ const WalletVoteRequestSchema = Joi.object<{
   amount: number;
 }>({
   voterWallet: Joi.string().regex(WALLET_REGEX).required(),
-  matter: Joi.string().required(),
   matterTargetType: Joi.string()
     .valid(...Object.values(VoteMatterTargetType))
+    .required(),
+  matter: Joi.string()
+    .when('matterTargetType', {
+      is: VoteMatterTargetType.PROFILE_ID,
+      then: Joi.string().equal('CIC').required()
+    })
     .required(),
   matterTargetId: Joi.string()
     .when('matterTargetType', {
