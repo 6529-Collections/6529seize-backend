@@ -18,7 +18,6 @@ import {
   MEMES_CONTRACT,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
-  TDH_HISTORY_TABLE,
   DELEGATIONS_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
@@ -426,7 +425,6 @@ export async function fetchAllConsolidatedTDH() {
 export async function fetchConsolidationDisplay(
   myWallets: string[]
 ): Promise<string> {
-  const placeholders = myWallets.map(() => '?').join(', ');
   const sql = `SELECT * FROM ${ENS_TABLE} WHERE wallet IN (:wallets)`;
   const results = await sqlExecutor.execute(sql, {
     wallets: myWallets.join(',')
@@ -1241,7 +1239,6 @@ export async function persistDelegations(
 }
 
 export async function fetchPrimaryWallet(tdhBlock: number, wallets: string[]) {
-  const placeholders = wallets.map(() => '?').join(', ');
   const sql = `SELECT wallet from ${WALLETS_TDH_TABLE} where wallet in (:wallets) AND block=:block order by boosted_tdh desc limit 1`;
   const results: any[] = await sqlExecutor.execute(sql, {
     wallets: wallets.join(','),
@@ -1287,7 +1284,6 @@ export async function fetchLatestNftUri(tokenId: number, contract: string) {
 }
 
 export async function fetchHasEns(wallets: string[]) {
-  const placeholders = wallets.map(() => '?').join(', ');
   const sql = `SELECT COUNT(*) as ens_count FROM ${ENS_TABLE} WHERE wallet IN (:wallets) AND display IS NOT NULL`;
 
   const results = await sqlExecutor.execute(sql, {
