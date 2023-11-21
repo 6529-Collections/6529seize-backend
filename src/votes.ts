@@ -268,7 +268,7 @@ export async function getCategoriesInfoOnMatter({
       walletsVotesByCategory[c.matter_category_tag] ?? 0,
     category_tag: c.matter_category_tag,
     category_enabled: !c.disabled_time,
-    category_display_name: c.matter_category_displayName,
+    category_display_name: c.matter_category_display_name,
     category_media: JSON.parse(c.matter_category_media || '{}')
   }));
 }

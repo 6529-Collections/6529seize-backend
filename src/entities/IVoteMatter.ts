@@ -13,7 +13,7 @@ export class VoteMatterCategory {
   @Column({ type: 'varchar', length: 256 })
   matter_category_tag!: string;
   @Column({ type: 'varchar', length: 256 })
-  matter_category_displayName!: string;
+  matter_category_display_name!: string;
   @Column({ type: 'json', nullable: true })
   matter_category_media!: string | null;
   @Column({ type: 'timestamp' })
@@ -28,5 +28,6 @@ export interface VoteCategoryMedia {
 }
 
 export enum VoteMatterTargetType {
-  WALLET = 'WALLET'
+  WALLET = 'WALLET',
+  PROFILE_ID = 'PROFILE_ID'
 }
