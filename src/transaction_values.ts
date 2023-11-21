@@ -179,7 +179,7 @@ async function resolveValue(t: Transaction) {
 
     const trfs = await alchemy.core.getAssetTransfers(settings);
     const trf = trfs.transfers.find((at) => at.hash == t.transaction);
-    if (trf && trf.value) {
+    if (trf?.value) {
       t.value = trf.value;
     }
   }
