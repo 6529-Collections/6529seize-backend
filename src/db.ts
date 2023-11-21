@@ -19,7 +19,9 @@ import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
   TDH_HISTORY_TABLE,
-  DELEGATIONS_TABLE
+  DELEGATIONS_TABLE,
+  MEME_LAB_ROYALTIES_TABLE,
+  MEME_LAB_ARTIST_ROYALTIES_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -259,9 +261,10 @@ export async function findDuplicateTransactionHashes(): Promise<string[]> {
 }
 
 export async function findTransactionsByHash(
+  table: string,
   hashes: string[]
 ): Promise<Transaction[]> {
-  const sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE transaction in (${mysql.escape(
+  const sql = `SELECT * FROM ${table} WHERE transaction in (${mysql.escape(
     hashes
   )}) ORDER BY transaction_date DESC;`;
   const results = await sqlExecutor.execute(sql);
@@ -432,7 +435,6 @@ export async function fetchConsolidationDisplay(
     wallets: myWallets.join(',')
   });
   const displayArray: string[] = [];
-
   myWallets.forEach((w) => {
     const result = results.find((r: any) => areEqualAddresses(r.wallet, w));
     if (result && result.display && !result.display.includes('?')) {
@@ -1028,6 +1030,37 @@ export async function persistLabNFTS(labnfts: LabNFT[]) {
       }
     })
   );
+}
+
+export async function persistLabNFTRoyalties() {
+  const labNfts = await fetchAllMemeLabNFTs();
+  const artistRoyalties = await AppDataSource.createQueryBuilder()
+    .select('*')
+    .from(MEME_LAB_ARTIST_ROYALTIES_TABLE, 'artist_royalties')
+    .getRawMany();
+
+  const labRoyalties: { id: number; royalty_split: number }[] = [];
+  labNfts.forEach((labNft: LabNFT) => {
+    const artistRoyalty = artistRoyalties.find((ar) =>
+      labNft.artist.includes(ar.artist)
+    );
+    labRoyalties.push({
+      id: labNft.id,
+      royalty_split: artistRoyalty ? artistRoyalty.royalty_split : 0
+    });
+  });
+
+  await AppDataSource.createQueryBuilder()
+    .insert()
+    .into(MEME_LAB_ROYALTIES_TABLE)
+    .values(
+      labRoyalties.map((labR) => ({
+        token_id: labR.id,
+        royalty_split: labR.royalty_split
+      }))
+    )
+    .orIgnore()
+    .execute();
 }
 
 export async function persistLabExtendedData(labMeta: LabExtendedData[]) {

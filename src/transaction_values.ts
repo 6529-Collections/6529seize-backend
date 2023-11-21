@@ -1,12 +1,21 @@
-import { Alchemy, Utils, fromHex } from 'alchemy-sdk';
+import {
+  Alchemy,
+  AssetTransfersCategory,
+  AssetTransfersParams,
+  Utils,
+  fromHex
+} from 'alchemy-sdk';
 import {
   ALCHEMY_SETTINGS,
   WETH_TOKEN_ADDRESS,
   MEMELAB_CONTRACT,
+  MEMELAB_DEPLOYER,
   MEMELAB_ROYALTIES_ADDRESS,
+  MEMES_DEPLOYER,
   NULL_ADDRESS,
   OPENSEA_ADDRESS,
-  ROYALTIES_ADDRESS
+  ROYALTIES_ADDRESS,
+  TRANSACTIONS_MEME_LAB_TABLE
 } from './constants';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
@@ -90,8 +99,10 @@ async function resolveValue(t: Transaction) {
   t.royalties = 0;
 
   let royaltiesAddress = ROYALTIES_ADDRESS;
+  let deployerAddress = MEMES_DEPLOYER;
   if (areEqualAddresses(t.contract, MEMELAB_CONTRACT)) {
     royaltiesAddress = MEMELAB_ROYALTIES_ADDRESS;
+    deployerAddress = MEMELAB_DEPLOYER;
   }
 
   if (transaction) {
@@ -152,6 +163,24 @@ async function resolveValue(t: Transaction) {
         t.value = totalValue;
         t.royalties = totalRoyalties;
       }
+    }
+  }
+
+  if (areEqualAddresses(t.from_address, NULL_ADDRESS)) {
+    const block = `0x${t.block.toString(16)}`;
+    const settings: AssetTransfersParams = {
+      category: [AssetTransfersCategory.INTERNAL],
+      excludeZeroValue: true,
+      maxCount: 150,
+      fromBlock: block,
+      toBlock: block,
+      toAddress: deployerAddress
+    };
+
+    const trfs = await alchemy.core.getAssetTransfers(settings);
+    const trf = trfs.transfers.find((at) => at.hash == t.transaction);
+    if (trf && trf.value) {
+      t.value = trf.value;
     }
   }
 
@@ -239,6 +268,7 @@ export const debugValues = async () => {
 
   // SAMPLE TRX HASHES
   const transactions = [
+    '0x3a79990d01b87d77741227a81db0201b31d2e711aefff943c086d2bbc90a0605',
     '0x0010dcbac1dcdebd2f4186342dda88ec8889bf0ffb9445b7598ec0172d671b07',
     '0x4144495f6932b53d48469b76876a82ffa0172d69dc9fc69f2120444b6df2a1b7',
     '0xdf73c5f14da545c5da2d86e9f9b9733541a003609374c456d7c3badad234b16a',
@@ -249,7 +279,9 @@ export const debugValues = async () => {
 
   await Promise.all(
     transactions.map(async (transactionHash) => {
-      const tr = await findTransactionsByHash([transactionHash]);
+      const tr = await findTransactionsByHash(TRANSACTIONS_MEME_LAB_TABLE, [
+        transactionHash
+      ]);
 
       let totalValue = 0;
       let totalRoyalties = 0;
@@ -266,7 +298,6 @@ export const debugValues = async () => {
       }
       logger.info({
         transactionHash: transactionHash,
-        message: 'total value',
         totalValue: totalValue,
         totalRoyalties: totalRoyalties
       });

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { fetchRoyaltiesMemes, fetchRoyaltiesUploads } from '../../../db-api';
+import { fetchRoyalties, fetchRoyaltiesUploads } from '../../../db-api';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 import {
@@ -26,8 +26,12 @@ interface RoyaltyResponse {
   name: string;
   artist: string;
   thumbnail?: string;
-  total_volume: number;
-  total_royalties: number;
+  primary_volume: number;
+  secondary_volume: number;
+  royalties: number;
+  royalty_split: number;
+  primary_artist_take: number;
+  secondary_artist_take: number;
 }
 
 interface RoyaltyUploadResponse {
@@ -37,10 +41,12 @@ interface RoyaltyUploadResponse {
 }
 
 router.get(
-  `/memes`,
+  `/collection/:collection_type`,
   function (
     req: Request<
-      {},
+      {
+        collection_type: string;
+      },
       {},
       {},
       {
@@ -51,28 +57,19 @@ router.get(
     >,
     res: Response<RoyaltyResponse[] | string>
   ) {
-    const fromDate: string = req.query.from_date as string;
-    const toDate: string = req.query.to_date as string;
-    const download = req.query.download === 'true';
-
-    fetchRoyaltiesMemes(fromDate, toDate).then(
-      async (results: RoyaltyResponse[]) => {
-        logger.info(
-          `[FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${results.length}`
-        );
-
-        if (results.length > 0) {
-          mcache.put(cacheKey(req), results, CACHE_TIME_MS);
-        }
-
-        if (download) {
-          results.forEach((r) => delete r.thumbnail);
-          returnCSVResult('royalties_memes', results, res);
-        } else {
-          returnJsonResult(results, req, res);
-        }
-      }
-    );
+    const collectionType = req.params.collection_type;
+    if (collectionType === 'memes' || collectionType === 'memelab') {
+      return returnRoyalties(
+        collectionType,
+        req.query.from_date as string,
+        req.query.to_date as string,
+        req.query.download === 'true',
+        req,
+        res
+      );
+    } else {
+      return res.status(404).send('Not found');
+    }
   }
 );
 
@@ -100,3 +97,33 @@ router.get(
     });
   }
 );
+
+function returnRoyalties(
+  type: 'memes' | 'memelab',
+  fromDate: string,
+  toDate: string,
+  download: boolean,
+  req: Request,
+  res: Response
+) {
+  fetchRoyalties(type, fromDate, toDate).then(
+    async (results: RoyaltyResponse[]) => {
+      logger.info(
+        `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${
+          results.length
+        }`
+      );
+
+      if (results.length > 0) {
+        mcache.put(cacheKey(req), results, CACHE_TIME_MS);
+      }
+
+      if (download) {
+        results.forEach((r) => delete r.thumbnail);
+        return returnCSVResult(`royalties_${type}`, results, res);
+      } else {
+        return returnJsonResult(results, req, res);
+      }
+    }
+  );
+}

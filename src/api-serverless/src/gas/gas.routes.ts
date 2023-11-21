@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { fetchGasMemes } from '../../../db-api';
+import { fetchGas } from '../../../db-api';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 import { CACHE_TIME_MS } from '../api-constants';
@@ -22,10 +22,12 @@ interface GasResponse {
 }
 
 router.get(
-  `/memes`,
+  `/collection/:collection_type`,
   function (
     req: Request<
-      {},
+      {
+        collection_type: string;
+      },
       {},
       {},
       {
@@ -36,25 +38,46 @@ router.get(
     >,
     res: Response<GasResponse[] | string>
   ) {
-    const fromDate: string = req.query.from_date as string;
-    const toDate: string = req.query.to_date as string;
-    const download = req.query.download === 'true';
-
-    fetchGasMemes(fromDate, toDate).then(async (results: GasResponse[]) => {
-      logger.info(
-        `[FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${results.length}`
+    const collectionType = req.params.collection_type;
+    if (collectionType === 'memes' || collectionType === 'memelab') {
+      return returnGas(
+        collectionType,
+        req.query.from_date as string,
+        req.query.to_date as string,
+        req.query.download === 'true',
+        req,
+        res
       );
-
-      if (results.length > 0) {
-        mcache.put(cacheKey(req), results, CACHE_TIME_MS);
-      }
-
-      if (download) {
-        results.forEach((r) => delete r.thumbnail);
-        returnCSVResult('gas_memes', results, res);
-      } else {
-        returnJsonResult(results, req, res);
-      }
-    });
+    } else {
+      return res.status(404).send('Not found');
+    }
   }
 );
+
+function returnGas(
+  type: 'memes' | 'memelab',
+  fromDate: string,
+  toDate: string,
+  download: boolean,
+  req: Request,
+  res: Response
+) {
+  fetchGas(type, fromDate, toDate).then(async (results: GasResponse[]) => {
+    logger.info(
+      `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${
+        results.length
+      }`
+    );
+
+    if (results.length > 0) {
+      mcache.put(cacheKey(req), results, CACHE_TIME_MS);
+    }
+
+    if (download) {
+      results.forEach((r) => delete r.thumbnail);
+      return returnCSVResult(`gas_${type}`, results, res);
+    } else {
+      return returnJsonResult(results, req, res);
+    }
+  });
+}
