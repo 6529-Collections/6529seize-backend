@@ -53,7 +53,7 @@ import {
   getRoyaltiesSql
 } from './sql_helpers';
 import { getProof } from './merkle_proof';
-import { setSqlExecutor } from './sql-executor';
+import { ConnectionWrapper, setSqlExecutor } from './sql-executor';
 import * as profiles from './profiles/profiles';
 
 import * as mysql from 'mysql';
@@ -122,85 +122,144 @@ export async function connect() {
       sql: string,
       params?: Record<string, any>,
       options?: DbQueryOptions
-    ) => execSQLWithParams(sql, params, options)
+    ) => execSQLWithParams(sql, params, options),
+    executeNativeQueriesInTransaction(executable) {
+      return execNativeTransactionally(executable);
+    }
   });
   logger.info(`[CONNECTION POOLS CREATED]`);
 }
 
-function getPool(sql: string, queryOptions?: DbQueryOptions) {
-  switch (queryOptions?.forcePool) {
-    case DbPoolName.READ:
-      return read_pool;
-    case DbPoolName.WRITE:
-      return write_pool;
-    default:
-      return WRITE_OPERATIONS.some((op) => sql.toUpperCase().startsWith(op))
-        ? write_pool
-        : read_pool;
-  }
+function getPoolNameBySql(sql: string): DbPoolName {
+  return WRITE_OPERATIONS.some((op) => sql.toUpperCase().startsWith(op))
+    ? DbPoolName.WRITE
+    : DbPoolName.READ;
 }
 
-export function execSQL(sql: string, options?: DbQueryOptions): Promise<any> {
-  const my_pool: mysql.Pool = getPool(sql, options);
+function getDbConnecionForQuery(
+  sql: string,
+  forcePool?: DbPoolName
+): Promise<mysql.PoolConnection> {
+  const poolName = forcePool ?? getPoolNameBySql(sql);
+  return getDbConnectionByPoolName(poolName);
+}
+
+function getPoolByName(poolName: DbPoolName): mysql.Pool {
+  const poolsMap: Record<DbPoolName, mysql.Pool> = {
+    [DbPoolName.READ]: read_pool,
+    [DbPoolName.WRITE]: write_pool
+  };
+  return poolsMap[poolName];
+}
+
+function getDbConnectionByPoolName(
+  poolName: DbPoolName
+): Promise<mysql.PoolConnection> {
+  const pool = getPoolByName(poolName);
   return new Promise((resolve, reject) => {
-    my_pool.getConnection(function (
+    pool.getConnection(function (
       err: mysql.MysqlError,
       dbcon: mysql.PoolConnection
     ) {
       if (err) {
-        logger.error('custom err', err);
-        dbcon?.release();
-        throw err;
+        logger.error(`Failed to establish connection to ${poolName}`, err);
+        reject(err);
       }
-      dbcon.query(sql, (err: any, result: any[]) => {
-        dbcon?.release();
-        if (err) {
-          logger.error('custom err', err);
-          return reject(err);
-        }
-        resolve(Object.values(JSON.parse(JSON.stringify(result))));
-      });
+      resolve(dbcon);
     });
   });
 }
 
-export function execSQLWithParams(
+export async function execSQL(
+  sql: string,
+  options?: {
+    forcePool?: DbPoolName;
+    wrappedConnection?: ConnectionWrapper<mysql.PoolConnection>;
+  }
+): Promise<any> {
+  const externallyGivenConnection = options?.wrappedConnection?.connection;
+  const connection =
+    externallyGivenConnection ||
+    (await getDbConnecionForQuery(sql, options?.forcePool));
+  return new Promise((resolve, reject) => {
+    connection.query(sql, (err: any, result: any[]) => {
+      if (!externallyGivenConnection) {
+        connection?.release();
+      }
+      if (err) {
+        logger.error(`Failed to execute SQL query`, err);
+        reject(err);
+      } else {
+        resolve(Object.values(JSON.parse(JSON.stringify(result))));
+      }
+    });
+  });
+}
+
+async function execNativeTransactionally<T>(
+  executable: (connectionWrapper: ConnectionWrapper<any>) => Promise<T>
+): Promise<T> {
+  const connection = await getDbConnectionByPoolName(DbPoolName.WRITE);
+  try {
+    connection.beginTransaction();
+    const result = await executable({ connection: connection });
+    return await new Promise((resolve, reject) => {
+      connection.commit((err: any) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(result);
+        }
+      });
+    });
+  } catch (e) {
+    connection.rollback();
+    throw e;
+  } finally {
+    connection.release();
+  }
+}
+
+function prepareStatemant(query: string, values: Record<string, any>) {
+  return query.replace(/:(\w+)/g, function (txt: any, key: any) {
+    if (values.hasOwnProperty(key)) {
+      const value = values[key];
+      if (Array.isArray(value)) {
+        return value.map((v) => mysql.escape(v)).join(', ');
+      }
+      return mysql.escape(value);
+    }
+    return txt;
+  });
+}
+
+async function execSQLWithParams<T>(
   sql: string,
   params?: Record<string, any>,
-  options?: { forcePool?: DbPoolName }
-): Promise<any> {
-  const my_pool: mysql.Pool = getPool(sql, options);
+  options?: {
+    forcePool?: DbPoolName;
+    wrappedConnection?: ConnectionWrapper<mysql.PoolConnection>;
+  }
+): Promise<T[]> {
+  const externallyGivenConnection = options?.wrappedConnection?.connection;
+  const connection: mysql.PoolConnection =
+    externallyGivenConnection ||
+    (await getDbConnecionForQuery(sql, options?.forcePool));
   return new Promise((resolve, reject) => {
-    my_pool.getConnection(function (
-      err: mysql.MysqlError,
-      dbcon: mysql.PoolConnection
-    ) {
-      if (err) {
-        logger.error('custom err', err);
-        dbcon?.release();
-        throw err;
+    connection.config.queryFormat = function (query, values) {
+      if (!values) return query;
+      return prepareStatemant(query, values);
+    };
+    connection.query({ sql, values: params }, (err: any, result: T[]) => {
+      if (!externallyGivenConnection) {
+        connection?.release();
       }
-      dbcon.config.queryFormat = function (query, values) {
-        if (!values) return query;
-        return query.replace(/\:(\w+)/g, function (txt: any, key: any) {
-          if (values.hasOwnProperty(key)) {
-            const value = values[key];
-            if (Array.isArray(value)) {
-              return value.map((v) => mysql.escape(v)).join(', ');
-            }
-            return mysql.escape(value);
-          }
-          return txt;
-        });
-      };
-      dbcon.query({ sql, values: params }, (err: any, result: any[]) => {
-        dbcon?.release();
-        if (err) {
-          logger.error('custom err', err);
-          return reject(err);
-        }
-        resolve(result);
-      });
+      if (err) {
+        logger.error(`Failed to execute SQL query`, err);
+        reject(err);
+      } else {
+        resolve(Object.values(JSON.parse(JSON.stringify(result))));
+      }
     });
   });
 }
@@ -738,12 +797,25 @@ export async function fetchTransactions(
     if (resolvedWallets.length == 0) {
       return returnEmpty();
     }
-    filters = constructFilters(
-      filters,
-      `(from_address in (${mysql.escape(
-        resolvedWallets
-      )}) OR to_address in (${mysql.escape(resolvedWallets)}))`
-    );
+
+    if (type_filter == 'purchases') {
+      filters = constructFilters(
+        filters,
+        `to_address in (${mysql.escape(resolvedWallets)})`
+      );
+    } else if (type_filter === 'sales') {
+      filters = constructFilters(
+        filters,
+        `from_address in (${mysql.escape(resolvedWallets)})`
+      );
+    } else {
+      filters = constructFilters(
+        filters,
+        `(from_address in (${mysql.escape(
+          resolvedWallets
+        )}) OR to_address in (${mysql.escape(resolvedWallets)}))`
+      );
+    }
   }
   if (contracts) {
     filters = constructFilters(
@@ -758,8 +830,11 @@ export async function fetchTransactions(
     let newTypeFilter = '';
     switch (type_filter) {
       case 'sales':
+      case 'purchases':
         newTypeFilter += `value > 0 AND from_address != ${mysql.escape(
           NULL_ADDRESS
+        )} and from_address != ${mysql.escape(
+          MANIFOLD
         )} and to_address != ${mysql.escape(NULL_ADDRESS)}`;
         break;
       case 'airdrops':

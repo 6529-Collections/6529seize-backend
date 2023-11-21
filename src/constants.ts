@@ -20,6 +20,7 @@ export const UPLOADS_TABLE = 'uploads';
 export const CONSOLIDATED_UPLOADS_TABLE = 'uploads_consolidation';
 export const ENS_TABLE = 'ens';
 export const PROFILES_TABLE = 'profiles';
+export const PROFILES_ARCHIVE_TABLE = 'profiles_archive';
 export const USER_TABLE = 'user';
 export const TEAM_TABLE = 'team';
 export const DISTRIBUTION_TABLE = 'distribution';
@@ -60,6 +61,7 @@ export const OPENSEA_ADDRESS = '0x00000000000000ADc04C56Bf30aC9d3c0aAF14dC';
 export const MEMES_DEPLOYER = '0x4B76837F8D8Ad0A28590d06E53dCD44b6B7D4554';
 export const MEMELAB_DEPLOYER = '0xb26c452e8ac20ae7445fcf46b6478d3984f5d8e9';
 export const LOOKS_TOKEN_ADDRESS = '0xf4d2888d29d722226fafa5d9b24f9164c092421e';
+export const WETH_TOKEN_ADDRESS = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
 
 export const ALCHEMY_SETTINGS = {
   network: Network.ETH_MAINNET,
