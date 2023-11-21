@@ -244,10 +244,14 @@ export function getRoyaltiesSql(
     type === 'memes' ? TRANSACTIONS_TABLE : TRANSACTIONS_MEME_LAB_TABLE;
   const nftsTable = type === 'memes' ? NFTS_TABLE : NFTS_MEME_LAB_TABLE;
   const contract = type === 'memes' ? MEMES_CONTRACT : MEMELAB_CONTRACT;
-  const royaltySplitSource =
+  const primaryRoyaltySplitSource =
     type === 'memes'
       ? MEMES_ROYALTIES_RATE
-      : `${MEME_LAB_ROYALTIES_TABLE}.royalty_split`;
+      : `${MEME_LAB_ROYALTIES_TABLE}.primary_royalty_split`;
+  const secondaryRoyaltySplitSource =
+    type === 'memes'
+      ? MEMES_ROYALTIES_RATE
+      : `${MEME_LAB_ROYALTIES_TABLE}.secondary_royalty_split`;
 
   let filters = constructFilters('', `${transactionsTable}.contract=:contract`);
   const params: any = {
@@ -286,9 +290,10 @@ export function getRoyaltiesSql(
       aggregated.primary_total_volume as primary_volume,
       aggregated.secondary_total_volume as secondary_volume,
       aggregated.total_royalties as royalties,
-      ${royaltySplitSource} as royalty_split,
-      aggregated.primary_total_volume * ${royaltySplitSource} AS primary_artist_take,
-      aggregated.total_royalties * ${royaltySplitSource} AS secondary_artist_take
+      ${primaryRoyaltySplitSource} as primary_royalty_split,
+      ${secondaryRoyaltySplitSource} as secondary_royalty_split,
+      aggregated.primary_total_volume * ${primaryRoyaltySplitSource} AS primary_artist_take,
+      aggregated.total_royalties * ${secondaryRoyaltySplitSource} AS secondary_artist_take
     FROM 
       (SELECT 
         token_id,

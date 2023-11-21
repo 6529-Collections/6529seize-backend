@@ -29,7 +29,8 @@ interface RoyaltyResponse {
   primary_volume: number;
   secondary_volume: number;
   royalties: number;
-  royalty_split: number;
+  primary_royalty_split: number;
+  secondary_royalty_split: number;
   primary_artist_take: number;
   secondary_artist_take: number;
 }

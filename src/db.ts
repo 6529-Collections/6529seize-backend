@@ -1040,14 +1040,23 @@ export async function persistLabNFTRoyalties() {
     .from(MEME_LAB_ARTIST_ROYALTIES_TABLE, 'artist_royalties')
     .getRawMany();
 
-  const labRoyalties: { id: number; royalty_split: number }[] = [];
+  const labRoyalties: {
+    id: number;
+    primary_royalty_split: number;
+    secondary_royalty_split: number;
+  }[] = [];
   labNfts.forEach((labNft: LabNFT) => {
     const artistRoyalty = artistRoyalties.find((ar) =>
       labNft.artist.includes(ar.artist)
     );
     labRoyalties.push({
       id: labNft.id,
-      royalty_split: artistRoyalty ? artistRoyalty.royalty_split : 0
+      primary_royalty_split: artistRoyalty
+        ? artistRoyalty.primary_royalty_split
+        : 0,
+      secondary_royalty_split: artistRoyalty
+        ? artistRoyalty.secondary_royalty_split
+        : 0
     });
   });
 
@@ -1057,7 +1066,8 @@ export async function persistLabNFTRoyalties() {
     .values(
       labRoyalties.map((labR) => ({
         token_id: labR.id,
-        royalty_split: labR.royalty_split
+        primary_royalty_split: labR.primary_royalty_split,
+        secondary_royalty_split: labR.secondary_royalty_split
       }))
     )
     .orIgnore()

@@ -20,8 +20,8 @@ export const handler = async (event?: any, context?: any) => {
 };
 
 async function memeLabLoop() {
-  await memeLabTransactions();
-  await memeLabOwners();
+  // await memeLabTransactions();
+  // await memeLabOwners();
   await memeLabNfts();
-  await memeLabExtendedData();
+  // await memeLabExtendedData();
 }
