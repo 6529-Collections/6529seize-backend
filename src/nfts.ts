@@ -81,7 +81,7 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
   await Promise.all(
     allMemesNFTS.map(async (mnft) => {
       const tokenId = parseInt(mnft.tokenId);
-      const fullMetadata = await (await fetch(mnft.tokenUri!.raw)).json();
+      const fullMetadata = await (await fetch(mnft.raw.tokenUri!)).json();
 
       const createdTransactions = transactions.filter(
         (t) =>
@@ -228,7 +228,7 @@ async function processGradients(
     allGradientsNFTS.map(async (gnft) => {
       const tokenId = parseInt(gnft.tokenId);
 
-      const fullMetadata = await (await fetch(gnft.tokenUri!.raw)).json();
+      const fullMetadata = await (await fetch(gnft.raw.tokenUri!)).json();
 
       const createdTransactions = transactions.filter(
         (t) =>

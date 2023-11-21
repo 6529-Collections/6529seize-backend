@@ -85,7 +85,7 @@ async function processNFTs(
           s.id == tokenId && areEqualAddresses(s.contract, MEMELAB_CONTRACT)
       );
 
-      const fullMetadata = await (await fetch(mnft.tokenUri!.raw)).json();
+      const fullMetadata = await (await fetch(mnft.raw.tokenUri!)).json();
 
       const tokenTransactions = [...startingTransactions]
         .filter((t) => t.token_id == tokenId)
@@ -379,7 +379,7 @@ export async function memeLabOwners() {
         wallet: ownerBalances.ownerAddress,
         token_id: fromHex(balance.tokenId),
         contract: MEMELAB_CONTRACT,
-        balance: balance.balance
+        balance: parseInt(balance.balance)
       };
       newOwners.push(owner);
     });

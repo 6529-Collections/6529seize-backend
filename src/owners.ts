@@ -72,7 +72,7 @@ export const findOwners = async () => {
         wallet: ownerBalances.ownerAddress,
         token_id: fromHex(balance.tokenId),
         contract: MEMES_CONTRACT,
-        balance: balance.balance
+        balance: parseInt(balance.balance)
       };
       newOwners.push(owner);
     });
@@ -85,7 +85,7 @@ export const findOwners = async () => {
         wallet: ownerBalances.ownerAddress,
         token_id: fromHex(balance.tokenId),
         contract: GRADIENT_CONTRACT,
-        balance: balance.balance
+        balance: parseInt(balance.balance)
       };
       newOwners.push(owner);
     });
