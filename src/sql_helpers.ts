@@ -14,7 +14,8 @@ import {
   MEME_LAB_ROYALTIES_TABLE,
   MEMELAB_CONTRACT,
   MANIFOLD,
-  NULL_ADDRESS
+  NULL_ADDRESS,
+  ACK_DEPLOYER
 } from './constants';
 import { constructFilters } from './api-serverless/src/api-helpers';
 import { Time } from './time';
@@ -256,7 +257,11 @@ export function getRoyaltiesSql(
 
   let filters = constructFilters('', `${transactionsTable}.contract=:contract`);
   const params: any = {
-    contract: contract
+    contract: contract,
+    no_royalty_artist: '%6529%',
+    null_address: NULL_ADDRESS,
+    manifold: MANIFOLD,
+    ack_deployer: ACK_DEPLOYER
   };
 
   filters = constructFilters(filters, `${transactionsTable}.value > 0`);
@@ -291,6 +296,15 @@ export function getRoyaltiesSql(
       ? `LEFT JOIN ${MEME_LAB_ROYALTIES_TABLE} ON ${nftsTable}.id = ${MEME_LAB_ROYALTIES_TABLE}.token_id`
       : '';
 
+  const specialCasePrimary =
+    type === 'memelab'
+      ? `OR (from_address = :ack_deployer AND token_id = 12)`
+      : '';
+  const specialCaseSecondary =
+    type === 'memelab'
+      ? `AND NOT (from_address = :ack_deployer AND token_id = 12)`
+      : '';
+
   const sql = `
     SELECT 
       ${nftsTable}.id as token_id, 
@@ -310,7 +324,7 @@ export function getRoyaltiesSql(
     LEFT JOIN 
       (SELECT 
         token_id, 
-        SUM(CASE WHEN from_address IN (:null_address, :manifold) THEN value ELSE 0 END) AS primary_total_volume
+        SUM(CASE WHEN from_address IN (:null_address, :manifold) ${specialCasePrimary} THEN value ELSE 0 END) AS primary_total_volume
       FROM 
         ${transactionsTable}
       WHERE contract=:contract
@@ -320,7 +334,7 @@ export function getRoyaltiesSql(
     LEFT JOIN 
       (SELECT 
         token_id,
-        SUM(CASE WHEN from_address NOT IN (:null_address, :manifold) THEN value ELSE 0 END) AS secondary_total_volume,
+        SUM(CASE WHEN from_address NOT IN (:null_address, :manifold) ${specialCaseSecondary} THEN value ELSE 0 END) AS secondary_total_volume,
         SUM(royalties) AS total_royalties
       FROM 
         ${transactionsTable}
@@ -332,10 +346,6 @@ export function getRoyaltiesSql(
     ${nftFilters}
     ORDER BY 
       ${nftsTable}.id ASC;`;
-
-  params.no_royalty_artist = '%6529%';
-  params.null_address = NULL_ADDRESS;
-  params.manifold = MANIFOLD;
 
   return {
     sql,
@@ -367,7 +377,8 @@ export function getGasSql(
   const params: any = {
     contract: contract,
     null_address: NULL_ADDRESS,
-    manifold: MANIFOLD
+    manifold: MANIFOLD,
+    ack_deployer: ACK_DEPLOYER
   };
 
   if (fromDate) {
@@ -395,6 +406,15 @@ export function getGasSql(
     params.artist = `(^|,| and )${artist}($|,| and )`;
   }
 
+  const specialCasePrimary =
+    type === 'memelab'
+      ? `OR (from_address = :ack_deployer AND token_id = 12)`
+      : '';
+  const specialCaseSecondary =
+    type === 'memelab'
+      ? `AND NOT (from_address = :ack_deployer AND token_id = 12)`
+      : '';
+
   const sql = `
     SELECT
       ${nftsTable}.id as token_id,
@@ -410,7 +430,7 @@ export function getGasSql(
       (SELECT
         token_id,
         SUM(CASE
-            WHEN from_address = :null_address OR from_address = :manifold
+            WHEN from_address = :null_address OR from_address = :manifold ${specialCasePrimary}
             THEN gas
             ELSE 0
             END) AS primary_gas
@@ -423,7 +443,7 @@ export function getGasSql(
       (SELECT
         token_id,
         SUM(CASE
-            WHEN from_address != :null_address AND from_address != :manifold
+            WHEN from_address != :null_address AND from_address != :manifold ${specialCaseSecondary}
             THEN gas
             ELSE 0
             END) AS secondary_gas
