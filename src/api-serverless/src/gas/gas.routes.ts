@@ -43,7 +43,7 @@ router.get(
     if (collectionType === 'memes' || collectionType === 'memelab') {
       return returnGas(
         collectionType,
-        req.query.artist,
+        req.query.artist as string,
         req.query.from_date as string,
         req.query.to_date as string,
         req.query.download === 'true',
