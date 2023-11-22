@@ -325,10 +325,10 @@ export async function fetchLatestTransactionsBlockNumber(beforeDate?: Date) {
   return r.length > 0 ? r[0].block : 0;
 }
 
-export async function fetchLatestTDHBDate() {
+export async function fetchLatestTDHBDate(): Promise<Date> {
   const sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await sqlExecutor.execute(sql);
-  return r.length > 0 ? r[0].timestamp : 0;
+  return r.length > 0 ? new Date(r[0].timestamp) : new Date();
 }
 
 export async function fetchLatestTDHBlockNumber() {

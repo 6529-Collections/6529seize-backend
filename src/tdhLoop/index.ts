@@ -49,7 +49,7 @@ async function tdh(force?: boolean) {
   const lastTDHCalc = getLastTDH();
 
   const lastTdhDB = await fetchLatestTDHBDate();
-  const lastTdhFromNow = Time.fromString(lastTdhDB).diffFromNow();
+  const lastTdhFromNow = Time.millis(lastTdhDB.getTime()).diffFromNow();
 
   if (lastTdhFromNow.gt(Time.hours(24)) || force) {
     await findTDH(lastTDHCalc);
