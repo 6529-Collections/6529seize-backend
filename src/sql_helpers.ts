@@ -355,12 +355,38 @@ export function getGasSql(
   const contract = type === 'memes' ? MEMES_CONTRACT : MEMELAB_CONTRACT;
 
   const transactionsAlias = 'distinct_transactions';
-  let filters = constructFilters('', `${transactionsAlias}.contract=:contract`);
+  let primaryFilters = constructFilters(
+    '',
+    `${transactionsAlias}.contract = :contract`
+  );
+  let secondaryFilters = constructFilters(
+    '',
+    `${transactionsAlias}.contract = :contract`
+  );
+
   const params: any = {
-    contract: contract
+    contract: contract,
+    null_address: NULL_ADDRESS,
+    manifold: MANIFOLD
   };
 
-  let nftFilters = constructFilters('', `${nftsTable}.contract=:contract`);
+  if (fromDate) {
+    secondaryFilters = constructFilters(
+      secondaryFilters,
+      `${transactionsAlias}.transaction_date >= :from_date`
+    );
+    params.from_date = fromDate;
+  }
+  if (toDate) {
+    const nextDay = Time.fromString(toDate).plusDays(1).toIsoDateString();
+    secondaryFilters = constructFilters(
+      secondaryFilters,
+      `${transactionsAlias}.transaction_date < :to_date`
+    );
+    params.to_date = nextDay;
+  }
+
+  let nftFilters = constructFilters('', `${nftsTable}.contract = :contract`);
   if (artist) {
     nftFilters = constructFilters(
       nftFilters,
@@ -368,63 +394,46 @@ export function getGasSql(
     );
     params.artist = `(^|,| and )${artist}($|,| and )`;
   }
-  if (fromDate) {
-    filters = constructFilters(
-      filters,
-      `${transactionsAlias}.transaction_date >= :from_date`
-    );
-    params.from_date = fromDate;
-  }
-  if (toDate) {
-    const nextDay = Time.fromString(toDate).plusDays(1).toIsoDateString();
-    filters = constructFilters(
-      filters,
-      `${transactionsAlias}.transaction_date < :to_date`
-    );
-    params.to_date = nextDay;
-  }
 
   const sql = `
     SELECT
-      aggregated.token_id,
+      ${nftsTable}.id as token_id,
       ${nftsTable}.contract,
       ${nftsTable}.name,
       ${nftsTable}.artist,
       ${nftsTable}.thumbnail,
-      aggregated.primary_gas,
-      aggregated.secondary_gas
+      COALESCE(primary_gas.primary_gas, 0) as primary_gas,
+      COALESCE(secondary_gas.secondary_gas, 0) as secondary_gas
     FROM
+      ${nftsTable}
+    LEFT JOIN
       (SELECT
         token_id,
-        contract,
         SUM(CASE
             WHEN from_address = :null_address OR from_address = :manifold
             THEN gas
             ELSE 0
-            END) AS primary_gas,
+            END) AS primary_gas
+      FROM
+        (SELECT DISTINCT transaction, token_id, contract, gas, from_address FROM ${transactionsTable}) AS ${transactionsAlias}
+      ${primaryFilters}
+      GROUP BY token_id) AS primary_gas
+      ON ${nftsTable}.id = primary_gas.token_id
+    LEFT JOIN
+      (SELECT
+        token_id,
         SUM(CASE
             WHEN from_address != :null_address AND from_address != :manifold
             THEN gas
             ELSE 0
             END) AS secondary_gas
       FROM
-        (SELECT DISTINCT transaction, token_id, contract, gas, from_address, transaction_date FROM ${transactionsTable}) as ${transactionsAlias}
-      ${filters}
-      GROUP BY
-        token_id,
-        contract) AS aggregated
-    JOIN
-      ${nftsTable} ON aggregated.contract = ${nftsTable}.contract AND aggregated.token_id = ${nftsTable}.id
+        (SELECT DISTINCT transaction, token_id, contract, gas, from_address, transaction_date FROM ${transactionsTable}) AS ${transactionsAlias}
+      ${secondaryFilters}
+      GROUP BY token_id) AS secondary_gas
+      ON ${nftsTable}.id = secondary_gas.token_id
     ${nftFilters}
-    GROUP BY
-      aggregated.token_id,
-      aggregated.contract
-    ORDER BY
-      aggregated.contract ASC,
-      aggregated.token_id ASC;`;
-
-  params.null_address = NULL_ADDRESS;
-  params.manifold = MANIFOLD;
+    ORDER BY ${nftsTable}.contract ASC, ${nftsTable}.id ASC;`;
 
   return {
     sql,

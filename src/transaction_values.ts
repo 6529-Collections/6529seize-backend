@@ -9,13 +9,13 @@ import {
   ALCHEMY_SETTINGS,
   WETH_TOKEN_ADDRESS,
   MEMELAB_CONTRACT,
-  MEMELAB_DEPLOYER,
   MEMELAB_ROYALTIES_ADDRESS,
   MEMES_DEPLOYER,
   NULL_ADDRESS,
   OPENSEA_ADDRESS,
   ROYALTIES_ADDRESS,
-  TRANSACTIONS_MEME_LAB_TABLE
+  MANIFOLD,
+  TRANSACTIONS_TABLE
 } from './constants';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
@@ -99,10 +99,8 @@ async function resolveValue(t: Transaction) {
   t.royalties = 0;
 
   let royaltiesAddress = ROYALTIES_ADDRESS;
-  let deployerAddress = MEMES_DEPLOYER;
   if (areEqualAddresses(t.contract, MEMELAB_CONTRACT)) {
     royaltiesAddress = MEMELAB_ROYALTIES_ADDRESS;
-    deployerAddress = MEMELAB_DEPLOYER;
   }
 
   if (transaction) {
@@ -166,21 +164,33 @@ async function resolveValue(t: Transaction) {
     }
   }
 
-  if (areEqualAddresses(t.from_address, NULL_ADDRESS)) {
+  if (
+    areEqualAddresses(t.from_address, NULL_ADDRESS) ||
+    areEqualAddresses(t.from_address, MANIFOLD)
+  ) {
     const block = `0x${t.block.toString(16)}`;
     const settings: AssetTransfersParams = {
       category: [AssetTransfersCategory.INTERNAL],
       excludeZeroValue: true,
       maxCount: 150,
       fromBlock: block,
-      toBlock: block,
-      toAddress: deployerAddress
+      toBlock: block
     };
 
-    const trfs = await alchemy.core.getAssetTransfers(settings);
-    const trf = trfs.transfers.find((at) => at.hash == t.transaction);
-    if (trf?.value) {
-      t.value = trf.value;
+    const internlTrfs = await alchemy.core.getAssetTransfers(settings);
+    const filteredInternalTrfs = internlTrfs.transfers.filter(
+      (at) => at.hash == t.transaction
+    );
+    if (filteredInternalTrfs.length > 0) {
+      let newValue = 0;
+      filteredInternalTrfs.forEach((internalT) => {
+        if (internalT?.value) {
+          newValue += internalT.value;
+        }
+      });
+      if (newValue) {
+        t.value = newValue;
+      }
     }
   }
 
@@ -262,12 +272,14 @@ export const debugValues = async () => {
       apiKey: process.env.ALCHEMY_API_KEY
     });
   }
+
   if (!SEAPORT_IFACE) {
     await loadABIs();
   }
 
   // SAMPLE TRX HASHES
   const transactions = [
+    '0x00019e0b982b67b6adbb3982b5bcea8a2e0cf754d06fdfa8ffd1a28fb043d114',
     '0x3a79990d01b87d77741227a81db0201b31d2e711aefff943c086d2bbc90a0605',
     '0x0010dcbac1dcdebd2f4186342dda88ec8889bf0ffb9445b7598ec0172d671b07',
     '0x4144495f6932b53d48469b76876a82ffa0172d69dc9fc69f2120444b6df2a1b7',
@@ -279,7 +291,7 @@ export const debugValues = async () => {
 
   await Promise.all(
     transactions.map(async (transactionHash) => {
-      const tr = await findTransactionsByHash(TRANSACTIONS_MEME_LAB_TABLE, [
+      const tr = await findTransactionsByHash(TRANSACTIONS_TABLE, [
         transactionHash
       ]);
 
