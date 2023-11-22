@@ -76,6 +76,7 @@ import { VoteMatterCategory } from './entities/IVoteMatter';
 import { Profile, ProfileArchived } from './entities/IProfile';
 import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
+import { Time } from './time';
 
 const mysql = require('mysql');
 
@@ -323,10 +324,10 @@ export async function fetchLatestTransactionsBlockNumber(beforeDate?: Date) {
   return r.length > 0 ? r[0].block : 0;
 }
 
-export async function fetchLatestTDHBDate(): Promise<Date> {
+export async function fetchLatestTDHBDate(): Promise<Time> {
   const sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await sqlExecutor.execute(sql);
-  return r.length > 0 ? new Date(r[0].timestamp) : new Date();
+  return r.length > 0 ? Time.fromString(r[0].timestamp) : Time.millis(0);
 }
 
 export async function fetchLatestTDHBlockNumber() {
@@ -427,7 +428,7 @@ export async function fetchConsolidationDisplay(
 ): Promise<string> {
   const sql = `SELECT * FROM ${ENS_TABLE} WHERE wallet IN (:wallets)`;
   const results = await sqlExecutor.execute(sql, {
-    wallets: myWallets.join(',')
+    wallets: myWallets
   });
   const displayArray: string[] = [];
 
@@ -1238,15 +1239,6 @@ export async function persistDelegations(
   );
 }
 
-export async function fetchPrimaryWallet(tdhBlock: number, wallets: string[]) {
-  const sql = `SELECT wallet from ${WALLETS_TDH_TABLE} where wallet in (:wallets) AND block=:block order by boosted_tdh desc limit 1`;
-  const results: any[] = await sqlExecutor.execute(sql, {
-    wallets: wallets.join(','),
-    block: tdhBlock
-  });
-  return results[0].wallet;
-}
-
 export async function persistNftHistory(nftHistory: NFTHistory[]) {
   await AppDataSource.getRepository(NFTHistory).save(nftHistory);
 }
@@ -1287,7 +1279,7 @@ export async function fetchHasEns(wallets: string[]) {
   const sql = `SELECT COUNT(*) as ens_count FROM ${ENS_TABLE} WHERE wallet IN (:wallets) AND display IS NOT NULL`;
 
   const results = await sqlExecutor.execute(sql, {
-    wallets: wallets.join(',')
+    wallets: wallets
   });
   return parseInt(results[0].ens_count) === wallets.length;
 }
