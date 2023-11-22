@@ -2630,10 +2630,11 @@ export async function fetchRoyalties(
 
 export async function fetchGas(
   type: 'memes' | 'memelab',
+  artist: string,
   fromDate: string,
   toDate: string
 ): Promise<GasResponse[]> {
-  const sql = getGasSql(type, fromDate, toDate);
+  const sql = getGasSql(type, artist, fromDate, toDate);
   return execSQLWithParams(sql.sql, sql.params);
 }
 

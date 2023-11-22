@@ -130,7 +130,7 @@ async function start() {
   // await s3.handler();
   // await team.handler();
   // await discoverEnsLoop.handler();
-  await refreshEnsLoop.handler();
+  // await refreshEnsLoop.handler();
   // await royaltiesLoop.handler();
   // await transactions.handlerValues();
   // await rememes.handler();

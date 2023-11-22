@@ -31,6 +31,7 @@ router.get(
       {},
       {},
       {
+        artist?: string;
         from_date?: string;
         to_date?: string;
         download?: string;
@@ -42,6 +43,7 @@ router.get(
     if (collectionType === 'memes' || collectionType === 'memelab') {
       return returnGas(
         collectionType,
+        req.query.artist,
         req.query.from_date as string,
         req.query.to_date as string,
         req.query.download === 'true',
@@ -56,28 +58,31 @@ router.get(
 
 function returnGas(
   type: 'memes' | 'memelab',
+  artist: string,
   fromDate: string,
   toDate: string,
   download: boolean,
   req: Request,
   res: Response
 ) {
-  fetchGas(type, fromDate, toDate).then(async (results: GasResponse[]) => {
-    logger.info(
-      `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${
-        results.length
-      }`
-    );
+  fetchGas(type, artist, fromDate, toDate).then(
+    async (results: GasResponse[]) => {
+      logger.info(
+        `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${
+          results.length
+        }`
+      );
 
-    if (results.length > 0) {
-      mcache.put(cacheKey(req), results, CACHE_TIME_MS);
-    }
+      if (results.length > 0) {
+        mcache.put(cacheKey(req), results, CACHE_TIME_MS);
+      }
 
-    if (download) {
-      results.forEach((r) => delete r.thumbnail);
-      return returnCSVResult(`gas_${type}`, results, res);
-    } else {
-      return returnJsonResult(results, req, res);
+      if (download) {
+        results.forEach((r) => delete r.thumbnail);
+        return returnCSVResult(`gas_${type}`, results, res);
+      } else {
+        return returnJsonResult(results, req, res);
+      }
     }
-  });
+  );
 }

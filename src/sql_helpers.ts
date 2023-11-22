@@ -345,6 +345,7 @@ export function getRoyaltiesSql(
 
 export function getGasSql(
   type: 'memes' | 'memelab',
+  artist: string,
   fromDate: string,
   toDate: string
 ) {
@@ -358,6 +359,15 @@ export function getGasSql(
   const params: any = {
     contract: contract
   };
+
+  let nftFilters = constructFilters('', `${nftsTable}.contract=:contract`);
+  if (artist) {
+    nftFilters = constructFilters(
+      nftFilters,
+      `${nftsTable}.artist REGEXP :artist`
+    );
+    params.artist = `(^|,| and )${artist}($|,| and )`;
+  }
   if (fromDate) {
     filters = constructFilters(
       filters,
@@ -377,6 +387,7 @@ export function getGasSql(
   const sql = `
     SELECT
       aggregated.token_id,
+      ${nftsTable}.contract,
       ${nftsTable}.name,
       ${nftsTable}.artist,
       ${nftsTable}.thumbnail,
@@ -404,12 +415,14 @@ export function getGasSql(
         contract) AS aggregated
     JOIN
       ${nftsTable} ON aggregated.contract = ${nftsTable}.contract AND aggregated.token_id = ${nftsTable}.id
+    ${nftFilters}
     GROUP BY
       aggregated.token_id,
       aggregated.contract
     ORDER BY
       aggregated.contract ASC,
       aggregated.token_id ASC;`;
+
   params.null_address = NULL_ADDRESS;
   params.manifold = MANIFOLD;
 
