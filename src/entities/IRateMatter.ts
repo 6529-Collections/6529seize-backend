@@ -1,13 +1,13 @@
 import { Column, Entity, PrimaryColumn, Unique } from 'typeorm';
-import { VOTE_MATTERS_CATEGORIES_TABLE } from '../constants';
+import { RATE_MATTERS_CATEGORIES_TABLE } from '../constants';
 
-@Entity(VOTE_MATTERS_CATEGORIES_TABLE)
+@Entity(RATE_MATTERS_CATEGORIES_TABLE)
 @Unique(['matter_target_type', 'matter', 'matter_category_tag'])
-export class VoteMatterCategory {
+export class RateMatterCategory {
   @PrimaryColumn({ type: 'varchar', length: 36 })
   id!: string;
   @Column({ type: 'varchar', length: 256 })
-  matter_target_type!: VoteMatterTargetType;
+  matter_target_type!: RateMatterTargetType;
   @Column({ type: 'varchar', length: 256 })
   matter!: string;
   @Column({ type: 'varchar', length: 256 })
@@ -22,12 +22,12 @@ export class VoteMatterCategory {
   disabled_time!: Date | null;
 }
 
-export interface VoteCategoryMedia {
+export interface RateCategoryMedia {
   media_type: string;
   media_url: string;
 }
 
-export enum VoteMatterTargetType {
+export enum RateMatterTargetType {
   WALLET = 'WALLET',
   PROFILE_ID = 'PROFILE_ID'
 }
