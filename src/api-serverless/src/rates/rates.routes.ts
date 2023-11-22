@@ -1,9 +1,9 @@
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
-import * as votes from '../../../votes';
+import * as rates from '../../../rates';
 import * as Joi from 'joi';
-import { VoteCategoryInfo } from '../../../votes';
-import { VoteMatterTargetType } from '../../../entities/IVoteMatter';
+import { RateCategoryInfo } from '../../../rates';
+import { RateMatterTargetType } from '../../../entities/IRateMatter';
 import {
   getWalletOrNull,
   getWalletOrThrow,
@@ -18,7 +18,7 @@ import { Logger } from '../../../logging';
 
 const router = asyncRouter();
 
-const logger = Logger.get('VOTES_API');
+const logger = Logger.get('RATES_API');
 
 router.get(
   `/targets/:matter_target_type/:matter_target_id/matters/:matter`,
@@ -27,7 +27,7 @@ router.get(
     req: Request<
       {
         matter_target_id: string;
-        matter_target_type: VoteMatterTargetType;
+        matter_target_type: RateMatterTargetType;
         matter: string;
       },
       any,
@@ -35,25 +35,25 @@ router.get(
       any,
       any
     >,
-    res: Response<ApiResponse<WalletStateOnMattersVoting>>
+    res: Response<ApiResponse<WalletStateOnMattersRating>>
   ) {
     const { matter, matter_target_type, matter_target_id } = req.params;
     const wallet = getWalletOrNull(req);
-    const { votesLeft, consolidatedWallets } = wallet
-      ? await votes.getVotesLeftOnMatterForWallet({
+    const { ratesLeft, consolidatedWallets } = wallet
+      ? await rates.getRatesLeftOnMatterForWallet({
           wallet,
           matter,
           matterTargetType: matter_target_type
         })
-      : { votesLeft: 0, consolidatedWallets: [] as string[] };
-    const categoriesInfo = await votes.getCategoriesInfoOnMatter({
+      : { ratesLeft: 0, consolidatedWallets: [] as string[] };
+    const categoriesInfo = await rates.getCategoriesInfoOnMatter({
       wallets: consolidatedWallets,
       matter,
       matterTargetType: matter_target_type,
       matterTargetId: matter_target_id
     });
     res.status(200).send({
-      votes_left: votesLeft,
+      rates_left: ratesLeft,
       categories: categoriesInfo
     });
   }
@@ -66,7 +66,7 @@ router.post(
     req: Request<
       {
         matter_target_id: string;
-        matter_target_type: VoteMatterTargetType;
+        matter_target_type: RateMatterTargetType;
         matter: string;
       },
       any,
@@ -78,58 +78,58 @@ router.post(
   ) {
     const walletFromHeader = getWalletOrThrow(req);
     const { matter, matter_target_type, matter_target_id } = req.params;
-    const { amount, category, voter_wallet } = req.body as ApiVoteRequestBody;
-    if (walletFromHeader !== voter_wallet) {
+    const { amount, category, rater } = req.body as ApiRateRequestBody;
+    if (walletFromHeader !== rater) {
       logger.error(
-        `Voter failed to vote on path (target_type=${matter_target_type}; matter=${matter}; category=${category}}) because wallet from auth '${walletFromHeader}' and wallet in body '${voter_wallet}' did not match`
+        `Rater failed to rate on path (target_type=${matter_target_type}; matter=${matter}; category=${category}}) because wallet from auth '${walletFromHeader}' and wallet in body '${rater}' did not match`
       );
       throw new ForbiddenException(
-        'Something went wrong. User is not allowed to vote.'
+        'Something went wrong. User is not allowed to rate.'
       );
     }
-    const voteRequest = getValidatedByJoiOrThrow(
+    const rateRequest = getValidatedByJoiOrThrow(
       {
-        voterWallet: voter_wallet,
+        rater: rater,
         matter,
         matterTargetType: matter_target_type,
         matterTargetId: matter_target_id,
         category: category,
         amount: amount
       },
-      WalletVoteRequestSchema
+      WalletRateRequestSchema
     );
-    await votes.registerUserVote(voteRequest);
+    await rates.registerUserRating(rateRequest);
     res.status(201).send();
   }
 );
 
-interface ApiVoteRequestBody {
-  voter_wallet: string;
+interface ApiRateRequestBody {
+  rater: string;
   amount: number;
   category: string;
 }
 
-const WalletVoteRequestSchema = Joi.object<{
-  voterWallet: string;
+const WalletRateRequestSchema = Joi.object<{
+  rater: string;
   matter: string;
-  matterTargetType: VoteMatterTargetType;
+  matterTargetType: RateMatterTargetType;
   matterTargetId: string;
   category: string;
   amount: number;
 }>({
-  voterWallet: Joi.string().regex(WALLET_REGEX).required(),
+  rater: Joi.string().regex(WALLET_REGEX).required(),
   matterTargetType: Joi.string()
-    .valid(...Object.values(VoteMatterTargetType))
+    .valid(...Object.values(RateMatterTargetType))
     .required(),
   matter: Joi.string()
     .when('matterTargetType', {
-      is: VoteMatterTargetType.PROFILE_ID,
+      is: RateMatterTargetType.PROFILE_ID,
       then: Joi.string().equal('CIC').required()
     })
     .required(),
   matterTargetId: Joi.string()
     .when('matterTargetType', {
-      is: VoteMatterTargetType.WALLET,
+      is: RateMatterTargetType.WALLET,
       then: Joi.string().regex(WALLET_REGEX).required()
     })
     .required(),
@@ -137,9 +137,9 @@ const WalletVoteRequestSchema = Joi.object<{
   amount: Joi.number().integer().options({ convert: false })
 });
 
-export interface WalletStateOnMattersVoting {
-  votes_left: number;
-  categories: VoteCategoryInfo[];
+export interface WalletStateOnMattersRating {
+  rates_left: number;
+  categories: RateCategoryInfo[];
 }
 
 export default router;

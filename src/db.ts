@@ -70,9 +70,9 @@ import {
   formatAddress
 } from './helpers';
 import { getConsolidationsSql } from './sql_helpers';
-import { VoteEvent } from './entities/IVoteEvent';
+import { RateEvent } from './entities/IRateEvent';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
-import { VoteMatterCategory } from './entities/IVoteMatter';
+import { RateMatterCategory } from './entities/IRateMatter';
 import { Profile, ProfileArchived } from './entities/IProfile';
 import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
@@ -115,8 +115,8 @@ export async function connect(entities: any[] = []) {
       GlobalTDHHistory,
       ENS,
       User,
-      VoteEvent,
-      VoteMatterCategory,
+      RateEvent,
+      RateMatterCategory,
       Profile,
       ProfileArchived
     ];

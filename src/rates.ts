@@ -1,42 +1,42 @@
-import { VOTE_EVENTS_TABLE, VOTE_MATTERS_CATEGORIES_TABLE } from './constants';
+import { RATE_EVENTS_TABLE, RATE_MATTERS_CATEGORIES_TABLE } from './constants';
 import { ConnectionWrapper, sqlExecutor } from './sql-executor';
 
 import { randomUUID } from 'crypto';
 import {
-  VoteCategoryMedia,
-  VoteMatterCategory,
-  VoteMatterTargetType
-} from './entities/IVoteMatter';
-import { VoteEvent, VoteEventReason } from './entities/IVoteEvent';
+  RateCategoryMedia,
+  RateMatterCategory,
+  RateMatterTargetType
+} from './entities/IRateMatter';
+import { RateEvent, RateEventReason } from './entities/IRateEvent';
 import { Time } from './time';
 import { BadRequestException } from './exceptions';
 import * as tdh_consolidation from './tdh_consolidation';
 import { Logger } from './logging';
 
-const logger = Logger.get('VOTES');
+const logger = Logger.get('RATES');
 
 async function getCategoriesForMatter({
   matter,
   matterTargetType
 }: {
   matter: string;
-  matterTargetType: VoteMatterTargetType;
-}): Promise<VoteMatterCategory[]> {
+  matterTargetType: RateMatterTargetType;
+}): Promise<RateMatterCategory[]> {
   return sqlExecutor.execute(
-    `SELECT * FROM ${VOTE_MATTERS_CATEGORIES_TABLE} 
+    `SELECT * FROM ${RATE_MATTERS_CATEGORIES_TABLE} 
     WHERE matter_target_type = :matterTargetType 
     AND matter = :matter`,
     { matterTargetType, matter }
   );
 }
 
-async function insertVoteEvent(
-  voteEvent: VoteEvent,
+async function insertRateEvent(
+  event: RateEvent,
   connectionHolder?: ConnectionWrapper<any>
 ) {
   await sqlExecutor.execute(
-    `INSERT INTO ${VOTE_EVENTS_TABLE} (id,
-                                       voter_wallet,
+    `INSERT INTO ${RATE_EVENTS_TABLE} (id,
+                                       rater,
                                        matter_target_id,
                                        matter_target_type,
                                        matter,
@@ -45,7 +45,7 @@ async function insertVoteEvent(
                                        amount,
                                        created_time)
      values (:id,
-             :voterWallet,
+             :rater,
              :matterTargetId,
              :matterTargetType,
              :matter,
@@ -54,60 +54,60 @@ async function insertVoteEvent(
              :amount,
              current_time)`,
     {
-      id: voteEvent.id,
-      voterWallet: voteEvent.voter_wallet,
-      matterTargetId: voteEvent.matter_target_id,
-      matterTargetType: voteEvent.matter_target_type,
-      matter: voteEvent.matter,
-      matterCategory: voteEvent.matter_category,
-      eventReason: voteEvent.event_reason,
-      amount: voteEvent.amount
+      id: event.id,
+      rater: event.rater,
+      matterTargetId: event.matter_target_id,
+      matterTargetType: event.matter_target_type,
+      matter: event.matter,
+      matterCategory: event.matter_category,
+      eventReason: event.event_reason,
+      amount: event.amount
     },
     { wrappedConnection: connectionHolder?.connection }
   );
 }
 
-export async function registerUserVote({
-  voterWallet,
+export async function registerUserRating({
+  rater,
   matter,
   matterTargetType,
   matterTargetId,
   category,
   amount
 }: {
-  voterWallet: string;
+  rater: string;
   matter: string;
-  matterTargetType: VoteMatterTargetType;
+  matterTargetType: RateMatterTargetType;
   matterTargetId: string;
   category: string;
   amount: number;
 }) {
-  const { votesLeft, consolidatedWallets } =
-    await getVotesLeftOnMatterForWallet({
-      wallet: voterWallet,
+  const { ratesLeft, consolidatedWallets } =
+    await getRatesLeftOnMatterForWallet({
+      wallet: rater,
       matter,
       matterTargetType
     });
-  const votesTallyForWalletOnMatterByCategories =
-    await getVotesTallyForWalletOnMatterByCategories({
+  const ratesTallyForWalletOnMatterByCategories =
+    await getRatesTallyForWalletOnMatterByCategories({
       matter,
       matterTargetType,
       matterTargetId,
       wallets: consolidatedWallets
     });
-  const votesSpentOnGivenCategory =
-    votesTallyForWalletOnMatterByCategories[category] ?? 0;
+  const ratesSpentOnGivenCategory =
+    ratesTallyForWalletOnMatterByCategories[category] ?? 0;
   if (amount === 0) {
     return;
   }
-  if (amount < 0 && Math.abs(amount) > votesSpentOnGivenCategory) {
+  if (amount < 0 && Math.abs(amount) > ratesSpentOnGivenCategory) {
     throw new BadRequestException(
-      `Wallet tried to revoke ${amount} votes on matter and category but has only historically given ${votesSpentOnGivenCategory} votes`
+      `Wallet tried to revoke ${amount} rates on matter and category but has only historically given ${ratesSpentOnGivenCategory} rates`
     );
   }
-  if (amount > 0 && votesLeft < amount) {
+  if (amount > 0 && ratesLeft < amount) {
     throw new BadRequestException(
-      `Wallet tried to give ${amount} votes on matter without enough votes left. Votes left: ${votesLeft}`
+      `Wallet tried to give ${amount} rates on matter without enough rates left. Rates left: ${ratesLeft}`
     );
   }
   const allCategoriesForMatter = await getCategoriesForMatter({
@@ -121,33 +121,33 @@ export async function registerUserVote({
     .find((c) => c.matter_category_tag === category);
   if (!activeCategory) {
     throw new BadRequestException(
-      `Tried to vote on matter with category ${category} but no active category with such tag exists for this matter`
+      `Tried to rate on matter with category ${category} but no active category with such tag exists for this matter`
     );
   }
-  await insertVoteEvent({
+  await insertRateEvent({
     id: randomUUID(),
-    voter_wallet: voterWallet,
+    rater,
     matter_target_id: matterTargetId,
     matter_target_type: matterTargetType,
     matter,
     matter_category: category,
-    event_reason: VoteEventReason.USER_VOTED,
+    event_reason: RateEventReason.USER_RATED,
     amount,
     created_time: new Date()
   });
 }
 
-export async function getVotesLeftOnMatterForWallet({
+export async function getRatesLeftOnMatterForWallet({
   wallet,
   matter,
   matterTargetType
 }: {
   wallet: string;
   matter: string;
-  matterTargetType: VoteMatterTargetType;
+  matterTargetType: RateMatterTargetType;
 }): Promise<{
-  votesLeft: number;
-  votesSpent: number;
+  ratesLeft: number;
+  ratesSpent: number;
   consolidatedWallets: string[];
 }> {
   const { tdh, consolidatedWallets } =
@@ -157,19 +157,19 @@ export async function getVotesLeftOnMatterForWallet({
   ) {
     consolidatedWallets.push(wallet.toLowerCase());
   }
-  const votesSpent = await getTotalVotesSpentOnMatterByWallets({
+  const ratesSpent = await getTotalRatesSpentOnMatterByWallets({
     wallets: consolidatedWallets,
     matter,
     matterTargetType
   });
   return {
-    votesLeft: tdh - votesSpent,
-    votesSpent,
+    ratesLeft: tdh - ratesSpent,
+    ratesSpent: ratesSpent,
     consolidatedWallets
   };
 }
 
-async function getVotesTallyForWalletOnMatterByCategories({
+async function getRatesTallyForWalletOnMatterByCategories({
   wallets,
   matter,
   matterTargetType,
@@ -177,16 +177,16 @@ async function getVotesTallyForWalletOnMatterByCategories({
 }: {
   wallets: string[];
   matter: string;
-  matterTargetType: VoteMatterTargetType;
+  matterTargetType: RateMatterTargetType;
   matterTargetId: string;
 }): Promise<Record<string, number>> {
   if (!wallets.length) {
     return {};
   }
-  const result: { matter_category: string; vote_tally: number }[] =
+  const result: { matter_category: string; rate_tally: number }[] =
     await sqlExecutor.execute(
-      `SELECT matter_category, SUM(amount) AS vote_tally FROM ${VOTE_EVENTS_TABLE}
-      WHERE LOWER(voter_wallet) IN (:wallets)
+      `SELECT matter_category, SUM(amount) AS rate_tally FROM ${RATE_EVENTS_TABLE}
+      WHERE LOWER(rater) IN (:wallets)
       AND matter = :matter
       AND matter_target_type = :matterTargetType
       AND matter_target_id = :matterTargetId
@@ -199,30 +199,30 @@ async function getVotesTallyForWalletOnMatterByCategories({
       }
     );
   return (result ?? []).reduce((acc, row) => {
-    acc[row.matter_category] = row.vote_tally;
+    acc[row.matter_category] = row.rate_tally;
     return acc;
   }, {} as Record<string, number>);
 }
 
-export interface VoteCategoryInfo {
+export interface RateCategoryInfo {
   category_tag: string;
   tally: number;
   category_display_name: string;
-  category_media: VoteCategoryMedia;
+  category_media: RateCategoryMedia;
   category_enabled: boolean;
-  authenticated_wallet_votes: number;
+  authenticated_wallet_rates: number;
 }
 
 async function getTotalTalliesByCategories(
-  matterTargetType: VoteMatterTargetType,
+  matterTargetType: RateMatterTargetType,
   matterTargetId: string,
   matter: string
 ): Promise<Record<string, number>> {
   const totalTallies: {
     matter_category: string;
-    vote_tally: number;
+    rate_tally: number;
   }[] = await sqlExecutor.execute(
-    `SELECT matter_category, SUM(amount) AS vote_tally FROM ${VOTE_EVENTS_TABLE}
+    `SELECT matter_category, SUM(amount) AS rate_tally FROM ${RATE_EVENTS_TABLE}
     WHERE matter_target_type = :matterTargetType
     AND matter_target_id = :matterTargetId
     AND matter = :matter
@@ -230,7 +230,7 @@ async function getTotalTalliesByCategories(
     { matterTargetType, matterTargetId, matter }
   );
   return totalTallies.reduce((acc, row) => {
-    acc[row.matter_category] = row.vote_tally;
+    acc[row.matter_category] = row.rate_tally;
     return acc;
   }, {} as Record<string, number>);
 }
@@ -242,10 +242,10 @@ export async function getCategoriesInfoOnMatter({
   wallets
 }: {
   wallets: string[];
-  matterTargetType: VoteMatterTargetType;
+  matterTargetType: RateMatterTargetType;
   matter: string;
   matterTargetId: string;
-}): Promise<VoteCategoryInfo[]> {
+}): Promise<RateCategoryInfo[]> {
   const categories = await getCategoriesForMatter({
     matter,
     matterTargetType
@@ -255,17 +255,17 @@ export async function getCategoriesInfoOnMatter({
     matterTargetId,
     matter
   );
-  const walletsVotesByCategory =
-    await getVotesTallyForWalletOnMatterByCategories({
+  const walletsRatesByCategory =
+    await getRatesTallyForWalletOnMatterByCategories({
       wallets,
       matter,
       matterTargetType,
       matterTargetId
     });
-  return categories.map<VoteCategoryInfo>((c) => ({
+  return categories.map<RateCategoryInfo>((c) => ({
     tally: totalTalliesByCategory[c.matter_category_tag] ?? 0,
-    authenticated_wallet_votes:
-      walletsVotesByCategory[c.matter_category_tag] ?? 0,
+    authenticated_wallet_rates:
+      walletsRatesByCategory[c.matter_category_tag] ?? 0,
     category_tag: c.matter_category_tag,
     category_enabled: !c.disabled_time,
     category_display_name: c.matter_category_display_name,
@@ -273,7 +273,7 @@ export async function getCategoriesInfoOnMatter({
   }));
 }
 
-function calculateOvervoteSummaries(
+function calculateOverrateSummaries(
   activeTdhs: {
     tdh: number;
     wallets: string[];
@@ -286,7 +286,7 @@ function calculateOvervoteSummaries(
     >
   >
 ) {
-  // create mock 0 tdhs for wallets that have historically voted but are not part of community anymore
+  // create mock 0 tdhs for wallets that have historically rated but are not part of community anymore
   for (const wallet of Object.keys(talliesByWallets)) {
     const walletNotFoundFromTdhs = !activeTdhs.find((tdh) =>
       tdh.wallets.map((it) => it.toLowerCase()).includes(wallet.toLowerCase())
@@ -306,44 +306,44 @@ function calculateOvervoteSummaries(
           tally: number;
           matter: string;
           matter_target_type: string;
-          voteParticipatingWallets: string[];
+          rate_participating_wallets: string[];
           tdh: number;
         }
       > = {};
-      // aggregate all consolidation group votes by matter
+      // aggregate all consolidation group rates by matter
       for (const wallet of activeTdh.wallets) {
         const allMattersTalliesForWallet = talliesByWallets[wallet] || {};
         for (const [key, matterTallyDescription] of Object.entries(
           allMattersTalliesForWallet
         )) {
           if (!talliesForConsolidationGroupsByMatter[key]) {
-            // for the first wallet in consolidation group that has spent votes on this matter
+            // for the first wallet in consolidation group that has spent rates on this matter
             talliesForConsolidationGroupsByMatter[key] = {
               matter: matterTallyDescription.matter,
               matter_target_type: matterTallyDescription.matter_target_type,
               tally: matterTallyDescription.tally,
-              voteParticipatingWallets: [wallet],
+              rate_participating_wallets: [wallet],
               tdh: activeTdh.tdh
             };
           } else {
-            // for other wallets in consolidation group that has spent votes on this matter
+            // for other wallets in consolidation group that has spent rates on this matter
             talliesForConsolidationGroupsByMatter[key] = {
               matter: matterTallyDescription.matter,
               matter_target_type: matterTallyDescription.matter_target_type,
               tally:
                 talliesForConsolidationGroupsByMatter[key].tally +
                 matterTallyDescription.tally,
-              voteParticipatingWallets: [
+              rate_participating_wallets: [
                 wallet,
                 ...talliesForConsolidationGroupsByMatter[key]
-                  .voteParticipatingWallets
+                  .rate_participating_wallets
               ],
               tdh: activeTdh.tdh
             };
           }
         }
       }
-      // keep only the ones where vote count exceeds TDH
+      // keep only the ones where rate count exceeds TDH
       aggregatedTallies.push(
         ...Object.values(talliesForConsolidationGroupsByMatter).filter(
           (t) => t.tally > activeTdh.tdh
@@ -356,139 +356,139 @@ function calculateOvervoteSummaries(
       tally: number;
       matter: string;
       matter_target_type: string;
-      voteParticipatingWallets: string[];
+      rate_participating_wallets: string[];
     }[]
   );
 }
 
-async function getAllVoteMatterTalliesByWallets() {
-  const activeVoteTally: {
-    voter_wallet: string;
+async function getAllRateMatterTalliesByWallets() {
+  const activeRateTally: {
+    rater: string;
     matter: string;
-    matter_target_type: VoteMatterTargetType;
-    vote_tally: number;
+    matter_target_type: RateMatterTargetType;
+    rate_tally: number;
   }[] = await sqlExecutor.execute(
-    `select voter_wallet, matter, matter_target_type, sum(amount) as vote_tally from ${VOTE_EVENTS_TABLE} group by voter_wallet, matter, matter_target_type`
+    `select rater, matter, matter_target_type, sum(amount) as rate_tally from ${RATE_EVENTS_TABLE} group by rater, matter, matter_target_type`
   );
-  return activeVoteTally.reduce((a, vt) => {
-    const voter_wallet = vt.voter_wallet.toLowerCase();
-    if (!a[voter_wallet]) {
-      a[voter_wallet] = {};
+  return activeRateTally.reduce((a, vt) => {
+    const rater = vt.rater.toLowerCase();
+    if (!a[rater]) {
+      a[rater] = {};
     }
-    a[voter_wallet][`${vt.matter}-${vt.matter_target_type}`] = {
+    a[rater][`${vt.matter}-${vt.matter_target_type}`] = {
       matter: vt.matter,
       matter_target_type: vt.matter_target_type,
-      tally: +vt.vote_tally
+      tally: +vt.rate_tally
     };
     return a;
   }, {} as Record<string, Record<string, { matter: string; matter_target_type: string; tally: number }>>);
 }
 
 async function createRevocationEvents(
-  allOverVotes: {
+  allOverRates: {
     tdh: number;
     tally: number;
     matter: string;
     matter_target_type: string;
-    voteParticipatingWallets: string[];
+    rate_participating_wallets: string[];
   }[]
 ) {
   await sqlExecutor.executeNativeQueriesInTransaction(
     async (connectionHolder) => {
-      for (const overVote of allOverVotes) {
-        const overvoteAmount = overVote.tally - overVote.tdh;
+      for (const overRate of allOverRates) {
+        const overRateAmount = overRate.tally - overRate.tdh;
 
-        const toBeRevokedEvents: VoteEvent[] = await sqlExecutor.execute(
-          `WITH full_overvotes AS (SELECT NULL AS id, NULL AS total
+        const toBeRevokedEvents: RateEvent[] = await sqlExecutor.execute(
+          `WITH full_overrates AS (SELECT NULL AS id, NULL AS total
                                FROM dual
                                WHERE (@total := 0)
                                UNION
                                SELECT ve.id, @total := @total + ve.amount AS total
                                FROM (SELECT id, amount
-                                     FROM vote_events
-                                     WHERE LOWER(voter_wallet) IN (:voteParticipantsIn)
+                                     FROM rate_events
+                                     WHERE LOWER(rater) IN (:rateParticipantsIn)
                                        AND matter = :matter
                                      ORDER BY created_time desc) ve
-                               WHERE @total < :overvoteAmount)
+                               WHERE @total < :overRateAmount)
        SELECT *
-       FROM vote_events
-       WHERE id IN (SELECT id FROM full_overvotes)
+       FROM rate_events
+       WHERE id IN (SELECT id FROM full_overrates)
        ORDER BY created_time DESC`,
           {
-            matter: overVote.matter,
-            overvoteAmount,
-            voteParticipantsIn: overVote.voteParticipatingWallets.map((it) =>
+            matter: overRate.matter,
+            overRateAmount: overRateAmount,
+            rateParticipantsIn: overRate.rate_participating_wallets.map((it) =>
               it.toLowerCase()
             )
           },
           { wrappedConnection: connectionHolder }
         );
-        const reverseVoteEventsByKey: Record<string, VoteEvent> = {};
-        let reverseVoteAmount = 0;
+        const reverseRateEventsByKey: Record<string, RateEvent> = {};
+        let reverseRateAmount = 0;
         for (const event of toBeRevokedEvents) {
-          const key = `${event.matter}-${event.matter_target_type}-${event.voter_wallet}-${event.matter_target_id}-${event.matter_category}`;
+          const key = `${event.matter}-${event.matter_target_type}-${event.rater}-${event.matter_target_id}-${event.matter_category}`;
           let toAdd = event.amount;
-          if (reverseVoteAmount + toAdd > overvoteAmount) {
-            toAdd = overvoteAmount - reverseVoteAmount;
+          if (reverseRateAmount + toAdd > overRateAmount) {
+            toAdd = overRateAmount - reverseRateAmount;
           }
-          reverseVoteAmount += toAdd;
-          if (!reverseVoteEventsByKey[key]) {
-            reverseVoteEventsByKey[key] = {
+          reverseRateAmount += toAdd;
+          if (!reverseRateEventsByKey[key]) {
+            reverseRateEventsByKey[key] = {
               ...event,
               id: randomUUID(),
               created_time: new Date(),
-              event_reason: VoteEventReason.TDH_CHANGED,
+              event_reason: RateEventReason.TDH_CHANGED,
               amount: -toAdd
             };
           } else {
-            reverseVoteEventsByKey[key].amount -= toAdd;
+            reverseRateEventsByKey[key].amount -= toAdd;
           }
         }
-        const reverseVoteEvents = Object.values(reverseVoteEventsByKey).filter(
+        const reverseRateEvents = Object.values(reverseRateEventsByKey).filter(
           (e) => e.amount !== 0
         );
-        for (const reverseVoterEvent of reverseVoteEvents) {
-          await insertVoteEvent(reverseVoterEvent, connectionHolder);
+        for (const reverseRaterEvent of reverseRateEvents) {
+          await insertRateEvent(reverseRaterEvent, connectionHolder);
         }
         logger.info(
-          `Created ${reverseVoteEvents.length} vote revocation events on matter ${overVote.matter_target_type}/${overVote.matter}`
+          `Created ${reverseRateEvents.length} rate revocation events on matter ${overRate.matter_target_type}/${overRate.matter}`
         );
       }
     }
   );
 }
 
-export async function revokeOverVotes() {
+export async function revokeOverRates() {
   const startTime = Time.now();
   logger.info(`Fetching current TDH's...`);
   const activeTdhs = await tdh_consolidation.getAllTdhs();
-  logger.info(`Fetching current vote tallies...`);
-  const talliesByWallets = await getAllVoteMatterTalliesByWallets();
-  logger.info(`Figuring out overvotes...`);
-  const allOverVotes = calculateOvervoteSummaries(activeTdhs, talliesByWallets);
-  logger.info(`Revoking overvotes...`);
-  await createRevocationEvents(allOverVotes);
-  logger.info(`All overvotes revoked in ${startTime.diffFromNow()}`);
+  logger.info(`Fetching current rate tallies...`);
+  const talliesByWallets = await getAllRateMatterTalliesByWallets();
+  logger.info(`Figuring out overrates...`);
+  const allOverRates = calculateOverrateSummaries(activeTdhs, talliesByWallets);
+  logger.info(`Revoking overrates...`);
+  await createRevocationEvents(allOverRates);
+  logger.info(`All overrates revoked in ${startTime.diffFromNow()}`);
 }
 
-async function getTotalVotesSpentOnMatterByWallets({
+async function getTotalRatesSpentOnMatterByWallets({
   wallets,
   matter,
   matterTargetType
 }: {
   wallets: string[];
   matter: string;
-  matterTargetType: VoteMatterTargetType;
+  matterTargetType: RateMatterTargetType;
 }): Promise<number> {
   if (!wallets.length) {
     return 0;
   }
-  const result: { votes_spent: number }[] = await sqlExecutor.execute(
-    `SELECT SUM(amount) AS votes_spent FROM ${VOTE_EVENTS_TABLE}
-     WHERE LOWER(voter_wallet) IN (:wallets) 
+  const result: { rates_spent: number }[] = await sqlExecutor.execute(
+    `SELECT SUM(amount) AS rates_spent FROM ${RATE_EVENTS_TABLE}
+     WHERE LOWER(rater) IN (:wallets) 
      AND matter = :matter 
      AND matter_target_type = :matterTargetType`,
     { matter, matterTargetType, wallets: wallets.map((it) => it.toLowerCase()) }
   );
-  return result.at(0)?.votes_spent ?? 0;
+  return result.at(0)?.rates_spent ?? 0;
 }
