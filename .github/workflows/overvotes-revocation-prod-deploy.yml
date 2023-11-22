@@ -1,4 +1,4 @@
-name: Deploy overvotesRevocationLoop to PRODUCTION
+name: Deploy overRatesRevocationLoop to PRODUCTION
 
 on: workflow_dispatch
 
@@ -16,7 +16,7 @@ jobs:
       - name: Install dependencies
         run: npm i
       - name: Build
-        run: pushd src/overvotesRevocationLoop && npm run build && popd
+        run: pushd src/overRatesRevocationLoop && npm run build && popd
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@13d241b293754004c80624b5567555c4a39ffbe3
         with:
@@ -24,14 +24,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
       - name: Deploy
-        run: pushd src/overvotesRevocationLoop && npm run sls-deploy:prod && popd
+        run: pushd src/overRatesRevocationLoop && npm run sls-deploy:prod && popd
       - name: Notify about failure
         uses: sarisia/actions-status-discord@v1
         if: failure()
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         with:
-          title: "Seize PROD overvotesRevocationLoop DEPLOY: CI pipeline is broken!!!"
+          title: "Seize PROD overRatesRevocationLoop DEPLOY: CI pipeline is broken!!!"
           description: ${{ env.COMMIT_SHA }} - ${{ env.COMMIT_MESSAGE }}
           content: "@everyone"
           color: 0xff0000
@@ -42,6 +42,6 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         with:
-          title: "Seize PROD overvotesRevocationLoop DEPLOY: CI pipeline complete"
+          title: "Seize PROD overRatesRevocationLoop DEPLOY: CI pipeline complete"
           description: ${{ env.COMMIT_SHA }} - ${{ env.COMMIT_MESSAGE }}
           color: 0x00ff00
