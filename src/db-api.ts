@@ -406,6 +406,37 @@ export async function fetchArtists(
   );
 }
 
+export async function fetchArtistsNamesMemes() {
+  return fetchArtistsNamesByTable('memes');
+}
+
+export async function fetchArtistsNamesMemeLab() {
+  return fetchArtistsNamesByTable('memelab');
+}
+
+async function fetchArtistsNamesByTable(field: string) {
+  const sql = `SELECT name, ${field} as cards 
+      FROM artists 
+      WHERE ${field} IS NOT NULL 
+        AND JSON_VALID(${field}) 
+        AND JSON_TYPE(${field}) = 'ARRAY' 
+        AND JSON_LENGTH(${field}) > 0`;
+  const artists = await sqlExecutor.execute(sql);
+  return artists
+    .map((a: any) => {
+      const cards = JSON.parse(a.cards);
+      return {
+        name: a.name,
+        cards: cards.map((m: any) => m.id).sort((a: number, b: number) => a - b)
+      };
+    })
+    .sort((a: any, b: any) => {
+      let minCardA = Math.min(...a.cards);
+      let minCardB = Math.min(...b.cards);
+      return minCardA - minCardB;
+    });
+}
+
 export async function fetchLabNFTs(
   memeIds: string,
   pageSize: number,
@@ -2589,10 +2620,11 @@ export async function updateUser(user: User) {
 
 export async function fetchRoyalties(
   type: 'memes' | 'memelab',
+  artist: string,
   fromDate: string,
   toDate: string
 ): Promise<RoyaltyResponse[]> {
-  const sql = getRoyaltiesSql(type, fromDate, toDate);
+  const sql = getRoyaltiesSql(type, artist, fromDate, toDate);
   return execSQLWithParams(sql.sql, sql.params);
 }
 

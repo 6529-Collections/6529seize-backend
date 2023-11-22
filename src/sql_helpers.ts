@@ -237,6 +237,7 @@ export function getProfilePageSql(wallets: string[]) {
 
 export function getRoyaltiesSql(
   type: 'memes' | 'memelab',
+  artist: string,
   fromDate: string,
   toDate: string
 ) {
@@ -260,6 +261,15 @@ export function getRoyaltiesSql(
 
   filters = constructFilters(filters, `${transactionsTable}.value > 0`);
 
+  let nftFilters = constructFilters('', `${nftsTable}.contract=:contract`);
+  if (artist) {
+    nftFilters = constructFilters(
+      nftFilters,
+      `${nftsTable}.artist REGEXP :artist`
+    );
+    params.artist = `(^|,| and )${artist}($|,| and )`;
+  }
+
   if (fromDate) {
     filters = constructFilters(
       filters,
@@ -278,43 +288,55 @@ export function getRoyaltiesSql(
 
   const royaltiesJoinClause =
     type === 'memelab'
-      ? `JOIN ${MEME_LAB_ROYALTIES_TABLE} ON aggregated.token_id = ${MEME_LAB_ROYALTIES_TABLE}.token_id`
+      ? `LEFT JOIN ${MEME_LAB_ROYALTIES_TABLE} ON ${nftsTable}.id = ${MEME_LAB_ROYALTIES_TABLE}.token_id`
       : '';
 
   const sql = `
     SELECT 
-      aggregated.token_id, 
+      ${nftsTable}.id as token_id, 
+      ${nftsTable}.contract, 
       ${nftsTable}.name, 
       ${nftsTable}.artist, 
       ${nftsTable}.thumbnail,
-      aggregated.primary_total_volume as primary_volume,
-      aggregated.secondary_total_volume as secondary_volume,
-      aggregated.total_royalties as royalties,
-      ${primaryRoyaltySplitSource} as primary_royalty_split,
-      ${secondaryRoyaltySplitSource} as secondary_royalty_split,
-      aggregated.primary_total_volume * ${primaryRoyaltySplitSource} AS primary_artist_take,
-      aggregated.total_royalties * ${secondaryRoyaltySplitSource} AS secondary_artist_take
+      COALESCE(primaryVolume.primary_total_volume, 0) as primary_volume,
+      COALESCE(aggregated.secondary_total_volume, 0) as secondary_volume,
+      COALESCE(aggregated.total_royalties, 0) as royalties,
+      CASE WHEN artist not like :no_royalty_artist THEN ${primaryRoyaltySplitSource} ELSE 0 END as primary_royalty_split,
+      CASE WHEN artist not like :no_royalty_artist THEN ${secondaryRoyaltySplitSource} ELSE 0 END as secondary_royalty_split,
+      COALESCE(primaryVolume.primary_total_volume, 0) * CASE WHEN artist not like :no_royalty_artist THEN ${primaryRoyaltySplitSource} ELSE 0 END AS primary_artist_take,
+      COALESCE(aggregated.total_royalties, 0) * CASE WHEN artist not like :no_royalty_artist THEN ${secondaryRoyaltySplitSource} ELSE 0 END AS secondary_artist_take
     FROM 
+      ${nftsTable} 
+    LEFT JOIN 
+      (SELECT 
+        token_id, 
+        SUM(CASE WHEN from_address IN (:null_address, :manifold) THEN value ELSE 0 END) AS primary_total_volume
+      FROM 
+        ${transactionsTable}
+      WHERE contract=:contract
+      GROUP BY 
+        token_id) AS primaryVolume
+      ON ${nftsTable}.id = primaryVolume.token_id
+    LEFT JOIN 
       (SELECT 
         token_id,
-        contract,
-        SUM(CASE WHEN from_address IN (:null_address, :manifold) THEN value ELSE 0 END) AS primary_total_volume,
-              SUM(CASE WHEN from_address NOT IN (:null_address, :manifold) THEN value ELSE 0 END) AS secondary_total_volume,
+        SUM(CASE WHEN from_address NOT IN (:null_address, :manifold) THEN value ELSE 0 END) AS secondary_total_volume,
         SUM(royalties) AS total_royalties
       FROM 
         ${transactionsTable}
       ${filters}
       GROUP BY 
-        token_id, 
-        contract) AS aggregated
-    JOIN 
-      ${nftsTable} ON aggregated.contract = ${nftsTable}.contract AND aggregated.token_id = ${nftsTable}.id
+        token_id) AS aggregated
+      ON ${nftsTable}.id = aggregated.token_id
     ${royaltiesJoinClause}
+    ${nftFilters}
     ORDER BY 
-      aggregated.contract ASC, 
-      aggregated.token_id ASC;`;
+      ${nftsTable}.id ASC;`;
+
+  params.no_royalty_artist = '%6529%';
   params.null_address = NULL_ADDRESS;
   params.manifold = MANIFOLD;
+
   return {
     sql,
     params
@@ -390,6 +412,7 @@ export function getGasSql(
       aggregated.token_id ASC;`;
   params.null_address = NULL_ADDRESS;
   params.manifold = MANIFOLD;
+
   return {
     sql,
     params
