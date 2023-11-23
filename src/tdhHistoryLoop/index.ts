@@ -99,8 +99,6 @@ async function tdhHistory(date: Date) {
   const today = uploads[0];
   const yesterday = uploads[1];
 
-  console.log("TODAY", today)
-
   const todayData = await fetchAndParseCSV(today.url);
   const yesterdayData = await fetchAndParseCSV(yesterday.url);
 
