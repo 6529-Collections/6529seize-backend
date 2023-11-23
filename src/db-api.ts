@@ -46,12 +46,7 @@ import {
   distinct,
   extractConsolidationWallets
 } from './helpers';
-import {
-  getConsolidationsSql,
-  getGasSql,
-  getProfilePageSql,
-  getRoyaltiesSql
-} from './sql_helpers';
+import { getConsolidationsSql, getProfilePageSql } from './sql_helpers';
 import { getProof } from './merkle_proof';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import * as profiles from './profiles/profiles';
@@ -66,8 +61,6 @@ import {
   constructFilters,
   constructFiltersOR
 } from './api-serverless/src/api-helpers';
-import { RoyaltyResponse } from './api-serverless/src/royalties/royalties.routes';
-import { GasResponse } from './api-serverless/src/gas/gas.routes';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -2616,26 +2609,6 @@ export async function updateUser(user: User) {
   };
 
   await sqlExecutor.execute(sql, params);
-}
-
-export async function fetchRoyalties(
-  type: 'memes' | 'memelab',
-  artist: string,
-  fromDate: string,
-  toDate: string
-): Promise<RoyaltyResponse[]> {
-  const sql = getRoyaltiesSql(type, artist, fromDate, toDate);
-  return execSQLWithParams(sql.sql, sql.params);
-}
-
-export async function fetchGas(
-  type: 'memes' | 'memelab',
-  artist: string,
-  fromDate: string,
-  toDate: string
-): Promise<GasResponse[]> {
-  const sql = getGasSql(type, artist, fromDate, toDate);
-  return execSQLWithParams(sql.sql, sql.params);
 }
 
 export async function fetchRoyaltiesUploads(pageSize: number, page: number) {

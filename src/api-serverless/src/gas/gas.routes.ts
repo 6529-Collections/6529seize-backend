@@ -1,25 +1,16 @@
 import { Request, Response } from 'express';
-import { fetchGas } from '../../../db-api';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 import { CACHE_TIME_MS } from '../api-constants';
 import { cacheKey, returnCSVResult, returnJsonResult } from '../api-helpers';
 import * as mcache from 'memory-cache';
+import { GasResponse, fetchGas } from './gas.db';
 
 const router = asyncRouter();
 
 const logger = Logger.get('GAS_API');
 
 export default router;
-
-export interface GasResponse {
-  token_id: number;
-  name: string;
-  artist: string;
-  thumbnail?: string;
-  primary_gas: number;
-  secondary_gas: number;
-}
 
 router.get(
   `/collection/:collection_type`,

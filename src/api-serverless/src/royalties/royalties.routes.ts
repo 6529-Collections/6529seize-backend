@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { fetchRoyalties, fetchRoyaltiesUploads } from '../../../db-api';
+import { fetchRoyaltiesUploads } from '../../../db-api';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 import {
@@ -14,26 +14,13 @@ import {
   returnPaginatedResult
 } from '../api-helpers';
 import * as mcache from 'memory-cache';
+import { RoyaltyResponse, fetchRoyalties } from './royalties.db';
 
 const router = asyncRouter();
 
 const logger = Logger.get('ROYALTIES_API');
 
 export default router;
-
-export interface RoyaltyResponse {
-  token_id: number;
-  name: string;
-  artist: string;
-  thumbnail?: string;
-  primary_volume: number;
-  secondary_volume: number;
-  royalties: number;
-  primary_royalty_split: number;
-  secondary_royalty_split: number;
-  primary_artist_take: number;
-  secondary_artist_take: number;
-}
 
 interface RoyaltyUploadResponse {
   created_at: string;
