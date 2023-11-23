@@ -42,7 +42,7 @@ async function getResult(url: string) {
 }
 
 const findFloorPrice = async (stat: any): Promise<number> => {
-  const url = `https://api.staging.seize.io/floor_price?contract=${stat.contract}&id=${stat.id}`;
+  const url = `https://api.seize.io/floor_price?contract=${stat.contract}&id=${stat.id}`;
   const res = await getResult(url);
 
   if (res && res.status === 200) {
