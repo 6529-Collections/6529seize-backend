@@ -6,5 +6,5 @@ export interface RateCategoryInfo {
   category_display_name: string;
   category_media: RateCategoryMedia;
   category_enabled: boolean;
-  authenticated_wallet_rates: number;
+  authenticated_profile_rates: number;
 }

@@ -25,7 +25,7 @@ describe('RatesService', () => {
 
   describe('revokeOverRates', () => {
     it('empty ratesDb', async () => {
-      when(ratesDb.getAllTdhs).mockResolvedValue([]);
+      when(ratesDb.getAllProfilesTdhs).mockResolvedValue([]);
       when(
         ratesDb.getActiveRateTalliesGroupedByRaterMatterAndTarget
       ).mockResolvedValue([]);
@@ -34,8 +34,8 @@ describe('RatesService', () => {
     });
 
     it('tdh owners exists but no rates given', async () => {
-      when(ratesDb.getAllTdhs).mockResolvedValue([
-        { tdh: 10, wallets: ['0xwallet'] }
+      when(ratesDb.getAllProfilesTdhs).mockResolvedValue([
+        { tdh: 10, profile_id: 'pid123' }
       ]);
       when(
         ratesDb.getActiveRateTalliesGroupedByRaterMatterAndTarget
@@ -45,14 +45,14 @@ describe('RatesService', () => {
     });
 
     it('tdh owners has rated in limits', async () => {
-      when(ratesDb.getAllTdhs).mockResolvedValue([
-        { tdh: 10, wallets: ['0xwallet'] }
+      when(ratesDb.getAllProfilesTdhs).mockResolvedValue([
+        { tdh: 10, profile_id: 'pid123' }
       ]);
       when(
         ratesDb.getActiveRateTalliesGroupedByRaterMatterAndTarget
       ).mockResolvedValue([
         {
-          rater: '0xwallet',
+          rater: 'pid123',
           matter: 'aMatter',
           matter_target_type: RateMatterTargetType.PROFILE_ID,
           rate_tally: 1
@@ -63,14 +63,14 @@ describe('RatesService', () => {
     });
 
     it('tdh owners has rated over limits', async () => {
-      when(ratesDb.getAllTdhs).mockResolvedValue([
-        { tdh: 10, wallets: ['0xwallet'] }
+      when(ratesDb.getAllProfilesTdhs).mockResolvedValue([
+        { tdh: 10, profile_id: 'pid123' }
       ]);
       when(
         ratesDb.getActiveRateTalliesGroupedByRaterMatterAndTarget
       ).mockResolvedValue([
         {
-          rater: '0xwallet',
+          rater: 'pid123',
           matter: 'aMatter',
           matter_target_type: RateMatterTargetType.PROFILE_ID,
           rate_tally: 11
@@ -79,7 +79,7 @@ describe('RatesService', () => {
       when(ratesDb.getToBeRevokedEvents).mockResolvedValue([
         {
           id: '1',
-          rater: '0xwallet',
+          rater: 'pid123',
           matter_target_id: 'testId',
           matter: 'testMatter',
           matter_category: 'testCategory',
@@ -100,7 +100,7 @@ describe('RatesService', () => {
           matter_category: 'testCategory',
           matter_target_id: 'testId',
           matter_target_type: 'PROFILE_ID',
-          rater: '0xwallet'
+          rater: 'pid123'
         },
         { connection: {} }
       );
@@ -133,19 +133,19 @@ describe('RatesService', () => {
       ]);
       when(ratesDb.getTotalTalliesByCategories).mockResolvedValue({ cat1: 5 });
       when(
-        ratesDb.getRatesTallyForWalletOnMatterByCategories
+        ratesDb.getRatesTallyForProfileOnMatterByCategories
       ).mockResolvedValue({
         cat1: 2
       });
       const result = await service.getCategoriesInfoOnMatter({
-        wallets: ['wallet1', 'wallet2'],
+        profileId: 'pid123',
         matterTargetType: RateMatterTargetType.PROFILE_ID,
         matter: 'CIC',
         matterTargetId: '123'
       });
       expect(result).toStrictEqual([
         {
-          authenticated_wallet_rates: 2,
+          authenticated_profile_rates: 2,
           category_display_name: 'Mat1',
           category_enabled: true,
           category_media: {
@@ -155,7 +155,7 @@ describe('RatesService', () => {
           tally: 5
         },
         {
-          authenticated_wallet_rates: 0,
+          authenticated_profile_rates: 0,
           category_display_name: 'Mat2',
           category_enabled: false,
           category_media: {},
@@ -168,25 +168,14 @@ describe('RatesService', () => {
 
   describe('getRatesLeftOnMatterForWallet', () => {
     it('gives correct rates left count', async () => {
-      when(ratesDb.getTdhInfoForWallet).mockResolvedValue({
-        block: 1,
-        tdh: 10,
-        wallets: [
-          '0x0000000000000000000000000000000000000000',
-          '0x0000000000000000000000000000000000000001'
-        ]
-      });
-      when(ratesDb.getTotalRatesSpentOnMatterByWallets).mockResolvedValue(5);
-      const result = await service.getRatesLeftOnMatterForWallet({
-        wallet: '0x0000000000000000000000000000000000000000',
+      when(ratesDb.getTdhInfoForProfile).mockResolvedValue(10);
+      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(5);
+      const result = await service.getRatesLeftOnMatterForProfile({
+        profileId: 'pid123',
         matterTargetType: RateMatterTargetType.PROFILE_ID,
         matter: 'CIC'
       });
       expect(result).toStrictEqual({
-        consolidatedWallets: [
-          '0x0000000000000000000000000000000000000000',
-          '0x0000000000000000000000000000000000000001'
-        ],
         ratesLeft: 5,
         ratesSpent: 5
       });
@@ -196,25 +185,26 @@ describe('RatesService', () => {
   describe('registerUserRating', () => {
     it('unknown category', async () => {
       when(
-        ratesDb.getRatesTallyForWalletOnMatterByCategories
+        ratesDb.getRatesTallyForProfileOnMatterByCategories
       ).mockResolvedValue({});
       when(ratesDb.getCategoriesForMatter).mockResolvedValue([]);
       await expectExceptionWithMessage(async () => {
         await service.registerUserRating({
-          rater: '0x0000000000000000000000000000000000000000',
+          raterProfileId: 'pid123',
           matterTargetType: RateMatterTargetType.PROFILE_ID,
           matter: 'CIC',
           matterTargetId: 'id1',
           category: 'cat1',
           amount: 5
         });
-      }, 'Tried to rate on matter with category cat1 but no active category with such tag exists for this matter');
+      }, 'Profile tried to rate on matter with category cat1 but no active category with such tag exists for this matter');
     });
 
     it('not enough rates', async () => {
-      when(ratesDb.getTotalRatesSpentOnMatterByWallets).mockResolvedValue(0);
+      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(0);
+      when(ratesDb.getTdhInfoForProfile).mockResolvedValue(0);
       when(
-        ratesDb.getRatesTallyForWalletOnMatterByCategories
+        ratesDb.getRatesTallyForProfileOnMatterByCategories
       ).mockResolvedValue({
         cat1: 5
       });
@@ -232,20 +222,20 @@ describe('RatesService', () => {
       ]);
       await expectExceptionWithMessage(async () => {
         await service.registerUserRating({
-          rater: '0x0000000000000000000000000000000000000000',
+          raterProfileId: 'pid123',
           matterTargetType: RateMatterTargetType.PROFILE_ID,
           matter: 'MAT1',
           matterTargetId: 'id1',
           category: 'cat1',
           amount: 5
         });
-      }, 'Wallet tried to give 5 rates on matter without enough rates left. Rates left: 0');
+      }, 'Profile tried to give 5 rates on matter but only has 0 rates left');
     });
 
     it('revoking more than given not allowed', async () => {
-      when(ratesDb.getTotalRatesSpentOnMatterByWallets).mockResolvedValue(0);
+      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(0);
       when(
-        ratesDb.getRatesTallyForWalletOnMatterByCategories
+        ratesDb.getRatesTallyForProfileOnMatterByCategories
       ).mockResolvedValue({
         cat1: 5
       });
@@ -263,25 +253,21 @@ describe('RatesService', () => {
       ]);
       await expectExceptionWithMessage(async () => {
         await service.registerUserRating({
-          rater: '0x0000000000000000000000000000000000000000',
+          raterProfileId: 'pid123',
           matterTargetType: RateMatterTargetType.PROFILE_ID,
           matter: 'MAT1',
           matterTargetId: 'id1',
           category: 'cat1',
           amount: -6
         });
-      }, 'Wallet tried to revoke 6 rates on matter and category but has only historically given 5 rates');
+      }, 'Profile tried to revoke 6 rates on matter and category but has only historically given 5 rates');
     });
 
     it('rate on a disabled matter not allowed', async () => {
-      when(ratesDb.getTdhInfoForWallet).mockResolvedValue({
-        block: 1,
-        tdh: 5,
-        wallets: ['0x0000000000000000000000000000000000000000']
-      });
-      when(ratesDb.getTotalRatesSpentOnMatterByWallets).mockResolvedValue(2);
+      when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
+      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(2);
       when(
-        ratesDb.getRatesTallyForWalletOnMatterByCategories
+        ratesDb.getRatesTallyForProfileOnMatterByCategories
       ).mockResolvedValue({
         cat1: 0
       });
@@ -299,25 +285,21 @@ describe('RatesService', () => {
       ]);
       await expectExceptionWithMessage(async () => {
         await service.registerUserRating({
-          rater: '0x0000000000000000000000000000000000000000',
+          raterProfileId: 'pid123',
           matterTargetType: RateMatterTargetType.PROFILE_ID,
           matter: 'MAT1',
           matterTargetId: 'id1',
           category: 'cat1',
           amount: 2
         });
-      }, 'Tried to rate on matter with category cat1 but no active category with such tag exists for this matter');
+      }, 'Profile tried to rate on matter with category cat1 but no active category with such tag exists for this matter');
     });
 
     it('rate successfully', async () => {
-      when(ratesDb.getTdhInfoForWallet).mockResolvedValue({
-        block: 1,
-        tdh: 5,
-        wallets: ['0x0000000000000000000000000000000000000000']
-      });
-      when(ratesDb.getTotalRatesSpentOnMatterByWallets).mockResolvedValue(2);
+      when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
+      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(2);
       when(
-        ratesDb.getRatesTallyForWalletOnMatterByCategories
+        ratesDb.getRatesTallyForProfileOnMatterByCategories
       ).mockResolvedValue({
         cat1: 0
       });
@@ -334,7 +316,7 @@ describe('RatesService', () => {
         }
       ]);
       await service.registerUserRating({
-        rater: '0x0000000000000000000000000000000000000000',
+        raterProfileId: 'pid123',
         matterTargetType: RateMatterTargetType.PROFILE_ID,
         matter: 'MAT1',
         matterTargetId: 'id1',
@@ -350,19 +332,15 @@ describe('RatesService', () => {
         matter_category: 'cat1',
         matter_target_id: 'id1',
         matter_target_type: 'PROFILE_ID',
-        rater: '0x0000000000000000000000000000000000000000'
+        rater: 'pid123'
       });
     });
 
     it('revoke rating successfully', async () => {
-      when(ratesDb.getTdhInfoForWallet).mockResolvedValue({
-        block: 1,
-        tdh: 5,
-        wallets: ['0x0000000000000000000000000000000000000000']
-      });
-      when(ratesDb.getTotalRatesSpentOnMatterByWallets).mockResolvedValue(2);
+      when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
+      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(2);
       when(
-        ratesDb.getRatesTallyForWalletOnMatterByCategories
+        ratesDb.getRatesTallyForProfileOnMatterByCategories
       ).mockResolvedValue({
         cat1: 2
       });
@@ -379,7 +357,7 @@ describe('RatesService', () => {
         }
       ]);
       await service.registerUserRating({
-        rater: '0x0000000000000000000000000000000000000000',
+        raterProfileId: 'pid123',
         matterTargetType: RateMatterTargetType.PROFILE_ID,
         matter: 'MAT1',
         matterTargetId: 'id1',
@@ -395,19 +373,15 @@ describe('RatesService', () => {
         matter_category: 'cat1',
         matter_target_id: 'id1',
         matter_target_type: 'PROFILE_ID',
-        rater: '0x0000000000000000000000000000000000000000'
+        rater: 'pid123'
       });
     });
 
     it('revoke rating on a disabled matter successfully', async () => {
-      when(ratesDb.getTdhInfoForWallet).mockResolvedValue({
-        block: 1,
-        tdh: 5,
-        wallets: ['0x0000000000000000000000000000000000000000']
-      });
-      when(ratesDb.getTotalRatesSpentOnMatterByWallets).mockResolvedValue(2);
+      when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
+      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(2);
       when(
-        ratesDb.getRatesTallyForWalletOnMatterByCategories
+        ratesDb.getRatesTallyForProfileOnMatterByCategories
       ).mockResolvedValue({
         cat1: 2
       });
@@ -424,7 +398,7 @@ describe('RatesService', () => {
         }
       ]);
       await service.registerUserRating({
-        rater: '0x0000000000000000000000000000000000000000',
+        raterProfileId: 'pid123',
         matterTargetType: RateMatterTargetType.PROFILE_ID,
         matter: 'MAT1',
         matterTargetId: 'id1',
@@ -440,7 +414,7 @@ describe('RatesService', () => {
         matter_category: 'cat1',
         matter_target_id: 'id1',
         matter_target_type: 'PROFILE_ID',
-        rater: '0x0000000000000000000000000000000000000000'
+        rater: 'pid123'
       });
     });
   });

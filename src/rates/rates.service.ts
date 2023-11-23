@@ -6,6 +6,7 @@ import { RateCategoryInfo } from './rates.types';
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { ratesDb, RatesDb } from './rates.db';
+import * as profiles from '../profiles/profiles';
 
 export class RatesService {
   private readonly logger = Logger.get('RATES_SERVICE');
@@ -15,62 +16,92 @@ export class RatesService {
   public async revokeOverRates() {
     const startTime = Time.now();
     this.logger.info(`Fetching current TDH's...`);
-    const activeTdhs = await this.ratesDb.getAllTdhs();
+    const activeTdhs = await this.ratesDb.getAllProfilesTdhs();
     this.logger.info(`Fetching current rate tallies...`);
-    const talliesByWallets = await this.getAllRateMatterTalliesByWallets();
+    const talliesByRaters = await this.getAllRateMatterTalliesGroupedByRaters();
     this.logger.info(`Figuring out overrates...`);
     const allOverRates = this.calculateOverrateSummaries(
       activeTdhs,
-      talliesByWallets
+      talliesByRaters
     );
     this.logger.info(`Revoking overrates...`);
     await this.createRevocationEvents(allOverRates);
     this.logger.info(`All overrates revoked in ${startTime.diffFromNow()}`);
   }
 
-  public async registerUserRating({
-    rater,
+  public async registerUserRatingWithWallet({
+    raterWallet,
     matter,
     matterTargetType,
     matterTargetId,
     category,
     amount
   }: {
-    rater: string;
+    raterWallet: string;
     matter: string;
     matterTargetType: RateMatterTargetType;
     matterTargetId: string;
     category: string;
     amount: number;
   }) {
-    const { ratesLeft, consolidatedWallets } =
-      await this.getRatesLeftOnMatterForWallet({
-        wallet: rater,
-        matter,
-        matterTargetType
-      });
-    const ratesTallyForWalletOnMatterByCategories =
-      await this.ratesDb.getRatesTallyForWalletOnMatterByCategories({
-        matter,
-        matterTargetType,
-        matterTargetId,
-        wallets: consolidatedWallets
-      });
-    const ratesSpentOnGivenCategory =
-      ratesTallyForWalletOnMatterByCategories[category] ?? 0;
+    const rater = await profiles.getProfileIdByWallet(raterWallet);
+    if (!rater) {
+      throw new BadRequestException(
+        `Wallet ${raterWallet} doesn't have a profile. Profile needs to be created before user can rate.`
+      );
+    }
+    await ratesService.registerUserRating({
+      raterProfileId: rater,
+      matter,
+      matterTargetType,
+      matterTargetId,
+      category,
+      amount
+    });
+  }
+
+  public async registerUserRating({
+    raterProfileId,
+    matter,
+    matterTargetType,
+    matterTargetId,
+    category,
+    amount
+  }: {
+    raterProfileId: string;
+    matter: string;
+    matterTargetType: RateMatterTargetType;
+    matterTargetId: string;
+    category: string;
+    amount: number;
+  }) {
     if (amount === 0) {
       return;
     }
+    const { ratesLeft } = await this.getRatesLeftOnMatterForProfile({
+      profileId: raterProfileId,
+      matter,
+      matterTargetType
+    });
+    const ratesTallyForProfileOnMatterByCategories =
+      await this.ratesDb.getRatesTallyForProfileOnMatterByCategories({
+        matter,
+        matterTargetType,
+        matterTargetId,
+        profileId: raterProfileId
+      });
+    const ratesSpentOnGivenCategory =
+      ratesTallyForProfileOnMatterByCategories[category] ?? 0;
     if (amount < 0 && Math.abs(amount) > ratesSpentOnGivenCategory) {
       throw new BadRequestException(
-        `Wallet tried to revoke ${Math.abs(
+        `Profile tried to revoke ${Math.abs(
           amount
         )} rates on matter and category but has only historically given ${ratesSpentOnGivenCategory} rates`
       );
     }
     if (amount > 0 && ratesLeft < amount) {
       throw new BadRequestException(
-        `Wallet tried to give ${amount} rates on matter without enough rates left. Rates left: ${ratesLeft}`
+        `Profile tried to give ${amount} rates on matter but only has ${ratesLeft} rates left`
       );
     }
     const allCategoriesForMatter = await this.ratesDb.getCategoriesForMatter({
@@ -84,12 +115,12 @@ export class RatesService {
       .find((c) => c.matter_category_tag === category);
     if (!activeCategory) {
       throw new BadRequestException(
-        `Tried to rate on matter with category ${category} but no active category with such tag exists for this matter`
+        `Profile tried to rate on matter with category ${category} but no active category with such tag exists for this matter`
       );
     }
     await this.ratesDb.insertRateEvent({
       id: randomUUID(),
-      rater,
+      rater: raterProfileId,
       matter_target_id: matterTargetId,
       matter_target_type: matterTargetType,
       matter,
@@ -100,35 +131,29 @@ export class RatesService {
     });
   }
 
-  public async getRatesLeftOnMatterForWallet({
-    wallet,
+  public async getRatesLeftOnMatterForProfile({
+    profileId,
     matter,
     matterTargetType
   }: {
-    wallet: string;
+    profileId: string;
     matter: string;
     matterTargetType: RateMatterTargetType;
   }): Promise<{
     ratesLeft: number;
     ratesSpent: number;
-    consolidatedWallets: string[];
   }> {
-    const { tdh, consolidatedWallets } =
-      await this.getWalletTdhAndConsolidatedWallets(wallet);
-    if (
-      !consolidatedWallets.find((w) => w.toLowerCase() === wallet.toLowerCase())
-    ) {
-      consolidatedWallets.push(wallet.toLowerCase());
-    }
-    const ratesSpent = await this.ratesDb.getTotalRatesSpentOnMatterByWallets({
-      wallets: consolidatedWallets,
-      matter,
-      matterTargetType
-    });
+    const tdh = await this.ratesDb.getTdhInfoForProfile(profileId);
+    const ratesSpent = await this.ratesDb.getTotalRatesSpentOnMatterByProfileId(
+      {
+        profileId,
+        matter,
+        matterTargetType
+      }
+    );
     return {
       ratesLeft: tdh - ratesSpent,
-      ratesSpent: ratesSpent,
-      consolidatedWallets
+      ratesSpent: ratesSpent
     };
   }
 
@@ -136,9 +161,9 @@ export class RatesService {
     matterTargetType,
     matterTargetId,
     matter,
-    wallets
+    profileId
   }: {
-    wallets: string[];
+    profileId?: string | null;
     matterTargetType: RateMatterTargetType;
     matter: string;
     matterTargetId: string;
@@ -153,17 +178,18 @@ export class RatesService {
         matterTargetId,
         matter
       );
-    const walletsRatesByCategory =
-      await this.ratesDb.getRatesTallyForWalletOnMatterByCategories({
-        wallets,
-        matter,
-        matterTargetType,
-        matterTargetId
-      });
+    const profileRatesByCategory = profileId
+      ? await this.ratesDb.getRatesTallyForProfileOnMatterByCategories({
+          profileId,
+          matter,
+          matterTargetType,
+          matterTargetId
+        })
+      : {};
     return categories.map<RateCategoryInfo>((c) => ({
       tally: totalTalliesByCategory[c.matter_category_tag] ?? 0,
-      authenticated_wallet_rates:
-        walletsRatesByCategory[c.matter_category_tag] ?? 0,
+      authenticated_profile_rates:
+        profileRatesByCategory[c.matter_category_tag] ?? 0,
       category_tag: c.matter_category_tag,
       category_enabled: !c.disabled_time,
       category_display_name: c.matter_category_display_name,
@@ -174,76 +200,71 @@ export class RatesService {
   private calculateOverrateSummaries(
     activeTdhs: {
       tdh: number;
-      wallets: string[];
+      profile_id: string;
     }[],
-    talliesByWallets: Record<
+    talliesByRaters: Record<
       string,
       Record<
         string,
-        { matter: string; matter_target_type: string; tally: number }
+        {
+          matter: string;
+          matter_target_type: string;
+          tally: number;
+        }
       >
     >
   ) {
-    // create mock 0 tdhs for wallets that have historically rated but are not part of community anymore
-    for (const wallet of Object.keys(talliesByWallets)) {
-      const walletNotFoundFromTdhs = !activeTdhs.find((tdh) =>
-        tdh.wallets.map((it) => it.toLowerCase()).includes(wallet.toLowerCase())
+    // create mock 0 tdhs for profiles that have historically rated but are not part of community anymore
+    for (const raterId of Object.keys(talliesByRaters)) {
+      const profilesNotFoundFromTdhs = !activeTdhs.find(
+        (tdh) => tdh.profile_id === raterId
       );
-      if (walletNotFoundFromTdhs) {
+      if (profilesNotFoundFromTdhs) {
         activeTdhs.push({
           tdh: 0,
-          wallets: [wallet]
+          profile_id: raterId
         });
       }
     }
     return activeTdhs.reduce(
       (aggregatedTallies, activeTdh) => {
-        const talliesForConsolidationGroupsByMatter: Record<
+        const talliesForProfilesByMatter: Record<
           string,
           {
             tally: number;
             matter: string;
             matter_target_type: string;
-            rate_participating_wallets: string[];
+            profileId: string;
             tdh: number;
           }
         > = {};
-        // aggregate all consolidation group rates by matter
-        for (const wallet of activeTdh.wallets) {
-          const allMattersTalliesForWallet = talliesByWallets[wallet] || {};
-          for (const [key, matterTallyDescription] of Object.entries(
-            allMattersTalliesForWallet
-          )) {
-            if (!talliesForConsolidationGroupsByMatter[key]) {
-              // for the first wallet in consolidation group that has spent rates on this matter
-              talliesForConsolidationGroupsByMatter[key] = {
-                matter: matterTallyDescription.matter,
-                matter_target_type: matterTallyDescription.matter_target_type,
-                tally: matterTallyDescription.tally,
-                rate_participating_wallets: [wallet],
-                tdh: activeTdh.tdh
-              };
-            } else {
-              // for other wallets in consolidation group that has spent rates on this matter
-              talliesForConsolidationGroupsByMatter[key] = {
-                matter: matterTallyDescription.matter,
-                matter_target_type: matterTallyDescription.matter_target_type,
-                tally:
-                  talliesForConsolidationGroupsByMatter[key].tally +
-                  matterTallyDescription.tally,
-                rate_participating_wallets: [
-                  wallet,
-                  ...talliesForConsolidationGroupsByMatter[key]
-                    .rate_participating_wallets
-                ],
-                tdh: activeTdh.tdh
-              };
-            }
+        const allMattersTalliesForProfile =
+          talliesByRaters[activeTdh.profile_id] || {};
+        for (const [key, matterTallyDescription] of Object.entries(
+          allMattersTalliesForProfile
+        )) {
+          if (!talliesForProfilesByMatter[key]) {
+            talliesForProfilesByMatter[key] = {
+              matter: matterTallyDescription.matter,
+              matter_target_type: matterTallyDescription.matter_target_type,
+              tally: matterTallyDescription.tally,
+              profileId: activeTdh.profile_id,
+              tdh: activeTdh.tdh
+            };
+          } else {
+            talliesForProfilesByMatter[key] = {
+              matter: matterTallyDescription.matter,
+              matter_target_type: matterTallyDescription.matter_target_type,
+              tally:
+                talliesForProfilesByMatter[key].tally +
+                matterTallyDescription.tally,
+              profileId: activeTdh.profile_id,
+              tdh: activeTdh.tdh
+            };
           }
         }
-        // keep only the ones where rate count exceeds TDH
         aggregatedTallies.push(
-          ...Object.values(talliesForConsolidationGroupsByMatter).filter(
+          ...Object.values(talliesForProfilesByMatter).filter(
             (t) => t.tally > activeTdh.tdh
           )
         );
@@ -254,12 +275,12 @@ export class RatesService {
         tally: number;
         matter: string;
         matter_target_type: string;
-        rate_participating_wallets: string[];
+        profileId: string;
       }[]
     );
   }
 
-  private async getAllRateMatterTalliesByWallets() {
+  private async getAllRateMatterTalliesGroupedByRaters() {
     const activeRateTally =
       await this.ratesDb.getActiveRateTalliesGroupedByRaterMatterAndTarget();
     return activeRateTally.reduce((a, vt) => {
@@ -282,7 +303,7 @@ export class RatesService {
       tally: number;
       matter: string;
       matter_target_type: string;
-      rate_participating_wallets: string[];
+      profileId: string;
     }[]
   ) {
     await this.ratesDb.executeNativeQueriesInTransaction(
@@ -332,24 +353,6 @@ export class RatesService {
         }
       }
     );
-  }
-
-  private async getWalletTdhAndConsolidatedWallets(
-    wallet: string
-  ): Promise<{ tdh: number; consolidatedWallets: string[]; blockNo: number }> {
-    if (!/0x[a-fA-F0-9]{40}/.exec(wallet)) {
-      return { tdh: 0, consolidatedWallets: [], blockNo: 0 };
-    }
-    const walletTdh = await this.ratesDb.getTdhInfoForWallet(wallet);
-    const consolidatedWallets = walletTdh?.wallets ?? [];
-    if (!consolidatedWallets.includes(wallet.toLowerCase())) {
-      consolidatedWallets.push(wallet.toLowerCase());
-    }
-    return {
-      tdh: walletTdh?.tdh ?? 0,
-      consolidatedWallets: consolidatedWallets,
-      blockNo: walletTdh?.block ?? 0
-    };
   }
 }
 

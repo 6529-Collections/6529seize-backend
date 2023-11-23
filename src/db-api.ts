@@ -246,7 +246,11 @@ async function execSQLWithParams<T>(
         connection?.release();
       }
       if (err) {
-        logger.error(`Failed to execute SQL query`, err);
+        logger.error(
+          `Error "${err}" executing SQL query ${sql}${
+            params ? `with params ${JSON.stringify(params)}` : ''
+          }\n`
+        );
         reject(err);
       } else {
         resolve(Object.values(JSON.parse(JSON.stringify(result))));

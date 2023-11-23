@@ -202,8 +202,8 @@ router.post(
     if (!profile?.profile) {
       throw new NotFoundException(`No profile found for ${handleOrWallet}`);
     }
-    await ratesService.registerUserRating({
-      rater: raterWallet.toLowerCase(),
+    await ratesService.registerUserRatingWithWallet({
+      raterWallet: raterWallet.toLowerCase(),
       matterTargetType: RateMatterTargetType.PROFILE_ID,
       matterTargetId: profile.profile.external_id,
       matter: 'CIC',
