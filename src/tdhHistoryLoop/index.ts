@@ -8,7 +8,6 @@ import {
 } from '../entities/ITDH';
 import { areEqualAddresses, formatDateAsString } from '../helpers';
 import { loadEnv, unload } from '../secrets';
-import { ConsolidatedTDHUpload } from '../entities/IUpload';
 import axios from 'axios';
 import { Readable } from 'stream';
 import { Logger } from '../logging';
@@ -53,7 +52,11 @@ export async function tdhHistoryLoop(iterations: number) {
   }
 }
 
-async function fetchUploads(date: string): Promise<ConsolidatedTDHUpload[]> {
+async function fetchUploads(date: string): Promise<{
+  date:string;
+  block:number;
+  url:string;
+}[]> {
   const uploads = await fetch(
     `https://api.seize.io/api/consolidated_uploads?date=${date}&page_size=5`
   );
@@ -96,8 +99,10 @@ async function tdhHistory(date: Date) {
   const today = uploads[0];
   const yesterday = uploads[1];
 
-  const todayData = await fetchAndParseCSV(today.tdh);
-  const yesterdayData = await fetchAndParseCSV(yesterday.tdh);
+  console.log("TODAY", today)
+
+  const todayData = await fetchAndParseCSV(today.url);
+  const yesterdayData = await fetchAndParseCSV(yesterday.url);
 
   const tdhHistory: TDHHistory[] = [];
 
