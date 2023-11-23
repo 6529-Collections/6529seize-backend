@@ -1,4 +1,4 @@
-import { constructFilters } from 'src/api-helpers';
+import { constructFilters } from '../api-helpers';
 import {
   TRANSACTIONS_TABLE,
   TRANSACTIONS_MEME_LAB_TABLE,
