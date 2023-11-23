@@ -1,8 +1,6 @@
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
-import * as rates from '../../../rates';
 import * as Joi from 'joi';
-import { RateCategoryInfo } from '../../../rates';
 import { RateMatterTargetType } from '../../../entities/IRateMatter';
 import {
   getWalletOrNull,
@@ -15,6 +13,8 @@ import { ForbiddenException } from '../../../exceptions';
 import { asyncRouter } from '../async.router';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { Logger } from '../../../logging';
+import { RateCategoryInfo } from '../../../rates/rates.types';
+import { ratesService } from '../../../rates/rates.service';
 
 const router = asyncRouter();
 
@@ -40,13 +40,13 @@ router.get(
     const { matter, matter_target_type, matter_target_id } = req.params;
     const wallet = getWalletOrNull(req);
     const { ratesLeft, consolidatedWallets } = wallet
-      ? await rates.getRatesLeftOnMatterForWallet({
+      ? await ratesService.getRatesLeftOnMatterForWallet({
           wallet,
           matter,
           matterTargetType: matter_target_type
         })
       : { ratesLeft: 0, consolidatedWallets: [] as string[] };
-    const categoriesInfo = await rates.getCategoriesInfoOnMatter({
+    const categoriesInfo = await ratesService.getCategoriesInfoOnMatter({
       wallets: consolidatedWallets,
       matter,
       matterTargetType: matter_target_type,
@@ -98,7 +98,7 @@ router.post(
       },
       WalletRateRequestSchema
     );
-    await rates.registerUserRating(rateRequest);
+    await ratesService.registerUserRating(rateRequest);
     res.status(201).send();
   }
 );
