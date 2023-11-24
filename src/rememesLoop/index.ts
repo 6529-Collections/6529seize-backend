@@ -238,7 +238,7 @@ async function buildRememe(contract: string, id: string, memes: number[]) {
       contract: contract,
       id: id,
       deployer: deployer,
-      token_uri: tokenUri ? tokenUri : ``,
+      token_uri: tokenUri || ``,
       token_type: tokenType,
       meme_references: memes,
       metadata,

@@ -5,7 +5,7 @@ import { isNumber } from '../../helpers';
 
 import { validateUser } from './users/user_validation';
 
-import votesRoutes from './votes/votes.routes';
+import ratesRoutes from './rates/rates.routes';
 import profilesRoutes from './profiles/profiles.routes';
 import authRoutes from './auth/auth.routes';
 import rememesRoutes from './rememes/rememes.routes';
@@ -1275,7 +1275,7 @@ loadApi().then(() => {
     );
   });
 
-  apiRouter.use(`/votes`, votesRoutes);
+  apiRouter.use(`/rates`, ratesRoutes);
   apiRouter.use(`/profiles`, profilesRoutes);
   apiRouter.use(`/auth`, authRoutes);
   apiRouter.use(`/rememes`, rememesRoutes);

@@ -169,17 +169,6 @@ export const findTDH = async (lastTDHCalc: Date) => {
       );
 
       ADJUSTED_NFTS.forEach((nft) => {
-        let tokenTransactions: Transaction[] = [];
-        if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
-          tokenTransactions = [...memesTransactions].filter(
-            (tr) => nft.id == tr.token_id
-          );
-        } else if (areEqualAddresses(nft.contract, GRADIENT_CONTRACT)) {
-          tokenTransactions = [...gradientsTransactions].filter(
-            (tr) => nft.id == tr.token_id
-          );
-        }
-
         const tokenConsolidatedTransactions = [
           ...consolidationTransactions
         ].filter(

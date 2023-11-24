@@ -227,7 +227,11 @@ async function execSQLWithParams<T>(
         connection?.release();
       }
       if (err) {
-        logger.error(`Failed to execute SQL query`, err);
+        logger.error(
+          `Error "${err}" executing SQL query ${sql}${
+            params ? `with params ${JSON.stringify(params)}` : ''
+          }\n`
+        );
         reject(err);
       } else {
         resolve(Object.values(JSON.parse(JSON.stringify(result))));
@@ -1382,9 +1386,8 @@ export async function fetchOwnerMetrics(
   if (results.data.length == 0 && wallets && profilePage) {
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length > 0) {
-      const sql = getProfilePageSql();
-      const params = getProfilePageSqlParams(resolvedWallets);
-      let results2 = await sqlExecutor.execute(sql, params);
+      const sql = getProfilePageSql(resolvedWallets);
+      let results2 = await sqlExecutor.execute(sql.sql, sql.params);
       results2 = await enhanceDataWithHandlesAndLevel(results2);
       return {
         count: results2.length,
@@ -1523,9 +1526,8 @@ export async function fetchConsolidatedOwnerMetricsForKey(
 
   if (results.data.length == 0) {
     const resolvedWallets = consolidationkey.split('-');
-    const sql = getProfilePageSql();
-    const params = getProfilePageSqlParams(resolvedWallets);
-    const results2 = await sqlExecutor.execute(sql, params);
+    const sql = getProfilePageSql(resolvedWallets);
+    const results2 = await sqlExecutor.execute(sql.sql, sql.params);
     if (results2.length == 1) {
       const r = results2[0];
       r.consolidation_key = consolidationkey;
@@ -1854,9 +1856,8 @@ export async function fetchConsolidatedOwnerMetrics(
   if (results.data.length == 0 && wallets && profilePage) {
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length > 0) {
-      const sql = getProfilePageSql();
-      const params = getProfilePageSqlParams(resolvedWallets);
-      let results2 = await sqlExecutor.execute(sql);
+      const sql = getProfilePageSql(resolvedWallets);
+      let results2 = await sqlExecutor.execute(sql.sql, sql.params);
       results2[0].wallets = resolvedWallets;
       results2 = await enhanceDataWithHandlesAndLevel(results2);
       return {

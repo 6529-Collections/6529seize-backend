@@ -18,7 +18,6 @@ import {
   MEMES_CONTRACT,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
-  TDH_HISTORY_TABLE,
   DELEGATIONS_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
@@ -71,9 +70,6 @@ import {
   formatAddress
 } from './helpers';
 import { getConsolidationsSql } from './sql_helpers';
-import { VoteEvent } from './entities/IVoteEvent';
-import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
-import { VoteMatterCategory } from './entities/IVoteMatter';
 import {
   NextGenTransactionsBlock,
   NextGenAllowlist,
@@ -81,9 +77,13 @@ import {
   NextGenCollection,
   NextGenCollectionBurn
 } from './entities/INextGen';
+import { RateEvent } from './entities/IRateEvent';
+import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
+import { RateMatterCategory } from './entities/IRateMatter';
 import { Profile, ProfileArchived } from './entities/IProfile';
 import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
+import { Time } from './time';
 
 const mysql = require('mysql');
 
@@ -122,8 +122,8 @@ export async function connect(entities: any[] = []) {
       GlobalTDHHistory,
       ENS,
       User,
-      VoteEvent,
-      VoteMatterCategory,
+      RateEvent,
+      RateMatterCategory,
       Profile,
       NextGenTransactionsBlock,
       NextGenAllowlist,
@@ -336,10 +336,10 @@ export async function fetchLatestTransactionsBlockNumber(beforeDate?: Date) {
   return r.length > 0 ? r[0].block : 0;
 }
 
-export async function fetchLatestTDHBDate() {
+export async function fetchLatestTDHBDate(): Promise<Time> {
   const sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await sqlExecutor.execute(sql);
-  return r.length > 0 ? r[0].timestamp : 0;
+  return r.length > 0 ? Time.fromString(r[0].timestamp) : Time.millis(0);
 }
 
 export async function fetchLatestTDHBlockNumber() {
@@ -438,10 +438,9 @@ export async function fetchAllConsolidatedTDH() {
 export async function fetchConsolidationDisplay(
   myWallets: string[]
 ): Promise<string> {
-  const placeholders = myWallets.map(() => '?').join(', ');
   const sql = `SELECT * FROM ${ENS_TABLE} WHERE wallet IN (:wallets)`;
   const results = await sqlExecutor.execute(sql, {
-    wallets: myWallets.join(',')
+    wallets: myWallets
   });
   const displayArray: string[] = [];
 
@@ -817,17 +816,18 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
   if (ownersTags.length > 0) {
     logger.info(`[OWNERS TAGS] [PERSISTING ${ownersTags.length} WALLETS]`);
 
-    const repo = AppDataSource.getRepository(OwnerTags);
-
-    await Promise.all(
-      ownersTags.map(async (owner) => {
-        if (0 >= owner.memes_balance && 0 >= owner.gradients_balance) {
-          await repo.remove(owner);
-        } else {
-          await repo.save(owner);
-        }
-      })
-    );
+    await AppDataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(OwnerTags);
+      await Promise.all(
+        ownersTags.map(async (owner) => {
+          if (0 >= owner.memes_balance && 0 >= owner.gradients_balance) {
+            await repo.remove(owner);
+          } else {
+            await repo.upsert(owner, ['wallet']);
+          }
+        })
+      );
+    });
 
     logger.info(`[OWNERS TAGS] [ALL ${ownersTags.length} WALLETS PERSISTED]`);
   }
@@ -1251,16 +1251,6 @@ export async function persistDelegations(
   );
 }
 
-export async function fetchPrimaryWallet(tdhBlock: number, wallets: string[]) {
-  const placeholders = wallets.map(() => '?').join(', ');
-  const sql = `SELECT wallet from ${WALLETS_TDH_TABLE} where wallet in (:wallets) AND block=:block order by boosted_tdh desc limit 1`;
-  const results: any[] = await sqlExecutor.execute(sql, {
-    wallets: wallets.join(','),
-    block: tdhBlock
-  });
-  return results[0].wallet;
-}
-
 export async function persistNftHistory(nftHistory: NFTHistory[]) {
   await AppDataSource.getRepository(NFTHistory).save(nftHistory);
 }
@@ -1298,11 +1288,10 @@ export async function fetchLatestNftUri(tokenId: number, contract: string) {
 }
 
 export async function fetchHasEns(wallets: string[]) {
-  const placeholders = wallets.map(() => '?').join(', ');
   const sql = `SELECT COUNT(*) as ens_count FROM ${ENS_TABLE} WHERE wallet IN (:wallets) AND display IS NOT NULL`;
 
   const results = await sqlExecutor.execute(sql, {
-    wallets: wallets.join(',')
+    wallets: wallets
   });
   return parseInt(results[0].ens_count) === wallets.length;
 }

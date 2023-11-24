@@ -1,4 +1,4 @@
-import * as overvotesRevocation from './overvotesRevocationLoop';
+import * as overRatesRevocation from './overRatesRevocationLoop';
 import { Logger } from './logging';
 
 const transactions = require('./transactionsLoop');
@@ -100,7 +100,7 @@ cron.schedule('1,15,30,45 0 * * *', async function () {
   if (isCronsEnabled()) {
     await tdh.handler();
     await tdhHistory.handler();
-    await overvotesRevocation.handler();
+    await overRatesRevocation.handler();
   }
 });
 
@@ -136,8 +136,8 @@ async function start() {
   // await transactions.handlerValues();
   // await rememes.handler();
   // await transactionsReplay.handler();
-  await overvotesRevocation.handler();
   await nextgenLoop.handler();
+  await overRatesRevocation.handler();
 
   RUNNING_START_SCRIPT = false;
   logger.info(`[START SCRIPT COMPLETE] [SERVICE STARTED...]`);

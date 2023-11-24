@@ -13,7 +13,7 @@ import {
   CreateOrUpdateProfileCommand,
   ProfileAndConsolidations
 } from '../../../profiles/profiles';
-import * as votes from '../../../votes';
+import { ratesService } from '../../../rates/rates.service';
 import * as profiles from '../../../profiles/profiles';
 import { NotFoundException } from '../../../exceptions';
 import { initMulterSingleMiddleware } from '../multer-middleware';
@@ -21,7 +21,7 @@ import { initMulterSingleMiddleware } from '../multer-middleware';
 import { asyncRouter } from '../async.router';
 import { RESERVED_HANDLES } from './profiles.constats';
 import { ProfileClassification } from '../../../entities/IProfile';
-import { VoteMatterTargetType } from '../../../entities/IVoteMatter';
+import { RateMatterTargetType } from '../../../entities/IRateMatter';
 
 const router = asyncRouter();
 
@@ -190,7 +190,7 @@ router.post(
     res: Response<ApiResponse<ProfileAndConsolidations>>
   ) {
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
-    const voterWallet = getWalletOrThrow(req);
+    const raterWallet = getWalletOrThrow(req);
     const { amount } = getValidatedByJoiOrThrow(
       req.body,
       ApiAddCicRatingToProfileRequestSchema
@@ -202,9 +202,9 @@ router.post(
     if (!profile?.profile) {
       throw new NotFoundException(`No profile found for ${handleOrWallet}`);
     }
-    await votes.registerUserVote({
-      voterWallet: voterWallet.toLowerCase(),
-      matterTargetType: VoteMatterTargetType.PROFILE_ID,
+    await ratesService.registerUserRatingWithWallet({
+      raterWallet: raterWallet.toLowerCase(),
+      matterTargetType: RateMatterTargetType.PROFILE_ID,
       matterTargetId: profile.profile.external_id,
       matter: 'CIC',
       category: 'CIC',
