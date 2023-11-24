@@ -86,6 +86,6 @@ export class Logger {
   }
 
   error(arg1: any, ...rest: any) {
-    getWinstonInstance(this.name).debug(arg1, rest);
+    getWinstonInstance(this.name).error(arg1, rest);
   }
 }

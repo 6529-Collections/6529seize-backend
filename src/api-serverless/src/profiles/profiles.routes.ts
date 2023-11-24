@@ -13,7 +13,7 @@ import {
   CreateOrUpdateProfileCommand,
   ProfileAndConsolidations
 } from '../../../profiles/profiles';
-import * as rates from '../../../rates';
+import { ratesService } from '../../../rates/rates.service';
 import * as profiles from '../../../profiles/profiles';
 import { NotFoundException } from '../../../exceptions';
 import { initMulterSingleMiddleware } from '../multer-middleware';
@@ -202,8 +202,8 @@ router.post(
     if (!profile?.profile) {
       throw new NotFoundException(`No profile found for ${handleOrWallet}`);
     }
-    await rates.registerUserRating({
-      rater: raterWallet.toLowerCase(),
+    await ratesService.registerUserRatingWithWallet({
+      raterWallet: raterWallet.toLowerCase(),
       matterTargetType: RateMatterTargetType.PROFILE_ID,
       matterTargetId: profile.profile.external_id,
       matter: 'CIC',

@@ -1,8 +1,6 @@
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
-import * as rates from '../../../rates';
 import * as Joi from 'joi';
-import { RateCategoryInfo } from '../../../rates';
 import { RateMatterTargetType } from '../../../entities/IRateMatter';
 import {
   getWalletOrNull,
@@ -15,6 +13,9 @@ import { ForbiddenException } from '../../../exceptions';
 import { asyncRouter } from '../async.router';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { Logger } from '../../../logging';
+import { RateCategoryInfo } from '../../../rates/rates.types';
+import { ratesService } from '../../../rates/rates.service';
+import * as profiles from '../../../profiles/profiles';
 
 const router = asyncRouter();
 
@@ -39,19 +40,27 @@ router.get(
   ) {
     const { matter, matter_target_type, matter_target_id } = req.params;
     const wallet = getWalletOrNull(req);
-    const { ratesLeft, consolidatedWallets } = wallet
-      ? await rates.getRatesLeftOnMatterForWallet({
-          wallet,
-          matter,
-          matterTargetType: matter_target_type
-        })
-      : { ratesLeft: 0, consolidatedWallets: [] as string[] };
-    const categoriesInfo = await rates.getCategoriesInfoOnMatter({
-      wallets: consolidatedWallets,
+    const profileId = wallet
+      ? await profiles.getProfileIdByWallet(wallet)
+      : null;
+    const categoriesInfo = await ratesService.getCategoriesInfoOnMatter({
+      profileId,
       matter,
       matterTargetType: matter_target_type,
       matterTargetId: matter_target_id
     });
+    const profilePrimaryWallet = profileId
+      ? await profiles.getPrimaryWalletByProfileId(profileId)
+      : null;
+    const ratesLeft = profilePrimaryWallet
+      ? await ratesService
+          .getRatesLeftOnMatterForProfile({
+            profileId: profileId!,
+            matter,
+            matterTargetType: matter_target_type
+          })
+          .then((it) => it?.ratesLeft)
+      : 0;
     res.status(200).send({
       rates_left: ratesLeft,
       categories: categoriesInfo
@@ -78,10 +87,10 @@ router.post(
   ) {
     const walletFromHeader = getWalletOrThrow(req);
     const { matter, matter_target_type, matter_target_id } = req.params;
-    const { amount, category, rater } = req.body as ApiRateRequestBody;
-    if (walletFromHeader !== rater) {
+    const { amount, category, rater_wallet } = req.body as ApiRateRequestBody;
+    if (walletFromHeader !== rater_wallet) {
       logger.error(
-        `Rater failed to rate on path (target_type=${matter_target_type}; matter=${matter}; category=${category}}) because wallet from auth '${walletFromHeader}' and wallet in body '${rater}' did not match`
+        `Rater failed to rate on path (target_type=${matter_target_type}; matter=${matter}; category=${category}}) because wallet from auth '${walletFromHeader}' and wallet in body '${rater_wallet}' did not match`
       );
       throw new ForbiddenException(
         'Something went wrong. User is not allowed to rate.'
@@ -89,7 +98,7 @@ router.post(
     }
     const rateRequest = getValidatedByJoiOrThrow(
       {
-        rater: rater,
+        raterWallet: rater_wallet,
         matter,
         matterTargetType: matter_target_type,
         matterTargetId: matter_target_id,
@@ -98,26 +107,26 @@ router.post(
       },
       WalletRateRequestSchema
     );
-    await rates.registerUserRating(rateRequest);
+    await ratesService.registerUserRatingWithWallet(rateRequest);
     res.status(201).send();
   }
 );
 
 interface ApiRateRequestBody {
-  rater: string;
+  rater_wallet: string;
   amount: number;
   category: string;
 }
 
 const WalletRateRequestSchema = Joi.object<{
-  rater: string;
+  raterWallet: string;
   matter: string;
   matterTargetType: RateMatterTargetType;
   matterTargetId: string;
   category: string;
   amount: number;
 }>({
-  rater: Joi.string().regex(WALLET_REGEX).required(),
+  raterWallet: Joi.string().regex(WALLET_REGEX).required(),
   matterTargetType: Joi.string()
     .valid(...Object.values(RateMatterTargetType))
     .required(),

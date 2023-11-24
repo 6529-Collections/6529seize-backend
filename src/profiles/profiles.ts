@@ -36,6 +36,35 @@ export interface ProfileAndConsolidations {
   level: number;
 }
 
+export async function getProfileIdByWallet(
+  wallet: string
+): Promise<string | null> {
+  const { consolidatedWallets } =
+    await tdh_consolidation.getWalletTdhAndConsolidatedWallets(wallet);
+
+  return sqlExecutor
+    .execute(
+      `select external_id from ${PROFILES_TABLE} where lower(primary_wallet) in (:wallets) order by created_at desc limit 1`,
+      {
+        wallets: consolidatedWallets
+      }
+    )
+    ?.then((result) => result.at(0)?.external_id ?? null);
+}
+
+export async function getPrimaryWalletByProfileId(
+  profileId: string
+): Promise<string | null> {
+  return sqlExecutor
+    .execute(
+      `select primary_wallet from ${PROFILES_TABLE} where external_id = :externalId`,
+      {
+        externalId: profileId
+      }
+    )
+    ?.then((result) => result.at(0)?.primary_wallet ?? null);
+}
+
 async function getProfileByEnsName(
   query: string
 ): Promise<ProfileAndConsolidations | null> {
