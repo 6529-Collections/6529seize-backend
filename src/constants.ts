@@ -34,8 +34,11 @@ export const DELEGATIONS_TABLE = 'delegations';
 export const NFTS_HISTORY_TABLE = 'nfts_history';
 export const NFTS_HISTORY_BLOCKS_TABLE = 'nfts_history_blocks';
 export const NFTS_HISTORY_CLAIMS_TABLE = 'nfts_history_claims';
-export const NEXT_GEN_ALLOWLIST = 'next_gen_allowlist';
-export const NEXT_GEN_COLLECTIONS = 'next_gen_collections';
+export const NEXTGEN_TRANSACTIONS_BLOCK_TABLE = 'nextgen_transactions_block';
+export const NEXTGEN_ALLOWLIST_TABLE = 'nextgen_allowlist';
+export const NEXTGEN_ALLOWLIST_BURN_TABLE = 'nextgen_allowlist_burn';
+export const NEXTGEN_COLLECTIONS_TABLE = 'nextgen_collection';
+export const NEXTGEN_BURN_COLLECTIONS_TABLE = 'nextgen_burn_collection';
 export const REMEMES_TABLE = 'rememes';
 export const REMEMES_UPLOADS = 'uploads_rememes';
 export const RATE_EVENTS_TABLE = 'rate_events';
@@ -59,6 +62,11 @@ export const MEMELAB_ROYALTIES_ADDRESS =
 export const OPENSEA_ADDRESS = '0x00000000000000ADc04C56Bf30aC9d3c0aAF14dC';
 export const MEMES_DEPLOYER = '0x4B76837F8D8Ad0A28590d06E53dCD44b6B7D4554';
 export const ACK_DEPLOYER = '0x03ee832367e29a5cd001f65093283eabb5382b62';
+export const NEXTGEN_ADMIN = '0x1bAe1D145Dd61fBBB62C85f8A6d7B6eDe0D150f5';
+export const NEXTGEN_CONTRACT = {
+  network: Network.ETH_GOERLI,
+  contract: '0xF3ff54B93844B1512C7bDafd2c41B5D228D03f98'
+};
 export const LOOKS_TOKEN_ADDRESS = '0xf4d2888d29d722226fafa5d9b24f9164c092421e';
 export const WETH_TOKEN_ADDRESS = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
 
@@ -69,22 +77,20 @@ export const ALCHEMY_SETTINGS = {
 
 export const INFURA_KEY = 'b496145d088a4fe5a5861a6db9ee2034';
 
-export const NFT_ORIGINAL_IMAGE_LINK =
-  'https://d3lqz0a4bldqgf.cloudfront.net/images/original/';
+export const CLOUDFRONT_DISTRIBUTION = 'ECGWRHUV1NM3I';
+export const CLOUDFRONT_ID = 'd3lqz0a4bldqgf';
+export const CLOUDFRONT_LINK = `https://${CLOUDFRONT_ID}.cloudfront.net`;
 
-export const NFT_SCALED1000_IMAGE_LINK =
-  'https://d3lqz0a4bldqgf.cloudfront.net/images/scaled_x1000/';
+export const NFT_ORIGINAL_IMAGE_LINK = `${CLOUDFRONT_LINK}/images/original/`;
 
-export const NFT_SCALED450_IMAGE_LINK =
-  'https://d3lqz0a4bldqgf.cloudfront.net/images/scaled_x450/';
+export const NFT_SCALED1000_IMAGE_LINK = `${CLOUDFRONT_LINK}/images/scaled_x1000/`;
 
-export const NFT_SCALED60_IMAGE_LINK =
-  'https://d3lqz0a4bldqgf.cloudfront.net/images/scaled_x60/';
+export const NFT_SCALED450_IMAGE_LINK = `${CLOUDFRONT_LINK}/images/scaled_x450/`;
 
-export const NFT_VIDEO_LINK = 'https://d3lqz0a4bldqgf.cloudfront.net/videos/';
-export const NFT_HTML_LINK = 'https://d3lqz0a4bldqgf.cloudfront.net/html/';
+export const NFT_SCALED60_IMAGE_LINK = `${CLOUDFRONT_LINK}/images/scaled_x60/`;
 
-export const CLOUDFRONT_LINK = 'https://d3lqz0a4bldqgf.cloudfront.net';
+export const NFT_VIDEO_LINK = `${CLOUDFRONT_LINK}/videos/`;
+export const NFT_HTML_LINK = `${CLOUDFRONT_LINK}/html/`;
 
 // export const DELEGATION_CONTRACT: {
 //   chain_id: number;
