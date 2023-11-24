@@ -360,27 +360,24 @@ loadApi().then(() => {
         ? req.query.sort_direction
         : 'desc';
 
-    const contracts = req.query.contract;
     const nfts = req.query.id;
     const memeIds = req.query.meme_id;
 
-    db.fetchLabNFTs(memeIds, pageSize, page, contracts, nfts, sortDir).then(
-      (result) => {
-        result.data.map((d: any) => {
-          d.meme_references = JSON.parse(d.meme_references);
-          d.metadata = JSON.parse(d.metadata);
-          if (
-            d.metadata.animation_details &&
-            typeof d.metadata.animation_details === 'string'
-          ) {
-            d.metadata.animation_details = JSON.parse(
-              d.metadata.animation_details
-            );
-          }
-        });
-        returnPaginatedResult(result, req, res);
-      }
-    );
+    db.fetchLabNFTs(memeIds, pageSize, page, nfts, sortDir).then((result) => {
+      result.data.map((d: any) => {
+        d.meme_references = JSON.parse(d.meme_references);
+        d.metadata = JSON.parse(d.metadata);
+        if (
+          d.metadata.animation_details &&
+          typeof d.metadata.animation_details === 'string'
+        ) {
+          d.metadata.animation_details = JSON.parse(
+            d.metadata.animation_details
+          );
+        }
+      });
+      returnPaginatedResult(result, req, res);
+    });
   });
 
   apiRouter.get(`/memes_extended_data`, function (req: any, res: any) {

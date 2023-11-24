@@ -561,7 +561,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
         let transfers_out_memes_season5 = 0;
         let transfers_out_gradients = 0;
 
-        consolidatedWalletsMetrics.map((com) => {
+        consolidatedWalletsMetrics.forEach((com) => {
           balance += com.balance;
           memes_balance += com.memes_balance;
           memes_balance_season1 += com.memes_balance_season1;
@@ -797,7 +797,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
         };
         consolidatedMetrics.push(consolidation);
       }
-      consolidations.map((c) => {
+      consolidations.forEach((c) => {
         processedWallets.add(c);
       });
     })

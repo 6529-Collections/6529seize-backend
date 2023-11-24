@@ -36,7 +36,11 @@ const fetch = (url: RequestInfo, init?: RequestInit) =>
 
 let alchemy: Alchemy;
 
-async function getNFTResponse(contract: string, key: any) {
+export async function getNFTResponse(
+  alchemy: Alchemy,
+  contract: string,
+  key: any
+) {
   const settings = {
     pageKey: undefined
   };
@@ -54,7 +58,7 @@ async function getAllNFTs(
   nfts: Nft[] = [],
   key = ''
 ): Promise<Nft[]> {
-  const response = await getNFTResponse(contract, key);
+  const response = await getNFTResponse(alchemy, contract, key);
   const newKey = response.pageKey;
   nfts = nfts.concat(response.nfts);
 
@@ -81,7 +85,7 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
   await Promise.all(
     allMemesNFTS.map(async (mnft) => {
       const tokenId = parseInt(mnft.tokenId);
-      const fullMetadata = await (await fetch(mnft.tokenUri!.raw)).json();
+      const fullMetadata = await (await fetch(mnft.raw.tokenUri!)).json();
 
       const createdTransactions = transactions.filter(
         (t) =>
@@ -119,10 +123,10 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
         }
       }
       let supply = 0;
-      createdTransactions.map((mint) => {
+      createdTransactions.forEach((mint) => {
         supply += mint.token_count;
       });
-      burntTransactions.map((burn) => {
+      burntTransactions.forEach((burn) => {
         supply -= burn.token_count;
       });
 
@@ -228,7 +232,7 @@ async function processGradients(
     allGradientsNFTS.map(async (gnft) => {
       const tokenId = parseInt(gnft.tokenId);
 
-      const fullMetadata = await (await fetch(gnft.tokenUri!.raw)).json();
+      const fullMetadata = await (await fetch(gnft.raw.tokenUri!)).json();
 
       const createdTransactions = transactions.filter(
         (t) =>
@@ -345,7 +349,7 @@ export const findNFTs = async (
     logger.info(
       `[HODL INDEX CHANGED] [DB ${GLOBAL_HODL_INDEX_TOKEN?.supply}] [NEW ${NEW_TOKENS_HODL_INDEX}] [RECALCULATING]`
     );
-    allNFTS.map((t) => {
+    allNFTS.forEach((t) => {
       if (!GLOBAL_HODL_INDEX_TOKEN) {
         GLOBAL_HODL_INDEX_TOKEN = t;
       } else {
@@ -357,7 +361,7 @@ export const findNFTs = async (
     logger.info(
       `[GLOBAL_HODL_INDEX_TOKEN SUPPLY ${GLOBAL_HODL_INDEX_TOKEN!.supply}]`
     );
-    allNFTS.map((t) => {
+    allNFTS.forEach((t) => {
       const hodl = GLOBAL_HODL_INDEX_TOKEN!.supply / t.supply;
       t.hodl_rate = isFinite(hodl) ? hodl : 1;
     });

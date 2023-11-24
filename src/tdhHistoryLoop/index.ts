@@ -108,7 +108,7 @@ async function tdhHistory(date: Date) {
 
   const yesterdayEntries: string[] = [];
 
-  todayData.map((d) => {
+  todayData.forEach((d) => {
     d.memes = JSON.parse(d.memes);
     d.gradients = JSON.parse(d.gradients);
     d.wallets = JSON.parse(d.wallets);
@@ -136,7 +136,7 @@ async function tdhHistory(date: Date) {
     );
 
     if (yesterdayTdh.length > 0) {
-      yesterdayTdh.map((y) => {
+      yesterdayTdh.forEach((y) => {
         yesterdayEntries.push(JSON.parse(y.wallets).sort().join('-'));
         if (!Array.isArray(y.memes)) {
           y.memes = JSON.parse(y.memes);
@@ -150,7 +150,7 @@ async function tdhHistory(date: Date) {
     d.memes.map((m: TokenTDH) => {
       const existing: any[] = [];
       if (yesterdayTdh) {
-        yesterdayTdh.map((y) => {
+        yesterdayTdh.forEach((y) => {
           const e = y.memes.find((em: TokenTDH) => em.id == m.id);
           if (e) {
             e.boosted_tdh = e.tdh * y.boost;
@@ -168,7 +168,7 @@ async function tdhHistory(date: Date) {
       };
 
       if (existing) {
-        existing.map((e) => {
+        existing.forEach((e) => {
           previousTdh.boosted_tdh += e.boosted_tdh;
           previousTdh.tdh += e.tdh;
           previousTdh.tdh__raw += e.tdh__raw;
@@ -194,7 +194,7 @@ async function tdhHistory(date: Date) {
     d.gradients.map((m: TokenTDH) => {
       const existing: any[] = [];
       if (yesterdayTdh) {
-        yesterdayTdh.map((y) => {
+        yesterdayTdh.forEach((y) => {
           const e = y.gradients.find((em: TokenTDH) => em.id == m.id);
           if (e) {
             e.boosted_tdh = e.tdh * y.boost;
@@ -212,7 +212,7 @@ async function tdhHistory(date: Date) {
       };
 
       if (existing) {
-        existing.map((e) => {
+        existing.forEach((e) => {
           previousTdh.boosted_tdh += e.boosted_tdh;
           previousTdh.tdh += e.tdh;
           previousTdh.tdh__raw += e.tdh__raw;
@@ -265,7 +265,7 @@ async function tdhHistory(date: Date) {
     tdhHistory.push(tdhH);
   });
 
-  yesterdayData.map((yd) => {
+  yesterdayData.forEach((yd) => {
     const key = JSON.parse(yd.wallets).sort().join('-');
     if (!yesterdayEntries.includes(key)) {
       logger.info(
@@ -344,7 +344,7 @@ async function calculateGlobalTDHHistory(
   let totalDestroyedBalance = 0;
   let totalNetBalance = 0;
 
-  tdhHistory.map((h) => {
+  tdhHistory.forEach((h) => {
     totalCreatedTdh += h.created_tdh;
     totalDestroyedTdh += h.destroyed_tdh;
     totalNetTdh += h.net_tdh;
@@ -372,7 +372,7 @@ async function calculateGlobalTDHHistory(
   let memesLength = 0;
   let gradientsLength = 0;
 
-  tdhData.map((h: any) => {
+  tdhData.forEach((h: any) => {
     totalBoostedTdh += parseFloat(h.boosted_tdh);
     totalTdh += parseFloat(h.tdh);
     totalTdhRaw += parseFloat(h.tdh__raw);

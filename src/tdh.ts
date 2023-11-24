@@ -168,18 +168,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
         areEqualAddresses(t.contract, GRADIENT_CONTRACT)
       );
 
-      ADJUSTED_NFTS.map((nft) => {
-        let tokenTransactions: Transaction[] = [];
-        if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
-          tokenTransactions = [...memesTransactions].filter(
-            (tr) => nft.id == tr.token_id
-          );
-        } else if (areEqualAddresses(nft.contract, GRADIENT_CONTRACT)) {
-          tokenTransactions = [...gradientsTransactions].filter(
-            (tr) => nft.id == tr.token_id
-          );
-        }
-
+      ADJUSTED_NFTS.forEach((nft) => {
         const tokenConsolidatedTransactions = [
           ...consolidationTransactions
         ].filter(
@@ -194,7 +183,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
         );
 
         let tdh__raw = 0;
-        tokenDatesForWallet.map((e) => {
+        tokenDatesForWallet.forEach((e) => {
           const daysDiff = getDaysDiff(lastTDHCalc, e);
           tdh__raw += daysDiff;
         });
@@ -338,7 +327,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
           gradients: walletGradients,
           gradients_ranks: []
         };
-        walletGradients.map((wg) => {
+        walletGradients.forEach((wg) => {
           allGradientsTDH.push(wg);
         });
         walletsTDH.push(tdh);
@@ -544,7 +533,7 @@ export async function ranks(
     })
   );
 
-  ADJUSTED_NFTS.map((nft) => {
+  ADJUSTED_NFTS.forEach((nft) => {
     boostedTDH
       .filter(
         (w) =>
@@ -572,7 +561,7 @@ export async function ranks(
           return 1;
         }
       })
-      .map((w, index) => {
+      .forEach((w, index) => {
         if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
           w.memes_ranks.push({
             id: nft.id,

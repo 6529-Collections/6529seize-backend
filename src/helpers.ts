@@ -76,7 +76,7 @@ function shouldAddConsolidation(
   wallet: string
 ) {
   let hasConsolidationsWithAll = true;
-  uniqueWallets.map((w) => {
+  uniqueWallets.forEach((w) => {
     if (
       !consolidations.some(
         (c) =>
@@ -99,7 +99,7 @@ export function extractConsolidationWallets(
   const uniqueWallets: string[] = [];
   const seenWallets = new Set();
 
-  consolidations.map((consolidation) => {
+  consolidations.forEach((consolidation) => {
     if (!seenWallets.has(consolidation.wallet1)) {
       seenWallets.add(consolidation.wallet1);
       const shouldAdd = shouldAddConsolidation(
