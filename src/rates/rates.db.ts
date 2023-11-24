@@ -5,6 +5,7 @@ import {
 } from '../sql-executor';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  PROFILES_TABLE,
   RATE_EVENTS_TABLE,
   RATE_MATTERS_CATEGORIES_TABLE
 } from '../constants';
@@ -15,36 +16,32 @@ import {
 } from '../entities/IRateMatter';
 
 export class RatesDb extends LazyDbAccessCompatibleService {
-  public async getAllTdhs(): Promise<{ tdh: number; wallets: string[] }[]> {
-    return this.db
-      .execute(`select tdh, wallets from ${CONSOLIDATED_WALLETS_TDH_TABLE}`)
-      .then((rows) =>
-        rows.map((row: any) => ({
-          ...row,
-          wallets: JSON.parse(row.wallets).map((it: string) => it.toLowerCase())
-        }))
-      );
+  public async getAllProfilesTdhs(): Promise<
+    { tdh: number; profile_id: string }[]
+  > {
+    return this.db.execute(
+      `
+          with b_and_w as (SELECT T.boosted_tdh
+                                , data.wallet
+                           FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} T
+                                    INNER JOIN JSON_TABLE
+                               (
+                                   T.wallets,
+                                   "$[*]" COLUMNS (
+                             wallet varchar(50) COLLATE utf8mb4_0900_ai_ci PATH "$"
+                             )
+                               ) data)
+          select ${PROFILES_TABLE}.external_id           as profile_id,
+                 b_and_w.boosted_tdh            as tdh
+          from b_and_w
+                   inner join ${PROFILES_TABLE} on lower(${PROFILES_TABLE}.primary_wallet) = lower(b_and_w.wallet)
+         `
+    );
   }
 
-  public async getTdhInfoForWallet(
-    wallet: string
-  ): Promise<{ block: number; tdh: number; wallets: string[] } | null> {
-    return await this.db
-      .execute(
-        `SELECT block, boosted_tdh as tdh, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
-        { wallet: `%${wallet.toLowerCase()}%` }
-      )
-      .then(
-        (result: any[]) =>
-          result
-            .map((row) => ({
-              ...row,
-              wallets: JSON.parse(row.wallets).map((it: string) =>
-                it.toLowerCase()
-              )
-            }))
-            .at(0) ?? null
-      );
+  public async getTdhInfoForProfile(profileId: string): Promise<number> {
+    const allProfilesTdhs = await this.getAllProfilesTdhs();
+    return allProfilesTdhs.find((it) => it.profile_id === profileId)?.tdh ?? 0;
   }
 
   public async getToBeRevokedEvents(
@@ -53,7 +50,7 @@ export class RatesDb extends LazyDbAccessCompatibleService {
       tally: number;
       matter: string;
       matter_target_type: string;
-      rate_participating_wallets: string[];
+      profileId: string;
     },
     overRateAmount: number,
     connectionHolder: ConnectionWrapper<any>
@@ -66,7 +63,7 @@ export class RatesDb extends LazyDbAccessCompatibleService {
                                SELECT ve.id, @total := @total + ve.amount AS total
                                FROM (SELECT id, amount
                                      FROM rate_events
-                                     WHERE LOWER(rater) IN (:rateParticipantsIn)
+                                     WHERE rater = :raterProfile
                                        AND matter = :matter
                                      ORDER BY created_time desc) ve
                                WHERE @total < :overRateAmount)
@@ -77,9 +74,7 @@ export class RatesDb extends LazyDbAccessCompatibleService {
       {
         matter: overRate.matter,
         overRateAmount: overRateAmount,
-        rateParticipantsIn: overRate.rate_participating_wallets.map((it) =>
-          it.toLowerCase()
-        )
+        raterProfile: overRate.profileId
       },
       { wrappedConnection: connectionHolder }
     );
@@ -94,31 +89,38 @@ export class RatesDb extends LazyDbAccessCompatibleService {
     }[]
   > {
     return this.db.execute(
-      `select rater, matter, matter_target_type, sum(amount) as rate_tally from ${RATE_EVENTS_TABLE} group by rater, matter, matter_target_type`
+      `
+      select 
+        r.rater, 
+        r.matter, 
+        r.matter_target_type,
+        sum(r.amount) as rate_tally 
+      from ${RATE_EVENTS_TABLE} r
+      group by r.rater, r.matter, r.matter_target_type`
     );
   }
 
-  public async getTotalRatesSpentOnMatterByWallets({
-    wallets,
+  public async getTotalRatesSpentOnMatterByProfileId({
+    profileId,
     matter,
     matterTargetType
   }: {
-    wallets: string[];
+    profileId: string;
     matter: string;
     matterTargetType: RateMatterTargetType;
   }): Promise<number> {
-    if (!wallets.length) {
+    if (!profileId.length) {
       return 0;
     }
     const result: { rates_spent: number }[] = await this.db.execute(
       `SELECT SUM(amount) AS rates_spent FROM ${RATE_EVENTS_TABLE}
-     WHERE LOWER(rater) IN (:wallets) 
+     WHERE rater = :profileId 
      AND matter = :matter 
      AND matter_target_type = :matterTargetType`,
       {
         matter,
         matterTargetType,
-        wallets: wallets.map((it) => it.toLowerCase())
+        profileId
       }
     );
     return result.at(0)?.rates_spent ?? 0;
@@ -176,30 +178,27 @@ export class RatesDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  public async getRatesTallyForWalletOnMatterByCategories({
-    wallets,
+  public async getRatesTallyForProfileOnMatterByCategories({
+    profileId,
     matter,
     matterTargetType,
     matterTargetId
   }: {
-    wallets: string[];
+    profileId: string;
     matter: string;
     matterTargetType: RateMatterTargetType;
     matterTargetId: string;
   }): Promise<Record<string, number>> {
-    if (!wallets.length) {
-      return {};
-    }
     const result: { matter_category: string; rate_tally: number }[] =
       await this.db.execute(
         `SELECT matter_category, SUM(amount) AS rate_tally FROM ${RATE_EVENTS_TABLE}
-      WHERE LOWER(rater) IN (:wallets)
+      WHERE rater = :profileId
       AND matter = :matter
       AND matter_target_type = :matterTargetType
       AND matter_target_id = :matterTargetId
       GROUP BY matter_category`,
         {
-          wallets: wallets.map((it) => it.toLowerCase()),
+          profileId,
           matter,
           matterTargetType,
           matterTargetId

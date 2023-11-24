@@ -2,9 +2,9 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 
 let sharp: any;
-if (process.env.NODE_ENV == 'local') {
+try {
   sharp = require('sharp');
-} else {
+} catch (error) {
   sharp = require(__dirname + '/native_modules/sharp');
 }
 
