@@ -9,7 +9,6 @@ import {
 import * as Joi from 'joi';
 import { PROFILE_HANDLE_REGEX, WALLET_REGEX } from '../../../constants';
 import { getValidatedByJoiOrThrow } from '../validation';
-import { ratesService } from '../../../rates/rates.service';
 import { NotFoundException } from '../../../exceptions';
 import { initMulterSingleMiddleware } from '../multer-middleware';
 
@@ -22,6 +21,7 @@ import {
   ProfileAndConsolidations
 } from '../../../profiles/profile.types';
 import { profilesService } from '../../../profiles/profiles.service';
+import { cicRatingsService } from '../../../rates/cic-ratings.service';
 
 const router = asyncRouter();
 
@@ -197,20 +197,27 @@ router.post(
       req.body,
       ApiAddCicRatingToProfileRequestSchema
     );
-    const profile =
+    const targetProfile =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
         handleOrWallet
       );
-    if (!profile?.profile) {
+    if (!targetProfile?.profile) {
       throw new NotFoundException(`No profile found for ${handleOrWallet}`);
     }
-    await ratesService.registerUserRatingWithWallet({
-      raterWallet: raterWallet.toLowerCase(),
-      matterTargetType: RateMatterTargetType.PROFILE_ID,
-      matterTargetId: profile.profile.external_id,
-      matter: 'CIC',
-      category: 'CIC',
-      amount
+    const raterProfile =
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        raterWallet
+      );
+    if (!raterProfile?.profile) {
+      throw new NotFoundException(
+        `No profile found for authenticated used ${handleOrWallet}`
+      );
+    }
+    const raterProfileId = raterProfile.profile.external_id;
+    await cicRatingsService.updateProfileCicRating({
+      raterProfileId: raterProfileId,
+      targetProfileId: targetProfile.profile.external_id,
+      cicRating: amount
     });
     const updatedProfileInfo =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(

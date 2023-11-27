@@ -77,6 +77,7 @@ import { Profile, ProfileArchived } from './entities/IProfile';
 import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
+import { CicRating } from './entities/ICICRating';
 
 const mysql = require('mysql');
 
@@ -118,7 +119,8 @@ export async function connect(entities: any[] = []) {
       RateEvent,
       RateMatterCategory,
       Profile,
-      ProfileArchived
+      ProfileArchived,
+      CicRating
     ];
   }
 
