@@ -160,7 +160,7 @@ async function getAllTransactions(
     fromBlock: startingBlockHex,
     toBlock: latestBlockHex,
     fromAddress: NULL_ADDRESS,
-    pageKey: key ? key : undefined
+    pageKey: key
   };
 
   const response = await alchemy.core.getAssetTransfers(settings);
