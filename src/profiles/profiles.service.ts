@@ -35,12 +35,6 @@ export class ProfilesService {
       .then((result) => result[0] ?? null);
   }
 
-  public async getPrimaryWalletByProfileId(
-    profileId: string
-  ): Promise<string | null> {
-    return profilesDb.getPrimaryWalletByExternalId(profileId);
-  }
-
   public async getProfileByEnsName(
     query: string
   ): Promise<ProfileAndConsolidations | null> {

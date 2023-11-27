@@ -223,7 +223,7 @@ async function execSQLWithParams<T>(
       if (err) {
         logger.error(
           `Error "${err}" executing SQL query ${sql}${
-            params ? `with params ${JSON.stringify(params)}` : ''
+            params ? ` with params ${JSON.stringify(params)}` : ''
           }\n`
         );
         reject(err);

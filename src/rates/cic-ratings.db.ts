@@ -13,10 +13,28 @@ export class CicRatingsDb extends LazyDbAccessCompatibleService {
   ): Promise<AggregatedCicRating> {
     return this.db
       .execute(
-        `select sum(cic_rating) as cic_rating, count(*) as contributor_count from ${CIC_RATINGS_TABLE} where target_profile_id = :profileId and rating != 0`,
+        `select sum(rating) as cic_rating, count(*) as contributor_count from ${CIC_RATINGS_TABLE} where target_profile_id = :profileId and rating != 0`,
         { profileId }
       )
-      .then((results) => results[0]);
+      .then((results) => {
+        const result = results[0];
+        return {
+          cic_rating: result.cic_rating ?? 0,
+          contributor_count: result.contributor_count ?? 0
+        };
+      });
+  }
+
+  async getProfilesAggregatedCicRatingForProfile(
+    targetProfileId: string,
+    raterProfileId: string
+  ): Promise<number> {
+    return this.db
+      .execute(
+        `select sum(rating) as cic_rating from ${CIC_RATINGS_TABLE} where target_profile_id = :targetProfileId and rating != 0 and rater_profile_id = :raterProfileId`,
+        { raterProfileId, targetProfileId }
+      )
+      .then((results) => results[0].cic_rating ?? 0);
   }
 
   async lockCicRating({

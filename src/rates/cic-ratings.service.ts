@@ -27,6 +27,26 @@ export class CicRatingsService {
     return result;
   }
 
+  public async getProfilesAggregatedCicRatingForProfile(
+    targetProfileId: string,
+    raterProfileId: string
+  ): Promise<number> {
+    return this.cicRatingsDb.getProfilesAggregatedCicRatingForProfile(
+      targetProfileId,
+      raterProfileId
+    );
+  }
+
+  public async getCicRatesLeftForProfile(profileId: string): Promise<number> {
+    const { ratesLeft } =
+      await this.ratesService.getRatesLeftOnMatterForProfile({
+        profileId,
+        matter: 'CIC',
+        matterTargetType: RateMatterTargetType.PROFILE_ID
+      });
+    return ratesLeft;
+  }
+
   public async updateProfileCicRating({
     raterProfileId,
     targetProfileId,
@@ -64,7 +84,7 @@ export class CicRatingsService {
       targetProfileId,
       connectionHolder
     });
-    await this.createRatingEvents(
+    await this.createRatingEvent(
       raterProfileId,
       targetProfileId,
       connectionHolder,
@@ -78,168 +98,38 @@ export class CicRatingsService {
     });
   }
 
-  private async createRatingEvents(
+  private async createRatingEvent(
     raterProfileId: string,
     targetProfileId: string,
     connectionHolder: ConnectionWrapper<any>,
     cicRating: number
   ) {
-    const { positiveTally, negativeTally } =
-      await this.getPositiveAndNegativeTallies(
-        raterProfileId,
-        targetProfileId,
-        connectionHolder
-      );
-    if (cicRating > 0) {
-      await this.revokeNegativeAndAdjustPositiveEvents(
-        negativeTally,
-        raterProfileId,
-        targetProfileId,
-        cicRating,
-        positiveTally,
-        connectionHolder
-      );
-    } else if (cicRating < 0) {
-      await this.revokePositiveAndAdjustNegativeEvents(
-        positiveTally,
-        raterProfileId,
-        targetProfileId,
-        cicRating,
-        negativeTally,
-        connectionHolder
-      );
-    } else {
-      await this.revokeAllEvents(
-        negativeTally,
-        raterProfileId,
-        targetProfileId,
-        positiveTally,
-        connectionHolder
-      );
-    }
-  }
-
-  private async revokeNegativeAndAdjustPositiveEvents(
-    negativeTally: number,
-    raterProfileId: string,
-    targetProfileId: string,
-    cicRating: number,
-    positiveTally: number,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    if (negativeTally > 0) {
-      await this.registerNegativeRatingEvent(
-        raterProfileId,
-        targetProfileId,
-        -negativeTally,
-        connectionHolder
-      );
-    }
-    await this.registerPositiveRatingEvent(
+    const currentRating = await this.getProfileCurrentRatingOnProfile(
       raterProfileId,
       targetProfileId,
-      cicRating - positiveTally,
       connectionHolder
     );
-  }
-
-  private async revokePositiveAndAdjustNegativeEvents(
-    positiveTally: number,
-    raterProfileId: string,
-    targetProfileId: string,
-    cicRating: number,
-    negativeTally: number,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    if (positiveTally > 0) {
-      await this.registerPositiveRatingEvent(
-        raterProfileId,
-        targetProfileId,
-        -positiveTally,
-        connectionHolder
-      );
-    }
-    await this.registerNegativeRatingEvent(
-      raterProfileId,
-      targetProfileId,
-      Math.abs(cicRating) - negativeTally,
-      connectionHolder
-    );
-  }
-
-  private async revokeAllEvents(
-    negativeTally: number,
-    raterProfileId: string,
-    targetProfileId: string,
-    positiveTally: number,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    if (negativeTally > 0) {
-      await this.registerNegativeRatingEvent(
-        raterProfileId,
-        targetProfileId,
-        -negativeTally,
-        connectionHolder
-      );
-    }
-    if (positiveTally > 0) {
-      await this.registerPositiveRatingEvent(
-        raterProfileId,
-        targetProfileId,
-        -positiveTally,
-        connectionHolder
-      );
-    }
-  }
-
-  private async getPositiveAndNegativeTallies(
-    raterProfileId: string,
-    targetProfileId: string,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    const rateEventTallies =
-      await this.ratesDb.getRatesTallyForProfileOnMatterByCategories({
-        profileId: raterProfileId,
-        matter: 'CIC',
-        matterTargetType: RateMatterTargetType.PROFILE_ID,
-        matterTargetId: targetProfileId,
-        connectionHolder
-      });
-    const positiveTally = rateEventTallies['POSITIVE'] ?? 0;
-    const negativeTally = rateEventTallies['NEGATIVE'] ?? 0;
-    return { positiveTally, negativeTally };
-  }
-
-  private async registerNegativeRatingEvent(
-    raterProfileId: string,
-    targetProfileId: string,
-    amount: number,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
     await this.ratesService.registerUserRating({
       raterProfileId,
       matterTargetType: RateMatterTargetType.PROFILE_ID,
       matterTargetId: targetProfileId,
       matter: 'CIC',
-      category: 'NEGATIVE',
-      amount: amount,
+      category: 'CIC',
+      amount: cicRating - currentRating,
       connectionHolder
     });
   }
 
-  private async registerPositiveRatingEvent(
+  private async getProfileCurrentRatingOnProfile(
     raterProfileId: string,
     targetProfileId: string,
-    amount: number,
     connectionHolder: ConnectionWrapper<any>
-  ) {
-    await this.ratesService.registerUserRating({
-      raterProfileId,
+  ): Promise<number> {
+    return this.ratesDb.getTotalRatesTallyOnMatterByProfileId({
+      profileId: raterProfileId,
+      matter: 'CIC',
       matterTargetType: RateMatterTargetType.PROFILE_ID,
       matterTargetId: targetProfileId,
-      matter: 'CIC',
-      category: 'NEGATIVE',
-      amount: amount,
       connectionHolder
     });
   }

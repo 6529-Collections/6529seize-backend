@@ -6,6 +6,7 @@ import { RateEventReason } from '../entities/IRateEvent';
 import { Time } from '../time';
 import {
   expectExceptionWithMessage,
+  mockConnection,
   mockDbService
 } from '../tests/test.helper';
 
@@ -195,19 +196,15 @@ describe('RatesService', () => {
           matter: 'CIC',
           matterTargetId: 'id1',
           category: 'cat1',
-          amount: 5
+          amount: 5,
+          connectionHolder: mockConnection
         });
-      }, 'Profile tried to rate on matter with category cat1 but no active category with such tag exists for this matter');
+      }, 'Profile tried to rate on matter with category cat1 but no active category with such tag exists for this matter. If this is a legacy matter then you can only take away all your already given rates.');
     });
 
-    it('not enough rates', async () => {
-      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(0);
-      when(ratesDb.getTdhInfoForProfile).mockResolvedValue(0);
-      when(
-        ratesDb.getRatesTallyForProfileOnMatterByCategories
-      ).mockResolvedValue({
-        cat1: 5
-      });
+    it('adding positive rating to an already positive rating over TDH not allowed', async () => {
+      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(5);
+      when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
       when(ratesDb.getCategoriesForMatter).mockResolvedValue([
         {
           id: 'id1',
@@ -227,18 +224,55 @@ describe('RatesService', () => {
           matter: 'MAT1',
           matterTargetId: 'id1',
           category: 'cat1',
-          amount: 5
+          amount: 1,
+          connectionHolder: mockConnection
         });
-      }, 'Profile tried to give 5 rates on matter but only has 0 rates left');
+      }, 'Can not rate. Not enough TDH.');
     });
 
-    it('revoking more than given not allowed', async () => {
-      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(0);
-      when(
-        ratesDb.getRatesTallyForProfileOnMatterByCategories
-      ).mockResolvedValue({
-        cat1: 5
+    it('adding positive rating to an already positive rating in limits of TDH allowed', async () => {
+      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(4);
+      when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
+      when(ratesDb.getCategoriesForMatter).mockResolvedValue([
+        {
+          id: 'id1',
+          matter: 'MAT1',
+          matter_target_type: RateMatterTargetType.PROFILE_ID,
+          matter_category_display_name: 'Mat1',
+          matter_category_media: '{"hello": "world"}',
+          created_time: Time.millis(0).toDate(),
+          matter_category_tag: 'cat1',
+          disabled_time: null
+        }
+      ]);
+      await service.registerUserRating({
+        raterProfileId: 'pid123',
+        matterTargetType: RateMatterTargetType.PROFILE_ID,
+        matter: 'MAT1',
+        matterTargetId: 'id1',
+        category: 'cat1',
+        amount: 1,
+        connectionHolder: mockConnection
       });
+      expect(ratesDb.insertRateEvent).toBeCalledWith(
+        {
+          amount: 1,
+          created_time: expect.anything(),
+          event_reason: 'USER_RATED',
+          id: expect.anything(),
+          matter: 'MAT1',
+          matter_category: 'cat1',
+          matter_target_id: 'id1',
+          matter_target_type: 'PROFILE_ID',
+          rater: 'pid123'
+        },
+        mockConnection
+      );
+    });
+
+    it('changing from positive to negative rating more than allowed', async () => {
+      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(5);
+      when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
       when(ratesDb.getCategoriesForMatter).mockResolvedValue([
         {
           id: 'id1',
@@ -258,9 +292,50 @@ describe('RatesService', () => {
           matter: 'MAT1',
           matterTargetId: 'id1',
           category: 'cat1',
-          amount: -6
+          amount: -11,
+          connectionHolder: mockConnection
         });
-      }, 'Profile tried to revoke 6 rates on matter and category but has only historically given 5 rates');
+      }, 'Can not rate. Not enough TDH.');
+    });
+
+    it('changing from positive to negative rating in allowed limits', async () => {
+      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(5);
+      when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
+      when(ratesDb.getCategoriesForMatter).mockResolvedValue([
+        {
+          id: 'id1',
+          matter: 'MAT1',
+          matter_target_type: RateMatterTargetType.PROFILE_ID,
+          matter_category_display_name: 'Mat1',
+          matter_category_media: '{"hello": "world"}',
+          created_time: Time.millis(0).toDate(),
+          matter_category_tag: 'cat1',
+          disabled_time: null
+        }
+      ]);
+      await service.registerUserRating({
+        raterProfileId: 'pid123',
+        matterTargetType: RateMatterTargetType.PROFILE_ID,
+        matter: 'MAT1',
+        matterTargetId: 'id1',
+        category: 'cat1',
+        amount: -10,
+        connectionHolder: mockConnection
+      });
+      expect(ratesDb.insertRateEvent).toBeCalledWith(
+        {
+          amount: -10,
+          created_time: expect.anything(),
+          event_reason: 'USER_RATED',
+          id: expect.anything(),
+          matter: 'MAT1',
+          matter_category: 'cat1',
+          matter_target_id: 'id1',
+          matter_target_type: 'PROFILE_ID',
+          rater: 'pid123'
+        },
+        mockConnection
+      );
     });
 
     it('rate on a disabled matter not allowed', async () => {
@@ -290,91 +365,10 @@ describe('RatesService', () => {
           matter: 'MAT1',
           matterTargetId: 'id1',
           category: 'cat1',
-          amount: 2
+          amount: 2,
+          connectionHolder: mockConnection
         });
-      }, 'Profile tried to rate on matter with category cat1 but no active category with such tag exists for this matter');
-    });
-
-    it('rate successfully', async () => {
-      when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
-      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(2);
-      when(
-        ratesDb.getRatesTallyForProfileOnMatterByCategories
-      ).mockResolvedValue({
-        cat1: 0
-      });
-      when(ratesDb.getCategoriesForMatter).mockResolvedValue([
-        {
-          id: 'id1',
-          matter: 'MAT1',
-          matter_target_type: RateMatterTargetType.PROFILE_ID,
-          matter_category_display_name: 'Mat1',
-          matter_category_media: '{"hello": "world"}',
-          created_time: Time.millis(0).toDate(),
-          matter_category_tag: 'cat1',
-          disabled_time: null
-        }
-      ]);
-      await service.registerUserRating({
-        raterProfileId: 'pid123',
-        matterTargetType: RateMatterTargetType.PROFILE_ID,
-        matter: 'MAT1',
-        matterTargetId: 'id1',
-        category: 'cat1',
-        amount: 2
-      });
-      expect(ratesDb.insertRateEvent).toBeCalledWith({
-        amount: 2,
-        created_time: expect.anything(),
-        event_reason: 'USER_RATED',
-        id: expect.anything(),
-        matter: 'MAT1',
-        matter_category: 'cat1',
-        matter_target_id: 'id1',
-        matter_target_type: 'PROFILE_ID',
-        rater: 'pid123'
-      });
-    });
-
-    it('revoke rating successfully', async () => {
-      when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
-      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(2);
-      when(
-        ratesDb.getRatesTallyForProfileOnMatterByCategories
-      ).mockResolvedValue({
-        cat1: 2
-      });
-      when(ratesDb.getCategoriesForMatter).mockResolvedValue([
-        {
-          id: 'id1',
-          matter: 'MAT1',
-          matter_target_type: RateMatterTargetType.PROFILE_ID,
-          matter_category_display_name: 'Mat1',
-          matter_category_media: '{"hello": "world"}',
-          created_time: Time.millis(0).toDate(),
-          matter_category_tag: 'cat1',
-          disabled_time: null
-        }
-      ]);
-      await service.registerUserRating({
-        raterProfileId: 'pid123',
-        matterTargetType: RateMatterTargetType.PROFILE_ID,
-        matter: 'MAT1',
-        matterTargetId: 'id1',
-        category: 'cat1',
-        amount: -2
-      });
-      expect(ratesDb.insertRateEvent).toBeCalledWith({
-        amount: -2,
-        created_time: expect.anything(),
-        event_reason: 'USER_RATED',
-        id: expect.anything(),
-        matter: 'MAT1',
-        matter_category: 'cat1',
-        matter_target_id: 'id1',
-        matter_target_type: 'PROFILE_ID',
-        rater: 'pid123'
-      });
+      }, 'Profile tried to rate on matter with category cat1 but no active category with such tag exists for this matter. If this is a legacy matter then you can only take away all your already given rates.');
     });
 
     it('revoke rating on a disabled matter successfully', async () => {
@@ -403,19 +397,23 @@ describe('RatesService', () => {
         matter: 'MAT1',
         matterTargetId: 'id1',
         category: 'cat1',
-        amount: -2
-      });
-      expect(ratesDb.insertRateEvent).toBeCalledWith({
         amount: -2,
-        created_time: expect.anything(),
-        event_reason: 'USER_RATED',
-        id: expect.anything(),
-        matter: 'MAT1',
-        matter_category: 'cat1',
-        matter_target_id: 'id1',
-        matter_target_type: 'PROFILE_ID',
-        rater: 'pid123'
+        connectionHolder: mockConnection
       });
+      expect(ratesDb.insertRateEvent).toBeCalledWith(
+        {
+          amount: -2,
+          created_time: expect.anything(),
+          event_reason: 'USER_RATED',
+          id: expect.anything(),
+          matter: 'MAT1',
+          matter_category: 'cat1',
+          matter_target_id: 'id1',
+          matter_target_type: 'PROFILE_ID',
+          rater: 'pid123'
+        },
+        mockConnection
+      );
     });
   });
 });

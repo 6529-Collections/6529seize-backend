@@ -14,16 +14,70 @@ import { initMulterSingleMiddleware } from '../multer-middleware';
 
 import { asyncRouter } from '../async.router';
 import { RESERVED_HANDLES } from './profiles.constats';
-import { ProfileClassification } from '../../../entities/IProfile';
-import { RateMatterTargetType } from '../../../entities/IRateMatter';
+import { Profile, ProfileClassification } from '../../../entities/IProfile';
 import {
   CreateOrUpdateProfileCommand,
   ProfileAndConsolidations
 } from '../../../profiles/profile.types';
 import { profilesService } from '../../../profiles/profiles.service';
 import { cicRatingsService } from '../../../rates/cic-ratings.service';
+import { Wallet } from '../../../entities/IWallet';
+import { AggregatedCicRating } from '../../../rates/rates.types';
 
 const router = asyncRouter();
+
+export interface ApiGetProfileResponse {
+  readonly profile: Profile | null;
+  readonly consolidation: {
+    wallets: { wallet: Wallet; tdh: number }[];
+    tdh: number;
+  };
+  readonly level: number;
+  readonly cic: AggregatedCicRating & {
+    readonly authenticated_profile_contribution: number;
+    readonly cic_left_for_authenticated_profile: number;
+  };
+}
+
+async function prepProfileApiResponse(
+  profile: ProfileAndConsolidations,
+  req: Request<
+    {
+      handleOrWallet: string;
+    },
+    any,
+    any,
+    any,
+    any
+  >
+) {
+  const targetProfileId = profile.profile?.external_id;
+  const authenticatedWallet = getWalletOrNull(req);
+  const authenticatedProfileId = authenticatedWallet
+    ? await profilesService.getProfileIdByWallet(authenticatedWallet)
+    : null;
+  let cic_left_for_authenticated_profile = 0;
+  let authenticated_profile_contribution = 0;
+  if (targetProfileId && authenticatedProfileId) {
+    cic_left_for_authenticated_profile =
+      await cicRatingsService.getCicRatesLeftForProfile(authenticatedProfileId);
+    authenticated_profile_contribution =
+      await cicRatingsService.getProfilesAggregatedCicRatingForProfile(
+        targetProfileId,
+        authenticatedProfileId
+      );
+  }
+  return {
+    profile: profile.profile,
+    consolidation: profile.consolidation,
+    level: profile.level,
+    cic: {
+      ...profile.cic,
+      authenticated_profile_contribution,
+      cic_left_for_authenticated_profile
+    }
+  };
+}
 
 router.get(
   `/:handleOrWallet`,
@@ -37,7 +91,7 @@ router.get(
       any,
       any
     >,
-    res: Response<ApiResponse<ProfileAndConsolidations>>
+    res: Response<ApiResponse<ApiGetProfileResponse>>
   ) {
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profile =
@@ -47,7 +101,8 @@ router.get(
     if (!profile) {
       throw new NotFoundException('Profile not found');
     }
-    res.status(200).send(profile);
+    const resp = await prepProfileApiResponse(profile, req);
+    res.status(200).send(resp);
   }
 );
 
@@ -115,7 +170,7 @@ router.post(
   needsAuthenticatedUser(),
   async function (
     req: Request<any, any, ApiCreateOrUpdateProfileRequest, any, any>,
-    res: Response<ApiResponse<ProfileAndConsolidations>>
+    res: Response<ApiResponse<ApiGetProfileResponse>>
   ) {
     const {
       handle,
@@ -140,7 +195,8 @@ router.post(
     const profile = await profilesService.createOrUpdateProfile(
       createProfileCommand
     );
-    res.status(201).send(profile);
+    const resp = await prepProfileApiResponse(profile, req);
+    res.status(201).send(resp);
   }
 );
 
@@ -189,7 +245,7 @@ router.post(
       any,
       any
     >,
-    res: Response<ApiResponse<ProfileAndConsolidations>>
+    res: Response<ApiResponse<ApiGetProfileResponse>>
   ) {
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const raterWallet = getWalletOrThrow(req);
@@ -223,7 +279,8 @@ router.post(
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
         handleOrWallet
       );
-    res.status(201).send(updatedProfileInfo!);
+    const resp = await prepProfileApiResponse(updatedProfileInfo!, req);
+    res.status(201).send(resp);
   }
 );
 

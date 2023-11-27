@@ -55,40 +55,31 @@ export class RatesService {
       matterTargetType,
       connectionHolder
     });
-    const ratesTallyForProfileOnMatterByCategories =
-      await this.ratesDb.getRatesTallyForProfileOnMatterByCategories({
+    const ratesTally = await this.ratesDb.getTotalRatesSpentOnMatterByProfileId(
+      {
+        profileId: raterProfileId,
         matter,
         matterTargetType,
-        matterTargetId,
-        profileId: raterProfileId,
         connectionHolder
-      });
-    const ratesSpentOnGivenCategory =
-      ratesTallyForProfileOnMatterByCategories[category] ?? 0;
-    if (amount < 0 && Math.abs(amount) > ratesSpentOnGivenCategory) {
-      throw new BadRequestException(
-        `Profile tried to revoke ${Math.abs(
-          amount
-        )} rates on matter and category but has only historically given ${ratesSpentOnGivenCategory} rates`
-      );
-    }
-    if (amount > 0 && ratesLeft < amount) {
-      throw new BadRequestException(
-        `Profile tried to give ${amount} rates on matter but only has ${ratesLeft} rates left`
-      );
+      }
+    );
+    const maxRatesUserCanSpend = Math.abs(ratesTally) + ratesLeft;
+    const ratesSpentAfterThisRating = Math.abs(ratesTally + amount);
+    if (ratesSpentAfterThisRating > maxRatesUserCanSpend) {
+      throw new BadRequestException(`Can not rate. Not enough TDH.`);
     }
     const allCategoriesForMatter = await this.ratesDb.getCategoriesForMatter({
       matter,
       matterTargetType
     });
     const activeCategory = allCategoriesForMatter
-      .filter((c) => amount < 0 || !c.disabled_time)
+      .filter((c) => amount + ratesTally === 0 || !c.disabled_time)
       .filter((c) => c.matter === matter)
       .filter((c) => c.matter_target_type === matterTargetType)
       .find((c) => c.matter_category_tag === category);
     if (!activeCategory) {
       throw new BadRequestException(
-        `Profile tried to rate on matter with category ${category} but no active category with such tag exists for this matter`
+        `Profile tried to rate on matter with category ${category} but no active category with such tag exists for this matter. If this is a legacy matter then you can only take away all your already given rates.`
       );
     }
     await this.ratesDb.insertRateEvent(

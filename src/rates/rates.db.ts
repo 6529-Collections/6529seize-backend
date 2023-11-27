@@ -99,7 +99,7 @@ export class RatesDb extends LazyDbAccessCompatibleService {
         r.rater, 
         r.matter, 
         r.matter_target_type,
-        sum(r.amount) as rate_tally 
+        abs(sum(r.amount)) as rate_tally 
       from ${RATE_EVENTS_TABLE} r
       group by r.rater, r.matter, r.matter_target_type`
     );
@@ -120,7 +120,7 @@ export class RatesDb extends LazyDbAccessCompatibleService {
       return 0;
     }
     const result: { rates_spent: number }[] = await this.db.execute(
-      `SELECT SUM(amount) AS rates_spent FROM ${RATE_EVENTS_TABLE}
+      `SELECT ABS(SUM(amount)) AS rates_spent FROM ${RATE_EVENTS_TABLE}
      WHERE rater = :profileId 
      AND matter = :matter 
      AND matter_target_type = :matterTargetType`,
@@ -132,6 +132,39 @@ export class RatesDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: connectionHolder?.connection }
     );
     return result.at(0)?.rates_spent ?? 0;
+  }
+
+  public async getTotalRatesTallyOnMatterByProfileId({
+    profileId,
+    matter,
+    matterTargetType,
+    matterTargetId,
+    connectionHolder
+  }: {
+    profileId: string;
+    matter: string;
+    matterTargetType: RateMatterTargetType;
+    matterTargetId: string;
+    connectionHolder?: ConnectionWrapper<any>;
+  }): Promise<number> {
+    if (!profileId.length) {
+      return 0;
+    }
+    const result: { tally: number }[] = await this.db.execute(
+      `SELECT SUM(amount) AS tally FROM ${RATE_EVENTS_TABLE}
+     WHERE rater = :profileId 
+     AND matter = :matter 
+     AND matter_target_type = :matterTargetType
+     AND matter_target_id = :matterTargetId`,
+      {
+        matter,
+        matterTargetType,
+        profileId,
+        matterTargetId
+      },
+      { wrappedConnection: connectionHolder?.connection }
+    );
+    return result.at(0)?.tally ?? 0;
   }
 
   public async getCategoriesForMatter({
