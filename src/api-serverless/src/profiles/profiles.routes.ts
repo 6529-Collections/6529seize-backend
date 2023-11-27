@@ -9,12 +9,7 @@ import {
 import * as Joi from 'joi';
 import { PROFILE_HANDLE_REGEX, WALLET_REGEX } from '../../../constants';
 import { getValidatedByJoiOrThrow } from '../validation';
-import {
-  CreateOrUpdateProfileCommand,
-  ProfileAndConsolidations
-} from '../../../profiles/profiles';
 import { ratesService } from '../../../rates/rates.service';
-import * as profiles from '../../../profiles/profiles';
 import { NotFoundException } from '../../../exceptions';
 import { initMulterSingleMiddleware } from '../multer-middleware';
 
@@ -22,6 +17,11 @@ import { asyncRouter } from '../async.router';
 import { RESERVED_HANDLES } from './profiles.constats';
 import { ProfileClassification } from '../../../entities/IProfile';
 import { RateMatterTargetType } from '../../../entities/IRateMatter';
+import {
+  CreateOrUpdateProfileCommand,
+  ProfileAndConsolidations
+} from '../../../profiles/profile.types';
+import { profilesService } from '../../../profiles/profiles.service';
 
 const router = asyncRouter();
 
@@ -41,7 +41,7 @@ router.get(
   ) {
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profile =
-      await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
         handleOrWallet
       );
     if (!profile) {
@@ -86,14 +86,14 @@ router.get(
     }
     const authenticatedHandle = maybeAuthenticatedWallet
       ? (
-          await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+          await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
             maybeAuthenticatedWallet
           )
         )?.profile?.handle
       : null;
     if (proposedHandle.toLowerCase() !== authenticatedHandle?.toLowerCase()) {
       const profile =
-        await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
           proposedHandle
         );
       if (profile) {
@@ -137,7 +137,9 @@ router.post(
       creator_or_updater_wallet: getWalletOrThrow(req),
       classification
     };
-    const profile = await profiles.createOrUpdateProfile(createProfileCommand);
+    const profile = await profilesService.createOrUpdateProfile(
+      createProfileCommand
+    );
     res.status(201).send(profile);
   }
 );
@@ -165,7 +167,7 @@ router.post(
       ApiUploadProfilePictureRequestSchema
     );
     const file = req.file;
-    const response = await profiles.updateProfilePfp({
+    const response = await profilesService.updateProfilePfp({
       authenticatedWallet,
       handleOrWallet,
       memeOrFile: { file, meme }
@@ -196,7 +198,7 @@ router.post(
       ApiAddCicRatingToProfileRequestSchema
     );
     const profile =
-      await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
         handleOrWallet
       );
     if (!profile?.profile) {
@@ -211,7 +213,7 @@ router.post(
       amount
     });
     const updatedProfileInfo =
-      await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
         handleOrWallet
       );
     res.status(201).send(updatedProfileInfo!);

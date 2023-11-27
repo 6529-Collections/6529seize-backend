@@ -1,13 +1,6 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 
-let sharp: any;
-try {
-  sharp = require('sharp');
-} catch (error) {
-  sharp = require(__dirname + '/native_modules/sharp');
-}
-
 const TARGET_HEIGHT = 500;
 
 let s3: S3Client;
@@ -40,7 +33,16 @@ export const scalePfpAndPersistToS3 = async (
   throw new Error('Failed to upload image');
 };
 
+function getSharp() {
+  try {
+    return require('sharp');
+  } catch (error) {
+    return require(__dirname + '/native_modules/sharp');
+  }
+}
+
 async function resizeImage(ext: string, file: any) {
+  const sharp = getSharp();
   const buffer = file.buffer;
   if (ext != 'gif') {
     return await sharp(buffer)
