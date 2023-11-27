@@ -16,9 +16,9 @@ import {
 } from '../entities/IRateMatter';
 
 export class RatesDb extends LazyDbAccessCompatibleService {
-  public async getAllProfilesTdhs(): Promise<
-    { tdh: number; profile_id: string }[]
-  > {
+  public async getAllProfilesTdhs(
+    connectionHolder?: ConnectionWrapper<any>
+  ): Promise<{ tdh: number; profile_id: string }[]> {
     return this.db.execute(
       `
           with b_and_w as (SELECT T.boosted_tdh
@@ -35,12 +35,17 @@ export class RatesDb extends LazyDbAccessCompatibleService {
                  b_and_w.boosted_tdh            as tdh
           from b_and_w
                    inner join ${PROFILES_TABLE} on lower(${PROFILES_TABLE}.primary_wallet) = lower(b_and_w.wallet)
-         `
+         `,
+      undefined,
+      { wrappedConnection: connectionHolder?.connection }
     );
   }
 
-  public async getTdhInfoForProfile(profileId: string): Promise<number> {
-    const allProfilesTdhs = await this.getAllProfilesTdhs();
+  public async getTdhInfoForProfile(
+    profileId: string,
+    connectionHolder?: ConnectionWrapper<any>
+  ): Promise<number> {
+    const allProfilesTdhs = await this.getAllProfilesTdhs(connectionHolder);
     return allProfilesTdhs.find((it) => it.profile_id === profileId)?.tdh ?? 0;
   }
 
@@ -94,7 +99,7 @@ export class RatesDb extends LazyDbAccessCompatibleService {
         r.rater, 
         r.matter, 
         r.matter_target_type,
-        sum(r.amount) as rate_tally 
+        abs(sum(r.amount)) as rate_tally 
       from ${RATE_EVENTS_TABLE} r
       group by r.rater, r.matter, r.matter_target_type`
     );
@@ -103,17 +108,19 @@ export class RatesDb extends LazyDbAccessCompatibleService {
   public async getTotalRatesSpentOnMatterByProfileId({
     profileId,
     matter,
-    matterTargetType
+    matterTargetType,
+    connectionHolder
   }: {
     profileId: string;
     matter: string;
     matterTargetType: RateMatterTargetType;
+    connectionHolder?: ConnectionWrapper<any>;
   }): Promise<number> {
     if (!profileId.length) {
       return 0;
     }
     const result: { rates_spent: number }[] = await this.db.execute(
-      `SELECT SUM(amount) AS rates_spent FROM ${RATE_EVENTS_TABLE}
+      `SELECT ABS(SUM(amount)) AS rates_spent FROM ${RATE_EVENTS_TABLE}
      WHERE rater = :profileId 
      AND matter = :matter 
      AND matter_target_type = :matterTargetType`,
@@ -121,9 +128,43 @@ export class RatesDb extends LazyDbAccessCompatibleService {
         matter,
         matterTargetType,
         profileId
-      }
+      },
+      { wrappedConnection: connectionHolder?.connection }
     );
     return result.at(0)?.rates_spent ?? 0;
+  }
+
+  public async getTotalRatesTallyOnMatterByProfileId({
+    profileId,
+    matter,
+    matterTargetType,
+    matterTargetId,
+    connectionHolder
+  }: {
+    profileId: string;
+    matter: string;
+    matterTargetType: RateMatterTargetType;
+    matterTargetId: string;
+    connectionHolder?: ConnectionWrapper<any>;
+  }): Promise<number> {
+    if (!profileId.length) {
+      return 0;
+    }
+    const result: { tally: number }[] = await this.db.execute(
+      `SELECT SUM(amount) AS tally FROM ${RATE_EVENTS_TABLE}
+     WHERE rater = :profileId 
+     AND matter = :matter 
+     AND matter_target_type = :matterTargetType
+     AND matter_target_id = :matterTargetId`,
+      {
+        matter,
+        matterTargetType,
+        profileId,
+        matterTargetId
+      },
+      { wrappedConnection: connectionHolder?.connection }
+    );
+    return result.at(0)?.tally ?? 0;
   }
 
   public async getCategoriesForMatter({
@@ -143,7 +184,7 @@ export class RatesDb extends LazyDbAccessCompatibleService {
 
   public async insertRateEvent(
     event: RateEvent,
-    connectionHolder?: ConnectionWrapper<any>
+    connectionHolder: ConnectionWrapper<any>
   ) {
     await this.db.execute(
       `INSERT INTO ${RATE_EVENTS_TABLE} (id,
@@ -174,7 +215,7 @@ export class RatesDb extends LazyDbAccessCompatibleService {
         eventReason: event.event_reason,
         amount: event.amount
       },
-      { wrappedConnection: connectionHolder?.connection }
+      { wrappedConnection: connectionHolder.connection }
     );
   }
 
@@ -182,12 +223,14 @@ export class RatesDb extends LazyDbAccessCompatibleService {
     profileId,
     matter,
     matterTargetType,
-    matterTargetId
+    matterTargetId,
+    connectionHolder
   }: {
     profileId: string;
     matter: string;
     matterTargetType: RateMatterTargetType;
     matterTargetId: string;
+    connectionHolder?: ConnectionWrapper<any>;
   }): Promise<Record<string, number>> {
     const result: { matter_category: string; rate_tally: number }[] =
       await this.db.execute(
@@ -202,7 +245,8 @@ export class RatesDb extends LazyDbAccessCompatibleService {
           matter,
           matterTargetType,
           matterTargetId
-        }
+        },
+        { wrappedConnection: connectionHolder?.connection }
       );
     return (result ?? []).reduce((acc, row) => {
       acc[row.matter_category] = row.rate_tally;
