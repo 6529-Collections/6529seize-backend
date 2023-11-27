@@ -6,7 +6,6 @@ import {
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_TRANSACTIONS_BLOCK_TABLE
 } from '../constants';
-import * as mysql from 'mysql';
 
 @Entity(NEXTGEN_TRANSACTIONS_BLOCK_TABLE)
 export class NextGenTransactionsBlock {

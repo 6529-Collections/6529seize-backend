@@ -21,9 +21,20 @@ export const handler = async () => {
     NextGenCollectionBurn
   ]);
   await findNextgenTokens();
-  // await refreshNextgenTokens();
   await unload();
   logger.info('[NEXTGEN LOOP COMPLETE]');
 };
 
-export const handlerRefresh = async () => {};
+export const handlerRefresh = async () => {
+  logger.info('[RUNNING REFRESH LOOP]');
+  await loadEnv([
+    NextGenTransactionsBlock,
+    NextGenAllowlist,
+    NextGenAllowlistBurn,
+    NextGenCollection,
+    NextGenCollectionBurn
+  ]);
+  await refreshNextgenTokens();
+  await unload();
+  logger.info('[REFRESH LOOP COMPLETE]');
+};

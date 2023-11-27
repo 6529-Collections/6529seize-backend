@@ -367,10 +367,8 @@ async function validateAdmin(collection_id: number, address: string) {
 }
 
 function getUrl(chainId: number) {
-  switch (chainId) {
-    case 5:
-      return `https://eth-goerli.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
-    default:
-      return `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
+  if (chainId === 5) {
+    return `https://eth-goerli.alchemyapi.io/v2/${process.env.ALCHEMY_API_KEY}`;
   }
+  return `https://eth-mainnet.alchemyapi.io/v2/${process.env.ALCHEMY_API_KEY}`;
 }

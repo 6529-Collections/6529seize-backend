@@ -19,7 +19,6 @@ import {
   NEXTGEN_ALLOWLIST_TABLE,
   NEXTGEN_COLLECTIONS_TABLE
 } from '../../../constants';
-import * as mysql from 'mysql';
 import * as db from '../../../db-api';
 import { asyncRouter } from '../async.router';
 import { initMulterSingleMiddleware } from '../multer-middleware';
