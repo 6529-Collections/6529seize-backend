@@ -48,11 +48,7 @@ import {
   distinct,
   extractConsolidationWallets
 } from './helpers';
-import {
-  getConsolidationsSql,
-  getProfilePageSql,
-  getProfilePageSqlParams
-} from './sql_helpers';
+import { getConsolidationsSql, getProfilePageSql } from './sql_helpers';
 import { getProof } from './merkle_proof';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import * as profiles from './profiles/profiles';
