@@ -15,7 +15,7 @@ import { getValidatedByJoiOrThrow } from '../validation';
 import { Logger } from '../../../logging';
 import { RateCategoryInfo } from '../../../rates/rates.types';
 import { ratesService } from '../../../rates/rates.service';
-import * as profiles from '../../../profiles/profiles';
+import { profilesService } from '../../../profiles/profiles.service';
 
 const router = asyncRouter();
 
@@ -41,7 +41,7 @@ router.get(
     const { matter, matter_target_type, matter_target_id } = req.params;
     const wallet = getWalletOrNull(req);
     const profileId = wallet
-      ? await profiles.getProfileIdByWallet(wallet)
+      ? await profilesService.getProfileIdByWallet(wallet)
       : null;
     const categoriesInfo = await ratesService.getCategoriesInfoOnMatter({
       profileId,
@@ -50,7 +50,7 @@ router.get(
       matterTargetId: matter_target_id
     });
     const profilePrimaryWallet = profileId
-      ? await profiles.getPrimaryWalletByProfileId(profileId)
+      ? await profilesService.getPrimaryWalletByProfileId(profileId)
       : null;
     const ratesLeft = profilePrimaryWallet
       ? await ratesService

@@ -6,7 +6,7 @@ import { RateCategoryInfo } from './rates.types';
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { ratesDb, RatesDb } from './rates.db';
-import * as profiles from '../profiles/profiles';
+import { profilesService } from '../profiles/profiles.service';
 
 export class RatesService {
   private readonly logger = Logger.get('RATES_SERVICE');
@@ -44,7 +44,7 @@ export class RatesService {
     category: string;
     amount: number;
   }) {
-    const rater = await profiles.getProfileIdByWallet(raterWallet);
+    const rater = await profilesService.getProfileIdByWallet(raterWallet);
     if (!rater) {
       throw new BadRequestException(
         `Wallet ${raterWallet} doesn't have a profile. Profile needs to be created before user can rate.`
