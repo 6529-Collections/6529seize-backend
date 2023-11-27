@@ -299,6 +299,20 @@ describe('RatesService', () => {
       }, 'Can not rate. Not enough TDH.');
     });
 
+    it('cant rate CIC on itself', async () => {
+      await expectExceptionWithMessage(async () => {
+        await service.registerUserRating({
+          raterProfileId: 'pid123',
+          matterTargetType: RateMatterTargetType.PROFILE_ID,
+          matter: 'CIC',
+          matterTargetId: 'pid123',
+          category: 'cat1',
+          amount: 2,
+          connectionHolder: mockConnection
+        });
+      }, 'Users cannot rate themselves');
+    });
+
     it('changing from positive to negative rating in allowed limits', async () => {
       when(ratesDb.getRatesTallyOnMatterByProfileId).mockResolvedValue(5);
       when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
