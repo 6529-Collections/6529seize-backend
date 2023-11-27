@@ -14,10 +14,15 @@ import { BadRequestException } from '../exceptions';
 import { distinct } from '../helpers';
 import * as path from 'path';
 import { scalePfpAndPersistToS3 } from '../api-serverless/src/users/s3';
+import {
+  cicRatingsService,
+  CicRatingsService
+} from '../rates/cic-ratings.service';
 
 export class ProfilesService {
   constructor(
     private readonly profilesDb: ProfilesDb,
+    private readonly cicRatingsService: CicRatingsService,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
 
@@ -28,12 +33,6 @@ export class ProfilesService {
     return this.profilesDb
       .getProfileIdsByWalletsNewestFirst(consolidatedWallets)
       .then((result) => result[0] ?? null);
-  }
-
-  public async getPrimaryWalletByProfileId(
-    profileId: string
-  ): Promise<string | null> {
-    return profilesDb.getPrimaryWalletByExternalId(profileId);
   }
 
   public async getProfileByEnsName(
@@ -56,6 +55,7 @@ export class ProfilesService {
     const wallets = await this.profilesDb.getPrediscoveredEnsNames(
       consolidatedWallets
     );
+    const cic = await this.getCic(profile);
     return {
       profile: profile ?? null,
       consolidation: {
@@ -65,8 +65,15 @@ export class ProfilesService {
         })),
         tdh
       },
-      level: tdh2Level(tdh)
+      level: tdh2Level(tdh),
+      cic
     };
+  }
+
+  private async getCic(profile?: Profile) {
+    return profile?.external_id
+      ? await this.cicRatingsService.getProfileCicRating(profile?.external_id)
+      : { cic_rating: 0, contributor_count: 0 };
   }
 
   public async getProfileByWallet(
@@ -85,6 +92,7 @@ export class ProfilesService {
     const wallets = await this.profilesDb.getPrediscoveredEnsNames(
       consolidatedWallets
     );
+    const cic = await this.getCic(profile);
     return {
       profile: profile ?? null,
       consolidation: {
@@ -94,7 +102,8 @@ export class ProfilesService {
         })),
         tdh
       },
-      level: tdh2Level(tdh)
+      level: tdh2Level(tdh),
+      cic
     };
   }
 
@@ -126,6 +135,7 @@ export class ProfilesService {
       const wallets = await this.profilesDb.getPrediscoveredEnsNames(
         consolidatedWallets
       );
+      const cic = await this.getCic(profile);
       return {
         profile: profile ?? null,
         consolidation: {
@@ -135,7 +145,8 @@ export class ProfilesService {
           })),
           tdh
         },
-        level: tdh2Level(tdh)
+        level: tdh2Level(tdh),
+        cic
       };
     }
   }
@@ -388,5 +399,6 @@ export class ProfilesService {
 
 export const profilesService = new ProfilesService(
   profilesDb,
+  cicRatingsService,
   getAlchemyInstance
 );

@@ -6,7 +6,7 @@ import { RateCategoryInfo } from './rates.types';
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { ratesDb, RatesDb } from './rates.db';
-import { profilesService } from '../profiles/profiles.service';
+import { ConnectionWrapper } from '../sql-executor';
 
 export class RatesService {
   private readonly logger = Logger.get('RATES_SERVICE');
@@ -29,44 +29,14 @@ export class RatesService {
     this.logger.info(`All overrates revoked in ${startTime.diffFromNow()}`);
   }
 
-  public async registerUserRatingWithWallet({
-    raterWallet,
-    matter,
-    matterTargetType,
-    matterTargetId,
-    category,
-    amount
-  }: {
-    raterWallet: string;
-    matter: string;
-    matterTargetType: RateMatterTargetType;
-    matterTargetId: string;
-    category: string;
-    amount: number;
-  }) {
-    const rater = await profilesService.getProfileIdByWallet(raterWallet);
-    if (!rater) {
-      throw new BadRequestException(
-        `Wallet ${raterWallet} doesn't have a profile. Profile needs to be created before user can rate.`
-      );
-    }
-    await ratesService.registerUserRating({
-      raterProfileId: rater,
-      matter,
-      matterTargetType,
-      matterTargetId,
-      category,
-      amount
-    });
-  }
-
   public async registerUserRating({
     raterProfileId,
     matter,
     matterTargetType,
     matterTargetId,
     category,
-    amount
+    amount,
+    connectionHolder
   }: {
     raterProfileId: string;
     matter: string;
@@ -74,6 +44,7 @@ export class RatesService {
     matterTargetId: string;
     category: string;
     amount: number;
+    connectionHolder: ConnectionWrapper<any>;
   }) {
     if (amount === 0) {
       return;
@@ -81,74 +52,76 @@ export class RatesService {
     const { ratesLeft } = await this.getRatesLeftOnMatterForProfile({
       profileId: raterProfileId,
       matter,
-      matterTargetType
+      matterTargetType,
+      connectionHolder
     });
-    const ratesTallyForProfileOnMatterByCategories =
-      await this.ratesDb.getRatesTallyForProfileOnMatterByCategories({
+    const ratesTally = await this.ratesDb.getTotalRatesSpentOnMatterByProfileId(
+      {
+        profileId: raterProfileId,
         matter,
         matterTargetType,
-        matterTargetId,
-        profileId: raterProfileId
-      });
-    const ratesSpentOnGivenCategory =
-      ratesTallyForProfileOnMatterByCategories[category] ?? 0;
-    if (amount < 0 && Math.abs(amount) > ratesSpentOnGivenCategory) {
-      throw new BadRequestException(
-        `Profile tried to revoke ${Math.abs(
-          amount
-        )} rates on matter and category but has only historically given ${ratesSpentOnGivenCategory} rates`
-      );
-    }
-    if (amount > 0 && ratesLeft < amount) {
-      throw new BadRequestException(
-        `Profile tried to give ${amount} rates on matter but only has ${ratesLeft} rates left`
-      );
+        connectionHolder
+      }
+    );
+    const maxRatesUserCanSpend = Math.abs(ratesTally) + ratesLeft;
+    const ratesSpentAfterThisRating = Math.abs(ratesTally + amount);
+    if (ratesSpentAfterThisRating > maxRatesUserCanSpend) {
+      throw new BadRequestException(`Can not rate. Not enough TDH.`);
     }
     const allCategoriesForMatter = await this.ratesDb.getCategoriesForMatter({
       matter,
       matterTargetType
     });
     const activeCategory = allCategoriesForMatter
-      .filter((c) => amount < 0 || !c.disabled_time)
+      .filter((c) => amount + ratesTally === 0 || !c.disabled_time)
       .filter((c) => c.matter === matter)
       .filter((c) => c.matter_target_type === matterTargetType)
       .find((c) => c.matter_category_tag === category);
     if (!activeCategory) {
       throw new BadRequestException(
-        `Profile tried to rate on matter with category ${category} but no active category with such tag exists for this matter`
+        `Profile tried to rate on matter with category ${category} but no active category with such tag exists for this matter. If this is a legacy matter then you can only take away all your already given rates.`
       );
     }
-    await this.ratesDb.insertRateEvent({
-      id: randomUUID(),
-      rater: raterProfileId,
-      matter_target_id: matterTargetId,
-      matter_target_type: matterTargetType,
-      matter,
-      matter_category: category,
-      event_reason: RateEventReason.USER_RATED,
-      amount,
-      created_time: new Date()
-    });
+    await this.ratesDb.insertRateEvent(
+      {
+        id: randomUUID(),
+        rater: raterProfileId,
+        matter_target_id: matterTargetId,
+        matter_target_type: matterTargetType,
+        matter,
+        matter_category: category,
+        event_reason: RateEventReason.USER_RATED,
+        amount,
+        created_time: new Date()
+      },
+      connectionHolder
+    );
   }
 
   public async getRatesLeftOnMatterForProfile({
     profileId,
     matter,
-    matterTargetType
+    matterTargetType,
+    connectionHolder
   }: {
     profileId: string;
     matter: string;
     matterTargetType: RateMatterTargetType;
+    connectionHolder?: ConnectionWrapper<any>;
   }): Promise<{
     ratesLeft: number;
     ratesSpent: number;
   }> {
-    const tdh = await this.ratesDb.getTdhInfoForProfile(profileId);
+    const tdh = await this.ratesDb.getTdhInfoForProfile(
+      profileId,
+      connectionHolder
+    );
     const ratesSpent = await this.ratesDb.getTotalRatesSpentOnMatterByProfileId(
       {
         profileId,
         matter,
-        matterTargetType
+        matterTargetType,
+        connectionHolder
       }
     );
     return {

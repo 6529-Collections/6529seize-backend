@@ -1,5 +1,6 @@
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { Wallet } from '../entities/IWallet';
+import { AggregatedCicRating } from '../rates/rates.types';
 
 export interface CreateOrUpdateProfileCommand {
   handle: string;
@@ -18,4 +19,5 @@ export interface ProfileAndConsolidations {
     tdh: number;
   };
   level: number;
+  cic: AggregatedCicRating;
 }
