@@ -51,7 +51,7 @@ export class NextGenAllowlistBurn {
   @PrimaryColumn({ type: 'varchar', length: 100 })
   merkle_root!: string;
 
-  @PrimaryColumn({ type: 'int' })
+  @PrimaryColumn({ type: 'varchar', length: 100 })
   token_id!: string;
 
   @Column({ type: 'text' })
@@ -209,7 +209,7 @@ export function extractNextGenCollectionBurnInsert(
 
   // Construct the SQL query using named placeholders
   const sql = `
-    INSERT INTO nextgen_burn_collection (
+    INSERT INTO ${NEXTGEN_BURN_COLLECTIONS_TABLE} (
       collection_id, 
       burn_collection, 
       burn_collection_id, 
