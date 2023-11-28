@@ -170,7 +170,7 @@ describe('RatesService', () => {
   describe('getRatesLeftOnMatterForWallet', () => {
     it('gives correct rates left count', async () => {
       when(ratesDb.getTdhInfoForProfile).mockResolvedValue(10);
-      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(5);
+      when(ratesDb.getRatesTallyOnMatterByProfileId).mockResolvedValue(5);
       const result = await service.getRatesLeftOnMatterForProfile({
         profileId: 'pid123',
         matterTargetType: RateMatterTargetType.PROFILE_ID,
@@ -188,6 +188,7 @@ describe('RatesService', () => {
       when(
         ratesDb.getRatesTallyForProfileOnMatterByCategories
       ).mockResolvedValue({});
+      when(ratesDb.getRatesTallyOnMatterByProfileId).mockResolvedValue(0);
       when(ratesDb.getCategoriesForMatter).mockResolvedValue([]);
       await expectExceptionWithMessage(async () => {
         await service.registerUserRating({
@@ -203,7 +204,7 @@ describe('RatesService', () => {
     });
 
     it('adding positive rating to an already positive rating over TDH not allowed', async () => {
-      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(5);
+      when(ratesDb.getRatesTallyOnMatterByProfileId).mockResolvedValue(5);
       when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
       when(ratesDb.getCategoriesForMatter).mockResolvedValue([
         {
@@ -231,7 +232,7 @@ describe('RatesService', () => {
     });
 
     it('adding positive rating to an already positive rating in limits of TDH allowed', async () => {
-      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(4);
+      when(ratesDb.getRatesTallyOnMatterByProfileId).mockResolvedValue(4);
       when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
       when(ratesDb.getCategoriesForMatter).mockResolvedValue([
         {
@@ -271,7 +272,7 @@ describe('RatesService', () => {
     });
 
     it('changing from positive to negative rating more than allowed', async () => {
-      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(5);
+      when(ratesDb.getRatesTallyOnMatterByProfileId).mockResolvedValue(5);
       when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
       when(ratesDb.getCategoriesForMatter).mockResolvedValue([
         {
@@ -299,7 +300,7 @@ describe('RatesService', () => {
     });
 
     it('changing from positive to negative rating in allowed limits', async () => {
-      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(5);
+      when(ratesDb.getRatesTallyOnMatterByProfileId).mockResolvedValue(5);
       when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
       when(ratesDb.getCategoriesForMatter).mockResolvedValue([
         {
@@ -340,7 +341,7 @@ describe('RatesService', () => {
 
     it('rate on a disabled matter not allowed', async () => {
       when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
-      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(2);
+      when(ratesDb.getRatesTallyOnMatterByProfileId).mockResolvedValue(2);
       when(
         ratesDb.getRatesTallyForProfileOnMatterByCategories
       ).mockResolvedValue({
@@ -373,7 +374,7 @@ describe('RatesService', () => {
 
     it('revoke rating on a disabled matter successfully', async () => {
       when(ratesDb.getTdhInfoForProfile).mockResolvedValue(5);
-      when(ratesDb.getTotalRatesSpentOnMatterByProfileId).mockResolvedValue(2);
+      when(ratesDb.getRatesTallyOnMatterByProfileId).mockResolvedValue(2);
       when(
         ratesDb.getRatesTallyForProfileOnMatterByCategories
       ).mockResolvedValue({
