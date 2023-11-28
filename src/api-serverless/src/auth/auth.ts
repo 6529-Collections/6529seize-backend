@@ -1,6 +1,5 @@
 import * as passport from 'passport';
 import { Request } from 'express';
-import { CONNECTED_WALLET_HEADER } from '../api-constants';
 
 export function getJwtSecret() {
   const jwtsecret = process.env.JWT_SECRET;
@@ -44,12 +43,4 @@ export function getWalletOrThrow(req: Request): string {
     throw new Error('Wallet not found');
   }
   return wallet;
-}
-
-export function getConnectedWalletOrNull(req: Request): string | null {
-  const header = req.headers[CONNECTED_WALLET_HEADER];
-  if (Array.isArray(header)) {
-    return header[0] ?? null;
-  }
-  return header ?? null;
 }
