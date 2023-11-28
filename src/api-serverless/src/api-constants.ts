@@ -8,8 +8,6 @@ export const ACCESS_CONTROL_ALLOW_ORIGIN_HEADER =
   'Access-Control-Allow-Headers';
 export const CONTENT_TYPE_HEADER = 'Content-Type';
 export const JSON_HEADER_VALUE = 'application/json';
-export const CONNECTED_WALLET_HEADER = 'x-connected-wallet';
-export const DEFAULT_PAGE_SIZE = 50;
 export const NFTS_PAGE_SIZE = 101;
 export const DISTRIBUTION_PAGE_SIZE = 250;
 export const SORT_DIRECTIONS = ['ASC', 'DESC'];
@@ -24,8 +22,7 @@ export const corsOptions = {
     'Origin',
     'Accept',
     'X-Requested-With',
-    'Authorization',
-    CONNECTED_WALLET_HEADER
+    'Authorization'
   ]
 };
 
