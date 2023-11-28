@@ -1,5 +1,6 @@
 import * as passport from 'passport';
 import { Request } from 'express';
+import { CONNECTED_WALLET_HEADER } from '../api-constants';
 
 export function getJwtSecret() {
   const jwtsecret = process.env.JWT_SECRET;
@@ -29,7 +30,7 @@ export function maybeAuthenticatedUser() {
   return passport.authenticate(['jwt', 'anonymous'], { session: false });
 }
 
-export function getWalletOrNull(req: Request): string | null {
+export function getAuthenticatedWalletOrNull(req: Request): string | null {
   const user = req.user as any;
   if (!user) {
     return null;
@@ -38,9 +39,17 @@ export function getWalletOrNull(req: Request): string | null {
 }
 
 export function getWalletOrThrow(req: Request): string {
-  const wallet = getWalletOrNull(req);
+  const wallet = getAuthenticatedWalletOrNull(req);
   if (!wallet) {
     throw new Error('Wallet not found');
   }
   return wallet;
+}
+
+export function getConnectedWalletOrNull(req: Request): string | null {
+  const header = req.headers[CONNECTED_WALLET_HEADER];
+  if (Array.isArray(header)) {
+    return header[0] ?? null;
+  }
+  return header ?? null;
 }

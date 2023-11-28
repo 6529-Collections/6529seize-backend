@@ -1,7 +1,8 @@
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import {
-  getWalletOrNull,
+  getAuthenticatedWalletOrNull,
+  getConnectedWalletOrNull,
   getWalletOrThrow,
   maybeAuthenticatedUser,
   needsAuthenticatedUser
@@ -52,9 +53,10 @@ async function prepProfileApiResponse(
   >
 ) {
   const targetProfileId = profile.profile?.external_id;
-  const authenticatedWallet = getWalletOrNull(req);
-  const authenticatedProfileId = authenticatedWallet
-    ? await profilesService.getProfileIdByWallet(authenticatedWallet)
+  const connectedWallet =
+    getAuthenticatedWalletOrNull(req) ?? getConnectedWalletOrNull(req);
+  const authenticatedProfileId = connectedWallet
+    ? await profilesService.getProfileIdByWallet(connectedWallet)
     : null;
   let cic_left_for_authenticated_profile = 0;
   let authenticated_profile_contribution = 0;
@@ -121,7 +123,7 @@ router.get(
     >,
     res: Response<ApiResponse<{ available: boolean; message: string }>>
   ) {
-    const maybeAuthenticatedWallet = getWalletOrNull(req);
+    const maybeAuthenticatedWallet = getAuthenticatedWalletOrNull(req);
     const proposedHandle = req.params.handle.toLowerCase();
     if (!proposedHandle.match(PROFILE_HANDLE_REGEX)) {
       return res.status(200).send({
