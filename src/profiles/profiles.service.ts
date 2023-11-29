@@ -18,8 +18,13 @@ import {
   cicRatingsService,
   CicRatingsService
 } from '../rates/cic-ratings.service';
+import { ConnectionWrapper } from '../sql-executor';
+import { Logger } from '../logging';
+import { Time } from '../time';
 
 export class ProfilesService {
+  private readonly logger = Logger.get('PROFILES_SERVICE');
+
   constructor(
     private readonly profilesDb: ProfilesDb,
     private readonly cicRatingsService: CicRatingsService,
@@ -329,6 +334,53 @@ export class ProfilesService {
       }
       return result;
     }, {} as Record<string, string>);
+  }
+
+  public async updateProfileTdhs(
+    blockNo: number,
+    connectionHolder?: ConnectionWrapper<any>
+  ) {
+    if (connectionHolder) {
+      await this.updateProfileTdhsInternal(blockNo, connectionHolder);
+    } else {
+      await this.profilesDb.executeNativeQueriesInTransaction(
+        async (connectionHolder) => {
+          await this.updateProfileTdhsInternal(blockNo, connectionHolder);
+        }
+      );
+    }
+  }
+
+  private async updateProfileTdhsInternal(
+    blockNo: number,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    this.logger.info(`Starting to update profile TDHs for block ${blockNo}`);
+    const start = Time.now();
+    const maxRecordedBlock = await profilesDb.getMaxRecordedProfileTdhBlock(
+      connectionHolder
+    );
+    if (maxRecordedBlock < blockNo) {
+      const newProfileTdhs = await profilesDb.getAllPotentialProfileTdhs(
+        blockNo,
+        connectionHolder
+      );
+
+      await profilesDb.updateProfileTdhs(
+        newProfileTdhs,
+        blockNo,
+        connectionHolder
+      );
+      this.logger.info(
+        `Finished profile TDHs update for block ${blockNo} with ${
+          newProfileTdhs.length
+        } records in ${start.diffFromNow()}`
+      );
+    } else {
+      this.logger.info(
+        `Skipping profile TDHs update for block ${blockNo} as there already is data for block ${maxRecordedBlock}`
+      );
+    }
   }
 
   private async getWalletsNewestProfile(

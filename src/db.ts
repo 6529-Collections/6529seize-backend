@@ -78,6 +78,8 @@ import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
 import { CicRating } from './entities/ICICRating';
+import { profilesService } from './profiles/profiles.service';
+import { ProfileTdh, ProfileTdhLog } from './entities/IProfileTDH';
 
 const mysql = require('mysql');
 
@@ -120,7 +122,9 @@ export async function connect(entities: any[] = []) {
       RateMatterCategory,
       Profile,
       ProfileArchived,
-      CicRating
+      CicRating,
+      ProfileTdh,
+      ProfileTdhLog
     ];
   }
 
@@ -986,6 +990,9 @@ export async function persistConsolidatedTDH(tdh: ConsolidatedTDH[]) {
     const repo = manager.getRepository(ConsolidatedTDH);
     await repo.clear();
     await repo.save(tdh);
+    await profilesService.updateProfileTdhs(tdh.at(0)?.block ?? 0, {
+      connection: manager.connection
+    });
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);

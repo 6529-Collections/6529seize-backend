@@ -8,6 +8,8 @@ import {
   ENS_TABLE,
   MEMES_CONTRACT,
   NFTS_TABLE,
+  PROFILE_TDH_LOGS_TABLE,
+  PROFILE_TDHS_TABLE,
   PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
   WALLETS_TDH_TABLE
@@ -17,6 +19,7 @@ import { Profile } from '../entities/IProfile';
 import { DbPoolName } from '../db-query.options';
 import { CreateOrUpdateProfileCommand } from './profile.types';
 import { randomUUID } from 'crypto';
+import { ProfileTdh } from '../entities/IProfileTDH';
 
 export class ProfilesDb extends LazyDbAccessCompatibleService {
   public async getConsolidationInfoForWallet(
@@ -305,6 +308,86 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         }
       );
     });
+  }
+
+  public async getAllPotentialProfileTdhs(
+    blockNo: number,
+    connectionHolder: ConnectionWrapper<any>
+  ): Promise<ProfileTdh[]> {
+    return this.db
+      .execute(
+        `select 
+        p.external_id as profile_id, 
+        c.tdh as tdh, 
+        c.boosted_tdh as boosted_tdh from ${PROFILES_TABLE} p 
+        left join ${CONSOLIDATED_WALLETS_TDH_TABLE} c on LOWER(c.consolidation_key) LIKE concat('%', LOWER(p.primary_wallet), '%')
+        where c.block = :blockNo`,
+        {
+          blockNo
+        },
+        {
+          wrappedConnection: connectionHolder
+        }
+      )
+      .then((result) =>
+        result.map(
+          (it: {
+            profile_id: string;
+            tdh: number | null;
+            boosted_tdh: number | null;
+          }) => ({
+            profile_id: it.profile_id,
+            tdh: it.tdh ?? 0,
+            boosted_tdh: it.boosted_tdh ?? 0
+          })
+        )
+      );
+  }
+
+  public async getMaxRecordedProfileTdhBlock(
+    connectionHolder: ConnectionWrapper<any>
+  ): Promise<number> {
+    return this.db
+      .execute(
+        `select max(block) as block from ${PROFILE_TDH_LOGS_TABLE}`,
+        undefined,
+        {
+          wrappedConnection: connectionHolder
+        }
+      )
+      .then((result) => result.at(0)?.block ?? 0);
+  }
+
+  async updateProfileTdhs(
+    newProfileTdhs: ProfileTdh[],
+    blockNo: number,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(`delete from  ${PROFILE_TDHS_TABLE}`, {
+      wrappedConnection: connectionHolder
+    });
+    for (const newProfileTdh of newProfileTdhs) {
+      await this.db.execute(
+        `insert into ${PROFILE_TDH_LOGS_TABLE} (profile_id, tdh, boosted_tdh, block) values (:profileId, :tdh, :boostedTdh, :block)`,
+        {
+          profileId: newProfileTdh.profile_id,
+          tdh: newProfileTdh.tdh,
+          boostedTdh: newProfileTdh.boosted_tdh,
+          block: blockNo
+        },
+        {
+          wrappedConnection: connectionHolder
+        }
+      );
+      await this.db.execute(
+        `insert into ${PROFILE_TDHS_TABLE} (profile_id, tdh, boosted_tdh) values (:profileId, :tdh, :boostedTdh)`,
+        {
+          profileId: newProfileTdh.profile_id,
+          tdh: newProfileTdh.tdh,
+          boostedTdh: newProfileTdh.boosted_tdh
+        }
+      );
+    }
   }
 }
 
