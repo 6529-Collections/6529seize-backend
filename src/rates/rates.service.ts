@@ -55,14 +55,12 @@ export class RatesService {
       matterTargetType,
       connectionHolder
     });
-    const ratesTally = await this.ratesDb.getTotalRatesSpentOnMatterByProfileId(
-      {
-        profileId: raterProfileId,
-        matter,
-        matterTargetType,
-        connectionHolder
-      }
-    );
+    const ratesTally = await this.ratesDb.getRatesTallyOnMatterByProfileId({
+      profileId: raterProfileId,
+      matter,
+      matterTargetType,
+      connectionHolder
+    });
     const maxRatesUserCanSpend = Math.abs(ratesTally) + ratesLeft;
     const ratesSpentAfterThisRating = Math.abs(ratesTally + amount);
     if (ratesSpentAfterThisRating > maxRatesUserCanSpend) {
@@ -116,14 +114,14 @@ export class RatesService {
       profileId,
       connectionHolder
     );
-    const ratesSpent = await this.ratesDb.getTotalRatesSpentOnMatterByProfileId(
-      {
+    const ratesSpent = await this.ratesDb
+      .getRatesTallyOnMatterByProfileId({
         profileId,
         matter,
         matterTargetType,
         connectionHolder
-      }
-    );
+      })
+      .then((t) => Math.abs(t ?? 0));
     return {
       ratesLeft: tdh - ratesSpent,
       ratesSpent: ratesSpent

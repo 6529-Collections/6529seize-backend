@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import {
-  getWalletOrNull,
+  getAuthenticatedWalletOrNull,
   getWalletOrThrow,
   maybeAuthenticatedUser,
   needsAuthenticatedUser
@@ -14,70 +14,15 @@ import { initMulterSingleMiddleware } from '../multer-middleware';
 
 import { asyncRouter } from '../async.router';
 import { RESERVED_HANDLES } from './profiles.constats';
-import { Profile, ProfileClassification } from '../../../entities/IProfile';
+import { ProfileClassification } from '../../../entities/IProfile';
 import {
   CreateOrUpdateProfileCommand,
   ProfileAndConsolidations
 } from '../../../profiles/profile.types';
 import { profilesService } from '../../../profiles/profiles.service';
 import { cicRatingsService } from '../../../rates/cic-ratings.service';
-import { Wallet } from '../../../entities/IWallet';
-import { AggregatedCicRating } from '../../../rates/rates.types';
 
 const router = asyncRouter();
-
-export interface ApiGetProfileResponse {
-  readonly profile: Profile | null;
-  readonly consolidation: {
-    wallets: { wallet: Wallet; tdh: number }[];
-    tdh: number;
-  };
-  readonly level: number;
-  readonly cic: AggregatedCicRating & {
-    readonly authenticated_profile_contribution: number;
-    readonly cic_left_for_authenticated_profile: number;
-  };
-}
-
-async function prepProfileApiResponse(
-  profile: ProfileAndConsolidations,
-  req: Request<
-    {
-      handleOrWallet: string;
-    },
-    any,
-    any,
-    any,
-    any
-  >
-) {
-  const targetProfileId = profile.profile?.external_id;
-  const authenticatedWallet = getWalletOrNull(req);
-  const authenticatedProfileId = authenticatedWallet
-    ? await profilesService.getProfileIdByWallet(authenticatedWallet)
-    : null;
-  let cic_left_for_authenticated_profile = 0;
-  let authenticated_profile_contribution = 0;
-  if (targetProfileId && authenticatedProfileId) {
-    cic_left_for_authenticated_profile =
-      await cicRatingsService.getCicRatesLeftForProfile(authenticatedProfileId);
-    authenticated_profile_contribution =
-      await cicRatingsService.getProfilesAggregatedCicRatingForProfile(
-        targetProfileId,
-        authenticatedProfileId
-      );
-  }
-  return {
-    profile: profile.profile,
-    consolidation: profile.consolidation,
-    level: profile.level,
-    cic: {
-      ...profile.cic,
-      authenticated_profile_contribution,
-      cic_left_for_authenticated_profile
-    }
-  };
-}
 
 router.get(
   `/:handleOrWallet`,
@@ -91,7 +36,7 @@ router.get(
       any,
       any
     >,
-    res: Response<ApiResponse<ApiGetProfileResponse>>
+    res: Response<ApiResponse<ProfileAndConsolidations>>
   ) {
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profile =
@@ -101,8 +46,7 @@ router.get(
     if (!profile) {
       throw new NotFoundException('Profile not found');
     }
-    const resp = await prepProfileApiResponse(profile, req);
-    res.status(200).send(resp);
+    res.status(200).send(profile);
   }
 );
 
@@ -121,7 +65,7 @@ router.get(
     >,
     res: Response<ApiResponse<{ available: boolean; message: string }>>
   ) {
-    const maybeAuthenticatedWallet = getWalletOrNull(req);
+    const maybeAuthenticatedWallet = getAuthenticatedWalletOrNull(req);
     const proposedHandle = req.params.handle.toLowerCase();
     if (!proposedHandle.match(PROFILE_HANDLE_REGEX)) {
       return res.status(200).send({
@@ -170,7 +114,7 @@ router.post(
   needsAuthenticatedUser(),
   async function (
     req: Request<any, any, ApiCreateOrUpdateProfileRequest, any, any>,
-    res: Response<ApiResponse<ApiGetProfileResponse>>
+    res: Response<ApiResponse<ProfileAndConsolidations>>
   ) {
     const {
       handle,
@@ -195,8 +139,7 @@ router.post(
     const profile = await profilesService.createOrUpdateProfile(
       createProfileCommand
     );
-    const resp = await prepProfileApiResponse(profile, req);
-    res.status(201).send(resp);
+    res.status(201).send(profile);
   }
 );
 
@@ -245,7 +188,7 @@ router.post(
       any,
       any
     >,
-    res: Response<ApiResponse<ApiGetProfileResponse>>
+    res: Response<ApiResponse<ProfileAndConsolidations>>
   ) {
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const raterWallet = getWalletOrThrow(req);
@@ -279,8 +222,57 @@ router.post(
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
         handleOrWallet
       );
-    const resp = await prepProfileApiResponse(updatedProfileInfo!, req);
-    res.status(201).send(resp);
+    res.status(201).send(updatedProfileInfo!);
+  }
+);
+
+router.get(
+  `/:handleOrWallet/cic/rating/:raterHandleOrWallet`,
+  async function (
+    req: Request<
+      {
+        handleOrWallet: string;
+        raterHandleOrWallet: string;
+      },
+      any,
+      any,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ApiProfileRaterCicState>>
+  ) {
+    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
+    const raterHandleOrWallet = req.params.raterHandleOrWallet.toLowerCase();
+    const profileAndConsolidationsOfTarget =
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        handleOrWallet
+      );
+    const targetProfile = profileAndConsolidationsOfTarget?.profile;
+    const profileAndConsolidationsOfRater =
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        raterHandleOrWallet
+      );
+    const raterProfile = profileAndConsolidationsOfRater?.profile;
+    if (raterProfile && targetProfile) {
+      const cicRatingByRater =
+        await cicRatingsService.getProfilesAggregatedCicRatingForProfile(
+          targetProfile.external_id,
+          raterProfile.external_id
+        );
+      const cicRatingsLeftToGiveByRater =
+        await cicRatingsService.getCicRatesLeftForProfile(
+          raterProfile.external_id
+        );
+      res.send({
+        cic_rating_by_rater: cicRatingByRater,
+        cic_ratings_left_to_give_by_rater: cicRatingsLeftToGiveByRater
+      });
+    } else {
+      res.send({
+        cic_rating_by_rater: null,
+        cic_ratings_left_to_give_by_rater: null
+      });
+    }
   }
 );
 
@@ -291,6 +283,11 @@ interface ApiCreateOrUpdateProfileRequest {
   readonly banner_2?: string;
   readonly website?: string;
   readonly classification: ProfileClassification;
+}
+
+interface ApiProfileRaterCicState {
+  readonly cic_rating_by_rater: number | null;
+  readonly cic_ratings_left_to_give_by_rater: number | null;
 }
 
 const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateProfileRequest> =

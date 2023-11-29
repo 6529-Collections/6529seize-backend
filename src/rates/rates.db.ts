@@ -105,7 +105,7 @@ export class RatesDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  public async getTotalRatesSpentOnMatterByProfileId({
+  public async getRatesTallyOnMatterByProfileId({
     profileId,
     matter,
     matterTargetType,
@@ -120,7 +120,7 @@ export class RatesDb extends LazyDbAccessCompatibleService {
       return 0;
     }
     const result: { rates_spent: number }[] = await this.db.execute(
-      `SELECT ABS(SUM(amount)) AS rates_spent FROM ${RATE_EVENTS_TABLE}
+      `SELECT SUM(amount) AS rates_spent FROM ${RATE_EVENTS_TABLE}
      WHERE rater = :profileId 
      AND matter = :matter 
      AND matter_target_type = :matterTargetType`,
