@@ -5,6 +5,7 @@ import { Profile, ProfileArchived } from '../entities/IProfile';
 import { Logger } from '../logging';
 import { ratesService } from '../rates/rates.service';
 import { CicRating } from '../entities/ICICRating';
+import { CicStatement } from '../entities/ICICStatement';
 
 const logger = Logger.get('OVER_RATES_REVOCATION_LOOP');
 
@@ -15,7 +16,8 @@ export const handler = async () => {
     RateEvent,
     Profile,
     ProfileArchived,
-    CicRating
+    CicRating,
+    CicStatement
   ]);
   await ratesService.revokeOverRates();
   await unload();

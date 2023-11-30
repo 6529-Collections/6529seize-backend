@@ -20,7 +20,7 @@ import {
   ProfileAndConsolidations
 } from '../../../profiles/profile.types';
 import { profilesService } from '../../../profiles/profiles.service';
-import { cicRatingsService } from '../../../rates/cic-ratings.service';
+import profileCicRoutes from './profile-cic.routes';
 
 const router = asyncRouter();
 
@@ -175,107 +175,6 @@ router.post(
   }
 );
 
-router.post(
-  `/:handleOrWallet/cic/rating`,
-  needsAuthenticatedUser(),
-  async function (
-    req: Request<
-      {
-        handleOrWallet: string;
-      },
-      any,
-      ApiAddCicRatingToProfileRequest,
-      any,
-      any
-    >,
-    res: Response<ApiResponse<ProfileAndConsolidations>>
-  ) {
-    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
-    const raterWallet = getWalletOrThrow(req);
-    const { amount } = getValidatedByJoiOrThrow(
-      req.body,
-      ApiAddCicRatingToProfileRequestSchema
-    );
-    const targetProfile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
-      );
-    if (!targetProfile?.profile) {
-      throw new NotFoundException(`No profile found for ${handleOrWallet}`);
-    }
-    const raterProfile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        raterWallet
-      );
-    if (!raterProfile?.profile) {
-      throw new NotFoundException(
-        `No profile found for authenticated used ${handleOrWallet}`
-      );
-    }
-    const raterProfileId = raterProfile.profile.external_id;
-    await cicRatingsService.updateProfileCicRating({
-      raterProfileId: raterProfileId,
-      targetProfileId: targetProfile.profile.external_id,
-      cicRating: amount
-    });
-    const updatedProfileInfo =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
-      );
-    res.status(201).send(updatedProfileInfo!);
-  }
-);
-
-router.get(
-  `/:handleOrWallet/cic/rating/:raterHandleOrWallet`,
-  async function (
-    req: Request<
-      {
-        handleOrWallet: string;
-        raterHandleOrWallet: string;
-      },
-      any,
-      any,
-      any,
-      any
-    >,
-    res: Response<ApiResponse<ApiProfileRaterCicState>>
-  ) {
-    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
-    const raterHandleOrWallet = req.params.raterHandleOrWallet.toLowerCase();
-    const profileAndConsolidationsOfTarget =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
-      );
-    const targetProfile = profileAndConsolidationsOfTarget?.profile;
-    const profileAndConsolidationsOfRater =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        raterHandleOrWallet
-      );
-    const raterProfile = profileAndConsolidationsOfRater?.profile;
-    if (raterProfile && targetProfile) {
-      const cicRatingByRater =
-        await cicRatingsService.getProfilesAggregatedCicRatingForProfile(
-          targetProfile.external_id,
-          raterProfile.external_id
-        );
-      const cicRatingsLeftToGiveByRater =
-        await cicRatingsService.getCicRatesLeftForProfile(
-          raterProfile.external_id
-        );
-      res.send({
-        cic_rating_by_rater: cicRatingByRater,
-        cic_ratings_left_to_give_by_rater: cicRatingsLeftToGiveByRater
-      });
-    } else {
-      res.send({
-        cic_rating_by_rater: null,
-        cic_ratings_left_to_give_by_rater: null
-      });
-    }
-  }
-);
-
 interface ApiCreateOrUpdateProfileRequest {
   readonly handle: string;
   readonly primary_wallet: string;
@@ -283,11 +182,6 @@ interface ApiCreateOrUpdateProfileRequest {
   readonly banner_2?: string;
   readonly website?: string;
   readonly classification: ProfileClassification;
-}
-
-interface ApiProfileRaterCicState {
-  readonly cic_rating_by_rater: number | null;
-  readonly cic_ratings_left_to_give_by_rater: number | null;
 }
 
 const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateProfileRequest> =
@@ -332,13 +226,6 @@ const ApiUploadProfilePictureRequestSchema: Joi.ObjectSchema<ApiUploadProfilePic
     meme: Joi.number().optional()
   });
 
-interface ApiAddCicRatingToProfileRequest {
-  readonly amount: number;
-}
-
-const ApiAddCicRatingToProfileRequestSchema: Joi.ObjectSchema<ApiAddCicRatingToProfileRequest> =
-  Joi.object({
-    amount: Joi.number().integer().required()
-  });
+router.use('/:handleOrWallet/cic', profileCicRoutes);
 
 export default router;

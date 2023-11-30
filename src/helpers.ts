@@ -1,7 +1,6 @@
 import axios, { AxiosResponse } from 'axios';
-import { CONSOLIDATIONS_LIMIT, CONSOLIDATIONS_TABLE } from './constants';
-
-const mysql = require('mysql');
+import { CONSOLIDATIONS_LIMIT } from './constants';
+import * as short from 'short-uuid';
 
 export function areEqualAddresses(w1: string, w2: string) {
   if (!w1 || !w2) {
@@ -204,4 +203,8 @@ export function isValidUrl(url: string) {
 
 export function distinct<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
+}
+
+export function uniqueShortId(): string {
+  return short.generate();
 }
