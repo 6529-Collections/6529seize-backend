@@ -14,15 +14,12 @@ import { BadRequestException } from '../exceptions';
 import { distinct } from '../helpers';
 import * as path from 'path';
 import { scalePfpAndPersistToS3 } from '../api-serverless/src/users/s3';
-import {
-  cicRatingsService,
-  CicRatingsService
-} from '../rates/cic-ratings.service';
+import { cicService, CicService } from '../rates/cic.service';
 
 export class ProfilesService {
   constructor(
     private readonly profilesDb: ProfilesDb,
-    private readonly cicRatingsService: CicRatingsService,
+    private readonly cicRatingsService: CicService,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
 
@@ -399,6 +396,6 @@ export class ProfilesService {
 
 export const profilesService = new ProfilesService(
   profilesDb,
-  cicRatingsService,
+  cicService,
   getAlchemyInstance
 );
