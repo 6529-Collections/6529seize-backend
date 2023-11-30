@@ -369,11 +369,7 @@ export class ProfilesService {
       blockNo,
       connectionHolder
     );
-    await profilesDb.updateProfileTdhs(
-      newProfileTdhs,
-      blockNo,
-      connectionHolder
-    );
+    await profilesDb.updateProfileTdhs(newProfileTdhs, connectionHolder);
     this.logger.info(
       `Finished profile TDHs update for block ${blockNo} with ${
         newProfileTdhs.length
