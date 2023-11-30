@@ -18,6 +18,7 @@ export const WALLETS_TDH_TABLE = 'tdh';
 export const UPLOADS_TABLE = 'uploads';
 export const CONSOLIDATED_UPLOADS_TABLE = 'uploads_consolidation';
 export const ENS_TABLE = 'ens';
+export const CIC_STATEMENTS_TABLE = 'cic_statements';
 export const CIC_RATINGS_TABLE = 'cic_ratings';
 export const PROFILES_TABLE = 'profiles';
 export const PROFILE_TDHS_TABLE = 'profile_tdhs';

@@ -88,6 +88,7 @@ import { Time } from './time';
 import { CicRating } from './entities/ICICRating';
 import { profilesService } from './profiles/profiles.service';
 import { ProfileTdh, ProfileTdhLog } from './entities/IProfileTDH';
+import { CicStatement } from './entities/ICICStatement';
 
 const mysql = require('mysql');
 
@@ -136,6 +137,7 @@ export async function connect(entities: any[] = []) {
       NextGenCollectionBurn,
       ProfileArchived,
       CicRating,
+      CicStatement,
       ProfileTdh,
       ProfileTdhLog
     ];
