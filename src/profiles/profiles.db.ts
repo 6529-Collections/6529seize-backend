@@ -314,6 +314,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     blockNo: number,
     connectionHolder: ConnectionWrapper<any>
   ): Promise<ProfileTdh[]> {
+    const now = new Date();
     return this.db
       .execute(
         `select 
@@ -338,7 +339,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
           }) => ({
             profile_id: it.profile_id,
             tdh: it.tdh ?? 0,
-            boosted_tdh: it.boosted_tdh ?? 0
+            boosted_tdh: it.boosted_tdh ?? 0,
+            created_at: now
           })
         )
       );
@@ -358,6 +360,17 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       .then((result) => result.at(0)?.block ?? 0);
   }
 
+  async deleteProfileTdhLogsByBlock(
+    block: number,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `delete from ${PROFILE_TDH_LOGS_TABLE} where block = :block`,
+      { block },
+      { wrappedConnection: connectionHolder.connection }
+    );
+  }
+
   async updateProfileTdhs(
     newProfileTdhs: ProfileTdh[],
     blockNo: number,
@@ -368,23 +381,25 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     });
     for (const newProfileTdh of newProfileTdhs) {
       await this.db.execute(
-        `insert into ${PROFILE_TDH_LOGS_TABLE} (profile_id, tdh, boosted_tdh, block) values (:profileId, :tdh, :boostedTdh, :block)`,
+        `insert into ${PROFILE_TDH_LOGS_TABLE} (profile_id, tdh, boosted_tdh, block, created_at) values (:profileId, :tdh, :boostedTdh, :block, :createdAt)`,
         {
           profileId: newProfileTdh.profile_id,
           tdh: newProfileTdh.tdh,
           boostedTdh: newProfileTdh.boosted_tdh,
-          block: blockNo
+          block: blockNo,
+          createdAt: newProfileTdh.created_at
         },
         {
           wrappedConnection: connectionHolder
         }
       );
       await this.db.execute(
-        `insert into ${PROFILE_TDHS_TABLE} (profile_id, tdh, boosted_tdh) values (:profileId, :tdh, :boostedTdh)`,
+        `insert into ${PROFILE_TDHS_TABLE} (profile_id, tdh, boosted_tdh, created_at) values (:profileId, :tdh, :boostedTdh, :createdAt)`,
         {
           profileId: newProfileTdh.profile_id,
           tdh: newProfileTdh.tdh,
-          boostedTdh: newProfileTdh.boosted_tdh
+          boostedTdh: newProfileTdh.boosted_tdh,
+          createdAt: newProfileTdh.created_at
         }
       );
     }

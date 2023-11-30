@@ -313,7 +313,7 @@ export class ProfilesService {
         );
       });
     const thumbnailUri = await this.getOrCreatePfpFileUri({ meme, file });
-    await profilesDb.updateProfilePfpUri(thumbnailUri, profile);
+    await this.profilesDb.updateProfilePfpUri(thumbnailUri, profile);
     return { pfp_url: thumbnailUri };
   }
 
@@ -357,30 +357,28 @@ export class ProfilesService {
   ) {
     this.logger.info(`Starting to update profile TDHs for block ${blockNo}`);
     const start = Time.now();
-    const maxRecordedBlock = await profilesDb.getMaxRecordedProfileTdhBlock(
-      connectionHolder
-    );
-    if (maxRecordedBlock < blockNo) {
-      const newProfileTdhs = await profilesDb.getAllPotentialProfileTdhs(
+    const maxRecordedBlock =
+      await this.profilesDb.getMaxRecordedProfileTdhBlock(connectionHolder);
+    if (maxRecordedBlock >= blockNo) {
+      await this.profilesDb.deleteProfileTdhLogsByBlock(
         blockNo,
         connectionHolder
-      );
-
-      await profilesDb.updateProfileTdhs(
-        newProfileTdhs,
-        blockNo,
-        connectionHolder
-      );
-      this.logger.info(
-        `Finished profile TDHs update for block ${blockNo} with ${
-          newProfileTdhs.length
-        } records in ${start.diffFromNow()}`
-      );
-    } else {
-      this.logger.info(
-        `Skipping profile TDHs update for block ${blockNo} as there already is data for block ${maxRecordedBlock}`
       );
     }
+    const newProfileTdhs = await profilesDb.getAllPotentialProfileTdhs(
+      blockNo,
+      connectionHolder
+    );
+    await profilesDb.updateProfileTdhs(
+      newProfileTdhs,
+      blockNo,
+      connectionHolder
+    );
+    this.logger.info(
+      `Finished profile TDHs update for block ${blockNo} with ${
+        newProfileTdhs.length
+      } records in ${start.diffFromNow()}`
+    );
   }
 
   private async getWalletsNewestProfile(
