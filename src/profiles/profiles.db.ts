@@ -12,6 +12,7 @@ import {
   PROFILE_TDHS_TABLE,
   PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
+  TDH_BLOCKS_TABLE,
   WALLETS_TDH_TABLE
 } from '../constants';
 import { Wallet } from '../entities/IWallet';
@@ -315,11 +316,13 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     connectionHolder: ConnectionWrapper<any>
   ): Promise<ProfileTdh[]> {
     const now = new Date();
+    const blockDate = await this.getBlockDateByBlockNo(blockNo);
     return this.db
       .execute(
         `select 
         p.external_id as profile_id, 
-        c.tdh as tdh, 
+        c.tdh as tdh,
+        c.block as block,
         c.boosted_tdh as boosted_tdh from ${PROFILES_TABLE} p 
         left join ${CONSOLIDATED_WALLETS_TDH_TABLE} c on LOWER(c.consolidation_key) LIKE concat('%', LOWER(p.primary_wallet), '%')
         where c.block = :blockNo`,
@@ -336,11 +339,14 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
             profile_id: string;
             tdh: number | null;
             boosted_tdh: number | null;
+            block: number;
           }) => ({
             profile_id: it.profile_id,
             tdh: it.tdh ?? 0,
             boosted_tdh: it.boosted_tdh ?? 0,
-            created_at: now
+            created_at: now,
+            block: it.block,
+            block_date: blockDate
           })
         )
       );
@@ -373,7 +379,6 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
 
   async updateProfileTdhs(
     newProfileTdhs: ProfileTdh[],
-    blockNo: number,
     connectionHolder: ConnectionWrapper<any>
   ) {
     await this.db.execute(`delete from  ${PROFILE_TDHS_TABLE}`, {
@@ -381,28 +386,44 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     });
     for (const newProfileTdh of newProfileTdhs) {
       await this.db.execute(
-        `insert into ${PROFILE_TDH_LOGS_TABLE} (profile_id, tdh, boosted_tdh, block, created_at) values (:profileId, :tdh, :boostedTdh, :block, :createdAt)`,
+        `insert into ${PROFILE_TDH_LOGS_TABLE} (profile_id, tdh, boosted_tdh, block, created_at, block_date) values (:profileId, :tdh, :boostedTdh, :block, :createdAt, :blockDate)`,
         {
           profileId: newProfileTdh.profile_id,
           tdh: newProfileTdh.tdh,
           boostedTdh: newProfileTdh.boosted_tdh,
-          block: blockNo,
-          createdAt: newProfileTdh.created_at
+          block: newProfileTdh.block,
+          createdAt: newProfileTdh.created_at,
+          blockDate: newProfileTdh.block_date
         },
         {
           wrappedConnection: connectionHolder
         }
       );
       await this.db.execute(
-        `insert into ${PROFILE_TDHS_TABLE} (profile_id, tdh, boosted_tdh, created_at) values (:profileId, :tdh, :boostedTdh, :createdAt)`,
+        `insert into ${PROFILE_TDHS_TABLE} (profile_id, tdh, boosted_tdh, created_at, block, block_date) values (:profileId, :tdh, :boostedTdh, :createdAt, :block, :blockDate)`,
         {
           profileId: newProfileTdh.profile_id,
           tdh: newProfileTdh.tdh,
           boostedTdh: newProfileTdh.boosted_tdh,
-          createdAt: newProfileTdh.created_at
+          createdAt: newProfileTdh.created_at,
+          block: newProfileTdh.block,
+          blockDate: newProfileTdh.block_date
         }
       );
     }
+  }
+
+  private async getBlockDateByBlockNo(blockNo: number): Promise<Date> {
+    const blockDateStr = await this.db
+      .execute(
+        `select created_at from ${TDH_BLOCKS_TABLE} where block_number = :blockNo`,
+        { blockNo }
+      )
+      .then((result) => result.at(0)?.created_at);
+    if (!blockDateStr) {
+      throw new Error(`Block date not found for block ${blockNo}`);
+    }
+    return new Date(blockDateStr);
   }
 }
 

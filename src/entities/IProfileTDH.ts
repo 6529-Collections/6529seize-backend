@@ -8,12 +8,16 @@ class ProfileTDHBase {
   boosted_tdh!: number;
   @Column({ type: 'datetime', nullable: false })
   created_at!: Date;
+  @Column({ type: 'datetime', nullable: false })
+  block_date!: Date;
 }
 
 @Entity(PROFILE_TDHS_TABLE)
 export class ProfileTdh extends ProfileTDHBase {
   @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
   profile_id!: string;
+  @Column({ type: 'int', nullable: false })
+  block!: number;
 }
 
 @Entity(PROFILE_TDH_LOGS_TABLE)
