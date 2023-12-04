@@ -10,7 +10,10 @@ import {
   profileActivityLogsDb,
   ProfileActivityLogsDb
 } from '../profileActivityLogs/profile-activity-logs.db';
-import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
+import {
+  ProfileActivityLogTargetType,
+  ProfileActivityLogType
+} from '../entities/IProfileActivityLog';
 
 const CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE: Record<
   CicStatementGroup,
@@ -195,15 +198,30 @@ export class CicService {
       targetProfileId,
       connectionHolder
     );
-    await this.ratesService.registerUserRating({
-      raterProfileId,
-      matterTargetType: RateMatterTargetType.PROFILE_ID,
-      matterTargetId: targetProfileId,
-      matter: 'CIC',
-      category: 'CIC',
-      amount: cicRating - currentRating,
-      connectionHolder
-    });
+    if (cicRating !== currentRating) {
+      await this.ratesService.registerUserRating({
+        raterProfileId,
+        matterTargetType: RateMatterTargetType.PROFILE_ID,
+        matterTargetId: targetProfileId,
+        matter: 'CIC',
+        category: 'CIC',
+        amount: cicRating - currentRating,
+        connectionHolder
+      });
+      await this.profileActivityLogsDb.insert(
+        {
+          profile_id: raterProfileId,
+          target_id: targetProfileId,
+          target_type: ProfileActivityLogTargetType.PROFILE_ID,
+          type: ProfileActivityLogType.CIC_RATINGS,
+          contents: JSON.stringify({
+            oldRating: currentRating,
+            newRating: cicRating
+          })
+        },
+        connectionHolder
+      );
+    }
   }
 
   private async getProfileCurrentRatingOnProfile(
