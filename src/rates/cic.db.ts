@@ -118,7 +118,8 @@ export class CicDb extends LazyDbAccessCompatibleService {
   }
 
   async insertCicStatement(
-    newCicStatement: Omit<CicStatement, 'id' | 'crated_at'>
+    newCicStatement: Omit<CicStatement, 'id' | 'crated_at'>,
+    connectionHolder: ConnectionWrapper<any>
   ): Promise<CicStatement> {
     const id = uniqueShortId();
     await this.db.execute(
@@ -130,30 +131,44 @@ export class CicDb extends LazyDbAccessCompatibleService {
       {
         id: id,
         ...newCicStatement
-      }
+      },
+      { wrappedConnection: connectionHolder.connection }
     );
-    return (await this.getCicStatementByIdAndProfileId({
-      id,
-      profile_id: newCicStatement.profile_id
-    }))!;
+    return (await this.getCicStatementByIdAndProfileId(
+      {
+        id,
+        profile_id: newCicStatement.profile_id
+      },
+      connectionHolder
+    ))!;
   }
 
-  async deleteCicStatement(props: { profile_id: string; id: string }) {
+  async deleteCicStatement(
+    props: { profile_id: string; id: string },
+    connectionHolder: ConnectionWrapper<any>
+  ) {
     await this.db.execute(
       `delete from ${CIC_STATEMENTS_TABLE} where id = :id and profile_id = :profile_id`,
-      props
+      props,
+      { wrappedConnection: connectionHolder.connection }
     );
   }
 
-  async getCicStatementByIdAndProfileId(props: {
-    profile_id: string;
-    id: string;
-  }): Promise<CicStatement | null> {
+  async getCicStatementByIdAndProfileId(
+    props: {
+      profile_id: string;
+      id: string;
+    },
+    connectionHolder?: ConnectionWrapper<any>
+  ): Promise<CicStatement | null> {
     return this.db
       .execute(
         `select * from ${CIC_STATEMENTS_TABLE} where id = :id and profile_id = :profile_id`,
         props,
-        { forcePool: DbPoolName.WRITE }
+        {
+          wrappedConnection: connectionHolder?.connection,
+          forcePool: DbPoolName.WRITE
+        }
       )
       ?.then((results) => results[0] ?? null);
   }
