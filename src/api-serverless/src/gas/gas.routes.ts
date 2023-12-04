@@ -22,6 +22,7 @@ router.get(
       {},
       {},
       {
+        primary?: string;
         artist?: string;
         from_date?: string;
         to_date?: string;
@@ -34,6 +35,7 @@ router.get(
     if (collectionType === 'memes' || collectionType === 'memelab') {
       return returnGas(
         collectionType,
+        req.query.primary === 'true',
         req.query.artist as string,
         req.query.from_date as string,
         req.query.to_date as string,
@@ -49,6 +51,7 @@ router.get(
 
 function returnGas(
   type: 'memes' | 'memelab',
+  isPrimary: boolean,
   artist: string,
   fromDate: string,
   toDate: string,
@@ -56,7 +59,7 @@ function returnGas(
   req: Request,
   res: Response
 ) {
-  fetchGas(type, artist, fromDate, toDate).then(
+  fetchGas(type, isPrimary, artist, fromDate, toDate).then(
     async (results: GasResponse[]) => {
       logger.info(
         `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${

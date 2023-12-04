@@ -38,6 +38,7 @@ router.get(
       {},
       {},
       {
+        primary?: string;
         artist?: string;
         from_date?: string;
         to_date?: string;
@@ -50,6 +51,7 @@ router.get(
     if (collectionType === 'memes' || collectionType === 'memelab') {
       return returnRoyalties(
         collectionType,
+        req.query.primary === 'true',
         req.query.artist as string,
         req.query.from_date as string,
         req.query.to_date as string,
@@ -90,6 +92,7 @@ router.get(
 
 function returnRoyalties(
   type: 'memes' | 'memelab',
+  isPrimary: boolean,
   artist: string,
   fromDate: string,
   toDate: string,
@@ -97,7 +100,7 @@ function returnRoyalties(
   req: Request,
   res: Response
 ) {
-  fetchRoyalties(type, artist, fromDate, toDate).then(
+  fetchRoyalties(type, isPrimary, artist, fromDate, toDate).then(
     async (results: RoyaltyResponse[]) => {
       logger.info(
         `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${
