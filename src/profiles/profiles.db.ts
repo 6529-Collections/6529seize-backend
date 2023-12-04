@@ -92,11 +92,21 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     if (wallets.length === 0) {
       return [];
     }
-    return this.db.execute(
-      `select * from ${PROFILES_TABLE} where primary_wallet in (:wallets)`,
-      { wallets: wallets.map((w) => w.toLowerCase()) },
-      { forcePool: DbPoolName.WRITE }
-    );
+    return this.db
+      .execute(
+        `select * from ${PROFILES_TABLE} where primary_wallet in (:wallets)`,
+        { wallets: wallets.map((w) => w.toLowerCase()) },
+        { forcePool: DbPoolName.WRITE }
+      )
+      .then((result) =>
+        result.map((profile: Profile) => {
+          profile.created_at = new Date(profile.created_at);
+          profile.updated_at = profile.updated_at
+            ? new Date(profile.updated_at)
+            : null;
+          return profile;
+        })
+      );
   }
 
   public async getWalletsTdhs({
@@ -132,11 +142,21 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     handle: string,
     connection?: ConnectionWrapper<any>
   ): Promise<Profile | null> {
-    const result = await this.db.execute(
-      `select * from ${PROFILES_TABLE} where normalised_handle = :handle`,
-      { handle: handle.toLowerCase() },
-      { forcePool: DbPoolName.WRITE, wrappedConnection: connection }
-    );
+    const result = await this.db
+      .execute(
+        `select * from ${PROFILES_TABLE} where normalised_handle = :handle`,
+        { handle: handle.toLowerCase() },
+        { forcePool: DbPoolName.WRITE, wrappedConnection: connection }
+      )
+      .then((result) =>
+        result.map((profile: Profile) => {
+          profile.created_at = new Date(profile.created_at);
+          profile.updated_at = profile.updated_at
+            ? new Date(profile.updated_at)
+            : null;
+          return profile;
+        })
+      );
     return result.at(0) ?? null;
   }
 

@@ -49,6 +49,9 @@ export class RatesService {
     if (amount === 0) {
       return;
     }
+    if (matter === 'CIC' && raterProfileId === matterTargetId) {
+      throw new BadRequestException('Users cannot rate themselves');
+    }
     const { ratesLeft } = await this.getRatesLeftOnMatterForProfile({
       profileId: raterProfileId,
       matter,

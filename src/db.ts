@@ -137,9 +137,9 @@ export async function connect(entities: any[] = []) {
       NextGenCollectionBurn,
       ProfileArchived,
       CicRating,
-      CicStatement,
       ProfileTdh,
-      ProfileTdhLog
+      ProfileTdhLog,
+      CicStatement
     ];
   }
 

@@ -26,7 +26,6 @@ export class CicService {
     }
     return result;
   }
-
   public async getProfilesAggregatedCicRatingForProfile(
     targetProfileId: string,
     raterProfileId: string
