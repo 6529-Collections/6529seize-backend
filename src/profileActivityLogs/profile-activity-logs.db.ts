@@ -39,7 +39,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
 
   public async insert(
     log: Omit<ProfileActivityLog, 'id' | 'created_at'>,
-    connectionHolder?: ConnectionWrapper<any>
+    connectionHolder: ConnectionWrapper<any>
   ) {
     await this.db.execute(
       `
@@ -50,7 +50,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
         ...log,
         id: uniqueShortId()
       },
-      { wrappedConnection: connectionHolder?.connection }
+      { wrappedConnection: connectionHolder.connection }
     );
   }
 
