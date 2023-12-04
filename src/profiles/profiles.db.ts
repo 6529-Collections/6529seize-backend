@@ -21,6 +21,7 @@ import { DbPoolName } from '../db-query.options';
 import { CreateOrUpdateProfileCommand } from './profile.types';
 import { randomUUID } from 'crypto';
 import { ProfileTdh } from '../entities/IProfileTDH';
+import { distinct } from '../helpers';
 
 export class ProfilesDb extends LazyDbAccessCompatibleService {
   public async getConsolidationInfoForWallet(
@@ -441,6 +442,34 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         }
       );
     }
+  }
+
+  async getProfileHandlesByIds(
+    profileIds: string[]
+  ): Promise<Record<string, string>> {
+    const distinctProfileIds = distinct(profileIds);
+    if (!distinctProfileIds.length) {
+      return {};
+    }
+    return this.db
+      .execute(
+        `select external_id, handle from ${PROFILES_TABLE} where external_id in (:profileIds)`,
+        {
+          profileIds: distinctProfileIds
+        }
+      )
+      .then((result) =>
+        result.reduce(
+          (
+            acc: Record<string, string>,
+            it: { external_id: string; handle: string }
+          ) => {
+            acc[it.external_id] = it.handle;
+            return acc;
+          },
+          {}
+        )
+      );
   }
 
   private async getBlockDateByBlockNo(blockNo: number): Promise<Date> {
