@@ -18,6 +18,12 @@ import { cicService, CicService } from '../rates/cic.service';
 import { ConnectionWrapper } from '../sql-executor';
 import { Logger } from '../logging';
 import { Time } from '../time';
+import {
+  NewProfileActivityLog,
+  profileActivityLogsDb,
+  ProfileActivityLogsDb
+} from '../profileActivityLogs/profile-activity-logs.db';
+import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -25,17 +31,9 @@ export class ProfilesService {
   constructor(
     private readonly profilesDb: ProfilesDb,
     private readonly cicRatingsService: CicService,
+    private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
-
-  public async getProfileIdByWallet(wallet: string): Promise<string | null> {
-    const { consolidatedWallets } =
-      await this.getWalletTdhBlockNoAndConsolidatedWallets(wallet);
-
-    return this.profilesDb
-      .getProfileIdsByWalletsNewestFirst(consolidatedWallets)
-      .then((result) => result[0] ?? null);
-  }
 
   public async getProfileByEnsName(
     query: string
@@ -191,21 +189,36 @@ export class ProfilesService {
       }
     }
     if (creatorOrUpdaterProfiles.length === 0) {
-      await this.profilesDb.insertProfileRecord({
-        command: {
-          handle,
-          primary_wallet,
-          banner_1,
-          banner_2,
-          website,
-          creator_or_updater_wallet,
-          classification
+      await this.profilesDb.executeNativeQueriesInTransaction(
+        async (connectionHolder) => {
+          const profileId = await this.profilesDb.insertProfileRecord(
+            {
+              command: {
+                handle,
+                primary_wallet,
+                banner_1,
+                banner_2,
+                website,
+                creator_or_updater_wallet,
+                classification
+              }
+            },
+            connectionHolder
+          );
+          await this.createProfileEditLogs({
+            profileId: profileId,
+            profileBeforeChange: null,
+            newHandle: handle,
+            newPrimaryWallet: primary_wallet,
+            authenticatedWallet: creator_or_updater_wallet,
+            connectionHolder
+          });
         }
-      });
+      );
     } else {
       const latestProfile = creatorOrUpdaterProfiles
         .sort((a, d) => d.created_at.getTime() - a.created_at.getTime())
-        .at(0);
+        .at(0)!;
       const isNameTaken =
         creatorOrUpdaterProfiles
           .sort((a, d) => d.created_at.getTime() - a.created_at.getTime())
@@ -222,24 +235,84 @@ export class ProfilesService {
           `Handle ${handle} or primary wallet ${primary_wallet} is already taken`
         );
       }
-      await this.profilesDb.updateProfileRecord({
-        oldHandle: latestProfile!.normalised_handle,
-        command: {
-          handle,
-          primary_wallet,
-          banner_1,
-          banner_2,
-          website,
-          creator_or_updater_wallet,
-          classification
+      await this.profilesDb.executeNativeQueriesInTransaction(
+        async (connectionHolder) => {
+          await this.profilesDb.updateProfileRecord(
+            {
+              oldHandle: latestProfile.normalised_handle,
+              command: {
+                handle,
+                primary_wallet,
+                banner_1,
+                banner_2,
+                website,
+                creator_or_updater_wallet,
+                classification
+              }
+            },
+            connectionHolder
+          );
+          await this.createProfileEditLogs({
+            profileId: latestProfile.external_id,
+            profileBeforeChange: latestProfile,
+            newHandle: handle,
+            newPrimaryWallet: primary_wallet,
+            authenticatedWallet: creator_or_updater_wallet,
+            connectionHolder
+          });
         }
-      });
+      );
     }
     const updatedProfile =
       await this.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
         handle
       );
     return updatedProfile!;
+  }
+
+  private async createProfileEditLogs({
+    profileId,
+    profileBeforeChange,
+    newHandle,
+    newPrimaryWallet,
+    authenticatedWallet,
+    connectionHolder
+  }: {
+    profileId: string;
+    profileBeforeChange: Profile | null;
+    newHandle: string;
+    newPrimaryWallet: string;
+    authenticatedWallet: string;
+    connectionHolder: ConnectionWrapper<any>;
+  }) {
+    const logEvents: NewProfileActivityLog[] = [];
+    if (profileBeforeChange?.normalised_handle !== newHandle.toLowerCase()) {
+      logEvents.push({
+        profile_id: profileId,
+        target_id: null,
+        target_type: null,
+        type: ProfileActivityLogType.HANDLE_EDIT,
+        contents: JSON.stringify({
+          authenticated_wallet: authenticatedWallet,
+          oldValue: profileBeforeChange?.handle ?? null,
+          newValue: newHandle
+        })
+      });
+    }
+    if (profileBeforeChange?.primary_wallet !== newPrimaryWallet) {
+      logEvents.push({
+        profile_id: profileId,
+        target_id: null,
+        target_type: null,
+        type: ProfileActivityLogType.PRIMARY_WALLET_EDIT,
+        contents: JSON.stringify({
+          authenticated_wallet: authenticatedWallet,
+          oldValue: profileBeforeChange?.primary_wallet ?? null,
+          newValue: newPrimaryWallet
+        })
+      });
+    }
+    await this.profileActivityLogsDb.insertMany(logEvents, connectionHolder);
   }
 
   public async enhanceDataWithHandlesAndLevel(
@@ -443,5 +516,6 @@ export class ProfilesService {
 export const profilesService = new ProfilesService(
   profilesDb,
   cicService,
+  profileActivityLogsDb,
   getAlchemyInstance
 );

@@ -11,6 +11,13 @@ export interface PageRequest {
   page_size: number;
 }
 
+export interface Page<T> {
+  count: number;
+  page: number;
+  next: boolean;
+  data: T[];
+}
+
 export function getPageRequestOrDefault(
   pageRequest?: RawPageRequest,
   opts?: { defaultPageSize?: number; pageMaxSize?: number }
