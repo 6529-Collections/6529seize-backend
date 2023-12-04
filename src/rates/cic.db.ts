@@ -1,13 +1,16 @@
 import {
-  LazyDbAccessCompatibleService,
+  ConnectionWrapper,
   dbSupplier,
-  ConnectionWrapper
+  LazyDbAccessCompatibleService
 } from '../sql-executor';
 import { CicRating } from '../entities/ICICRating';
-import { CIC_RATINGS_TABLE } from '../constants';
+import { CIC_RATINGS_TABLE, CIC_STATEMENTS_TABLE } from '../constants';
 import { AggregatedCicRating } from './rates.types';
+import { CicStatement } from '../entities/ICICStatement';
+import { uniqueShortId } from '../helpers';
+import { DbPoolName } from '../db-query.options';
 
-export class CicRatingsDb extends LazyDbAccessCompatibleService {
+export class CicDb extends LazyDbAccessCompatibleService {
   async getAggregatedCicRatingForProfile(
     profileId: string
   ): Promise<AggregatedCicRating> {
@@ -57,7 +60,8 @@ export class CicRatingsDb extends LazyDbAccessCompatibleService {
       .then((results) => results[0] ?? null);
     if (!maybeCicRating) {
       await this.db.execute(
-        `insert into ${CIC_RATINGS_TABLE} (rater_profile_id, target_profile_id, rating) values (:raterProfileId, :targetProfileId, 0)`,
+        `insert into ${CIC_RATINGS_TABLE} (rater_profile_id, target_profile_id, rating)
+         values (:raterProfileId, :targetProfileId, 0)`,
         {
           raterProfileId,
           targetProfileId
@@ -99,7 +103,10 @@ export class CicRatingsDb extends LazyDbAccessCompatibleService {
       );
     } else {
       await this.db.execute(
-        `update ${CIC_RATINGS_TABLE} set rating = :cicRating where rater_profile_id = :raterProfileId and target_profile_id = :targetProfileId`,
+        `update ${CIC_RATINGS_TABLE}
+         set rating = :cicRating
+         where rater_profile_id = :raterProfileId
+           and target_profile_id = :targetProfileId`,
         {
           raterProfileId,
           targetProfileId,
@@ -109,6 +116,74 @@ export class CicRatingsDb extends LazyDbAccessCompatibleService {
       );
     }
   }
+
+  async insertCicStatement(
+    newCicStatement: Omit<CicStatement, 'id' | 'crated_at' | 'updated_at'>
+  ): Promise<CicStatement> {
+    const id = uniqueShortId();
+    await this.db.execute(
+      `
+          insert into ${CIC_STATEMENTS_TABLE}
+          (id, profile_id, statement_group, statement_type, statement_comment, statement_value, crated_at)
+          values (:id, :profile_id, :statement_group, :statement_type, :statement_comment, :statement_value, current_time)
+      `,
+      {
+        id: id,
+        ...newCicStatement
+      }
+    );
+    return (await this.getCicStatementByIdAndProfileId({
+      id,
+      profile_id: newCicStatement.profile_id
+    }))!;
+  }
+
+  async updateCicStatement(
+    cicStatementUpdate: Omit<CicStatement, 'crated_at' | 'updated_at'>
+  ) {
+    await this.db.execute(
+      `
+          update ${CIC_STATEMENTS_TABLE} 
+          set statement_group = :statement_group, statement_type = :statement_type, statement_comment = :statement_comment, statement_value = :statement_value, updated_at = current_time
+          where id = :id and profile_id = :profile_id
+      `,
+      cicStatementUpdate
+    );
+    return (await this.getCicStatementByIdAndProfileId({
+      id: cicStatementUpdate.id,
+      profile_id: cicStatementUpdate.profile_id
+    }))!;
+  }
+
+  async deleteCicStatement(props: { profile_id: string; id: string }) {
+    await this.db.execute(
+      `delete from ${CIC_STATEMENTS_TABLE} where id = :id and profile_id = :profile_id`,
+      props
+    );
+  }
+
+  async getCicStatementByIdAndProfileId(props: {
+    profile_id: string;
+    id: string;
+  }): Promise<CicStatement | null> {
+    return this.db
+      .execute(
+        `select * from ${CIC_STATEMENTS_TABLE} where id = :id and profile_id = :profile_id`,
+        props,
+        { forcePool: DbPoolName.WRITE }
+      )
+      ?.then((results) => results[0] ?? null);
+  }
+
+  async getCicStatementsByProfileId(
+    profile_id: string
+  ): Promise<CicStatement[]> {
+    return this.db.execute(
+      `select * from ${CIC_STATEMENTS_TABLE} where profile_id = :profile_id`,
+      { profile_id: profile_id },
+      { forcePool: DbPoolName.WRITE }
+    );
+  }
 }
 
-export const cicRatingsDb = new CicRatingsDb(dbSupplier);
+export const cicDb = new CicDb(dbSupplier);

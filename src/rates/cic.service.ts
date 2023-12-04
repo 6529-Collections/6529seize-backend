@@ -1,23 +1,23 @@
 import { ratesService, RatesService } from './rates.service';
-import { cicRatingsDb, CicRatingsDb } from './cic-ratings.db';
+import { cicDb, CicDb } from './cic.db';
 import { ConnectionWrapper } from '../sql-executor';
 import { RateMatterTargetType } from '../entities/IRateMatter';
 import { ratesDb, RatesDb } from './rates.db';
 import { AggregatedCicRating } from './rates.types';
+import { CicStatement } from '../entities/ICICStatement';
+import { NotFoundException } from '../exceptions';
 
-export class CicRatingsService {
+export class CicService {
   constructor(
     private readonly ratesService: RatesService,
     private readonly ratesDb: RatesDb,
-    private readonly cicRatingsDb: CicRatingsDb
+    private readonly cicDb: CicDb
   ) {}
 
   public async getProfileCicRating(
     profileId: string
   ): Promise<AggregatedCicRating> {
-    const result = await this.cicRatingsDb.getAggregatedCicRatingForProfile(
-      profileId
-    );
+    const result = await this.cicDb.getAggregatedCicRatingForProfile(profileId);
     if (result === null) {
       return {
         cic_rating: 0,
@@ -26,12 +26,11 @@ export class CicRatingsService {
     }
     return result;
   }
-
   public async getProfilesAggregatedCicRatingForProfile(
     targetProfileId: string,
     raterProfileId: string
   ): Promise<number> {
-    return this.cicRatingsDb.getProfilesAggregatedCicRatingForProfile(
+    return this.cicDb.getProfilesAggregatedCicRatingForProfile(
       targetProfileId,
       raterProfileId
     );
@@ -56,7 +55,7 @@ export class CicRatingsService {
     targetProfileId: string;
     cicRating: number;
   }) {
-    await this.cicRatingsDb.executeNativeQueriesInTransaction(
+    await this.cicDb.executeNativeQueriesInTransaction(
       async (connectionHolder) => {
         await this.updateProfileCicRatingInGivenTransaction({
           raterProfileId,
@@ -66,6 +65,48 @@ export class CicRatingsService {
         });
       }
     );
+  }
+
+  public async getCicStatementByIdAndProfileIDOrThrow(props: {
+    profile_id: string;
+    id: string;
+  }): Promise<CicStatement> {
+    const cicStatement = await this.cicDb.getCicStatementByIdAndProfileId(
+      props
+    );
+    if (!cicStatement) {
+      throw new NotFoundException(
+        `CIC statement ${props.id} not found for profile ${props.profile_id}`
+      );
+    }
+    return cicStatement;
+  }
+
+  async getCicStatementsByProfileId(
+    profile_id: string
+  ): Promise<CicStatement[]> {
+    return this.cicDb.getCicStatementsByProfileId(profile_id);
+  }
+
+  public async addCicStatement(
+    statement: Omit<CicStatement, 'id' | 'crated_at' | 'updated_at'>
+  ) {
+    return this.cicDb.insertCicStatement(statement);
+  }
+
+  public async updateCicStatement(
+    statement: Omit<CicStatement, 'crated_at' | 'updated_at'>
+  ) {
+    await this.getCicStatementByIdAndProfileIDOrThrow({
+      id: statement.id,
+      profile_id: statement.profile_id
+    });
+    return this.cicDb.updateCicStatement(statement);
+  }
+
+  public async deleteCicStatement(props: { profile_id: string; id: string }) {
+    await this.getCicStatementByIdAndProfileIDOrThrow(props);
+    await this.cicDb.deleteCicStatement(props);
   }
 
   private async updateProfileCicRatingInGivenTransaction({
@@ -79,7 +120,7 @@ export class CicRatingsService {
     cicRating: number;
     connectionHolder: ConnectionWrapper<any>;
   }) {
-    await this.cicRatingsDb.lockCicRating({
+    await this.cicDb.lockCicRating({
       raterProfileId,
       targetProfileId,
       connectionHolder
@@ -90,7 +131,7 @@ export class CicRatingsService {
       connectionHolder,
       cicRating
     );
-    await this.cicRatingsDb.updateCicRating({
+    await this.cicDb.updateCicRating({
       raterProfileId,
       targetProfileId,
       cicRating,
@@ -135,8 +176,4 @@ export class CicRatingsService {
   }
 }
 
-export const cicRatingsService = new CicRatingsService(
-  ratesService,
-  ratesDb,
-  cicRatingsDb
-);
+export const cicService = new CicService(ratesService, ratesDb, cicDb);

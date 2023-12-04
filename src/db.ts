@@ -78,6 +78,7 @@ import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
 import { CicRating } from './entities/ICICRating';
+import { CicStatement } from './entities/ICICStatement';
 import { profilesService } from './profiles/profiles.service';
 import { ProfileTdh, ProfileTdhLog } from './entities/IProfileTDH';
 
@@ -124,7 +125,8 @@ export async function connect(entities: any[] = []) {
       ProfileArchived,
       CicRating,
       ProfileTdh,
-      ProfileTdhLog
+      ProfileTdhLog,
+      CicStatement
     ];
   }
 
