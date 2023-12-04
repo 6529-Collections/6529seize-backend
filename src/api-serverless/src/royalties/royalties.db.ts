@@ -21,18 +21,15 @@ export interface RoyaltyResponse {
   name: string;
   artist: string;
   thumbnail?: string;
-  primary_volume: number;
-  primary_proceeds: number;
-  secondary_volume: number;
-  royalties: number;
-  primary_royalty_split: number;
-  secondary_royalty_split: number;
-  primary_artist_take: number;
-  secondary_artist_take: number;
+  volume: number;
+  proceeds: number;
+  artist_split: number;
+  artist_take: number;
 }
 
 export function getRoyaltiesSql(
   type: 'memes' | 'memelab',
+  isPrimary: boolean,
   artist: string,
   fromDate: string,
   toDate: string
@@ -100,24 +97,23 @@ export function getRoyaltiesSql(
       ? `AND NOT (from_address = :ack_deployer AND token_id = 12)`
       : '';
 
-  const sql = `
+  let selectClause = `
     SELECT 
       ${nftsTable}.id as token_id, 
       ${nftsTable}.contract, 
       ${nftsTable}.name, 
       ${nftsTable}.artist, 
-      ${nftsTable}.thumbnail,
-      COALESCE(primaryVolume.primary_total_volume, 0) as primary_volume,
-      COALESCE(primaryVolume.primary_total_proceeds, 0) as primary_proceeds,
-      COALESCE(aggregated.secondary_total_volume, 0) as secondary_volume,
-      COALESCE(aggregated.total_royalties, 0) as royalties,
-      CASE WHEN artist not like :no_royalty_artist THEN ${primaryRoyaltySplitSource} ELSE 0 END as primary_royalty_split,
-      CASE WHEN artist not like :no_royalty_artist THEN ${secondaryRoyaltySplitSource} ELSE 0 END as secondary_royalty_split,
-      COALESCE(primaryVolume.primary_total_proceeds, 0) * CASE WHEN artist not like :no_royalty_artist THEN ${primaryRoyaltySplitSource} ELSE 0 END AS primary_artist_take,
-      COALESCE(aggregated.total_royalties, 0) * CASE WHEN artist not like :no_royalty_artist THEN ${secondaryRoyaltySplitSource} ELSE 0 END AS secondary_artist_take
-    FROM 
-      ${nftsTable} 
-    LEFT JOIN 
+      ${nftsTable}.thumbnail`;
+
+  let joinClause = '';
+  if (isPrimary) {
+    selectClause += `,
+      COALESCE(primaryVolume.primary_total_volume, 0) as volume,
+      COALESCE(primaryVolume.primary_total_proceeds, 0) as proceeds,
+      CASE WHEN artist not like :no_royalty_artist THEN ${primaryRoyaltySplitSource} ELSE 0 END as artist_split,
+      COALESCE(primaryVolume.primary_total_proceeds, 0) * CASE WHEN artist not like :no_royalty_artist THEN ${primaryRoyaltySplitSource} ELSE 0 END AS artist_take`;
+
+    joinClause = `LEFT JOIN 
       (SELECT 
         token_id, 
         SUM(CASE WHEN from_address IN (:null_address, :manifold) ${specialCasePrimary} THEN value ELSE 0 END) AS primary_total_volume,
@@ -127,8 +123,15 @@ export function getRoyaltiesSql(
       WHERE contract=:contract
       GROUP BY 
         token_id) AS primaryVolume
-      ON ${nftsTable}.id = primaryVolume.token_id
-    LEFT JOIN 
+      ON ${nftsTable}.id = primaryVolume.token_id`;
+  } else {
+    selectClause += `,
+      COALESCE(aggregated.secondary_total_volume, 0) as volume,
+      COALESCE(aggregated.total_royalties, 0) as proceeds,
+      CASE WHEN artist not like :no_royalty_artist THEN ${secondaryRoyaltySplitSource} ELSE 0 END as artist_split,
+      COALESCE(aggregated.total_royalties, 0) * CASE WHEN artist not like :no_royalty_artist THEN ${secondaryRoyaltySplitSource} ELSE 0 END AS artist_take`;
+
+    joinClause = `LEFT JOIN 
       (SELECT 
         token_id,
         SUM(CASE WHEN from_address NOT IN (:null_address, :manifold) ${specialCaseSecondary} THEN value ELSE 0 END) AS secondary_total_volume,
@@ -138,7 +141,14 @@ export function getRoyaltiesSql(
       ${filters}
       GROUP BY 
         token_id) AS aggregated
-      ON ${nftsTable}.id = aggregated.token_id
+      ON ${nftsTable}.id = aggregated.token_id`;
+  }
+
+  const sql = `
+    ${selectClause}
+    FROM 
+      ${nftsTable} 
+    ${joinClause}
     ${royaltiesJoinClause}
     ${nftFilters}
     ORDER BY 
@@ -152,10 +162,11 @@ export function getRoyaltiesSql(
 
 export async function fetchRoyalties(
   type: 'memes' | 'memelab',
+  isPrimary: boolean,
   artist: string,
   fromDate: string,
   toDate: string
 ): Promise<RoyaltyResponse[]> {
-  const sql = getRoyaltiesSql(type, artist, fromDate, toDate);
+  const sql = getRoyaltiesSql(type, isPrimary, artist, fromDate, toDate);
   return sqlExecutor.execute(sql.sql, sql.params);
 }

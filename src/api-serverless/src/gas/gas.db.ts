@@ -19,12 +19,12 @@ export interface GasResponse {
   name: string;
   artist: string;
   thumbnail?: string;
-  primary_gas: number;
-  secondary_gas: number;
+  gas: number;
 }
 
 function getGasSql(
   type: 'memes' | 'memelab',
+  isPrimary: boolean,
   artist: string,
   fromDate: string,
   toDate: string
@@ -35,11 +35,7 @@ function getGasSql(
   const contract = type === 'memes' ? MEMES_CONTRACT : MEMELAB_CONTRACT;
 
   const transactionsAlias = 'distinct_transactions';
-  let primaryFilters = constructFilters(
-    '',
-    `${transactionsAlias}.contract = :contract`
-  );
-  let secondaryFilters = constructFilters(
+  let filters = constructFilters(
     '',
     `${transactionsAlias}.contract = :contract`
   );
@@ -52,16 +48,16 @@ function getGasSql(
   };
 
   if (fromDate) {
-    secondaryFilters = constructFilters(
-      secondaryFilters,
+    filters = constructFilters(
+      filters,
       `${transactionsAlias}.transaction_date >= :from_date`
     );
     params.from_date = fromDate;
   }
   if (toDate) {
     const nextDay = Time.fromString(toDate).plusDays(1).toIsoDateString();
-    secondaryFilters = constructFilters(
-      secondaryFilters,
+    filters = constructFilters(
+      filters,
       `${transactionsAlias}.transaction_date < :to_date`
     );
     params.to_date = nextDay;
@@ -85,18 +81,20 @@ function getGasSql(
       ? `AND NOT (from_address = :ack_deployer AND token_id = 12)`
       : '';
 
-  const sql = `
+  let selectClause = `
     SELECT
       ${nftsTable}.id as token_id,
       ${nftsTable}.contract,
       ${nftsTable}.name,
       ${nftsTable}.artist,
-      ${nftsTable}.thumbnail,
-      COALESCE(primary_gas.primary_gas, 0) as primary_gas,
-      COALESCE(secondary_gas.secondary_gas, 0) as secondary_gas
-    FROM
-      ${nftsTable}
-    LEFT JOIN
+      ${nftsTable}.thumbnail`;
+
+  let joinClause = '';
+  if (isPrimary) {
+    selectClause += `,
+      COALESCE(primary_gas.primary_gas, 0) as gas`;
+
+    joinClause = `LEFT JOIN
       (SELECT
         token_id,
         SUM(CASE
@@ -106,10 +104,14 @@ function getGasSql(
             END) AS primary_gas
       FROM
         (SELECT DISTINCT transaction, token_id, contract, gas, from_address FROM ${transactionsTable}) AS ${transactionsAlias}
-      ${primaryFilters}
+      ${filters}
       GROUP BY token_id) AS primary_gas
-      ON ${nftsTable}.id = primary_gas.token_id
-    LEFT JOIN
+      ON ${nftsTable}.id = primary_gas.token_id`;
+  } else {
+    selectClause += `,
+      COALESCE(secondary_gas.secondary_gas, 0) as gas`;
+
+    joinClause = `LEFT JOIN
       (SELECT
         token_id,
         SUM(CASE
@@ -119,9 +121,16 @@ function getGasSql(
             END) AS secondary_gas
       FROM
         (SELECT DISTINCT transaction, token_id, contract, gas, from_address, transaction_date FROM ${transactionsTable}) AS ${transactionsAlias}
-      ${secondaryFilters}
+      ${filters}
       GROUP BY token_id) AS secondary_gas
-      ON ${nftsTable}.id = secondary_gas.token_id
+      ON ${nftsTable}.id = secondary_gas.token_id`;
+  }
+
+  const sql = `
+    ${selectClause}
+    FROM
+      ${nftsTable}
+    ${joinClause}
     ${nftFilters}
     ORDER BY ${nftsTable}.contract ASC, ${nftsTable}.id ASC;`;
 
@@ -133,10 +142,11 @@ function getGasSql(
 
 export async function fetchGas(
   type: 'memes' | 'memelab',
+  isPrimary: boolean,
   artist: string,
   fromDate: string,
   toDate: string
 ): Promise<GasResponse[]> {
-  const sql = getGasSql(type, artist, fromDate, toDate);
+  const sql = getGasSql(type, isPrimary, artist, fromDate, toDate);
   return sqlExecutor.execute(sql.sql, sql.params);
 }
