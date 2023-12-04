@@ -94,16 +94,6 @@ export class CicService {
     return this.cicDb.insertCicStatement(statement);
   }
 
-  public async updateCicStatement(
-    statement: Omit<CicStatement, 'crated_at' | 'updated_at'>
-  ) {
-    await this.getCicStatementByIdAndProfileIDOrThrow({
-      id: statement.id,
-      profile_id: statement.profile_id
-    });
-    return this.cicDb.updateCicStatement(statement);
-  }
-
   public async deleteCicStatement(props: { profile_id: string; id: string }) {
     await this.getCicStatementByIdAndProfileIDOrThrow(props);
     await this.cicDb.deleteCicStatement(props);
