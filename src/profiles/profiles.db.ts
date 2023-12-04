@@ -209,16 +209,18 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  public async updateProfileRecord({
-    command,
-    oldHandle
-  }: {
-    command: CreateOrUpdateProfileCommand;
-    oldHandle: string;
-  }) {
-    await this.db.executeNativeQueriesInTransaction(async (connection) => {
-      await this.db.execute(
-        `update ${PROFILES_TABLE}
+  public async updateProfileRecord(
+    {
+      command,
+      oldHandle
+    }: {
+      command: CreateOrUpdateProfileCommand;
+      oldHandle: string;
+    },
+    connectionHolder: ConnectionWrapper<any>
+  ): Promise<void> {
+    await this.db.execute(
+      `update ${PROFILES_TABLE}
          set handle            = :handle,
              normalised_handle = :normalisedHandle,
              primary_wallet    = :primaryWallet,
@@ -229,34 +231,39 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
              website           = :website,
              classification    = :classification
          where normalised_handle = :oldHandle`,
-        {
-          oldHandle,
-          handle: command.handle,
-          normalisedHandle: command.handle.toLowerCase(),
-          primaryWallet: command.primary_wallet.toLowerCase(),
-          updatedByWallet: command.creator_or_updater_wallet.toLowerCase(),
-          banner1: command.banner_1 ?? null,
-          banner2: command.banner_2 ?? null,
-          website: command.website ?? null,
-          classification: command.classification
-        },
-        { wrappedConnection: connection }
-      );
-      const profile = await this.getProfileByHandle(command.handle, connection);
-      if (profile) {
-        await this.insertProfileArchiveRecord(profile, connection);
-      }
-    });
+      {
+        oldHandle,
+        handle: command.handle,
+        normalisedHandle: command.handle.toLowerCase(),
+        primaryWallet: command.primary_wallet.toLowerCase(),
+        updatedByWallet: command.creator_or_updater_wallet.toLowerCase(),
+        banner1: command.banner_1 ?? null,
+        banner2: command.banner_2 ?? null,
+        website: command.website ?? null,
+        classification: command.classification
+      },
+      { wrappedConnection: connectionHolder.connection }
+    );
+    const profile = await this.getProfileByHandle(
+      command.handle,
+      connectionHolder
+    );
+    if (profile) {
+      await this.insertProfileArchiveRecord(profile, connectionHolder);
+    }
   }
 
-  public async insertProfileRecord({
-    command
-  }: {
-    command: CreateOrUpdateProfileCommand;
-  }) {
-    await this.db.executeNativeQueriesInTransaction(async (connection) => {
-      await this.db.execute(
-        `insert into ${PROFILES_TABLE}
+  public async insertProfileRecord(
+    {
+      command
+    }: {
+      command: CreateOrUpdateProfileCommand;
+    },
+    connectionHolder: ConnectionWrapper<any>
+  ): Promise<string> {
+    const profileId = randomUUID();
+    await this.db.execute(
+      `insert into ${PROFILES_TABLE}
      (handle,
       normalised_handle,
       primary_wallet,
@@ -278,24 +285,27 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
              :classification,
              :externalId
              )`,
-        {
-          handle: command.handle,
-          normalisedHandle: command.handle.toLowerCase(),
-          primaryWallet: command.primary_wallet.toLowerCase(),
-          createdByWallet: command.creator_or_updater_wallet.toLowerCase(),
-          banner1: command.banner_1 ?? null,
-          banner2: command.banner_2 ?? null,
-          website: command.website ?? null,
-          classification: command.classification,
-          externalId: randomUUID()
-        },
-        { wrappedConnection: connection }
-      );
-      const profile = await this.getProfileByHandle(command.handle, connection);
-      if (profile) {
-        await this.insertProfileArchiveRecord(profile, connection);
-      }
-    });
+      {
+        handle: command.handle,
+        normalisedHandle: command.handle.toLowerCase(),
+        primaryWallet: command.primary_wallet.toLowerCase(),
+        createdByWallet: command.creator_or_updater_wallet.toLowerCase(),
+        banner1: command.banner_1 ?? null,
+        banner2: command.banner_2 ?? null,
+        website: command.website ?? null,
+        classification: command.classification,
+        externalId: profileId
+      },
+      { wrappedConnection: connectionHolder.connection }
+    );
+    const profile = await this.getProfileByHandle(
+      command.handle,
+      connectionHolder
+    );
+    if (profile) {
+      await this.insertProfileArchiveRecord(profile, connectionHolder);
+    }
+    return profileId;
   }
 
   public async getMemeThumbnailUriById(id: number): Promise<string | null> {

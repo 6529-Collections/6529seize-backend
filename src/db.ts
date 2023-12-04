@@ -81,6 +81,7 @@ import { CicRating } from './entities/ICICRating';
 import { CicStatement } from './entities/ICICStatement';
 import { profilesService } from './profiles/profiles.service';
 import { ProfileTdh, ProfileTdhLog } from './entities/IProfileTDH';
+import { ProfileActivityLog } from './entities/IProfileActivityLog';
 
 const mysql = require('mysql');
 
@@ -126,7 +127,8 @@ export async function connect(entities: any[] = []) {
       CicRating,
       ProfileTdh,
       ProfileTdhLog,
-      CicStatement
+      CicStatement,
+      ProfileActivityLog
     ];
   }
 
