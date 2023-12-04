@@ -4,14 +4,30 @@ import { ConnectionWrapper } from '../sql-executor';
 import { RateMatterTargetType } from '../entities/IRateMatter';
 import { ratesDb, RatesDb } from './rates.db';
 import { AggregatedCicRating } from './rates.types';
-import { CicStatement } from '../entities/ICICStatement';
+import { CicStatement, CicStatementGroup } from '../entities/ICICStatement';
 import { NotFoundException } from '../exceptions';
+import {
+  profileActivityLogsDb,
+  ProfileActivityLogsDb
+} from '../profileActivityLogs/profile-activity-logs.db';
+import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
+
+const CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE: Record<
+  CicStatementGroup,
+  ProfileActivityLogType
+> = {
+  [CicStatementGroup.CONTACT]: ProfileActivityLogType.CONTACTS_EDIT,
+  [CicStatementGroup.SOCIAL_MEDIA_ACCOUNT]: ProfileActivityLogType.SOCIALS_EDIT,
+  [CicStatementGroup.SOCIAL_MEDIA_VERIFICATION_POST]:
+    ProfileActivityLogType.SOCIAL_VERIFICATION_POST_EDIT
+};
 
 export class CicService {
   constructor(
     private readonly ratesService: RatesService,
     private readonly ratesDb: RatesDb,
-    private readonly cicDb: CicDb
+    private readonly cicDb: CicDb,
+    private readonly profileActivityLogsDb: ProfileActivityLogsDb
   ) {}
 
   public async getProfileCicRating(
@@ -91,12 +107,51 @@ export class CicService {
   public async addCicStatement(
     statement: Omit<CicStatement, 'id' | 'crated_at' | 'updated_at'>
   ) {
-    return this.cicDb.insertCicStatement(statement);
+    return await this.cicDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const cicStatement = await this.cicDb.insertCicStatement(
+          statement,
+          connection
+        );
+        await this.profileActivityLogsDb.insert(
+          {
+            profile_id: statement.profile_id,
+            target_id: null,
+            target_type: null,
+            type: CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE[
+              cicStatement.statement_group
+            ],
+            contents: JSON.stringify({ action: 'ADD', statement: cicStatement })
+          },
+          connection
+        );
+        return cicStatement;
+      }
+    );
   }
 
   public async deleteCicStatement(props: { profile_id: string; id: string }) {
-    await this.getCicStatementByIdAndProfileIDOrThrow(props);
-    await this.cicDb.deleteCicStatement(props);
+    const cicStatement = await this.getCicStatementByIdAndProfileIDOrThrow(
+      props
+    );
+    await this.cicDb.executeNativeQueriesInTransaction(async (connection) => {
+      await this.cicDb.deleteCicStatement(props, connection);
+      await this.profileActivityLogsDb.insert(
+        {
+          profile_id: cicStatement.profile_id,
+          target_id: null,
+          target_type: null,
+          type: CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE[
+            cicStatement.statement_group
+          ],
+          contents: JSON.stringify({
+            action: 'DELETE',
+            statement: cicStatement
+          })
+        },
+        connection
+      );
+    });
   }
 
   private async updateProfileCicRatingInGivenTransaction({
@@ -166,4 +221,9 @@ export class CicService {
   }
 }
 
-export const cicService = new CicService(ratesService, ratesDb, cicDb);
+export const cicService = new CicService(
+  ratesService,
+  ratesDb,
+  cicDb,
+  profileActivityLogsDb
+);

@@ -10,7 +10,7 @@ export class CicStatement {
   profile_id!: string;
 
   @Column({ type: 'varchar', length: 250, nullable: false })
-  statement_group!: string;
+  statement_group!: CicStatementGroup;
 
   @Column({ type: 'varchar', length: 250, nullable: false })
   statement_type!: string;
@@ -23,4 +23,10 @@ export class CicStatement {
 
   @Column({ type: 'datetime', nullable: false })
   crated_at!: Date;
+}
+
+export enum CicStatementGroup {
+  CONTACT = 'CONTACT',
+  SOCIAL_MEDIA_ACCOUNT = 'SOCIAL_MEDIA_ACCOUNT',
+  SOCIAL_MEDIA_VERIFICATION_POST = 'SOCIAL_MEDIA_VERIFICATION_POST'
 }

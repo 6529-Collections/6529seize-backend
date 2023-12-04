@@ -8,7 +8,10 @@ import { profilesService } from '../../../profiles/profiles.service';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { cicService } from '../../../rates/cic.service';
 import * as Joi from 'joi';
-import { CicStatement } from '../../../entities/ICICStatement';
+import {
+  CicStatement,
+  CicStatementGroup
+} from '../../../entities/ICICStatement';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -280,7 +283,9 @@ type ApiCreateOrUpdateProfileCicStatement = Omit<
 
 const ApiCreateOrUpdateProfileCicStatementSchema: Joi.ObjectSchema<ApiCreateOrUpdateProfileCicStatement> =
   Joi.object({
-    statement_group: Joi.string().required().min(1).max(250),
+    statement_group: Joi.string()
+      .valid(...Object.values(CicStatementGroup))
+      .required(),
     statement_type: Joi.string().required().min(1).max(250),
     statement_comment: Joi.optional().default(null),
     statement_value: Joi.string().min(1).required()
