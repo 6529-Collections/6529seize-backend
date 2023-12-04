@@ -118,7 +118,7 @@ export class CicDb extends LazyDbAccessCompatibleService {
   }
 
   async insertCicStatement(
-    newCicStatement: Omit<CicStatement, 'id' | 'crated_at' | 'updated_at'>
+    newCicStatement: Omit<CicStatement, 'id' | 'crated_at'>
   ): Promise<CicStatement> {
     const id = uniqueShortId();
     await this.db.execute(
@@ -135,23 +135,6 @@ export class CicDb extends LazyDbAccessCompatibleService {
     return (await this.getCicStatementByIdAndProfileId({
       id,
       profile_id: newCicStatement.profile_id
-    }))!;
-  }
-
-  async updateCicStatement(
-    cicStatementUpdate: Omit<CicStatement, 'crated_at' | 'updated_at'>
-  ) {
-    await this.db.execute(
-      `
-          update ${CIC_STATEMENTS_TABLE} 
-          set statement_group = :statement_group, statement_type = :statement_type, statement_comment = :statement_comment, statement_value = :statement_value, updated_at = current_time
-          where id = :id and profile_id = :profile_id
-      `,
-      cicStatementUpdate
-    );
-    return (await this.getCicStatementByIdAndProfileId({
-      id: cicStatementUpdate.id,
-      profile_id: cicStatementUpdate.profile_id
     }))!;
   }
 

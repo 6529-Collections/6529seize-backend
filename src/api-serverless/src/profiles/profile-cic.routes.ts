@@ -224,50 +224,6 @@ router.delete(
 );
 
 router.post(
-  `/statements/:statementId`,
-  needsAuthenticatedUser(),
-  async function (
-    req: Request<
-      {
-        handleOrWallet: string;
-        statementId: string;
-      },
-      any,
-      ApiCreateOrUpdateProfileCicStatement,
-      any,
-      any
-    >,
-    res: Response
-  ) {
-    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
-    const profileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
-      );
-    if (!isAuthenticatedWalletProfileOwner(req, profileAndConsolidations)) {
-      throw new ForbiddenException(
-        `User can only update statements of its own profile`
-      );
-    }
-    const requestPayload = getValidatedByJoiOrThrow(
-      req.body,
-      ApiCreateOrUpdateProfileCicStatementSchema
-    );
-    const statementId = req.params.statementId;
-    const profileId = profileAndConsolidations?.profile?.external_id;
-    if (!profileId) {
-      throw new NotFoundException(`No profile found for ${handleOrWallet}`);
-    }
-    const updatedStatement = await cicService.updateCicStatement({
-      id: statementId,
-      profile_id: profileId,
-      ...requestPayload
-    });
-    res.status(201).send(updatedStatement);
-  }
-);
-
-router.post(
   `/statements`,
   needsAuthenticatedUser(),
   async function (

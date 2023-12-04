@@ -23,7 +23,4 @@ export class CicStatement {
 
   @Column({ type: 'datetime', nullable: false })
   crated_at!: Date;
-
-  @Column({ type: 'datetime', nullable: true })
-  updated_at!: Date | null;
 }
