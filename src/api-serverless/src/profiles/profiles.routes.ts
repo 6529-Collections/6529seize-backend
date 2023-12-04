@@ -13,7 +13,7 @@ import { NotFoundException } from '../../../exceptions';
 import { initMulterSingleMiddleware } from '../multer-middleware';
 
 import { asyncRouter } from '../async.router';
-import { RESERVED_HANDLES } from './profiles.constats';
+import { RESERVED_HANDLES } from './profiles.constants';
 import { ProfileClassification } from '../../../entities/IProfile';
 import {
   CreateOrUpdateProfileCommand,

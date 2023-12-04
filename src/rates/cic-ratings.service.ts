@@ -27,19 +27,6 @@ export class CicRatingsService {
     return result;
   }
 
-  public async getTdhSpe(profileId: string): Promise<AggregatedCicRating> {
-    const result = await this.cicRatingsDb.getAggregatedCicRatingForProfile(
-      profileId
-    );
-    if (result === null) {
-      return {
-        cic_rating: 0,
-        contributor_count: 0
-      };
-    }
-    return result;
-  }
-
   public async getProfilesAggregatedCicRatingForProfile(
     targetProfileId: string,
     raterProfileId: string
