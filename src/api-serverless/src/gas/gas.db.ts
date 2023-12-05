@@ -27,7 +27,9 @@ function getGasSql(
   isPrimary: boolean,
   artist: string,
   fromDate: string,
-  toDate: string
+  toDate: string,
+  fromBlock: number,
+  toBlock: number
 ) {
   const transactionsTable =
     type === 'memes' ? TRANSACTIONS_TABLE : TRANSACTIONS_MEME_LAB_TABLE;
@@ -61,6 +63,20 @@ function getGasSql(
       `${transactionsAlias}.transaction_date < :to_date`
     );
     params.to_date = nextDay;
+  }
+  if (fromBlock) {
+    filters = constructFilters(
+      filters,
+      `${transactionsAlias}.block >= :from_block`
+    );
+    params.from_block = fromBlock;
+  }
+  if (toBlock) {
+    filters = constructFilters(
+      filters,
+      `${transactionsAlias}.block <= :to_block`
+    );
+    params.to_block = toBlock;
   }
 
   let nftFilters = constructFilters('', `${nftsTable}.contract = :contract`);
@@ -120,7 +136,7 @@ function getGasSql(
             ELSE 0
             END) AS secondary_gas
       FROM
-        (SELECT DISTINCT transaction, token_id, contract, gas, from_address, transaction_date FROM ${transactionsTable}) AS ${transactionsAlias}
+        (SELECT DISTINCT transaction, token_id, contract, gas, from_address, transaction_date, block FROM ${transactionsTable}) AS ${transactionsAlias}
       ${filters}
       GROUP BY token_id) AS secondary_gas
       ON ${nftsTable}.id = secondary_gas.token_id`;
@@ -145,8 +161,18 @@ export async function fetchGas(
   isPrimary: boolean,
   artist: string,
   fromDate: string,
-  toDate: string
+  toDate: string,
+  fromBlock: number,
+  toBlock: number
 ): Promise<GasResponse[]> {
-  const sql = getGasSql(type, isPrimary, artist, fromDate, toDate);
+  const sql = getGasSql(
+    type,
+    isPrimary,
+    artist,
+    fromDate,
+    toDate,
+    fromBlock,
+    toBlock
+  );
   return sqlExecutor.execute(sql.sql, sql.params);
 }

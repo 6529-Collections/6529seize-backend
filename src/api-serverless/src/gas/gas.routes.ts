@@ -26,6 +26,8 @@ router.get(
         artist?: string;
         from_date?: string;
         to_date?: string;
+        from_block?: string;
+        to_block?: string;
         download?: string;
       }
     >,
@@ -33,12 +35,28 @@ router.get(
   ) {
     const collectionType = req.params.collection_type;
     if (collectionType === 'memes' || collectionType === 'memelab') {
+      let fromBlockResolved = 0;
+      if (req.query.from_block) {
+        const fromB = parseInt(req.query.from_block);
+        if (!isNaN(fromB)) {
+          fromBlockResolved = parseInt(req.query.from_block);
+        }
+      }
+      let toBlockResolved = 0;
+      if (req.query.to_block) {
+        const toB = parseInt(req.query.to_block);
+        if (!isNaN(toB)) {
+          toBlockResolved = parseInt(req.query.to_block);
+        }
+      }
       return returnGas(
         collectionType,
         req.query.primary === 'true',
         req.query.artist as string,
         req.query.from_date as string,
         req.query.to_date as string,
+        fromBlockResolved,
+        toBlockResolved,
         req.query.download === 'true',
         req,
         res
@@ -55,11 +73,13 @@ function returnGas(
   artist: string,
   fromDate: string,
   toDate: string,
+  fromBlock: number,
+  toBlock: number,
   download: boolean,
   req: Request,
   res: Response
 ) {
-  fetchGas(type, isPrimary, artist, fromDate, toDate).then(
+  fetchGas(type, isPrimary, artist, fromDate, toDate, fromBlock, toBlock).then(
     async (results: GasResponse[]) => {
       logger.info(
         `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${

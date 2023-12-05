@@ -32,7 +32,9 @@ export function getRoyaltiesSql(
   isPrimary: boolean,
   artist: string,
   fromDate: string,
-  toDate: string
+  toDate: string,
+  fromBlock: number,
+  toBlock: number
 ) {
   const transactionsTable =
     type === 'memes' ? TRANSACTIONS_TABLE : TRANSACTIONS_MEME_LAB_TABLE;
@@ -81,6 +83,20 @@ export function getRoyaltiesSql(
       `${transactionsTable}.transaction_date < :to_date`
     );
     params.to_date = nextDay;
+  }
+  if (fromBlock) {
+    filters = constructFilters(
+      filters,
+      `${transactionsTable}.block >= :from_block`
+    );
+    params.from_block = fromBlock;
+  }
+  if (toBlock) {
+    filters = constructFilters(
+      filters,
+      `${transactionsTable}.block <= :to_block`
+    );
+    params.to_block = toBlock;
   }
 
   const royaltiesJoinClause =
@@ -165,8 +181,18 @@ export async function fetchRoyalties(
   isPrimary: boolean,
   artist: string,
   fromDate: string,
-  toDate: string
+  toDate: string,
+  fromBlock: number,
+  toBlock: number
 ): Promise<RoyaltyResponse[]> {
-  const sql = getRoyaltiesSql(type, isPrimary, artist, fromDate, toDate);
+  const sql = getRoyaltiesSql(
+    type,
+    isPrimary,
+    artist,
+    fromDate,
+    toDate,
+    fromBlock,
+    toBlock
+  );
   return sqlExecutor.execute(sql.sql, sql.params);
 }
