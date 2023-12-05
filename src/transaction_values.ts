@@ -16,7 +16,8 @@ import {
   MANIFOLD,
   TRANSACTIONS_TABLE,
   TRANSACTIONS_MEME_LAB_TABLE,
-  ACK_DEPLOYER
+  ACK_DEPLOYER,
+  MEMES_DEPLOYER
 } from './constants';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
@@ -182,10 +183,11 @@ async function resolveValue(t: Transaction) {
 
     const internlTrfs = await alchemy.core.getAssetTransfers(settings);
     const filteredInternalTrfs = internlTrfs.transfers.filter(
-      (at) =>
-        at.hash == t.transaction &&
-        (areEqualAddresses(at.from, t.to_address) ||
-          areEqualAddresses(at.from, MANIFOLD))
+      (it) =>
+        it.hash == t.transaction &&
+        (areEqualAddresses(it.from, t.to_address) ||
+          areEqualAddresses(it.from, MANIFOLD) ||
+          (it.to && areEqualAddresses(it.to, MEMES_DEPLOYER)))
     );
 
     if (filteredInternalTrfs.length > 0) {
@@ -199,6 +201,10 @@ async function resolveValue(t: Transaction) {
         t.primary_proceeds = primaryProceeds;
         t.value = primaryProceeds;
       }
+    }
+
+    if (!t.primary_proceeds) {
+      t.primary_proceeds = t.value;
     }
   }
 
