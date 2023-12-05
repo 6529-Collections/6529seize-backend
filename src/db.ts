@@ -89,6 +89,7 @@ import { CicRating } from './entities/ICICRating';
 import { profilesService } from './profiles/profiles.service';
 import { ProfileTdh, ProfileTdhLog } from './entities/IProfileTDH';
 import { CicStatement } from './entities/ICICStatement';
+import { ProfileActivityLog } from './entities/IProfileActivityLog';
 
 const mysql = require('mysql');
 
@@ -130,16 +131,17 @@ export async function connect(entities: any[] = []) {
       RateEvent,
       RateMatterCategory,
       Profile,
-      NextGenTransactionsBlock,
-      NextGenAllowlist,
-      NextGenAllowlistBurn,
-      NextGenCollection,
-      NextGenCollectionBurn,
       ProfileArchived,
       CicRating,
       ProfileTdh,
       ProfileTdhLog,
-      CicStatement
+      CicStatement,
+      ProfileActivityLog,
+      NextGenTransactionsBlock,
+      NextGenAllowlist,
+      NextGenAllowlistBurn,
+      NextGenCollection,
+      NextGenCollectionBurn
     ];
   }
 

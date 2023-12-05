@@ -21,6 +21,7 @@ export const ENS_TABLE = 'ens';
 export const CIC_STATEMENTS_TABLE = 'cic_statements';
 export const CIC_RATINGS_TABLE = 'cic_ratings';
 export const PROFILES_TABLE = 'profiles';
+export const PROFILES_ACTIVITY_LOGS_TABLE = 'profile_activity_logs';
 export const PROFILE_TDHS_TABLE = 'profile_tdhs';
 export const PROFILE_TDH_LOGS_TABLE = 'profile_tdh_logs';
 export const PROFILES_ARCHIVE_TABLE = 'profiles_archive';
@@ -69,7 +70,7 @@ export const ACK_DEPLOYER = '0x03ee832367e29a5cd001f65093283eabb5382b62';
 export const NEXTGEN_ADMIN = '0x1bAe1D145Dd61fBBB62C85f8A6d7B6eDe0D150f5';
 export const NEXTGEN_CONTRACT = {
   network: Network.ETH_GOERLI,
-  contract: '0xF3ff54B93844B1512C7bDafd2c41B5D228D03f98'
+  contract: '0xA25645414EEE330342b9382B73b1023a7dB99CC9'
 };
 export const LOOKS_TOKEN_ADDRESS = '0xf4d2888d29d722226fafa5d9b24f9164c092421e';
 export const WETH_TOKEN_ADDRESS = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';

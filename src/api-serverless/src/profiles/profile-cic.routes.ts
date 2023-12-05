@@ -8,7 +8,10 @@ import { profilesService } from '../../../profiles/profiles.service';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { cicService } from '../../../rates/cic.service';
 import * as Joi from 'joi';
-import { CicStatement } from '../../../entities/ICICStatement';
+import {
+  CicStatement,
+  CicStatementGroup
+} from '../../../entities/ICICStatement';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -224,50 +227,6 @@ router.delete(
 );
 
 router.post(
-  `/statements/:statementId`,
-  needsAuthenticatedUser(),
-  async function (
-    req: Request<
-      {
-        handleOrWallet: string;
-        statementId: string;
-      },
-      any,
-      ApiCreateOrUpdateProfileCicStatement,
-      any,
-      any
-    >,
-    res: Response
-  ) {
-    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
-    const profileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
-      );
-    if (!isAuthenticatedWalletProfileOwner(req, profileAndConsolidations)) {
-      throw new ForbiddenException(
-        `User can only update statements of its own profile`
-      );
-    }
-    const requestPayload = getValidatedByJoiOrThrow(
-      req.body,
-      ApiCreateOrUpdateProfileCicStatementSchema
-    );
-    const statementId = req.params.statementId;
-    const profileId = profileAndConsolidations?.profile?.external_id;
-    if (!profileId) {
-      throw new NotFoundException(`No profile found for ${handleOrWallet}`);
-    }
-    const updatedStatement = await cicService.updateCicStatement({
-      id: statementId,
-      profile_id: profileId,
-      ...requestPayload
-    });
-    res.status(201).send(updatedStatement);
-  }
-);
-
-router.post(
   `/statements`,
   needsAuthenticatedUser(),
   async function (
@@ -324,7 +283,9 @@ type ApiCreateOrUpdateProfileCicStatement = Omit<
 
 const ApiCreateOrUpdateProfileCicStatementSchema: Joi.ObjectSchema<ApiCreateOrUpdateProfileCicStatement> =
   Joi.object({
-    statement_group: Joi.string().required().min(1).max(250),
+    statement_group: Joi.string()
+      .valid(...Object.values(CicStatementGroup))
+      .required(),
     statement_type: Joi.string().required().min(1).max(250),
     statement_comment: Joi.optional().default(null),
     statement_value: Joi.string().min(1).required()

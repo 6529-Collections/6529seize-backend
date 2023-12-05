@@ -136,8 +136,8 @@ async function start() {
   // await transactions.handlerValues();
   // await rememes.handler();
   // await transactionsReplay.handler();
-  await nextgenLoop.handler();
-  await overRatesRevocation.handler();
+  await nextgenLoop.handlerRefresh();
+  // await overRatesRevocation.handler();
 
   // RUNNING_START_SCRIPT = false;
   logger.info(`[START SCRIPT COMPLETE] [SERVICE STARTED...]`);
