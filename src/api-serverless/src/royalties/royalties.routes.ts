@@ -103,8 +103,8 @@ function returnRoyalties(
   artist: string,
   fromDate: string,
   toDate: string,
-  fromBlock: number,
-  toBlock: number,
+  fromBlock: number | undefined,
+  toBlock: number | undefined,
   download: boolean,
   req: Request,
   res: Response
