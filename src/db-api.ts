@@ -51,7 +51,6 @@ import {
 import { getConsolidationsSql, getProfilePageSql } from './sql_helpers';
 import { getProof } from './merkle_proof';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
-import * as profiles from './profiles/profiles';
 
 import * as mysql from 'mysql';
 import { Time } from './time';
@@ -59,6 +58,7 @@ import { DbPoolName, DbQueryOptions } from './db-query.options';
 import { Logger } from './logging';
 import { tdh2Level } from './profiles/profile-level';
 import { Nft } from 'alchemy-sdk';
+import { profilesService } from './profiles/profiles.service';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -225,7 +225,7 @@ async function execSQLWithParams<T>(
       if (err) {
         logger.error(
           `Error "${err}" executing SQL query ${sql}${
-            params ? `with params ${JSON.stringify(params)}` : ''
+            params ? ` with params ${JSON.stringify(params)}` : ''
           }\n`
         );
         reject(err);
@@ -834,7 +834,7 @@ export async function fetchTransactions(
   nfts: string,
   type_filter: string
 ) {
-  let filters = await getTransactionFilters(wallets, nfts, type_filter);
+  const filters = await getTransactionFilters(wallets, nfts, type_filter);
   if (!filters) {
     return returnEmpty();
   }
@@ -1551,9 +1551,8 @@ async function enhanceDataWithHandlesAndLevel(
       )
       .flat()
   );
-  const walletsToHandles = await profiles.getProfileHandlesByPrimaryWallets(
-    resultWallets
-  );
+  const walletsToHandles =
+    await profilesService.getProfileHandlesByPrimaryWallets(resultWallets);
 
   return data.map(
     (d: { wallets?: string; wallet?: string; boosted_tdh?: number }) => {
@@ -1591,7 +1590,7 @@ export async function fetchConsolidatedOwnerMetrics(
 ) {
   let filters = '';
   let hideWalletFilters = '';
-  let params: any = {};
+  const params: any = {};
   if (hideMuseum) {
     filters = constructFilters(
       filters,
@@ -2197,7 +2196,7 @@ export async function fetchConsolidations(
   block: string
 ) {
   let filters = constructFilters('', "wallets like '%, %'");
-  let params: any = {};
+  const params: any = {};
   if (block) {
     filters = constructFilters(filters, `block <= :block`);
     params.block = block;

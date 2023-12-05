@@ -1,7 +1,6 @@
 import axios, { AxiosResponse } from 'axios';
-import { CONSOLIDATIONS_LIMIT, CONSOLIDATIONS_TABLE } from './constants';
-
-const mysql = require('mysql');
+import { CONSOLIDATIONS_LIMIT } from './constants';
+import * as short from 'short-uuid';
 
 export function areEqualAddresses(w1: string, w2: string) {
   if (!w1 || !w2) {
@@ -214,3 +213,17 @@ export function stringToHex(s: string) {
 export function distinct<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
 }
+
+export function uniqueShortId(): string {
+  return short.generate();
+}
+
+// The assertUnreachable function takes an input _x of type never and always throws
+// an error. This function is typically used in TypeScript to assert exhaustiveness in
+// switch-case or if-else constructs, ensuring that all possible cases are handled.
+export const assertUnreachable = (_x: never): never => {
+  // Throw an error with a message indicating that this function should not be reached.
+  // This error should only be thrown if there's a bug in the code or a new case has been
+  // introduced without updating the relevant switch-case or if-else constructs.
+  throw new Error("Didn't expect to get here");
+};

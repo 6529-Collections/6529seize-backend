@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import {
-  getWalletOrNull,
+  getAuthenticatedWalletOrNull,
   getWalletOrThrow,
   maybeAuthenticatedUser,
   needsAuthenticatedUser
@@ -9,19 +9,18 @@ import {
 import * as Joi from 'joi';
 import { PROFILE_HANDLE_REGEX, WALLET_REGEX } from '../../../constants';
 import { getValidatedByJoiOrThrow } from '../validation';
-import {
-  CreateOrUpdateProfileCommand,
-  ProfileAndConsolidations
-} from '../../../profiles/profiles';
-import { ratesService } from '../../../rates/rates.service';
-import * as profiles from '../../../profiles/profiles';
 import { NotFoundException } from '../../../exceptions';
 import { initMulterSingleMiddleware } from '../multer-middleware';
 
 import { asyncRouter } from '../async.router';
-import { RESERVED_HANDLES } from './profiles.constats';
+import { RESERVED_HANDLES } from './profiles.constants';
 import { ProfileClassification } from '../../../entities/IProfile';
-import { RateMatterTargetType } from '../../../entities/IRateMatter';
+import {
+  CreateOrUpdateProfileCommand,
+  ProfileAndConsolidations
+} from '../../../profiles/profile.types';
+import { profilesService } from '../../../profiles/profiles.service';
+import profileCicRoutes from './profile-cic.routes';
 
 const router = asyncRouter();
 
@@ -41,7 +40,7 @@ router.get(
   ) {
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profile =
-      await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
         handleOrWallet
       );
     if (!profile) {
@@ -66,7 +65,7 @@ router.get(
     >,
     res: Response<ApiResponse<{ available: boolean; message: string }>>
   ) {
-    const maybeAuthenticatedWallet = getWalletOrNull(req);
+    const maybeAuthenticatedWallet = getAuthenticatedWalletOrNull(req);
     const proposedHandle = req.params.handle.toLowerCase();
     if (!proposedHandle.match(PROFILE_HANDLE_REGEX)) {
       return res.status(200).send({
@@ -86,14 +85,14 @@ router.get(
     }
     const authenticatedHandle = maybeAuthenticatedWallet
       ? (
-          await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+          await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
             maybeAuthenticatedWallet
           )
         )?.profile?.handle
       : null;
     if (proposedHandle.toLowerCase() !== authenticatedHandle?.toLowerCase()) {
       const profile =
-        await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
           proposedHandle
         );
       if (profile) {
@@ -137,7 +136,9 @@ router.post(
       creator_or_updater_wallet: getWalletOrThrow(req),
       classification
     };
-    const profile = await profiles.createOrUpdateProfile(createProfileCommand);
+    const profile = await profilesService.createOrUpdateProfile(
+      createProfileCommand
+    );
     res.status(201).send(profile);
   }
 );
@@ -165,56 +166,12 @@ router.post(
       ApiUploadProfilePictureRequestSchema
     );
     const file = req.file;
-    const response = await profiles.updateProfilePfp({
+    const response = await profilesService.updateProfilePfp({
       authenticatedWallet,
       handleOrWallet,
       memeOrFile: { file, meme }
     });
     res.status(201).send(response);
-  }
-);
-
-router.post(
-  `/:handleOrWallet/cic/rating`,
-  needsAuthenticatedUser(),
-  async function (
-    req: Request<
-      {
-        handleOrWallet: string;
-      },
-      any,
-      ApiAddCicRatingToProfileRequest,
-      any,
-      any
-    >,
-    res: Response<ApiResponse<ProfileAndConsolidations>>
-  ) {
-    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
-    const raterWallet = getWalletOrThrow(req);
-    const { amount } = getValidatedByJoiOrThrow(
-      req.body,
-      ApiAddCicRatingToProfileRequestSchema
-    );
-    const profile =
-      await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
-      );
-    if (!profile?.profile) {
-      throw new NotFoundException(`No profile found for ${handleOrWallet}`);
-    }
-    await ratesService.registerUserRatingWithWallet({
-      raterWallet: raterWallet.toLowerCase(),
-      matterTargetType: RateMatterTargetType.PROFILE_ID,
-      matterTargetId: profile.profile.external_id,
-      matter: 'CIC',
-      category: 'CIC',
-      amount
-    });
-    const updatedProfileInfo =
-      await profiles.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
-      );
-    res.status(201).send(updatedProfileInfo!);
   }
 );
 
@@ -269,13 +226,6 @@ const ApiUploadProfilePictureRequestSchema: Joi.ObjectSchema<ApiUploadProfilePic
     meme: Joi.number().optional()
   });
 
-interface ApiAddCicRatingToProfileRequest {
-  readonly amount: number;
-}
-
-const ApiAddCicRatingToProfileRequestSchema: Joi.ObjectSchema<ApiAddCicRatingToProfileRequest> =
-  Joi.object({
-    amount: Joi.number().integer().required()
-  });
+router.use('/:handleOrWallet/cic', profileCicRoutes);
 
 export default router;
