@@ -9,6 +9,7 @@ import {
 } from '../api-constants';
 import {
   cacheKey,
+  resolveIntParam,
   returnCSVResult,
   returnJsonResult,
   returnPaginatedResult
@@ -51,20 +52,8 @@ router.get(
   ) {
     const collectionType = req.params.collection_type;
     if (collectionType === 'memes' || collectionType === 'memelab') {
-      let fromBlockResolved = 0;
-      if (req.query.from_block) {
-        const fromB = parseInt(req.query.from_block);
-        if (!isNaN(fromB)) {
-          fromBlockResolved = parseInt(req.query.from_block);
-        }
-      }
-      let toBlockResolved = 0;
-      if (req.query.to_block) {
-        const toB = parseInt(req.query.to_block);
-        if (!isNaN(toB)) {
-          toBlockResolved = parseInt(req.query.to_block);
-        }
-      }
+      const fromBlockResolved = resolveIntParam(req.query.from_block);
+      const toBlockResolved = resolveIntParam(req.query.to_block);
       return returnRoyalties(
         collectionType,
         req.query.primary === 'true',

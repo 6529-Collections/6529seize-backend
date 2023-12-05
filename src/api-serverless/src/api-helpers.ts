@@ -91,3 +91,13 @@ export function constructFiltersOR(f: string, newF: string) {
   }
   return ` ${newF} `;
 }
+
+export function resolveIntParam(param: string | string[] | undefined) {
+  if (param) {
+    const parsed = parseInt(param as string);
+    if (!isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
