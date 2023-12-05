@@ -19,7 +19,6 @@ export const UPLOADS_TABLE = 'uploads';
 export const CONSOLIDATED_UPLOADS_TABLE = 'uploads_consolidation';
 export const ENS_TABLE = 'ens';
 export const CIC_STATEMENTS_TABLE = 'cic_statements';
-export const CIC_RATINGS_TABLE = 'cic_ratings';
 export const PROFILES_TABLE = 'profiles';
 export const PROFILES_ACTIVITY_LOGS_TABLE = 'profile_activity_logs';
 export const PROFILE_TDHS_TABLE = 'profile_tdhs';
@@ -43,11 +42,8 @@ export const NEXT_GEN_ALLOWLIST = 'next_gen_allowlist';
 export const NEXT_GEN_COLLECTIONS = 'next_gen_collections';
 export const REMEMES_TABLE = 'rememes';
 export const REMEMES_UPLOADS = 'uploads_rememes';
-export const RATE_EVENTS_TABLE = 'rate_events';
+export const RATINGS_TABLE = 'ratings';
 export const ROYALTIES_UPLOADS_TABLE = 'royalties_upload';
-
-export const RATE_MATTERS_CATEGORIES_TABLE = 'rate_matters_categories';
-
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
 export const GRADIENT_CONTRACT = '0x0c58ef43ff3032005e472cb5709f8908acb00205';
 export const MEMELAB_CONTRACT = '0x4db52a61dc491e15a2f78f5ac001c14ffe3568cb';

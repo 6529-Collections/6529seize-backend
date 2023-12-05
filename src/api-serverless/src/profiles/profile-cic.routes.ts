@@ -12,6 +12,8 @@ import {
   CicStatement,
   CicStatementGroup
 } from '../../../entities/ICICStatement';
+import { ratingsService } from '../../../rates/ratings.service';
+import { RateMatter } from '../../../entities/IRating';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -55,13 +57,18 @@ router.get(
       );
     const raterProfile = profileAndConsolidationsOfRater?.profile;
     if (raterProfile && targetProfile) {
-      const cicRatingByRater =
-        await cicService.getProfilesAggregatedCicRatingForProfile(
-          targetProfile.external_id,
-          raterProfile.external_id
-        );
+      const { rating: cicRatingByRater } =
+        await ratingsService.getAggregatedRatingOnMatter({
+          rater_profile_id: raterProfile.external_id,
+          matter: RateMatter.CIC,
+          matter_category: RateMatter.CIC,
+          matter_target_id: targetProfile.external_id
+        });
       const cicRatingsLeftToGiveByRater =
-        await cicService.getCicRatesLeftForProfile(raterProfile.external_id);
+        await ratingsService.getRatesLeftOnMatterForProfile({
+          profile_id: raterProfile.external_id,
+          matter: RateMatter.CIC
+        });
       res.send({
         cic_rating_by_rater: cicRatingByRater,
         cic_ratings_left_to_give_by_rater: cicRatingsLeftToGiveByRater
@@ -113,10 +120,13 @@ router.post(
       );
     }
     const raterProfileId = raterProfile.profile.external_id;
-    await cicService.updateProfileCicRating({
-      raterProfileId: raterProfileId,
-      targetProfileId: targetProfile.profile.external_id,
-      cicRating: amount
+    const targetProfileId = targetProfile.profile.external_id;
+    await ratingsService.updateRating({
+      rater_profile_id: raterProfileId,
+      matter: RateMatter.CIC,
+      matter_category: 'CIC',
+      matter_target_id: targetProfileId,
+      rating: amount
     });
     const updatedProfileInfo =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(

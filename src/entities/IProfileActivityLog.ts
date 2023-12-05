@@ -12,9 +12,6 @@ export class ProfileActivityLog {
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly target_id!: string | null;
 
-  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
-  readonly target_type!: ProfileActivityLogTargetType | null;
-
   @Column({ type: 'json' })
   readonly contents!: string;
 
@@ -26,14 +23,10 @@ export class ProfileActivityLog {
 }
 
 export enum ProfileActivityLogType {
-  CIC_RATINGS = 'CIC_RATINGS',
+  RATING_EDIT = 'RATING_EDIT',
   HANDLE_EDIT = 'HANDLE_EDIT',
   PRIMARY_WALLET_EDIT = 'PRIMARY_WALLET_EDIT',
   SOCIALS_EDIT = 'SOCIALS_EDIT',
   CONTACTS_EDIT = 'CONTACTS_EDIT',
   SOCIAL_VERIFICATION_POST_EDIT = 'SOCIAL_VERIFICATION_POST_EDIT'
-}
-
-export enum ProfileActivityLogTargetType {
-  PROFILE_ID = 'PROFILE_ID'
 }

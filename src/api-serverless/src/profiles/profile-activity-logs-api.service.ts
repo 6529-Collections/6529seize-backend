@@ -5,11 +5,11 @@ import {
 } from '../../../profileActivityLogs/profile-activity-logs.db';
 import {
   ProfileActivityLog,
-  ProfileActivityLogTargetType,
   ProfileActivityLogType
 } from '../../../entities/IProfileActivityLog';
 import { Page, PageRequest } from '../page-request';
 import { profilesDb, ProfilesDb } from '../../../profiles/profiles.db';
+import { RateMatter } from '../../../entities/IRating';
 
 export class ProfileActivityLogsApiService {
   constructor(
@@ -22,13 +22,11 @@ export class ProfileActivityLogsApiService {
     order,
     pageRequest,
     targetId,
-    logType,
-    targetType
+    logType
   }: {
     profileId?: string;
     targetId?: string;
-    targetType?: ProfileActivityLogTargetType;
-    logType?: ProfileActivityLogType;
+    logType?: ProfileActivityLogType[];
     pageRequest: PageRequest;
     order: 'desc' | 'asc';
   }): Promise<Page<ApiProfileActivtyLog>> {
@@ -46,19 +44,13 @@ export class ProfileActivityLogsApiService {
     if (targetId) {
       params.target_id = targetId;
     }
-    if (targetType) {
-      params.target_type = targetType;
-    }
-    if (logType) {
+    if (logType?.length) {
       params.type = logType;
     }
     const foundLogs = await this.profileActivityLogsDb.searchLogs(params);
     const profileIdsInLogs = foundLogs.data.reduce((acc, log) => {
       acc.push(log.profile_id);
-      if (
-        log.target_type === ProfileActivityLogTargetType.PROFILE_ID &&
-        log.target_id
-      ) {
+      if (log.target_id) {
         acc.push(log.target_id);
       }
       return acc;
@@ -66,15 +58,19 @@ export class ProfileActivityLogsApiService {
     const profilesHandlesByIds = await this.profilesDb.getProfileHandlesByIds(
       profileIdsInLogs
     );
-    const convertedData = foundLogs.data.map((log) => ({
-      ...log,
-      contents: JSON.parse(log.contents),
-      profile_handle: profilesHandlesByIds[log.profile_id]!,
-      target_profile_handle:
-        log.target_type === ProfileActivityLogTargetType.PROFILE_ID
-          ? profilesHandlesByIds[log.target_id!]
-          : null
-    }));
+    const convertedData = foundLogs.data.map((log) => {
+      const logContents = JSON.parse(log.contents);
+      return {
+        ...log,
+        contents: logContents,
+        profile_handle: profilesHandlesByIds[log.profile_id]!,
+        target_profile_handle:
+          log.type === ProfileActivityLogType.RATING_EDIT &&
+          logContents.rating_matter === RateMatter.CIC
+            ? profilesHandlesByIds[log.target_id!]
+            : null
+      };
+    });
     return {
       ...foundLogs,
       data: convertedData
