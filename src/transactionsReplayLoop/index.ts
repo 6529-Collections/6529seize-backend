@@ -1,6 +1,5 @@
 import { loadEnv, unload } from '../secrets';
-import { Transaction } from '../entities/ITransaction';
-import { LabTransaction } from '../entities/ITransaction';
+import { Transaction, LabTransaction } from '../entities/ITransaction';
 // import { fetchAndPersistTransactions } from '../transactionsLoop/index';
 import { fetchAndPersistTransactions } from '../meme_lab';
 import { Logger } from '../logging';

@@ -2,7 +2,12 @@ import { Request, Response } from 'express';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 import { CACHE_TIME_MS } from '../api-constants';
-import { cacheKey, returnCSVResult, returnJsonResult } from '../api-helpers';
+import {
+  cacheKey,
+  resolveIntParam,
+  returnCSVResult,
+  returnJsonResult
+} from '../api-helpers';
 import * as mcache from 'memory-cache';
 import { GasResponse, fetchGas } from './gas.db';
 
@@ -35,20 +40,8 @@ router.get(
   ) {
     const collectionType = req.params.collection_type;
     if (collectionType === 'memes' || collectionType === 'memelab') {
-      let fromBlockResolved = 0;
-      if (req.query.from_block) {
-        const fromB = parseInt(req.query.from_block);
-        if (!isNaN(fromB)) {
-          fromBlockResolved = parseInt(req.query.from_block);
-        }
-      }
-      let toBlockResolved = 0;
-      if (req.query.to_block) {
-        const toB = parseInt(req.query.to_block);
-        if (!isNaN(toB)) {
-          toBlockResolved = parseInt(req.query.to_block);
-        }
-      }
+      const fromBlockResolved = resolveIntParam(req.query.from_block);
+      const toBlockResolved = resolveIntParam(req.query.to_block);
       return returnGas(
         collectionType,
         req.query.primary === 'true',
@@ -73,8 +66,8 @@ function returnGas(
   artist: string,
   fromDate: string,
   toDate: string,
-  fromBlock: number,
-  toBlock: number,
+  fromBlock: number | undefined,
+  toBlock: number | undefined,
   download: boolean,
   req: Request,
   res: Response

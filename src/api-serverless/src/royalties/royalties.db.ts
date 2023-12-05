@@ -33,8 +33,8 @@ export function getRoyaltiesSql(
   artist: string,
   fromDate: string,
   toDate: string,
-  fromBlock: number,
-  toBlock: number
+  fromBlock: number | undefined,
+  toBlock: number | undefined
 ) {
   const transactionsTable =
     type === 'memes' ? TRANSACTIONS_TABLE : TRANSACTIONS_MEME_LAB_TABLE;
@@ -182,8 +182,8 @@ export async function fetchRoyalties(
   artist: string,
   fromDate: string,
   toDate: string,
-  fromBlock: number,
-  toBlock: number
+  fromBlock: number | undefined,
+  toBlock: number | undefined
 ): Promise<RoyaltyResponse[]> {
   const sql = getRoyaltiesSql(
     type,

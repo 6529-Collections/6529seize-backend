@@ -5,20 +5,8 @@ import {
   SZN3_INDEX,
   SZN4_INDEX,
   GRADIENT_CONTRACT,
-  CONSOLIDATIONS_TABLE,
-  TRANSACTIONS_TABLE,
-  TRANSACTIONS_MEME_LAB_TABLE,
-  NFTS_TABLE,
-  NFTS_MEME_LAB_TABLE,
-  MEMES_ROYALTIES_RATE,
-  MEME_LAB_ROYALTIES_TABLE,
-  MEMELAB_CONTRACT,
-  MANIFOLD,
-  NULL_ADDRESS,
-  ACK_DEPLOYER
+  CONSOLIDATIONS_TABLE
 } from './constants';
-import { constructFilters } from './api-serverless/src/api-helpers';
-import { Time } from './time';
 
 const mysql = require('mysql');
 
