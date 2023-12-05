@@ -1,8 +1,8 @@
 import { loadEnv, unload } from '../secrets';
 import { Transaction } from '../entities/ITransaction';
 import { LabTransaction } from '../entities/ITransaction';
-import { fetchAndPersistTransactions } from '../transactionsLoop/index';
-// import { fetchAndPersistTransactions } from '../meme_lab';
+// import { fetchAndPersistTransactions } from '../transactionsLoop/index';
+import { fetchAndPersistTransactions } from '../meme_lab';
 import { Logger } from '../logging';
 
 const logger = Logger.get('TRANSACTIONS_REPLAY_LOOP');

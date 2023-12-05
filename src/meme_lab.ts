@@ -324,7 +324,7 @@ export async function memeLabTransactions() {
 export async function fetchAndPersistTransactions(
   startingBlock?: number,
   latestBlock?: number,
-  pagKey?: string
+  pageKey?: string
 ) {
   try {
     let startingBlockResolved: number;
@@ -337,7 +337,7 @@ export async function fetchAndPersistTransactions(
     const response = await findTransactions(
       startingBlockResolved,
       latestBlock,
-      pagKey,
+      pageKey,
       [MEMELAB_CONTRACT]
     );
 
@@ -356,7 +356,7 @@ export async function fetchAndPersistTransactions(
     }
   } catch (e: any) {
     logger.error('[TRANSACTIONS] [ETIMEDOUT!] [RETRYING PROCESS]', e);
-    await fetchAndPersistTransactions(startingBlock, latestBlock, pagKey);
+    await fetchAndPersistTransactions(startingBlock, latestBlock, pageKey);
   }
 }
 
