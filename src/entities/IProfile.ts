@@ -18,7 +18,7 @@ class ProfileBase {
   created_by_wallet!: string;
 
   @Column({ type: 'datetime', nullable: true, default: null })
-  updated_at?: Date;
+  updated_at?: Date | null;
 
   @Column({ type: 'varchar', length: 50, nullable: true, default: null })
   updated_by_wallet?: string;

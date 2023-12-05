@@ -8,3 +8,8 @@ export interface RateCategoryInfo {
   category_enabled: boolean;
   authenticated_profile_rates: number;
 }
+
+export interface AggregatedCicRating {
+  cic_rating: number;
+  contributor_count: number;
+}

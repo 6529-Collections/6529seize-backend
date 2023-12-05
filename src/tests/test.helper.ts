@@ -1,4 +1,7 @@
-import { LazyDbAccessCompatibleService } from '../sql-executor';
+import {
+  ConnectionWrapper,
+  LazyDbAccessCompatibleService
+} from '../sql-executor';
 import { Mock, mock } from 'ts-jest-mocker';
 import { when } from 'jest-when';
 
@@ -25,3 +28,7 @@ export function mockDbService<T extends LazyDbAccessCompatibleService>(
   );
   return mocked;
 }
+
+export const mockConnection: ConnectionWrapper<any> = {
+  connection: {}
+};

@@ -29,7 +29,7 @@ export function maybeAuthenticatedUser() {
   return passport.authenticate(['jwt', 'anonymous'], { session: false });
 }
 
-export function getWalletOrNull(req: Request): string | null {
+export function getAuthenticatedWalletOrNull(req: Request): string | null {
   const user = req.user as any;
   if (!user) {
     return null;
@@ -38,7 +38,7 @@ export function getWalletOrNull(req: Request): string | null {
 }
 
 export function getWalletOrThrow(req: Request): string {
-  const wallet = getWalletOrNull(req);
+  const wallet = getAuthenticatedWalletOrNull(req);
   if (!wallet) {
     throw new Error('Wallet not found');
   }

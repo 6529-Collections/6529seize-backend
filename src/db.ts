@@ -78,6 +78,11 @@ import { Profile, ProfileArchived } from './entities/IProfile';
 import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
+import { CicRating } from './entities/ICICRating';
+import { CicStatement } from './entities/ICICStatement';
+import { profilesService } from './profiles/profiles.service';
+import { ProfileTdh, ProfileTdhLog } from './entities/IProfileTDH';
+import { ProfileActivityLog } from './entities/IProfileActivityLog';
 
 const mysql = require('mysql');
 
@@ -119,7 +124,12 @@ export async function connect(entities: any[] = []) {
       RateEvent,
       RateMatterCategory,
       Profile,
-      ProfileArchived
+      ProfileArchived,
+      CicRating,
+      ProfileTdh,
+      ProfileTdhLog,
+      CicStatement,
+      ProfileActivityLog
     ];
   }
 
@@ -985,6 +995,9 @@ export async function persistConsolidatedTDH(tdh: ConsolidatedTDH[]) {
     const repo = manager.getRepository(ConsolidatedTDH);
     await repo.clear();
     await repo.save(tdh);
+    await profilesService.updateProfileTdhs(tdh.at(0)?.block ?? 0, {
+      connection: manager.connection
+    });
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);

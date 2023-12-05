@@ -17,6 +17,7 @@ import { OwnerMetric } from '../entities/IOwner';
 import * as notifier from '../notifier';
 import { Logger } from '../logging';
 import { Time } from '../time';
+import { ProfileTdh, ProfileTdhLog } from '../entities/IProfileTDH';
 
 const logger = Logger.get('TDH_LOOP');
 
@@ -28,7 +29,9 @@ export const handler = async () => {
     NFT,
     OwnerMetric,
     TDHHistory,
-    GlobalTDHHistory
+    GlobalTDHHistory,
+    ProfileTdh,
+    ProfileTdhLog
   ]);
   const force = process.env.TDH_RESET == 'true';
   logger.info(`[RUNNING force=${force}]`);
