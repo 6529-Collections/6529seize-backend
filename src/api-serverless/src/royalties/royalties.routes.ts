@@ -42,6 +42,8 @@ router.get(
         artist?: string;
         from_date?: string;
         to_date?: string;
+        from_block?: string;
+        to_block?: string;
         download?: string;
       }
     >,
@@ -49,12 +51,28 @@ router.get(
   ) {
     const collectionType = req.params.collection_type;
     if (collectionType === 'memes' || collectionType === 'memelab') {
+      let fromBlockResolved = 0;
+      if (req.query.from_block) {
+        const fromB = parseInt(req.query.from_block);
+        if (!isNaN(fromB)) {
+          fromBlockResolved = parseInt(req.query.from_block);
+        }
+      }
+      let toBlockResolved = 0;
+      if (req.query.to_block) {
+        const toB = parseInt(req.query.to_block);
+        if (!isNaN(toB)) {
+          toBlockResolved = parseInt(req.query.to_block);
+        }
+      }
       return returnRoyalties(
         collectionType,
         req.query.primary === 'true',
         req.query.artist as string,
         req.query.from_date as string,
         req.query.to_date as string,
+        fromBlockResolved,
+        toBlockResolved,
         req.query.download === 'true',
         req,
         res
@@ -96,28 +114,36 @@ function returnRoyalties(
   artist: string,
   fromDate: string,
   toDate: string,
+  fromBlock: number,
+  toBlock: number,
   download: boolean,
   req: Request,
   res: Response
 ) {
-  fetchRoyalties(type, isPrimary, artist, fromDate, toDate).then(
-    async (results: RoyaltyResponse[]) => {
-      logger.info(
-        `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${
-          results.length
-        }`
-      );
+  fetchRoyalties(
+    type,
+    isPrimary,
+    artist,
+    fromDate,
+    toDate,
+    fromBlock,
+    toBlock
+  ).then(async (results: RoyaltyResponse[]) => {
+    logger.info(
+      `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${
+        results.length
+      }`
+    );
 
-      if (results.length > 0) {
-        mcache.put(cacheKey(req), results, CACHE_TIME_MS);
-      }
-
-      if (download) {
-        results.forEach((r) => delete r.thumbnail);
-        return returnCSVResult(`royalties_${type}`, results, res);
-      } else {
-        return returnJsonResult(results, req, res);
-      }
+    if (results.length > 0) {
+      mcache.put(cacheKey(req), results, CACHE_TIME_MS);
     }
-  );
+
+    if (download) {
+      results.forEach((r) => delete r.thumbnail);
+      return returnCSVResult(`royalties_${type}`, results, res);
+    } else {
+      return returnJsonResult(results, req, res);
+    }
+  });
 }

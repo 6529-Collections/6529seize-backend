@@ -442,5 +442,6 @@ export const RESERVED_HANDLES = [
   'community',
   'punk',
   'royalties',
-  'gas'
+  'gas',
+  'meme-accounting'
 ];

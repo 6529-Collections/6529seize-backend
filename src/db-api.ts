@@ -58,11 +58,11 @@ import { DbPoolName, DbQueryOptions } from './db-query.options';
 import { Logger } from './logging';
 import { tdh2Level } from './profiles/profile-level';
 import { Nft } from 'alchemy-sdk';
-import { profilesService } from './profiles/profiles.service';
 import {
   constructFilters,
   constructFiltersOR
 } from './api-serverless/src/api-helpers';
+import { profilesService } from './profiles/profiles.service';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
