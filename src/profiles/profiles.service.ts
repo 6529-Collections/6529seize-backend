@@ -14,7 +14,6 @@ import { BadRequestException } from '../exceptions';
 import { distinct } from '../helpers';
 import * as path from 'path';
 import { scalePfpAndPersistToS3 } from '../api-serverless/src/users/s3';
-import { cicService, CicService } from '../rates/cic.service';
 import { ConnectionWrapper } from '../sql-executor';
 import { Logger } from '../logging';
 import { Time } from '../time';
@@ -24,13 +23,15 @@ import {
   ProfileActivityLogsDb
 } from '../profileActivityLogs/profile-activity-logs.db';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
+import { ratingsService, RatingsService } from '../rates/ratings.service';
+import { RateMatter } from '../entities/IRating';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
 
   constructor(
     private readonly profilesDb: ProfilesDb,
-    private readonly cicRatingsService: CicService,
+    private readonly ratingsService: RatingsService,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
@@ -71,8 +72,19 @@ export class ProfilesService {
   }
 
   private async getCic(profile?: Profile) {
-    return profile?.external_id
-      ? await this.cicRatingsService.getProfileCicRating(profile?.external_id)
+    const profileId = profile?.external_id;
+    return profileId
+      ? await this.ratingsService
+          .getAggregatedRatingOnMatter({
+            rater_profile_id: null,
+            matter: RateMatter.CIC,
+            matter_target_id: profileId,
+            matter_category: RateMatter.CIC
+          })
+          .then((res) => ({
+            cic_rating: res.rating,
+            contributor_count: res.contributor_count
+          }))
       : { cic_rating: 0, contributor_count: 0 };
   }
 
@@ -290,12 +302,11 @@ export class ProfilesService {
       logEvents.push({
         profile_id: profileId,
         target_id: null,
-        target_type: null,
         type: ProfileActivityLogType.HANDLE_EDIT,
         contents: JSON.stringify({
           authenticated_wallet: authenticatedWallet,
-          oldValue: profileBeforeChange?.handle ?? null,
-          newValue: newHandle
+          old_value: profileBeforeChange?.handle ?? null,
+          new_value: newHandle
         })
       });
     }
@@ -303,12 +314,11 @@ export class ProfilesService {
       logEvents.push({
         profile_id: profileId,
         target_id: null,
-        target_type: null,
         type: ProfileActivityLogType.PRIMARY_WALLET_EDIT,
         contents: JSON.stringify({
           authenticated_wallet: authenticatedWallet,
-          oldValue: profileBeforeChange?.primary_wallet ?? null,
-          newValue: newPrimaryWallet
+          old_value: profileBeforeChange?.primary_wallet ?? null,
+          new_value: newPrimaryWallet
         })
       });
     }
@@ -515,7 +525,7 @@ export class ProfilesService {
 
 export const profilesService = new ProfilesService(
   profilesDb,
-  cicService,
+  ratingsService,
   profileActivityLogsDb,
   getAlchemyInstance
 );

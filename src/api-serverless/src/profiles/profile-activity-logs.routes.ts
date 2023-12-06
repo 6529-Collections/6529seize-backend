@@ -6,10 +6,7 @@ import {
   profileActivityLogsApiService
 } from './profile-activity-logs-api.service';
 import { Request, Response } from 'express';
-import {
-  ProfileActivityLogTargetType,
-  ProfileActivityLogType
-} from '../../../entities/IProfileActivityLog';
+import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { profilesService } from '../../../profiles/profiles.service';
 
 const router = asyncRouter();
@@ -25,7 +22,6 @@ router.get(
         order?: string;
         profile?: string;
         target?: string;
-        target_type?: string;
         log_type?: ProfileActivityLogType;
         page?: string;
         page_size?: string;
@@ -43,21 +39,23 @@ router.get(
         .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(profile)
         .then((result) => result?.profile?.external_id ?? '-');
     }
-    let targetId = queryParams.target;
-    if (
-      queryParams.target_type === ProfileActivityLogTargetType.PROFILE_ID &&
-      targetId
-    ) {
-      targetId = await profilesService
-        .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(targetId)
-        .then((result) => result?.profile?.external_id ?? '-');
-    }
-    const targetType = Object.values(ProfileActivityLogTargetType).find(
-      (t) => t?.toUpperCase() === queryParams.target_type
-    );
-    const logType = Object.values(ProfileActivityLogType).find(
-      (t) => t?.toUpperCase() === queryParams.log_type
-    );
+    const targetId = queryParams.target
+      ? await profilesService
+          .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+            queryParams.target
+          )
+          .then((result) => result?.profile?.external_id ?? queryParams.target)
+      : queryParams.target;
+    const logType = queryParams.log_type
+      ?.split(',')
+      .filter((logType) =>
+        Object.values(ProfileActivityLogType).find(
+          (t) => t?.toUpperCase() === logType.toUpperCase()
+        )
+      )
+      ?.map((logType) => logType.toUpperCase()) as
+      | ProfileActivityLogType[]
+      | undefined;
     const pageProposal = parseInt(queryParams.page ?? '1');
 
     const page = !isNaN(pageProposal) && pageProposal > 0 ? pageProposal : 1;
@@ -71,8 +69,7 @@ router.get(
         page_size: size
       },
       targetId,
-      targetType,
-      logType
+      logType: logType
     });
     res.status(200).send(results);
   }
