@@ -298,6 +298,18 @@ loadApi().then(() => {
     });
   });
 
+  apiRouter.get(`/memes/artists_names`, function (req: any, res: any) {
+    db.fetchArtistsNamesMemes().then((result) => {
+      return returnJsonResult(result, req, res);
+    });
+  });
+
+  apiRouter.get(`/memelab/artists_names`, function (req: any, res: any) {
+    db.fetchArtistsNamesMemeLab().then((result) => {
+      return returnJsonResult(result, req, res);
+    });
+  });
+
   apiRouter.get(`/nfts`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE

@@ -30,7 +30,8 @@ import {
   fetchAllLabOwners,
   persistOwners,
   fetchMemesWithSeason,
-  persistLabExtendedData
+  persistLabExtendedData,
+  persistLabNFTRoyalties
 } from './db';
 import { Artist } from './entities/IArtist';
 import { findArtists } from './artists';
@@ -310,6 +311,7 @@ export async function memeLabNfts(reset?: boolean) {
   const newNfts = await findNFTs(nfts, transactions, owners, reset);
   const newArtists = await findArtists(artists, newNfts);
   await persistLabNFTS(newNfts);
+  await persistLabNFTRoyalties();
   await persistArtists(newArtists);
 }
 
@@ -322,7 +324,7 @@ export async function memeLabTransactions() {
 export async function fetchAndPersistTransactions(
   startingBlock?: number,
   latestBlock?: number,
-  pagKey?: string
+  pageKey?: string
 ) {
   try {
     let startingBlockResolved: number;
@@ -335,7 +337,7 @@ export async function fetchAndPersistTransactions(
     const response = await findTransactions(
       startingBlockResolved,
       latestBlock,
-      pagKey,
+      pageKey,
       [MEMELAB_CONTRACT]
     );
 
@@ -354,7 +356,7 @@ export async function fetchAndPersistTransactions(
     }
   } catch (e: any) {
     logger.error('[TRANSACTIONS] [ETIMEDOUT!] [RETRYING PROCESS]', e);
-    await fetchAndPersistTransactions(startingBlock, latestBlock, pagKey);
+    await fetchAndPersistTransactions(startingBlock, latestBlock, pageKey);
   }
 }
 

@@ -56,6 +56,10 @@ import { DbPoolName, DbQueryOptions } from './db-query.options';
 import { Logger } from './logging';
 import { tdh2Level } from './profiles/profile-level';
 import { Nft } from 'alchemy-sdk';
+import {
+  constructFilters,
+  constructFiltersOR
+} from './api-serverless/src/api-helpers';
 import { profilesService } from './profiles/profiles.service';
 
 let read_pool: mysql.Pool;
@@ -246,20 +250,6 @@ export async function fetchLatestTDHHistoryBlockNumber() {
   return r.length > 0 ? r[0].block : 0;
 }
 
-function constructFilters(f: string, newF: string) {
-  if (f.trim().toUpperCase().startsWith('WHERE')) {
-    return ` ${f} AND ${newF} `;
-  }
-  return ` WHERE ${newF} `;
-}
-
-function constructFiltersOR(f: string, newF: string) {
-  if (f.trim() != '') {
-    return ` ${f} OR ${newF} `;
-  }
-  return ` ${newF} `;
-}
-
 async function getTeamWallets() {
   const sql = `SELECT wallet FROM ${TEAM_TABLE}`;
   let results = await sqlExecutor.execute(sql);
@@ -411,6 +401,37 @@ export async function fetchArtists(
     page,
     filters
   );
+}
+
+export async function fetchArtistsNamesMemes() {
+  return fetchArtistsNamesByTable('memes');
+}
+
+export async function fetchArtistsNamesMemeLab() {
+  return fetchArtistsNamesByTable('memelab');
+}
+
+async function fetchArtistsNamesByTable(field: string) {
+  const sql = `SELECT name, ${field} as cards 
+      FROM artists 
+      WHERE ${field} IS NOT NULL 
+        AND JSON_VALID(${field}) 
+        AND JSON_TYPE(${field}) = 'ARRAY' 
+        AND JSON_LENGTH(${field}) > 0`;
+  const artists = await sqlExecutor.execute(sql);
+  return artists
+    .map((a: any) => {
+      const cards = JSON.parse(a.cards);
+      return {
+        name: a.name,
+        cards: cards.map((m: any) => m.id).sort((a: number, b: number) => a - b)
+      };
+    })
+    .sort((a: any, b: any) => {
+      let minCardA = Math.min(...a.cards);
+      let minCardB = Math.min(...b.cards);
+      return minCardA - minCardB;
+    });
 }
 
 export async function fetchLabNFTs(
@@ -2591,129 +2612,6 @@ export async function updateUser(user: User) {
   };
 
   await sqlExecutor.execute(sql, params);
-}
-
-export async function fetchRoyaltiesMemes(fromDate: string, toDate: string) {
-  const params: any = {};
-  let filters = constructFilters(
-    '',
-    `${TRANSACTIONS_TABLE}.contract=:memes_contract`
-  );
-  params.memes_contract = MEMES_CONTRACT;
-  filters = constructFilters(filters, `${TRANSACTIONS_TABLE}.value > 0`);
-  if (fromDate) {
-    filters = constructFilters(
-      filters,
-      `${TRANSACTIONS_TABLE}.transaction_date >= :from_date`
-    );
-    params.from_date = fromDate;
-  }
-  if (toDate) {
-    const nextDay = Time.fromString(toDate).plusDays(1).toIsoDateString();
-    filters = constructFilters(
-      filters,
-      `${TRANSACTIONS_TABLE}.transaction_date < :to_date`
-    );
-    params.to_date = nextDay;
-  }
-
-  filters = constructFilters(filters, `from_address != :null_address`);
-  filters = constructFilters(filters, `from_address != :manifold`);
-  params.null_address = NULL_ADDRESS;
-  params.manifold = MANIFOLD;
-
-  const sql = `
-    SELECT 
-      aggregated.token_id, 
-      ${NFTS_TABLE}.name, 
-      ${NFTS_TABLE}.artist, 
-      ${NFTS_TABLE}.thumbnail, 
-      aggregated.total_volume,
-      aggregated.total_royalties
-    FROM 
-      (SELECT 
-        token_id,
-        contract,
-        SUM(value) AS total_volume,
-        SUM(royalties) AS total_royalties
-      FROM 
-        ${TRANSACTIONS_TABLE}
-      ${filters}
-      GROUP BY 
-        token_id, 
-        contract) AS aggregated
-    JOIN 
-      ${NFTS_TABLE} ON aggregated.contract = ${NFTS_TABLE}.contract AND aggregated.token_id = ${NFTS_TABLE}.id
-    ORDER BY 
-      aggregated.contract ASC, 
-      aggregated.token_id ASC;`;
-  return sqlExecutor.execute(sql, params);
-}
-
-export async function fetchGasMemes(fromDate: string, toDate: string) {
-  const transactionsAlias = 'distinct_transactions';
-  const params: any = {};
-  let filters = constructFilters(
-    '',
-    `${transactionsAlias}.contract=:memes_contract`
-  );
-  params.memes_contract = MEMES_CONTRACT;
-
-  if (fromDate) {
-    filters = constructFilters(
-      filters,
-      `${transactionsAlias}.transaction_date >= :from_date`
-    );
-    params.from_date = fromDate;
-  }
-  if (toDate) {
-    const nextDay = Time.fromString(toDate).plusDays(1).toIsoDateString();
-    filters = constructFilters(
-      filters,
-      `${transactionsAlias}.transaction_date < :to_date`
-    );
-    params.to_date = nextDay;
-  }
-
-  const sql = `
-    SELECT
-      aggregated.token_id,
-      ${NFTS_TABLE}.name,
-      ${NFTS_TABLE}.artist,
-      ${NFTS_TABLE}.thumbnail,
-      aggregated.primary_gas,
-      aggregated.secondary_gas
-    FROM
-      (SELECT
-        token_id,
-        contract,
-        SUM(CASE
-            WHEN from_address = :null_address OR from_address = :manifold
-            THEN gas
-            ELSE 0
-            END) AS primary_gas,
-        SUM(CASE
-            WHEN from_address != :null_address AND from_address != :manifold
-            THEN gas
-            ELSE 0
-            END) AS secondary_gas
-      FROM
-        (SELECT DISTINCT transaction, token_id, contract, gas, from_address, transaction_date FROM ${TRANSACTIONS_TABLE}) as ${transactionsAlias}
-      ${filters}
-      GROUP BY
-        token_id,
-        contract) AS aggregated
-    JOIN
-      ${NFTS_TABLE} ON aggregated.contract = ${NFTS_TABLE}.contract AND aggregated.token_id = ${NFTS_TABLE}.id
-    GROUP BY
-      aggregated.token_id,
-      aggregated.contract
-    ORDER BY
-      aggregated.contract ASC,
-      aggregated.token_id ASC;`;
-  params.null_address = NULL_ADDRESS;
-  params.manifold = MANIFOLD;
-  return sqlExecutor.execute(sql, params);
 }
 
 export async function fetchRoyaltiesUploads(pageSize: number, page: number) {

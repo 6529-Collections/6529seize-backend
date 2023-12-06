@@ -1,10 +1,15 @@
 import { Request, Response } from 'express';
-import { fetchGasMemes } from '../../../db-api';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 import { CACHE_TIME_MS } from '../api-constants';
-import { cacheKey, returnCSVResult, returnJsonResult } from '../api-helpers';
+import {
+  cacheKey,
+  resolveIntParam,
+  returnCSVResult,
+  returnJsonResult
+} from '../api-helpers';
 import * as mcache from 'memory-cache';
+import { GasResponse, fetchGas } from './gas.db';
 
 const router = asyncRouter();
 
@@ -12,37 +17,67 @@ const logger = Logger.get('GAS_API');
 
 export default router;
 
-interface GasResponse {
-  token_id: number;
-  name: string;
-  artist: string;
-  thumbnail?: string;
-  primary_gas: number;
-  secondary_gas: number;
-}
-
 router.get(
-  `/memes`,
+  `/collection/:collection_type`,
   function (
     req: Request<
-      {},
+      {
+        collection_type: string;
+      },
       {},
       {},
       {
+        primary?: string;
+        artist?: string;
         from_date?: string;
         to_date?: string;
+        from_block?: string;
+        to_block?: string;
         download?: string;
       }
     >,
     res: Response<GasResponse[] | string>
   ) {
-    const fromDate: string = req.query.from_date as string;
-    const toDate: string = req.query.to_date as string;
-    const download = req.query.download === 'true';
+    const collectionType = req.params.collection_type;
+    if (collectionType === 'memes' || collectionType === 'memelab') {
+      const fromBlockResolved = resolveIntParam(req.query.from_block);
+      const toBlockResolved = resolveIntParam(req.query.to_block);
+      return returnGas(
+        collectionType,
+        req.query.primary === 'true',
+        req.query.artist as string,
+        req.query.from_date as string,
+        req.query.to_date as string,
+        fromBlockResolved,
+        toBlockResolved,
+        req.query.download === 'true',
+        req,
+        res
+      );
+    } else {
+      return res.status(404).send('Not found');
+    }
+  }
+);
 
-    fetchGasMemes(fromDate, toDate).then(async (results: GasResponse[]) => {
+function returnGas(
+  type: 'memes' | 'memelab',
+  isPrimary: boolean,
+  artist: string,
+  fromDate: string,
+  toDate: string,
+  fromBlock: number | undefined,
+  toBlock: number | undefined,
+  download: boolean,
+  req: Request,
+  res: Response
+) {
+  fetchGas(type, isPrimary, artist, fromDate, toDate, fromBlock, toBlock).then(
+    async (results: GasResponse[]) => {
       logger.info(
-        `[FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${results.length}`
+        `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${
+          results.length
+        }`
       );
 
       if (results.length > 0) {
@@ -51,10 +86,10 @@ router.get(
 
       if (download) {
         results.forEach((r) => delete r.thumbnail);
-        returnCSVResult('gas_memes', results, res);
+        return returnCSVResult(`gas_${type}`, results, res);
       } else {
-        returnJsonResult(results, req, res);
+        return returnJsonResult(results, req, res);
       }
-    });
-  }
-);
+    }
+  );
+}
