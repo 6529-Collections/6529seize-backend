@@ -6,6 +6,7 @@ export const TRANSACTIONS_MEME_LAB_TABLE = 'transactions_meme_lab';
 export const TRANSACTIONS_REMAKE_TABLE = 'transactions_remake';
 export const NFTS_TABLE = 'nfts';
 export const NFTS_MEME_LAB_TABLE = 'nfts_meme_lab';
+export const MEME_LAB_ROYALTIES_TABLE = 'meme_lab_royalties';
 export const ARTISTS_TABLE = 'artists';
 export const OWNERS_TABLE = 'owners';
 export const OWNERS_MEME_LAB_TABLE = 'owners_meme_lab';
@@ -70,6 +71,7 @@ export const NEXTGEN_CONTRACT = {
   network: Network.ETH_GOERLI,
   contract: '0xA25645414EEE330342b9382B73b1023a7dB99CC9'
 };
+export const ACK_DEPLOYER = '0x03ee832367e29a5cd001f65093283eabb5382b62';
 export const LOOKS_TOKEN_ADDRESS = '0xf4d2888d29d722226fafa5d9b24f9164c092421e';
 export const WETH_TOKEN_ADDRESS = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
 

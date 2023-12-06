@@ -1,4 +1,10 @@
-import { Alchemy, Utils, fromHex } from 'alchemy-sdk';
+import {
+  Alchemy,
+  AssetTransfersCategory,
+  AssetTransfersParams,
+  Utils,
+  fromHex
+} from 'alchemy-sdk';
 import {
   ALCHEMY_SETTINGS,
   WETH_TOKEN_ADDRESS,
@@ -6,7 +12,12 @@ import {
   MEMELAB_ROYALTIES_ADDRESS,
   NULL_ADDRESS,
   OPENSEA_ADDRESS,
-  ROYALTIES_ADDRESS
+  ROYALTIES_ADDRESS,
+  MANIFOLD,
+  TRANSACTIONS_TABLE,
+  TRANSACTIONS_MEME_LAB_TABLE,
+  ACK_DEPLOYER,
+  MEMES_DEPLOYER
 } from './constants';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
@@ -155,6 +166,56 @@ async function resolveValue(t: Transaction) {
     }
   }
 
+  if (
+    areEqualAddresses(t.from_address, NULL_ADDRESS) ||
+    areEqualAddresses(t.from_address, MANIFOLD) ||
+    (areEqualAddresses(t.from_address, ACK_DEPLOYER) &&
+      areEqualAddresses(t.contract, MEMELAB_CONTRACT) &&
+      t.token_id == 12)
+  ) {
+    const block = `0x${t.block.toString(16)}`;
+    const settings: AssetTransfersParams = {
+      category: [AssetTransfersCategory.INTERNAL],
+      excludeZeroValue: true,
+      fromBlock: block,
+      toBlock: block
+    };
+
+    const internlTrfs = await alchemy.core.getAssetTransfers(settings);
+    const filteredInternalTrfs = internlTrfs.transfers.filter(
+      (it) =>
+        it.hash == t.transaction &&
+        (areEqualAddresses(it.from, t.to_address) ||
+          areEqualAddresses(it.from, MANIFOLD) ||
+          (it.to && areEqualAddresses(it.to, MEMES_DEPLOYER)))
+    );
+
+    if (filteredInternalTrfs.length > 0) {
+      let primaryProceeds = 0;
+      filteredInternalTrfs.forEach((internalT) => {
+        if (internalT?.value) {
+          primaryProceeds += internalT.value;
+        }
+      });
+      if (primaryProceeds) {
+        t.primary_proceeds = primaryProceeds;
+        t.value = primaryProceeds;
+      }
+    }
+
+    if (!t.primary_proceeds) {
+      t.primary_proceeds = t.value;
+    }
+  }
+
+  t.value = parseFloat(t.value.toFixed(8));
+  t.royalties = parseFloat(t.royalties.toFixed(8));
+  t.primary_proceeds = parseFloat(t.primary_proceeds.toFixed(8));
+  t.gas = parseFloat(t.gas.toFixed(8));
+  t.gas_price = parseFloat(t.gas_price.toFixed(8));
+  t.gas_price_gwei = parseFloat(t.gas_price_gwei.toFixed(8));
+  t.gas_gwei = parseFloat(t.gas_gwei.toFixed(8));
+
   return t;
 }
 
@@ -233,12 +294,16 @@ export const debugValues = async () => {
       apiKey: process.env.ALCHEMY_API_KEY
     });
   }
+
   if (!SEAPORT_IFACE) {
     await loadABIs();
   }
 
   // SAMPLE TRX HASHES
   const transactions = [
+    '0xfca058600347480cb759890182328dc11034e5c135b7d51f2d67dbc9774e674f',
+    '0xf7982454b13c4837058f8efadc0794239b281d2d473817d3edfbce2520114e44',
+    '0x3a79990d01b87d77741227a81db0201b31d2e711aefff943c086d2bbc90a0605',
     '0x0010dcbac1dcdebd2f4186342dda88ec8889bf0ffb9445b7598ec0172d671b07',
     '0x4144495f6932b53d48469b76876a82ffa0172d69dc9fc69f2120444b6df2a1b7',
     '0xdf73c5f14da545c5da2d86e9f9b9733541a003609374c456d7c3badad234b16a',
@@ -249,9 +314,12 @@ export const debugValues = async () => {
 
   await Promise.all(
     transactions.map(async (transactionHash) => {
-      const tr = await findTransactionsByHash([transactionHash]);
+      const tr = await findTransactionsByHash(TRANSACTIONS_MEME_LAB_TABLE, [
+        transactionHash
+      ]);
 
       let totalValue = 0;
+      let totalPrimaryProceeds = 0;
       let totalRoyalties = 0;
       for (const t of tr) {
         const parsedTransaction = await resolveValue(t);
@@ -259,15 +327,17 @@ export const debugValues = async () => {
           from: parsedTransaction.from_address,
           to: parsedTransaction.to_address,
           value: parsedTransaction.value,
+          primaryProceeds: parsedTransaction.primary_proceeds,
           royalties: parsedTransaction.royalties
         });
         totalValue += parsedTransaction.value;
+        totalPrimaryProceeds += parsedTransaction.primary_proceeds;
         totalRoyalties += parsedTransaction.royalties;
       }
       logger.info({
         transactionHash: transactionHash,
-        message: 'total value',
         totalValue: totalValue,
+        totalPrimaryProceeds: totalPrimaryProceeds,
         totalRoyalties: totalRoyalties
       });
     })

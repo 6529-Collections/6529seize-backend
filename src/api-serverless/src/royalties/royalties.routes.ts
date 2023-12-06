@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { fetchRoyaltiesMemes, fetchRoyaltiesUploads } from '../../../db-api';
+import { fetchRoyaltiesUploads } from '../../../db-api';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 import {
@@ -9,26 +9,19 @@ import {
 } from '../api-constants';
 import {
   cacheKey,
+  resolveIntParam,
   returnCSVResult,
   returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
 import * as mcache from 'memory-cache';
+import { RoyaltyResponse, fetchRoyalties } from './royalties.db';
 
 const router = asyncRouter();
 
 const logger = Logger.get('ROYALTIES_API');
 
 export default router;
-
-interface RoyaltyResponse {
-  token_id: number;
-  name: string;
-  artist: string;
-  thumbnail?: string;
-  total_volume: number;
-  total_royalties: number;
-}
 
 interface RoyaltyUploadResponse {
   created_at: string;
@@ -37,42 +30,45 @@ interface RoyaltyUploadResponse {
 }
 
 router.get(
-  `/memes`,
+  `/collection/:collection_type`,
   function (
     req: Request<
-      {},
+      {
+        collection_type: string;
+      },
       {},
       {},
       {
+        primary?: string;
+        artist?: string;
         from_date?: string;
         to_date?: string;
+        from_block?: string;
+        to_block?: string;
         download?: string;
       }
     >,
     res: Response<RoyaltyResponse[] | string>
   ) {
-    const fromDate: string = req.query.from_date as string;
-    const toDate: string = req.query.to_date as string;
-    const download = req.query.download === 'true';
-
-    fetchRoyaltiesMemes(fromDate, toDate).then(
-      async (results: RoyaltyResponse[]) => {
-        logger.info(
-          `[FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${results.length}`
-        );
-
-        if (results.length > 0) {
-          mcache.put(cacheKey(req), results, CACHE_TIME_MS);
-        }
-
-        if (download) {
-          results.forEach((r) => delete r.thumbnail);
-          returnCSVResult('royalties_memes', results, res);
-        } else {
-          returnJsonResult(results, req, res);
-        }
-      }
-    );
+    const collectionType = req.params.collection_type;
+    if (collectionType === 'memes' || collectionType === 'memelab') {
+      const fromBlockResolved = resolveIntParam(req.query.from_block);
+      const toBlockResolved = resolveIntParam(req.query.to_block);
+      return returnRoyalties(
+        collectionType,
+        req.query.primary === 'true',
+        req.query.artist as string,
+        req.query.from_date as string,
+        req.query.to_date as string,
+        fromBlockResolved,
+        toBlockResolved,
+        req.query.download === 'true',
+        req,
+        res
+      );
+    } else {
+      return res.status(404).send('Not found');
+    }
   }
 );
 
@@ -100,3 +96,43 @@ router.get(
     });
   }
 );
+
+function returnRoyalties(
+  type: 'memes' | 'memelab',
+  isPrimary: boolean,
+  artist: string,
+  fromDate: string,
+  toDate: string,
+  fromBlock: number | undefined,
+  toBlock: number | undefined,
+  download: boolean,
+  req: Request,
+  res: Response
+) {
+  fetchRoyalties(
+    type,
+    isPrimary,
+    artist,
+    fromDate,
+    toDate,
+    fromBlock,
+    toBlock
+  ).then(async (results: RoyaltyResponse[]) => {
+    logger.info(
+      `[${type.toUpperCase()} FROM_DATE ${fromDate} TO_DATE ${toDate} - Fetched ${
+        results.length
+      }`
+    );
+
+    if (results.length > 0) {
+      mcache.put(cacheKey(req), results, CACHE_TIME_MS);
+    }
+
+    if (download) {
+      results.forEach((r) => delete r.thumbnail);
+      return returnCSVResult(`royalties_${type}`, results, res);
+    } else {
+      return returnJsonResult(results, req, res);
+    }
+  });
+}

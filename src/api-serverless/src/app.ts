@@ -10,6 +10,7 @@ import authRoutes from './auth/auth.routes';
 import rememesRoutes from './rememes/rememes.routes';
 import nextgenRoutes from './nextgen/nextgen.routes';
 import royaltiesRoutes from './royalties/royalties.routes';
+import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
 import gasRoutes from './gas/gas.routes';
 import * as passport from 'passport';
 import {
@@ -293,6 +294,18 @@ loadApi().then(() => {
         a.social_links = JSON.parse(a.social_links);
       });
       returnPaginatedResult(result, req, res);
+    });
+  });
+
+  apiRouter.get(`/memes/artists_names`, function (req: any, res: any) {
+    db.fetchArtistsNamesMemes().then((result) => {
+      return returnJsonResult(result, req, res);
+    });
+  });
+
+  apiRouter.get(`/memelab/artists_names`, function (req: any, res: any) {
+    db.fetchArtistsNamesMemeLab().then((result) => {
+      return returnJsonResult(result, req, res);
     });
   });
 
@@ -1278,6 +1291,7 @@ loadApi().then(() => {
   apiRouter.use(`/nextgen`, nextgenRoutes);
   apiRouter.use(`/gas`, gasRoutes);
   apiRouter.use(`/royalties`, royaltiesRoutes);
+  apiRouter.use(`/profile-logs`, profileActivityLogsRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 

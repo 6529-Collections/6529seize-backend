@@ -54,14 +54,9 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  public async searchLogs(params: {
-    profile_id?: string;
-    target_id?: string;
-    target_type?: ProfileActivityLogTargetType;
-    type?: ProfileActivityLogType;
-    pageRequest: PageRequest;
-    order: 'asc' | 'desc';
-  }): Promise<Page<ProfileActivityLog>> {
+  public async searchLogs(
+    params: ProfileLogSearchParams
+  ): Promise<Page<ProfileActivityLog>> {
     const page = params.pageRequest.page;
     const page_size =
       params.pageRequest.page_size < 1 || params.pageRequest.page_size > 2000
@@ -75,8 +70,17 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     };
     const countParams: Record<string, any> = {};
     if (params.profile_id) {
-      sql += ` and profile_id = :profile_id`;
-      countSql += ` and profile_id = :profile_id`;
+      if (params.profileIdAndTargetIdInOrCondition) {
+        sql += ` and (profile_id = :profile_id or target_id = :target_id and target_type = :target_type_w_id)`;
+        countSql += ` and (profile_id = :profile_id or target_id = :target_id and target_type = :target_type_w_id)`;
+        sqlParams.target_id = params.profile_id;
+        sqlParams.target_type_w_id = ProfileActivityLogTargetType.PROFILE_ID;
+        countParams.target_id = params.profile_id;
+        countParams.target_type_w_id = ProfileActivityLogTargetType.PROFILE_ID;
+      } else {
+        sql += ` and profile_id = :profile_id`;
+        countSql += ` and profile_id = :profile_id`;
+      }
       sqlParams.profile_id = params.profile_id;
       countParams.profile_id = params.profile_id;
     }
@@ -123,5 +127,15 @@ export type NewProfileActivityLog = Omit<
   ProfileActivityLog,
   'id' | 'created_at'
 >;
+
+export interface ProfileLogSearchParams {
+  profile_id?: string;
+  target_id?: string;
+  target_type?: ProfileActivityLogTargetType;
+  type?: ProfileActivityLogType;
+  pageRequest: PageRequest;
+  order: 'asc' | 'desc';
+  profileIdAndTargetIdInOrCondition?: boolean;
+}
 
 export const profileActivityLogsDb = new ProfileActivityLogsDb(dbSupplier);

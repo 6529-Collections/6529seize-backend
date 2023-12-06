@@ -37,6 +37,9 @@ export class BaseTransaction {
   value!: number;
 
   @Column({ type: 'double' })
+  primary_proceeds!: number;
+
+  @Column({ type: 'double' })
   royalties!: number;
 
   @Column({ type: 'double' })
