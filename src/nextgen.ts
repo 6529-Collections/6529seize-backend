@@ -36,7 +36,7 @@ let myBucket: string;
 
 const logger = Logger.get('NEXTGEN');
 
-const NEXTGEN_S3_PATH = 'nextgen/tokens/images';
+const NEXTGEN_S3_PATH = `nextgen/tokens/images/${NEXTGEN_CONTRACT.network}-${NEXTGEN_CONTRACT.contract}`;
 
 function load() {
   alchemy = new Alchemy({
@@ -93,7 +93,9 @@ export const refreshNextgenTokens = async () => {
 
     await Promise.all(
       imageResponse.Contents.map(async (i) => {
-        const tokenId = parseInt(i.Key!.split('/')[3].split('.')[0]);
+        const key = i.Key!.split('/');
+        const image = key[key.length - 1];
+        const tokenId = parseInt(image.split('.')[0]);
         await persistImage(tokenId, getCFLink(tokenId));
       })
     );
