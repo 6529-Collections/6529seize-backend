@@ -2340,7 +2340,7 @@ export async function fetchNftHistory(
   contract: string,
   nftId: number
 ) {
-  const filter = constructFilters('', `contract=:contract AND nft_id=nft_id`);
+  const filter = constructFilters('', `contract=:contract AND nft_id=:nft_id`);
   const params = {
     contract: contract,
     nft_id: nftId
