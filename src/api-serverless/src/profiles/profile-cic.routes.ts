@@ -6,7 +6,6 @@ import { ProfileAndConsolidations } from '../../../profiles/profile.types';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { profilesService } from '../../../profiles/profiles.service';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
-import { cicService } from '../../../rates/cic.service';
 import * as Joi from 'joi';
 import {
   CicStatement,
@@ -14,6 +13,9 @@ import {
 } from '../../../entities/ICICStatement';
 import { ratingsService } from '../../../rates/ratings.service';
 import { RateMatter } from '../../../entities/IRating';
+import { Page } from '../page-request';
+import { ProfilesMatterRating } from '../../../rates/rates.types';
+import { cicService } from '../../../cic/cic.service';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -79,6 +81,66 @@ router.get(
         cic_ratings_left_to_give_by_rater: null
       });
     }
+  }
+);
+
+router.get(
+  `/ratings`,
+  async function (
+    req: Request<
+      {
+        handleOrWallet: string;
+      },
+      any,
+      any,
+      {
+        order: string;
+        order_by: string;
+        page?: string;
+        page_size?: string;
+        rater?: string | null;
+      },
+      any
+    >,
+    res: Response<ApiResponse<Page<ProfilesMatterRating>>>
+  ) {
+    const order = req.query.order?.toLowerCase();
+    const order_by = req.query.order_by?.toLowerCase();
+    const page = req.query.page ? parseInt(req.query.page) : 1;
+    const page_size = req.query.page_size ? parseInt(req.query.page_size) : 200;
+    const targetHandleOrWallet = req.params.handleOrWallet.toLowerCase();
+    const profileAndConsolidationsOfTarget =
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        targetHandleOrWallet
+      );
+    const targetProfile = profileAndConsolidationsOfTarget?.profile;
+    if (!targetProfile) {
+      throw new NotFoundException(
+        `No profile found for ${targetHandleOrWallet}`
+      );
+    }
+    let rater_profile_id: string | null = null;
+    if (req.query.rater) {
+      rater_profile_id =
+        (
+          await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+            req.query.rater
+          )
+        )?.profile?.external_id ?? null;
+    }
+
+    const results = await ratingsService.getPageOfRatingsForMatter({
+      rater_profile_id: rater_profile_id,
+      matter: RateMatter.CIC,
+      matter_target_id: targetProfile.external_id,
+      page_request: {
+        page: page > 0 ? page : 1,
+        page_size: page_size > 0 ? page_size : 200
+      },
+      order: order,
+      order_by: order_by
+    });
+    res.send(results);
   }
 );
 

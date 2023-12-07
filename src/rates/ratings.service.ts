@@ -4,6 +4,7 @@ import {
   OverRateMatter,
   ratingsDb,
   RatingsDb,
+  RatingsSearchRequest,
   UpdateRatingRequest
 } from './ratings.db';
 import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
@@ -17,6 +18,8 @@ import { RateMatter, Rating } from '../entities/IRating';
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
+import { Page } from '../api-serverless/src/page-request';
+import { ProfilesMatterRating } from './rates.types';
 
 export class RatingsService {
   private readonly logger = Logger.get('[RATINGS_SERVICE]');
@@ -31,6 +34,12 @@ export class RatingsService {
     request: AggregatedRatingRequest
   ): Promise<AggregatedRating> {
     return this.ratingsDb.getAggregatedRatingOnMatter(request);
+  }
+
+  public async getPageOfRatingsForMatter(
+    request: RatingsSearchRequest
+  ): Promise<Page<ProfilesMatterRating>> {
+    return this.ratingsDb.searchRatingsForMatter(request);
   }
 
   public async getRatesLeftOnMatterForProfile({
