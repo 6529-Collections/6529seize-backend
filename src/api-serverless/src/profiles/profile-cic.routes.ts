@@ -6,12 +6,16 @@ import { ProfileAndConsolidations } from '../../../profiles/profile.types';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { profilesService } from '../../../profiles/profiles.service';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
-import { cicService } from '../../../rates/cic.service';
 import * as Joi from 'joi';
 import {
   CicStatement,
   CicStatementGroup
 } from '../../../entities/ICICStatement';
+import { ratingsService } from '../../../rates/ratings.service';
+import { RateMatter } from '../../../entities/IRating';
+import { Page } from '../page-request';
+import { ProfilesMatterRating } from '../../../rates/rates.types';
+import { cicService } from '../../../cic/cic.service';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -55,13 +59,18 @@ router.get(
       );
     const raterProfile = profileAndConsolidationsOfRater?.profile;
     if (raterProfile && targetProfile) {
-      const cicRatingByRater =
-        await cicService.getProfilesAggregatedCicRatingForProfile(
-          targetProfile.external_id,
-          raterProfile.external_id
-        );
+      const { rating: cicRatingByRater } =
+        await ratingsService.getAggregatedRatingOnMatter({
+          rater_profile_id: raterProfile.external_id,
+          matter: RateMatter.CIC,
+          matter_category: RateMatter.CIC,
+          matter_target_id: targetProfile.external_id
+        });
       const cicRatingsLeftToGiveByRater =
-        await cicService.getCicRatesLeftForProfile(raterProfile.external_id);
+        await ratingsService.getRatesLeftOnMatterForProfile({
+          profile_id: raterProfile.external_id,
+          matter: RateMatter.CIC
+        });
       res.send({
         cic_rating_by_rater: cicRatingByRater,
         cic_ratings_left_to_give_by_rater: cicRatingsLeftToGiveByRater
@@ -72,6 +81,66 @@ router.get(
         cic_ratings_left_to_give_by_rater: null
       });
     }
+  }
+);
+
+router.get(
+  `/ratings`,
+  async function (
+    req: Request<
+      {
+        handleOrWallet: string;
+      },
+      any,
+      any,
+      {
+        order: string;
+        order_by: string;
+        page?: string;
+        page_size?: string;
+        rater?: string | null;
+      },
+      any
+    >,
+    res: Response<ApiResponse<Page<ProfilesMatterRating>>>
+  ) {
+    const order = req.query.order?.toLowerCase();
+    const order_by = req.query.order_by?.toLowerCase();
+    const page = req.query.page ? parseInt(req.query.page) : 1;
+    const page_size = req.query.page_size ? parseInt(req.query.page_size) : 200;
+    const targetHandleOrWallet = req.params.handleOrWallet.toLowerCase();
+    const profileAndConsolidationsOfTarget =
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        targetHandleOrWallet
+      );
+    const targetProfile = profileAndConsolidationsOfTarget?.profile;
+    if (!targetProfile) {
+      throw new NotFoundException(
+        `No profile found for ${targetHandleOrWallet}`
+      );
+    }
+    let rater_profile_id: string | null = null;
+    if (req.query.rater) {
+      rater_profile_id =
+        (
+          await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+            req.query.rater
+          )
+        )?.profile?.external_id ?? null;
+    }
+
+    const results = await ratingsService.getPageOfRatingsForMatter({
+      rater_profile_id: rater_profile_id,
+      matter: RateMatter.CIC,
+      matter_target_id: targetProfile.external_id,
+      page_request: {
+        page: page > 0 ? page : 1,
+        page_size: page_size > 0 ? page_size : 200
+      },
+      order: order,
+      order_by: order_by
+    });
+    res.send(results);
   }
 );
 
@@ -113,10 +182,13 @@ router.post(
       );
     }
     const raterProfileId = raterProfile.profile.external_id;
-    await cicService.updateProfileCicRating({
-      raterProfileId: raterProfileId,
-      targetProfileId: targetProfile.profile.external_id,
-      cicRating: amount
+    const targetProfileId = targetProfile.profile.external_id;
+    await ratingsService.updateRating({
+      rater_profile_id: raterProfileId,
+      matter: RateMatter.CIC,
+      matter_category: 'CIC',
+      matter_target_id: targetProfileId,
+      rating: amount
     });
     const updatedProfileInfo =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(

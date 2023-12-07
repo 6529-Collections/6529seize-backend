@@ -80,16 +80,15 @@ import {
 } from './entities/INextGen';
 import { RateEvent } from './entities/IRateEvent';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
-import { RateMatterCategory } from './entities/IRateMatter';
 import { Profile, ProfileArchived } from './entities/IProfile';
 import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
-import { CicRating } from './entities/ICICRating';
 import { CicStatement } from './entities/ICICStatement';
 import { profilesService } from './profiles/profiles.service';
 import { ProfileTdh, ProfileTdhLog } from './entities/IProfileTDH';
 import { ProfileActivityLog } from './entities/IProfileActivityLog';
+import { Rating } from './entities/IRating';
 
 const mysql = require('mysql');
 
@@ -128,8 +127,6 @@ export async function connect(entities: any[] = []) {
       GlobalTDHHistory,
       ENS,
       User,
-      RateEvent,
-      RateMatterCategory,
       Profile,
       ProfileArchived,
       NextGenTransactionsBlock,
@@ -137,11 +134,11 @@ export async function connect(entities: any[] = []) {
       NextGenAllowlistBurn,
       NextGenCollection,
       NextGenCollectionBurn,
-      CicRating,
       ProfileTdh,
       ProfileTdhLog,
       CicStatement,
-      ProfileActivityLog
+      ProfileActivityLog,
+      Rating
     ];
   }
 

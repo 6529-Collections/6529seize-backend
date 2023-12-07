@@ -5,7 +5,6 @@ import {
 } from '../sql-executor';
 import {
   ProfileActivityLog,
-  ProfileActivityLogTargetType,
   ProfileActivityLogType
 } from '../entities/IProfileActivityLog';
 import { uniqueShortId } from '../helpers';
@@ -43,8 +42,8 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   ) {
     await this.db.execute(
       `
-    insert into ${PROFILES_ACTIVITY_LOGS_TABLE} (id, profile_id, target_id, target_type, contents, type, created_at)
-    values (:id, :profile_id, :target_id, :target_type, :contents, :type, now())
+    insert into ${PROFILES_ACTIVITY_LOGS_TABLE} (id, profile_id, target_id, contents, type, created_at)
+    values (:id, :profile_id, :target_id, :contents, :type, now())
     `,
       {
         ...log,
@@ -71,12 +70,10 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     const countParams: Record<string, any> = {};
     if (params.profile_id) {
       if (params.profileIdAndTargetIdInOrCondition) {
-        sql += ` and (profile_id = :profile_id or target_id = :target_id and target_type = :target_type_w_id)`;
-        countSql += ` and (profile_id = :profile_id or target_id = :target_id and target_type = :target_type_w_id)`;
+        sql += ` and (profile_id = :profile_id or target_id = :target_id)`;
+        countSql += ` and (profile_id = :profile_id or target_id = :target_id)`;
         sqlParams.target_id = params.profile_id;
-        sqlParams.target_type_w_id = ProfileActivityLogTargetType.PROFILE_ID;
         countParams.target_id = params.profile_id;
-        countParams.target_type_w_id = ProfileActivityLogTargetType.PROFILE_ID;
       } else {
         sql += ` and profile_id = :profile_id`;
         countSql += ` and profile_id = :profile_id`;
@@ -90,15 +87,9 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       sqlParams.target_id = params.target_id;
       countParams.target_id = params.target_id;
     }
-    if (params.target_type) {
-      sql += ` and target_type = :target_type`;
-      countSql += ` and target_type = :target_type`;
-      sqlParams.target_type = params.target_type;
-      countParams.target_type = params.target_type;
-    }
-    if (params.type) {
-      sql += ` and type = :type`;
-      countSql += ` and type = :type`;
+    if (params.type?.length) {
+      sql += ` and type in (:type)`;
+      countSql += ` and type in (:type)`;
       sqlParams.type = params.type;
       countParams.type = params.type;
     }
@@ -131,8 +122,7 @@ export type NewProfileActivityLog = Omit<
 export interface ProfileLogSearchParams {
   profile_id?: string;
   target_id?: string;
-  target_type?: ProfileActivityLogTargetType;
-  type?: ProfileActivityLogType;
+  type?: ProfileActivityLogType[];
   pageRequest: PageRequest;
   order: 'asc' | 'desc';
   profileIdAndTargetIdInOrCondition?: boolean;

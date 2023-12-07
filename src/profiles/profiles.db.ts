@@ -408,6 +408,15 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async getProfileTdh(profileId: string): Promise<number> {
+    return this.db
+      .execute(
+        `select boosted_tdh from ${PROFILE_TDHS_TABLE} where profile_id = :profileId`,
+        { profileId }
+      )
+      .then((result) => result.at(0)?.boosted_tdh ?? 0);
+  }
+
   async updateProfileTdhs(
     newProfileTdhs: ProfileTdh[],
     connectionHolder: ConnectionWrapper<any>
