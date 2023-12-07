@@ -69,15 +69,8 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     };
     const countParams: Record<string, any> = {};
     if (params.profile_id) {
-      if (params.profileIdAndTargetIdInOrCondition) {
-        sql += ` and (profile_id = :profile_id or target_id = :target_id)`;
-        countSql += ` and (profile_id = :profile_id or target_id = :target_id)`;
-        sqlParams.target_id = params.profile_id;
-        countParams.target_id = params.profile_id;
-      } else {
-        sql += ` and profile_id = :profile_id`;
-        countSql += ` and profile_id = :profile_id`;
-      }
+      sql += ` and profile_id = :profile_id`;
+      countSql += ` and profile_id = :profile_id`;
       sqlParams.profile_id = params.profile_id;
       countParams.profile_id = params.profile_id;
     }
@@ -125,7 +118,6 @@ export interface ProfileLogSearchParams {
   type?: ProfileActivityLogType[];
   pageRequest: PageRequest;
   order: 'asc' | 'desc';
-  profileIdAndTargetIdInOrCondition?: boolean;
 }
 
 export const profileActivityLogsDb = new ProfileActivityLogsDb(dbSupplier);

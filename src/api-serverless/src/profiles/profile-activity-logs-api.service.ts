@@ -37,9 +37,6 @@ export class ProfileActivityLogsApiService {
 
     if (profileId) {
       params.profile_id = profileId;
-      if (!targetId) {
-        params.profileIdAndTargetIdInOrCondition = true;
-      }
     }
     if (targetId) {
       params.target_id = targetId;
