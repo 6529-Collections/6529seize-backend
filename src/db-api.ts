@@ -288,7 +288,8 @@ async function fetchPaginated(
   const data = await sqlExecutor.execute(resultsSql, params);
 
   logger.debug(`Count sql: '${countSql}', Result: ${count}`);
-  logger.debug(`Result sql: '${resultsSql}', Result: %o`, data);
+  logger.debug(`Result sql: ${resultsSql}`);
+  logger.debug(`Result data: %o`, data);
 
   return {
     count,
@@ -455,9 +456,20 @@ export async function fetchLabNFTs(
   }
 
   if (nfts) {
-    filters = constructFilters(filters, `id in (:nfts)`);
+    filters = constructFilters(filters, `${NFTS_MEME_LAB_TABLE}.id in (:nfts)`);
     params.nfts = nfts.split(',');
   }
+
+  const fields = `
+    ${NFTS_MEME_LAB_TABLE}.*,
+    IF(d.card_id IS NOT NULL, TRUE, FALSE) AS has_distribution
+  `;
+  const joinClause = `
+    LEFT JOIN distribution d ON d.card_id = ${NFTS_MEME_LAB_TABLE}.id AND d.contract = :meme_lab_contract
+  `;
+  const groupBy = `${NFTS_MEME_LAB_TABLE}.id`;
+  params.meme_lab_contract = MEMELAB_CONTRACT;
+
   return fetchPaginated(
     NFTS_MEME_LAB_TABLE,
     params,
@@ -465,8 +477,9 @@ export async function fetchLabNFTs(
     pageSize,
     page,
     filters,
-    `${NFTS_MEME_LAB_TABLE}.*, CASE WHEN EXISTS (SELECT 1 FROM distribution d WHERE d.card_id = ${NFTS_MEME_LAB_TABLE}.id AND d.contract = ${NFTS_MEME_LAB_TABLE}.contract) THEN TRUE ELSE FALSE END AS has_distribution`,
-    ''
+    fields,
+    joinClause,
+    groupBy
   );
 }
 
