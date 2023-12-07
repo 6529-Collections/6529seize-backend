@@ -78,7 +78,6 @@ import {
   NextGenCollection,
   NextGenCollectionBurn
 } from './entities/INextGen';
-import { RateEvent } from './entities/IRateEvent';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { Profile, ProfileArchived } from './entities/IProfile';
 import { Logger } from './logging';
