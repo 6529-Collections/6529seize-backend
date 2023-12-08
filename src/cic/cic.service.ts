@@ -82,16 +82,16 @@ export class CicService {
         'Youtube needs to start with https://www.youtube.com/'
     },
     DISCORD: {
-      regexp: /^.{,50}$/,
+      regexp: /^.{1,50}$/,
       errorMessageIfNotValid: 'Discord needs to be less than 50 characters'
     },
     TELEGRAM: {
-      regexp: /^.{,100}$/,
-      errorMessageIfNotValid: 'Telegram needs to be less than 50 characters'
+      regexp: /^.{1,100}$/,
+      errorMessageIfNotValid: 'Telegram needs to be less than 100 characters'
     },
     WECHAT: {
-      regexp: /^.{,100}$/,
-      errorMessageIfNotValid: 'WeChat needs to be less than 50 characters'
+      regexp: /^.{1,100}$/,
+      errorMessageIfNotValid: 'WeChat needs to be less than 100 characters'
     },
     EMAIL: {
       regexp:
