@@ -23,61 +23,61 @@ export class CicService {
     { regexp: RegExp; errorMessageIfNotValid: string }
   > = {
     X: {
-      regexp: /^https:\/\/(www\\.)?(x|twitter)\\.com\/[a-zA-Z0-9_]{3,15}$/,
+      regexp: /^https:\/\/(www\.)?(x|twitter)\.com\/[a-zA-Z0-9_]{3,15}$/,
       errorMessageIfNotValid:
         'X needs to start with https://x.com/ or https://twitter.com/ and the handle must be 3 to 15 characters long containing only letters, numbers, and underscores'
     },
     FACEBOOK: {
-      regexp: /^https:\/\/(www\\.)?facebook\\.com\/(.)+/,
+      regexp: /^https:\/\/(www\.)?facebook\.com\/(.)+/,
       errorMessageIfNotValid:
         'Facebook needs go start with https://www.facebook.com/'
     },
     LINKED_IN: {
-      regexp: /^https:\/\/(www\\.)?(linkedin\\.com|linked\\.in)\/(.)+/,
+      regexp: /^https:\/\/(www\.)?(linkedin\.com|linked\.in)\/(.)+/,
       errorMessageIfNotValid:
         'LinkedIn needs go start with https://www.linkedin.com/ or https://linked.in/'
     },
     INSTAGRAM: {
-      regexp: /^https:\/\/(www\\.)?instagram\\.com\/(.)+/,
+      regexp: /^https:\/\/(www\.)?instagram\.com\/(.)+/,
       errorMessageIfNotValid:
         'Instagram needs go start with https://www.instagram.com/'
     },
     TIK_TOK: {
-      regexp: /^https:\/\/(www\\.)?tiktok\\.com\/@(.)+/,
+      regexp: /^https:\/\/(www\.)?tiktok\.com\/@(.)+/,
       errorMessageIfNotValid:
         'TikTok needs go start with https://www.tiktok.com/@'
     },
     GITHUB: {
-      regexp: /^https:\/\/(www\\.)?github\\.com\/(.)+/,
+      regexp: /^https:\/\/(www\.)?github\.com\/(.)+/,
       errorMessageIfNotValid:
         'GitHub needs go start with https://www.github.com/'
     },
     REDDIT: {
-      regexp: /^https:\/\/(www\\.)?reddit\\.com\/([ru])\/(.)+/,
+      regexp: /^https:\/\/(www\.)?reddit\.com\/([ru])\/(.)+/,
       errorMessageIfNotValid:
         'Reddit needs go start with https://www.reddit.com/ followed by /r/ or /u/ and subreddit or username'
     },
     WEIBO: {
-      regexp: /^https:\/\/(www\\.)?weibo\\.com\/(.)+/,
+      regexp: /^https:\/\/(www\.)?weibo\.com\/(.)+/,
       errorMessageIfNotValid: 'Weibo needs go start with https://www.weibo.com/'
     },
     SUBSTACK: {
-      regexp: /^https:\/\/(.)+\\.substack\\.com(\/)?$/,
+      regexp: /^https:\/\/(.)+\.substack\.com(\/)?$/,
       errorMessageIfNotValid:
         'Substack needs to be https://yourusername.substack.com/'
     },
     MEDIUM: {
-      regexp: /^https:\/\/(www\\.)?medium.com\\.com\/@(.)+/,
+      regexp: /^https:\/\/(www\.)?medium.com\.com\/@(.)+/,
       errorMessageIfNotValid:
         'Medium needs to start with https://www.medium.com/@'
     },
     MIRROR_XYZ: {
-      regexp: /^https:\/\/(www\\.)?mirror\\.xyz\/(.)+/,
+      regexp: /^https:\/\/(www\.)?mirror\.xyz\/(.)+/,
       errorMessageIfNotValid:
         'Mirror needs to start with https://www.mirror.xyz/'
     },
     YOUTUBE: {
-      regexp: /^https:\/\/(www\\.)?youtube\\.com\/(.)+/,
+      regexp: /^https:\/\/(www\.)?youtube\.com\/(.)+/,
       errorMessageIfNotValid:
         'Youtube needs to start with https://www.youtube.com/'
     },
@@ -95,7 +95,7 @@ export class CicService {
     },
     EMAIL: {
       regexp:
-        /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/,
+        /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/,
       errorMessageIfNotValid: 'Email is not valid'
     },
     WEBSITE: {
