@@ -1,6 +1,6 @@
 import { cicDb, CicDb } from './cic.db';
 import { CicStatement, CicStatementGroup } from '../entities/ICICStatement';
-import { NotFoundException } from '../exceptions';
+import { BadRequestException, NotFoundException } from '../exceptions';
 import {
   profileActivityLogsDb,
   ProfileActivityLogsDb
@@ -18,6 +18,96 @@ const CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE: Record<
 };
 
 export class CicService {
+  private readonly socialsRules: Record<
+    string,
+    { regexp: RegExp; errorMessageIfNotValid: string }
+  > = {
+    X: {
+      regexp: /^https:\/\/(www\\.)?(x|twitter)\\.com\/[a-zA-Z0-9_]{3,15}$/,
+      errorMessageIfNotValid:
+        'X needs to start with https://x.com/ or https://twitter.com/ and the handle must be 3 to 15 characters long containing only letters, numbers, and underscores'
+    },
+    FACEBOOK: {
+      regexp: /^https:\/\/(www\\.)?facebook\\.com\/(.)+/,
+      errorMessageIfNotValid:
+        'Facebook needs go start with https://www.facebook.com/'
+    },
+    LINKED_IN: {
+      regexp: /^https:\/\/(www\\.)?(linkedin\\.com|linked\\.in)\/(.)+/,
+      errorMessageIfNotValid:
+        'LinkedIn needs go start with https://www.linkedin.com/ or https://linked.in/'
+    },
+    INSTAGRAM: {
+      regexp: /^https:\/\/(www\\.)?instagram\\.com\/(.)+/,
+      errorMessageIfNotValid:
+        'Instagram needs go start with https://www.instagram.com/'
+    },
+    TIK_TOK: {
+      regexp: /^https:\/\/(www\\.)?tiktok\\.com\/@(.)+/,
+      errorMessageIfNotValid:
+        'TikTok needs go start with https://www.tiktok.com/@'
+    },
+    GITHUB: {
+      regexp: /^https:\/\/(www\\.)?github\\.com\/(.)+/,
+      errorMessageIfNotValid:
+        'GitHub needs go start with https://www.github.com/'
+    },
+    REDDIT: {
+      regexp: /^https:\/\/(www\\.)?reddit\\.com\/([ru])\/(.)+/,
+      errorMessageIfNotValid:
+        'Reddit needs go start with https://www.reddit.com/ followed by /r/ or /u/ and subreddit or username'
+    },
+    WEIBO: {
+      regexp: /^https:\/\/(www\\.)?weibo\\.com\/(.)+/,
+      errorMessageIfNotValid: 'Weibo needs go start with https://www.weibo.com/'
+    },
+    SUBSTACK: {
+      regexp: /^https:\/\/(.)+\\.substack\\.com(\/)?$/,
+      errorMessageIfNotValid:
+        'Substack needs to be https://yourusername.substack.com/'
+    },
+    MEDIUM: {
+      regexp: /^https:\/\/(www\\.)?medium.com\\.com\/@(.)+/,
+      errorMessageIfNotValid:
+        'Medium needs to start with https://www.medium.com/@'
+    },
+    MIRROR_XYZ: {
+      regexp: /^https:\/\/(www\\.)?mirror\\.xyz\/(.)+/,
+      errorMessageIfNotValid:
+        'Mirror needs to start with https://www.mirror.xyz/'
+    },
+    YOUTUBE: {
+      regexp: /^https:\/\/(www\\.)?youtube\\.com\/(.)+/,
+      errorMessageIfNotValid:
+        'Youtube needs to start with https://www.youtube.com/'
+    },
+    DISCORD: {
+      regexp: /^.{,50}$/,
+      errorMessageIfNotValid: 'Discord needs to be less than 50 characters'
+    },
+    TELEGRAM: {
+      regexp: /^.{,100}$/,
+      errorMessageIfNotValid: 'Telegram needs to be less than 50 characters'
+    },
+    WECHAT: {
+      regexp: /^.{,100}$/,
+      errorMessageIfNotValid: 'WeChat needs to be less than 50 characters'
+    },
+    EMAIL: {
+      regexp:
+        /^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/,
+      errorMessageIfNotValid: 'Email is not valid'
+    },
+    WEBSITE: {
+      regexp: /^http(s)?:\/\/(.)+/,
+      errorMessageIfNotValid: 'Website needs to start with http or https'
+    },
+    LINK: {
+      regexp: /^http(s)?:\/\/(.)+/,
+      errorMessageIfNotValid: 'Link needs to start with http or https'
+    }
+  };
+
   constructor(
     private readonly cicDb: CicDb,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb
@@ -43,9 +133,43 @@ export class CicService {
     return this.cicDb.getCicStatementsByProfileId(profile_id);
   }
 
+  private validateCicStatement({
+    statement_type,
+    statement_value
+  }: {
+    statement_type: string;
+    statement_value: string;
+  }) {
+    const rule = this.socialsRules[statement_type];
+    if (rule) {
+      const regexp = rule.regexp;
+      if (!regexp.test(statement_value)) {
+        throw new BadRequestException(rule.errorMessageIfNotValid);
+      }
+    } else if (statement_value.length > 500) {
+      throw new BadRequestException(
+        `Statement of type ${statement_type} can not be longer than 500 characters`
+      );
+    }
+  }
+
   public async addCicStatement(
     statement: Omit<CicStatement, 'id' | 'crated_at' | 'updated_at'>
   ) {
+    this.validateCicStatement(statement);
+    const existingStatements = await this.cicDb.getCicStatementsByProfileId(
+      statement.profile_id
+    );
+    const preexistingStatement = existingStatements.find(
+      (existingStatement) =>
+        existingStatement.statement_type === statement.statement_type &&
+        existingStatement.statement_value === statement.statement_value
+    );
+    if (preexistingStatement) {
+      throw new BadRequestException(
+        `Statement of type ${statement.statement_type} with value ${statement.statement_value} already exists`
+      );
+    }
     return await this.cicDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const cicStatement = await this.cicDb.insertCicStatement(
