@@ -11,7 +11,6 @@ import { Profile } from '../entities/IProfile';
 import * as tdh_consolidation from '../tdh_consolidation';
 import * as tdhs from '../tdh';
 import { BadRequestException } from '../exceptions';
-import { distinct } from '../helpers';
 import * as path from 'path';
 import { scalePfpAndPersistToS3 } from '../api-serverless/src/users/s3';
 import { ConnectionWrapper } from '../sql-executor';
@@ -323,42 +322,6 @@ export class ProfilesService {
       });
     }
     await this.profileActivityLogsDb.insertMany(logEvents, connectionHolder);
-  }
-
-  public async enhanceDataWithHandlesAndLevel(
-    data: { wallets?: string; wallet?: string; boostedTdh?: number }[]
-  ) {
-    const resultWallets: string[] = distinct(
-      data
-        .map((d: { wallets?: string; wallet?: string }) =>
-          d.wallet ? [d.wallet] : d.wallets ? JSON.parse(d.wallets) : []
-        )
-        .flat()
-    );
-    const walletsToHandles = await this.getProfileHandlesByPrimaryWallets(
-      resultWallets
-    );
-
-    return data.map(
-      (d: { wallets?: string; wallet?: string; boosted_tdh?: number }) => {
-        const parsedWallets = d.wallet
-          ? [d.wallet]
-          : d.wallets
-          ? JSON.parse(d.wallets)
-          : [];
-        const resolvedWallet = parsedWallets.find(
-          (w: string) => walletsToHandles[w.toLowerCase()]
-        );
-        (d as any).level = tdh2Level(d.boosted_tdh ?? 0);
-        if (!resolvedWallet) {
-          return d;
-        }
-        return {
-          ...d,
-          handle: walletsToHandles[resolvedWallet.toLowerCase()]
-        };
-      }
-    );
   }
 
   public async updateProfilePfp({
