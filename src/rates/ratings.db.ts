@@ -54,8 +54,12 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
     order_by,
     order
   }: RatingsSearchRequest): Promise<Page<ProfilesMatterRating>> {
-    let sql = `select r.matter, r.matter_category, p.handle as rater_handle, r.rating, r.last_modified from ${RATINGS_TABLE} r
+    let sql = `
+        with summed_cics as (select matter_target_id as profile_id, sum(rating) as cic_rating from ${RATINGS_TABLE} group by 1)
+    select r.matter, r.matter_category, p.handle as rater_handle, r.rating, r.last_modified, case when sc.cic_rating is null then 0 else sc.cic_rating end as rater_cic_rating, p_tdh.boosted_tdh as rater_tdh from ${RATINGS_TABLE} r
       join ${PROFILES_TABLE} p on r.rater_profile_id = p.external_id
+      join ${PROFILE_TDHS_TABLE} p_tdh on r.rater_profile_id = p_tdh.profile_id
+      left join summed_cics sc on p.external_id = sc.profile_id
       where r.rating <> 0 and r.matter = :matter and r.matter_target_id = :matter_target_id`;
     let countSql = `select count(*) as cnt from ${RATINGS_TABLE} r
       join ${PROFILES_TABLE} p on r.rater_profile_id = p.external_id

@@ -11,10 +11,12 @@ import {
   CicStatement,
   CicStatementGroup
 } from '../../../entities/ICICStatement';
-import { ratingsService } from '../../../rates/ratings.service';
+import {
+  ProfilesMatterRatingWithRaterLevel,
+  ratingsService
+} from '../../../rates/ratings.service';
 import { RateMatter } from '../../../entities/IRating';
 import { Page } from '../page-request';
-import { ProfilesMatterRating } from '../../../rates/rates.types';
 import { cicService } from '../../../cic/cic.service';
 
 const router = asyncRouter({ mergeParams: true });
@@ -102,7 +104,7 @@ router.get(
       },
       any
     >,
-    res: Response<ApiResponse<Page<ProfilesMatterRating>>>
+    res: Response<ApiResponse<Page<ProfilesMatterRatingWithRaterLevel>>>
   ) {
     const order = req.query.order?.toLowerCase();
     const order_by = req.query.order_by?.toLowerCase();

@@ -10,5 +10,7 @@ export interface ProfilesMatterRating {
   readonly matter: RateMatter;
   readonly matter_category: string;
   readonly rating: number;
+  readonly rater_cic_rating: number;
+  readonly rater_tdh: number;
   readonly last_modified: Date;
 }

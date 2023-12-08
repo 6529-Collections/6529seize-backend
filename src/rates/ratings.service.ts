@@ -20,6 +20,12 @@ import { Time } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
 import { Page } from '../api-serverless/src/page-request';
 import { ProfilesMatterRating } from './rates.types';
+import { tdh2Level } from '../profiles/profile-level';
+
+export interface ProfilesMatterRatingWithRaterLevel
+  extends ProfilesMatterRating {
+  readonly rater_level: number;
+}
 
 export class RatingsService {
   private readonly logger = Logger.get('[RATINGS_SERVICE]');
@@ -38,8 +44,16 @@ export class RatingsService {
 
   public async getPageOfRatingsForMatter(
     request: RatingsSearchRequest
-  ): Promise<Page<ProfilesMatterRating>> {
-    return this.ratingsDb.searchRatingsForMatter(request);
+  ): Promise<Page<ProfilesMatterRatingWithRaterLevel>> {
+    return this.ratingsDb.searchRatingsForMatter(request).then((page) => {
+      return {
+        ...page,
+        data: page.data.map((result) => ({
+          ...result,
+          rater_level: tdh2Level(result.rater_tdh)
+        }))
+      };
+    });
   }
 
   public async getRatesLeftOnMatterForProfile({
