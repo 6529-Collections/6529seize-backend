@@ -67,6 +67,14 @@ cron.schedule('*/2 * * * *', async function () {
   }
 });
 
+// PULL EVERY 5 MINUTES
+cron.schedule('*/5 * * * *', async function () {
+  if (isCronsEnabled()) {
+    await nextgenLoop.handler();
+    await nextgenLoop.handlerRefresh();
+  }
+});
+
 // PULL EVERY 30 MINUTES
 cron.schedule('*/30 * * * *', async function () {
   if (isCronsEnabled()) {
