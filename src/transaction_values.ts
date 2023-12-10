@@ -124,6 +124,7 @@ async function resolveValue(t: Transaction) {
     if (receipt) {
       let totalValue = 0;
       let totalRoyalties = 0;
+      let seaportEvent = false;
       await Promise.all(
         receipt.logs.map(async (log) => {
           const parsedLog = await parseSeaportLog(t, royaltiesAddress, log);
@@ -134,8 +135,12 @@ async function resolveValue(t: Transaction) {
           ) {
             t.royalties = parsedLog.royaltiesAmount;
             t.value = parsedLog.totalAmount;
+            seaportEvent = true;
           } else {
-            if (areEqualAddresses(log.topics[0], TRANSFER_EVENT)) {
+            if (
+              areEqualAddresses(log.topics[0], TRANSFER_EVENT) &&
+              !seaportEvent
+            ) {
               try {
                 const address = log.address;
                 if (areEqualAddresses(address, WETH_TOKEN_ADDRESS)) {
@@ -324,6 +329,7 @@ export const debugValues = async () => {
       for (const t of tr) {
         const parsedTransaction = await resolveValue(t);
         logger.info({
+          token_id: parsedTransaction.token_id,
           from: parsedTransaction.from_address,
           to: parsedTransaction.to_address,
           value: parsedTransaction.value,

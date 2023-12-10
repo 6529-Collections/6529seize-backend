@@ -14,6 +14,7 @@ import {
 } from '../../../constants';
 import { Time } from '../../../time';
 import { sqlExecutor } from '../../../sql-executor';
+import * as mysql from 'mysql';
 
 export interface RoyaltyResponse {
   token_id: number;
@@ -121,13 +122,23 @@ export function getRoyaltiesSql(
       ${nftsTable}.artist, 
       ${nftsTable}.thumbnail`;
 
+  const cases = `
+    CASE WHEN 
+    (artist not like :no_royalty_artist OR (contract = ${mysql.escape(
+      MEMES_CONTRACT
+    )} AND token_id = 19))
+    AND (contract != ${mysql.escape(
+      MEMES_CONTRACT
+    )} OR (contract = ${mysql.escape(MEMES_CONTRACT)} AND token_id != 100))
+  `;
+
   let joinClause = '';
   if (isPrimary) {
     selectClause += `,
       COALESCE(primaryVolume.primary_total_volume, 0) as volume,
       COALESCE(primaryVolume.primary_total_proceeds, 0) as proceeds,
-      CASE WHEN artist not like :no_royalty_artist THEN ${primaryRoyaltySplitSource} ELSE 0 END as artist_split,
-      COALESCE(primaryVolume.primary_total_proceeds, 0) * CASE WHEN artist not like :no_royalty_artist THEN ${primaryRoyaltySplitSource} ELSE 0 END AS artist_take`;
+      ${cases} THEN ${primaryRoyaltySplitSource} ELSE 0 END as artist_split,
+      COALESCE(primaryVolume.primary_total_proceeds, 0) * ${cases} THEN ${primaryRoyaltySplitSource} ELSE 0 END AS artist_take`;
 
     joinClause = `LEFT JOIN 
       (SELECT 
@@ -144,8 +155,8 @@ export function getRoyaltiesSql(
     selectClause += `,
       COALESCE(aggregated.secondary_total_volume, 0) as volume,
       COALESCE(aggregated.total_royalties, 0) as proceeds,
-      CASE WHEN artist not like :no_royalty_artist THEN ${secondaryRoyaltySplitSource} ELSE 0 END as artist_split,
-      COALESCE(aggregated.total_royalties, 0) * CASE WHEN artist not like :no_royalty_artist THEN ${secondaryRoyaltySplitSource} ELSE 0 END AS artist_take`;
+      ${cases} THEN ${secondaryRoyaltySplitSource} ELSE 0 END as artist_split,
+      COALESCE(aggregated.total_royalties, 0) * ${cases} THEN ${secondaryRoyaltySplitSource} ELSE 0 END AS artist_take`;
 
     joinClause = `LEFT JOIN 
       (SELECT 
