@@ -126,10 +126,12 @@ export function getRoyaltiesSql(
     CASE WHEN 
     (artist not like :no_royalty_artist OR (contract = ${mysql.escape(
       MEMES_CONTRACT
-    )} AND token_id = 19))
+    )} AND ${nftsTable}.id = 19))
     AND (contract != ${mysql.escape(
       MEMES_CONTRACT
-    )} OR (contract = ${mysql.escape(MEMES_CONTRACT)} AND token_id != 100))
+    )} OR (contract = ${mysql.escape(
+    MEMES_CONTRACT
+  )} AND ${nftsTable}.id != 100))
   `;
 
   let joinClause = '';
@@ -162,7 +164,7 @@ export function getRoyaltiesSql(
       (SELECT 
         token_id,
         SUM(CASE WHEN from_address NOT IN (:null_address, :manifold) ${specialCaseSecondary} THEN value ELSE 0 END) AS secondary_total_volume,
-        SUM(royalties) AS total_royalties
+        SUM(CASE WHEN from_address NOT IN (:null_address, :manifold) ${specialCaseSecondary} THEN royalties ELSE 0 END) AS total_royalties
       FROM 
         ${transactionsTable}
       ${filters}
