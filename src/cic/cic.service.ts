@@ -67,7 +67,7 @@ export class CicService {
         'Substack needs to be https://yourusername.substack.com/'
     },
     MEDIUM: {
-      regexp: /^https:\/\/(www\.)?medium.com\.com\/@(.)+/,
+      regexp: /^https:\/\/(www\.)?medium\.com\/@(.)+/,
       errorMessageIfNotValid:
         'Medium needs to start with https://www.medium.com/@'
     },
@@ -99,12 +99,14 @@ export class CicService {
       errorMessageIfNotValid: 'Email is not valid'
     },
     WEBSITE: {
-      regexp: /^http(s)?:\/\/(.)+/,
-      errorMessageIfNotValid: 'Website needs to start with http or https'
+      regexp: /^http(s)?:\/\/.{1,2000}$/,
+      errorMessageIfNotValid:
+        "Website needs to start with http or https and URL can't be longer than 2000 characters"
     },
     LINK: {
-      regexp: /^http(s)?:\/\/(.)+/,
-      errorMessageIfNotValid: 'Link needs to start with http or https'
+      regexp: /^http(s)?:\/\/.{1,2000}$/,
+      errorMessageIfNotValid:
+        "Link needs to start with http or https and URL can't be longer than 2000 characters"
     }
   };
 
@@ -112,7 +114,8 @@ export class CicService {
     private readonly cicDb: CicDb,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb
   ) {}
-  public async getCicStatementByIdAndProfileIDOrThrow(props: {
+
+  public async getCicStatementByIdAndProfileIdOrThrow(props: {
     profile_id: string;
     id: string;
   }): Promise<CicStatement> {
@@ -193,7 +196,7 @@ export class CicService {
   }
 
   public async deleteCicStatement(props: { profile_id: string; id: string }) {
-    const cicStatement = await this.getCicStatementByIdAndProfileIDOrThrow(
+    const cicStatement = await this.getCicStatementByIdAndProfileIdOrThrow(
       props
     );
     await this.cicDb.executeNativeQueriesInTransaction(async (connection) => {
