@@ -67,7 +67,7 @@ export class RatingsService {
       profile_id,
       matter
     });
-    const tdh = await profilesDb.getProfileTdh(profile_id);
+    const tdh = await this.profilesDb.getProfileTdh(profile_id);
     return tdh - ratesSpent;
   }
 
@@ -143,7 +143,7 @@ export class RatingsService {
     for (const overRatedMatter of profileMatters) {
       let runningTdhOver =
         Math.abs(overRatedMatter.tally) - overRatedMatter.rater_tdh;
-      for (let page = 1; runningTdhOver >= 0; page++) {
+      for (let page = 1; runningTdhOver > 0; page++) {
         await this.ratingsDb.executeNativeQueriesInTransaction(
           async (connection) => {
             runningTdhOver = await this.handlePageOfOverRates(
@@ -171,11 +171,16 @@ export class RatingsService {
         matter: overRatedMatter.matter,
         page_request: {
           page: 1,
-          page_size: 1
+          page_size: 1000
         }
       },
       connection
     );
+    if (!ratings.length && runningTdhOver > 0) {
+      throw new Error(
+        `There are no ratings to revoke, but TDH is still over. rater_profile_id: ${raterProfileId}, matter: ${overRatedMatter.matter}`
+      );
+    }
     for (const rating of ratings) {
       const ratingValue = rating.rating;
       const sign = ratingValue > 0 ? 1 : -1;
@@ -186,7 +191,7 @@ export class RatingsService {
       runningTdhOver -= Math.abs(counterRating);
       await this.insertCounterRating(
         rating,
-        counterRating,
+        rating.rating - sign * counterRating,
         connection,
         ratingValue
       );
@@ -199,14 +204,14 @@ export class RatingsService {
 
   private async insertCounterRating(
     rating: Rating,
-    counterRating: number,
+    newRating: number,
     connection: ConnectionWrapper<any>,
     ratingValue: number
   ) {
     await this.ratingsDb.updateRating(
       {
         ...rating,
-        rating: counterRating
+        rating: newRating
       },
       connection
     );
@@ -217,7 +222,7 @@ export class RatingsService {
         type: ProfileActivityLogType.RATING_EDIT,
         contents: JSON.stringify({
           old_rating: ratingValue,
-          new_rating: counterRating,
+          new_rating: newRating,
           rating_matter: rating.matter,
           rating_category: rating.matter_category,
           change_reason: 'LOST_TDH'
