@@ -253,7 +253,7 @@ router.get(
     if (!profileId) {
       throw new NotFoundException(`No profile found for ${handleOrWallet}`);
     }
-    const statement = await cicService.getCicStatementByIdAndProfileIDOrThrow({
+    const statement = await cicService.getCicStatementByIdAndProfileIdOrThrow({
       id: statementId,
       profile_id: profileId
     });
