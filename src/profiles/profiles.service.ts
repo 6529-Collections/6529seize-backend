@@ -222,6 +222,7 @@ export class ProfilesService {
             newHandle: handle,
             newPrimaryWallet: primary_wallet,
             authenticatedWallet: creator_or_updater_wallet,
+            newClassification: classification,
             connectionHolder
           });
         }
@@ -269,6 +270,7 @@ export class ProfilesService {
             newHandle: handle,
             newPrimaryWallet: primary_wallet,
             authenticatedWallet: creator_or_updater_wallet,
+            newClassification: classification,
             connectionHolder
           });
         }
@@ -286,6 +288,7 @@ export class ProfilesService {
     profileBeforeChange,
     newHandle,
     newPrimaryWallet,
+    newClassification,
     authenticatedWallet,
     connectionHolder
   }: {
@@ -293,6 +296,7 @@ export class ProfilesService {
     profileBeforeChange: Profile | null;
     newHandle: string;
     newPrimaryWallet: string;
+    newClassification: string;
     authenticatedWallet: string;
     connectionHolder: ConnectionWrapper<any>;
   }) {
@@ -318,6 +322,18 @@ export class ProfilesService {
           authenticated_wallet: authenticatedWallet,
           old_value: profileBeforeChange?.primary_wallet ?? null,
           new_value: newPrimaryWallet
+        })
+      });
+    }
+    if (profileBeforeChange?.classification !== newClassification) {
+      logEvents.push({
+        profile_id: profileId,
+        target_id: null,
+        type: ProfileActivityLogType.CLASSIFICATION_EDIT,
+        contents: JSON.stringify({
+          authenticated_wallet: authenticatedWallet,
+          old_value: profileBeforeChange?.classification ?? null,
+          new_value: newClassification
         })
       });
     }
