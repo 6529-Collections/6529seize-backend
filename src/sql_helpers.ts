@@ -203,17 +203,17 @@ export function getProfilePageSql(wallets: string[]) {
        MEMES_CONTRACT
      )} AND token_id > ${SZN4_INDEX.end}) AS transfers_in_memes_season5,
     (SELECT SUM(token_count) FROM transactions 
-     WHERE from_address IN (:wallets) AND value > 0 AND contract=:gradient_contract AS sales_count_gradients,
+     WHERE from_address IN (:wallets) AND value > 0 AND contract=:gradient_contract) AS sales_count_gradients,
     (SELECT SUM(value) FROM transactions 
-     WHERE from_address IN (:wallets) AND value > 0 AND contract=:gradient_contract AS sales_value_gradients,
+     WHERE from_address IN (:wallets) AND value > 0 AND contract=:gradient_contract) AS sales_value_gradients,
     (SELECT SUM(token_count) FROM transactions 
-     WHERE from_address IN (:wallets) AND value = 0 AND contract=:gradient_contract AS transfers_out_gradients,
+     WHERE from_address IN (:wallets) AND value = 0 AND contract=:gradient_contract) AS transfers_out_gradients,
     (SELECT SUM(token_count) FROM transactions 
-     WHERE to_address IN (:wallets) AND value > 0 AND contract=:gradient_contract AS purchases_count_gradients,
+     WHERE to_address IN (:wallets) AND value > 0 AND contract=:gradient_contract) AS purchases_count_gradients,
     (SELECT SUM(value) FROM transactions 
-     WHERE to_address IN (:wallets) AND value > 0 AND contract=:gradient_contract AS purchases_value_gradients,
+     WHERE to_address IN (:wallets) AND value > 0 AND contract=:gradient_contract) AS purchases_value_gradients,
     (SELECT SUM(token_count) FROM transactions 
-     WHERE to_address IN (:wallets) AND value = 0 AND contract=:gradient_contract AS transfers_in_gradients`;
+     WHERE to_address IN (:wallets) AND value = 0 AND contract=:gradient_contract) AS transfers_in_gradients`;
   return {
     sql,
     params: {
