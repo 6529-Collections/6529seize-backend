@@ -320,25 +320,31 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     return result.at(0)?.thumbnail ?? null;
   }
 
-  public async updateProfilePfpUri(thumbnailUri: string, profile: Profile) {
-    await this.db.executeNativeQueriesInTransaction(async (connection) => {
-      await this.db.execute(
-        `update ${PROFILES_TABLE}
+  public async updateProfilePfpUri(
+    thumbnailUri: string,
+    profile: Profile,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update ${PROFILES_TABLE}
        set pfp_url = :pfp
        where normalised_handle = :handle`,
-        {
-          pfp: thumbnailUri,
-          handle: profile.normalised_handle
-        },
-        { wrappedConnection: connection }
-      );
-      await this.getProfileByHandle(profile.handle, connection).then(
-        async (it) => {
-          if (it) {
-            await this.insertProfileArchiveRecord(profile, connection);
-          }
-        }
-      );
+      {
+        pfp: thumbnailUri,
+        handle: profile.normalised_handle
+      },
+      { wrappedConnection: connectionHolder.connection }
+    );
+    await this.getProfileByHandle(
+      profile.handle,
+      connectionHolder.connection
+    ).then(async (it) => {
+      if (it) {
+        await this.insertProfileArchiveRecord(
+          profile,
+          connectionHolder.connection
+        );
+      }
     });
   }
 
