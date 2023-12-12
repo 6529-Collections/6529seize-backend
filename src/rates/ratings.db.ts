@@ -24,7 +24,9 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
     select sum(rating) as rating,
     count(distinct rater_profile_id) as contributor_count
     from ${RATINGS_TABLE}
-    where matter = :matter
+    where 
+      rating <> 0 and
+      matter = :matter
       and matter_category = :matter_category
       and matter_target_id = :matter_target_id
   `;
