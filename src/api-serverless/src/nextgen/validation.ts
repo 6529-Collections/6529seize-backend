@@ -285,7 +285,7 @@ async function computeMerkle(allowlist: UploadAllowlist[]): Promise<any> {
     const parsedInfo = stringToHex(info);
     const concatenatedData = `${parsedAddress}${parsedSpots}${parsedInfo}`;
     const bufferData = Buffer.from(concatenatedData, 'hex');
-    const result = keccak256(bufferData).slice(2);
+    const result = keccak256(keccak256(bufferData)).slice(2);
 
     return {
       ...al,
@@ -312,7 +312,7 @@ async function computeMerkleBurn(
     const parsedInfo = stringToHex(info);
     const concatenatedData = `${tokenId}${parsedInfo}`;
     const bufferData = Buffer.from(concatenatedData, 'hex');
-    const result = keccak256(bufferData).slice(2);
+    const result = keccak256(keccak256(bufferData)).slice(2);
 
     return {
       ...al,

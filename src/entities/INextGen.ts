@@ -99,10 +99,10 @@ export class NextGenCollectionBurn {
   @Column({ type: 'int' })
   burn_collection_id!: number;
 
-  @Column({ type: 'int' })
+  @Column({ type: 'bigint' })
   min_token_index!: number;
 
-  @Column({ type: 'int' })
+  @Column({ type: 'bigint' })
   max_token_index!: number;
 
   @Column({ type: 'varchar', length: 100 })
