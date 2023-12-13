@@ -309,8 +309,9 @@ async function computeMerkleBurn(
   const processedAllowlist = allowlist.map((al) => {
     const tokenId = al.token_id;
     const info = al.info;
+    const parsedTokenId = stringToHex(tokenId);
     const parsedInfo = stringToHex(info);
-    const concatenatedData = `${tokenId}${parsedInfo}`;
+    const concatenatedData = `${parsedTokenId}${parsedInfo}`;
     const bufferData = Buffer.from(concatenatedData, 'hex');
     const result = keccak256(keccak256(bufferData)).slice(2);
 
