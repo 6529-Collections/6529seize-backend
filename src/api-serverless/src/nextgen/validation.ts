@@ -280,7 +280,7 @@ async function computeMerkle(allowlist: UploadAllowlist[]): Promise<any> {
       ? al.address.slice(2)
       : al.address;
     const spots = al.spots;
-    const parsedSpots = spots.toString().padStart(64, '0');
+    const parsedSpots = spots.toString(16).padStart(64, '0');
     const info = al.info;
     const parsedInfo = stringToHex(info);
     const concatenatedData = `${parsedAddress}${parsedSpots}${parsedInfo}`;
@@ -307,9 +307,9 @@ async function computeMerkleBurn(
   allowlist: UploadAllowlistBurn[]
 ): Promise<any> {
   const processedAllowlist = allowlist.map((al) => {
-    const tokenId = al.token_id;
+    const tokenId = parseInt(al.token_id);
     const info = al.info;
-    const parsedTokenId = stringToHex(tokenId);
+    const parsedTokenId = tokenId.toString(16).padStart(64, '0');
     const parsedInfo = stringToHex(info);
     const concatenatedData = `${parsedTokenId}${parsedInfo}`;
     const bufferData = Buffer.from(concatenatedData, 'hex');
