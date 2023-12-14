@@ -221,6 +221,9 @@ export class ProfilesService {
             profileBeforeChange: null,
             newHandle: handle,
             newPrimaryWallet: primary_wallet,
+            newBanner1: banner_1,
+            newBanner2: banner_2,
+            newWebsite: website,
             authenticatedWallet: creator_or_updater_wallet,
             newClassification: classification,
             connectionHolder
@@ -269,6 +272,9 @@ export class ProfilesService {
             profileBeforeChange: latestProfile,
             newHandle: handle,
             newPrimaryWallet: primary_wallet,
+            newBanner1: banner_1,
+            newBanner2: banner_2,
+            newWebsite: website,
             authenticatedWallet: creator_or_updater_wallet,
             newClassification: classification,
             connectionHolder
@@ -289,6 +295,9 @@ export class ProfilesService {
     newHandle,
     newPrimaryWallet,
     newClassification,
+    newBanner1,
+    newBanner2,
+    newWebsite,
     authenticatedWallet,
     connectionHolder
   }: {
@@ -297,6 +306,9 @@ export class ProfilesService {
     newHandle: string;
     newPrimaryWallet: string;
     newClassification: string;
+    newBanner1?: string;
+    newBanner2?: string;
+    newWebsite?: string;
     authenticatedWallet: string;
     connectionHolder: ConnectionWrapper<any>;
   }) {
@@ -313,31 +325,69 @@ export class ProfilesService {
         })
       });
     }
-    if (profileBeforeChange?.primary_wallet !== newPrimaryWallet) {
-      logEvents.push({
-        profile_id: profileId,
-        target_id: null,
-        type: ProfileActivityLogType.PRIMARY_WALLET_EDIT,
-        contents: JSON.stringify({
-          authenticated_wallet: authenticatedWallet,
-          old_value: profileBeforeChange?.primary_wallet ?? null,
-          new_value: newPrimaryWallet
-        })
-      });
-    }
-    if (profileBeforeChange?.classification !== newClassification) {
-      logEvents.push({
-        profile_id: profileId,
-        target_id: null,
-        type: ProfileActivityLogType.CLASSIFICATION_EDIT,
-        contents: JSON.stringify({
-          authenticated_wallet: authenticatedWallet,
-          old_value: profileBeforeChange?.classification ?? null,
-          new_value: newClassification
-        })
-      });
-    }
+    this.addEventToArrayIfChanged(
+      profileBeforeChange?.primary_wallet ?? null,
+      newPrimaryWallet ?? null,
+      logEvents,
+      profileId,
+      ProfileActivityLogType.PRIMARY_WALLET_EDIT,
+      authenticatedWallet
+    );
+    this.addEventToArrayIfChanged(
+      profileBeforeChange?.classification ?? null,
+      newClassification ?? null,
+      logEvents,
+      profileId,
+      ProfileActivityLogType.CLASSIFICATION_EDIT,
+      authenticatedWallet
+    );
+    this.addEventToArrayIfChanged(
+      profileBeforeChange?.banner_1 ?? null,
+      newBanner1 ?? null,
+      logEvents,
+      profileId,
+      ProfileActivityLogType.BANNER_1_EDIT,
+      authenticatedWallet
+    );
+    this.addEventToArrayIfChanged(
+      profileBeforeChange?.banner_2 ?? null,
+      newBanner2 ?? null,
+      logEvents,
+      profileId,
+      ProfileActivityLogType.BANNER_2_EDIT,
+      authenticatedWallet
+    );
+    this.addEventToArrayIfChanged(
+      profileBeforeChange?.website ?? null,
+      newWebsite ?? null,
+      logEvents,
+      profileId,
+      ProfileActivityLogType.WEBSITE_EDIT,
+      authenticatedWallet
+    );
     await this.profileActivityLogsDb.insertMany(logEvents, connectionHolder);
+  }
+
+  private addEventToArrayIfChanged(
+    oldValue: string | null,
+    newValue: string | null,
+    logEvents: NewProfileActivityLog[],
+    profileId: string,
+    logType: ProfileActivityLogType,
+    authenticatedWallet: string
+  ) {
+    if (oldValue !== newValue) {
+      logEvents.push({
+        profile_id: profileId,
+        target_id: null,
+        type: logType,
+        contents: JSON.stringify({
+          authenticated_wallet: authenticatedWallet,
+          old_value: oldValue,
+          new_value: newValue
+        })
+      });
+    }
   }
 
   public async updateProfilePfp({
@@ -372,7 +422,31 @@ export class ProfilesService {
         );
       });
     const thumbnailUri = await this.getOrCreatePfpFileUri({ meme, file });
-    await this.profilesDb.updateProfilePfpUri(thumbnailUri, profile);
+    await this.profilesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        await this.profilesDb.updateProfilePfpUri(
+          thumbnailUri,
+          profile,
+          connection
+        );
+        if ((thumbnailUri ?? null) !== (profile.pfp_url ?? null)) {
+          await this.profileActivityLogsDb.insert(
+            {
+              profile_id: profile.external_id,
+              target_id: null,
+              type: ProfileActivityLogType.PFP_EDIT,
+              contents: JSON.stringify({
+                authenticated_wallet: authenticatedWallet,
+                old_value: profile.pfp_url ?? null,
+                new_value: thumbnailUri
+              })
+            },
+            connection
+          );
+        }
+      }
+    );
+
     return { pfp_url: thumbnailUri };
   }
 
