@@ -59,7 +59,7 @@ resources:
           Statement:
             - Effect: "Allow"
               Principal:
-                AWS: '*'
+                Service: "sns.amazonaws.com"
               Action:
                 - sqs:SendMessage
                 - sqs:ReceiveMessage

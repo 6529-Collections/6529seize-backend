@@ -42,8 +42,13 @@ export class ProfilesService {
     if (!wallet) {
       return null;
     }
-    const { consolidatedWallets, tdh, blockNo } =
-      await this.getWalletTdhBlockNoAndConsolidatedWallets(wallet);
+    const {
+      consolidatedWallets,
+      tdh,
+      blockNo,
+      consolidation_key,
+      consolidation_display
+    } = await this.getWalletTdhBlockNoAndConsolidatedWallets(wallet);
     if (consolidatedWallets.length === 0) {
       return null;
     }
@@ -59,6 +64,8 @@ export class ProfilesService {
     return {
       profile: profile ?? null,
       consolidation: {
+        consolidation_key,
+        consolidation_display,
         wallets: wallets.map((w) => ({
           wallet: w,
           tdh: walletTdhs[w.address]
@@ -90,8 +97,13 @@ export class ProfilesService {
   public async getProfileByWallet(
     query: string
   ): Promise<ProfileAndConsolidations | null> {
-    const { consolidatedWallets, tdh, blockNo } =
-      await this.getWalletTdhBlockNoAndConsolidatedWallets(query);
+    const {
+      consolidatedWallets,
+      tdh,
+      blockNo,
+      consolidation_key,
+      consolidation_display
+    } = await this.getWalletTdhBlockNoAndConsolidatedWallets(query);
     if (consolidatedWallets.length === 0) {
       return null;
     }
@@ -107,6 +119,8 @@ export class ProfilesService {
     return {
       profile: profile ?? null,
       consolidation: {
+        consolidation_display,
+        consolidation_key,
         wallets: wallets.map((w) => ({
           wallet: w,
           tdh: walletTdhs[w.address]
@@ -135,10 +149,15 @@ export class ProfilesService {
       if (!profile) {
         return null;
       }
-      const { consolidatedWallets, tdh, blockNo } =
-        await tdh_consolidation.getWalletTdhAndConsolidatedWallets(
-          profile.primary_wallet.toLowerCase()
-        );
+      const {
+        consolidatedWallets,
+        tdh,
+        blockNo,
+        consolidation_key,
+        consolidation_display
+      } = await tdh_consolidation.getWalletTdhAndConsolidatedWallets(
+        profile.primary_wallet.toLowerCase()
+      );
       const walletTdhs = await tdhs.getWalletsTdhs({
         wallets: consolidatedWallets,
         blockNo
@@ -154,7 +173,9 @@ export class ProfilesService {
             wallet: w,
             tdh: walletTdhs[w.address]
           })),
-          tdh
+          tdh,
+          consolidation_key,
+          consolidation_display
         },
         level: tdh2Level(tdh),
         cic
@@ -221,7 +242,10 @@ export class ProfilesService {
             profileBeforeChange: null,
             newHandle: handle,
             newPrimaryWallet: primary_wallet,
+            newBanner1: banner_1,
+            newBanner2: banner_2,
             authenticatedWallet: creator_or_updater_wallet,
+            newClassification: classification,
             connectionHolder
           });
         }
@@ -268,7 +292,10 @@ export class ProfilesService {
             profileBeforeChange: latestProfile,
             newHandle: handle,
             newPrimaryWallet: primary_wallet,
+            newBanner1: banner_1,
+            newBanner2: banner_2,
             authenticatedWallet: creator_or_updater_wallet,
+            newClassification: classification,
             connectionHolder
           });
         }
@@ -286,6 +313,9 @@ export class ProfilesService {
     profileBeforeChange,
     newHandle,
     newPrimaryWallet,
+    newClassification,
+    newBanner1,
+    newBanner2,
     authenticatedWallet,
     connectionHolder
   }: {
@@ -293,6 +323,9 @@ export class ProfilesService {
     profileBeforeChange: Profile | null;
     newHandle: string;
     newPrimaryWallet: string;
+    newClassification: string;
+    newBanner1?: string;
+    newBanner2?: string;
     authenticatedWallet: string;
     connectionHolder: ConnectionWrapper<any>;
   }) {
@@ -309,19 +342,61 @@ export class ProfilesService {
         })
       });
     }
-    if (profileBeforeChange?.primary_wallet !== newPrimaryWallet) {
+    this.addEventToArrayIfChanged(
+      profileBeforeChange?.primary_wallet ?? null,
+      newPrimaryWallet ?? null,
+      logEvents,
+      profileId,
+      ProfileActivityLogType.PRIMARY_WALLET_EDIT,
+      authenticatedWallet
+    );
+    this.addEventToArrayIfChanged(
+      profileBeforeChange?.classification ?? null,
+      newClassification ?? null,
+      logEvents,
+      profileId,
+      ProfileActivityLogType.CLASSIFICATION_EDIT,
+      authenticatedWallet
+    );
+    this.addEventToArrayIfChanged(
+      profileBeforeChange?.banner_1 ?? null,
+      newBanner1 ?? null,
+      logEvents,
+      profileId,
+      ProfileActivityLogType.BANNER_1_EDIT,
+      authenticatedWallet
+    );
+    this.addEventToArrayIfChanged(
+      profileBeforeChange?.banner_2 ?? null,
+      newBanner2 ?? null,
+      logEvents,
+      profileId,
+      ProfileActivityLogType.BANNER_2_EDIT,
+      authenticatedWallet
+    );
+    await this.profileActivityLogsDb.insertMany(logEvents, connectionHolder);
+  }
+
+  private addEventToArrayIfChanged(
+    oldValue: string | null,
+    newValue: string | null,
+    logEvents: NewProfileActivityLog[],
+    profileId: string,
+    logType: ProfileActivityLogType,
+    authenticatedWallet: string
+  ) {
+    if (oldValue !== newValue) {
       logEvents.push({
         profile_id: profileId,
         target_id: null,
-        type: ProfileActivityLogType.PRIMARY_WALLET_EDIT,
+        type: logType,
         contents: JSON.stringify({
           authenticated_wallet: authenticatedWallet,
-          old_value: profileBeforeChange?.primary_wallet ?? null,
-          new_value: newPrimaryWallet
+          old_value: oldValue,
+          new_value: newValue
         })
       });
     }
-    await this.profileActivityLogsDb.insertMany(logEvents, connectionHolder);
   }
 
   public async updateProfilePfp({
@@ -356,7 +431,31 @@ export class ProfilesService {
         );
       });
     const thumbnailUri = await this.getOrCreatePfpFileUri({ meme, file });
-    await this.profilesDb.updateProfilePfpUri(thumbnailUri, profile);
+    await this.profilesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        await this.profilesDb.updateProfilePfpUri(
+          thumbnailUri,
+          profile,
+          connection
+        );
+        if ((thumbnailUri ?? null) !== (profile.pfp_url ?? null)) {
+          await this.profileActivityLogsDb.insert(
+            {
+              profile_id: profile.external_id,
+              target_id: null,
+              type: ProfileActivityLogType.PFP_EDIT,
+              contents: JSON.stringify({
+                authenticated_wallet: authenticatedWallet,
+                old_value: profile.pfp_url ?? null,
+                new_value: thumbnailUri
+              })
+            },
+            connection
+          );
+        }
+      }
+    );
+
     return { pfp_url: thumbnailUri };
   }
 
@@ -433,10 +532,22 @@ export class ProfilesService {
 
   private async getWalletTdhBlockNoAndConsolidatedWallets(
     wallet: string
-  ): Promise<{ tdh: number; consolidatedWallets: string[]; blockNo: number }> {
+  ): Promise<{
+    tdh: number;
+    consolidatedWallets: string[];
+    blockNo: number;
+    consolidation_key: string | null;
+    consolidation_display: string | null;
+  }> {
     const normalisedWallet = wallet.toLowerCase();
     if (!WALLET_REGEX.exec(normalisedWallet)) {
-      return { tdh: 0, consolidatedWallets: [], blockNo: 0 };
+      return {
+        tdh: 0,
+        consolidatedWallets: [],
+        blockNo: 0,
+        consolidation_key: null,
+        consolidation_display: null
+      };
     }
     return this.profilesDb
       .getConsolidationInfoForWallet(normalisedWallet)
@@ -445,7 +556,9 @@ export class ProfilesService {
           return {
             tdh: 0,
             consolidatedWallets: [normalisedWallet],
-            blockNo: 0
+            blockNo: 0,
+            consolidation_key: null,
+            consolidation_display: null
           };
         }
         const result = resultRows[0];
@@ -455,7 +568,9 @@ export class ProfilesService {
         return {
           tdh: result.tdh,
           consolidatedWallets: result.wallets,
-          blockNo: result.blockNo
+          blockNo: result.blockNo,
+          consolidation_key: result.consolidation_key,
+          consolidation_display: result.consolidation_display
         };
       });
   }

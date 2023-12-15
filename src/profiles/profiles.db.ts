@@ -24,20 +24,36 @@ import { ProfileTdh } from '../entities/IProfileTDH';
 import { distinct } from '../helpers';
 
 export class ProfilesDb extends LazyDbAccessCompatibleService {
-  public async getConsolidationInfoForWallet(
-    wallet: string
-  ): Promise<{ tdh: number; wallets: string[]; blockNo: number }[]> {
+  public async getConsolidationInfoForWallet(wallet: string): Promise<
+    {
+      tdh: number;
+      wallets: string[];
+      blockNo: number;
+      consolidation_key: string | null;
+      consolidation_display: string | null;
+    }[]
+  > {
     return this.db
       .execute(
-        `SELECT block, boosted_tdh as tdh, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
+        `SELECT block, boosted_tdh as tdh, wallets, consolidation_key, consolidation_display FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
         { wallet: `%${wallet.toLowerCase()}%` }
       )
       .then((result) =>
-        result.map((it: { tdh: number; wallets: string; block: number }) => ({
-          tdh: it.tdh,
-          wallets: JSON.parse(it.wallets),
-          blockNo: it.block
-        }))
+        result.map(
+          (it: {
+            tdh: number;
+            wallets: string;
+            block: number;
+            consolidation_key: string | null;
+            consolidation_display: string | null;
+          }) => ({
+            tdh: it.tdh,
+            wallets: JSON.parse(it.wallets),
+            blockNo: it.block,
+            consolidation_key: it.consolidation_key,
+            consolidation_display: it.consolidation_display
+          })
+        )
       );
   }
 
@@ -320,25 +336,31 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     return result.at(0)?.thumbnail ?? null;
   }
 
-  public async updateProfilePfpUri(thumbnailUri: string, profile: Profile) {
-    await this.db.executeNativeQueriesInTransaction(async (connection) => {
-      await this.db.execute(
-        `update ${PROFILES_TABLE}
+  public async updateProfilePfpUri(
+    thumbnailUri: string,
+    profile: Profile,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update ${PROFILES_TABLE}
        set pfp_url = :pfp
        where normalised_handle = :handle`,
-        {
-          pfp: thumbnailUri,
-          handle: profile.normalised_handle
-        },
-        { wrappedConnection: connection }
-      );
-      await this.getProfileByHandle(profile.handle, connection).then(
-        async (it) => {
-          if (it) {
-            await this.insertProfileArchiveRecord(profile, connection);
-          }
-        }
-      );
+      {
+        pfp: thumbnailUri,
+        handle: profile.normalised_handle
+      },
+      { wrappedConnection: connectionHolder.connection }
+    );
+    await this.getProfileByHandle(
+      profile.handle,
+      connectionHolder.connection
+    ).then(async (it) => {
+      if (it) {
+        await this.insertProfileArchiveRecord(
+          profile,
+          connectionHolder.connection
+        );
+      }
     });
   }
 

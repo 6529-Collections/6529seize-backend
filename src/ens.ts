@@ -1,12 +1,17 @@
 import { Alchemy } from 'alchemy-sdk';
-import { ALCHEMY_SETTINGS, ENS_TABLE } from './constants';
+import {
+  ALCHEMY_SETTINGS,
+  CONSOLIDATIONS_TABLE,
+  DELEGATIONS_TABLE,
+  ENS_TABLE
+} from './constants';
 import { ENS } from './entities/IENS';
 import {
   fetchEnsRefresh,
   persistENS,
   fetchMissingEns,
   fetchBrokenEnsRefresh,
-  fetchMissingEnsDelegations
+  fetchMissingEnsNFTDelegation
 } from './db';
 import { Wallet } from './entities/IWallet';
 import { sqlExecutor } from './sql-executor';
@@ -138,13 +143,21 @@ export async function discoverEns(datetime?: Date) {
 }
 
 export async function discoverEnsDelegations() {
+  return discoverEnsNFTDelegation(DELEGATIONS_TABLE);
+}
+
+export async function discoverEnsConsolidations() {
+  return discoverEnsNFTDelegation(CONSOLIDATIONS_TABLE);
+}
+
+async function discoverEnsNFTDelegation(table: string) {
   alchemy = new Alchemy({
     ...ALCHEMY_SETTINGS,
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
   try {
-    const missingEns = await fetchMissingEnsDelegations();
+    const missingEns = await fetchMissingEnsNFTDelegation(table);
     if (missingEns.length > 0) {
       const newEns = await findNewEns(missingEns);
       if (newEns.length > 0) {

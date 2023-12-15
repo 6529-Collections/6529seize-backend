@@ -1,4 +1,8 @@
-import { discoverEns, discoverEnsDelegations } from '../ens';
+import {
+  discoverEns,
+  discoverEnsConsolidations,
+  discoverEnsDelegations
+} from '../ens';
 import { ENS } from '../entities/IENS';
 import { loadEnv, unload } from '../secrets';
 import { Logger } from '../logging';
@@ -10,6 +14,7 @@ export const handler = async (event?: any, context?: any) => {
   await loadEnv([ENS]);
   await discoverEns();
   await discoverEnsDelegations();
+  await discoverEnsConsolidations();
   await unload();
   logger.info('[COMPLETE]');
 };
