@@ -284,7 +284,7 @@ router.delete(
       );
     if (!isAuthenticatedWalletProfileOwner(req, profileAndConsolidations)) {
       throw new ForbiddenException(
-        `User can only add statements to its own profile`
+        `User can only add statements to their own profile`
       );
     }
     const statementId = req.params.statementId;
