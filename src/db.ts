@@ -18,8 +18,8 @@ import {
   MEMES_CONTRACT,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
-  DELEGATIONS_TABLE,
-  MEME_LAB_ROYALTIES_TABLE
+  MEME_LAB_ROYALTIES_TABLE,
+  CONSOLIDATIONS_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -611,17 +611,25 @@ export async function fetchMissingEns(datetime?: Date) {
   return structuredResults;
 }
 
-export async function fetchMissingEnsDelegations() {
+export async function fetchMissingEnsNFTDelegation(table: string) {
+  let address1 = 'from_address';
+  let address2 = 'to_address';
+
+  if (table === CONSOLIDATIONS_TABLE) {
+    address1 = 'wallet1';
+    address2 = 'wallet2';
+  }
+
   let sql = `SELECT DISTINCT address
     FROM (
-      SELECT from_address AS address
-      FROM ${DELEGATIONS_TABLE}
-      WHERE from_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
+      SELECT ${address1} AS address
+      FROM ${table}
+      WHERE ${address1} NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
 
   sql += ` UNION
-      SELECT to_address AS address
-      FROM ${DELEGATIONS_TABLE}
-      WHERE to_address NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
+      SELECT ${address2} AS address
+      FROM ${table}
+      WHERE ${address2} NOT IN (SELECT wallet FROM ${ENS_TABLE})`;
 
   sql += `) AS addresses LIMIT 200`;
 
