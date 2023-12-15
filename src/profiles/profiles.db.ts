@@ -24,20 +24,36 @@ import { ProfileTdh } from '../entities/IProfileTDH';
 import { distinct } from '../helpers';
 
 export class ProfilesDb extends LazyDbAccessCompatibleService {
-  public async getConsolidationInfoForWallet(
-    wallet: string
-  ): Promise<{ tdh: number; wallets: string[]; blockNo: number }[]> {
+  public async getConsolidationInfoForWallet(wallet: string): Promise<
+    {
+      tdh: number;
+      wallets: string[];
+      blockNo: number;
+      consolidation_key: string | null;
+      consolidation_display: string | null;
+    }[]
+  > {
     return this.db
       .execute(
-        `SELECT block, boosted_tdh as tdh, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
+        `SELECT block, boosted_tdh as tdh, wallets, consolidation_key, consolidation_display FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
         { wallet: `%${wallet.toLowerCase()}%` }
       )
       .then((result) =>
-        result.map((it: { tdh: number; wallets: string; block: number }) => ({
-          tdh: it.tdh,
-          wallets: JSON.parse(it.wallets),
-          blockNo: it.block
-        }))
+        result.map(
+          (it: {
+            tdh: number;
+            wallets: string;
+            block: number;
+            consolidation_key: string | null;
+            consolidation_display: string | null;
+          }) => ({
+            tdh: it.tdh,
+            wallets: JSON.parse(it.wallets),
+            blockNo: it.block,
+            consolidation_key: it.consolidation_key,
+            consolidation_display: it.consolidation_display
+          })
+        )
       );
   }
 
