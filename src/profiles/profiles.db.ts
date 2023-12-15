@@ -31,11 +31,13 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       blockNo: number;
       consolidation_key: string | null;
       consolidation_display: string | null;
+      block_date: Date | null;
+      raw_tdh: number;
     }[]
   > {
     return this.db
       .execute(
-        `SELECT block, boosted_tdh as tdh, wallets, consolidation_key, consolidation_display FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
+        `SELECT t.block, t.boosted_tdh as tdh, t.tdh as raw_tdh, b.created_at as block_date, t.wallets, t.consolidation_key, t.consolidation_display, t.block FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} t LEFT JOIN ${TDH_BLOCKS_TABLE} b on t.block = b.block_number WHERE LOWER(t.consolidation_key) LIKE :wallet`,
         { wallet: `%${wallet.toLowerCase()}%` }
       )
       .then((result) =>
@@ -46,12 +48,16 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
             block: number;
             consolidation_key: string | null;
             consolidation_display: string | null;
+            block_date: string | null;
+            raw_tdh: number;
           }) => ({
             tdh: it.tdh,
             wallets: JSON.parse(it.wallets),
             blockNo: it.block,
             consolidation_key: it.consolidation_key,
-            consolidation_display: it.consolidation_display
+            consolidation_display: it.consolidation_display,
+            block_date: it.block_date ? new Date(it.block_date) : null,
+            raw_tdh: it.raw_tdh
           })
         )
       );
@@ -447,32 +453,39 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       wrappedConnection: connectionHolder
     });
     for (const newProfileTdh of newProfileTdhs) {
-      await this.db.execute(
-        `insert into ${PROFILE_TDH_LOGS_TABLE} (profile_id, tdh, boosted_tdh, block, created_at, block_date) values (:profileId, :tdh, :boostedTdh, :block, :createdAt, :blockDate)`,
-        {
-          profileId: newProfileTdh.profile_id,
-          tdh: newProfileTdh.tdh,
-          boostedTdh: newProfileTdh.boosted_tdh,
-          block: newProfileTdh.block,
-          createdAt: newProfileTdh.created_at,
-          blockDate: newProfileTdh.block_date
-        },
-        {
-          wrappedConnection: connectionHolder
-        }
-      );
-      await this.db.execute(
-        `insert into ${PROFILE_TDHS_TABLE} (profile_id, tdh, boosted_tdh, created_at, block, block_date) values (:profileId, :tdh, :boostedTdh, :createdAt, :block, :blockDate)`,
-        {
-          profileId: newProfileTdh.profile_id,
-          tdh: newProfileTdh.tdh,
-          boostedTdh: newProfileTdh.boosted_tdh,
-          createdAt: newProfileTdh.created_at,
-          block: newProfileTdh.block,
-          blockDate: newProfileTdh.block_date
-        }
-      );
+      await this.insertProfileTdh(newProfileTdh, connectionHolder);
     }
+  }
+
+  public async insertProfileTdh(
+    newProfileTdh: ProfileTdh,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `insert into ${PROFILE_TDH_LOGS_TABLE} (profile_id, tdh, boosted_tdh, block, created_at, block_date) values (:profileId, :tdh, :boostedTdh, :block, :createdAt, :blockDate)`,
+      {
+        profileId: newProfileTdh.profile_id,
+        tdh: newProfileTdh.tdh,
+        boostedTdh: newProfileTdh.boosted_tdh,
+        block: newProfileTdh.block,
+        createdAt: newProfileTdh.created_at,
+        blockDate: newProfileTdh.block_date
+      },
+      {
+        wrappedConnection: connectionHolder
+      }
+    );
+    await this.db.execute(
+      `insert into ${PROFILE_TDHS_TABLE} (profile_id, tdh, boosted_tdh, created_at, block, block_date) values (:profileId, :tdh, :boostedTdh, :createdAt, :block, :blockDate)`,
+      {
+        profileId: newProfileTdh.profile_id,
+        tdh: newProfileTdh.tdh,
+        boostedTdh: newProfileTdh.boosted_tdh,
+        createdAt: newProfileTdh.created_at,
+        block: newProfileTdh.block,
+        blockDate: newProfileTdh.block_date
+      }
+    );
   }
 
   async getProfileHandlesByIds(

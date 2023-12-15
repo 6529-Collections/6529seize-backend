@@ -237,6 +237,23 @@ export class ProfilesService {
             },
             connectionHolder
           );
+          const tdhInfo = await this.getWalletTdhBlockNoAndConsolidatedWallets(
+            primary_wallet
+          );
+          console.log(tdhInfo);
+          if (tdhInfo.block_date) {
+            await this.profilesDb.insertProfileTdh(
+              {
+                profile_id: profileId,
+                block: tdhInfo.blockNo,
+                tdh: tdhInfo.tdh,
+                boosted_tdh: tdhInfo.tdh,
+                created_at: new Date(),
+                block_date: tdhInfo.block_date
+              },
+              connectionHolder
+            );
+          }
           await this.createProfileEditLogs({
             profileId: profileId,
             profileBeforeChange: null,
@@ -538,6 +555,8 @@ export class ProfilesService {
     blockNo: number;
     consolidation_key: string | null;
     consolidation_display: string | null;
+    block_date: Date | null;
+    raw_tdh: number;
   }> {
     const normalisedWallet = wallet.toLowerCase();
     if (!WALLET_REGEX.exec(normalisedWallet)) {
@@ -546,7 +565,9 @@ export class ProfilesService {
         consolidatedWallets: [],
         blockNo: 0,
         consolidation_key: null,
-        consolidation_display: null
+        consolidation_display: null,
+        block_date: null,
+        raw_tdh: 0
       };
     }
     return this.profilesDb
@@ -558,7 +579,9 @@ export class ProfilesService {
             consolidatedWallets: [normalisedWallet],
             blockNo: 0,
             consolidation_key: null,
-            consolidation_display: null
+            consolidation_display: null,
+            block_date: null,
+            raw_tdh: 0
           };
         }
         const result = resultRows[0];
@@ -570,7 +593,9 @@ export class ProfilesService {
           consolidatedWallets: result.wallets,
           blockNo: result.blockNo,
           consolidation_key: result.consolidation_key,
-          consolidation_display: result.consolidation_display
+          consolidation_display: result.consolidation_display,
+          block_date: result.block_date,
+          raw_tdh: result.raw_tdh
         };
       });
   }
