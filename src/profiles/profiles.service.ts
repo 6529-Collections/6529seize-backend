@@ -223,7 +223,6 @@ export class ProfilesService {
             newPrimaryWallet: primary_wallet,
             newBanner1: banner_1,
             newBanner2: banner_2,
-            newWebsite: website,
             authenticatedWallet: creator_or_updater_wallet,
             newClassification: classification,
             connectionHolder
@@ -274,7 +273,6 @@ export class ProfilesService {
             newPrimaryWallet: primary_wallet,
             newBanner1: banner_1,
             newBanner2: banner_2,
-            newWebsite: website,
             authenticatedWallet: creator_or_updater_wallet,
             newClassification: classification,
             connectionHolder
@@ -297,7 +295,6 @@ export class ProfilesService {
     newClassification,
     newBanner1,
     newBanner2,
-    newWebsite,
     authenticatedWallet,
     connectionHolder
   }: {
@@ -308,7 +305,6 @@ export class ProfilesService {
     newClassification: string;
     newBanner1?: string;
     newBanner2?: string;
-    newWebsite?: string;
     authenticatedWallet: string;
     connectionHolder: ConnectionWrapper<any>;
   }) {
@@ -355,14 +351,6 @@ export class ProfilesService {
       logEvents,
       profileId,
       ProfileActivityLogType.BANNER_2_EDIT,
-      authenticatedWallet
-    );
-    this.addEventToArrayIfChanged(
-      profileBeforeChange?.website ?? null,
-      newWebsite ?? null,
-      logEvents,
-      profileId,
-      ProfileActivityLogType.WEBSITE_EDIT,
       authenticatedWallet
     );
     await this.profileActivityLogsDb.insertMany(logEvents, connectionHolder);
