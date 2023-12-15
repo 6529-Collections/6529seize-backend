@@ -24,12 +24,24 @@ const logger = Logger.get('TDH_CONSOLIDATION');
 
 export async function getWalletTdhAndConsolidatedWallets(
   wallet: string
-): Promise<{ tdh: number; consolidatedWallets: string[]; blockNo: number }> {
+): Promise<{
+  tdh: number;
+  consolidatedWallets: string[];
+  blockNo: number;
+  consolidation_key: string | null;
+  consolidation_display: string | null;
+}> {
   if (!wallet.match(/0x[a-fA-F0-9]{40}/)) {
-    return { tdh: 0, consolidatedWallets: [], blockNo: 0 };
+    return {
+      tdh: 0,
+      consolidatedWallets: [],
+      blockNo: 0,
+      consolidation_display: null,
+      consolidation_key: null
+    };
   }
   const tdhSqlResult = await sqlExecutor.execute(
-    `SELECT block, boosted_tdh as tdh, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
+    `SELECT consolidation_key, consolidation_display, block, boosted_tdh as tdh, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
     { wallet: `%${wallet.toLowerCase()}%` }
   );
   const row = tdhSqlResult?.at(0);
@@ -40,6 +52,8 @@ export async function getWalletTdhAndConsolidatedWallets(
     consolidatedWallets.push(wallet.toLowerCase());
   }
   return {
+    consolidation_key: row?.consolidation_key ?? null,
+    consolidation_display: row?.consolidation_display ?? null,
     tdh: row?.tdh ?? 0,
     consolidatedWallets: consolidatedWallets,
     blockNo: row?.block ?? 0

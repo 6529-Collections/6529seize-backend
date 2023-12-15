@@ -42,8 +42,13 @@ export class ProfilesService {
     if (!wallet) {
       return null;
     }
-    const { consolidatedWallets, tdh, blockNo } =
-      await this.getWalletTdhBlockNoAndConsolidatedWallets(wallet);
+    const {
+      consolidatedWallets,
+      tdh,
+      blockNo,
+      consolidation_key,
+      consolidation_display
+    } = await this.getWalletTdhBlockNoAndConsolidatedWallets(wallet);
     if (consolidatedWallets.length === 0) {
       return null;
     }
@@ -59,6 +64,8 @@ export class ProfilesService {
     return {
       profile: profile ?? null,
       consolidation: {
+        consolidation_key,
+        consolidation_display,
         wallets: wallets.map((w) => ({
           wallet: w,
           tdh: walletTdhs[w.address]
@@ -90,8 +97,13 @@ export class ProfilesService {
   public async getProfileByWallet(
     query: string
   ): Promise<ProfileAndConsolidations | null> {
-    const { consolidatedWallets, tdh, blockNo } =
-      await this.getWalletTdhBlockNoAndConsolidatedWallets(query);
+    const {
+      consolidatedWallets,
+      tdh,
+      blockNo,
+      consolidation_key,
+      consolidation_display
+    } = await this.getWalletTdhBlockNoAndConsolidatedWallets(query);
     if (consolidatedWallets.length === 0) {
       return null;
     }
@@ -107,6 +119,8 @@ export class ProfilesService {
     return {
       profile: profile ?? null,
       consolidation: {
+        consolidation_display,
+        consolidation_key,
         wallets: wallets.map((w) => ({
           wallet: w,
           tdh: walletTdhs[w.address]
@@ -135,10 +149,15 @@ export class ProfilesService {
       if (!profile) {
         return null;
       }
-      const { consolidatedWallets, tdh, blockNo } =
-        await tdh_consolidation.getWalletTdhAndConsolidatedWallets(
-          profile.primary_wallet.toLowerCase()
-        );
+      const {
+        consolidatedWallets,
+        tdh,
+        blockNo,
+        consolidation_key,
+        consolidation_display
+      } = await tdh_consolidation.getWalletTdhAndConsolidatedWallets(
+        profile.primary_wallet.toLowerCase()
+      );
       const walletTdhs = await tdhs.getWalletsTdhs({
         wallets: consolidatedWallets,
         blockNo
@@ -154,7 +173,9 @@ export class ProfilesService {
             wallet: w,
             tdh: walletTdhs[w.address]
           })),
-          tdh
+          tdh,
+          consolidation_key,
+          consolidation_display
         },
         level: tdh2Level(tdh),
         cic
@@ -511,10 +532,22 @@ export class ProfilesService {
 
   private async getWalletTdhBlockNoAndConsolidatedWallets(
     wallet: string
-  ): Promise<{ tdh: number; consolidatedWallets: string[]; blockNo: number }> {
+  ): Promise<{
+    tdh: number;
+    consolidatedWallets: string[];
+    blockNo: number;
+    consolidation_key: string | null;
+    consolidation_display: string | null;
+  }> {
     const normalisedWallet = wallet.toLowerCase();
     if (!WALLET_REGEX.exec(normalisedWallet)) {
-      return { tdh: 0, consolidatedWallets: [], blockNo: 0 };
+      return {
+        tdh: 0,
+        consolidatedWallets: [],
+        blockNo: 0,
+        consolidation_key: null,
+        consolidation_display: null
+      };
     }
     return this.profilesDb
       .getConsolidationInfoForWallet(normalisedWallet)
@@ -523,7 +556,9 @@ export class ProfilesService {
           return {
             tdh: 0,
             consolidatedWallets: [normalisedWallet],
-            blockNo: 0
+            blockNo: 0,
+            consolidation_key: null,
+            consolidation_display: null
           };
         }
         const result = resultRows[0];
@@ -533,7 +568,9 @@ export class ProfilesService {
         return {
           tdh: result.tdh,
           consolidatedWallets: result.wallets,
-          blockNo: result.blockNo
+          blockNo: result.blockNo,
+          consolidation_key: result.consolidation_key,
+          consolidation_display: result.consolidation_display
         };
       });
   }

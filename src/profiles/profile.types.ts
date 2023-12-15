@@ -17,6 +17,8 @@ export interface ProfileAndConsolidations {
   readonly consolidation: {
     wallets: { wallet: Wallet; tdh: number }[];
     tdh: number;
+    consolidation_key: string | null;
+    consolidation_display: string | null;
   };
   level: number;
   cic: AggregatedCicRating;
