@@ -240,7 +240,6 @@ export class ProfilesService {
           const tdhInfo = await this.getWalletTdhBlockNoAndConsolidatedWallets(
             primary_wallet
           );
-          console.log(tdhInfo);
           if (tdhInfo.block_date) {
             await this.profilesDb.insertProfileTdh(
               {
