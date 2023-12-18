@@ -20,3 +20,7 @@ export class Rating {
 export enum RateMatter {
   CIC = 'CIC'
 }
+
+export function getMattersWhereTargetIsProfile(): RateMatter[] {
+  return [RateMatter.CIC];
+}

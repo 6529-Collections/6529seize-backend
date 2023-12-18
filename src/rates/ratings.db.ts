@@ -205,6 +205,61 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
       .then((results) => results[0]?.rating ?? 0);
   }
 
+  async lockNonZeroRatingsForProfileOlderFirst(
+    {
+      rater_profile_id,
+      page_request
+    }: {
+      rater_profile_id: string;
+      page_request: { page: number; page_size: number };
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<Rating[]> {
+    if (page_request.page < 1 || page_request.page_size <= 0) {
+      return [];
+    }
+    return this.db.execute(
+      `select * from ${RATINGS_TABLE} where rater_profile_id = :rater_profile_id and rating <> 0 order by last_modified asc limit :limit offset :offset for update`,
+      {
+        rater_profile_id,
+        offset: (page_request.page - 1) * page_request.page_size,
+        limit: page_request.page_size
+      },
+      { wrappedConnection: connection }
+    );
+  }
+
+  async lockNonZeroRatingsForMatterAndTargetIdOlderFirst(
+    {
+      matter_target_id,
+      matters,
+      page_request
+    }: {
+      matter_target_id: string;
+      matters: RateMatter[];
+      page_request: { page: number; page_size: number };
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<Rating[]> {
+    if (
+      page_request.page < 1 ||
+      page_request.page_size <= 0 ||
+      !matters.length
+    ) {
+      return [];
+    }
+    return this.db.execute(
+      `select * from ${RATINGS_TABLE} where matter_target_id = :matter_target_id and matter in (:matters) and rating <> 0 order by last_modified asc limit :limit offset :offset for update`,
+      {
+        matter_target_id,
+        matters,
+        offset: (page_request.page - 1) * page_request.page_size,
+        limit: page_request.page_size
+      },
+      { wrappedConnection: connection }
+    );
+  }
+
   async getSummedRatingsOnMatterByTargetIds(param: {
     matter: RateMatter;
     matter_target_ids: string[];

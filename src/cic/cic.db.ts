@@ -21,8 +21,8 @@ export class CicDb extends LazyDbAccessCompatibleService {
           values (:id, :profile_id, :statement_group, :statement_type, :statement_comment, :statement_value, current_time)
       `,
       {
-        id: id,
-        ...newCicStatement
+        ...newCicStatement,
+        id: id
       },
       { wrappedConnection: connectionHolder }
     );

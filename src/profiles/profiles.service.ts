@@ -24,6 +24,7 @@ import {
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { ratingsService, RatingsService } from '../rates/ratings.service';
 import { RateMatter } from '../entities/IRating';
+import { cicService, CicService } from '../cic/cic.service';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -32,6 +33,7 @@ export class ProfilesService {
     private readonly profilesDb: ProfilesDb,
     private readonly ratingsService: RatingsService,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
+    private readonly cicService: CicService,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
 
@@ -322,6 +324,85 @@ export class ProfilesService {
         handle
       );
     return updatedProfile!;
+  }
+
+  public async mergeProfiles(connectionHolder: ConnectionWrapper<any>) {
+    const start = Time.now();
+    const archivalCandidates =
+      await this.profilesDb.getProfilesArchivalCandidates(connectionHolder);
+    const groups = archivalCandidates.reduce((result, profile) => {
+      const key = profile.consolidation_key;
+      if (!result[key]) {
+        result[key] = [];
+      }
+      result[key].push(profile);
+      return result;
+    }, {} as Record<string, (Profile & { cic_rating: number })[]>);
+    const profileSets = Object.values(groups).map((profiles) => {
+      const sorted = [...profiles].sort((a, d) => d.cic_rating - a.cic_rating);
+      const target = sorted.at(0)!;
+      const toBeMerged = sorted.slice(1);
+      return { target, toBeMerged };
+    });
+    this.logger.info(`Archiving profiles in ${profileSets.length} sets`);
+    for (const profileSet of profileSets) {
+      await this.mergeProfileSet(profileSet, connectionHolder);
+    }
+    this.logger.info(
+      `${profileSets
+        .map((it) => it.toBeMerged.length)
+        .reduce(
+          (a, d) => a + d,
+          0
+        )} profiles merged with other profiles ${start.diffFromNow()}`
+    );
+  }
+
+  private async mergeProfileSet(
+    {
+      toBeMerged,
+      target
+    }: {
+      toBeMerged: Profile[];
+      target: Profile;
+    },
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    for (const profileToBeMerged of toBeMerged) {
+      const start = Time.now();
+      this.logger.info(
+        `Merging profile ${profileToBeMerged.external_id}/${profileToBeMerged.handle} to profile ${target.external_id}/${target.handle}`
+      );
+      await this.mergeProfileStatements(
+        profileToBeMerged,
+        target,
+        connectionHolder
+      );
+      await this.mergeRatings(profileToBeMerged, target, connectionHolder);
+      await this.profilesDb.deleteProfile(
+        { id: profileToBeMerged.external_id },
+        connectionHolder
+      );
+      await this.profileActivityLogsDb.insert(
+        {
+          profile_id: profileToBeMerged.external_id,
+          target_id: null,
+          type: ProfileActivityLogType.PROFILE_ARCHIVED,
+          contents: JSON.stringify({
+            handle: profileToBeMerged.handle,
+            reason: 'CONFLICTING_CONSOLIDATION'
+          })
+        },
+        connectionHolder
+      );
+      this.logger.info(
+        `Profile ${profileToBeMerged.external_id}/${
+          profileToBeMerged.handle
+        } deleted and merged to profile ${target.external_id}/${
+          target.handle
+        } on ${start.diffFromNow()}`
+      );
+    }
   }
 
   private async createProfileEditLogs({
@@ -623,6 +704,61 @@ export class ProfilesService {
       throw new BadRequestException('No PFP provided');
     }
   }
+
+  private async mergeProfileStatements(
+    source: Profile,
+    target: Profile,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    const sourceStatements = await this.cicService.getCicStatementsByProfileId(
+      source.external_id
+    );
+    const targetStatements = await this.cicService.getCicStatementsByProfileId(
+      target.external_id
+    );
+    const missingTargetStatements = sourceStatements.filter(
+      (sourceStatement) => {
+        return !targetStatements.find(
+          (targetStatement) =>
+            targetStatement.statement_group ===
+              sourceStatement.statement_group &&
+            targetStatement.statement_type === sourceStatement.statement_type &&
+            targetStatement.statement_comment ===
+              sourceStatement.statement_comment &&
+            targetStatement.statement_value === sourceStatement.statement_value
+        );
+      }
+    );
+    for (const statement of missingTargetStatements) {
+      await this.cicService.insertStatement(
+        {
+          ...statement,
+          profile_id: target.external_id
+        },
+        connectionHolder
+      );
+    }
+    for (const sourceStatement of sourceStatements) {
+      await this.cicService.deleteStatement(sourceStatement, connectionHolder);
+    }
+  }
+
+  private async mergeRatings(
+    sourceProfile: Profile,
+    targetProfile: Profile,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.ratingsService.transferAllGivenProfileRatings(
+      sourceProfile,
+      targetProfile,
+      connectionHolder
+    );
+    await this.ratingsService.transferAllReceivedProfileRatings(
+      sourceProfile,
+      targetProfile,
+      connectionHolder
+    );
+  }
   async searchProfileMinimalsOfClosestMatches({
     param,
     limit
@@ -671,5 +807,6 @@ export const profilesService = new ProfilesService(
   profilesDb,
   ratingsService,
   profileActivityLogsDb,
+  cicService,
   getAlchemyInstance
 );

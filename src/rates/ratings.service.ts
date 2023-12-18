@@ -14,13 +14,18 @@ import {
   profileActivityLogsDb,
   ProfileActivityLogsDb
 } from '../profileActivityLogs/profile-activity-logs.db';
-import { RateMatter, Rating } from '../entities/IRating';
+import {
+  getMattersWhereTargetIsProfile,
+  RateMatter,
+  Rating
+} from '../entities/IRating';
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
 import { Page } from '../api-serverless/src/page-request';
 import { ProfilesMatterRating } from './rates.types';
 import { tdh2Level } from '../profiles/profile-level';
+import { Profile } from '../entities/IProfile';
 
 export interface ProfilesMatterRatingWithRaterLevel
   extends ProfilesMatterRating {
@@ -74,39 +79,50 @@ export class RatingsService {
   public async updateRating(request: UpdateRatingRequest) {
     await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        const profileId = request.rater_profile_id;
-        const currentRating = await this.ratingsDb.getRatingForUpdate(
-          request,
-          connection
-        );
-        const totalTdhSpentOnMatter = currentRating.total_tdh_spent_on_matter;
-        const tdhSpentOnThisRequest =
-          Math.abs(request.rating) - Math.abs(currentRating.rating);
-        const profileTdh = await this.profilesDb.getProfileTdh(profileId);
-        if (totalTdhSpentOnMatter + tdhSpentOnThisRequest > profileTdh) {
-          throw new BadRequestException(
-            `Not enough TDH left to spend on this matter. Changing this vote would spend ${tdhSpentOnThisRequest} TDH, but profile only has ${
-              profileTdh - totalTdhSpentOnMatter
-            } left to spend`
-          );
-        }
-        await this.ratingsDb.updateRating(request, connection);
-        await this.profileActivityLogsDb.insert(
-          {
-            profile_id: request.rater_profile_id,
-            target_id: request.matter_target_id,
-            type: ProfileActivityLogType.RATING_EDIT,
-            contents: JSON.stringify({
-              old_rating: currentRating.rating,
-              new_rating: request.rating,
-              rating_matter: request.matter,
-              rating_category: request.matter_category,
-              change_reason: 'USER_EDIT'
-            })
-          },
-          connection
+        await this.updateRatingInternal(request, 'USER_EDIT', connection);
+      }
+    );
+  }
+
+  private async updateRatingInternal(
+    request: UpdateRatingRequest,
+    changeReason: string,
+    connection: ConnectionWrapper<any>,
+    skipTdhCheck?: boolean
+  ) {
+    const profileId = request.rater_profile_id;
+    const currentRating = await this.ratingsDb.getRatingForUpdate(
+      request,
+      connection
+    );
+    if (!skipTdhCheck) {
+      const totalTdhSpentOnMatter = currentRating.total_tdh_spent_on_matter;
+      const tdhSpentOnThisRequest =
+        Math.abs(request.rating) - Math.abs(currentRating.rating);
+      const profileTdh = await this.profilesDb.getProfileTdh(profileId);
+      if (totalTdhSpentOnMatter + tdhSpentOnThisRequest > profileTdh) {
+        throw new BadRequestException(
+          `Not enough TDH left to spend on this matter. Changing this vote would spend ${tdhSpentOnThisRequest} TDH, but profile only has ${
+            profileTdh - totalTdhSpentOnMatter
+          } left to spend`
         );
       }
+    }
+    await this.ratingsDb.updateRating(request, connection);
+    await this.profileActivityLogsDb.insert(
+      {
+        profile_id: request.rater_profile_id,
+        target_id: request.matter_target_id,
+        type: ProfileActivityLogType.RATING_EDIT,
+        contents: JSON.stringify({
+          old_rating: currentRating.rating,
+          new_rating: request.rating,
+          rating_matter: request.matter,
+          rating_category: request.matter_category,
+          change_reason: changeReason
+        })
+      },
+      connection
     );
   }
 
@@ -185,6 +201,146 @@ export class RatingsService {
       },
       connection
     );
+  }
+
+  async deleteRatingsForProfileArchival(
+    ratings: Rating[],
+    sourceHandle: string,
+    targetHandle: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    for (const rating of ratings) {
+      await this.updateRatingInternal(
+        {
+          ...rating,
+          rating: 0
+        },
+        `Profile ${sourceHandle} archived, ratings transferred to ${targetHandle}`,
+        connectionHolder,
+        true
+      );
+    }
+  }
+
+  async transferAllGivenProfileRatings(
+    sourceProfile: Profile,
+    targetProfile: Profile,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    let page = 1;
+    while (true) {
+      const ratings =
+        await this.ratingsDb.lockNonZeroRatingsForProfileOlderFirst(
+          {
+            rater_profile_id: sourceProfile.external_id,
+            page_request: {
+              page,
+              page_size: 1000
+            }
+          },
+          connectionHolder
+        );
+      await this.deleteRatingsForProfileArchival(
+        ratings,
+        sourceProfile.handle,
+        targetProfile.handle,
+        connectionHolder
+      );
+      await this.insertRatingsAfterProfileArchival(
+        ratings
+          .map((it) => ({
+            ...it,
+            rater_profile_id: targetProfile.external_id
+          }))
+          .filter(
+            (it) =>
+              !(
+                it.matter_target_id === targetProfile.external_id &&
+                getMattersWhereTargetIsProfile().includes(it.matter)
+              )
+          ),
+        sourceProfile.handle,
+        targetProfile.handle,
+        connectionHolder
+      );
+      if (!ratings.length) {
+        break;
+      }
+      page++;
+    }
+  }
+
+  async transferAllReceivedProfileRatings(
+    sourceProfile: Profile,
+    targetProfile: Profile,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    let page = 1;
+    while (true) {
+      const ratings =
+        await this.ratingsDb.lockNonZeroRatingsForMatterAndTargetIdOlderFirst(
+          {
+            matter_target_id: sourceProfile.external_id,
+            matters: getMattersWhereTargetIsProfile(),
+            page_request: {
+              page,
+              page_size: 1000
+            }
+          },
+          connectionHolder
+        );
+      if (!ratings.length) {
+        break;
+      }
+      await this.deleteRatingsForProfileArchival(
+        ratings,
+        sourceProfile.handle,
+        targetProfile.handle,
+        connectionHolder
+      );
+      await this.insertRatingsAfterProfileArchival(
+        ratings
+          .map((it) => ({
+            ...it,
+            matter_target_id: targetProfile.external_id
+          }))
+          .filter(
+            (it) =>
+              !(
+                it.rater_profile_id === targetProfile.external_id &&
+                getMattersWhereTargetIsProfile().includes(it.matter)
+              )
+          ),
+        sourceProfile.handle,
+        targetProfile.handle,
+        connectionHolder
+      );
+      if (!ratings.length) {
+        break;
+      }
+      page++;
+    }
+  }
+
+  private async insertRatingsAfterProfileArchival(
+    ratings: Rating[],
+    sourceHandle: string,
+    targetHandle: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    for (const rating of ratings) {
+      const targetRating = await this.ratingsDb.getRatingForUpdate(
+        rating,
+        connectionHolder
+      );
+
+      await this.updateRatingInternal(
+        { ...rating, rating: rating.rating + targetRating.rating },
+        `Profile ${sourceHandle} archived, ratings transferred to ${targetHandle}`,
+        connectionHolder,
+        true
+      );
+    }
   }
 
   async getSummedRatingsOnMatterByTargetIds({
