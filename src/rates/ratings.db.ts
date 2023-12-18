@@ -96,6 +96,24 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
     };
   }
 
+  async lockRatingsOnMatterForUpdate({
+    rater_profile_id,
+    matter
+  }: {
+    rater_profile_id: string;
+    matter: RateMatter;
+  }): Promise<Rating[]> {
+    return this.db.execute(
+      `
+          select * from ${RATINGS_TABLE} where rating <> 0 and rater_profile_id = :rater_profile_id and matter = :matter for update
+      `,
+      {
+        rater_profile_id,
+        matter
+      }
+    );
+  }
+
   async getRatingForUpdate(
     ratingLockRequest: UpdateRatingRequest,
     connection: ConnectionWrapper<any>
@@ -185,33 +203,6 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
         param
       )
       .then((results) => results[0]?.rating ?? 0);
-  }
-
-  async lockNonZeroRatingsNewerFirst(
-    {
-      rater_profile_id,
-      page_request,
-      matter
-    }: {
-      rater_profile_id: string;
-      page_request: { page: number; page_size: number };
-      matter: RateMatter;
-    },
-    connection: ConnectionWrapper<any>
-  ): Promise<Rating[]> {
-    if (page_request.page < 1 || page_request.page_size <= 0) {
-      return [];
-    }
-    return this.db.execute(
-      `select * from ${RATINGS_TABLE} where rater_profile_id = :rater_profile_id and matter = :matter and rating <> 0 order by last_modified desc limit :limit offset :offset for update`,
-      {
-        rater_profile_id,
-        matter,
-        offset: (page_request.page - 1) * page_request.page_size,
-        limit: page_request.page_size
-      },
-      { wrappedConnection: connection }
-    );
   }
 }
 

@@ -110,7 +110,7 @@ export class RatingsService {
     );
   }
 
-  public async revokeOverRates() {
+  public async reduceOverRates() {
     const start = Time.now();
     this.logger.info('Revoking rates for profiles which have lost TDH');
     const overRateMatters = await this.ratingsDb.getOverRateMatters();
@@ -128,103 +128,58 @@ export class RatingsService {
     for (const [raterProfileId, profileMatters] of Object.entries(
       overRateMattersByProfileIds
     )) {
-      await this.revokeGivenProfileOverRates(raterProfileId, profileMatters);
+      await this.reduceGivenProfileOverRates(raterProfileId, profileMatters);
     }
     this.logger.info(
       `All rates revoked profiles which have lost TDH in ${start.diffFromNow()}`
     );
   }
 
-  private async revokeGivenProfileOverRates(
+  private async reduceGivenProfileOverRates(
     raterProfileId: string,
     profileMatters: OverRateMatter[]
   ) {
-    this.logger.info(`Revoking rates for profile ${raterProfileId}`);
+    this.logger.info(`Reducing rates for profile ${raterProfileId}`);
     for (const overRatedMatter of profileMatters) {
-      let runningTdhOver =
-        Math.abs(overRatedMatter.tally) - overRatedMatter.rater_tdh;
-      for (let page = 1; runningTdhOver > 0; page++) {
-        await this.ratingsDb.executeNativeQueriesInTransaction(
-          async (connection) => {
-            runningTdhOver = await this.handlePageOfOverRates(
-              raterProfileId,
-              overRatedMatter,
-              connection,
-              runningTdhOver
-            );
-          }
-        );
-      }
-    }
-    this.logger.info(`Revoked rates for profile ${raterProfileId}`);
-  }
-
-  private async handlePageOfOverRates(
-    raterProfileId: string,
-    overRatedMatter: OverRateMatter,
-    connection: ConnectionWrapper<any>,
-    runningTdhOver: number
-  ) {
-    const ratings = await this.ratingsDb.lockNonZeroRatingsNewerFirst(
-      {
+      const ratings = await this.ratingsDb.lockRatingsOnMatterForUpdate({
         rater_profile_id: raterProfileId,
-        matter: overRatedMatter.matter,
-        page_request: {
-          page: 1,
-          page_size: 1000
+        matter: overRatedMatter.matter
+      });
+      const coefficient = overRatedMatter.rater_tdh / overRatedMatter.tally;
+      await this.ratingsDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          for (const rating of ratings) {
+            const newRating = Math.floor(rating.rating * coefficient);
+            await this.insertLostTdhRating(rating, newRating, connection);
+          }
         }
-      },
-      connection
-    );
-    if (!ratings.length && runningTdhOver > 0) {
-      throw new Error(
-        `There are no ratings to revoke, but TDH is still over. rater_profile_id: ${raterProfileId}, matter: ${overRatedMatter.matter}`
       );
     }
-    for (const rating of ratings) {
-      const ratingValue = rating.rating;
-      const sign = ratingValue > 0 ? 1 : -1;
-      const counterRating =
-        (runningTdhOver - Math.abs(ratingValue) < 0
-          ? Math.abs(ratingValue) - runningTdhOver
-          : ratingValue) * sign;
-      runningTdhOver -= Math.abs(counterRating);
-      await this.insertCounterRating(
-        rating,
-        rating.rating - sign * counterRating,
-        connection,
-        ratingValue
-      );
-      if (runningTdhOver <= 0) {
-        break;
-      }
-    }
-    return runningTdhOver;
+    this.logger.info(`Reduced rates for profile ${raterProfileId}`);
   }
 
-  private async insertCounterRating(
-    rating: Rating,
+  private async insertLostTdhRating(
+    oldRating: Rating,
     newRating: number,
-    connection: ConnectionWrapper<any>,
-    ratingValue: number
+    connection: ConnectionWrapper<any>
   ) {
     await this.ratingsDb.updateRating(
       {
-        ...rating,
+        ...oldRating,
         rating: newRating
       },
       connection
     );
     await this.profileActivityLogsDb.insert(
       {
-        profile_id: rating.rater_profile_id,
-        target_id: rating.matter_target_id,
+        profile_id: oldRating.rater_profile_id,
+        target_id: oldRating.matter_target_id,
         type: ProfileActivityLogType.RATING_EDIT,
         contents: JSON.stringify({
-          old_rating: ratingValue,
+          old_rating: oldRating.rating,
           new_rating: newRating,
-          rating_matter: rating.matter,
-          rating_category: rating.matter_category,
+          rating_matter: oldRating.matter,
+          rating_category: oldRating.matter_category,
           change_reason: 'LOST_TDH'
         })
       },
