@@ -185,10 +185,10 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
                                        sum(r.rating) as tally
                                 from ${RATINGS_TABLE} r
                                 group by 1, 2)
-          select rt.rater_profile_id, rt.matter, rt.tally, pt.tdh as rater_tdh
+          select rt.rater_profile_id, rt.matter, rt.tally, pt.boosted_tdh as rater_tdh
           from rate_tallies rt
                    join ${PROFILE_TDHS_TABLE} pt on rt.rater_profile_id = pt.profile_id
-          where pt.tdh < abs(rt.tally);
+          where pt.boosted_tdh < abs(rt.tally);
       `
     );
   }
