@@ -528,6 +528,42 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     }
     return new Date(blockDateStr);
   }
+
+  async searchWhereHandleLike({
+    limit,
+    handle
+  }: {
+    limit: number;
+    handle: string;
+  }): Promise<Profile[]> {
+    return this.db.execute(
+      `select * from ${PROFILES_TABLE} where handle like concat('%',lower(:handle),'%') limit :limit`,
+      { handle, limit }
+    );
+  }
+
+  async getProfilesTdhsByProfileIds(
+    profileIds: string[]
+  ): Promise<Record<string, number>> {
+    if (!profileIds.length) {
+      return {};
+    }
+    return this.db
+      .execute(
+        `select profile_id, boosted_tdh as tdh from ${PROFILE_TDHS_TABLE} where profile_id in (:profileIds)`,
+        { profileIds }
+      )
+      .then((result) =>
+        profileIds.reduce((acc: Record<string, number>, profileId: string) => {
+          acc[profileId] =
+            result.find(
+              (r: { profile_id: string; tdh: number }) =>
+                r.profile_id === profileId
+            )?.tdh ?? 0;
+          return acc;
+        }, {} as Record<string, number>)
+      );
+  }
 }
 
 export const profilesDb = new ProfilesDb(dbSupplier);

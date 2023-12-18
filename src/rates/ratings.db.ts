@@ -204,6 +204,19 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
       )
       .then((results) => results[0]?.rating ?? 0);
   }
+
+  async getSummedRatingsOnMatterByTargetIds(param: {
+    matter: RateMatter;
+    matter_target_ids: string[];
+  }): Promise<{ matter_target_id: string; rating: number }[]> {
+    if (!param.matter_target_ids.length) {
+      return [];
+    }
+    return this.db.execute(
+      `select matter_target_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = :matter and matter_target_id in (:matter_target_ids) group by 1`,
+      param
+    );
+  }
 }
 
 export type UpdateRatingRequest = Omit<Rating, 'last_modified'>;

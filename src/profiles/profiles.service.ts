@@ -623,6 +623,48 @@ export class ProfilesService {
       throw new BadRequestException('No PFP provided');
     }
   }
+  async searchProfileMinimalsOfClosestMatches({
+    param,
+    limit
+  }: {
+    param: string;
+    limit: number;
+  }): Promise<ProfileMinimal[]> {
+    const profiles = await this.profilesDb.searchWhereHandleLike({
+      handle: param,
+      limit
+    });
+    const profileIds = profiles.map((it) => it.external_id);
+    const foundProfilesCicsByProfileIds =
+      await this.ratingsService.getSummedRatingsOnMatterByTargetIds({
+        matter: RateMatter.CIC,
+        matter_target_ids: profileIds
+      });
+    const tdhsByProfileIds = await this.profilesDb.getProfilesTdhsByProfileIds(
+      profileIds
+    );
+    return profiles.map((profile) => {
+      const cic = foundProfilesCicsByProfileIds[profile.external_id];
+      const tdh = tdhsByProfileIds[profile.external_id];
+      return {
+        handle: profile.handle,
+        normalised_handle: profile.normalised_handle,
+        primary_wallet: profile.primary_wallet,
+        tdh: tdh,
+        level: tdh2Level(tdh),
+        cic_rating: cic
+      };
+    });
+  }
+}
+
+export interface ProfileMinimal {
+  readonly handle: string;
+  readonly normalised_handle: string;
+  readonly primary_wallet: string;
+  readonly tdh: number;
+  readonly level: number;
+  readonly cic_rating: number;
 }
 
 export const profilesService = new ProfilesService(
