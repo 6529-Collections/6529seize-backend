@@ -49,7 +49,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
         ...log,
         id: uniqueShortId()
       },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
   }
 

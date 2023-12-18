@@ -265,7 +265,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         website: command.website ?? null,
         classification: command.classification
       },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
     const profile = await this.getProfileByHandle(
       command.handle,
@@ -319,7 +319,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         classification: command.classification,
         externalId: profileId
       },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
     const profile = await this.getProfileByHandle(
       command.handle,
@@ -355,7 +355,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         pfp: thumbnailUri,
         handle: profile.normalised_handle
       },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
     await this.getProfileByHandle(
       profile.handle,
@@ -432,7 +432,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `delete from ${PROFILE_TDH_LOGS_TABLE} where block = :block`,
       { block },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
   }
 
