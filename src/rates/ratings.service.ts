@@ -186,6 +186,23 @@ export class RatingsService {
       connection
     );
   }
+
+  async getSummedRatingsOnMatterByTargetIds({
+    matter_target_ids,
+    matter
+  }: {
+    matter_target_ids: string[];
+    matter: RateMatter;
+  }): Promise<Record<string, number>> {
+    const results = await this.ratingsDb.getSummedRatingsOnMatterByTargetIds({
+      matter_target_ids,
+      matter
+    });
+    return matter_target_ids.reduce((acc, id) => {
+      acc[id] = results.find((it) => it.matter_target_id === id)?.rating ?? 0;
+      return acc;
+    }, {} as Record<string, number>);
+  }
 }
 
 export const ratingsService: RatingsService = new RatingsService(
