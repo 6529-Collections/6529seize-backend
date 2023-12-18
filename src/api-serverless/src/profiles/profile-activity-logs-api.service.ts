@@ -9,7 +9,7 @@ import {
 } from '../../../entities/IProfileActivityLog';
 import { Page, PageRequest } from '../page-request';
 import { profilesDb, ProfilesDb } from '../../../profiles/profiles.db';
-import { RateMatter } from '../../../entities/IRating';
+import { getMattersWhereTargetIsProfile } from '../../../entities/IRating';
 
 export class ProfileActivityLogsApiService {
   constructor(
@@ -29,7 +29,7 @@ export class ProfileActivityLogsApiService {
     logType?: ProfileActivityLogType[];
     pageRequest: PageRequest;
     order: 'desc' | 'asc';
-  }): Promise<Page<ApiProfileActivtyLog>> {
+  }): Promise<Page<ApiProfileActivityLog>> {
     const params: ProfileLogSearchParams = {
       order,
       pageRequest
@@ -63,7 +63,7 @@ export class ProfileActivityLogsApiService {
         profile_handle: profilesHandlesByIds[log.profile_id]!,
         target_profile_handle:
           log.type === ProfileActivityLogType.RATING_EDIT &&
-          logContents.rating_matter === RateMatter.CIC
+          getMattersWhereTargetIsProfile().includes(logContents.rating_matter)
             ? profilesHandlesByIds[log.target_id!]
             : null
       };
@@ -75,7 +75,7 @@ export class ProfileActivityLogsApiService {
   }
 }
 
-export interface ApiProfileActivtyLog
+export interface ApiProfileActivityLog
   extends Omit<ProfileActivityLog, 'contents'> {
   readonly contents: object;
   readonly profile_handle: string;

@@ -2,7 +2,7 @@ import { asyncRouter } from '../async.router';
 import { ApiResponse } from '../api-response';
 import { Page } from '../page-request';
 import {
-  ApiProfileActivtyLog,
+  ApiProfileActivityLog,
   profileActivityLogsApiService
 } from './profile-activity-logs-api.service';
 import { Request, Response } from 'express';
@@ -28,7 +28,7 @@ router.get(
       },
       any
     >,
-    res: Response<ApiResponse<Page<ApiProfileActivtyLog>>>
+    res: Response<ApiResponse<Page<ApiProfileActivityLog>>>
   ) {
     const queryParams = req.query;
     const order = queryParams.order?.toLowerCase() === 'asc' ? 'asc' : 'desc';
