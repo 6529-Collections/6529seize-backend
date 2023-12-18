@@ -24,7 +24,7 @@ export class CicDb extends LazyDbAccessCompatibleService {
         id: id,
         ...newCicStatement
       },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
     return (await this.getCicStatementByIdAndProfileId(
       {
@@ -42,7 +42,7 @@ export class CicDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `delete from ${CIC_STATEMENTS_TABLE} where id = :id and profile_id = :profile_id`,
       props,
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
   }
 
@@ -58,7 +58,7 @@ export class CicDb extends LazyDbAccessCompatibleService {
         `select * from ${CIC_STATEMENTS_TABLE} where id = :id and profile_id = :profile_id`,
         props,
         {
-          wrappedConnection: connectionHolder?.connection,
+          wrappedConnection: connectionHolder,
           forcePool: DbPoolName.WRITE
         }
       )

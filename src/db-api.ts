@@ -127,7 +127,7 @@ export async function connect() {
 }
 
 function getPoolNameBySql(sql: string): DbPoolName {
-  return WRITE_OPERATIONS.some((op) => sql.toUpperCase().startsWith(op))
+  return WRITE_OPERATIONS.some((op) => sql.trim().toUpperCase().startsWith(op))
     ? DbPoolName.WRITE
     : DbPoolName.READ;
 }
@@ -429,8 +429,8 @@ async function fetchArtistsNamesByTable(field: string) {
       };
     })
     .sort((a: any, b: any) => {
-      let minCardA = Math.min(...a.cards);
-      let minCardB = Math.min(...b.cards);
+      const minCardA = Math.min(...a.cards);
+      const minCardB = Math.min(...b.cards);
       return minCardA - minCardB;
     });
 }
