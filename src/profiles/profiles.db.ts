@@ -12,6 +12,7 @@ import {
   PROFILE_TDHS_TABLE,
   PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
+  RATINGS_TABLE,
   TDH_BLOCKS_TABLE,
   WALLETS_TDH_TABLE
 } from '../constants';
@@ -31,11 +32,13 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       blockNo: number;
       consolidation_key: string | null;
       consolidation_display: string | null;
+      block_date: Date | null;
+      raw_tdh: number;
     }[]
   > {
     return this.db
       .execute(
-        `SELECT block, boosted_tdh as tdh, wallets, consolidation_key, consolidation_display FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
+        `SELECT t.block, t.boosted_tdh as tdh, t.tdh as raw_tdh, b.created_at as block_date, t.wallets, t.consolidation_key, t.consolidation_display, t.block FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} t LEFT JOIN ${TDH_BLOCKS_TABLE} b on t.block = b.block_number WHERE LOWER(t.consolidation_key) LIKE :wallet`,
         { wallet: `%${wallet.toLowerCase()}%` }
       )
       .then((result) =>
@@ -46,12 +49,16 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
             block: number;
             consolidation_key: string | null;
             consolidation_display: string | null;
+            block_date: string | null;
+            raw_tdh: number;
           }) => ({
             tdh: it.tdh,
             wallets: JSON.parse(it.wallets),
             blockNo: it.block,
             consolidation_key: it.consolidation_key,
-            consolidation_display: it.consolidation_display
+            consolidation_display: it.consolidation_display,
+            block_date: it.block_date ? new Date(it.block_date) : null,
+            raw_tdh: it.raw_tdh
           })
         )
       );
@@ -183,31 +190,30 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
   ) {
     await this.db.execute(
       `insert into ${PROFILES_ARCHIVE_TABLE}
-     (handle,
-      normalised_handle,
-      primary_wallet,
-      created_at,
-      created_by_wallet,
-      banner_1,
-      banner_2,
-      website,
-      classification,
-      updated_at,
-      updated_by_wallet,
-      external_id)
-     values (:handle,
-             :normalisedHandle,
-             :primaryWallet,
-             :createdAt,
-             :createdByWallet,
-             :banner1,
-             :banner2,
-             :website,
-             :classification,
-             :updatedAt,
-             :updatedByWallet,
-             :externalId
-             )`,
+       (handle,
+        normalised_handle,
+        primary_wallet,
+        created_at,
+        created_by_wallet,
+        banner_1,
+        banner_2,
+        website,
+        classification,
+        updated_at,
+        updated_by_wallet,
+        external_id)
+       values (:handle,
+               :normalisedHandle,
+               :primaryWallet,
+               :createdAt,
+               :createdByWallet,
+               :banner1,
+               :banner2,
+               :website,
+               :classification,
+               :updatedAt,
+               :updatedByWallet,
+               :externalId)`,
       {
         handle: param.handle,
         normalisedHandle: param.normalised_handle,
@@ -238,16 +244,16 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
   ): Promise<void> {
     await this.db.execute(
       `update ${PROFILES_TABLE}
-         set handle            = :handle,
-             normalised_handle = :normalisedHandle,
-             primary_wallet    = :primaryWallet,
-             updated_at        = current_time,
-             updated_by_wallet = :updatedByWallet,
-             banner_1          = :banner1,
-             banner_2          = :banner2,
-             website           = :website,
-             classification    = :classification
-         where normalised_handle = :oldHandle`,
+       set handle            = :handle,
+           normalised_handle = :normalisedHandle,
+           primary_wallet    = :primaryWallet,
+           updated_at        = current_time,
+           updated_by_wallet = :updatedByWallet,
+           banner_1          = :banner1,
+           banner_2          = :banner2,
+           website           = :website,
+           classification    = :classification
+       where normalised_handle = :oldHandle`,
       {
         oldHandle,
         handle: command.handle,
@@ -259,7 +265,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         website: command.website ?? null,
         classification: command.classification
       },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
     const profile = await this.getProfileByHandle(
       command.handle,
@@ -281,27 +287,26 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     const profileId = randomUUID();
     await this.db.execute(
       `insert into ${PROFILES_TABLE}
-     (handle,
-      normalised_handle,
-      primary_wallet,
-      created_at,
-      created_by_wallet,
-      banner_1,
-      banner_2,
-      website,
-      classification,
-      external_id)
-     values (:handle,
-             :normalisedHandle,
-             :primaryWallet,
-             current_time,
-             :createdByWallet,
-             :banner1,
-             :banner2,
-             :website,
-             :classification,
-             :externalId
-             )`,
+       (handle,
+        normalised_handle,
+        primary_wallet,
+        created_at,
+        created_by_wallet,
+        banner_1,
+        banner_2,
+        website,
+        classification,
+        external_id)
+       values (:handle,
+               :normalisedHandle,
+               :primaryWallet,
+               current_time,
+               :createdByWallet,
+               :banner1,
+               :banner2,
+               :website,
+               :classification,
+               :externalId)`,
       {
         handle: command.handle,
         normalisedHandle: command.handle.toLowerCase(),
@@ -313,7 +318,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         classification: command.classification,
         externalId: profileId
       },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
     const profile = await this.getProfileByHandle(
       command.handle,
@@ -349,7 +354,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         pfp: thumbnailUri,
         handle: profile.normalised_handle
       },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
     await this.getProfileByHandle(
       profile.handle,
@@ -426,7 +431,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `delete from ${PROFILE_TDH_LOGS_TABLE} where block = :block`,
       { block },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
   }
 
@@ -447,32 +452,41 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       wrappedConnection: connectionHolder
     });
     for (const newProfileTdh of newProfileTdhs) {
-      await this.db.execute(
-        `insert into ${PROFILE_TDH_LOGS_TABLE} (profile_id, tdh, boosted_tdh, block, created_at, block_date) values (:profileId, :tdh, :boostedTdh, :block, :createdAt, :blockDate)`,
-        {
-          profileId: newProfileTdh.profile_id,
-          tdh: newProfileTdh.tdh,
-          boostedTdh: newProfileTdh.boosted_tdh,
-          block: newProfileTdh.block,
-          createdAt: newProfileTdh.created_at,
-          blockDate: newProfileTdh.block_date
-        },
-        {
-          wrappedConnection: connectionHolder
-        }
-      );
-      await this.db.execute(
-        `insert into ${PROFILE_TDHS_TABLE} (profile_id, tdh, boosted_tdh, created_at, block, block_date) values (:profileId, :tdh, :boostedTdh, :createdAt, :block, :blockDate)`,
-        {
-          profileId: newProfileTdh.profile_id,
-          tdh: newProfileTdh.tdh,
-          boostedTdh: newProfileTdh.boosted_tdh,
-          createdAt: newProfileTdh.created_at,
-          block: newProfileTdh.block,
-          blockDate: newProfileTdh.block_date
-        }
-      );
+      await this.insertProfileTdh(newProfileTdh, connectionHolder);
     }
+  }
+
+  public async insertProfileTdh(
+    newProfileTdh: ProfileTdh,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `insert into ${PROFILE_TDH_LOGS_TABLE} (profile_id, tdh, boosted_tdh, block, created_at, block_date)
+       values (:profileId, :tdh, :boostedTdh, :block, :createdAt, :blockDate)`,
+      {
+        profileId: newProfileTdh.profile_id,
+        tdh: newProfileTdh.tdh,
+        boostedTdh: newProfileTdh.boosted_tdh,
+        block: newProfileTdh.block,
+        createdAt: newProfileTdh.created_at,
+        blockDate: newProfileTdh.block_date
+      },
+      {
+        wrappedConnection: connectionHolder
+      }
+    );
+    await this.db.execute(
+      `insert into ${PROFILE_TDHS_TABLE} (profile_id, tdh, boosted_tdh, created_at, block, block_date)
+       values (:profileId, :tdh, :boostedTdh, :createdAt, :block, :blockDate)`,
+      {
+        profileId: newProfileTdh.profile_id,
+        tdh: newProfileTdh.tdh,
+        boostedTdh: newProfileTdh.boosted_tdh,
+        createdAt: newProfileTdh.created_at,
+        block: newProfileTdh.block,
+        blockDate: newProfileTdh.block_date
+      }
+    );
   }
 
   async getProfileHandlesByIds(
@@ -514,6 +528,80 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       throw new Error(`Block date not found for block ${blockNo}`);
     }
     return new Date(blockDateStr);
+  }
+
+  async searchWhereHandleLike({
+    limit,
+    handle
+  }: {
+    limit: number;
+    handle: string;
+  }): Promise<Profile[]> {
+    return this.db.execute(
+      `select * from ${PROFILES_TABLE} where handle like concat('%',lower(:handle),'%') limit :limit`,
+      { handle, limit }
+    );
+  }
+
+  async getProfilesTdhsByProfileIds(
+    profileIds: string[]
+  ): Promise<Record<string, number>> {
+    if (!profileIds.length) {
+      return {};
+    }
+    return this.db
+      .execute(
+        `select profile_id, boosted_tdh as tdh from ${PROFILE_TDHS_TABLE} where profile_id in (:profileIds)`,
+        { profileIds }
+      )
+      .then((result) =>
+        profileIds.reduce((acc: Record<string, number>, profileId: string) => {
+          acc[profileId] =
+            result.find(
+              (r: { profile_id: string; tdh: number }) =>
+                r.profile_id === profileId
+            )?.tdh ?? 0;
+          return acc;
+        }, {} as Record<string, number>)
+      );
+  }
+
+  async deleteProfile(
+    { id }: { id: string },
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `delete from ${PROFILES_TABLE} where external_id = :id`,
+      { id },
+      { wrappedConnection: connectionHolder }
+    );
+  }
+
+  async getProfilesArchivalCandidates(
+    connectionHolder: ConnectionWrapper<any>
+  ): Promise<(Profile & { cic_rating: number; consolidation_key: string })[]> {
+    return this.db.execute(
+      `with cics as (select matter_target_id as profile_id, sum(rating) as cic_rating
+                       from ${RATINGS_TABLE}
+                       where matter = 'CIC'
+                         and rating <> 0
+                       group by 1),
+              profile_and_consolidation_key as (select p.*, lower(c.consolidation_key) as consolidation_key
+                                                from ${PROFILES_TABLE} p
+                                                         join ${CONSOLIDATED_WALLETS_TDH_TABLE} c
+                                                              on lower(c.consolidation_key) like
+                                                                 concat('%', lower(p.primary_wallet), '%')),
+              conflicting_profiles as (select consolidation_key
+                                       from profile_and_consolidation_key
+                                       group by 1
+                                       having count(*) > 1)
+         select p_and_c.*, case when cics.cic_rating is null then 0 else cics.cic_rating end as cic_rating, c.consolidation_key as consolidation_key
+         from conflicting_profiles c
+                  join profile_and_consolidation_key p_and_c on p_and_c.consolidation_key = c.consolidation_key
+                  left join cics on cics.profile_id = p_and_c.external_id`,
+      undefined,
+      { wrappedConnection: connectionHolder }
+    );
   }
 }
 

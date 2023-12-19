@@ -1014,6 +1014,9 @@ export async function persistConsolidatedTDH(tdh: ConsolidatedTDH[]) {
     await profilesService.updateProfileTdhs(tdh.at(0)?.block ?? 0, {
       connection: manager.connection
     });
+    await profilesService.mergeProfiles({
+      connection: manager.connection
+    });
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);

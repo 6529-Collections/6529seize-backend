@@ -24,6 +24,7 @@ import {
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { ratingsService, RatingsService } from '../rates/ratings.service';
 import { RateMatter } from '../entities/IRating';
+import { cicService, CicService } from '../cic/cic.service';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -32,6 +33,7 @@ export class ProfilesService {
     private readonly profilesDb: ProfilesDb,
     private readonly ratingsService: RatingsService,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
+    private readonly cicService: CicService,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
 
@@ -237,6 +239,22 @@ export class ProfilesService {
             },
             connectionHolder
           );
+          const tdhInfo = await this.getWalletTdhBlockNoAndConsolidatedWallets(
+            primary_wallet
+          );
+          if (tdhInfo.block_date) {
+            await this.profilesDb.insertProfileTdh(
+              {
+                profile_id: profileId,
+                block: tdhInfo.blockNo,
+                tdh: tdhInfo.tdh,
+                boosted_tdh: tdhInfo.tdh,
+                created_at: new Date(),
+                block_date: tdhInfo.block_date
+              },
+              connectionHolder
+            );
+          }
           await this.createProfileEditLogs({
             profileId: profileId,
             profileBeforeChange: null,
@@ -306,6 +324,85 @@ export class ProfilesService {
         handle
       );
     return updatedProfile!;
+  }
+
+  public async mergeProfiles(connectionHolder: ConnectionWrapper<any>) {
+    const start = Time.now();
+    const archivalCandidates =
+      await this.profilesDb.getProfilesArchivalCandidates(connectionHolder);
+    const groups = archivalCandidates.reduce((result, profile) => {
+      const key = profile.consolidation_key;
+      if (!result[key]) {
+        result[key] = [];
+      }
+      result[key].push(profile);
+      return result;
+    }, {} as Record<string, (Profile & { cic_rating: number })[]>);
+    const profileSets = Object.values(groups).map((profiles) => {
+      const sorted = [...profiles].sort((a, d) => d.cic_rating - a.cic_rating);
+      const target = sorted.at(0)!;
+      const toBeMerged = sorted.slice(1);
+      return { target, toBeMerged };
+    });
+    this.logger.info(`Archiving profiles in ${profileSets.length} sets`);
+    for (const profileSet of profileSets) {
+      await this.mergeProfileSet(profileSet, connectionHolder);
+    }
+    this.logger.info(
+      `${profileSets
+        .map((it) => it.toBeMerged.length)
+        .reduce(
+          (a, d) => a + d,
+          0
+        )} profiles merged with other profiles ${start.diffFromNow()}`
+    );
+  }
+
+  private async mergeProfileSet(
+    {
+      toBeMerged,
+      target
+    }: {
+      toBeMerged: Profile[];
+      target: Profile;
+    },
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    for (const profileToBeMerged of toBeMerged) {
+      const start = Time.now();
+      this.logger.info(
+        `Merging profile ${profileToBeMerged.external_id}/${profileToBeMerged.handle} to profile ${target.external_id}/${target.handle}`
+      );
+      await this.mergeProfileStatements(
+        profileToBeMerged,
+        target,
+        connectionHolder
+      );
+      await this.mergeRatings(profileToBeMerged, target, connectionHolder);
+      await this.profilesDb.deleteProfile(
+        { id: profileToBeMerged.external_id },
+        connectionHolder
+      );
+      await this.profileActivityLogsDb.insert(
+        {
+          profile_id: profileToBeMerged.external_id,
+          target_id: null,
+          type: ProfileActivityLogType.PROFILE_ARCHIVED,
+          contents: JSON.stringify({
+            handle: profileToBeMerged.handle,
+            reason: 'CONFLICTING_CONSOLIDATION'
+          })
+        },
+        connectionHolder
+      );
+      this.logger.info(
+        `Profile ${profileToBeMerged.external_id}/${
+          profileToBeMerged.handle
+        } deleted and merged to profile ${target.external_id}/${
+          target.handle
+        } on ${start.diffFromNow()}`
+      );
+    }
   }
 
   private async createProfileEditLogs({
@@ -538,6 +635,8 @@ export class ProfilesService {
     blockNo: number;
     consolidation_key: string | null;
     consolidation_display: string | null;
+    block_date: Date | null;
+    raw_tdh: number;
   }> {
     const normalisedWallet = wallet.toLowerCase();
     if (!WALLET_REGEX.exec(normalisedWallet)) {
@@ -546,7 +645,9 @@ export class ProfilesService {
         consolidatedWallets: [],
         blockNo: 0,
         consolidation_key: null,
-        consolidation_display: null
+        consolidation_display: null,
+        block_date: null,
+        raw_tdh: 0
       };
     }
     return this.profilesDb
@@ -558,7 +659,9 @@ export class ProfilesService {
             consolidatedWallets: [normalisedWallet],
             blockNo: 0,
             consolidation_key: null,
-            consolidation_display: null
+            consolidation_display: null,
+            block_date: null,
+            raw_tdh: 0
           };
         }
         const result = resultRows[0];
@@ -570,7 +673,9 @@ export class ProfilesService {
           consolidatedWallets: result.wallets,
           blockNo: result.blockNo,
           consolidation_key: result.consolidation_key,
-          consolidation_display: result.consolidation_display
+          consolidation_display: result.consolidation_display,
+          block_date: result.block_date,
+          raw_tdh: result.raw_tdh
         };
       });
   }
@@ -599,11 +704,109 @@ export class ProfilesService {
       throw new BadRequestException('No PFP provided');
     }
   }
+
+  private async mergeProfileStatements(
+    source: Profile,
+    target: Profile,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    const sourceStatements = await this.cicService.getCicStatementsByProfileId(
+      source.external_id
+    );
+    const targetStatements = await this.cicService.getCicStatementsByProfileId(
+      target.external_id
+    );
+    const missingTargetStatements = sourceStatements.filter(
+      (sourceStatement) => {
+        return !targetStatements.find(
+          (targetStatement) =>
+            targetStatement.statement_group ===
+              sourceStatement.statement_group &&
+            targetStatement.statement_type === sourceStatement.statement_type &&
+            targetStatement.statement_comment ===
+              sourceStatement.statement_comment &&
+            targetStatement.statement_value === sourceStatement.statement_value
+        );
+      }
+    );
+    for (const statement of missingTargetStatements) {
+      await this.cicService.insertStatement(
+        {
+          ...statement,
+          profile_id: target.external_id
+        },
+        connectionHolder
+      );
+    }
+    for (const sourceStatement of sourceStatements) {
+      await this.cicService.deleteStatement(sourceStatement, connectionHolder);
+    }
+  }
+
+  private async mergeRatings(
+    sourceProfile: Profile,
+    targetProfile: Profile,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.ratingsService.transferAllGivenProfileRatings(
+      sourceProfile,
+      targetProfile,
+      connectionHolder
+    );
+    await this.ratingsService.transferAllReceivedProfileRatings(
+      sourceProfile,
+      targetProfile,
+      connectionHolder
+    );
+  }
+  async searchProfileMinimalsOfClosestMatches({
+    param,
+    limit
+  }: {
+    param: string;
+    limit: number;
+  }): Promise<ProfileMinimal[]> {
+    const profiles = await this.profilesDb.searchWhereHandleLike({
+      handle: param,
+      limit
+    });
+    const profileIds = profiles.map((it) => it.external_id);
+    const foundProfilesCicsByProfileIds =
+      await this.ratingsService.getSummedRatingsOnMatterByTargetIds({
+        matter: RateMatter.CIC,
+        matter_target_ids: profileIds
+      });
+    const tdhsByProfileIds = await this.profilesDb.getProfilesTdhsByProfileIds(
+      profileIds
+    );
+    return profiles.map((profile) => {
+      const cic = foundProfilesCicsByProfileIds[profile.external_id];
+      const tdh = tdhsByProfileIds[profile.external_id];
+      return {
+        handle: profile.handle,
+        normalised_handle: profile.normalised_handle,
+        primary_wallet: profile.primary_wallet,
+        tdh: tdh,
+        level: tdh2Level(tdh),
+        cic_rating: cic
+      };
+    });
+  }
+}
+
+export interface ProfileMinimal {
+  readonly handle: string;
+  readonly normalised_handle: string;
+  readonly primary_wallet: string;
+  readonly tdh: number;
+  readonly level: number;
+  readonly cic_rating: number;
 }
 
 export const profilesService = new ProfilesService(
   profilesDb,
   ratingsService,
   profileActivityLogsDb,
+  cicService,
   getAlchemyInstance
 );

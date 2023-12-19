@@ -208,21 +208,29 @@ describe('RatingsService', () => {
         {
           rater_profile_id: 'pid',
           matter: RateMatter.CIC,
-          tally: 10,
+          tally: 20,
           rater_tdh: 8
         }
       ]);
-      when(ratingsDb.lockNonZeroRatingsNewerFirst).mockResolvedValue([
+      when(ratingsDb.lockRatingsOnMatterForUpdate).mockResolvedValue([
         {
-          rating: -2,
+          rating: 10,
           rater_profile_id: 'pid',
           matter: RateMatter.CIC,
           matter_target_id: 'mid2',
           matter_category: 'CIC',
           last_modified: Time.millis(0).toDate()
+        },
+        {
+          rating: -10,
+          rater_profile_id: 'pid',
+          matter: RateMatter.CIC,
+          matter_target_id: 'mid2',
+          matter_category: 'CIC2',
+          last_modified: Time.millis(0).toDate()
         }
       ]);
-      await ratingsService.revokeOverRates();
+      await ratingsService.reduceOverRates();
       expect(ratingsDb.updateRating).toBeCalledWith(
         {
           rater_profile_id: 'pid',
@@ -230,7 +238,18 @@ describe('RatingsService', () => {
           matter_target_id: 'mid2',
           matter_category: 'CIC',
           last_modified: expect.any(Date),
-          rating: 0
+          rating: 4
+        },
+        mockConnection
+      );
+      expect(ratingsDb.updateRating).toBeCalledWith(
+        {
+          rater_profile_id: 'pid',
+          matter: RateMatter.CIC,
+          matter_target_id: 'mid2',
+          matter_category: 'CIC2',
+          last_modified: expect.any(Date),
+          rating: -4
         },
         mockConnection
       );
@@ -240,10 +259,25 @@ describe('RatingsService', () => {
           target_id: 'mid2',
           type: ProfileActivityLogType.RATING_EDIT,
           contents: JSON.stringify({
-            old_rating: -2,
-            new_rating: 0,
+            old_rating: 10,
+            new_rating: 4,
             rating_matter: 'CIC',
             rating_category: 'CIC',
+            change_reason: 'LOST_TDH'
+          })
+        },
+        mockConnection
+      );
+      expect(profileActivityLogsDb.insert).toBeCalledWith(
+        {
+          profile_id: 'pid',
+          target_id: 'mid2',
+          type: ProfileActivityLogType.RATING_EDIT,
+          contents: JSON.stringify({
+            old_rating: -10,
+            new_rating: -4,
+            rating_matter: 'CIC',
+            rating_category: 'CIC2',
             change_reason: 'LOST_TDH'
           })
         },

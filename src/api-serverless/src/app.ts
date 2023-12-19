@@ -6,6 +6,7 @@ import { isNumber } from '../../helpers';
 import { validateUser } from './users/user_validation';
 
 import profilesRoutes from './profiles/profiles.routes';
+import profileSearchRoutes from './profiles/profile-search.routes';
 import authRoutes from './auth/auth.routes';
 import rememesRoutes from './rememes/rememes.routes';
 import nextgenRoutes from './nextgen/nextgen.routes';
@@ -1286,6 +1287,7 @@ loadApi().then(() => {
   });
 
   apiRouter.use(`/profiles`, profilesRoutes);
+  apiRouter.use(`/profiles-search`, profileSearchRoutes);
   apiRouter.use(`/auth`, authRoutes);
   apiRouter.use(`/rememes`, rememesRoutes);
   apiRouter.use(`/nextgen`, nextgenRoutes);

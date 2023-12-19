@@ -96,6 +96,24 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
     };
   }
 
+  async lockRatingsOnMatterForUpdate({
+    rater_profile_id,
+    matter
+  }: {
+    rater_profile_id: string;
+    matter: RateMatter;
+  }): Promise<Rating[]> {
+    return this.db.execute(
+      `
+          select * from ${RATINGS_TABLE} where rating <> 0 and rater_profile_id = :rater_profile_id and matter = :matter for update
+      `,
+      {
+        rater_profile_id,
+        matter
+      }
+    );
+  }
+
   async getRatingForUpdate(
     ratingLockRequest: UpdateRatingRequest,
     connection: ConnectionWrapper<any>
@@ -167,10 +185,10 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
                                        sum(r.rating) as tally
                                 from ${RATINGS_TABLE} r
                                 group by 1, 2)
-          select rt.rater_profile_id, rt.matter, rt.tally, pt.tdh as rater_tdh
+          select rt.rater_profile_id, rt.matter, rt.tally, pt.boosted_tdh as rater_tdh
           from rate_tallies rt
                    join ${PROFILE_TDHS_TABLE} pt on rt.rater_profile_id = pt.profile_id
-          where pt.tdh < abs(rt.tally);
+          where pt.boosted_tdh < abs(rt.tally);
       `
     );
   }
@@ -187,15 +205,13 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
       .then((results) => results[0]?.rating ?? 0);
   }
 
-  async lockNonZeroRatingsNewerFirst(
+  async lockNonZeroRatingsForProfileOlderFirst(
     {
       rater_profile_id,
-      page_request,
-      matter
+      page_request
     }: {
       rater_profile_id: string;
       page_request: { page: number; page_size: number };
-      matter: RateMatter;
     },
     connection: ConnectionWrapper<any>
   ): Promise<Rating[]> {
@@ -203,14 +219,57 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
       return [];
     }
     return this.db.execute(
-      `select * from ${RATINGS_TABLE} where rater_profile_id = :rater_profile_id and matter = :matter and rating <> 0 order by last_modified desc limit :limit offset :offset for update`,
+      `select * from ${RATINGS_TABLE} where rater_profile_id = :rater_profile_id and rating <> 0 order by last_modified asc limit :limit offset :offset for update`,
       {
         rater_profile_id,
-        matter,
         offset: (page_request.page - 1) * page_request.page_size,
         limit: page_request.page_size
       },
       { wrappedConnection: connection }
+    );
+  }
+
+  async lockNonZeroRatingsForMatterAndTargetIdOlderFirst(
+    {
+      matter_target_id,
+      matters,
+      page_request
+    }: {
+      matter_target_id: string;
+      matters: RateMatter[];
+      page_request: { page: number; page_size: number };
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<Rating[]> {
+    if (
+      page_request.page < 1 ||
+      page_request.page_size <= 0 ||
+      !matters.length
+    ) {
+      return [];
+    }
+    return this.db.execute(
+      `select * from ${RATINGS_TABLE} where matter_target_id = :matter_target_id and matter in (:matters) and rating <> 0 order by last_modified asc limit :limit offset :offset for update`,
+      {
+        matter_target_id,
+        matters,
+        offset: (page_request.page - 1) * page_request.page_size,
+        limit: page_request.page_size
+      },
+      { wrappedConnection: connection }
+    );
+  }
+
+  async getSummedRatingsOnMatterByTargetIds(param: {
+    matter: RateMatter;
+    matter_target_ids: string[];
+  }): Promise<{ matter_target_id: string; rating: number }[]> {
+    if (!param.matter_target_ids.length) {
+      return [];
+    }
+    return this.db.execute(
+      `select matter_target_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = :matter and matter_target_id in (:matter_target_ids) group by 1`,
+      param
     );
   }
 }

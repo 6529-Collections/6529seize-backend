@@ -17,7 +17,7 @@ export const handler = async () => {
     ProfileActivityLog,
     Rating
   ]);
-  await ratingsService.revokeOverRates();
+  await ratingsService.reduceOverRates();
   await unload();
   logger.info(`[COMPLETE]`);
 };

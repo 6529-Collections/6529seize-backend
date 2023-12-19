@@ -21,10 +21,10 @@ export class CicDb extends LazyDbAccessCompatibleService {
           values (:id, :profile_id, :statement_group, :statement_type, :statement_comment, :statement_value, current_time)
       `,
       {
-        id: id,
-        ...newCicStatement
+        ...newCicStatement,
+        id: id
       },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
     return (await this.getCicStatementByIdAndProfileId(
       {
@@ -42,7 +42,7 @@ export class CicDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `delete from ${CIC_STATEMENTS_TABLE} where id = :id and profile_id = :profile_id`,
       props,
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
   }
 
@@ -58,7 +58,7 @@ export class CicDb extends LazyDbAccessCompatibleService {
         `select * from ${CIC_STATEMENTS_TABLE} where id = :id and profile_id = :profile_id`,
         props,
         {
-          wrappedConnection: connectionHolder?.connection,
+          wrappedConnection: connectionHolder,
           forcePool: DbPoolName.WRITE
         }
       )

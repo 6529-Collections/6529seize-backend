@@ -6,6 +6,7 @@ import {
   ProfileActivityLogsDb
 } from '../profileActivityLogs/profile-activity-logs.db';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
+import { ConnectionWrapper } from '../sql-executor';
 
 const CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE: Record<
   CicStatementGroup,
@@ -175,24 +176,31 @@ export class CicService {
     }
     return await this.cicDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        const cicStatement = await this.cicDb.insertCicStatement(
-          statement,
-          connection
-        );
-        await this.profileActivityLogsDb.insert(
-          {
-            profile_id: statement.profile_id,
-            target_id: null,
-            type: CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE[
-              cicStatement.statement_group
-            ],
-            contents: JSON.stringify({ action: 'ADD', statement: cicStatement })
-          },
-          connection
-        );
-        return cicStatement;
+        return await this.insertStatement(statement, connection);
       }
     );
+  }
+
+  public async insertStatement(
+    statement: Omit<CicStatement, 'id' | 'crated_at' | 'updated_at'>,
+    connection: ConnectionWrapper<any>
+  ) {
+    const cicStatement = await this.cicDb.insertCicStatement(
+      statement,
+      connection
+    );
+    await this.profileActivityLogsDb.insert(
+      {
+        profile_id: statement.profile_id,
+        target_id: null,
+        type: CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE[
+          cicStatement.statement_group
+        ],
+        contents: JSON.stringify({ action: 'ADD', statement: cicStatement })
+      },
+      connection
+    );
+    return cicStatement;
   }
 
   public async deleteCicStatement(props: { profile_id: string; id: string }) {
@@ -200,22 +208,32 @@ export class CicService {
       props
     );
     await this.cicDb.executeNativeQueriesInTransaction(async (connection) => {
-      await this.cicDb.deleteCicStatement(props, connection);
-      await this.profileActivityLogsDb.insert(
-        {
-          profile_id: cicStatement.profile_id,
-          target_id: null,
-          type: CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE[
-            cicStatement.statement_group
-          ],
-          contents: JSON.stringify({
-            action: 'DELETE',
-            statement: cicStatement
-          })
-        },
-        connection
-      );
+      await this.deleteStatement(cicStatement, connection);
     });
+  }
+
+  public async deleteStatement(
+    cicStatement: CicStatement,
+    connection: ConnectionWrapper<any>
+  ) {
+    await this.cicDb.deleteCicStatement(
+      { id: cicStatement.id, profile_id: cicStatement.profile_id },
+      connection
+    );
+    await this.profileActivityLogsDb.insert(
+      {
+        profile_id: cicStatement.profile_id,
+        target_id: null,
+        type: CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE[
+          cicStatement.statement_group
+        ],
+        contents: JSON.stringify({
+          action: 'DELETE',
+          statement: cicStatement
+        })
+      },
+      connection
+    );
   }
 }
 
