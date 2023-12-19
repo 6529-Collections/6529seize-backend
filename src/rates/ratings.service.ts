@@ -33,7 +33,7 @@ export interface ProfilesMatterRatingWithRaterLevel
 }
 
 export class RatingsService {
-  private readonly logger = Logger.get('[RATINGS_SERVICE]');
+  private readonly logger = Logger.get('RATINGS_SERVICE');
 
   constructor(
     private readonly ratingsDb: RatingsDb,
@@ -164,9 +164,17 @@ export class RatingsService {
       const coefficient = overRatedMatter.rater_tdh / overRatedMatter.tally;
       await this.ratingsDb.executeNativeQueriesInTransaction(
         async (connection) => {
+          let overTdh =
+            Math.abs(overRatedMatter.tally) - overRatedMatter.rater_tdh;
           for (const rating of ratings) {
-            const newRating = Math.floor(rating.rating * coefficient);
+            const newRating =
+              Math.floor(Math.abs(rating.rating * coefficient)) *
+              (rating.rating / Math.abs(rating.rating));
+            overTdh = overTdh - (Math.abs(rating.rating) - Math.abs(newRating));
             await this.insertLostTdhRating(rating, newRating, connection);
+            if (overTdh <= 0) {
+              break;
+            }
           }
         }
       );
