@@ -1,7 +1,8 @@
 import {
   Alchemy,
   AssetTransfersCategory,
-  AssetTransfersWithMetadataParams
+  AssetTransfersWithMetadataParams,
+  Network
 } from 'alchemy-sdk';
 import {
   CLOUDFRONT_DISTRIBUTION,
@@ -37,6 +38,8 @@ let myBucket: string;
 const logger = Logger.get('NEXTGEN');
 
 const NEXTGEN_S3_PATH = `nextgen/tokens/images/${NEXTGEN_CONTRACT.network}-${NEXTGEN_CONTRACT.contract}`;
+const GENERATOR_NETWORK_PATH =
+  NEXTGEN_CONTRACT.network === Network.ETH_GOERLI ? 'testnet' : 'mainnet';
 
 function load() {
   alchemy = new Alchemy({
@@ -96,7 +99,7 @@ export const refreshNextgenTokens = async () => {
         const key = i.Key!.split('/');
         const image = key[key.length - 1];
         const tokenId = parseInt(image.split('.')[0]);
-        await persistImage(tokenId, getCFLink(tokenId));
+        await persistImage(tokenId);
       })
     );
   } else {
@@ -178,16 +181,17 @@ async function persistNewTokens(newTokens: number[]) {
   );
 }
 
-async function persistImage(tokenId: number, url?: string) {
+async function persistImage(tokenId: number) {
   const imageKey = `${NEXTGEN_S3_PATH}/${tokenId}.png`;
   const imageExists = await objectExists(s3, myBucket, imageKey);
-  const generatorUrl = `https://nextgen-generator.seize.io/png/${tokenId}`;
+  const generatorUrl = `https://nextgen-generator.seize.io/${GENERATOR_NETWORK_PATH}/png/${tokenId}`;
+  const cfUrl = getCFLink(tokenId);
 
   let imageCompare: boolean;
-  if (url && imageExists) {
-    imageCompare = await compareImages(url, generatorUrl);
+  if (imageExists) {
+    imageCompare = await compareImages(cfUrl, generatorUrl);
   } else {
-    imageCompare = true;
+    imageCompare = false;
   }
 
   logger.info({
