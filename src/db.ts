@@ -71,6 +71,13 @@ import {
   formatAddress
 } from './helpers';
 import { getConsolidationsSql } from './sql_helpers';
+import {
+  NextGenTransactionsBlock,
+  NextGenAllowlist,
+  NextGenAllowlistBurn,
+  NextGenCollection,
+  NextGenCollectionBurn
+} from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { Profile, ProfileArchived } from './entities/IProfile';
 import { Logger } from './logging';
@@ -121,6 +128,11 @@ export async function connect(entities: any[] = []) {
       User,
       Profile,
       ProfileArchived,
+      NextGenTransactionsBlock,
+      NextGenAllowlist,
+      NextGenAllowlistBurn,
+      NextGenCollection,
+      NextGenCollectionBurn,
       ProfileTdh,
       ProfileTdhLog,
       CicStatement,
@@ -1372,4 +1384,22 @@ export async function persistTDHHistory(tdhHistory: TDHHistory[]) {
 export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
   const globalHistoryRepo = AppDataSource.getRepository(GlobalTDHHistory);
   await globalHistoryRepo.upsert(globalHistory, ['date', 'block']);
+}
+
+export async function fetchLatestNextgenTransactionsBlockNumber() {
+  const repo = AppDataSource.getRepository(NextGenTransactionsBlock);
+  const latestBlock = await repo.findOne({
+    order: {
+      block_number: 'DESC'
+    },
+    where: {}
+  });
+  return latestBlock ? latestBlock.block_number : 0;
+}
+
+export async function persistNextgenTransactionsBlockNumber(block: number) {
+  const repo = AppDataSource.getRepository(NextGenTransactionsBlock);
+  await repo.save({
+    block_number: block
+  });
 }
