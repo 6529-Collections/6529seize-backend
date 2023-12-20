@@ -33,7 +33,7 @@ import {
 import { validateUser } from './users/user_validation';
 
 import profilesRoutes from './profiles/profiles.routes';
-import profileSearchRoutes from './profiles/profile-search.routes';
+import communityMembersSearchRoutes from './profiles/community-members-search.routes';
 import authRoutes from './auth/auth.routes';
 import royaltiesRoutes from './royalties/royalties.routes';
 import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
@@ -1370,7 +1370,7 @@ loadApi().then(() => {
   });
 
   apiRouter.use(`/profiles`, profilesRoutes);
-  apiRouter.use(`/profiles-search`, profileSearchRoutes);
+  apiRouter.use(`/community-members`, communityMembersSearchRoutes);
   apiRouter.use(`/auth`, authRoutes);
   apiRouter.use(`/gas`, gasRoutes);
   apiRouter.use(`/royalties`, royaltiesRoutes);
