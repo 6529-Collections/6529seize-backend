@@ -4,7 +4,10 @@ import {
 } from '../open-ai-abusiveness-detection.service';
 import { abusivenessCheckDb, AbusivenessCheckDb } from './abusiveness-check.db';
 import { BadRequestException } from '../exceptions';
-import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
+import {
+  AbusivenessDetectionResult,
+  REP_CATEGORY_PATTERN
+} from '../entities/IAbusivenessDetectionResult';
 
 export class AbusivenessCheckService {
   constructor(
@@ -17,8 +20,7 @@ export class AbusivenessCheckService {
     if (txt.length === 0 || txt.length > 100) {
       throw new BadRequestException(`Text must be 1-100 characters`);
     }
-    const regexPattern = /^[a-zA-Z0-9?!,.'() ]{1,100}$/;
-    if (!regexPattern.exec(txt)) {
+    if (!REP_CATEGORY_PATTERN.exec(txt)) {
       throw new BadRequestException(
         `Text for abusiveness check contains invalid characters, is shorter than one character or is longer than 100 characters. Only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes are allowed.`
       );

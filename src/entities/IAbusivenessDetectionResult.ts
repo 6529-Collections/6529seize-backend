@@ -12,3 +12,5 @@ export class AbusivenessDetectionResult {
   @Column({ type: 'datetime', nullable: false })
   readonly external_check_performed_at!: Date;
 }
+
+export const REP_CATEGORY_PATTERN = /^[a-zA-Z0-9?!,.'() ]{1,100}$/;
