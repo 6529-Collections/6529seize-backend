@@ -81,6 +81,7 @@ import { profilesService } from './profiles/profiles.service';
 import { ProfileTdh, ProfileTdhLog } from './entities/IProfileTDH';
 import { ProfileActivityLog } from './entities/IProfileActivityLog';
 import { Rating } from './entities/IRating';
+import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
 
 const mysql = require('mysql');
 
@@ -125,7 +126,8 @@ export async function connect(entities: any[] = []) {
       ProfileTdhLog,
       CicStatement,
       ProfileActivityLog,
-      Rating
+      Rating,
+      AbusivenessDetectionResult
     ];
   }
 
