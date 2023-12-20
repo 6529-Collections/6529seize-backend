@@ -770,7 +770,7 @@ export class ProfilesService {
       return [];
     }
     if (WALLET_REGEX.exec(param)) {
-      return await this.searchCommunityMemeberByWallet(param);
+      return await this.searchCommunityMemberByWallet(param);
     } else {
       const membersByHandles =
         await this.profilesDb.searchCommunityMembersWhereHandleLike({
@@ -783,6 +783,12 @@ export class ProfilesService {
           limit: limit * 3
         });
       const members = [...membersByHandles, ...profilesByEnsNames]
+        .reduce((acc, prof) => {
+          if (!acc.find((it) => it.display === prof.display)) {
+            acc.push(prof);
+          }
+          return acc;
+        }, [] as (Profile & { display: string; tdh: number; wallet: string })[])
         .sort((a, d) => d.tdh - a.tdh)
         .slice(0, limit);
       const profileIds = members
@@ -802,13 +808,16 @@ export class ProfilesService {
           tdh: member.tdh,
           level: tdh2Level(member.tdh),
           cic_rating: cic ?? 0,
-          display: member.display
+          display: member.display,
+          wallet: member.wallet
         };
       });
     }
   }
 
-  private async searchCommunityMemeberByWallet(wallet: string) {
+  private async searchCommunityMemberByWallet(
+    wallet: string
+  ): Promise<CommunityMemberMinimal[]> {
     const profileAndConsolidationsInfo = await this.getProfileByWallet(wallet);
     if (!profileAndConsolidationsInfo) {
       return [];
@@ -822,7 +831,8 @@ export class ProfilesService {
       const wallets = await this.profilesDb.getPrediscoveredEnsNames([
         profile!.primary_wallet.toLowerCase()
       ]);
-      display = wallets.at(0)?.ens ?? profile?.primary_wallet ?? null;
+      const walletResp = wallets.at(0);
+      display = walletResp?.ens ?? wallet;
     }
     return [
       {
@@ -832,7 +842,8 @@ export class ProfilesService {
         tdh: consolidation.tdh,
         level: level,
         cic_rating: cic.cic_rating ?? 0,
-        display: display
+        display: display,
+        wallet
       }
     ];
   }
@@ -846,6 +857,7 @@ export interface CommunityMemberMinimal {
   readonly tdh: number;
   readonly level: number;
   readonly cic_rating: number;
+  readonly wallet: string;
 }
 
 export const profilesService = new ProfilesService(
