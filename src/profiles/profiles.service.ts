@@ -789,7 +789,14 @@ export class ProfilesService {
           }
           return acc;
         }, [] as (Profile & { display: string; tdh: number; wallet: string })[])
-        .sort((a, d) => d.tdh - a.tdh)
+        .sort((a, d) => {
+          if (a.handle && !d.handle) {
+            return -1;
+          } else if (!a.handle && d.handle) {
+            return 1;
+          }
+          return d.tdh - a.tdh;
+        })
         .slice(0, limit);
       const profileIds = members
         .map((it) => it.external_id)
