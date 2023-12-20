@@ -536,12 +536,17 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
   }: {
     limit: number;
     handle: string;
-  }): Promise<(Profile & { tdh: number; display: string })[]> {
-    const sql = `
+  }): Promise<(Profile & { tdh: number; display: string; wallet: string })[]> {
+    if (handle.endsWith('eth') && handle.length <= 6) {
+      return [];
+    }
+    {
+      const sql = `
     select ${PROFILES_TABLE}.*, 
       ${PROFILES_TABLE}.*, 
       if(${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh is null, 0, ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh) as tdh,
-      coalesce(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, ${ENS_TABLE}.display, ${PROFILES_TABLE}.primary_wallet) as display
+      coalesce(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, ${ENS_TABLE}.display, ${PROFILES_TABLE}.primary_wallet) as display,
+      ${ENS_TABLE}.wallet as wallet
     from ${ENS_TABLE}
     left join ${CONSOLIDATED_WALLETS_TDH_TABLE} on lower(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key) like concat('%', lower(${ENS_TABLE}.wallet), '%')
     left join ${PROFILES_TABLE} on lower(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key) like concat('%', lower(${PROFILES_TABLE}.primary_wallet), '%')
@@ -549,7 +554,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     order by ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh desc
     limit :limit
     `;
-    return this.db.execute(sql, { handle, limit });
+      return this.db.execute(sql, { handle, limit });
+    }
   }
 
   async searchCommunityMembersWhereHandleLike({
@@ -558,12 +564,13 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
   }: {
     limit: number;
     handle: string;
-  }): Promise<(Profile & { tdh: number; display: string })[]> {
+  }): Promise<(Profile & { tdh: number; display: string; wallet: string })[]> {
     const sql = `
     select 
       ${PROFILES_TABLE}.*, 
       if(${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh is null, 0, ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh) as tdh,
-      coalesce(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, ${ENS_TABLE}.display, ${PROFILES_TABLE}.primary_wallet) as display
+      coalesce(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, ${ENS_TABLE}.display, ${PROFILES_TABLE}.primary_wallet) as display,
+      ${PROFILES_TABLE}.primary_wallet as wallet
     from ${PROFILES_TABLE}
     left join ${CONSOLIDATED_WALLETS_TDH_TABLE} on lower(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key) like concat('%', lower(${PROFILES_TABLE}.primary_wallet), '%')
     left join ${ENS_TABLE} on lower(${ENS_TABLE}.wallet) = concat('%', lower(${PROFILES_TABLE}.primary_wallet), '%')
