@@ -759,45 +759,90 @@ export class ProfilesService {
       connectionHolder
     );
   }
-  async searchProfileMinimalsOfClosestMatches({
+  async searchCommunityMemberMinimalsOfClosestMatches({
     param,
     limit
   }: {
     param: string;
     limit: number;
-  }): Promise<ProfileMinimal[]> {
-    const profiles = await this.profilesDb.searchWhereHandleLike({
-      handle: param,
-      limit
-    });
-    const profileIds = profiles.map((it) => it.external_id);
-    const foundProfilesCicsByProfileIds =
-      await this.ratingsService.getSummedRatingsOnMatterByTargetIds({
-        matter: RateMatter.CIC,
-        matter_target_ids: profileIds
+  }): Promise<CommunityMemberMinimal[]> {
+    if (param.length < 3 || param.length > 100) {
+      return [];
+    }
+    if (WALLET_REGEX.exec(param)) {
+      return await this.searchCommunityMemeberByWallet(param);
+    } else {
+      const membersByHandles =
+        await this.profilesDb.searchCommunityMembersWhereHandleLike({
+          handle: param,
+          limit: limit * 3
+        });
+      const profilesByEnsNames =
+        await this.profilesDb.searchCommunityMembersWhereEnsLike({
+          handle: param,
+          limit: limit * 3
+        });
+      const members = [...membersByHandles, ...profilesByEnsNames]
+        .sort((a, d) => d.tdh - a.tdh)
+        .slice(0, limit);
+      const profileIds = members
+        .map((it) => it.external_id)
+        .filter((it) => !!it);
+      const foundProfilesCicsByProfileIds =
+        await this.ratingsService.getSummedRatingsOnMatterByTargetIds({
+          matter: RateMatter.CIC,
+          matter_target_ids: profileIds
+        });
+      return members.map((member) => {
+        const cic = foundProfilesCicsByProfileIds[member.external_id];
+        return {
+          handle: member.handle,
+          normalised_handle: member.normalised_handle,
+          primary_wallet: member.primary_wallet,
+          tdh: member.tdh,
+          level: tdh2Level(member.tdh),
+          cic_rating: cic ?? 0,
+          display: member.display
+        };
       });
-    const tdhsByProfileIds = await this.profilesDb.getProfilesTdhsByProfileIds(
-      profileIds
-    );
-    return profiles.map((profile) => {
-      const cic = foundProfilesCicsByProfileIds[profile.external_id];
-      const tdh = tdhsByProfileIds[profile.external_id];
-      return {
-        handle: profile.handle,
-        normalised_handle: profile.normalised_handle,
-        primary_wallet: profile.primary_wallet,
-        tdh: tdh,
-        level: tdh2Level(tdh),
-        cic_rating: cic
-      };
-    });
+    }
+  }
+
+  private async searchCommunityMemeberByWallet(wallet: string) {
+    const profileAndConsolidationsInfo = await this.getProfileByWallet(wallet);
+    if (!profileAndConsolidationsInfo) {
+      return [];
+    }
+    const { profile, consolidation, cic, level } = profileAndConsolidationsInfo;
+    let display = consolidation.consolidation_display;
+    if (!display && !profile) {
+      return [];
+    }
+    if (!display) {
+      const wallets = await this.profilesDb.getPrediscoveredEnsNames([
+        profile!.primary_wallet.toLowerCase()
+      ]);
+      display = wallets.at(0)?.ens ?? profile?.primary_wallet ?? null;
+    }
+    return [
+      {
+        handle: profile?.handle ?? null,
+        normalised_handle: profile?.normalised_handle ?? null,
+        primary_wallet: profile?.primary_wallet ?? null,
+        tdh: consolidation.tdh,
+        level: level,
+        cic_rating: cic.cic_rating ?? 0,
+        display: display
+      }
+    ];
   }
 }
 
-export interface ProfileMinimal {
-  readonly handle: string;
-  readonly normalised_handle: string;
-  readonly primary_wallet: string;
+export interface CommunityMemberMinimal {
+  readonly handle: string | null;
+  readonly normalised_handle: string | null;
+  readonly primary_wallet: string | null;
+  readonly display: string | null;
   readonly tdh: number;
   readonly level: number;
   readonly cic_rating: number;

@@ -2,7 +2,7 @@ import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import {
-  ProfileMinimal,
+  CommunityMemberMinimal,
   profilesService
 } from '../../../profiles/profiles.service';
 
@@ -20,7 +20,7 @@ router.get(
       },
       any
     >,
-    res: Response<ApiResponse<ProfileMinimal[]>>
+    res: Response<ApiResponse<CommunityMemberMinimal[]>>
   ) {
     const param = req.query.param?.toLowerCase();
 
@@ -28,7 +28,7 @@ router.get(
       res.send([]);
     } else {
       const results =
-        await profilesService.searchProfileMinimalsOfClosestMatches({
+        await profilesService.searchCommunityMemberMinimalsOfClosestMatches({
           param,
           limit: 10
         });
