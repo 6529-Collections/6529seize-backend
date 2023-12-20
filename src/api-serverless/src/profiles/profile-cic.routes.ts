@@ -18,6 +18,12 @@ import {
 import { RateMatter } from '../../../entities/IRating';
 import { Page } from '../page-request';
 import { cicService } from '../../../cic/cic.service';
+import {
+  GetProfileRatingsRequest,
+  getRaterInfoFromRequest,
+  getRatingsSearchParamsFromRequest,
+  RateProfileRequest
+} from './rating.helper';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -89,47 +95,17 @@ router.get(
 router.get(
   `/ratings`,
   async function (
-    req: Request<
-      {
-        handleOrWallet: string;
-      },
-      any,
-      any,
-      {
-        order: string;
-        order_by: string;
-        page?: string;
-        page_size?: string;
-        rater?: string | null;
-      },
-      any
-    >,
+    req: GetProfileRatingsRequest,
     res: Response<ApiResponse<Page<ProfilesMatterRatingWithRaterLevel>>>
   ) {
-    const order = req.query.order?.toLowerCase();
-    const order_by = req.query.order_by?.toLowerCase();
-    const page = req.query.page ? parseInt(req.query.page) : 1;
-    const page_size = req.query.page_size ? parseInt(req.query.page_size) : 200;
-    const targetHandleOrWallet = req.params.handleOrWallet.toLowerCase();
-    const profileAndConsolidationsOfTarget =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        targetHandleOrWallet
-      );
-    const targetProfile = profileAndConsolidationsOfTarget?.profile;
-    if (!targetProfile) {
-      throw new NotFoundException(
-        `No profile found for ${targetHandleOrWallet}`
-      );
-    }
-    let rater_profile_id: string | null = null;
-    if (req.query.rater) {
-      rater_profile_id =
-        (
-          await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-            req.query.rater
-          )
-        )?.profile?.external_id ?? null;
-    }
+    const {
+      order,
+      order_by,
+      page,
+      page_size,
+      targetProfile,
+      rater_profile_id
+    } = await getRatingsSearchParamsFromRequest(req);
 
     const results = await ratingsService.getPageOfRatingsForMatter({
       rater_profile_id: rater_profile_id,
@@ -150,41 +126,15 @@ router.post(
   `/rating`,
   needsAuthenticatedUser(),
   async function (
-    req: Request<
-      {
-        handleOrWallet: string;
-      },
-      any,
-      ApiAddCicRatingToProfileRequest,
-      any,
-      any
-    >,
+    req: RateProfileRequest<ApiAddCicRatingToProfileRequest>,
     res: Response<ApiResponse<ProfileAndConsolidations>>
   ) {
-    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
-    const raterWallet = getWalletOrThrow(req);
     const { amount } = getValidatedByJoiOrThrow(
       req.body,
       ApiAddCicRatingToProfileRequestSchema
     );
-    const targetProfile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
-      );
-    if (!targetProfile?.profile) {
-      throw new NotFoundException(`No profile found for ${handleOrWallet}`);
-    }
-    const raterProfile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        raterWallet
-      );
-    if (!raterProfile?.profile) {
-      throw new NotFoundException(
-        `No profile found for authenticated used ${handleOrWallet}`
-      );
-    }
-    const raterProfileId = raterProfile.profile.external_id;
-    const targetProfileId = targetProfile.profile.external_id;
+    const { handleOrWallet, raterProfileId, targetProfileId } =
+      await getRaterInfoFromRequest(req);
     await ratingsService.updateRating({
       rater_profile_id: raterProfileId,
       matter: RateMatter.CIC,

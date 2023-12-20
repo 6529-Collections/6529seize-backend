@@ -1,59 +1,72 @@
 import { asyncRouter } from '../async.router';
-import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
-import { Request, Response } from 'express';
+import { needsAuthenticatedUser } from '../auth/auth';
+import { Response } from 'express';
 import { ApiResponse } from '../api-response';
-import { ProfileAndConsolidations } from '../../../profiles/profile.types';
 import { getValidatedByJoiOrThrow } from '../validation';
-import { profilesService } from '../../../profiles/profiles.service';
-import { BadRequestException, NotFoundException } from '../../../exceptions';
+import { BadRequestException } from '../../../exceptions';
 import * as Joi from 'joi';
-import { ratingsService } from '../../../rates/ratings.service';
+import {
+  ProfilesMatterRatingWithRaterLevel,
+  ratingsService
+} from '../../../rates/ratings.service';
 import { RateMatter } from '../../../entities/IRating';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
+import { Page } from '../page-request';
+import {
+  GetProfileRatingsRequest,
+  getRaterInfoFromRequest,
+  getRatingsSearchParamsFromRequest,
+  RateProfileRequest
+} from './rating.helper';
 
 const router = asyncRouter({ mergeParams: true });
+
+router.get(
+  `/ratings`,
+  async function (
+    req: GetProfileRatingsRequest,
+    res: Response<ApiResponse<Page<ProfilesMatterRatingWithRaterLevel>>>
+  ) {
+    const {
+      order,
+      order_by,
+      page,
+      page_size,
+      targetProfile,
+      rater_profile_id
+    } = await getRatingsSearchParamsFromRequest(req);
+
+    const results = await ratingsService.getPageOfRatingsForMatter({
+      rater_profile_id: rater_profile_id,
+      matter: RateMatter.REP,
+      matter_target_id: targetProfile.external_id,
+      page_request: {
+        page: page > 0 ? page : 1,
+        page_size: page_size > 0 ? page_size : 200
+      },
+      order: order,
+      order_by: order_by
+    });
+    res.send(results);
+  }
+);
 
 router.post(
   `/rating`,
   needsAuthenticatedUser(),
   async function (
-    req: Request<
-      {
-        handleOrWallet: string;
-      },
-      any,
-      ApiAddRepRatingToProfileRequest,
-      any,
-      any
-    >,
-    res: Response<ApiResponse<ProfileAndConsolidations>>
+    req: RateProfileRequest<ApiAddRepRatingToProfileRequest>,
+    res: Response<ApiResponse<void>>
   ) {
-    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
-    const raterWallet = getWalletOrThrow(req);
     const { amount, category } = getValidatedByJoiOrThrow(
       req.body,
       ApiAddRepRatingToProfileRequestSchema
     );
     const proposedCategory = category?.trim() ?? '';
-    const targetProfile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
-      );
-    if (!targetProfile?.profile) {
-      throw new NotFoundException(`No profile found for ${handleOrWallet}`);
-    }
-    const raterProfile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        raterWallet
-      );
-    if (!raterProfile?.profile) {
-      throw new NotFoundException(
-        `No profile found for authenticated used ${handleOrWallet}`
-      );
-    }
-    const raterProfileId = raterProfile.profile.external_id;
-    const targetProfileId = targetProfile.profile.external_id;
+    const { raterProfileId, targetProfileId } = await getRaterInfoFromRequest(
+      req
+    );
     if (proposedCategory !== '') {
       const abusivenessDetectionResult =
         await abusivenessCheckService.checkAbusiveness(category);
@@ -68,11 +81,7 @@ router.post(
       matter_target_id: targetProfileId,
       rating: amount
     });
-    const updatedProfileInfo =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
-      );
-    res.status(201).send(updatedProfileInfo!);
+    res.status(201);
   }
 );
 
