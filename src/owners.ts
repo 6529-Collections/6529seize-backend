@@ -99,7 +99,6 @@ export const findOwners = async () => {
 
   logger.info(`[DELTA ${ownersDelta.length}]`);
   await persistOwners(ownersDelta);
-  return ownersDelta;
 };
 
 export function getOwnersDelta(newOwners: Owner[], startingOwners: Owner[]) {

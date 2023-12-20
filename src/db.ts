@@ -35,9 +35,13 @@ import { ConsolidatedTDHUpload } from './entities/IUpload';
 import {
   ConsolidatedOwnerMetric,
   ConsolidatedOwnerTags,
+  ConsolidatedOwnerTransactions,
   Owner,
+  OwnerBalances,
+  OwnerMemesBalances,
   OwnerMetric,
-  OwnerTags
+  OwnerTags,
+  OwnerTransactions
 } from './entities/IOwner';
 import {
   ConsolidatedTDH,
@@ -81,6 +85,8 @@ import { profilesService } from './profiles/profiles.service';
 import { ProfileTdh, ProfileTdhLog } from './entities/IProfileTDH';
 import { ProfileActivityLog } from './entities/IProfileActivityLog';
 import { Rating } from './entities/IRating';
+import { MemesSeason } from './entities/ISeason';
+import { WalletConsolidation } from './entities/IWalletConsolidation';
 
 const mysql = require('mysql');
 
@@ -125,7 +131,13 @@ export async function connect(entities: any[] = []) {
       ProfileTdhLog,
       CicStatement,
       ProfileActivityLog,
-      Rating
+      Rating,
+      MemesSeason,
+      OwnerTransactions,
+      ConsolidatedOwnerTransactions,
+      OwnerBalances,
+      OwnerMemesBalances,
+      WalletConsolidation
     ];
   }
 
@@ -431,6 +443,48 @@ export async function fetchAllConsolidatedTDH() {
   return results;
 }
 
+export async function fetchProcessedConsolidation(wallets: string[]) {
+  const sortedWallets = [...wallets]
+    .map((w) => w.toLowerCase())
+    .sort((a, b) => {
+      return a.localeCompare(b);
+    });
+  const key = [...sortedWallets].join('-');
+  const sql = `SELECT wallet, display FROM ${ENS_TABLE} WHERE wallet IN (:sortedWallets)`;
+  const results = await sqlExecutor.execute(sql, { sortedWallets: wallets });
+  const displayArray: string[] = [];
+
+  sortedWallets.forEach((w) => {
+    const result = results.find((r: any) => areEqualAddresses(r.wallet, w));
+    if (result && result.display && !result.display.includes('?')) {
+      displayArray.push(result.display);
+    } else {
+      displayArray.push(formatAddress(w));
+    }
+  });
+
+  const consolidation = new WalletConsolidation();
+  consolidation.key = key;
+  consolidation.wallets = sortedWallets;
+  consolidation.display = displayArray.join(' - ');
+
+  return consolidation;
+}
+
+export async function persistWalletConsolidations(
+  walletConsolidations: WalletConsolidation[]
+) {
+  logger.info(
+    `[WALLET CONSOLIDATIONS] [PERSISTING ${walletConsolidations.length} ENTRIES]`
+  );
+
+  await AppDataSource.transaction(async (manager) => {
+    const repo = manager.getRepository(WalletConsolidation);
+    await repo.clear();
+    await repo.save(walletConsolidations);
+  });
+}
+
 export async function fetchConsolidationDisplay(
   myWallets: string[]
 ): Promise<string> {
@@ -496,6 +550,10 @@ export async function fetchAllArtists() {
   return results;
 }
 
+export async function fetchAllSeasons() {
+  return AppDataSource.getRepository(MemesSeason).find();
+}
+
 export async function fetchAllLabOwners() {
   const sql = `SELECT * FROM ${OWNERS_MEME_LAB_TABLE};`;
   const results = await sqlExecutor.execute(sql);
@@ -509,10 +567,8 @@ export async function fetchAllOwners() {
 }
 
 export async function fetchDistinctOwnerWallets() {
-  const sql = `SELECT DISTINCT ${OWNERS_TABLE}.wallet, 
-    ${OWNERS_METRICS_TABLE}.created_at 
-    FROM ${OWNERS_TABLE} LEFT JOIN ${OWNERS_METRICS_TABLE} 
-    ON ${OWNERS_TABLE}.wallet = ${OWNERS_METRICS_TABLE}.wallet 
+  const sql = `SELECT DISTINCT ${OWNERS_TABLE}.wallet 
+    FROM ${OWNERS_TABLE} 
     WHERE ${OWNERS_TABLE}.wallet != :null_address;`;
   const results = await sqlExecutor.execute(sql, {
     null_address: NULL_ADDRESS
@@ -762,6 +818,63 @@ export async function persistOwnerMetrics(
       `[OWNERS METRICS] [ALL ${ownerMetrics.length} WALLETS PERSISTED]`
     );
   }
+}
+
+export async function persistOwnerTransactions(
+  transactions: OwnerTransactions[],
+  reset?: boolean
+) {
+  logger.info({
+    message: '[PERSISTING OWNER TRANSACTIONS]',
+    transactions: transactions.length,
+    reset: reset
+  });
+
+  await AppDataSource.transaction(async (manager) => {
+    const repo = manager.getRepository(OwnerTransactions);
+
+    if (reset) {
+      await repo.clear();
+    }
+
+    await Promise.all(
+      transactions.map(async (t) => {
+        await repo.upsert(t, ['wallet', 'contract', 'season']);
+      })
+    );
+  });
+
+  logger.info({
+    message: '[OWNER TRANSACTIONS PERSISTED]'
+  });
+}
+
+export async function persistConsolidatedOwnerTransactions(
+  transactions: ConsolidatedOwnerTransactions[],
+  reset?: boolean
+) {
+  logger.info({
+    message: '[PERSISTING CONSOLIDATED OWNER TRANSACTIONS]',
+    purchases: transactions.length,
+    reset: reset
+  });
+
+  await AppDataSource.transaction(async (manager) => {
+    const repo = manager.getRepository(ConsolidatedOwnerTransactions);
+    if (reset) {
+      await repo.clear();
+    }
+
+    await Promise.all(
+      transactions.map(async (t) => {
+        await repo.upsert(t, ['consolidation_key', 'contract', 'season']);
+      })
+    );
+  });
+
+  logger.info({
+    message: '[CONSOLIDATED OWNER TRANSACTIONS PERSISTED]'
+  });
 }
 
 export async function persistConsolidatedOwnerTags(
@@ -1143,6 +1256,25 @@ export async function fetchRoyalties(startDate: Date, endDate: Date) {
   return results;
 }
 
+export async function fetchConsolidations(): Promise<string[]> {
+  const repo = AppDataSource.getRepository(Consolidation);
+
+  const consolidations = await repo.find({
+    where: {
+      confirmed: true
+    }
+  });
+
+  const uniqueWallets = new Set<string>();
+
+  consolidations.forEach((c) => {
+    uniqueWallets.add(c.wallet1);
+    uniqueWallets.add(c.wallet2);
+  });
+
+  return Array.from(uniqueWallets);
+}
+
 export async function persistConsolidations(
   force: boolean,
   consolidations: ConsolidationEvent[]
@@ -1372,4 +1504,16 @@ export async function persistTDHHistory(tdhHistory: TDHHistory[]) {
 export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
   const globalHistoryRepo = AppDataSource.getRepository(GlobalTDHHistory);
   await globalHistoryRepo.upsert(globalHistory, ['date', 'block']);
+}
+
+export async function persistMemesSeasons(seasons: MemesSeason[]) {
+  await AppDataSource.getRepository(MemesSeason).save(seasons);
+}
+
+export async function fetchAllOwnerTransactions() {
+  return await AppDataSource.getRepository(OwnerTransactions).find();
+}
+
+export async function fetchAllWalletConsolidations() {
+  return await AppDataSource.getRepository(WalletConsolidation).find();
 }

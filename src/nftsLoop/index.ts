@@ -5,19 +5,20 @@ import { loadEnv, unload } from '../secrets';
 import { NFT } from '../entities/INFT';
 import { ConsolidatedOwnerTags, Owner, OwnerTags } from '../entities/IOwner';
 import { Logger } from '../logging';
+import { MemesSeason } from '../entities/ISeason';
 
 const logger = Logger.get('NFTS_LOOP');
 
 export const handler = async () => {
   logger.info(`[RUNNING]`);
-  await loadEnv([NFT, Owner, OwnerTags, ConsolidatedOwnerTags]);
+  await loadEnv([NFT, Owner, OwnerTags, ConsolidatedOwnerTags, MemesSeason]);
   await nftsLoop();
   await unload();
   logger.info(`[COMPLETE]`);
 };
 
 async function nftsLoop() {
-  await nfts();
+  // await nfts();
   await findOwners();
-  await findMemesExtendedData();
+  // await findMemesExtendedData();
 }

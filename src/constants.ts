@@ -34,10 +34,18 @@ export const CONSOLIDATED_OWNERS_TAGS_TABLE = 'owners_tags_consolidation';
 export const TDH_GLOBAL_HISTORY_TABLE = 'tdh_global_history';
 export const TDH_HISTORY_TABLE = 'tdh_history';
 export const CONSOLIDATIONS_TABLE = 'consolidations';
+export const WALLET_CONSOLIDATIONS_TABLE = 'wallet_consolidations';
 export const DELEGATIONS_TABLE = 'delegations';
 export const NFTS_HISTORY_TABLE = 'nfts_history';
 export const NFTS_HISTORY_BLOCKS_TABLE = 'nfts_history_blocks';
 export const NFTS_HISTORY_CLAIMS_TABLE = 'nfts_history_claims';
+export const MEMES_SEASONS_TABLE = 'memes_seasons';
+export const OWNERS_TRANSACTIONS_TABLE = 'owners_transactions';
+export const CONSOLIDATED_OWNERS_TRANSACTIONS_TABLE =
+  'owners_transactions_consolidation';
+export const OWNERS_BALANCES_TABLE = 'owners_balances';
+export const OWNERS_MEMES_BALANCES_TABLE = 'owners_memes_balances';
+
 export const NEXT_GEN_ALLOWLIST = 'next_gen_allowlist';
 export const NEXT_GEN_COLLECTIONS = 'next_gen_collections';
 export const REMEMES_TABLE = 'rememes';

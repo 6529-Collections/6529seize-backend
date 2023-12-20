@@ -59,8 +59,8 @@ cron.schedule('*/4 * * * *', async function () {
   }
 });
 
-// PULL EVERY 2 MINUTES
-cron.schedule('*/2 * * * *', async function () {
+// PULL EVERY 4 MINUTES
+cron.schedule('*/4 * * * *', async function () {
   if (isCronsEnabled()) {
     await delegations.handler();
   }
@@ -120,7 +120,7 @@ async function start() {
   // await transactions.handler();
   // await nfts.handler();
   // await owners.handler();
-  // await ownerMetrics.handler();
+  await ownerMetrics.handler();
   // await tdh.handler();
   // await tdhHistory.handler();
   // await memeLab.handler();
@@ -135,9 +135,9 @@ async function start() {
   // await transactions.handlerValues();
   // await rememes.handler();
   // await transactionsReplay.handler();
-  await overRatesRevocation.handler();
+  // await overRatesRevocation.handler();
 
-  RUNNING_START_SCRIPT = false;
+  // RUNNING_START_SCRIPT = false;
   logger.info(`[START SCRIPT COMPLETE] [SERVICE STARTED...]`);
 }
 

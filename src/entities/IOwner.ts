@@ -1,9 +1,19 @@
-import { Entity, Column, PrimaryGeneratedColumn, PrimaryColumn } from 'typeorm';
+import {
+  Entity,
+  Column,
+  PrimaryColumn,
+  CreateDateColumn,
+  UpdateDateColumn
+} from 'typeorm';
 import {
   CONSOLIDATED_OWNERS_METRICS_TABLE,
   CONSOLIDATED_OWNERS_TAGS_TABLE,
   OWNERS_METRICS_TABLE,
-  OWNERS_TAGS_TABLE
+  OWNERS_TAGS_TABLE,
+  OWNERS_TRANSACTIONS_TABLE,
+  OWNERS_BALANCES_TABLE,
+  OWNERS_MEMES_BALANCES_TABLE,
+  CONSOLIDATED_OWNERS_TRANSACTIONS_TABLE
 } from '../constants';
 
 @Entity()
@@ -712,4 +722,111 @@ export class ConsolidatedOwnerMetric {
 
   @Column({ type: 'datetime', nullable: true })
   transaction_reference!: Date;
+}
+
+@Entity({ name: OWNERS_MEMES_BALANCES_TABLE })
+export class OwnerMemesBalances {
+  @CreateDateColumn()
+  created_at?: Date;
+
+  @UpdateDateColumn()
+  updated_at?: Date;
+
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  wallet!: string;
+
+  @PrimaryColumn({ type: 'int' })
+  season!: number;
+
+  @Column({ type: 'int', nullable: false })
+  balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique!: number;
+}
+
+@Entity({ name: OWNERS_BALANCES_TABLE })
+export class OwnerBalances {
+  @CreateDateColumn()
+  created_at?: Date;
+
+  @UpdateDateColumn()
+  updated_at?: Date;
+
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  wallet!: string;
+
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  contract!: string;
+
+  @Column({ type: 'int', nullable: false })
+  total!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes!: number;
+
+  @Column({ type: 'int', nullable: false })
+  gradients!: number;
+}
+
+export abstract class OwnerTransactionsBase {
+  @CreateDateColumn()
+  created_at?: Date;
+
+  @UpdateDateColumn()
+  updated_at?: Date;
+
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  contract!: string;
+
+  @PrimaryColumn({ type: 'int' })
+  season!: number;
+
+  @Column({ type: 'double', nullable: false })
+  primary_purchases_value!: number;
+
+  @Column({ type: 'int', nullable: false })
+  primary_purchases_count!: number;
+
+  @Column({ type: 'double', nullable: false })
+  secondary_purchases_value!: number;
+
+  @Column({ type: 'int', nullable: false })
+  secondary_purchases_count!: number;
+
+  @Column({ type: 'int', nullable: false })
+  burns!: number;
+
+  @Column({ type: 'double', nullable: false })
+  sales_value!: number;
+
+  @Column({ type: 'int', nullable: false })
+  sales_count!: number;
+
+  @Column({ type: 'int', nullable: false })
+  airdrops!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_in!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_out!: number;
+}
+
+@Entity({ name: OWNERS_TRANSACTIONS_TABLE })
+export class OwnerTransactions extends OwnerTransactionsBase {
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  wallet!: string;
+}
+
+@Entity({ name: CONSOLIDATED_OWNERS_TRANSACTIONS_TABLE })
+export class ConsolidatedOwnerTransactions extends OwnerTransactionsBase {
+  @PrimaryColumn({ type: 'varchar', length: 200 })
+  consolidation_key!: string;
 }

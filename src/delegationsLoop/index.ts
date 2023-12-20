@@ -3,21 +3,25 @@ import {
   fetchLatestConsolidationsBlockNumber,
   retrieveWalletConsolidations,
   persistDelegations,
-  fetchLatestDelegationsBlockNumber
+  fetchLatestDelegationsBlockNumber,
+  fetchConsolidations,
+  fetchProcessedConsolidation,
+  persistWalletConsolidations
 } from '../db';
 import { findDelegationTransactions } from '../delegations';
 import { Delegation, Consolidation } from '../entities/IDelegation';
 import { loadEnv, unload } from '../secrets';
 import { Logger } from '../logging';
+import { WalletConsolidation } from '../entities/IWalletConsolidation';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
 export const handler = async (event?: any, context?: any) => {
-  await loadEnv([Delegation, Consolidation]);
-  // await retrieveConsolidations();
+  await loadEnv([Delegation, Consolidation, WalletConsolidation]);
   const force = process.env.DELEGATIONS_RESET == 'true';
   logger.info(`[RUNNING] [FORCE ${force}]`);
   await delegations(force ? 0 : undefined);
+  await consolidateWallets();
   await unload();
   logger.info('[COMPLETE]');
 };
@@ -76,4 +80,27 @@ export async function delegations(
     logger.error('[ETIMEDOUT!] [RETRYING PROCESS]', e);
     await delegations(startingBlock, latestBlock);
   }
+}
+
+async function consolidateWallets() {
+  const wallets = await fetchConsolidations();
+
+  const processedWallets = new Set<string>();
+  const walletConsolidations: WalletConsolidation[] = [];
+
+  for (const wallet of wallets) {
+    if (processedWallets.has(wallet.toLowerCase())) continue;
+
+    const consolidations = await retrieveWalletConsolidations(wallet);
+    const processedConsolidation = await fetchProcessedConsolidation(
+      consolidations
+    );
+
+    walletConsolidations.push(processedConsolidation);
+    processedConsolidation.wallets.forEach((w: string) =>
+      processedWallets.add(w)
+    );
+  }
+
+  await persistWalletConsolidations(walletConsolidations);
 }
