@@ -1,6 +1,7 @@
 import {
   AggregatedRating,
   AggregatedRatingRequest,
+  CategoryRatingWithRaterInfo,
   OverRateMatter,
   ratingsDb,
   RatingsDb,
@@ -376,7 +377,25 @@ export class RatingsService {
   }): Promise<RatingStats[]> {
     return this.ratingsDb.getRatingStatsOnMatterGroupedByCategories(param);
   }
+
+  async getRatingsForMatterAndCategoryOnProfileWithRatersInfo(param: {
+    matter_target_id: string;
+    matter_category: string;
+    matter: RateMatter;
+  }): Promise<CategoryRatingWithRaterInfoAndRaterLevel[]> {
+    const result =
+      await this.ratingsDb.getRatingsForMatterAndCategoryOnProfileWithRatersInfo(
+        param
+      );
+    return result.map((it) => ({
+      ...it,
+      rater_level: tdh2Level(it.rater_tdh)
+    }));
+  }
 }
+
+export type CategoryRatingWithRaterInfoAndRaterLevel =
+  CategoryRatingWithRaterInfo & { rater_level: number };
 
 export const ratingsService: RatingsService = new RatingsService(
   ratingsDb,
