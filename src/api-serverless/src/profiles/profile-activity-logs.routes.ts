@@ -25,6 +25,8 @@ router.get(
         log_type?: ProfileActivityLogType;
         page?: string;
         page_size?: string;
+        rating_matter?: string;
+        include_incoming?: string;
       },
       any
     >,
@@ -33,6 +35,9 @@ router.get(
     const queryParams = req.query;
     const order = queryParams.order?.toLowerCase() === 'asc' ? 'asc' : 'desc';
     const profile = queryParams.profile;
+    const includeProfileIdToIncoming =
+      queryParams.include_incoming?.toLowerCase() === 'true';
+    const ratingMatter = queryParams.rating_matter;
     let profileId = undefined;
     if (profile) {
       profileId = await profilesService
@@ -64,6 +69,8 @@ router.get(
     const results = await profileActivityLogsApiService.getProfileActivityLogs({
       profileId,
       order,
+      includeProfileIdToIncoming,
+      ratingMatter,
       pageRequest: {
         page,
         page_size: size
