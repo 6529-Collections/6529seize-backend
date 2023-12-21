@@ -55,6 +55,17 @@ export type RateProfileRequest<REQ_BODY> = Request<
   any
 >;
 
+export type GetRaterAggregatedRatingRequest = Request<
+  {
+    handleOrWallet: string;
+    raterHandleOrWallet: string;
+  },
+  any,
+  any,
+  any,
+  any
+>;
+
 export async function getRatingsSearchParamsFromRequest(
   req: Request<
     { handleOrWallet: string },

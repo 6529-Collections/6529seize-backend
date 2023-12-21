@@ -27,13 +27,13 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
     where 
       rating <> 0 and
       matter = :matter
-      and matter_category = :matter_category
       and matter_target_id = :matter_target_id
+      and matter_category = :matter_category
   `;
     const params: Record<string, any> = {
       matter,
-      matter_category,
-      matter_target_id
+      matter_target_id,
+      matter_category
     };
     if (rater_profile_id) {
       sql += ' and rater_profile_id = :rater_profile_id';
@@ -46,6 +46,54 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
           contributor_count: 0
         }
     );
+  }
+
+  async getRatingStatsOnMatterGroupedByCategories({
+    rater_profile_id,
+    matter,
+    matter_target_id
+  }: Omit<AggregatedRatingRequest, 'matter_category'>): Promise<RatingStats[]> {
+    const sql = `
+with general_stats as (select matter_category                  as category,
+                          sum(rating)                      as rating,
+                          count(distinct rater_profile_id) as contributor_count
+                   from ${RATINGS_TABLE}
+                   where rating <> 0
+                     and matter = :matter
+                     and matter_target_id = :matter_target_id
+                   group by 1),
+ rater_stats as (select matter_category as category,
+                        sum(rating)     as rating
+                 from ${RATINGS_TABLE}
+                 where rating <> 0
+                   and matter = :matter
+                   and matter_target_id = :matter_target_id
+                   and rater_profile_id = :rater_profile_id
+                 group by 1)
+select general_stats.category,
+       general_stats.rating,
+       general_stats.contributor_count,
+       coalesce(rater_stats.rating, 0) as rater_contribution
+from general_stats
+         left join rater_stats on general_stats.category = rater_stats.category
+  order by 4 desc, 2 desc
+  `;
+    const params: Record<string, any> = {
+      matter,
+      matter_target_id,
+      rater_profile_id: rater_profile_id ?? '-'
+    };
+    return this.db
+      .execute(sql, params, { forcePool: DbPoolName.WRITE })
+      .then((results) => {
+        if (!rater_profile_id) {
+          return results.map((result: RatingStats) => ({
+            ...result,
+            rater_contribution: null
+          }));
+        }
+        return results;
+      });
   }
 
   async searchRatingsForMatter({
@@ -293,6 +341,13 @@ export interface AggregatedRatingRequest {
 export interface AggregatedRating {
   rating: number;
   contributor_count: number;
+}
+
+export interface RatingStats {
+  category: number;
+  rating: number;
+  contributor_count: number;
+  rater_contribution: number | null;
 }
 
 export interface RatingsSearchRequest {
