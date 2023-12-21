@@ -5,7 +5,10 @@ import { ApiResponse } from '../api-response';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import * as Joi from 'joi';
-import { ratingsService } from '../../../rates/ratings.service';
+import {
+  CategoryRatingWithRaterInfoAndRaterLevel,
+  ratingsService
+} from '../../../rates/ratings.service';
 import { RateMatter } from '../../../entities/IRating';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
@@ -15,8 +18,39 @@ import { RatingStats } from '../../../rates/ratings.db';
 
 const router = asyncRouter({ mergeParams: true });
 
+async function getReceivedRatingsStats(
+  raterProfileId: string | null,
+  targetProfileId: string
+): Promise<ApiProfileReceivedRepRatesState> {
+  const repRatesLeftForRater = raterProfileId
+    ? await ratingsService.getRatesLeftOnMatterForProfile({
+        profile_id: raterProfileId,
+        matter: RateMatter.REP
+      })
+    : null;
+
+  const ratingStats =
+    await ratingsService.getAllRatingsForMatterOnProfileGroupedByCategories({
+      matter: RateMatter.REP,
+      matter_target_id: targetProfileId,
+      rater_profile_id: raterProfileId ?? null
+    });
+
+  return {
+    total_rep_rating: ratingStats.reduce(
+      (acc, it) => acc + (it.rating ?? 0),
+      0
+    ),
+    total_rep_rating_by_rater: !raterProfileId
+      ? null
+      : ratingStats.reduce((acc, it) => acc + (it.rater_contribution ?? 0), 0),
+    rep_rates_left_for_rater: repRatesLeftForRater,
+    rating_stats: ratingStats
+  };
+}
+
 router.get(
-  `/ratings`,
+  `/ratings/received`,
   async function (
     req: Request<
       { handleOrWallet: string },
@@ -27,7 +61,7 @@ router.get(
       },
       any
     >,
-    res: Response<ApiResponse<ApiProfileRepRatesState>>
+    res: Response<ApiResponse<ApiProfileReceivedRepRatesState>>
   ) {
     const targetHandleOrWallet = req.params.handleOrWallet.toLowerCase();
     const raterHandleOrWallet = req.query.rater?.toLowerCase() ?? null;
@@ -36,46 +70,67 @@ router.get(
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
         targetHandleOrWallet
       );
-    const targetProfile = targetProfileAndConsolidations?.profile;
-    if (!targetProfile) {
-      throw new NotFoundException(
-        `No profile found for ${targetHandleOrWallet}`
-      );
-    }
+    const targetProfileId =
+      targetProfileAndConsolidations?.profile?.external_id;
     const raterProfileAndConsolidations = !raterHandleOrWallet
       ? null
       : await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
           raterHandleOrWallet
         );
-    const raterProfile = raterProfileAndConsolidations?.profile;
-    const repRatesLeftForRater = raterProfile
-      ? await ratingsService.getRatesLeftOnMatterForProfile({
-          profile_id: raterProfile.external_id,
-          matter: RateMatter.REP
-        })
-      : null;
+    const raterProfileId = raterProfileAndConsolidations?.profile?.external_id;
+    if (!targetProfileId) {
+      throw new NotFoundException(
+        `No profile found for ${targetHandleOrWallet}`
+      );
+    }
+    const response = await getReceivedRatingsStats(
+      raterProfileId ?? null,
+      targetProfileId
+    );
+    res.send(response);
+  }
+);
 
-    const ratingStats =
-      await ratingsService.getAllRatingsForMatterOnProfileGroupedByCategories({
-        matter: RateMatter.REP,
-        matter_target_id: targetProfile.external_id,
-        rater_profile_id: raterProfile?.external_id ?? null
-      });
+router.get(
+  `/ratings/received/category-raters`,
+  async function (
+    req: Request<
+      { handleOrWallet: string },
+      any,
+      any,
+      {
+        category?: string;
+      },
+      any
+    >,
+    res: Response<ApiResponse<CategoryRatingWithRaterInfoAndRaterLevel[]>>
+  ) {
+    const targetHandleOrWallet = req.params.handleOrWallet.toLowerCase();
+    const category = req.query.category;
+    if (!category) {
+      throw new BadRequestException(`Query parameter "category" is required`);
+    }
 
-    res.send({
-      total_rep_rating: ratingStats.reduce(
-        (acc, it) => acc + (it.rating ?? 0),
-        0
-      ),
-      total_rep_rating_by_rater: !raterProfile
-        ? null
-        : ratingStats.reduce(
-            (acc, it) => acc + (it.rater_contribution ?? 0),
-            0
-          ),
-      rep_rates_left_for_rater: repRatesLeftForRater,
-      rating_stats: ratingStats
-    });
+    const targetProfileAndConsolidations =
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        targetHandleOrWallet
+      );
+    const targetProfileId =
+      targetProfileAndConsolidations?.profile?.external_id;
+    if (!targetProfileId) {
+      throw new NotFoundException(
+        `No profile found for ${targetHandleOrWallet}`
+      );
+    }
+    const response =
+      await ratingsService.getRatingsForMatterAndCategoryOnProfileWithRatersInfo(
+        {
+          matter: RateMatter.REP,
+          matter_target_id: targetProfileId,
+          matter_category: category
+        }
+      );
+    res.send(response);
   }
 );
 
@@ -84,7 +139,7 @@ router.post(
   needsAuthenticatedUser(),
   async function (
     req: RateProfileRequest<ApiAddRepRatingToProfileRequest>,
-    res: Response<ApiResponse<void>>
+    res: Response<ApiResponse<ApiProfileReceivedRepRatesState>>
   ) {
     const { amount, category } = getValidatedByJoiOrThrow(
       req.body,
@@ -108,7 +163,11 @@ router.post(
       matter_target_id: targetProfileId,
       rating: amount
     });
-    res.status(201);
+    const response = await getReceivedRatingsStats(
+      raterProfileId,
+      targetProfileId
+    );
+    res.send(response);
   }
 );
 
@@ -125,7 +184,7 @@ const ApiAddRepRatingToProfileRequestSchema: Joi.ObjectSchema<ApiAddRepRatingToP
     })
   });
 
-interface ApiProfileRepRatesState {
+interface ApiProfileReceivedRepRatesState {
   readonly total_rep_rating: number;
   readonly total_rep_rating_by_rater: number | null;
   readonly rep_rates_left_for_rater: number | null;

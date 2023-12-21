@@ -320,9 +320,48 @@ from general_stats
       param
     );
   }
+
+  async getRatingsForMatterAndCategoryOnProfileWithRatersInfo(param: {
+    matter_target_id: string;
+    matter_category: string;
+    matter: RateMatter;
+  }): Promise<CategoryRatingWithRaterInfo[]> {
+    return this.db.execute(
+      `
+with grouped_rates as (select r.rater_profile_id as profile_id, sum(r.rating) as rating
+                       from ${RATINGS_TABLE} r
+                       where r.matter_target_id = :matter_target_id
+                         and r.matter = :matter
+                         and r.matter_category = :matter_category
+                         and r.rating > 0
+                       group by 1),
+     rater_cic_ratings as (select matter_target_id as profile_id, sum(rating) as cic
+                           from ${RATINGS_TABLE}
+                           where matter = 'CIC'
+                             and rating <> 0
+                           group by 1)
+select p.handle                           as rater_handle,
+       coalesce(ptdh.boosted_tdh, 0)      as rater_tdh,
+       r.rating,
+       coalesce(rater_cic_ratings.cic, 0) as rater_cic
+from grouped_rates r
+         join ${PROFILES_TABLE} p on p.external_id = r.profile_id
+         left join ${PROFILE_TDHS_TABLE} ptdh on ptdh.profile_id = r.profile_id
+         left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id
+         order by 3 desc, 2 desc`,
+      param
+    );
+  }
 }
 
 export type UpdateRatingRequest = Omit<Rating, 'last_modified'>;
+
+export interface CategoryRatingWithRaterInfo {
+  rater_handle: string;
+  rater_tdh: number;
+  rating: number;
+  rater_cic: number;
+}
 
 export interface OverRateMatter {
   rater_profile_id: string;
