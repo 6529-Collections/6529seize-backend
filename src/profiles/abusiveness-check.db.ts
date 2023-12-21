@@ -6,7 +6,7 @@ export class AbusivenessCheckDb extends LazyDbAccessCompatibleService {
   async findResult(text: string): Promise<AbusivenessDetectionResult | null> {
     return await this.db
       .execute(
-        `select ${ABUSIVENESS_DETECTION_RESULTS_TABLE} from abusiveness_detection_results where text = :text`,
+        `select * from ${ABUSIVENESS_DETECTION_RESULTS_TABLE} where text = :text`,
         { text }
       )
       .then((results) => {
