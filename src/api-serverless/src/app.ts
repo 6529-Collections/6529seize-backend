@@ -37,6 +37,7 @@ import communityMembersSearchRoutes from './profiles/community-members-search.ro
 import authRoutes from './auth/auth.routes';
 import royaltiesRoutes from './royalties/royalties.routes';
 import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
+import repCategorySearchRoutes from './profiles/rep-category-search.routes';
 import gasRoutes from './gas/gas.routes';
 import * as passport from 'passport';
 import {
@@ -1375,6 +1376,7 @@ loadApi().then(() => {
   apiRouter.use(`/gas`, gasRoutes);
   apiRouter.use(`/royalties`, royaltiesRoutes);
   apiRouter.use(`/profile-logs`, profileActivityLogsRoutes);
+  apiRouter.use(`/rep/categories`, repCategorySearchRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 
