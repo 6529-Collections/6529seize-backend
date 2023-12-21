@@ -1320,9 +1320,17 @@ export async function persistNftHistoryBlock(block: number) {
   });
 }
 
-export async function fetchLatestNftUri(tokenId: number, contract: string) {
+export async function fetchLatestNftUri(
+  tokenId: number,
+  contract: string,
+  block: number
+) {
   const latestHistory = await AppDataSource.getRepository(NFTHistory).findOne({
-    where: { nft_id: tokenId, contract: contract },
+    where: {
+      nft_id: tokenId,
+      contract: contract,
+      block: LessThan(block)
+    },
     order: { transaction_date: 'DESC' }
   });
   return latestHistory ? latestHistory.uri : null;
