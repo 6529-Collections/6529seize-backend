@@ -20,6 +20,7 @@ import { Page } from '../page-request';
 import { cicService } from '../../../cic/cic.service';
 import {
   GetProfileRatingsRequest,
+  GetRaterAggregatedRatingRequest,
   getRaterInfoFromRequest,
   getRatingsSearchParamsFromRequest,
   RateProfileRequest
@@ -42,16 +43,7 @@ function isAuthenticatedWalletProfileOwner(
 router.get(
   `/rating/:raterHandleOrWallet`,
   async function (
-    req: Request<
-      {
-        handleOrWallet: string;
-        raterHandleOrWallet: string;
-      },
-      any,
-      any,
-      any,
-      any
-    >,
+    req: GetRaterAggregatedRatingRequest,
     res: Response<ApiResponse<ApiProfileRaterCicState>>
   ) {
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();

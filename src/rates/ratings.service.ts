@@ -5,6 +5,7 @@ import {
   ratingsDb,
   RatingsDb,
   RatingsSearchRequest,
+  RatingStats,
   UpdateRatingRequest
 } from './ratings.db';
 import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
@@ -366,6 +367,14 @@ export class RatingsService {
       acc[id] = results.find((it) => it.matter_target_id === id)?.rating ?? 0;
       return acc;
     }, {} as Record<string, number>);
+  }
+
+  async getAllRatingsForMatterOnProfileGroupedByCategories(param: {
+    matter_target_id: string;
+    rater_profile_id: string | null;
+    matter: RateMatter;
+  }): Promise<RatingStats[]> {
+    return this.ratingsDb.getRatingStatsOnMatterGroupedByCategories(param);
   }
 }
 
