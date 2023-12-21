@@ -3,6 +3,26 @@ import { ABUSIVENESS_DETECTION_RESULTS_TABLE } from '../constants';
 import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
 
 export class AbusivenessCheckDb extends LazyDbAccessCompatibleService {
+  async searchAllowedTextsLike({
+    text,
+    limit
+  }: {
+    text: string;
+    limit: number;
+  }): Promise<string[]> {
+    if (limit < 1) {
+      return [];
+    }
+    return await this.db
+      .execute(
+        `select text from ${ABUSIVENESS_DETECTION_RESULTS_TABLE} where text like coalesce('%', :text, '%') and status = 'ALLOWED' order by CHAR_LENGTH(text) limit :limit`,
+        { text, limit }
+      )
+      .then((results) =>
+        results.map((result: { text: string }) => result.text)
+      );
+  }
+
   async findResult(text: string): Promise<AbusivenessDetectionResult | null> {
     return await this.db
       .execute(
