@@ -37,8 +37,9 @@ input: "fuckface"
 Disallowed Insulting term
 
 I will now put the classification request after the word "input" and make further requestions in that format.
-input ${text}
+input: ${text}
     `.trim();
+    console.log(message);
     const response = await this.supplyOpenAi().chat.completions.create({
       model: 'gpt-4',
       messages: [{ role: 'user', content: message }]
