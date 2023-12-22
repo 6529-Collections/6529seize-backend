@@ -108,7 +108,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     );
     return walletAddresses.map((walletAddress) => ({
       address: walletAddress,
-      ens: results.find((row) => row.address === walletAddress)?.ens
+      ens: results.find((row) => row.address.toLowerCase() === walletAddress)
+        ?.ens
     }));
   }
 
