@@ -6,7 +6,7 @@ import { getValidatedByJoiOrThrow } from '../validation';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import * as Joi from 'joi';
 import {
-  CategoryRatingWithRaterInfoAndRaterLevel,
+  RatingWithProfileInfoAndLevel,
   ratingsService
 } from '../../../rates/ratings.service';
 import { RateMatter } from '../../../entities/IRating';
@@ -15,6 +15,7 @@ import { abusivenessCheckService } from '../../../profiles/abusiveness-check.ser
 import { getRaterInfoFromRequest, RateProfileRequest } from './rating.helper';
 import { profilesService } from '../../../profiles/profiles.service';
 import { RatingStats } from '../../../rates/ratings.db';
+import { Page } from '../page-request';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -55,6 +56,45 @@ async function getReceivedRatingsStats(
     rating_stats: ratingStats
   };
 }
+
+router.get(
+  `/ratings/by-rater`,
+  async function (
+    req: Request<
+      { handleOrWallet: string },
+      any,
+      any,
+      {
+        given?: string;
+        page?: string;
+        page_size?: string;
+      },
+      any
+    >,
+    res: Response<ApiResponse<Page<RatingWithProfileInfoAndLevel>>>
+  ) {
+    const given = req.query.given === 'true';
+    const page = req.query.page ? parseInt(req.query.page) : 1;
+    const page_size = req.query.page_size ? parseInt(req.query.page_size) : 200;
+    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
+    const profile =
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        handleOrWallet
+      );
+    const profile_id = profile?.profile?.external_id;
+    if (!profile_id) {
+      throw new NotFoundException(`No profile found for ${handleOrWallet}`);
+    }
+    const result = await ratingsService.getRatingsByRatersForMatter({
+      profileId: profile_id,
+      matter: RateMatter.REP,
+      given: given,
+      page: page,
+      page_size: page_size
+    });
+    res.send(result);
+  }
+);
 
 router.get(
   `/ratings/received`,
@@ -110,7 +150,7 @@ router.get(
       },
       any
     >,
-    res: Response<ApiResponse<CategoryRatingWithRaterInfoAndRaterLevel[]>>
+    res: Response<ApiResponse<RatingWithProfileInfoAndLevel[]>>
   ) {
     const targetHandleOrWallet = req.params.handleOrWallet.toLowerCase();
     const category = req.query.category;
