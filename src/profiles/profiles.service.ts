@@ -665,12 +665,16 @@ export class ProfilesService {
           };
         }
         const result = resultRows[0];
-        if (!result.wallets.includes(normalisedWallet)) {
-          result.wallets.push(normalisedWallet);
+        if (
+          !result.wallets
+            .map((it) => it.toLowerCase())
+            .includes(normalisedWallet.toLowerCase())
+        ) {
+          result.wallets.push(normalisedWallet.toLowerCase());
         }
         return {
           tdh: result.tdh,
-          consolidatedWallets: result.wallets,
+          consolidatedWallets: result.wallets.map((it) => it.toLowerCase()),
           blockNo: result.blockNo,
           consolidation_key: result.consolidation_key,
           consolidation_display: result.consolidation_display,
