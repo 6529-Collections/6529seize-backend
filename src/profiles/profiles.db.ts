@@ -146,7 +146,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       return {};
     }
     const result: { wallet: string; tdh: number }[] = await this.db.execute(
-      `select lower(wallet), boosted_tdh as tdh from ${WALLETS_TDH_TABLE} where block = :blockNo and lower(wallet) in (:wallets)`,
+      `select lower(wallet) as wallet, boosted_tdh as tdh from ${WALLETS_TDH_TABLE} where block = :blockNo and lower(wallet) in (:wallets)`,
       {
         blockNo,
         wallets: normalisedWallets
