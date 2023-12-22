@@ -325,30 +325,31 @@ from general_stats
     matter_target_id: string;
     matter_category: string;
     matter: RateMatter;
-  }): Promise<CategoryRatingWithRaterInfo[]> {
+  }): Promise<RatingWithProfileInfo[]> {
     return this.db.execute(
       `
-with grouped_rates as (select r.rater_profile_id as profile_id, sum(r.rating) as rating
+with grouped_rates as (select r.rater_profile_id as profile_id, sum(r.rating) as rating, max(last_modified) as last_modified
                        from ${RATINGS_TABLE} r
                        where r.matter_target_id = :matter_target_id
                          and r.matter = :matter
                          and r.matter_category = :matter_category
-                         and r.rating > 0
+                         and r.rating <> 0
                        group by 1),
      rater_cic_ratings as (select matter_target_id as profile_id, sum(rating) as cic
                            from ${RATINGS_TABLE}
                            where matter = 'CIC'
                              and rating <> 0
                            group by 1)
-select p.handle                           as rater_handle,
-       coalesce(ptdh.boosted_tdh, 0)      as rater_tdh,
+select p.handle                           as handle,
+       coalesce(ptdh.boosted_tdh, 0)      as tdh,
        r.rating,
-       coalesce(rater_cic_ratings.cic, 0) as rater_cic
+       r.last_modified,
+       coalesce(rater_cic_ratings.cic, 0) as cic
 from grouped_rates r
          join ${PROFILES_TABLE} p on p.external_id = r.profile_id
          left join ${PROFILE_TDHS_TABLE} ptdh on ptdh.profile_id = r.profile_id
          left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id
-         order by 3 desc, 2 desc`,
+         order by 4 desc, 2 desc`,
       param
     );
   }
@@ -364,15 +365,76 @@ from grouped_rates r
       )
       .then((results) => results[0]?.cnt ?? 0);
   }
+
+  async getRatingsByRatersForMatter(param: {
+    given: boolean;
+    profileId: string;
+    page: number;
+    matter: RateMatter;
+    page_size: number;
+  }): Promise<Page<RatingWithProfileInfo>> {
+    const profile_id_field = param.given
+      ? 'matter_target_id'
+      : 'rater_profile_id';
+    const where_profile_id_field =
+      profile_id_field === 'rater_profile_id'
+        ? 'matter_target_id'
+        : 'rater_profile_id';
+    const sqlParams = { profile_id: param.profileId, matter: param.matter };
+    const limit = param.page_size;
+    const offset = (param.page - 1) * param.page_size;
+    const sql_start = `with grouped_rates as (select r.${profile_id_field} as profile_id, sum(r.rating) as rating, max(last_modified) as last_modified
+                                 from ${RATINGS_TABLE} r
+                                 where r.${where_profile_id_field} = :profile_id
+                                   and r.matter = :matter
+                                   and r.rating <> 0
+                                 group by 1),
+               rater_cic_ratings as (select matter_target_id as profile_id, sum(rating) as cic
+                                     from ${RATINGS_TABLE}
+                                     where matter = 'CIC'
+                                       and rating <> 0
+                                     group by 1) `;
+    const [results, count] = await Promise.all([
+      this.db.execute(
+        `${sql_start} select p.handle                           as handle,
+             coalesce(ptdh.boosted_tdh, 0)      as tdh,
+             r.rating,
+             r.last_modified,
+             coalesce(rater_cic_ratings.cic, 0) as cic
+      from grouped_rates r
+               join ${PROFILES_TABLE} p on p.external_id = r.profile_id
+               left join ${PROFILE_TDHS_TABLE} ptdh on ptdh.profile_id = r.profile_id
+               left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id order by 3 desc limit ${limit} offset ${offset}`,
+        sqlParams
+      ),
+      this.db
+        .execute(
+          `${sql_start} select count(*) as cnt
+          from grouped_rates r
+                   join ${PROFILES_TABLE} p on p.external_id = r.profile_id
+                   left join ${PROFILE_TDHS_TABLE} ptdh on ptdh.profile_id = r.profile_id
+                   left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id`,
+          sqlParams
+        )
+        .then((results) => results[0]?.cnt ?? 0)
+    ]);
+    return {
+      page: param.page,
+      next: count > param.page_size * param.page,
+      count: count,
+      data: results
+    };
+  }
 }
 
 export type UpdateRatingRequest = Omit<Rating, 'last_modified'>;
 
-export interface CategoryRatingWithRaterInfo {
-  rater_handle: string;
-  rater_tdh: number;
+export interface RatingWithProfileInfo {
+  handle: string;
+  tdh: number;
   rating: number;
-  rater_cic: number;
+  cic: number;
+  last_modified: string;
 }
 
 export interface OverRateMatter {
@@ -395,7 +457,7 @@ export interface AggregatedRating {
 }
 
 export interface RatingStats {
-  category: number;
+  category: string;
   rating: number;
   contributor_count: number;
   rater_contribution: number | null;
