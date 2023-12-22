@@ -392,6 +392,13 @@ export class RatingsService {
       rater_level: tdh2Level(it.rater_tdh)
     }));
   }
+
+  async getNumberOfRatersForMatterOnProfile(param: {
+    matter: RateMatter;
+    profile_id: string;
+  }): Promise<number> {
+    return this.ratingsDb.getNumberOfRatersForMatterOnProfile(param);
+  }
 }
 
 export type CategoryRatingWithRaterInfoAndRaterLevel =
