@@ -15,7 +15,7 @@ export class AbusivenessCheckDb extends LazyDbAccessCompatibleService {
     }
     return await this.db
       .execute(
-        `select text from ${ABUSIVENESS_DETECTION_RESULTS_TABLE} where text like coalesce('%', :text, '%') and status = 'ALLOWED' order by CHAR_LENGTH(text) limit :limit`,
+        `select text from ${ABUSIVENESS_DETECTION_RESULTS_TABLE} where text like concat('%', :text, '%') and status = 'ALLOWED' order by CHAR_LENGTH(text) limit :limit`,
         { text, limit }
       )
       .then((results) =>
