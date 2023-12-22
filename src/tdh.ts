@@ -100,11 +100,6 @@ export const findTDH = async (lastTDHCalc: Date) => {
 
       const walletMemes: any[] = [];
       let unique_memes = 0;
-      let unique_memes_season1 = 0;
-      let unique_memes_season2 = 0;
-      let unique_memes_season3 = 0;
-      let unique_memes_season4 = 0;
-      let unique_memes_season5 = 0;
       const walletGradients: any[] = [];
 
       let totalTDH = 0;
@@ -113,21 +108,6 @@ export const findTDH = async (lastTDHCalc: Date) => {
       let memesTDH = 0;
       let memesTDH__raw = 0;
       let memesBalance = 0;
-      let memes_tdh_season1 = 0;
-      let memes_tdh_season1__raw = 0;
-      let memes_balance_season1 = 0;
-      let memes_tdh_season2 = 0;
-      let memes_tdh_season2__raw = 0;
-      let memes_balance_season2 = 0;
-      let memes_tdh_season3 = 0;
-      let memes_tdh_season3__raw = 0;
-      let memes_balance_season3 = 0;
-      let memes_tdh_season4 = 0;
-      let memes_tdh_season4__raw = 0;
-      let memes_balance_season4 = 0;
-      let memes_tdh_season5 = 0;
-      let memes_tdh_season5__raw = 0;
-      let memes_balance_season5 = 0;
       let gradientsBalance = 0;
       let gradientsTDH = 0;
       let gradientsTDH__raw = 0;
@@ -160,13 +140,6 @@ export const findTDH = async (lastTDHCalc: Date) => {
           new Date(b.transaction_date).getTime()
         );
       });
-
-      const memesTransactions = [...walletTransactions].filter((t) =>
-        areEqualAddresses(t.contract, MEMES_CONTRACT)
-      );
-      const gradientsTransactions = [...walletTransactions].filter((t) =>
-        areEqualAddresses(t.contract, GRADIENT_CONTRACT)
-      );
 
       ADJUSTED_NFTS.forEach((nft) => {
         const tokenConsolidatedTransactions = [
@@ -206,41 +179,6 @@ export const findTDH = async (lastTDHCalc: Date) => {
           if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
             memesTDH += tdh;
             memesTDH__raw += tdh__raw;
-            const season = parseInt(
-              nft.metadata.attributes.find(
-                (a: any) => a.trait_type === 'Type - Season'
-              )?.value
-            );
-            if (season == 1) {
-              memes_tdh_season1 += tdh;
-              memes_tdh_season1__raw += tdh__raw;
-              memes_balance_season1 += balance;
-              unique_memes_season1++;
-            }
-            if (season == 2) {
-              memes_tdh_season2 += tdh;
-              memes_tdh_season2__raw += tdh__raw;
-              memes_balance_season2 += balance;
-              unique_memes_season2++;
-            }
-            if (season == 3) {
-              memes_tdh_season3 += tdh;
-              memes_tdh_season3__raw += tdh__raw;
-              memes_balance_season3 += balance;
-              unique_memes_season3++;
-            }
-            if (season == 4) {
-              memes_tdh_season4 += tdh;
-              memes_tdh_season4__raw += tdh__raw;
-              memes_balance_season4 += balance;
-              unique_memes_season4++;
-            }
-            if (season == 5) {
-              memes_tdh_season5 += tdh;
-              memes_tdh_season5__raw += tdh__raw;
-              memes_balance_season5 += balance;
-              unique_memes_season5++;
-            }
             unique_memes++;
             memesBalance += balance;
             walletMemes.push(tokenTDH);
@@ -271,14 +209,9 @@ export const findTDH = async (lastTDHCalc: Date) => {
       if (Math.round(totalTDH) > 0) {
         const tdh: TDH = {
           date: new Date(),
-          wallet: wallet,
+          wallet: wallet.toLowerCase(),
           tdh_rank: 0, //assigned later
           tdh_rank_memes: 0, //assigned later
-          tdh_rank_memes_szn1: 0, //assigned later
-          tdh_rank_memes_szn2: 0, //assigned later
-          tdh_rank_memes_szn3: 0, //assigned later
-          tdh_rank_memes_szn4: 0, //assigned later
-          tdh_rank_memes_szn5: 0, //assigned later
           tdh_rank_gradients: 0, //assigned later
           block: block,
           tdh: totalTDH,
@@ -289,35 +222,10 @@ export const findTDH = async (lastTDHCalc: Date) => {
           memes_cards_sets: memesCardSets,
           genesis: genesis,
           unique_memes: unique_memes,
-          unique_memes_season1: unique_memes_season1,
-          unique_memes_season2: unique_memes_season2,
-          unique_memes_season3: unique_memes_season3,
-          unique_memes_season4: unique_memes_season4,
-          unique_memes_season5: unique_memes_season5,
           boosted_memes_tdh: 0,
           memes_tdh: memesTDH,
           memes_tdh__raw: memesTDH__raw,
           memes_balance: memesBalance,
-          boosted_memes_tdh_season1: 0,
-          memes_tdh_season1: memes_tdh_season1,
-          memes_tdh_season1__raw: memes_tdh_season1__raw,
-          memes_balance_season1: memes_balance_season1,
-          boosted_memes_tdh_season2: 0,
-          memes_tdh_season2: memes_tdh_season2,
-          memes_tdh_season2__raw: memes_tdh_season2__raw,
-          memes_balance_season2: memes_balance_season2,
-          boosted_memes_tdh_season3: 0,
-          memes_tdh_season3: memes_tdh_season3,
-          memes_tdh_season3__raw: memes_tdh_season3__raw,
-          memes_balance_season3: memes_balance_season3,
-          boosted_memes_tdh_season4: 0,
-          memes_tdh_season4: memes_tdh_season4,
-          memes_tdh_season4__raw: memes_tdh_season4__raw,
-          memes_balance_season4: memes_balance_season4,
-          boosted_memes_tdh_season5: 0,
-          memes_tdh_season5: memes_tdh_season5,
-          memes_tdh_season5__raw: memes_tdh_season5__raw,
-          memes_balance_season5: memes_balance_season5,
           memes: walletMemes,
           memes_ranks: [],
           boosted_gradients_tdh: 0,
@@ -339,12 +247,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
     `[BLOCK ${block}] [WALLETS ${walletsTDH.length}] [CALCULATING RANKS]`
   );
 
-  const sortedTdh = await ranks(
-    allGradientsTDH,
-    walletsTDH,
-    ADJUSTED_NFTS,
-    MEMES_COUNT
-  );
+  const sortedTdh = await ranks(allGradientsTDH, walletsTDH, ADJUSTED_NFTS);
 
   logger.info(
     `[BLOCK ${block}] [WALLETS ${sortedTdh.length}] [CALCULATING TDH - END]`
@@ -484,8 +387,7 @@ function getTokenDatesFromConsolidation(
 export async function ranks(
   allGradientsTDH: any[],
   walletsTDH: any[],
-  ADJUSTED_NFTS: any[],
-  MEMES_COUNT: number
+  ADJUSTED_NFTS: any[]
 ) {
   const sortedGradientsTdh = allGradientsTDH
     .sort((a, b) => {
@@ -523,11 +425,6 @@ export async function ranks(
       w.boost = boost;
       w.boosted_tdh = w.tdh * boost;
       w.boosted_memes_tdh = w.memes_tdh * boost;
-      w.boosted_memes_tdh_season1 = w.memes_tdh_season1 * boost;
-      w.boosted_memes_tdh_season2 = w.memes_tdh_season2 * boost;
-      w.boosted_memes_tdh_season3 = w.memes_tdh_season3 * boost;
-      w.boosted_memes_tdh_season4 = w.memes_tdh_season4 * boost;
-      w.boosted_memes_tdh_season5 = w.memes_tdh_season5 * boost;
       w.boosted_gradients_tdh = w.gradients_tdh * boost;
       boostedTDH.push(w);
     })
@@ -613,16 +510,6 @@ export async function ranks(
       else if (a.boosted_tdh < b.boosted_tdh) return 1;
       else if (a.tdh > b.tdh) return -1;
       else if (a.tdh < b.tdh) return 1;
-      else if (a.memes_tdh_season1 > b.memes_tdh_season1) return -1;
-      else if (a.memes_tdh_season1 < b.memes_tdh_season1) return 1;
-      else if (a.memes_tdh_season2 > b.memes_tdh_season2) return -1;
-      else if (a.memes_tdh_season2 < b.memes_tdh_season2) return 1;
-      else if (a.memes_tdh_season3 > b.memes_tdh_season3) return -1;
-      else if (a.memes_tdh_season3 < b.memes_tdh_season3) return 1;
-      else if (a.memes_tdh_season4 > b.memes_tdh_season4) return -1;
-      else if (a.memes_tdh_season4 < b.memes_tdh_season4) return 1;
-      else if (a.memes_tdh_season5 > b.memes_tdh_season5) return -1;
-      else if (a.memes_tdh_season5 < b.memes_tdh_season5) return 1;
       else if (a.gradients_tdh > b.gradients_tdh) return -1;
       else if (a.gradients_tdh < b.gradients_tdh) return 1;
       else return -1;
@@ -630,9 +517,7 @@ export async function ranks(
     .map((w, index) => {
       w.tdh_rank = index + 1;
       return w;
-    });
-
-  sortedTdh = boostedTDH
+    })
     .sort((a: TDH, b: TDH) => {
       if (a.boosted_memes_tdh > b.boosted_memes_tdh) return -1;
       else if (a.boosted_memes_tdh < b.boosted_memes_tdh) return 1;
@@ -650,114 +535,7 @@ export async function ranks(
         w.tdh_rank_memes = -1;
       }
       return w;
-    });
-
-  sortedTdh = boostedTDH
-    .sort((a: TDH, b: TDH) => {
-      if (a.boosted_memes_tdh_season1 > b.boosted_memes_tdh_season1) return -1;
-      else if (a.boosted_memes_tdh_season1 < b.boosted_memes_tdh_season1)
-        return 1;
-      else if (a.memes_tdh_season1 > b.memes_tdh_season1) return -1;
-      else if (a.memes_tdh_season1 < b.memes_tdh_season1) return 1;
-      else if (a.memes_balance_season1 > b.memes_balance_season1) return -1;
-      else if (a.memes_balance_season1 < b.memes_balance_season1) return 1;
-      else if (a.balance > b.balance) return -1;
-      else return -1;
     })
-    .map((w, index) => {
-      if (w.boosted_memes_tdh_season1 > 0) {
-        w.tdh_rank_memes_szn1 = index + 1;
-      } else {
-        w.tdh_rank_memes_szn1 = -1;
-      }
-      return w;
-    });
-
-  sortedTdh = boostedTDH
-    .sort((a: TDH, b: TDH) => {
-      if (a.boosted_memes_tdh_season2 > b.boosted_memes_tdh_season2) return -1;
-      else if (a.boosted_memes_tdh_season2 < b.boosted_memes_tdh_season2)
-        return 1;
-      else if (a.memes_tdh_season2 > b.memes_tdh_season2) return -1;
-      else if (a.memes_tdh_season2 < b.memes_tdh_season2) return 1;
-      else if (a.memes_balance_season2 > b.memes_balance_season2) return -1;
-      else if (a.memes_balance_season2 < b.memes_balance_season2) return 1;
-      else if (a.balance > b.balance) return -1;
-      else return -1;
-    })
-    .map((w, index) => {
-      if (w.boosted_memes_tdh_season2 > 0) {
-        w.tdh_rank_memes_szn2 = index + 1;
-      } else {
-        w.tdh_rank_memes_szn2 = -1;
-      }
-      return w;
-    });
-
-  sortedTdh = boostedTDH
-    .sort((a: TDH, b: TDH) => {
-      if (a.boosted_memes_tdh_season3 > b.boosted_memes_tdh_season3) return -1;
-      else if (a.boosted_memes_tdh_season3 < b.boosted_memes_tdh_season3)
-        return 1;
-      else if (a.memes_tdh_season3 > b.memes_tdh_season3) return -1;
-      else if (a.memes_tdh_season3 < b.memes_tdh_season3) return 1;
-      else if (a.memes_balance_season3 > b.memes_balance_season3) return -1;
-      else if (a.memes_balance_season3 < b.memes_balance_season3) return 1;
-      else if (a.balance > b.balance) return -1;
-      else return -1;
-    })
-    .map((w, index) => {
-      if (w.boosted_memes_tdh_season3 > 0) {
-        w.tdh_rank_memes_szn3 = index + 1;
-      } else {
-        w.tdh_rank_memes_szn3 = -1;
-      }
-      return w;
-    });
-
-  sortedTdh = boostedTDH
-    .sort((a: TDH, b: TDH) => {
-      if (a.boosted_memes_tdh_season4 > b.boosted_memes_tdh_season4) return -1;
-      else if (a.boosted_memes_tdh_season4 < b.boosted_memes_tdh_season4)
-        return 1;
-      else if (a.memes_tdh_season4 > b.memes_tdh_season4) return -1;
-      else if (a.memes_tdh_season4 < b.memes_tdh_season4) return 1;
-      else if (a.memes_balance_season4 > b.memes_balance_season4) return -1;
-      else if (a.memes_balance_season4 < b.memes_balance_season4) return 1;
-      else if (a.balance > b.balance) return -1;
-      else return -1;
-    })
-    .map((w, index) => {
-      if (w.boosted_memes_tdh_season4 > 0) {
-        w.tdh_rank_memes_szn4 = index + 1;
-      } else {
-        w.tdh_rank_memes_szn4 = -1;
-      }
-      return w;
-    });
-
-  sortedTdh = boostedTDH
-    .sort((a: TDH, b: TDH) => {
-      if (a.boosted_memes_tdh_season5 > b.boosted_memes_tdh_season5) return -1;
-      else if (a.boosted_memes_tdh_season5 < b.boosted_memes_tdh_season5)
-        return 1;
-      else if (a.memes_tdh_season5 > b.memes_tdh_season5) return -1;
-      else if (a.memes_tdh_season5 < b.memes_tdh_season5) return 1;
-      else if (a.memes_balance_season5 > b.memes_balance_season5) return -1;
-      else if (a.memes_balance_season5 < b.memes_balance_season5) return 1;
-      else if (a.balance > b.balance) return -1;
-      else return -1;
-    })
-    .map((w, index) => {
-      if (w.boosted_memes_tdh_season5 > 0) {
-        w.tdh_rank_memes_szn5 = index + 1;
-      } else {
-        w.tdh_rank_memes_szn5 = -1;
-      }
-      return w;
-    });
-
-  sortedTdh = boostedTDH
     .sort((a: TDH, b: TDH) => {
       if (a.boosted_gradients_tdh > b.boosted_gradients_tdh) return -1;
       else if (a.boosted_gradients_tdh < b.boosted_gradients_tdh) return 1;

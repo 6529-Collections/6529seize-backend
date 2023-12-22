@@ -4,7 +4,7 @@ import { Logger } from './logging';
 const transactions = require('./transactionsLoop');
 const transactionsReplay = require('./transactionsReplayLoop');
 const nfts = require('./nftsLoop');
-const owners = require('./ownersLoop');
+const ownersBalances = require('./ownersBalancesLoop');
 const memeLab = require('./memeLabLoop');
 const tdh = require('./tdhLoop');
 const tdhHistory = require('./tdhHistoryLoop');
@@ -34,7 +34,7 @@ function isCronsEnabled() {
 cron.schedule('*/4 * * * *', async function () {
   if (isCronsEnabled()) {
     await nfts.handler();
-    await owners.handler();
+    await ownersBalances.handler();
   }
 });
 
@@ -119,8 +119,8 @@ async function start() {
   // await delegations.handler();
   // await transactions.handler();
   // await nfts.handler();
-  // await owners.handler();
-  await ownerMetrics.handler();
+  // await ownerMetrics.handler();
+  await ownersBalances.handler();
   // await tdh.handler();
   // await tdhHistory.handler();
   // await memeLab.handler();

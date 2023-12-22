@@ -118,6 +118,12 @@ export class Time {
     return this.ms / MILLIS_IN_UNIT[TimeUnit.MINUTES];
   }
 
+  public toMinutesAndSecondsString(): string {
+    const minutes = Math.floor(this.toMinutes());
+    const seconds = Math.floor(this.minusMinutes(minutes).toSeconds());
+    return `${minutes}m ${seconds}s`;
+  }
+
   public toHours(): number {
     return this.ms / MILLIS_IN_UNIT[TimeUnit.HOURS];
   }
@@ -222,6 +228,10 @@ export class Time {
   public toString = (): string => {
     return this.formatAsDuration();
   };
+
+  public printTimeDiff(): string {
+    return this.diffFromNow().toMinutesAndSecondsString();
+  }
 
   public formatAsDuration() {
     let left = this.ms;

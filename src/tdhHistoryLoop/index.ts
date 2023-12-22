@@ -1,11 +1,7 @@
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { persistGlobalTDHHistory, persistTDHHistory } from '../db';
-import {
-  ConsolidatedTDH,
-  GlobalTDHHistory,
-  TDHHistory,
-  TokenTDH
-} from '../entities/ITDH';
+import { ConsolidatedTDH, TokenTDH } from '../entities/ITDH';
+import { GlobalTDHHistory, TDHHistory } from '../entities/ITDHHistory';
 import { areEqualAddresses, formatDateAsString } from '../helpers';
 import { loadEnv, unload } from '../secrets';
 import axios from 'axios';
@@ -52,11 +48,13 @@ export async function tdhHistoryLoop(iterations: number) {
   }
 }
 
-async function fetchUploads(date: string): Promise<{
-  date:string;
-  block:number;
-  url:string;
-}[]> {
+async function fetchUploads(date: string): Promise<
+  {
+    date: string;
+    block: number;
+    url: string;
+  }[]
+> {
   const uploads = await fetch(
     `https://api.seize.io/api/consolidated_uploads?date=${date}&page_size=5`
   );

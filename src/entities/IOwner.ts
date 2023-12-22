@@ -7,13 +7,11 @@ import {
 } from 'typeorm';
 import {
   CONSOLIDATED_OWNERS_METRICS_TABLE,
-  CONSOLIDATED_OWNERS_TAGS_TABLE,
   OWNERS_METRICS_TABLE,
-  OWNERS_TAGS_TABLE,
   OWNERS_TRANSACTIONS_TABLE,
-  OWNERS_BALANCES_TABLE,
-  OWNERS_MEMES_BALANCES_TABLE,
-  CONSOLIDATED_OWNERS_TRANSACTIONS_TABLE
+  CONSOLIDATED_OWNERS_TRANSACTIONS_TABLE,
+  OWNERS_TAGS_TABLE,
+  CONSOLIDATED_OWNERS_TAGS_TABLE
 } from '../constants';
 
 @Entity()
@@ -32,138 +30,6 @@ export class Owner {
 
   @Column({ type: 'int' })
   balance!: number;
-}
-
-@Entity({ name: OWNERS_TAGS_TABLE })
-export class OwnerTags {
-  @Column({ type: 'datetime' })
-  created_at!: Date;
-
-  @PrimaryColumn({ type: 'varchar', length: 50 })
-  wallet!: string;
-
-  @Column({ type: 'int', nullable: false })
-  memes_balance!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique_memes!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique_memes_szn1!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique_memes_szn2!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique_memes_szn3!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique_memes_szn4!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique_memes_szn5!: number;
-
-  @Column({ type: 'int', nullable: false })
-  gradients_balance!: number;
-
-  @Column({ type: 'int', nullable: false })
-  genesis!: number;
-
-  @Column({ type: 'int', nullable: false })
-  nakamoto!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets_minus1!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets_minus2!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets_szn1!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets_szn2!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets_szn3!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets_szn4!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets_szn5!: number;
-}
-
-@Entity({ name: CONSOLIDATED_OWNERS_TAGS_TABLE })
-export class ConsolidatedOwnerTags {
-  @Column({ type: 'datetime' })
-  created_at!: Date;
-
-  @PrimaryColumn({ type: 'varchar', length: 500 })
-  consolidation_display!: string;
-
-  @Column({ type: 'varchar', length: 200 })
-  consolidation_key!: string;
-
-  @Column({ type: 'json', nullable: false })
-  wallets?: any;
-
-  @Column({ type: 'int', nullable: false })
-  memes_balance!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique_memes!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique_memes_szn1!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique_memes_szn2!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique_memes_szn3!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique_memes_szn4!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique_memes_szn5!: number;
-
-  @Column({ type: 'int', nullable: false })
-  gradients_balance!: number;
-
-  @Column({ type: 'int', nullable: false })
-  genesis!: number;
-
-  @Column({ type: 'int', nullable: false })
-  nakamoto!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets_minus1!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets_minus2!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets_szn1!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets_szn2!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets_szn3!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets_szn4!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets_szn5!: number;
 }
 
 @Entity({ name: OWNERS_METRICS_TABLE })
@@ -724,55 +590,136 @@ export class ConsolidatedOwnerMetric {
   transaction_reference!: Date;
 }
 
-@Entity({ name: OWNERS_MEMES_BALANCES_TABLE })
-export class OwnerMemesBalances {
-  @CreateDateColumn()
-  created_at?: Date;
-
-  @UpdateDateColumn()
-  updated_at?: Date;
+@Entity({ name: OWNERS_TAGS_TABLE })
+export class OwnerTags {
+  @Column({ type: 'datetime' })
+  created_at!: Date;
 
   @PrimaryColumn({ type: 'varchar', length: 50 })
   wallet!: string;
 
-  @PrimaryColumn({ type: 'int' })
-  season!: number;
-
   @Column({ type: 'int', nullable: false })
-  balance!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique!: number;
-}
-
-@Entity({ name: OWNERS_BALANCES_TABLE })
-export class OwnerBalances {
-  @CreateDateColumn()
-  created_at?: Date;
-
-  @UpdateDateColumn()
-  updated_at?: Date;
-
-  @PrimaryColumn({ type: 'varchar', length: 50 })
-  wallet!: string;
-
-  @PrimaryColumn({ type: 'varchar', length: 50 })
-  contract!: string;
-
-  @Column({ type: 'int', nullable: false })
-  total!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes!: number;
+  memes_balance!: number;
 
   @Column({ type: 'int', nullable: false })
   unique_memes!: number;
 
   @Column({ type: 'int', nullable: false })
-  gradients!: number;
+  unique_memes_szn1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn3!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn4!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn5!: number;
+
+  @Column({ type: 'int', nullable: false })
+  gradients_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  genesis!: number;
+
+  @Column({ type: 'int', nullable: false })
+  nakamoto!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_minus1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_minus2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn3!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn4!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn5!: number;
+}
+
+@Entity({ name: CONSOLIDATED_OWNERS_TAGS_TABLE })
+export class ConsolidatedOwnerTags {
+  @Column({ type: 'datetime' })
+  created_at!: Date;
+
+  @PrimaryColumn({ type: 'varchar', length: 500 })
+  consolidation_display!: string;
+
+  @Column({ type: 'varchar', length: 200 })
+  consolidation_key!: string;
+
+  @Column({ type: 'json', nullable: false })
+  wallets?: any;
+
+  @Column({ type: 'int', nullable: false })
+  memes_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn3!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn4!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes_szn5!: number;
+
+  @Column({ type: 'int', nullable: false })
+  gradients_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  genesis!: number;
+
+  @Column({ type: 'int', nullable: false })
+  nakamoto!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_minus1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_minus2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn1!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn2!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn3!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn4!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets_szn5!: number;
 }
 
 export abstract class OwnerTransactionsBase {

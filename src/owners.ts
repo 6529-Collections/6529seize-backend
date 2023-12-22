@@ -56,20 +56,19 @@ export const findOwners = async () => {
   logger.info(`[DB ${startingOwners.length}]`);
 
   const memesOwners = await getAllOwners(alchemy, MEMES_CONTRACT);
-
   const gradientsOwners = await getAllOwners(alchemy, GRADIENT_CONTRACT);
 
-  logger.info(
-    `[MEMES ${memesOwners.length}] [GRADIENTS ${gradientsOwners.length}]`
-  );
+  logger.info({
+    memes: memesOwners.length,
+    gradients: gradientsOwners.length
+  });
 
   const newOwners: Owner[] = [];
-
   memesOwners.forEach((ownerBalances) => {
     ownerBalances.tokenBalances.map((balance) => {
       const owner: Owner = {
         created_at: new Date(),
-        wallet: ownerBalances.ownerAddress,
+        wallet: ownerBalances.ownerAddress.toLowerCase(),
         token_id: fromHex(balance.tokenId),
         contract: MEMES_CONTRACT,
         balance: parseInt(balance.balance)

@@ -15,6 +15,9 @@ export class MemesSeason {
   @Column({ type: 'int' })
   end_index!: number;
 
+  @Column({ type: 'int' })
+  count!: number;
+
   @Column({ type: 'text' })
   name!: string;
 

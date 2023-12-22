@@ -15,6 +15,7 @@ export const OWNERS_METRICS_TABLE = 'owners_metrics';
 export const MEMES_EXTENDED_DATA_TABLE = 'memes_extended_data';
 export const LAB_EXTENDED_DATA_TABLE = 'lab_extended_data';
 export const WALLETS_TDH_TABLE = 'tdh';
+export const WALLETS_MEMES_TDH_TABLE = 'tdh_memes';
 export const UPLOADS_TABLE = 'uploads';
 export const CONSOLIDATED_UPLOADS_TABLE = 'uploads_consolidation';
 export const ENS_TABLE = 'ens';
@@ -44,7 +45,11 @@ export const OWNERS_TRANSACTIONS_TABLE = 'owners_transactions';
 export const CONSOLIDATED_OWNERS_TRANSACTIONS_TABLE =
   'owners_transactions_consolidation';
 export const OWNERS_BALANCES_TABLE = 'owners_balances';
-export const OWNERS_MEMES_BALANCES_TABLE = 'owners_memes_balances';
+export const OWNERS_BALANCES_MEMES_TABLE = 'owners_balances_memes';
+export const CONSOLIDATED_OWNERS_BALANCES_TABLE =
+  'owners_balances_consolidation';
+export const CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE =
+  'owners_balances_memes_consolidation';
 
 export const NEXT_GEN_ALLOWLIST = 'next_gen_allowlist';
 export const NEXT_GEN_COLLECTIONS = 'next_gen_collections';

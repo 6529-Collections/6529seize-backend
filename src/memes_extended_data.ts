@@ -160,6 +160,7 @@ export const findMemesExtendedData = async () => {
       created_at: new Date(),
       start_index: Math.min(...seasonMemes.map((m) => m.id)),
       end_index: Math.max(...seasonMemes.map((m) => m.id)),
+      count: seasonMemes.length,
       name: `Season ${s}`,
       display: `SZN${s}`
     };
