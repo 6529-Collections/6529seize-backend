@@ -457,7 +457,7 @@ export interface AggregatedRating {
 }
 
 export interface RatingStats {
-  category: number;
+  category: string;
   rating: number;
   contributor_count: number;
   rater_contribution: number | null;
