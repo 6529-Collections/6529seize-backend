@@ -352,6 +352,18 @@ from grouped_rates r
       param
     );
   }
+
+  async getNumberOfRatersForMatterOnProfile(param: {
+    matter: RateMatter;
+    profile_id: string;
+  }): Promise<number> {
+    return this.db
+      .execute(
+        `select count(*) as cnt from ${RATINGS_TABLE} where matter_target_id = :profile_id and matter = :matter and rating <> 0`,
+        param
+      )
+      .then((results) => results[0]?.cnt ?? 0);
+  }
 }
 
 export type UpdateRatingRequest = Omit<Rating, 'last_modified'>;

@@ -36,6 +36,12 @@ async function getReceivedRatingsStats(
       rater_profile_id: raterProfileId ?? null
     });
 
+  const numberOfProfileReppers =
+    await ratingsService.getNumberOfRatersForMatterOnProfile({
+      matter: RateMatter.REP,
+      profile_id: targetProfileId
+    });
+
   return {
     total_rep_rating: ratingStats.reduce(
       (acc, it) => acc + (it.rating ?? 0),
@@ -44,6 +50,7 @@ async function getReceivedRatingsStats(
     total_rep_rating_by_rater: !raterProfileId
       ? null
       : ratingStats.reduce((acc, it) => acc + (it.rater_contribution ?? 0), 0),
+    number_of_raters: numberOfProfileReppers,
     rep_rates_left_for_rater: repRatesLeftForRater,
     rating_stats: ratingStats
   };
@@ -188,6 +195,7 @@ interface ApiProfileReceivedRepRatesState {
   readonly total_rep_rating: number;
   readonly total_rep_rating_by_rater: number | null;
   readonly rep_rates_left_for_rater: number | null;
+  readonly number_of_raters: number;
   readonly rating_stats: RatingStats[];
 }
 
