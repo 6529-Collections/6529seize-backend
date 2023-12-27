@@ -425,14 +425,6 @@ export async function fetchAllTDH() {
   return results;
 }
 
-export async function fetchAllConsolidatedTDH() {
-  const sql = `SELECT * FROM ${CONSOLIDATED_WALLETS_TDH_TABLE};`;
-  const results = await sqlExecutor.execute(sql);
-  results.map((r: any) => (r.memes = JSON.parse(r.memes)));
-  results.map((r: any) => (r.gradients = JSON.parse(r.gradients)));
-  return results;
-}
-
 export async function fetchConsolidationDisplay(
   myWallets: string[]
 ): Promise<string> {
@@ -999,7 +991,7 @@ export async function persistConsolidatedTDH(tdh: ConsolidatedTDH[]) {
 
   await AppDataSource.transaction(async (manager) => {
     const repo = manager.getRepository(ConsolidatedTDH);
-    await repo.clear();
+    await repo.delete({});
     await repo.save(tdh);
     await profilesService.updateProfileTdhs(tdh.at(0)?.block ?? 0, {
       connection: manager.connection

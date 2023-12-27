@@ -4,7 +4,8 @@ import {
   fetchAllTDH,
   fetchAllNFTs,
   persistConsolidatedTDH,
-  fetchConsolidationDisplay
+  fetchConsolidationDisplay,
+  fetchAllConsolidatedTdh
 } from './db';
 import { areEqualAddresses } from './helpers';
 import { ranks } from './tdh';
@@ -73,7 +74,7 @@ export async function getAllTdhs(): Promise<
     );
 }
 
-export const consolidateTDH = async (lastTDHCalc: Date) => {
+export const consolidateTDH = async (lastTDHCalc: Date, recalculate = true) => {
   const tdh: TDHENS[] = await fetchAllTDH();
   const nfts = await fetchAllNFTs();
 
@@ -93,6 +94,11 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
   const processedWallets = new Set<string>();
   const allGradientsTDH: any[] = [];
 
+  let startingConsolidatedTdh: ConsolidatedTDH[] = [];
+  if (!recalculate) {
+    startingConsolidatedTdh = await fetchAllConsolidatedTdh();
+  }
+
   await Promise.all(
     tdh.map(async (tdhEntry) => {
       const wallet = tdhEntry.wallet;
@@ -105,6 +111,22 @@ export const consolidateTDH = async (lastTDHCalc: Date) => {
           areEqualAddresses(wallet, pw)
         )
       ) {
+        if (!recalculate) {
+          const existingConsolidation = startingConsolidatedTdh.find((c) =>
+            areEqualAddresses(c.consolidation_key, consolidationKey)
+          );
+          if (existingConsolidation) {
+            consolidatedTdh.push(existingConsolidation);
+            existingConsolidation.gradients.forEach((wg: any) => {
+              allGradientsTDH.push(wg);
+            });
+            consolidations.forEach((c) => {
+              processedWallets.add(c);
+            });
+            return;
+          }
+        }
+
         const consolidatedWalletsTdh = [...tdh].filter((t) =>
           consolidations.some((c) => areEqualAddresses(c, t.wallet))
         );

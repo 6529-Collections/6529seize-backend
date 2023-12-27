@@ -1,14 +1,14 @@
 import { GRADIENT_CONTRACT, MEMES_CONTRACT } from './constants';
 import { NFT } from './entities/INFT';
 import { areEqualAddresses } from './helpers';
-import { fetchAllNFTs, fetchAllConsolidatedTDH, persistNFTs } from './db';
-import { TDH } from './entities/ITDH';
+import { fetchAllConsolidatedTdh, fetchAllNFTs, persistNFTs } from './db';
+import { ConsolidatedTDH } from './entities/ITDH';
 import { Logger } from './logging';
 
 const logger = Logger.get('NFT_TDH');
 
 export const findNftTDH = async () => {
-  const tdhs: TDH[] = await fetchAllConsolidatedTDH();
+  const tdhs: ConsolidatedTDH[] = await fetchAllConsolidatedTdh();
 
   logger.info(`[WALLETS ${tdhs.length}]`);
 
