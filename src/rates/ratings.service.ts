@@ -1,10 +1,12 @@
 import {
   AggregatedRating,
   AggregatedRatingRequest,
+  RatingWithProfileInfo,
   OverRateMatter,
   ratingsDb,
   RatingsDb,
   RatingsSearchRequest,
+  RatingStats,
   UpdateRatingRequest
 } from './ratings.db';
 import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
@@ -33,7 +35,7 @@ export interface ProfilesMatterRatingWithRaterLevel
 }
 
 export class RatingsService {
-  private readonly logger = Logger.get('[RATINGS_SERVICE]');
+  private readonly logger = Logger.get('RATINGS_SERVICE');
 
   constructor(
     private readonly ratingsDb: RatingsDb,
@@ -164,9 +166,17 @@ export class RatingsService {
       const coefficient = overRatedMatter.rater_tdh / overRatedMatter.tally;
       await this.ratingsDb.executeNativeQueriesInTransaction(
         async (connection) => {
+          let overTdh =
+            Math.abs(overRatedMatter.tally) - overRatedMatter.rater_tdh;
           for (const rating of ratings) {
-            const newRating = Math.floor(rating.rating * coefficient);
+            const newRating =
+              Math.floor(Math.abs(rating.rating * coefficient)) *
+              (rating.rating / Math.abs(rating.rating));
+            overTdh = overTdh - (Math.abs(rating.rating) - Math.abs(newRating));
             await this.insertLostTdhRating(rating, newRating, connection);
+            if (overTdh <= 0) {
+              break;
+            }
           }
         }
       );
@@ -359,7 +369,59 @@ export class RatingsService {
       return acc;
     }, {} as Record<string, number>);
   }
+
+  async getAllRatingsForMatterOnProfileGroupedByCategories(param: {
+    matter_target_id: string;
+    rater_profile_id: string | null;
+    matter: RateMatter;
+  }): Promise<RatingStats[]> {
+    return this.ratingsDb.getRatingStatsOnMatterGroupedByCategories(param);
+  }
+
+  async getRatingsForMatterAndCategoryOnProfileWithRatersInfo(param: {
+    matter_target_id: string;
+    matter_category: string;
+    matter: RateMatter;
+  }): Promise<RatingWithProfileInfoAndLevel[]> {
+    const result =
+      await this.ratingsDb.getRatingsForMatterAndCategoryOnProfileWithRatersInfo(
+        param
+      );
+    return result.map((it) => ({
+      ...it,
+      level: tdh2Level(it.tdh)
+    }));
+  }
+
+  async getNumberOfRatersForMatterOnProfile(param: {
+    matter: RateMatter;
+    profile_id: string;
+  }): Promise<number> {
+    return this.ratingsDb.getNumberOfRatersForMatterOnProfile(param);
+  }
+
+  async getRatingsByRatersForMatter(param: {
+    given: boolean;
+    profileId: string;
+    page: number;
+    matter: RateMatter;
+    page_size: number;
+  }): Promise<Page<RatingWithProfileInfoAndLevel>> {
+    return this.ratingsDb.getRatingsByRatersForMatter(param).then((page) => {
+      return {
+        ...page,
+        data: page.data.map((result) => ({
+          ...result,
+          level: tdh2Level(result.tdh)
+        }))
+      };
+    });
+  }
 }
+
+export type RatingWithProfileInfoAndLevel = RatingWithProfileInfo & {
+  level: number;
+};
 
 export const ratingsService: RatingsService = new RatingsService(
   ratingsDb,

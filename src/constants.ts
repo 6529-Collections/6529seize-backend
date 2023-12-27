@@ -18,6 +18,8 @@ export const WALLETS_TDH_TABLE = 'tdh';
 export const UPLOADS_TABLE = 'uploads';
 export const CONSOLIDATED_UPLOADS_TABLE = 'uploads_consolidation';
 export const ENS_TABLE = 'ens';
+export const ABUSIVENESS_DETECTION_RESULTS_TABLE =
+  'abusiveness_detection_results';
 export const CIC_STATEMENTS_TABLE = 'cic_statements';
 export const PROFILES_TABLE = 'profiles';
 export const PROFILES_ACTIVITY_LOGS_TABLE = 'profile_activity_logs';

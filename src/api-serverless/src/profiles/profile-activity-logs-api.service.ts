@@ -9,7 +9,10 @@ import {
 } from '../../../entities/IProfileActivityLog';
 import { Page, PageRequest } from '../page-request';
 import { profilesDb, ProfilesDb } from '../../../profiles/profiles.db';
-import { RateMatter } from '../../../entities/IRating';
+import {
+  getMattersWhereTargetIsProfile,
+  RateMatter
+} from '../../../entities/IRating';
 
 export class ProfileActivityLogsApiService {
   constructor(
@@ -21,18 +24,23 @@ export class ProfileActivityLogsApiService {
     profileId,
     order,
     pageRequest,
+    includeProfileIdToIncoming,
+    ratingMatter,
     targetId,
     logType
   }: {
     profileId?: string;
     targetId?: string;
     logType?: ProfileActivityLogType[];
+    includeProfileIdToIncoming: boolean;
+    ratingMatter?: string;
     pageRequest: PageRequest;
     order: 'desc' | 'asc';
-  }): Promise<Page<ApiProfileActivtyLog>> {
+  }): Promise<Page<ApiProfileActivityLog>> {
     const params: ProfileLogSearchParams = {
       order,
-      pageRequest
+      pageRequest,
+      includeProfileIdToIncoming
     };
 
     if (profileId) {
@@ -43,6 +51,11 @@ export class ProfileActivityLogsApiService {
     }
     if (logType?.length) {
       params.type = logType;
+    }
+    if (ratingMatter) {
+      if (Object.values(RateMatter).includes(ratingMatter as RateMatter)) {
+        params.rating_matter = ratingMatter as RateMatter;
+      }
     }
     const foundLogs = await this.profileActivityLogsDb.searchLogs(params);
     const profileIdsInLogs = foundLogs.data.reduce((acc, log) => {
@@ -63,7 +76,7 @@ export class ProfileActivityLogsApiService {
         profile_handle: profilesHandlesByIds[log.profile_id]!,
         target_profile_handle:
           log.type === ProfileActivityLogType.RATING_EDIT &&
-          logContents.rating_matter === RateMatter.CIC
+          getMattersWhereTargetIsProfile().includes(logContents.rating_matter)
             ? profilesHandlesByIds[log.target_id!]
             : null
       };
@@ -75,7 +88,7 @@ export class ProfileActivityLogsApiService {
   }
 }
 
-export interface ApiProfileActivtyLog
+export interface ApiProfileActivityLog
   extends Omit<ProfileActivityLog, 'contents'> {
   readonly contents: object;
   readonly profile_handle: string;

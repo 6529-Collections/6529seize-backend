@@ -27,13 +27,13 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
     where 
       rating <> 0 and
       matter = :matter
-      and matter_category = :matter_category
       and matter_target_id = :matter_target_id
+      and matter_category = :matter_category
   `;
     const params: Record<string, any> = {
       matter,
-      matter_category,
-      matter_target_id
+      matter_target_id,
+      matter_category
     };
     if (rater_profile_id) {
       sql += ' and rater_profile_id = :rater_profile_id';
@@ -46,6 +46,54 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
           contributor_count: 0
         }
     );
+  }
+
+  async getRatingStatsOnMatterGroupedByCategories({
+    rater_profile_id,
+    matter,
+    matter_target_id
+  }: Omit<AggregatedRatingRequest, 'matter_category'>): Promise<RatingStats[]> {
+    const sql = `
+with general_stats as (select matter_category                  as category,
+                          sum(rating)                      as rating,
+                          count(distinct rater_profile_id) as contributor_count
+                   from ${RATINGS_TABLE}
+                   where rating <> 0
+                     and matter = :matter
+                     and matter_target_id = :matter_target_id
+                   group by 1),
+ rater_stats as (select matter_category as category,
+                        sum(rating)     as rating
+                 from ${RATINGS_TABLE}
+                 where rating <> 0
+                   and matter = :matter
+                   and matter_target_id = :matter_target_id
+                   and rater_profile_id = :rater_profile_id
+                 group by 1)
+select general_stats.category,
+       general_stats.rating,
+       general_stats.contributor_count,
+       coalesce(rater_stats.rating, 0) as rater_contribution
+from general_stats
+         left join rater_stats on general_stats.category = rater_stats.category
+  order by 4 desc, 2 desc
+  `;
+    const params: Record<string, any> = {
+      matter,
+      matter_target_id,
+      rater_profile_id: rater_profile_id ?? '-'
+    };
+    return this.db
+      .execute(sql, params, { forcePool: DbPoolName.WRITE })
+      .then((results) => {
+        if (!rater_profile_id) {
+          return results.map((result: RatingStats) => ({
+            ...result,
+            rater_contribution: null
+          }));
+        }
+        return results;
+      });
   }
 
   async searchRatingsForMatter({
@@ -272,9 +320,122 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
       param
     );
   }
+
+  async getRatingsForMatterAndCategoryOnProfileWithRatersInfo(param: {
+    matter_target_id: string;
+    matter_category: string;
+    matter: RateMatter;
+  }): Promise<RatingWithProfileInfo[]> {
+    return this.db.execute(
+      `
+with grouped_rates as (select r.rater_profile_id as profile_id, sum(r.rating) as rating, max(last_modified) as last_modified
+                       from ${RATINGS_TABLE} r
+                       where r.matter_target_id = :matter_target_id
+                         and r.matter = :matter
+                         and r.matter_category = :matter_category
+                         and r.rating <> 0
+                       group by 1),
+     rater_cic_ratings as (select matter_target_id as profile_id, sum(rating) as cic
+                           from ${RATINGS_TABLE}
+                           where matter = 'CIC'
+                             and rating <> 0
+                           group by 1)
+select p.handle                           as handle,
+       coalesce(ptdh.boosted_tdh, 0)      as tdh,
+       r.rating,
+       r.last_modified,
+       coalesce(rater_cic_ratings.cic, 0) as cic
+from grouped_rates r
+         join ${PROFILES_TABLE} p on p.external_id = r.profile_id
+         left join ${PROFILE_TDHS_TABLE} ptdh on ptdh.profile_id = r.profile_id
+         left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id
+         order by 4 desc, 2 desc`,
+      param
+    );
+  }
+
+  async getNumberOfRatersForMatterOnProfile(param: {
+    matter: RateMatter;
+    profile_id: string;
+  }): Promise<number> {
+    return this.db
+      .execute(
+        `select count(*) as cnt from ${RATINGS_TABLE} where matter_target_id = :profile_id and matter = :matter and rating <> 0`,
+        param
+      )
+      .then((results) => results[0]?.cnt ?? 0);
+  }
+
+  async getRatingsByRatersForMatter(param: {
+    given: boolean;
+    profileId: string;
+    page: number;
+    matter: RateMatter;
+    page_size: number;
+  }): Promise<Page<RatingWithProfileInfo>> {
+    const profile_id_field = param.given
+      ? 'matter_target_id'
+      : 'rater_profile_id';
+    const where_profile_id_field =
+      profile_id_field === 'rater_profile_id'
+        ? 'matter_target_id'
+        : 'rater_profile_id';
+    const sqlParams = { profile_id: param.profileId, matter: param.matter };
+    const limit = param.page_size;
+    const offset = (param.page - 1) * param.page_size;
+    const sql_start = `with grouped_rates as (select r.${profile_id_field} as profile_id, sum(r.rating) as rating, max(last_modified) as last_modified
+                                 from ${RATINGS_TABLE} r
+                                 where r.${where_profile_id_field} = :profile_id
+                                   and r.matter = :matter
+                                   and r.rating <> 0
+                                 group by 1),
+               rater_cic_ratings as (select matter_target_id as profile_id, sum(rating) as cic
+                                     from ${RATINGS_TABLE}
+                                     where matter = 'CIC'
+                                       and rating <> 0
+                                     group by 1) `;
+    const [results, count] = await Promise.all([
+      this.db.execute(
+        `${sql_start} select p.handle                           as handle,
+             coalesce(ptdh.boosted_tdh, 0)      as tdh,
+             r.rating,
+             r.last_modified,
+             coalesce(rater_cic_ratings.cic, 0) as cic
+      from grouped_rates r
+               join ${PROFILES_TABLE} p on p.external_id = r.profile_id
+               left join ${PROFILE_TDHS_TABLE} ptdh on ptdh.profile_id = r.profile_id
+               left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id order by 3 desc limit ${limit} offset ${offset}`,
+        sqlParams
+      ),
+      this.db
+        .execute(
+          `${sql_start} select count(*) as cnt
+          from grouped_rates r
+                   join ${PROFILES_TABLE} p on p.external_id = r.profile_id
+                   left join ${PROFILE_TDHS_TABLE} ptdh on ptdh.profile_id = r.profile_id
+                   left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id`,
+          sqlParams
+        )
+        .then((results) => results[0]?.cnt ?? 0)
+    ]);
+    return {
+      page: param.page,
+      next: count > param.page_size * param.page,
+      count: count,
+      data: results
+    };
+  }
 }
 
 export type UpdateRatingRequest = Omit<Rating, 'last_modified'>;
+
+export interface RatingWithProfileInfo {
+  handle: string;
+  tdh: number;
+  rating: number;
+  cic: number;
+  last_modified: string;
+}
 
 export interface OverRateMatter {
   rater_profile_id: string;
@@ -293,6 +454,13 @@ export interface AggregatedRatingRequest {
 export interface AggregatedRating {
   rating: number;
   contributor_count: number;
+}
+
+export interface RatingStats {
+  category: string;
+  rating: number;
+  contributor_count: number;
+  rater_contribution: number | null;
 }
 
 export interface RatingsSearchRequest {

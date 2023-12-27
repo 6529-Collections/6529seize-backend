@@ -2,7 +2,7 @@ import { asyncRouter } from '../async.router';
 import { ApiResponse } from '../api-response';
 import { Page } from '../page-request';
 import {
-  ApiProfileActivtyLog,
+  ApiProfileActivityLog,
   profileActivityLogsApiService
 } from './profile-activity-logs-api.service';
 import { Request, Response } from 'express';
@@ -25,14 +25,19 @@ router.get(
         log_type?: ProfileActivityLogType;
         page?: string;
         page_size?: string;
+        rating_matter?: string;
+        include_incoming?: string;
       },
       any
     >,
-    res: Response<ApiResponse<Page<ApiProfileActivtyLog>>>
+    res: Response<ApiResponse<Page<ApiProfileActivityLog>>>
   ) {
     const queryParams = req.query;
     const order = queryParams.order?.toLowerCase() === 'asc' ? 'asc' : 'desc';
     const profile = queryParams.profile;
+    const includeProfileIdToIncoming =
+      queryParams.include_incoming?.toLowerCase() === 'true';
+    const ratingMatter = queryParams.rating_matter;
     let profileId = undefined;
     if (profile) {
       profileId = await profilesService
@@ -64,6 +69,8 @@ router.get(
     const results = await profileActivityLogsApiService.getProfileActivityLogs({
       profileId,
       order,
+      includeProfileIdToIncoming,
+      ratingMatter,
       pageRequest: {
         page,
         page_size: size

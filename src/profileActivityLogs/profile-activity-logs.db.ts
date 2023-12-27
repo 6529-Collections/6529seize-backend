@@ -10,6 +10,7 @@ import {
 import { uniqueShortId } from '../helpers';
 import { PROFILES_ACTIVITY_LOGS_TABLE } from '../constants';
 import { Page, PageRequest } from '../api-serverless/src/page-request';
+import { RateMatter } from '../entities/IRating';
 
 export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   public async insertMany(
@@ -69,10 +70,21 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     };
     const countParams: Record<string, any> = {};
     if (params.profile_id) {
-      sql += ` and profile_id = :profile_id`;
-      countSql += ` and profile_id = :profile_id`;
+      if (params.includeProfileIdToIncoming) {
+        sql += ` and (profile_id = :profile_id or target_id = :profile_id)`;
+        countSql += ` and (profile_id = :profile_id or target_id = :profile_id)`;
+      } else {
+        sql += ` and profile_id = :profile_id`;
+        countSql += ` and profile_id = :profile_id`;
+      }
       sqlParams.profile_id = params.profile_id;
       countParams.profile_id = params.profile_id;
+    }
+    if (params.rating_matter) {
+      sql += ` and JSON_UNQUOTE(JSON_EXTRACT(contents, '$.rating_matter')) = :rating_matter`;
+      countSql += ` and JSON_UNQUOTE(JSON_EXTRACT(contents, '$.rating_matter')) = :rating_matter`;
+      sqlParams.rating_matter = params.rating_matter;
+      countParams.rating_matter = params.rating_matter;
     }
     if (params.target_id) {
       sql += ` and target_id = :target_id`;
@@ -115,8 +127,10 @@ export type NewProfileActivityLog = Omit<
 export interface ProfileLogSearchParams {
   profile_id?: string;
   target_id?: string;
+  rating_matter?: RateMatter;
   type?: ProfileActivityLogType[];
   pageRequest: PageRequest;
+  includeProfileIdToIncoming: boolean;
   order: 'asc' | 'desc';
 }
 

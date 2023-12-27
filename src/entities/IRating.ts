@@ -18,9 +18,10 @@ export class Rating {
 }
 
 export enum RateMatter {
-  CIC = 'CIC'
+  CIC = 'CIC',
+  REP = 'REP'
 }
 
 export function getMattersWhereTargetIsProfile(): RateMatter[] {
-  return [RateMatter.CIC];
+  return [RateMatter.CIC, RateMatter.REP];
 }

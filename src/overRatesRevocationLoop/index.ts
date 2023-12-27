@@ -5,6 +5,7 @@ import { CicStatement } from '../entities/ICICStatement';
 import { ProfileActivityLog } from '../entities/IProfileActivityLog';
 import { Rating } from '../entities/IRating';
 import { ratingsService } from '../rates/ratings.service';
+import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
 
 const logger = Logger.get('OVER_RATES_REVOCATION_LOOP');
 
@@ -15,7 +16,8 @@ export const handler = async () => {
     ProfileArchived,
     CicStatement,
     ProfileActivityLog,
-    Rating
+    Rating,
+    AbusivenessDetectionResult
   ]);
   await ratingsService.reduceOverRates();
   await unload();

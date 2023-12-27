@@ -6,12 +6,13 @@ import { isNumber } from '../../helpers';
 import { validateUser } from './users/user_validation';
 
 import profilesRoutes from './profiles/profiles.routes';
-import profileSearchRoutes from './profiles/profile-search.routes';
+import communityMembersSearchRoutes from './profiles/community-members-search.routes';
 import authRoutes from './auth/auth.routes';
 import rememesRoutes from './rememes/rememes.routes';
 import nextgenRoutes from './nextgen/nextgen.routes';
 import royaltiesRoutes from './royalties/royalties.routes';
 import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
+import repCategorySearchRoutes from './profiles/rep-category-search.routes';
 import gasRoutes from './gas/gas.routes';
 import * as passport from 'passport';
 import {
@@ -1287,13 +1288,14 @@ loadApi().then(() => {
   });
 
   apiRouter.use(`/profiles`, profilesRoutes);
-  apiRouter.use(`/profiles-search`, profileSearchRoutes);
+  apiRouter.use(`/community-members`, communityMembersSearchRoutes);
   apiRouter.use(`/auth`, authRoutes);
   apiRouter.use(`/rememes`, rememesRoutes);
   apiRouter.use(`/nextgen`, nextgenRoutes);
   apiRouter.use(`/gas`, gasRoutes);
   apiRouter.use(`/royalties`, royaltiesRoutes);
   apiRouter.use(`/profile-logs`, profileActivityLogsRoutes);
+  apiRouter.use(`/rep/categories`, repCategorySearchRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 

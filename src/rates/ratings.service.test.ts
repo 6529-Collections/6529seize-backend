@@ -203,7 +203,7 @@ describe('RatingsService', () => {
   });
 
   describe('revokeOverRates', () => {
-    it('revokes all over rates', async () => {
+    it('reduces all rates on matter when there TDH is overspent', async () => {
       when(ratingsDb.getOverRateMatters).mockResolvedValue([
         {
           rater_profile_id: 'pid',
@@ -275,6 +275,88 @@ describe('RatingsService', () => {
           type: ProfileActivityLogType.RATING_EDIT,
           contents: JSON.stringify({
             old_rating: -10,
+            new_rating: -4,
+            rating_matter: 'CIC',
+            rating_category: 'CIC2',
+            change_reason: 'LOST_TDH'
+          })
+        },
+        mockConnection
+      );
+    });
+
+    it('reduces some rates on matter when there TDH is overspent', async () => {
+      when(ratingsDb.getOverRateMatters).mockResolvedValue([
+        {
+          rater_profile_id: 'pid',
+          matter: RateMatter.CIC,
+          tally: 11,
+          rater_tdh: 10
+        }
+      ]);
+      when(ratingsDb.lockRatingsOnMatterForUpdate).mockResolvedValue([
+        {
+          rating: -6,
+          rater_profile_id: 'pid',
+          matter: RateMatter.CIC,
+          matter_target_id: 'mid2',
+          matter_category: 'CIC',
+          last_modified: Time.millis(0).toDate()
+        },
+        {
+          rating: -5,
+          rater_profile_id: 'pid',
+          matter: RateMatter.CIC,
+          matter_target_id: 'mid2',
+          matter_category: 'CIC2',
+          last_modified: Time.millis(0).toDate()
+        }
+      ]);
+      await ratingsService.reduceOverRates();
+      expect(ratingsDb.updateRating).toHaveBeenCalledWith(
+        {
+          rater_profile_id: 'pid',
+          matter: RateMatter.CIC,
+          matter_target_id: 'mid2',
+          matter_category: 'CIC',
+          last_modified: expect.any(Date),
+          rating: -5
+        },
+        mockConnection
+      );
+      expect(ratingsDb.updateRating).not.toHaveBeenCalledWith(
+        {
+          rater_profile_id: 'pid',
+          matter: RateMatter.CIC,
+          matter_target_id: 'mid2',
+          matter_category: 'CIC2',
+          last_modified: expect.any(Date),
+          rating: expect.any(Number)
+        },
+        mockConnection
+      );
+      expect(profileActivityLogsDb.insert).toHaveBeenCalledWith(
+        {
+          profile_id: 'pid',
+          target_id: 'mid2',
+          type: ProfileActivityLogType.RATING_EDIT,
+          contents: JSON.stringify({
+            old_rating: -6,
+            new_rating: -5,
+            rating_matter: 'CIC',
+            rating_category: 'CIC',
+            change_reason: 'LOST_TDH'
+          })
+        },
+        mockConnection
+      );
+      expect(profileActivityLogsDb.insert).not.toHaveBeenCalledWith(
+        {
+          profile_id: 'pid',
+          target_id: 'mid2',
+          type: ProfileActivityLogType.RATING_EDIT,
+          contents: JSON.stringify({
+            old_rating: -5,
             new_rating: -4,
             rating_matter: 'CIC',
             rating_category: 'CIC2',

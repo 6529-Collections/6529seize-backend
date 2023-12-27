@@ -7,6 +7,8 @@ const nfts = require('./nftsLoop');
 const owners = require('./ownersLoop');
 const memeLab = require('./memeLabLoop');
 const tdh = require('./tdhLoop');
+const tdhConsolidations = require('./tdhConsolidationsLoop');
+
 const tdhHistory = require('./tdhHistoryLoop');
 const team = require('./teamLoop');
 const rememes = require('./rememesLoop');
@@ -36,6 +38,7 @@ cron.schedule('*/4 * * * *', async function () {
   if (isCronsEnabled()) {
     await nfts.handler();
     await owners.handler();
+    await tdhConsolidations.handler();
   }
 });
 
@@ -131,6 +134,7 @@ async function start() {
   // await owners.handler();
   // await ownerMetrics.handler();
   // await tdh.handler();
+  await tdhConsolidations.handler();
   // await tdhHistory.handler();
   // await memeLab.handler();
   // await memeStats();

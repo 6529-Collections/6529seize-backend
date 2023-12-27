@@ -108,7 +108,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     );
     return walletAddresses.map((walletAddress) => ({
       address: walletAddress,
-      ens: results.find((row) => row.address === walletAddress)?.ens
+      ens: results.find((row) => row.address.toLowerCase() === walletAddress)
+        ?.ens
     }));
   }
 
@@ -145,7 +146,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       return {};
     }
     const result: { wallet: string; tdh: number }[] = await this.db.execute(
-      `select wallet, boosted_tdh as tdh from ${WALLETS_TDH_TABLE} where block = :blockNo and lower(wallet) in (:wallets)`,
+      `select lower(wallet) as wallet, boosted_tdh as tdh from ${WALLETS_TDH_TABLE} where block = :blockNo and lower(wallet) in (:wallets)`,
       {
         blockNo,
         wallets: normalisedWallets
@@ -530,40 +531,55 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     return new Date(blockDateStr);
   }
 
-  async searchWhereHandleLike({
+  async searchCommunityMembersWhereEnsLike({
     limit,
     handle
   }: {
     limit: number;
     handle: string;
-  }): Promise<Profile[]> {
-    return this.db.execute(
-      `select * from ${PROFILES_TABLE} where handle like concat('%',lower(:handle),'%') limit :limit`,
-      { handle, limit }
-    );
+  }): Promise<(Profile & { tdh: number; display: string; wallet: string })[]> {
+    if (handle.endsWith('eth') && handle.length <= 6) {
+      return [];
+    }
+    {
+      const sql = `
+    select ${PROFILES_TABLE}.*, 
+      ${PROFILES_TABLE}.*, 
+      if(${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh is null, 0, ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh) as tdh,
+      coalesce(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, ${ENS_TABLE}.display, ${PROFILES_TABLE}.primary_wallet) as display,
+      ${ENS_TABLE}.wallet as wallet
+    from ${ENS_TABLE}
+    left join ${CONSOLIDATED_WALLETS_TDH_TABLE} on lower(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key) like concat('%', lower(${ENS_TABLE}.wallet), '%')
+    left join ${PROFILES_TABLE} on lower(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key) like concat('%', lower(${PROFILES_TABLE}.primary_wallet), '%')
+    where ${ENS_TABLE}.display like concat('%',:handle,'%')
+    order by ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh desc
+    limit :limit
+    `;
+      return this.db.execute(sql, { handle, limit });
+    }
   }
 
-  async getProfilesTdhsByProfileIds(
-    profileIds: string[]
-  ): Promise<Record<string, number>> {
-    if (!profileIds.length) {
-      return {};
-    }
-    return this.db
-      .execute(
-        `select profile_id, boosted_tdh as tdh from ${PROFILE_TDHS_TABLE} where profile_id in (:profileIds)`,
-        { profileIds }
-      )
-      .then((result) =>
-        profileIds.reduce((acc: Record<string, number>, profileId: string) => {
-          acc[profileId] =
-            result.find(
-              (r: { profile_id: string; tdh: number }) =>
-                r.profile_id === profileId
-            )?.tdh ?? 0;
-          return acc;
-        }, {} as Record<string, number>)
-      );
+  async searchCommunityMembersWhereHandleLike({
+    limit,
+    handle
+  }: {
+    limit: number;
+    handle: string;
+  }): Promise<(Profile & { tdh: number; display: string; wallet: string })[]> {
+    const sql = `
+    select 
+      ${PROFILES_TABLE}.*, 
+      if(${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh is null, 0, ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh) as tdh,
+      coalesce(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, ${ENS_TABLE}.display, ${PROFILES_TABLE}.primary_wallet) as display,
+      ${PROFILES_TABLE}.primary_wallet as wallet
+    from ${PROFILES_TABLE}
+    left join ${CONSOLIDATED_WALLETS_TDH_TABLE} on lower(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key) like concat('%', lower(${PROFILES_TABLE}.primary_wallet), '%')
+    left join ${ENS_TABLE} on lower(${ENS_TABLE}.wallet) = concat('%', lower(${PROFILES_TABLE}.primary_wallet), '%')
+    where ${PROFILES_TABLE}.handle like concat('%', lower(:handle), '%')
+    order by ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh desc
+    limit :limit
+    `;
+    return this.db.execute(sql, { handle, limit });
   }
 
   async deleteProfile(

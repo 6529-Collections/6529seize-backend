@@ -122,7 +122,7 @@ const findDetailsFromTransaction = async (tx: TransactionResponse) => {
         }
       }
     } catch (e: any) {
-      logger.error(`[ERROR PARSING TX ${tx.hash}]`, e);
+      logger.error(`[ERROR PARSING TX ${tx.hash}] [${e}]`);
     }
   }
   return null;
@@ -182,12 +182,14 @@ function getAttributeChanges(oldAttributes: any[], newAttributes: any[]) {
 const getEditDescription = async (
   tokenId: number,
   contract: string,
-  newUri: string
+  newUri: string,
+  blockNumber: number
 ) => {
-  const previousUri = await fetchLatestNftUri(tokenId, contract);
+  const previousUri = await fetchLatestNftUri(tokenId, contract, blockNumber);
   if (previousUri) {
     const previousMeta = await (await fetch(previousUri)).json();
     const newMeta = await (await fetch(newUri)).json();
+
     const changes: any[] = [];
     for (const key in previousMeta) {
       if (typeof previousMeta[key] != 'object') {
@@ -218,6 +220,37 @@ const getEditDescription = async (
                 from: previousMeta[key][key2],
                 to: newMeta[key][key2]
               });
+            }
+          }
+        }
+      }
+    }
+    for (const key in newMeta) {
+      if (!previousMeta[key]) {
+        if (typeof newMeta[key] != 'object') {
+          changes.push({ key: key, from: '', to: newMeta[key] });
+        } else {
+          if (key == 'attributes') {
+            const attributeChanges = getAttributeChanges(
+              previousMeta[key],
+              newMeta[key]
+            );
+            attributeChanges.forEach((change) => {
+              changes.push({
+                key: `${key}::${change.trait_type}`,
+                from: change.old_value,
+                to: change.new_value
+              });
+            });
+          } else {
+            for (const key2 in newMeta[key]) {
+              if (typeof newMeta[key][key2] != 'object') {
+                changes.push({
+                  key: `${key}::${key2}`,
+                  from: '',
+                  to: newMeta[key][key2]
+                });
+              }
             }
           }
         }
@@ -320,7 +353,7 @@ export const getDeployerTransactions = async (
         };
         await persistNftClaims([claim]);
       } catch (e: any) {
-        logger.info(`[ERROR PARSING TX ${tx.hash}]`, e.message);
+        logger.info(`[ERROR PARSING TX ${tx.hash}] [${e.message}]`);
       }
     } else if (tx?.data.startsWith(INITIALIZE_CLAIM_METHOD_2)) {
       const data = tx.data;
@@ -363,7 +396,7 @@ export const getDeployerTransactions = async (
           await persistNftClaims([claim]);
         }
       } catch (e: any) {
-        logger.error(`[ERROR PARSING TX ${tx.hash}]`, e);
+        logger.error(`[ERROR PARSING TX ${tx.hash}] [${e}]`);
       }
     } else if (tx?.data.startsWith(INITIALIZE_BURN_METHOD)) {
       const data = tx.data;
@@ -398,7 +431,7 @@ export const getDeployerTransactions = async (
           await persistNftHistory([nftMint]);
         }
       } catch (e: any) {
-        logger.error(`[ERROR PARSING TX ${tx.hash}]`, e);
+        logger.error(`[ERROR PARSING TX ${tx.hash}] [${e}]`);
       }
     } else if (tx?.data.startsWith(SET_TOKEN_URI_METHOD)) {
       const details = await findDetailsFromTransaction(tx);
@@ -406,7 +439,8 @@ export const getDeployerTransactions = async (
         const editDescription = await getEditDescription(
           details.tokenId,
           details.contract,
-          details.tokenUri
+          details.tokenUri,
+          tx.blockNumber!
         );
         const nftEdit: NFTHistory = {
           created_at: new Date(),
@@ -457,7 +491,7 @@ export const getDeployerTransactions = async (
           }
         }
       } catch (e: any) {
-        logger.error(`[ERROR PARSING TX ${tx.hash}]`, e);
+        logger.error(`[ERROR PARSING TX ${tx.hash}] [${e}]`);
       }
     } else if (
       tx?.data.startsWith(UPDATE_CLAIM_METHOD_1) ||
@@ -480,7 +514,8 @@ export const getDeployerTransactions = async (
               const editDescription = await getEditDescription(
                 nftId,
                 contract,
-                `https://arweave.net/${location}`
+                `https://arweave.net/${location}`,
+                tx.blockNumber!
               );
               if (editDescription.changes.length == 0) {
                 throw new Error(`no changes found ${tx.hash} ${location}`);
@@ -500,7 +535,7 @@ export const getDeployerTransactions = async (
           }
         }
       } catch (e: any) {
-        logger.error(`[ERROR PARSING TX ${tx.hash}]`, e);
+        logger.error(`[ERROR PARSING TX ${tx.hash}] [${e}]`);
       }
     }
   }
@@ -558,7 +593,7 @@ export const findNFTHistory = async (
 
     await persistNftHistoryBlock(deployerTransactionsBlock);
   } catch (e: any) {
-    logger.error('[ETIMEDOUT!] [RETRYING PROCESS]', e);
+    logger.error(`[ETIMEDOUT!] [RETRYING PROCESS] [${e}]`);
     await findNFTHistory(force, startingBlock, latestBlock, pagKey);
   }
 };
