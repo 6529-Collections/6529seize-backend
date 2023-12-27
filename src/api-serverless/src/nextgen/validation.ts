@@ -3,11 +3,11 @@ import * as Joi from 'joi';
 import { hashMessage } from '@ethersproject/hash';
 import { areEqualAddresses, stringToHex } from '../../../helpers';
 import { Readable } from 'stream';
-import { NEXTGEN_ADMIN } from '../../../constants';
 import {
+  NEXTGEN_ADMIN,
   NEXTGEN_ADMIN_ABI,
   NEXTGEN_CHAIN_ID,
-  NEXTGEN_FUNCTION_SELECTOR
+  NEXTGEN_SET_COLLECTION_PHASES_SELECTOR
 } from './abis';
 import { Logger } from '../../../logging';
 const { keccak256 } = require('@ethersproject/keccak256');
@@ -335,7 +335,7 @@ async function validateAdmin(collection_id: number, address: string) {
   const rpcUrl = getUrl(NEXTGEN_CHAIN_ID);
   const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
   const contract = new ethers.Contract(
-    NEXTGEN_ADMIN,
+    NEXTGEN_ADMIN[NEXTGEN_CHAIN_ID],
     NEXTGEN_ADMIN_ABI,
     provider
   );
@@ -346,7 +346,7 @@ async function validateAdmin(collection_id: number, address: string) {
 
     const result2 = await contract.functions.retrieveFunctionAdmin(
       address,
-      NEXTGEN_FUNCTION_SELECTOR
+      NEXTGEN_SET_COLLECTION_PHASES_SELECTOR
     );
     const isFunctionAdmin = result2[0];
 
