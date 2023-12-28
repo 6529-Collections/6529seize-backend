@@ -15,7 +15,8 @@ import {
   SZN2_INDEX,
   SZN3_INDEX,
   SZN4_INDEX,
-  SZN5_INDEX
+  SZN5_INDEX,
+  SZN6_INDEX
 } from './constants';
 import { sqlExecutor } from './sql-executor';
 import { Logger } from './logging';
@@ -116,6 +117,9 @@ export async function consolidateTDHForWallets(
       let memes_tdh_season5 = 0;
       let memes_tdh_season5__raw = 0;
       let memes_balance_season5 = 0;
+      let memes_tdh_season6 = 0;
+      let memes_tdh_season6__raw = 0;
+      let memes_balance_season6 = 0;
       let gradientsTDH = 0;
       let gradientsTDH__raw = 0;
       let gradientsBalance = 0;
@@ -145,6 +149,9 @@ export async function consolidateTDHForWallets(
         memes_tdh_season5 += wTdh.memes_tdh_season5;
         memes_tdh_season5__raw += wTdh.memes_tdh_season5__raw;
         memes_balance_season5 += wTdh.memes_balance_season5;
+        memes_tdh_season6 += wTdh.memes_tdh_season6;
+        memes_tdh_season6__raw += wTdh.memes_tdh_season6__raw;
+        memes_balance_season6 += wTdh.memes_balance_season6;
         gradientsTDH += wTdh.gradients_tdh;
         gradientsTDH__raw += wTdh.gradients_tdh__raw;
         gradientsBalance += wTdh.gradients_balance;
@@ -171,6 +178,7 @@ export async function consolidateTDHForWallets(
       const unique_memes_season3 = getUniqueMemesSeason(3, consolidationMemes);
       const unique_memes_season4 = getUniqueMemesSeason(4, consolidationMemes);
       const unique_memes_season5 = getUniqueMemesSeason(5, consolidationMemes);
+      const unique_memes_season6 = getUniqueMemesSeason(6, consolidationMemes);
 
       const consolidation: ConsolidatedTDH = {
         date: new Date(),
@@ -184,6 +192,7 @@ export async function consolidateTDHForWallets(
         tdh_rank_memes_szn3: 0, //assigned later
         tdh_rank_memes_szn4: 0, //assigned later
         tdh_rank_memes_szn5: 0, //assigned later
+        tdh_rank_memes_szn6: 0, //assigned later
         tdh_rank_gradients: 0, //assigned later
         block: tdhEntry.block,
         tdh: totalTDH,
@@ -199,6 +208,7 @@ export async function consolidateTDHForWallets(
         unique_memes_season3: unique_memes_season3,
         unique_memes_season4: unique_memes_season4,
         unique_memes_season5: unique_memes_season5,
+        unique_memes_season6: unique_memes_season6,
         boosted_memes_tdh: 0,
         memes_tdh: memesTDH,
         memes_tdh__raw: memesTDH__raw,
@@ -223,6 +233,10 @@ export async function consolidateTDHForWallets(
         memes_tdh_season5: memes_tdh_season5,
         memes_tdh_season5__raw: memes_tdh_season5__raw,
         memes_balance_season5: memes_balance_season5,
+        boosted_memes_tdh_season6: 0,
+        memes_tdh_season6: memes_tdh_season6,
+        memes_tdh_season6__raw: memes_tdh_season6__raw,
+        memes_balance_season6: memes_balance_season6,
         memes: consolidationMemes,
         memes_ranks: [],
         boosted_gradients_tdh: 0,
@@ -320,7 +334,8 @@ function getUniqueMemesSeason(season: number, consolidationTokens: any[]) {
       (season == 2 && c.id >= SZN2_INDEX.start && c.id <= SZN2_INDEX.end) ||
       (season == 3 && c.id >= SZN3_INDEX.start && c.id <= SZN3_INDEX.end) ||
       (season == 4 && c.id >= SZN4_INDEX.start && c.id <= SZN4_INDEX.end) ||
-      (season == 5 && c.id >= SZN5_INDEX.start)
+      (season == 5 && c.id >= SZN5_INDEX.start && c.id <= SZN5_INDEX.end) ||
+      (season == 6 && c.id >= SZN6_INDEX.start)
     ) {
       unique.add(c.id);
     }
