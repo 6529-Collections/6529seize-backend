@@ -55,7 +55,10 @@ router.get(
     const abusivenessDetectionResult =
       await abusivenessCheckService.checkAbusiveness(searchParam);
     if (abusivenessDetectionResult.status === 'DISALLOWED') {
-      throw new BadRequestException(abusivenessDetectionResult.explanation);
+      throw new BadRequestException(
+        abusivenessDetectionResult.explanation ??
+          'Given category is not allowed'
+      );
     }
     res.send(true);
   }

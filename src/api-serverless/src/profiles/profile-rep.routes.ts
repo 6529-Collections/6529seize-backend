@@ -200,7 +200,10 @@ router.post(
       const abusivenessDetectionResult =
         await abusivenessCheckService.checkAbusiveness(category);
       if (abusivenessDetectionResult.status === 'DISALLOWED') {
-        throw new BadRequestException(abusivenessDetectionResult.explanation);
+        throw new BadRequestException(
+          abusivenessDetectionResult.explanation ??
+            'Given category is not allowed'
+        );
       }
     }
     await ratingsService.updateRating({
