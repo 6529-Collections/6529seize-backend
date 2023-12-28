@@ -122,11 +122,11 @@ async function start() {
 
   // await nftHistory.handler();
   // await delegations.handler();
-  await transactions.handler();
-  await nfts.handler();
-  await owners.handler();
-  await ownerMetrics.handler();
-  await tdh.handler();
+  // await transactions.handler();
+  // await nfts.handler();
+  // await owners.handler();
+  // await ownerMetrics.handler();
+  // await tdh.handler();
   // await tdhConsolidations.handler();
   // await tdhHistory.handler();
   // await memeLab.handler();
@@ -141,9 +141,9 @@ async function start() {
   // await transactions.handlerValues();
   // await rememes.handler();
   // await transactionsReplay.handler();
-  // await overRatesRevocation.handler();
+  await overRatesRevocation.handler();
 
-  // RUNNING_START_SCRIPT = false;
+  RUNNING_START_SCRIPT = false;
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}] [SERVICE STARTED...]`);
 }
