@@ -54,13 +54,14 @@ import * as mysql from 'mysql';
 import { Time } from './time';
 import { DbPoolName, DbQueryOptions } from './db-query.options';
 import { Logger } from './logging';
-import { tdh2Level } from './profiles/profile-level';
+import { calculateLevel } from './profiles/profile-level';
 import { Nft } from 'alchemy-sdk';
 import {
   constructFilters,
   constructFiltersOR
 } from './api-serverless/src/api-helpers';
 import { profilesService } from './profiles/profiles.service';
+import { repService } from './api-serverless/src/profiles/rep.service';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -1583,9 +1584,12 @@ async function enhanceDataWithHandlesAndLevel(
       )
       .flat()
   );
-  const walletsToHandles =
-    await profilesService.getProfileHandlesByPrimaryWallets(resultWallets);
-
+  const walletsToHandlesAndIds =
+    await profilesService.getProfileIdsAndHandlesByPrimaryWallets(
+      resultWallets
+    );
+  const profileIds = Object.values(walletsToHandlesAndIds).map((it) => it.id);
+  const profileReps = await repService.getRepForProfiles(profileIds);
   return data.map(
     (d: { wallets?: string; wallet?: string; boosted_tdh?: number }) => {
       const parsedWallets = d.wallet
@@ -1594,15 +1598,22 @@ async function enhanceDataWithHandlesAndLevel(
         ? JSON.parse(d.wallets)
         : [];
       const resolvedWallet = parsedWallets.find(
-        (w: string) => walletsToHandles[w.toLowerCase()]
+        (w: string) => walletsToHandlesAndIds[w.toLowerCase()]
       );
-      (d as any).level = tdh2Level(d.boosted_tdh ?? 0);
+      (d as any).level = calculateLevel({
+        tdh: d.boosted_tdh ?? 0,
+        rep: !resolvedWallet
+          ? 0
+          : profileReps[
+              walletsToHandlesAndIds[resolvedWallet.toLowerCase()]?.id
+            ] ?? 0
+      });
       if (!resolvedWallet) {
         return d;
       }
       return {
         ...d,
-        handle: walletsToHandles[resolvedWallet.toLowerCase()]
+        handle: walletsToHandlesAndIds[resolvedWallet.toLowerCase()]?.handle
       };
     }
   );

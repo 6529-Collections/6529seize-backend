@@ -26,8 +26,12 @@ import { Time } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
 import { Page } from '../api-serverless/src/page-request';
 import { ProfilesMatterRating } from './rates.types';
-import { tdh2Level } from '../profiles/profile-level';
+import { calculateLevel } from '../profiles/profile-level';
 import { Profile } from '../entities/IProfile';
+import {
+  repService,
+  RepService
+} from '../api-serverless/src/profiles/rep.service';
 
 export interface ProfilesMatterRatingWithRaterLevel
   extends ProfilesMatterRating {
@@ -40,6 +44,7 @@ export class RatingsService {
   constructor(
     private readonly ratingsDb: RatingsDb,
     private readonly profilesDb: ProfilesDb,
+    private readonly repService: RepService,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb
   ) {}
 
@@ -52,12 +57,18 @@ export class RatingsService {
   public async getPageOfRatingsForMatter(
     request: RatingsSearchRequest
   ): Promise<Page<ProfilesMatterRatingWithRaterLevel>> {
-    return this.ratingsDb.searchRatingsForMatter(request).then((page) => {
+    return this.ratingsDb.searchRatingsForMatter(request).then(async (page) => {
+      const profileReps = await this.repService.getRepForProfiles(
+        page.data.map((it) => it.rater_profile_id)
+      );
       return {
         ...page,
         data: page.data.map((result) => ({
           ...result,
-          rater_level: tdh2Level(result.rater_tdh)
+          rater_level: calculateLevel({
+            tdh: result.rater_tdh,
+            rep: profileReps[result.rater_profile_id] ?? 0
+          })
         }))
       };
     });
@@ -387,9 +398,14 @@ export class RatingsService {
       await this.ratingsDb.getRatingsForMatterAndCategoryOnProfileWithRatersInfo(
         param
       );
+    const profileIds = result.map((it) => it.profile_id);
+    const profileReps = await this.repService.getRepForProfiles(profileIds);
     return result.map((it) => ({
       ...it,
-      level: tdh2Level(it.tdh)
+      level: calculateLevel({
+        tdh: it.tdh,
+        rep: profileReps[it.profile_id] ?? 0
+      })
     }));
   }
 
@@ -407,15 +423,22 @@ export class RatingsService {
     matter: RateMatter;
     page_size: number;
   }): Promise<Page<RatingWithProfileInfoAndLevel>> {
-    return this.ratingsDb.getRatingsByRatersForMatter(param).then((page) => {
-      return {
-        ...page,
-        data: page.data.map((result) => ({
-          ...result,
-          level: tdh2Level(result.tdh)
-        }))
-      };
-    });
+    return this.ratingsDb
+      .getRatingsByRatersForMatter(param)
+      .then(async (page) => {
+        const profileIds = page.data.map((it) => it.profile_id);
+        const profileReps = await this.repService.getRepForProfiles(profileIds);
+        return {
+          ...page,
+          data: page.data.map((result) => ({
+            ...result,
+            level: calculateLevel({
+              tdh: result.tdh,
+              rep: profileReps[result.profile_id] ?? 0
+            })
+          }))
+        };
+      });
   }
 }
 
@@ -426,5 +449,6 @@ export type RatingWithProfileInfoAndLevel = RatingWithProfileInfo & {
 export const ratingsService: RatingsService = new RatingsService(
   ratingsDb,
   profilesDb,
+  repService,
   profileActivityLogsDb
 );
