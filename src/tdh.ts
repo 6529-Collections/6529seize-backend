@@ -95,7 +95,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
   const allGradientsTDH: any[] = [];
   await Promise.all(
     owners.map(async (owner) => {
-      const wallet = owner.wallet;
+      const wallet = owner.wallet.toLowerCase();
       const consolidations = await retrieveWalletConsolidations(wallet);
 
       const walletMemes: any[] = [];
