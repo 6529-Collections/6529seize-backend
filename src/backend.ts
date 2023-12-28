@@ -134,7 +134,7 @@ async function start() {
   // await owners.handler();
   // await ownerMetrics.handler();
   // await tdh.handler();
-  await tdhConsolidations.handler();
+  // await tdhConsolidations.handler();
   // await tdhHistory.handler();
   // await memeLab.handler();
   // await memeStats();

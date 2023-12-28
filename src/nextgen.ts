@@ -34,16 +34,29 @@ let alchemy: Alchemy;
 let cloudfront: CloudFrontClient;
 let s3: S3Client;
 let myBucket: string;
+let network: Network.ETH_GOERLI | Network.ETH_MAINNET;
+let s3Path: string;
+let generatorNetworkPath: string;
 
 const logger = Logger.get('NEXTGEN');
 
-const NEXTGEN_S3_PATH = `nextgen/tokens/images/${NEXTGEN_CONTRACT.network}-${NEXTGEN_CONTRACT.contract}`;
-const GENERATOR_NETWORK_PATH =
-  NEXTGEN_CONTRACT.network === Network.ETH_GOERLI ? 'testnet' : 'mainnet';
+export function getNextGenNetwork() {
+  if (process.env.NEXTGEN_CHAIN_ID) {
+    const chainId: number = parseInt(process.env.NEXTGEN_CHAIN_ID);
+    if (chainId === 5) {
+      return Network.ETH_GOERLI;
+    }
+  }
+  return Network.ETH_MAINNET;
+}
 
 function load() {
+  network = getNextGenNetwork();
+  s3Path = `nextgen/tokens/images/${network}-${NEXTGEN_CONTRACT[network]}`;
+  generatorNetworkPath = network === Network.ETH_GOERLI ? 'testnet' : 'mainnet';
+
   alchemy = new Alchemy({
-    network: NEXTGEN_CONTRACT.network,
+    network: network,
     maxRetries: 10,
     apiKey: process.env.ALCHEMY_API_KEY
   });
@@ -69,7 +82,8 @@ export const findNextgenTokens = async (pageKey?: string) => {
   logger.info({
     task: 'FIND NEXTGEN TOKENS',
     start_block: startBlock,
-    latest_block: latestBlock
+    latest_block: latestBlock,
+    network: network
   });
 
   await findTransactions(startBlock, latestBlock, pageKey);
@@ -87,7 +101,7 @@ export const refreshNextgenTokens = async () => {
   const imageResponse = await s3.send(
     new ListObjectsCommand({
       Bucket: myBucket,
-      Prefix: NEXTGEN_S3_PATH
+      Prefix: s3Path
     })
   );
 
@@ -159,7 +173,7 @@ async function getAllTransactions(
 
   const settings: AssetTransfersWithMetadataParams = {
     category: [AssetTransfersCategory.ERC721],
-    contractAddresses: [NEXTGEN_CONTRACT.contract],
+    contractAddresses: [NEXTGEN_CONTRACT[network]],
     withMetadata: true,
     maxCount: 150,
     fromBlock: startingBlockHex,
@@ -182,9 +196,9 @@ async function persistNewTokens(newTokens: number[]) {
 }
 
 async function persistImage(tokenId: number) {
-  const imageKey = `${NEXTGEN_S3_PATH}/${tokenId}.png`;
+  const imageKey = `${s3Path}/${tokenId}.png`;
   const imageExists = await objectExists(s3, myBucket, imageKey);
-  const generatorUrl = `https://nextgen-generator.seize.io/${GENERATOR_NETWORK_PATH}/png/${tokenId}`;
+  const generatorUrl = `https://nextgen-generator.seize.io/${generatorNetworkPath}/png/${tokenId}`;
   const cfUrl = getCFLink(tokenId);
 
   let imageCompare: boolean;
@@ -259,5 +273,5 @@ async function compareImages(url1: string, url2: string): Promise<boolean> {
 }
 
 function getCFLink(tokenId: number) {
-  return `${CLOUDFRONT_LINK}/${NEXTGEN_S3_PATH}/${tokenId}.png`;
+  return `${CLOUDFRONT_LINK}/${s3Path}/${tokenId}.png`;
 }
