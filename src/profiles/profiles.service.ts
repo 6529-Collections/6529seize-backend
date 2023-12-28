@@ -6,7 +6,7 @@ import {
   CreateOrUpdateProfileCommand,
   ProfileAndConsolidations
 } from './profile.types';
-import { tdh2Level } from './profile-level';
+import { calculateLevel } from './profile-level';
 import { Profile } from '../entities/IProfile';
 import * as tdh_consolidation from '../tdh_consolidation';
 import * as tdhs from '../tdh';
@@ -25,6 +25,10 @@ import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { ratingsService, RatingsService } from '../rates/ratings.service';
 import { RateMatter } from '../entities/IRating';
 import { cicService, CicService } from '../cic/cic.service';
+import {
+  RepService,
+  repService
+} from '../api-serverless/src/profiles/rep.service';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -34,6 +38,7 @@ export class ProfilesService {
     private readonly ratingsService: RatingsService,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly cicService: CicService,
+    private readonly repService: RepService,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
 
@@ -63,6 +68,9 @@ export class ProfilesService {
       consolidatedWallets
     );
     const cic = await this.getCic(profile);
+    const rep = profile?.external_id
+      ? await this.repService.getRepForProfile(profile.external_id)
+      : 0;
     return {
       profile: profile ?? null,
       consolidation: {
@@ -74,7 +82,8 @@ export class ProfilesService {
         })),
         tdh
       },
-      level: tdh2Level(tdh),
+      level: calculateLevel({ tdh, rep }),
+      rep,
       cic
     };
   }
@@ -118,6 +127,9 @@ export class ProfilesService {
       consolidatedWallets
     );
     const cic = await this.getCic(profile);
+    const rep = profile?.external_id
+      ? await this.repService.getRepForProfile(profile?.external_id)
+      : 0;
     return {
       profile: profile ?? null,
       consolidation: {
@@ -129,8 +141,9 @@ export class ProfilesService {
         })),
         tdh
       },
-      level: tdh2Level(tdh),
-      cic
+      level: calculateLevel({ tdh, rep }),
+      cic,
+      rep
     };
   }
 
@@ -168,6 +181,9 @@ export class ProfilesService {
         consolidatedWallets
       );
       const cic = await this.getCic(profile);
+      const rep = profile?.external_id
+        ? await this.repService.getRepForProfile(profile?.external_id)
+        : 0;
       return {
         profile: profile ?? null,
         consolidation: {
@@ -179,8 +195,9 @@ export class ProfilesService {
           consolidation_key,
           consolidation_display
         },
-        level: tdh2Level(tdh),
-        cic
+        level: calculateLevel({ tdh, rep }),
+        cic,
+        rep
       };
     }
   }
@@ -556,23 +573,26 @@ export class ProfilesService {
     return { pfp_url: thumbnailUri };
   }
 
-  public async getProfileHandlesByPrimaryWallets(
+  public async getProfileIdsAndHandlesByPrimaryWallets(
     wallets: string[]
-  ): Promise<Record<string, string>> {
+  ): Promise<Record<string, { id: string; handle: string }>> {
     if (!wallets.length) {
       return {};
     }
     const profiles = await this.getProfilesByWallets(wallets);
     return wallets.reduce((result, wallet) => {
-      const handle = profiles.find(
+      const profile = profiles.find(
         (profile) =>
           profile.primary_wallet.toLowerCase() === wallet.toLowerCase()
-      )?.handle;
-      if (handle) {
-        result[wallet.toLowerCase()] = handle;
+      );
+      if (profile) {
+        result[wallet.toLowerCase()] = {
+          id: profile.external_id,
+          handle: profile.handle
+        };
       }
       return result;
-    }, {} as Record<string, string>);
+    }, {} as Record<string, { id: string; handle: string }>);
   }
 
   public async updateProfileTdhs(
@@ -763,6 +783,7 @@ export class ProfilesService {
       connectionHolder
     );
   }
+
   async searchCommunityMemberMinimalsOfClosestMatches({
     param,
     limit
@@ -810,6 +831,9 @@ export class ProfilesService {
           matter: RateMatter.CIC,
           matter_target_ids: profileIds
         });
+      const profileRepsByProfileIds = await this.repService.getRepForProfiles(
+        profileIds
+      );
       return members.map((member) => {
         const cic = foundProfilesCicsByProfileIds[member.external_id];
         return {
@@ -817,7 +841,10 @@ export class ProfilesService {
           normalised_handle: member.normalised_handle,
           primary_wallet: member.primary_wallet,
           tdh: member.tdh,
-          level: tdh2Level(member.tdh),
+          level: calculateLevel({
+            tdh: member.tdh,
+            rep: profileRepsByProfileIds[member.external_id] ?? 0
+          }),
           cic_rating: cic ?? 0,
           display: member.display,
           wallet: member.wallet
@@ -876,5 +903,6 @@ export const profilesService = new ProfilesService(
   ratingsService,
   profileActivityLogsDb,
   cicService,
+  repService,
   getAlchemyInstance
 );

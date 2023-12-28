@@ -1,5 +1,5 @@
 import { RatingsService } from './ratings.service';
-import { Mock } from 'ts-jest-mocker';
+import { mock, Mock } from 'ts-jest-mocker';
 import {
   AggregatedRatingRequest,
   RatingsDb,
@@ -16,20 +16,24 @@ import { when } from 'jest-when';
 import { RateMatter } from '../entities/IRating';
 import { Time } from '../time';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
+import { RepService } from '../api-serverless/src/profiles/rep.service';
 
 describe('RatingsService', () => {
   let ratingsService: RatingsService;
   let ratingsDb: Mock<RatingsDb>;
   let profilesDb: Mock<ProfilesDb>;
+  let repService: Mock<RepService>;
   let profileActivityLogsDb: Mock<ProfileActivityLogsDb>;
 
   beforeEach(() => {
     profilesDb = mockDbService();
     ratingsDb = mockDbService();
     profileActivityLogsDb = mockDbService();
+    repService = mock(RepService);
     ratingsService = new RatingsService(
       ratingsDb,
       profilesDb,
+      repService,
       profileActivityLogsDb
     );
   });
@@ -68,9 +72,14 @@ describe('RatingsService', () => {
         },
         rater_profile_id: 'a_profile_id'
       };
+      when(repService.getRepForProfiles).mockResolvedValue({
+        a_profile_id_1: 0,
+        a_profile_id_2: 0
+      });
       when(ratingsDb.searchRatingsForMatter).mockResolvedValue({
         data: [
           {
+            rater_profile_id: 'a_profile_id_1',
             rater_handle: 'a_rater_handle_1',
             rater_tdh: 1,
             rating: 10,
@@ -80,6 +89,7 @@ describe('RatingsService', () => {
             rater_cic_rating: 1
           },
           {
+            rater_profile_id: 'a_profile_id_2',
             rater_handle: 'a_rater_handle_2',
             rater_tdh: 10000,
             rating: 10,
@@ -99,6 +109,7 @@ describe('RatingsService', () => {
         data: [
           {
             rater_handle: 'a_rater_handle_1',
+            rater_profile_id: 'a_profile_id_1',
             rater_tdh: 1,
             rating: 10,
             matter: RateMatter.CIC,
@@ -109,6 +120,7 @@ describe('RatingsService', () => {
           },
           {
             rater_handle: 'a_rater_handle_2',
+            rater_profile_id: 'a_profile_id_2',
             rater_tdh: 10000,
             rating: 10,
             matter: RateMatter.CIC,
