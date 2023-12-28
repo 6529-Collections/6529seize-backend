@@ -35,6 +35,7 @@ export const CONSOLIDATED_WALLETS_TDH_TABLE = 'tdh_consolidation';
 export const CONSOLIDATED_OWNERS_TAGS_TABLE = 'owners_tags_consolidation';
 export const TDH_GLOBAL_HISTORY_TABLE = 'tdh_global_history';
 export const TDH_HISTORY_TABLE = 'tdh_history';
+export const NFTDELEGATION_BLOCKS_TABLE = 'nftdelegation_blocks';
 export const CONSOLIDATIONS_TABLE = 'consolidations';
 export const DELEGATIONS_TABLE = 'delegations';
 export const NFTS_HISTORY_TABLE = 'nfts_history';

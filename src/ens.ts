@@ -44,15 +44,14 @@ export async function getPrediscoveredEnsNames(
 export async function reverseResolveEnsName(
   ensName: string
 ): Promise<string | null> {
-  alchemy = new Alchemy({
-    ...ALCHEMY_SETTINGS,
-    apiKey: process.env.ALCHEMY_API_KEY
-  });
+  initializeAlchemy();
   return alchemy.core.resolveName(ensName);
 }
 
 async function findExistingEns(ens: ENS[]) {
   logger.info(`[PROCESSING EXISTING ENS FOR ${ens.length} WALLETS]`);
+
+  initializeAlchemy();
 
   const deltaEns: ENS[] = [];
 
@@ -70,7 +69,7 @@ async function findExistingEns(ens: ENS[]) {
       };
       deltaEns.push(newEns);
     } catch (e: any) {
-      logger.error(`[ERROR FOR WALLET ${w.wallet}]`, e);
+      logger.error(`[ERROR FOR WALLET ${w.wallet}] [${e}]`);
       const newEns: ENS = {
         created_at: new Date(),
         wallet: w.wallet,
@@ -85,9 +84,10 @@ async function findExistingEns(ens: ENS[]) {
   return deltaEns;
 }
 
-async function findNewEns(wallets: string[]) {
+export async function findNewEns(wallets: string[]) {
   logger.info(`[PROCESSING NEW ENS FOR ${wallets.length} WALLETS]`);
 
+  initializeAlchemy();
   const finalEns: ENS[] = [];
 
   await Promise.all(
@@ -105,7 +105,7 @@ async function findNewEns(wallets: string[]) {
         };
         finalEns.push(newEns);
       } catch (e: any) {
-        logger.error(`[ERROR FOR WALLET ${w}]`, e);
+        logger.error(`[ERROR FOR WALLET ${w}] [${e}]`);
         const newEns: ENS = {
           created_at: new Date(),
           wallet: w,
@@ -122,11 +122,6 @@ async function findNewEns(wallets: string[]) {
 }
 
 export async function discoverEns(datetime?: Date) {
-  alchemy = new Alchemy({
-    ...ALCHEMY_SETTINGS,
-    apiKey: process.env.ALCHEMY_API_KEY
-  });
-
   try {
     const missingEns = await fetchMissingEns(datetime);
     if (missingEns.length > 0) {
@@ -151,11 +146,6 @@ export async function discoverEnsConsolidations() {
 }
 
 async function discoverEnsNFTDelegation(table: string) {
-  alchemy = new Alchemy({
-    ...ALCHEMY_SETTINGS,
-    apiKey: process.env.ALCHEMY_API_KEY
-  });
-
   try {
     const missingEns = await fetchMissingEnsNFTDelegation(table);
     if (missingEns.length > 0) {
@@ -190,11 +180,6 @@ async function refreshEnsLoop() {
 }
 
 export async function refreshEns() {
-  alchemy = new Alchemy({
-    ...ALCHEMY_SETTINGS,
-    apiKey: process.env.ALCHEMY_API_KEY
-  });
-
   let processing = true;
   while (processing) {
     processing = await refreshEnsLoop();
@@ -210,4 +195,13 @@ function replaceEmojisWithHex(inputString: string) {
     }
     return match;
   });
+}
+
+function initializeAlchemy() {
+  if (!alchemy) {
+    alchemy = new Alchemy({
+      ...ALCHEMY_SETTINGS,
+      apiKey: process.env.ALCHEMY_API_KEY
+    });
+  }
 }
