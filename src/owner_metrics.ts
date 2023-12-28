@@ -44,7 +44,7 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
   );
 
   for (const metric of myOwnerMetrics) {
-    const wallet = metric.wallet;
+    const wallet = metric.wallet.toLowerCase();
     const consolidations = await retrieveWalletConsolidations(wallet);
     const display = await fetchConsolidationDisplay(consolidations);
     const consolidationKey = [...consolidations].sort().join('-');

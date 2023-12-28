@@ -768,7 +768,7 @@ export async function persistOwnerMetrics(
           );
           await repo.remove(ownerMetric);
         } else {
-          await repo.save(ownerMetric);
+          await repo.upsert(ownerMetric, ['wallet']);
         }
       })
     );
@@ -1076,7 +1076,8 @@ export async function persistENS(ens: ENS[]) {
             wallet: t.wallet,
             display: t.display
           });
-        } catch {
+        } catch (e) {
+          logger.error(`[ENS] ERROR PERSISTING ENS [${t.wallet}] [${e}]`);
           await sqlExecutor.execute(
             `REPLACE INTO ${ENS_TABLE} SET 
             wallet = ?,
