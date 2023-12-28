@@ -339,9 +339,11 @@ export const findTDH = async (lastTDHCalc: Date) => {
     `[BLOCK ${block}] [WALLETS ${walletsTDH.length}] [CALCULATING RANKS]`
   );
 
-  const sortedTdh = await ranks(
+  const boostedTdh = await calculateBoosts(walletsTDH);
+
+  const sortedTdh = await calculateRanks(
     allGradientsTDH,
-    walletsTDH,
+    boostedTdh,
     ADJUSTED_NFTS,
     MEMES_COUNT
   );
@@ -481,27 +483,7 @@ function getTokenDatesFromConsolidation(
   return tokenDatesMap[currentWallet] || [];
 }
 
-export async function ranks(
-  allGradientsTDH: any[],
-  walletsTDH: any[],
-  ADJUSTED_NFTS: any[],
-  MEMES_COUNT: number
-) {
-  const sortedGradientsTdh = allGradientsTDH
-    .sort((a, b) => {
-      if (a.tdh > b.tdh) {
-        return -1;
-      } else if (a.tdh < b.tdh) {
-        return 1;
-      } else {
-        return a.id > b.id ? 1 : -1;
-      }
-    })
-    .map((a, index) => {
-      a.rank = index + 1;
-      return a;
-    });
-
+export async function calculateBoosts(walletsTDH: any[]) {
   const boostedTDH: any[] = [];
 
   await Promise.all(
@@ -532,6 +514,30 @@ export async function ranks(
       boostedTDH.push(w);
     })
   );
+
+  return boostedTDH;
+}
+
+export async function calculateRanks(
+  allGradientsTDH: any[],
+  boostedTDH: any[],
+  ADJUSTED_NFTS: any[],
+  MEMES_COUNT: number
+) {
+  const sortedGradientsTdh = allGradientsTDH
+    .sort((a, b) => {
+      if (a.tdh > b.tdh) {
+        return -1;
+      } else if (a.tdh < b.tdh) {
+        return 1;
+      } else {
+        return a.id > b.id ? 1 : -1;
+      }
+    })
+    .map((a, index) => {
+      a.rank = index + 1;
+      return a;
+    });
 
   ADJUSTED_NFTS.forEach((nft) => {
     boostedTDH
@@ -582,7 +588,7 @@ export async function ranks(
       });
 
     if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
-      const wallets = [...walletsTDH].filter((w) =>
+      const wallets = [...boostedTDH].filter((w) =>
         w.memes.some((m: any) => m.id == nft.id)
       );
 

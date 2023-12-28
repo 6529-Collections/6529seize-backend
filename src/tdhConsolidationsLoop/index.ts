@@ -21,5 +21,5 @@ export const handler = async () => {
 
 export async function consolidatedTdhLoop() {
   const lastTDHCalc = getLastTDH();
-  await consolidateTDH(lastTDHCalc, false);
+  await consolidateTDH(lastTDHCalc);
 }

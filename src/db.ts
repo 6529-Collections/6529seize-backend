@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { DataSource, IsNull, LessThan, QueryRunner } from 'typeorm';
+import { DataSource, In, IsNull, LessThan, QueryRunner } from 'typeorm';
 import {
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
@@ -56,7 +56,8 @@ import {
   ConsolidationEvent,
   Delegation,
   DelegationEvent,
-  EventType
+  EventType,
+  NFTDelegationBlock
 } from './entities/IDelegation';
 import { RoyaltiesUpload } from './entities/IRoyalties';
 import {
@@ -111,6 +112,7 @@ export async function connect(entities: any[] = []) {
       ConsolidatedOwnerTags,
       ConsolidatedTDHUpload,
       Delegation,
+      NFTDelegationBlock,
       NFTHistory,
       NFTHistoryBlock,
       NFTHistoryClaim,
@@ -314,12 +316,23 @@ export async function fetchLatestConsolidationsBlockNumber() {
   return block.maxBlock;
 }
 
-export async function fetchLatestDelegationsBlockNumber() {
-  const block = await AppDataSource.getRepository(Delegation)
+export async function fetchLatestNftDelegationBlock(): Promise<number> {
+  const repo = AppDataSource.getRepository(NFTDelegationBlock);
+  const block = await repo
     .createQueryBuilder()
     .select('MAX(block)', 'maxBlock')
     .getRawOne();
-  return block.maxBlock;
+  return block.maxBlock ?? 0;
+}
+
+export async function persistNftDelegationBlock(
+  blockNo: number,
+  timestamp: number
+) {
+  const block = new NFTDelegationBlock();
+  block.block = blockNo;
+  block.timestamp = timestamp;
+  await AppDataSource.getRepository(NFTDelegationBlock).save(block);
 }
 
 export async function fetchLatestTransactionsBlockNumber(beforeDate?: Date) {
@@ -416,10 +429,13 @@ export async function fetchAllNFTs() {
   return results;
 }
 
-export async function fetchAllTDH() {
+export async function fetchAllTDH(wallets?: string[]) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
-  const sql = `SELECT ${ENS_TABLE}.display as ens, ${WALLETS_TDH_TABLE}.* FROM ${WALLETS_TDH_TABLE} LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet WHERE block=:block;`;
-  const results = await sqlExecutor.execute(sql, { block: tdhBlock });
+  let sql = `SELECT ${ENS_TABLE}.display as ens, ${WALLETS_TDH_TABLE}.* FROM ${WALLETS_TDH_TABLE} LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet WHERE block=:block `;
+  if (wallets && wallets.length > 0) {
+    sql += `AND ${WALLETS_TDH_TABLE}.wallet IN (:wallets)`;
+  }
+  const results = await sqlExecutor.execute(sql, { block: tdhBlock, wallets });
   results.map((r: any) => (r.memes = JSON.parse(r.memes)));
   results.map((r: any) => (r.gradients = JSON.parse(r.gradients)));
   return results;
@@ -457,9 +473,15 @@ export async function fetchAllOwnerTags() {
   return metrics;
 }
 
-export async function fetchAllOwnerMetrics() {
-  const metrics = await AppDataSource.getRepository(OwnerMetric).find();
-  return metrics;
+export async function fetchAllOwnerMetrics(wallets?: string[]) {
+  const repo = AppDataSource.getRepository(OwnerMetric);
+  if (wallets && wallets.length > 0) {
+    return await repo.find({
+      where: { wallet: In(wallets) }
+    });
+  } else {
+    return await repo.find();
+  }
 }
 
 export async function fetchAllConsolidatedOwnerMetrics() {
@@ -773,10 +795,11 @@ export async function persistConsolidatedOwnerTags(
 }
 
 export async function persistConsolidatedOwnerMetrics(
-  metrics: ConsolidatedOwnerMetric[]
+  metrics: ConsolidatedOwnerMetric[],
+  wallets?: string[]
 ) {
   logger.info(
-    `[CONSOLIDATED OWNER METRICS] PERSISTING [${metrics.length} WALLETS]`
+    `[CONSOLIDATED OWNER METRICS] [PERSISTING ${metrics.length} ENTRIES]`
   );
 
   await AppDataSource.transaction(async (manager) => {
@@ -786,26 +809,43 @@ export async function persistConsolidatedOwnerMetrics(
       (metric) => metric.consolidation_display
     );
 
-    const result = await AppDataSource.createQueryBuilder()
-      .delete()
-      .from(ConsolidatedOwnerMetric)
-      .where('consolidation_key NOT IN (:...consolidationKeys)', {
-        consolidationKeys
-      })
-      .orWhere('consolidation_display NOT IN (:...consolidationDisplays)', {
-        consolidationDisplays
-      })
-      .execute();
+    if (wallets && wallets.length > 0) {
+      logger.info(
+        `[CONSOLIDATED OWNER METRICS] [DELETING ${wallets.length} WALLETS]`
+      );
+      await Promise.all(
+        wallets.map(async (wallet) => {
+          repo
+            .createQueryBuilder()
+            .delete()
+            .where('consolidation_key like :walletPattern', {
+              walletPattern: `%${wallet}%`
+            })
+            .execute();
+        })
+      );
+    } else {
+      const deleteResults = await AppDataSource.createQueryBuilder()
+        .delete()
+        .from(ConsolidatedOwnerMetric)
+        .where('consolidation_key NOT IN (:...consolidationKeys)', {
+          consolidationKeys
+        })
+        .orWhere('consolidation_display NOT IN (:...consolidationDisplays)', {
+          consolidationDisplays
+        })
+        .execute();
 
-    logger.info(
-      `[CONSOLIDATED OWNER METRICS] [DELETED ${result.affected} WALLETS]`
-    );
+      logger.info(
+        `[CONSOLIDATED OWNER METRICS] [DELETED ${deleteResults.affected} ENTRIES]`
+      );
+    }
 
     await repo.save(metrics);
   });
 
   logger.info(
-    `[CONSOLIDATED OWNER METRICS] [PERSISTED ${metrics.length} WALLETS]`
+    `[CONSOLIDATED OWNER METRICS] [PERSISTED ${metrics.length} ENTRIES]`
   );
 }
 
@@ -986,12 +1026,31 @@ export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
   logger.info(`[TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
 
-export async function persistConsolidatedTDH(tdh: ConsolidatedTDH[]) {
+export async function persistConsolidatedTDH(
+  tdh: ConsolidatedTDH[],
+  wallets?: string[]
+) {
   logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
 
   await AppDataSource.transaction(async (manager) => {
     const repo = manager.getRepository(ConsolidatedTDH);
-    await repo.delete({});
+    if (wallets && wallets.length > 0) {
+      logger.info(`[CONSOLIDATED TDH] [DELETING ${wallets.length} WALLETS]`);
+      await Promise.all(
+        wallets.map(async (wallet) => {
+          repo
+            .createQueryBuilder()
+            .delete()
+            .where('consolidation_key like :walletPattern', {
+              walletPattern: `%${wallet}%`
+            })
+            .execute();
+        })
+      );
+    } else {
+      logger.info(`[CONSOLIDATED TDH] [DELETING ALL WALLETS]`);
+      await repo.delete({});
+    }
     await repo.save(tdh);
     await profilesService.updateProfileTdhs(tdh.at(0)?.block ?? 0, {
       connection: manager.connection
@@ -1280,7 +1339,7 @@ export async function persistDelegations(
   }
 
   logger.info(
-    `[DELEGATIONS] [${registrations.length} [REGISTRATIONS PERSISTED] [${revocations.length} REVOCATIONS PERSISTED]`
+    `[DELEGATIONS] [${registrations.length} REGISTRATIONS PERSISTED] [${revocations.length} REVOCATIONS PERSISTED]`
   );
 }
 

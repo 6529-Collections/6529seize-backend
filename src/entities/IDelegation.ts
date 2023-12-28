@@ -2,8 +2,10 @@ import { Entity, Column, PrimaryColumn, CreateDateColumn } from 'typeorm';
 import {
   CONSOLIDATIONS_TABLE,
   DELEGATIONS_TABLE,
-  NEVER_DATE
+  NEVER_DATE,
+  NFTDELEGATION_BLOCKS_TABLE
 } from '../constants';
+import { BlockEntity } from './IBlock';
 
 @Entity(CONSOLIDATIONS_TABLE)
 export class Consolidation {
@@ -74,3 +76,6 @@ export interface DelegationEvent extends ConsolidationEvent {
   all_tokens?: boolean;
   token_id?: number;
 }
+
+@Entity(NFTDELEGATION_BLOCKS_TABLE)
+export class NFTDelegationBlock extends BlockEntity {}
