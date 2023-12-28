@@ -1,5 +1,5 @@
 import { SecretsManager } from '@aws-sdk/client-secrets-manager';
-import { connect } from './db';
+import { connect, disconnect } from './db';
 import { Logger } from './logging';
 
 const envs = ['local', 'development', 'production'];
@@ -20,7 +20,7 @@ export async function loadEnv(entities: any[] = []) {
 }
 
 export async function unload() {
-  // await disconnect();
+  await disconnect();
 }
 
 export async function loadSecrets() {

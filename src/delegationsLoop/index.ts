@@ -1,79 +1,125 @@
 import {
   persistConsolidations,
-  fetchLatestConsolidationsBlockNumber,
-  retrieveWalletConsolidations,
   persistDelegations,
-  fetchLatestDelegationsBlockNumber
+  fetchLatestNftDelegationBlock,
+  persistNftDelegationBlock
 } from '../db';
 import { findDelegationTransactions } from '../delegations';
-import { Delegation, Consolidation } from '../entities/IDelegation';
+import {
+  Delegation,
+  Consolidation,
+  ConsolidationEvent,
+  DelegationEvent,
+  NFTDelegationBlock
+} from '../entities/IDelegation';
 import { loadEnv, unload } from '../secrets';
 import { Logger } from '../logging';
+import { discoverEnsConsolidations, discoverEnsDelegations } from '../ens';
+import { Time } from '../time';
+import { getLastTDH } from '../helpers';
+import { consolidateTDH } from '../tdh_consolidation';
+import { consolidateOwnerMetrics } from '../owner_metrics';
+import { sqlExecutor } from '../sql-executor';
+import { CONSOLIDATIONS_TABLE } from '../constants';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
 export const handler = async (event?: any, context?: any) => {
-  await loadEnv([Delegation, Consolidation]);
-  // await retrieveConsolidations();
+  const start = Time.now();
+  await loadEnv([Delegation, Consolidation, NFTDelegationBlock]);
   const force = process.env.DELEGATIONS_RESET == 'true';
   logger.info(`[RUNNING] [FORCE ${force}]`);
-  await delegations(force ? 0 : undefined);
+  const delegationsResponse = await handleDelegations(force);
+  await persistNftDelegationBlock(
+    delegationsResponse.block,
+    delegationsResponse.blockTimestamp
+  );
   await unload();
-  logger.info('[COMPLETE]');
+  const diff = start.diffFromNow().formatAsDuration();
+  logger.info(`[COMPLETE IN ${diff}]`);
 };
 
-export async function retrieveConsolidations() {
-  const a = await retrieveWalletConsolidations(
-    '0x7f3774eadae4beb01919dec7f32a72e417ab5de3'
+async function handleDelegations(force: boolean) {
+  const delegationsResponse = await findNewDelegations(force ? 0 : undefined);
+  await persistConsolidations(force, delegationsResponse.consolidations);
+  await persistDelegations(
+    force,
+    delegationsResponse.registrations,
+    delegationsResponse.revocation
   );
-  const b = await retrieveWalletConsolidations(
-    '0xC03E57b6acE9Dd62C84A095E11E494E3C8FD4D42'
-  );
-  const c = await retrieveWalletConsolidations(
-    '0xfd22004806a6846ea67ad883356be810f0428793'
-  );
-  const d = await retrieveWalletConsolidations(
-    '0xFe49A85E98941F1A115aCD4bEB98521023a25802'
-  );
-  logger.info(`prxt ${JSON.stringify(a)}`);
-  logger.info(`coins ${JSON.stringify(b)}`);
-  logger.info(`punk ${JSON.stringify(c)}`);
-  logger.info(`better_phoebe ${JSON.stringify(d)}`);
+
+  await handleENS();
+
+  if (delegationsResponse.consolidations.length > 0) {
+    await reconsolidateWallets(delegationsResponse.consolidations);
+  }
+
+  return delegationsResponse;
 }
 
-export async function delegations(
+async function handleENS() {
+  await discoverEnsDelegations();
+  await discoverEnsConsolidations();
+}
+
+async function findNewDelegations(
   startingBlock?: number,
   latestBlock?: number
-) {
+): Promise<{
+  block: number;
+  blockTimestamp: number;
+  consolidations: ConsolidationEvent[];
+  registrations: DelegationEvent[];
+  revocation: DelegationEvent[];
+}> {
   try {
-    let startingBlockResolved: number;
     if (startingBlock == undefined) {
-      const consolidationBlock = await fetchLatestConsolidationsBlockNumber();
-      const delegationBlock = await fetchLatestDelegationsBlockNumber();
-      startingBlockResolved =
-        consolidationBlock && delegationBlock
-          ? Math.min(consolidationBlock, delegationBlock)
-          : 0;
-    } else {
-      startingBlockResolved = startingBlock;
+      startingBlock = await fetchLatestNftDelegationBlock();
     }
 
     const response = await findDelegationTransactions(
-      startingBlockResolved,
+      startingBlock,
       latestBlock
     );
 
-    await persistConsolidations(
-      process.env.DELEGATIONS_RESET == 'true',
-      response.consolidations
-    );
-    await persistDelegations(
-      process.env.DELEGATIONS_RESET == 'true',
-      response.registrations,
-      response.revocation
-    );
+    return {
+      block: response.latestBlock,
+      blockTimestamp: response.latestBlockTimestamp,
+      consolidations: response.consolidations,
+      registrations: response.registrations,
+      revocation: response.revocation
+    };
   } catch (e: any) {
     logger.error('[ETIMEDOUT!] [RETRYING PROCESS]', e);
-    await delegations(startingBlock, latestBlock);
+    return await findNewDelegations(startingBlock, latestBlock);
   }
+}
+
+async function reconsolidateWallets(events: ConsolidationEvent[]) {
+  const wallets = new Set<string>();
+  events.forEach((c) => {
+    wallets.add(c.wallet1);
+    wallets.add(c.wallet2);
+  });
+
+  const query = `
+    SELECT * FROM ${CONSOLIDATIONS_TABLE}
+    WHERE wallet1 IN (:wallets)
+    OR wallet2 IN (:wallets)
+`;
+  const distinctWalletConsolidations = await sqlExecutor.execute(query, {
+    wallets: Array.from(wallets)
+  });
+
+  const distinctWallets = new Set<string>();
+  distinctWalletConsolidations.forEach((c: Consolidation) => {
+    distinctWallets.add(c.wallet1);
+    distinctWallets.add(c.wallet2);
+  });
+
+  logger.info(`[RECONSOLIDATING FOR ${distinctWallets.size} DISTINCT WALLETS]`);
+
+  const lastTDHCalc = getLastTDH();
+  await consolidateTDH(lastTDHCalc, Array.from(distinctWallets));
+  await consolidateOwnerMetrics(Array.from(distinctWallets));
 }

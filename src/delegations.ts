@@ -78,16 +78,6 @@ export const findDelegationTransactions = async (
 
   logger.info(`[FOUND ${allDelegations.length} NEW TRANSACTIONS]`);
 
-  if (allDelegations.length == 0) {
-    return {
-      latestBlock: latestBlock,
-      latestBlockTimestamp: new Date(timestamp * 1000),
-      consolidations: [],
-      registrations: [],
-      revocation: []
-    };
-  }
-
   const consolidations: ConsolidationEvent[] = [];
   const registrations: DelegationEvent[] = [];
   const revocation: DelegationEvent[] = [];
@@ -167,7 +157,7 @@ export const findDelegationTransactions = async (
 
   return {
     latestBlock: latestBlock,
-    latestBlockTimestamp: new Date(timestamp * 1000),
+    latestBlockTimestamp: timestamp,
     consolidations: consolidations,
     registrations: registrations,
     revocation: revocation
