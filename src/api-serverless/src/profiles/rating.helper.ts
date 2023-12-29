@@ -21,7 +21,7 @@ export async function getRaterInfoFromRequest(
     );
   if (!raterProfile?.profile) {
     throw new NotFoundException(
-      `No profile found for authenticated used ${handleOrWallet}`
+      `No profile found for authenticated user ${handleOrWallet}`
     );
   }
   const raterProfileId = raterProfile.profile.external_id;
