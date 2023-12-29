@@ -159,7 +159,7 @@ function getDbConnectionByPoolName(
       dbcon: mysql.PoolConnection
     ) {
       if (err) {
-        logger.error(`Failed to establish connection to ${poolName}`, err);
+        logger.error(`Failed to establish connection to ${poolName} [${err}]`);
         reject(err);
       }
       resolve(dbcon);

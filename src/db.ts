@@ -193,7 +193,7 @@ async function execNativeTransactionally<T>(
     await queryRunner.commitTransaction();
     return result;
   } catch (err: any) {
-    logger.error('Database transaction failed', err);
+    logger.error(`Database transaction failed [${err}]`);
     if (queryRunner.isTransactionActive) {
       await queryRunner.rollbackTransaction();
     }
