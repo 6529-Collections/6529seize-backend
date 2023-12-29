@@ -362,7 +362,7 @@ from grouped_rates r
   }): Promise<number> {
     return this.db
       .execute(
-        `select count(*) as cnt from ${RATINGS_TABLE} where matter_target_id = :profile_id and matter = :matter and rating <> 0`,
+        `select count(distinct rater_profile_id) as cnt from ${RATINGS_TABLE} where matter_target_id = :profile_id and matter = :matter and rating <> 0`,
         param
       )
       .then((results) => results[0]?.cnt ?? 0);
