@@ -1,40 +1,174 @@
-import { SZN1_INDEX, SZN2_INDEX, SZN3_INDEX, SZN4_INDEX } from '../constants';
+import {
+  SZN1_INDEX,
+  SZN2_INDEX,
+  SZN3_INDEX,
+  SZN4_INDEX,
+  SZN5_INDEX
+} from '../constants';
 
 const calculateBoost = require('../tdh').calculateBoost;
 
 test('calculateBoost should calculate the boost correctly', () => {
   //s1 set
   expect(
-    calculateBoost(0, SZN1_INDEX.count, 0, 0, 0, false, false, [], false)
+    calculateBoost(
+      0,
+      SZN1_INDEX.count,
+      0,
+      0,
+      0,
+      0,
+      false,
+      false,
+      [],
+      false,
+      false
+    )
   ).toBe(1.05);
   //s2 set
   expect(
-    calculateBoost(0, 0, SZN2_INDEX.count, 0, 0, false, false, [], false)
+    calculateBoost(
+      0,
+      0,
+      SZN2_INDEX.count,
+      0,
+      0,
+      0,
+      false,
+      false,
+      [],
+      false,
+      false
+    )
   ).toBe(1.05);
   //s3 set
   expect(
-    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, false, false, [], false)
+    calculateBoost(
+      0,
+      0,
+      0,
+      SZN3_INDEX.count,
+      0,
+      0,
+      false,
+      false,
+      [],
+      false,
+      false
+    )
+  ).toBe(1.05);
+  //s4 set
+  expect(
+    calculateBoost(
+      0,
+      0,
+      0,
+      0,
+      SZN4_INDEX.count,
+      0,
+      false,
+      false,
+      [],
+      false,
+      false
+    )
+  ).toBe(1.05);
+  //s5 set
+  expect(
+    calculateBoost(
+      0,
+      0,
+      0,
+      0,
+      0,
+      SZN5_INDEX.count,
+      false,
+      false,
+      [],
+      false,
+      false
+    )
   ).toBe(1.05);
 
   //s1 set + genesis
   expect(
-    calculateBoost(0, SZN1_INDEX.count, 0, 0, 0, true, true, [], false)
+    calculateBoost(
+      0,
+      SZN1_INDEX.count,
+      0,
+      0,
+      0,
+      0,
+      true,
+      true,
+      [],
+      false,
+      false
+    )
   ).toBe(1.05);
   //s2 set + genesis
   expect(
-    calculateBoost(0, 0, SZN2_INDEX.count, 0, 0, true, false, [], false)
+    calculateBoost(
+      0,
+      0,
+      SZN2_INDEX.count,
+      0,
+      0,
+      0,
+      true,
+      false,
+      [],
+      false,
+      false
+    )
   ).toBe(1.06);
   //s2 set + naka
   expect(
-    calculateBoost(0, 0, SZN2_INDEX.count, 0, 0, false, true, [], false)
+    calculateBoost(
+      0,
+      0,
+      SZN2_INDEX.count,
+      0,
+      0,
+      0,
+      false,
+      true,
+      [],
+      false,
+      false
+    )
   ).toBe(1.06);
   //s2 set + genesis + naka
   expect(
-    calculateBoost(0, 0, SZN2_INDEX.count, 0, 0, true, true, [], false)
+    calculateBoost(
+      0,
+      0,
+      SZN2_INDEX.count,
+      0,
+      0,
+      0,
+      true,
+      true,
+      [],
+      false,
+      false
+    )
   ).toBe(1.07);
   //s2 set + genesis + naka + 1gradient
   expect(
-    calculateBoost(0, 0, SZN2_INDEX.count, 0, 0, true, true, [{ id: 1 }], false)
+    calculateBoost(
+      0,
+      0,
+      SZN2_INDEX.count,
+      0,
+      0,
+      0,
+      true,
+      true,
+      [{ id: 1 }],
+      false,
+      false
+    )
   ).toBe(1.09);
   //s2 set + genesis + naka + 2gradient
   expect(
@@ -44,9 +178,11 @@ test('calculateBoost should calculate the boost correctly', () => {
       SZN2_INDEX.count,
       0,
       0,
+      0,
       true,
       true,
       [{ id: 1 }, { id: 2 }],
+      false,
       false
     )
   ).toBe(1.11);
@@ -58,9 +194,11 @@ test('calculateBoost should calculate the boost correctly', () => {
       SZN2_INDEX.count,
       0,
       0,
+      0,
       true,
       true,
       [{ id: 1 }, { id: 2 }, { id: 3 }],
+      false,
       false
     )
   ).toBe(1.13);
@@ -73,29 +211,67 @@ test('calculateBoost should calculate the boost correctly', () => {
       SZN2_INDEX.count,
       0,
       0,
+      0,
       true,
       true,
       [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
+      false,
       false
     )
   ).toBe(1.13);
 
   //s3 set + genesis
   expect(
-    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, true, false, [], false)
+    calculateBoost(
+      0,
+      0,
+      0,
+      SZN3_INDEX.count,
+      0,
+      0,
+      true,
+      false,
+      [],
+      false,
+      false
+    )
   ).toBe(1.06);
   //s3 set + naka
   expect(
-    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, false, true, [], false)
+    calculateBoost(
+      0,
+      0,
+      0,
+      SZN3_INDEX.count,
+      0,
+      0,
+      false,
+      true,
+      [],
+      false,
+      false
+    )
   ).toBe(1.06);
   //s3 set + genesis + naka
   expect(
-    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, true, true, [], false)
+    calculateBoost(
+      0,
+      0,
+      0,
+      SZN3_INDEX.count,
+      0,
+      0,
+      true,
+      true,
+      [],
+      false,
+      false
+    )
   ).toBe(1.07);
   //s3 set + genesis + ENS
   expect(
-    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, true, true, [], true)
-  ).toBe(1.09);
+    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, 0, true, true, [], true, false)
+  ).toBe(1.08);
   //s3 set + genesis + 4gradient
   expect(
     calculateBoost(
@@ -104,29 +280,67 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       SZN3_INDEX.count,
       0,
+      0,
       true,
       true,
       [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
+      false,
       false
     )
   ).toBe(1.13);
 
   //s3 set + genesis
   expect(
-    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, true, false, [], false)
+    calculateBoost(
+      0,
+      0,
+      0,
+      SZN3_INDEX.count,
+      0,
+      0,
+      true,
+      false,
+      [],
+      false,
+      false
+    )
   ).toBe(1.06);
   //s3 set + naka
   expect(
-    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, false, true, [], false)
+    calculateBoost(
+      0,
+      0,
+      0,
+      SZN3_INDEX.count,
+      0,
+      0,
+      false,
+      true,
+      [],
+      false,
+      false
+    )
   ).toBe(1.06);
   //s3 set + genesis + naka
   expect(
-    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, true, true, [], false)
+    calculateBoost(
+      0,
+      0,
+      0,
+      SZN3_INDEX.count,
+      0,
+      0,
+      true,
+      true,
+      [],
+      false,
+      false
+    )
   ).toBe(1.07);
   //s3 set + genesis + ENS
   expect(
-    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, true, true, [], true)
-  ).toBe(1.09);
+    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, 0, true, true, [], true, false)
+  ).toBe(1.08);
   //s3 set + genesis + 4gradient
   expect(
     calculateBoost(
@@ -135,9 +349,11 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       SZN3_INDEX.count,
       0,
+      0,
       true,
       true,
       [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
+      false,
       false
     )
   ).toBe(1.13);
@@ -150,12 +366,14 @@ test('calculateBoost should calculate the boost correctly', () => {
       SZN2_INDEX.count,
       0,
       0,
+      0,
       false,
       false,
       [],
+      false,
       false
     )
-  ).toBe(1.2);
+  ).toBe(1.25);
   // 2set
   expect(
     calculateBoost(
@@ -164,12 +382,14 @@ test('calculateBoost should calculate the boost correctly', () => {
       SZN2_INDEX.count,
       0,
       0,
+      0,
       false,
       false,
       [],
+      false,
       false
     )
-  ).toBe(1.22);
+  ).toBe(1.27);
   // 3set
   expect(
     calculateBoost(
@@ -178,12 +398,14 @@ test('calculateBoost should calculate the boost correctly', () => {
       SZN2_INDEX.count,
       0,
       0,
+      0,
       false,
       false,
       [],
+      false,
       false
     )
-  ).toBe(1.24);
+  ).toBe(1.29);
   // 4set
   expect(
     calculateBoost(
@@ -192,12 +414,14 @@ test('calculateBoost should calculate the boost correctly', () => {
       SZN2_INDEX.count,
       0,
       0,
+      0,
       false,
       false,
       [],
+      false,
       false
     )
-  ).toBe(1.24);
+  ).toBe(1.29);
   // 1set + ENS
   expect(
     calculateBoost(
@@ -206,12 +430,14 @@ test('calculateBoost should calculate the boost correctly', () => {
       SZN2_INDEX.count,
       0,
       0,
+      0,
       false,
       false,
       [],
-      true
+      true,
+      false
     )
-  ).toBe(1.22);
+  ).toBe(1.26);
   // 1set + 4gradient + ENS
   expect(
     calculateBoost(
@@ -220,12 +446,14 @@ test('calculateBoost should calculate the boost correctly', () => {
       SZN2_INDEX.count,
       0,
       0,
+      0,
       false,
       false,
       [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
-      true
+      true,
+      false
     )
-  ).toBe(1.28);
+  ).toBe(1.32);
 
   // 3set + 3gradient + ENS
   expect(
@@ -235,12 +463,14 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
+      0,
       false,
       false,
       [{ id: 1 }, { id: 2 }, { id: 3 }],
-      true
+      true,
+      false
     )
-  ).toBe(1.32);
+  ).toBe(1.36);
 
   // 3set + naka + genesis + ENS
   expect(
@@ -250,16 +480,18 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
+      0,
       true,
       true,
       [{ id: 1 }, { id: 2 }, { id: 3 }],
-      true
+      true,
+      false
     )
-  ).toBe(1.32);
+  ).toBe(1.36);
 
   //s4 set
   expect(
-    calculateBoost(0, 0, 0, 0, SZN4_INDEX.count, false, false, [], false)
+    calculateBoost(0, 0, 0, 0, SZN4_INDEX.count, 0, false, false, [], false)
   ).toBe(1.05);
 
   //s3 + s4 set
@@ -270,15 +502,114 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       SZN3_INDEX.count,
       SZN4_INDEX.count,
+      0,
       false,
       false,
       [],
+      false,
       false
     )
   ).toBe(1.1);
 
   //s4 set + ens
   expect(
-    calculateBoost(0, 0, 0, 0, SZN4_INDEX.count, false, false, [], true)
-  ).toBe(1.07);
+    calculateBoost(
+      0,
+      0,
+      0,
+      0,
+      SZN4_INDEX.count,
+      0,
+      false,
+      false,
+      [],
+      true,
+      false
+    )
+  ).toBe(1.06);
+
+  //s5 set
+  expect(
+    calculateBoost(
+      0,
+      0,
+      0,
+      0,
+      0,
+      SZN5_INDEX.count,
+      false,
+      false,
+      [],
+      false,
+      false
+    )
+  ).toBe(1.05);
+
+  //s4 + s5 set
+  expect(
+    calculateBoost(
+      0,
+      0,
+      0,
+      0,
+      SZN4_INDEX.count,
+      SZN5_INDEX.count,
+      false,
+      false,
+      [],
+      false,
+      false
+    )
+  ).toBe(1.1);
+
+  //s5 set + ens
+  expect(
+    calculateBoost(
+      0,
+      0,
+      0,
+      0,
+      0,
+      SZN5_INDEX.count,
+      false,
+      false,
+      [],
+      true,
+      false
+    )
+  ).toBe(1.06);
+
+  //s5 set + profile
+  expect(
+    calculateBoost(
+      0,
+      0,
+      0,
+      0,
+      0,
+      SZN5_INDEX.count,
+      false,
+      false,
+      [],
+      false,
+      true
+    )
+  ).toBe(1.08);
+
+  //s5 set + ens + profile
+  expect(
+    calculateBoost(
+      0,
+      0,
+      0,
+      0,
+      0,
+      SZN5_INDEX.count,
+      false,
+      false,
+      [],
+      true,
+      true
+    )
+  ).toBe(1.09);
 });

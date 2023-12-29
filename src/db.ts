@@ -18,7 +18,8 @@ import {
   MEMES_CONTRACT,
   CONSOLIDATED_UPLOADS_TABLE,
   MEME_LAB_ROYALTIES_TABLE,
-  CONSOLIDATIONS_TABLE
+  CONSOLIDATIONS_TABLE,
+  PROFILES_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -192,7 +193,7 @@ async function execNativeTransactionally<T>(
     await queryRunner.commitTransaction();
     return result;
   } catch (err: any) {
-    logger.error('Database transaction failed', err);
+    logger.error(`Database transaction failed [${err}]`);
     if (queryRunner.isTransactionActive) {
       await queryRunner.rollbackTransaction();
     }
@@ -1394,6 +1395,11 @@ export async function fetchHasEns(wallets: string[]) {
     wallets: wallets
   });
   return parseInt(results[0].ens_count) === wallets.length;
+}
+
+export async function fetchAllProfiles(): Promise<Profile[]> {
+  const profiles = await AppDataSource.getRepository(Profile).find();
+  return profiles;
 }
 
 export async function deleteRememes(rememes: Rememe[]) {

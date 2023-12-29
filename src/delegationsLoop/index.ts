@@ -21,12 +21,21 @@ import { consolidateTDH } from '../tdh_consolidation';
 import { consolidateOwnerMetrics } from '../owner_metrics';
 import { sqlExecutor } from '../sql-executor';
 import { CONSOLIDATIONS_TABLE } from '../constants';
+import { ConsolidatedTDH } from '../entities/ITDH';
+import { ConsolidatedOwnerMetric, OwnerMetric } from '../entities/IOwner';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
 export const handler = async (event?: any, context?: any) => {
   const start = Time.now();
-  await loadEnv([Delegation, Consolidation, NFTDelegationBlock]);
+  await loadEnv([
+    Delegation,
+    Consolidation,
+    NFTDelegationBlock,
+    ConsolidatedTDH,
+    ConsolidatedOwnerMetric,
+    OwnerMetric
+  ]);
   const force = process.env.DELEGATIONS_RESET == 'true';
   logger.info(`[RUNNING] [FORCE ${force}]`);
   const delegationsResponse = await handleDelegations(force);
@@ -90,7 +99,7 @@ async function findNewDelegations(
       revocation: response.revocation
     };
   } catch (e: any) {
-    logger.error('[ETIMEDOUT!] [RETRYING PROCESS]', e);
+    logger.error(`[ETIMEDOUT!] [RETRYING PROCESS] [${e}]`);
     return await findNewDelegations(startingBlock, latestBlock);
   }
 }
