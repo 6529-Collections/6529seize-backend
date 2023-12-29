@@ -21,7 +21,8 @@ import {
   persistTDH,
   retrieveWalletConsolidations,
   consolidateTransactions,
-  fetchHasEns
+  fetchHasEns,
+  fetchAllProfiles
 } from './db';
 import { sqlExecutor } from './sql-executor';
 import { Logger } from './logging';
@@ -388,7 +389,8 @@ export function calculateBoost(
   genesis: boolean,
   nakamoto: boolean,
   gradients: any[],
-  hasENS: boolean
+  hasENS: boolean,
+  hasProfile: boolean
 ) {
   let boost = 1;
 
@@ -437,7 +439,12 @@ export function calculateBoost(
 
   // ENS
   if (hasENS) {
-    boost += 0.02;
+    boost += 0.01;
+  }
+
+  // Profile
+  if (hasProfile) {
+    boost += 0.03;
   }
 
   return Math.round(boost * 100) / 100;
@@ -508,9 +515,19 @@ function getTokenDatesFromConsolidation(
 export async function calculateBoosts(walletsTDH: any[]) {
   const boostedTDH: any[] = [];
 
+  const profiles = await fetchAllProfiles();
+
   await Promise.all(
     walletsTDH.map(async (w) => {
       const hasENS = await fetchHasEns(w.wallets ? w.wallets : [w.wallet]);
+
+      const hasProfile = profiles.some((p) =>
+        w.wallets
+          ? w.wallets.some((wallet: string) =>
+              areEqualAddresses(wallet, p.primary_wallet)
+            )
+          : areEqualAddresses(w.wallet, p.primary_wallet)
+      );
 
       const boost = calculateBoost(
         w.memes_cards_sets,
@@ -522,7 +539,8 @@ export async function calculateBoosts(walletsTDH: any[]) {
         w.genesis,
         w.memes.some((m: any) => m.id == 4),
         w.gradients,
-        hasENS
+        hasENS,
+        hasProfile
       );
 
       w.boost = boost;
