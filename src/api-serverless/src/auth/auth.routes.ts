@@ -18,7 +18,6 @@ router.get(
     res: Response<ApiResponse<ApiNonceresponse>>
   ) {
     const signerAddress = req.query.signerAddress?.toLocaleLowerCase();
-    console.log(req.query);
     if (!signerAddress || !ethers.utils.isAddress(signerAddress)) {
       throw new UnauthorisedException(
         `Invalid signer address ${signerAddress}`
