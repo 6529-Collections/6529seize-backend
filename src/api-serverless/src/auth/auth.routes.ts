@@ -14,10 +14,29 @@ const router = asyncRouter();
 router.get(
   '/nonce',
   function (
-    _: Request<any, any, any, any, any>,
+    req: Request<any, any, any, { signerAddress: string }, any>,
     res: Response<ApiResponse<ApiNonceresponse>>
   ) {
-    const nonce = randomUUID();
+    const signerAddress = req.query.signerAddress?.toLocaleLowerCase();
+    if (!signerAddress || !ethers.utils.isAddress(signerAddress)) {
+      throw new UnauthorisedException(
+        `Invalid signer address ${signerAddress}`
+      );
+    }
+    const nonce = `
+Are you ready to Seize The Memes of Production?
+
+Please sign to confirm ownership of this address to allow use of the social features of Seize.io.
+
+The signature does not generate a blockchain transaction, cost gas, or give any token approvals. 
+
+Your use of the site is subject to the TOS (https://www.seize.io/tos) and Privacy (https://seize.io/privacy) policies.
+
+Wallet Address That You Are Verifying
+${signerAddress}
+
+Nonce (Unique Identifier)
+${randomUUID()}`;
     const serverSignature = jwt.sign(nonce, getJwtSecret());
     res.status(200).send({
       nonce,
