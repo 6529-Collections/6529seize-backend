@@ -18,6 +18,7 @@ import * as notifier from '../notifier';
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { ProfileTdh, ProfileTdhLog } from '../entities/IProfileTDH';
+import { Profile } from '../entities/IProfile';
 
 const logger = Logger.get('TDH_LOOP');
 
@@ -30,6 +31,7 @@ export const handler = async () => {
     OwnerMetric,
     TDHHistory,
     GlobalTDHHistory,
+    Profile,
     ProfileTdh,
     ProfileTdhLog
   ]);
