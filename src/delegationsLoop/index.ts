@@ -23,6 +23,7 @@ import { sqlExecutor } from '../sql-executor';
 import { CONSOLIDATIONS_TABLE } from '../constants';
 import { ConsolidatedTDH } from '../entities/ITDH';
 import { ConsolidatedOwnerMetric, OwnerMetric } from '../entities/IOwner';
+import { Profile } from '../entities/IProfile';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -34,7 +35,8 @@ export const handler = async (event?: any, context?: any) => {
     NFTDelegationBlock,
     ConsolidatedTDH,
     ConsolidatedOwnerMetric,
-    OwnerMetric
+    OwnerMetric,
+    Profile
   ]);
   const force = process.env.DELEGATIONS_RESET == 'true';
   logger.info(`[RUNNING] [FORCE ${force}]`);
