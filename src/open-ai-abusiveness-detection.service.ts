@@ -56,6 +56,7 @@ input: ${text}
       model: 'gpt-4',
       messages: [{ role: 'user', content: message }]
     });
+    
     const responseContent = response.choices[0].message.content?.replace(
       '\n',
       ' '
