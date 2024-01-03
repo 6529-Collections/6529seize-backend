@@ -486,6 +486,9 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         createdAt: newProfileTdh.created_at,
         block: newProfileTdh.block,
         blockDate: newProfileTdh.block_date
+      },
+      {
+        wrappedConnection: connectionHolder
       }
     );
   }
