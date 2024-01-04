@@ -1053,10 +1053,10 @@ export async function persistConsolidatedTDH(
     }
     await repo.save(tdh);
     await profilesService.updateProfileTdhs(tdh.at(0)?.block ?? 0, {
-      connection: manager.connection
+      connection: manager
     });
     await profilesService.mergeProfiles({
-      connection: manager.connection
+      connection: manager
     });
   });
 

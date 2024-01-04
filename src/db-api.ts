@@ -1019,9 +1019,9 @@ export async function fetchConsolidatedNftTdh(
       const paramName = `wallet${index}`;
       filters = constructFilters(
         filters,
-        `LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE '%:${paramName}%'`
+        `LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE :${paramName}`
       );
-      params[paramName] = w.toLowerCase();
+      params[paramName] = `%${w.toLowerCase()}%`;
     });
   }
 
