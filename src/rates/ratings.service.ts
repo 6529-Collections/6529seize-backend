@@ -422,6 +422,8 @@ export class RatingsService {
     page: number;
     matter: RateMatter;
     page_size: number;
+    order: string;
+    order_by: string;
   }): Promise<Page<RatingWithProfileInfoAndLevel>> {
     return this.ratingsDb
       .getRatingsByRatersForMatter(param)

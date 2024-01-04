@@ -374,6 +374,8 @@ from grouped_rates r
     page: number;
     matter: RateMatter;
     page_size: number;
+    order: string;
+    order_by: string;
   }): Promise<Page<RatingWithProfileInfo>> {
     const profile_id_field = param.given
       ? 'matter_target_id'
@@ -383,6 +385,8 @@ from grouped_rates r
         ? 'matter_target_id'
         : 'rater_profile_id';
     const sqlParams = { profile_id: param.profileId, matter: param.matter };
+    const order = param.order;
+    const order_by = param.order_by;
     const limit = param.page_size;
     const offset = (param.page - 1) * param.page_size;
     const sql_start = `with grouped_rates as (select r.${profile_id_field} as profile_id, sum(r.rating) as rating, max(last_modified) as last_modified
@@ -406,7 +410,7 @@ from grouped_rates r
       from grouped_rates r
                join ${PROFILES_TABLE} p on p.external_id = r.profile_id
                left join ${PROFILE_TDHS_TABLE} ptdh on ptdh.profile_id = r.profile_id
-               left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id order by 3 desc limit ${limit} offset ${offset}`,
+               left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id order by ${order_by} ${order}  limit ${limit} offset ${offset}`,
         sqlParams
       ),
       this.db

@@ -68,6 +68,8 @@ router.get(
         given?: string;
         page?: string;
         page_size?: string;
+        order?: string;
+        order_by?: string;
       },
       any
     >,
@@ -76,6 +78,11 @@ router.get(
     const given = req.query.given === 'true';
     const page = req.query.page ? parseInt(req.query.page) : 1;
     const page_size = req.query.page_size ? parseInt(req.query.page_size) : 200;
+    const order = req.query.order?.toLowerCase() === 'asc' ? 'asc' : 'desc';
+    const order_by =
+      req.query.order_by?.toLowerCase() === 'rating'
+        ? 'rating'
+        : 'last_modified';
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profile =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
@@ -88,9 +95,11 @@ router.get(
     const result = await ratingsService.getRatingsByRatersForMatter({
       profileId: profile_id,
       matter: RateMatter.REP,
-      given: given,
-      page: page,
-      page_size: page_size
+      given,
+      page,
+      page_size,
+      order,
+      order_by
     });
     res.send(result);
   }
