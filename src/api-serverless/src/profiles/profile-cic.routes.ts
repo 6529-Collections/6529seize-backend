@@ -12,7 +12,7 @@ import {
   CicStatementGroup
 } from '../../../entities/ICICStatement';
 import {
-  ProfilesMatterRatingWithRaterLevel,
+  RatingWithProfileInfoAndLevel,
   ratingsService
 } from '../../../rates/ratings.service';
 import { RateMatter } from '../../../entities/IRating';
@@ -22,7 +22,6 @@ import {
   GetProfileRatingsRequest,
   GetRaterAggregatedRatingRequest,
   getRaterInfoFromRequest,
-  getRatingsSearchParamsFromRequest,
   RateProfileRequest
 } from './rating.helper';
 
@@ -85,32 +84,17 @@ router.get(
 );
 
 router.get(
-  `/ratings`,
+  `/ratings/by-rater`,
   async function (
     req: GetProfileRatingsRequest,
-    res: Response<ApiResponse<Page<ProfilesMatterRatingWithRaterLevel>>>
+    res: Response<ApiResponse<Page<RatingWithProfileInfoAndLevel>>>
   ) {
-    const {
-      order,
-      order_by,
-      page,
-      page_size,
-      targetProfile,
-      rater_profile_id
-    } = await getRatingsSearchParamsFromRequest(req);
-
-    const results = await ratingsService.getPageOfRatingsForMatter({
-      rater_profile_id: rater_profile_id,
-      matter: RateMatter.CIC,
-      matter_target_id: targetProfile.external_id,
-      page_request: {
-        page: page > 0 ? page : 1,
-        page_size: page_size > 0 ? page_size : 200
-      },
-      order: order,
-      order_by: order_by
+    const result = await ratingsService.getRatingsByRatersForMatter({
+      queryParams: req.query,
+      handleOrWallet: req.params.handleOrWallet,
+      matter: RateMatter.CIC
     });
-    res.send(results);
+    res.send(result);
   }
 );
 
