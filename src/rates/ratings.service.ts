@@ -5,7 +5,6 @@ import {
   OverRateMatter,
   ratingsDb,
   RatingsDb,
-  RatingsSearchRequest,
   RatingStats,
   UpdateRatingRequest
 } from './ratings.db';
@@ -25,18 +24,16 @@ import { Logger } from '../logging';
 import { Time } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
 import { Page } from '../api-serverless/src/page-request';
-import { ProfilesMatterRating } from './rates.types';
 import { calculateLevel } from '../profiles/profile-level';
 import { Profile } from '../entities/IProfile';
 import {
   repService,
   RepService
 } from '../api-serverless/src/profiles/rep.service';
-
-export interface ProfilesMatterRatingWithRaterLevel
-  extends ProfilesMatterRating {
-  readonly rater_level: number;
-}
+import {
+  GetProfileRatingsRequest,
+  getRatingsSearchParamsFromRequest
+} from '../api-serverless/src/profiles/rating.helper';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -52,26 +49,6 @@ export class RatingsService {
     request: AggregatedRatingRequest
   ): Promise<AggregatedRating> {
     return this.ratingsDb.getAggregatedRatingOnMatter(request);
-  }
-
-  public async getPageOfRatingsForMatter(
-    request: RatingsSearchRequest
-  ): Promise<Page<ProfilesMatterRatingWithRaterLevel>> {
-    return this.ratingsDb.searchRatingsForMatter(request).then(async (page) => {
-      const profileReps = await this.repService.getRepForProfiles(
-        page.data.map((it) => it.rater_profile_id)
-      );
-      return {
-        ...page,
-        data: page.data.map((result) => ({
-          ...result,
-          rater_level: calculateLevel({
-            tdh: result.rater_tdh,
-            rep: profileReps[result.rater_profile_id] ?? 0
-          })
-        }))
-      };
-    });
   }
 
   public async getRatesLeftOnMatterForProfile({
@@ -416,17 +393,22 @@ export class RatingsService {
     return this.ratingsDb.getNumberOfRatersForMatterOnProfile(param);
   }
 
-  async getRatingsByRatersForMatter(param: {
-    given: boolean;
-    profileId: string;
-    page: number;
+  async getRatingsByRatersForMatter({
+    queryParams,
+    handleOrWallet,
+    matter
+  }: {
+    queryParams: GetProfileRatingsRequest['query'];
+    handleOrWallet: string;
     matter: RateMatter;
-    page_size: number;
-    order: string;
-    order_by: string;
   }): Promise<Page<RatingWithProfileInfoAndLevel>> {
+    const params = await getRatingsSearchParamsFromRequest({
+      queryParams,
+      handleOrWallet,
+      matter
+    });
     return this.ratingsDb
-      .getRatingsByRatersForMatter(param)
+      .getRatingsByRatersForMatter(params)
       .then(async (page) => {
         const profileIds = page.data.map((it) => it.profile_id);
         const profileReps = await this.repService.getRepForProfiles(profileIds);
