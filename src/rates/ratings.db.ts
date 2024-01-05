@@ -10,8 +10,7 @@ import {
   RATINGS_TABLE
 } from '../constants';
 import { DbPoolName } from '../db-query.options';
-import { Page, PageRequest } from '../api-serverless/src/page-request';
-import { ProfilesMatterRating } from './rates.types';
+import { Page } from '../api-serverless/src/page-request';
 
 export class RatingsDb extends LazyDbAccessCompatibleService {
   async getAggregatedRatingOnMatter({
@@ -94,54 +93,6 @@ from general_stats
         }
         return results;
       });
-  }
-
-  async searchRatingsForMatter({
-    matter,
-    matter_target_id,
-    rater_profile_id,
-    page_request,
-    order_by,
-    order
-  }: RatingsSearchRequest): Promise<Page<ProfilesMatterRating>> {
-    let sql = `
-        with summed_cics as (select matter_target_id as profile_id, sum(rating) as cic_rating from ${RATINGS_TABLE} where matter = 'CIC' group by 1)
-    select p.external_id as rater_profile_id, r.matter, r.matter_category, p.handle as rater_handle, r.rating, r.last_modified, case when sc.cic_rating is null then 0 else sc.cic_rating end as rater_cic_rating, p_tdh.boosted_tdh as rater_tdh from ${RATINGS_TABLE} r
-      join ${PROFILES_TABLE} p on r.rater_profile_id = p.external_id
-      join ${PROFILE_TDHS_TABLE} p_tdh on r.rater_profile_id = p_tdh.profile_id
-      left join summed_cics sc on p.external_id = sc.profile_id
-      where r.rating <> 0 and r.matter = :matter and r.matter_target_id = :matter_target_id`;
-    let countSql = `select count(*) as cnt from ${RATINGS_TABLE} r
-      join ${PROFILES_TABLE} p on r.rater_profile_id = p.external_id
-      where r.rating <> 0 and r.matter = :matter and r.matter_target_id = :matter_target_id`;
-    const params: Record<string, any> = { matter, matter_target_id };
-    if (rater_profile_id) {
-      params.rater_profile_id = rater_profile_id;
-      sql += ' and r.rater_profile_id = :rater_profile_id';
-      countSql += ' and r.rater_profile_id = :rater_profile_id';
-    }
-    const direction = order?.toLowerCase() === 'asc' ? 'asc' : 'desc';
-    const orderBy =
-      order_by?.toLowerCase() === 'rating' ? 'rating' : 'last_modified';
-    sql += ` order by r.${orderBy} ${direction}`;
-    const limit =
-      page_request.page_size < 0 ? 0 : Math.min(page_request.page_size, 2000);
-    const offset =
-      page_request.page < 0
-        ? 0
-        : (page_request.page - 1) * page_request.page_size;
-    sql += ` limit ${limit} offset ${offset}`;
-
-    const [data, count] = await Promise.all([
-      this.db.execute(sql, params),
-      this.db.execute(countSql, params)
-    ]);
-    return {
-      page: page_request.page,
-      next: count > page_request.page_size * page_request.page,
-      count: count[0]['cnt'],
-      data
-    };
   }
 
   async lockRatingsOnMatterForUpdate({
@@ -374,6 +325,8 @@ from grouped_rates r
     page: number;
     matter: RateMatter;
     page_size: number;
+    order: string;
+    order_by: string;
   }): Promise<Page<RatingWithProfileInfo>> {
     const profile_id_field = param.given
       ? 'matter_target_id'
@@ -383,6 +336,8 @@ from grouped_rates r
         ? 'matter_target_id'
         : 'rater_profile_id';
     const sqlParams = { profile_id: param.profileId, matter: param.matter };
+    const order = param.order;
+    const order_by = param.order_by;
     const limit = param.page_size;
     const offset = (param.page - 1) * param.page_size;
     const sql_start = `with grouped_rates as (select r.${profile_id_field} as profile_id, sum(r.rating) as rating, max(last_modified) as last_modified
@@ -406,7 +361,7 @@ from grouped_rates r
       from grouped_rates r
                join ${PROFILES_TABLE} p on p.external_id = r.profile_id
                left join ${PROFILE_TDHS_TABLE} ptdh on ptdh.profile_id = r.profile_id
-               left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id order by 3 desc limit ${limit} offset ${offset}`,
+               left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id order by ${order_by} ${order}  limit ${limit} offset ${offset}`,
         sqlParams
       ),
       this.db
@@ -487,15 +442,6 @@ export interface RatingStats {
   rating: number;
   contributor_count: number;
   rater_contribution: number | null;
-}
-
-export interface RatingsSearchRequest {
-  matter: RateMatter;
-  matter_target_id: string;
-  rater_profile_id: string | null;
-  page_request: PageRequest;
-  order_by?: string;
-  order?: string;
 }
 
 export const ratingsDb = new RatingsDb(dbSupplier);

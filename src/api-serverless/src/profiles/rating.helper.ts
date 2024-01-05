@@ -2,6 +2,7 @@ import { Request } from 'express';
 import { getWalletOrThrow } from '../auth/auth';
 import { profilesService } from '../../../profiles/profiles.service';
 import { NotFoundException } from '../../../exceptions';
+import { RateMatter } from '../../../entities/IRating';
 
 export async function getRaterInfoFromRequest(
   req: Request<{ handleOrWallet: string }, any, any, any, any>
@@ -36,11 +37,11 @@ export type GetProfileRatingsRequest = Request<
   any,
   any,
   {
-    order: string;
-    order_by: string;
+    given?: string;
     page?: string;
     page_size?: string;
-    rater?: string | null;
+    order?: string;
+    order_by?: string;
   },
   any
 >;
@@ -66,42 +67,50 @@ export type GetRaterAggregatedRatingRequest = Request<
   any
 >;
 
-export async function getRatingsSearchParamsFromRequest(
-  req: Request<
-    { handleOrWallet: string },
-    any,
-    any,
-    {
-      order: string;
-      order_by: string;
-      page?: string;
-      page_size?: string;
-      rater?: string | null;
-    },
-    any
-  >
-) {
-  const order = req.query.order?.toLowerCase();
-  const order_by = req.query.order_by?.toLowerCase();
-  const page = req.query.page ? parseInt(req.query.page) : 1;
-  const page_size = req.query.page_size ? parseInt(req.query.page_size) : 200;
-  const targetHandleOrWallet = req.params.handleOrWallet.toLowerCase();
-  const profileAndConsolidationsOfTarget =
+export type GetRatingsByRatersForMatterParams = {
+  given: boolean;
+  profileId: string;
+  page: number;
+  matter: RateMatter;
+  page_size: number;
+  order: string;
+  order_by: string;
+};
+
+export async function getRatingsSearchParamsFromRequest({
+  queryParams,
+  handleOrWallet,
+  matter
+}: {
+  queryParams: GetProfileRatingsRequest['query'];
+  handleOrWallet: string;
+  matter: RateMatter;
+}): Promise<GetRatingsByRatersForMatterParams> {
+  const given = queryParams.given === 'true';
+  const page = queryParams.page ? parseInt(queryParams.page) : 1;
+  const page_size = queryParams.page_size
+    ? parseInt(queryParams.page_size)
+    : 200;
+  const order = queryParams.order?.toLowerCase() === 'asc' ? 'asc' : 'desc';
+  const order_by =
+    queryParams.order_by?.toLowerCase() === 'rating'
+      ? 'rating'
+      : 'last_modified';
+  const profile =
     await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-      targetHandleOrWallet
+      handleOrWallet.toLocaleLowerCase()
     );
-  const targetProfile = profileAndConsolidationsOfTarget?.profile;
-  if (!targetProfile) {
-    throw new NotFoundException(`No profile found for ${targetHandleOrWallet}`);
+  const profile_id = profile?.profile?.external_id;
+  if (!profile_id) {
+    throw new NotFoundException(`No profile found for ${handleOrWallet}`);
   }
-  let rater_profile_id: string | null = null;
-  if (req.query.rater) {
-    rater_profile_id =
-      (
-        await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-          req.query.rater
-        )
-      )?.profile?.external_id ?? null;
-  }
-  return { order, order_by, page, page_size, targetProfile, rater_profile_id };
+  return {
+    profileId: profile_id,
+    matter,
+    given,
+    page,
+    page_size,
+    order,
+    order_by
+  };
 }

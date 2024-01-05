@@ -12,7 +12,11 @@ import {
 import { RateMatter } from '../../../entities/IRating';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
-import { getRaterInfoFromRequest, RateProfileRequest } from './rating.helper';
+import {
+  GetProfileRatingsRequest,
+  getRaterInfoFromRequest,
+  RateProfileRequest
+} from './rating.helper';
 import { profilesService } from '../../../profiles/profiles.service';
 import { RatingStats } from '../../../rates/ratings.db';
 import { Page } from '../page-request';
@@ -60,37 +64,13 @@ async function getReceivedRatingsStats(
 router.get(
   `/ratings/by-rater`,
   async function (
-    req: Request<
-      { handleOrWallet: string },
-      any,
-      any,
-      {
-        given?: string;
-        page?: string;
-        page_size?: string;
-      },
-      any
-    >,
+    req: GetProfileRatingsRequest,
     res: Response<ApiResponse<Page<RatingWithProfileInfoAndLevel>>>
   ) {
-    const given = req.query.given === 'true';
-    const page = req.query.page ? parseInt(req.query.page) : 1;
-    const page_size = req.query.page_size ? parseInt(req.query.page_size) : 200;
-    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
-    const profile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
-      );
-    const profile_id = profile?.profile?.external_id;
-    if (!profile_id) {
-      throw new NotFoundException(`No profile found for ${handleOrWallet}`);
-    }
     const result = await ratingsService.getRatingsByRatersForMatter({
-      profileId: profile_id,
-      matter: RateMatter.REP,
-      given: given,
-      page: page,
-      page_size: page_size
+      queryParams: req.query,
+      handleOrWallet: req.params.handleOrWallet,
+      matter: RateMatter.REP
     });
     res.send(result);
   }
