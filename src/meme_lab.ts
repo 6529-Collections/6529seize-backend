@@ -194,6 +194,18 @@ async function processNFTs(
             memeReferences.push(
               ...[...memeNFTs].filter((m) => m.season == 3).map((m) => m.id)
             );
+          } else if (ref.toUpperCase() == 'ALL SZN4') {
+            memeReferences.push(
+              ...[...memeNFTs].filter((m) => m.season == 4).map((m) => m.id)
+            );
+          } else if (ref.toUpperCase() == 'ALL SZN5') {
+            memeReferences.push(
+              ...[...memeNFTs].filter((m) => m.season == 5).map((m) => m.id)
+            );
+          } else if (ref.toUpperCase() == 'ALL SZN6') {
+            memeReferences.push(
+              ...[...memeNFTs].filter((m) => m.season == 6).map((m) => m.id)
+            );
           } else {
             const memeRef = memeNFTs.find((m) => m.name == ref);
             if (memeRef) {
@@ -355,7 +367,7 @@ export async function fetchAndPersistTransactions(
       );
     }
   } catch (e: any) {
-    logger.error('[TRANSACTIONS] [ETIMEDOUT!] [RETRYING PROCESS]', e);
+    logger.error(`[TRANSACTIONS] [ETIMEDOUT!] [RETRYING PROCESS] [${e}]`);
     await fetchAndPersistTransactions(startingBlock, latestBlock, pageKey);
   }
 }

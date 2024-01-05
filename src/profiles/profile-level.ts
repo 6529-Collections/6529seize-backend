@@ -402,6 +402,12 @@ const LEVELS: { minTdh: number; level: number }[] = [
   }
 ].reverse();
 
-export function tdh2Level(tdh: number): number {
-  return LEVELS.find((l) => tdh >= l.minTdh)?.level ?? 0;
+export function calculateLevel({
+  tdh,
+  rep
+}: {
+  tdh: number;
+  rep: number;
+}): number {
+  return LEVELS.find((l) => tdh + rep >= l.minTdh)?.level ?? 0;
 }

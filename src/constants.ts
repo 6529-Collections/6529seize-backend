@@ -136,7 +136,13 @@ export const SZN4_INDEX = {
 };
 
 export const SZN5_INDEX = {
-  start: 152
+  start: 152,
+  end: 180,
+  count: 29
+};
+
+export const SZN6_INDEX = {
+  start: 181
 };
 
 export const WALLET_REGEX = /^0x[a-fA-F0-9]{40}$/;

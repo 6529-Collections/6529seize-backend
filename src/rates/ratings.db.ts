@@ -105,8 +105,8 @@ from general_stats
     order
   }: RatingsSearchRequest): Promise<Page<ProfilesMatterRating>> {
     let sql = `
-        with summed_cics as (select matter_target_id as profile_id, sum(rating) as cic_rating from ${RATINGS_TABLE} group by 1)
-    select r.matter, r.matter_category, p.handle as rater_handle, r.rating, r.last_modified, case when sc.cic_rating is null then 0 else sc.cic_rating end as rater_cic_rating, p_tdh.boosted_tdh as rater_tdh from ${RATINGS_TABLE} r
+        with summed_cics as (select matter_target_id as profile_id, sum(rating) as cic_rating from ${RATINGS_TABLE} where matter = 'CIC' group by 1)
+    select p.external_id as rater_profile_id, r.matter, r.matter_category, p.handle as rater_handle, r.rating, r.last_modified, case when sc.cic_rating is null then 0 else sc.cic_rating end as rater_cic_rating, p_tdh.boosted_tdh as rater_tdh from ${RATINGS_TABLE} r
       join ${PROFILES_TABLE} p on r.rater_profile_id = p.external_id
       join ${PROFILE_TDHS_TABLE} p_tdh on r.rater_profile_id = p_tdh.profile_id
       left join summed_cics sc on p.external_id = sc.profile_id
@@ -340,7 +340,9 @@ with grouped_rates as (select r.rater_profile_id as profile_id, sum(r.rating) as
                            where matter = 'CIC'
                              and rating <> 0
                            group by 1)
-select p.handle                           as handle,
+select 
+       p.external_id as profile_id,
+       p.handle                           as handle,
        coalesce(ptdh.boosted_tdh, 0)      as tdh,
        r.rating,
        r.last_modified,
@@ -360,7 +362,7 @@ from grouped_rates r
   }): Promise<number> {
     return this.db
       .execute(
-        `select count(*) as cnt from ${RATINGS_TABLE} where matter_target_id = :profile_id and matter = :matter and rating <> 0`,
+        `select count(distinct rater_profile_id) as cnt from ${RATINGS_TABLE} where matter_target_id = :profile_id and matter = :matter and rating <> 0`,
         param
       )
       .then((results) => results[0]?.cnt ?? 0);
@@ -425,11 +427,35 @@ from grouped_rates r
       data: results
     };
   }
+
+  async getRatingsForTargetsOnMatters({
+    targetIds,
+    matter
+  }: {
+    targetIds: string[];
+    matter: RateMatter;
+  }): Promise<{ matter_target_id: string; rating: number }[]> {
+    if (!targetIds.length) {
+      return [];
+    }
+    return this.db.execute(
+      `
+      select matter_target_id, sum(rating) as rating
+      from ${RATINGS_TABLE}
+      where matter = :matter
+        and matter_target_id in (:targetIds)
+        and rating <> 0
+      group by 1
+      `,
+      { targetIds, matter }
+    );
+  }
 }
 
 export type UpdateRatingRequest = Omit<Rating, 'last_modified'>;
 
 export interface RatingWithProfileInfo {
+  profile_id: string;
   handle: string;
   tdh: number;
   rating: number;

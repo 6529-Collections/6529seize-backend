@@ -54,6 +54,9 @@ export class TDH {
   tdh_rank_memes_szn5!: number;
 
   @Column({ type: 'int', nullable: false })
+  tdh_rank_memes_szn6!: number;
+
+  @Column({ type: 'int', nullable: false })
   tdh_rank_gradients!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -82,6 +85,9 @@ export class TDH {
 
   @Column({ type: 'int', nullable: false, default: 0 })
   unique_memes_season5!: number;
+
+  @Column({ type: 'int', nullable: false, default: 0 })
+  unique_memes_season6!: number;
 
   @Column({ type: 'int', nullable: false })
   boosted_memes_tdh!: number;
@@ -146,14 +152,26 @@ export class TDH {
   @Column({ type: 'double', nullable: false })
   boosted_memes_tdh_season5!: number;
 
+  @Column({ type: 'double', nullable: false })
+  boosted_memes_tdh_season6!: number;
+
   @Column({ type: 'int', nullable: false })
   memes_tdh_season5!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_tdh_season6!: number;
 
   @Column({ type: 'int', nullable: false })
   memes_balance_season5!: number;
 
   @Column({ type: 'int', nullable: false })
+  memes_balance_season6!: number;
+
+  @Column({ type: 'int', nullable: false })
   memes_tdh_season5__raw!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_tdh_season6__raw!: number;
 
   @Column({ type: 'json', nullable: true })
   memes?: any;
@@ -235,6 +253,9 @@ export class ConsolidatedTDH {
   tdh_rank_memes_szn5!: number;
 
   @Column({ type: 'int', nullable: false })
+  tdh_rank_memes_szn6!: number;
+
+  @Column({ type: 'int', nullable: false })
   tdh_rank_gradients!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -263,6 +284,9 @@ export class ConsolidatedTDH {
 
   @Column({ type: 'int', nullable: false, default: 0 })
   unique_memes_season5!: number;
+
+  @Column({ type: 'int', nullable: false, default: 0 })
+  unique_memes_season6!: number;
 
   @Column({ type: 'int', nullable: false })
   boosted_memes_tdh!: number;
@@ -335,6 +359,18 @@ export class ConsolidatedTDH {
 
   @Column({ type: 'int', nullable: false })
   memes_tdh_season5__raw!: number;
+
+  @Column({ type: 'double', nullable: false })
+  boosted_memes_tdh_season6!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_tdh_season6!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_balance_season6!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_tdh_season6__raw!: number;
 
   @Column({ type: 'json', nullable: true })
   memes?: any;

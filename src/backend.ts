@@ -1,5 +1,6 @@
 import * as overRatesRevocation from './overRatesRevocationLoop';
 import { Logger } from './logging';
+import { Time } from './time';
 
 const transactions = require('./transactionsLoop');
 const transactionsReplay = require('./transactionsReplayLoop');
@@ -123,6 +124,7 @@ cron.schedule('1 4 * * *', async function () {
 });
 
 async function start() {
+  const start = Time.now();
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
   // Uncomment to call on start
@@ -153,7 +155,8 @@ async function start() {
   await overRatesRevocation.handler();
 
   RUNNING_START_SCRIPT = false;
-  logger.info(`[START SCRIPT COMPLETE] [SERVICE STARTED...]`);
+  const diff = start.diffFromNow().formatAsDuration();
+  logger.info(`[START SCRIPT COMPLETE IN ${diff}] [SERVICE STARTED...]`);
 }
 
 start();

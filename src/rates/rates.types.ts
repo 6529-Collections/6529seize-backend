@@ -6,6 +6,7 @@ export interface AggregatedCicRating {
 }
 
 export interface ProfilesMatterRating {
+  readonly rater_profile_id: string;
   readonly rater_handle: string;
   readonly matter: RateMatter;
   readonly matter_category: string;
