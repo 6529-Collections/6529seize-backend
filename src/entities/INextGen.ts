@@ -7,15 +7,6 @@ import {
   NEXTGEN_TRANSACTIONS_BLOCK_TABLE
 } from '../constants';
 
-@Entity(NEXTGEN_TRANSACTIONS_BLOCK_TABLE)
-export class NextGenTransactionsBlock {
-  @PrimaryColumn({ type: 'int' })
-  block_number!: number;
-
-  @CreateDateColumn({ type: 'datetime' })
-  created_at!: Date;
-}
-
 @Entity(NEXTGEN_ALLOWLIST_TABLE)
 export class NextGenAllowlist {
   @CreateDateColumn({ type: 'datetime' })

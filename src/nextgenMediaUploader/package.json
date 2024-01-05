@@ -1,5 +1,5 @@
 {
-  "name": "nextgenloop",
+  "name": "nextgenmediauploader",
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
@@ -10,7 +10,8 @@
   },
   "author": "",
   "license": "ISC",
-  "dependencies": {
-    "node-fetch": "^3.3.0"
-  }
+  "devDependencies": {
+    "esbuild": "^0.17.5"
+  },
+  "dependencies": {}
 }

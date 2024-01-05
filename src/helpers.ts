@@ -227,3 +227,27 @@ export const assertUnreachable = (_x: never): never => {
   // introduced without updating the relevant switch-case or if-else constructs.
   throw new Error("Didn't expect to get here");
 };
+
+export async function fetchImage(url: string): Promise<ArrayBuffer> {
+  const response = await fetch(url);
+  return await response.arrayBuffer();
+}
+
+export async function compareImages(
+  url1: string,
+  url2: string
+): Promise<boolean> {
+  try {
+    const [image1, image2] = await Promise.all([
+      fetchImage(url1),
+      fetchImage(url2)
+    ]);
+    const data1 = new Uint8Array(image1);
+    const data2 = new Uint8Array(image2);
+    const areImagesEqual = JSON.stringify(data1) === JSON.stringify(data2);
+    return areImagesEqual;
+  } catch (error) {
+    console.error('Error fetching or comparing images:', error);
+    return false;
+  }
+}

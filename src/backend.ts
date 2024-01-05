@@ -20,7 +20,6 @@ const refreshEnsLoop = require('./refreshEnsLoop');
 const royaltiesLoop = require('./royaltiesLoop');
 const delegations = require('./delegationsLoop');
 const nftHistory = require('./nftHistoryLoop');
-const nextgenLoop = require('./nextgenLoop');
 
 const { memeStats, memeLabStats, gradientStats } = require('./marketStatsLoop');
 
@@ -68,14 +67,6 @@ cron.schedule('*/4 * * * *', async function () {
 cron.schedule('*/2 * * * *', async function () {
   if (isCronsEnabled()) {
     await delegations.handler();
-  }
-});
-
-// PULL EVERY 5 MINUTES
-cron.schedule('*/5 * * * *', async function () {
-  if (isCronsEnabled()) {
-    await nextgenLoop.handler();
-    await nextgenLoop.handlerRefresh();
   }
 });
 
@@ -150,8 +141,6 @@ async function start() {
   // await transactions.handlerValues();
   // await rememes.handler();
   // await transactionsReplay.handler();
-  await nextgenLoop.handler();
-  await nextgenLoop.handlerRefresh();
   await overRatesRevocation.handler();
 
   RUNNING_START_SCRIPT = false;
