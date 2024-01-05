@@ -355,6 +355,7 @@ from grouped_rates r
       this.db.execute(
         `${sql_start} select p.handle                           as handle,
              coalesce(ptdh.boosted_tdh, 0)      as tdh,
+             r.profile_id,
              r.rating,
              r.last_modified,
              coalesce(rater_cic_ratings.cic, 0) as cic
