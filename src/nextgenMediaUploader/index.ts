@@ -67,6 +67,15 @@ async function uploadMissingNextgenMedia(path: string) {
     return;
   }
 
+  if (!metadata.attributes || metadata.attributes.length === 0) {
+    logger.info(
+      `[GENERATOR METADATA RESPONSE ERROR] : [EXITING] : [MISSING ATTRIBUTES] : [${JSON.stringify(
+        metadata
+      )}]`
+    );
+    return;
+  }
+
   if (metadata.image) {
     metadata.image = `${CF_BASE_PATH}${imagePath}`;
   }
