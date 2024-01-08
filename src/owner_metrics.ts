@@ -12,7 +12,7 @@ import {
 } from './constants';
 import { ConsolidatedOwnerMetric, OwnerMetric } from './entities/IOwner';
 import { Transaction } from './entities/ITransaction';
-import { areEqualAddresses } from './helpers';
+import { areEqualAddresses, buildConsolidationKey } from './helpers';
 import {
   persistOwnerMetrics,
   fetchWalletTransactions,
@@ -48,7 +48,8 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
     const wallet = metric.wallet.toLowerCase();
     const consolidations = await retrieveWalletConsolidations(wallet);
     const display = await fetchConsolidationDisplay(consolidations);
-    const consolidationKey = [...consolidations].sort().join('-');
+    const consolidationKey = buildConsolidationKey(consolidations);
+
     if (
       !Array.from(processedWallets).some((pw) => areEqualAddresses(wallet, pw))
     ) {
@@ -526,14 +527,6 @@ export const findOwnerMetrics = async (reset?: boolean) => {
             // SZN6_INDEX.end >= tr.token_id &&
             tr.token_id >= SZN6_INDEX.start
         );
-        if (
-          areEqualAddresses(
-            wallet,
-            '0x7f3774eadae4beb01919dec7f32a72e417ab5de3'
-          )
-        ) {
-          console.log('memesTransactionsInSeason6', memesTransactionsInSeason6);
-        }
         const memesTransactionsOutSeason6 = [...memesTransactionsOut].filter(
           (tr) =>
             // SZN6_INDEX.end >= tr.token_id &&

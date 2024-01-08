@@ -38,9 +38,14 @@ export const handler = async (event?: any, context?: any) => {
     OwnerMetric,
     Profile
   ]);
-  const force = process.env.DELEGATIONS_RESET == 'true';
-  logger.info(`[RUNNING] [FORCE ${force}]`);
-  const delegationsResponse = await handleDelegations(force);
+  const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
+  const startBlock =
+    startBlockEnv && Number.isInteger(Number(startBlockEnv))
+      ? parseInt(startBlockEnv, 10)
+      : undefined;
+
+  logger.info(`[RUNNING] [START_BLOCK ${startBlock}]`);
+  const delegationsResponse = await handleDelegations(startBlock);
   await persistNftDelegationBlock(
     delegationsResponse.block,
     delegationsResponse.blockTimestamp
@@ -50,11 +55,11 @@ export const handler = async (event?: any, context?: any) => {
   logger.info(`[COMPLETE IN ${diff}]`);
 };
 
-async function handleDelegations(force: boolean) {
-  const delegationsResponse = await findNewDelegations(force ? 0 : undefined);
-  await persistConsolidations(force, delegationsResponse.consolidations);
+async function handleDelegations(startBlock: number | undefined) {
+  const delegationsResponse = await findNewDelegations(startBlock);
+  await persistConsolidations(startBlock, delegationsResponse.consolidations);
   await persistDelegations(
-    force,
+    startBlock,
     delegationsResponse.registrations,
     delegationsResponse.revocation
   );
@@ -87,6 +92,8 @@ async function findNewDelegations(
     if (startingBlock == undefined) {
       startingBlock = await fetchLatestNftDelegationBlock();
     }
+
+    logger.info(`[STARTING BLOCK ${startingBlock}]`);
 
     const response = await findDelegationTransactions(
       startingBlock,

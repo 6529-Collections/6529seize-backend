@@ -22,7 +22,8 @@ import {
   retrieveWalletConsolidations,
   consolidateTransactions,
   fetchHasEns,
-  fetchAllProfiles
+  fetchAllProfiles,
+  fetchAllConsolidationAddresses
 } from './db';
 import { sqlExecutor } from './sql-executor';
 import { Logger } from './logging';
@@ -69,6 +70,16 @@ export const findTDH = async (lastTDHCalc: Date) => {
   const block = await fetchLatestTransactionsBlockNumber(lastTDHCalc);
   const nfts = await fetchAllNFTs();
   const owners: { wallet: string }[] = await fetchAllOwnersAddresses();
+  const consolidationAddresses = await fetchAllConsolidationAddresses();
+
+  const combinedAddresses = owners
+    .concat(consolidationAddresses)
+    .filter(
+      (value, index, self) =>
+        self.findIndex((item) =>
+          areEqualAddresses(item.wallet, value.wallet)
+        ) === index
+    );
 
   const ADJUSTED_NFTS = [...nfts].filter(
     (nft) =>
@@ -92,11 +103,13 @@ export const findTDH = async (lastTDHCalc: Date) => {
     }] [CALCULATING TDH - START]`
   );
 
-  logger.info(`[TRANSACTIONS UNIQUE WALLETS ${owners.length}]`);
+  logger.info(
+    `[OWNER UNIQUE WALLETS ${owners.length}] : [CONSOLIDATIONS UNIQUE WALLETS ${consolidationAddresses.length}] : [COMBINED UNIQUE WALLETS ${combinedAddresses.length}]`
+  );
 
   const allGradientsTDH: any[] = [];
   await Promise.all(
-    owners.map(async (owner) => {
+    combinedAddresses.map(async (owner) => {
       const wallet = owner.wallet.toLowerCase();
       const consolidations = await retrieveWalletConsolidations(wallet);
 
@@ -197,7 +210,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
         const balance = tokenDatesForWallet.length;
         const tdh = tdh__raw * nft.hodl_rate;
 
-        if (tdh > 0 && balance > 0) {
+        if (tdh > 0 || balance > 0 || consolidations.length > 1) {
           totalTDH += tdh;
           totalTDH__raw += tdh__raw;
           totalBalance += balance;
@@ -280,7 +293,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
       const gen3 = walletMemes.some((a) => a.id == 3 && a.balance > 0);
       const genesis = gen1 && gen2 && gen3;
 
-      if (Math.round(totalTDH) > 0) {
+      if (totalTDH > 0 || totalBalance > 0 || consolidations.length > 1) {
         const tdh: TDH = {
           date: new Date(),
           wallet: wallet,

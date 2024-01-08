@@ -1,7 +1,7 @@
 import { GRADIENT_CONTRACT, MEMES_CONTRACT } from './constants';
 import { NFT } from './entities/INFT';
 import { ConsolidatedOwnerTags, Owner, OwnerTags } from './entities/IOwner';
-import { areEqualAddresses } from './helpers';
+import { areEqualAddresses, buildConsolidationKey } from './helpers';
 import {
   fetchAllNFTs,
   fetchAllOwners,
@@ -117,7 +117,7 @@ export const findOwnerTags = async () => {
       const wallet = om.wallet;
       const consolidations = await retrieveWalletConsolidations(wallet);
       const display = await fetchConsolidationDisplay(consolidations);
-      const consolidationKey = [...consolidations].sort().join('-');
+      const consolidationKey = buildConsolidationKey(consolidations);
 
       if (
         !Array.from(processedWallets).some((pw) =>
