@@ -12,7 +12,7 @@ import {
 } from './constants';
 import { ConsolidatedOwnerMetric, OwnerMetric } from './entities/IOwner';
 import { Transaction } from './entities/ITransaction';
-import { areEqualAddresses } from './helpers';
+import { areEqualAddresses, buildConsolidationKey } from './helpers';
 import {
   persistOwnerMetrics,
   fetchWalletTransactions,
@@ -48,7 +48,8 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
     const wallet = metric.wallet.toLowerCase();
     const consolidations = await retrieveWalletConsolidations(wallet);
     const display = await fetchConsolidationDisplay(consolidations);
-    const consolidationKey = [...consolidations].sort().join('-');
+    const consolidationKey = buildConsolidationKey(consolidations);
+
     if (
       !Array.from(processedWallets).some((pw) => areEqualAddresses(wallet, pw))
     ) {

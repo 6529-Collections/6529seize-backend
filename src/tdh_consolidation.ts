@@ -7,7 +7,7 @@ import {
   fetchConsolidationDisplay,
   fetchLatestTDHBlockNumber
 } from './db';
-import { areEqualAddresses } from './helpers';
+import { areEqualAddresses, buildConsolidationKey } from './helpers';
 import { calculateBoosts, calculateRanks } from './tdh';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
@@ -87,7 +87,7 @@ export async function consolidateTDHForWallets(
     const wallet = tdhEntry.wallet;
     const consolidations = await retrieveWalletConsolidations(wallet);
     const display = await fetchConsolidationDisplay(consolidations);
-    const consolidationKey = [...consolidations].sort().join('-');
+    const consolidationKey = buildConsolidationKey(consolidations);
 
     if (
       !Array.from(processedWallets).some((pw) => areEqualAddresses(wallet, pw))
@@ -273,7 +273,7 @@ export const consolidateMissingWallets = async (
   for (const wallet of wallets) {
     const consolidations = await retrieveWalletConsolidations(wallet);
     const display = await fetchConsolidationDisplay(consolidations);
-    const consolidationKey = [...consolidations].sort().join('-');
+    const consolidationKey = buildConsolidationKey(consolidations);
 
     if (
       !Array.from(processedWallets).some((pw) => areEqualAddresses(wallet, pw))

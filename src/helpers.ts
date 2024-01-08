@@ -218,3 +218,10 @@ export const assertUnreachable = (_x: never): never => {
   // introduced without updating the relevant switch-case or if-else constructs.
   throw new Error("Didn't expect to get here");
 };
+
+export function buildConsolidationKey(wallets: string[]) {
+  return wallets
+    .map((wallet) => wallet.toLowerCase())
+    .sort((a, b) => a.localeCompare(b))
+    .join('-');
+}
