@@ -4,7 +4,8 @@ import {
   fetchAllTDH,
   fetchAllNFTs,
   persistConsolidatedTDH,
-  fetchConsolidationDisplay
+  fetchConsolidationDisplay,
+  fetchLatestTDHBlockNumber
 } from './db';
 import { areEqualAddresses } from './helpers';
 import { calculateBoosts, calculateRanks } from './tdh';
@@ -262,6 +263,97 @@ export async function consolidateTDHForWallets(
   };
 }
 
+export const consolidateMissingWallets = async (
+  wallets: string[]
+): Promise<ConsolidatedTDH[]> => {
+  const processedWallets = new Set<string>();
+  const missingTdh: ConsolidatedTDH[] = [];
+  const tdhBlock = await fetchLatestTDHBlockNumber();
+
+  for (const wallet of wallets) {
+    const consolidations = await retrieveWalletConsolidations(wallet);
+    const display = await fetchConsolidationDisplay(consolidations);
+    const consolidationKey = [...consolidations].sort().join('-');
+
+    if (
+      !Array.from(processedWallets).some((pw) => areEqualAddresses(wallet, pw))
+    ) {
+      processedWallets.add(wallet);
+      missingTdh.push({
+        date: new Date(),
+        consolidation_display: display,
+        consolidation_key: consolidationKey,
+        wallets: consolidations,
+        tdh_rank: 0,
+        tdh_rank_memes: 0,
+        tdh_rank_memes_szn1: 0,
+        tdh_rank_memes_szn2: 0,
+        tdh_rank_memes_szn3: 0,
+        tdh_rank_memes_szn4: 0,
+        tdh_rank_memes_szn5: 0,
+        tdh_rank_memes_szn6: 0,
+        tdh_rank_gradients: 0,
+        block: tdhBlock,
+        tdh: 0,
+        boost: 0,
+        boosted_tdh: 0,
+        tdh__raw: 0,
+        balance: 0,
+        memes_cards_sets: 0,
+        genesis: false,
+        unique_memes: 0,
+        unique_memes_season1: 0,
+        unique_memes_season2: 0,
+        unique_memes_season3: 0,
+        unique_memes_season4: 0,
+        unique_memes_season5: 0,
+        unique_memes_season6: 0,
+        boosted_memes_tdh: 0,
+        memes_tdh: 0,
+        memes_tdh__raw: 0,
+        memes_balance: 0,
+        boosted_memes_tdh_season1: 0,
+        memes_tdh_season1: 0,
+        memes_tdh_season1__raw: 0,
+        memes_balance_season1: 0,
+        boosted_memes_tdh_season2: 0,
+        memes_tdh_season2: 0,
+        memes_tdh_season2__raw: 0,
+        memes_balance_season2: 0,
+        boosted_memes_tdh_season3: 0,
+        memes_tdh_season3: 0,
+        memes_tdh_season3__raw: 0,
+        memes_balance_season3: 0,
+        boosted_memes_tdh_season4: 0,
+        memes_tdh_season4: 0,
+        memes_tdh_season4__raw: 0,
+        memes_balance_season4: 0,
+        boosted_memes_tdh_season5: 0,
+        memes_tdh_season5: 0,
+        memes_tdh_season5__raw: 0,
+        memes_balance_season5: 0,
+        boosted_memes_tdh_season6: 0,
+        memes_tdh_season6: 0,
+        memes_tdh_season6__raw: 0,
+        memes_balance_season6: 0,
+        memes: [],
+        memes_ranks: [],
+        boosted_gradients_tdh: 0,
+        gradients_tdh: 0,
+        gradients_tdh__raw: 0,
+        gradients_balance: 0,
+        gradients: [],
+        gradients_ranks: []
+      });
+      consolidations.forEach((c) => {
+        processedWallets.add(c);
+      });
+    }
+  }
+
+  return missingTdh;
+};
+
 export const consolidateTDH = async (
   lastTDHCalc: Date,
   startingWallets?: string[]
@@ -287,6 +379,20 @@ export const consolidateTDH = async (
   );
 
   const consolidatedBoostedTdh = await calculateBoosts(consolidatedTdh);
+
+  if (startingWallets) {
+    const missingWallets = startingWallets?.filter(
+      (s) =>
+        !consolidatedBoostedTdh.some((c) =>
+          c.wallets.some((w: string) => areEqualAddresses(w, s))
+        )
+    );
+    const missingConsolidatedTdh = await consolidateMissingWallets(
+      missingWallets
+    );
+    logger.info(`[MISSING WALLETS TDH ${missingConsolidatedTdh.length}]`);
+    consolidatedBoostedTdh.push(...missingConsolidatedTdh);
+  }
 
   if (startingWallets) {
     await persistConsolidatedTDH(consolidatedBoostedTdh, startingWallets);
