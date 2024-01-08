@@ -34,7 +34,6 @@ export async function notifyTdhCalculationsDone() {
 
 export async function notifyMissingNextgenMedia(path: string) {
   logger.info(`[NOTIFYING MISSING NEXTGEN MEDIA] : [PATH ${path}]`);
-  const uid = randomUUID();
   const input = {
     TopicArn:
       'arn:aws:sns:us-east-1:987989283142:nextgen-media-proxy-interceptor',
