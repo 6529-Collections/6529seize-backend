@@ -8,7 +8,7 @@ const logger = Logger.get('OWNER_METRICS_LOOP');
 export const handler = async (event?: any, context?: any) => {
   logger.info('[RUNNING]');
   await loadEnv([OwnerMetric, ConsolidatedOwnerMetric]);
-  await findOwnerMetrics(process.env.RESET == 'true');
+  await findOwnerMetrics(process.env.METRICS_RESET == 'true');
   await unload();
   logger.info('[COMPLETE]');
 };
