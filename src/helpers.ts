@@ -220,5 +220,6 @@ export const assertUnreachable = (_x: never): never => {
 };
 
 export function buildConsolidationKey(wallets: string[]) {
-  return wallets.sort((a, b) => a.localeCompare(b)).join('-');
+  const sortedWallets = wallets.slice().sort((a, b) => a.localeCompare(b));
+  return sortedWallets.join('-');
 }
