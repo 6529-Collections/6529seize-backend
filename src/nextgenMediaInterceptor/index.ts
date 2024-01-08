@@ -30,9 +30,13 @@ export const handler = async (event: any) => {
       customResponse.image = image;
       if (details.collection) {
         customResponse.collection = details.collection;
+      } else {
+        delete customResponse.collection;
       }
       if (details.tokenId) {
         customResponse.tokenId = details.tokenId;
+      } else {
+        delete customResponse.tokenId;
       }
       response = buildJsonResponse(response, customResponse);
     }
