@@ -251,3 +251,8 @@ export async function compareImages(
     return false;
   }
 }
+
+export function buildConsolidationKey(wallets: string[]) {
+  const sortedWallets = wallets.slice().sort((a, b) => a.localeCompare(b));
+  return sortedWallets.join('-');
+}

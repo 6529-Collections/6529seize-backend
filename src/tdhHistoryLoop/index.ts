@@ -6,7 +6,11 @@ import {
   TDHHistory,
   TokenTDH
 } from '../entities/ITDH';
-import { areEqualAddresses, formatDateAsString } from '../helpers';
+import {
+  areEqualAddresses,
+  buildConsolidationKey,
+  formatDateAsString
+} from '../helpers';
 import { loadEnv, unload } from '../secrets';
 import axios from 'axios';
 import { Readable } from 'stream';
@@ -52,11 +56,13 @@ export async function tdhHistoryLoop(iterations: number) {
   }
 }
 
-async function fetchUploads(date: string): Promise<{
-  date:string;
-  block:number;
-  url:string;
-}[]> {
+async function fetchUploads(date: string): Promise<
+  {
+    date: string;
+    block: number;
+    url: string;
+  }[]
+> {
   const uploads = await fetch(
     `https://api.seize.io/api/consolidated_uploads?date=${date}&page_size=5`
   );
@@ -112,7 +118,7 @@ async function tdhHistory(date: Date) {
     d.memes = JSON.parse(d.memes);
     d.gradients = JSON.parse(d.gradients);
     d.wallets = JSON.parse(d.wallets);
-    d.consolidation_key = d.wallets.sort().join('-');
+    d.consolidation_key = buildConsolidationKey(d.wallets);
 
     let tdhCreated = 0;
     let tdhDestroyed = 0;
@@ -128,7 +134,7 @@ async function tdhHistory(date: Date) {
         areEqualAddresses(d.consolidation_key, yd.consolidation_key) ||
         areEqualAddresses(
           d.consolidation_key,
-          JSON.parse(yd.wallets).sort().join('-')
+          buildConsolidationKey(JSON.parse(yd.wallets))
         ) ||
         d.wallets.some((dw: string) =>
           JSON.parse(yd.wallets).some((yw: string) => areEqualAddresses(dw, yw))
@@ -137,7 +143,9 @@ async function tdhHistory(date: Date) {
 
     if (yesterdayTdh.length > 0) {
       yesterdayTdh.forEach((y) => {
-        yesterdayEntries.push(JSON.parse(y.wallets).sort().join('-'));
+        const wallets = JSON.parse(y.wallets);
+        const key = buildConsolidationKey(wallets);
+        yesterdayEntries.push(key);
         if (!Array.isArray(y.memes)) {
           y.memes = JSON.parse(y.memes);
         }
@@ -266,7 +274,8 @@ async function tdhHistory(date: Date) {
   });
 
   yesterdayData.forEach((yd) => {
-    const key = JSON.parse(yd.wallets).sort().join('-');
+    const wallets = JSON.parse(yd.wallets);
+    const key = buildConsolidationKey(wallets);
     if (!yesterdayEntries.includes(key)) {
       logger.info(
         `[DATE ${date.toISOString().split('T')[0]}] [KEY LOST ${key} ${

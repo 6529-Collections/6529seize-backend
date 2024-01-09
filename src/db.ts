@@ -1,5 +1,12 @@
 import 'reflect-metadata';
-import { DataSource, In, IsNull, LessThan, QueryRunner } from 'typeorm';
+import {
+  DataSource,
+  In,
+  IsNull,
+  LessThan,
+  MoreThanOrEqual,
+  QueryRunner
+} from 'typeorm';
 import {
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
@@ -363,7 +370,7 @@ export async function fetchLatestTDHBDate(): Promise<Time> {
   return r.length > 0 ? Time.fromString(r[0].timestamp) : Time.millis(0);
 }
 
-export async function fetchLatestTDHBlockNumber() {
+export async function fetchLatestTDHBlockNumber(): Promise<number> {
   const sql = `SELECT block_number FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await sqlExecutor.execute(sql);
   return r.length > 0 ? r[0].block_number : 0;
@@ -571,6 +578,17 @@ export async function fetchAllOwnersAddresses() {
   const results = await sqlExecutor.execute(sql, {
     null_address: NULL_ADDRESS
   });
+  return results;
+}
+
+export async function fetchAllConsolidationAddresses() {
+  const sql = `SELECT wallet FROM (
+      SELECT wallet1 AS wallet FROM consolidations WHERE confirmed = 1
+      UNION
+      SELECT wallet2 AS wallet FROM consolidations WHERE confirmed = 1
+  ) AS unique_wallets;`;
+
+  const results = await sqlExecutor.execute(sql);
   return results;
 }
 
@@ -1062,7 +1080,9 @@ export async function persistConsolidatedTDH(
       await repo.delete({});
     }
     await repo.save(tdh);
-    await profilesService.updateProfileTdhs(tdh.at(0)?.block ?? 0, {
+
+    const tdhBlock = await fetchLatestTDHBlockNumber();
+    await profilesService.updateProfileTdhs(tdhBlock, {
       connection: manager
     });
     await profilesService.mergeProfiles({
@@ -1208,18 +1228,21 @@ export async function fetchRoyalties(startDate: Date, endDate: Date) {
 }
 
 export async function persistConsolidations(
-  force: boolean,
+  startBlock: number | undefined,
   consolidations: ConsolidationEvent[]
 ) {
   if (consolidations.length > 0) {
     logger.info(
-      `[CONSOLIDATIONS] [FORCE ${force}] [PERSISTING ${consolidations.length} RESULTS]`
+      `[CONSOLIDATIONS] [START_BLOCK ${startBlock}] [PERSISTING ${consolidations.length} RESULTS]`
     );
 
     const repo = AppDataSource.getRepository(Consolidation);
 
-    if (force) {
-      repo.clear();
+    if (startBlock) {
+      //delete all with block >= startBlock
+      await repo.delete({
+        block: MoreThanOrEqual(startBlock)
+      });
     }
 
     for (const consolidation of consolidations) {
@@ -1300,18 +1323,21 @@ export async function persistConsolidations(
 }
 
 export async function persistDelegations(
-  force: boolean,
+  startBlock: number | undefined,
   registrations: DelegationEvent[],
   revocations: DelegationEvent[]
 ) {
   logger.info(
-    `[DELEGATIONS] [FORCE ${force}] [PERSISTING ${registrations.length} REGISTRATIONS] [PERSISTING ${revocations.length} REVOCATIONS]`
+    `[DELEGATIONS] [START_BLOCK ${startBlock}] [PERSISTING ${registrations.length} REGISTRATIONS] [PERSISTING ${revocations.length} REVOCATIONS]`
   );
 
   const repo = AppDataSource.getRepository(Delegation);
 
-  if (force) {
-    repo.clear();
+  if (startBlock) {
+    //delete all with block >= startBlock
+    await repo.delete({
+      block: MoreThanOrEqual(startBlock)
+    });
   }
 
   for (const registration of registrations) {

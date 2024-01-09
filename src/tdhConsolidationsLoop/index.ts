@@ -6,6 +6,7 @@ import { Logger } from '../logging';
 import { ProfileTdh, ProfileTdhLog } from '../entities/IProfileTDH';
 import { Time } from '../time';
 import { Profile } from '../entities/IProfile';
+import { fetchAllConsolidationAddresses } from '../db';
 
 const logger = Logger.get('TDH_CONSOLIDATIONS_LOOP');
 
@@ -22,5 +23,10 @@ export const handler = async () => {
 
 export async function consolidatedTdhLoop() {
   const lastTDHCalc = getLastTDH();
-  await consolidateTDH(lastTDHCalc);
+  const consolidationAddresses: { wallet: string }[] =
+    await fetchAllConsolidationAddresses();
+  await consolidateTDH(
+    lastTDHCalc,
+    consolidationAddresses.map((c) => c.wallet)
+  );
 }
