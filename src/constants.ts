@@ -149,6 +149,8 @@ export const WALLET_REGEX = /^0x[a-fA-F0-9]{40}$/;
 export const PROFILE_HANDLE_REGEX = /^[a-zA-Z0-9_]{3,15}$/;
 export const MEMES_ROYALTIES_RATE = 0.5;
 
+export const NEXTGEN_NETWORK = Network.ETH_GOERLI;
+
 export const NEXTGEN_CONTRACT = {
   [Network.ETH_GOERLI]: '0x25a972f1bf3c816061ceaea59d2bb3fe4c130766',
   [Network.ETH_MAINNET]: '0xC3390e3D2e98544DcBB6f235a3B15345A6728E8c'
