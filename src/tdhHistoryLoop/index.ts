@@ -134,7 +134,7 @@ async function tdhHistory(date: Date) {
         areEqualAddresses(d.consolidation_key, yd.consolidation_key) ||
         areEqualAddresses(
           d.consolidation_key,
-          JSON.parse(yd.wallets).sort().join('-')
+          buildConsolidationKey(JSON.parse(yd.wallets))
         ) ||
         d.wallets.some((dw: string) =>
           JSON.parse(yd.wallets).some((yw: string) => areEqualAddresses(dw, yw))
@@ -143,7 +143,9 @@ async function tdhHistory(date: Date) {
 
     if (yesterdayTdh.length > 0) {
       yesterdayTdh.forEach((y) => {
-        yesterdayEntries.push(JSON.parse(y.wallets).sort().join('-'));
+        const wallets = JSON.parse(y.wallets);
+        const key = buildConsolidationKey(wallets);
+        yesterdayEntries.push(key);
         if (!Array.isArray(y.memes)) {
           y.memes = JSON.parse(y.memes);
         }
