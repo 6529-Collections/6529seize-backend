@@ -210,7 +210,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
         const balance = tokenDatesForWallet.length;
         const tdh = tdh__raw * nft.hodl_rate;
 
-        if (tdh > 0 || balance > 0 || consolidations.length > 1) {
+        if (tdh > 0 || balance > 0) {
           totalTDH += tdh;
           totalTDH__raw += tdh__raw;
           totalBalance += balance;
