@@ -443,5 +443,9 @@ export const RESERVED_HANDLES = [
   'punk',
   'royalties',
   'gas',
-  'meme-accounting'
+  'meme-accounting',
+  'tos',
+  'username',
+  'community-activity',
+  'open-data'
 ];
