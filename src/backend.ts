@@ -1,4 +1,3 @@
-import * as overRatesRevocation from './overRatesRevocationLoop';
 import { Logger } from './logging';
 import { Time } from './time';
 
@@ -7,10 +6,8 @@ const transactionsReplay = require('./transactionsReplayLoop');
 const nfts = require('./nftsLoop');
 const owners = require('./ownersLoop');
 const memeLab = require('./memeLabLoop');
-const tdh = require('./tdhLoop');
 const tdhConsolidations = require('./tdhConsolidationsLoop');
 
-const tdhHistory = require('./tdhHistoryLoop');
 const team = require('./teamLoop');
 const rememes = require('./rememesLoop');
 const ownerMetrics = require('./ownerMetricsLoop');
@@ -98,15 +95,6 @@ cron.schedule('30 * * * *', async function () {
   }
 });
 
-// CALCULATE TDH AT 00:01,00:15,00:30,00:45
-cron.schedule('1,15,30,45 0 * * *', async function () {
-  if (isCronsEnabled()) {
-    await tdh.handler();
-    await tdhHistory.handler();
-    await overRatesRevocation.handler();
-  }
-});
-
 // UPLOAD ROYALTIES AT 04:01
 cron.schedule('1 4 * * *', async function () {
   if (isCronsEnabled()) {
@@ -126,9 +114,7 @@ async function start() {
   // await nfts.handler();
   // await owners.handler();
   // await ownerMetrics.handler();
-  // await tdh.handler();
   // await tdhConsolidations.handler();
-  // await tdhHistory.handler();
   // await memeLab.handler();
   // await memeStats();
   // await gradientStats();
@@ -141,7 +127,6 @@ async function start() {
   // await transactions.handlerValues();
   // await rememes.handler();
   // await transactionsReplay.handler();
-  await overRatesRevocation.handler();
 
   RUNNING_START_SCRIPT = false;
   const diff = start.diffFromNow().formatAsDuration();

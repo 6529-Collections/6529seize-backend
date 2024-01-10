@@ -1034,7 +1034,9 @@ export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
   logger.info(`[TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
 
   await AppDataSource.transaction(async (manager) => {
-    await manager.getRepository(TDH).save(tdh);
+    const repo = manager.getRepository(TDH);
+    await repo.delete({ block: block });
+    await repo.save(tdh);
     await manager.query(
       `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block_number=?, timestamp=?`,
       [block, timestamp]

@@ -27,7 +27,7 @@ export async function loadSecrets() {
   const logger = Logger.get('SECRETS');
   logger.info('[LOADING SECRETS]');
 
-  const secretsManager = new SecretsManager({ region: 'us-east-1' });
+  const secretsManager = new SecretsManager();
 
   const secret = await secretsManager.getSecretValue({ SecretId: SECRET });
 
