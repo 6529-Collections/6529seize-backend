@@ -31,6 +31,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ github.event.inputs.environment == 'prod' && 'us-east-1' || 'eu-west-1' }}
       - name: Deploy
         run: pushd src/tdhLoop && npm run sls-deploy:${{ github.event.inputs.environment }} && popd
       - name: Notify about failure
