@@ -23,7 +23,7 @@ jobs:
         with:
           ref: ${{ github.event.inputs.branch }}
       - name: Install dependencies
-        run: npm i && pushd src/tdhHistoryLoop && npm i && popd
+        run: npm i && pushd src/api-serverless && npm i && popd  && pushd src/tdhHistoryLoop && npm i && popd
       - name: Build
         run: pushd src/tdhHistoryLoop && npm run build && popd
       - name: Configure AWS credentials
