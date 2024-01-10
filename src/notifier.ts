@@ -8,17 +8,18 @@ let snsClient: SNSClient;
 
 function getSnsClient(): SNSClient {
   if (!snsClient) {
-    snsClient = new SNSClient({ region: 'us-east-1' });
+    snsClient = new SNSClient({ region: 'eu-west-1' });
   }
   return snsClient;
 }
 
 export async function notifyTdhCalculationsDone() {
   logger.info('[NOTIFYING TDH CALCULATIONS DONE]');
-  if (process.env.NODE_ENV == 'production') {
+  const snsQueue = process.env.TDH_CALCULATIONS_DONE_SNS;
+  if (snsQueue) {
     const uid = randomUUID();
     const input = {
-      TopicArn: 'arn:aws:sns:us-east-1:987989283142:tdh-calculation-done.fifo',
+      TopicArn: snsQueue,
       Message: JSON.stringify({ randomId: uid }),
       MessageGroupId: uid,
       MessageDeduplicationId: uid
