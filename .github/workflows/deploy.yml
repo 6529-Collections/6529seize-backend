@@ -55,7 +55,7 @@ jobs:
         run: npm i
       - name: Install lambda dependencies
         if: github.event.inputs.service != 'api'
-        run: npm i && popd && pushd src/${{ github.event.inputs.service }} && npm i && popd
+        run: npm i && pushd src/${{ github.event.inputs.service }} && npm i && popd
       - name: Install api dependencies
         if: github.event.inputs.service == 'api'
         run: pushd src/api-serverless && npm i && popd
