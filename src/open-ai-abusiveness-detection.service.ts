@@ -31,7 +31,7 @@ Some examples below, that show the rep points being assigned and the classificat
 Task
 
 You are going to help us create the allowlist of allowed rep classifications, please.
-The general model is that all rep classifications are allowed except the following five categories:
+The general model is that all rep classifications are allowed, except the following categories:
 
 1. Discriminatory or hate speech on any typical grounds
 2. Personal insults
