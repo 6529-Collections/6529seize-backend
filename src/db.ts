@@ -26,7 +26,8 @@ import {
   CONSOLIDATED_UPLOADS_TABLE,
   MEME_LAB_ROYALTIES_TABLE,
   CONSOLIDATIONS_TABLE,
-  PROFILES_TABLE
+  NEXTGEN_COLLECTIONS_TABLE,
+  NEXTGEN_BLOCKS_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -56,7 +57,7 @@ import { Team } from './entities/ITeam';
 import {
   Transaction,
   LabTransaction,
-  BaseTransaction
+  BaseMemeTransaction
 } from './entities/ITransaction';
 import {
   Consolidation,
@@ -82,8 +83,13 @@ import { getConsolidationsSql } from './sql_helpers';
 import {
   NextGenAllowlist,
   NextGenAllowlistBurn,
+  NextGenAllowlistCollection,
   NextGenCollection,
-  NextGenCollectionBurn
+  NextGenCollectionBurn,
+  NextGenBlock,
+  NextGenLog,
+  NextGenToken,
+  NextGenTransaction
 } from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { Profile, ProfileArchived } from './entities/IProfile';
@@ -104,7 +110,7 @@ const logger = Logger.get('DB');
 let AppDataSource: DataSource;
 
 export async function connect(entities: any[] = []) {
-  logger.info(`[DB HOST ${process.env.DB_HOST}]`);
+  logger.info(`[DB ${process.env.DB_HOST}:${process.env.DB_PORT}]`);
 
   if (process.env.NODE_ENV != 'production') {
     entities = [
@@ -139,14 +145,19 @@ export async function connect(entities: any[] = []) {
       ProfileArchived,
       NextGenAllowlist,
       NextGenAllowlistBurn,
-      NextGenCollection,
+      NextGenAllowlistCollection,
       NextGenCollectionBurn,
       ProfileTdh,
       ProfileTdhLog,
       CicStatement,
       ProfileActivityLog,
       Rating,
-      AbusivenessDetectionResult
+      AbusivenessDetectionResult,
+      NextGenCollection,
+      NextGenBlock,
+      NextGenLog,
+      NextGenToken,
+      NextGenTransaction
     ];
   }
 
@@ -163,6 +174,7 @@ export async function connect(entities: any[] = []) {
   });
 
   await AppDataSource.initialize().catch((error) => logger.error(error));
+
   setSqlExecutor({
     execute: (
       sql: string,
@@ -173,7 +185,9 @@ export async function connect(entities: any[] = []) {
       return execNativeTransactionally(executable);
     }
   });
-  logger.info('[CONNECTION CREATED]');
+  logger.info(
+    `[CONNECTION CREATED] [APP DATA SOURCE INITIALIZED ${AppDataSource.isInitialized}]`
+  );
 }
 
 export async function disconnect() {
@@ -182,9 +196,9 @@ export async function disconnect() {
 }
 
 export function consolidateTransactions(
-  transactions: BaseTransaction[]
-): BaseTransaction[] {
-  const consolidatedTransactions: BaseTransaction[] = Object.values(
+  transactions: BaseMemeTransaction[]
+): BaseMemeTransaction[] {
+  const consolidatedTransactions: BaseMemeTransaction[] = Object.values(
     transactions.reduce((acc: any, transaction) => {
       const primaryKey = `${transaction.transaction}_${transaction.from_address}_${transaction.to_address}_${transaction.contract}_${transaction.token_id}`;
 
@@ -684,7 +698,7 @@ export async function fetchMissingEnsNFTDelegation(table: string) {
 }
 
 export async function persistTransactions(
-  transactions: BaseTransaction[],
+  transactions: BaseMemeTransaction[],
   isLab?: boolean
 ) {
   if (transactions.length > 0) {
@@ -1475,4 +1489,64 @@ export async function persistTDHHistory(tdhHistory: TDHHistory[]) {
 export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
   const globalHistoryRepo = AppDataSource.getRepository(GlobalTDHHistory);
   await globalHistoryRepo.upsert(globalHistory, ['date', 'block']);
+}
+
+export async function persistNextGenLogs(logs: NextGenLog[]) {
+  await AppDataSource.getRepository(NextGenLog).save(logs);
+}
+
+export async function fetchNextGenCollectionIndex() {
+  const sql = `SELECT MAX(id) as max_id FROM ${NEXTGEN_COLLECTIONS_TABLE}`;
+  const results = await sqlExecutor.execute(sql);
+  if (results.length == 0) {
+    return 0;
+  }
+  return results[0].max_id;
+}
+
+export async function persistNextGenCollection(collection: NextGenCollection) {
+  await AppDataSource.getRepository(NextGenCollection).save(collection);
+}
+
+export async function fetchNextGenCollection(id: number) {
+  const c = await AppDataSource.getRepository(NextGenCollection).findOne({
+    where: {
+      id: id
+    }
+  });
+  return c;
+}
+
+export async function fetchNextGenLatestBlock() {
+  const sql = `SELECT MAX(block) as max_block FROM ${NEXTGEN_BLOCKS_TABLE}`;
+  const results = await sqlExecutor.execute(sql);
+  return results[0].max_block ?? 0;
+}
+
+export async function persistNextGenBlock(block: NextGenBlock) {
+  await AppDataSource.getRepository(NextGenBlock).save(block);
+}
+
+export async function persistNextGenToken(token: NextGenToken) {
+  await AppDataSource.getRepository(NextGenToken).upsert(token, ['id']);
+}
+
+export async function fetchNextGenToken(id: number) {
+  const c = await AppDataSource.getRepository(NextGenToken).findOne({
+    where: {
+      id: id
+    }
+  });
+  return c;
+}
+
+export async function persistNextgenTransactions(
+  transactions: NextGenTransaction[]
+) {
+  await AppDataSource.getRepository(NextGenTransaction).upsert(transactions, [
+    'transaction',
+    'from_address',
+    'to_address',
+    'token_id'
+  ]);
 }

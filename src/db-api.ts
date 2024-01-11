@@ -18,7 +18,7 @@ import {
   NEXTGEN_ALLOWLIST_BURN_TABLE,
   NEXTGEN_ALLOWLIST_TABLE,
   NEXTGEN_BURN_COLLECTIONS_TABLE,
-  NEXTGEN_COLLECTIONS_TABLE,
+  NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
   NFTS_HISTORY_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
@@ -39,7 +39,9 @@ import {
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   USER_TABLE,
-  WALLETS_TDH_TABLE
+  WALLETS_TDH_TABLE,
+  NEXTGEN_COLLECTIONS_TABLE,
+  NEXTGEN_TOKENS_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
 import { User } from './entities/IUser';
@@ -64,6 +66,8 @@ import {
 } from './api-serverless/src/api-helpers';
 import { profilesService } from './profiles/profiles.service';
 import { repService } from './api-serverless/src/profiles/rep.service';
+import { DEFAULT_PAGE_SIZE } from './api-serverless/src/api-constants';
+import { NextGenCollectionStatus } from './api-serverless/src/api-filters';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -271,9 +275,9 @@ async function fetchPaginated(
   joins?: string,
   groups?: string
 ) {
-  const countSql = `SELECT COUNT(1) as count FROM (SELECT 1 FROM ${table} ${joins} ${filters}${
-    groups ? ` GROUP BY ${groups}` : ``
-  }) inner_q`;
+  const countSql = `SELECT COUNT(1) as count FROM (SELECT 1 FROM ${table} ${
+    joins ?? ''
+  } ${filters}${groups ? ` GROUP BY ${groups}` : ``}) inner_q`;
 
   let resultsSql = `SELECT ${fields ? fields : '*'} FROM ${table} ${
     joins ? joins : ''
@@ -290,8 +294,8 @@ async function fetchPaginated(
     .then((r) => r[0].count);
   const data = await sqlExecutor.execute(resultsSql, params);
 
-  logger.debug(`Count sql: '${countSql}', Result: ${count}`);
-  logger.debug(`Result sql: ${resultsSql}`);
+  logger.info(`Count sql: '${countSql}', Result: ${count}`);
+  logger.info(`Result sql: ${resultsSql}`);
   logger.debug(`Result data: %o`, data);
 
   return {
@@ -2432,8 +2436,8 @@ export async function fetchNftHistory(
   );
 }
 
-export async function fetchNextGenCollection(merkleRoot: string) {
-  const sql = `SELECT * FROM ${NEXTGEN_COLLECTIONS_TABLE} LEFT JOIN ${NEXTGEN_BURN_COLLECTIONS_TABLE} ON ${NEXTGEN_COLLECTIONS_TABLE}.collection_id=${NEXTGEN_BURN_COLLECTIONS_TABLE}.collection_id WHERE ${NEXTGEN_COLLECTIONS_TABLE}.merkle_root=:merkle_root`;
+export async function fetchNextGenAllowlistCollection(merkleRoot: string) {
+  const sql = `SELECT * FROM ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} LEFT JOIN ${NEXTGEN_BURN_COLLECTIONS_TABLE} ON ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.collection_id=${NEXTGEN_BURN_COLLECTIONS_TABLE}.collection_id WHERE ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.merkle_root=:merkle_root`;
   const collection = (
     await sqlExecutor.execute(sql, {
       merkle_root: merkleRoot
@@ -2446,7 +2450,7 @@ export async function fetchNextGenAllowlist(
   merkleRoot: string,
   address: string
 ) {
-  const sql1 = `SELECT * FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE merkle_root=:merkle_root`;
+  const sql1 = `SELECT * FROM ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} WHERE merkle_root=:merkle_root`;
   const collection = (
     await sqlExecutor.execute(sql1, {
       merkle_root: merkleRoot
@@ -2483,7 +2487,7 @@ export async function fetchNextGenBurnAllowlist(
   merkleRoot: string,
   tokenId: number
 ) {
-  const collection = await fetchNextGenCollection(merkleRoot);
+  const collection = await fetchNextGenAllowlistCollection(merkleRoot);
 
   const sql2 = `SELECT * FROM ${NEXTGEN_ALLOWLIST_BURN_TABLE} WHERE merkle_root=:merkle_root AND token_id=:token_id`;
   const allowlist = (
@@ -2738,4 +2742,89 @@ export async function fetchRoyaltiesUploads(pageSize: number, page: number) {
     page,
     ''
   );
+}
+
+export async function fetchNextGenCollections(
+  pageSize: number,
+  page: number,
+  status: NextGenCollectionStatus | null
+) {
+  let filters = '';
+  let sort = 'id desc';
+  if (status) {
+    const now = Time.now().toSeconds();
+    sort = 'allowlist_start asc, public_start asc, id desc';
+    switch (status) {
+      case NextGenCollectionStatus.LIVE:
+        filters = constructFilters(
+          filters,
+          `(allowlist_start <= ${now} AND allowlist_end >= ${now}) OR (public_start <= ${now} AND public_end >= ${now})`
+        );
+        sort = 'allowlist_start asc, public_start asc, id desc';
+        break;
+      case NextGenCollectionStatus.UPCOMING:
+        filters = constructFilters(
+          filters,
+          `allowlist_start > ${now} OR public_start > ${now}`
+        );
+        break;
+      case NextGenCollectionStatus.COMPLETED:
+        filters = constructFilters(
+          filters,
+          `allowlist_end < ${now} AND public_end < ${now}`
+        );
+        break;
+    }
+  }
+  return fetchPaginated(
+    NEXTGEN_COLLECTIONS_TABLE,
+    {},
+    sort,
+    pageSize,
+    page,
+    filters
+  );
+}
+
+export async function fetchNextGenCollectionById(id: number) {
+  const sql = `SELECT * FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE id=:id`;
+  const results = await sqlExecutor.execute(sql, {
+    id: id
+  });
+  if (results.length === 1) {
+    return results[0];
+  }
+  return returnEmpty();
+}
+
+export async function fetchNextGenCollectionTokens(
+  collectionId: number,
+  pageSize: number,
+  page: number
+) {
+  let filters = constructFilters(
+    '',
+    `${NEXTGEN_TOKENS_TABLE}.collection_id=:collectionId`
+  );
+  return fetchPaginated(
+    NEXTGEN_TOKENS_TABLE,
+    {
+      collectionId: collectionId
+    },
+    'id asc',
+    pageSize,
+    page,
+    filters
+  );
+}
+
+export async function fetchNextGenToken(tokendId: number) {
+  const sql = `SELECT * FROM ${NEXTGEN_TOKENS_TABLE} WHERE id=:id`;
+  const results = await sqlExecutor.execute(sql, {
+    id: tokendId
+  });
+  if (results.length === 1) {
+    return results[0];
+  }
+  return returnEmpty();
 }

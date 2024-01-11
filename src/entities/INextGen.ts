@@ -1,11 +1,25 @@
-import { Entity, CreateDateColumn, PrimaryColumn, Column } from 'typeorm';
+import {
+  Entity,
+  CreateDateColumn,
+  PrimaryColumn,
+  Column,
+  UpdateDateColumn,
+  PrimaryGeneratedColumn,
+  Index
+} from 'typeorm';
 import {
   NEXTGEN_ALLOWLIST_BURN_TABLE,
   NEXTGEN_ALLOWLIST_TABLE,
   NEXTGEN_BURN_COLLECTIONS_TABLE,
+  NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
+  NEXTGEN_BLOCKS_TABLE,
+  NEXTGEN_LOGS,
   NEXTGEN_COLLECTIONS_TABLE,
-  NEXTGEN_TRANSACTIONS_BLOCK_TABLE
+  NEXTGEN_TOKENS_TABLE,
+  NEXTGEN_TRANSACTIONS_TABLE
 } from '../constants';
+import { BlockEntity } from './IBlock';
+import { BaseTransaction } from './ITransaction';
 
 @Entity(NEXTGEN_ALLOWLIST_TABLE)
 export class NextGenAllowlist {
@@ -52,8 +66,8 @@ export class NextGenAllowlistBurn {
   keccak!: string;
 }
 
-@Entity(NEXTGEN_COLLECTIONS_TABLE)
-export class NextGenCollection {
+@Entity(NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE)
+export class NextGenAllowlistCollection {
   @CreateDateColumn({ type: 'datetime' })
   created_at!: Date;
 
@@ -166,7 +180,9 @@ export function extractNextGenAllowlistBurnInsert(
   };
 }
 
-export function extractNextGenCollectionInsert(nextgen: NextGenCollection) {
+export function extractNextGenCollectionInsert(
+  nextgen: NextGenAllowlistCollection
+) {
   const params = {
     merkleRoot: nextgen.merkle_root,
     collectionId: nextgen.collection_id,
@@ -176,7 +192,7 @@ export function extractNextGenCollectionInsert(nextgen: NextGenCollection) {
     phase: nextgen.phase
   };
 
-  const sql = `INSERT INTO ${NEXTGEN_COLLECTIONS_TABLE} (merkle_root, collection_id, added_by, al_type, merkle_tree, phase) VALUES (:merkleRoot, :collectionId, :addedBy, :alType, :merkleTree, :phase)`;
+  const sql = `INSERT INTO ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} (merkle_root, collection_id, added_by, al_type, merkle_tree, phase) VALUES (:merkleRoot, :collectionId, :addedBy, :alType, :merkleTree, :phase)`;
 
   return {
     sql,
@@ -229,4 +245,146 @@ export function extractNextGenCollectionBurnInsert(
     sql,
     params
   };
+}
+
+@Entity(NEXTGEN_BLOCKS_TABLE)
+export class NextGenBlock extends BlockEntity {}
+
+@Entity(NEXTGEN_LOGS)
+export class NextGenLog {
+  @CreateDateColumn({ type: 'datetime' })
+  created_at?: Date;
+
+  @PrimaryGeneratedColumn({ type: 'int' })
+  id?: number;
+
+  @Column({ type: 'varchar', length: 100 })
+  transaction!: string;
+
+  @Column({ type: 'int' })
+  block!: number;
+
+  @Column({ type: 'text' })
+  log!: string;
+
+  @Column({ type: 'int' })
+  collection_id?: number;
+
+  @Column({ type: 'text' })
+  source!: string;
+}
+
+@Entity(NEXTGEN_COLLECTIONS_TABLE)
+export class NextGenCollection {
+  @CreateDateColumn({ type: 'datetime' })
+  created_at?: Date;
+
+  @UpdateDateColumn({ type: 'datetime' })
+  updated_at?: Date;
+
+  @PrimaryColumn({ type: 'int' })
+  id!: number;
+
+  @Column({ type: 'text' })
+  name!: string;
+
+  @Column({ type: 'text' })
+  artist!: string;
+
+  @Column({ type: 'text' })
+  description!: string;
+
+  @Column({ type: 'text' })
+  website!: string;
+
+  @Column({ type: 'text' })
+  licence!: string;
+
+  @Column({ type: 'text' })
+  base_uri!: string;
+
+  @Column({ type: 'text' })
+  library!: string;
+
+  @Column({ type: 'text' })
+  image!: string;
+
+  @Column({ type: 'text', nullable: true })
+  artist_address?: string;
+
+  @Column({ type: 'text', nullable: true })
+  artist_signature?: string;
+
+  @Column({ type: 'int', default: -1 })
+  max_purchases?: number;
+
+  @Column({ type: 'int', default: -1 })
+  total_supply?: number;
+
+  @Column({ type: 'int', default: -1 })
+  final_supply_after_mint?: number;
+
+  @Column({ type: 'int', default: 0 })
+  mint_count!: number;
+
+  @Column({ type: 'boolean', default: false })
+  on_chain?: boolean;
+
+  @Column({ type: 'bigint', default: -1 })
+  allowlist_start?: number;
+
+  @Column({ type: 'bigint', default: -1 })
+  allowlist_end?: number;
+
+  @Column({ type: 'bigint', default: -1 })
+  public_start?: number;
+
+  @Column({ type: 'bigint', default: -1 })
+  public_end?: number;
+
+  @Column({ type: 'text', nullable: true })
+  merkle_root?: string;
+}
+
+@Entity(NEXTGEN_TOKENS_TABLE)
+export class NextGenToken {
+  @CreateDateColumn({ type: 'datetime' })
+  created_at?: Date;
+
+  @UpdateDateColumn({ type: 'datetime' })
+  updated_at?: Date;
+
+  @PrimaryColumn({ type: 'bigint' })
+  id!: number;
+
+  @Column({ type: 'int' })
+  normalised_id!: number;
+
+  @Column({ type: 'int' })
+  collection_id!: number;
+
+  @Column({ type: 'text' })
+  name!: string;
+
+  @Column({ type: 'text' })
+  metadata_url!: string;
+
+  @Column({ type: 'text' })
+  image_url!: string;
+
+  @Column({ type: 'text', nullable: true })
+  animation_url!: string;
+
+  @Column({ type: 'text', nullable: true })
+  generator_url!: string;
+
+  @Column({ type: 'text' })
+  owner!: string;
+}
+
+@Entity(NEXTGEN_TRANSACTIONS_TABLE)
+export class NextGenTransaction extends BaseTransaction {
+  @Index()
+  @PrimaryColumn({ type: 'bigint' })
+  token_id!: number;
 }

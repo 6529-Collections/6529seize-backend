@@ -2,6 +2,7 @@ import {
   Alchemy,
   AssetTransfersCategory,
   AssetTransfersParams,
+  Network,
   Utils,
   fromHex
 } from 'alchemy-sdk';
@@ -24,6 +25,7 @@ import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
 import { findTransactionsByHash } from './db';
 import { Logger } from './logging';
+import { NextGenTransaction } from './entities/INextGen';
 
 const logger = Logger.get('TRANSACTION_VALUES');
 
@@ -67,9 +69,16 @@ function resolveLogValue(data: string) {
   return parseFloat(Utils.formatEther(data));
 }
 
-export const findTransactionValues = async (transactions: Transaction[]) => {
+export const findTransactionValues = async (
+  transactions: Transaction[],
+  network?: Network
+) => {
+  const settings = ALCHEMY_SETTINGS;
+  if (network) {
+    settings.network = network;
+  }
   alchemy = new Alchemy({
-    ...ALCHEMY_SETTINGS,
+    ...settings,
     apiKey: process.env.ALCHEMY_API_KEY
   });
 

@@ -7,7 +7,7 @@ import { sqlExecutor } from '../../../sql-executor';
 import {
   NextGenAllowlist,
   NextGenAllowlistBurn,
-  NextGenCollection,
+  NextGenAllowlistCollection,
   NextGenCollectionBurn,
   extractNextGenAllowlistBurnInsert,
   extractNextGenAllowlistInsert,
@@ -17,7 +17,7 @@ import {
 import {
   NEXTGEN_ALLOWLIST_BURN_TABLE,
   NEXTGEN_ALLOWLIST_TABLE,
-  NEXTGEN_COLLECTIONS_TABLE
+  NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE
 } from '../../../constants';
 import * as db from '../../../db-api';
 import { asyncRouter } from '../async.router';
@@ -27,8 +27,11 @@ import {
   CONTENT_TYPE_HEADER,
   JSON_HEADER_VALUE,
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-  corsOptions
+  corsOptions,
+  DEFAULT_PAGE_SIZE
 } from '../api-constants';
+import { returnJsonResult, returnPaginatedResult } from 'src/api-helpers';
+import { NextGenCollectionStatus } from 'src/api-filters';
 
 const logger = Logger.get('NEXTGEN_API');
 
@@ -88,23 +91,26 @@ router.post(
   }
 );
 
-router.get(`/:merkle_root`, async function (req: any, res: any, next: any) {
-  const merkleRoot = req.params.merkle_root;
+router.get(
+  `/merkle_roots/:merkle_root`,
+  async function (req: any, res: any, next: any) {
+    const merkleRoot = req.params.merkle_root;
 
-  db.fetchNextGenCollection(merkleRoot).then((result) => {
-    if (result) {
-      result.merkle_tree = JSON.parse(result.merkle_tree);
-    } else {
-      result = null;
-    }
-    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-    res.setHeader(
-      ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-      corsOptions.allowedHeaders
-    );
-    res.end(JSON.stringify(result));
-  });
-});
+    db.fetchNextGenAllowlistCollection(merkleRoot).then((result) => {
+      if (result) {
+        result.merkle_tree = JSON.parse(result.merkle_tree);
+      } else {
+        result = null;
+      }
+      res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+      res.setHeader(
+        ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+        corsOptions.allowedHeaders
+      );
+      res.end(JSON.stringify(result));
+    });
+  }
+);
 
 router.get(
   `/proofs/:merkle_root/:address`,
@@ -140,6 +146,100 @@ router.get(
   }
 );
 
+router.get(`/collections`, async function (req: any, res: any, next: any) {
+  const pageSize: number =
+    req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+      ? parseInt(req.query.page_size)
+      : DEFAULT_PAGE_SIZE;
+  const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  const statusKey =
+    req.query.status?.toUpperCase() as keyof typeof NextGenCollectionStatus;
+  const status =
+    statusKey in NextGenCollectionStatus
+      ? NextGenCollectionStatus[statusKey]
+      : null;
+  logger.info(
+    `[FETCHING ALL COLLECTIONS] : [PAGE SIZE ${pageSize}] : [PAGE ${page}] : [STATUS ${status}]`
+  );
+  db.fetchNextGenCollections(pageSize, page, status).then((result) => {
+    return returnPaginatedResult(result, req, res);
+  });
+});
+
+router.get(`/collections/:id`, async function (req: any, res: any, next: any) {
+  const id: number = parseInt(req.params.id);
+  if (!isNaN(id)) {
+    logger.info(`[FETCHING COLLECTION ID ${id}]`);
+    db.fetchNextGenCollectionById(id).then((result) => {
+      if (result.id) {
+        return returnJsonResult(result, req, res);
+      } else {
+        return res.status(404).send();
+      }
+    });
+  } else {
+    return res.status(404).send();
+  }
+});
+
+router.get(
+  `/collections/:id/tokens`,
+  async function (req: any, res: any, next: any) {
+    const id: number = parseInt(req.params.id);
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+    if (!isNaN(id)) {
+      logger.info(`[FETCHING TOKENS FOR COLLECTION ID ${id}]`);
+      db.fetchNextGenCollectionTokens(id, pageSize, page).then((result) => {
+        return returnJsonResult(result, req, res);
+      });
+    } else {
+      return res.status(404).send();
+    }
+  }
+);
+
+router.get(
+  `/collections/:id/tokens/:token`,
+  async function (req: any, res: any, next: any) {
+    const id: number = parseInt(req.params.id);
+    const token: number = parseInt(req.params.token);
+    if (!isNaN(id) && !isNaN(token)) {
+      const tokenId = id * 10000000000 + token;
+      logger.info(`[FETCHING TOKEN ${id}]`);
+      db.fetchNextGenToken(tokenId).then((result) => {
+        if (result.id) {
+          return returnJsonResult(result, req, res);
+        } else {
+          return res.status(404).send();
+        }
+      });
+    } else {
+      return res.status(404).send();
+    }
+  }
+);
+
+router.get(`/tokens/:id`, async function (req: any, res: any, next: any) {
+  const id: number = parseInt(req.params.id);
+  if (!isNaN(id)) {
+    logger.info(`[FETCHING TOKEN ${id}]`);
+    db.fetchNextGenToken(id).then((result) => {
+      if (result.id) {
+        return returnJsonResult(result, req, res);
+      } else {
+        return res.status(404).send();
+      }
+    });
+  } else {
+    return res.status(404).send();
+  }
+});
+
 async function persistAllowlist(body: {
   collection_id: number;
   added_by: string;
@@ -151,7 +251,7 @@ async function persistAllowlist(body: {
     allowlist: any[];
   };
 }): Promise<void> {
-  const collection = new NextGenCollection();
+  const collection = new NextGenAllowlistCollection();
   collection.collection_id = body.collection_id;
   collection.added_by = body.added_by;
   collection.al_type = body.al_type;
@@ -160,7 +260,7 @@ async function persistAllowlist(body: {
   collection.merkle_tree = JSON.stringify(body.merkle.merkle_tree);
 
   const existingMerkle = await sqlExecutor.execute(
-    `SELECT * FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE collection_id = :collection_id`,
+    `SELECT * FROM ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} WHERE collection_id = :collection_id`,
     {
       collection_id: collection.collection_id
     }
@@ -170,7 +270,7 @@ async function persistAllowlist(body: {
     if (existingMerkle.length > 0) {
       const existingMerkleRoot = existingMerkle[0].merkle_root;
       await sqlExecutor.execute(
-        `DELETE FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE merkle_root = :merkle_root AND collection_id=:collection_id`,
+        `DELETE FROM ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} WHERE merkle_root = :merkle_root AND collection_id=:collection_id`,
         {
           merkle_root: existingMerkleRoot,
           collection_id: collection.collection_id

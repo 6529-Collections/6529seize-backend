@@ -41,10 +41,15 @@ export const DELEGATIONS_TABLE = 'delegations';
 export const NFTS_HISTORY_TABLE = 'nfts_history';
 export const NFTS_HISTORY_BLOCKS_TABLE = 'nfts_history_blocks';
 export const NFTS_HISTORY_CLAIMS_TABLE = 'nfts_history_claims';
-export const NEXTGEN_TRANSACTIONS_BLOCK_TABLE = 'nextgen_transactions_block';
+export const NEXTGEN_BLOCKS_TABLE = 'nextgen_blocks';
+export const NEXTGEN_LOGS = 'nextgen_logs';
+export const NEXTGEN_COLLECTIONS_TABLE = 'nextgen_collections';
+export const NEXTGEN_TOKENS_TABLE = 'nextgen_tokens';
 export const NEXTGEN_ALLOWLIST_TABLE = 'nextgen_allowlist';
+export const NEXTGEN_TRANSACTIONS_TABLE = 'nextgen_transactions';
 export const NEXTGEN_ALLOWLIST_BURN_TABLE = 'nextgen_allowlist_burn';
-export const NEXTGEN_COLLECTIONS_TABLE = 'nextgen_collection';
+export const NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE =
+  'nextgen_allowlist_collection';
 export const NEXTGEN_BURN_COLLECTIONS_TABLE = 'nextgen_burn_collection';
 export const REMEMES_TABLE = 'rememes';
 export const REMEMES_UPLOADS = 'uploads_rememes';
@@ -151,7 +156,15 @@ export const MEMES_ROYALTIES_RATE = 0.5;
 
 export const NEXTGEN_NETWORK = Network.ETH_GOERLI;
 
-export const NEXTGEN_CONTRACT = {
+export const NEXTGEN_CORE_CONTRACT = {
   [Network.ETH_GOERLI]: '0x25a972f1bf3c816061ceaea59d2bb3fe4c130766',
   [Network.ETH_MAINNET]: '0xC3390e3D2e98544DcBB6f235a3B15345A6728E8c'
 };
+
+export const NEXTGEN_MINTER_CONTRACT = {
+  [Network.ETH_GOERLI]: '0x1a7040a7d4baf44f136c50626a4e8f4ae5ca170f',
+  [Network.ETH_MAINNET]: '0x6113fd2c91514e84e6149c6ede47f2e09545253a'
+};
+
+export const NEXTGEN_CF_BASE_PATH =
+  'https://media-proxy.nextgen-generator.seize.io/';

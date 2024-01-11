@@ -5,10 +5,10 @@ import {
 } from '@aws-sdk/client-cloudfront';
 import { Logger } from '../logging';
 import { Time } from '../time';
+import { NEXTGEN_CF_BASE_PATH } from '../constants';
 
 const logger = Logger.get('NEXTGEN_MEDIA_UPLOADER');
 const GENERATOR_BASE_PATH = 'https://nextgen-generator.seize.io/';
-const CF_BASE_PATH = 'https://media-proxy.nextgen-generator.seize.io/';
 const BUCKET = 'media-proxy.nextgen-generator.seize.io';
 const AWS_REGION = 'us-east-1';
 const CLOUDFRONT_DISTRIBUTION = 'E1YUOAX1CF71P7';
@@ -77,10 +77,10 @@ async function uploadMissingNextgenMedia(path: string) {
   }
 
   if (metadata.image) {
-    metadata.image = `${CF_BASE_PATH}${imagePath}`;
+    metadata.image = `${NEXTGEN_CF_BASE_PATH}${imagePath}`;
   }
   if (metadata.animation_url) {
-    metadata.animation_url = `${CF_BASE_PATH}${htmlPath}`;
+    metadata.animation_url = `${NEXTGEN_CF_BASE_PATH}${htmlPath}`;
   }
   metadata.generator_url = generatorMetadataPath;
 

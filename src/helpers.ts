@@ -1,3 +1,4 @@
+import fetch from 'node-fetch';
 import axios, { AxiosResponse } from 'axios';
 import { CONSOLIDATIONS_LIMIT } from './constants';
 import * as short from 'short-uuid';
@@ -255,4 +256,12 @@ export async function compareImages(
 export function buildConsolidationKey(wallets: string[]) {
   const sortedWallets = wallets.slice().sort((a, b) => a.localeCompare(b));
   return sortedWallets.join('-');
+}
+
+export function gweiToEth(gwei: number): number {
+  return gwei / 1e9;
+}
+
+export function weiToEth(wei: number): number {
+  return wei / 1e18;
 }

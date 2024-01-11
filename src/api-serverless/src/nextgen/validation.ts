@@ -6,8 +6,8 @@ import { Readable } from 'stream';
 import {
   NEXTGEN_ADMIN,
   NEXTGEN_ADMIN_ABI,
-  NEXTGEN_CHAIN_ID,
-  NEXTGEN_SET_COLLECTION_PHASES_SELECTOR
+  NEXTGEN_SET_COLLECTION_PHASES_SELECTOR,
+  getNextGenChainId
 } from './abis';
 import { Logger } from '../../../logging';
 const { keccak256 } = require('@ethersproject/keccak256');
@@ -332,10 +332,12 @@ async function computeMerkleBurn(
 }
 
 async function validateAdmin(collection_id: number, address: string) {
-  const rpcUrl = getUrl(NEXTGEN_CHAIN_ID);
+  const chainId = getNextGenChainId();
+  const rpcUrl = getUrl(chainId);
   const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
+
   const contract = new ethers.Contract(
-    NEXTGEN_ADMIN[NEXTGEN_CHAIN_ID],
+    NEXTGEN_ADMIN[chainId],
     NEXTGEN_ADMIN_ABI,
     provider
   );

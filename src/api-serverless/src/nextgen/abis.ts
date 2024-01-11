@@ -15,8 +15,6 @@ export function getNextGenChainId() {
   return mainnet.id;
 }
 
-export const NEXTGEN_CHAIN_ID = getNextGenChainId();
-
 export const NEXTGEN_SET_COLLECTION_PHASES_SELECTOR = '0xb85f97a0';
 
 export const NEXTGEN_ADMIN: NextGenContract = {

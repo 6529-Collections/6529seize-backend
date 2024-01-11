@@ -26,10 +26,6 @@ export class BaseTransaction {
   @PrimaryColumn({ type: 'varchar', length: 50 })
   contract!: string;
 
-  @Index()
-  @PrimaryColumn({ type: 'int' })
-  token_id!: number;
-
   @Column({ type: 'int' })
   token_count!: number;
 
@@ -55,11 +51,17 @@ export class BaseTransaction {
   gas!: number;
 }
 
+export class BaseMemeTransaction extends BaseTransaction {
+  @Index()
+  @PrimaryColumn({ type: 'int' })
+  token_id!: number;
+}
+
 @Entity('transactions')
-export class Transaction extends BaseTransaction {}
+export class Transaction extends BaseMemeTransaction {}
 
 @Entity('transactions_meme_lab')
-export class LabTransaction extends BaseTransaction {}
+export class LabTransaction extends BaseMemeTransaction {}
 
 export interface TransactionValue {
   transaction: string;
