@@ -1,4 +1,4 @@
-service: tdhHistoryLoop
+service: transactionsReplayLoop
 
 package:
   artifact: dist/index.zip
@@ -13,13 +13,11 @@ provider:
   timeout: 900
 
 functions:
-  tdhHistoryLoop:
+  transactionsReplayLoop:
     handler: index.handler
-    name: tdhHistoryLoop
+    name: transactionsReplayLoop
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
-    events:
-      - schedule: cron(30 0 * * ? *)
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}

@@ -1,4 +1,4 @@
-service: tdhHistoryLoop
+service: ownerMetricsLoop
 
 package:
   artifact: dist/index.zip
@@ -13,13 +13,16 @@ provider:
   timeout: 900
 
 functions:
-  tdhHistoryLoop:
+  ownerMetricsLoop:
     handler: index.handler
-    name: tdhHistoryLoop
+    name: ownerMetricsLoop
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
-      - schedule: cron(30 0 * * ? *)
+      - schedule: rate(3 minutes)
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      RESET: false
+      METRICS_RESET: true

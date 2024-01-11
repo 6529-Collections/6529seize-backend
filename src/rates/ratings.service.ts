@@ -9,7 +9,7 @@ import {
   UpdateRatingRequest
 } from './ratings.db';
 import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
-import { BadRequestException } from '../exceptions';
+import { BadRequestException, NotFoundException } from '../exceptions';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import {
   profileActivityLogsDb,
@@ -30,10 +30,8 @@ import {
   repService,
   RepService
 } from '../api-serverless/src/profiles/rep.service';
-import {
-  GetProfileRatingsRequest,
-  getRatingsSearchParamsFromRequest
-} from '../api-serverless/src/profiles/rating.helper';
+import { profilesService } from '../profiles/profiles.service';
+import { Request } from 'express';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -402,7 +400,7 @@ export class RatingsService {
     handleOrWallet: string;
     matter: RateMatter;
   }): Promise<Page<RatingWithProfileInfoAndLevel>> {
-    const params = await getRatingsSearchParamsFromRequest({
+    const params = await this.getRatingsSearchParamsFromRequest({
       queryParams,
       handleOrWallet,
       matter
@@ -424,7 +422,71 @@ export class RatingsService {
         };
       });
   }
+
+  private async getRatingsSearchParamsFromRequest({
+    queryParams,
+    handleOrWallet,
+    matter
+  }: {
+    queryParams: GetProfileRatingsRequest['query'];
+    handleOrWallet: string;
+    matter: RateMatter;
+  }): Promise<GetRatingsByRatersForMatterParams> {
+    const given = queryParams.given === 'true';
+    const page = queryParams.page ? parseInt(queryParams.page) : 1;
+    const page_size = queryParams.page_size
+      ? parseInt(queryParams.page_size)
+      : 200;
+    const order = queryParams.order?.toLowerCase() === 'asc' ? 'asc' : 'desc';
+    const order_by =
+      queryParams.order_by?.toLowerCase() === 'rating'
+        ? 'rating'
+        : 'last_modified';
+    const profile =
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        handleOrWallet.toLocaleLowerCase()
+      );
+    const profile_id = profile?.profile?.external_id;
+    if (!profile_id) {
+      throw new NotFoundException(`No profile found for ${handleOrWallet}`);
+    }
+    return {
+      profileId: profile_id,
+      matter,
+      given,
+      page,
+      page_size,
+      order,
+      order_by
+    };
+  }
 }
+
+export type GetProfileRatingsRequest = Request<
+  {
+    handleOrWallet: string;
+  },
+  any,
+  any,
+  {
+    given?: string;
+    page?: string;
+    page_size?: string;
+    order?: string;
+    order_by?: string;
+  },
+  any
+>;
+
+export type GetRatingsByRatersForMatterParams = {
+  given: boolean;
+  profileId: string;
+  page: number;
+  matter: RateMatter;
+  page_size: number;
+  order: string;
+  order_by: string;
+};
 
 export type RatingWithProfileInfoAndLevel = RatingWithProfileInfo & {
   level: number;

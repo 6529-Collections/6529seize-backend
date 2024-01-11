@@ -13,13 +13,13 @@ import {
 } from '../../../entities/ICICStatement';
 import {
   RatingWithProfileInfoAndLevel,
-  ratingsService
+  ratingsService,
+  GetProfileRatingsRequest
 } from '../../../rates/ratings.service';
 import { RateMatter } from '../../../entities/IRating';
 import { Page } from '../page-request';
 import { cicService } from '../../../cic/cic.service';
 import {
-  GetProfileRatingsRequest,
   GetRaterAggregatedRatingRequest,
   getRaterInfoFromRequest,
   RateProfileRequest

@@ -7,16 +7,13 @@ import { BadRequestException, NotFoundException } from '../../../exceptions';
 import * as Joi from 'joi';
 import {
   RatingWithProfileInfoAndLevel,
-  ratingsService
+  ratingsService,
+  GetProfileRatingsRequest
 } from '../../../rates/ratings.service';
 import { RateMatter } from '../../../entities/IRating';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
-import {
-  GetProfileRatingsRequest,
-  getRaterInfoFromRequest,
-  RateProfileRequest
-} from './rating.helper';
+import { getRaterInfoFromRequest, RateProfileRequest } from './rating.helper';
 import { profilesService } from '../../../profiles/profiles.service';
 import { RatingStats } from '../../../rates/ratings.db';
 import { Page } from '../page-request';
