@@ -1,4 +1,4 @@
-service: tdhLoop
+service: memeLabLoop
 
 package:
   artifact: dist/index.zip
@@ -13,12 +13,12 @@ provider:
   timeout: 900
 
 functions:
-  tdhLoop:
+  memeLabLoop:
     handler: index.handler
-    name: tdhLoop
+    name: memeLabLoop
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     events:
-      - schedule: cron(1 0 * * ? *)
+      - schedule: rate(5 minutes)
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
