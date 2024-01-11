@@ -17,6 +17,7 @@ functions:
     handler: index.handler
     name: ownerMetricsLoop
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
     events:
       - schedule: rate(3 minutes)
     vpc:

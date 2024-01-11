@@ -15,6 +15,7 @@ provider:
 functions:
   overRatesRevocationLoop:
     handler: index.handler
+    reservedConcurrency: 1
     name: overRatesRevocationLoop
     events:
       - sqs:
