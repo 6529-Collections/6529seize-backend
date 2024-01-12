@@ -186,7 +186,9 @@ export async function connect(entities: any[] = []) {
     }
   });
   logger.info(
-    `[CONNECTION CREATED] [APP DATA SOURCE INITIALIZED ${AppDataSource.isInitialized}]`
+    `[CONNECTION CREATED] [APP DATA SOURCE ${
+      !AppDataSource.isInitialized ? 'NOT ' : ''
+    }INITIALIZED]`
   );
 }
 
@@ -1508,6 +1510,10 @@ export async function persistNextGenCollection(collection: NextGenCollection) {
   await AppDataSource.getRepository(NextGenCollection).save(collection);
 }
 
+export async function fetchNextGenCollections() {
+  return await AppDataSource.getRepository(NextGenCollection).find();
+}
+
 export async function fetchNextGenCollection(id: number) {
   const c = await AppDataSource.getRepository(NextGenCollection).findOne({
     where: {
@@ -1549,4 +1555,12 @@ export async function persistNextgenTransactions(
     'to_address',
     'token_id'
   ]);
+}
+
+export async function fetchPendingNextgenTokens() {
+  return await AppDataSource.getRepository(NextGenToken).find({
+    where: {
+      pending: true
+    }
+  });
 }

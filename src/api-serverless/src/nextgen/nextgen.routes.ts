@@ -174,11 +174,11 @@ router.get(`/collections/:id`, async function (req: any, res: any, next: any) {
       if (result.id) {
         return returnJsonResult(result, req, res);
       } else {
-        return res.status(404).send();
+        return res.status(404).send({});
       }
     });
   } else {
-    return res.status(404).send();
+    return res.status(404).send({});
   }
 });
 
@@ -198,7 +198,7 @@ router.get(
         return returnJsonResult(result, req, res);
       });
     } else {
-      return res.status(404).send();
+      return res.status(404).send({});
     }
   }
 );
@@ -215,11 +215,32 @@ router.get(
         if (result.id) {
           return returnJsonResult(result, req, res);
         } else {
-          return res.status(404).send();
+          return res.status(404).send({});
         }
       });
     } else {
-      return res.status(404).send();
+      return res.status(404).send({});
+    }
+  }
+);
+
+router.get(
+  `/collections/:id/transactions`,
+  async function (req: any, res: any, next: any) {
+    const id: number = parseInt(req.params.id);
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+    if (!isNaN(id)) {
+      logger.info(`[FETCHING TRANSACTIONS FOR COLLECTION ID ${id}]`);
+      db.fetchNextGenCollectionLogs(id, pageSize, page).then((result) => {
+        return returnJsonResult(result, req, res);
+      });
+    } else {
+      return res.status(404).send({});
     }
   }
 );
@@ -232,11 +253,29 @@ router.get(`/tokens/:id`, async function (req: any, res: any, next: any) {
       if (result.id) {
         return returnJsonResult(result, req, res);
       } else {
-        return res.status(404).send();
+        return res.status(404).send({});
       }
     });
   } else {
-    return res.status(404).send();
+    return res.status(404).send({});
+  }
+});
+
+router.get(`/tokens/:id/logs`, async function (req: any, res: any, next: any) {
+  const id: number = parseInt(req.params.id);
+  const pageSize: number =
+    req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+      ? parseInt(req.query.page_size)
+      : DEFAULT_PAGE_SIZE;
+  const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+  if (!isNaN(id)) {
+    logger.info(`[FETCHING TOKEN ${id} LOGS]`);
+    db.fetchNextGenTokenTransactions(id, pageSize, page).then((result) => {
+      return returnJsonResult(result, req, res);
+    });
+  } else {
+    return res.status(404).send({});
   }
 });
 

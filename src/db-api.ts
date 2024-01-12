@@ -41,7 +41,9 @@ import {
   USER_TABLE,
   WALLETS_TDH_TABLE,
   NEXTGEN_COLLECTIONS_TABLE,
-  NEXTGEN_TOKENS_TABLE
+  NEXTGEN_TOKENS_TABLE,
+  NEXTGEN_LOGS_TABLE,
+  NEXTGEN_TRANSACTIONS_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
 import { User } from './entities/IUser';
@@ -2827,4 +2829,46 @@ export async function fetchNextGenToken(tokendId: number) {
     return results[0];
   }
   return returnEmpty();
+}
+
+export async function fetchNextGenCollectionLogs(
+  collectionId: number,
+  pageSize: number,
+  page: number
+) {
+  let filters = constructFilters(
+    '',
+    `${NEXTGEN_LOGS_TABLE}.collection_id = :collectionId OR ${NEXTGEN_LOGS_TABLE}.collection_id = 0`
+  );
+  return fetchPaginated(
+    NEXTGEN_LOGS_TABLE,
+    {
+      collectionId: collectionId
+    },
+    'block desc',
+    pageSize,
+    page,
+    filters
+  );
+}
+
+export async function fetchNextGenTokenTransactions(
+  tokenId: number,
+  pageSize: number,
+  page: number
+) {
+  let filters = constructFilters(
+    '',
+    `${NEXTGEN_TRANSACTIONS_TABLE}.token_id = :tokenId`
+  );
+  return fetchPaginated(
+    NEXTGEN_TRANSACTIONS_TABLE,
+    {
+      tokenId: tokenId
+    },
+    'block desc',
+    pageSize,
+    page,
+    filters
+  );
 }

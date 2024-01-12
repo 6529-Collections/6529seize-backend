@@ -5,6 +5,7 @@ import { NextGenBlock } from '../entities/INextGen';
 import { findCoreEvents } from './nextgen_core_events';
 import { findCoreTransactions } from './nextgen_core_transactions';
 import { findMinterTransactions } from './nextgen_minter';
+import { processPendingTokens } from './nextgen_pending';
 
 export async function findNextGenTransactions() {
   const alchemy = new Alchemy({
@@ -27,4 +28,6 @@ export async function findNextGenTransactions() {
     timestamp: blockTimestamp
   };
   await persistNextGenBlock(nextgenBlock);
+
+  await processPendingTokens();
 }

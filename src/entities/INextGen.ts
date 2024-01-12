@@ -13,7 +13,7 @@ import {
   NEXTGEN_BURN_COLLECTIONS_TABLE,
   NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
   NEXTGEN_BLOCKS_TABLE,
-  NEXTGEN_LOGS,
+  NEXTGEN_LOGS_TABLE,
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_TOKENS_TABLE,
   NEXTGEN_TRANSACTIONS_TABLE
@@ -250,7 +250,7 @@ export function extractNextGenCollectionBurnInsert(
 @Entity(NEXTGEN_BLOCKS_TABLE)
 export class NextGenBlock extends BlockEntity {}
 
-@Entity(NEXTGEN_LOGS)
+@Entity(NEXTGEN_LOGS_TABLE)
 export class NextGenLog {
   @CreateDateColumn({ type: 'datetime' })
   created_at?: Date;
@@ -360,11 +360,14 @@ export class NextGenToken {
   @Column({ type: 'int' })
   normalised_id!: number;
 
+  @Column({ type: 'text' })
+  name!: string;
+
   @Column({ type: 'int' })
   collection_id!: number;
 
   @Column({ type: 'text' })
-  name!: string;
+  collection_name!: string;
 
   @Column({ type: 'text' })
   metadata_url!: string;
@@ -380,6 +383,9 @@ export class NextGenToken {
 
   @Column({ type: 'text' })
   owner!: string;
+
+  @Column({ type: 'boolean' })
+  pending!: boolean;
 }
 
 @Entity(NEXTGEN_TRANSACTIONS_TABLE)

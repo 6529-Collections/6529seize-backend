@@ -15,17 +15,18 @@ import {
   OPENSEA_ADDRESS,
   ROYALTIES_ADDRESS,
   MANIFOLD,
-  TRANSACTIONS_TABLE,
   TRANSACTIONS_MEME_LAB_TABLE,
   ACK_DEPLOYER,
-  MEMES_DEPLOYER
+  MEMES_DEPLOYER,
+  NEXTGEN_CORE_CONTRACT,
+  NEXTGEN_NETWORK,
+  NEXTGEN_ROYALTIES_ADDRESS
 } from './constants';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
 import { findTransactionsByHash } from './db';
 import { Logger } from './logging';
-import { NextGenTransaction } from './entities/INextGen';
 
 const logger = Logger.get('TRANSACTION_VALUES');
 
@@ -112,6 +113,10 @@ async function resolveValue(t: Transaction) {
   let royaltiesAddress = ROYALTIES_ADDRESS;
   if (areEqualAddresses(t.contract, MEMELAB_CONTRACT)) {
     royaltiesAddress = MEMELAB_ROYALTIES_ADDRESS;
+  } else if (
+    areEqualAddresses(t.contract, NEXTGEN_CORE_CONTRACT[NEXTGEN_NETWORK])
+  ) {
+    royaltiesAddress = NEXTGEN_ROYALTIES_ADDRESS;
   }
 
   if (transaction) {

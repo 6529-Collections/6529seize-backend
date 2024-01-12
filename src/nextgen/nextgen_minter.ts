@@ -97,6 +97,9 @@ async function processLog(
     case 'airDropTokens':
       // skip - handled by core_events
       return [];
+    case 'burnOrSwapExternalToMint':
+      // skip - handled by Transfer
+      return [];
   }
 
   let methodNameParts = methodName

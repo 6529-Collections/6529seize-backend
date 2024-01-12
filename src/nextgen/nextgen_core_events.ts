@@ -2,13 +2,15 @@ import { Alchemy, Log } from 'alchemy-sdk';
 import {
   NEXTGEN_CORE_CONTRACT,
   NEXTGEN_NETWORK,
-  NULL_ADDRESS
+  NULL_ADDRESS,
+  NULL_ADDRESS_DEAD
 } from '../constants';
 import { Logger } from '../logging';
 import { NEXTGEN_CORE_IFACE } from '../abis/nextgen';
 import {
   NextGenCollection,
   NextGenLog,
+  NextGenToken,
   NextGenTransaction
 } from '../entities/INextGen';
 import { LogDescription } from 'ethers/lib/utils';
@@ -130,18 +132,26 @@ async function processTransfer(
   )[0];
 
   const isMint = areEqualAddresses(logInfo.args.from, NULL_ADDRESS);
+  const isSale = transactionWithValue.value > 0;
   let description = 'Transfer';
 
   if (isMint) {
     description = 'Mint';
-  } else if (areEqualAddresses(logInfo.args.to, NULL_ADDRESS)) {
+  } else if (
+    areEqualAddresses(logInfo.args.to, NULL_ADDRESS) ||
+    areEqualAddresses(logInfo.args.to, NULL_ADDRESS_DEAD)
+  ) {
     description = 'Burn';
-  } else if (transactionWithValue.value > 0) {
-    description += `Sale`;
+  } else if (isSale) {
+    description = `Sale`;
   }
   description += ` of ${
     collection?.name ?? collectionId
   } #${normalisedTokenId}`;
+
+  if (transactionWithValue.value) {
+    description += ` for ${transactionWithValue.value} ETH`;
+  }
 
   await persistNextgenTransactions([transactionWithValue]);
 
@@ -170,16 +180,20 @@ export async function upsertToken(
 ) {
   const metadataLink = `${collection.base_uri}${tokenId}`;
   const metadataResponse: any = await (await fetch(metadataLink)).json();
-  const nextGenToken = {
+  const pending = metadataResponse.name.toLowerCase().startsWith('pending');
+
+  const nextGenToken: NextGenToken = {
     id: tokenId,
     normalised_id: normalisedTokenId,
-    collection_id: collection.id,
     name: metadataResponse.name,
+    collection_id: collection.id,
+    collection_name: collection.name,
     metadata_url: metadataLink,
     image_url: metadataResponse.image,
     animation_url: metadataResponse.animation_url,
     generator_url: metadataResponse.generator_url,
-    owner: owner
+    owner: owner,
+    pending: pending
   };
 
   if (isMint) {
