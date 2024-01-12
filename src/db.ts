@@ -110,7 +110,47 @@ const logger = Logger.get('DB');
 let AppDataSource: DataSource;
 
 export async function connect(entities: any[] = []) {
-  logger.info(`[DB ${process.env.DB_HOST}:${process.env.DB_PORT}]`);
+  logger.info(`[DB HOST ${process.env.DB_HOST}]`);
+
+  if (process.env.NODE_ENV == 'local') {
+    entities = [
+      Owner,
+      LabNFT,
+      LabExtendedData,
+      Transaction,
+      OwnerMetric,
+      NFT,
+      Team,
+      LabTransaction,
+      RoyaltiesUpload,
+      OwnerTags,
+      TDH,
+      Consolidation,
+      ConsolidatedTDH,
+      ConsolidatedOwnerMetric,
+      ConsolidatedOwnerTags,
+      ConsolidatedTDHUpload,
+      Delegation,
+      NFTDelegationBlock,
+      NFTHistory,
+      NFTHistoryBlock,
+      NFTHistoryClaim,
+      Rememe,
+      RememeUpload,
+      TDHHistory,
+      GlobalTDHHistory,
+      ENS,
+      User,
+      Profile,
+      ProfileArchived,
+      ProfileTdh,
+      ProfileTdhLog,
+      CicStatement,
+      ProfileActivityLog,
+      Rating,
+      AbusivenessDetectionResult
+    ];
+  }
 
   AppDataSource = new DataSource({
     type: 'mysql',
