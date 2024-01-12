@@ -100,7 +100,7 @@ let AppDataSource: DataSource;
 export async function connect(entities: any[] = []) {
   logger.info(`[DB HOST ${process.env.DB_HOST}]`);
 
-  if (process.env.NODE_ENV == 'local') {
+  if (process.env.NODE_ENV === 'local') {
     entities = [
       Owner,
       LabNFT,

@@ -39,9 +39,12 @@ on:
           - transactionsReplayLoop
           - nextgenContractLoop
       branch:
+        type: choice
         description: 'Branch name'
         required: true
         default: 'main'
+        options:
+          - ${{ join(github.event.repository.branches.*.name, '\n') }}
 
 jobs:
   build-and-deploy:
