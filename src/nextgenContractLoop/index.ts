@@ -6,7 +6,11 @@ import {
   NextGenBlock,
   NextGenLog,
   NextGenToken,
-  NextGenTransaction
+  NextGenTransaction,
+  NextGenAllowlist,
+  NextGenAllowlistBurn,
+  NextGenAllowlistCollection,
+  NextGenCollection
 } from '../entities/INextGen';
 import { findNextGenTransactions } from '../nextgen/nextgen';
 
@@ -16,6 +20,10 @@ export const handler = async (event: any) => {
   const start = Time.now();
   logger.info(`[RUNNING]`);
   await loadEnv([
+    NextGenAllowlist,
+    NextGenAllowlistBurn,
+    NextGenAllowlistCollection,
+    NextGenCollection,
     NextGenCollectionBurn,
     NextGenBlock,
     NextGenLog,

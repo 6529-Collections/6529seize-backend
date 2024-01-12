@@ -148,7 +148,16 @@ export async function connect(entities: any[] = []) {
       CicStatement,
       ProfileActivityLog,
       Rating,
-      AbusivenessDetectionResult
+      AbusivenessDetectionResult,
+      NextGenAllowlist,
+      NextGenAllowlistBurn,
+      NextGenAllowlistCollection,
+      NextGenCollection,
+      NextGenCollectionBurn,
+      NextGenBlock,
+      NextGenLog,
+      NextGenToken,
+      NextGenTransaction
     ];
   }
 
