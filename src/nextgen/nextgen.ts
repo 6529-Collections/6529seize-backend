@@ -18,8 +18,8 @@ export async function findNextGenTransactions() {
   const endBlock = await alchemy.core.getBlockNumber();
 
   await findCoreTransactions(alchemy, startBlock, endBlock, undefined);
-  await findCoreEvents(alchemy, startBlock, endBlock, undefined);
   await findMinterTransactions(alchemy, startBlock, endBlock, undefined);
+  await findCoreEvents(alchemy, startBlock, endBlock, undefined);
 
   const blockTimestamp = (await alchemy.core.getBlock(endBlock)).timestamp;
 

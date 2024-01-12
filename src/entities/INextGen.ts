@@ -264,6 +264,9 @@ export class NextGenLog {
   @Column({ type: 'int' })
   block!: number;
 
+  @Column({ type: 'bigint' })
+  block_timestamp!: number;
+
   @Column({ type: 'text' })
   log!: string;
 

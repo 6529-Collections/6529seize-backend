@@ -20,6 +20,7 @@ import {
   persistNextGenCollection,
   persistNextGenLogs
 } from '../db';
+import { Time } from '../time';
 
 const logger = Logger.get('NEXTGEN_CORE_TRANSACTIONS');
 
@@ -56,10 +57,12 @@ export async function findCoreTransactions(
       const methodName = parsedReceipt.name;
       const args = parsedReceipt.args;
       const processedLogs = await processLog(methodName, args);
+      const timestamp = new Date(transfer.metadata.blockTimestamp);
       processedLogs.forEach((processedLog) => {
         const l: NextGenLog = {
           transaction: transfer.hash,
           block: parseInt(transfer.blockNum, 16),
+          block_timestamp: timestamp.getTime() / 1000,
           collection_id: processedLog.id,
           log: processedLog.description,
           source: 'transactions'

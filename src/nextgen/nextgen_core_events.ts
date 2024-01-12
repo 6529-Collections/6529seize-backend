@@ -49,12 +49,15 @@ export async function findCoreEvents(
   for (const log of response) {
     const processedLog = await processLog(log);
     if (processedLog) {
+      const blockTimestamp = (await alchemy.core.getBlock(log.blockNumber))
+        .timestamp;
       const l: NextGenLog = {
         transaction: log.transactionHash,
         block: log.blockNumber,
+        block_timestamp: blockTimestamp,
         collection_id: processedLog.id,
         log: processedLog.description,
-        source: 'transactions'
+        source: 'events'
       };
       logs.push(l);
     }

@@ -52,10 +52,12 @@ export async function findMinterTransactions(
       const methodName = parsedReceipt.name;
       const args = parsedReceipt.args;
       const processedLogs = await processLog(methodName, args);
+      const timestamp = new Date(transfer.metadata.blockTimestamp);
       processedLogs.forEach((processedLog) => {
         const l: NextGenLog = {
           transaction: transfer.hash,
           block: parseInt(transfer.blockNum, 16),
+          block_timestamp: timestamp.getTime() / 1000,
           collection_id: processedLog.id,
           log: processedLog.description,
           source: 'minter'
