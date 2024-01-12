@@ -25,12 +25,10 @@ import {
   MEMES_CONTRACT,
   CONSOLIDATED_UPLOADS_TABLE,
   MEME_LAB_ROYALTIES_TABLE,
-  CONSOLIDATIONS_TABLE,
-  PROFILES_TABLE
+  CONSOLIDATIONS_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
-import { User } from './entities/IUser';
 
 import {
   LabExtendedData,
@@ -38,7 +36,6 @@ import {
   MemesExtendedData,
   NFT
 } from './entities/INFT';
-import { ConsolidatedTDHUpload } from './entities/IUpload';
 import {
   ConsolidatedOwnerMetric,
   ConsolidatedOwnerTags,
@@ -80,16 +77,11 @@ import {
 } from './helpers';
 import { getConsolidationsSql } from './sql_helpers';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
-import { Profile, ProfileArchived } from './entities/IProfile';
+import { Profile } from './entities/IProfile';
 import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
-import { CicStatement } from './entities/ICICStatement';
 import { profilesService } from './profiles/profiles.service';
-import { ProfileTdh, ProfileTdhLog } from './entities/IProfileTDH';
-import { ProfileActivityLog } from './entities/IProfileActivityLog';
-import { Rating } from './entities/IRating';
-import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
 
 const mysql = require('mysql');
 
@@ -99,46 +91,6 @@ let AppDataSource: DataSource;
 
 export async function connect(entities: any[] = []) {
   logger.info(`[DB HOST ${process.env.DB_HOST}]`);
-
-  if (process.env.NODE_ENV != 'production') {
-    entities = [
-      Owner,
-      LabNFT,
-      LabExtendedData,
-      Transaction,
-      OwnerMetric,
-      NFT,
-      Team,
-      LabTransaction,
-      RoyaltiesUpload,
-      OwnerTags,
-      TDH,
-      Consolidation,
-      ConsolidatedTDH,
-      ConsolidatedOwnerMetric,
-      ConsolidatedOwnerTags,
-      ConsolidatedTDHUpload,
-      Delegation,
-      NFTDelegationBlock,
-      NFTHistory,
-      NFTHistoryBlock,
-      NFTHistoryClaim,
-      Rememe,
-      RememeUpload,
-      TDHHistory,
-      GlobalTDHHistory,
-      ENS,
-      User,
-      Profile,
-      ProfileArchived,
-      ProfileTdh,
-      ProfileTdhLog,
-      CicStatement,
-      ProfileActivityLog,
-      Rating,
-      AbusivenessDetectionResult
-    ];
-  }
 
   AppDataSource = new DataSource({
     type: 'mysql',
