@@ -18,6 +18,6 @@
     "esbuild": "^0.19.6",
     "fluent-ffmpeg": "^2.1.2",
     "imagescript": "^1.2.17",
-    "sharp": "^0.31.3"
+    "sharp": "^0.33.1"
   }
 }
