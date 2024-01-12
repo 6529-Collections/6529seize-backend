@@ -2845,7 +2845,7 @@ export async function fetchNextGenCollectionLogs(
     {
       collectionId: collectionId
     },
-    'block desc',
+    'block desc, log desc',
     pageSize,
     page,
     filters
@@ -2861,14 +2861,20 @@ export async function fetchNextGenTokenTransactions(
     '',
     `${NEXTGEN_TRANSACTIONS_TABLE}.token_id = :tokenId`
   );
+
+  const fields = `${NEXTGEN_TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${NEXTGEN_TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${NEXTGEN_TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
+
   return fetchPaginated(
     NEXTGEN_TRANSACTIONS_TABLE,
     {
       tokenId: tokenId
     },
-    'block desc, transaction_date desc',
+    'block desc, transaction_date desc, token_id desc',
     pageSize,
     page,
-    filters
+    filters,
+    fields,
+    joins
   );
 }

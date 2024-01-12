@@ -12,7 +12,7 @@ async function start() {
   await nextgen.handler();
 
   const diff = start.diffFromNow().formatAsDuration();
-  logger.info(`[START SCRIPT COMPLETE IN ${diff}] [START SCRIPT COMPLETE]`);
+  logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
   process.exit(0);
 }
 
