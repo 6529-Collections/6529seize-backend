@@ -112,55 +112,6 @@ let AppDataSource: DataSource;
 export async function connect(entities: any[] = []) {
   logger.info(`[DB ${process.env.DB_HOST}:${process.env.DB_PORT}]`);
 
-  if (process.env.NODE_ENV != 'production') {
-    entities = [
-      Owner,
-      LabNFT,
-      LabExtendedData,
-      Transaction,
-      OwnerMetric,
-      NFT,
-      Team,
-      LabTransaction,
-      RoyaltiesUpload,
-      OwnerTags,
-      TDH,
-      Consolidation,
-      ConsolidatedTDH,
-      ConsolidatedOwnerMetric,
-      ConsolidatedOwnerTags,
-      ConsolidatedTDHUpload,
-      Delegation,
-      NFTDelegationBlock,
-      NFTHistory,
-      NFTHistoryBlock,
-      NFTHistoryClaim,
-      Rememe,
-      RememeUpload,
-      TDHHistory,
-      GlobalTDHHistory,
-      ENS,
-      User,
-      Profile,
-      ProfileArchived,
-      NextGenAllowlist,
-      NextGenAllowlistBurn,
-      NextGenAllowlistCollection,
-      NextGenCollectionBurn,
-      ProfileTdh,
-      ProfileTdhLog,
-      CicStatement,
-      ProfileActivityLog,
-      Rating,
-      AbusivenessDetectionResult,
-      NextGenCollection,
-      NextGenBlock,
-      NextGenLog,
-      NextGenToken,
-      NextGenTransaction
-    ];
-  }
-
   AppDataSource = new DataSource({
     type: 'mysql',
     host: process.env.DB_HOST,
