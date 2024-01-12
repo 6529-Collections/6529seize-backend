@@ -1,0 +1,99 @@
+name: Deploy a service
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        description: 'Environment'
+        required: true
+        default: staging
+        options:
+          - staging
+          - prod
+      service:
+        type: choice
+        description: 'Service'
+        required: true
+        default: api
+        options:
+          - api
+          - overRatesRevocationLoop
+          - delegationsLoop
+          - discoverEnsLoop
+          - marketStatsLoop
+          - memeLabLoop
+          - nftHistoryLoop
+          - nftsLoop
+          - ownerMetricsLoop
+          - ownersLoop
+          - refreshEnsLoop
+          - rememesLoop
+          - royaltiesLoop
+          - s3Loop
+          - tdhConsolidationsLoop
+          - tdhHistoryLoop
+          - tdhLoop
+          - teamLoop
+          - transactionsLoop
+          - transactionsReplayLoop
+      branch:
+        description: 'Branch name'
+        required: true
+        default: 'main'
+
+jobs:
+  build-and-deploy:
+    name: Build and deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.inputs.branch }}
+      - name: Install root dependencies
+        run: npm i
+      - name: Install lambda dependencies
+        if: github.event.inputs.service != 'api'
+        run: npm i && pushd src/${{ github.event.inputs.service }} && npm i && popd
+      - name: Install api dependencies
+        if: github.event.inputs.service == 'api'
+        run: pushd src/api-serverless && npm i && popd
+      - name: Build service
+        if: github.event.inputs.service != 'api'
+        run: pushd src/${{ github.event.inputs.service }} && npm run build && popd
+      - name: Build API
+        if: github.event.inputs.service == 'api'
+        run: pushd src/api-serverless && npm run build && popd
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@13d241b293754004c80624b5567555c4a39ffbe3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ github.event.inputs.environment == 'prod' && 'us-east-1' || 'eu-west-1' }}
+      - name: Deploy service
+        if: github.event.inputs.service != 'api'
+        run: pushd src/${{ github.event.inputs.service }} && npm run sls-deploy:${{ github.event.inputs.environment }} && popd
+      - name: Deploy API
+        if: github.event.inputs.service == 'api'
+        run: aws lambda update-function-code --function-name  seizeAPI --zip-file fileb://src/api-serverless/dist/index.zip
+      - name: Notify about failure
+        uses: sarisia/actions-status-discord@v1
+        if: failure()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        with:
+          title: Seize ${{ github.event.inputs.environment }} ${{ github.event.inputs.service }} DEPLOY CI pipeline is broken!!!
+          description: Branch ${{ github.event.inputs.branch }} - Version ${{ env.COMMIT_SHA }} - ${{ env.COMMIT_MESSAGE }}
+          content: "@everyone"
+          color: 0xff0000
+
+      - name: Notify about success
+        uses: sarisia/actions-status-discord@v1
+        if: success()
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        with:
+          title: Seize ${{ github.event.inputs.environment }} ${{ github.event.inputs.service }} DEPLOY CI pipeline complete
+          description: Branch ${{ github.event.inputs.branch }} - Version ${{ env.COMMIT_SHA }} - ${{ env.COMMIT_MESSAGE }}
+          color: 0x00ff00

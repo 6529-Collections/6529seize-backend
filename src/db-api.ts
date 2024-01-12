@@ -2866,7 +2866,7 @@ export async function fetchNextGenTokenTransactions(
     {
       tokenId: tokenId
     },
-    'block desc',
+    'block desc, transaction_date desc',
     pageSize,
     page,
     filters

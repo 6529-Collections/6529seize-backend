@@ -32,6 +32,7 @@ export async function getWalletTdhAndConsolidatedWallets(
   blockNo: number;
   consolidation_key: string | null;
   consolidation_display: string | null;
+  balance: number;
 }> {
   if (!wallet.match(/0x[a-fA-F0-9]{40}/)) {
     return {
@@ -39,11 +40,12 @@ export async function getWalletTdhAndConsolidatedWallets(
       consolidatedWallets: [],
       blockNo: 0,
       consolidation_display: null,
-      consolidation_key: null
+      consolidation_key: null,
+      balance: 0
     };
   }
   const tdhSqlResult = await sqlExecutor.execute(
-    `SELECT consolidation_key, consolidation_display, block, boosted_tdh as tdh, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
+    `SELECT consolidation_key, consolidation_display, block, boosted_tdh as tdh, balance, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
     { wallet: `%${wallet.toLowerCase()}%` }
   );
   const row = tdhSqlResult?.at(0);
@@ -58,7 +60,8 @@ export async function getWalletTdhAndConsolidatedWallets(
     consolidation_display: row?.consolidation_display ?? null,
     tdh: row?.tdh ?? 0,
     consolidatedWallets: consolidatedWallets,
-    blockNo: row?.block ?? 0
+    blockNo: row?.block ?? 0,
+    balance: row?.balance ?? 0
   };
 }
 

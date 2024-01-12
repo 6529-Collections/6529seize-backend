@@ -1,0 +1,51 @@
+service: marketStatsLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  memorySize: 1028
+  timeout: 900
+
+functions:
+  marketStatsMEMES:
+    handler: index.handler
+    name: marketStatsMEMES
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule: rate(5 minutes)
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      CONTRACT: "0x33FD426905F149f8376e227d0C9D3340AaD17aF1"
+  marketStatsLAB:
+    handler: index.handler
+    name: marketStatsLAB
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule: rate(10 minutes)
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      CONTRACT: "0x4db52a61dc491e15a2f78f5ac001c14ffe3568cb"
+  marketStatsGRADIENT:
+    handler: index.handler
+    name: marketStatsGRADIENT
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule: rate(15 minutes)
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      CONTRACT: "0x0c58ef43ff3032005e472cb5709f8908acb00205"

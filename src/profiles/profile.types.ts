@@ -23,4 +23,5 @@ export interface ProfileAndConsolidations {
   level: number;
   cic: AggregatedCicRating;
   rep: number;
+  balance: number;
 }

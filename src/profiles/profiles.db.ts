@@ -34,11 +34,12 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       consolidation_display: string | null;
       block_date: Date | null;
       raw_tdh: number;
+      balance: number;
     }[]
   > {
     return this.db
       .execute(
-        `SELECT t.block, t.boosted_tdh as tdh, t.tdh as raw_tdh, b.created_at as block_date, t.wallets, t.consolidation_key, t.consolidation_display, t.block FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} t LEFT JOIN ${TDH_BLOCKS_TABLE} b on t.block = b.block_number WHERE LOWER(t.consolidation_key) LIKE :wallet`,
+        `SELECT t.block, t.balance, t.boosted_tdh as tdh, t.tdh as raw_tdh, b.created_at as block_date, t.wallets, t.consolidation_key, t.consolidation_display, t.block FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} t LEFT JOIN ${TDH_BLOCKS_TABLE} b on t.block = b.block_number WHERE LOWER(t.consolidation_key) LIKE :wallet`,
         { wallet: `%${wallet.toLowerCase()}%` }
       )
       .then((result) =>
@@ -51,6 +52,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
             consolidation_display: string | null;
             block_date: string | null;
             raw_tdh: number;
+            balance: number;
           }) => ({
             tdh: it.tdh,
             wallets: JSON.parse(it.wallets),
@@ -58,7 +60,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
             consolidation_key: it.consolidation_key,
             consolidation_display: it.consolidation_display,
             block_date: it.block_date ? new Date(it.block_date) : null,
-            raw_tdh: it.raw_tdh
+            raw_tdh: it.raw_tdh,
+            balance: it.balance
           })
         )
       );

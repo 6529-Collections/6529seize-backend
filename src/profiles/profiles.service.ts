@@ -54,7 +54,8 @@ export class ProfilesService {
       tdh,
       blockNo,
       consolidation_key,
-      consolidation_display
+      consolidation_display,
+      balance
     } = await this.getWalletTdhBlockNoAndConsolidatedWallets(wallet);
     if (consolidatedWallets.length === 0) {
       return null;
@@ -84,7 +85,8 @@ export class ProfilesService {
       },
       level: calculateLevel({ tdh, rep }),
       rep,
-      cic
+      cic,
+      balance
     };
   }
 
@@ -113,7 +115,8 @@ export class ProfilesService {
       tdh,
       blockNo,
       consolidation_key,
-      consolidation_display
+      consolidation_display,
+      balance
     } = await this.getWalletTdhBlockNoAndConsolidatedWallets(query);
     if (consolidatedWallets.length === 0) {
       return null;
@@ -143,7 +146,8 @@ export class ProfilesService {
       },
       level: calculateLevel({ tdh, rep }),
       cic,
-      rep
+      rep,
+      balance
     };
   }
 
@@ -169,7 +173,8 @@ export class ProfilesService {
         tdh,
         blockNo,
         consolidation_key,
-        consolidation_display
+        consolidation_display,
+        balance
       } = await tdh_consolidation.getWalletTdhAndConsolidatedWallets(
         profile.primary_wallet.toLowerCase()
       );
@@ -197,7 +202,8 @@ export class ProfilesService {
         },
         level: calculateLevel({ tdh, rep }),
         cic,
-        rep
+        rep,
+        balance
       };
     }
   }
@@ -657,6 +663,7 @@ export class ProfilesService {
     consolidation_display: string | null;
     block_date: Date | null;
     raw_tdh: number;
+    balance: number;
   }> {
     const normalisedWallet = wallet.toLowerCase();
     if (!WALLET_REGEX.exec(normalisedWallet)) {
@@ -667,7 +674,8 @@ export class ProfilesService {
         consolidation_key: null,
         consolidation_display: null,
         block_date: null,
-        raw_tdh: 0
+        raw_tdh: 0,
+        balance: 0
       };
     }
     return this.profilesDb
@@ -681,7 +689,8 @@ export class ProfilesService {
             consolidation_key: null,
             consolidation_display: null,
             block_date: null,
-            raw_tdh: 0
+            raw_tdh: 0,
+            balance: 0
           };
         }
         const result = resultRows[0];
@@ -699,7 +708,8 @@ export class ProfilesService {
           consolidation_key: result.consolidation_key,
           consolidation_display: result.consolidation_display,
           block_date: result.block_date,
-          raw_tdh: result.raw_tdh
+          raw_tdh: result.raw_tdh,
+          balance: result.balance
         };
       });
   }
