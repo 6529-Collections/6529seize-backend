@@ -4,9 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "prebuild": "rm -rf dist",
-    "build": "esbuild index.ts --bundle --external:sharp --external:imagescript --sourcemap --platform=node --target=es2020 --outfile=dist/index.js",
-    "postbuild": "cp rememes.csv dist",
+    "prebuild": "rm -rf dist && ls ../../ffmpeg-installer.js && node ../../ffmpeg-installer.js",
+    "build": "esbuild index.ts --bundle --external:sharp --external:imagescript --sourcemap --platform=node --target=es2020 --outfile=dist/index.js && mkdir dist/native_modules && cp -r node_modules/sharp dist/native_modules/sharp/ && cp -r node_modules dist/node_modules",
+    "postbuild": "cp rememes.csv dist && cd dist && zip -r index.zip *",
     "sls-deploy:prod": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1",
     "sls-deploy:staging": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1"
   },
@@ -17,6 +17,13 @@
     "esbuild": "^0.17.5"
   },
   "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffmpeg-installer/linux-x64": "^4.1.0",
+    "detect-libc": "^2.0.1",
+    "esbuild": "^0.19.6",
+    "fluent-ffmpeg": "^2.1.2",
+    "imagescript": "^1.2.17",
+    "sharp": "^0.33.2",
     "alchemy-sdk": "^2.4.1"
   }
 }
