@@ -220,7 +220,7 @@ export async function upsertToken(
   }
 }
 
-async function processTraits(
+export async function processTraits(
   tokenId: number,
   collectionId: number,
   attributes: { trait_type: string; value: string }[]

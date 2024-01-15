@@ -5,6 +5,7 @@ import {
   persistNextGenToken
 } from '../db';
 import { Logger } from '../logging';
+import { processTraits } from './nextgen_core_events';
 
 const logger = Logger.get('NEXTGEN_PENDING');
 
@@ -35,6 +36,13 @@ export async function processPendingTokens() {
       token.pending = pending;
 
       await persistNextGenToken(token);
+      if (metadataResponse.attributes) {
+        await processTraits(
+          token.id,
+          collection.id,
+          metadataResponse.attributes
+        );
+      }
       logger.info(
         `[TOKEN ID ${token.id}] : [PENDING ${pending}] : [METADATA LINK ${metadataLink}]`
       );
