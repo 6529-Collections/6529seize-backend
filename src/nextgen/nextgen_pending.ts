@@ -12,6 +12,8 @@ export async function processPendingTokens() {
   const pending = await fetchPendingNextgenTokens();
   const collections = await fetchNextGenCollections();
 
+  logger.info(`[FOUND ${pending.length} PENDING TOKENS]`);
+
   for (const token of pending) {
     const collection = collections.find((c) => c.id === token.collection_id);
     if (!collection) {
@@ -32,5 +34,8 @@ export async function processPendingTokens() {
     token.pending = pending;
 
     await persistNextGenToken(token);
+    logger.info(
+      `[TOKEN ID ${token.id}] : [PENDING ${pending}] : [METADATA LINK ${metadataLink}]`
+    );
   }
 }
