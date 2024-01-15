@@ -14,6 +14,7 @@ const CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE: Record<
 > = {
   [CicStatementGroup.CONTACT]: ProfileActivityLogType.CONTACTS_EDIT,
   [CicStatementGroup.SOCIAL_MEDIA_ACCOUNT]: ProfileActivityLogType.SOCIALS_EDIT,
+  [CicStatementGroup.GENERAL]: ProfileActivityLogType.GENERAL_CIC_STATEMENT_EDIT,
   [CicStatementGroup.SOCIAL_MEDIA_VERIFICATION_POST]:
     ProfileActivityLogType.SOCIAL_VERIFICATION_POST_EDIT
 };
@@ -169,13 +170,23 @@ export class CicService {
         existingStatement.statement_type === statement.statement_type &&
         existingStatement.statement_value === statement.statement_value
     );
-    if (preexistingStatement) {
-      throw new BadRequestException(
-        `Statement of type ${statement.statement_type} with value ${statement.statement_value} already exists`
-      );
-    }
     return await this.cicDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        if (
+          statement.statement_group === CicStatementGroup.GENERAL &&
+          statement.statement_type === 'BIO'
+        ) {
+          const existingBioStatement = existingStatements.find(
+            (existingStatement) => existingStatement.statement_type === 'BIO'
+          );
+          if (existingBioStatement) {
+            await this.deleteStatement(existingBioStatement, connection);
+          }
+        } else if (preexistingStatement) {
+          throw new BadRequestException(
+            `Statement of type ${statement.statement_type} with value ${statement.statement_value} already exists`
+          );
+        }
         return await this.insertStatement(statement, connection);
       }
     );

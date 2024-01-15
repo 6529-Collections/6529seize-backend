@@ -1,9 +1,6 @@
 import { RatingsService } from './ratings.service';
 import { mock, Mock } from 'ts-jest-mocker';
-import {
-  AggregatedRatingRequest,
-  RatingsDb,
-} from './ratings.db';
+import { AggregatedRatingRequest, RatingsDb } from './ratings.db';
 import { ProfilesDb } from '../profiles/profiles.db';
 import { ProfileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
 import {
