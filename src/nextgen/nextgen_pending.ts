@@ -23,19 +23,27 @@ export async function processPendingTokens() {
       continue;
     }
     const metadataLink = `${collection.base_uri}${token.id}`;
-    const metadataResponse: any = await (await fetch(metadataLink)).json();
-    const pending = metadataResponse.name.toLowerCase().startsWith('pending');
+    try {
+      const metadataResponse: any = await (await fetch(metadataLink)).json();
+      const pending = metadataResponse.name.toLowerCase().startsWith('pending');
 
-    token.name = metadataResponse.name;
-    token.metadata_url = metadataLink;
-    token.image_url = metadataResponse.image;
-    token.animation_url = metadataResponse.animation_url;
-    token.generator_url = metadataResponse.generator_url;
-    token.pending = pending;
+      token.name = metadataResponse.name;
+      token.metadata_url = metadataLink;
+      token.image_url = metadataResponse.image;
+      token.animation_url = metadataResponse.animation_url;
+      token.generator_url = metadataResponse.generator_url;
+      token.pending = pending;
 
-    await persistNextGenToken(token);
-    logger.info(
-      `[TOKEN ID ${token.id}] : [PENDING ${pending}] : [METADATA LINK ${metadataLink}]`
-    );
+      await persistNextGenToken(token);
+      logger.info(
+        `[TOKEN ID ${token.id}] : [PENDING ${pending}] : [METADATA LINK ${metadataLink}]`
+      );
+    } catch (e) {
+      logger.info(
+        `[TOKEN ID ${
+          token.id
+        }] : [ERROR FETCHING METADATA] : [METADATA LINK ${metadataLink}] : [ERROR ${e.getMessage()}]`
+      );
+    }
   }
 }
