@@ -16,5 +16,5 @@
   "emitDecoratorMetadata": true,
   "experimentalDecorators": true,
   "strictPropertyInitialization": false,
-  "exclude": ["jest.config.js", "serverless-config/**/*"]
+  "exclude": ["jest.config.js", "serverless-config/**/*", "ffmpeg-installer.js"]
 }
