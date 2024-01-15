@@ -40,9 +40,7 @@ export async function processPendingTokens() {
       );
     } catch (e) {
       logger.info(
-        `[TOKEN ID ${
-          token.id
-        }] : [ERROR FETCHING METADATA] : [METADATA LINK ${metadataLink}] : [ERROR ${e.getMessage()}]`
+        `[TOKEN ID ${token.id}] : [ERROR FETCHING METADATA] : [METADATA LINK ${metadataLink}] : [ERROR ${e}]`
       );
     }
   }

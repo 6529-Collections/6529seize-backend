@@ -215,7 +215,7 @@ export async function upsertToken(
     }
   } catch (e) {
     logger.info(
-      `[TOKEN ID ${tokenId}] : [ERROR FETCHING METADATA] : [METADATA LINK ${metadataLink}] : [ERROR ${e.getMessage()}]`
+      `[TOKEN ID ${tokenId}] : [ERROR FETCHING METADATA] : [METADATA LINK ${metadataLink}] : [ERROR ${e}]`
     );
   }
 }
