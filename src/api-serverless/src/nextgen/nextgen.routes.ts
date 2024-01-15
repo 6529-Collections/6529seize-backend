@@ -191,12 +191,15 @@ router.get(
         ? parseInt(req.query.page_size)
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const traits = req.query.traits ? req.query.traits.split(',') : [];
 
     if (!isNaN(id)) {
       logger.info(`[FETCHING TOKENS FOR COLLECTION ID ${id}]`);
-      db.fetchNextGenCollectionTokens(id, pageSize, page).then((result) => {
-        return returnJsonResult(result, req, res);
-      });
+      db.fetchNextGenCollectionTokens(id, pageSize, page, traits).then(
+        (result) => {
+          return returnJsonResult(result, req, res);
+        }
+      );
     } else {
       return res.status(404).send({});
     }
@@ -237,6 +240,22 @@ router.get(
     if (!isNaN(id)) {
       logger.info(`[FETCHING LOGS FOR COLLECTION ID ${id}]`);
       db.fetchNextGenCollectionLogs(id, pageSize, page).then((result) => {
+        return returnJsonResult(result, req, res);
+      });
+    } else {
+      return res.status(404).send({});
+    }
+  }
+);
+
+router.get(
+  `/collections/:id/traits`,
+  async function (req: any, res: any, next: any) {
+    const id: number = parseInt(req.params.id);
+
+    if (!isNaN(id)) {
+      logger.info(`[FETCHING TRAITS FOR COLLECTION ID ${id}]`);
+      db.fetchNextGenCollectionTraits(id).then((result) => {
         return returnJsonResult(result, req, res);
       });
     } else {

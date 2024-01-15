@@ -44,7 +44,8 @@ import {
   NEXTGEN_TOKENS_TABLE,
   NEXTGEN_LOGS_TABLE,
   NEXTGEN_TRANSACTIONS_TABLE,
-  NEXTGEN_TOKEN_TRAITS_TABLE
+  NEXTGEN_TOKEN_TRAITS_TABLE,
+  NEXTGEN_TRAITS_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
 import { User } from './entities/IUser';
@@ -292,14 +293,16 @@ async function fetchPaginated(
     resultsSql += ` OFFSET ${offset}`;
   }
 
+  logger.debug(`Count sql: '${countSql}`);
+  logger.debug(`Data sql: ${resultsSql}`);
+
   const count = await sqlExecutor
     .execute(countSql, params)
     .then((r) => r[0].count);
   const data = await sqlExecutor.execute(resultsSql, params);
 
-  logger.info(`Count sql: '${countSql}', Result: ${count}`);
-  logger.info(`Result sql: ${resultsSql}`);
-  logger.debug(`Result data: %o`, data);
+  logger.debug(`Count result: %o`, count);
+  logger.debug(`Data result: %o`, data);
 
   return {
     count,
@@ -2803,17 +2806,31 @@ export async function fetchNextGenCollectionById(id: number) {
 export async function fetchNextGenCollectionTokens(
   collectionId: number,
   pageSize: number,
-  page: number
+  page: number,
+  traits: string[]
 ) {
   let filters = constructFilters(
     '',
     `${NEXTGEN_TOKENS_TABLE}.collection_id=:collectionId`
   );
+  let params: any = {
+    collectionId: collectionId
+  };
+  if (traits.length > 0) {
+    filters = constructFilters(
+      filters,
+      `EXISTS (
+      SELECT 1
+      FROM ${NEXTGEN_TOKEN_TRAITS_TABLE}
+      WHERE ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id = ${NEXTGEN_TOKENS_TABLE}.id
+      AND ${NEXTGEN_TOKEN_TRAITS_TABLE}.trait in (:traits)
+    )`
+    );
+    params.traits = traits;
+  }
   return fetchPaginated(
     NEXTGEN_TOKENS_TABLE,
-    {
-      collectionId: collectionId
-    },
+    params,
     'id asc',
     pageSize,
     page,
@@ -2880,12 +2897,16 @@ export async function fetchNextGenTokenTransactions(
   );
 }
 
-export async function fetchNextGenTokenTraits(tokenId: number) {
-  let filters = constructFilters(
-    '',
-    `${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id = :tokenId`
+export async function fetchNextGenCollectionTraits(collectionId: number) {
+  return sqlExecutor.execute(
+    `SELECT * FROM ${NEXTGEN_TRAITS_TABLE} WHERE collection_id=:collectionId ORDER BY trait ASC`,
+    {
+      collectionId
+    }
   );
+}
 
+export async function fetchNextGenTokenTraits(tokenId: number) {
   return sqlExecutor.execute(
     `SELECT * FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} WHERE token_id=:tokenId ORDER BY trait ASC`,
     {
