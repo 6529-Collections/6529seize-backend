@@ -110,7 +110,8 @@ async function uploadMissingNextgenMedia(path: string) {
       Bucket: BUCKET,
       Key: metadataPath,
       Body: Buffer.from(JSON.stringify(metadata)),
-      ContentType: `application/json`
+      ContentType: `application/json`,
+      ACL: 'public-read'
     })
   );
 
@@ -119,7 +120,8 @@ async function uploadMissingNextgenMedia(path: string) {
       Bucket: BUCKET,
       Key: imagePath,
       Body: Buffer.from(imageBlob),
-      ContentType: `image/png`
+      ContentType: `image/png`,
+      ACL: 'public-read'
     })
   );
 
@@ -128,7 +130,8 @@ async function uploadMissingNextgenMedia(path: string) {
       Bucket: BUCKET,
       Key: htmlPath,
       Body: Buffer.from(htmlBlob),
-      ContentType: `text/html`
+      ContentType: `text/html`,
+      ACL: 'public-read'
     })
   );
 

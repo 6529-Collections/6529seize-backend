@@ -30,8 +30,8 @@ import {
   corsOptions,
   DEFAULT_PAGE_SIZE
 } from '../api-constants';
-import { returnJsonResult, returnPaginatedResult } from 'src/api-helpers';
-import { NextGenCollectionStatus } from 'src/api-filters';
+import { returnPaginatedResult, returnJsonResult } from '../api-helpers';
+import { NextGenCollectionStatus } from '../api-filters';
 
 const logger = Logger.get('NEXTGEN_API');
 
@@ -274,6 +274,22 @@ router.get(
     if (!isNaN(id)) {
       logger.info(`[FETCHING TOKEN ${id} TRANSACTIONS]`);
       db.fetchNextGenTokenTransactions(id, pageSize, page).then((result) => {
+        return returnJsonResult(result, req, res);
+      });
+    } else {
+      return res.status(404).send({});
+    }
+  }
+);
+
+router.get(
+  `/tokens/:id/traits`,
+  async function (req: any, res: any, next: any) {
+    const id: number = parseInt(req.params.id);
+
+    if (!isNaN(id)) {
+      logger.info(`[FETCHING TOKEN ${id} TRAITS]`);
+      db.fetchNextGenTokenTraits(id).then((result) => {
         return returnJsonResult(result, req, res);
       });
     } else {

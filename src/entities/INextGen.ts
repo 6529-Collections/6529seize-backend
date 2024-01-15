@@ -4,8 +4,9 @@ import {
   PrimaryColumn,
   Column,
   UpdateDateColumn,
-  PrimaryGeneratedColumn,
-  Index
+  Index,
+  OneToMany,
+  ManyToOne
 } from 'typeorm';
 import {
   NEXTGEN_ALLOWLIST_BURN_TABLE,
@@ -16,7 +17,9 @@ import {
   NEXTGEN_LOGS_TABLE,
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_TOKENS_TABLE,
-  NEXTGEN_TRANSACTIONS_TABLE
+  NEXTGEN_TRANSACTIONS_TABLE,
+  NEXTGEN_TRAITS_TABLE,
+  NEXTGEN_TOKEN_TRAITS_TABLE
 } from '../constants';
 import { BlockEntity } from './IBlock';
 import { BaseTransaction } from './ITransaction';
@@ -255,8 +258,8 @@ export class NextGenLog {
   @CreateDateColumn({ type: 'datetime' })
   created_at?: Date;
 
-  @PrimaryGeneratedColumn({ type: 'int' })
-  id?: number;
+  @PrimaryColumn({ type: 'varchar', length: 100 })
+  id!: string;
 
   @Column({ type: 'varchar', length: 100 })
   transaction!: string;
@@ -396,4 +399,46 @@ export class NextGenTransaction extends BaseTransaction {
   @Index()
   @PrimaryColumn({ type: 'bigint' })
   token_id!: number;
+}
+
+@Entity(NEXTGEN_TRAITS_TABLE)
+export class NextGenTrait {
+  @CreateDateColumn({ type: 'datetime' })
+  created_at?: Date;
+
+  @UpdateDateColumn({ type: 'datetime' })
+  updated_at?: Date;
+
+  @PrimaryColumn({ type: 'int' })
+  collection_id!: number;
+
+  @PrimaryColumn({ type: 'varchar', length: 100 })
+  trait!: string;
+}
+
+@Entity(NEXTGEN_TOKEN_TRAITS_TABLE)
+export class NextGenTokenTrait {
+  @CreateDateColumn({ type: 'datetime' })
+  created_at?: Date;
+
+  @UpdateDateColumn({ type: 'datetime' })
+  updated_at?: Date;
+
+  @PrimaryColumn({ type: 'bigint' })
+  token_id!: number;
+
+  @Column({ type: 'int' })
+  collection_id!: number;
+
+  @PrimaryColumn({ type: 'varchar', length: 100 })
+  trait!: string;
+
+  @Column({ type: 'int', default: 0 })
+  trait_score?: number;
+
+  @Column({ type: 'varchar', length: 100 })
+  value!: string;
+
+  @Column({ type: 'int', default: 0 })
+  value_score?: number;
 }

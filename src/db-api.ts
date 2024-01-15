@@ -43,7 +43,8 @@ import {
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_TOKENS_TABLE,
   NEXTGEN_LOGS_TABLE,
-  NEXTGEN_TRANSACTIONS_TABLE
+  NEXTGEN_TRANSACTIONS_TABLE,
+  NEXTGEN_TOKEN_TRAITS_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
 import { User } from './entities/IUser';
@@ -2876,5 +2877,19 @@ export async function fetchNextGenTokenTransactions(
     filters,
     fields,
     joins
+  );
+}
+
+export async function fetchNextGenTokenTraits(tokenId: number) {
+  let filters = constructFilters(
+    '',
+    `${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id = :tokenId`
+  );
+
+  return sqlExecutor.execute(
+    `SELECT * FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} WHERE token_id=:tokenId ORDER BY trait ASC`,
+    {
+      tokenId: tokenId
+    }
   );
 }

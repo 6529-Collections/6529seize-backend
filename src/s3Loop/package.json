@@ -2,9 +2,9 @@
   "name": "s3loop",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "index.ts",
   "scripts": {
-    "prebuild": "rm -rf dist",
+    "prebuild": "rm -rf dist && node ../../ffmpeg-installer.js",
     "build": "esbuild index.ts --bundle --external:sharp --external:imagescript --sourcemap --platform=node --target=es2020 --outfile=dist/index.js",
     "sls-deploy:prod": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1",
     "sls-deploy:staging": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1"

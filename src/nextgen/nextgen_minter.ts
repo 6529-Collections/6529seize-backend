@@ -53,8 +53,9 @@ export async function findMinterTransactions(
       const args = parsedReceipt.args;
       const processedLogs = await processLog(methodName, args);
       const timestamp = new Date(transfer.metadata.blockTimestamp);
-      processedLogs.forEach((processedLog) => {
+      processedLogs.forEach((processedLog, index) => {
         const l: NextGenLog = {
+          id: `${transfer.hash}-${index}`,
           transaction: transfer.hash,
           block: parseInt(transfer.blockNum, 16),
           block_timestamp: timestamp.getTime() / 1000,
@@ -89,6 +90,8 @@ async function processLog(
   }[]
 > {
   switch (methodName) {
+    case 'initializeBurn':
+      return await initializeBurn(args);
     case 'initializeExternalBurnOrSwap':
       return await initializeExternalBurnOrSwap(args);
     case 'setCollectionCosts':
@@ -100,6 +103,7 @@ async function processLog(
       // skip - handled by core_events
       return [];
     case 'burnOrSwapExternalToMint':
+    case 'burnToMint':
       // skip - handled by Transfer
       return [];
   }
@@ -115,6 +119,42 @@ async function processLog(
     {
       id: 0,
       description: methodNameParts.join(' ')
+    }
+  ];
+}
+
+async function initializeBurn(args: ethers.utils.Result): Promise<
+  {
+    id: number;
+    description: string;
+  }[]
+> {
+  const burnCollectionId = parseInt(args[0]);
+  const mintCollectionId = parseInt(args[1]);
+  const status: boolean = args[2];
+
+  const burnCollection = await fetchNextGenCollection(burnCollectionId);
+  const mintCollection = await fetchNextGenCollection(mintCollectionId);
+
+  if (!burnCollection || !mintCollection) {
+    logger.info(
+      `[METHOD NAME INITIALIZE BURN] : [COLLECTION ID ${burnCollectionId} OR ${mintCollectionId} NOT FOUND]`
+    );
+    return [];
+  }
+
+  let description = 'Burn';
+  if (status) {
+    description += ` Initialized`;
+  } else {
+    description += ` Deactivated`;
+  }
+  description += ` for Collection #${burnCollectionId} - ${burnCollection.name} for Mint Collection #${mintCollectionId} - ${mintCollection.name}`;
+
+  return [
+    {
+      id: mintCollectionId,
+      description: description
     }
   ];
 }

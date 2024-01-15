@@ -47,6 +47,8 @@ export const NEXTGEN_COLLECTIONS_TABLE = 'nextgen_collections';
 export const NEXTGEN_TOKENS_TABLE = 'nextgen_tokens';
 export const NEXTGEN_ALLOWLIST_TABLE = 'nextgen_allowlist';
 export const NEXTGEN_TRANSACTIONS_TABLE = 'nextgen_transactions';
+export const NEXTGEN_TRAITS_TABLE = 'nextgen_traits';
+export const NEXTGEN_TOKEN_TRAITS_TABLE = 'nextgen_token_traits';
 export const NEXTGEN_ALLOWLIST_BURN_TABLE = 'nextgen_allowlist_burn';
 export const NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE =
   'nextgen_allowlist_collection';

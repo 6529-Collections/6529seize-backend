@@ -89,7 +89,9 @@ import {
   NextGenBlock,
   NextGenLog,
   NextGenToken,
-  NextGenTransaction
+  NextGenTransaction,
+  NextGenTrait,
+  NextGenTokenTrait
 } from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { Profile, ProfileArchived } from './entities/IProfile';
@@ -157,7 +159,9 @@ export async function connect(entities: any[] = []) {
       NextGenBlock,
       NextGenLog,
       NextGenToken,
-      NextGenTransaction
+      NextGenTransaction,
+      NextGenTrait,
+      NextGenTokenTrait
     ];
   }
 
@@ -1512,7 +1516,7 @@ export async function persistNextGenCollection(collection: NextGenCollection) {
   await AppDataSource.getRepository(NextGenCollection).save(collection);
 }
 
-export async function fetchNextGenCollections() {
+export async function fetchNextGenCollections(): Promise<NextGenCollection[]> {
   return await AppDataSource.getRepository(NextGenCollection).find();
 }
 
@@ -1528,7 +1532,7 @@ export async function fetchNextGenCollection(id: number) {
 export async function fetchNextGenLatestBlock() {
   const sql = `SELECT MAX(block) as max_block FROM ${NEXTGEN_BLOCKS_TABLE}`;
   const results = await sqlExecutor.execute(sql);
-  return results[0].max_block ?? 0;
+  return results[0].max_block ?? 10272666;
 }
 
 export async function persistNextGenBlock(block: NextGenBlock) {
@@ -1565,4 +1569,24 @@ export async function fetchPendingNextgenTokens() {
       pending: true
     }
   });
+}
+
+export async function persistNextGenTraits(
+  traits: NextGenTrait[],
+  tokenTraits: NextGenTokenTrait[]
+) {
+  await AppDataSource.transaction(async (manager) => {
+    const traitsRepo = manager.getRepository(NextGenTrait);
+    const tokenTraitsRepo = manager.getRepository(NextGenTokenTrait);
+    await traitsRepo.upsert(traits, ['collection_id', 'trait']);
+    await tokenTraitsRepo.upsert(tokenTraits, ['token_id', 'trait']);
+  });
+}
+
+export async function fetchNextGenTraits(): Promise<NextGenTrait[]> {
+  return await AppDataSource.getRepository(NextGenTrait).find();
+}
+
+export async function fetchNextGenTokenTraits(): Promise<NextGenTokenTrait[]> {
+  return await AppDataSource.getRepository(NextGenTokenTrait).find();
 }

@@ -11,6 +11,8 @@ import {
   NextGenCollection,
   NextGenLog,
   NextGenToken,
+  NextGenTokenTrait,
+  NextGenTrait,
   NextGenTransaction
 } from '../entities/INextGen';
 import { LogDescription } from 'ethers/lib/utils';
@@ -21,6 +23,7 @@ import {
   persistNextGenCollection,
   persistNextGenLogs,
   persistNextGenToken,
+  persistNextGenTraits,
   persistNextgenTransactions
 } from '../db';
 
@@ -52,6 +55,7 @@ export async function findCoreEvents(
       const blockTimestamp = (await alchemy.core.getBlock(log.blockNumber))
         .timestamp;
       const l: NextGenLog = {
+        id: `${log.transactionHash}-${log.logIndex}`,
         transaction: log.transactionHash,
         block: log.blockNumber,
         block_timestamp: blockTimestamp,
@@ -204,4 +208,33 @@ export async function upsertToken(
     await persistNextGenCollection(collection);
   }
   await persistNextGenToken(nextGenToken);
+
+  if (metadataResponse.attributes) {
+    await processTraits(tokenId, collection.id, metadataResponse.attributes);
+  }
+}
+
+async function processTraits(
+  tokenId: number,
+  collectionId: number,
+  attributes: { trait_type: string; value: string }[]
+) {
+  const traits: NextGenTrait[] = [];
+  const tokenTraits: NextGenTokenTrait[] = [];
+  for (const attribute of attributes) {
+    const trait: NextGenTrait = {
+      collection_id: collectionId,
+      trait: attribute.trait_type
+    };
+    traits.push(trait);
+    const tokenTrait: NextGenTokenTrait = {
+      token_id: tokenId,
+      collection_id: collectionId,
+      trait: attribute.trait_type,
+      value: attribute.value
+    };
+    tokenTraits.push(tokenTrait);
+  }
+
+  await persistNextGenTraits(traits, tokenTraits);
 }

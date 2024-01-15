@@ -58,8 +58,9 @@ export async function findCoreTransactions(
       const args = parsedReceipt.args;
       const processedLogs = await processLog(methodName, args);
       const timestamp = new Date(transfer.metadata.blockTimestamp);
-      processedLogs.forEach((processedLog) => {
+      processedLogs.forEach((processedLog, index) => {
         const l: NextGenLog = {
+          id: `${transfer.hash}-${index}`,
           transaction: transfer.hash,
           block: parseInt(transfer.blockNum, 16),
           block_timestamp: timestamp.getTime() / 1000,
@@ -101,6 +102,10 @@ async function processLog(
       return await changeMetadataView(args);
     case 'updateImagesAndAttributes':
       return await updateImagesAndAttributes(args);
+    case 'addRandomizer':
+      return await addRandomizer(args);
+    case 'setApprovalForAll':
+      return [];
   }
 
   let methodNameParts = methodName
@@ -298,6 +303,22 @@ async function updateImagesAndAttributes(args: ethers.utils.Result): Promise<
     }
   }
   return logs;
+}
+
+async function addRandomizer(args: ethers.utils.Result): Promise<
+  {
+    id: number;
+    description: string;
+  }[]
+> {
+  const collectionId = parseInt(args[0]);
+
+  return [
+    {
+      id: collectionId,
+      description: `Randomizer Added`
+    }
+  ];
 }
 
 function getCollectionImage(collectionId: number): string {
