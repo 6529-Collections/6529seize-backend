@@ -151,16 +151,20 @@ async function invalidatePath(path: string) {
   if (!path.startsWith('/')) {
     path = `/${path}`;
   }
-  await cloudfront.send(
-    new CreateInvalidationCommand({
-      DistributionId: CLOUDFRONT_DISTRIBUTION,
-      InvalidationBatch: {
-        CallerReference: Date.now().toString(),
-        Paths: {
-          Quantity: 1,
-          Items: [path]
+  try {
+    await cloudfront.send(
+      new CreateInvalidationCommand({
+        DistributionId: CLOUDFRONT_DISTRIBUTION,
+        InvalidationBatch: {
+          CallerReference: Date.now().toString(),
+          Paths: {
+            Quantity: 1,
+            Items: [path]
+          }
         }
-      }
-    })
-  );
+      })
+    );
+  } catch (e) {
+    logger.info(`[INVALIDATE ERROR] : [PATH ${path}] : [ERROR ${e}]`);
+  }
 }
