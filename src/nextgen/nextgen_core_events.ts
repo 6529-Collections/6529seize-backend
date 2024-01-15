@@ -186,31 +186,37 @@ export async function upsertToken(
   isMint: boolean
 ) {
   const metadataLink = `${collection.base_uri}${tokenId}`;
-  const metadataResponse: any = await (await fetch(metadataLink)).json();
-  const pending = metadataResponse.name.toLowerCase().startsWith('pending');
+  try {
+    const metadataResponse: any = await (await fetch(metadataLink)).json();
+    const pending = metadataResponse.name.toLowerCase().startsWith('pending');
 
-  const nextGenToken: NextGenToken = {
-    id: tokenId,
-    normalised_id: normalisedTokenId,
-    name: metadataResponse.name,
-    collection_id: collection.id,
-    collection_name: collection.name,
-    metadata_url: metadataLink,
-    image_url: metadataResponse.image,
-    animation_url: metadataResponse.animation_url,
-    generator_url: metadataResponse.generator_url,
-    owner: owner,
-    pending: pending
-  };
+    const nextGenToken: NextGenToken = {
+      id: tokenId,
+      normalised_id: normalisedTokenId,
+      name: metadataResponse.name,
+      collection_id: collection.id,
+      collection_name: collection.name,
+      metadata_url: metadataLink,
+      image_url: metadataResponse.image,
+      animation_url: metadataResponse.animation_url,
+      generator_url: metadataResponse.generator_url,
+      owner: owner,
+      pending: pending
+    };
 
-  if (isMint) {
-    collection.mint_count += 1;
-    await persistNextGenCollection(collection);
-  }
-  await persistNextGenToken(nextGenToken);
+    if (isMint) {
+      collection.mint_count += 1;
+      await persistNextGenCollection(collection);
+    }
+    await persistNextGenToken(nextGenToken);
 
-  if (metadataResponse.attributes) {
-    await processTraits(tokenId, collection.id, metadataResponse.attributes);
+    if (metadataResponse.attributes) {
+      await processTraits(tokenId, collection.id, metadataResponse.attributes);
+    }
+  } catch (e) {
+    logger.info(
+      `[TOKEN ID ${tokenId}] : [ERROR FETCHING METADATA] : [METADATA LINK ${metadataLink}] : [ERROR ${e.getMessage()}]`
+    );
   }
 }
 
