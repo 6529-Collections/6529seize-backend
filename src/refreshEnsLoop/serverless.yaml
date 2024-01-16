@@ -25,3 +25,5 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       REFRESH_BROKEN_ENS: false
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "refreshENS_${opt:stage, self:provider.stage}"

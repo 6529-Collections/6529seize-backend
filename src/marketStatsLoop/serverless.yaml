@@ -25,6 +25,8 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       CONTRACT: "0x33FD426905F149f8376e227d0C9D3340AaD17aF1"
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "marketStatsMEMES_${opt:stage, self:provider.stage}"
   marketStatsLAB:
     handler: index.handler
     name: marketStatsLAB
@@ -37,6 +39,8 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       CONTRACT: "0x4db52a61dc491e15a2f78f5ac001c14ffe3568cb"
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "marketStatsLAB_${opt:stage, self:provider.stage}"
   marketStatsGRADIENT:
     handler: index.handler
     name: marketStatsGRADIENT
@@ -49,3 +53,5 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       CONTRACT: "0x0c58ef43ff3032005e472cb5709f8908acb00205"
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "marketStatsGRADIENT_${opt:stage, self:provider.stage}"
