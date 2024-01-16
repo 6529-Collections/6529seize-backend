@@ -26,3 +26,5 @@ functions:
     environment:
       RESET: false
       METRICS_RESET: true
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "ownerMetricsLoop_${opt:stage, self:provider.stage}"

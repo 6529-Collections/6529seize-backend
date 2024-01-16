@@ -25,6 +25,8 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       REMEMES_S3: true
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "rememesS3Loop_${opt:stage, self:provider.stage}"
   rememesRefreshMetadataLoop:
     handler: index.handler
     name: rememesRefreshMetadataLoop
@@ -37,6 +39,8 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       REMEMES_LOAD_FILE: false
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "rememesRefreshMetadataLoop_${opt:stage, self:provider.stage}"
   rememesFileLoop:
     handler: index.handler
     name: rememesFileLoop
@@ -47,3 +51,5 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       REMEMES_LOAD_FILE: true
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "rememesFileLoop_${opt:stage, self:provider.stage}"

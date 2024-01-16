@@ -15,6 +15,7 @@ import { persistRememesS3 } from '../s3_rememes';
 import { areEqualAddresses, getContentType } from '../helpers';
 import { Logger } from '../logging';
 import { Time } from '../time';
+import * as sentryContext from "../sentry.context";
 
 const Arweave = require('arweave');
 const csvParser = require('csv-parser');
@@ -37,7 +38,7 @@ const myarweave = Arweave.init({
 
 let alchemy: Alchemy;
 
-export const handler = async (event?: any, context?: any) => {
+export const handler = sentryContext.wrapLambdaHandler(async (event?: any, context?: any) => {
   logger.info('[RUNNING]');
   const start = Time.now();
   await loadEnv([Rememe, RememeUpload]);
@@ -63,7 +64,7 @@ export const handler = async (event?: any, context?: any) => {
   }
 
   logger.info(`[COMPLETE in ${start.diffFromNow()}]`);
-};
+});
 
 async function loadRememes() {
   const csvData: CSVData[] = [];

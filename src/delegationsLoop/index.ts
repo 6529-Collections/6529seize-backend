@@ -24,10 +24,11 @@ import { CONSOLIDATIONS_TABLE } from '../constants';
 import { ConsolidatedTDH } from '../entities/ITDH';
 import { ConsolidatedOwnerMetric, OwnerMetric } from '../entities/IOwner';
 import { Profile } from '../entities/IProfile';
+import * as sentryContext from "../sentry.context";
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
-export const handler = async (event?: any, context?: any) => {
+export const handler = sentryContext.wrapLambdaHandler(async (event?: any, context?: any) => {
   const start = Time.now();
   await loadEnv([
     Delegation,
@@ -53,7 +54,7 @@ export const handler = async (event?: any, context?: any) => {
   await unload();
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
-};
+});
 
 async function handleDelegations(startBlock: number | undefined) {
   const delegationsResponse = await findNewDelegations(startBlock);

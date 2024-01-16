@@ -43,6 +43,10 @@ on:
         required: true
         default: 'main'
 
+env:
+  SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+  SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
 jobs:
   build-and-deploy:
     name: Build and deploy

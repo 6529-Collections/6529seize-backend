@@ -19,10 +19,11 @@ import { Logger } from '../logging';
 import { Time } from '../time';
 import { ProfileTdh, ProfileTdhLog } from '../entities/IProfileTDH';
 import { Profile } from '../entities/IProfile';
+import * as sentryContext from "../sentry.context";
 
 const logger = Logger.get('TDH_LOOP');
 
-export const handler = async () => {
+export const handler = sentryContext.wrapLambdaHandler(async () => {
   await loadEnv([
     TDH,
     ConsolidatedTDH,
@@ -40,7 +41,7 @@ export const handler = async () => {
   await tdhLoop(force);
   await unload();
   logger.info('[COMPLETE]');
-};
+});
 
 export async function tdhLoop(force?: boolean) {
   await tdh(force);

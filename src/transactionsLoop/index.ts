@@ -6,16 +6,17 @@ import { loadEnv, unload } from '../secrets';
 import { Transaction } from '../entities/ITransaction';
 import { User } from '../entities/IUser';
 import { Logger } from '../logging';
+import * as sentryContext from "../sentry.context";
 
 const logger = Logger.get('TRANSACTIONS_LOOP');
 
-export const handler = async (event?: any, context?: any) => {
+export const handler = sentryContext.wrapLambdaHandler(async (event?: any, context?: any) => {
   await loadEnv([Transaction, User]);
   logger.info('[RUNNING]');
   await transactionsLoop();
   await unload();
   logger.info('[COMPLETE]');
-};
+});
 
 export const handlerValues = async (event?: any, context?: any) => {
   await loadEnv();
@@ -24,13 +25,13 @@ export const handlerValues = async (event?: any, context?: any) => {
   logger.info('[TRANSACTIONS VALUES COMPLETE]');
 };
 
-export async function transactionsLoop() {
+async function transactionsLoop() {
   const now = new Date();
   await fetchAndPersistTransactions();
   await discoverEns(now);
 }
 
-export async function fetchAndPersistTransactions(
+async function fetchAndPersistTransactions(
   startingBlock?: number,
   latestBlock?: number,
   pageKey?: string
