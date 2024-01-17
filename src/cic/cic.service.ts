@@ -14,7 +14,9 @@ const CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE: Record<
 > = {
   [CicStatementGroup.CONTACT]: ProfileActivityLogType.CONTACTS_EDIT,
   [CicStatementGroup.SOCIAL_MEDIA_ACCOUNT]: ProfileActivityLogType.SOCIALS_EDIT,
-  [CicStatementGroup.GENERAL]: ProfileActivityLogType.GENERAL_CIC_STATEMENT_EDIT,
+  [CicStatementGroup.GENERAL]:
+    ProfileActivityLogType.GENERAL_CIC_STATEMENT_EDIT,
+  [CicStatementGroup.NFT_ACCOUNTS]: ProfileActivityLogType.NFT_ACCOUNTS_EDIT,
   [CicStatementGroup.SOCIAL_MEDIA_VERIFICATION_POST]:
     ProfileActivityLogType.SOCIAL_VERIFICATION_POST_EDIT
 };
@@ -109,6 +111,56 @@ export class CicService {
       regexp: /^http(s)?:\/\/.{1,2000}$/,
       errorMessageIfNotValid:
         "Link needs to start with http or https and URL can't be longer than 2000 characters"
+    },
+    SUPER_RARE: {
+      regexp: /^https:\/\/(www\.)?superrare\.com\/(.)+/,
+      errorMessageIfNotValid:
+        'SuperRare needs to start with https://www.superrare.com/'
+    },
+    FOUNDATION: {
+      regexp: /^https:\/\/(www\.)?foundation\.app\/(.)+/,
+      errorMessageIfNotValid:
+        'Foundation needs to start with https://www.foundation.app/'
+    },
+    MAKERS_PLACE: {
+      regexp: /^https:\/\/(www\.)?makersplace\.com\/(.)+/,
+      errorMessageIfNotValid:
+        'MakersPlace needs to start with https://www.makersplace.com/'
+    },
+    KNOWN_ORIGIN: {
+      regexp: /^https:\/\/(www\.)?knownorigin\.io\/(.)+/,
+      errorMessageIfNotValid:
+        'KnownOrigin needs to start with https://www.knownorigin.io/'
+    },
+    PEPE_WTF: {
+      regexp: /^https:\/\/(www\.)?pepe\.wtf\/(.)+/,
+      errorMessageIfNotValid:
+        'Pepe.wtf needs to start with https://www.pepe.wtf/'
+    },
+    OPENSEA: {
+      regexp: /^https:\/\/(www\.)?opensea\.io\/(.)+/,
+      errorMessageIfNotValid:
+        'OpenSea needs to start with https://www.opensea.io/'
+    },
+    ART_BLOCKS: {
+      regexp: /^https:\/\/(www\.)?artblocks\.io\/(.)+/,
+      errorMessageIfNotValid:
+        'Art Blocks needs to start with https://www.artblocks.io/'
+    },
+    DECA_ART: {
+      regexp: /^https:\/\/(www\.)?deca\.art\/(.)+/,
+      errorMessageIfNotValid:
+        'Deca Art needs to start with https://www.deca.art/'
+    },
+    ON_CYBER: {
+      regexp: /^https:\/\/(www\.)?oncyber\.io\/(.)+/,
+      errorMessageIfNotValid:
+        'OnCyber needs to start with https://www.oncyber.io/'
+    },
+    THE_LINE: {
+      regexp: /^https:\/\/(www\.)?oncyber\.io\/line(.)+/,
+      errorMessageIfNotValid:
+        'The Line needs to start with https://www.oncyber.io/line'
     }
   };
 
