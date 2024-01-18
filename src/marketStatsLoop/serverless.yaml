@@ -16,6 +16,7 @@ functions:
   marketStatsMEMES:
     handler: index.handler
     name: marketStatsMEMES
+    description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
@@ -30,6 +31,7 @@ functions:
   marketStatsLAB:
     handler: index.handler
     name: marketStatsLAB
+    description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
@@ -44,6 +46,7 @@ functions:
   marketStatsGRADIENT:
     handler: index.handler
     name: marketStatsGRADIENT
+    description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
