@@ -11,6 +11,8 @@ provider:
   runtime: nodejs18.x
   memorySize: 1028
   timeout: 900
+  environment:
+    NEXTGEN_CHAIN_ID: 11155111
 
 functions:
   nextgenContractLoop:
