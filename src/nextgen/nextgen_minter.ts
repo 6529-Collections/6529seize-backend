@@ -5,25 +5,30 @@ import {
   AssetTransfersWithMetadataParams,
   SortingOrder
 } from 'alchemy-sdk';
-import { NEXTGEN_MINTER_CONTRACT, NEXTGEN_NETWORK } from '../constants';
 import { Logger } from '../logging';
 import { NEXTGEN_MINTER_IFACE } from '../abis/nextgen';
 import { NextGenLog } from '../entities/INextGen';
+import { Time } from '../time';
+import { weiToEth } from '../helpers';
 import {
   fetchNextGenCollection,
   persistNextGenCollection,
   persistNextGenLogs
-} from '../db';
-import { Time } from '../time';
-import { weiToEth } from '../helpers';
+} from './nextgen.db';
+import { EntityManager } from 'typeorm';
+import {
+  NEXTGEN_MINTER_CONTRACT,
+  getNextgenNetwork
+} from './nextgen_constants';
 
 const logger = Logger.get('NEXTGEN_MINTER');
 
 export async function findMinterTransactions(
+  entityManager: EntityManager,
   alchemy: Alchemy,
   startBlock: number,
   endBlock: number,
-  pageKey: string | undefined
+  pageKey?: string
 ) {
   logger.info(
     `[FINDING TRANSACTIONS] : [START BLOCK ${startBlock}] : [END BLOCK ${endBlock}] : [PAGE KEY ${pageKey}]`
@@ -35,7 +40,7 @@ export async function findMinterTransactions(
     fromBlock: `0x${startBlock.toString(16)}`,
     toBlock: `0x${endBlock.toString(16)}`,
     pageKey: pageKey,
-    toAddress: NEXTGEN_MINTER_CONTRACT[NEXTGEN_NETWORK],
+    toAddress: NEXTGEN_MINTER_CONTRACT[getNextgenNetwork()],
     withMetadata: true,
     order: SortingOrder.ASCENDING
   };
@@ -51,7 +56,7 @@ export async function findMinterTransactions(
       });
       const methodName = parsedReceipt.name;
       const args = parsedReceipt.args;
-      const processedLogs = await processLog(methodName, args);
+      const processedLogs = await processLog(entityManager, methodName, args);
       const timestamp = new Date(transfer.metadata.blockTimestamp);
       processedLogs.forEach((processedLog, index) => {
         const l: NextGenLog = {
@@ -68,10 +73,11 @@ export async function findMinterTransactions(
     }
   }
 
-  await persistNextGenLogs(logs);
+  await persistNextGenLogs(entityManager, logs);
 
   if (response.pageKey) {
     await findMinterTransactions(
+      entityManager,
       alchemy,
       startBlock,
       endBlock,
@@ -81,6 +87,7 @@ export async function findMinterTransactions(
 }
 
 async function processLog(
+  entityManager: EntityManager,
   methodName: string,
   args: ethers.utils.Result
 ): Promise<
@@ -91,13 +98,13 @@ async function processLog(
 > {
   switch (methodName) {
     case 'initializeBurn':
-      return await initializeBurn(args);
+      return await initializeBurn(entityManager, args);
     case 'initializeExternalBurnOrSwap':
       return await initializeExternalBurnOrSwap(args);
     case 'setCollectionCosts':
       return await setCollectionCosts(args);
     case 'setCollectionPhases':
-      return await setCollectionPhases(args);
+      return await setCollectionPhases(entityManager, args);
     case 'mint':
     case 'airDropTokens':
       // skip - handled by core_events
@@ -123,7 +130,10 @@ async function processLog(
   ];
 }
 
-async function initializeBurn(args: ethers.utils.Result): Promise<
+async function initializeBurn(
+  entityManager: EntityManager,
+  args: ethers.utils.Result
+): Promise<
   {
     id: number;
     description: string;
@@ -133,8 +143,14 @@ async function initializeBurn(args: ethers.utils.Result): Promise<
   const mintCollectionId = parseInt(args[1]);
   const status: boolean = args[2];
 
-  const burnCollection = await fetchNextGenCollection(burnCollectionId);
-  const mintCollection = await fetchNextGenCollection(mintCollectionId);
+  const burnCollection = await fetchNextGenCollection(
+    entityManager,
+    burnCollectionId
+  );
+  const mintCollection = await fetchNextGenCollection(
+    entityManager,
+    mintCollectionId
+  );
 
   if (!burnCollection || !mintCollection) {
     logger.info(
@@ -243,7 +259,10 @@ async function setCollectionCosts(args: ethers.utils.Result): Promise<
   ];
 }
 
-async function setCollectionPhases(args: ethers.utils.Result): Promise<
+async function setCollectionPhases(
+  entityManager: EntityManager,
+  args: ethers.utils.Result
+): Promise<
   {
     id: number;
     description: string;
@@ -256,7 +275,7 @@ async function setCollectionPhases(args: ethers.utils.Result): Promise<
   const publicEnd = parseInt(args[4]);
   const merkleRoot = args[5];
 
-  const collection = await fetchNextGenCollection(id);
+  const collection = await fetchNextGenCollection(entityManager, id);
   if (!collection) {
     logger.info(
       `[METHOD NAME SET COLLECTION PHASES] : [COLLECTION ID ${id} NOT FOUND]`
@@ -269,7 +288,7 @@ async function setCollectionPhases(args: ethers.utils.Result): Promise<
   collection.public_end = publicEnd;
   collection.merkle_root = merkleRoot;
 
-  await persistNextGenCollection(collection);
+  await persistNextGenCollection(entityManager, collection);
 
   return [
     {

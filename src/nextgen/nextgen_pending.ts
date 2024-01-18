@@ -1,17 +1,17 @@
 import {
-  fetchNextGenCollection,
   fetchNextGenCollections,
-  fetchPendingNextgenTokens,
-  persistNextGenToken
-} from '../db';
+  persistNextGenToken,
+  fetchPendingNextgenTokens
+} from './nextgen.db';
 import { Logger } from '../logging';
 import { processTraits } from './nextgen_core_events';
+import { EntityManager } from 'typeorm';
 
 const logger = Logger.get('NEXTGEN_PENDING');
 
-export async function processPendingTokens() {
-  const pending = await fetchPendingNextgenTokens();
-  const collections = await fetchNextGenCollections();
+export async function processPendingTokens(entityManager: EntityManager) {
+  const pending = await fetchPendingNextgenTokens(entityManager);
+  const collections = await fetchNextGenCollections(entityManager);
 
   logger.info(`[FOUND ${pending.length} PENDING TOKENS]`);
 
@@ -35,9 +35,10 @@ export async function processPendingTokens() {
       token.generator_url = metadataResponse.generator_url;
       token.pending = pending;
 
-      await persistNextGenToken(token);
+      await persistNextGenToken(entityManager, token);
       if (metadataResponse.attributes) {
         await processTraits(
+          entityManager,
           token.id,
           collection.id,
           metadataResponse.attributes

@@ -1,13 +1,17 @@
-import { goerli, mainnet } from '@wagmi/chains';
+import { goerli, mainnet, sepolia } from '@wagmi/chains';
 
 export interface NextGenContract {
   [goerli.id]: string;
+  [sepolia.id]: string;
   [mainnet.id]: string;
 }
 
 export function getNextGenChainId() {
   if (process.env.NEXTGEN_CHAIN_ID) {
     const chainId: number = parseInt(process.env.NEXTGEN_CHAIN_ID);
+    if (chainId == sepolia.id) {
+      return sepolia.id;
+    }
     if (chainId == goerli.id) {
       return goerli.id;
     }
@@ -19,6 +23,7 @@ export const NEXTGEN_SET_COLLECTION_PHASES_SELECTOR = '0xb85f97a0';
 
 export const NEXTGEN_ADMIN: NextGenContract = {
   [goerli.id]: '0x1bAe1D145Dd61fBBB62C85f8A6d7B6eDe0D150f5',
+  [sepolia.id]: '0xdA8d7A00D222b223e6152B22fFe97cA1778E5f38',
   [mainnet.id]: '0x26ad9c64930bf5e057cb895a183436b30ad140f8'
 };
 

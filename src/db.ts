@@ -25,9 +25,7 @@ import {
   MEMES_CONTRACT,
   CONSOLIDATED_UPLOADS_TABLE,
   MEME_LAB_ROYALTIES_TABLE,
-  CONSOLIDATIONS_TABLE,
-  NEXTGEN_COLLECTIONS_TABLE,
-  NEXTGEN_BLOCKS_TABLE
+  CONSOLIDATIONS_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -90,7 +88,6 @@ import {
   NextGenLog,
   NextGenToken,
   NextGenTransaction,
-  NextGenTrait,
   NextGenTokenTrait
 } from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
@@ -114,7 +111,7 @@ let AppDataSource: DataSource;
 export async function connect(entities: any[] = []) {
   logger.info(`[DB HOST ${process.env.DB_HOST}]`);
 
-  if (process.env.NODE_ENV == 'local') {
+  if (process.env.NODE_ENV === 'local') {
     entities = [
       Owner,
       LabNFT,
@@ -160,7 +157,6 @@ export async function connect(entities: any[] = []) {
       NextGenLog,
       NextGenToken,
       NextGenTransaction,
-      NextGenTrait,
       NextGenTokenTrait
     ];
   }
@@ -194,6 +190,10 @@ export async function connect(entities: any[] = []) {
       !AppDataSource.isInitialized ? 'NOT ' : ''
     }INITIALIZED]`
   );
+}
+
+export function getDataSource() {
+  return AppDataSource;
 }
 
 export async function disconnect() {
@@ -1497,96 +1497,4 @@ export async function persistTDHHistory(tdhHistory: TDHHistory[]) {
 export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
   const globalHistoryRepo = AppDataSource.getRepository(GlobalTDHHistory);
   await globalHistoryRepo.upsert(globalHistory, ['date', 'block']);
-}
-
-export async function persistNextGenLogs(logs: NextGenLog[]) {
-  await AppDataSource.getRepository(NextGenLog).save(logs);
-}
-
-export async function fetchNextGenCollectionIndex() {
-  const sql = `SELECT MAX(id) as max_id FROM ${NEXTGEN_COLLECTIONS_TABLE}`;
-  const results = await sqlExecutor.execute(sql);
-  if (results.length == 0) {
-    return 0;
-  }
-  return results[0].max_id;
-}
-
-export async function persistNextGenCollection(collection: NextGenCollection) {
-  await AppDataSource.getRepository(NextGenCollection).save(collection);
-}
-
-export async function fetchNextGenCollections(): Promise<NextGenCollection[]> {
-  return await AppDataSource.getRepository(NextGenCollection).find();
-}
-
-export async function fetchNextGenCollection(id: number) {
-  const c = await AppDataSource.getRepository(NextGenCollection).findOne({
-    where: {
-      id: id
-    }
-  });
-  return c;
-}
-
-export async function fetchNextGenLatestBlock() {
-  const sql = `SELECT MAX(block) as max_block FROM ${NEXTGEN_BLOCKS_TABLE}`;
-  const results = await sqlExecutor.execute(sql);
-  return results[0].max_block ?? 10272666;
-}
-
-export async function persistNextGenBlock(block: NextGenBlock) {
-  await AppDataSource.getRepository(NextGenBlock).save(block);
-}
-
-export async function persistNextGenToken(token: NextGenToken) {
-  await AppDataSource.getRepository(NextGenToken).upsert(token, ['id']);
-}
-
-export async function fetchNextGenToken(id: number) {
-  const c = await AppDataSource.getRepository(NextGenToken).findOne({
-    where: {
-      id: id
-    }
-  });
-  return c;
-}
-
-export async function persistNextgenTransactions(
-  transactions: NextGenTransaction[]
-) {
-  await AppDataSource.getRepository(NextGenTransaction).upsert(transactions, [
-    'transaction',
-    'from_address',
-    'to_address',
-    'token_id'
-  ]);
-}
-
-export async function fetchPendingNextgenTokens() {
-  return await AppDataSource.getRepository(NextGenToken).find({
-    where: {
-      pending: true
-    }
-  });
-}
-
-export async function persistNextGenTraits(
-  traits: NextGenTrait[],
-  tokenTraits: NextGenTokenTrait[]
-) {
-  await AppDataSource.transaction(async (manager) => {
-    const traitsRepo = manager.getRepository(NextGenTrait);
-    const tokenTraitsRepo = manager.getRepository(NextGenTokenTrait);
-    await traitsRepo.upsert(traits, ['collection_id', 'trait']);
-    await tokenTraitsRepo.upsert(tokenTraits, ['token_id', 'trait']);
-  });
-}
-
-export async function fetchNextGenTraits(): Promise<NextGenTrait[]> {
-  return await AppDataSource.getRepository(NextGenTrait).find();
-}
-
-export async function fetchNextGenTokenTraits(): Promise<NextGenTokenTrait[]> {
-  return await AppDataSource.getRepository(NextGenTokenTrait).find();
 }

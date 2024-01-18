@@ -14,12 +14,7 @@ import {
   extractNextGenCollectionBurnInsert,
   extractNextGenCollectionInsert
 } from '../../../entities/INextGen';
-import {
-  NEXTGEN_ALLOWLIST_BURN_TABLE,
-  NEXTGEN_ALLOWLIST_TABLE,
-  NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE
-} from '../../../constants';
-import * as db from '../../../db-api';
+import * as db from './nextgen.db-api';
 import { asyncRouter } from '../async.router';
 import { initMulterSingleMiddleware } from '../multer-middleware';
 import { Logger } from '../../../logging';
@@ -32,6 +27,11 @@ import {
 } from '../api-constants';
 import { returnPaginatedResult, returnJsonResult } from '../api-helpers';
 import { NextGenCollectionStatus } from '../api-filters';
+import {
+  NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
+  NEXTGEN_ALLOWLIST_TABLE,
+  NEXTGEN_ALLOWLIST_BURN_TABLE
+} from '../../../nextgen/nextgen_constants';
 
 const logger = Logger.get('NEXTGEN_API');
 
@@ -197,7 +197,7 @@ router.get(
       logger.info(`[FETCHING TOKENS FOR COLLECTION ID ${id}]`);
       db.fetchNextGenCollectionTokens(id, pageSize, page, traits).then(
         (result) => {
-          return returnJsonResult(result, req, res);
+          return returnPaginatedResult(result, req, res);
         }
       );
     } else {
@@ -256,7 +256,18 @@ router.get(
     if (!isNaN(id)) {
       logger.info(`[FETCHING TRAITS FOR COLLECTION ID ${id}]`);
       db.fetchNextGenCollectionTraits(id).then((result) => {
-        return returnJsonResult(result, req, res);
+        const uniqueKeys = [...new Set(result.map((r: any) => r.trait))];
+        const traits = [];
+        uniqueKeys.forEach((key) => {
+          const trait = {
+            trait: key,
+            values: result
+              .filter((r: any) => r.trait === key)
+              .map((r: any) => r.value)
+          };
+          traits.push(trait);
+        });
+        return returnJsonResult(traits, req, res);
       });
     } else {
       return res.status(404).send({});

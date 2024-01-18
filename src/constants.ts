@@ -41,18 +41,6 @@ export const DELEGATIONS_TABLE = 'delegations';
 export const NFTS_HISTORY_TABLE = 'nfts_history';
 export const NFTS_HISTORY_BLOCKS_TABLE = 'nfts_history_blocks';
 export const NFTS_HISTORY_CLAIMS_TABLE = 'nfts_history_claims';
-export const NEXTGEN_BLOCKS_TABLE = 'nextgen_blocks';
-export const NEXTGEN_LOGS_TABLE = 'nextgen_logs';
-export const NEXTGEN_COLLECTIONS_TABLE = 'nextgen_collections';
-export const NEXTGEN_TOKENS_TABLE = 'nextgen_tokens';
-export const NEXTGEN_ALLOWLIST_TABLE = 'nextgen_allowlist';
-export const NEXTGEN_TRANSACTIONS_TABLE = 'nextgen_transactions';
-export const NEXTGEN_TRAITS_TABLE = 'nextgen_traits';
-export const NEXTGEN_TOKEN_TRAITS_TABLE = 'nextgen_token_traits';
-export const NEXTGEN_ALLOWLIST_BURN_TABLE = 'nextgen_allowlist_burn';
-export const NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE =
-  'nextgen_allowlist_collection';
-export const NEXTGEN_BURN_COLLECTIONS_TABLE = 'nextgen_burn_collection';
 export const REMEMES_TABLE = 'rememes';
 export const REMEMES_UPLOADS = 'uploads_rememes';
 export const RATINGS_TABLE = 'ratings';
@@ -71,8 +59,6 @@ export const ENS_ADDRESS = '0x57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85';
 export const ROYALTIES_ADDRESS = '0x1b1289e34fe05019511d7b436a5138f361904df0';
 export const MEMELAB_ROYALTIES_ADDRESS =
   '0x900b67e6f16291431e469e6ec8208d17de09fc37';
-export const NEXTGEN_ROYALTIES_ADDRESS =
-  '0xC8ed02aFEBD9aCB14c33B5330c803feacAF01377';
 export const OPENSEA_ADDRESS = '0x00000000000000ADc04C56Bf30aC9d3c0aAF14dC';
 export const MEMES_DEPLOYER = '0x4B76837F8D8Ad0A28590d06E53dCD44b6B7D4554';
 
@@ -158,18 +144,3 @@ export const SZN6_INDEX = {
 export const WALLET_REGEX = /^0x[a-fA-F0-9]{40}$/;
 export const PROFILE_HANDLE_REGEX = /^[a-zA-Z0-9_]{3,15}$/;
 export const MEMES_ROYALTIES_RATE = 0.5;
-
-export const NEXTGEN_NETWORK = Network.ETH_GOERLI;
-
-export const NEXTGEN_CORE_CONTRACT = {
-  [Network.ETH_GOERLI]: '0x25a972f1bf3c816061ceaea59d2bb3fe4c130766',
-  [Network.ETH_MAINNET]: '0xC3390e3D2e98544DcBB6f235a3B15345A6728E8c'
-};
-
-export const NEXTGEN_MINTER_CONTRACT = {
-  [Network.ETH_GOERLI]: '0x1a7040a7d4baf44f136c50626a4e8f4ae5ca170f',
-  [Network.ETH_MAINNET]: '0x6113fd2c91514e84e6149c6ede47f2e09545253a'
-};
-
-export const NEXTGEN_CF_BASE_PATH =
-  'https://media-proxy.nextgen-generator.seize.io/';

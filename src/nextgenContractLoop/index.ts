@@ -11,7 +11,6 @@ import {
   NextGenAllowlistBurn,
   NextGenAllowlistCollection,
   NextGenCollection,
-  NextGenTrait,
   NextGenTokenTrait
 } from '../entities/INextGen';
 import { findNextGenTransactions } from '../nextgen/nextgen';
@@ -31,7 +30,6 @@ export const handler = async (event: any) => {
     NextGenLog,
     NextGenToken,
     NextGenTransaction,
-    NextGenTrait,
     NextGenTokenTrait
   ]);
   await findNextGenTransactions();

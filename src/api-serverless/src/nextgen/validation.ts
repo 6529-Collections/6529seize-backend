@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import * as Joi from 'joi';
+import Joi from 'joi';
 import { hashMessage } from '@ethersproject/hash';
 import { areEqualAddresses, stringToHex } from '../../../helpers';
 import { Readable } from 'stream';
@@ -10,6 +10,7 @@ import {
   getNextGenChainId
 } from './abis';
 import { Logger } from '../../../logging';
+import { goerli, sepolia } from '@wagmi/chains';
 const { keccak256 } = require('@ethersproject/keccak256');
 const { MerkleTree } = require('merkletreejs');
 
@@ -370,8 +371,11 @@ async function validateAdmin(collection_id: number, address: string) {
 }
 
 function getUrl(chainId: number) {
-  if (chainId === 5) {
+  if (chainId === goerli.id) {
     return `https://eth-goerli.alchemyapi.io/v2/${process.env.ALCHEMY_API_KEY}`;
+  }
+  if (chainId === sepolia.id) {
+    return `https://eth-sepolia.alchemyapi.io/v2/${process.env.ALCHEMY_API_KEY}`;
   }
   return `https://eth-mainnet.alchemyapi.io/v2/${process.env.ALCHEMY_API_KEY}`;
 }

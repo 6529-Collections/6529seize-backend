@@ -1,10 +1,5 @@
 import { Alchemy, Log } from 'alchemy-sdk';
-import {
-  NEXTGEN_CORE_CONTRACT,
-  NEXTGEN_NETWORK,
-  NULL_ADDRESS,
-  NULL_ADDRESS_DEAD
-} from '../constants';
+import { NULL_ADDRESS, NULL_ADDRESS_DEAD } from '../constants';
 import { Logger } from '../logging';
 import { NEXTGEN_CORE_IFACE } from '../abis/nextgen';
 import {
@@ -12,7 +7,6 @@ import {
   NextGenLog,
   NextGenToken,
   NextGenTokenTrait,
-  NextGenTrait,
   NextGenTransaction
 } from '../entities/INextGen';
 import { LogDescription } from 'ethers/lib/utils';
@@ -25,17 +19,20 @@ import {
   persistNextGenToken,
   persistNextGenTraits,
   persistNextgenTransactions
-} from '../db';
+} from './nextgen.db';
+import { EntityManager } from 'typeorm';
+import { NEXTGEN_CORE_CONTRACT, getNextgenNetwork } from './nextgen_constants';
 
 const logger = Logger.get('NEXTGEN_CORE_EVENTS');
 
 let alchemy: Alchemy;
 
 export async function findCoreEvents(
+  entityManager: EntityManager,
   a: Alchemy,
   startBlock: number,
   endBlock: number,
-  pageKey: string | undefined
+  pageKey?: string
 ) {
   alchemy = a;
   logger.info(
@@ -43,14 +40,14 @@ export async function findCoreEvents(
   );
 
   const response = await alchemy.core.getLogs({
-    address: NEXTGEN_CORE_CONTRACT[NEXTGEN_NETWORK],
+    address: NEXTGEN_CORE_CONTRACT[getNextgenNetwork()],
     fromBlock: `0x${startBlock.toString(16)}`,
     toBlock: `0x${endBlock.toString(16)}`
   });
 
   const logs: NextGenLog[] = [];
   for (const log of response) {
-    const processedLog = await processLog(log);
+    const processedLog = await processLog(entityManager, log);
     if (processedLog) {
       const blockTimestamp = (await alchemy.core.getBlock(log.blockNumber))
         .timestamp;
@@ -66,10 +63,13 @@ export async function findCoreEvents(
       logs.push(l);
     }
   }
-  await persistNextGenLogs(logs);
+  await persistNextGenLogs(entityManager, logs);
 }
 
-async function processLog(log: Log): Promise<{
+async function processLog(
+  entityManager: EntityManager,
+  log: Log
+): Promise<{
   id: number;
   description: string;
 } | null> {
@@ -90,19 +90,22 @@ async function processLog(log: Log): Promise<{
         };
       }
     case 'Transfer':
-      return await processTransfer(log, parsedLog);
+      return await processTransfer(entityManager, log, parsedLog);
   }
 
   return null;
 }
 
 async function processTransfer(
+  entityManager: EntityManager,
   log: Log,
   logInfo: LogDescription
 ): Promise<{
   id: number;
   description: string;
 }> {
+  const network = getNextgenNetwork();
+
   const blockTimestamp = (await alchemy.core.getBlock(log.blockNumber))
     .timestamp;
 
@@ -110,7 +113,7 @@ async function processTransfer(
   const collectionId = Math.round(tokenId / 10000000000);
   const normalisedTokenId = tokenId - collectionId * 10000000000;
 
-  const collection = await fetchNextGenCollection(collectionId);
+  const collection = await fetchNextGenCollection(entityManager, collectionId);
   if (!collection) {
     logger.info(`[UPSERT TOKEN] : [COLLECTION ID ${collectionId} NOT FOUND]`);
   }
@@ -122,7 +125,7 @@ async function processTransfer(
     transaction_date: new Date(blockTimestamp * 1000),
     from_address: logInfo.args.from,
     to_address: logInfo.args.to,
-    contract: NEXTGEN_CORE_CONTRACT[NEXTGEN_NETWORK],
+    contract: NEXTGEN_CORE_CONTRACT[network],
     token_id: parseInt(logInfo.args.tokenId),
     token_count: 1,
     value: 0,
@@ -135,7 +138,7 @@ async function processTransfer(
   };
 
   const transactionWithValue: NextGenTransaction = (
-    await findTransactionValues([transaction], NEXTGEN_NETWORK)
+    await findTransactionValues([transaction], network)
   )[0];
 
   const isMint = areEqualAddresses(logInfo.args.from, NULL_ADDRESS);
@@ -160,10 +163,11 @@ async function processTransfer(
     description += ` for ${transactionWithValue.value} ETH`;
   }
 
-  await persistNextgenTransactions([transactionWithValue]);
+  await persistNextgenTransactions(entityManager, [transactionWithValue]);
 
   if (collection) {
     await upsertToken(
+      entityManager,
       collection,
       tokenId,
       normalisedTokenId,
@@ -179,6 +183,7 @@ async function processTransfer(
 }
 
 export async function upsertToken(
+  entityManager: EntityManager,
   collection: NextGenCollection,
   tokenId: number,
   normalisedTokenId: number,
@@ -206,12 +211,17 @@ export async function upsertToken(
 
     if (isMint) {
       collection.mint_count += 1;
-      await persistNextGenCollection(collection);
+      await persistNextGenCollection(entityManager, collection);
     }
-    await persistNextGenToken(nextGenToken);
+    await persistNextGenToken(entityManager, nextGenToken);
 
     if (metadataResponse.attributes) {
-      await processTraits(tokenId, collection.id, metadataResponse.attributes);
+      await processTraits(
+        entityManager,
+        tokenId,
+        collection.id,
+        metadataResponse.attributes
+      );
     }
   } catch (e) {
     logger.info(
@@ -221,18 +231,13 @@ export async function upsertToken(
 }
 
 export async function processTraits(
+  entityManager: EntityManager,
   tokenId: number,
   collectionId: number,
   attributes: { trait_type: string; value: string }[]
 ) {
-  const traits: NextGenTrait[] = [];
   const tokenTraits: NextGenTokenTrait[] = [];
   for (const attribute of attributes) {
-    const trait: NextGenTrait = {
-      collection_id: collectionId,
-      trait: attribute.trait_type
-    };
-    traits.push(trait);
     const tokenTrait: NextGenTokenTrait = {
       token_id: tokenId,
       collection_id: collectionId,
@@ -242,5 +247,5 @@ export async function processTraits(
     tokenTraits.push(tokenTrait);
   }
 
-  await persistNextGenTraits(traits, tokenTraits);
+  await persistNextGenTraits(entityManager, tokenTraits);
 }

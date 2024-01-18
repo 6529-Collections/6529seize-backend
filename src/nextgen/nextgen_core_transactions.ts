@@ -6,29 +6,30 @@ import {
   Network,
   SortingOrder
 } from 'alchemy-sdk';
-import {
-  NEXTGEN_CF_BASE_PATH,
-  NEXTGEN_CORE_CONTRACT,
-  NEXTGEN_NETWORK
-} from '../constants';
 import { Logger } from '../logging';
 import { NEXTGEN_CORE_IFACE } from '../abis/nextgen';
 import { NextGenCollection, NextGenLog } from '../entities/INextGen';
 import {
-  fetchNextGenCollection,
-  fetchNextGenCollectionIndex,
   persistNextGenCollection,
-  persistNextGenLogs
-} from '../db';
-import { Time } from '../time';
+  persistNextGenLogs,
+  fetchNextGenCollection,
+  fetchNextGenCollectionIndex
+} from './nextgen.db';
+import { EntityManager } from 'typeorm';
+import {
+  NEXTGEN_CF_BASE_PATH,
+  NEXTGEN_CORE_CONTRACT,
+  getNextgenNetwork
+} from './nextgen_constants';
 
 const logger = Logger.get('NEXTGEN_CORE_TRANSACTIONS');
 
 export async function findCoreTransactions(
+  entityManager: EntityManager,
   alchemy: Alchemy,
   startBlock: number,
   endBlock: number,
-  pageKey: string | undefined
+  pageKey?: string
 ) {
   logger.info(
     `[FINDING TRANSACTIONS] : [START BLOCK ${startBlock}] : [END BLOCK ${endBlock}] : [PAGE KEY ${pageKey}]`
@@ -40,7 +41,7 @@ export async function findCoreTransactions(
     fromBlock: `0x${startBlock.toString(16)}`,
     toBlock: `0x${endBlock.toString(16)}`,
     pageKey: pageKey,
-    toAddress: NEXTGEN_CORE_CONTRACT[NEXTGEN_NETWORK],
+    toAddress: NEXTGEN_CORE_CONTRACT[getNextgenNetwork()],
     withMetadata: true,
     order: SortingOrder.ASCENDING
   };
@@ -56,7 +57,7 @@ export async function findCoreTransactions(
       });
       const methodName = parsedReceipt.name;
       const args = parsedReceipt.args;
-      const processedLogs = await processLog(methodName, args);
+      const processedLogs = await processLog(entityManager, methodName, args);
       const timestamp = new Date(transfer.metadata.blockTimestamp);
       processedLogs.forEach((processedLog, index) => {
         const l: NextGenLog = {
@@ -73,14 +74,21 @@ export async function findCoreTransactions(
     }
   }
 
-  await persistNextGenLogs(logs);
+  await persistNextGenLogs(entityManager, logs);
 
   if (response.pageKey) {
-    await findCoreTransactions(alchemy, startBlock, endBlock, response.pageKey);
+    await findCoreTransactions(
+      entityManager,
+      alchemy,
+      startBlock,
+      endBlock,
+      response.pageKey
+    );
   }
 }
 
 async function processLog(
+  entityManager: EntityManager,
   methodName: string,
   args: ethers.utils.Result
 ): Promise<
@@ -91,17 +99,17 @@ async function processLog(
 > {
   switch (methodName) {
     case 'createCollection':
-      return await createCollection(args);
+      return await createCollection(entityManager, args);
     case 'updateCollectionInfo':
-      return await updateCollectionInfo(args);
+      return await updateCollectionInfo(entityManager, args);
     case 'artistSignature':
-      return await artistSignature(args);
+      return await artistSignature(entityManager, args);
     case 'setCollectionData':
-      return await setCollectionData(args);
+      return await setCollectionData(entityManager, args);
     case 'changeMetadataView':
-      return await changeMetadataView(args);
+      return await changeMetadataView(entityManager, args);
     case 'updateImagesAndAttributes':
-      return await updateImagesAndAttributes(args);
+      return await updateImagesAndAttributes(entityManager, args);
     case 'addRandomizer':
       return await addRandomizer(args);
     case 'setApprovalForAll':
@@ -123,13 +131,16 @@ async function processLog(
   ];
 }
 
-async function createCollection(args: ethers.utils.Result): Promise<
+async function createCollection(
+  entityManager: EntityManager,
+  args: ethers.utils.Result
+): Promise<
   {
     id: number;
     description: string;
   }[]
 > {
-  const latestId = await fetchNextGenCollectionIndex();
+  const latestId = await fetchNextGenCollectionIndex(entityManager);
   const newId = latestId + 1;
   const image = getCollectionImage(newId);
   const collection: NextGenCollection = {
@@ -144,7 +155,7 @@ async function createCollection(args: ethers.utils.Result): Promise<
     image: image,
     mint_count: 0
   };
-  await persistNextGenCollection(collection);
+  await persistNextGenCollection(entityManager, collection);
   return [
     {
       id: newId,
@@ -153,7 +164,10 @@ async function createCollection(args: ethers.utils.Result): Promise<
   ];
 }
 
-async function updateCollectionInfo(args: ethers.utils.Result): Promise<
+async function updateCollectionInfo(
+  entityManager: EntityManager,
+  args: ethers.utils.Result
+): Promise<
   {
     id: number;
     description: string;
@@ -182,7 +196,7 @@ async function updateCollectionInfo(args: ethers.utils.Result): Promise<
   } else {
     description = `Script at index ${scriptIndex} updated`;
   }
-  await persistNextGenCollection(collection);
+  await persistNextGenCollection(entityManager, collection);
   return [
     {
       id: collectionId,
@@ -191,7 +205,10 @@ async function updateCollectionInfo(args: ethers.utils.Result): Promise<
   ];
 }
 
-async function artistSignature(args: ethers.utils.Result): Promise<
+async function artistSignature(
+  entityManager: EntityManager,
+  args: ethers.utils.Result
+): Promise<
   {
     id: number;
     description: string;
@@ -199,7 +216,7 @@ async function artistSignature(args: ethers.utils.Result): Promise<
 > {
   const id = parseInt(args[0]);
   const signature = args[1];
-  const collection = await fetchNextGenCollection(id);
+  const collection = await fetchNextGenCollection(entityManager, id);
   if (!collection) {
     logger.info(
       `[METHOD NAME ARTIST SIGNATURE] : [COLLECTION ID ${id} NOT FOUND]`
@@ -207,7 +224,7 @@ async function artistSignature(args: ethers.utils.Result): Promise<
     return [];
   }
   collection.artist_signature = signature;
-  await persistNextGenCollection(collection);
+  await persistNextGenCollection(entityManager, collection);
   return [
     {
       id: id,
@@ -216,7 +233,10 @@ async function artistSignature(args: ethers.utils.Result): Promise<
   ];
 }
 
-async function setCollectionData(args: ethers.utils.Result): Promise<
+async function setCollectionData(
+  entityManager: EntityManager,
+  args: ethers.utils.Result
+): Promise<
   {
     id: number;
     description: string;
@@ -228,7 +248,7 @@ async function setCollectionData(args: ethers.utils.Result): Promise<
   const totalSupply = parseInt(args[3]);
   const finalSupplyAfterMint = parseInt(args[4]);
 
-  const collection = await fetchNextGenCollection(id);
+  const collection = await fetchNextGenCollection(entityManager, id);
   if (!collection) {
     logger.info(
       `[METHOD NAME SET COLLECTION DATA] : [COLLECTION ID ${id} NOT FOUND]`
@@ -239,7 +259,7 @@ async function setCollectionData(args: ethers.utils.Result): Promise<
   collection.max_purchases = maxPurchases;
   collection.total_supply = totalSupply;
   collection.final_supply_after_mint = finalSupplyAfterMint;
-  await persistNextGenCollection(collection);
+  await persistNextGenCollection(entityManager, collection);
 
   return [
     {
@@ -249,7 +269,10 @@ async function setCollectionData(args: ethers.utils.Result): Promise<
   ];
 }
 
-async function changeMetadataView(args: ethers.utils.Result): Promise<
+async function changeMetadataView(
+  entityManager: EntityManager,
+  args: ethers.utils.Result
+): Promise<
   {
     id: number;
     description: string;
@@ -258,7 +281,7 @@ async function changeMetadataView(args: ethers.utils.Result): Promise<
   const id = parseInt(args[0]);
   const onChain: boolean = args[1];
 
-  const collection = await fetchNextGenCollection(id);
+  const collection = await fetchNextGenCollection(entityManager, id);
   if (!collection) {
     logger.info(
       `[METHOD NAME CHANGE METADATA VIEW] : [COLLECTION ID ${id} NOT FOUND]`
@@ -266,7 +289,7 @@ async function changeMetadataView(args: ethers.utils.Result): Promise<
     return [];
   }
   collection.on_chain = onChain;
-  await persistNextGenCollection(collection);
+  await persistNextGenCollection(entityManager, collection);
 
   return [
     {
@@ -278,7 +301,10 @@ async function changeMetadataView(args: ethers.utils.Result): Promise<
   ];
 }
 
-async function updateImagesAndAttributes(args: ethers.utils.Result): Promise<
+async function updateImagesAndAttributes(
+  entityManager: EntityManager,
+  args: ethers.utils.Result
+): Promise<
   {
     id: number;
     description: string;
@@ -289,7 +315,10 @@ async function updateImagesAndAttributes(args: ethers.utils.Result): Promise<
   for (const tokenId of tokenIds) {
     const tokenIdInt = parseInt(tokenId);
     const collectionId = Math.round(tokenId / 10000000000);
-    const collection = await fetchNextGenCollection(collectionId);
+    const collection = await fetchNextGenCollection(
+      entityManager,
+      collectionId
+    );
     if (!collection) {
       logger.info(
         `[METHOD NAME UPDATE IMAGES AND ATTRIBUTES] : [COLLECTION ID ${collectionId} NOT FOUND]`
@@ -322,7 +351,10 @@ async function addRandomizer(args: ethers.utils.Result): Promise<
 }
 
 function getCollectionImage(collectionId: number): string {
+  const network = getNextgenNetwork();
   return `${NEXTGEN_CF_BASE_PATH}${
-    NEXTGEN_NETWORK === Network.ETH_GOERLI ? 'testnet' : 'mainnet'
+    network === Network.ETH_SEPOLIA || network === Network.ETH_GOERLI
+      ? 'testnet'
+      : 'mainnet'
   }/png/${collectionId * 10000000000}`;
 }

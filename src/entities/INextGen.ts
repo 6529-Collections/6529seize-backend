@@ -4,9 +4,7 @@ import {
   PrimaryColumn,
   Column,
   UpdateDateColumn,
-  Index,
-  OneToMany,
-  ManyToOne
+  Index
 } from 'typeorm';
 import {
   NEXTGEN_ALLOWLIST_BURN_TABLE,
@@ -18,9 +16,8 @@ import {
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_TOKENS_TABLE,
   NEXTGEN_TRANSACTIONS_TABLE,
-  NEXTGEN_TRAITS_TABLE,
   NEXTGEN_TOKEN_TRAITS_TABLE
-} from '../constants';
+} from '../nextgen/nextgen_constants';
 import { BlockEntity } from './IBlock';
 import { BaseTransaction } from './ITransaction';
 
@@ -399,21 +396,6 @@ export class NextGenTransaction extends BaseTransaction {
   @Index()
   @PrimaryColumn({ type: 'bigint' })
   token_id!: number;
-}
-
-@Entity(NEXTGEN_TRAITS_TABLE)
-export class NextGenTrait {
-  @CreateDateColumn({ type: 'datetime' })
-  created_at?: Date;
-
-  @UpdateDateColumn({ type: 'datetime' })
-  updated_at?: Date;
-
-  @PrimaryColumn({ type: 'int' })
-  collection_id!: number;
-
-  @PrimaryColumn({ type: 'varchar', length: 100 })
-  trait!: string;
 }
 
 @Entity(NEXTGEN_TOKEN_TRAITS_TABLE)

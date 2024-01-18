@@ -1,0 +1,45 @@
+import { goerli, sepolia } from '@wagmi/chains';
+import { Network } from 'alchemy-sdk';
+
+export const NEXTGEN_BLOCKS_TABLE = 'nextgen_blocks';
+export const NEXTGEN_LOGS_TABLE = 'nextgen_logs';
+export const NEXTGEN_COLLECTIONS_TABLE = 'nextgen_collections';
+export const NEXTGEN_TOKENS_TABLE = 'nextgen_tokens';
+export const NEXTGEN_ALLOWLIST_TABLE = 'nextgen_allowlist';
+export const NEXTGEN_TRANSACTIONS_TABLE = 'nextgen_transactions';
+export const NEXTGEN_TOKEN_TRAITS_TABLE = 'nextgen_token_traits';
+export const NEXTGEN_ALLOWLIST_BURN_TABLE = 'nextgen_allowlist_burn';
+export const NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE =
+  'nextgen_allowlist_collection';
+export const NEXTGEN_BURN_COLLECTIONS_TABLE = 'nextgen_burn_collection';
+
+export const NEXTGEN_CF_BASE_PATH =
+  'https://media-proxy.nextgen-generator.seize.io/';
+
+export const NEXTGEN_ROYALTIES_ADDRESS =
+  '0xC8ed02aFEBD9aCB14c33B5330c803feacAF01377';
+
+export function getNextgenNetwork() {
+  if (process.env.NEXTGEN_CHAIN_ID) {
+    const chainId: number = parseInt(process.env.NEXTGEN_CHAIN_ID);
+    if (chainId == sepolia.id) {
+      return Network.ETH_SEPOLIA;
+    }
+    if (chainId == goerli.id) {
+      return Network.ETH_GOERLI;
+    }
+  }
+  return Network.ETH_MAINNET;
+}
+
+export const NEXTGEN_CORE_CONTRACT = {
+  [Network.ETH_GOERLI]: '0x25a972f1bf3c816061ceaea59d2bb3fe4c130766',
+  [Network.ETH_SEPOLIA]: '0x16757ad6Ed2e26B17E7d0fD501908e88B79a6BAb',
+  [Network.ETH_MAINNET]: '0xC3390e3D2e98544DcBB6f235a3B15345A6728E8c'
+};
+
+export const NEXTGEN_MINTER_CONTRACT = {
+  [Network.ETH_GOERLI]: '0x1a7040a7d4baf44f136c50626a4e8f4ae5ca170f',
+  [Network.ETH_SEPOLIA]: '0xaDA9027EaF134038d3731f677241c4351b799Eb4',
+  [Network.ETH_MAINNET]: '0x6113fd2c91514e84e6149c6ede47f2e09545253a'
+};
