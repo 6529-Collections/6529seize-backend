@@ -175,7 +175,7 @@ router.post(
     );
     if (proposedCategory !== '') {
       const abusivenessDetectionResult =
-        await abusivenessCheckService.checkAbusiveness(category);
+        await abusivenessCheckService.checkRepPhrase(category);
       if (abusivenessDetectionResult.status === 'DISALLOWED') {
         throw new BadRequestException(
           abusivenessDetectionResult.explanation ??

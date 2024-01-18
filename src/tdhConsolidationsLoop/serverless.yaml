@@ -16,6 +16,7 @@ functions:
   tdhConsolidationsLoop:
     handler: index.handler
     name: tdhConsolidationsLoop
+    description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
     vpc:
