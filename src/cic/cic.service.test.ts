@@ -1,7 +1,7 @@
 import { CicDb } from './cic.db';
 import { ProfileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
 import { CicService } from './cic.service';
-import { Mock } from 'ts-jest-mocker';
+import { mock, Mock } from "ts-jest-mocker";
 import { CicStatementGroup } from '../entities/ICICStatement';
 import {
   expectExceptionWithMessage,
@@ -11,16 +11,19 @@ import {
 import { when } from 'jest-when';
 import { uniqueShortId } from '../helpers';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
+import { AbusivenessCheckService } from "../profiles/abusiveness-check.service";
 
 describe('CicService', () => {
   let cicDb: Mock<CicDb>;
   let profileActivityLogsDb: Mock<ProfileActivityLogsDb>;
+  let abusivenessCheckService: Mock<AbusivenessCheckService>;
   let cicService: CicService;
 
   beforeEach(() => {
     cicDb = mockDbService();
     profileActivityLogsDb = mockDbService();
-    cicService = new CicService(cicDb, profileActivityLogsDb);
+    abusivenessCheckService = mock(AbusivenessCheckService);
+    cicService = new CicService(cicDb, profileActivityLogsDb, abusivenessCheckService);
   });
 
   describe('getCicStatementByIdAndProfileIdOrThrow', () => {
