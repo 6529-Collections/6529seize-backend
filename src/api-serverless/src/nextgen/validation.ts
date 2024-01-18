@@ -1,5 +1,5 @@
 import { ethers } from 'ethers';
-import Joi from 'joi';
+import * as Joi from 'joi';
 import { hashMessage } from '@ethersproject/hash';
 import { areEqualAddresses, stringToHex } from '../../../helpers';
 import { Readable } from 'stream';
