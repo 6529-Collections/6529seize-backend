@@ -85,6 +85,7 @@ jobs:
         if: github.event.inputs.service == 'api'
         run: |
           aws lambda update-function-code --function-name  seizeAPI --zip-file fileb://src/api-serverless/dist/index.zip
+          sleep 10
           aws lambda update-function-configuration --function-name seizeAPI --description "$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
       - name: Notify about failure
         uses: sarisia/actions-status-discord@v1
