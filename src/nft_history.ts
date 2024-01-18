@@ -10,8 +10,7 @@ import {
   ALCHEMY_SETTINGS,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
-  MEMES_DEPLOYER,
-  NULL_ADDRESS
+  MEMES_DEPLOYER
 } from './constants';
 import {
   fetchLatestNftHistoryBlockNumber,

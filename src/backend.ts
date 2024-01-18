@@ -2,32 +2,14 @@ import { Logger } from './logging';
 import { Time } from './time';
 
 const logger = Logger.get('BACKEND');
+const tdh = require('./tdhLoop');
 
 async function start() {
   const start = Time.now();
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  // Uncomment to call on start
+  await tdh.handler();
 
-  // await nftHistory.handler();
-  // await delegations.handler();
-  // await transactions.handler();
-  // await nfts.handler();
-  // await owners.handler();
-  // await ownerMetrics.handler();
-  // await tdhConsolidations.handler();
-  // await memeLab.handler();
-  // await memeStats();
-  // await gradientStats();
-  // await memeLabStats();
-  // await s3.handler();
-  // await team.handler();
-  // await discoverEnsLoop.handler();
-  // await refreshEnsLoop.handler();
-  // await royaltiesLoop.handler();
-  // await transactions.handlerValues();
-  // await rememes.handler();
-  // await transactionsReplay.handler();
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}] [SERVICE STARTED...]`);
 }

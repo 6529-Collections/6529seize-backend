@@ -1,5 +1,9 @@
 import axios, { AxiosResponse } from 'axios';
-import { CONSOLIDATIONS_LIMIT } from './constants';
+import {
+  CONSOLIDATIONS_LIMIT,
+  NULL_ADDRESS,
+  NULL_ADDRESS_DEAD
+} from './constants';
 import * as short from 'short-uuid';
 
 export function areEqualAddresses(w1: string, w2: string) {
@@ -7,6 +11,13 @@ export function areEqualAddresses(w1: string, w2: string) {
     return false;
   }
   return w1.toUpperCase() === w2.toUpperCase();
+}
+
+export function isNullAddress(address: string) {
+  return (
+    areEqualAddresses(address, NULL_ADDRESS) ||
+    areEqualAddresses(address, NULL_ADDRESS_DEAD)
+  );
 }
 
 export function getDaysDiff(t1: Date, t2: Date, floor = true) {

@@ -19,7 +19,7 @@ import { Logger } from '../logging';
 import { Time } from '../time';
 import { ProfileTdh, ProfileTdhLog } from '../entities/IProfileTDH';
 import { Profile } from '../entities/IProfile';
-import * as sentryContext from "../sentry.context";
+import * as sentryContext from '../sentry.context';
 
 const logger = Logger.get('TDH_LOOP');
 
@@ -45,10 +45,10 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 
 export async function tdhLoop(force?: boolean) {
   await tdh(force);
-  await findNftTDH();
-  await uploadTDH(force);
-  await uploadConsolidatedTDH(force);
-  await notifier.notifyTdhCalculationsDone();
+  // await findNftTDH();
+  // await uploadTDH(force);
+  // await uploadConsolidatedTDH(force);
+  // await notifier.notifyTdhCalculationsDone();
 }
 
 async function tdh(force?: boolean) {

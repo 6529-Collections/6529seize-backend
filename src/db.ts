@@ -76,7 +76,8 @@ import { Rememe, RememeUpload } from './entities/IRememe';
 import {
   areEqualAddresses,
   extractConsolidationWallets,
-  formatAddress
+  formatAddress,
+  isNullAddress
 } from './helpers';
 import { getConsolidationsSql } from './sql_helpers';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
@@ -564,10 +565,8 @@ export async function fetchTransactionsFromDate(
 }
 
 export async function fetchAllOwnersAddresses() {
-  const sql = `SELECT distinct wallet FROM ${OWNERS_TABLE} WHERE wallet != :null_address;`;
-  const results = await sqlExecutor.execute(sql, {
-    null_address: NULL_ADDRESS
-  });
+  const sql = `SELECT distinct wallet FROM ${OWNERS_TABLE};`;
+  const results = await sqlExecutor.execute(sql);
   return results;
 }
 
@@ -586,12 +585,18 @@ export async function fetchWalletTransactions(wallet: string, block?: number) {
   const sql = `SELECT * FROM ${TRANSACTIONS_TABLE}`;
   const params: any = {};
 
-  let filters = constructFilters(
-    'filters',
-    `(from_address = :from_address OR to_address = :to_address)`
-  );
-  params.from_address = wallet;
-  params.to_address = wallet;
+  let filters;
+  if (isNullAddress(wallet)) {
+    filters = constructFilters('filters', `to_address = :wallet`);
+    params.wallet = wallet;
+  } else {
+    filters = constructFilters(
+      'filters',
+      `(from_address = :from_address OR to_address = :to_address)`
+    );
+    params.from_address = wallet;
+    params.to_address = wallet;
+  }
 
   if (block) {
     filters = constructFilters(filters, `block <= :block`);
