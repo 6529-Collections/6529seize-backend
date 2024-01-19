@@ -205,7 +205,7 @@ export async function upsertToken(
       image_url: metadataResponse.image,
       animation_url: metadataResponse.animation_url,
       generator_url: metadataResponse.generator_url,
-      owner: owner,
+      owner: owner.toLowerCase(),
       pending: pending
     };
 

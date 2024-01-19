@@ -38,7 +38,7 @@ export class NextGenAllowlist {
   @Column({ type: 'int' })
   spots!: number;
 
-  @Column({ type: 'text' })
+  @PrimaryColumn({ type: 'varchar', length: 500 })
   info!: string;
 
   @Column({ type: 'text' })
@@ -59,7 +59,7 @@ export class NextGenAllowlistBurn {
   @PrimaryColumn({ type: 'varchar', length: 100 })
   token_id!: string;
 
-  @Column({ type: 'text' })
+  @PrimaryColumn({ type: 'varchar', length: 500 })
   info!: string;
 
   @Column({ type: 'text' })

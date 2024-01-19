@@ -102,6 +102,17 @@ export async function fetchPendingNextgenTokens(manager: EntityManager) {
   });
 }
 
+export async function fetchNextGenTokensForCollection(
+  manager: EntityManager,
+  collection: NextGenCollection
+) {
+  return await manager.getRepository(NextGenToken).find({
+    where: {
+      collection_id: collection.id
+    }
+  });
+}
+
 export async function fetchNextGenTokenTraits(
   manager: EntityManager
 ): Promise<NextGenTokenTrait[]> {

@@ -38,6 +38,7 @@ on:
           - transactionsLoop
           - transactionsReplayLoop
           - nextgenContractLoop
+          - nextgenMetadataLoop
       branch:
         description: 'Branch name'
         required: true

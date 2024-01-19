@@ -160,17 +160,25 @@ export async function fetchNextGenCollectionTokens(
     collectionId: collectionId
   };
   if (traits.length > 0) {
-    filters = constructFilters(
-      filters,
-      `EXISTS (
-      SELECT 1
-      FROM ${NEXTGEN_TOKEN_TRAITS_TABLE}
-      WHERE ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id = ${NEXTGEN_TOKENS_TABLE}.id
-      AND ${NEXTGEN_TOKEN_TRAITS_TABLE}.trait in (:traits)
-    )`
-    );
-    params.traits = traits;
+    traits.forEach((trait, index) => {
+      const parts = trait.split(':');
+      const key = parts[0];
+      const value = parts[1];
+      filters = constructFilters(
+        filters,
+        `EXISTS (
+        SELECT 1
+        FROM ${NEXTGEN_TOKEN_TRAITS_TABLE}
+        WHERE ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id = ${NEXTGEN_TOKENS_TABLE}.id
+        AND ${NEXTGEN_TOKEN_TRAITS_TABLE}.trait = :trait${index}
+        AND ${NEXTGEN_TOKEN_TRAITS_TABLE}.value = :value${index}
+      )`
+      );
+      params[`trait${index}`] = key;
+      params[`value${index}`] = value;
+    });
   }
+
   return fetchPaginated(
     NEXTGEN_TOKENS_TABLE,
     params,
