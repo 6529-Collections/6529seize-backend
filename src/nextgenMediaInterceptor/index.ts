@@ -85,5 +85,8 @@ function buildJsonResponse(response: any, body: any) {
   response.headers['content-type'] = [
     { key: 'Content-Type', value: 'application/json' }
   ];
+  response.headers['cache-control'] = [
+    { key: 'Cache-Control', value: 'no-store' }
+  ];
   return response;
 }

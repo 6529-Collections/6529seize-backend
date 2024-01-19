@@ -5,7 +5,7 @@ import {
 } from '@aws-sdk/client-cloudfront';
 import { Logger } from '../logging';
 import { Time } from '../time';
-import { NEXTGEN_CF_BASE_PATH } from '../constants';
+import { NEXTGEN_CF_BASE_PATH } from '../nextgen/nextgen_constants';
 
 const logger = Logger.get('NEXTGEN_MEDIA_UPLOADER');
 const GENERATOR_BASE_PATH = 'https://nextgen-generator.seize.io/';
@@ -132,25 +132,16 @@ async function uploadMissingNextgenMedia(path: string) {
     })
   );
 
-  await invalidatePath(metadataPath);
-  await invalidatePath(imagePath);
-  await invalidatePath(htmlPath);
-
-  logger.info(
-    `[METADATA UPLOAD ETAG ${metadataUpload.ETag}] : [PATH INVALIDATED ${metadataPath}]`
-  );
-  logger.info(
-    `[IMAGE UPLOAD ETAG ${imageUpload.ETag}] : [PATH INVALIDATED ${imagePath}]`
-  );
-  logger.info(
-    `[HTML UPLOAD ETAG ${htmlUpload.ETag}] : [PATH INVALIDATED ${htmlPath}]`
-  );
+  await invalidatePath(path);
 }
 
 async function invalidatePath(path: string) {
   if (!path.startsWith('/')) {
     path = `/${path}`;
   }
+  const pathParts = path.split('/', 3);
+  const invalidationPath = `/${pathParts[1]}/*`;
+  logger.info(`[INVALIDATING PATH] : [PATH ${invalidationPath}]`);
   try {
     await cloudfront.send(
       new CreateInvalidationCommand({
@@ -159,12 +150,14 @@ async function invalidatePath(path: string) {
           CallerReference: Date.now().toString(),
           Paths: {
             Quantity: 1,
-            Items: [path]
+            Items: [invalidationPath]
           }
         }
       })
     );
   } catch (e) {
-    logger.info(`[INVALIDATE ERROR] : [PATH ${path}] : [ERROR ${e}]`);
+    logger.info(
+      `[INVALIDATE ERROR] : [PATH ${invalidationPath}] : [ERROR ${e}]`
+    );
   }
 }

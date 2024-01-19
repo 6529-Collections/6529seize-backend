@@ -12,7 +12,12 @@ provider:
   memorySize: 1028
   timeout: 900
   environment:
-    NEXTGEN_CHAIN_ID: 11155111
+    NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
+
+custom:
+  chainIDs:
+    staging: 11155111
+    prod: 1
 
 functions:
   nextgenContractLoop:

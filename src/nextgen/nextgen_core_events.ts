@@ -210,6 +210,9 @@ export async function upsertToken(
     };
 
     if (isMint) {
+      logger.info(
+        `[TOKEN ID ${tokenId}] : [MINTED] : [COLLECTION MINT COUNT ${collection.mint_count}] : [UPDATING COLLECTION MINT COUNT...]`
+      );
       collection.mint_count += 1;
       await persistNextGenCollection(entityManager, collection);
     }
