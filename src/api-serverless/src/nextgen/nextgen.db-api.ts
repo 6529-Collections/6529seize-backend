@@ -38,30 +38,27 @@ export async function fetchNextGenAllowlist(
     })
   )[0];
 
-  const sql2 = `SELECT * FROM ${NEXTGEN_ALLOWLIST_TABLE} WHERE merkle_root=:merkle_root AND address=:address`;
+  const sql2 = `SELECT * FROM ${NEXTGEN_ALLOWLIST_TABLE} WHERE merkle_root=:merkle_root AND address=:address ORDER BY spots ASC`;
 
-  const allowlist = (
-    await sqlExecutor.execute(sql2, {
-      merkle_root: merkleRoot,
-      address: address
-    })
-  )[0];
+  const allowlists = await sqlExecutor.execute(sql2, {
+    merkle_root: merkleRoot,
+    address: address
+  });
 
-  if (collection && allowlist) {
-    const proof = getProof(collection.merkle_tree, allowlist.keccak);
-    return {
-      keccak: allowlist.keccak,
-      spots: allowlist.spots,
-      info: allowlist.info,
-      proof: proof
-    };
+  if (collection && allowlists.length > 0) {
+    const response = [];
+    for (const allowlist of allowlists) {
+      const proof = getProof(collection.merkle_tree, allowlist.keccak);
+      response.push({
+        keccak: allowlist.keccak,
+        spots: allowlist.spots,
+        info: allowlist.info,
+        proof: proof
+      });
+    }
+    return response;
   }
-  return {
-    keccak: null,
-    spots: -1,
-    data: null,
-    proof: []
-  };
+  return [];
 }
 
 export async function fetchNextGenBurnAllowlist(

@@ -10,7 +10,7 @@ import {
   getNextGenChainId
 } from './abis';
 import { Logger } from '../../../logging';
-import { goerli, sepolia } from '@wagmi/chains';
+import { goerli, mainnet, sepolia } from '@wagmi/chains';
 const { keccak256 } = require('@ethersproject/keccak256');
 const { MerkleTree } = require('merkletreejs');
 
@@ -371,11 +371,11 @@ async function validateAdmin(collection_id: number, address: string) {
 }
 
 function getUrl(chainId: number) {
-  if (chainId === goerli.id) {
-    return `https://eth-goerli.alchemyapi.io/v2/${process.env.ALCHEMY_API_KEY}`;
-  }
-  if (chainId === sepolia.id) {
-    return `https://eth-sepolia.alchemyapi.io/v2/${process.env.ALCHEMY_API_KEY}`;
-  }
-  return `https://eth-mainnet.alchemyapi.io/v2/${process.env.ALCHEMY_API_KEY}`;
+  return `https://eth-${
+    chainId === goerli.id
+      ? goerli.network
+      : chainId === sepolia.id
+      ? sepolia.network
+      : mainnet.network
+  }.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
 }
