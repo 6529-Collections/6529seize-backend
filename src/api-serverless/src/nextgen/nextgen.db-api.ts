@@ -264,3 +264,30 @@ export async function fetchNextGenTokenTraits(tokenId: number) {
     }
   );
 }
+
+export async function fetchFeaturedCollection() {
+  const sql = `SELECT * 
+    FROM ${NEXTGEN_COLLECTIONS_TABLE} 
+    ORDER BY 
+        CASE 
+            WHEN now() BETWEEN FROM_UNIXTIME(allowlist_start) AND FROM_UNIXTIME(allowlist_end) 
+                OR now() BETWEEN FROM_UNIXTIME(public_start) AND FROM_UNIXTIME(public_end) 
+            THEN 0 
+            ELSE 1 
+        END, 
+        CASE 
+            WHEN now() < FROM_UNIXTIME(allowlist_start) 
+            THEN TIMESTAMPDIFF(SECOND, now(), FROM_UNIXTIME(allowlist_start)) 
+            WHEN now() < FROM_UNIXTIME(public_start) 
+            THEN TIMESTAMPDIFF(SECOND, now(), FROM_UNIXTIME(public_start)) 
+            ELSE 999999999 
+        END, 
+        RAND() 
+    LIMIT 1;
+    `;
+  const results = await sqlExecutor.execute(sql);
+  if (results.length === 1) {
+    return results[0];
+  }
+  return returnEmpty();
+}

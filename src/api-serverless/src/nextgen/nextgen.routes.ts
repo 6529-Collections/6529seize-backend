@@ -146,6 +146,13 @@ router.get(
   }
 );
 
+router.get(`/featured`, async function (req: any, res: any, next: any) {
+  logger.info(`[FETCHING FEATURED COLLECTION]`);
+  db.fetchFeaturedCollection().then((result) => {
+    return returnJsonResult(result, req, res);
+  });
+});
+
 router.get(`/collections`, async function (req: any, res: any, next: any) {
   const pageSize: number =
     req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
