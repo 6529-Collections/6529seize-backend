@@ -10,8 +10,8 @@ async function start() {
   const start = Time.now();
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  // await nextgenContract.handler();
-  await nextgenMetadata.handler();
+  await nextgenContract.handler();
+  // await nextgenMetadata.handler();
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
