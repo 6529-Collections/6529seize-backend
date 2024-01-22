@@ -28,9 +28,9 @@ describe(`AbusivenessCheckService`, () => {
   });
 
   it(`should throw BadRequestException if text is empty`, async () => {
-    await expect(
-      abusivenessCheckService.checkRepPhrase('  ')
-    ).rejects.toThrow('Text must be 1-100 characters');
+    await expect(abusivenessCheckService.checkRepPhrase('  ')).rejects.toThrow(
+      'Text must be 1-100 characters'
+    );
   });
 
   it(`should throw BadRequestException if text is longer than 100 characters`, async () => {

@@ -10,7 +10,9 @@ const STATUS_MAPPINGS: Record<string, 'ALLOWED' | 'DISALLOWED'> = {
 export class OpenAiAbusivenessDetectionService {
   constructor(private readonly supplyOpenAi: () => OpenAI) {}
 
-  public async checkRepPhraseText(text: string): Promise<AbusivenessDetectionResult> {
+  public async checkRepPhraseText(
+    text: string
+  ): Promise<AbusivenessDetectionResult> {
     const message = `
 Background
 
@@ -111,20 +113,20 @@ input: ${text}
 
   private async doCheck(message: string, text: string) {
     const response = await this.supplyOpenAi().chat.completions.create({
-      model: "gpt-4",
-      messages: [{ role: "user", content: message }]
+      model: 'gpt-4',
+      messages: [{ role: 'user', content: message }]
     });
 
     const responseContent = response.choices[0].message.content?.replace(
-      "\n",
-      " "
+      '\n',
+      ' '
     );
     if (!responseContent) {
       throw new Error(`OpenAI gave an empty response to given text`);
     }
-    const responseTokens = responseContent.split(" ");
+    const responseTokens = responseContent.split(' ');
     const decision = responseTokens[0];
-    const gptReason = responseTokens.slice(1).join(" ");
+    const gptReason = responseTokens.slice(1).join(' ');
     const status = STATUS_MAPPINGS[decision];
     if (!status) {
       throw new Error(

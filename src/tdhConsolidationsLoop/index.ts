@@ -7,7 +7,7 @@ import { ProfileTdh, ProfileTdhLog } from '../entities/IProfileTDH';
 import { Time } from '../time';
 import { Profile } from '../entities/IProfile';
 import { fetchAllConsolidationAddresses } from '../db';
-import * as sentryContext from "../sentry.context";
+import * as sentryContext from '../sentry.context';
 
 const logger = Logger.get('TDH_CONSOLIDATIONS_LOOP');
 

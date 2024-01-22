@@ -7,7 +7,10 @@ import {
 } from '../profileActivityLogs/profile-activity-logs.db';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { ConnectionWrapper } from '../sql-executor';
-import { abusivenessCheckService, AbusivenessCheckService } from "../profiles/abusiveness-check.service";
+import {
+  abusivenessCheckService,
+  AbusivenessCheckService
+} from '../profiles/abusiveness-check.service';
 
 const CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE: Record<
   CicStatementGroup,
@@ -230,7 +233,10 @@ export class CicService {
           statement.statement_group === CicStatementGroup.GENERAL &&
           statement.statement_type === 'BIO'
         ) {
-          const abusivenessDetectionResult = await this.abusivenessCheckService.checkBio(statement.statement_value);
+          const abusivenessDetectionResult =
+            await this.abusivenessCheckService.checkBio(
+              statement.statement_value
+            );
           if (abusivenessDetectionResult.status === 'DISALLOWED') {
             throw new BadRequestException(
               `Bio is not allowed: ${abusivenessDetectionResult.explanation}`
@@ -308,4 +314,8 @@ export class CicService {
   }
 }
 
-export const cicService = new CicService(cicDb, profileActivityLogsDb, abusivenessCheckService);
+export const cicService = new CicService(
+  cicDb,
+  profileActivityLogsDb,
+  abusivenessCheckService
+);

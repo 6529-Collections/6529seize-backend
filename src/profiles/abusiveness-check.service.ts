@@ -1,10 +1,13 @@
 import {
   openAiAbusivenessDetectionService,
   OpenAiAbusivenessDetectionService
-} from "../open-ai-abusiveness-detection.service";
-import { abusivenessCheckDb, AbusivenessCheckDb } from "./abusiveness-check.db";
-import { BadRequestException } from "../exceptions";
-import { AbusivenessDetectionResult, REP_CATEGORY_PATTERN } from "../entities/IAbusivenessDetectionResult";
+} from '../open-ai-abusiveness-detection.service';
+import { abusivenessCheckDb, AbusivenessCheckDb } from './abusiveness-check.db';
+import { BadRequestException } from '../exceptions';
+import {
+  AbusivenessDetectionResult,
+  REP_CATEGORY_PATTERN
+} from '../entities/IAbusivenessDetectionResult';
 
 export class AbusivenessCheckService {
   constructor(
@@ -26,7 +29,8 @@ export class AbusivenessCheckService {
     if (existingResult) {
       return existingResult;
     }
-    const result = await this.openAiAbusivenessDetectionService.checkRepPhraseText(txt);
+    const result =
+      await this.openAiAbusivenessDetectionService.checkRepPhraseText(txt);
     await this.abusivenessCheckDb.saveResult(result);
     return result;
   }

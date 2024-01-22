@@ -6,7 +6,7 @@ import { ProfileActivityLog } from '../entities/IProfileActivityLog';
 import { Rating } from '../entities/IRating';
 import { ratingsService } from '../rates/ratings.service';
 import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
-import * as sentryContext from "../sentry.context";
+import * as sentryContext from '../sentry.context';
 
 const logger = Logger.get('OVER_RATES_REVOCATION_LOOP');
 
