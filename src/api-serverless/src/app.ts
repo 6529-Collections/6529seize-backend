@@ -226,6 +226,10 @@ loadApi().then(() => {
   const BASE_PATH = '/api';
   const apiRouter = asyncRouter();
 
+  //TODO: REMOVE THIS AFTER TESTING
+  app.all('/nextgen*', (req: any, res: any, next: any) => {
+    next();
+  });
   app.all(`${BASE_PATH}*`, requireLogin);
   app.all(`${BASE_PATH}*`, checkCache);
 
