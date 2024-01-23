@@ -109,6 +109,7 @@ export async function connect(entities: any[] = []) {
       Transaction,
       OwnerMetric,
       NFT,
+      MemesExtendedData,
       Team,
       LabTransaction,
       RoyaltiesUpload,
@@ -894,59 +895,7 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
 }
 
 export async function persistMemesExtendedData(data: MemesExtendedData[]) {
-  if (data.length > 0) {
-    logger.info(
-      `[MEMES EXTENDED DATA] [PERSISTING ${data.length} MEMES EXTENDED DATA]`
-    );
-    await Promise.all(
-      data.map(async (md) => {
-        const sql = `REPLACE INTO ${MEMES_EXTENDED_DATA_TABLE} SET 
-            id=:id, 
-            created_at=:created_at, 
-            season=:season, 
-            meme=:meme, 
-            meme_name=:meme_name, 
-            collection_size=:collection_size, 
-            edition_size=:edition_size, 
-            edition_size_rank=:edition_size_rank, 
-            museum_holdings=:museum_holdings, 
-            museum_holdings_rank=:museum_holdings_rank, 
-            edition_size_cleaned=:edition_size_cleaned, 
-            edition_size_cleaned_rank=:edition_size_cleaned_rank, 
-            hodlers=:hodlers, 
-            hodlers_rank=:hodlers_rank, 
-            percent_unique=:percent_unique, 
-            percent_unique_rank=:percent_unique_rank, 
-            percent_unique_cleaned=:percent_unique_cleaned, 
-            percent_unique_cleaned_rank=:percent_unique_cleaned_rank`;
-
-        const params = {
-          id: md.id,
-          created_at: new Date(),
-          season: md.season,
-          meme: md.meme,
-          meme_name: md.meme_name,
-          collection_size: md.collection_size,
-          edition_size: md.edition_size,
-          edition_size_rank: md.edition_size_rank,
-          museum_holdings: md.museum_holdings,
-          museum_holdings_rank: md.museum_holdings_rank,
-          edition_size_cleaned: md.edition_size_cleaned,
-          edition_size_cleaned_rank: md.edition_size_cleaned_rank,
-          hodlers: md.hodlers,
-          hodlers_rank: md.hodlers_rank,
-          percent_unique: md.percent_unique,
-          percent_unique_rank: md.percent_unique_rank,
-          percent_unique_cleaned: md.percent_unique_cleaned,
-          percent_unique_cleaned_rank: md.percent_unique_cleaned_rank
-        };
-        await sqlExecutor.execute(sql, params);
-      })
-    );
-    logger.info(
-      `[MEMES EXTENDED DATA] [ALL ${data.length} MEMES EXTENDED DATA PERSISTED]`
-    );
-  }
+  await AppDataSource.getRepository(MemesExtendedData).save(data);
 }
 
 export async function findVolumeNFTs(nft: NFT): Promise<{

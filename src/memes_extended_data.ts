@@ -1,7 +1,7 @@
-import { MEMES_CONTRACT, NULL_ADDRESS, SIX529_MUSEUM } from './constants';
+import { MEMES_CONTRACT, SIX529_MUSEUM } from './constants';
 import { MemesExtendedData, NFT } from './entities/INFT';
 import { Owner } from './entities/IOwner';
-import { areEqualAddresses } from './helpers';
+import { areEqualAddresses, isNullAddress } from './helpers';
 import {
   fetchAllOwners,
   fetchNftsForContract,
@@ -27,19 +27,32 @@ export const findMemesExtendedData = async () => {
         o.token_id == nft.id && areEqualAddresses(o.contract, MEMES_CONTRACT)
     );
 
-    const tokenWallets = allTokenWallets.filter(
-      (tw) => !areEqualAddresses(NULL_ADDRESS, tw.wallet)
-    );
+    const nonBurntTokenWallets = [...allTokenWallets].filter(
+      (o) => !isNullAddress(o.wallet)
+    ).length;
+
+    const cleanedTokenWallets = [...allTokenWallets].filter(
+      (o) =>
+        !isNullAddress(o.wallet) && !areEqualAddresses(o.wallet, SIX529_MUSEUM)
+    ).length;
 
     let edition_size = 0;
     let museum_holdings = 0;
+    let burnt = 0;
+    let edition_size_not_burnt = 0;
     let edition_size_cleaned = 0;
-    tokenWallets.forEach((tw) => {
-      if (!areEqualAddresses(tw.wallet, SIX529_MUSEUM.toUpperCase())) {
-        edition_size_cleaned += tw.balance;
+    allTokenWallets.forEach((tw) => {
+      if (isNullAddress(tw.wallet)) {
+        burnt += tw.balance;
       } else {
-        museum_holdings += tw.balance;
+        edition_size_not_burnt += tw.balance;
+        if (!areEqualAddresses(tw.wallet, SIX529_MUSEUM)) {
+          edition_size_cleaned += tw.balance;
+        } else {
+          museum_holdings += tw.balance;
+        }
       }
+
       edition_size += tw.balance;
     });
 
@@ -63,16 +76,21 @@ export const findMemesExtendedData = async () => {
       meme_name: meme_name,
       collection_size: nfts.length,
       edition_size: edition_size,
+      edition_size_not_burnt: edition_size_not_burnt,
       edition_size_cleaned: edition_size_cleaned,
       museum_holdings: museum_holdings,
+      burnt: burnt,
       museum_holdings_rank: -1,
-      hodlers: tokenWallets.length,
-      percent_unique: tokenWallets.length / edition_size,
-      percent_unique_cleaned: tokenWallets.length / edition_size_cleaned,
+      hodlers: allTokenWallets.length,
+      percent_unique: allTokenWallets.length / edition_size,
+      percent_unique_not_burnt: nonBurntTokenWallets / edition_size_not_burnt,
+      percent_unique_cleaned: cleanedTokenWallets / edition_size_cleaned,
       edition_size_rank: -1,
+      edition_size_not_burnt_rank: -1,
       edition_size_cleaned_rank: -1,
       hodlers_rank: -1,
       percent_unique_rank: -1,
+      percent_unique_not_burnt_rank: -1,
       percent_unique_cleaned_rank: -1
     };
     memesMeta.push(meta);
@@ -85,6 +103,17 @@ export const findMemesExtendedData = async () => {
           return m;
         }
         if (m.edition_size == mm.edition_size) {
+          if (mm.id > m.id) {
+            return m;
+          }
+        }
+      }).length + 1;
+    mm.edition_size_not_burnt_rank =
+      memesMeta.filter((m) => {
+        if (mm.edition_size_not_burnt > m.edition_size_not_burnt) {
+          return m;
+        }
+        if (m.edition_size_not_burnt == mm.edition_size_not_burnt) {
           if (mm.id > m.id) {
             return m;
           }
@@ -129,6 +158,17 @@ export const findMemesExtendedData = async () => {
           return m;
         }
         if (m.percent_unique == mm.percent_unique) {
+          if (mm.id > m.id) {
+            return m;
+          }
+        }
+      }).length + 1;
+    mm.percent_unique_not_burnt_rank =
+      memesMeta.filter((m) => {
+        if (m.percent_unique_not_burnt > mm.percent_unique_not_burnt) {
+          return m;
+        }
+        if (m.percent_unique_not_burnt == mm.percent_unique_not_burnt) {
           if (mm.id > m.id) {
             return m;
           }

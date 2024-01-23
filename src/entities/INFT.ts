@@ -1,4 +1,5 @@
 import { Entity, Column, PrimaryColumn, BaseEntity } from 'typeorm';
+import { MEMES_EXTENDED_DATA_TABLE } from '../constants';
 export interface BaseNFT {
   id: number;
   contract: string;
@@ -195,25 +196,76 @@ export class NFT {
   total_volume!: number;
 }
 
-export interface MemesExtendedData {
-  id: number;
-  created_at: Date;
-  season: number;
-  meme: number;
-  meme_name: string;
-  collection_size: number;
-  edition_size: number;
-  edition_size_rank: number;
-  museum_holdings: number;
-  museum_holdings_rank: number;
-  edition_size_cleaned: number;
-  edition_size_cleaned_rank: number;
-  hodlers: number;
-  hodlers_rank: number;
-  percent_unique: number;
-  percent_unique_rank: number;
-  percent_unique_cleaned: number;
-  percent_unique_cleaned_rank: number;
+@Entity(MEMES_EXTENDED_DATA_TABLE)
+export class MemesExtendedData {
+  @PrimaryColumn({ type: 'int' })
+  id!: number;
+
+  @Column({ type: 'datetime' })
+  created_at!: Date;
+
+  @Column({ type: 'int' })
+  season!: number;
+
+  @Column({ type: 'int' })
+  meme!: number;
+
+  @Column({ type: 'text' })
+  meme_name!: string;
+
+  @Column({ type: 'int' })
+  collection_size!: number;
+
+  @Column({ type: 'int' })
+  edition_size!: number;
+
+  @Column({ type: 'int' })
+  edition_size_not_burnt!: number;
+
+  @Column({ type: 'int' })
+  edition_size_rank!: number;
+
+  @Column({ type: 'int' })
+  edition_size_not_burnt_rank!: number;
+
+  @Column({ type: 'int' })
+  museum_holdings!: number;
+
+  @Column({ type: 'int' })
+  burnt!: number;
+
+  @Column({ type: 'int' })
+  museum_holdings_rank!: number;
+
+  @Column({ type: 'int' })
+  edition_size_cleaned!: number;
+
+  @Column({ type: 'int' })
+  edition_size_cleaned_rank!: number;
+
+  @Column({ type: 'int' })
+  hodlers!: number;
+
+  @Column({ type: 'int' })
+  hodlers_rank!: number;
+
+  @Column({ type: 'double' })
+  percent_unique!: number;
+
+  @Column({ type: 'int' })
+  percent_unique_rank!: number;
+
+  @Column({ type: 'double' })
+  percent_unique_not_burnt!: number;
+
+  @Column({ type: 'int' })
+  percent_unique_not_burnt_rank!: number;
+
+  @Column({ type: 'double' })
+  percent_unique_cleaned!: number;
+
+  @Column({ type: 'int' })
+  percent_unique_cleaned_rank!: number;
 }
 
 export interface NFTWithExtendedData extends NFT, MemesExtendedData {}
