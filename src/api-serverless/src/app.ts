@@ -8,12 +8,12 @@ import {
 } from './rememes/rememes_validation';
 import {
   CACHE_TIME_MS,
+  corsOptions,
   DEFAULT_PAGE_SIZE,
   DISTRIBUTION_PAGE_SIZE,
   NFTS_PAGE_SIZE,
   SEIZE_SETTINGS,
-  SORT_DIRECTIONS,
-  corsOptions
+  SORT_DIRECTIONS
 } from './api-constants';
 import {
   cacheKey,
@@ -35,6 +35,7 @@ import { validateUser } from './users/user_validation';
 import profilesRoutes from './profiles/profiles.routes';
 import communityMembersSearchRoutes from './profiles/community-members-search.routes';
 import authRoutes from './auth/auth.routes';
+import analyticsRoutes from './analytics/analytics.routes';
 import royaltiesRoutes from './royalties/royalties.routes';
 import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
@@ -1370,6 +1371,7 @@ loadApi().then(() => {
   });
 
   apiRouter.use(`/profiles`, profilesRoutes);
+  apiRouter.use(`/analytics`, analyticsRoutes);
   apiRouter.use(`/community-members`, communityMembersSearchRoutes);
   apiRouter.use(`/auth`, authRoutes);
   apiRouter.use(`/gas`, gasRoutes);
