@@ -24,8 +24,8 @@ router.get(
       {
         collection_type: string;
       },
-      {},
-      {},
+      any,
+      any,
       {
         primary?: string;
         artist?: string;

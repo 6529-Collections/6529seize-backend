@@ -19,7 +19,7 @@ import { Logger } from '../logging';
 import { Time } from '../time';
 import { ProfileTdh, ProfileTdhLog } from '../entities/IProfileTDH';
 import { Profile } from '../entities/IProfile';
-import * as sentryContext from "../sentry.context";
+import * as sentryContext from '../sentry.context';
 
 const logger = Logger.get('TDH_LOOP');
 

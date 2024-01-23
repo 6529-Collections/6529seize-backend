@@ -1,12 +1,12 @@
 import { Request, Response } from 'express';
 import * as mcache from 'memory-cache';
 import {
-  CONTENT_TYPE_HEADER,
-  JSON_HEADER_VALUE,
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+  CACHE_TIME_MS,
+  CONTENT_TYPE_HEADER,
   corsOptions,
-  PaginatedResponse,
-  CACHE_TIME_MS
+  JSON_HEADER_VALUE,
+  PaginatedResponse
 } from './api-constants';
 
 const converter = require('json-2-csv');
@@ -100,4 +100,15 @@ export function resolveIntParam(param: string | string[] | undefined) {
     }
   }
   return undefined;
+}
+
+export function parseNumberOrNull(input: any): number | null {
+  if (input === null || input === undefined) {
+    return null;
+  }
+  const parsed = parseInt(input);
+  if (isNaN(parsed)) {
+    return null;
+  }
+  return parsed;
 }
