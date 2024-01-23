@@ -1,7 +1,12 @@
 import { asyncRouter } from '../../async.router';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../../api-response';
-import { DEFAULT_MAX_SIZE, DEFAULT_PAGE_SIZE, Page } from '../../page-request';
+import {
+  DEFAULT_MAX_SIZE,
+  DEFAULT_PAGE_SIZE,
+  Page,
+  PageSortDirection
+} from '../../page-request';
 import {
   CardSeizedStatus,
   CollectedCard,
@@ -10,7 +15,6 @@ import {
 } from './collected.types';
 import { collectedService } from './collected.service';
 import * as Joi from 'joi';
-import { SortDirection } from '../../api-constants';
 import { getValidatedByJoiOrThrow } from '../../validation';
 
 const router = asyncRouter({
@@ -26,16 +30,7 @@ router.get(
       },
       any,
       any,
-      {
-        collection?: string;
-        account_for_consolidations?: string;
-        seized?: string;
-        szn?: string;
-        page?: string;
-        page_size?: string;
-        sort_direction?: string;
-        sort?: string;
-      },
+      Omit<CollectedQuery, 'handle_or_wallet'>,
       any
     >,
     res: Response<ApiResponse<Page<CollectedCard>>>
@@ -43,14 +38,7 @@ router.get(
     const query = getValidatedByJoiOrThrow(
       {
         handle_or_wallet: req.params.handleOrWallet,
-        collection: req.query.collection as any,
-        account_for_consolidations: req.query.account_for_consolidations as any,
-        seized: req.query.seized as any,
-        page_size: req.query.page_size as any,
-        page: req.query.page as any,
-        sort_direction: req.query.sort_direction as any,
-        sort: req.query.sort as any,
-        szn: req.query.szn as any
+        ...req.query
       },
       ApiGetCollectedCardsRequestSchema
     );
@@ -76,9 +64,9 @@ const ApiGetCollectedCardsRequestSchema: Joi.ObjectSchema<CollectedQuery> =
       .optional()
       .default(DEFAULT_PAGE_SIZE),
     sort_direction: Joi.string()
-      .valid(...Object.values(SortDirection))
+      .valid(...Object.values(PageSortDirection))
       .optional()
-      .default(SortDirection.ASC),
+      .default(PageSortDirection.ASC),
     sort: Joi.string()
       .valid('token_id', 'tdh', 'rank')
       .optional()

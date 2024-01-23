@@ -4,7 +4,7 @@ import {
   CollectedQuery,
   CollectionType
 } from './collected.types';
-import { emptyFirstPage, Page } from '../../page-request';
+import { emptyPage, Page, PageSortDirection } from '../../page-request';
 import {
   profilesService,
   ProfilesService
@@ -17,7 +17,6 @@ import {
   NftsOwnershipData
 } from './collected.db';
 import { parseNumberOrNull } from '../../api-helpers';
-import { SortDirection } from '../../api-constants';
 import { assertUnreachable } from '../../../../helpers';
 
 export class CollectedService {
@@ -63,7 +62,7 @@ export class CollectedService {
   ): Promise<Page<CollectedCard>> {
     const walletsToSearchBy = await this.getWalletsToSearchBy(query);
     if (walletsToSearchBy.length === 0) {
-      return emptyFirstPage();
+      return emptyPage();
     }
     const { nfts, memesAndGradientsStats, memeLabOwnerBalancesByTokenIds } =
       await this.getDataFromDb(walletsToSearchBy);
@@ -94,10 +93,10 @@ export class CollectedService {
         const val1 = parseNumberOrNull(a[query.sort]) ?? 0;
         const val2 = parseNumberOrNull(b[query.sort]) ?? 0;
         switch (query.sort_direction) {
-          case SortDirection.DESC: {
+          case PageSortDirection.DESC: {
             return val2 - val1;
           }
-          case SortDirection.ASC: {
+          case PageSortDirection.ASC: {
             return val1 - val2;
           }
           default: {
