@@ -1,5 +1,5 @@
-import { NextGenCollectionStatus } from 'src/api-filters';
-import { constructFilters } from 'src/api-helpers';
+import { NextGenCollectionStatus } from '../api-filters';
+import { constructFilters } from '../api-helpers';
 import { ENS_TABLE } from '../../../constants';
 import { getProof } from '../../../merkle_proof';
 import { sqlExecutor } from '../../../sql-executor';

@@ -263,10 +263,21 @@ router.get(
     if (!isNaN(id)) {
       logger.info(`[FETCHING TRAITS FOR COLLECTION ID ${id}]`);
       db.fetchNextGenCollectionTraits(id).then((result) => {
-        const uniqueKeys = [...new Set(result.map((r: any) => r.trait))];
-        const traits = [];
+        const uniqueKeys: string[] = [];
+        result.forEach((r: any) => {
+          if (!uniqueKeys.includes(r.trait)) {
+            uniqueKeys.push(r.trait);
+          }
+        });
+        const traits: {
+          trait: string;
+          values: string[];
+        }[] = [];
         uniqueKeys.forEach((key) => {
-          const trait = {
+          const trait: {
+            trait: string;
+            values: string[];
+          } = {
             trait: key,
             values: result
               .filter((r: any) => r.trait === key)
