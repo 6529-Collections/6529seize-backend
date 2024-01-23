@@ -1,7 +1,7 @@
 import { CicDb } from './cic.db';
 import { ProfileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
 import { CicService } from './cic.service';
-import { Mock } from 'ts-jest-mocker';
+import { mock, Mock } from 'ts-jest-mocker';
 import { CicStatementGroup } from '../entities/ICICStatement';
 import {
   expectExceptionWithMessage,
@@ -11,16 +11,23 @@ import {
 import { when } from 'jest-when';
 import { uniqueShortId } from '../helpers';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
+import { AbusivenessCheckService } from '../profiles/abusiveness-check.service';
 
 describe('CicService', () => {
   let cicDb: Mock<CicDb>;
   let profileActivityLogsDb: Mock<ProfileActivityLogsDb>;
+  let abusivenessCheckService: Mock<AbusivenessCheckService>;
   let cicService: CicService;
 
   beforeEach(() => {
     cicDb = mockDbService();
     profileActivityLogsDb = mockDbService();
-    cicService = new CicService(cicDb, profileActivityLogsDb);
+    abusivenessCheckService = mock(AbusivenessCheckService);
+    cicService = new CicService(
+      cicDb,
+      profileActivityLogsDb,
+      abusivenessCheckService
+    );
   });
 
   describe('getCicStatementByIdAndProfileIdOrThrow', () => {
@@ -1037,6 +1044,516 @@ describe('CicService', () => {
         await cicService.addCicStatement({
           ...aNewWebsiteCicStatement,
           statement_value: 'https://www.example.com'
+        });
+      });
+    });
+
+    describe('statement type is SUPER_RARE', () => {
+      const aNewCicStatement = {
+        profile_id: aProfileId,
+        statement_group: CicStatementGroup.NFT_ACCOUNTS,
+        statement_type: 'SUPER_RARE',
+        statement_value: 'https://www.superrare.com/username',
+        statement_comment: 'a comment'
+      };
+
+      it('validation fails without https:// beginning', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'www.superrare.com/username'
+          });
+        }, 'SuperRare needs to start with https://www.superrare.com/');
+      });
+
+      it('validation fails if domain is not www.superrare.com', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.super.rare/username'
+          });
+        }, 'SuperRare needs to start with https://www.superrare.com/');
+      });
+
+      it('validation fails if there is nothing following www.superrare.com/', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.superrare.com/'
+          });
+        }, 'SuperRare needs to start with https://www.superrare.com/');
+      });
+
+      it('validation passes with www.superrare.com/ followed by something', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://www.superrare.com/username'
+        });
+      });
+
+      it('validation passes without www. in front of domain', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://superrare.com/username'
+        });
+      });
+    });
+
+    describe('statement type is FOUNDATION', () => {
+      const aNewCicStatement = {
+        profile_id: aProfileId,
+        statement_group: CicStatementGroup.NFT_ACCOUNTS,
+        statement_type: 'FOUNDATION',
+        statement_value: 'https://www.foundation.app/username',
+        statement_comment: 'a comment'
+      };
+
+      it('validation fails without https:// beginning', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'www.foundation.app/username'
+          });
+        }, 'Foundation needs to start with https://www.foundation.app/');
+      });
+
+      it('validation fails if domain is not www.foundation.app', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.found.ation.app/username'
+          });
+        }, 'Foundation needs to start with https://www.foundation.app/');
+      });
+
+      it('validation fails if there is nothing following www.foundation.app/', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.foundation.app/'
+          });
+        }, 'Foundation needs to start with https://www.foundation.app/');
+      });
+
+      it('validation passes with www.foundation.app/ followed by something', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://www.foundation.app/username'
+        });
+      });
+
+      it('validation passes without www. in front of domain', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://foundation.app/username'
+        });
+      });
+    });
+
+    describe('statement type is MAKERS_PLACE', () => {
+      const aNewCicStatement = {
+        profile_id: aProfileId,
+        statement_group: CicStatementGroup.NFT_ACCOUNTS,
+        statement_type: 'MAKERS_PLACE',
+        statement_value: 'https://www.makersplace.com/username',
+        statement_comment: 'a comment'
+      };
+
+      it('validation fails without https:// beginning', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'www.makersplace.com/username'
+          });
+        }, 'MakersPlace needs to start with https://www.makersplace.com/');
+      });
+
+      it('validation fails if domain is not www.makersplace.com', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.makers.place.com/username'
+          });
+        }, 'MakersPlace needs to start with https://www.makersplace.com/');
+      });
+
+      it('validation fails if there is nothing following www.makersplace.com/', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.makersplace.com/'
+          });
+        }, 'MakersPlace needs to start with https://www.makersplace.com/');
+      });
+
+      it('validation passes with www.makersplace.com/ followed by something', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://www.makersplace.com/username'
+        });
+      });
+
+      it('validation passes without www. in front of domain', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://makersplace.com/username'
+        });
+      });
+    });
+
+    describe('statement type is KNOWN_ORIGIN', () => {
+      const aNewCicStatement = {
+        profile_id: aProfileId,
+        statement_group: CicStatementGroup.NFT_ACCOUNTS,
+        statement_type: 'KNOWN_ORIGIN',
+        statement_value: 'https://www.knownorigin.io/username',
+        statement_comment: 'a comment'
+      };
+
+      it('validation fails without https:// beginning', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'www.knownorigin.io/username'
+          });
+        }, 'KnownOrigin needs to start with https://www.knownorigin.io/');
+      });
+
+      it('validation fails if domain is not www.knownorigin.io', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.known.origin.io/username'
+          });
+        }, 'KnownOrigin needs to start with https://www.knownorigin.io/');
+      });
+
+      it('validation fails if there is nothing following www.knownorigin.io/', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.knownorigin.io/'
+          });
+        }, 'KnownOrigin needs to start with https://www.knownorigin.io/');
+      });
+
+      it('validation passes with www.knownorigin.io/ followed by something', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://www.knownorigin.io/username'
+        });
+      });
+
+      it('validation passes without www. in front of domain', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://knownorigin.io/username'
+        });
+      });
+    });
+
+    describe('statement type is PEPE_WTF', () => {
+      const aNewCicStatement = {
+        profile_id: aProfileId,
+        statement_group: CicStatementGroup.NFT_ACCOUNTS,
+        statement_type: 'PEPE_WTF',
+        statement_value: 'https://www.pepe.wtf/username',
+        statement_comment: 'a comment'
+      };
+
+      it('validation fails without https:// beginning', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'www.pepe.wtf/username'
+          });
+        }, 'Pepe.wtf needs to start with https://www.pepe.wtf/');
+      });
+
+      it('validation fails if domain is not www.pepe.wtf', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.pepe.wtf.com/username'
+          });
+        }, 'Pepe.wtf needs to start with https://www.pepe.wtf/');
+      });
+
+      it('validation fails if there is nothing following www.pepe.wtf/', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.pepe.wtf/'
+          });
+        }, 'Pepe.wtf needs to start with https://www.pepe.wtf/');
+      });
+
+      it('validation passes with www.pepe.wtf/ followed by something', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://www.pepe.wtf/username'
+        });
+      });
+
+      it('validation passes without www. in front of domain', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://pepe.wtf/username'
+        });
+      });
+    });
+
+    describe('statement type is OPENSEA', () => {
+      const aNewCicStatement = {
+        profile_id: aProfileId,
+        statement_group: CicStatementGroup.NFT_ACCOUNTS,
+        statement_type: 'OPENSEA',
+        statement_value: 'https://www.opensea.io/username',
+        statement_comment: 'a comment'
+      };
+
+      it('validation fails without https:// beginning', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'www.opensea.io/username'
+          });
+        }, 'OpenSea needs to start with https://www.opensea.io/');
+      });
+
+      it('validation fails if domain is not www.pepe.wtf', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.open.sea.io/username'
+          });
+        }, 'OpenSea needs to start with https://www.opensea.io/');
+      });
+
+      it('validation fails if there is nothing following www.opensea.io/', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.opensea.io/'
+          });
+        }, 'OpenSea needs to start with https://www.opensea.io/');
+      });
+
+      it('validation passes with www.opensea.io/ followed by something', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://www.opensea.io/username'
+        });
+      });
+
+      it('validation passes without www. in front of domain', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://opensea.io/username'
+        });
+      });
+    });
+
+    describe('statement type is ART_BLOCKS', () => {
+      const aNewCicStatement = {
+        profile_id: aProfileId,
+        statement_group: CicStatementGroup.NFT_ACCOUNTS,
+        statement_type: 'ART_BLOCKS',
+        statement_value: 'https://www.artblocks.io/username',
+        statement_comment: 'a comment'
+      };
+
+      it('validation fails without https:// beginning', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'www.artblocks.io/username'
+          });
+        }, 'Art Blocks needs to start with https://www.artblocks.io/');
+      });
+
+      it('validation fails if domain is not www.artblocks.io', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.art.blocks.io/username'
+          });
+        }, 'Art Blocks needs to start with https://www.artblocks.io/');
+      });
+
+      it('validation fails if there is nothing following www.artblocks.io/', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.artblocks.io/'
+          });
+        }, 'Art Blocks needs to start with https://www.artblocks.io/');
+      });
+
+      it('validation passes with www.artblocks.io/ followed by something', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://www.artblocks.io/username'
+        });
+      });
+
+      it('validation passes without www. in front of domain', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://artblocks.io/username'
+        });
+      });
+    });
+
+    describe('statement type is DECA_ART', () => {
+      const aNewCicStatement = {
+        profile_id: aProfileId,
+        statement_group: CicStatementGroup.NFT_ACCOUNTS,
+        statement_type: 'DECA_ART',
+        statement_value: 'https://www.deca.art/username',
+        statement_comment: 'a comment'
+      };
+
+      it('validation fails without https:// beginning', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'www.deca.art/username'
+          });
+        }, 'Deca Art needs to start with https://www.deca.art/');
+      });
+
+      it('validation fails if domain is not www.pepe.wtf', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.dec.a.art/username'
+          });
+        }, 'Deca Art needs to start with https://www.deca.art/');
+      });
+
+      it('validation fails if there is nothing following www.deca.art/', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.deca.art/'
+          });
+        }, 'Deca Art needs to start with https://www.deca.art/');
+      });
+
+      it('validation passes with www.deca.art/ followed by something', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://www.deca.art/username'
+        });
+      });
+
+      it('validation passes without www. in front of domain', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://deca.art/username'
+        });
+      });
+    });
+
+    describe('statement type is ON_CYBER', () => {
+      const aNewCicStatement = {
+        profile_id: aProfileId,
+        statement_group: CicStatementGroup.NFT_ACCOUNTS,
+        statement_type: 'ON_CYBER',
+        statement_value: 'https://www.oncyber.io/username',
+        statement_comment: 'a comment'
+      };
+
+      it('validation fails without https:// beginning', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'www.oncyber.io/username'
+          });
+        }, 'OnCyber needs to start with https://www.oncyber.io/');
+      });
+
+      it('validation fails if domain is not www.oncyber.io', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.on.cyber.io/username'
+          });
+        }, 'OnCyber needs to start with https://www.oncyber.io/');
+      });
+
+      it('validation fails if there is nothing following www.oncyber.io/', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.oncyber.io/'
+          });
+        }, 'OnCyber needs to start with https://www.oncyber.io/');
+      });
+
+      it('validation passes with www.oncyber.io/ followed by something', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://www.oncyber.io/username'
+        });
+      });
+
+      it('validation passes without www. in front of domain', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://oncyber.io/username'
+        });
+      });
+    });
+
+    describe('statement type is THE_LINE', () => {
+      const aNewCicStatement = {
+        profile_id: aProfileId,
+        statement_group: CicStatementGroup.NFT_ACCOUNTS,
+        statement_type: 'THE_LINE',
+        statement_value: 'https://www.oncyber.io/line1',
+        statement_comment: 'a comment'
+      };
+
+      it('validation fails without https:// beginning', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'www.oncyber.io/line1'
+          });
+        }, 'The Line needs to start with https://www.oncyber.io/line');
+      });
+
+      it('validation fails if domain is not www.oncyber.io/line', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.oncyber.io/username'
+          });
+        }, 'The Line needs to start with https://www.oncyber.io/line');
+      });
+
+      it('validation fails if there is nothing following www.oncyber.io/line', async () => {
+        await expectExceptionWithMessage(async () => {
+          await cicService.addCicStatement({
+            ...aNewCicStatement,
+            statement_value: 'https://www.oncyber.io/line'
+          });
+        }, 'The Line needs to start with https://www.oncyber.io/line');
+      });
+
+      it('validation passes with www.oncyber.io/line followed by something', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://www.oncyber.io/line2'
+        });
+      });
+
+      it('validation passes without www. in front of domain', async () => {
+        await cicService.addCicStatement({
+          ...aNewCicStatement,
+          statement_value: 'https://oncyber.io/line2'
         });
       });
     });

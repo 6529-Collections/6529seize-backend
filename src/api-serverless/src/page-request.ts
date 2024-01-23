@@ -1,5 +1,5 @@
-const DEFAULT_PAGE_SIZE = 50;
-const DEFAULT_MAX_SIZE = 2000;
+export const DEFAULT_PAGE_SIZE = 50;
+export const DEFAULT_MAX_SIZE = 2000;
 
 export interface RawPageRequest {
   page?: string;
@@ -16,6 +16,15 @@ export interface Page<T> {
   page: number;
   next: boolean;
   data: T[];
+}
+
+export function emptyFirstPage<T>(): Page<T> {
+  return {
+    count: 0,
+    page: 1,
+    next: false,
+    data: []
+  };
 }
 
 export function getPageRequestOrDefault(

@@ -24,37 +24,39 @@ import { CONSOLIDATIONS_TABLE } from '../constants';
 import { ConsolidatedTDH } from '../entities/ITDH';
 import { ConsolidatedOwnerMetric, OwnerMetric } from '../entities/IOwner';
 import { Profile } from '../entities/IProfile';
-import * as sentryContext from "../sentry.context";
+import * as sentryContext from '../sentry.context';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
-export const handler = sentryContext.wrapLambdaHandler(async (event?: any, context?: any) => {
-  const start = Time.now();
-  await loadEnv([
-    Delegation,
-    Consolidation,
-    NFTDelegationBlock,
-    ConsolidatedTDH,
-    ConsolidatedOwnerMetric,
-    OwnerMetric,
-    Profile
-  ]);
-  const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
-  const startBlock =
-    startBlockEnv && Number.isInteger(Number(startBlockEnv))
-      ? parseInt(startBlockEnv, 10)
-      : undefined;
+export const handler = sentryContext.wrapLambdaHandler(
+  async (event?: any, context?: any) => {
+    const start = Time.now();
+    await loadEnv([
+      Delegation,
+      Consolidation,
+      NFTDelegationBlock,
+      ConsolidatedTDH,
+      ConsolidatedOwnerMetric,
+      OwnerMetric,
+      Profile
+    ]);
+    const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
+    const startBlock =
+      startBlockEnv && Number.isInteger(Number(startBlockEnv))
+        ? parseInt(startBlockEnv, 10)
+        : undefined;
 
-  logger.info(`[RUNNING] [START_BLOCK ${startBlock}]`);
-  const delegationsResponse = await handleDelegations(startBlock);
-  await persistNftDelegationBlock(
-    delegationsResponse.block,
-    delegationsResponse.blockTimestamp
-  );
-  await unload();
-  const diff = start.diffFromNow().formatAsDuration();
-  logger.info(`[COMPLETE IN ${diff}]`);
-});
+    logger.info(`[RUNNING] [START_BLOCK ${startBlock}]`);
+    const delegationsResponse = await handleDelegations(startBlock);
+    await persistNftDelegationBlock(
+      delegationsResponse.block,
+      delegationsResponse.blockTimestamp
+    );
+    await unload();
+    const diff = start.diffFromNow().formatAsDuration();
+    logger.info(`[COMPLETE IN ${diff}]`);
+  }
+);
 
 async function handleDelegations(startBlock: number | undefined) {
   const delegationsResponse = await findNewDelegations(startBlock);

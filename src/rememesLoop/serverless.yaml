@@ -16,6 +16,7 @@ functions:
   rememesS3Loop:
     handler: index.handler
     name: rememesS3Loop
+    description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
@@ -30,6 +31,7 @@ functions:
   rememesRefreshMetadataLoop:
     handler: index.handler
     name: rememesRefreshMetadataLoop
+    description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
@@ -44,6 +46,7 @@ functions:
   rememesFileLoop:
     handler: index.handler
     name: rememesFileLoop
+    description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
     vpc:

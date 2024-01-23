@@ -7,21 +7,23 @@ import { LabNFT, NFT } from '../entities/INFT';
 import { findNftMarketStats } from '../nft_market_stats';
 import { loadEnv, unload } from '../secrets';
 import { Logger } from '../logging';
-import * as sentryContext from "../sentry.context";
+import * as sentryContext from '../sentry.context';
 
 const logger = Logger.get('MARKET_STATS_LOOP');
 
-export const handler = sentryContext.wrapLambdaHandler(async (event?: any, context?: any) => {
-  logger.info('[RUNNING]');
-  if (process.env.CONTRACT) {
-    await loadEnv([NFT, LabNFT]);
-    await findNftMarketStats(process.env.CONTRACT);
-    await unload();
-  } else {
-    logger.info('[MISSING process.env.CONTRACT]');
+export const handler = sentryContext.wrapLambdaHandler(
+  async (event?: any, context?: any) => {
+    logger.info('[RUNNING]');
+    if (process.env.CONTRACT) {
+      await loadEnv([NFT, LabNFT]);
+      await findNftMarketStats(process.env.CONTRACT);
+      await unload();
+    } else {
+      logger.info('[MISSING process.env.CONTRACT]');
+    }
+    logger.info('[COMPLETE]');
   }
-  logger.info('[COMPLETE]');
-});
+);
 
 export const memeStats = async () => {
   await loadEnv([NFT, LabNFT]);

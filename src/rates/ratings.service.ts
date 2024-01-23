@@ -1,11 +1,11 @@
 import {
   AggregatedRating,
   AggregatedRatingRequest,
-  RatingWithProfileInfo,
   OverRateMatter,
   ratingsDb,
   RatingsDb,
   RatingStats,
+  RatingWithProfileInfo,
   UpdateRatingRequest
 } from './ratings.db';
 import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
@@ -79,6 +79,12 @@ export class RatingsService {
     skipTdhCheck?: boolean
   ) {
     const profileId = request.rater_profile_id;
+    if (
+      getMattersWhereTargetIsProfile().includes(request.matter) &&
+      request.matter_target_id === profileId
+    ) {
+      throw new BadRequestException(`User can not rate their own profile`);
+    }
     const currentRating = await this.ratingsDb.getRatingForUpdate(
       request,
       connection

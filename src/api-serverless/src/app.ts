@@ -838,7 +838,6 @@ loadApi().then(() => {
     `/consolidated_owner_metrics/:consolidation_key`,
     function (req: any, res: any) {
       const consolidationKey = req.params.consolidation_key;
-
       db.fetchConsolidatedOwnerMetricsForKey(consolidationKey).then(
         async (d) => {
           if (d) {

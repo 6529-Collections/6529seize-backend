@@ -16,7 +16,7 @@ import axios from 'axios';
 import { Readable } from 'stream';
 import { Logger } from '../logging';
 import { Time } from '../time';
-import * as sentryContext from "../sentry.context";
+import * as sentryContext from '../sentry.context';
 
 const csvParser = require('csv-parser');
 
@@ -25,14 +25,16 @@ const logger = Logger.get('TDH_HISTORY_LOOP');
 const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
 
-export const handler = sentryContext.wrapLambdaHandler(async (event?: any, context?: any) => {
-  await loadEnv([TDHHistory, GlobalTDHHistory]);
-  const iterations = parseInt(process.env.TDH_HISTORY_ITERATIONS || '1');
-  logger.info(`[RUNNING] [ITERATIONS ${iterations}]`);
-  await tdhHistoryLoop(iterations);
-  await unload();
-  logger.info('[COMPLETE]');
-});
+export const handler = sentryContext.wrapLambdaHandler(
+  async (event?: any, context?: any) => {
+    await loadEnv([TDHHistory, GlobalTDHHistory]);
+    const iterations = parseInt(process.env.TDH_HISTORY_ITERATIONS || '1');
+    logger.info(`[RUNNING] [ITERATIONS ${iterations}]`);
+    await tdhHistoryLoop(iterations);
+    await unload();
+    logger.info('[COMPLETE]');
+  }
+);
 
 async function tdhHistoryLoop(iterations: number) {
   for (let i = iterations - 1; i >= 0; i--) {

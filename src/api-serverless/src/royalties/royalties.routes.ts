@@ -36,8 +36,8 @@ router.get(
       {
         collection_type: string;
       },
-      {},
-      {},
+      any,
+      any,
       {
         primary?: string;
         artist?: string;
@@ -76,9 +76,9 @@ router.get(
   `/uploads`,
   function (
     req: Request<
-      {},
-      {},
-      {},
+      any,
+      any,
+      any,
       {
         page_size?: number;
         page?: number;
