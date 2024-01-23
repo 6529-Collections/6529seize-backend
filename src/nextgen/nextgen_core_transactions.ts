@@ -13,7 +13,8 @@ import {
   persistNextGenCollection,
   persistNextGenLogs,
   fetchNextGenCollection,
-  fetchNextGenCollectionIndex
+  fetchNextGenCollectionIndex,
+  wasTransactionLogProcessed
 } from './nextgen.db';
 import { EntityManager } from 'typeorm';
 import {
@@ -49,6 +50,16 @@ export async function findCoreTransactions(
 
   const logs: NextGenLog[] = [];
   for (const transfer of response.transfers) {
+    const wasProcessed = await wasTransactionLogProcessed(
+      entityManager,
+      transfer.hash
+    );
+    if (wasProcessed) {
+      logger.info(
+        `[TRANSACTION ALREADY PROCESSED] : [TRANSACTION HASH ${transfer.hash}]`
+      );
+      continue;
+    }
     const receipt = await alchemy.core.getTransaction(transfer.hash);
     if (receipt) {
       const parsedReceipt = NEXTGEN_CORE_IFACE.parseTransaction({

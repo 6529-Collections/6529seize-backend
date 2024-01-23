@@ -118,3 +118,15 @@ export async function fetchNextGenTokenTraits(
 ): Promise<NextGenTokenTrait[]> {
   return await manager.getRepository(NextGenTokenTrait).find();
 }
+
+export async function wasTransactionLogProcessed(
+  manager: EntityManager,
+  txHash: string
+): Promise<boolean> {
+  const count = await manager.getRepository(NextGenLog).count({
+    where: {
+      transaction: txHash
+    }
+  });
+  return count > 0;
+}
