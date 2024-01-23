@@ -210,10 +210,11 @@ export async function upsertToken(
     };
 
     if (isMint) {
+      const newMintCount = normalisedTokenId + 1;
       logger.info(
-        `[TOKEN ID ${tokenId}] : [MINTED] : [COLLECTION MINT COUNT ${collection.mint_count}] : [UPDATING COLLECTION MINT COUNT...]`
+        `[TOKEN ID ${tokenId}] : [MINTED] : [COLLECTION MINT COUNT ${collection.mint_count}] : [UPDATING COLLECTION MINT COUNT TO ${newMintCount}...]`
       );
-      collection.mint_count += 1;
+      collection.mint_count = newMintCount;
       await persistNextGenCollection(entityManager, collection);
     }
     await persistNextGenToken(entityManager, nextGenToken);

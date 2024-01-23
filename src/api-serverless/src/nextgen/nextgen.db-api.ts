@@ -157,22 +157,56 @@ export async function fetchNextGenCollectionTokens(
     collectionId: collectionId
   };
   if (traits.length > 0) {
-    traits.forEach((trait, index) => {
-      const parts = trait.split(':');
-      const key = parts[0];
-      const value = parts[1];
+    const groupedTraits: {
+      [key: string]: string[];
+    } = {};
+    traits.forEach((trait) => {
+      const [key, value] = trait.split(':');
+      if (!groupedTraits[key]) {
+        groupedTraits[key] = [];
+      }
+      groupedTraits[key].push(value);
+    });
+    Object.entries(groupedTraits).forEach(([key, values], index) => {
+      const orConditions = values
+        .map((value, valueIndex) => {
+          const conditionIndex = `${index}_${valueIndex}`;
+          params[`trait${conditionIndex}`] = key;
+          params[`value${conditionIndex}`] = value;
+          return `(${NEXTGEN_TOKEN_TRAITS_TABLE}.trait = :trait${conditionIndex} AND ${NEXTGEN_TOKEN_TRAITS_TABLE}.value = :value${conditionIndex})`;
+        })
+        .join(' OR ');
+
       filters = constructFilters(
         filters,
         `EXISTS (
-        SELECT 1
-        FROM ${NEXTGEN_TOKEN_TRAITS_TABLE}
-        WHERE ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id = ${NEXTGEN_TOKENS_TABLE}.id
-        AND ${NEXTGEN_TOKEN_TRAITS_TABLE}.trait = :trait${index}
-        AND ${NEXTGEN_TOKEN_TRAITS_TABLE}.value = :value${index}
-      )`
+            SELECT 1
+            FROM ${NEXTGEN_TOKEN_TRAITS_TABLE}
+            WHERE ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id = ${NEXTGEN_TOKENS_TABLE}.id
+            AND (${orConditions})
+          )`
       );
-      params[`trait${index}`] = key;
-      params[`value${index}`] = value;
+    });
+
+    Object.entries(groupedTraits).forEach(([key, values], index) => {
+      const orConditions = values
+        .map((value, valueIndex) => {
+          const conditionIndex = `${index}_${valueIndex}`;
+          params[`trait${conditionIndex}`] = key;
+          params[`value${conditionIndex}`] = value;
+          return `(${NEXTGEN_TOKEN_TRAITS_TABLE}.trait = :trait${conditionIndex} AND ${NEXTGEN_TOKEN_TRAITS_TABLE}.value = :value${conditionIndex})`;
+        })
+        .join(' OR ');
+
+      filters = constructFilters(
+        filters,
+        `EXISTS (
+            SELECT 1
+            FROM ${NEXTGEN_TOKEN_TRAITS_TABLE}
+            WHERE ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id = ${NEXTGEN_TOKENS_TABLE}.id
+            AND (${orConditions})
+          )`
+      );
     });
   }
 
@@ -249,7 +283,13 @@ export async function fetchNextGenCollectionTraits(collectionId: number) {
   return sqlExecutor.execute(
     `SELECT DISTINCT trait, value
     FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} where collection_id=:collectionId
-    ORDER BY trait, value asc`,
+    ORDER BY 
+      trait, 
+      CASE 
+        WHEN value REGEXP '^[0-9]+$' THEN CAST(value AS UNSIGNED)
+        ELSE 9999999 -- A high number to ensure non-numeric values are sorted after numeric values
+      END,
+      value`,
     {
       collectionId
     }

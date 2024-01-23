@@ -114,6 +114,8 @@ async function processLog(
       return await addRandomizer(args);
     case 'setApprovalForAll':
       return [];
+    case 'changeTokenData':
+      return await changeTokenData(args);
   }
 
   let methodNameParts = methodName
@@ -346,6 +348,24 @@ async function addRandomizer(args: ethers.utils.Result): Promise<
     {
       id: collectionId,
       description: `Randomizer Added`
+    }
+  ];
+}
+
+async function changeTokenData(args: ethers.utils.Result): Promise<
+  {
+    id: number;
+    description: string;
+  }[]
+> {
+  const tokenId = parseInt(args[0]);
+  const collectionId = Math.round(tokenId / 10000000000);
+  const normalisedTokenId = tokenId - collectionId * 10000000000;
+
+  return [
+    {
+      id: collectionId,
+      description: `Change token data for #${normalisedTokenId}`
     }
   ];
 }
