@@ -18,7 +18,6 @@ import {
   UPLOADS_TABLE,
   ENS_TABLE,
   OWNERS_METRICS_TABLE,
-  NULL_ADDRESS,
   NFTS_MEME_LAB_TABLE,
   TRANSACTIONS_MEME_LAB_TABLE,
   OWNERS_MEME_LAB_TABLE,
@@ -261,14 +260,6 @@ export async function fetchLastOwnerMetrics(): Promise<any> {
   const sql = `SELECT transaction_reference FROM ${OWNERS_METRICS_TABLE} ORDER BY transaction_reference DESC LIMIT 1;`;
   const results = await sqlExecutor.execute(sql);
   return results ? results[0].transaction_reference : null;
-}
-
-export async function findReplayTransactions(): Promise<Transaction[]> {
-  const sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE value=0 AND from_address != ${mysql.escape(
-    NULL_ADDRESS
-  )};`;
-  const results = await sqlExecutor.execute(sql);
-  return results;
 }
 
 export async function findDuplicateTransactionHashes(): Promise<string[]> {
@@ -537,11 +528,8 @@ export async function fetchDistinctOwnerWallets() {
   const sql = `SELECT DISTINCT ${OWNERS_TABLE}.wallet, 
     ${OWNERS_METRICS_TABLE}.created_at 
     FROM ${OWNERS_TABLE} LEFT JOIN ${OWNERS_METRICS_TABLE} 
-    ON ${OWNERS_TABLE}.wallet = ${OWNERS_METRICS_TABLE}.wallet 
-    WHERE ${OWNERS_TABLE}.wallet != :null_address;`;
-  const results = await sqlExecutor.execute(sql, {
-    null_address: NULL_ADDRESS
-  });
+    ON ${OWNERS_TABLE}.wallet = ${OWNERS_METRICS_TABLE}.wallet;`;
+  const results = await sqlExecutor.execute(sql);
   return results;
 }
 

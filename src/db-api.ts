@@ -21,6 +21,7 @@ import {
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
   NULL_ADDRESS,
+  NULL_ADDRESS_DEAD,
   OWNERS_MEME_LAB_TABLE,
   OWNERS_METRICS_TABLE,
   OWNERS_TABLE,
@@ -804,7 +805,7 @@ async function getTransactionFilters(
     switch (type_filter) {
       case 'sales':
       case 'purchases':
-        newTypeFilter += `value > 0 AND from_address != :null_address and from_address != :manifold and to_address != :null_address`;
+        newTypeFilter += `value > 0 AND from_address != :null_address and from_address != :manifold and to_address != :null_address and to_address != :dead_address`;
         break;
       case 'airdrops':
         newTypeFilter += `value = 0 AND from_address = :null_address`;
@@ -813,15 +814,16 @@ async function getTransactionFilters(
         newTypeFilter += `value > 0 AND (from_address = :null_address OR from_address = :manifold)`;
         break;
       case 'transfers':
-        newTypeFilter += `value = 0 and from_address != :null_address and to_address != :null_address`;
+        newTypeFilter += `value = 0 and from_address != :null_address and to_address != :null_address and to_address != :dead_address`;
         break;
       case 'burns':
-        newTypeFilter += `to_address = :null_address`;
+        newTypeFilter += `to_address = :null_address or to_address = :dead_address`;
         break;
     }
     if (newTypeFilter) {
       filters = constructFilters(filters, newTypeFilter);
       params.null_address = NULL_ADDRESS;
+      params.dead_address = NULL_ADDRESS_DEAD;
       params.manifold = MANIFOLD;
     }
   }

@@ -15,7 +15,7 @@ import {
 } from './constants';
 import { NFT } from './entities/INFT';
 import { Transaction } from './entities/ITransaction';
-import { areEqualAddresses } from './helpers';
+import { areEqualAddresses, isNullAddress } from './helpers';
 import {
   fetchAllNFTs,
   fetchAllTransactions,
@@ -98,7 +98,7 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
         (t) =>
           t.token_id == tokenId &&
           areEqualAddresses(t.contract, MEMES_CONTRACT) &&
-          areEqualAddresses(NULL_ADDRESS, t.to_address)
+          isNullAddress(t.to_address)
       );
 
       const firstMintTransaction = transactions.find(
