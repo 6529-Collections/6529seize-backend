@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 1028
+  memorySize: 5120
   timeout: 900
 
 functions:
@@ -26,4 +26,4 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: "s3Loop_${opt:stage, self:provider.stage}"
+      SENTRY_ENVIRONMENT: 's3Loop_${opt:stage, self:provider.stage}'
