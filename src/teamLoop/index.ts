@@ -3,6 +3,7 @@ import { replaceTeam } from '../db';
 import { Team } from '../entities/ITeam';
 import { loadEnv } from '../secrets';
 import { Logger } from '../logging';
+import * as sentryContext from '../sentry.context';
 
 const Arweave = require('arweave');
 const csvParser = require('csv-parser');
@@ -17,13 +18,15 @@ const myarweave = Arweave.init({
   protocol: 'https'
 });
 
-export const handler = async (event?: any, context?: any) => {
-  logger.info('[RUNNING]');
-  await loadEnv([Team]);
-  await saveTeam();
-  await uploadTeam();
-  logger.info('[COMPLETE]');
-};
+export const handler = sentryContext.wrapLambdaHandler(
+  async (event?: any, context?: any) => {
+    logger.info('[RUNNING]');
+    await loadEnv([Team]);
+    await saveTeam();
+    await uploadTeam();
+    logger.info('[COMPLETE]');
+  }
+);
 
 async function saveTeam() {
   const team: Team[] = [];

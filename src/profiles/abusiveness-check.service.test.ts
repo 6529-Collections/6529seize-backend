@@ -28,14 +28,14 @@ describe(`AbusivenessCheckService`, () => {
   });
 
   it(`should throw BadRequestException if text is empty`, async () => {
-    await expect(
-      abusivenessCheckService.checkAbusiveness('  ')
-    ).rejects.toThrow('Text must be 1-100 characters');
+    await expect(abusivenessCheckService.checkRepPhrase('  ')).rejects.toThrow(
+      'Text must be 1-100 characters'
+    );
   });
 
   it(`should throw BadRequestException if text is longer than 100 characters`, async () => {
     await expect(
-      abusivenessCheckService.checkAbusiveness('r'.repeat(101))
+      abusivenessCheckService.checkRepPhrase('r'.repeat(101))
     ).rejects.toThrow('Text must be 1-100 characters');
   });
 
@@ -45,10 +45,10 @@ describe(`AbusivenessCheckService`, () => {
       .calledWith(input)
       .mockResolvedValue(anAbusivenessCheckResult);
     await expect(
-      abusivenessCheckService.checkAbusiveness(input)
+      abusivenessCheckService.checkRepPhrase(input)
     ).resolves.toEqual(anAbusivenessCheckResult);
     expect(
-      openAiAbusivenessDetectionService.checkText
+      openAiAbusivenessDetectionService.checkRepPhraseText
     ).not.toHaveBeenCalledWith(input);
   });
 
@@ -57,11 +57,11 @@ describe(`AbusivenessCheckService`, () => {
     when(abusivenessCheckDb.findResult)
       .calledWith(input)
       .mockResolvedValue(null);
-    when(openAiAbusivenessDetectionService.checkText)
+    when(openAiAbusivenessDetectionService.checkRepPhraseText)
       .calledWith(input)
       .mockResolvedValue(anAbusivenessCheckResult);
     await expect(
-      abusivenessCheckService.checkAbusiveness(input)
+      abusivenessCheckService.checkRepPhrase(input)
     ).resolves.toEqual(anAbusivenessCheckResult);
     expect(abusivenessCheckDb.saveResult).toHaveBeenCalledWith(
       anAbusivenessCheckResult
@@ -70,25 +70,25 @@ describe(`AbusivenessCheckService`, () => {
 
   it(`should throw BadRequestException if text contains newlines`, async () => {
     await expect(
-      abusivenessCheckService.checkAbusiveness('Hey\nyou')
+      abusivenessCheckService.checkRepPhrase('Hey\nyou')
     ).rejects.toThrow(
-      'Text for abusiveness check contains invalid characters, is shorter than one character or is longer than 100 characters. Only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes are allowed.'
+      'Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes are allowed.'
     );
   });
 
   it(`should throw BadRequestException if text contains tabs`, async () => {
     await expect(
-      abusivenessCheckService.checkAbusiveness('Hey\tyou')
+      abusivenessCheckService.checkRepPhrase('Hey\tyou')
     ).rejects.toThrow(
-      'Text for abusiveness check contains invalid characters, is shorter than one character or is longer than 100 characters. Only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes are allowed.'
+      'Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes are allowed.'
     );
   });
 
   it(`should throw BadRequestException if text special characters`, async () => {
     await expect(
-      abusivenessCheckService.checkAbusiveness('Hey%you')
+      abusivenessCheckService.checkRepPhrase('Hey%you')
     ).rejects.toThrow(
-      'Text for abusiveness check contains invalid characters, is shorter than one character or is longer than 100 characters. Only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes are allowed.'
+      'Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes are allowed.'
     );
   });
 });

@@ -2,6 +2,7 @@ import { RoyaltiesUpload } from '../entities/IRoyalties';
 import { findRoyalties } from '../royalties';
 import { loadEnv } from '../secrets';
 import { Logger } from '../logging';
+import * as sentryContext from '../sentry.context';
 
 const Arweave = require('arweave');
 const csvParser = require('csv-parser');
@@ -14,9 +15,11 @@ const myarweave = Arweave.init({
   protocol: 'https'
 });
 
-export const handler = async (event?: any, context?: any) => {
-  logger.info('[RUNNING]');
-  await loadEnv([RoyaltiesUpload]);
-  await findRoyalties();
-  logger.info('[COMPLETE]');
-};
+export const handler = sentryContext.wrapLambdaHandler(
+  async (event?: any, context?: any) => {
+    logger.info('[RUNNING]');
+    await loadEnv([RoyaltiesUpload]);
+    await findRoyalties();
+    logger.info('[COMPLETE]');
+  }
+);

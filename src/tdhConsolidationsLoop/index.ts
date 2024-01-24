@@ -7,10 +7,11 @@ import { ProfileTdh, ProfileTdhLog } from '../entities/IProfileTDH';
 import { Time } from '../time';
 import { Profile } from '../entities/IProfile';
 import { fetchAllConsolidationAddresses } from '../db';
+import * as sentryContext from '../sentry.context';
 
 const logger = Logger.get('TDH_CONSOLIDATIONS_LOOP');
 
-export const handler = async () => {
+export const handler = sentryContext.wrapLambdaHandler(async () => {
   const start = Time.now();
   await loadEnv([TDH, ConsolidatedTDH, ProfileTdh, ProfileTdhLog, Profile]);
   const force = process.env.TDH_RESET == 'true';
@@ -19,9 +20,9 @@ export const handler = async () => {
   await unload();
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
-};
+});
 
-export async function consolidatedTdhLoop() {
+async function consolidatedTdhLoop() {
   const lastTDHCalc = getLastTDH();
   const consolidationAddresses: { wallet: string }[] =
     await fetchAllConsolidationAddresses();

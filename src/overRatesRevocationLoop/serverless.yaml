@@ -17,6 +17,7 @@ functions:
     handler: index.handler
     reservedConcurrency: 1
     name: overRatesRevocationLoop
+    description: ${env:VERSION_DESCRIPTION}
     events:
       - sqs:
           arn:
@@ -27,6 +28,9 @@ functions:
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "overRatesRevocationLoop_${opt:stage, self:provider.stage}"
 
 resources:
   Resources:

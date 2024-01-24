@@ -10,6 +10,7 @@ import communityMembersSearchRoutes from './profiles/community-members-search.ro
 import authRoutes from './auth/auth.routes';
 import rememesRoutes from './rememes/rememes.routes';
 import nextgenRoutes from './nextgen/nextgen.routes';
+import analyticsRoutes from './analytics/analytics.routes';
 import royaltiesRoutes from './royalties/royalties.routes';
 import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
@@ -837,7 +838,6 @@ loadApi().then(() => {
     `/consolidated_owner_metrics/:consolidation_key`,
     function (req: any, res: any) {
       const consolidationKey = req.params.consolidation_key;
-
       db.fetchConsolidatedOwnerMetricsForKey(consolidationKey).then(
         async (d) => {
           if (d) {
@@ -1288,6 +1288,7 @@ loadApi().then(() => {
   });
 
   apiRouter.use(`/profiles`, profilesRoutes);
+  apiRouter.use(`/analytics`, analyticsRoutes);
   apiRouter.use(`/community-members`, communityMembersSearchRoutes);
   apiRouter.use(`/auth`, authRoutes);
   apiRouter.use(`/rememes`, rememesRoutes);

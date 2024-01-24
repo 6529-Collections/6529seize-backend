@@ -16,6 +16,7 @@ functions:
   royaltiesLoop:
     handler: index.handler
     name: royaltiesLoop
+    description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
@@ -23,3 +24,7 @@ functions:
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      REMEMES_LOAD_FILE: true
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "royaltiesLoop_${opt:stage, self:provider.stage}"

@@ -93,6 +93,18 @@ describe('RatingsService', () => {
       }, 'Not enough TDH left to spend on this matter. Changing this vote would spend 4 TDH, but profile only has 2 left to spend');
     });
 
+    it('not able to rate themselves', async () => {
+      await expectExceptionWithMessage(async () => {
+        await ratingsService.updateRating({
+          rater_profile_id: 'pid',
+          matter: RateMatter.CIC,
+          matter_target_id: 'pid',
+          matter_category: 'mcat',
+          rating: 10
+        });
+      }, 'User can not rate their own profile');
+    });
+
     it('enough TDH - correct db modifications are done', async () => {
       when(profilesDb.getProfileTdh).mockResolvedValue(12);
       when(ratingsDb.getRatingForUpdate).mockResolvedValue({
