@@ -4,6 +4,7 @@ import {
   MEMES_CONTRACT,
   MEME_8_BURN_TRANSACTION,
   NULL_ADDRESS,
+  NULL_ADDRESS_DEAD,
   PUNK_6529,
   SZN1_INDEX,
   SZN2_INDEX,
@@ -452,6 +453,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
       addresses.add(wallet.to_address);
     });
     addresses.add(NULL_ADDRESS);
+    addresses.add(NULL_ADDRESS_DEAD);
 
     owners = Array.from(addresses).map((address) => {
       return { wallet: address };
