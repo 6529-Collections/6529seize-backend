@@ -24,8 +24,7 @@ import {
   MEMES_CONTRACT,
   CONSOLIDATED_UPLOADS_TABLE,
   MEME_LAB_ROYALTIES_TABLE,
-  CONSOLIDATIONS_TABLE,
-  PROFILES_TABLE
+  CONSOLIDATIONS_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';

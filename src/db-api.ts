@@ -15,6 +15,7 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
+  MEME_8_EDITION_BURN_ADJUSTMENT,
   NEXT_GEN_ALLOWLIST,
   NEXT_GEN_COLLECTIONS,
   NFTS_HISTORY_TABLE,
@@ -700,7 +701,25 @@ export async function fetchOwners(
     params.nfts = nfts.split(',');
   }
 
-  const fields = ` ${OWNERS_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
+  const fields = ` 
+    ${OWNERS_TABLE}.created_at, 
+    ${OWNERS_TABLE}.wallet, 
+    ${OWNERS_TABLE}.token_id, 
+    ${OWNERS_TABLE}.contract, 
+    CAST(
+        CASE 
+            WHEN ${OWNERS_TABLE}.wallet = :null_address AND ${OWNERS_TABLE}.token_id = :card_8 AND ${OWNERS_TABLE}.contract = :memes_contract THEN balance + :adjustment 
+            ELSE balance 
+        END 
+        AS SIGNED
+    ) as balance, 
+    ${ENS_TABLE}.display as wallet_display `;
+
+  params.null_address = NULL_ADDRESS;
+  params.card_8 = 8;
+  params.memes_contract = MEMES_CONTRACT;
+  params.adjustment = MEME_8_EDITION_BURN_ADJUSTMENT;
+
   const joins = `LEFT JOIN ${ENS_TABLE} ON ${OWNERS_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
   return fetchPaginated(

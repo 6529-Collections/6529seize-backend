@@ -2,6 +2,8 @@ import {
   ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
   MEMES_CONTRACT,
+  MEME_8_BURN_TRANSACTION,
+  NULL_ADDRESS,
   SZN1_INDEX,
   SZN2_INDEX,
   SZN3_INDEX,
@@ -180,12 +182,14 @@ export const findTDH = async (lastTDHCalc: Date) => {
         );
       });
 
-      const memesTransactions = [...walletTransactions].filter((t) =>
-        areEqualAddresses(t.contract, MEMES_CONTRACT)
-      );
-      const gradientsTransactions = [...walletTransactions].filter((t) =>
-        areEqualAddresses(t.contract, GRADIENT_CONTRACT)
-      );
+      if (areEqualAddresses(wallet, NULL_ADDRESS)) {
+        logger.info(
+          `[WALLET ${wallet}] [SKIPPING MEME CARD 8 BURN TRANSACTION ${MEME_8_BURN_TRANSACTION}]`
+        );
+        consolidationTransactions = consolidationTransactions.filter(
+          (t) => !areEqualAddresses(t.transaction, MEME_8_BURN_TRANSACTION)
+        );
+      }
 
       ADJUSTED_NFTS.forEach((nft) => {
         const tokenConsolidatedTransactions = [

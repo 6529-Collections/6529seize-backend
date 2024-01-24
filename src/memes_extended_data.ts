@@ -1,4 +1,9 @@
-import { MEMES_CONTRACT, SIX529_MUSEUM } from './constants';
+import {
+  MEMES_CONTRACT,
+  MEME_8_EDITION_BURN_ADJUSTMENT,
+  NULL_ADDRESS,
+  SIX529_MUSEUM
+} from './constants';
 import { MemesExtendedData, NFT } from './entities/INFT';
 import { Owner } from './entities/IOwner';
 import { areEqualAddresses, isNullAddress } from './helpers';
@@ -42,6 +47,10 @@ export const findMemesExtendedData = async () => {
     let edition_size_not_burnt = 0;
     let edition_size_cleaned = 0;
     allTokenWallets.forEach((tw) => {
+      if (areEqualAddresses(tw.wallet, NULL_ADDRESS) && nft.id === 8) {
+        tw.balance += MEME_8_EDITION_BURN_ADJUSTMENT;
+      }
+
       if (isNullAddress(tw.wallet)) {
         burnt += tw.balance;
       } else {

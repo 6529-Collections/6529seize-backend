@@ -2,6 +2,8 @@ import {
   GRADIENT_CONTRACT,
   MANIFOLD,
   MEMES_CONTRACT,
+  MEME_8_BURN_TRANSACTION,
+  NULL_ADDRESS,
   PUNK_6529,
   SZN1_INDEX,
   SZN2_INDEX,
@@ -449,6 +451,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
       addresses.add(wallet.from_address);
       addresses.add(wallet.to_address);
     });
+    addresses.add(NULL_ADDRESS);
 
     owners = Array.from(addresses).map((address) => {
       return { wallet: address };
@@ -465,9 +468,18 @@ export const findOwnerMetrics = async (reset?: boolean) => {
     owners.map(async (owner) => {
       const wallet = owner.wallet;
 
-      const walletTransactions: Transaction[] = await fetchWalletTransactions(
+      let walletTransactions: Transaction[] = await fetchWalletTransactions(
         wallet
       );
+
+      if (areEqualAddresses(wallet, NULL_ADDRESS)) {
+        logger.info(
+          `[WALLET ${wallet}] [SKIPPING MEME CARD 8 BURN TRANSACTION ${MEME_8_BURN_TRANSACTION}]`
+        );
+        walletTransactions = walletTransactions.filter(
+          (t) => !areEqualAddresses(t.transaction, MEME_8_BURN_TRANSACTION)
+        );
+      }
 
       if (walletTransactions.length > 0) {
         const transactionsIn = [...walletTransactions].filter((wt) =>

@@ -147,3 +147,7 @@ export const SZN6_INDEX = {
 export const WALLET_REGEX = /^0x[a-fA-F0-9]{40}$/;
 export const PROFILE_HANDLE_REGEX = /^[a-zA-Z0-9_]{3,15}$/;
 export const MEMES_ROYALTIES_RATE = 0.5;
+
+export const MEME_8_EDITION_BURN_ADJUSTMENT = -2588;
+export const MEME_8_BURN_TRANSACTION =
+  '0xa6c27335d3c4f87064a938e987e36525885cc3d136ebb726f4c5d374c0d2d854';
