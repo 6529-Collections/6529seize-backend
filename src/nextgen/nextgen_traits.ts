@@ -60,7 +60,7 @@ async function processCollectionTraitScores(
 
     tt.rarity_score_normalised =
       ((1 / sharedKeyValue) * 1000000) /
-      ((traitsCount + 1) * valuesCountForTrait + 1);
+      ((traitsCount + 1) * (valuesCountForTrait + 1));
   });
 
   await persistNextGenTraits(entityManager, tokenTraits);
