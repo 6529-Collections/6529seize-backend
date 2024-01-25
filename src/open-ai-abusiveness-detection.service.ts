@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { getOpenAiInstance } from './openai';
 import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
 import { ChatCompletion } from 'openai/resources';
+import { discord, Discord, DiscordChannel } from './discord';
 
 const STATUS_MAPPINGS: Record<string, 'ALLOWED' | 'DISALLOWED'> = {
   Allowed: 'ALLOWED',
@@ -9,7 +10,10 @@ const STATUS_MAPPINGS: Record<string, 'ALLOWED' | 'DISALLOWED'> = {
 };
 
 export class OpenAiAbusivenessDetectionService {
-  constructor(private readonly supplyOpenAi: () => OpenAI) {}
+  constructor(
+    private readonly supplyOpenAi: () => OpenAI,
+    private readonly discord: Discord
+  ) {}
 
   public async checkRepPhraseText(
     text: string
@@ -187,6 +191,12 @@ input
 {"username": "${handle}", "usertype": "${profile_type}", "about_text": "${text}"}
     `.trim();
     const response = await this.doGptRequest(prompt);
+    if (process.env.NODE_ENV !== 'local') {
+      await this.discord.sendMessage(
+        DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
+        `Username: ${handle}\n\nUser Type: ${profile_type}\n\nInput text:\n${text}\n\nGPT response:\n${response.choices[0].message.content}`
+      );
+    }
     const responseMessage = response.choices[0].message.content ?? '';
     return await this.formatChatResponse(text, responseMessage);
   }
@@ -227,4 +237,4 @@ interface GptResponseJson {
 }
 
 export const openAiAbusivenessDetectionService =
-  new OpenAiAbusivenessDetectionService(getOpenAiInstance);
+  new OpenAiAbusivenessDetectionService(getOpenAiInstance, discord);
