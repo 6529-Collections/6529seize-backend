@@ -11,6 +11,7 @@ import {
   abusivenessCheckService,
   AbusivenessCheckService
 } from '../profiles/abusiveness-check.service';
+import { Profile, ProfileClassification } from '../entities/IProfile';
 
 const CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE: Record<
   CicStatementGroup,
@@ -215,9 +216,13 @@ export class CicService {
     }
   }
 
-  public async addCicStatement(
-    statement: Omit<CicStatement, 'id' | 'crated_at' | 'updated_at'>
-  ) {
+  public async addCicStatement({
+    statement,
+    profile
+  }: {
+    statement: Omit<CicStatement, 'id' | 'crated_at' | 'updated_at'>;
+    profile: Profile;
+  }) {
     this.validateCicStatement(statement);
     const existingStatements = await this.cicDb.getCicStatementsByProfileId(
       statement.profile_id
@@ -234,9 +239,12 @@ export class CicService {
           statement.statement_type === 'BIO'
         ) {
           const abusivenessDetectionResult =
-            await this.abusivenessCheckService.checkBio(
-              statement.statement_value
-            );
+            await this.abusivenessCheckService.checkBio({
+              handle: profile.handle,
+              profile_type:
+                profile.classification ?? ProfileClassification.PSEUDONYM,
+              text: statement.statement_value
+            });
           if (abusivenessDetectionResult.status === 'DISALLOWED') {
             throw new BadRequestException(
               `Bio is not allowed: ${abusivenessDetectionResult.explanation}`

@@ -12,9 +12,9 @@ import {
   CicStatementGroup
 } from '../../../entities/ICICStatement';
 import {
-  RatingWithProfileInfoAndLevel,
+  GetProfileRatingsRequest,
   ratingsService,
-  GetProfileRatingsRequest
+  RatingWithProfileInfoAndLevel
 } from '../../../rates/ratings.service';
 import { RateMatter } from '../../../entities/IRating';
 import { Page } from '../page-request';
@@ -255,13 +255,17 @@ router.post(
       req.body,
       ApiCreateOrUpdateProfileCicStatementSchema
     );
-    const profileId = profileAndConsolidations?.profile?.external_id;
+    const profile = profileAndConsolidations?.profile;
+    const profileId = profile?.external_id;
     if (!profileId) {
       throw new NotFoundException(`No profile found for ${handleOrWallet}`);
     }
     const updatedStatement = await cicService.addCicStatement({
-      profile_id: profileId,
-      ...requestPayload
+      profile: profile,
+      statement: {
+        profile_id: profileId,
+        ...requestPayload
+      }
     });
     res.status(201).send(updatedStatement);
   }
