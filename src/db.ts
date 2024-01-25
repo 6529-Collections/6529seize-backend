@@ -88,7 +88,8 @@ import {
   NextGenLog,
   NextGenToken,
   NextGenTransaction,
-  NextGenTokenTrait
+  NextGenTokenTrait,
+  NextGenTokenScore
 } from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { Profile, ProfileArchived } from './entities/IProfile';
@@ -157,7 +158,8 @@ export async function connect(entities: any[] = []) {
       NextGenLog,
       NextGenToken,
       NextGenTransaction,
-      NextGenTokenTrait
+      NextGenTokenTrait,
+      NextGenTokenScore
     ];
   }
 

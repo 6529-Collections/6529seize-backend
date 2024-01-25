@@ -28,7 +28,8 @@ export async function refreshNextgenMetadata() {
             token.id,
             token.normalised_id,
             token.owner,
-            false
+            false,
+            token.burnt
           );
         })
       );

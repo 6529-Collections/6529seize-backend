@@ -32,6 +32,7 @@ import {
   NEXTGEN_ALLOWLIST_TABLE,
   NEXTGEN_ALLOWLIST_BURN_TABLE
 } from '../../../nextgen/nextgen_constants';
+import { PageSortDirection } from 'src/page-request';
 
 const logger = Logger.get('NEXTGEN_API');
 
@@ -200,13 +201,28 @@ router.get(
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
     const traits = req.query.traits ? req.query.traits.split(',') : [];
 
+    const sortDir: PageSortDirection =
+      PageSortDirection[
+        req.query.sort_direction?.toUpperCase() as keyof typeof PageSortDirection
+      ] || PageSortDirection.ASC;
+
+    const sort: db.TokensSort =
+      db.TokensSort[
+        req.query.sort?.toUpperCase() as keyof typeof db.TokensSort
+      ] || db.TokensSort.ID;
+
     if (!isNaN(id)) {
       logger.info(`[FETCHING TOKENS FOR COLLECTION ID ${id}]`);
-      db.fetchNextGenCollectionTokens(id, pageSize, page, traits).then(
-        (result) => {
-          return returnPaginatedResult(result, req, res);
-        }
-      );
+      db.fetchNextGenCollectionTokens(
+        id,
+        pageSize,
+        page,
+        traits,
+        sort,
+        sortDir
+      ).then((result) => {
+        return returnPaginatedResult(result, req, res);
+      });
     } else {
       return res.status(404).send({});
     }

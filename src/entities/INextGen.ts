@@ -16,7 +16,8 @@ import {
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_TOKENS_TABLE,
   NEXTGEN_TRANSACTIONS_TABLE,
-  NEXTGEN_TOKEN_TRAITS_TABLE
+  NEXTGEN_TOKEN_TRAITS_TABLE,
+  NEXTGEN_TOKEN_SCORES_TABLE
 } from '../nextgen/nextgen_constants';
 import { BlockEntity } from './IBlock';
 import { BaseTransaction } from './ITransaction';
@@ -390,11 +391,8 @@ export class NextGenToken {
   @Column({ type: 'boolean' })
   pending!: boolean;
 
-  @Column({ type: 'double' })
-  rarity_score!: number;
-
-  @Column({ type: 'double' })
-  rarity_score_normalised!: number;
+  @Column({ type: 'boolean' })
+  burnt!: boolean;
 }
 
 @Entity(NEXTGEN_TRANSACTIONS_TABLE)
@@ -438,4 +436,37 @@ export class NextGenTokenTrait {
 
   @Column({ type: 'int', default: 0 })
   trait_count?: number;
+}
+
+@Entity(NEXTGEN_TOKEN_SCORES_TABLE)
+export class NextGenTokenScore {
+  @CreateDateColumn({ type: 'datetime' })
+  created_at?: Date;
+
+  @UpdateDateColumn({ type: 'datetime' })
+  updated_at?: Date;
+
+  @PrimaryColumn({ type: 'bigint' })
+  id!: number;
+
+  @Column({ type: 'int' })
+  collection_id!: number;
+
+  @Column({ type: 'double' })
+  rarity_score!: number;
+
+  @Column({ type: 'double' })
+  rarity_score_normalised!: number;
+
+  @Column({ type: 'double' })
+  statistical_score!: number;
+
+  @Column({ type: 'int' })
+  rarity_score_rank?: number;
+
+  @Column({ type: 'int' })
+  rarity_score_normalised_rank?: number;
+
+  @Column({ type: 'int' })
+  statistical_score_rank?: number;
 }

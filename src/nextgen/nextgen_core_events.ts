@@ -10,7 +10,7 @@ import {
   NextGenTransaction
 } from '../entities/INextGen';
 import { LogDescription } from 'ethers/lib/utils';
-import { areEqualAddresses } from '../helpers';
+import { areEqualAddresses, isNullAddress } from '../helpers';
 import { findTransactionValues } from '../transaction_values';
 import {
   fetchNextGenCollection,
@@ -142,6 +142,7 @@ async function processTransfer(
   )[0];
 
   const isMint = areEqualAddresses(logInfo.args.from, NULL_ADDRESS);
+  const isBurn = isNullAddress(logInfo.args.to);
   const isSale = transactionWithValue.value > 0;
   let description = 'Transfer';
 
@@ -172,7 +173,8 @@ async function processTransfer(
       tokenId,
       normalisedTokenId,
       logInfo.args.to,
-      isMint
+      isMint,
+      isBurn
     );
   }
 
@@ -188,7 +190,8 @@ export async function upsertToken(
   tokenId: number,
   normalisedTokenId: number,
   owner: string,
-  isMint: boolean
+  isMint: boolean,
+  isBurn: boolean
 ) {
   const metadataLink = `${collection.base_uri}${tokenId}`;
   try {
@@ -207,8 +210,7 @@ export async function upsertToken(
       generator_url: metadataResponse.generator_url,
       owner: owner.toLowerCase(),
       pending: pending,
-      rarity_score: 0,
-      rarity_score_normalised: 0
+      burnt: isBurn
     };
 
     if (isMint) {

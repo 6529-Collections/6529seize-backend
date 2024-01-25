@@ -11,7 +11,8 @@ import {
   NextGenAllowlistBurn,
   NextGenAllowlistCollection,
   NextGenCollection,
-  NextGenTokenTrait
+  NextGenTokenTrait,
+  NextGenTokenScore
 } from '../entities/INextGen';
 import { findNextGenTransactions } from '../nextgen/nextgen';
 
@@ -30,7 +31,8 @@ export const handler = async (event: any) => {
     NextGenLog,
     NextGenToken,
     NextGenTransaction,
-    NextGenTokenTrait
+    NextGenTokenTrait,
+    NextGenTokenScore
   ]);
   await findNextGenTransactions();
   const diff = start.diffFromNow().formatAsDuration();

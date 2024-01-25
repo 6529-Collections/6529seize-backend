@@ -19,21 +19,21 @@ export async function findNextGenTransactions() {
   const endBlock = await alchemy.core.getBlockNumber();
   const dataSource = getDataSource();
   await dataSource.transaction(async (entityManager) => {
-    const startBlock = await fetchNextGenLatestBlock(entityManager);
+    // const startBlock = await fetchNextGenLatestBlock(entityManager);
 
-    await findCoreTransactions(entityManager, alchemy, startBlock, endBlock);
-    await findMinterTransactions(entityManager, alchemy, startBlock, endBlock);
-    await findCoreEvents(entityManager, alchemy, startBlock, endBlock);
+    // await findCoreTransactions(entityManager, alchemy, startBlock, endBlock);
+    // await findMinterTransactions(entityManager, alchemy, startBlock, endBlock);
+    // await findCoreEvents(entityManager, alchemy, startBlock, endBlock);
 
-    const blockTimestamp = (await alchemy.core.getBlock(endBlock)).timestamp;
+    // const blockTimestamp = (await alchemy.core.getBlock(endBlock)).timestamp;
 
-    const nextgenBlock: NextGenBlock = {
-      block: endBlock,
-      timestamp: blockTimestamp
-    };
-    await persistNextGenBlock(entityManager, nextgenBlock);
+    // const nextgenBlock: NextGenBlock = {
+    //   block: endBlock,
+    //   timestamp: blockTimestamp
+    // };
+    // await persistNextGenBlock(entityManager, nextgenBlock);
 
-    await processPendingTokens(entityManager);
+    // await processPendingTokens(entityManager);
     await processTraitScores(entityManager);
   });
 }

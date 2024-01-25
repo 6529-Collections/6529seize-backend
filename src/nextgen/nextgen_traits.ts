@@ -2,13 +2,12 @@ import {
   fetchNextGenCollections,
   persistNextGenTraits,
   fetchNextGenTokenTraits,
-  fetchPendingNextgenTokens,
   fetchNextGenTokensForCollection
 } from './nextgen.db';
 import {
   NextGenCollection,
-  NextGenToken,
-  NextGenTokenTrait
+  NextGenTokenTrait,
+  NextGenTokenScore
 } from '../entities/INextGen';
 import { Logger } from '../logging';
 import { EntityManager } from 'typeorm';
@@ -76,6 +75,7 @@ async function processTokenRarityScores(
     collection
   );
 
+  const traitScores: NextGenTokenScore[] = [];
   for (const token of tokens) {
     const traits = await entityManager.getRepository(NextGenTokenTrait).find({
       where: {
@@ -83,18 +83,70 @@ async function processTokenRarityScores(
       }
     });
 
-    const { rarityScore, rarityScoreNormalised } = traits.reduce(
-      (acc, tt) => {
-        acc.rarityScore += tt.rarity_score;
-        acc.rarityScoreNormalised += tt.rarity_score_normalised;
-        return acc;
-      },
-      { rarityScore: 0, rarityScoreNormalised: 0 }
-    );
+    const { rarityScore, rarityScoreNormalised, statisticalScore } =
+      traits.reduce(
+        (acc, tt) => {
+          acc.rarityScore += tt.rarity_score;
+          acc.rarityScoreNormalised += tt.rarity_score_normalised;
+          acc.statisticalScore *= tt.rarity / 100;
+          return acc;
+        },
+        { rarityScore: 0, rarityScoreNormalised: 0, statisticalScore: 1 }
+      );
 
-    token.rarity_score = rarityScore;
-    token.rarity_score_normalised = rarityScoreNormalised;
+    traitScores.push({
+      id: token.id,
+      collection_id: token.collection_id,
+      rarity_score: rarityScore,
+      rarity_score_normalised: rarityScoreNormalised,
+      statistical_score: statisticalScore
+    });
   }
 
-  await entityManager.getRepository(NextGenToken).save(tokens);
+  const rarityScoreRanks = calculateRanks(traitScores, 'rarity_score');
+  const rarityScoreNormalisedRanks = calculateRanks(
+    traitScores,
+    'rarity_score_normalised'
+  );
+  const statisticalScoreRanks = calculateRanks(
+    traitScores,
+    'statistical_score',
+    true
+  );
+
+  const rankedTraitScores: NextGenTokenScore[] = traitScores.map((score) => ({
+    ...score,
+    rarity_score_rank: rarityScoreRanks.get(score.id),
+    rarity_score_normalised_rank: rarityScoreNormalisedRanks.get(score.id),
+    statistical_score_rank: statisticalScoreRanks.get(score.id)
+  }));
+
+  await entityManager.getRepository(NextGenTokenScore).save(rankedTraitScores);
 }
+
+const calculateRanks = (
+  scores: NextGenTokenScore[],
+  scoreKey: keyof NextGenTokenScore,
+  inverse: boolean = false
+): Map<number, number> => {
+  const sortedScores = [...scores].sort((a, b) => {
+    const aValue = a[scoreKey];
+    const bValue = b[scoreKey];
+
+    if (typeof aValue === 'number' && typeof bValue === 'number') {
+      if (bValue === aValue) {
+        return a.id - b.id;
+      }
+      return inverse ? aValue - bValue : bValue - aValue;
+    }
+
+    return 0;
+  });
+
+  const ranks = new Map<number, number>();
+  sortedScores.forEach((score, index) => {
+    ranks.set(score.id, index + 1);
+  });
+
+  return ranks;
+};

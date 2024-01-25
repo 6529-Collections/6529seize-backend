@@ -13,9 +13,17 @@ import {
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_LOGS_TABLE,
   NEXTGEN_TOKENS_TABLE,
+  NEXTGEN_TOKEN_SCORES_TABLE,
   NEXTGEN_TOKEN_TRAITS_TABLE,
   NEXTGEN_TRANSACTIONS_TABLE
 } from '../../../nextgen/nextgen_constants';
+import { PageSortDirection } from 'src/page-request';
+
+export enum TokensSort {
+  ID = 'id',
+  RARITY_SCORE = 'rarity_score',
+  STATISTICAL_SCORE = 'statistical_score'
+}
 
 export async function fetchNextGenAllowlistCollection(merkleRoot: string) {
   const sql = `SELECT * FROM ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} LEFT JOIN ${NEXTGEN_BURN_COLLECTIONS_TABLE} ON ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.collection_id=${NEXTGEN_BURN_COLLECTIONS_TABLE}.collection_id WHERE ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.merkle_root=:merkle_root`;
@@ -147,7 +155,9 @@ export async function fetchNextGenCollectionTokens(
   collectionId: number,
   pageSize: number,
   page: number,
-  traits: string[]
+  traits: string[],
+  sort: TokensSort,
+  sortDirection: PageSortDirection
 ) {
   let filters = constructFilters(
     '',
@@ -210,18 +220,27 @@ export async function fetchNextGenCollectionTokens(
     });
   }
 
+  const joins = `LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_SCORES_TABLE}.id`;
+
   return fetchPaginated(
     NEXTGEN_TOKENS_TABLE,
     params,
-    'id asc',
+    `${NEXTGEN_TOKEN_SCORES_TABLE}.${sort} ${sortDirection}, ${NEXTGEN_TOKEN_SCORES_TABLE}.id asc`,
     pageSize,
     page,
-    filters
+    filters,
+    `${NEXTGEN_TOKENS_TABLE}.*, ${NEXTGEN_TOKEN_SCORES_TABLE}.*`,
+    joins
   );
 }
 
 export async function fetchNextGenToken(tokendId: number) {
-  const sql = `SELECT * FROM ${NEXTGEN_TOKENS_TABLE} WHERE id=:id`;
+  const sql = `
+    SELECT t.*, s.* 
+    FROM ${NEXTGEN_TOKENS_TABLE} t
+    LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} s ON t.id = s.id 
+    WHERE t.id = :id
+  `;
   const results = await sqlExecutor.execute(sql, {
     id: tokendId
   });
