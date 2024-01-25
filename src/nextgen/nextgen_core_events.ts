@@ -206,7 +206,9 @@ export async function upsertToken(
       animation_url: metadataResponse.animation_url,
       generator_url: metadataResponse.generator_url,
       owner: owner.toLowerCase(),
-      pending: pending
+      pending: pending,
+      rarity_score: 0,
+      rarity_score_normalised: 0
     };
 
     if (isMint) {
@@ -246,7 +248,12 @@ export async function processTraits(
       token_id: tokenId,
       collection_id: collectionId,
       trait: attribute.trait_type,
-      value: attribute.value
+      value: attribute.value,
+      rarity: 0,
+      rarity_score: 0,
+      rarity_score_normalised: 0,
+      token_count: 0,
+      trait_count: 0
     };
     tokenTraits.push(tokenTrait);
   }

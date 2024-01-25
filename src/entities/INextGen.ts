@@ -389,6 +389,12 @@ export class NextGenToken {
 
   @Column({ type: 'boolean' })
   pending!: boolean;
+
+  @Column({ type: 'double' })
+  rarity_score!: number;
+
+  @Column({ type: 'double' })
+  rarity_score_normalised!: number;
 }
 
 @Entity(NEXTGEN_TRANSACTIONS_TABLE)
@@ -415,12 +421,21 @@ export class NextGenTokenTrait {
   @PrimaryColumn({ type: 'varchar', length: 100 })
   trait!: string;
 
-  @Column({ type: 'int', default: 0 })
-  trait_score?: number;
-
   @Column({ type: 'varchar', length: 100 })
   value!: string;
 
+  @Column({ type: 'double' })
+  rarity!: number;
+
+  @Column({ type: 'double' })
+  rarity_score!: number;
+
+  @Column({ type: 'double' })
+  rarity_score_normalised!: number;
+
+  @Column({ type: 'int' })
+  token_count!: number;
+
   @Column({ type: 'int', default: 0 })
-  value_score?: number;
+  trait_count?: number;
 }
