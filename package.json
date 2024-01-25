@@ -49,12 +49,12 @@
     "typescript": "^5.0.4"
   },
   "dependencies": {
-    "@aws-sdk/client-cloudfront": "^3.454.0",
-    "@aws-sdk/client-s3": "^3.454.0",
+    "@aws-sdk/client-cloudfront": "^3.481.0",
+    "@aws-sdk/client-s3": "^3.481.0",
     "@aws-sdk/client-secrets-manager": "^3.454.0",
-    "@aws-sdk/client-sns": "^3.454.0",
+    "@aws-sdk/client-sns": "^3.481.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
-    "@sentry/serverless": "^7.83.0",
+    "@sentry/serverless": "^7.91.0",
     "@types/multer": "^1.4.9",
     "@wagmi/chains": "^1.8.0",
     "alchemy-sdk": "^3.0.0",
@@ -77,7 +77,7 @@
     "mysql": "^2.18.1",
     "node-cron": "^3.0.2",
     "node-fetch": "^2.7.0",
-    "openai": "^4.23.0",
+    "openai": "^4.24.1",
     "sharp": "^0.32.6",
     "short-uuid": "^4.2.2",
     "winston": "^3.11.0"
