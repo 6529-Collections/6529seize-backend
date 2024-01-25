@@ -59,7 +59,7 @@ async function processCollectionTraitScores(
       .size;
 
     tt.rarity_score_normalised =
-      ((1 / sharedKey.length) * 1000000) /
+      ((1 / sharedKeyValue) * 1000000) /
       ((traitsCount + 1) * valuesCountForTrait + 1);
   });
 
