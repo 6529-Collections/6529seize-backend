@@ -22,7 +22,8 @@ import { PageSortDirection } from 'src/page-request';
 export enum TokensSort {
   ID = 'id',
   RARITY_SCORE = 'rarity_score',
-  STATISTICAL_SCORE = 'statistical_score'
+  STATISTICAL_SCORE = 'statistical_score',
+  RANDOM = 'random'
 }
 
 export async function fetchNextGenAllowlistCollection(merkleRoot: string) {
@@ -222,10 +223,16 @@ export async function fetchNextGenCollectionTokens(
 
   const joins = `LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_SCORES_TABLE}.id`;
 
+  let sortQuery;
+  if (sort === TokensSort.RANDOM) {
+    sortQuery = `RAND()`;
+  } else {
+    sortQuery = `${NEXTGEN_TOKEN_SCORES_TABLE}.${sort} ${sortDirection}, ${NEXTGEN_TOKEN_SCORES_TABLE}.id asc`;
+  }
   return fetchPaginated(
     NEXTGEN_TOKENS_TABLE,
     params,
-    `${NEXTGEN_TOKEN_SCORES_TABLE}.${sort} ${sortDirection}, ${NEXTGEN_TOKEN_SCORES_TABLE}.id asc`,
+    sortQuery,
     pageSize,
     page,
     filters,
