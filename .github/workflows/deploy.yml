@@ -27,6 +27,7 @@ on:
           - nftsLoop
           - ownerMetricsLoop
           - ownersLoop
+          - rateEventProcessingLoop
           - refreshEnsLoop
           - rememesLoop
           - royaltiesLoop
