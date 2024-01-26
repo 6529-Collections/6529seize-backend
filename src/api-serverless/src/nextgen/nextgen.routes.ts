@@ -115,26 +115,31 @@ router.get(
 );
 
 router.get(
-  `/allowlist_merkle/:merkle_root?`,
+  `/:collection_id/allowlist_merkle/:merkle_root?`,
   async function (req: any, res: any, next: any) {
-    const merkleRoot = req.params.merkle_root;
+    const id: number = parseInt(req.params.collection_id);
+    if (!isNaN(id)) {
+      const merkleRoot = req.params.merkle_root;
 
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DISTRIBUTION_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DISTRIBUTION_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    db.fetchNextGenAllowlistByPhase(merkleRoot, pageSize, page).then(
-      (result) => {
-        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-        res.setHeader(
-          ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-          corsOptions.allowedHeaders
-        );
-        res.end(JSON.stringify(result));
-      }
-    );
+      db.fetchNextGenAllowlistByPhase(id, merkleRoot, pageSize, page).then(
+        (result) => {
+          res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+          res.setHeader(
+            ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+            corsOptions.allowedHeaders
+          );
+          res.end(JSON.stringify(result));
+        }
+      );
+    } else {
+      return res.status(404).send({});
+    }
   }
 );
 

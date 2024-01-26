@@ -373,11 +373,15 @@ export async function fetchAllowlistPhasesForCollection(collectionId: number) {
 }
 
 export async function fetchNextGenAllowlistByPhase(
+  id: number,
   merkleRoot: string | undefined,
   pageSize: number,
   page: number
 ) {
-  let filters = '';
+  let filters = constructFilters(
+    '',
+    `${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.collection_id=:id`
+  );
   if (merkleRoot) {
     filters = constructFilters(
       filters,
@@ -391,6 +395,7 @@ export async function fetchNextGenAllowlistByPhase(
   return fetchPaginated(
     NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
     {
+      id: id,
       merkleRoot: merkleRoot
     },
     'phase asc, address asc, spots asc',
