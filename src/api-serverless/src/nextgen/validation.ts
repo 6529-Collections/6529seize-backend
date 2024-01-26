@@ -29,7 +29,9 @@ const nextgenSchema = Joi.object({
   signature: Joi.string().required(),
   collection_id: Joi.number().required(),
   uuid: Joi.string().required(),
-  phase: Joi.string().optional(),
+  phase: Joi.string().required(),
+  start_time: Joi.number().required(),
+  end_time: Joi.number().required(),
   al_type: Joi.string()
     .valid(...Object.values(NextGenAllowlistType))
     .required()
@@ -130,7 +132,9 @@ export async function validateNextgen(req: any, res: any, next: any) {
       added_by: value.wallet,
       al_type: value.al_type,
       merkle: merkle,
-      phase: value.phase
+      phase: value.phase,
+      start_time: value.start_time,
+      end_time: value.end_time
     };
 
     return next();

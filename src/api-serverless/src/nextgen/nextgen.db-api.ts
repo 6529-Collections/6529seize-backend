@@ -18,6 +18,8 @@ import {
   NEXTGEN_TRANSACTIONS_TABLE
 } from '../../../nextgen/nextgen_constants';
 import { PageSortDirection } from 'src/page-request';
+import { NextGenAllowlistCollection } from '../../../entities/INextGen';
+import { DEFAULT_PAGE_SIZE } from 'src/api-constants';
 
 export enum TokensSort {
   ID = 'id',
@@ -356,4 +358,41 @@ export async function fetchFeaturedCollection() {
     return results[0];
   }
   return returnEmpty();
+}
+
+export async function fetchAllowlistPhasesForCollection(collectionId: number) {
+  const sql = `SELECT 
+    created_at, merkle_root, collection_id, added_by, al_type, phase, start_time, end_time
+  FROM ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} 
+  WHERE collection_id=:collectionId`;
+
+  const results = await sqlExecutor.execute(sql, {
+    collectionId: collectionId
+  });
+  return results;
+}
+
+export async function fetchNextGenAllowlistByPhase(
+  merkleRoot: string,
+  pageSize: number,
+  page: number
+) {
+  let filters = constructFilters(
+    '',
+    `${NEXTGEN_ALLOWLIST_TABLE}.merkle_root=:merkleRoot`
+  );
+  let joins = ` LEFT JOIN ${ENS_TABLE} ens ON ${NEXTGEN_ALLOWLIST_TABLE}.address=ens.wallet`;
+
+  return fetchPaginated(
+    NEXTGEN_ALLOWLIST_TABLE,
+    {
+      merkleRoot: merkleRoot
+    },
+    'address asc, spots asc',
+    pageSize,
+    page,
+    filters,
+    `${NEXTGEN_ALLOWLIST_TABLE}.*, ens.display as wallet_display`,
+    joins
+  );
 }

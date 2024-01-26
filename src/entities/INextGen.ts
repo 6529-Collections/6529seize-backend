@@ -84,11 +84,17 @@ export class NextGenAllowlistCollection {
   @Column({ type: 'json' })
   merkle_tree!: string;
 
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'text' })
   al_type!: string;
 
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'text' })
   phase!: string;
+
+  @Column({ type: 'bigint' })
+  start_time!: number;
+
+  @Column({ type: 'bigint' })
+  end_time!: number;
 }
 
 @Entity(NEXTGEN_BURN_COLLECTIONS_TABLE)
@@ -190,10 +196,31 @@ export function extractNextGenCollectionInsert(
     addedBy: nextgen.added_by,
     alType: nextgen.al_type,
     merkleTree: nextgen.merkle_tree,
-    phase: nextgen.phase
+    phase: nextgen.phase,
+    startTime: nextgen.start_time,
+    endTime: nextgen.end_time
   };
 
-  const sql = `INSERT INTO ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} (merkle_root, collection_id, added_by, al_type, merkle_tree, phase) VALUES (:merkleRoot, :collectionId, :addedBy, :alType, :merkleTree, :phase)`;
+  const sql = `INSERT INTO 
+    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} (
+      merkle_root, 
+      collection_id, 
+      added_by, 
+      al_type, 
+      merkle_tree, 
+      phase,
+      start_time,
+      end_time
+    ) VALUES (
+      :merkleRoot, 
+      :collectionId, 
+      :addedBy, 
+      :alType, 
+      :merkleTree, 
+      :phase,
+      :startTime,
+      :endTime
+    )`;
 
   return {
     sql,

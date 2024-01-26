@@ -114,6 +114,30 @@ router.get(
 );
 
 router.get(
+  `/proofs/:merkle_root`,
+  async function (req: any, res: any, next: any) {
+    const merkleRoot = req.params.merkle_root;
+
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+    db.fetchNextGenAllowlistByPhase(merkleRoot, pageSize, page).then(
+      (result) => {
+        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+        res.setHeader(
+          ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+          corsOptions.allowedHeaders
+        );
+        res.end(JSON.stringify(result));
+      }
+    );
+  }
+);
+
+router.get(
   `/proofs/:merkle_root/:address`,
   async function (req: any, res: any, next: any) {
     const merkleRoot = req.params.merkle_root;
@@ -144,6 +168,22 @@ router.get(
       );
       res.end(JSON.stringify(result));
     });
+  }
+);
+
+router.get(
+  `/allowlist_phases/:collection_id`,
+  async function (req: any, res: any, next: any) {
+    const id: number = parseInt(req.params.collection_id);
+    if (!isNaN(id)) {
+      logger.info(`[FETCHING ALLOWLIST PHASES COLLECTION ID ${id}]`);
+      db.fetchAllowlistPhasesForCollection(id).then((result) => {
+        return returnPaginatedResult(result, req, res);
+      });
+    } else {
+      console.log('here', id);
+      return res.status(404).send({});
+    }
   }
 );
 
@@ -367,6 +407,8 @@ async function persistAllowlist(body: {
   added_by: string;
   al_type: string;
   phase: string;
+  start_time: number;
+  end_time: number;
   merkle: {
     merkle_root: string;
     merkle_tree: any;
@@ -380,10 +422,13 @@ async function persistAllowlist(body: {
   collection.merkle_root = body.merkle.merkle_root;
   collection.phase = body.phase;
   collection.merkle_tree = JSON.stringify(body.merkle.merkle_tree);
+  collection.start_time = body.start_time;
+  collection.end_time = body.end_time;
 
   const existingMerkle = await sqlExecutor.execute(
-    `SELECT * FROM ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} WHERE collection_id = :collection_id`,
+    `SELECT * FROM ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} WHERE merkle_root = :merkle_root AND collection_id = :collection_id`,
     {
+      merkle_root: body.merkle.merkle_root,
       collection_id: collection.collection_id
     }
   );
