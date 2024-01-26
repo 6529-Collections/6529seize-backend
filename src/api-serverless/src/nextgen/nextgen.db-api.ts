@@ -384,12 +384,12 @@ export async function fetchNextGenAllowlistByPhase(
       `${NEXTGEN_ALLOWLIST_TABLE}.merkle_root=:merkleRoot`
     );
   }
-  let joins = `LEFT JOIN ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} ON 
+  let joins = `LEFT JOIN ${NEXTGEN_ALLOWLIST_TABLE} ON 
     ${NEXTGEN_ALLOWLIST_TABLE}.merkle_root=${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.merkle_root 
   LEFT JOIN ${ENS_TABLE} ens ON ${NEXTGEN_ALLOWLIST_TABLE}.address=ens.wallet`;
 
   return fetchPaginated(
-    NEXTGEN_ALLOWLIST_TABLE,
+    NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
     {
       merkleRoot: merkleRoot
     },
