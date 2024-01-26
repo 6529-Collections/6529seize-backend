@@ -426,9 +426,9 @@ async function persistAllowlist(body: {
   collection.end_time = body.end_time;
 
   const existingMerkle = await sqlExecutor.execute(
-    `SELECT * FROM ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} WHERE merkle_root = :merkle_root AND collection_id = :collection_id`,
+    `SELECT * FROM ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} WHERE phase = :phase AND collection_id = :collection_id`,
     {
-      merkle_root: body.merkle.merkle_root,
+      phase: body.phase,
       collection_id: collection.collection_id
     }
   );
