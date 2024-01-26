@@ -373,26 +373,31 @@ export async function fetchAllowlistPhasesForCollection(collectionId: number) {
 }
 
 export async function fetchNextGenAllowlistByPhase(
-  merkleRoot: string,
+  merkleRoot: string | undefined,
   pageSize: number,
   page: number
 ) {
-  let filters = constructFilters(
-    '',
-    `${NEXTGEN_ALLOWLIST_TABLE}.merkle_root=:merkleRoot`
-  );
-  let joins = ` LEFT JOIN ${ENS_TABLE} ens ON ${NEXTGEN_ALLOWLIST_TABLE}.address=ens.wallet`;
+  let filters = '';
+  if (merkleRoot) {
+    filters = constructFilters(
+      filters,
+      `${NEXTGEN_ALLOWLIST_TABLE}.merkle_root=:merkleRoot`
+    );
+  }
+  let joins = `LEFT JOIN ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} ON 
+    ${NEXTGEN_ALLOWLIST_TABLE}.merkle_root=${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.merkle_root 
+  LEFT JOIN ${ENS_TABLE} ens ON ${NEXTGEN_ALLOWLIST_TABLE}.address=ens.wallet`;
 
   return fetchPaginated(
     NEXTGEN_ALLOWLIST_TABLE,
     {
       merkleRoot: merkleRoot
     },
-    'address asc, spots asc',
+    'phase asc, address asc, spots asc',
     pageSize,
     page,
     filters,
-    `${NEXTGEN_ALLOWLIST_TABLE}.*, ens.display as wallet_display`,
+    `${NEXTGEN_ALLOWLIST_TABLE}.*, ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.phase, ens.display as wallet_display`,
     joins
   );
 }

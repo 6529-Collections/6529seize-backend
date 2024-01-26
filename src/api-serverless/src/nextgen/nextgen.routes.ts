@@ -23,7 +23,8 @@ import {
   JSON_HEADER_VALUE,
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   corsOptions,
-  DEFAULT_PAGE_SIZE
+  DEFAULT_PAGE_SIZE,
+  DISTRIBUTION_PAGE_SIZE
 } from '../api-constants';
 import { returnPaginatedResult, returnJsonResult } from '../api-helpers';
 import { NextGenCollectionStatus } from '../api-filters';
@@ -114,14 +115,14 @@ router.get(
 );
 
 router.get(
-  `/proofs/:merkle_root`,
+  `/allowlist_merkle/:merkle_root?`,
   async function (req: any, res: any, next: any) {
     const merkleRoot = req.params.merkle_root;
 
     const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+      req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
         ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
+        : DISTRIBUTION_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
     db.fetchNextGenAllowlistByPhase(merkleRoot, pageSize, page).then(
