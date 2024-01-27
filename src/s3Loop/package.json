@@ -16,9 +16,9 @@
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@ffmpeg-installer/linux-x64": "^4.1.0",
     "detect-libc": "^2.0.1",
-    "esbuild": "^0.19.10",
+    "esbuild": "^0.19.11",
     "fluent-ffmpeg": "^2.1.2",
-    "imagescript": "^1.2.17",
+    "imagescript": "^1.2.18",
     "sharp": "^0.33.2"
   }
 }
