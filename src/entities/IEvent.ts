@@ -30,7 +30,8 @@ export class ProcessableEvent {
 }
 
 export enum EventType {
-  PROFILE_CIC_RATE = 'PROFILE_CIC_RATE'
+  PROFILE_CIC_RATE = 'PROFILE_CIC_RATE',
+  PROFILE_REP_RATE = 'PROFILE_REP_RATE'
 }
 
 export enum EventStatus {

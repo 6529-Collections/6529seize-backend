@@ -6,6 +6,8 @@ import { EventProcessor } from '../events/event.processor';
 import { eventsDb } from '../events/events.db';
 import { cicSumEventListener } from './cic-score/cic-sum.event-listener';
 import { CicScoreAggregation } from '../entities/ICicScoreAggregation';
+import { ProfileTotalRepScoreAggregation } from '../entities/IRepScoreAggregations';
+import { profileRepSumEventListener } from './rep-score/profile-rep-sum.event-listener';
 
 const logger = Logger.get('RATE_EVENT_PROCESSING_LOOP');
 
@@ -14,9 +16,13 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   await loadEnv([
     ProcessableEvent,
     CicScoreAggregation,
+    ProfileTotalRepScoreAggregation,
     ListenerProcessedEvent
   ]);
-  const eventProcessor = new EventProcessor(eventsDb, [cicSumEventListener]);
+  const eventProcessor = new EventProcessor(eventsDb, [
+    cicSumEventListener,
+    profileRepSumEventListener
+  ]);
   await eventProcessor.processUntilNoMoreEventsFound();
   await unload();
   logger.info(`[COMPLETE]`);
