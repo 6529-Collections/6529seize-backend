@@ -8,25 +8,24 @@ import {
   QueryRunner
 } from 'typeorm';
 import {
-  TDH_BLOCKS_TABLE,
-  TRANSACTIONS_TABLE,
-  NFTS_TABLE,
   ARTISTS_TABLE,
-  MEMES_EXTENDED_DATA_TABLE,
-  OWNERS_TABLE,
-  WALLETS_TDH_TABLE,
-  UPLOADS_TABLE,
-  ENS_TABLE,
-  OWNERS_METRICS_TABLE,
-  NULL_ADDRESS,
-  NFTS_MEME_LAB_TABLE,
-  TRANSACTIONS_MEME_LAB_TABLE,
-  OWNERS_MEME_LAB_TABLE,
-  MEMES_CONTRACT,
   CONSOLIDATED_UPLOADS_TABLE,
-  MEME_LAB_ROYALTIES_TABLE,
   CONSOLIDATIONS_TABLE,
-  PROFILES_TABLE
+  ENS_TABLE,
+  MEME_LAB_ROYALTIES_TABLE,
+  MEMES_CONTRACT,
+  MEMES_EXTENDED_DATA_TABLE,
+  NFTS_MEME_LAB_TABLE,
+  NFTS_TABLE,
+  NULL_ADDRESS,
+  OWNERS_MEME_LAB_TABLE,
+  OWNERS_METRICS_TABLE,
+  OWNERS_TABLE,
+  TDH_BLOCKS_TABLE,
+  TRANSACTIONS_MEME_LAB_TABLE,
+  TRANSACTIONS_TABLE,
+  UPLOADS_TABLE,
+  WALLETS_TDH_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -54,9 +53,9 @@ import {
 } from './entities/ITDH';
 import { Team } from './entities/ITeam';
 import {
-  Transaction,
+  BaseTransaction,
   LabTransaction,
-  BaseTransaction
+  Transaction
 } from './entities/ITransaction';
 import {
   Consolidation,
@@ -68,8 +67,8 @@ import {
 } from './entities/IDelegation';
 import { RoyaltiesUpload } from './entities/IRoyalties';
 import {
-  NFTHistoryBlock,
   NFTHistory,
+  NFTHistoryBlock,
   NFTHistoryClaim
 } from './entities/INFTHistory';
 import { Rememe, RememeUpload } from './entities/IRememe';
@@ -90,6 +89,8 @@ import { ProfileTdh, ProfileTdhLog } from './entities/IProfileTDH';
 import { ProfileActivityLog } from './entities/IProfileActivityLog';
 import { Rating } from './entities/IRating';
 import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
+import { ListenerProcessedEvent, ProcessableEvent } from './entities/IEvent';
+import { CicScoreAggregation } from './entities/ICicScoreAggregation';
 
 const mysql = require('mysql');
 
@@ -136,7 +137,10 @@ export async function connect(entities: any[] = []) {
       CicStatement,
       ProfileActivityLog,
       Rating,
-      AbusivenessDetectionResult
+      AbusivenessDetectionResult,
+      ProcessableEvent,
+      ListenerProcessedEvent,
+      CicScoreAggregation
     ];
   }
 

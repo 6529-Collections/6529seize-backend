@@ -32,6 +32,7 @@ import {
 } from '../api-serverless/src/profiles/rep.service';
 import { profilesService } from '../profiles/profiles.service';
 import { Request } from 'express';
+import { eventScheduler, EventScheduler } from '../events/event.scheduler';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -40,7 +41,8 @@ export class RatingsService {
     private readonly ratingsDb: RatingsDb,
     private readonly profilesDb: ProfilesDb,
     private readonly repService: RepService,
-    private readonly profileActivityLogsDb: ProfileActivityLogsDb
+    private readonly profileActivityLogsDb: ProfileActivityLogsDb,
+    private readonly eventScheduler: EventScheduler
   ) {}
 
   public async getAggregatedRatingOnMatter(
@@ -103,6 +105,17 @@ export class RatingsService {
       }
     }
     await this.ratingsDb.updateRating(request, connection);
+    if (request.matter === RateMatter.CIC) {
+      await this.eventScheduler.scheduleCicRatingChangedEvent(
+        {
+          rater_profile_id: request.rater_profile_id,
+          target_profile_id: request.matter_target_id,
+          old_score: currentRating.rating,
+          new_score: request.rating
+        },
+        connection
+      );
+    }
     await this.profileActivityLogsDb.insert(
       {
         profile_id: request.rater_profile_id,
@@ -502,5 +515,6 @@ export const ratingsService: RatingsService = new RatingsService(
   ratingsDb,
   profilesDb,
   repService,
-  profileActivityLogsDb
+  profileActivityLogsDb,
+  eventScheduler
 );

@@ -1,12 +1,14 @@
 import { Logger } from './logging';
 import { Time } from './time';
+import * as rateEventProcessingLoop from './rateEventProcessingLoop';
 
 const logger = Logger.get('BACKEND');
 
 async function start() {
   const start = Time.now();
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
-
+  const handler = null as unknown as any;
+  await rateEventProcessingLoop.handler(undefined, handler, handler);
   // Uncomment to call on start
 
   // await nftHistory.handler();
