@@ -6,6 +6,7 @@ import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATIONS_TABLE,
   DELEGATIONS_TABLE,
+  DELEGATION_ALL_ADDRESS,
   DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE,
   ENS_TABLE,
@@ -35,6 +36,8 @@ import {
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   USER_TABLE,
+  USE_CASE_ALL,
+  USE_CASE_MINTING,
   WALLETS_TDH_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
@@ -2354,6 +2357,39 @@ export async function fetchDelegations(
   const filter = `WHERE from_address = :wallet OR to_address = :wallet`;
   const params = {
     wallet: wallet
+  };
+
+  let joins = `LEFT JOIN ${ENS_TABLE} e1 ON ${DELEGATIONS_TABLE}.from_address=e1.wallet`;
+  joins += ` LEFT JOIN ${ENS_TABLE} e2 ON ${DELEGATIONS_TABLE}.to_address=e2.wallet`;
+
+  return fetchPaginated(
+    DELEGATIONS_TABLE,
+    params,
+    'block desc',
+    pageSize,
+    page,
+    filter,
+    `${DELEGATIONS_TABLE}.*, e1.display as from_display, e2.display as to_display`,
+    joins
+  );
+}
+
+export async function fetchMintingDelegations(
+  wallet: string,
+  pageSize: number,
+  page: number
+) {
+  let filter = constructFilters('', `LOWER(from_address) = :wallet`);
+
+  filter = constructFilters(filter, `expiry >= :expiry`);
+  filter = constructFilters(filter, `use_case in (:use_cases)`);
+  filter = constructFilters(filter, `collection in (:collections)`);
+
+  const params = {
+    wallet: wallet.toLowerCase(),
+    expiry: Date.now() / 1000,
+    use_cases: [USE_CASE_ALL, USE_CASE_MINTING],
+    collections: [DELEGATION_ALL_ADDRESS, MEMES_CONTRACT]
   };
 
   let joins = `LEFT JOIN ${ENS_TABLE} e1 ON ${DELEGATIONS_TABLE}.from_address=e1.wallet`;

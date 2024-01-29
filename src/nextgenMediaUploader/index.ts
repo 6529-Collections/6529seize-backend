@@ -105,7 +105,7 @@ async function uploadMissingNextgenMedia(path: string) {
   }
   const htmlBlob = await genHtmlResponse.arrayBuffer();
 
-  const metadataUpload = await s3.send(
+  await s3.send(
     new PutObjectCommand({
       Bucket: BUCKET,
       Key: metadataPath,
@@ -114,7 +114,7 @@ async function uploadMissingNextgenMedia(path: string) {
     })
   );
 
-  const imageUpload = await s3.send(
+  await s3.send(
     new PutObjectCommand({
       Bucket: BUCKET,
       Key: imagePath,
@@ -123,7 +123,7 @@ async function uploadMissingNextgenMedia(path: string) {
     })
   );
 
-  const htmlUpload = await s3.send(
+  await s3.send(
     new PutObjectCommand({
       Bucket: BUCKET,
       Key: htmlPath,

@@ -143,6 +143,24 @@ router.get(
   }
 );
 
+router.get(`/proofs`, async function (req: any, res: any, next: any) {
+  const pageSize: number =
+    req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+      ? parseInt(req.query.page_size)
+      : DEFAULT_PAGE_SIZE;
+  const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  const addresses = req.query.address;
+
+  db.fetchNextGenProofs(addresses, pageSize, page).then((result) => {
+    res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+    res.setHeader(
+      ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+      corsOptions.allowedHeaders
+    );
+    res.end(JSON.stringify(result));
+  });
+});
+
 router.get(
   `/proofs/:merkle_root/:address`,
   async function (req: any, res: any, next: any) {
@@ -177,19 +195,32 @@ router.get(
   }
 );
 
+router.get(`/allowlist_phases`, async function (req: any, res: any, next: any) {
+  const pageSize: number =
+    req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+      ? parseInt(req.query.page_size)
+      : DEFAULT_PAGE_SIZE;
+  const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+  logger.info(
+    `[FETCHING ALLOWLIST PHASES FOR ALL COLLECTIONS] : [PAGE SIZE ${pageSize}] : [PAGE ${page}]`
+  );
+  db.fetchAllAllowlistPhases(pageSize, page).then((result) => {
+    return returnPaginatedResult(result, req, res);
+  });
+});
+
 router.get(
   `/allowlist_phases/:collection_id`,
   async function (req: any, res: any, next: any) {
-    const id: number = parseInt(req.params.collection_id);
-    if (!isNaN(id)) {
-      logger.info(`[FETCHING ALLOWLIST PHASES COLLECTION ID ${id}]`);
-      db.fetchAllowlistPhasesForCollection(id).then((result) => {
-        return returnPaginatedResult(result, req, res);
-      });
-    } else {
-      console.log('here', id);
-      return res.status(404).send({});
+    let id: number = parseInt(req.params.collection_id);
+    if (isNaN(id)) {
+      id = undefined;
     }
+    logger.info(`[FETCHING ALLOWLIST PHASES COLLECTION ID ${id}]`);
+    db.fetchAllowlistPhasesForCollection(id).then((result) => {
+      return returnPaginatedResult(result, req, res);
+    });
   }
 );
 

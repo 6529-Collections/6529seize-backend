@@ -61,10 +61,12 @@ export async function fetchNextGenAllowlist(
     for (const allowlist of allowlists) {
       const proof = getProof(collection.merkle_tree, allowlist.keccak);
       response.push({
+        merkle_root: allowlist.merkle_root,
         keccak: allowlist.keccak,
         spots: allowlist.spots,
         info: allowlist.info,
-        proof: proof
+        proof: proof,
+        address: allowlist.address
       });
     }
     return response;
@@ -360,6 +362,18 @@ export async function fetchFeaturedCollection() {
   return returnEmpty();
 }
 
+export async function fetchAllAllowlistPhases(pageSize: number, page: number) {
+  return fetchPaginated(
+    NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
+    {},
+    'collection_id asc, phase asc',
+    pageSize,
+    page,
+    '',
+    'merkle_root, collection_id, phase, start_time, end_time, al_type, added_by'
+  );
+}
+
 export async function fetchAllowlistPhasesForCollection(collectionId: number) {
   const sql = `SELECT 
     created_at, merkle_root, collection_id, added_by, al_type, phase, start_time, end_time
@@ -404,5 +418,27 @@ export async function fetchNextGenAllowlistByPhase(
     filters,
     `${NEXTGEN_ALLOWLIST_TABLE}.*, ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.phase, ens.display as wallet_display`,
     joins
+  );
+}
+
+export async function fetchNextGenProofs(
+  addressesStr: string,
+  pageSize: number,
+  page: number
+) {
+  let filters = '';
+  let params: any = {};
+  if (addressesStr) {
+    filters = constructFilters(filters, `address in (:addresses)`);
+    params.addresses = addressesStr.toLowerCase().split(',');
+  }
+
+  return fetchPaginated(
+    NEXTGEN_ALLOWLIST_TABLE,
+    params,
+    'collection_id asc, address asc',
+    pageSize,
+    page,
+    filters
   );
 }

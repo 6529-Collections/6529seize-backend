@@ -1126,6 +1126,20 @@ loadApi().then(() => {
     });
   });
 
+  apiRouter.get(`/delegations/minting/:wallet`, function (req: any, res: any) {
+    const wallet = req.params.wallet;
+
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+    db.fetchMintingDelegations(wallet, pageSize, page).then((result) => {
+      returnPaginatedResult(result, req, res);
+    });
+  });
+
   apiRouter.get(`/delegations`, function (req: any, res: any) {
     const use_cases = req.query.use_case;
     const collections = req.query.collection;

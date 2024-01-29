@@ -137,7 +137,7 @@ export function extractNextGenAllowlistInsert(
     const keccakKey = `keccak${index}`;
 
     params[merkleRootKey] = entry.merkle_root;
-    params[addressKey] = entry.address;
+    params[addressKey] = entry.address.toLowerCase();
     params[spotsKey] = entry.spots;
     params[infoKey] = entry.info;
     params[keccakKey] = entry.keccak;
