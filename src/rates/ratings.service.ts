@@ -105,17 +105,7 @@ export class RatingsService {
       }
     }
     await this.ratingsDb.updateRating(request, connection);
-    if (request.matter === RateMatter.CIC) {
-      await this.eventScheduler.scheduleCicRatingChangedEvent(
-        {
-          rater_profile_id: request.rater_profile_id,
-          target_profile_id: request.matter_target_id,
-          old_score: currentRating.rating,
-          new_score: request.rating
-        },
-        connection
-      );
-    }
+    await this.scheduleEvents(request, currentRating, connection);
     await this.profileActivityLogsDb.insert(
       {
         profile_id: request.rater_profile_id,
@@ -131,6 +121,35 @@ export class RatingsService {
       },
       connection
     );
+  }
+
+  private async scheduleEvents(
+    request: UpdateRatingRequest,
+    currentRating: Rating & { total_tdh_spent_on_matter: number },
+    connection: ConnectionWrapper<any>
+  ) {
+    if (request.matter === RateMatter.CIC) {
+      await this.eventScheduler.scheduleCicRatingChangedEvent(
+        {
+          rater_profile_id: request.rater_profile_id,
+          target_profile_id: request.matter_target_id,
+          old_score: currentRating.rating,
+          new_score: request.rating
+        },
+        connection
+      );
+    } else if (request.matter === RateMatter.REP) {
+      await this.eventScheduler.scheduleRepRatingChangedEvent(
+        {
+          rater_profile_id: request.rater_profile_id,
+          target_profile_id: request.matter_target_id,
+          category: request.matter_category,
+          old_score: currentRating.rating,
+          new_score: request.rating
+        },
+        connection
+      );
+    }
   }
 
   public async reduceOverRates() {

@@ -91,6 +91,7 @@ import { Rating } from './entities/IRating';
 import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
 import { ListenerProcessedEvent, ProcessableEvent } from './entities/IEvent';
 import { CicScoreAggregation } from './entities/ICicScoreAggregation';
+import { ProfileTotalRepScoreAggregation } from './entities/IRepScoreAggregations';
 
 const mysql = require('mysql');
 
@@ -140,7 +141,8 @@ export async function connect(entities: any[] = []) {
       AbusivenessDetectionResult,
       ProcessableEvent,
       ListenerProcessedEvent,
-      CicScoreAggregation
+      CicScoreAggregation,
+      ProfileTotalRepScoreAggregation
     ];
   }
 
@@ -1021,9 +1023,9 @@ async function persistTdhUploadByTable(
   dateString: string,
   location: string
 ) {
-  const sql = `REPLACE INTO ${table} SET 
-    date = :date,
-    block = :block,
+  const sql = `REPLACE INTO ${table} SET
+      date = :date,
+          block = :block,
     tdh = :tdh`;
   await sqlExecutor.execute(sql, {
     date: dateString,
@@ -1095,9 +1097,9 @@ export async function persistENS(ens: ENS[]) {
   await Promise.all(
     ens.map(async (t) => {
       if ((t.display && t.display.length < 150) || !t.display) {
-        const sql = `REPLACE INTO ${ENS_TABLE} SET 
-          wallet = :wallet,
-          display = :display`;
+        const sql = `REPLACE INTO ${ENS_TABLE} SET
+            wallet = :wallet,
+                display = :display`;
         try {
           await sqlExecutor.execute(sql, {
             wallet: t.wallet,
@@ -1106,9 +1108,9 @@ export async function persistENS(ens: ENS[]) {
         } catch (e) {
           logger.error(`[ENS] ERROR PERSISTING ENS [${t.wallet}] [${e}]`);
           await sqlExecutor.execute(
-            `REPLACE INTO ${ENS_TABLE} SET 
-            wallet = ?,
-            display = ?`,
+            `REPLACE INTO ${ENS_TABLE} SET
+                wallet = ?,
+                    display = ?`,
             [t.wallet, null]
           );
         }
