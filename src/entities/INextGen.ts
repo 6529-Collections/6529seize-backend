@@ -95,6 +95,9 @@ export class NextGenAllowlistCollection {
 
   @Column({ type: 'bigint' })
   end_time!: number;
+
+  @Column({ type: 'double' })
+  mint_price!: number;
 }
 
 @Entity(NEXTGEN_BURN_COLLECTIONS_TABLE)
@@ -198,7 +201,8 @@ export function extractNextGenCollectionInsert(
     merkleTree: nextgen.merkle_tree,
     phase: nextgen.phase,
     startTime: nextgen.start_time,
-    endTime: nextgen.end_time
+    endTime: nextgen.end_time,
+    mintPrice: nextgen.mint_price
   };
 
   const sql = `INSERT INTO 
@@ -210,7 +214,8 @@ export function extractNextGenCollectionInsert(
       merkle_tree, 
       phase,
       start_time,
-      end_time
+      end_time,
+      mint_price
     ) VALUES (
       :merkleRoot, 
       :collectionId, 
@@ -219,7 +224,8 @@ export function extractNextGenCollectionInsert(
       :merkleTree, 
       :phase,
       :startTime,
-      :endTime
+      :endTime,
+      :mintPrice
     )`;
 
   return {

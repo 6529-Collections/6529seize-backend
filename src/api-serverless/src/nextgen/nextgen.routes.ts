@@ -472,6 +472,7 @@ async function persistAllowlist(body: {
   phase: string;
   start_time: number;
   end_time: number;
+  mint_price: number;
   merkle: {
     merkle_root: string;
     merkle_tree: any;
@@ -487,6 +488,7 @@ async function persistAllowlist(body: {
   collection.merkle_tree = JSON.stringify(body.merkle.merkle_tree);
   collection.start_time = body.start_time;
   collection.end_time = body.end_time;
+  collection.mint_price = body.mint_price;
 
   const existingMerkle = await sqlExecutor.execute(
     `SELECT * FROM ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE} WHERE phase = :phase AND collection_id = :collection_id`,

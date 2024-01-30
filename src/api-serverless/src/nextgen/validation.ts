@@ -32,6 +32,7 @@ const nextgenSchema = Joi.object({
   phase: Joi.string().required(),
   start_time: Joi.number().required(),
   end_time: Joi.number().required(),
+  mint_price: Joi.number().required(),
   al_type: Joi.string()
     .valid(...Object.values(NextGenAllowlistType))
     .required()
@@ -134,7 +135,8 @@ export async function validateNextgen(req: any, res: any, next: any) {
       merkle: merkle,
       phase: value.phase,
       start_time: value.start_time,
-      end_time: value.end_time
+      end_time: value.end_time,
+      mint_price: value.mint_price
     };
 
     return next();
