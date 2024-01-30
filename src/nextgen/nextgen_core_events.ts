@@ -60,6 +60,9 @@ export async function findCoreEvents(
         log: processedLog.description,
         source: 'events'
       };
+      if (processedLog.token_id) {
+        l.token_id = processedLog.token_id;
+      }
       logs.push(l);
     }
   }
@@ -71,6 +74,7 @@ async function processLog(
   log: Log
 ): Promise<{
   id: number;
+  token_id?: number;
   description: string;
 } | null> {
   const parsedLog = NEXTGEN_CORE_IFACE.parseLog(log);
@@ -102,6 +106,7 @@ async function processTransfer(
   logInfo: LogDescription
 ): Promise<{
   id: number;
+  token_id: number;
   description: string;
 }> {
   const network = getNextgenNetwork();
@@ -180,6 +185,7 @@ async function processTransfer(
 
   return {
     id: collectionId,
+    token_id: tokenId,
     description: description
   };
 }

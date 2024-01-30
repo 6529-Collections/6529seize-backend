@@ -349,6 +349,32 @@ router.get(
 );
 
 router.get(
+  `/collections/:id/logs/:tokenId`,
+  async function (req: any, res: any, next: any) {
+    const id: number = parseInt(req.params.id);
+    const tokenId = parseInt(req.params.tokenId);
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+    if (!isNaN(id) && !isNaN(tokenId)) {
+      logger.info(
+        `[FETCHING LOGS FOR COLLECTION ID ${id} TOKEN ID ${tokenId}]`
+      );
+      db.fetchNextGenCollectionAndTokenLogs(id, tokenId, pageSize, page).then(
+        (result) => {
+          return returnJsonResult(result, req, res);
+        }
+      );
+    } else {
+      return res.status(404).send({});
+    }
+  }
+);
+
+router.get(
   `/collections/:id/traits`,
   async function (req: any, res: any, next: any) {
     const id: number = parseInt(req.params.id);

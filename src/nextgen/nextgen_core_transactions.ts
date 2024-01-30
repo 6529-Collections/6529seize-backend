@@ -80,6 +80,9 @@ export async function findCoreTransactions(
           log: processedLog.description,
           source: 'transactions'
         };
+        if (processedLog.token_id) {
+          l.token_id = processedLog.token_id;
+        }
         logs.push(l);
       });
     }
@@ -105,6 +108,7 @@ async function processLog(
 ): Promise<
   {
     id: number;
+    token_id?: number;
     description: string;
   }[]
 > {
@@ -165,6 +169,7 @@ async function createCollection(
     licence: args[4],
     base_uri: args[5],
     library: args[6],
+    dependency_script: args[7],
     image: image,
     mint_count: 0
   };
@@ -197,10 +202,11 @@ async function updateCollectionInfo(
     licence: args[5],
     base_uri: args[6],
     library: args[7],
+    dependency_script: args[8],
     image: image,
     mint_count: 0
   };
-  const scriptIndex = parseInt(args[8]);
+  const scriptIndex = parseInt(args[9]);
   let description: string;
   if (scriptIndex === 1000000) {
     description = 'Collection Info Updated';
@@ -366,6 +372,7 @@ async function addRandomizer(args: ethers.utils.Result): Promise<
 async function changeTokenData(args: ethers.utils.Result): Promise<
   {
     id: number;
+    token_id: number;
     description: string;
   }[]
 > {
@@ -376,6 +383,7 @@ async function changeTokenData(args: ethers.utils.Result): Promise<
   return [
     {
       id: collectionId,
+      token_id: tokenId,
       description: `Change token data for #${normalisedTokenId}`
     }
   ];
@@ -383,7 +391,7 @@ async function changeTokenData(args: ethers.utils.Result): Promise<
 
 function getCollectionImage(collectionId: number): string {
   const network = getNextgenNetwork();
-  return `${NEXTGEN_CF_BASE_PATH}${
+  return `${NEXTGEN_CF_BASE_PATH}/${
     network === Network.ETH_SEPOLIA || network === Network.ETH_GOERLI
       ? 'testnet'
       : 'mainnet'

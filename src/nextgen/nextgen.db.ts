@@ -7,6 +7,7 @@ import {
   NextGenTransaction
 } from '../entities/INextGen';
 import { EntityManager } from 'typeorm';
+import { NEXTGEN_START_BLOCK, getNextgenNetwork } from './nextgen_constants';
 
 export async function fetchNextGenLatestBlock(manager: EntityManager) {
   const block = await manager
@@ -14,7 +15,7 @@ export async function fetchNextGenLatestBlock(manager: EntityManager) {
     .createQueryBuilder()
     .select('MAX(block)', 'max_block')
     .getRawOne();
-  return block.max_block ?? 0;
+  return block.max_block ?? NEXTGEN_START_BLOCK[getNextgenNetwork()];
 }
 
 export async function fetchNextGenCollection(

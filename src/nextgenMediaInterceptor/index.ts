@@ -1,7 +1,7 @@
+import { NEXTGEN_CF_BASE_PATH } from '../nextgen/nextgen_constants';
 import { notifyMissingNextgenMedia } from '../notifier';
 
-const CF_BASE_PATH = 'https://media-proxy.nextgen-generator.seize.io';
-const DEFAULT_IMAGE_PATH = `${CF_BASE_PATH}/placeholders/pending.png`;
+const DEFAULT_IMAGE_PATH = `${NEXTGEN_CF_BASE_PATH}/placeholders/pending.png`;
 
 const DEFAULT_RESPONSE_BODY = {
   name: 'Pending...',
@@ -73,7 +73,7 @@ function getDetails(uri: string): Details {
 
 function getImagePath(details: Details) {
   if (details.collection && details.collection > 0) {
-    return `${CF_BASE_PATH}/placeholders/${details.network}/${details.collection}.png`;
+    return `${NEXTGEN_CF_BASE_PATH}/placeholders/${details.network}/${details.collection}.png`;
   }
   return DEFAULT_IMAGE_PATH;
 }

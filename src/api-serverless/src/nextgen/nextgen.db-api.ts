@@ -270,10 +270,35 @@ export async function fetchNextGenCollectionLogs(
     '',
     `${NEXTGEN_LOGS_TABLE}.collection_id = :collectionId OR ${NEXTGEN_LOGS_TABLE}.collection_id = 0`
   );
+
   return fetchPaginated(
     NEXTGEN_LOGS_TABLE,
     {
       collectionId: collectionId
+    },
+    'block desc, log desc',
+    pageSize,
+    page,
+    filters
+  );
+}
+
+export async function fetchNextGenCollectionAndTokenLogs(
+  collectionId: number,
+  tokenId: number,
+  pageSize: number,
+  page: number
+) {
+  let filters = constructFilters(
+    '',
+    `(${NEXTGEN_LOGS_TABLE}.collection_id = :collectionId OR ${NEXTGEN_LOGS_TABLE}.collection_id = 0) AND (token_id is NULL OR token_id = :tokenId)`
+  );
+
+  return fetchPaginated(
+    NEXTGEN_LOGS_TABLE,
+    {
+      collectionId: collectionId,
+      tokenId: tokenId
     },
     'block desc, log desc',
     pageSize,

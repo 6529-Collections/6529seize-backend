@@ -299,7 +299,10 @@ export class NextGenLog {
   log!: string;
 
   @Column({ type: 'int' })
-  collection_id?: number;
+  collection_id!: number;
+
+  @Column({ type: 'bigint', nullable: true })
+  token_id?: number;
 
   @Column({ type: 'text' })
   source!: string;
@@ -336,6 +339,9 @@ export class NextGenCollection {
 
   @Column({ type: 'text' })
   library!: string;
+
+  @Column({ type: 'text' })
+  dependency_script!: string;
 
   @Column({ type: 'text' })
   image!: string;

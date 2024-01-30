@@ -15,7 +15,7 @@ export const NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE =
 export const NEXTGEN_BURN_COLLECTIONS_TABLE = 'nextgen_burn_collection';
 
 export const NEXTGEN_CF_BASE_PATH =
-  'https://media-proxy.nextgen-generator.seize.io/';
+  'https://media-proxy.nextgen-generator.seize.io';
 
 export const NEXTGEN_ROYALTIES_ADDRESS =
   '0xC8ed02aFEBD9aCB14c33B5330c803feacAF01377';
@@ -37,6 +37,12 @@ export const NEXTGEN_CORE_CONTRACT = {
   [Network.ETH_GOERLI]: '0x25a972f1bf3c816061ceaea59d2bb3fe4c130766',
   [Network.ETH_SEPOLIA]: '0x60671e59a349589Ad74bE6cd643003a0Abb38cC3',
   [Network.ETH_MAINNET]: '0xC3390e3D2e98544DcBB6f235a3B15345A6728E8c'
+};
+
+export const NEXTGEN_START_BLOCK = {
+  [Network.ETH_GOERLI]: 10272665,
+  [Network.ETH_SEPOLIA]: 5176112,
+  [Network.ETH_MAINNET]: 0
 };
 
 export const NEXTGEN_MINTER_CONTRACT = {

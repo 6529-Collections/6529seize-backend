@@ -77,10 +77,10 @@ async function uploadMissingNextgenMedia(path: string) {
   }
 
   if (metadata.image) {
-    metadata.image = `${NEXTGEN_CF_BASE_PATH}${imagePath}`;
+    metadata.image = `${NEXTGEN_CF_BASE_PATH}/${imagePath}`;
   }
   if (metadata.animation_url) {
-    metadata.animation_url = `${NEXTGEN_CF_BASE_PATH}${htmlPath}`;
+    metadata.animation_url = `${NEXTGEN_CF_BASE_PATH}/${htmlPath}`;
   }
   metadata.generator_url = generatorMetadataPath;
 

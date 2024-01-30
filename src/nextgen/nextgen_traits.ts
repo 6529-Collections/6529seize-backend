@@ -134,9 +134,6 @@ const calculateRanks = (
     const bValue = b[scoreKey];
 
     if (typeof aValue === 'number' && typeof bValue === 'number') {
-      if (bValue === aValue) {
-        return a.id - b.id;
-      }
       return inverse ? aValue - bValue : bValue - aValue;
     }
 
@@ -144,8 +141,17 @@ const calculateRanks = (
   });
 
   const ranks = new Map<number, number>();
+  let currentRank = 1;
+  let previousScore: number | null = null;
+
   sortedScores.forEach((score, index) => {
-    ranks.set(score.id, index + 1);
+    if (previousScore !== null && score[scoreKey] === previousScore) {
+      ranks.set(score.id, currentRank);
+    } else {
+      currentRank = index + 1;
+      ranks.set(score.id, currentRank);
+      previousScore = score[scoreKey] as number;
+    }
   });
 
   return ranks;
