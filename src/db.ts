@@ -8,24 +8,24 @@ import {
   QueryRunner
 } from 'typeorm';
 import {
-  TDH_BLOCKS_TABLE,
-  TRANSACTIONS_TABLE,
-  NFTS_TABLE,
   ARTISTS_TABLE,
-  MEMES_EXTENDED_DATA_TABLE,
-  OWNERS_TABLE,
-  WALLETS_TDH_TABLE,
-  UPLOADS_TABLE,
-  ENS_TABLE,
-  OWNERS_METRICS_TABLE,
-  NULL_ADDRESS,
-  NFTS_MEME_LAB_TABLE,
-  TRANSACTIONS_MEME_LAB_TABLE,
-  OWNERS_MEME_LAB_TABLE,
-  MEMES_CONTRACT,
   CONSOLIDATED_UPLOADS_TABLE,
   MEME_LAB_ROYALTIES_TABLE,
-  CONSOLIDATIONS_TABLE
+  CONSOLIDATIONS_TABLE,
+  ENS_TABLE,
+  MEMES_CONTRACT,
+  MEMES_EXTENDED_DATA_TABLE,
+  NFTS_MEME_LAB_TABLE,
+  NFTS_TABLE,
+  NULL_ADDRESS,
+  OWNERS_MEME_LAB_TABLE,
+  OWNERS_METRICS_TABLE,
+  OWNERS_TABLE,
+  TDH_BLOCKS_TABLE,
+  TRANSACTIONS_MEME_LAB_TABLE,
+  TRANSACTIONS_TABLE,
+  UPLOADS_TABLE,
+  WALLETS_TDH_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
@@ -53,9 +53,9 @@ import {
 } from './entities/ITDH';
 import { Team } from './entities/ITeam';
 import {
-  Transaction,
   LabTransaction,
-  BaseMemeTransaction
+  BaseMemeTransaction,
+  Transaction
 } from './entities/ITransaction';
 import {
   Consolidation,
@@ -67,8 +67,8 @@ import {
 } from './entities/IDelegation';
 import { RoyaltiesUpload } from './entities/IRoyalties';
 import {
-  NFTHistoryBlock,
   NFTHistory,
+  NFTHistoryBlock,
   NFTHistoryClaim
 } from './entities/INFTHistory';
 import { Rememe, RememeUpload } from './entities/IRememe';
@@ -102,6 +102,9 @@ import { ProfileTdh, ProfileTdhLog } from './entities/IProfileTDH';
 import { ProfileActivityLog } from './entities/IProfileActivityLog';
 import { Rating } from './entities/IRating';
 import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
+import { ListenerProcessedEvent, ProcessableEvent } from './entities/IEvent';
+import { CicScoreAggregation } from './entities/ICicScoreAggregation';
+import { ProfileTotalRepScoreAggregation } from './entities/IRepScoreAggregations';
 
 const mysql = require('mysql');
 
@@ -159,7 +162,11 @@ export async function connect(entities: any[] = []) {
       NextGenToken,
       NextGenTransaction,
       NextGenTokenTrait,
-      NextGenTokenScore
+      NextGenTokenScore,
+      ProcessableEvent,
+      ListenerProcessedEvent,
+      CicScoreAggregation,
+      ProfileTotalRepScoreAggregation
     ];
   }
 
@@ -1049,9 +1056,9 @@ async function persistTdhUploadByTable(
   dateString: string,
   location: string
 ) {
-  const sql = `REPLACE INTO ${table} SET 
-    date = :date,
-    block = :block,
+  const sql = `REPLACE INTO ${table} SET
+      date = :date,
+          block = :block,
     tdh = :tdh`;
   await sqlExecutor.execute(sql, {
     date: dateString,
@@ -1123,9 +1130,9 @@ export async function persistENS(ens: ENS[]) {
   await Promise.all(
     ens.map(async (t) => {
       if ((t.display && t.display.length < 150) || !t.display) {
-        const sql = `REPLACE INTO ${ENS_TABLE} SET 
-          wallet = :wallet,
-          display = :display`;
+        const sql = `REPLACE INTO ${ENS_TABLE} SET
+            wallet = :wallet,
+                display = :display`;
         try {
           await sqlExecutor.execute(sql, {
             wallet: t.wallet,
@@ -1134,9 +1141,9 @@ export async function persistENS(ens: ENS[]) {
         } catch (e) {
           logger.error(`[ENS] ERROR PERSISTING ENS [${t.wallet}] [${e}]`);
           await sqlExecutor.execute(
-            `REPLACE INTO ${ENS_TABLE} SET 
-            wallet = ?,
-            display = ?`,
+            `REPLACE INTO ${ENS_TABLE} SET
+                wallet = ?,
+                    display = ?`,
             [t.wallet, null]
           );
         }

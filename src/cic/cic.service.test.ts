@@ -12,6 +12,16 @@ import { when } from 'jest-when';
 import { uniqueShortId } from '../helpers';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { AbusivenessCheckService } from '../profiles/abusiveness-check.service';
+import { Profile } from '../entities/IProfile';
+
+const aProfile: Profile = {
+  handle: 'Joe',
+  normalised_handle: 'joe',
+  external_id: 'pid',
+  primary_wallet: '0x0',
+  created_by_wallet: '0x0',
+  created_at: new Date()
+};
 
 describe('CicService', () => {
   let cicDb: Mock<CicDb>;
@@ -122,8 +132,11 @@ describe('CicService', () => {
       it('validation fails if domain is neither x.com nor twitter.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewXCicStatement,
-            statement_value: 'https://www.y.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewXCicStatement,
+              statement_value: 'https://www.y.com/username'
+            }
           });
         }, 'X needs to start with https://x.com/ or https://twitter.com/ and the handle must be 3 to 15 characters long containing only letters, numbers, and underscores');
       });
@@ -131,8 +144,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewXCicStatement,
-            statement_value: 'www.x.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewXCicStatement,
+              statement_value: 'www.x.com/username'
+            }
           });
         }, 'X needs to start with https://x.com/ or https://twitter.com/ and the handle must be 3 to 15 characters long containing only letters, numbers, and underscores');
       });
@@ -140,8 +156,11 @@ describe('CicService', () => {
       it('validation fails if handle is less than 3 characters', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewXCicStatement,
-            statement_value: 'https://www.x.com/us'
+            profile: aProfile,
+            statement: {
+              ...aNewXCicStatement,
+              statement_value: 'https://www.x.com/us'
+            }
           });
         }, 'X needs to start with https://x.com/ or https://twitter.com/ and the handle must be 3 to 15 characters long containing only letters, numbers, and underscores');
       });
@@ -149,8 +168,11 @@ describe('CicService', () => {
       it('validation fails if handle is longer than 15 characters', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewXCicStatement,
-            statement_value: 'https://www.x.com/abnormally_long_'
+            profile: aProfile,
+            statement: {
+              ...aNewXCicStatement,
+              statement_value: 'https://www.x.com/abnormally_long_'
+            }
           });
         }, 'X needs to start with https://x.com/ or https://twitter.com/ and the handle must be 3 to 15 characters long containing only letters, numbers, and underscores');
       });
@@ -158,30 +180,42 @@ describe('CicService', () => {
       it('validation fails if handle contanins special characters', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewXCicStatement,
-            statement_value: 'https://www.x.com/user$name'
+            profile: aProfile,
+            statement: {
+              ...aNewXCicStatement,
+              statement_value: 'https://www.x.com/user$name'
+            }
           });
         }, 'X needs to start with https://x.com/ or https://twitter.com/ and the handle must be 3 to 15 characters long containing only letters, numbers, and underscores');
       });
 
       it('validation passes with www.x.com domain and correct handle', async () => {
         await cicService.addCicStatement({
-          ...aNewXCicStatement,
-          statement_value: 'https://www.x.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewXCicStatement,
+            statement_value: 'https://www.x.com/username'
+          }
         });
       });
 
       it('validation passes with www.twitter.com domain and correct handle', async () => {
         await cicService.addCicStatement({
-          ...aNewXCicStatement,
-          statement_value: 'https://www.twitter.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewXCicStatement,
+            statement_value: 'https://www.twitter.com/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewXCicStatement,
-          statement_value: 'https://x.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewXCicStatement,
+            statement_value: 'https://x.com/username'
+          }
         });
       });
     });
@@ -198,8 +232,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewFacebookCicStatement,
-            statement_value: 'www.facebook.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewFacebookCicStatement,
+              statement_value: 'www.facebook.com/username'
+            }
           });
         }, 'Facebook needs go start with https://www.facebook.com/');
       });
@@ -207,8 +244,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.facebook.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewFacebookCicStatement,
-            statement_value: 'https://www.facetook.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewFacebookCicStatement,
+              statement_value: 'https://www.facetook.com/username'
+            }
           });
         }, 'Facebook needs go start with https://www.facebook.com/');
       });
@@ -216,23 +256,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.facebook.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewFacebookCicStatement,
-            statement_value: 'https://www.facebook.com/'
+            profile: aProfile,
+            statement: {
+              ...aNewFacebookCicStatement,
+              statement_value: 'https://www.facebook.com/'
+            }
           });
         }, 'Facebook needs go start with https://www.facebook.com/');
       });
 
       it('validation passes with www.facebook.com followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewFacebookCicStatement,
-          statement_value: 'https://www.facebook.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewFacebookCicStatement,
+            statement_value: 'https://www.facebook.com/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewFacebookCicStatement,
-          statement_value: 'https://facebook.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewFacebookCicStatement,
+            statement_value: 'https://facebook.com/username'
+          }
         });
       });
     });
@@ -249,8 +298,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewLinkedInCicStatement,
-            statement_value: 'www.linkedin.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewLinkedInCicStatement,
+              statement_value: 'www.linkedin.com/username'
+            }
           });
         }, 'LinkedIn needs go start with https://www.linkedin.com/ or https://linked.in/');
       });
@@ -258,8 +310,11 @@ describe('CicService', () => {
       it('validation fails if domain is neither www.linkedin.com nor www.linked.in', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewLinkedInCicStatement,
-            statement_value: 'https://www.linkedn.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewLinkedInCicStatement,
+              statement_value: 'https://www.linkedn.com/username'
+            }
           });
         }, 'LinkedIn needs go start with https://www.linkedin.com/ or https://linked.in/');
       });
@@ -267,30 +322,42 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.linkedin.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewLinkedInCicStatement,
-            statement_value: 'https://www.linkedin.com/'
+            profile: aProfile,
+            statement: {
+              ...aNewLinkedInCicStatement,
+              statement_value: 'https://www.linkedin.com/'
+            }
           });
         }, 'LinkedIn needs go start with https://www.linkedin.com/ or https://linked.in/');
       });
 
       it('validation passes with www.linkedin.com followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewLinkedInCicStatement,
-          statement_value: 'https://www.linkedin.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewLinkedInCicStatement,
+            statement_value: 'https://www.linkedin.com/username'
+          }
         });
       });
 
       it('validation passes with www.linked.in followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewLinkedInCicStatement,
-          statement_value: 'https://www.linked.in/username'
+          profile: aProfile,
+          statement: {
+            ...aNewLinkedInCicStatement,
+            statement_value: 'https://www.linked.in/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewLinkedInCicStatement,
-          statement_value: 'https://linkedin.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewLinkedInCicStatement,
+            statement_value: 'https://linkedin.com/username'
+          }
         });
       });
     });
@@ -307,8 +374,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewInstagramCicStatement,
-            statement_value: 'www.instagram.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewInstagramCicStatement,
+              statement_value: 'www.instagram.com/username'
+            }
           });
         }, 'Instagram needs go start with https://www.instagram.com/');
       });
@@ -316,8 +386,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.instagram.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewInstagramCicStatement,
-            statement_value: 'https://www.instagam.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewInstagramCicStatement,
+              statement_value: 'https://www.instagam.com/username'
+            }
           });
         }, 'Instagram needs go start with https://www.instagram.com/');
       });
@@ -325,23 +398,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.facebook.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewInstagramCicStatement,
-            statement_value: 'https://www.instagram.com/'
+            profile: aProfile,
+            statement: {
+              ...aNewInstagramCicStatement,
+              statement_value: 'https://www.instagram.com/'
+            }
           });
         }, 'Instagram needs go start with https://www.instagram.com/');
       });
 
       it('validation passes with www.facebook.com followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewInstagramCicStatement,
-          statement_value: 'https://www.instagram.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewInstagramCicStatement,
+            statement_value: 'https://www.instagram.com/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewInstagramCicStatement,
-          statement_value: 'https://instagram.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewInstagramCicStatement,
+            statement_value: 'https://instagram.com/username'
+          }
         });
       });
     });
@@ -358,8 +440,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewTikTokCicStatement,
-            statement_value: 'www.tiktok.com/@username'
+            profile: aProfile,
+            statement: {
+              ...aNewTikTokCicStatement,
+              statement_value: 'www.tiktok.com/@username'
+            }
           });
         }, 'TikTok needs go start with https://www.tiktok.com/@');
       });
@@ -367,8 +452,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.tiktok.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewTikTokCicStatement,
-            statement_value: 'https://www.tiktoc.com/@username'
+            profile: aProfile,
+            statement: {
+              ...aNewTikTokCicStatement,
+              statement_value: 'https://www.tiktoc.com/@username'
+            }
           });
         }, 'TikTok needs go start with https://www.tiktok.com/@');
       });
@@ -376,8 +464,11 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.tiktok.com/@', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewTikTokCicStatement,
-            statement_value: 'https://www.tiktok.com/@'
+            profile: aProfile,
+            statement: {
+              ...aNewTikTokCicStatement,
+              statement_value: 'https://www.tiktok.com/@'
+            }
           });
         }, 'TikTok needs go start with https://www.tiktok.com/@');
       });
@@ -385,23 +476,32 @@ describe('CicService', () => {
       it('validation fails if handle doesnt start with @', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewTikTokCicStatement,
-            statement_value: 'https://www.tiktok.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewTikTokCicStatement,
+              statement_value: 'https://www.tiktok.com/username'
+            }
           });
         }, 'TikTok needs go start with https://www.tiktok.com/@');
       });
 
       it('validation passes with www.tiktok.com/@ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewTikTokCicStatement,
-          statement_value: 'https://www.tiktok.com/@username'
+          profile: aProfile,
+          statement: {
+            ...aNewTikTokCicStatement,
+            statement_value: 'https://www.tiktok.com/@username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewTikTokCicStatement,
-          statement_value: 'https://tiktok.com/@username'
+          profile: aProfile,
+          statement: {
+            ...aNewTikTokCicStatement,
+            statement_value: 'https://tiktok.com/@username'
+          }
         });
       });
     });
@@ -418,8 +518,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewGitHubCicStatement,
-            statement_value: 'www.github.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewGitHubCicStatement,
+              statement_value: 'www.github.com/username'
+            }
           });
         }, 'GitHub needs go start with https://www.github.com/');
       });
@@ -427,8 +530,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.github.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewGitHubCicStatement,
-            statement_value: 'https://www.githup.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewGitHubCicStatement,
+              statement_value: 'https://www.githup.com/username'
+            }
           });
         }, 'GitHub needs go start with https://www.github.com/');
       });
@@ -436,23 +542,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.github.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewGitHubCicStatement,
-            statement_value: 'https://www.github.com/'
+            profile: aProfile,
+            statement: {
+              ...aNewGitHubCicStatement,
+              statement_value: 'https://www.github.com/'
+            }
           });
         }, 'GitHub needs go start with https://www.github.com/');
       });
 
       it('validation passes with www.github.com followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewGitHubCicStatement,
-          statement_value: 'https://www.github.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewGitHubCicStatement,
+            statement_value: 'https://www.github.com/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewGitHubCicStatement,
-          statement_value: 'https://github.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewGitHubCicStatement,
+            statement_value: 'https://github.com/username'
+          }
         });
       });
     });
@@ -469,8 +584,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewRedditCicStatement,
-            statement_value: 'www.reddit.com/u/username'
+            profile: aProfile,
+            statement: {
+              ...aNewRedditCicStatement,
+              statement_value: 'www.reddit.com/u/username'
+            }
           });
         }, 'Reddit needs go start with https://www.reddit.com/ followed by /r/ or /u/ and subreddit or username');
       });
@@ -478,8 +596,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.reddit.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewRedditCicStatement,
-            statement_value: 'www.beddit.com/u/username'
+            profile: aProfile,
+            statement: {
+              ...aNewRedditCicStatement,
+              statement_value: 'www.beddit.com/u/username'
+            }
           });
         }, 'Reddit needs go start with https://www.reddit.com/ followed by /r/ or /u/ and subreddit or username');
       });
@@ -487,8 +608,11 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.reddit.com/u/', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewRedditCicStatement,
-            statement_value: 'https://www.reddit.com/u/'
+            profile: aProfile,
+            statement: {
+              ...aNewRedditCicStatement,
+              statement_value: 'https://www.reddit.com/u/'
+            }
           });
         }, 'Reddit needs go start with https://www.reddit.com/ followed by /r/ or /u/ and subreddit or username');
       });
@@ -496,8 +620,11 @@ describe('CicService', () => {
       it('validation fails if there is something else instead of /u/ or /r/ in the middle of URL', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewRedditCicStatement,
-            statement_value: 'https://www.reddit.com/x/username'
+            profile: aProfile,
+            statement: {
+              ...aNewRedditCicStatement,
+              statement_value: 'https://www.reddit.com/x/username'
+            }
           });
         }, 'Reddit needs go start with https://www.reddit.com/ followed by /r/ or /u/ and subreddit or username');
       });
@@ -505,30 +632,42 @@ describe('CicService', () => {
       it('validation fails if there is neither /u/ nor /r/ in the middle of URL', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewRedditCicStatement,
-            statement_value: 'https://www.reddit.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewRedditCicStatement,
+              statement_value: 'https://www.reddit.com/username'
+            }
           });
         }, 'Reddit needs go start with https://www.reddit.com/ followed by /r/ or /u/ and subreddit or username');
       });
 
       it('validation passes with www.reddit.com/u/ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewRedditCicStatement,
-          statement_value: 'https://www.reddit.com/u/username'
+          profile: aProfile,
+          statement: {
+            ...aNewRedditCicStatement,
+            statement_value: 'https://www.reddit.com/u/username'
+          }
         });
       });
 
       it('validation passes with www.reddit.com/r/ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewRedditCicStatement,
-          statement_value: 'https://www.reddit.com/r/username'
+          profile: aProfile,
+          statement: {
+            ...aNewRedditCicStatement,
+            statement_value: 'https://www.reddit.com/r/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewRedditCicStatement,
-          statement_value: 'https://reddit.com/u/username'
+          profile: aProfile,
+          statement: {
+            ...aNewRedditCicStatement,
+            statement_value: 'https://reddit.com/u/username'
+          }
         });
       });
     });
@@ -545,8 +684,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewWeiboCicStatement,
-            statement_value: 'www.weibo.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewWeiboCicStatement,
+              statement_value: 'www.weibo.com/username'
+            }
           });
         }, 'Weibo needs go start with https://www.weibo.com/');
       });
@@ -554,8 +696,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.weibo.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewWeiboCicStatement,
-            statement_value: 'www.welbo.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewWeiboCicStatement,
+              statement_value: 'www.welbo.com/username'
+            }
           });
         }, 'Weibo needs go start with https://www.weibo.com/');
       });
@@ -563,23 +708,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.weibo.com/', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewWeiboCicStatement,
-            statement_value: 'https://www.weibo.com/'
+            profile: aProfile,
+            statement: {
+              ...aNewWeiboCicStatement,
+              statement_value: 'https://www.weibo.com/'
+            }
           });
         }, 'Weibo needs go start with https://www.weibo.com/');
       });
 
       it('validation passes with www.weibo.com/ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewWeiboCicStatement,
-          statement_value: 'https://www.weibo.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewWeiboCicStatement,
+            statement_value: 'https://www.weibo.com/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewWeiboCicStatement,
-          statement_value: 'https://weibo.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewWeiboCicStatement,
+            statement_value: 'https://weibo.com/username'
+          }
         });
       });
     });
@@ -596,8 +750,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewSubstackCicStatement,
-            statement_value: 'username.substack.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewSubstackCicStatement,
+              statement_value: 'username.substack.com/username'
+            }
           });
         }, 'Substack needs to be https://yourusername.substack.com/');
       });
@@ -605,8 +762,11 @@ describe('CicService', () => {
       it('validation fails if domain is not username.substack.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewSubstackCicStatement,
-            statement_value: 'https://yourusername.subztack.com/'
+            profile: aProfile,
+            statement: {
+              ...aNewSubstackCicStatement,
+              statement_value: 'https://yourusername.subztack.com/'
+            }
           });
         }, 'Substack needs to be https://yourusername.substack.com/');
       });
@@ -614,8 +774,11 @@ describe('CicService', () => {
       it('validation fails if there is something following username.substack.com/', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewSubstackCicStatement,
-            statement_value: 'https://username.substack.com/hello'
+            profile: aProfile,
+            statement: {
+              ...aNewSubstackCicStatement,
+              statement_value: 'https://username.substack.com/hello'
+            }
           });
         }, 'Substack needs to be https://yourusername.substack.com/');
       });
@@ -623,8 +786,11 @@ describe('CicService', () => {
       it('validation fails if there is no username subdomain', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewSubstackCicStatement,
-            statement_value: 'https://substack.com/hello'
+            profile: aProfile,
+            statement: {
+              ...aNewSubstackCicStatement,
+              statement_value: 'https://substack.com/hello'
+            }
           });
         }, 'Substack needs to be https://yourusername.substack.com/');
       });
@@ -632,23 +798,32 @@ describe('CicService', () => {
       it('validation fails if there is a dot but no username subdomain', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewSubstackCicStatement,
-            statement_value: 'https://.substack.com/hello'
+            profile: aProfile,
+            statement: {
+              ...aNewSubstackCicStatement,
+              statement_value: 'https://.substack.com/hello'
+            }
           });
         }, 'Substack needs to be https://yourusername.substack.com/');
       });
 
       it('validation passes with username.substack.com/', async () => {
         await cicService.addCicStatement({
-          ...aNewSubstackCicStatement,
-          statement_value: 'https://username.substack.com/'
+          profile: aProfile,
+          statement: {
+            ...aNewSubstackCicStatement,
+            statement_value: 'https://username.substack.com/'
+          }
         });
       });
 
       it('validation passes with username.substack.com', async () => {
         await cicService.addCicStatement({
-          ...aNewSubstackCicStatement,
-          statement_value: 'https://username.substack.com'
+          profile: aProfile,
+          statement: {
+            ...aNewSubstackCicStatement,
+            statement_value: 'https://username.substack.com'
+          }
         });
       });
     });
@@ -665,8 +840,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewMediumCicStatement,
-            statement_value: 'www.medium.com/@username'
+            profile: aProfile,
+            statement: {
+              ...aNewMediumCicStatement,
+              statement_value: 'www.medium.com/@username'
+            }
           });
         }, 'Medium needs to start with https://www.medium.com/@');
       });
@@ -674,8 +852,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.medium.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewMediumCicStatement,
-            statement_value: 'https://www.mediun.com/@username'
+            profile: aProfile,
+            statement: {
+              ...aNewMediumCicStatement,
+              statement_value: 'https://www.mediun.com/@username'
+            }
           });
         }, 'Medium needs to start with https://www.medium.com/@');
       });
@@ -683,8 +864,11 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.medium.com/@', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewMediumCicStatement,
-            statement_value: 'https://www.medium.com/@'
+            profile: aProfile,
+            statement: {
+              ...aNewMediumCicStatement,
+              statement_value: 'https://www.medium.com/@'
+            }
           });
         }, 'Medium needs to start with https://www.medium.com/@');
       });
@@ -692,23 +876,32 @@ describe('CicService', () => {
       it('validation fails if handle doesnt start with @', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewMediumCicStatement,
-            statement_value: 'https://www.medium.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewMediumCicStatement,
+              statement_value: 'https://www.medium.com/username'
+            }
           });
         }, 'Medium needs to start with https://www.medium.com/@');
       });
 
       it('validation passes with www.medium.com/@ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewMediumCicStatement,
-          statement_value: 'https://www.medium.com/@username'
+          profile: aProfile,
+          statement: {
+            ...aNewMediumCicStatement,
+            statement_value: 'https://www.medium.com/@username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewMediumCicStatement,
-          statement_value: 'https://medium.com/@username'
+          profile: aProfile,
+          statement: {
+            ...aNewMediumCicStatement,
+            statement_value: 'https://medium.com/@username'
+          }
         });
       });
     });
@@ -725,8 +918,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewMirrorXyzCicStatement,
-            statement_value: 'www.mirror.xyz/username'
+            profile: aProfile,
+            statement: {
+              ...aNewMirrorXyzCicStatement,
+              statement_value: 'www.mirror.xyz/username'
+            }
           });
         }, 'Mirror needs to start with https://www.mirror.xyz/');
       });
@@ -734,8 +930,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.mirror.xyz', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewMirrorXyzCicStatement,
-            statement_value: 'https://www.mirror.xy/username'
+            profile: aProfile,
+            statement: {
+              ...aNewMirrorXyzCicStatement,
+              statement_value: 'https://www.mirror.xy/username'
+            }
           });
         }, 'Mirror needs to start with https://www.mirror.xyz/');
       });
@@ -743,23 +942,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.mirror.xyz/', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewMirrorXyzCicStatement,
-            statement_value: 'https://www.mirror.xyz/'
+            profile: aProfile,
+            statement: {
+              ...aNewMirrorXyzCicStatement,
+              statement_value: 'https://www.mirror.xyz/'
+            }
           });
         }, 'Mirror needs to start with https://www.mirror.xyz/');
       });
 
       it('validation passes with www.mirror.xyz/ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewMirrorXyzCicStatement,
-          statement_value: 'https://www.mirror.xyz/username'
+          profile: aProfile,
+          statement: {
+            ...aNewMirrorXyzCicStatement,
+            statement_value: 'https://www.mirror.xyz/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewMirrorXyzCicStatement,
-          statement_value: 'https://mirror.xyz/username'
+          profile: aProfile,
+          statement: {
+            ...aNewMirrorXyzCicStatement,
+            statement_value: 'https://mirror.xyz/username'
+          }
         });
       });
     });
@@ -776,8 +984,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewYoutubeCicStatement,
-            statement_value: 'www.youtube.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewYoutubeCicStatement,
+              statement_value: 'www.youtube.com/username'
+            }
           });
         }, 'Youtube needs to start with https://www.youtube.com/');
       });
@@ -785,8 +996,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.youtube.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewYoutubeCicStatement,
-            statement_value: 'https://www.you.tube/username'
+            profile: aProfile,
+            statement: {
+              ...aNewYoutubeCicStatement,
+              statement_value: 'https://www.you.tube/username'
+            }
           });
         }, 'Youtube needs to start with https://www.youtube.com/');
       });
@@ -794,23 +1008,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.youtube.com/', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewYoutubeCicStatement,
-            statement_value: 'https://www.youtube.com/'
+            profile: aProfile,
+            statement: {
+              ...aNewYoutubeCicStatement,
+              statement_value: 'https://www.youtube.com/'
+            }
           });
         }, 'Youtube needs to start with https://www.youtube.com/');
       });
 
       it('validation passes with www.youtube.com/ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewYoutubeCicStatement,
-          statement_value: 'https://www.youtube.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewYoutubeCicStatement,
+            statement_value: 'https://www.youtube.com/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewYoutubeCicStatement,
-          statement_value: 'https://youtube.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewYoutubeCicStatement,
+            statement_value: 'https://youtube.com/username'
+          }
         });
       });
     });
@@ -827,8 +1050,11 @@ describe('CicService', () => {
       it('validation fails if username is empty', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewDiscordCicStatement,
-            statement_value: ''
+            profile: aProfile,
+            statement: {
+              ...aNewDiscordCicStatement,
+              statement_value: ''
+            }
           });
         }, 'Discord needs to be less than 50 characters');
       });
@@ -836,16 +1062,22 @@ describe('CicService', () => {
       it('validation fails if username is longer than 50 characters', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewDiscordCicStatement,
-            statement_value: 'r'.repeat(51)
+            profile: aProfile,
+            statement: {
+              ...aNewDiscordCicStatement,
+              statement_value: 'r'.repeat(51)
+            }
           });
         }, 'Discord needs to be less than 50 characters');
       });
 
       it('validation passes', async () => {
         await cicService.addCicStatement({
-          ...aNewDiscordCicStatement,
-          statement_value: 'r'.repeat(50)
+          profile: aProfile,
+          statement: {
+            ...aNewDiscordCicStatement,
+            statement_value: 'r'.repeat(50)
+          }
         });
       });
     });
@@ -862,8 +1094,11 @@ describe('CicService', () => {
       it('validation fails if username is empty', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewTelegramCicStatement,
-            statement_value: ''
+            profile: aProfile,
+            statement: {
+              ...aNewTelegramCicStatement,
+              statement_value: ''
+            }
           });
         }, 'Telegram needs to be less than 100 characters');
       });
@@ -871,16 +1106,22 @@ describe('CicService', () => {
       it('validation fails if username is longer than 100 characters', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewTelegramCicStatement,
-            statement_value: 'r'.repeat(101)
+            profile: aProfile,
+            statement: {
+              ...aNewTelegramCicStatement,
+              statement_value: 'r'.repeat(101)
+            }
           });
         }, 'Telegram needs to be less than 100 characters');
       });
 
       it('validation passes', async () => {
         await cicService.addCicStatement({
-          ...aNewTelegramCicStatement,
-          statement_value: 'r'.repeat(100)
+          profile: aProfile,
+          statement: {
+            ...aNewTelegramCicStatement,
+            statement_value: 'r'.repeat(100)
+          }
         });
       });
     });
@@ -897,8 +1138,11 @@ describe('CicService', () => {
       it('validation fails if username is empty', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewWeChatCicStatement,
-            statement_value: ''
+            profile: aProfile,
+            statement: {
+              ...aNewWeChatCicStatement,
+              statement_value: ''
+            }
           });
         }, 'WeChat needs to be less than 100 characters');
       });
@@ -906,16 +1150,22 @@ describe('CicService', () => {
       it('validation fails if username is longer than 100 characters', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewWeChatCicStatement,
-            statement_value: 'r'.repeat(101)
+            profile: aProfile,
+            statement: {
+              ...aNewWeChatCicStatement,
+              statement_value: 'r'.repeat(101)
+            }
           });
         }, 'WeChat needs to be less than 100 characters');
       });
 
       it('validation passes', async () => {
         await cicService.addCicStatement({
-          ...aNewWeChatCicStatement,
-          statement_value: 'r'.repeat(100)
+          profile: aProfile,
+          statement: {
+            ...aNewWeChatCicStatement,
+            statement_value: 'r'.repeat(100)
+          }
         });
       });
     });
@@ -932,16 +1182,22 @@ describe('CicService', () => {
       it('validation fails if email is faulty', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewEmailCicStatement,
-            statement_value: 'njefmkds'
+            profile: aProfile,
+            statement: {
+              ...aNewEmailCicStatement,
+              statement_value: 'njefmkds'
+            }
           });
         }, 'Email is not valid');
       });
 
       it('validation passes', async () => {
         await cicService.addCicStatement({
-          ...aNewEmailCicStatement,
-          statement_value: 'test@example.com'
+          profile: aProfile,
+          statement: {
+            ...aNewEmailCicStatement,
+            statement_value: 'test@example.com'
+          }
         });
       });
     });
@@ -958,8 +1214,11 @@ describe('CicService', () => {
       it('validation fails if no protocol', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewWebsiteCicStatement,
-            statement_value: 'www.example.com'
+            profile: aProfile,
+            statement: {
+              ...aNewWebsiteCicStatement,
+              statement_value: 'www.example.com'
+            }
           });
         }, "Website needs to start with http or https and URL can't be longer than 2000 characters");
       });
@@ -967,8 +1226,11 @@ describe('CicService', () => {
       it('validation fails if unknown protocol', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewWebsiteCicStatement,
-            statement_value: 'ftp://www.example.com'
+            profile: aProfile,
+            statement: {
+              ...aNewWebsiteCicStatement,
+              statement_value: 'ftp://www.example.com'
+            }
           });
         }, "Website needs to start with http or https and URL can't be longer than 2000 characters");
       });
@@ -976,23 +1238,32 @@ describe('CicService', () => {
       it('validation fails if nothing follows the protocol', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewWebsiteCicStatement,
-            statement_value: 'https://'
+            profile: aProfile,
+            statement: {
+              ...aNewWebsiteCicStatement,
+              statement_value: 'https://'
+            }
           });
         }, "Website needs to start with http or https and URL can't be longer than 2000 characters");
       });
 
       it('validation passes with http', async () => {
         await cicService.addCicStatement({
-          ...aNewWebsiteCicStatement,
-          statement_value: 'http://www.example.com'
+          profile: aProfile,
+          statement: {
+            ...aNewWebsiteCicStatement,
+            statement_value: 'http://www.example.com'
+          }
         });
       });
 
       it('validation passes with https', async () => {
         await cicService.addCicStatement({
-          ...aNewWebsiteCicStatement,
-          statement_value: 'https://www.example.com'
+          profile: aProfile,
+          statement: {
+            ...aNewWebsiteCicStatement,
+            statement_value: 'https://www.example.com'
+          }
         });
       });
     });
@@ -1009,8 +1280,11 @@ describe('CicService', () => {
       it('validation fails if no protocol', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewWebsiteCicStatement,
-            statement_value: 'www.example.com'
+            profile: aProfile,
+            statement: {
+              ...aNewWebsiteCicStatement,
+              statement_value: 'www.example.com'
+            }
           });
         }, "Link needs to start with http or https and URL can't be longer than 2000 characters");
       });
@@ -1018,8 +1292,11 @@ describe('CicService', () => {
       it('validation fails if unknown protocol', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewWebsiteCicStatement,
-            statement_value: 'ftp://www.example.com'
+            profile: aProfile,
+            statement: {
+              ...aNewWebsiteCicStatement,
+              statement_value: 'ftp://www.example.com'
+            }
           });
         }, "Link needs to start with http or https and URL can't be longer than 2000 characters");
       });
@@ -1027,23 +1304,32 @@ describe('CicService', () => {
       it('validation fails if nothing follows the protocol', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewWebsiteCicStatement,
-            statement_value: 'https://'
+            profile: aProfile,
+            statement: {
+              ...aNewWebsiteCicStatement,
+              statement_value: 'https://'
+            }
           });
         }, "Link needs to start with http or https and URL can't be longer than 2000 characters");
       });
 
       it('validation passes with http', async () => {
         await cicService.addCicStatement({
-          ...aNewWebsiteCicStatement,
-          statement_value: 'http://www.example.com'
+          profile: aProfile,
+          statement: {
+            ...aNewWebsiteCicStatement,
+            statement_value: 'http://www.example.com'
+          }
         });
       });
 
       it('validation passes with https', async () => {
         await cicService.addCicStatement({
-          ...aNewWebsiteCicStatement,
-          statement_value: 'https://www.example.com'
+          profile: aProfile,
+          statement: {
+            ...aNewWebsiteCicStatement,
+            statement_value: 'https://www.example.com'
+          }
         });
       });
     });
@@ -1060,8 +1346,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'www.superrare.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'www.superrare.com/username'
+            }
           });
         }, 'SuperRare needs to start with https://www.superrare.com/');
       });
@@ -1069,8 +1358,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.superrare.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.super.rare/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.super.rare/username'
+            }
           });
         }, 'SuperRare needs to start with https://www.superrare.com/');
       });
@@ -1078,23 +1370,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.superrare.com/', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.superrare.com/'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.superrare.com/'
+            }
           });
         }, 'SuperRare needs to start with https://www.superrare.com/');
       });
 
       it('validation passes with www.superrare.com/ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://www.superrare.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://www.superrare.com/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://superrare.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://superrare.com/username'
+          }
         });
       });
     });
@@ -1111,8 +1412,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'www.foundation.app/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'www.foundation.app/username'
+            }
           });
         }, 'Foundation needs to start with https://www.foundation.app/');
       });
@@ -1120,8 +1424,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.foundation.app', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.found.ation.app/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.found.ation.app/username'
+            }
           });
         }, 'Foundation needs to start with https://www.foundation.app/');
       });
@@ -1129,23 +1436,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.foundation.app/', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.foundation.app/'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.foundation.app/'
+            }
           });
         }, 'Foundation needs to start with https://www.foundation.app/');
       });
 
       it('validation passes with www.foundation.app/ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://www.foundation.app/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://www.foundation.app/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://foundation.app/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://foundation.app/username'
+          }
         });
       });
     });
@@ -1162,8 +1478,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'www.makersplace.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'www.makersplace.com/username'
+            }
           });
         }, 'MakersPlace needs to start with https://www.makersplace.com/');
       });
@@ -1171,8 +1490,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.makersplace.com', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.makers.place.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.makers.place.com/username'
+            }
           });
         }, 'MakersPlace needs to start with https://www.makersplace.com/');
       });
@@ -1180,23 +1502,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.makersplace.com/', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.makersplace.com/'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.makersplace.com/'
+            }
           });
         }, 'MakersPlace needs to start with https://www.makersplace.com/');
       });
 
       it('validation passes with www.makersplace.com/ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://www.makersplace.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://www.makersplace.com/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://makersplace.com/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://makersplace.com/username'
+          }
         });
       });
     });
@@ -1213,8 +1544,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'www.knownorigin.io/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'www.knownorigin.io/username'
+            }
           });
         }, 'KnownOrigin needs to start with https://www.knownorigin.io/');
       });
@@ -1222,8 +1556,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.knownorigin.io', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.known.origin.io/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.known.origin.io/username'
+            }
           });
         }, 'KnownOrigin needs to start with https://www.knownorigin.io/');
       });
@@ -1231,23 +1568,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.knownorigin.io/', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.knownorigin.io/'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.knownorigin.io/'
+            }
           });
         }, 'KnownOrigin needs to start with https://www.knownorigin.io/');
       });
 
       it('validation passes with www.knownorigin.io/ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://www.knownorigin.io/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://www.knownorigin.io/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://knownorigin.io/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://knownorigin.io/username'
+          }
         });
       });
     });
@@ -1264,8 +1610,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'www.pepe.wtf/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'www.pepe.wtf/username'
+            }
           });
         }, 'Pepe.wtf needs to start with https://www.pepe.wtf/');
       });
@@ -1273,8 +1622,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.pepe.wtf', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.pepe.wtf.com/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.pepe.wtf.com/username'
+            }
           });
         }, 'Pepe.wtf needs to start with https://www.pepe.wtf/');
       });
@@ -1282,23 +1634,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.pepe.wtf/', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.pepe.wtf/'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.pepe.wtf/'
+            }
           });
         }, 'Pepe.wtf needs to start with https://www.pepe.wtf/');
       });
 
       it('validation passes with www.pepe.wtf/ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://www.pepe.wtf/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://www.pepe.wtf/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://pepe.wtf/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://pepe.wtf/username'
+          }
         });
       });
     });
@@ -1315,8 +1676,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'www.opensea.io/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'www.opensea.io/username'
+            }
           });
         }, 'OpenSea needs to start with https://www.opensea.io/');
       });
@@ -1324,8 +1688,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.pepe.wtf', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.open.sea.io/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.open.sea.io/username'
+            }
           });
         }, 'OpenSea needs to start with https://www.opensea.io/');
       });
@@ -1333,23 +1700,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.opensea.io/', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.opensea.io/'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.opensea.io/'
+            }
           });
         }, 'OpenSea needs to start with https://www.opensea.io/');
       });
 
       it('validation passes with www.opensea.io/ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://www.opensea.io/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://www.opensea.io/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://opensea.io/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://opensea.io/username'
+          }
         });
       });
     });
@@ -1366,8 +1742,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'www.artblocks.io/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'www.artblocks.io/username'
+            }
           });
         }, 'Art Blocks needs to start with https://www.artblocks.io/');
       });
@@ -1375,8 +1754,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.artblocks.io', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.art.blocks.io/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.art.blocks.io/username'
+            }
           });
         }, 'Art Blocks needs to start with https://www.artblocks.io/');
       });
@@ -1384,23 +1766,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.artblocks.io/', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.artblocks.io/'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.artblocks.io/'
+            }
           });
         }, 'Art Blocks needs to start with https://www.artblocks.io/');
       });
 
       it('validation passes with www.artblocks.io/ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://www.artblocks.io/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://www.artblocks.io/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://artblocks.io/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://artblocks.io/username'
+          }
         });
       });
     });
@@ -1417,8 +1808,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'www.deca.art/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'www.deca.art/username'
+            }
           });
         }, 'Deca Art needs to start with https://www.deca.art/');
       });
@@ -1426,8 +1820,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.pepe.wtf', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.dec.a.art/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.dec.a.art/username'
+            }
           });
         }, 'Deca Art needs to start with https://www.deca.art/');
       });
@@ -1435,23 +1832,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.deca.art/', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.deca.art/'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.deca.art/'
+            }
           });
         }, 'Deca Art needs to start with https://www.deca.art/');
       });
 
       it('validation passes with www.deca.art/ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://www.deca.art/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://www.deca.art/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://deca.art/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://deca.art/username'
+          }
         });
       });
     });
@@ -1468,8 +1874,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'www.oncyber.io/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'www.oncyber.io/username'
+            }
           });
         }, 'OnCyber needs to start with https://www.oncyber.io/');
       });
@@ -1477,8 +1886,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.oncyber.io', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.on.cyber.io/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.on.cyber.io/username'
+            }
           });
         }, 'OnCyber needs to start with https://www.oncyber.io/');
       });
@@ -1486,23 +1898,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.oncyber.io/', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.oncyber.io/'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.oncyber.io/'
+            }
           });
         }, 'OnCyber needs to start with https://www.oncyber.io/');
       });
 
       it('validation passes with www.oncyber.io/ followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://www.oncyber.io/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://www.oncyber.io/username'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://oncyber.io/username'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://oncyber.io/username'
+          }
         });
       });
     });
@@ -1519,8 +1940,11 @@ describe('CicService', () => {
       it('validation fails without https:// beginning', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'www.oncyber.io/line1'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'www.oncyber.io/line1'
+            }
           });
         }, 'The Line needs to start with https://www.oncyber.io/line');
       });
@@ -1528,8 +1952,11 @@ describe('CicService', () => {
       it('validation fails if domain is not www.oncyber.io/line', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.oncyber.io/username'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.oncyber.io/username'
+            }
           });
         }, 'The Line needs to start with https://www.oncyber.io/line');
       });
@@ -1537,23 +1964,32 @@ describe('CicService', () => {
       it('validation fails if there is nothing following www.oncyber.io/line', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewCicStatement,
-            statement_value: 'https://www.oncyber.io/line'
+            profile: aProfile,
+            statement: {
+              ...aNewCicStatement,
+              statement_value: 'https://www.oncyber.io/line'
+            }
           });
         }, 'The Line needs to start with https://www.oncyber.io/line');
       });
 
       it('validation passes with www.oncyber.io/line followed by something', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://www.oncyber.io/line2'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://www.oncyber.io/line2'
+          }
         });
       });
 
       it('validation passes without www. in front of domain', async () => {
         await cicService.addCicStatement({
-          ...aNewCicStatement,
-          statement_value: 'https://oncyber.io/line2'
+          profile: aProfile,
+          statement: {
+            ...aNewCicStatement,
+            statement_value: 'https://oncyber.io/line2'
+          }
         });
       });
     });
@@ -1569,16 +2005,22 @@ describe('CicService', () => {
       it('validation fails if longer than 500 characters', async () => {
         await expectExceptionWithMessage(async () => {
           await cicService.addCicStatement({
-            ...aNewUnknownCicStatement,
-            statement_value: 'r'.repeat(501)
+            profile: aProfile,
+            statement: {
+              ...aNewUnknownCicStatement,
+              statement_value: 'r'.repeat(501)
+            }
           });
         }, 'Statement of type UNDEFINED can not be longer than 500 characters');
       });
 
       it('validation passes if in constraints', async () => {
         await cicService.addCicStatement({
-          ...aNewUnknownCicStatement,
-          statement_value: 'r'.repeat(500)
+          profile: aProfile,
+          statement: {
+            ...aNewUnknownCicStatement,
+            statement_value: 'r'.repeat(500)
+          }
         });
       });
     });
@@ -1601,7 +2043,10 @@ describe('CicService', () => {
           }
         ]);
       await expectExceptionWithMessage(async () => {
-        await cicService.addCicStatement(addCicStatement);
+        await cicService.addCicStatement({
+          profile: aProfile,
+          statement: addCicStatement
+        });
       }, 'Statement of type LINK with value https://www.example.com already exists');
     });
 
@@ -1613,7 +2058,10 @@ describe('CicService', () => {
         statement_value: 'https://www.example.com',
         statement_comment: 'a comment'
       };
-      const cicStatement = await cicService.addCicStatement(addCicStatement);
+      const cicStatement = await cicService.addCicStatement({
+        profile: aProfile,
+        statement: addCicStatement
+      });
       expect(cicDb.insertCicStatement).toHaveBeenCalledWith(
         addCicStatement,
         mockConnection

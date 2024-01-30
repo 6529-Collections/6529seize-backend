@@ -13,6 +13,7 @@ import { RateMatter } from '../entities/IRating';
 import { Time } from '../time';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { RepService } from '../api-serverless/src/profiles/rep.service';
+import { EventScheduler } from '../events/event.scheduler';
 
 describe('RatingsService', () => {
   let ratingsService: RatingsService;
@@ -20,17 +21,20 @@ describe('RatingsService', () => {
   let profilesDb: Mock<ProfilesDb>;
   let repService: Mock<RepService>;
   let profileActivityLogsDb: Mock<ProfileActivityLogsDb>;
+  let eventScheduler: Mock<EventScheduler>;
 
   beforeEach(() => {
     profilesDb = mockDbService();
     ratingsDb = mockDbService();
     profileActivityLogsDb = mockDbService();
+    eventScheduler = mock(EventScheduler);
     repService = mock(RepService);
     ratingsService = new RatingsService(
       ratingsDb,
       profilesDb,
       repService,
-      profileActivityLogsDb
+      profileActivityLogsDb,
+      eventScheduler
     );
   });
 
