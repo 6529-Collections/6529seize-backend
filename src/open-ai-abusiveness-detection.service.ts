@@ -1,6 +1,8 @@
 import OpenAI from 'openai';
 import { getOpenAiInstance } from './openai';
 import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
+import { ChatCompletion } from 'openai/resources';
+import { discord, Discord, DiscordChannel } from './discord';
 
 const STATUS_MAPPINGS: Record<string, 'ALLOWED' | 'DISALLOWED'> = {
   Allowed: 'ALLOWED',
@@ -8,12 +10,15 @@ const STATUS_MAPPINGS: Record<string, 'ALLOWED' | 'DISALLOWED'> = {
 };
 
 export class OpenAiAbusivenessDetectionService {
-  constructor(private readonly supplyOpenAi: () => OpenAI) {}
+  constructor(
+    private readonly supplyOpenAi: () => OpenAI,
+    private readonly discord: Discord
+  ) {}
 
   public async checkRepPhraseText(
     text: string
   ): Promise<AbusivenessDetectionResult> {
-    const message = `
+    const prompt = `
 Background
 
 We operate a social media site in the cryptocurrency space, more specifically in the nft space. This website allows us to give "rep" (aka reputation) points to community members for different activities or characteristics.
@@ -40,108 +45,196 @@ Format
 
 The format of the task is as follows:
 We will submit a classification.
-You will return: 
-The value: "Allowed" or "Disallowed"
-The rationale of why it is disallowed, in the case you disallowed
+You will return a JSON with the following fields: 
+value - "Allowed" or "Disallowed"
+reason - Only set if value is Disallowed. Contains the rationale of why it is disallowed, in the case you disallowed
 You must return NO other text or explanations as you will be integrated into an automated workflow and we will not be able to understand the text.
 I will share two examples of input and output.
+
 Example 1:
-input: "Software Developer "
-Allowed
+
+Our Input: 
+Software Developer
+
+Your Output:
+{"value": "Allowed"}
+
 Example 2:
-input: "fuckface"
-Disallowed - Insulting Term
+
+Our Input:
+fuckface
+Your Output:
+{"value": "Disallowed", "reason": "Insulting term"}
 I will now put the classification request after the word "input" and make further requestions in that format.
-input: ${text}
+input
+${text}
     `.trim();
-    return await this.doCheck(message, text);
+    const response = await this.doGptRequest(prompt);
+    const responseMessage = response.choices[0].message.content ?? '';
+    return await this.formatChatResponse(text, responseMessage);
   }
 
-  public async checkBioText(text: string): Promise<AbusivenessDetectionResult> {
-    const message = `
+  public async checkBioText({
+    text,
+    handle,
+    profile_type
+  }: {
+    text: string;
+    handle: string;
+    profile_type: string;
+  }): Promise<AbusivenessDetectionResult> {
+    const prompt = `
 Background
 
-We operate a social media site in the cryptocurrency space, more specifically in the nft space. This website allows users to create profiles to verify their identity. Profiles can get "rep" (aka reputation) points from other community members for different activities or characteristics.
+We operate a social media site in the cryptocurrency space, more specifically in the nft space. This website allows users to create profiles to verify their identity.  
+
+
 Each profile may have an “About” section, that lets the person or organization describe themselves in their own words.
 
-Task
+Task:
 
-You are going to help us moderate this user-generated content of the About section, please.
-Use the following guidelines:
+You are going to help us confirm that a user is not using their “About” section to violate the rules and policies of the website.
 
-1. We do not allow discriminatory or hate speech on any typical grounds
-2. We do not allow Personal insults, even if a user directs it at themselves.
-3. Generally words that would make a normal user in the cryptotwitter community feel bad or uncomfortable. Given the nature of the community (cryptotwitter and NFT twitter) we are more permissive than most social media sites on the following two factors:
-  a. We allow typical cryptotwitter terms. Aka "shitposting" is fine as a term, as is “cryptodickbutt”, and “degen”.
-  b. We allow discussion of artistic Nudity as we support nude art photographers.
-4. A user’s About content should not contain any Personal Doxxing Information about anyone else: We don’t allow hints at or direct reference to anything that could doxx a person's identity such as:
-  a. Disclosing other people’s proper names (e.g. “John Hammersmith”)
-  b. Indirect workarounds to the above (e.g. “John Hammersmith's father”)
-  c. You can assume that famous people's names such as politicians, celebrities, and athletes are not a concern and can be allowed.
-  D. Disallow Organizational Doxxing Information when it’s about other people: This is information that could dox a person's through their organizational affiliations such as: “CEO of Acme Enterprises” or “VP of Finance, Salesforce.com” or “the person who the VP of Operations at Acme Inc replaced last year”
+Username:
 
+We will submit the username of the user whose “About” section you are evaluating, along with their account type: Government Name, Pseudonymous, Organization, Bot or AI
+
+Take their username into account when analyzing the About section.  They are allowed to make comments about themselves but they are not allowed to use the About section to make comments about others.
+
+Keep in mind that UserName and AccountType are self-declared and therefore not certain to be true. 
+
+Guidelines
+
+
+Use the following guidelines for what is not allowed:
+
+Hate Speech: We do not allow discriminatory or hate speech of any type
+
+
+Personal Insults: We do not allow personal insults
+ 
+Inappropriate Language: We do not allow language that would would make a normal user in the cryptotwitter community feel bad or uncomfortable. Given the nature of the community (cryptotwitter and NFT twitter) we are more permissive than most social media sites on the following two factors:
+We allow typical cryptotwitter terms. Aka "shitposting" is fine as a term, as is “cryptodickbutt”, and “degen”.
+We allow discussion of artistic nudity as we support nude art photographers.
+
+
+Doxxing of Another Person: A user’s About should not contain any personal doxxing Information about other people.  Some illustrative but not comprehensive examples below:
+Disclosing proper names of other people who are not the author (e.g. “I gave 269 rep to John Hammersmith”)
+Indirect workarounds to the above (e.g. “John Hammersmith's father”)
+“Mike Smith works at Goldman Sachs”
+
+
+For avoidance of doubt, users are allowed to dox themselves.   If someone’s profile is “NFTDegen” and their About text is “I work at Goldman Sachs and love NFTs”, it is OK
+
+
+Language
 Note further that people may describe themselves in languages other than English. Apply the same rules in that case, taking into account idiomatic use.
 
 Format
 
 The format of the task is as follows:
-We will submit text for classification.
-You will return: 
-The value: "Allowed" or "Disallowed"
-The rationale of why it is disallowed, in the case you disallowed.
-You must return NO other text or explanations as you will be integrated into an automated workflow and we will not be able to understand the text.
-I will share two examples of input and output.
+
+We will send our request as a JSON and you will respond with a JSON. Our request JSON contains the following fields: username, usertype, about_text.
+
+
+You will return a JSON with the following fields:
+value - Allowed or Disallowed
+self_dox - This field is only set if you Allowed. If there is a self-dox in the text then the value is “Yes”, otherwise the value is “No”
+reason - This field is only set if you Disallowed and contains the reason you disallowed, picking only from the following values:
+“Hate Speech”
+“Personal Insults”
+“Inappropriate Language”
+“Doxxing of Another Person”
+
+Examples of Input and Output
 
 Example 1:
-input: "Software Developer turned jpeg degen looking for the next shitcoin to moon."
-Allowed
+
+Our Input: 
+{"username": "NFTGod", "usertype": "Pseudonymous", "about_text": "I am an NFT God, king of kings"}
+
+Your Output:
+{"value": "Allowed", "self_dox": "No"}
 
 Example 2:
-input: "i’m just a quiet community member who awaits the rise of the aryan nation."
-Disallowed hate speech
+
+Our Input: 
+
+{"username": "NFTGod", "usertype": "Pseudonymous", "about_text": "I am John Smith and work at Goldman Sachs"}
+
+Your Output:
+{"value": "Allowed", "self_dox": "Yes"}
+
+
 
 Example 3:
-input: "I collect NFTs… don’t you think Punku is really Vitalik?"
-Disallowed doxxing
+
+Our Input: 
+{"username": "JohnSmith", "usertype": "Government Name", "about_text": "I am just a quiet community member waiting for the rise of the Aryan Nation"}
+
+Your Output:
+{"value": "Disallowed", "reason": "Hate Speech"}
+
+Example 4:
+
+Our Input: 
+
+{"username": "MeMu", "usertype": "Bot", "about_text": "I collect NFTs… don’t you think Punku is really Vitalik?"}
+
+Your Output:
+
+{"value": "Disallowed", "reason": "Doxxing Of Another Person"}
 
 I will now put the classification request after the word "input" and make further requests in that format.
 
-input: ${text}
+input
+{"username": "${handle}", "usertype": "${profile_type}", "about_text": "${text}"}
     `.trim();
-    return await this.doCheck(message, text);
+    const response = await this.doGptRequest(prompt);
+    if (process.env.NODE_ENV !== 'local') {
+      await this.discord.sendMessage(
+        DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
+        `Username: ${handle}\n\nUser Type: ${profile_type}\n\nInput text:\n${text}\n\nGPT response:\n${response.choices[0].message.content}`
+      );
+    }
+    const responseMessage = response.choices[0].message.content ?? '';
+    return await this.formatChatResponse(text, responseMessage);
   }
 
-  private async doCheck(message: string, text: string) {
-    const response = await this.supplyOpenAi().chat.completions.create({
-      model: 'gpt-4',
-      messages: [{ role: 'user', content: message }]
-    });
-
-    const responseContent = response.choices[0].message.content?.replace(
-      '\n',
-      ' '
-    );
-    if (!responseContent) {
+  private async formatChatResponse(text: string, response: string) {
+    const parsedResponse: GptResponseJson = JSON.parse(response);
+    if (!parsedResponse) {
       throw new Error(`OpenAI gave an empty response to given text`);
     }
-    const responseTokens = responseContent.split(' ');
-    const decision = responseTokens[0];
-    const gptReason = responseTokens.slice(1).join(' ');
+    const decision = parsedResponse.value;
+    const gptReason = parsedResponse.reason ?? '';
     const status = STATUS_MAPPINGS[decision];
     if (!status) {
       throw new Error(
-        `Check against GPT failed. Input: ${text}. GPT response: ${responseContent}`
+        `Check against GPT failed. Input: ${text}. GPT response: ${parsedResponse}`
       );
     }
-    const explanation = gptReason.trim().length === 0 ? null : gptReason;
     return {
       text,
       status,
-      explanation,
+      explanation: gptReason,
       external_check_performed_at: new Date()
     };
   }
+
+  private async doGptRequest(message: string): Promise<ChatCompletion> {
+    return this.supplyOpenAi().chat.completions.create({
+      model: 'gpt-4',
+      messages: [{ role: 'user', content: message }]
+    });
+  }
+}
+
+interface GptResponseJson {
+  value: string;
+  self_dox?: string;
+  reason?: string;
 }
 
 export const openAiAbusivenessDetectionService =
-  new OpenAiAbusivenessDetectionService(getOpenAiInstance);
+  new OpenAiAbusivenessDetectionService(getOpenAiInstance, discord);

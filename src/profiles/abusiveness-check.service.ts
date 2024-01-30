@@ -35,12 +35,20 @@ export class AbusivenessCheckService {
     return result;
   }
 
-  async checkBio(text: string): Promise<AbusivenessDetectionResult> {
-    const txt = text.trim();
+  async checkBio(query: {
+    text: string;
+    handle: string;
+    profile_type: string;
+  }): Promise<AbusivenessDetectionResult> {
+    const txt = query.text.trim();
     if (txt.length > 500) {
       throw new BadRequestException(`Text must be up to 500 characters`);
     }
-    return await this.openAiAbusivenessDetectionService.checkBioText(txt);
+    return await this.openAiAbusivenessDetectionService.checkBioText({
+      text: txt,
+      handle: query.handle,
+      profile_type: query.profile_type
+    });
   }
 }
 

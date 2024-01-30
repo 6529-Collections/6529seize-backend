@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 1028
+  memorySize: 5120
   timeout: 900
 
 functions:
@@ -27,7 +27,7 @@ functions:
     environment:
       REMEMES_S3: true
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: "rememesS3Loop_${opt:stage, self:provider.stage}"
+      SENTRY_ENVIRONMENT: 'rememesS3Loop_${opt:stage, self:provider.stage}'
   rememesRefreshMetadataLoop:
     handler: index.handler
     name: rememesRefreshMetadataLoop
@@ -42,7 +42,7 @@ functions:
     environment:
       REMEMES_LOAD_FILE: false
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: "rememesRefreshMetadataLoop_${opt:stage, self:provider.stage}"
+      SENTRY_ENVIRONMENT: 'rememesRefreshMetadataLoop_${opt:stage, self:provider.stage}'
   rememesFileLoop:
     handler: index.handler
     name: rememesFileLoop
@@ -55,4 +55,4 @@ functions:
     environment:
       REMEMES_LOAD_FILE: true
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: "rememesFileLoop_${opt:stage, self:provider.stage}"
+      SENTRY_ENVIRONMENT: 'rememesFileLoop_${opt:stage, self:provider.stage}'
