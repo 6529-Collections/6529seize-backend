@@ -219,7 +219,7 @@ async function setCollectionCosts(args: ethers.utils.Result): Promise<
   const rate = parseInt(args[3]);
   const timePeriod = parseInt(args[4]);
   const salesOption = parseInt(args[5]);
-  //   const delAddress = args[6];
+  // const delAddress = args[6];
 
   let salesOptionDescription = '';
 
