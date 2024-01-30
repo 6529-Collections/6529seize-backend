@@ -18,9 +18,7 @@ export async function processPendingTokens(entityManager: EntityManager) {
   for (const token of pending) {
     const collection = collections.find((c) => c.id === token.collection_id);
     if (!collection) {
-      if (!collection) {
-        logger.info(`[TOKEN ID ${token.id}] : [COLLECTION NOT FOUND]`);
-      }
+      logger.info(`[TOKEN ID ${token.id}] : [COLLECTION NOT FOUND]`);
       continue;
     }
     const metadataLink = `${collection.base_uri}${token.id}`;

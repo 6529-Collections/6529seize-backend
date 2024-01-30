@@ -375,11 +375,15 @@ async function validateAdmin(collection_id: number, address: string) {
 }
 
 function getUrl(chainId: number) {
-  return `https://eth-${
-    chainId === goerli.id
-      ? goerli.network
-      : chainId === sepolia.id
-      ? sepolia.network
-      : mainnet.network
-  }.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
+  let network: string;
+
+  if (chainId === goerli.id) {
+    network = goerli.network;
+  } else if (chainId === sepolia.id) {
+    network = sepolia.network;
+  } else {
+    network = mainnet.network;
+  }
+
+  return `https://eth-${network}.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
 }

@@ -1,4 +1,4 @@
-import { Alchemy, Network } from 'alchemy-sdk';
+import { Alchemy } from 'alchemy-sdk';
 import { NextGenBlock } from '../entities/INextGen';
 import { findCoreEvents } from './nextgen_core_events';
 import { findCoreTransactions } from './nextgen_core_transactions';

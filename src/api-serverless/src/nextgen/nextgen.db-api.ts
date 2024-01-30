@@ -18,8 +18,6 @@ import {
   NEXTGEN_TRANSACTIONS_TABLE
 } from '../../../nextgen/nextgen_constants';
 import { PageSortDirection } from 'src/page-request';
-import { NextGenAllowlistCollection } from '../../../entities/INextGen';
-import { DEFAULT_PAGE_SIZE } from 'src/api-constants';
 
 export enum TokensSort {
   ID = 'id',
@@ -119,7 +117,6 @@ export async function fetchNextGenCollections(
           filters,
           `(allowlist_start <= ${now} AND allowlist_end >= ${now}) OR (public_start <= ${now} AND public_end >= ${now})`
         );
-        sort = 'allowlist_start asc, public_start asc, id desc';
         break;
       case NextGenCollectionStatus.UPCOMING:
         filters = constructFilters(

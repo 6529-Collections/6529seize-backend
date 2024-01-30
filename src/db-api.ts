@@ -48,7 +48,6 @@ import {
   extractConsolidationWallets
 } from './helpers';
 import { getConsolidationsSql, getProfilePageSql } from './sql_helpers';
-import { getProof } from './merkle_proof';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 
 import * as mysql from 'mysql';
@@ -63,8 +62,6 @@ import {
 } from './api-serverless/src/api-helpers';
 import { profilesService } from './profiles/profiles.service';
 import { repService } from './api-serverless/src/profiles/rep.service';
-import { DEFAULT_PAGE_SIZE } from './api-serverless/src/api-constants';
-import { NextGenCollectionStatus } from './api-serverless/src/api-filters';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -272,9 +269,10 @@ export async function fetchPaginated(
   joins?: string,
   groups?: string
 ) {
+  const groupPart = groups ? ` GROUP BY ${groups}` : '';
   const countSql = `SELECT COUNT(1) as count FROM (SELECT 1 FROM ${table} ${
     joins ?? ''
-  } ${filters}${groups ? ` GROUP BY ${groups}` : ``}) inner_q`;
+  } ${filters}${groupPart}) inner_q`;
 
   let resultsSql = `SELECT ${fields ? fields : '*'} FROM ${table} ${
     joins ? joins : ''

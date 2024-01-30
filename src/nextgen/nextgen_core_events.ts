@@ -81,8 +81,7 @@ async function processLog(
 
   switch (parsedLog.name) {
     case 'OwnershipTransferred':
-      const previousOwner = parsedLog.args.previousOwner;
-      if (areEqualAddresses(NULL_ADDRESS, previousOwner)) {
+      if (areEqualAddresses(NULL_ADDRESS, parsedLog.args.previousOwner)) {
         return {
           id: 0,
           description: 'NextGen Contract Deployed'
