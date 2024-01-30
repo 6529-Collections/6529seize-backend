@@ -5,20 +5,22 @@ import {
 } from '@aws-sdk/client-cloudfront';
 import { Logger } from '../logging';
 import { Time } from '../time';
-import { NEXTGEN_CF_BASE_PATH } from '../nextgen/nextgen_constants';
+import {
+  CLOUDFRONT_DISTRIBUTION,
+  GENERATOR_BASE_PATH,
+  NEXTGEN_BUCKET,
+  NEXTGEN_BUCKET_AWS_REGION,
+  NEXTGEN_CF_BASE_PATH
+} from '../nextgen/nextgen_constants';
 
 const logger = Logger.get('NEXTGEN_MEDIA_UPLOADER');
-const GENERATOR_BASE_PATH = 'https://nextgen-generator.seize.io/';
-const BUCKET = 'media-proxy.nextgen-generator.seize.io';
-const AWS_REGION = 'us-east-1';
-const CLOUDFRONT_DISTRIBUTION = 'E1YUOAX1CF71P7';
 
 let s3: S3Client;
 let cloudfront: CloudFrontClient;
 
 async function setup() {
-  s3 = new S3Client({ region: AWS_REGION });
-  cloudfront = new CloudFrontClient({ region: AWS_REGION });
+  s3 = new S3Client({ region: NEXTGEN_BUCKET_AWS_REGION });
+  cloudfront = new CloudFrontClient({ region: NEXTGEN_BUCKET_AWS_REGION });
 }
 
 export const handler = async (event: any) => {
@@ -107,7 +109,7 @@ async function uploadMissingNextgenMedia(path: string) {
 
   await s3.send(
     new PutObjectCommand({
-      Bucket: BUCKET,
+      Bucket: NEXTGEN_BUCKET,
       Key: metadataPath,
       Body: Buffer.from(JSON.stringify(metadata)),
       ContentType: `application/json`
@@ -116,7 +118,7 @@ async function uploadMissingNextgenMedia(path: string) {
 
   await s3.send(
     new PutObjectCommand({
-      Bucket: BUCKET,
+      Bucket: NEXTGEN_BUCKET,
       Key: imagePath,
       Body: Buffer.from(imageBlob),
       ContentType: `image/png`
@@ -125,7 +127,7 @@ async function uploadMissingNextgenMedia(path: string) {
 
   await s3.send(
     new PutObjectCommand({
-      Bucket: BUCKET,
+      Bucket: NEXTGEN_BUCKET,
       Key: htmlPath,
       Body: Buffer.from(htmlBlob),
       ContentType: `text/html`

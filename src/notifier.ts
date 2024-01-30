@@ -8,7 +8,7 @@ let snsClient: SNSClient;
 
 function getSnsClient(): SNSClient {
   if (!snsClient) {
-    snsClient = new SNSClient({ region: 'us-east-1' });
+    snsClient = new SNSClient();
   }
   return snsClient;
 }
