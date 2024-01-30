@@ -148,6 +148,46 @@ describe('RatingsService', () => {
         mockConnection
       );
     });
+
+    it('enough TDH, but rating did not change - no db modifications are done', async () => {
+      when(profilesDb.getProfileTdh).mockResolvedValue(12);
+      when(ratingsDb.getRatingForUpdate).mockResolvedValue({
+        rating: -6,
+        rater_profile_id: 'pid',
+        matter: RateMatter.CIC,
+        matter_target_id: 'mid',
+        matter_category: 'CIC',
+        last_modified: Time.millis(0).toDate(),
+        total_tdh_spent_on_matter: 8
+      });
+      const request = {
+        rater_profile_id: 'pid',
+        matter: RateMatter.CIC,
+        matter_target_id: 'mid',
+        matter_category: 'CIC',
+        rating: -6
+      };
+      await ratingsService.updateRating(request);
+      expect(ratingsDb.updateRating).not.toHaveBeenCalledWith(
+        request,
+        mockConnection
+      );
+      expect(profileActivityLogsDb.insert).not.toHaveBeenCalledWith(
+        {
+          profile_id: 'pid',
+          target_id: 'mid',
+          type: ProfileActivityLogType.RATING_EDIT,
+          contents: JSON.stringify({
+            old_rating: -6,
+            new_rating: -6,
+            rating_matter: 'CIC',
+            rating_category: 'CIC',
+            change_reason: 'USER_EDIT'
+          })
+        },
+        mockConnection
+      );
+    });
   });
 
   describe('revokeOverRates', () => {
