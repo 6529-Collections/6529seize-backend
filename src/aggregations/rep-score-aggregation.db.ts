@@ -2,11 +2,20 @@ import {
   ConnectionWrapper,
   dbSupplier,
   LazyDbAccessCompatibleService
-} from '../../sql-executor';
-import { PROFILE_TOTAL_REP_SCORE_AGGREGATIONS_TABLE } from '../../constants';
-import { ProfileTotalRepScoreAggregation } from '../../entities/IRepScoreAggregations';
+} from '../sql-executor';
+import { PROFILE_TOTAL_REP_SCORE_AGGREGATIONS_TABLE } from '../constants';
+import { ProfileTotalRepScoreAggregation } from '../entities/IRepScoreAggregations';
 
 export class RepScoreAggregationDb extends LazyDbAccessCompatibleService {
+  async getDataForProfiles(
+    profileIds: string[]
+  ): Promise<ProfileTotalRepScoreAggregation[]> {
+    return this.db.execute(
+      `SELECT * FROM ${PROFILE_TOTAL_REP_SCORE_AGGREGATIONS_TABLE} WHERE profile_id IN (:profileIds)`,
+      { profileIds }
+    );
+  }
+
   async upsertForProfile(
     value: ProfileTotalRepScoreAggregation,
     connection: ConnectionWrapper<any>

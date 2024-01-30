@@ -5,7 +5,7 @@ import { Logger } from '../../logging';
 import {
   cicScoreAggregationDb,
   CicScoreAggregationDb
-} from './cic-score-aggregation.db';
+} from '../../aggregations/cic-score-aggregation.db';
 import { ProfileCicRatedEventData } from '../../events/datatypes/profile-cic-rated.event-data';
 import { aggregateScoresAndCountsByTarget } from '../aggregations.helper';
 
