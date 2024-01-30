@@ -836,7 +836,7 @@ async function getTransactionFilters(
         newTypeFilter += `value = 0 and from_address != :null_address and to_address != :null_address and to_address != :dead_address`;
         break;
       case 'burns':
-        newTypeFilter += `to_address = :null_address or to_address = :dead_address`;
+        newTypeFilter += `(to_address = :null_address or to_address = :dead_address)`;
         break;
     }
     if (newTypeFilter) {
