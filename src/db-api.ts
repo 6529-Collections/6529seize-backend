@@ -1618,7 +1618,7 @@ async function enhanceDataWithHandlesAndLevel(
       resultWallets
     );
   const profileIds = Object.values(walletsToHandlesAndIds).map((it) => it.id);
-  const profileReps = await repService.getRepForProfiles(profileIds);
+  const profileReps = await repService.getAggregatedRepForProfiles(profileIds);
   return data.map(
     (d: { wallets?: string; wallet?: string; boosted_tdh?: number }) => {
       const parsedWallets = d.wallet
