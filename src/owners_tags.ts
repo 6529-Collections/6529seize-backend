@@ -1,4 +1,9 @@
-import { GRADIENT_CONTRACT, MEMES_CONTRACT } from './constants';
+import {
+  GRADIENT_CONTRACT,
+  MEMES_CONTRACT,
+  MEME_8_EDITION_BURN_ADJUSTMENT,
+  NULL_ADDRESS
+} from './constants';
 import { NFT } from './entities/INFT';
 import { ConsolidatedOwnerTags, Owner, OwnerTags } from './entities/IOwner';
 import { areEqualAddresses, buildConsolidationKey } from './helpers';
@@ -49,6 +54,12 @@ export const findOwnerTags = async () => {
     const walletNFTs = [...startingOwners].filter((o) =>
       areEqualAddresses(o.wallet, owner)
     );
+
+    if (areEqualAddresses(owner, NULL_ADDRESS)) {
+      walletNFTs.find(
+        (n) => areEqualAddresses(n.contract, MEMES_CONTRACT) && n.token_id == 8
+      )!.balance += MEME_8_EDITION_BURN_ADJUSTMENT;
+    }
 
     const oTags = buildTagsFromNfts(
       walletNFTs,

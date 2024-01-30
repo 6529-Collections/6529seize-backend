@@ -15,7 +15,11 @@ import {
 } from './constants';
 import { ConsolidatedOwnerMetric, OwnerMetric } from './entities/IOwner';
 import { Transaction } from './entities/ITransaction';
-import { areEqualAddresses, buildConsolidationKey } from './helpers';
+import {
+  areEqualAddresses,
+  buildConsolidationKey,
+  isNullAddress
+} from './helpers';
 import {
   persistOwnerMetrics,
   fetchWalletTransactions,
@@ -466,6 +470,8 @@ export const findOwnerMetrics = async (reset?: boolean) => {
 
   const ownerMetrics: OwnerMetric[] = [];
 
+  owners = [{ wallet: NULL_ADDRESS }];
+
   await Promise.all(
     owners.map(async (owner) => {
       const wallet = owner.wallet;
@@ -473,6 +479,12 @@ export const findOwnerMetrics = async (reset?: boolean) => {
       let walletTransactions: Transaction[] = await fetchWalletTransactions(
         wallet
       );
+
+      if (isNullAddress(wallet)) {
+        walletTransactions.forEach((wt) => {
+          wt.value = 0;
+        });
+      }
 
       if (areEqualAddresses(wallet, NULL_ADDRESS)) {
         logger.info(

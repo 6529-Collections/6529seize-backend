@@ -15,7 +15,6 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
-  MEME_8_EDITION_BURN_ADJUSTMENT,
   NEXT_GEN_ALLOWLIST,
   NEXT_GEN_COLLECTIONS,
   NFTS_HISTORY_TABLE,
@@ -683,7 +682,7 @@ export async function fetchOwners(
   nfts: string
 ) {
   let filters = '';
-  const params: any = {};
+  let params: any = {};
 
   if (wallets) {
     filters = constructFilters(
