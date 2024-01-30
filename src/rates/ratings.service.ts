@@ -91,6 +91,9 @@ export class RatingsService {
       request,
       connection
     );
+    if (currentRating.rating === request.rating) {
+      return;
+    }
     if (!skipTdhCheck) {
       const totalTdhSpentOnMatter = currentRating.total_tdh_spent_on_matter;
       const tdhSpentOnThisRequest =
