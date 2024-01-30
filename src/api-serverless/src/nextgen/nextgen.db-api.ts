@@ -390,6 +390,7 @@ export async function fetchAllowlistPhasesForCollection(collectionId: number) {
 
 export async function fetchNextGenAllowlistByPhase(
   id: number,
+  addressesStr: string,
   merkleRoot: string | undefined,
   pageSize: number,
   page: number
@@ -398,27 +399,37 @@ export async function fetchNextGenAllowlistByPhase(
     '',
     `${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.collection_id=:id`
   );
+  let params: any = {
+    id: id
+  };
   if (merkleRoot) {
     filters = constructFilters(
       filters,
       `${NEXTGEN_ALLOWLIST_TABLE}.merkle_root=:merkleRoot`
     );
+    params.merkleRoot = merkleRoot;
   }
+
+  if (addressesStr) {
+    filters = constructFilters(
+      filters,
+      `${NEXTGEN_ALLOWLIST_TABLE}.address in (:addresses) OR ${ENS_TABLE}.display in (:addresses)`
+    );
+    params.addresses = addressesStr.toLowerCase().split(',');
+  }
+
   let joins = `LEFT JOIN ${NEXTGEN_ALLOWLIST_TABLE} ON 
     ${NEXTGEN_ALLOWLIST_TABLE}.merkle_root=${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.merkle_root 
   LEFT JOIN ${ENS_TABLE} ens ON ${NEXTGEN_ALLOWLIST_TABLE}.address=ens.wallet`;
 
   return fetchPaginated(
     NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
-    {
-      id: id,
-      merkleRoot: merkleRoot
-    },
+    params,
     'phase asc, address asc, spots asc',
     pageSize,
     page,
     filters,
-    `${NEXTGEN_ALLOWLIST_TABLE}.*, ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.phase, ens.display as wallet_display`,
+    `${NEXTGEN_ALLOWLIST_TABLE}.*, ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.phase, ${ENS_TABLE}.display as wallet_display`,
     joins
   );
 }

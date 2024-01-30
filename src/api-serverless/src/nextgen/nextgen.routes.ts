@@ -119,6 +119,7 @@ router.get(
   async function (req: any, res: any, next: any) {
     const id: number = parseInt(req.params.collection_id);
     if (!isNaN(id)) {
+      const addresses = req.query.address;
       const merkleRoot = req.params.merkle_root;
 
       const pageSize: number =
@@ -127,16 +128,20 @@ router.get(
           : DISTRIBUTION_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-      db.fetchNextGenAllowlistByPhase(id, merkleRoot, pageSize, page).then(
-        (result) => {
-          res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
-          res.setHeader(
-            ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
-            corsOptions.allowedHeaders
-          );
-          res.end(JSON.stringify(result));
-        }
-      );
+      db.fetchNextGenAllowlistByPhase(
+        id,
+        addresses,
+        merkleRoot,
+        pageSize,
+        page
+      ).then((result) => {
+        res.setHeader(CONTENT_TYPE_HEADER, JSON_HEADER_VALUE);
+        res.setHeader(
+          ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+          corsOptions.allowedHeaders
+        );
+        res.end(JSON.stringify(result));
+      });
     } else {
       return res.status(404).send({});
     }
