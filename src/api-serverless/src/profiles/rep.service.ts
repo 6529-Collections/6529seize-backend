@@ -1,8 +1,15 @@
 import { ratingsDb, RatingsDb } from '../../../rates/ratings.db';
 import { RateMatter } from '../../../entities/IRating';
+import {
+  repScoreAggregationDb,
+  RepScoreAggregationDb
+} from '../../../aggregations/rep-score-aggregation.db';
 
 export class RepService {
-  constructor(private readonly ratingsDb: RatingsDb) {}
+  constructor(
+    private readonly ratingsDb: RatingsDb,
+    private readonly repScoreAggregationDb: RepScoreAggregationDb
+  ) {}
 
   async getRepForProfiles(
     profileIds: string[]
@@ -21,6 +28,21 @@ export class RepService {
     }, {} as Record<string, number>);
   }
 
+  async getAggregatedRepForProfiles(
+    profileIds: string[]
+  ): Promise<Record<string, number>> {
+    const data = await this.repScoreAggregationDb.getDataForProfiles(
+      profileIds
+    );
+    return profileIds.reduce(
+      (acc, profileId) => ({
+        ...acc,
+        [profileId]: data.find((it) => it.profile_id === profileId)?.score ?? 0
+      }),
+      {} as Record<string, number>
+    );
+  }
+
   async getRepForProfile(profileId: string): Promise<number> {
     const foundRatings = await this.ratingsDb.getRatingsForTargetsOnMatters({
       targetIds: [profileId],
@@ -30,4 +52,4 @@ export class RepService {
   }
 }
 
-export const repService = new RepService(ratingsDb);
+export const repService = new RepService(ratingsDb, repScoreAggregationDb);
