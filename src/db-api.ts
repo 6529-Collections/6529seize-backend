@@ -805,7 +805,7 @@ async function getTransactionFilters(
 
     if (type_filter == 'purchases') {
       filters = constructFilters(filters, `to_address in (:wallets)`);
-    } else if (type_filter === 'sales') {
+    } else if (type_filter === 'sales' || type_filter === 'burns') {
       filters = constructFilters(filters, `from_address in (:wallets)`);
     } else {
       filters = constructFilters(
@@ -895,8 +895,9 @@ export async function fetchTransactions(
   if (contracts) {
     filters.filters = constructFilters(
       filters.filters,
-      `contract in (${mysql.escape(contracts.split(','))})`
+      `contract in (:contracts)`
     );
+    filters.params.contracts = contracts.split(',');
   }
 
   const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
