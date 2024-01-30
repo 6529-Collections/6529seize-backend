@@ -470,8 +470,6 @@ export const findOwnerMetrics = async (reset?: boolean) => {
 
   const ownerMetrics: OwnerMetric[] = [];
 
-  owners = [{ wallet: NULL_ADDRESS }];
-
   await Promise.all(
     owners.map(async (owner) => {
       const wallet = owner.wallet;
