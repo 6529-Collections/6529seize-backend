@@ -372,7 +372,7 @@ export async function fetchAllAllowlistPhases(pageSize: number, page: number) {
     pageSize,
     page,
     '',
-    'merkle_root, collection_id, phase, start_time, end_time, al_type, added_by'
+    'merkle_root, collection_id, phase, start_time, end_time, al_type, mint_price, added_by'
   );
 }
 
