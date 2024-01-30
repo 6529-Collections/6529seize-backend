@@ -179,26 +179,6 @@ export async function fetchNextGenCollectionTokens(
       }
       groupedTraits[key].push(value);
     });
-    Object.entries(groupedTraits).forEach(([key, values], index) => {
-      const orConditions = values
-        .map((value, valueIndex) => {
-          const conditionIndex = `${index}_${valueIndex}`;
-          params[`trait${conditionIndex}`] = key;
-          params[`value${conditionIndex}`] = value;
-          return `(${NEXTGEN_TOKEN_TRAITS_TABLE}.trait = :trait${conditionIndex} AND ${NEXTGEN_TOKEN_TRAITS_TABLE}.value = :value${conditionIndex})`;
-        })
-        .join(' OR ');
-
-      filters = constructFilters(
-        filters,
-        `EXISTS (
-            SELECT 1
-            FROM ${NEXTGEN_TOKEN_TRAITS_TABLE}
-            WHERE ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id = ${NEXTGEN_TOKENS_TABLE}.id
-            AND (${orConditions})
-          )`
-      );
-    });
 
     Object.entries(groupedTraits).forEach(([key, values], index) => {
       const orConditions = values
