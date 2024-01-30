@@ -1,6 +1,6 @@
 import { Mock } from 'ts-jest-mocker';
 import { CicSumEventListener } from './cic-sum.event-listener';
-import { CicScoreAggregationDb } from './cic-score-aggregation.db';
+import { CicScoreAggregationDb } from '../../aggregations/cic-score-aggregation.db';
 import { mockDbService } from '../../tests/test.helper';
 import {
   EventStatus,

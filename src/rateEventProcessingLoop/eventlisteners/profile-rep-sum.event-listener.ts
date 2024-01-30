@@ -5,7 +5,7 @@ import { Logger } from '../../logging';
 import {
   repScoreAggregationDb,
   RepScoreAggregationDb
-} from './rep-score-aggregation.db';
+} from '../../aggregations/rep-score-aggregation.db';
 import { ProfileRepRatedEventData } from '../../events/datatypes/profile-rep-rated.event-data';
 import { aggregateScoresAndCountsByTarget } from '../aggregations.helper';
 
