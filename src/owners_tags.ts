@@ -51,7 +51,7 @@ export const findOwnerTags = async () => {
   const ownersTagsDelta: OwnerTags[] = [];
 
   uniqueOwners.forEach((owner) => {
-    const walletNFTs = [...startingOwners].filter((o) =>
+    let walletNFTs = [...startingOwners].filter((o) =>
       areEqualAddresses(o.wallet, owner)
     );
 
@@ -60,6 +60,8 @@ export const findOwnerTags = async () => {
         (n) => areEqualAddresses(n.contract, MEMES_CONTRACT) && n.token_id == 8
       )!.balance += MEME_8_EDITION_BURN_ADJUSTMENT;
     }
+
+    walletNFTs = walletNFTs.filter((n) => n.balance > 0);
 
     const oTags = buildTagsFromNfts(
       walletNFTs,
