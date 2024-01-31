@@ -137,9 +137,18 @@ export const findOwnerTags = async () => {
           areEqualAddresses(wallet, pw)
         )
       ) {
-        const walletNFTs = [...startingOwners].filter((o) =>
+        let walletNFTs = [...startingOwners].filter((o) =>
           consolidations.some((s) => areEqualAddresses(s, o.wallet))
         );
+
+        if (areEqualAddresses(wallet, NULL_ADDRESS)) {
+          walletNFTs.find(
+            (n) =>
+              areEqualAddresses(n.contract, MEMES_CONTRACT) && n.token_id == 8
+          )!.balance += MEME_8_EDITION_BURN_ADJUSTMENT;
+        }
+
+        walletNFTs = walletNFTs.filter((n) => n.balance > 0);
 
         const processedWalletNfts: Owner[] = [];
         walletNFTs.forEach((wNft) => {
