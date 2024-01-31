@@ -153,6 +153,17 @@ export async function fetchNextGenCollectionById(id: number) {
   return returnEmpty();
 }
 
+export async function fetchNextGenCollectionByName(name: string) {
+  const sql = `SELECT * FROM ${NEXTGEN_COLLECTIONS_TABLE} WHERE LOWER(name)=:name`;
+  const results = await sqlExecutor.execute(sql, {
+    name: name.toLocaleLowerCase()
+  });
+  if (results.length === 1) {
+    return results[0];
+  }
+  return returnEmpty();
+}
+
 export async function fetchNextGenCollectionTokens(
   collectionId: number,
   pageSize: number,

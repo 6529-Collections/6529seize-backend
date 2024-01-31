@@ -258,15 +258,16 @@ router.get(`/collections`, async function (req: any, res: any, next: any) {
 
 router.get(`/collections/:id`, async function (req: any, res: any, next: any) {
   const id: number = parseInt(req.params.id);
+  let result: any;
   if (!isNaN(id)) {
     logger.info(`[FETCHING COLLECTION ID ${id}]`);
-    db.fetchNextGenCollectionById(id).then((result) => {
-      if (result.id) {
-        return returnJsonResult(result, req, res);
-      } else {
-        return res.status(404).send({});
-      }
-    });
+    result = await db.fetchNextGenCollectionById(id);
+  } else {
+    logger.info(`[FETCHING COLLECTION NAME ${req.params.id}]`);
+    result = await db.fetchNextGenCollectionByName(req.params.id);
+  }
+  if (result?.id) {
+    return returnJsonResult(result, req, res);
   } else {
     return res.status(404).send({});
   }
