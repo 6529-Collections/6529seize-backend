@@ -17,7 +17,7 @@ import {
   NEXTGEN_TOKEN_TRAITS_TABLE,
   NEXTGEN_TRANSACTIONS_TABLE
 } from '../../../nextgen/nextgen_constants';
-import { PageSortDirection } from 'src/page-request';
+import { PageSortDirection } from '../page-request';
 
 export enum TokensSort {
   ID = 'id',

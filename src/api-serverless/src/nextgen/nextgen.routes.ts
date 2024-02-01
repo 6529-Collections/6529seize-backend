@@ -33,7 +33,7 @@ import {
   NEXTGEN_ALLOWLIST_TABLE,
   NEXTGEN_ALLOWLIST_BURN_TABLE
 } from '../../../nextgen/nextgen_constants';
-import { PageSortDirection } from 'src/page-request';
+import { PageSortDirection } from '../page-request';
 
 const logger = Logger.get('NEXTGEN_API');
 
@@ -219,13 +219,14 @@ router.get(
   `/allowlist_phases/:collection_id`,
   async function (req: any, res: any, next: any) {
     let id: number = parseInt(req.params.collection_id);
-    if (isNaN(id)) {
-      id = undefined;
+    if (!isNaN(id)) {
+      logger.info(`[FETCHING ALLOWLIST PHASES COLLECTION ID ${id}]`);
+      db.fetchAllowlistPhasesForCollection(id).then((result) => {
+        return returnPaginatedResult(result, req, res);
+      });
+    } else {
+      return res.status(404).send({});
     }
-    logger.info(`[FETCHING ALLOWLIST PHASES COLLECTION ID ${id}]`);
-    db.fetchAllowlistPhasesForCollection(id).then((result) => {
-      return returnPaginatedResult(result, req, res);
-    });
   }
 );
 
