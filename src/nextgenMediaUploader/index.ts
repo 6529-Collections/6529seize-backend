@@ -12,6 +12,7 @@ import {
   NEXTGEN_BUCKET_AWS_REGION,
   NEXTGEN_CF_BASE_PATH
 } from '../nextgen/nextgen_constants';
+import { wrapLambdaHandler } from '../sentry.context';
 
 const logger = Logger.get('NEXTGEN_MEDIA_UPLOADER');
 
@@ -23,7 +24,7 @@ async function setup() {
   cloudfront = new CloudFrontClient({ region: NEXTGEN_BUCKET_AWS_REGION });
 }
 
-export const handler = async (event: any) => {
+export const handler = wrapLambdaHandler(async (event: any) => {
   const start = Time.now();
   logger.info(`[RUNNING]`);
   setup();
@@ -36,7 +37,7 @@ export const handler = async (event: any) => {
   await uploadMissingNextgenMedia(missingPath);
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
-};
+});
 
 async function uploadMissingNextgenMedia(path: string) {
   logger.info(`[UPLOADING MISSING NEXTGEN MEDIA] : [PATH ${path}]`);

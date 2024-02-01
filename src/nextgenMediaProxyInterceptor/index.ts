@@ -18,7 +18,9 @@ interface Details {
 }
 
 export const handler = async (event: any) => {
-  let { request, response } = event.Records[0].cf;
+  const cf = event.Records[0].cf;
+  const request = cf.request;
+  let response = cf.response;
   try {
     if (response.status === '403') {
       const uri = request.uri;
