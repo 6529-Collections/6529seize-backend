@@ -46,6 +46,7 @@ export const handler = async (event: any) => {
     logger.error(`[ERROR] : [${e}]`);
     const customBody: any = DEFAULT_RESPONSE_BODY;
     customBody.path = request.uri;
+    customBody.image = DEFAULT_IMAGE_PATH;
     response = buildJsonResponse(response, customBody);
   }
   return response;

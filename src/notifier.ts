@@ -1,14 +1,16 @@
 import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { randomUUID } from 'crypto';
 import { Logger } from './logging';
+import { NEXTGEN_BUCKET_AWS_REGION } from './nextgen/nextgen_constants';
 
 const logger = Logger.get('NOTIFIER');
 
 let snsClient: SNSClient;
 
-function getSnsClient(): SNSClient {
+function getSnsClient(region?: string): SNSClient {
+  const regionOption = region ? { region } : {};
   if (!snsClient) {
-    snsClient = new SNSClient();
+    snsClient = new SNSClient(regionOption);
   }
   return snsClient;
 }
@@ -33,7 +35,10 @@ export async function notifyTdhCalculationsDone() {
   }
 }
 
-export async function notifyMissingNextgenMedia(path: string) {
+export async function notifyMissingNextgenMedia(
+  path: string,
+  region: string = NEXTGEN_BUCKET_AWS_REGION
+) {
   logger.info(`[NOTIFYING MISSING NEXTGEN MEDIA] : [PATH ${path}]`);
   const input = {
     TopicArn:
@@ -46,7 +51,7 @@ export async function notifyMissingNextgenMedia(path: string) {
       }
     }
   };
-  const response = await getSnsClient().send(new PublishCommand(input));
+  const response = await getSnsClient(region).send(new PublishCommand(input));
   logger.info(
     `[SNS NOTIFICATION FOR MISSING NEXTGEN MEDIA SENT] : [PATH ${path}] : [MESSAGE ID ${response.MessageId}`
   );
