@@ -1,12 +1,14 @@
+import { Logger } from '../logging';
 import { NEXTGEN_CF_BASE_PATH } from '../nextgen/nextgen_constants';
 import { notifyMissingNextgenMedia } from '../notifier';
+
+const logger = Logger.get('NEXTGEN_MEDIA_INTERCEPTOR');
 
 const DEFAULT_IMAGE_PATH = `${NEXTGEN_CF_BASE_PATH}/placeholders/pending.png`;
 
 const DEFAULT_RESPONSE_BODY = {
   name: 'Pending...',
-  description: 'Pending...',
-  image: DEFAULT_IMAGE_PATH
+  description: 'Pending...'
 };
 
 interface Details {
@@ -41,7 +43,7 @@ export const handler = async (event: any) => {
       response = buildJsonResponse(response, customResponse);
     }
   } catch (e) {
-    console.error(e);
+    logger.error(`[ERROR] : [${e}]`);
     const customBody: any = DEFAULT_RESPONSE_BODY;
     customBody.path = request.uri;
     response = buildJsonResponse(response, customBody);
@@ -75,6 +77,7 @@ function getImagePath(details: Details) {
   if (details.collection && details.collection > 0) {
     return `${NEXTGEN_CF_BASE_PATH}/placeholders/${details.network}/${details.collection}.png`;
   }
+  logger.info(`[DETAILS ERROR] : [${details}]`);
   return DEFAULT_IMAGE_PATH;
 }
 
