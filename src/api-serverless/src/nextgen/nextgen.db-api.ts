@@ -376,6 +376,18 @@ export async function fetchFeaturedCollection() {
 }
 
 export async function fetchAllAllowlistPhases(pageSize: number, page: number) {
+  const joins = `LEFT JOIN ${NEXTGEN_COLLECTIONS_TABLE} ON ${NEXTGEN_COLLECTIONS_TABLE}.id=${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.collection_id`;
+  const fields = `
+    ${NEXTGEN_COLLECTIONS_TABLE}.name as collection_name,
+    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.collection_id, 
+    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.phase,
+    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.merkle_root,
+    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.start_time, 
+    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.end_time, 
+    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.al_type, 
+    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.mint_price, 
+    ${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.added_by
+  `;
   return fetchPaginated(
     NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
     {},
@@ -383,7 +395,8 @@ export async function fetchAllAllowlistPhases(pageSize: number, page: number) {
     pageSize,
     page,
     '',
-    'merkle_root, collection_id, phase, start_time, end_time, al_type, mint_price, added_by'
+    fields,
+    joins
   );
 }
 
