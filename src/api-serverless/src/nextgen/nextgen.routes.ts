@@ -264,8 +264,9 @@ router.get(`/collections/:id`, async function (req: any, res: any, next: any) {
     logger.info(`[FETCHING COLLECTION ID ${id}]`);
     result = await db.fetchNextGenCollectionById(id);
   } else {
-    logger.info(`[FETCHING COLLECTION NAME ${req.params.id}]`);
-    result = await db.fetchNextGenCollectionByName(req.params.id);
+    const name = req.params.id.replace(/-/g, ' ');
+    logger.info(`[FETCHING COLLECTION NAME ${name}]`);
+    result = await db.fetchNextGenCollectionByName(name);
   }
   if (result?.id) {
     return returnJsonResult(result, req, res);
