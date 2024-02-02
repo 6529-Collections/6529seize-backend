@@ -4,7 +4,7 @@ import { findCoreEvents } from './nextgen_core_events';
 import { findCoreTransactions } from './nextgen_core_transactions';
 import { findMinterTransactions } from './nextgen_minter';
 import { processPendingTokens } from './nextgen_pending';
-import { processTraitScores } from './nextgen_traits';
+import { processTraitScores } from './nextgen_tokens';
 import { fetchNextGenLatestBlock, persistNextGenBlock } from './nextgen.db';
 import { getDataSource } from '../db';
 import { getNextgenNetwork } from './nextgen_constants';

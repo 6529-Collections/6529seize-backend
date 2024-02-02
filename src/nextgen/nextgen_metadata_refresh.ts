@@ -5,7 +5,7 @@ import {
   fetchNextGenTokensForCollection
 } from './nextgen.db';
 import { upsertToken } from './nextgen_core_events';
-import { processTraitScores } from './nextgen_traits';
+import { processTraitScores } from './nextgen_tokens';
 
 const logger = Logger.get('NEXTGEN_METADATA_REFRESH');
 
