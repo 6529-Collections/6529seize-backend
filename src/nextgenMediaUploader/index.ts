@@ -95,9 +95,11 @@ async function uploadMissingNextgenMedia(path: string) {
   }
 
   const htmlGeneratorPath = `${GENERATOR_BASE_PATH}/${htmlPath}`;
-  metadata.generator_animation = htmlGeneratorPath;
-  metadata.generator_metadata = generatorMetadataPath;
-  metadata.generator_image = `${GENERATOR_BASE_PATH}/${imagePath}`;
+  metadata.generator = {
+    metadata: generatorMetadataPath,
+    html: htmlGeneratorPath,
+    image: `${GENERATOR_BASE_PATH}/${imagePath}`
+  };
 
   const imageBlob = await getImageBlob(imagePath);
   const imageBlob2k = await getImageBlob(`${imagePath}/2k`);
