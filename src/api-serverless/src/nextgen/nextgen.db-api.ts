@@ -261,7 +261,9 @@ export async function fetchNextGenToken(tokendId: number) {
     nullAddresses: [NULL_ADDRESS, NULL_ADDRESS_DEAD]
   });
   if (results.length === 1) {
-    return results[0];
+    const r = results[0];
+    r.generator = JSON.parse(r.generator);
+    return r;
   }
   return returnEmpty();
 }

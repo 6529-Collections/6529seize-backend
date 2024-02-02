@@ -219,8 +219,11 @@ export async function upsertToken(
       collection_name: collection.name,
       metadata_url: metadataLink,
       image_url: metadataResponse.image,
-      animation_url: metadataResponse.animation_url,
-      generator_url: metadataResponse.generator_url,
+      animation_url:
+        metadataResponse.animation_url ??
+        metadataResponse.generator?.html ??
+        null,
+      generator: metadataResponse.generator,
       owner: owner.toLowerCase(),
       pending: pending,
       burnt: isBurn,

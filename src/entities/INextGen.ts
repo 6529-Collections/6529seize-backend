@@ -424,8 +424,8 @@ export class NextGenToken {
   @Column({ type: 'text', nullable: true })
   animation_url!: string;
 
-  @Column({ type: 'text', nullable: true })
-  generator_url!: string;
+  @Column({ type: 'json', nullable: true })
+  generator!: string;
 
   @Column({ type: 'text' })
   owner!: string;

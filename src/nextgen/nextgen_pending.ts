@@ -30,7 +30,7 @@ export async function processPendingTokens(entityManager: EntityManager) {
       token.metadata_url = metadataLink;
       token.image_url = metadataResponse.image;
       token.animation_url = metadataResponse.animation_url;
-      token.generator_url = metadataResponse.generator_url;
+      token.generator = metadataResponse.generator;
       token.pending = pending;
 
       await persistNextGenToken(entityManager, token);

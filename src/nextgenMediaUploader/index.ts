@@ -103,10 +103,10 @@ async function uploadMissingNextgenMedia(path: string) {
 
   const imageBlob = await getImageBlob(imagePath);
   const imageBlob2k = await getImageBlob(`${imagePath}/2k`);
-  const imageBlob4k = await getImageBlob(`${imagePath}/4k`);
-  const imageBlob8k = await getImageBlob(`${imagePath}/8k`);
+  // const imageBlob4k = await getImageBlob(`${imagePath}/4k`);
+  // const imageBlob8k = await getImageBlob(`${imagePath}/8k`);
 
-  if (!imageBlob || !imageBlob2k || !imageBlob4k || !imageBlob8k) {
+  if (!imageBlob || !imageBlob2k) {
     logger.info(`[IMAGE BLOB ERROR] : [EXITING]`);
     return;
   }
@@ -131,7 +131,7 @@ async function uploadMissingNextgenMedia(path: string) {
 
   await s3Image(imageBlob, imagePath);
   await s3Image(imageBlob2k, `${imagePath}_2k`);
-  await s3Image(imageBlob4k, `${imagePath}_4k`);
+  // await s3Image(imageBlob4k, `${imagePath}_4k`);
   // await s3Image(imageBlob8k, `${imagePath}_8k`);
 
   await s3.send(
