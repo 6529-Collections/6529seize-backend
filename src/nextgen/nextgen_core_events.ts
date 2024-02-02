@@ -220,6 +220,7 @@ export async function upsertToken(
       metadata_url: metadataLink,
       image_url: metadataResponse.image,
       animation_url:
+        metadataResponse.image?.replace('/png/', '/html/') ??
         metadataResponse.animation_url ??
         metadataResponse.generator?.html ??
         null,
