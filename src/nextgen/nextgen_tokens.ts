@@ -15,9 +15,14 @@ import { Logger } from '../logging';
 import { EntityManager } from 'typeorm';
 import { getNftMaxSupply } from '../db';
 
-const logger = Logger.get('NEXTGEN_TRAITS');
+const logger = Logger.get('NEXTGEN_TOKENS');
 
-export async function processTraitScores(entityManager: EntityManager) {
+export async function refreshNextgenTokens(entityManager: EntityManager) {
+  await processTraitScores(entityManager);
+  await processHodlRates(entityManager);
+}
+
+async function processTraitScores(entityManager: EntityManager) {
   const collections = await fetchNextGenCollections(entityManager);
   const tokenTraits = await fetchNextGenTokenTraits(entityManager);
 
@@ -31,8 +36,6 @@ export async function processTraitScores(entityManager: EntityManager) {
       collectionTokenTraits
     );
   }
-
-  await processHodlRates(entityManager);
 }
 
 async function processCollectionTraitScores(

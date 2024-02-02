@@ -1509,10 +1509,8 @@ export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
 }
 
 export async function getNftMaxSupply(): Promise<number> {
-  const result = await AppDataSource.getRepository(NFT)
-    .createQueryBuilder()
-    .select('MAX(supply)', 'maxSupply')
-    .getRawOne();
-
-  return result.maxSupply;
+  const result = await AppDataSource.query(
+    `SELECT MAX(supply) AS maxSupply FROM ${NFTS_TABLE}`
+  );
+  return result[0].maxSupply;
 }

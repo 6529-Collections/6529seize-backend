@@ -5,7 +5,7 @@ import {
   fetchNextGenTokensForCollection
 } from './nextgen.db';
 import { upsertToken } from './nextgen_core_events';
-import { processTraitScores } from './nextgen_tokens';
+import { refreshNextgenTokens } from './nextgen_tokens';
 
 const logger = Logger.get('NEXTGEN_METADATA_REFRESH');
 
@@ -36,6 +36,6 @@ export async function refreshNextgenMetadata() {
       );
     }
 
-    await processTraitScores(entityManager);
+    await refreshNextgenTokens(entityManager);
   });
 }
