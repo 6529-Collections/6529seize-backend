@@ -82,12 +82,4 @@ function triggerGenerator(uri: string) {
   fetch(metadataPath);
   const imagePath = metadataPath.replace('/metadata/', '/png/');
   fetch(imagePath);
-  const imagePath2k = `${imagePath}/2k`;
-  fetch(imagePath2k);
-  const imagePath4k = `${imagePath}/4k`;
-  fetch(imagePath4k);
-  const imagePath8k = `${imagePath}/8k`;
-  fetch(imagePath8k);
-  const imagePath16k = `${imagePath}/16k`;
-  fetch(imagePath16k);
 }

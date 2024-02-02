@@ -13,7 +13,11 @@ import {
   NEXTGEN_CF_BASE_PATH
 } from '../nextgen/nextgen_constants';
 import { wrapLambdaHandler } from '../sentry.context';
-import { getGenDetailsFromUri } from '../nextgen/nextgen_generator';
+import {
+  getGenDetailsFromUri,
+  getImageBlobFromGenerator,
+  s3UploadNextgenImage
+} from '../nextgen/nextgen_generator';
 
 const logger = Logger.get('NEXTGEN_MEDIA_UPLOADER');
 
@@ -101,12 +105,8 @@ async function uploadMissingNextgenMedia(path: string) {
     image: `${GENERATOR_BASE_PATH}/${imagePath}`
   };
 
-  const imageBlob = await getImageBlob(imagePath);
-  const imageBlob2k = await getImageBlob(`${imagePath}/2k`);
-  // const imageBlob4k = await getImageBlob(`${imagePath}/4k`);
-  // const imageBlob8k = await getImageBlob(`${imagePath}/8k`);
-
-  if (!imageBlob || !imageBlob2k) {
+  const imageBlob = await getImageBlobFromGenerator(imagePath);
+  if (!imageBlob) {
     logger.info(`[IMAGE BLOB ERROR] : [EXITING]`);
     return;
   }
@@ -120,19 +120,7 @@ async function uploadMissingNextgenMedia(path: string) {
   }
   const htmlBlob = await genHtmlResponse.arrayBuffer();
 
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: NEXTGEN_BUCKET,
-      Key: metadataPath,
-      Body: Buffer.from(JSON.stringify(metadata)),
-      ContentType: `application/json`
-    })
-  );
-
-  await s3Image(imageBlob, imagePath);
-  await s3Image(imageBlob2k, `${imagePath}_2k`);
-  // await s3Image(imageBlob4k, `${imagePath}_4k`);
-  // await s3Image(imageBlob8k, `${imagePath}_8k`);
+  await s3UploadNextgenImage(s3, imageBlob, imagePath);
 
   await s3.send(
     new PutObjectCommand({
@@ -140,6 +128,15 @@ async function uploadMissingNextgenMedia(path: string) {
       Key: htmlPath,
       Body: Buffer.from(htmlBlob),
       ContentType: `text/html`
+    })
+  );
+
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: NEXTGEN_BUCKET,
+      Key: metadataPath,
+      Body: Buffer.from(JSON.stringify(metadata)),
+      ContentType: `application/json`
     })
   );
 
@@ -171,28 +168,4 @@ async function invalidatePath(path: string) {
       `[INVALIDATE ERROR] : [PATH ${invalidationPath}] : [ERROR ${e}]`
     );
   }
-}
-
-async function getImageBlob(path: string) {
-  const genImageResponse = await fetch(`${GENERATOR_BASE_PATH}/${path}`);
-  if (genImageResponse.status !== 200) {
-    logger.info(
-      `[GENERATOR IMAGE ERROR RESPONSE] : [STATUS ${genImageResponse.status}] : [PATH ${path}]`
-    );
-    return;
-  }
-  const imageBlob = await genImageResponse.arrayBuffer();
-  logger.info(`[IMAGE ${path} DOWNLOADED]`);
-  return imageBlob;
-}
-
-async function s3Image(imageBlob: any, path: string) {
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: NEXTGEN_BUCKET,
-      Key: path,
-      Body: Buffer.from(imageBlob),
-      ContentType: `image/png`
-    })
-  );
 }
