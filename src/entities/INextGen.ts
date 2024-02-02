@@ -352,6 +352,9 @@ export class NextGenCollection {
   @Column({ type: 'text' })
   image!: string;
 
+  @Column({ type: 'text' })
+  banner!: string;
+
   @Column({ type: 'text', nullable: true })
   artist_address?: string;
 

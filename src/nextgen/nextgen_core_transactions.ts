@@ -22,6 +22,7 @@ import {
   NEXTGEN_CORE_CONTRACT,
   getNextgenNetwork
 } from './nextgen_constants';
+import { CLOUDFRONT_LINK } from '../constants';
 
 const logger = Logger.get('NEXTGEN_CORE_TRANSACTIONS');
 
@@ -160,6 +161,7 @@ async function createCollection(
   const latestId = await fetchNextGenCollectionIndex(entityManager);
   const newId = latestId + 1;
   const image = getCollectionImage(newId);
+  const banner = getCollectionBanner(newId);
   const collection: NextGenCollection = {
     id: newId,
     name: args[0],
@@ -171,6 +173,7 @@ async function createCollection(
     library: args[6],
     dependency_script: args[7],
     image: image,
+    banner: banner,
     mint_count: 0
   };
   await persistNextGenCollection(entityManager, collection);
@@ -193,6 +196,7 @@ async function updateCollectionInfo(
 > {
   const collectionId = parseInt(args[0]);
   const image = getCollectionImage(collectionId);
+  const banner = getCollectionBanner(collectionId);
   const collection: NextGenCollection = {
     id: collectionId,
     name: args[1],
@@ -204,6 +208,7 @@ async function updateCollectionInfo(
     library: args[7],
     dependency_script: args[8],
     image: image,
+    banner: banner,
     mint_count: 0
   };
   const scriptIndex = parseInt(args[9]);
@@ -396,4 +401,8 @@ function getCollectionImage(collectionId: number): string {
       ? 'testnet'
       : 'mainnet'
   }/png/${collectionId * 10000000000}`;
+}
+
+function getCollectionBanner(collectionId: number): string {
+  return `${CLOUDFRONT_LINK}/banners/${collectionId}.jpg`;
 }
