@@ -129,7 +129,7 @@ async function uploadMissingNextgenMedia(path: string) {
   await s3Image(imageBlob, imagePath);
   await s3Image(imageBlob2k, `${imagePath}_2k`);
   await s3Image(imageBlob4k, `${imagePath}_4k`);
-  await s3Image(imageBlob8k, `${imagePath}_8k`);
+  // await s3Image(imageBlob8k, `${imagePath}_8k`);
 
   await s3.send(
     new PutObjectCommand({
