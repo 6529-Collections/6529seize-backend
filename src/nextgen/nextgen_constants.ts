@@ -14,7 +14,7 @@ export const NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE =
   'nextgen_allowlist_collection';
 export const NEXTGEN_BURN_COLLECTIONS_TABLE = 'nextgen_burn_collection';
 
-export const GENERATOR_BASE_PATH = 'https://generator.seize.io/';
+export const GENERATOR_BASE_PATH = 'https://generator.seize.io';
 export const NEXTGEN_BUCKET = 'media.generator.seize.io';
 export const NEXTGEN_CF_BASE_PATH = `https://${NEXTGEN_BUCKET}`;
 export const NEXTGEN_BUCKET_AWS_REGION = 'us-east-1';
@@ -45,7 +45,7 @@ export const NEXTGEN_CORE_CONTRACT = {
 export const NEXTGEN_START_BLOCK = {
   [Network.ETH_GOERLI]: 10272665,
   [Network.ETH_SEPOLIA]: 5176112,
-  [Network.ETH_MAINNET]: 0
+  [Network.ETH_MAINNET]: 18827665
 };
 
 export const NEXTGEN_MINTER_CONTRACT = {

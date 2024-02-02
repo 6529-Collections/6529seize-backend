@@ -13,6 +13,7 @@ import {
   NEXTGEN_CF_BASE_PATH
 } from '../nextgen/nextgen_constants';
 import { wrapLambdaHandler } from '../sentry.context';
+import { getGenDetailsFromUri } from '../nextgen/nextgen_generator';
 
 const logger = Logger.get('NEXTGEN_MEDIA_UPLOADER');
 
@@ -46,11 +47,13 @@ async function uploadMissingNextgenMedia(path: string) {
     return;
   }
 
+  const genDetails = getGenDetailsFromUri(path);
+
   const metadataPath = path.startsWith('/') ? path.slice(1) : path;
   const imagePath = metadataPath.replace('/metadata/', '/png/');
   const htmlPath = metadataPath.replace('/metadata/', '/html/');
 
-  const generatorMetadataPath = `${GENERATOR_BASE_PATH}${metadataPath}`;
+  const generatorMetadataPath = `${GENERATOR_BASE_PATH}/${metadataPath}`;
   const genMetaResponse = await fetch(generatorMetadataPath);
   if (genMetaResponse.status !== 200) {
     logger.info(
@@ -83,22 +86,28 @@ async function uploadMissingNextgenMedia(path: string) {
     metadata.image = `${NEXTGEN_CF_BASE_PATH}/${imagePath}`;
   }
   if (metadata.animation_url) {
-    metadata.animation_url = `${NEXTGEN_CF_BASE_PATH}/${htmlPath}`;
+    if (genDetails.collection == 1) {
+      logger.info('[SKIPPING METADATA ANIMATION URL] : [COLLECTION 1]');
+    } else {
+      metadata.animation_url = `${NEXTGEN_CF_BASE_PATH}/${htmlPath}`;
+    }
   }
-  metadata.generator_url = generatorMetadataPath;
 
-  const imageGeneratorPath = `${GENERATOR_BASE_PATH}${imagePath}`;
-  const genImageResponse = await fetch(imageGeneratorPath);
-  if (genImageResponse.status !== 200) {
-    logger.info(
-      `[GENERATOR IMAGE ERROR RESPONSE] : [STATUS ${genImageResponse.status}] : [IMAGE PATH ${imagePath}]`
-    );
+  const htmlGeneratorPath = `${GENERATOR_BASE_PATH}/${htmlPath}`;
+  metadata.generator_animation = htmlGeneratorPath;
+  metadata.generator_metadata = generatorMetadataPath;
+  metadata.generator_image = `${GENERATOR_BASE_PATH}/${imagePath}`;
+
+  const imageBlob = await getImageBlob(imagePath);
+  const imageBlob2k = await getImageBlob(`${imagePath}/2k`);
+  const imageBlob4k = await getImageBlob(`${imagePath}/4k`);
+  const imageBlob8k = await getImageBlob(`${imagePath}/8k`);
+
+  if (!imageBlob || !imageBlob2k || !imageBlob4k || !imageBlob8k) {
+    logger.info(`[IMAGE BLOB ERROR] : [EXITING]`);
     return;
   }
-  const imageBlob = await genImageResponse.arrayBuffer();
-  logger.info(`[IMAGE ${imagePath} DOWNLOADED]`);
 
-  const htmlGeneratorPath = `${GENERATOR_BASE_PATH}${htmlPath}`;
   const genHtmlResponse = await fetch(htmlGeneratorPath);
   if (genHtmlResponse.status !== 200) {
     logger.info(
@@ -117,14 +126,10 @@ async function uploadMissingNextgenMedia(path: string) {
     })
   );
 
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: NEXTGEN_BUCKET,
-      Key: imagePath,
-      Body: Buffer.from(imageBlob),
-      ContentType: `image/png`
-    })
-  );
+  await s3Image(imageBlob, imagePath);
+  await s3Image(imageBlob2k, `${imagePath}_2k`);
+  await s3Image(imageBlob4k, `${imagePath}_4k`);
+  await s3Image(imageBlob8k, `${imagePath}_8k`);
 
   await s3.send(
     new PutObjectCommand({
@@ -163,4 +168,28 @@ async function invalidatePath(path: string) {
       `[INVALIDATE ERROR] : [PATH ${invalidationPath}] : [ERROR ${e}]`
     );
   }
+}
+
+async function getImageBlob(path: string) {
+  const genImageResponse = await fetch(`${GENERATOR_BASE_PATH}/${path}`);
+  if (genImageResponse.status !== 200) {
+    logger.info(
+      `[GENERATOR IMAGE ERROR RESPONSE] : [STATUS ${genImageResponse.status}] : [PATH ${path}]`
+    );
+    return;
+  }
+  const imageBlob = await genImageResponse.arrayBuffer();
+  logger.info(`[IMAGE ${path} DOWNLOADED]`);
+  return imageBlob;
+}
+
+async function s3Image(imageBlob: any, path: string) {
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: NEXTGEN_BUCKET,
+      Key: path,
+      Body: Buffer.from(imageBlob),
+      ContentType: `image/png`
+    })
+  );
 }

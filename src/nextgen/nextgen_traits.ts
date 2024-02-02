@@ -2,7 +2,9 @@ import {
   fetchNextGenCollections,
   persistNextGenTraits,
   fetchNextGenTokenTraits,
-  fetchNextGenTokensForCollection
+  fetchNextGenTokensForCollection,
+  fetchNextgenTokens,
+  persistNextGenTokenHodlRate
 } from './nextgen.db';
 import {
   NextGenCollection,
@@ -11,6 +13,7 @@ import {
 } from '../entities/INextGen';
 import { Logger } from '../logging';
 import { EntityManager } from 'typeorm';
+import { getNftMaxSupply } from '../db';
 
 const logger = Logger.get('NEXTGEN_TRAITS');
 
@@ -28,6 +31,8 @@ export async function processTraitScores(entityManager: EntityManager) {
       collectionTokenTraits
     );
   }
+
+  await processHodlRates(entityManager);
 }
 
 async function processCollectionTraitScores(
@@ -156,3 +161,17 @@ const calculateRanks = (
 
   return ranks;
 };
+
+async function processHodlRates(entityManager: EntityManager) {
+  logger.info(`[PROCESSING HODL RATES]`);
+  const tokens = await fetchNextgenTokens(entityManager);
+  const nftMaxSupply = await getNftMaxSupply();
+
+  const hodlRate = nftMaxSupply / tokens.length;
+
+  logger.info(
+    `[TOKENS ${tokens.length}] : [NFT MAX SUPPLY ${nftMaxSupply}] : [HODL RATE ${hodlRate}]`
+  );
+
+  await persistNextGenTokenHodlRate(entityManager, hodlRate);
+}

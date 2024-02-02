@@ -435,6 +435,9 @@ export class NextGenToken {
 
   @Column({ type: 'boolean' })
   burnt!: boolean;
+
+  @Column({ type: 'double' })
+  hodl_rate!: number;
 }
 
 @Entity(NEXTGEN_TRANSACTIONS_TABLE)

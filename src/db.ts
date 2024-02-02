@@ -1507,3 +1507,12 @@ export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
   const globalHistoryRepo = AppDataSource.getRepository(GlobalTDHHistory);
   await globalHistoryRepo.upsert(globalHistory, ['date', 'block']);
 }
+
+export async function getNftMaxSupply(): Promise<number> {
+  const result = await AppDataSource.getRepository(NFT)
+    .createQueryBuilder()
+    .select('MAX(supply)', 'maxSupply')
+    .getRawOne();
+
+  return result.maxSupply;
+}

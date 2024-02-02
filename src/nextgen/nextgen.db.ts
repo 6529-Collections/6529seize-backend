@@ -131,3 +131,25 @@ export async function wasTransactionLogProcessed(
   });
   return count > 0;
 }
+
+export async function fetchNextgenToken(
+  manager: EntityManager,
+  tokenId: number
+) {
+  return await manager.getRepository(NextGenToken).findOne({
+    where: {
+      id: tokenId
+    }
+  });
+}
+
+export async function fetchNextgenTokens(manager: EntityManager) {
+  return await manager.getRepository(NextGenToken).find();
+}
+
+export async function persistNextGenTokenHodlRate(
+  manager: EntityManager,
+  hodlRate: number
+) {
+  await manager.getRepository(NextGenToken).update({}, { hodl_rate: hodlRate });
+}

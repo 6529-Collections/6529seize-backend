@@ -14,6 +14,7 @@ import { areEqualAddresses, isNullAddress } from '../helpers';
 import { findTransactionValues } from '../transaction_values';
 import {
   fetchNextGenCollection,
+  fetchNextgenToken,
   persistNextGenCollection,
   persistNextGenLogs,
   persistNextGenToken,
@@ -171,6 +172,11 @@ async function processTransfer(
   await persistNextgenTransactions(entityManager, [transactionWithValue]);
 
   if (collection) {
+    let hodlRate = 0;
+    if (!isBurn && !isMint) {
+      const dbToken = await fetchNextgenToken(entityManager, tokenId);
+      hodlRate = dbToken?.hodl_rate ?? 0;
+    }
     await upsertToken(
       entityManager,
       collection,
@@ -178,7 +184,8 @@ async function processTransfer(
       normalisedTokenId,
       logInfo.args.to,
       isMint,
-      isBurn
+      isBurn,
+      hodlRate
     );
   }
 
@@ -196,7 +203,8 @@ export async function upsertToken(
   normalisedTokenId: number,
   owner: string,
   isMint: boolean,
-  isBurn: boolean
+  isBurn: boolean,
+  hodlRate: number
 ) {
   const metadataLink = `${collection.base_uri}${tokenId}`;
   try {
@@ -215,7 +223,8 @@ export async function upsertToken(
       generator_url: metadataResponse.generator_url,
       owner: owner.toLowerCase(),
       pending: pending,
-      burnt: isBurn
+      burnt: isBurn,
+      hodl_rate: hodlRate
     };
 
     if (isMint) {

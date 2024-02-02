@@ -1,6 +1,6 @@
 import { NextGenCollectionStatus } from '../api-filters';
 import { constructFilters } from '../api-helpers';
-import { ENS_TABLE } from '../../../constants';
+import { ENS_TABLE, NULL_ADDRESS, NULL_ADDRESS_DEAD } from '../../../constants';
 import { getProof } from '../../../merkle_proof';
 import { sqlExecutor } from '../../../sql-executor';
 import { Time } from '../../../time';
@@ -235,13 +235,30 @@ export async function fetchNextGenCollectionTokens(
 
 export async function fetchNextGenToken(tokendId: number) {
   const sql = `
-    SELECT t.*, s.* 
+    SELECT 
+      t.*,
+      (
+        SELECT nt.transaction_date 
+        FROM ${NEXTGEN_TRANSACTIONS_TABLE} nt
+        WHERE nt.token_id = t.id AND nt.from_address in (:nullAddresses)
+        ORDER BY nt.transaction_date ASC
+        LIMIT 1
+      ) AS mint_date,
+      (
+        SELECT nt.transaction_date 
+        FROM ${NEXTGEN_TRANSACTIONS_TABLE} nt
+        WHERE nt.token_id = t.id AND nt.to_address in (:nullAddresses)
+        ORDER BY nt.transaction_date ASC
+        LIMIT 1
+      ) AS burnt_date,
+      s.*
     FROM ${NEXTGEN_TOKENS_TABLE} t
     LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} s ON t.id = s.id 
     WHERE t.id = :id
   `;
   const results = await sqlExecutor.execute(sql, {
-    id: tokendId
+    id: tokendId,
+    nullAddresses: [NULL_ADDRESS, NULL_ADDRESS_DEAD]
   });
   if (results.length === 1) {
     return results[0];

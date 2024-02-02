@@ -12,7 +12,7 @@ async function start() {
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
   await nextgenContract.handler();
-  await nextgenMetadata.handler();
+  // await nextgenMetadata.handler();
 
   const handler = null as unknown as any;
   await rateEventProcessingLoop.handler(undefined, handler, handler);

@@ -1,5 +1,6 @@
 import { Logger } from '../logging';
 import { NEXTGEN_CF_BASE_PATH } from '../nextgen/nextgen_constants';
+import { Details, getGenDetailsFromUri } from '../nextgen/nextgen_generator';
 import { notifyMissingNextgenMedia } from '../notifier';
 
 const logger = Logger.get('NEXTGEN_MEDIA_INTERCEPTOR');
@@ -11,12 +12,6 @@ const DEFAULT_RESPONSE_BODY = {
   description: 'Pending...'
 };
 
-interface Details {
-  network: string;
-  tokenId?: number;
-  collection?: number;
-}
-
 export const handler = async (event: any) => {
   const cf = event.Records[0].cf;
   const request = cf.request;
@@ -24,9 +19,12 @@ export const handler = async (event: any) => {
   try {
     if (response.status === '403') {
       const uri = request.uri;
+
+      triggerGenerator(uri);
+
       await notifyMissingNextgenMedia(uri);
 
-      const details = getDetails(uri);
+      const details = getGenDetailsFromUri(uri);
       const image = getImagePath(details);
       const customResponse: any = DEFAULT_RESPONSE_BODY;
       customResponse.path = uri;
@@ -54,28 +52,6 @@ export const handler = async (event: any) => {
   return response;
 };
 
-function getDetails(uri: string): Details {
-  if (uri.startsWith('/')) {
-    uri = uri.slice(1);
-  }
-  const uriSegments = uri.split('/');
-  const network = uriSegments[0];
-  const tokenIdStr = uriSegments.pop();
-
-  const tokenId = Number(tokenIdStr);
-  if (!isNaN(tokenId)) {
-    const collection = Math.round(tokenId / 10000000000);
-    return {
-      network: network,
-      tokenId: tokenId,
-      collection: collection
-    };
-  }
-  return {
-    network: network
-  };
-}
-
 function getImagePath(details: Details) {
   if (details.collection && details.collection > 0) {
     return `${NEXTGEN_CF_BASE_PATH}/placeholders/${details.network}/${details.collection}.png`;
@@ -95,4 +71,19 @@ function buildJsonResponse(response: any, body: any) {
     { key: 'Cache-Control', value: 'no-store' }
   ];
   return response;
+}
+
+function triggerGenerator(uri: string) {
+  const metadataPath = uri.startsWith('/') ? uri.slice(1) : uri;
+  fetch(metadataPath);
+  const imagePath = metadataPath.replace('/metadata/', '/png/');
+  fetch(imagePath);
+  const imagePath2k = `${imagePath}/2k`;
+  fetch(imagePath2k);
+  const imagePath4k = `${imagePath}/4k`;
+  fetch(imagePath4k);
+  const imagePath8k = `${imagePath}/8k`;
+  fetch(imagePath8k);
+  const imagePath16k = `${imagePath}/16k`;
+  fetch(imagePath16k);
 }
