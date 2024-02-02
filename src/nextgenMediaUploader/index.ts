@@ -88,6 +88,7 @@ async function uploadMissingNextgenMedia(path: string) {
   if (metadata.animation_url) {
     if (genDetails.collection == 1) {
       logger.info('[SKIPPING METADATA ANIMATION URL] : [COLLECTION 1]');
+      delete metadata.animation_url;
     } else {
       metadata.animation_url = `${NEXTGEN_CF_BASE_PATH}/${htmlPath}`;
     }
