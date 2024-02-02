@@ -404,5 +404,5 @@ function getCollectionImage(collectionId: number): string {
 }
 
 function getCollectionBanner(collectionId: number): string {
-  return `${CLOUDFRONT_LINK}/banners/${collectionId}.jpg`;
+  return `${CLOUDFRONT_LINK}/nextgen/banners/${collectionId}.jpg`;
 }
