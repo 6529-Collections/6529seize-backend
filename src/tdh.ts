@@ -235,84 +235,71 @@ export const findTDH = async (lastTDHCalc: Date) => {
             t.token_id == nft.id && areEqualAddresses(t.contract, nft.contract)
         );
 
-        const tokenDatesForWallet = getTokenDatesFromConsolidation(
+        const tokenTDH = getTokenTdh(
+          lastTDHCalc,
+          nft.id,
+          nft.hodl_rate,
           wallet,
           consolidations,
           tokenConsolidatedTransactions
         );
 
-        let tdh__raw = 0;
-        tokenDatesForWallet.forEach((e) => {
-          const daysDiff = getDaysDiff(lastTDHCalc, e);
-          tdh__raw += daysDiff;
-        });
-
-        const balance = tokenDatesForWallet.length;
-        const tdh = tdh__raw * nft.hodl_rate;
-
-        if (tdh > 0 || balance > 0) {
-          totalTDH += tdh;
-          totalTDH__raw += tdh__raw;
-          totalBalance += balance;
-
-          const tokenTDH = {
-            id: nft.id,
-            balance: balance,
-            tdh: tdh,
-            tdh__raw: tdh__raw
-          };
+        if (tokenTDH) {
+          totalTDH += tokenTDH.tdh;
+          totalTDH__raw += tokenTDH.tdh__raw;
+          totalBalance += tokenTDH.balance;
 
           if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
-            memesData.memes_tdh += tdh;
-            memesData.memes_tdh__raw += tdh__raw;
+            memesData.memes_tdh += tokenTDH.tdh;
+            memesData.memes_tdh__raw += tokenTDH.tdh__raw;
             const season = parseInt(
               nft.metadata.attributes.find(
                 (a: any) => a.trait_type === 'Type - Season'
               )?.value
             );
             if (season == 1) {
-              memesData.memes_tdh_season1 += tdh;
-              memesData.memes_tdh_season1__raw += tdh__raw;
-              memesData.memes_balance_season1 += balance;
+              memesData.memes_tdh_season1 += tokenTDH.tdh;
+              memesData.memes_tdh_season1__raw += tokenTDH.tdh__raw;
+              memesData.memes_balance_season1 += tokenTDH.balance;
               unique_memes_season1++;
             }
             if (season == 2) {
-              memesData.memes_tdh_season2 += tdh;
-              memesData.memes_tdh_season2__raw += tdh__raw;
-              memesData.memes_balance_season2 += balance;
+              memesData.memes_tdh_season2 += tokenTDH.tdh;
+              memesData.memes_tdh_season2__raw += tokenTDH.tdh__raw;
+              memesData.memes_balance_season2 += tokenTDH.balance;
               unique_memes_season2++;
             }
             if (season == 3) {
-              memesData.memes_tdh_season3 += tdh;
-              memesData.memes_tdh_season3__raw += tdh__raw;
-              memesData.memes_balance_season3 += balance;
+              memesData.memes_tdh_season3 += tokenTDH.tdh;
+              memesData.memes_tdh_season3__raw += tokenTDH.tdh__raw;
+              memesData.memes_balance_season3 += tokenTDH.balance;
               unique_memes_season3++;
             }
             if (season == 4) {
-              memesData.memes_tdh_season4 += tdh;
-              memesData.memes_tdh_season4__raw += tdh__raw;
-              memesData.memes_balance_season4 += balance;
+              memesData.memes_tdh_season4 += tokenTDH.tdh;
+              memesData.memes_tdh_season4__raw += tokenTDH.tdh__raw;
+              memesData.memes_balance_season4 += tokenTDH.balance;
               unique_memes_season4++;
             }
             if (season == 5) {
-              memesData.memes_tdh_season5 += tdh;
-              memesData.memes_tdh_season5__raw += tdh__raw;
-              memesData.memes_balance_season5 += balance;
+              memesData.memes_tdh_season5 += tokenTDH.tdh;
+              memesData.memes_tdh_season5__raw += tokenTDH.tdh__raw;
+              memesData.memes_balance_season5 += tokenTDH.balance;
               unique_memes_season5++;
             }
             if (season == 6) {
-              memesData.memes_tdh_season6 += tdh;
-              memesData.memes_tdh_season6__raw += tdh__raw;
-              memesData.memes_balance_season6 += balance;
+              memesData.memes_tdh_season6 += tokenTDH.tdh;
+              memesData.memes_tdh_season6__raw += tokenTDH.tdh__raw;
+              memesData.memes_balance_season6 += tokenTDH.balance;
               unique_memes_season6++;
             }
             unique_memes++;
-            memesData.memes_balance += balance;
+            memesData.memes_balance += tokenTDH.balance;
             walletMemes.push(tokenTDH);
           } else if (areEqualAddresses(nft.contract, GRADIENT_CONTRACT)) {
-            gradientsTDH += tdh;
-            gradientsTDH__raw += tdh__raw;
-            gradientsBalance += balance;
+            gradientsTDH += tokenTDH.tdh;
+            gradientsTDH__raw += tokenTDH.tdh__raw;
+            gradientsBalance += tokenTDH.balance;
             walletGradients.push(tokenTDH);
           }
         }
@@ -328,36 +315,23 @@ export const findTDH = async (lastTDHCalc: Date) => {
               areEqualAddresses(t.contract, NEXTGEN_CONTRACT)
           );
 
-          const tokenDatesForWallet = getTokenDatesFromConsolidation(
+          const tokenTDH = getTokenTdh(
+            lastTDHCalc,
+            nft.id,
+            nft.hodl_rate,
             wallet,
             consolidations,
             tokenConsolidatedTransactions
           );
 
-          let tdh__raw = 0;
-          tokenDatesForWallet.forEach((e) => {
-            const daysDiff = getDaysDiff(lastTDHCalc, e);
-            tdh__raw += daysDiff;
-          });
+          if (tokenTDH) {
+            totalTDH += tokenTDH.tdh;
+            totalTDH__raw += tokenTDH.tdh__raw;
+            totalBalance += tokenTDH.balance;
 
-          const balance = tokenDatesForWallet.length;
-          const tdh = tdh__raw * nft.hodl_rate;
-
-          if (tdh > 0 || balance > 0) {
-            totalTDH += tdh;
-            totalTDH__raw += tdh__raw;
-            totalBalance += balance;
-
-            const tokenTDH = {
-              id: nft.id,
-              balance: balance,
-              tdh: tdh,
-              tdh__raw: tdh__raw
-            };
-
-            nextgenTDH += tdh;
-            nextgenTDH__raw += tdh__raw;
-            nextgenBalance += balance;
+            nextgenTDH += tokenTDH.tdh;
+            nextgenTDH__raw += tokenTDH.tdh__raw;
+            nextgenBalance += tokenTDH.balance;
             walletNextgen.push(tokenTDH);
           }
         }
@@ -531,6 +505,41 @@ export function calculateBoost(
   return Math.round(boost * 100) / 100;
 }
 
+function getTokenTdh(
+  lastTDHCalc: Date,
+  id: number,
+  hodlRate: number,
+  wallet: string,
+  consolidations: string[],
+  tokenConsolidatedTransactions: Transaction[]
+) {
+  const tokenDatesForWallet = getTokenDatesFromConsolidation(
+    wallet,
+    consolidations,
+    tokenConsolidatedTransactions
+  );
+
+  let tdh__raw = 0;
+  tokenDatesForWallet.forEach((e) => {
+    const daysDiff = getDaysDiff(lastTDHCalc, e);
+    tdh__raw += daysDiff;
+  });
+
+  const balance = tokenDatesForWallet.length;
+  const tdh = tdh__raw * hodlRate;
+
+  if (tdh > 0 || balance > 0) {
+    const tokenTDH = {
+      id: id,
+      balance: balance,
+      tdh: tdh,
+      tdh__raw: tdh__raw
+    };
+    return tokenTDH;
+  }
+  return null;
+}
+
 function getTokenDatesFromConsolidation(
   currentWallet: string,
   consolidations: string[],
@@ -664,20 +673,19 @@ export async function calculateRanks(
       return a;
     });
 
-  const sortedNextgenTdh = allNextgenTDH
-    .sort((a, b) => {
-      if (a.tdh > b.tdh) {
-        return -1;
-      } else if (a.tdh < b.tdh) {
-        return 1;
-      } else {
-        return a.id > b.id ? 1 : -1;
-      }
-    })
-    .map((a, index) => {
-      a.rank = index + 1;
-      return a;
-    });
+  const sortedNextgenTdh = allNextgenTDH.sort((a, b) => {
+    if (a.tdh > b.tdh) {
+      return -1;
+    } else if (a.tdh < b.tdh) {
+      return 1;
+    } else {
+      return a.id > b.id ? 1 : -1;
+    }
+  });
+  const rankedNextgenTdh = sortedNextgenTdh.map((a, index) => {
+    a.rank = index + 1;
+    return a;
+  });
 
   ADJUSTED_NFTS.forEach((nft) => {
     boostedTDH
@@ -761,7 +769,7 @@ export async function calculateRanks(
         if (nextgen) {
           w.nextgen_ranks.push({
             id: nft.id,
-            rank: sortedNextgenTdh.find((s) => s.id == nft.id)?.rank
+            rank: rankedNextgenTdh.find((s) => s.id == nft.id)?.rank
           });
         }
         return w;
