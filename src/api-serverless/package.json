@@ -36,7 +36,7 @@
     "path": "^0.12.7",
     "semver": "^7.5.4",
     "serverless-http": "^3.1.1",
-    "sharp": "^0.32.6",
+    "sharp": "^0.33.2",
     "simple-swizzle": "^0.2.2"
   },
   "devDependencies": {
