@@ -3,8 +3,7 @@ import {
   persistNextGenTraits,
   fetchNextGenTokenTraits,
   fetchNextGenTokensForCollection,
-  fetchNextgenTokens,
-  persistNextGenTokenHodlRate
+  persistNextGenCollectionHodlRate
 } from './nextgen.db';
 import {
   NextGenCollection,
@@ -18,12 +17,15 @@ import { getNftMaxSupply } from '../db';
 const logger = Logger.get('NEXTGEN_TOKENS');
 
 export async function refreshNextgenTokens(entityManager: EntityManager) {
-  await processTraitScores(entityManager);
-  await processHodlRates(entityManager);
+  const collections = await fetchNextGenCollections(entityManager);
+
+  await processCollections(entityManager, collections);
 }
 
-async function processTraitScores(entityManager: EntityManager) {
-  const collections = await fetchNextGenCollections(entityManager);
+async function processCollections(
+  entityManager: EntityManager,
+  collections: NextGenCollection[]
+) {
   const tokenTraits = await fetchNextGenTokenTraits(entityManager);
 
   for (const collection of collections) {
@@ -71,10 +73,11 @@ async function processCollectionTraitScores(
   });
 
   await persistNextGenTraits(entityManager, tokenTraits);
-  await processTokenRarityScores(entityManager, collection);
+
+  await processTokens(entityManager, collection);
 }
 
-async function processTokenRarityScores(
+async function processTokens(
   entityManager: EntityManager,
   collection: NextGenCollection
 ) {
@@ -110,6 +113,8 @@ async function processTokenRarityScores(
       statistical_score: statisticalScore
     });
   }
+
+  await processCollectionHodlRate(entityManager, collection, tokens.length);
 
   const rarityScoreRanks = calculateRanks(traitScores, 'rarity_score');
   const rarityScoreNormalisedRanks = calculateRanks(
@@ -165,16 +170,22 @@ const calculateRanks = (
   return ranks;
 };
 
-async function processHodlRates(entityManager: EntityManager) {
-  logger.info(`[PROCESSING HODL RATES]`);
-  const tokens = await fetchNextgenTokens(entityManager);
+async function processCollectionHodlRate(
+  entityManager: EntityManager,
+  collection: NextGenCollection,
+  tokens: number
+) {
   const nftMaxSupply = await getNftMaxSupply();
 
-  const hodlRate = nftMaxSupply / tokens.length;
+  const hodlRate = nftMaxSupply / tokens;
 
   logger.info(
-    `[TOKENS ${tokens.length}] : [NFT MAX SUPPLY ${nftMaxSupply}] : [HODL RATE ${hodlRate}]`
+    `[COLLECTION ${collection.id}] : [TOKENS ${tokens}] : [NFT MAX SUPPLY ${nftMaxSupply}] : [HODL RATE ${hodlRate}]`
   );
 
-  await persistNextGenTokenHodlRate(entityManager, hodlRate);
+  await persistNextGenCollectionHodlRate(
+    entityManager,
+    collection.id,
+    hodlRate
+  );
 }

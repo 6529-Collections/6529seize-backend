@@ -60,6 +60,9 @@ export class TDH {
   tdh_rank_gradients!: number;
 
   @Column({ type: 'int', nullable: false })
+  tdh_rank_nextgen!: number;
+
+  @Column({ type: 'int', nullable: false })
   balance!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -196,6 +199,24 @@ export class TDH {
 
   @Column({ type: 'json', nullable: true })
   gradients_ranks?: any;
+
+  @Column({ type: 'int', nullable: false })
+  nextgen_balance!: number;
+
+  @Column({ type: 'double', nullable: false })
+  boosted_nextgen_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  nextgen_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  nextgen_tdh__raw!: number;
+
+  @Column({ type: 'json', nullable: true })
+  nextgen?: any;
+
+  @Column({ type: 'json', nullable: true })
+  nextgen_ranks?: any;
 }
 
 export interface TDHENS extends TDH {
@@ -259,6 +280,9 @@ export class ConsolidatedTDH {
   tdh_rank_gradients!: number;
 
   @Column({ type: 'int', nullable: false })
+  tdh_rank_nextgen!: number;
+
+  @Column({ type: 'int', nullable: false })
   balance!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -395,6 +419,24 @@ export class ConsolidatedTDH {
 
   @Column({ type: 'json', nullable: true })
   gradients_ranks?: any;
+
+  @Column({ type: 'int', nullable: false })
+  nextgen_balance!: number;
+
+  @Column({ type: 'double', nullable: false })
+  boosted_nextgen_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  nextgen_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  nextgen_tdh__raw!: number;
+
+  @Column({ type: 'json', nullable: true })
+  nextgen?: any;
+
+  @Column({ type: 'json', nullable: true })
+  nextgen_ranks?: any;
 }
 
 @Entity(TDH_GLOBAL_HISTORY_TABLE)
@@ -446,6 +488,9 @@ export class GlobalTDHHistory {
 
   @Column({ type: 'int', nullable: false })
   gradients_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  nextgen_balance!: number;
 
   @Column({ type: 'int', nullable: false })
   total_boosted_tdh!: number;

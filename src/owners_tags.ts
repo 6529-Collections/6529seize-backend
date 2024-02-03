@@ -12,18 +12,26 @@ import {
   retrieveWalletConsolidations
 } from './db';
 import { Logger } from './logging';
+import { NextGenToken } from './entities/INextGen';
+import { fetchNextgenTokens } from './nextgen/nextgen.db';
 
 const logger = Logger.get('OWNERS_TAGS');
 
 export const findOwnerTags = async () => {
   const nfts = await fetchAllNFTs();
   const startingOwners: Owner[] = await fetchAllOwners();
+  const nextgenTokens: NextGenToken[] = await fetchNextgenTokens();
   const startingOwnerTags: OwnerTags[] = await fetchAllOwnerTags();
 
-  const uniqueOwners = Array.from(
-    new Set([...startingOwners].map((item) => item.wallet))
-  );
+  const uniqueOwnersSet = new Set<string>();
+  startingOwners.forEach((o) => {
+    uniqueOwnersSet.add(o.wallet);
+  });
+  nextgenTokens.forEach((n) => {
+    uniqueOwnersSet.add(n.owner);
+  });
 
+  const uniqueOwners = Array.from(uniqueOwnersSet);
   logger.info(
     `[OWNERS TAGS ${startingOwnerTags.length}] [UNIQUE OWNERS ${uniqueOwners.length}]`
   );
@@ -49,9 +57,13 @@ export const findOwnerTags = async () => {
     const walletNFTs = [...startingOwners].filter((o) =>
       areEqualAddresses(o.wallet, owner)
     );
+    const walletNextgenNfts = [...nextgenTokens].filter((n) =>
+      areEqualAddresses(n.owner, owner)
+    );
 
     const oTags = buildTagsFromNfts(
       walletNFTs,
+      walletNextgenNfts,
       memesNFTs,
       memesNftsGenesis,
       memesNFTsSzn1,
@@ -77,6 +89,7 @@ export const findOwnerTags = async () => {
         existingTags.nakamoto != ownerTags.nakamoto ||
         existingTags.memes_balance != ownerTags.memes_balance ||
         existingTags.gradients_balance != ownerTags.gradients_balance ||
+        existingTags.nextgen_balance != ownerTags.nextgen_balance ||
         existingTags.unique_memes != ownerTags.unique_memes ||
         existingTags.unique_memes_szn1 != ownerTags.unique_memes_szn1 ||
         existingTags.unique_memes_szn2 != ownerTags.unique_memes_szn2 ||
@@ -108,13 +121,11 @@ export const findOwnerTags = async () => {
 
   const consolidatedTags: ConsolidatedOwnerTags[] = [];
   const processedWallets = new Set<string>();
-  const ownerTagsForConsolidation = await fetchAllOwnerTags();
 
-  logger.info(`[CONSOLIDATING ${ownerTagsForConsolidation.length} WALLETS]`);
+  logger.info(`[CONSOLIDATING ${uniqueOwners.length} WALLETS]`);
 
   await Promise.all(
-    ownerTagsForConsolidation.map(async (om) => {
-      const wallet = om.wallet;
+    uniqueOwners.map(async (wallet) => {
       const consolidations = await retrieveWalletConsolidations(wallet);
       const display = await fetchConsolidationDisplay(consolidations);
       const consolidationKey = buildConsolidationKey(consolidations);
@@ -142,8 +153,13 @@ export const findOwnerTags = async () => {
           }
         });
 
+        const walletNextgenNfts = nextgenTokens.filter((n) =>
+          consolidations.some((s) => areEqualAddresses(s, n.owner))
+        );
+
         const oTags = buildTagsFromNfts(
           processedWalletNfts,
+          walletNextgenNfts,
           memesNFTs,
           memesNftsGenesis,
           memesNFTsSzn1,
@@ -169,11 +185,7 @@ export const findOwnerTags = async () => {
     })
   );
 
-  logger.info(
-    `[DELTA ${consolidatedTags.length}] [PROCESSED ${
-      Array.from(processedWallets).length
-    }]`
-  );
+  logger.info(`[PROCESSED ${Array.from(processedWallets).length}]`);
   await persistConsolidatedOwnerTags(consolidatedTags);
 
   return ownersTagsDelta;
@@ -189,6 +201,7 @@ function filterSeason(season: number, nfts: NFT[]) {
 
 function buildTagsFromNfts(
   walletNFTs: Owner[],
+  walletNextgenNfts: NextGenToken[],
   memesNFTs: NFT[],
   memesNftsGenesis: NFT[],
   memesNFTsSzn1: NFT[],
@@ -381,6 +394,7 @@ function buildTagsFromNfts(
     unique_memes_szn5: walletMemesSzn5.length,
     unique_memes_szn6: walletMemesSzn6.length,
     gradients_balance: walletGradients.length,
+    nextgen_balance: walletNextgenNfts.length,
     genesis: genesis,
     nakamoto: nakamoto,
     memes_cards_sets: memesCardSets,

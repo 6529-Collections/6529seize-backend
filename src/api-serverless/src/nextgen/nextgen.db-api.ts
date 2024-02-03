@@ -13,6 +13,7 @@ import {
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_LOGS_TABLE,
   NEXTGEN_TOKENS_TABLE,
+  NEXTGEN_TOKENS_TDH_TABLE,
   NEXTGEN_TOKEN_SCORES_TABLE,
   NEXTGEN_TOKEN_TRAITS_TABLE,
   NEXTGEN_TRANSACTIONS_TABLE
@@ -493,6 +494,36 @@ export async function fetchNextGenProofs(
     NEXTGEN_ALLOWLIST_TABLE,
     params,
     'collection_id asc, address asc',
+    pageSize,
+    page,
+    filters
+  );
+}
+
+export async function fetchNextGenTokenTDH(
+  consolidationKeysStr: string,
+  tokenIdsStr: string,
+  pageSize: number,
+  page: number
+) {
+  let filters = '';
+  let params: any = {};
+  if (consolidationKeysStr) {
+    filters = constructFilters(
+      filters,
+      `consolidation_key in (:consolidationKeys)`
+    );
+    params.consolidationKeys = consolidationKeysStr.toLowerCase().split(',');
+  }
+  if (tokenIdsStr) {
+    filters = constructFilters(filters, `id in (:tokenIds)`);
+    params.tokenIds = tokenIdsStr.toLowerCase().split(',');
+  }
+
+  return fetchPaginated(
+    NEXTGEN_TOKENS_TDH_TABLE,
+    params,
+    'id asc',
     pageSize,
     page,
     filters

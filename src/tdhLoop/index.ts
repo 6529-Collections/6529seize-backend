@@ -20,6 +20,7 @@ import { Time } from '../time';
 import { ProfileTdh, ProfileTdhLog } from '../entities/IProfileTDH';
 import { Profile } from '../entities/IProfile';
 import * as sentryContext from '../sentry.context';
+import { NextGenTokenTDH } from '../entities/INextGen';
 
 const logger = Logger.get('TDH_LOOP');
 
@@ -27,6 +28,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   await loadEnv([
     TDH,
     ConsolidatedTDH,
+    NextGenTokenTDH,
     ConsolidatedTDHUpload,
     NFT,
     OwnerMetric,
@@ -46,9 +48,9 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 export async function tdhLoop(force?: boolean) {
   await tdh(force);
   await findNftTDH();
-  await uploadTDH(force);
-  await uploadConsolidatedTDH(force);
-  await notifier.notifyTdhCalculationsDone();
+  // await uploadTDH(force);
+  // await uploadConsolidatedTDH(force);
+  // await notifier.notifyTdhCalculationsDone();
 }
 
 async function tdh(force?: boolean) {

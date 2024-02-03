@@ -60,6 +60,9 @@ export class OwnerTags {
   gradients_balance!: number;
 
   @Column({ type: 'int', nullable: false })
+  nextgen_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
   genesis!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -135,6 +138,9 @@ export class ConsolidatedOwnerTags {
   gradients_balance!: number;
 
   @Column({ type: 'int', nullable: false })
+  nextgen_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
   genesis!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -203,6 +209,9 @@ export class OwnerMetric {
   @Column({ type: 'int', nullable: false })
   gradients_balance!: number;
 
+  @Column({ type: 'int', nullable: false })
+  nextgen_balance!: number;
+
   @Column({ type: 'double', nullable: false })
   purchases_value!: number;
 
@@ -282,6 +291,12 @@ export class OwnerMetric {
   purchases_count_gradients!: number;
 
   @Column({ type: 'double', nullable: false })
+  purchases_value_nextgen!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_nextgen!: number;
+
+  @Column({ type: 'double', nullable: false })
   purchases_value_primary_memes!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -328,6 +343,12 @@ export class OwnerMetric {
 
   @Column({ type: 'int', nullable: false })
   purchases_count_primary_gradients!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_primary_nextgen!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_primary_nextgen!: number;
 
   @Column({ type: 'double', nullable: false })
   purchases_value_secondary_memes!: number;
@@ -378,6 +399,12 @@ export class OwnerMetric {
   purchases_count_secondary_gradients!: number;
 
   @Column({ type: 'double', nullable: false })
+  purchases_value_secondary_nextgen!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_secondary_nextgen!: number;
+
+  @Column({ type: 'double', nullable: false })
   sales_value_memes!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -424,6 +451,12 @@ export class OwnerMetric {
 
   @Column({ type: 'int', nullable: false })
   sales_count_gradients!: number;
+
+  @Column({ type: 'double', nullable: false })
+  sales_value_nextgen!: number;
+
+  @Column({ type: 'int', nullable: false })
+  sales_count_nextgen!: number;
 
   @Column({ type: 'int', nullable: false })
   transfers_in_memes!: number;
@@ -472,6 +505,12 @@ export class OwnerMetric {
 
   @Column({ type: 'int', nullable: false })
   transfers_out_gradients!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_in_nextgen!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_out_nextgen!: number;
 
   @Column({ type: 'datetime', nullable: true })
   transaction_reference!: Date;
@@ -518,6 +557,9 @@ export class ConsolidatedOwnerMetric {
   @Column({ type: 'int', nullable: false })
   gradients_balance!: number;
 
+  @Column({ type: 'int', nullable: false })
+  nextgen_balance!: number;
+
   @Column({ type: 'double', nullable: false })
   purchases_value!: number;
 
@@ -597,6 +639,12 @@ export class ConsolidatedOwnerMetric {
   purchases_count_gradients!: number;
 
   @Column({ type: 'double', nullable: false })
+  purchases_value_nextgen!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_nextgen!: number;
+
+  @Column({ type: 'double', nullable: false })
   purchases_value_primary_memes!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -643,6 +691,12 @@ export class ConsolidatedOwnerMetric {
 
   @Column({ type: 'int', nullable: false })
   purchases_count_primary_gradients!: number;
+
+  @Column({ type: 'double', nullable: false })
+  purchases_value_primary_nextgen!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_primary_nextgen!: number;
 
   @Column({ type: 'double', nullable: false })
   purchases_value_secondary_memes!: number;
@@ -693,6 +747,12 @@ export class ConsolidatedOwnerMetric {
   purchases_count_secondary_gradients!: number;
 
   @Column({ type: 'double', nullable: false })
+  purchases_value_secondary_nextgen!: number;
+
+  @Column({ type: 'int', nullable: false })
+  purchases_count_secondary_nextgen!: number;
+
+  @Column({ type: 'double', nullable: false })
   sales_value_memes!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -739,6 +799,12 @@ export class ConsolidatedOwnerMetric {
 
   @Column({ type: 'int', nullable: false })
   sales_count_gradients!: number;
+
+  @Column({ type: 'double', nullable: false })
+  sales_value_nextgen!: number;
+
+  @Column({ type: 'int', nullable: false })
+  sales_count_nextgen!: number;
 
   @Column({ type: 'int', nullable: false })
   transfers_in_memes!: number;
@@ -787,6 +853,12 @@ export class ConsolidatedOwnerMetric {
 
   @Column({ type: 'int', nullable: false })
   transfers_out_gradients!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_in_nextgen!: number;
+
+  @Column({ type: 'int', nullable: false })
+  transfers_out_nextgen!: number;
 
   @Column({ type: 'datetime', nullable: true })
   transaction_reference!: Date;

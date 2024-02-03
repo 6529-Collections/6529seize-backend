@@ -21,6 +21,8 @@ import {
 } from './constants';
 import { sqlExecutor } from './sql-executor';
 import { Logger } from './logging';
+import { NextGenToken, NextGenTokenTDH } from './entities/INextGen';
+import { fetchNextgenTokens } from './nextgen/nextgen.db';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
 
@@ -85,6 +87,7 @@ export async function consolidateTDHForWallets(
   const consolidatedTdh: ConsolidatedTDH[] = [];
   const processedWallets = new Set<string>();
   const allGradientsTDH: any[] = [];
+  const allNextgenTDH: any[] = [];
 
   for (const tdhEntry of tdh) {
     const wallet = tdhEntry.wallet;
@@ -127,8 +130,12 @@ export async function consolidateTDHForWallets(
       let gradientsTDH = 0;
       let gradientsTDH__raw = 0;
       let gradientsBalance = 0;
+      let nextgenTDH = 0;
+      let nextgenTDH__raw = 0;
+      let nextgenBalance = 0;
       let consolidationMemes: any[] = [];
       let consolidationGradients: any[] = [];
+      let consolidationNextgen: any[] = [];
 
       consolidatedWalletsTdh.forEach((wTdh) => {
         totalTDH += wTdh.tdh;
@@ -159,10 +166,17 @@ export async function consolidateTDHForWallets(
         gradientsTDH += wTdh.gradients_tdh;
         gradientsTDH__raw += wTdh.gradients_tdh__raw;
         gradientsBalance += wTdh.gradients_balance;
+        nextgenTDH += wTdh.nextgen_tdh;
+        nextgenTDH__raw += wTdh.nextgen_tdh__raw;
+        nextgenBalance += wTdh.nextgen_balance;
         consolidationMemes = consolidateCards(consolidationMemes, wTdh.memes);
         consolidationGradients = consolidateCards(
           consolidationGradients,
           wTdh.gradients
+        );
+        consolidationNextgen = consolidateCards(
+          consolidationNextgen,
+          wTdh.nextgen
         );
       });
 
@@ -198,6 +212,7 @@ export async function consolidateTDHForWallets(
         tdh_rank_memes_szn5: 0, //assigned later
         tdh_rank_memes_szn6: 0, //assigned later
         tdh_rank_gradients: 0, //assigned later
+        tdh_rank_nextgen: 0, //assigned later
         block: tdhEntry.block,
         tdh: totalTDH,
         boost: 0,
@@ -248,10 +263,19 @@ export async function consolidateTDHForWallets(
         gradients_tdh__raw: gradientsTDH__raw,
         gradients_balance: gradientsBalance,
         gradients: consolidationGradients,
-        gradients_ranks: []
+        gradients_ranks: [],
+        boosted_nextgen_tdh: 0,
+        nextgen_tdh: nextgenTDH,
+        nextgen_tdh__raw: nextgenTDH__raw,
+        nextgen_balance: nextgenBalance,
+        nextgen: consolidationNextgen,
+        nextgen_ranks: []
       };
       consolidationGradients.forEach((wg) => {
         allGradientsTDH.push(wg);
+      });
+      consolidationNextgen.forEach((wn) => {
+        allNextgenTDH.push(wn);
       });
       consolidatedTdh.push(consolidation);
     }
@@ -262,7 +286,8 @@ export async function consolidateTDHForWallets(
 
   return {
     consolidatedTdh: consolidatedTdh,
-    allGradientsTDH: allGradientsTDH
+    allGradientsTDH: allGradientsTDH,
+    allNextgenTDH: allNextgenTDH
   };
 }
 
@@ -296,6 +321,7 @@ export const consolidateMissingWallets = async (
         tdh_rank_memes_szn5: 0,
         tdh_rank_memes_szn6: 0,
         tdh_rank_gradients: 0,
+        tdh_rank_nextgen: 0,
         block: tdhBlock,
         tdh: 0,
         boost: 0,
@@ -346,7 +372,13 @@ export const consolidateMissingWallets = async (
         gradients_tdh__raw: 0,
         gradients_balance: 0,
         gradients: [],
-        gradients_ranks: []
+        gradients_ranks: [],
+        boosted_nextgen_tdh: 0,
+        nextgen_tdh: 0,
+        nextgen_tdh__raw: 0,
+        nextgen_balance: 0,
+        nextgen: [],
+        nextgen_ranks: []
       });
       consolidations.forEach((c) => {
         processedWallets.add(c);
@@ -363,6 +395,7 @@ export const consolidateTDH = async (
 ) => {
   const tdh: TDHENS[] = await fetchAllTDH(startingWallets);
   const nfts = await fetchAllNFTs();
+  const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
 
   const ADJUSTED_NFTS = [...nfts].filter(
     (nft) =>
@@ -376,10 +409,8 @@ export const consolidateTDH = async (
 
   logger.info(`[WALLETS ${tdh.length}]`);
 
-  const { consolidatedTdh, allGradientsTDH } = await consolidateTDHForWallets(
-    tdh,
-    MEMES_COUNT
-  );
+  const { consolidatedTdh, allGradientsTDH, allNextgenTDH } =
+    await consolidateTDHForWallets(tdh, MEMES_COUNT);
 
   const consolidatedBoostedTdh = await calculateBoosts(consolidatedTdh);
 
@@ -403,9 +434,10 @@ export const consolidateTDH = async (
   } else {
     const sortedConsolidatedTdh = await calculateRanks(
       allGradientsTDH,
+      allNextgenTDH,
       consolidatedBoostedTdh,
       ADJUSTED_NFTS,
-      MEMES_COUNT
+      NEXTGEN_NFTS
     );
     await persistConsolidatedTDH(sortedConsolidatedTdh);
     logger.info(`[FINAL ENTRIES ${sortedConsolidatedTdh.length}]`);

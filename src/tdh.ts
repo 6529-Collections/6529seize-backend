@@ -27,6 +27,13 @@ import {
 } from './db';
 import { sqlExecutor } from './sql-executor';
 import { Logger } from './logging';
+import { fetchNextgenTokens } from './nextgen/nextgen.db';
+import { NextGenToken } from './entities/INextGen';
+import { NFT } from './entities/INFT';
+import {
+  NEXTGEN_CORE_CONTRACT,
+  getNextgenNetwork
+} from './nextgen/nextgen_constants';
 
 const logger = Logger.get('TDH');
 
@@ -68,12 +75,16 @@ export const findTDH = async (lastTDHCalc: Date) => {
   });
 
   const block = await fetchLatestTransactionsBlockNumber(lastTDHCalc);
-  const nfts = await fetchAllNFTs();
+  const nfts: NFT[] = await fetchAllNFTs();
   const owners: { wallet: string }[] = await fetchAllOwnersAddresses();
   const consolidationAddresses = await fetchAllConsolidationAddresses();
 
+  const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
+  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[getNextgenNetwork()];
+
   const combinedAddresses = owners
     .concat(consolidationAddresses)
+    .concat(NEXTGEN_NFTS.map((nft) => ({ wallet: nft.owner })))
     .filter(
       (value, index, self) =>
         self.findIndex((item) =>
@@ -100,7 +111,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
   logger.info(
     `[BLOCK ${block} - ${timestamp.toUTCString()}] [LAST TDH ${lastTDHCalc.toUTCString()}] [ADJUSTED_NFTS ${
       ADJUSTED_NFTS.length
-    }] [CALCULATING TDH - START]`
+    }] : [NEXTGEN_NFTS ${NEXTGEN_NFTS.length}] : [CALCULATING TDH - START]`
   );
 
   logger.info(
@@ -108,6 +119,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
   );
 
   const allGradientsTDH: any[] = [];
+  const allNextgenTDH: any[] = [];
   await Promise.all(
     combinedAddresses.map(async (owner) => {
       const wallet = owner.wallet.toLowerCase();
@@ -122,6 +134,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
       let unique_memes_season5 = 0;
       let unique_memes_season6 = 0;
       const walletGradients: any[] = [];
+      const walletNextgen: any[] = [];
 
       let totalTDH = 0;
       let totalTDH__raw = 0;
@@ -147,13 +160,31 @@ export const findTDH = async (lastTDHCalc: Date) => {
       let memes_tdh_season6 = 0;
       let memes_tdh_season6__raw = 0;
       let memes_balance_season6 = 0;
+
       let gradientsBalance = 0;
       let gradientsTDH = 0;
       let gradientsTDH__raw = 0;
 
-      const walletTransactions: Transaction[] = consolidateTransactions(
-        await fetchWalletTransactions(wallet, block)
-      ).sort((a: Transaction, b: Transaction) => {
+      let nextgenBalance = 0;
+      let nextgenTDH = 0;
+      let nextgenTDH__raw = 0;
+
+      const walletTransactionsNfts = await fetchWalletTransactions(
+        wallet,
+        false,
+        block
+      );
+
+      const walletTransactionsNextgen = await fetchWalletTransactions(
+        wallet,
+        true,
+        block
+      );
+
+      const walletTransactions: Transaction[] = consolidateTransactions([
+        ...walletTransactionsNfts,
+        ...walletTransactionsNextgen
+      ]).sort((a: Transaction, b: Transaction) => {
         return (
           new Date(a.transaction_date).getTime() -
           new Date(b.transaction_date).getTime()
@@ -164,9 +195,11 @@ export const findTDH = async (lastTDHCalc: Date) => {
       await Promise.all(
         consolidations.map(async (c) => {
           if (!areEqualAddresses(c, wallet)) {
-            const cTransactions = await fetchWalletTransactions(c, block);
-            consolidationTransactions =
-              consolidationTransactions.concat(cTransactions);
+            const nftTrx = await fetchWalletTransactions(c, false, block);
+            const nextgenTrx = await fetchWalletTransactions(c, true, block);
+            consolidationTransactions = consolidationTransactions
+              .concat(nftTrx)
+              .concat(nextgenTrx);
           }
         })
       );
@@ -179,13 +212,6 @@ export const findTDH = async (lastTDHCalc: Date) => {
           new Date(b.transaction_date).getTime()
         );
       });
-
-      const memesTransactions = [...walletTransactions].filter((t) =>
-        areEqualAddresses(t.contract, MEMES_CONTRACT)
-      );
-      const gradientsTransactions = [...walletTransactions].filter((t) =>
-        areEqualAddresses(t.contract, GRADIENT_CONTRACT)
-      );
 
       ADJUSTED_NFTS.forEach((nft) => {
         const tokenConsolidatedTransactions = [
@@ -278,6 +304,51 @@ export const findTDH = async (lastTDHCalc: Date) => {
         }
       });
 
+      NEXTGEN_NFTS.forEach((nft: NextGenToken) => {
+        if (areEqualAddresses(wallet, nft.owner)) {
+          const tokenConsolidatedTransactions = [
+            ...consolidationTransactions
+          ].filter(
+            (t) =>
+              t.token_id == nft.id &&
+              areEqualAddresses(t.contract, NEXTGEN_CONTRACT)
+          );
+
+          const tokenDatesForWallet = getTokenDatesFromConsolidation(
+            wallet,
+            consolidations,
+            tokenConsolidatedTransactions
+          );
+
+          let tdh__raw = 0;
+          tokenDatesForWallet.forEach((e) => {
+            const daysDiff = getDaysDiff(lastTDHCalc, e);
+            tdh__raw += daysDiff;
+          });
+
+          const balance = tokenDatesForWallet.length;
+          const tdh = tdh__raw * nft.hodl_rate;
+
+          if (tdh > 0 || balance > 0) {
+            totalTDH += tdh;
+            totalTDH__raw += tdh__raw;
+            totalBalance += balance;
+
+            const tokenTDH = {
+              id: nft.id,
+              balance: balance,
+              tdh: tdh,
+              tdh__raw: tdh__raw
+            };
+
+            nextgenTDH += tdh;
+            nextgenTDH__raw += tdh__raw;
+            nextgenBalance += balance;
+            walletNextgen.push(tokenTDH);
+          }
+        }
+      });
+
       let memesCardSets = 0;
       if (walletMemes.length == MEMES_COUNT) {
         memesCardSets = Math.min.apply(
@@ -306,6 +377,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
           tdh_rank_memes_szn5: 0, //assigned later
           tdh_rank_memes_szn6: 0, //assigned later
           tdh_rank_gradients: 0, //assigned later
+          tdh_rank_nextgen: 0, //assigned later
           block: block,
           tdh: totalTDH,
           boost: 0,
@@ -356,10 +428,19 @@ export const findTDH = async (lastTDHCalc: Date) => {
           gradients_tdh__raw: gradientsTDH__raw,
           gradients_balance: gradientsBalance,
           gradients: walletGradients,
-          gradients_ranks: []
+          gradients_ranks: [],
+          boosted_nextgen_tdh: 0,
+          nextgen_tdh: nextgenTDH,
+          nextgen_tdh__raw: nextgenTDH__raw,
+          nextgen_balance: nextgenBalance,
+          nextgen: walletNextgen,
+          nextgen_ranks: []
         };
         walletGradients.forEach((wg) => {
           allGradientsTDH.push(wg);
+        });
+        walletNextgen.forEach((wn) => {
+          allNextgenTDH.push(wn);
         });
         walletsTDH.push(tdh);
       }
@@ -374,9 +455,10 @@ export const findTDH = async (lastTDHCalc: Date) => {
 
   const sortedTdh = await calculateRanks(
     allGradientsTDH,
+    allNextgenTDH,
     boostedTdh,
     ADJUSTED_NFTS,
-    MEMES_COUNT
+    NEXTGEN_NFTS
   );
 
   logger.info(
@@ -566,6 +648,7 @@ export async function calculateBoosts(walletsTDH: any[]) {
       w.boosted_memes_tdh_season5 = w.memes_tdh_season5 * boost;
       w.boosted_memes_tdh_season6 = w.memes_tdh_season6 * boost;
       w.boosted_gradients_tdh = w.gradients_tdh * boost;
+      w.boosted_nextgen_tdh = w.nextgen_tdh * boost;
       boostedTDH.push(w);
     })
   );
@@ -575,11 +658,27 @@ export async function calculateBoosts(walletsTDH: any[]) {
 
 export async function calculateRanks(
   allGradientsTDH: any[],
+  allNextgenTDH: any[],
   boostedTDH: any[],
   ADJUSTED_NFTS: any[],
-  MEMES_COUNT: number
+  NEXTGEN_NFTS: NextGenToken[]
 ) {
   const sortedGradientsTdh = allGradientsTDH
+    .sort((a, b) => {
+      if (a.tdh > b.tdh) {
+        return -1;
+      } else if (a.tdh < b.tdh) {
+        return 1;
+      } else {
+        return a.id > b.id ? 1 : -1;
+      }
+    })
+    .map((a, index) => {
+      a.rank = index + 1;
+      return a;
+    });
+
+  const sortedNextgenTdh = allNextgenTDH
     .sort((a, b) => {
       if (a.tdh > b.tdh) {
         return -1;
@@ -668,6 +767,21 @@ export async function calculateRanks(
     }
   });
 
+  NEXTGEN_NFTS.forEach((nft) => {
+    boostedTDH
+      .filter((w) => w.nextgen.some((n: any) => n.id == nft.id && n.tdh > 0))
+      .forEach((w) => {
+        const nextgen = w.nextgen.find((g: any) => g.id == nft.id);
+        if (nextgen) {
+          w.nextgen_ranks.push({
+            id: nft.id,
+            rank: sortedNextgenTdh.find((s) => s.id == nft.id)?.rank
+          });
+        }
+        return w;
+      });
+  });
+
   let sortedTdh = boostedTDH
     .sort((a: TDH, b: TDH) => {
       if (a.boosted_tdh > b.boosted_tdh) return -1;
@@ -688,6 +802,8 @@ export async function calculateRanks(
       else if (a.memes_tdh_season6 < b.memes_tdh_season6) return 1;
       else if (a.gradients_tdh > b.gradients_tdh) return -1;
       else if (a.gradients_tdh < b.gradients_tdh) return 1;
+      else if (a.nextgen_tdh > b.nextgen_tdh) return -1;
+      else if (a.nextgen_tdh < b.nextgen_tdh) return 1;
       else return -1;
     })
     .map((w, index) => {
@@ -857,6 +973,26 @@ export async function calculateRanks(
         w.tdh_rank_gradients = index + 1;
       } else {
         w.tdh_rank_gradients = -1;
+      }
+      return w;
+    });
+
+  sortedTdh = boostedTDH
+    .sort((a: TDH, b: TDH) => {
+      if (a.boosted_nextgen_tdh > b.boosted_nextgen_tdh) return -1;
+      else if (a.boosted_nextgen_tdh < b.boosted_nextgen_tdh) return 1;
+      else if (a.nextgen_tdh > b.nextgen_tdh) return -1;
+      else if (a.nextgen_tdh < b.nextgen_tdh) return 1;
+      else if (a.nextgen_balance > b.nextgen_balance) return -1;
+      else if (a.nextgen_balance < b.nextgen_balance) return 1;
+      else if (a.balance > b.balance) return -1;
+      else return -1;
+    })
+    .map((w, index) => {
+      if (w.boosted_nextgen_tdh > 0) {
+        w.tdh_rank_nextgen = index + 1;
+      } else {
+        w.tdh_rank_nextgen = -1;
       }
       return w;
     });

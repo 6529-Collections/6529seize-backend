@@ -473,6 +473,25 @@ router.get(
   }
 );
 
+router.get(`/tdh`, async function (req: any, res: any, next: any) {
+  const pageSize: number =
+    req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+      ? parseInt(req.query.page_size)
+      : DEFAULT_PAGE_SIZE;
+  const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+  const consolidationKeys = req.query.consolidation_key;
+  const tokenIds = req.query.token_id;
+
+  logger.info(`[FETCHING TOKEN TDH]`);
+
+  db.fetchNextGenTokenTDH(consolidationKeys, tokenIds, pageSize, page).then(
+    (result) => {
+      return returnJsonResult(result, req, res);
+    }
+  );
+});
+
 async function persistAllowlist(body: {
   collection_id: number;
   added_by: string;

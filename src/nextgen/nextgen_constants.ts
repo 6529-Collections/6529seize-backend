@@ -13,6 +13,7 @@ export const NEXTGEN_ALLOWLIST_BURN_TABLE = 'nextgen_allowlist_burn';
 export const NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE =
   'nextgen_allowlist_collection';
 export const NEXTGEN_BURN_COLLECTIONS_TABLE = 'nextgen_burn_collection';
+export const NEXTGEN_TOKENS_TDH_TABLE = 'nextgen_tokens_tdh';
 
 export const GENERATOR_BASE_PATH = 'https://generator.seize.io';
 export const NEXTGEN_BUCKET = 'media.generator.seize.io';

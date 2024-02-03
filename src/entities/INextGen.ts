@@ -17,7 +17,8 @@ import {
   NEXTGEN_TOKENS_TABLE,
   NEXTGEN_TRANSACTIONS_TABLE,
   NEXTGEN_TOKEN_TRAITS_TABLE,
-  NEXTGEN_TOKEN_SCORES_TABLE
+  NEXTGEN_TOKEN_SCORES_TABLE,
+  NEXTGEN_TOKENS_TDH_TABLE
 } from '../nextgen/nextgen_constants';
 import { BlockEntity } from './IBlock';
 import { BaseTransaction } from './ITransaction';
@@ -438,6 +439,42 @@ export class NextGenToken {
 
   @Column({ type: 'double' })
   hodl_rate!: number;
+}
+
+@Entity(NEXTGEN_TOKENS_TDH_TABLE)
+export class NextGenTokenTDH {
+  @CreateDateColumn({ type: 'datetime' })
+  created_at?: Date;
+
+  @UpdateDateColumn({ type: 'datetime' })
+  updated_at?: Date;
+
+  @PrimaryColumn({ type: 'bigint' })
+  id!: number;
+
+  @Column({ type: 'int' })
+  normalised_id!: number;
+
+  @Column({ type: 'varchar', length: 200 })
+  consolidation_key!: string;
+
+  @Column({ type: 'int' })
+  collection_id!: number;
+
+  @PrimaryColumn({ type: 'int' })
+  block!: number;
+
+  @Column({ type: 'int', nullable: false })
+  tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  boosted_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  tdh__raw!: number;
+
+  @Column({ type: 'int', nullable: false })
+  tdh_rank!: number;
 }
 
 @Entity(NEXTGEN_TRANSACTIONS_TABLE)
