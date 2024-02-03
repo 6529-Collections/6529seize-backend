@@ -21,7 +21,7 @@ import {
 } from './constants';
 import { sqlExecutor } from './sql-executor';
 import { Logger } from './logging';
-import { NextGenToken, NextGenTokenTDH } from './entities/INextGen';
+import { NextGenToken } from './entities/INextGen';
 import { fetchNextgenTokens } from './nextgen/nextgen.db';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
