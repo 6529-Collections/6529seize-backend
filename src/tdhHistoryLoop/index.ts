@@ -399,7 +399,7 @@ async function calculateGlobalTDHHistory(
     walletsLength += h.wallets.length;
     memesLength += h.memes.length;
     gradientsLength += h.gradients.length;
-    nextgenLength += h.nextgen.length;
+    nextgenLength += h.nextgen?.length ?? 0;
   });
 
   const consolidationWallets = tdhData.length;
