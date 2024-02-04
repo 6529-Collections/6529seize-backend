@@ -1136,7 +1136,7 @@ export async function persistConsolidatedTDH(
 }
 
 export async function persistNextGenTokenTDH(nextgenTdh: NextGenTokenTDH[]) {
-  logger.info(`[NEXTGEN NEXTGEN TOKEN TDH] : [${nextgenTdh.length}]`);
+  logger.info(`[NEXTGEN TOKEN TDH] : [${nextgenTdh.length}]`);
   await AppDataSource.getRepository(NextGenTokenTDH).save(nextgenTdh);
 }
 
