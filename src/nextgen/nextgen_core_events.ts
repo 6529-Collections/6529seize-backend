@@ -244,7 +244,7 @@ export async function upsertToken(
       generator: metadataResponse.generator,
       owner: owner.toLowerCase(),
       pending: pending,
-      burnt: burnDate ? true : false,
+      burnt: !!burnDate,
       burnt_date: burnDate,
       hodl_rate: hodlRate
     };
