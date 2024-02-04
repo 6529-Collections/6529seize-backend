@@ -337,8 +337,6 @@ export const findTDH = async (lastTDHCalc: Date) => {
             nextgenTDH__raw += tokenTDH.tdh__raw;
             nextgenBalance += tokenTDH.balance;
             walletNextgen.push(tokenTDH);
-          } else {
-            console.log('i am NOT nextgen tdh', nft.id);
           }
         }
       });
