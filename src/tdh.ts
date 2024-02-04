@@ -321,7 +321,8 @@ export const findTDH = async (lastTDHCalc: Date) => {
             nft.hodl_rate,
             wallet,
             consolidations,
-            tokenConsolidatedTransactions
+            tokenConsolidatedTransactions,
+            true
           );
 
           if (tokenTDH) {
@@ -514,7 +515,8 @@ function getTokenTdh(
   hodlRate: number,
   wallet: string,
   consolidations: string[],
-  tokenConsolidatedTransactions: Transaction[]
+  tokenConsolidatedTransactions: Transaction[],
+  nextgen?: boolean
 ) {
   const tokenDatesForWallet = getTokenDatesFromConsolidation(
     wallet,
@@ -530,6 +532,13 @@ function getTokenTdh(
 
   const balance = tokenDatesForWallet.length;
   const tdh = tdh__raw * hodlRate;
+
+  if (nextgen) {
+    console.log('i am nextgen', id, hodlRate);
+    console.log('i am tokenDatesForWallet', tokenDatesForWallet);
+    console.log('i am balance', balance);
+    console.log('i am tdh', tdh);
+  }
 
   if (tdh > 0 || balance > 0) {
     const tokenTDH = {
