@@ -9,7 +9,7 @@ import {
 } from '../entities/INextGen';
 import { refreshNextgenMetadata } from '../nextgen/nextgen_metadata_refresh';
 
-const logger = Logger.get('NEXTGEN');
+const logger = Logger.get('NEXTGEN_METADATA_LOOP');
 
 export const handler = async (event: any) => {
   const start = Time.now();

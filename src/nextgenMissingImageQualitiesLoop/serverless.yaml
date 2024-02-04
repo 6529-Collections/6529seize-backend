@@ -1,0 +1,34 @@
+service: nextgenMissingImageQualitiesLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  memorySize: 1028
+  timeout: 900
+
+custom:
+  chainIDs:
+    staging: 11155111
+    prod: 1
+
+functions:
+  nextgenMissingImageQualitiesLoop:
+    handler: index.handler
+    name: nextgenMissingImageQualitiesLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule: rate(1 minute)
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'nextgenMissingImageQualitiesLoop_${opt:stage, self:provider.stage}'

@@ -3,7 +3,11 @@ import {
   GENERATOR_BASE_PATH,
   NEXTGEN_CF_BASE_PATH
 } from '../nextgen/nextgen_constants';
-import { Details, getGenDetailsFromUri } from '../nextgen/nextgen_generator';
+import {
+  Details,
+  getGenDetailsFromUri,
+  triggerGenerator
+} from '../nextgen/nextgen_generator';
 import { notifyMissingNextgenMedia } from '../notifier';
 
 const logger = Logger.get('NEXTGEN_MEDIA_INTERCEPTOR');
@@ -74,12 +78,4 @@ function buildJsonResponse(response: any, body: any) {
     { key: 'Cache-Control', value: 'no-store' }
   ];
   return response;
-}
-
-function triggerGenerator(uri: string) {
-  let metadataPath = uri.startsWith('/') ? uri.slice(1) : uri;
-  metadataPath = `${GENERATOR_BASE_PATH}/${metadataPath}`;
-  fetch(metadataPath);
-  const imagePath = metadataPath.replace('/metadata/', '/png/');
-  fetch(imagePath);
 }

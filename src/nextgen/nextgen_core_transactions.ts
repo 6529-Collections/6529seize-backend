@@ -162,6 +162,7 @@ async function createCollection(
   const newId = latestId + 1;
   const image = getCollectionImage(newId);
   const banner = getCollectionBanner(newId);
+  const distributionPlan = getCollectionDistribution(newId);
   const collection: NextGenCollection = {
     id: newId,
     name: args[0],
@@ -174,6 +175,7 @@ async function createCollection(
     dependency_script: args[7],
     image: image,
     banner: banner,
+    distribution_plan: distributionPlan,
     mint_count: 0
   };
   await persistNextGenCollection(entityManager, collection);
@@ -197,6 +199,7 @@ async function updateCollectionInfo(
   const collectionId = parseInt(args[0]);
   const image = getCollectionImage(collectionId);
   const banner = getCollectionBanner(collectionId);
+  const distributionPlan = getCollectionDistribution(collectionId);
   const collection: NextGenCollection = {
     id: collectionId,
     name: args[1],
@@ -209,6 +212,7 @@ async function updateCollectionInfo(
     dependency_script: args[8],
     image: image,
     banner: banner,
+    distribution_plan: distributionPlan,
     mint_count: 0
   };
   const scriptIndex = parseInt(args[9]);
@@ -404,5 +408,9 @@ function getCollectionImage(collectionId: number): string {
 }
 
 function getCollectionBanner(collectionId: number): string {
-  return `${CLOUDFRONT_LINK}/nextgen/banners/${collectionId}.jpg`;
+  return `${CLOUDFRONT_LINK}/nextgen/assets/${collectionId}/banner.jpg`;
+}
+
+function getCollectionDistribution(collectionId: number): string {
+  return `${CLOUDFRONT_LINK}/nextgen/assets/${collectionId}/distribution.pdf`;
 }

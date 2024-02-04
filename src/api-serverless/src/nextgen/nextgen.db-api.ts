@@ -238,20 +238,6 @@ export async function fetchNextGenToken(tokendId: number) {
   const sql = `
     SELECT 
       t.*,
-      (
-        SELECT nt.transaction_date 
-        FROM ${NEXTGEN_TRANSACTIONS_TABLE} nt
-        WHERE nt.token_id = t.id AND nt.from_address in (:nullAddresses)
-        ORDER BY nt.transaction_date ASC
-        LIMIT 1
-      ) AS mint_date,
-      (
-        SELECT nt.transaction_date 
-        FROM ${NEXTGEN_TRANSACTIONS_TABLE} nt
-        WHERE nt.token_id = t.id AND nt.to_address in (:nullAddresses)
-        ORDER BY nt.transaction_date ASC
-        LIMIT 1
-      ) AS burnt_date,
       s.*
     FROM ${NEXTGEN_TOKENS_TABLE} t
     LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} s ON t.id = s.id 

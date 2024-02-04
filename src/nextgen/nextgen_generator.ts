@@ -1,6 +1,7 @@
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { GENERATOR_BASE_PATH, NEXTGEN_BUCKET } from './nextgen_constants';
 import { Logger } from '../logging';
+import axios from 'axios';
 
 const logger = Logger.get('NEXTGEN_GENERATOR');
 
@@ -33,16 +34,24 @@ export function getGenDetailsFromUri(uri: string): Details {
 }
 
 export async function getImageBlobFromGenerator(path: string) {
-  const genImageResponse = await fetch(`${GENERATOR_BASE_PATH}/${path}`);
-  if (genImageResponse.status !== 200) {
-    logger.info(
-      `[GENERATOR IMAGE ERROR RESPONSE] : [STATUS ${genImageResponse.status}] : [PATH ${path}]`
-    );
+  const returnError = (error: string) => {
+    logger.error(`[GENERATOR IMAGE ERROR] : [PATH ${path}] : [ERROR ${error}]`);
     return;
+  };
+
+  try {
+    const genImageResponse = await axios.get(`${GENERATOR_BASE_PATH}/${path}`, {
+      responseType: 'arraybuffer',
+      timeout: 300000 // (5 minutes)
+    });
+    if (genImageResponse.status !== 200) {
+      return returnError(`[STATUS ${genImageResponse.status}]`);
+    }
+    logger.info(`[IMAGE ${path} DOWNLOADED]`);
+    return genImageResponse.data;
+  } catch (error: any) {
+    return returnError(`[ERROR ${error.message}]`);
   }
-  const imageBlob = await genImageResponse.arrayBuffer();
-  logger.info(`[IMAGE ${path} DOWNLOADED]`);
-  return imageBlob;
 }
 
 export async function s3UploadNextgenImage(
@@ -54,8 +63,20 @@ export async function s3UploadNextgenImage(
     new PutObjectCommand({
       Bucket: NEXTGEN_BUCKET,
       Key: path,
-      Body: Buffer.from(imageBlob),
+      Body: imageBlob,
       ContentType: `image/png`
     })
   );
+}
+
+export function triggerGenerator(uri: string) {
+  let metadataPath = uri.startsWith('/') ? uri.slice(1) : uri;
+  triggerGeneratorPath(metadataPath);
+  const imagePath = metadataPath.replace('/metadata/', '/png/');
+  triggerGeneratorPath(imagePath);
+}
+
+export function triggerGeneratorPath(path: string) {
+  const genPath = `${GENERATOR_BASE_PATH}/${path}`;
+  fetch(genPath);
 }
