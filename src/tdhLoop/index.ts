@@ -40,7 +40,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   ]);
   const force = process.env.TDH_RESET == 'true';
   logger.info(`[RUNNING force=${force}]`);
-  await tdhLoop(force);
+  await tdhLoop(true);
   await unload();
   logger.info('[COMPLETE]');
 });
