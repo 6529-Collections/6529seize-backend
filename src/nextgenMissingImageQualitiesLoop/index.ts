@@ -27,11 +27,14 @@ export const handler = async (event: any) => {
   setup();
   const resolutions = ['4k', '8k', '16k'];
   for (let resolution of resolutions) {
-    const foundAndProcessed = await findMissingImages(resolution);
-    if (foundAndProcessed) {
-      logger.info(
-        `[FOUND AND PROCESSED MISSING IMAGES FOR ${foundAndProcessed} @ ${resolution}]`
-      );
+    const found = await findMissingImages(resolution);
+    if (found.found) {
+      console.log('i am found', found);
+      if (found.processed) {
+        logger.info(`[FOUND AND PROCESSED ${found.image}]`);
+      } else {
+        logger.error(`[FOUND BUT FAILED TO PROCESS ${found.image}]`);
+      }
       break;
     }
   }
@@ -74,37 +77,49 @@ async function findMissingImages(resolution: string, count = PRELOAD_COUNT) {
     .filter((image) => !contentsResolution.includes(image))
     .slice(0, count);
 
-  if (missingImages.length > 0) {
-    missingImages.forEach((image) => {
-      const generatorPath = `${originalPath}${image}/${resolution}`;
-      logger.info(`[TRIGGERING CACHE FOR ${generatorPath}]`);
-      triggerGeneratorPath(generatorPath);
-      logger.info(`[CACHE TRIGGERED FOR ${image}]`);
-    });
+  if (missingImages.length == 0) {
+    return {
+      found: false
+    };
+  }
 
-    const firstImage = missingImages[0];
-    const firstGeneratorPath = `${originalPath}${firstImage}/${resolution}`;
-    logger.error(
-      `[PROCESSING FIRST MISSING IMAGE ${firstImage}] : [GENERATOR_PATH ${firstGeneratorPath}] : [DOWNLOADING...]`
-    );
-    try {
-      const imageBlob = await getImageBlobFromGenerator(firstGeneratorPath);
-      if (imageBlob) {
-        const uploadPath = `${resolutionPath}${firstImage}`;
-        await s3UploadNextgenImage(s3, imageBlob, uploadPath);
-        logger.info(`[IMAGE UPLOADED TO S3 ${uploadPath}]`);
-      } else {
-        logger.error(
-          `[IMAGE DOWNLOAD FAILED] : [GENERATOR_PATH ${firstGeneratorPath}] : [EXITING]`
-        );
-      }
-    } catch (error) {
+  missingImages.forEach((image) => {
+    const generatorPath = `${originalPath}${image}/${resolution}`;
+    logger.info(`[TRIGGERING CACHE FOR ${generatorPath}]`);
+    triggerGeneratorPath(generatorPath);
+    logger.info(`[CACHE TRIGGERED FOR ${image}]`);
+  });
+
+  const firstImage = missingImages[0];
+  const firstGeneratorPath = `${originalPath}${firstImage}/${resolution}`;
+  logger.info(
+    `[PROCESSING FIRST MISSING IMAGE ${firstImage}] : [GENERATOR_PATH ${firstGeneratorPath}] : [DOWNLOADING...]`
+  );
+  try {
+    const imageBlob = await getImageBlobFromGenerator(firstGeneratorPath);
+    if (imageBlob) {
+      const uploadPath = `${resolutionPath}${firstImage}`;
+      await s3UploadNextgenImage(s3, imageBlob, uploadPath);
+      logger.info(`[IMAGE UPLOADED TO S3 ${uploadPath}]`);
+      return {
+        found: true,
+        processed: true,
+        image: firstImage
+      };
+    } else {
       logger.error(
-        `[ERROR PROCESSING FIRST MISSING IMAGE] : [GENERATOR_PATH ${firstGeneratorPath}] : ${error}`
+        `[IMAGE DOWNLOAD FAILED] : [GENERATOR_PATH ${firstGeneratorPath}] : [EXITING]`
       );
     }
-
-    return firstImage;
+  } catch (error) {
+    logger.error(
+      `[ERROR PROCESSING FIRST MISSING IMAGE] : [GENERATOR_PATH ${firstGeneratorPath}] : ${error}`
+    );
   }
-  return false;
+
+  return {
+    found: true,
+    processed: false,
+    image: firstImage
+  };
 }
