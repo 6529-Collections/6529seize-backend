@@ -11,8 +11,6 @@ provider:
   runtime: nodejs18.x
   memorySize: 1028
   timeout: 900
-  environment:
-    NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
 
 custom:
   chainIDs:
@@ -31,3 +29,7 @@ functions:
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'nextgenContractLoop_${opt:stage, self:provider.stage}'
+      NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}

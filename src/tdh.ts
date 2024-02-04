@@ -114,7 +114,8 @@ export const findTDH = async (lastTDHCalc: Date) => {
   const consolidationAddresses = await fetchAllConsolidationAddresses();
 
   const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
-  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[getNextgenNetwork()];
+  const nextgenNetwork = getNextgenNetwork();
+  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[nextgenNetwork];
 
   const combinedAddresses = owners
     .concat(consolidationAddresses)
@@ -145,7 +146,9 @@ export const findTDH = async (lastTDHCalc: Date) => {
   logger.info(
     `[BLOCK ${block} - ${timestamp.toUTCString()}] [LAST TDH ${lastTDHCalc.toUTCString()}] [ADJUSTED_NFTS ${
       ADJUSTED_NFTS.length
-    }] : [NEXTGEN_NFTS ${NEXTGEN_NFTS.length}] : [CALCULATING TDH - START]`
+    }] : [NEXTGEN_NFTS ${
+      NEXTGEN_NFTS.length
+    }] : [NEXTGEN NETWORK ${nextgenNetwork}] : [CALCULATING TDH - START]`
   );
 
   logger.info(
