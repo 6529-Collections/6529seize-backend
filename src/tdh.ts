@@ -329,7 +329,6 @@ export const findTDH = async (lastTDHCalc: Date) => {
           );
 
           if (tokenTDH) {
-            console.log('i am nextgen tdh', nft.id, tokenTDH);
             totalTDH += tokenTDH.tdh;
             totalTDH__raw += tokenTDH.tdh__raw;
             totalBalance += tokenTDH.balance;
@@ -530,18 +529,13 @@ function getTokenTdh(
   let tdh__raw = 0;
   tokenDatesForWallet.forEach((e) => {
     const daysDiff = getDaysDiff(lastTDHCalc, e);
-    tdh__raw += daysDiff;
+    if (daysDiff > 0) {
+      tdh__raw += daysDiff;
+    }
   });
 
   const balance = tokenDatesForWallet.length;
   const tdh = tdh__raw * hodlRate;
-
-  if (nextgen) {
-    console.log('i am nextgen', id, hodlRate);
-    console.log('i am tokenDatesForWallet', tokenDatesForWallet);
-    console.log('i am balance', balance);
-    console.log('i am tdh', tdh);
-  }
 
   if (tdh > 0 || balance > 0) {
     const tokenTDH = {
