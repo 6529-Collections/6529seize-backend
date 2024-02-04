@@ -173,9 +173,22 @@ async function processTransfer(
 
   if (collection) {
     let hodlRate = 0;
-    if (!isBurn && !isMint) {
+    let mintDate: Date;
+    let mintPrice;
+    let burnDate: Date | undefined;
+    if (isMint) {
+      mintDate = transactionWithValue.transaction_date;
+      mintPrice = transactionWithValue.value;
+    } else {
       const dbToken = await fetchNextgenToken(entityManager, tokenId);
       hodlRate = dbToken?.hodl_rate ?? 0;
+      mintDate = dbToken?.mint_date ?? new Date();
+      mintPrice = dbToken?.mint_price ?? 0;
+      if (isBurn) {
+        burnDate = transactionWithValue.transaction_date;
+      } else {
+        burnDate = dbToken?.burnt_date;
+      }
     }
     await upsertToken(
       entityManager,
@@ -183,8 +196,9 @@ async function processTransfer(
       tokenId,
       normalisedTokenId,
       logInfo.args.to,
-      isMint,
-      isBurn,
+      mintDate,
+      mintPrice,
+      burnDate,
       hodlRate
     );
   }
@@ -202,8 +216,9 @@ export async function upsertToken(
   tokenId: number,
   normalisedTokenId: number,
   owner: string,
-  isMint: boolean,
-  isBurn: boolean,
+  mintDate: Date,
+  mintPrice: number,
+  burnDate: Date | undefined,
   hodlRate: number
 ) {
   const metadataLink = `${collection.base_uri}${tokenId}`;
@@ -217,6 +232,8 @@ export async function upsertToken(
       name: metadataResponse.name,
       collection_id: collection.id,
       collection_name: collection.name,
+      mint_date: mintDate,
+      mint_price: mintPrice,
       metadata_url: metadataLink,
       image_url: metadataResponse.image,
       animation_url:
@@ -227,11 +244,12 @@ export async function upsertToken(
       generator: metadataResponse.generator,
       owner: owner.toLowerCase(),
       pending: pending,
-      burnt: isBurn,
+      burnt: !!burnDate,
+      burnt_date: burnDate,
       hodl_rate: hodlRate
     };
 
-    if (isMint) {
+    if (mintDate) {
       const newMintCount = normalisedTokenId + 1;
       logger.info(
         `[TOKEN ID ${tokenId}] : [MINTED] : [COLLECTION MINT COUNT ${collection.mint_count}] : [UPDATING COLLECTION MINT COUNT TO ${newMintCount}...]`
@@ -271,7 +289,9 @@ export async function processTraits(
       value: attribute.value,
       rarity: 0,
       rarity_score: 0,
+      rarity_score_rank: 0,
       rarity_score_normalised: 0,
+      rarity_score_normalised_rank: 0,
       token_count: 0,
       trait_count: 0
     };

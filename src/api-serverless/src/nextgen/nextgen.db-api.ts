@@ -13,6 +13,7 @@ import {
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_LOGS_TABLE,
   NEXTGEN_TOKENS_TABLE,
+  NEXTGEN_TOKENS_TDH_TABLE,
   NEXTGEN_TOKEN_SCORES_TABLE,
   NEXTGEN_TOKEN_TRAITS_TABLE,
   NEXTGEN_TRANSACTIONS_TABLE
@@ -237,20 +238,6 @@ export async function fetchNextGenToken(tokendId: number) {
   const sql = `
     SELECT 
       t.*,
-      (
-        SELECT nt.transaction_date 
-        FROM ${NEXTGEN_TRANSACTIONS_TABLE} nt
-        WHERE nt.token_id = t.id AND nt.from_address in (:nullAddresses)
-        ORDER BY nt.transaction_date ASC
-        LIMIT 1
-      ) AS mint_date,
-      (
-        SELECT nt.transaction_date 
-        FROM ${NEXTGEN_TRANSACTIONS_TABLE} nt
-        WHERE nt.token_id = t.id AND nt.to_address in (:nullAddresses)
-        ORDER BY nt.transaction_date ASC
-        LIMIT 1
-      ) AS burnt_date,
       s.*
     FROM ${NEXTGEN_TOKENS_TABLE} t
     LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} s ON t.id = s.id 
@@ -493,6 +480,36 @@ export async function fetchNextGenProofs(
     NEXTGEN_ALLOWLIST_TABLE,
     params,
     'collection_id asc, address asc',
+    pageSize,
+    page,
+    filters
+  );
+}
+
+export async function fetchNextGenTokenTDH(
+  consolidationKeysStr: string,
+  tokenIdsStr: string,
+  pageSize: number,
+  page: number
+) {
+  let filters = '';
+  let params: any = {};
+  if (consolidationKeysStr) {
+    filters = constructFilters(
+      filters,
+      `consolidation_key in (:consolidationKeys)`
+    );
+    params.consolidationKeys = consolidationKeysStr.toLowerCase().split(',');
+  }
+  if (tokenIdsStr) {
+    filters = constructFilters(filters, `id in (:tokenIds)`);
+    params.tokenIds = tokenIdsStr.toLowerCase().split(',');
+  }
+
+  return fetchPaginated(
+    NEXTGEN_TOKENS_TDH_TABLE,
+    params,
+    'id asc',
     pageSize,
     page,
     filters

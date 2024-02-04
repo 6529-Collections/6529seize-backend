@@ -7,7 +7,12 @@ import {
   NextGenTransaction
 } from '../entities/INextGen';
 import { EntityManager } from 'typeorm';
-import { NEXTGEN_START_BLOCK, getNextgenNetwork } from './nextgen_constants';
+import {
+  NEXTGEN_START_BLOCK,
+  NEXTGEN_TOKENS_TABLE,
+  getNextgenNetwork
+} from './nextgen_constants';
+import { sqlExecutor } from '../sql-executor';
 
 export async function fetchNextGenLatestBlock(manager: EntityManager) {
   const block = await manager
@@ -143,13 +148,24 @@ export async function fetchNextgenToken(
   });
 }
 
-export async function fetchNextgenTokens(manager: EntityManager) {
-  return await manager.getRepository(NextGenToken).find();
+export async function fetchNextgenTokens(manager?: EntityManager) {
+  if (manager) {
+    return await manager.getRepository(NextGenToken).find();
+  } else {
+    const sql = `SELECT * FROM ${NEXTGEN_TOKENS_TABLE};`;
+    return await sqlExecutor.execute(sql);
+  }
 }
 
-export async function persistNextGenTokenHodlRate(
+export async function persistNextGenCollectionHodlRate(
   manager: EntityManager,
+  collectionId: number,
   hodlRate: number
 ) {
-  await manager.getRepository(NextGenToken).update({}, { hodl_rate: hodlRate });
+  await manager.getRepository(NextGenToken).update(
+    {
+      collection_id: collectionId
+    },
+    { hodl_rate: hodlRate }
+  );
 }

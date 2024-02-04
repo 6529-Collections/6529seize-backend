@@ -17,7 +17,8 @@ import {
   NEXTGEN_TOKENS_TABLE,
   NEXTGEN_TRANSACTIONS_TABLE,
   NEXTGEN_TOKEN_TRAITS_TABLE,
-  NEXTGEN_TOKEN_SCORES_TABLE
+  NEXTGEN_TOKEN_SCORES_TABLE,
+  NEXTGEN_TOKENS_TDH_TABLE
 } from '../nextgen/nextgen_constants';
 import { BlockEntity } from './IBlock';
 import { BaseTransaction } from './ITransaction';
@@ -355,6 +356,9 @@ export class NextGenCollection {
   @Column({ type: 'text' })
   banner!: string;
 
+  @Column({ type: 'text' })
+  distribution_plan!: string;
+
   @Column({ type: 'text', nullable: true })
   artist_address?: string;
 
@@ -415,6 +419,12 @@ export class NextGenToken {
   @Column({ type: 'text' })
   collection_name!: string;
 
+  @Column({ type: 'datetime' })
+  mint_date!: Date;
+
+  @Column({ type: 'double' })
+  mint_price!: number;
+
   @Column({ type: 'text' })
   metadata_url!: string;
 
@@ -436,8 +446,47 @@ export class NextGenToken {
   @Column({ type: 'boolean' })
   burnt!: boolean;
 
+  @Column({ type: 'datetime', nullable: true })
+  burnt_date!: Date | undefined;
+
   @Column({ type: 'double' })
   hodl_rate!: number;
+}
+
+@Entity(NEXTGEN_TOKENS_TDH_TABLE)
+export class NextGenTokenTDH {
+  @CreateDateColumn({ type: 'datetime' })
+  created_at?: Date;
+
+  @UpdateDateColumn({ type: 'datetime' })
+  updated_at?: Date;
+
+  @PrimaryColumn({ type: 'bigint' })
+  id!: number;
+
+  @Column({ type: 'int' })
+  normalised_id!: number;
+
+  @Column({ type: 'varchar', length: 200 })
+  consolidation_key!: string;
+
+  @Column({ type: 'int' })
+  collection_id!: number;
+
+  @PrimaryColumn({ type: 'int' })
+  block!: number;
+
+  @Column({ type: 'int', nullable: false })
+  tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  boosted_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  tdh__raw!: number;
+
+  @Column({ type: 'int', nullable: false })
+  tdh_rank!: number;
 }
 
 @Entity(NEXTGEN_TRANSACTIONS_TABLE)
@@ -473,14 +522,23 @@ export class NextGenTokenTrait {
   @Column({ type: 'double' })
   rarity_score!: number;
 
+  @Column({ type: 'int' })
+  rarity_score_rank!: number;
+
   @Column({ type: 'double' })
   rarity_score_normalised!: number;
+
+  @Column({ type: 'int' })
+  rarity_score_normalised_rank!: number;
 
   @Column({ type: 'int' })
   token_count!: number;
 
   @Column({ type: 'int', default: 0 })
   trait_count?: number;
+
+  @Column({ type: 'int', default: 0 })
+  value_count?: number;
 }
 
 @Entity(NEXTGEN_TOKEN_SCORES_TABLE)

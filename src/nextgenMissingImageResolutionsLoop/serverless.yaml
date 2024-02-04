@@ -1,4 +1,4 @@
-service: nextgenContractLoop
+service: nextgenMissingImageResolutionsLoop
 
 package:
   artifact: dist/index.zip
@@ -18,9 +18,9 @@ custom:
     prod: 1
 
 functions:
-  nextgenContractLoop:
+  nextgenMissingImageResolutionsLoop:
     handler: index.handler
-    name: nextgenContractLoop
+    name: nextgenMissingImageResolutionsLoop
     description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
@@ -31,5 +31,4 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: 'nextgenContractLoop_${opt:stage, self:provider.stage}'
-      NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
+      SENTRY_ENVIRONMENT: 'nextgenMissingImageResolutionsLoop_${opt:stage, self:provider.stage}'

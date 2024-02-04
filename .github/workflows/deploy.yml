@@ -40,6 +40,7 @@ on:
           - transactionsReplayLoop
           - nextgenContractLoop
           - nextgenMetadataLoop
+          - nextgenMissingImageResolutionsLoop
           - nextgenMediaProxyInterceptor
           - nextgenMediaUploader
       branch:

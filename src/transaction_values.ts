@@ -37,6 +37,9 @@ const fetch = require('node-fetch');
 const TRANSFER_EVENT =
   '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
+const MINT_FROM_ADDRESS =
+  '0x0000000000000000000000000000000000000000000000000000000000000000';
+
 let alchemy: Alchemy;
 let SEAPORT_IFACE: any = undefined;
 
@@ -123,6 +126,10 @@ async function resolveValue(t: Transaction) {
 
   if (transaction) {
     const receipt = await alchemy.core.getTransactionReceipt(transaction?.hash);
+    const logCount =
+      receipt?.logs.filter((l) =>
+        areEqualAddresses(l.topics[0], TRANSFER_EVENT)
+      ).length || 1;
 
     if (receipt?.gasUsed) {
       const gasUnits = receipt.gasUsed.toNumber();
@@ -134,7 +141,7 @@ async function resolveValue(t: Transaction) {
       t.gas_gwei = gasUnits;
       t.gas_price = gasPrice;
       t.gas_price_gwei = gasPriceGwei;
-      t.gas = gas;
+      t.gas = gas / logCount;
     }
 
     if (receipt) {
@@ -162,13 +169,18 @@ async function resolveValue(t: Transaction) {
                 if (areEqualAddresses(address, WETH_TOKEN_ADDRESS)) {
                   const from = resolveLogAddress(log.topics[1]);
                   const to = resolveLogAddress(log.topics[2]);
-                  const value = resolveLogValue(log.data);
+                  const value = resolveLogValue(log.data) / logCount;
                   if (areEqualAddresses(from, t.to_address)) {
                     totalValue += value;
                   }
                   if (areEqualAddresses(to, royaltiesAddress)) {
                     totalRoyalties += value;
                   }
+                } else if (
+                  areEqualAddresses(log.topics[1], MINT_FROM_ADDRESS)
+                ) {
+                  totalValue = t.value / logCount;
+                  totalRoyalties = 0;
                 }
               } catch (e) {
                 logger.error(

@@ -20,6 +20,7 @@ import { Time } from '../time';
 import { ProfileTdh, ProfileTdhLog } from '../entities/IProfileTDH';
 import { Profile } from '../entities/IProfile';
 import * as sentryContext from '../sentry.context';
+import { NextGenTokenTDH } from '../entities/INextGen';
 
 const logger = Logger.get('TDH_LOOP');
 
@@ -27,6 +28,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   await loadEnv([
     TDH,
     ConsolidatedTDH,
+    NextGenTokenTDH,
     ConsolidatedTDHUpload,
     NFT,
     OwnerMetric,

@@ -89,7 +89,8 @@ import {
   NextGenToken,
   NextGenTransaction,
   NextGenTokenTrait,
-  NextGenTokenScore
+  NextGenTokenScore,
+  NextGenTokenTDH
 } from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { Profile, ProfileArchived } from './entities/IProfile';
@@ -105,6 +106,7 @@ import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResu
 import { ListenerProcessedEvent, ProcessableEvent } from './entities/IEvent';
 import { CicScoreAggregation } from './entities/ICicScoreAggregation';
 import { ProfileTotalRepScoreAggregation } from './entities/IRepScoreAggregations';
+import { NEXTGEN_TRANSACTIONS_TABLE } from './nextgen/nextgen_constants';
 
 const mysql = require('mysql');
 
@@ -130,6 +132,7 @@ export async function connect(entities: any[] = []) {
       TDH,
       Consolidation,
       ConsolidatedTDH,
+      NextGenTokenTDH,
       ConsolidatedOwnerMetric,
       ConsolidatedOwnerTags,
       ConsolidatedTDHUpload,
@@ -484,6 +487,7 @@ export async function fetchAllTDH(wallets?: string[]) {
   const results = await sqlExecutor.execute(sql, { block: tdhBlock, wallets });
   results.map((r: any) => (r.memes = JSON.parse(r.memes)));
   results.map((r: any) => (r.gradients = JSON.parse(r.gradients)));
+  results.map((r: any) => (r.nextgen = JSON.parse(r.nextgen)));
   return results;
 }
 
@@ -584,18 +588,15 @@ export async function fetchDistinctOwnerWallets() {
 
 export async function fetchTransactionsFromDate(
   date: Date | undefined,
-  limit?: number
+  nextgen: boolean
 ) {
-  let sql = `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE}`;
+  const table = nextgen ? NEXTGEN_TRANSACTIONS_TABLE : TRANSACTIONS_TABLE;
+  let sql = `SELECT from_address, to_address FROM ${table}`;
   const params: any = {};
 
   if (date) {
-    sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at >= :date`;
+    sql += ` WHERE ${table}.created_at >= :date`;
     params.date = date.toISOString();
-  }
-  if (limit) {
-    sql += ` LIMIT :limit`;
-    params.limit = limit;
   }
 
   const results = await sqlExecutor.execute(sql, params);
@@ -621,8 +622,14 @@ export async function fetchAllConsolidationAddresses() {
   return results;
 }
 
-export async function fetchWalletTransactions(wallet: string, block?: number) {
-  const sql = `SELECT * FROM ${TRANSACTIONS_TABLE}`;
+export async function fetchWalletTransactions(
+  wallet: string,
+  nextgen: boolean,
+  block?: number
+) {
+  const sql = `SELECT * FROM ${
+    nextgen ? NEXTGEN_TRANSACTIONS_TABLE : TRANSACTIONS_TABLE
+  }`;
   const params: any = {};
 
   let filters = constructFilters(
@@ -914,7 +921,11 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
       const repo = manager.getRepository(OwnerTags);
       await Promise.all(
         ownersTags.map(async (owner) => {
-          if (0 >= owner.memes_balance && 0 >= owner.gradients_balance) {
+          if (
+            0 >= owner.memes_balance &&
+            0 >= owner.gradients_balance &&
+            0 >= owner.nextgen_balance
+          ) {
             await repo.remove(owner);
           } else {
             await repo.upsert(owner, ['wallet']);
@@ -1122,6 +1133,11 @@ export async function persistConsolidatedTDH(
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+export async function persistNextGenTokenTDH(nextgenTdh: NextGenTokenTDH[]) {
+  logger.info(`[NEXTGEN TOKEN TDH] : [${nextgenTdh.length}]`);
+  await AppDataSource.getRepository(NextGenTokenTDH).save(nextgenTdh);
 }
 
 export async function persistENS(ens: ENS[]) {

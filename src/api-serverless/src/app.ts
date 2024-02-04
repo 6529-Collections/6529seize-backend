@@ -57,6 +57,7 @@ import {
   TAGS_FILTERS,
   DISTRIBUTION_SORT
 } from './api-filters';
+import { parseTdhResults } from '../../sql_helpers';
 
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
@@ -578,12 +579,7 @@ loadApi().then(() => {
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
     db.fetchGradientTdh(pageSize, page).then((result) => {
-      result.data.map((d: any) => {
-        d.memes = JSON.parse(d.memes);
-        d.memes_ranks = JSON.parse(d.memes_ranks);
-        d.gradients = JSON.parse(d.gradients);
-        d.gradients_ranks = JSON.parse(d.gradients_ranks);
-      });
+      result = parseTdhResults(result);
       returnPaginatedResult(result, req, res);
     });
   });
@@ -644,12 +640,7 @@ loadApi().then(() => {
       sort,
       sortDir
     ).then((result) => {
-      result.data.map((d: any) => {
-        d.memes = JSON.parse(d.memes);
-        d.memes_ranks = JSON.parse(d.memes_ranks);
-        d.gradients = JSON.parse(d.gradients);
-        d.gradients_ranks = JSON.parse(d.gradients_ranks);
-      });
+      result = parseTdhResults(result);
       returnPaginatedResult(result, req, res);
     });
   });
@@ -687,13 +678,7 @@ loadApi().then(() => {
         sort,
         sortDir
       ).then((result) => {
-        result.data.map((d: any) => {
-          d.memes = JSON.parse(d.memes);
-          d.memes_ranks = JSON.parse(d.memes_ranks);
-          d.gradients = JSON.parse(d.gradients);
-          d.gradients_ranks = JSON.parse(d.gradients_ranks);
-          d.wallets = JSON.parse(d.wallets);
-        });
+        result = parseTdhResults(result);
         returnPaginatedResult(result, req, res);
       });
     }
@@ -739,12 +724,7 @@ loadApi().then(() => {
       hideMuseum,
       hideTeam
     ).then((result) => {
-      result.data.map((d: any) => {
-        d.memes = JSON.parse(d.memes);
-        d.memes_ranks = JSON.parse(d.memes_ranks);
-        d.gradients = JSON.parse(d.gradients);
-        d.gradients_ranks = JSON.parse(d.gradients_ranks);
-      });
+      result = parseTdhResults(result);
       returnPaginatedResult(result, req, res);
     });
   });
@@ -806,25 +786,14 @@ loadApi().then(() => {
           delete d.memes_ranks;
           delete d.gradients;
           delete d.gradients_ranks;
+          delete d.nextgen;
+          delete d.nextgen_ranks;
           if (!d.handle) {
             d.handle = '';
           }
         });
       } else {
-        result.data.map((d: any) => {
-          if (d.memes) {
-            d.memes = JSON.parse(d.memes);
-          }
-          if (d.memes_ranks) {
-            d.memes_ranks = JSON.parse(d.memes_ranks);
-          }
-          if (d.gradients) {
-            d.gradients = JSON.parse(d.gradients);
-          }
-          if (d.gradients_ranks) {
-            d.gradients_ranks = JSON.parse(d.gradients_ranks);
-          }
-        });
+        result = parseTdhResults(result);
       }
       if (downloadAll || downloadPage) {
         returnCSVResult('consolidated_owner_metrics', result.data, res);
@@ -936,6 +905,8 @@ loadApi().then(() => {
           delete d.memes_ranks;
           delete d.gradients;
           delete d.gradients_ranks;
+          delete d.nextgen;
+          delete d.nextgen_ranks;
           if (!d.handle) {
             d.handle = '';
           }

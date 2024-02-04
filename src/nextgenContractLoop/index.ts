@@ -16,7 +16,7 @@ import {
 } from '../entities/INextGen';
 import { findNextGenTransactions } from '../nextgen/nextgen';
 
-const logger = Logger.get('NEXTGEN');
+const logger = Logger.get('NEXTGEN_CONTRACT_LOOP');
 
 export const handler = async (event: any) => {
   const start = Time.now();
