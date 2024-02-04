@@ -12,6 +12,11 @@ provider:
   memorySize: 1028
   timeout: 900
 
+custom:
+  chainIDs:
+    staging: 11155111
+    prod: 1
+
 functions:
   tdhLoop:
     handler: index.handler
