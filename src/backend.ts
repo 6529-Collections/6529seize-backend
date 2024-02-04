@@ -3,7 +3,7 @@ import { Time } from './time';
 
 const nextgenContract = require('./nextgenContractLoop');
 const nextgenMetadata = require('./nextgenMetadataLoop');
-const nextgenMissingImagesLoop = require('./nextgenMissingImageQualitiesLoop');
+const nextgenMissingImageResolutionsLoop = require('./nextgenMissingImageResolutionsLoop');
 const tdhLoop = require('./tdhLoop');
 const ownerMetricsLoop = require('./ownerMetricsLoop');
 const ownersLoop = require('./ownersLoop');
@@ -16,7 +16,7 @@ async function start() {
 
   // await nextgenContract.handler();
   // await nextgenMetadata.handler();
-  await nextgenMissingImagesLoop.handler();
+  await nextgenMissingImageResolutionsLoop.handler();
   // await tdhLoop.handler();
   // await ownerMetricsLoop.handler();
   // await ownersLoop.handler();
