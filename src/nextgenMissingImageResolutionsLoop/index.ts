@@ -29,7 +29,6 @@ export const handler = async (event: any) => {
   for (let resolution of resolutions) {
     const found = await findMissingImages(resolution);
     if (found.found) {
-      console.log('i am found', found);
       if (found.processed) {
         logger.info(`[FOUND AND PROCESSED ${found.image}]`);
       } else {
@@ -56,7 +55,7 @@ async function listS3Objects(path: string) {
       }
     });
   } catch (error) {
-    console.error('Error:', error);
+    logger.error(`[S3 LIST ERROR] : [PATH ${path}] : [ERROR ${error}]`);
   }
   return contents;
 }
@@ -87,7 +86,6 @@ async function findMissingImages(resolution: string, count = PRELOAD_COUNT) {
     const generatorPath = `${originalPath}${image}/${resolution}`;
     logger.info(`[TRIGGERING CACHE FOR ${generatorPath}]`);
     triggerGeneratorPath(generatorPath);
-    logger.info(`[CACHE TRIGGERED FOR ${image}]`);
   });
 
   const firstImage = missingImages[0];
