@@ -473,7 +473,7 @@ export class NextGenTokenTDH {
   @Column({ type: 'int' })
   collection_id!: number;
 
-  @PrimaryColumn({ type: 'int' })
+  @Column({ type: 'int' })
   block!: number;
 
   @Column({ type: 'int', nullable: false })
