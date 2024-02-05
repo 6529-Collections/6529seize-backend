@@ -23,6 +23,7 @@ import {
   getNextgenNetwork
 } from './nextgen_constants';
 import { CLOUDFRONT_LINK } from '../constants';
+import { getAlchemyInstance } from '../alchemy';
 
 const logger = Logger.get('NEXTGEN_CORE_TRANSACTIONS');
 
@@ -253,10 +254,27 @@ async function artistSignature(
   }
   collection.artist_signature = signature;
   await persistNextGenCollection(entityManager, collection);
+  const artistAddress = collection.artist_address ?? '';
+
+  let artistEns;
+  try {
+    const alchemy = getAlchemyInstance();
+    artistEns = await alchemy.core.lookupAddress(artistAddress);
+    logger.info(
+      `[LOOKUP ARTIST ADDRESS] : [ADDRESS ${artistAddress}] : [ENS ${artistEns}]`
+    );
+  } catch (error) {
+    logger.error(`[LOOKUP ARTIST ADDRESS ERROR] : [ADDRESS ${artistAddress}]`);
+  }
+
+  const artistDisplay = `(${artistAddress}${
+    artistEns ? ` - ${artistEns}` : ''
+  })`;
+
   return [
     {
       id: id,
-      description: 'Artist Signature Added'
+      description: `Artist Signature Added ${artistDisplay}`
     }
   ];
 }
