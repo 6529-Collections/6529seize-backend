@@ -58,13 +58,13 @@ async function processCollectionTraitScores(
     tt.token_count = tokenCount;
 
     const sharedKey = tokenTraits.filter((tt) => tt.trait === name);
-    tt.trait_count = tokenTraits.length;
+    tt.trait_count = new Set(sharedKey.map((item) => item.value)).size;
 
     const valueCount = sharedKey.filter((tt) => tt.value === value).length;
     tt.value_count = valueCount;
 
     const sharedKeyValue = sharedKey.filter((tt) => tt.value === value).length;
-    tt.rarity = (sharedKeyValue / tokenCount) * 100;
+    tt.statistical_rarity = sharedKeyValue / tokenCount;
     tt.rarity_score = tokenCount / sharedKeyValue;
 
     const valuesCountForTrait = new Set(sharedKey.map((item) => item.value))
@@ -77,6 +77,7 @@ async function processCollectionTraitScores(
 
   let rankedTraits = calulateTokenRanks(tokenTraits, 'rarity_score');
   rankedTraits = calulateTokenRanks(rankedTraits, 'rarity_score_normalised');
+  rankedTraits = calulateTokenRanks(rankedTraits, 'statistical_rarity');
   await persistNextGenTraits(entityManager, rankedTraits);
 
   await processTokens(entityManager, collection);
@@ -106,18 +107,23 @@ async function processTokens(
         (acc, tt) => {
           acc.rarityScore += tt.rarity_score;
           acc.rarityScoreNormalised += tt.rarity_score_normalised;
-          acc.statisticalScore *= tt.rarity / 100;
+          acc.statisticalScore *= tt.statistical_rarity;
           return acc;
         },
         { rarityScore: 0, rarityScoreNormalised: 0, statisticalScore: 1 }
       );
+
+    const singleTraitRarity = Math.min(
+      ...traits.map((t) => t.statistical_rarity)
+    );
 
     traitScores.push({
       id: token.id,
       collection_id: token.collection_id,
       rarity_score: rarityScore,
       rarity_score_normalised: rarityScoreNormalised,
-      statistical_score: statisticalScore
+      statistical_score: statisticalScore,
+      single_trait_rarity_score: singleTraitRarity
     });
   }
 
@@ -131,12 +137,18 @@ async function processTokens(
     'statistical_score',
     true
   );
+  const singleTraitScoreRanks = calculateRanks(
+    traitScores,
+    'single_trait_rarity_score',
+    true
+  );
 
   const rankedTraitScores: NextGenTokenScore[] = traitScores.map((score) => ({
     ...score,
     rarity_score_rank: rarityScoreRanks.get(score.id),
     rarity_score_normalised_rank: rarityScoreNormalisedRanks.get(score.id),
-    statistical_score_rank: statisticalScoreRanks.get(score.id)
+    statistical_score_rank: statisticalScoreRanks.get(score.id),
+    single_trait_rarity_score_rank: singleTraitScoreRanks.get(score.id)
   }));
 
   await entityManager.getRepository(NextGenTokenScore).save(rankedTraitScores);
@@ -179,32 +191,34 @@ function calulateTokenRanks(
   startingTraits: NextGenTokenTrait[],
   field: string
 ) {
-  const tokenTraits = startingTraits as any[];
-  const sortedTraits = tokenTraits.sort(
-    (a: any, b: any) => b[field] - a[field]
-  );
+  const categories = new Set<string>(startingTraits.map((tt) => tt.trait));
+
+  const rankedTokens = Array.from(categories).map((category) => {
+    const traits = startingTraits.filter((tt) => tt.trait === category);
+    return calculateTokenRanksForCategory(traits, field);
+  });
+  return rankedTokens.flat();
+}
+
+function calculateTokenRanksForCategory(
+  startingTraits: NextGenTokenTrait[],
+  field: string
+) {
+  const tokenTraits = [...startingTraits] as any[];
+  const sortedTraits = tokenTraits.sort((a, b) => b[field] - a[field]);
 
   let currentRank = 1;
-  let previousScore = tokenTraits[0][field];
-  let itemsAtCurrentRank = 1;
+  let previousValue = sortedTraits[0][field];
 
   sortedTraits.forEach((tt, index) => {
-    if (index === 0) {
-      tt[`${field}_rank`] = currentRank;
-    } else {
-      if (tt.rarity_score === previousScore) {
-        tt[`${field}_rank`] = currentRank;
-        itemsAtCurrentRank++;
-      } else {
-        currentRank += itemsAtCurrentRank;
-        tt[`${field}_rank`] = currentRank;
-        previousScore = tt[field];
-        itemsAtCurrentRank = 1;
-      }
+    if (tt[field] !== previousValue) {
+      currentRank += 1;
+      previousValue = tt[field];
     }
+    tt[`${field}_rank`] = currentRank;
   });
 
-  return sortedTraits as NextGenTokenTrait[];
+  return sortedTraits;
 }
 
 async function processCollectionHodlRate(

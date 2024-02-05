@@ -14,9 +14,9 @@ async function start() {
   const start = Time.now();
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  // await nextgenContract.handler();
+  await nextgenContract.handler();
   // await nextgenMetadata.handler();
-  await nextgenMissingImageResolutionsLoop.handler();
+  // await nextgenMissingImageResolutionsLoop.handler();
   // await tdhLoop.handler();
   // await ownerMetricsLoop.handler();
   // await ownersLoop.handler();

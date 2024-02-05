@@ -517,7 +517,10 @@ export class NextGenTokenTrait {
   value!: string;
 
   @Column({ type: 'double' })
-  rarity!: number;
+  statistical_rarity!: number;
+
+  @Column({ type: 'double' })
+  statistical_rarity_rank!: number;
 
   @Column({ type: 'double' })
   rarity_score!: number;
@@ -564,6 +567,9 @@ export class NextGenTokenScore {
   @Column({ type: 'double' })
   statistical_score!: number;
 
+  @Column({ type: 'double' })
+  single_trait_rarity_score!: number;
+
   @Column({ type: 'int' })
   rarity_score_rank?: number;
 
@@ -572,4 +578,7 @@ export class NextGenTokenScore {
 
   @Column({ type: 'int' })
   statistical_score_rank?: number;
+
+  @Column({ type: 'int' })
+  single_trait_rarity_score_rank?: number;
 }
