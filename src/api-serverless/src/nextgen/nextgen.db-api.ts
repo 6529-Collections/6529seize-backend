@@ -216,9 +216,9 @@ export async function fetchNextGenCollectionTokens(
 
   const joins = `LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_SCORES_TABLE}.id`;
 
-  let sortQuery;
+  let sortQuery: string;
   if (sort === TokensSort.RANDOM) {
-    sortQuery = `RAND()`;
+    sortQuery = `pending, RAND()`;
   } else {
     sortQuery = `${NEXTGEN_TOKEN_SCORES_TABLE}.${sort} ${sortDirection}, ${NEXTGEN_TOKEN_SCORES_TABLE}.id asc`;
   }
