@@ -88,7 +88,7 @@ async function findMissingImages(resolution: string, count = PRELOAD_COUNT) {
     };
   }
 
-  if (resolution !== '16K') {
+  if (resolution !== '16k') {
     missingImages.forEach((image) => {
       const generatorPath = `${originalPath}${image}/${resolution}`;
       logger.info(`[TRIGGERING CACHE FOR ${generatorPath}]`);
