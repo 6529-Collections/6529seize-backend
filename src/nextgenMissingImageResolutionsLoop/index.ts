@@ -28,7 +28,7 @@ export const handler = async (event: any) => {
   logger.info(`[RUNNING]`);
   await loadEnv([]);
   setup();
-  const resolutions = ['4k', '8k', '16k'];
+  const resolutions = ['4k'];
   for (let resolution of resolutions) {
     const found = await findMissingImages(resolution);
     if (found.found) {
