@@ -10,6 +10,8 @@ import {
   s3UploadNextgenImage,
   triggerGeneratorPath
 } from '../nextgen/nextgen_generator';
+import { sepolia } from '@wagmi/chains';
+import { loadEnv } from '../secrets';
 
 const logger = Logger.get('NEXTGEN_IMAGES_LOOP');
 
@@ -24,6 +26,7 @@ const PRELOAD_COUNT = 5;
 export const handler = async (event: any) => {
   const start = Time.now();
   logger.info(`[RUNNING]`);
+  await loadEnv([]);
   setup();
   const resolutions = ['4k', '8k', '16k'];
   for (let resolution of resolutions) {
@@ -60,14 +63,17 @@ async function listS3Objects(path: string) {
   return contents;
 }
 
-function findFirstMissingImage(original: string[], contents4k: string[]) {
-  const missingImages = original.find((image) => !contents4k.includes(image));
-  return missingImages;
+function getNetworkPath() {
+  if (process.env.NEXTGEN_CHAIN_ID === sepolia.id.toString()) {
+    return `testnet`;
+  }
+  return `mainnet`;
 }
 
 async function findMissingImages(resolution: string, count = PRELOAD_COUNT) {
-  const originalPath = 'testnet/png/';
-  const resolutionPath = `testnet/png${resolution}/`;
+  const networkPath = getNetworkPath();
+  const originalPath = `${networkPath}/png/`;
+  const resolutionPath = `${networkPath}/png${resolution}/`;
 
   const contentOriginal = await listS3Objects(originalPath);
   const contentsResolution = await listS3Objects(resolutionPath);
@@ -82,11 +88,13 @@ async function findMissingImages(resolution: string, count = PRELOAD_COUNT) {
     };
   }
 
-  missingImages.forEach((image) => {
-    const generatorPath = `${originalPath}${image}/${resolution}`;
-    logger.info(`[TRIGGERING CACHE FOR ${generatorPath}]`);
-    triggerGeneratorPath(generatorPath);
-  });
+  if (resolution !== '16K') {
+    missingImages.forEach((image) => {
+      const generatorPath = `${originalPath}${image}/${resolution}`;
+      logger.info(`[TRIGGERING CACHE FOR ${generatorPath}]`);
+      triggerGeneratorPath(generatorPath);
+    });
+  }
 
   const firstImage = missingImages[0];
   const firstGeneratorPath = `${originalPath}${firstImage}/${resolution}`;
