@@ -45,12 +45,12 @@ export async function getImageBlobFromGenerator(path: string) {
       timeout: 300000 // (5 minutes)
     });
     if (genImageResponse.status !== 200) {
-      return returnError(`[STATUS ${genImageResponse.status}]`);
+      return returnError(`STATUS ${genImageResponse.status}`);
     }
     logger.info(`[IMAGE ${path} DOWNLOADED]`);
     return genImageResponse.data;
   } catch (error: any) {
-    return returnError(`[ERROR ${error.message}]`);
+    return returnError(`ERROR ${error.message}`);
   }
 }
 

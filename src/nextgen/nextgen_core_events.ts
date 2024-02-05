@@ -222,54 +222,49 @@ export async function upsertToken(
   hodlRate: number
 ) {
   const metadataLink = `${collection.base_uri}${tokenId}`;
-  try {
-    const metadataResponse: any = await (await fetch(metadataLink)).json();
-    const pending = metadataResponse.name.toLowerCase().startsWith('pending');
 
-    const nextGenToken: NextGenToken = {
-      id: tokenId,
-      normalised_id: normalisedTokenId,
-      name: metadataResponse.name,
-      collection_id: collection.id,
-      collection_name: collection.name,
-      mint_date: mintDate,
-      mint_price: mintPrice,
-      metadata_url: metadataLink,
-      image_url: metadataResponse.image,
-      animation_url:
-        metadataResponse.image?.replace('/png/', '/html/') ??
-        metadataResponse.animation_url ??
-        metadataResponse.generator?.html ??
-        null,
-      generator: metadataResponse.generator,
-      owner: owner.toLowerCase(),
-      pending: pending,
-      burnt: !!burnDate,
-      burnt_date: burnDate,
-      hodl_rate: hodlRate
-    };
+  const metadataResponse: any = await (await fetch(metadataLink)).json();
+  const pending = metadataResponse.name.toLowerCase().startsWith('pending');
 
-    if (mintDate) {
-      const newMintCount = normalisedTokenId + 1;
-      logger.info(
-        `[TOKEN ID ${tokenId}] : [MINTED] : [COLLECTION MINT COUNT ${collection.mint_count}] : [UPDATING COLLECTION MINT COUNT TO ${newMintCount}...]`
-      );
-      collection.mint_count = newMintCount;
-      await persistNextGenCollection(entityManager, collection);
-    }
-    await persistNextGenToken(entityManager, nextGenToken);
+  const nextGenToken: NextGenToken = {
+    id: tokenId,
+    normalised_id: normalisedTokenId,
+    name: metadataResponse.name,
+    collection_id: collection.id,
+    collection_name: collection.name,
+    mint_date: mintDate,
+    mint_price: mintPrice,
+    metadata_url: metadataLink,
+    image_url: metadataResponse.image,
+    animation_url:
+      metadataResponse.image?.replace('/png/', '/html/') ??
+      metadataResponse.animation_url ??
+      metadataResponse.generator?.html ??
+      null,
+    generator: metadataResponse.generator,
+    owner: owner.toLowerCase(),
+    pending: pending,
+    burnt: !!burnDate,
+    burnt_date: burnDate,
+    hodl_rate: hodlRate
+  };
 
-    if (metadataResponse.attributes) {
-      await processTraits(
-        entityManager,
-        tokenId,
-        collection.id,
-        metadataResponse.attributes
-      );
-    }
-  } catch (e) {
+  if (mintDate) {
+    const newMintCount = normalisedTokenId + 1;
     logger.info(
-      `[TOKEN ID ${tokenId}] : [ERROR FETCHING METADATA] : [METADATA LINK ${metadataLink}] : [ERROR ${e}]`
+      `[TOKEN ID ${tokenId}] : [MINTED] : [COLLECTION MINT COUNT ${collection.mint_count}] : [UPDATING COLLECTION MINT COUNT TO ${newMintCount}...]`
+    );
+    collection.mint_count = newMintCount;
+    await persistNextGenCollection(entityManager, collection);
+  }
+  await persistNextGenToken(entityManager, nextGenToken);
+
+  if (metadataResponse.attributes) {
+    await processTraits(
+      entityManager,
+      tokenId,
+      collection.id,
+      metadataResponse.attributes
     );
   }
 }
