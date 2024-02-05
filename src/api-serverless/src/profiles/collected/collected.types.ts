@@ -21,7 +21,7 @@ export interface CollectedCard {
   readonly tdh: number | null;
   readonly rank: number | null;
   readonly seized_count: number | null;
-  readonly szn: number | null;
+  readonly szn: string | null;
 }
 
 export interface CollectedQuery
@@ -30,5 +30,5 @@ export interface CollectedQuery
   readonly collection: CollectionType | null;
   readonly account_for_consolidations: boolean;
   readonly seized: CardSeizedStatus;
-  readonly szn: number | null;
+  readonly szn: string | null;
 }

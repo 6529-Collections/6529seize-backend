@@ -13,8 +13,9 @@ import { WALLET_REGEX } from '../../../../constants';
 import {
   collectedDb,
   CollectedDb,
+  MemesAndGradientsOwnershipData,
   NftData,
-  NftsOwnershipData
+  NftsCollectionOwnershipData
 } from './collected.db';
 import { parseNumberOrNull } from '../../api-helpers';
 import { assertUnreachable } from '../../../../helpers';
@@ -28,7 +29,9 @@ export class CollectedService {
   private async getWalletsToSearchBy(query: CollectedQuery): Promise<string[]> {
     if (
       query.collection &&
-      query.collection !== CollectionType.MEMES &&
+      ![CollectionType.MEMES, CollectionType.NEXTGEN].includes(
+        query.collection
+      ) &&
       query.szn
     ) {
       return [];
@@ -64,12 +67,17 @@ export class CollectedService {
     if (walletsToSearchBy.length === 0) {
       return emptyPage();
     }
-    const { nfts, memesAndGradientsStats, memeLabOwnerBalancesByTokenIds } =
-      await this.getDataFromDb(walletsToSearchBy);
+    const {
+      nfts,
+      memesAndGradientsStats,
+      nextgenStats,
+      memeLabOwnerBalancesByTokenIds
+    } = await this.getDataFromDb(walletsToSearchBy);
     const cards = await this.mergeNftsWithOwnersipData(
       nfts,
       memesAndGradientsStats,
-      memeLabOwnerBalancesByTokenIds
+      memeLabOwnerBalancesByTokenIds,
+      nextgenStats
     ).then((cards) => this.filterCards(query, cards));
     const pageOfCards = this.getPageData(cards, query);
     const count = cards.length;
@@ -129,31 +137,55 @@ export class CollectedService {
 
   private async mergeNftsWithOwnersipData(
     nfts: NftData[],
-    memesAndGradientsStats: NftsOwnershipData,
-    memeLabOwnerBalancesByTokenIds: Record<number, number>
+    memesAndGradientsStats: MemesAndGradientsOwnershipData,
+    memeLabOwnerBalancesByTokenIds: Record<number, number>,
+    nextgenStats: NftsCollectionOwnershipData
   ): Promise<CollectedCard[]> {
     return nfts.map<CollectedCard>((nft) => {
       let tdh = null;
       let rank = null;
       let seized = null;
-      if (nft.collection === CollectionType.MEMELAB) {
-        seized = memeLabOwnerBalancesByTokenIds[nft.token_id] ?? null;
-      } else if (nft.collection === CollectionType.MEMES) {
-        tdh = memesAndGradientsStats.memes[nft.token_id]?.tdh ?? null;
-        rank = memesAndGradientsStats.memes_ranks[nft.token_id] ?? null;
-        seized = memesAndGradientsStats.memes[nft.token_id]?.balance ?? null;
-      } else if (nft.collection === CollectionType.GRADIENTS) {
-        tdh = memesAndGradientsStats.gradients[nft.token_id]?.tdh ?? null;
-        rank = memesAndGradientsStats.gradients_ranks[nft.token_id] ?? null;
-        seized =
-          memesAndGradientsStats.gradients[nft.token_id]?.balance ?? null;
+      switch (nft.collection) {
+        case CollectionType.MEMELAB: {
+          seized = memeLabOwnerBalancesByTokenIds[nft.token_id] ?? null;
+          break;
+        }
+        case CollectionType.MEMES: {
+          tdh =
+            memesAndGradientsStats.memes.tdhsAndBalances[nft.token_id]?.tdh ??
+            null;
+          rank = memesAndGradientsStats.memes.ranks[nft.token_id] ?? null;
+          seized =
+            memesAndGradientsStats.memes.tdhsAndBalances[nft.token_id]
+              ?.balance ?? null;
+          break;
+        }
+        case CollectionType.GRADIENTS: {
+          tdh =
+            memesAndGradientsStats.gradients.tdhsAndBalances[nft.token_id]
+              ?.tdh ?? null;
+          rank = memesAndGradientsStats.gradients.ranks[nft.token_id] ?? null;
+          seized =
+            memesAndGradientsStats.gradients.tdhsAndBalances[nft.token_id]
+              ?.balance ?? null;
+          break;
+        }
+        case CollectionType.NEXTGEN: {
+          tdh = nextgenStats.tdhsAndBalances[nft.token_id]?.tdh ?? null;
+          rank = nextgenStats.ranks[nft.token_id] ?? null;
+          seized = nextgenStats.tdhsAndBalances[nft.token_id]?.balance ?? null;
+          break;
+        }
+        default: {
+          assertUnreachable(nft.collection);
+        }
       }
       return {
         collection: nft.collection,
         token_id: nft.token_id,
         token_name: nft.name,
         img: nft.thumbnail,
-        szn: parseNumberOrNull(nft.season),
+        szn: nft.season,
         tdh: tdh,
         rank: rank,
         seized_count: seized
@@ -163,25 +195,42 @@ export class CollectedService {
 
   private async getDataFromDb(walletsToSearchBy: string[]): Promise<{
     nfts: NftData[];
-    memesAndGradientsStats: NftsOwnershipData;
+    memesAndGradientsStats: MemesAndGradientsOwnershipData;
+    nextgenStats: NftsCollectionOwnershipData;
     memeLabOwnerBalancesByTokenIds: Record<number, number>;
   }> {
     const data = await Promise.all([
       this.collectedDb.getAllNfts(),
-      walletsToSearchBy.length > 1
-        ? this.collectedDb.getWalletConsolidatedMemesAndGradientsMetrics(
-            walletsToSearchBy[0]
-          )
-        : this.collectedDb.getWalletMemesAndGradientsMetrics(
-            walletsToSearchBy[0]
-          ),
+      this.getMemesAndGradientsOwnershipData(walletsToSearchBy),
+      this.getNextgenOwnershipData(walletsToSearchBy),
       this.collectedDb.getWalletsMemeLabsBalancesByTokens(walletsToSearchBy)
     ]);
     return {
       nfts: data[0],
       memesAndGradientsStats: data[1],
-      memeLabOwnerBalancesByTokenIds: data[2]
+      nextgenStats: data[2],
+      memeLabOwnerBalancesByTokenIds: data[3]
     };
+  }
+
+  private getMemesAndGradientsOwnershipData(
+    walletsToSearchBy: string[]
+  ): Promise<MemesAndGradientsOwnershipData> {
+    return walletsToSearchBy.length > 1
+      ? this.collectedDb.getWalletConsolidatedMemesAndGradientsMetrics(
+          walletsToSearchBy[0]
+        )
+      : this.collectedDb.getWalletMemesAndGradientsMetrics(
+          walletsToSearchBy[0]
+        );
+  }
+
+  private async getNextgenOwnershipData(
+    walletsToSearchBy: string[]
+  ): Promise<NftsCollectionOwnershipData> {
+    return walletsToSearchBy.length > 1
+      ? this.collectedDb.getConsolidatedNextgenMetrics(walletsToSearchBy)
+      : this.collectedDb.getWalletNextgenMetrics(walletsToSearchBy[0]);
   }
 }
 
