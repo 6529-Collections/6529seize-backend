@@ -113,9 +113,10 @@ async function processTokens(
         { rarityScore: 0, rarityScoreNormalised: 0, statisticalScore: 1 }
       );
 
-    const singleTraitRarity = Math.min(
-      ...traits.map((t) => t.statistical_rarity)
-    );
+    let singleTraitRarity = 0;
+    if (traits.length > 0) {
+      singleTraitRarity = Math.min(...traits.map((t) => t.statistical_rarity));
+    }
 
     traitScores.push({
       id: token.id,
