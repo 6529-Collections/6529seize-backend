@@ -123,6 +123,26 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
       .then(this.mapMemesAndGradientsResults);
   }
 
+  async getNextgenLiveBalances(
+    wallets: string[]
+  ): Promise<Record<number, number>> {
+    if (!wallets.length) {
+      return {};
+    }
+    let sql = `select id from ${NEXTGEN_TOKENS_TABLE} where owner = lower(:wallet1)`;
+    const params: Record<string, string> = { wallet1: wallets[0] };
+    for (let i = 1; i < wallets.length; i++) {
+      const key = `wallet${i + 1}`;
+      params[key] = wallets[i];
+      sql += ` or wallet = lower(:${key})`;
+    }
+    const result: { id: number }[] = await this.db.execute(sql, params);
+    return result.reduce((acc, cur) => {
+      acc[cur.id] = 1;
+      return acc;
+    }, {} as Record<number, number>);
+  }
+
   async getWalletsMemeLabsBalancesByTokens(
     wallets: string[]
   ): Promise<Record<number, number>> {
@@ -226,7 +246,7 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
       sql += ` or lower(token.owner) = lower(:${key})`;
     }
     const result: {
-      token_id: string;
+      token_id: number;
       tdh: number;
       rank: number;
       seized_count: number;
@@ -235,11 +255,11 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
       tdhsAndBalances: result.reduce((acc, cur) => {
         acc[cur.token_id] = { tdh: cur.tdh, balance: cur.seized_count };
         return acc;
-      }, {}),
+      }, {} as Record<number, { tdh: number; balance: number }>),
       ranks: result.reduce((acc, cur) => {
         acc[cur.token_id] = cur.rank;
         return acc;
-      }, {})
+      }, {} as Record<number, number>)
     };
   }
 
