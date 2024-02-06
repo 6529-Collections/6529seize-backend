@@ -81,7 +81,7 @@ export async function persistNextGenTraits(
   await repo.upsert(tokenTraits, ['token_id', 'trait']);
 }
 
-export async function transactionWithValue(
+export async function persistNextgenTransaction(
   manager: EntityManager,
   transaction: Transaction
 ) {

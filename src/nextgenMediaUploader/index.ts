@@ -18,6 +18,7 @@ import {
   getImageBlobFromGenerator,
   s3UploadNextgenImage
 } from '../nextgen/nextgen_generator';
+import { objectExists } from '../helpers/s3_helpers';
 
 const logger = Logger.get('NEXTGEN_MEDIA_UPLOADER');
 
@@ -45,17 +46,30 @@ export const handler = wrapLambdaHandler(async (event: any) => {
 });
 
 async function uploadMissingNextgenMedia(path: string) {
-  logger.info(`[UPLOADING MISSING NEXTGEN MEDIA] : [PATH ${path}]`);
+  const metadataPath = path.startsWith('/') ? path.slice(1) : path;
+  const imagePath = metadataPath.replace('/metadata/', '/png/');
+  const htmlPath = metadataPath.replace('/metadata/', '/html/');
+
+  const metadataExists = await objectExists(s3, NEXTGEN_BUCKET, metadataPath);
+  const imageExists = await objectExists(s3, NEXTGEN_BUCKET, imagePath);
+  const htmlExists = await objectExists(s3, NEXTGEN_BUCKET, htmlPath);
+
+  if (metadataExists && imageExists && htmlExists) {
+    logger.info(
+      `[ALL NEXTGEN MEDIA EXIST] : [METADATA ${metadataPath}] : [IMAGE ${imagePath}] : [HTML ${htmlPath}]`
+    );
+    return;
+  }
+
+  logger.info(
+    `[UPLOADING MISSING NEXTGEN MEDIA] : [PATH ${path}]: [METADATA EXISTS ${metadataExists}] : [IMAGE EXISTS ${imageExists}] : [HTML EXISTS ${htmlExists}]`
+  );
   if (!path.includes('/metadata/')) {
     logger.info(`[NOT A METADATA PATH] : [SKIPPING] : [PATH ${path}]`);
     return;
   }
 
   const genDetails = getGenDetailsFromUri(path);
-
-  const metadataPath = path.startsWith('/') ? path.slice(1) : path;
-  const imagePath = metadataPath.replace('/metadata/', '/png/');
-  const htmlPath = metadataPath.replace('/metadata/', '/html/');
 
   const generatorMetadataPath = `${GENERATOR_BASE_PATH}/${metadataPath}`;
   const genMetaResponse = await fetch(generatorMetadataPath);
