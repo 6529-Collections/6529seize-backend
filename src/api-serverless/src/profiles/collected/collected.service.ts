@@ -209,7 +209,11 @@ export class CollectedService {
     const memesAndGradients = data[1];
     const nextgenStats = data[2];
     const memeLabsBalances = data[3];
-    await this.adjustBalancesWithLiveData(walletsToSearchBy, memesAndGradients);
+    await this.adjustBalancesWithLiveData(
+      walletsToSearchBy,
+      memesAndGradients,
+      nextgenStats
+    );
     return {
       nfts: nfts,
       memesAndGradientsStats: memesAndGradients,
@@ -220,8 +224,12 @@ export class CollectedService {
 
   private async adjustBalancesWithLiveData(
     walletsToSearchBy: string[],
-    memesAndGradients: MemesAndGradientsOwnershipData
+    memesAndGradients: MemesAndGradientsOwnershipData,
+    nextgenStats: NftsCollectionOwnershipData
   ) {
+    const nextgenLiveBalances = await this.collectedDb.getNextgenLiveBalances(
+      walletsToSearchBy
+    );
     const { gradients: gradientsLiveBalances, memes: memesLiveBalances } =
       await this.collectedDb.getGradientsAndMemesLiveBalancesByTokenIds(
         walletsToSearchBy
@@ -256,6 +264,23 @@ export class CollectedService {
           memesAndGradients.gradients.tdhsAndBalances[tokenId] = {
             balance: liveBalance,
             tdh: memesAndGradients.gradients.tdhsAndBalances[tokenId]?.tdh ?? 0
+          };
+        }
+      }
+    });
+    distinct([
+      ...Object.keys(nextgenStats.tdhsAndBalances),
+      ...Object.keys(nextgenLiveBalances)
+    ]).forEach((id) => {
+      const tokenId = parseNumberOrNull(id);
+      if (tokenId !== null) {
+        const liveBalance = nextgenLiveBalances[tokenId] ?? 0;
+        if (liveBalance === 0) {
+          delete nextgenStats.tdhsAndBalances[tokenId];
+        } else {
+          nextgenStats.tdhsAndBalances[tokenId] = {
+            balance: liveBalance,
+            tdh: nextgenStats.tdhsAndBalances[tokenId]?.tdh ?? 0
           };
         }
       }
