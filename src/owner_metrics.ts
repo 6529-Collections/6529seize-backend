@@ -18,7 +18,7 @@ import {
   fetchWalletTransactions,
   fetchDistinctOwnerWallets,
   fetchLastOwnerMetrics,
-  fetchTransactionsFromDate,
+  fetchTransactionAddressesFromDate,
   retrieveWalletConsolidations,
   fetchConsolidationDisplay,
   persistConsolidatedOwnerMetrics
@@ -490,15 +490,11 @@ export const findOwnerMetrics = async (reset?: boolean) => {
       addresses.add(n.owner);
     });
   } else {
-    const allWalletsNfts: { from_address: string; to_address: string }[] =
-      await fetchTransactionsFromDate(new Date(lastMetricsDate), false);
-    const allWalletsNextgen: { from_address: string; to_address: string }[] =
-      await fetchTransactionsFromDate(new Date(lastMetricsDate), true);
-    allWalletsNfts.forEach((wallet) => {
-      addresses.add(wallet.from_address);
-      addresses.add(wallet.to_address);
-    });
-    allWalletsNextgen.forEach((wallet) => {
+    const allTransactionAddresses: {
+      from_address: string;
+      to_address: string;
+    }[] = await fetchTransactionAddressesFromDate(new Date(lastMetricsDate));
+    allTransactionAddresses.forEach((wallet) => {
       addresses.add(wallet.from_address);
       addresses.add(wallet.to_address);
     });
@@ -518,20 +514,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
     owners.map(async (owner) => {
       const wallet = owner.wallet;
 
-      const walletTransactionsNfts = await fetchWalletTransactions(
-        wallet,
-        false
-      );
-
-      const walletTransactionsNextgen = await fetchWalletTransactions(
-        wallet,
-        true
-      );
-
-      const walletTransactions = [
-        ...walletTransactionsNfts,
-        ...walletTransactionsNextgen
-      ];
+      const walletTransactions = await fetchWalletTransactions(wallet);
 
       if (walletTransactions.length > 0) {
         const transactionsIn = [...walletTransactions].filter((wt) =>

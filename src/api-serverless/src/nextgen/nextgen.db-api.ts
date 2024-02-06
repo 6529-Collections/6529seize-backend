@@ -1,6 +1,11 @@
 import { NextGenCollectionStatus } from '../api-filters';
 import { constructFilters } from '../api-helpers';
-import { ENS_TABLE, NULL_ADDRESS, NULL_ADDRESS_DEAD } from '../../../constants';
+import {
+  ENS_TABLE,
+  NULL_ADDRESS,
+  NULL_ADDRESS_DEAD,
+  TRANSACTIONS_TABLE
+} from '../../../constants';
 import { getProof } from '../../../merkle_proof';
 import { sqlExecutor } from '../../../sql-executor';
 import { Time } from '../../../time';
@@ -15,10 +20,10 @@ import {
   NEXTGEN_TOKENS_TABLE,
   NEXTGEN_TOKENS_TDH_TABLE,
   NEXTGEN_TOKEN_SCORES_TABLE,
-  NEXTGEN_TOKEN_TRAITS_TABLE,
-  NEXTGEN_TRANSACTIONS_TABLE
+  NEXTGEN_TOKEN_TRAITS_TABLE
 } from '../../../nextgen/nextgen_constants';
 import { PageSortDirection } from '../page-request';
+import { NEXTGEN_CORE, getNextGenChainId } from './abis';
 
 export enum TokensSort {
   ID = 'id',
@@ -308,15 +313,20 @@ export async function fetchNextGenTokenTransactions(
 ) {
   let filters = constructFilters(
     '',
-    `${NEXTGEN_TRANSACTIONS_TABLE}.token_id = :tokenId`
+    `${TRANSACTIONS_TABLE}.contract = :nextgenContract`
+  );
+  filters = constructFilters(
+    filters,
+    `${TRANSACTIONS_TABLE}.token_id = :tokenId`
   );
 
-  const fields = `${NEXTGEN_TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
-  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${NEXTGEN_TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${NEXTGEN_TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
+  const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
 
   return fetchPaginated(
-    NEXTGEN_TRANSACTIONS_TABLE,
+    TRANSACTIONS_TABLE,
     {
+      nextgenContract: NEXTGEN_CORE[getNextGenChainId()],
       tokenId: tokenId
     },
     'block desc, transaction_date desc, token_id desc',

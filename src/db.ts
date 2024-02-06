@@ -87,7 +87,6 @@ import {
   NextGenBlock,
   NextGenLog,
   NextGenToken,
-  NextGenTransaction,
   NextGenTokenTrait,
   NextGenTokenScore,
   NextGenTokenTDH
@@ -106,7 +105,6 @@ import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResu
 import { ListenerProcessedEvent, ProcessableEvent } from './entities/IEvent';
 import { CicScoreAggregation } from './entities/ICicScoreAggregation';
 import { ProfileTotalRepScoreAggregation } from './entities/IRepScoreAggregations';
-import { NEXTGEN_TRANSACTIONS_TABLE } from './nextgen/nextgen_constants';
 
 const mysql = require('mysql');
 
@@ -163,7 +161,6 @@ export async function connect(entities: any[] = []) {
       NextGenBlock,
       NextGenLog,
       NextGenToken,
-      NextGenTransaction,
       NextGenTokenTrait,
       NextGenTokenScore,
       ProcessableEvent,
@@ -586,12 +583,12 @@ export async function fetchDistinctOwnerWallets() {
   return results;
 }
 
-export async function fetchTransactionsFromDate(
-  date: Date | undefined,
-  nextgen: boolean
+export async function fetchTransactionAddressesFromDate(
+  date: Date | undefined
 ) {
-  const table = nextgen ? NEXTGEN_TRANSACTIONS_TABLE : TRANSACTIONS_TABLE;
-  let sql = `SELECT from_address, to_address FROM ${table}`;
+  const table = TRANSACTIONS_TABLE;
+
+  let sql = `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE}`;
   const params: any = {};
 
   if (date) {
@@ -622,14 +619,8 @@ export async function fetchAllConsolidationAddresses() {
   return results;
 }
 
-export async function fetchWalletTransactions(
-  wallet: string,
-  nextgen: boolean,
-  block?: number
-) {
-  const sql = `SELECT * FROM ${
-    nextgen ? NEXTGEN_TRANSACTIONS_TABLE : TRANSACTIONS_TABLE
-  }`;
+export async function fetchWalletTransactions(wallet: string, block?: number) {
+  const sql = `SELECT * FROM ${TRANSACTIONS_TABLE}`;
   const params: any = {};
 
   let filters = constructFilters(

@@ -3,8 +3,7 @@ import {
   NextGenCollection,
   NextGenLog,
   NextGenToken,
-  NextGenTokenTrait,
-  NextGenTransaction
+  NextGenTokenTrait
 } from '../entities/INextGen';
 import { EntityManager } from 'typeorm';
 import {
@@ -13,6 +12,7 @@ import {
   getNextgenNetwork
 } from './nextgen_constants';
 import { sqlExecutor } from '../sql-executor';
+import { Transaction } from '../entities/ITransaction';
 
 export async function fetchNextGenLatestBlock(manager: EntityManager) {
   const block = await manager
@@ -83,9 +83,9 @@ export async function persistNextGenTraits(
 
 export async function persistNextgenTransactions(
   manager: EntityManager,
-  transactions: NextGenTransaction[]
+  transactions: Transaction[]
 ) {
-  const repo = manager.getRepository(NextGenTransaction);
+  const repo = manager.getRepository(Transaction);
   await repo.upsert(transactions, [
     'transaction',
     'from_address',

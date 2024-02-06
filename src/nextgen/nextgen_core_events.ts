@@ -6,8 +6,7 @@ import {
   NextGenCollection,
   NextGenLog,
   NextGenToken,
-  NextGenTokenTrait,
-  NextGenTransaction
+  NextGenTokenTrait
 } from '../entities/INextGen';
 import { LogDescription } from 'ethers/lib/utils';
 import { areEqualAddresses, isNullAddress } from '../helpers';
@@ -23,6 +22,7 @@ import {
 } from './nextgen.db';
 import { EntityManager } from 'typeorm';
 import { NEXTGEN_CORE_CONTRACT, getNextgenNetwork } from './nextgen_constants';
+import { Transaction } from '../entities/ITransaction';
 
 const logger = Logger.get('NEXTGEN_CORE_EVENTS');
 
@@ -123,7 +123,7 @@ async function processTransfer(
     logger.info(`[UPSERT TOKEN] : [COLLECTION ID ${collectionId} NOT FOUND]`);
   }
 
-  const transaction: NextGenTransaction = {
+  const transaction: Transaction = {
     created_at: new Date(),
     transaction: log.transactionHash,
     block: log.blockNumber,
@@ -142,7 +142,7 @@ async function processTransfer(
     gas: 0
   };
 
-  const transactionWithValue: NextGenTransaction = (
+  const transactionWithValue: Transaction = (
     await findTransactionValues([transaction], network)
   )[0];
 
@@ -249,14 +249,6 @@ export async function upsertToken(
     hodl_rate: hodlRate
   };
 
-  if (mintDate) {
-    const newMintCount = normalisedTokenId + 1;
-    logger.info(
-      `[TOKEN ID ${tokenId}] : [MINTED] : [COLLECTION MINT COUNT ${collection.mint_count}] : [UPDATING COLLECTION MINT COUNT TO ${newMintCount}...]`
-    );
-    collection.mint_count = newMintCount;
-    await persistNextGenCollection(entityManager, collection);
-  }
   await persistNextGenToken(entityManager, nextGenToken);
 
   if (metadataResponse.attributes) {

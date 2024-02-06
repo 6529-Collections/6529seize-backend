@@ -15,13 +15,11 @@ import {
   NEXTGEN_LOGS_TABLE,
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_TOKENS_TABLE,
-  NEXTGEN_TRANSACTIONS_TABLE,
   NEXTGEN_TOKEN_TRAITS_TABLE,
   NEXTGEN_TOKEN_SCORES_TABLE,
   NEXTGEN_TOKENS_TDH_TABLE
 } from '../nextgen/nextgen_constants';
 import { BlockEntity } from './IBlock';
-import { BaseTransaction } from './ITransaction';
 
 @Entity(NEXTGEN_ALLOWLIST_TABLE)
 export class NextGenAllowlist {
@@ -488,9 +486,6 @@ export class NextGenTokenTDH {
   @Column({ type: 'int', nullable: false })
   tdh_rank!: number;
 }
-
-@Entity(NEXTGEN_TRANSACTIONS_TABLE)
-export class NextGenTransaction extends BaseTransaction {}
 
 @Entity(NEXTGEN_TOKEN_TRAITS_TABLE)
 export class NextGenTokenTrait {

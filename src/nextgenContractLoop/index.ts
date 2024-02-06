@@ -6,7 +6,6 @@ import {
   NextGenBlock,
   NextGenLog,
   NextGenToken,
-  NextGenTransaction,
   NextGenAllowlist,
   NextGenAllowlistBurn,
   NextGenAllowlistCollection,
@@ -15,6 +14,7 @@ import {
   NextGenTokenScore
 } from '../entities/INextGen';
 import { findNextGenTransactions } from '../nextgen/nextgen';
+import { Transaction } from '../entities/ITransaction';
 
 const logger = Logger.get('NEXTGEN_CONTRACT_LOOP');
 
@@ -30,9 +30,9 @@ export const handler = async (event: any) => {
     NextGenBlock,
     NextGenLog,
     NextGenToken,
-    NextGenTransaction,
     NextGenTokenTrait,
-    NextGenTokenScore
+    NextGenTokenScore,
+    Transaction
   ]);
   await findNextGenTransactions();
   const diff = start.diffFromNow().formatAsDuration();

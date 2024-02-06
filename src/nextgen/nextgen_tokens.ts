@@ -3,7 +3,8 @@ import {
   persistNextGenTraits,
   fetchNextGenTokenTraits,
   fetchNextGenTokensForCollection,
-  persistNextGenCollectionHodlRate
+  persistNextGenCollectionHodlRate,
+  persistNextGenCollection
 } from './nextgen.db';
 import {
   NextGenCollection,
@@ -77,7 +78,7 @@ async function processCollectionTraitScores(
 
   let rankedTraits = calulateTokenRanks(tokenTraits, 'rarity_score');
   rankedTraits = calulateTokenRanks(rankedTraits, 'rarity_score_normalised');
-  rankedTraits = calulateTokenRanks(rankedTraits, 'statistical_rarity', true);
+  rankedTraits = calulateTokenRanks(rankedTraits, 'statistical_rarity');
   await persistNextGenTraits(entityManager, rankedTraits);
 
   await processTokens(entityManager, collection);
@@ -190,27 +191,23 @@ const calculateRanks = (
 
 function calulateTokenRanks(
   startingTraits: NextGenTokenTrait[],
-  field: string,
-  inverse: boolean = false
+  field: string
 ) {
   const categories = new Set<string>(startingTraits.map((tt) => tt.trait));
 
   const rankedTokens = Array.from(categories).map((category) => {
     const traits = startingTraits.filter((tt) => tt.trait === category);
-    return calculateTokenRanksForCategory(traits, field, inverse);
+    return calculateTokenRanksForCategory(traits, field);
   });
   return rankedTokens.flat();
 }
 
 function calculateTokenRanksForCategory(
   startingTraits: NextGenTokenTrait[],
-  field: string,
-  inverse: boolean = false
+  field: string
 ) {
   const tokenTraits = [...startingTraits] as any[];
-  const sortedTraits = tokenTraits.sort((a, b) =>
-    inverse ? a[field] - b[field] : b[field] - a[field]
-  );
+  const sortedTraits = tokenTraits.sort((a, b) => b[field] - a[field]);
 
   let currentRank = 1;
   let previousValue = sortedTraits[0][field];
@@ -244,4 +241,10 @@ async function processCollectionHodlRate(
     collection.id,
     hodlRate
   );
+
+  logger.info(
+    `[SETTING COLLECTION ${collection.id} MINT COUNT TO ${tokens}] : [COLLECTION ${collection.id}]`
+  );
+  collection.mint_count = tokens;
+  await persistNextGenCollection(entityManager, collection);
 }

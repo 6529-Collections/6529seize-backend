@@ -186,22 +186,14 @@ export const findTDH = async (lastTDHCalc: Date) => {
       let nextgenTDH = 0;
       let nextgenTDH__raw = 0;
 
-      const walletTransactionsNfts = await fetchWalletTransactions(
+      const walletTransactionsDB: Transaction[] = await fetchWalletTransactions(
         wallet,
-        false,
         block
       );
 
-      const walletTransactionsNextgen = await fetchWalletTransactions(
-        wallet,
-        true,
-        block
-      );
-
-      const walletTransactions: Transaction[] = consolidateTransactions([
-        ...walletTransactionsNfts,
-        ...walletTransactionsNextgen
-      ]).sort((a: Transaction, b: Transaction) => {
+      const walletTransactions: Transaction[] = consolidateTransactions(
+        walletTransactionsDB
+      ).sort((a: Transaction, b: Transaction) => {
         return (
           new Date(a.transaction_date).getTime() -
           new Date(b.transaction_date).getTime()
@@ -212,11 +204,9 @@ export const findTDH = async (lastTDHCalc: Date) => {
       await Promise.all(
         consolidations.map(async (c) => {
           if (!areEqualAddresses(c, wallet)) {
-            const nftTrx = await fetchWalletTransactions(c, false, block);
-            const nextgenTrx = await fetchWalletTransactions(c, true, block);
-            consolidationTransactions = consolidationTransactions
-              .concat(nftTrx)
-              .concat(nextgenTrx);
+            const transactions = await fetchWalletTransactions(c, block);
+            consolidationTransactions =
+              consolidationTransactions.concat(transactions);
           }
         })
       );
@@ -324,8 +314,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
             nft.hodl_rate,
             wallet,
             consolidations,
-            tokenConsolidatedTransactions,
-            true
+            tokenConsolidatedTransactions
           );
 
           if (tokenTDH) {
@@ -515,8 +504,7 @@ function getTokenTdh(
   hodlRate: number,
   wallet: string,
   consolidations: string[],
-  tokenConsolidatedTransactions: Transaction[],
-  nextgen?: boolean
+  tokenConsolidatedTransactions: Transaction[]
 ) {
   const tokenDatesForWallet = getTokenDatesFromConsolidation(
     wallet,

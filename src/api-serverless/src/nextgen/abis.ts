@@ -27,6 +27,12 @@ export const NEXTGEN_ADMIN: NextGenContract = {
   [mainnet.id]: '0x26ad9c64930bf5e057cb895a183436b30ad140f8'
 };
 
+export const NEXTGEN_CORE: NextGenContract = {
+  [goerli.id]: '0x25a972f1bf3c816061ceaea59d2bb3fe4c130766',
+  [sepolia.id]: '0x60671e59a349589Ad74bE6cd643003a0Abb38cC3',
+  [mainnet.id]: '0x6113fd2c91514e84e6149c6ede47f2e09545253a'
+};
+
 const ADDRESS_INPUT = { internalType: 'address', name: '', type: 'address' };
 
 const OUTPUT = {
