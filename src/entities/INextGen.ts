@@ -490,11 +490,7 @@ export class NextGenTokenTDH {
 }
 
 @Entity(NEXTGEN_TRANSACTIONS_TABLE)
-export class NextGenTransaction extends BaseTransaction {
-  @Index()
-  @PrimaryColumn({ type: 'bigint' })
-  token_id!: number;
-}
+export class NextGenTransaction extends BaseTransaction {}
 
 @Entity(NEXTGEN_TOKEN_TRAITS_TABLE)
 export class NextGenTokenTrait {

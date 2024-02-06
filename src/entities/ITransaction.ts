@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryColumn, Index } from 'typeorm';
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
 export class BaseTransaction {
   @Column({ type: 'datetime' })
@@ -26,6 +26,10 @@ export class BaseTransaction {
   @PrimaryColumn({ type: 'varchar', length: 50 })
   contract!: string;
 
+  @Index()
+  @PrimaryColumn({ type: 'bigint' })
+  token_id!: number;
+
   @Column({ type: 'int' })
   token_count!: number;
 
@@ -51,17 +55,11 @@ export class BaseTransaction {
   gas!: number;
 }
 
-export class BaseMemeTransaction extends BaseTransaction {
-  @Index()
-  @PrimaryColumn({ type: 'int' })
-  token_id!: number;
-}
-
 @Entity('transactions')
-export class Transaction extends BaseMemeTransaction {}
+export class Transaction extends BaseTransaction {}
 
 @Entity('transactions_meme_lab')
-export class LabTransaction extends BaseMemeTransaction {}
+export class LabTransaction extends BaseTransaction {}
 
 export interface TransactionValue {
   transaction: string;

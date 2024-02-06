@@ -10,7 +10,7 @@ import {
   GRADIENT_CONTRACT,
   MEMES_CONTRACT
 } from './constants';
-import { BaseMemeTransaction } from './entities/ITransaction';
+import { BaseTransaction } from './entities/ITransaction';
 import { Logger } from './logging';
 
 const logger = Logger.get('TRANSACTIONS');
@@ -83,7 +83,7 @@ export const findTransactions = async (
     };
   }
 
-  const finalTransactions: BaseMemeTransaction[] = [];
+  const finalTransactions: BaseTransaction[] = [];
 
   await Promise.all(
     transactions.transfers.map(async (t) => {
@@ -91,7 +91,7 @@ export const findTransactions = async (
         const tokenId = parseInt(t.erc721TokenId, 16);
         const tokenCount = 1;
         if (t.to && t.rawContract.address) {
-          const finalTransaction: BaseMemeTransaction = {
+          const finalTransaction: BaseTransaction = {
             created_at: new Date(),
             transaction: t.hash,
             block: fromHex(t.blockNum),
@@ -116,7 +116,7 @@ export const findTransactions = async (
           const tokenId = parseInt(md.tokenId, 16);
           const tokenCount = parseInt(md.value, 16);
           if (t.to && t.rawContract.address) {
-            const finalTransaction: BaseMemeTransaction = {
+            const finalTransaction: BaseTransaction = {
               created_at: new Date(),
               transaction: t.hash,
               block: fromHex(t.blockNum),

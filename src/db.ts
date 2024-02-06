@@ -54,7 +54,7 @@ import {
 import { Team } from './entities/ITeam';
 import {
   LabTransaction,
-  BaseMemeTransaction,
+  BaseTransaction,
   Transaction
 } from './entities/ITransaction';
 import {
@@ -214,9 +214,9 @@ export async function disconnect() {
 }
 
 export function consolidateTransactions(
-  transactions: BaseMemeTransaction[]
-): BaseMemeTransaction[] {
-  const consolidatedTransactions: BaseMemeTransaction[] = Object.values(
+  transactions: BaseTransaction[]
+): BaseTransaction[] {
+  const consolidatedTransactions: BaseTransaction[] = Object.values(
     transactions.reduce((acc: any, transaction) => {
       const primaryKey = `${transaction.transaction}_${transaction.from_address}_${transaction.to_address}_${transaction.contract}_${transaction.token_id}`;
 
@@ -720,7 +720,7 @@ export async function fetchMissingEnsNFTDelegation(table: string) {
 }
 
 export async function persistTransactions(
-  transactions: BaseMemeTransaction[],
+  transactions: BaseTransaction[],
   isLab?: boolean
 ) {
   if (transactions.length > 0) {
@@ -730,15 +730,17 @@ export async function persistTransactions(
       logger.info(
         `[LAB TRANSACTIONS] [PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
       );
-      await AppDataSource.getRepository(LabTransaction).save(
-        consolidatedTransactions
+      await AppDataSource.getRepository(LabTransaction).upsert(
+        consolidatedTransactions,
+        ['transaction', 'contract', 'from_address', 'to_address', 'token_id']
       );
     } else {
       logger.info(
         `[TRANSACTIONS] [PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
       );
-      await AppDataSource.getRepository(Transaction).save(
-        consolidatedTransactions
+      await AppDataSource.getRepository(Transaction).upsert(
+        consolidatedTransactions,
+        ['transaction', 'contract', 'from_address', 'to_address', 'token_id']
       );
     }
 

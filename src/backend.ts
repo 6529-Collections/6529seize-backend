@@ -7,6 +7,7 @@ const nextgenMissingImageResolutionsLoop = require('./nextgenMissingImageResolut
 const tdhLoop = require('./tdhLoop');
 const ownerMetricsLoop = require('./ownerMetricsLoop');
 const ownersLoop = require('./ownersLoop');
+const transactionsLoop = require('./transactionsLoop');
 
 const logger = Logger.get('BACKEND');
 
@@ -15,11 +16,12 @@ async function start() {
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
   await nextgenContract.handler();
-  // await nextgenMetadata.handler();
+  await nextgenMetadata.handler();
+  await transactionsLoop.handler();
   // await nextgenMissingImageResolutionsLoop.handler();
-  // await tdhLoop.handler();
   // await ownerMetricsLoop.handler();
   // await ownersLoop.handler();
+  // await tdhLoop.handler();
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);

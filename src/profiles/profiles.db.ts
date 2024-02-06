@@ -625,6 +625,17 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: connectionHolder }
     );
   }
+
+  async updateWalletsEnsName(
+    param: { wallet: string; ensName: string | null },
+    connection: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `insert into ${ENS_TABLE} (display, wallet, created_at) values (:ensName, :wallet, current_time) on duplicate key update display = :ensName`,
+      param,
+      { wrappedConnection: connection }
+    );
+  }
 }
 
 export const profilesDb = new ProfilesDb(dbSupplier);
