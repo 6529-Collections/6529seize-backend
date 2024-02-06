@@ -15,10 +15,10 @@ import {
   CollectedDb,
   MemesAndGradientsOwnershipData,
   NftData,
-  NftsCollectionOwnershipData
-} from './collected.db';
+  NftsCollectionOwnershipData, NftsOwnershipData
+} from "./collected.db";
 import { parseNumberOrNull } from '../../api-helpers';
-import { assertUnreachable } from '../../../../helpers';
+import { assertUnreachable, distinct } from '../../../../helpers';
 
 export class CollectedService {
   constructor(
@@ -210,7 +210,54 @@ export class CollectedService {
       memesAndGradientsStats: data[1],
       nextgenStats: data[2],
       memeLabOwnerBalancesByTokenIds: data[3]
+      nfts: nfts,
+      memesAndGradientsStats: memesAndGradients,
+      memeLabOwnerBalancesByTokenIds: memeLabsBalances
     };
+  }
+
+  private async adjustBalancesWithLiveData(
+    walletsToSearchBy: string[],
+    memesAndGradients: NftsOwnershipData
+  ) {
+    const { gradients: gradientsLiveBalances, memes: memesLiveBalances } =
+      await this.collectedDb.getGradientsAndMemesLiveBalancesByTokenIds(
+        walletsToSearchBy
+      );
+    distinct([
+      ...Object.keys(memesAndGradients.memes),
+      ...Object.keys(memesLiveBalances)
+    ]).forEach((id) => {
+      const tokenId = parseNumberOrNull(id);
+      if (tokenId !== null) {
+        const liveBalance = memesLiveBalances[tokenId] ?? 0;
+        if (liveBalance === 0) {
+          delete memesAndGradients.memes[tokenId];
+        } else {
+          memesAndGradients.memes[tokenId] = {
+            balance: liveBalance,
+            tdh: memesAndGradients.memes[tokenId]?.tdh ?? 0
+          };
+        }
+      }
+    });
+    distinct([
+      ...Object.keys(memesAndGradients.gradients),
+      ...Object.keys(gradientsLiveBalances)
+    ]).forEach((id) => {
+      const tokenId = parseNumberOrNull(id);
+      if (tokenId !== null) {
+        const liveBalance = gradientsLiveBalances[tokenId] ?? 0;
+        if (liveBalance === 0) {
+          delete memesAndGradients.gradients[tokenId];
+        } else {
+          memesAndGradients.gradients[tokenId] = {
+            balance: liveBalance,
+            tdh: memesAndGradients.gradients[tokenId]?.tdh ?? 0
+          };
+        }
+      }
+    });
   }
 
   private getMemesAndGradientsOwnershipData(

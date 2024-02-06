@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryColumn, Index } from 'typeorm';
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
 export class BaseTransaction {
   @Column({ type: 'datetime' })
@@ -53,7 +53,7 @@ export class BaseTransaction {
 
 export class BaseMemeTransaction extends BaseTransaction {
   @Index()
-  @PrimaryColumn({ type: 'int' })
+  @PrimaryColumn({ type: 'bigint' })
   token_id!: number;
 }
 

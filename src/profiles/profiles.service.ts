@@ -262,6 +262,7 @@ export class ProfilesService {
             },
             connectionHolder
           );
+          await this.refreshPrimaryWalletEns(primary_wallet, connectionHolder);
           const tdhInfo = await this.getWalletTdhBlockNoAndConsolidatedWallets(
             primary_wallet
           );
@@ -313,6 +314,7 @@ export class ProfilesService {
       }
       await this.profilesDb.executeNativeQueriesInTransaction(
         async (connectionHolder) => {
+          await this.refreshPrimaryWalletEns(primary_wallet, connectionHolder);
           await this.profilesDb.updateProfileRecord(
             {
               oldHandle: latestProfile.normalised_handle,
@@ -894,6 +896,14 @@ export class ProfilesService {
         wallet
       }
     ];
+  }
+
+  private async refreshPrimaryWalletEns(
+    wallet: string,
+    connection: ConnectionWrapper<any>
+  ) {
+    const ensName = await this.supplyAlchemy().core.lookupAddress(wallet);
+    await this.profilesDb.updateWalletsEnsName({ wallet, ensName }, connection);
   }
 }
 

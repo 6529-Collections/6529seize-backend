@@ -1,6 +1,6 @@
 import { fetchLatestTransactionsBlockNumber, persistTransactions } from '../db';
 import { findTransactions } from '../transactions';
-import { findTransactionValues, debugValues } from '../transaction_values';
+import { debugValues, findTransactionValues } from '../transaction_values';
 import { discoverEns } from '../ens';
 import { loadEnv, unload } from '../secrets';
 import { Transaction } from '../entities/ITransaction';
