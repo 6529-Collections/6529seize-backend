@@ -15,8 +15,8 @@ import {
   CollectedDb,
   MemesAndGradientsOwnershipData,
   NftData,
-  NftsCollectionOwnershipData, NftsOwnershipData
-} from "./collected.db";
+  NftsCollectionOwnershipData
+} from './collected.db';
 import { parseNumberOrNull } from '../../api-helpers';
 import { assertUnreachable, distinct } from '../../../../helpers';
 
@@ -205,55 +205,57 @@ export class CollectedService {
       this.getNextgenOwnershipData(walletsToSearchBy),
       this.collectedDb.getWalletsMemeLabsBalancesByTokens(walletsToSearchBy)
     ]);
+    const nfts = data[0];
+    const memesAndGradients = data[1];
+    const nextgenStats = data[2];
+    const memeLabsBalances = data[3];
+    await this.adjustBalancesWithLiveData(walletsToSearchBy, memesAndGradients);
     return {
-      nfts: data[0],
-      memesAndGradientsStats: data[1],
-      nextgenStats: data[2],
-      memeLabOwnerBalancesByTokenIds: data[3]
       nfts: nfts,
       memesAndGradientsStats: memesAndGradients,
+      nextgenStats: nextgenStats,
       memeLabOwnerBalancesByTokenIds: memeLabsBalances
     };
   }
 
   private async adjustBalancesWithLiveData(
     walletsToSearchBy: string[],
-    memesAndGradients: NftsOwnershipData
+    memesAndGradients: MemesAndGradientsOwnershipData
   ) {
     const { gradients: gradientsLiveBalances, memes: memesLiveBalances } =
       await this.collectedDb.getGradientsAndMemesLiveBalancesByTokenIds(
         walletsToSearchBy
       );
     distinct([
-      ...Object.keys(memesAndGradients.memes),
+      ...Object.keys(memesAndGradients.memes.tdhsAndBalances),
       ...Object.keys(memesLiveBalances)
     ]).forEach((id) => {
       const tokenId = parseNumberOrNull(id);
       if (tokenId !== null) {
         const liveBalance = memesLiveBalances[tokenId] ?? 0;
         if (liveBalance === 0) {
-          delete memesAndGradients.memes[tokenId];
+          delete memesAndGradients.memes.tdhsAndBalances[tokenId];
         } else {
-          memesAndGradients.memes[tokenId] = {
+          memesAndGradients.memes.tdhsAndBalances[tokenId] = {
             balance: liveBalance,
-            tdh: memesAndGradients.memes[tokenId]?.tdh ?? 0
+            tdh: memesAndGradients.memes.tdhsAndBalances[tokenId]?.tdh ?? 0
           };
         }
       }
     });
     distinct([
-      ...Object.keys(memesAndGradients.gradients),
+      ...Object.keys(memesAndGradients.gradients.tdhsAndBalances),
       ...Object.keys(gradientsLiveBalances)
     ]).forEach((id) => {
       const tokenId = parseNumberOrNull(id);
       if (tokenId !== null) {
         const liveBalance = gradientsLiveBalances[tokenId] ?? 0;
         if (liveBalance === 0) {
-          delete memesAndGradients.gradients[tokenId];
+          delete memesAndGradients.gradients.tdhsAndBalances[tokenId];
         } else {
-          memesAndGradients.gradients[tokenId] = {
+          memesAndGradients.gradients.tdhsAndBalances[tokenId] = {
             balance: liveBalance,
-            tdh: memesAndGradients.gradients[tokenId]?.tdh ?? 0
+            tdh: memesAndGradients.gradients.tdhsAndBalances[tokenId]?.tdh ?? 0
           };
         }
       }

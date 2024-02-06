@@ -290,13 +290,6 @@ export interface NftData {
   thumbnail: string;
 }
 
-export interface NftsOwnershipData {
-  memes: CollectionTokensTdhAndBalance;
-  memes_ranks: Record<number, number>;
-  gradients: CollectionTokensTdhAndBalance;
-  gradients_ranks: Record<number, number>;
-}
-
 export interface MemesAndGradientsOwnershipData {
   memes: NftsCollectionOwnershipData;
   gradients: NftsCollectionOwnershipData;
