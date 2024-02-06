@@ -690,15 +690,17 @@ export async function persistTransactions(
       logger.info(
         `[LAB TRANSACTIONS] [PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
       );
-      await AppDataSource.getRepository(LabTransaction).save(
-        consolidatedTransactions
+      await AppDataSource.getRepository(LabTransaction).upsert(
+        consolidatedTransactions,
+        ['transaction', 'contract', 'from_address', 'to_address', 'token_id']
       );
     } else {
       logger.info(
         `[TRANSACTIONS] [PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
       );
-      await AppDataSource.getRepository(Transaction).save(
-        consolidatedTransactions
+      await AppDataSource.getRepository(Transaction).upsert(
+        consolidatedTransactions,
+        ['transaction', 'contract', 'from_address', 'to_address', 'token_id']
       );
     }
 
