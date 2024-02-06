@@ -18,7 +18,7 @@ import {
   persistNextGenLogs,
   persistNextGenToken,
   persistNextGenTraits,
-  persistNextgenTransactions
+  persistNextgenTransaction
 } from './nextgen.db';
 import { EntityManager } from 'typeorm';
 import { NEXTGEN_CORE_CONTRACT, getNextgenNetwork } from './nextgen_constants';
@@ -169,7 +169,7 @@ async function processTransfer(
     description += ` for ${transactionWithValue.value} ETH`;
   }
 
-  await persistNextgenTransactions(entityManager, [transactionWithValue]);
+  await persistNextgenTransaction(entityManager, transactionWithValue);
 
   if (collection) {
     let hodlRate = 0;
