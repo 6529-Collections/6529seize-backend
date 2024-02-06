@@ -38,6 +38,52 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async getGradientsAndMemesLiveBalancesByTokenIds(wallets: string[]): Promise<{
+    gradients: Record<number, number>;
+    memes: Record<number, number>;
+  }> {
+    if (!wallets.length) {
+      return {
+        gradients: {},
+        memes: {}
+      };
+    }
+    let sql = `select 
+       token_id,
+       case when contract = '${MEMES_CONTRACT}' then '${CollectionType.MEMES}' else '${CollectionType.GRADIENTS}' end collection,
+       sum(balance) as balance
+       from owners
+       where contract in ('${MEMES_CONTRACT}', '${GRADIENT_CONTRACT}') and (lower(wallet) = lower(:wallet1)`;
+
+    const params: Record<string, string> = { wallet1: wallets[0] };
+
+    for (let i = 1; i < wallets.length; i++) {
+      const key = `wallet${i + 1}`;
+      params[key] = wallets[i];
+      sql += ` or lower(wallet) = lower(:${key})`;
+    }
+    sql += `) group by token_id, collection`;
+    const result: {
+      token_id: number;
+      collection: CollectionType;
+      balance: number;
+    }[] = await this.db.execute(sql, params);
+    return result.reduce(
+      (acc, cur) => {
+        if (cur.collection === CollectionType.MEMES) {
+          acc.memes[cur.token_id] = cur.balance;
+        } else {
+          acc.gradients[cur.token_id] = cur.balance;
+        }
+        return acc;
+      },
+      {
+        gradients: {} as Record<number, number>,
+        memes: {} as Record<number, number>
+      }
+    );
+  }
+
   async getWalletMemesAndGradientsMetrics(
     wallet: string
   ): Promise<NftsOwnershipData> {
@@ -140,10 +186,17 @@ export interface NftData {
 }
 
 export interface NftsOwnershipData {
-  memes: Record<number, { tdh: number; balance: number }>;
+  memes: CollectionTokensTdhAndBalance;
   memes_ranks: Record<number, number>;
-  gradients: Record<number, { tdh: number; balance: number }>;
+  gradients: CollectionTokensTdhAndBalance;
   gradients_ranks: Record<number, number>;
 }
+
+export interface TokenTdhAndBalance {
+  tdh: number;
+  balance: number;
+}
+
+export type CollectionTokensTdhAndBalance = Record<number, TokenTdhAndBalance>;
 
 export const collectedDb = new CollectedDb(dbSupplier);
