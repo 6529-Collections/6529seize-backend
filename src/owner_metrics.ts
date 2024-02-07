@@ -480,6 +480,10 @@ export const findOwnerMetrics = async (reset?: boolean) => {
   const nextgenNetwork = getNextgenNetwork();
   const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[nextgenNetwork];
 
+  logger.info(
+    `[NEXTGEN_NETWORK ${nextgenNetwork}] : [NEXTGEN_CONTRACT ${NEXTGEN_CONTRACT}]`
+  );
+
   const addresses = new Set<string>();
   if (!lastMetricsDate || reset) {
     const ownersNfts = await fetchDistinctOwnerWallets();
@@ -506,7 +510,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
   });
 
   logger.info(
-    `[OWNERS ${owners.length}] [lastMetricsDate ${lastMetricsDate}] [transactionReference ${transactionReference}] [RESET ${reset}] : [NEXTGEN_NETWORK ${nextgenNetwork}]`
+    `[OWNERS ${owners.length}] [lastMetricsDate ${lastMetricsDate}] [transactionReference ${transactionReference}] [RESET ${reset}]`
   );
 
   const ownerMetrics: OwnerMetric[] = [];
