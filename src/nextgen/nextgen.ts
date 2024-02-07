@@ -8,6 +8,11 @@ import { refreshNextgenTokens } from './nextgen_tokens';
 import { fetchNextGenLatestBlock, persistNextGenBlock } from './nextgen.db';
 import { getDataSource } from '../db';
 import { getNextgenNetwork } from './nextgen_constants';
+import { Logger } from '../logging';
+
+const logger = Logger.get('NEXTGEN_CONTRACT');
+
+const BLOCK_THRESHOLD = 1000;
 
 export async function findNextGenTransactions() {
   const alchemy = new Alchemy({
@@ -16,10 +21,20 @@ export async function findNextGenTransactions() {
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const endBlock = await alchemy.core.getBlockNumber();
+  let endBlock = await alchemy.core.getBlockNumber();
   const dataSource = getDataSource();
   await dataSource.transaction(async (entityManager) => {
     const startBlock = await fetchNextGenLatestBlock(entityManager);
+
+    let blockAdjusted = false;
+    const blockRange = endBlock - startBlock;
+    if (blockRange > BLOCK_THRESHOLD) {
+      endBlock = startBlock + BLOCK_THRESHOLD;
+      logger.info(
+        `[BLOCK RANGE TOO LARGE ${blockRange}] : [START BLOCK ${startBlock}] : [ADJUSTING TO ${endBlock} ] `
+      );
+      blockAdjusted = true;
+    }
 
     await findCoreTransactions(entityManager, alchemy, startBlock, endBlock);
     await findMinterTransactions(entityManager, alchemy, startBlock, endBlock);
@@ -33,7 +48,9 @@ export async function findNextGenTransactions() {
     };
     await persistNextGenBlock(entityManager, nextgenBlock);
 
-    await processPendingTokens(entityManager);
-    await refreshNextgenTokens(entityManager);
+    if (!blockAdjusted) {
+      await processPendingTokens(entityManager);
+      await refreshNextgenTokens(entityManager);
+    }
   });
 }
