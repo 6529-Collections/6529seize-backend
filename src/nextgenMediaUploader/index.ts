@@ -19,6 +19,7 @@ import {
   s3UploadNextgenImage
 } from '../nextgen/nextgen_generator';
 import { objectExists } from '../helpers/s3_helpers';
+import { sendDiscordUpdate } from '../notifier-discord';
 
 const logger = Logger.get('NEXTGEN_MEDIA_UPLOADER');
 
@@ -155,6 +156,13 @@ async function uploadMissingNextgenMedia(path: string) {
   );
 
   await invalidatePath(path);
+
+  const discordMessage = `New Token Generated: ${NEXTGEN_CF_BASE_PATH}/${imagePath}`;
+  await sendDiscordUpdate(
+    process.env.NEXTGEN_GENERATOR_DISCORD_WEBHOOK as string,
+    discordMessage,
+    'NEXTGEN_GENERATOR'
+  );
 }
 
 async function invalidatePath(path: string) {
