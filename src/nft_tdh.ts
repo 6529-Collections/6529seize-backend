@@ -92,7 +92,7 @@ export const findNftTDH = async () => {
         }
       }
     });
-    tdh.nextgen.map((nextgen: any) => {
+    tdh.nextgen?.map((nextgen: any) => {
       const token = nextgenNfts.find((n) => n.id == nextgen.id);
       if (token) {
         nextgenTdh.push({
