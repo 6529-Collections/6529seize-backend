@@ -159,7 +159,7 @@ async function uploadMissingNextgenMedia(path: string) {
 
   await invalidatePath(path);
 
-  const discordMessage = `New Token Generated: ${NEXTGEN_CF_BASE_PATH}/${imagePath}`;
+  const discordMessage = `New Token Generated\n${NEXTGEN_CF_BASE_PATH}/${imagePath}`;
   await sendDiscordUpdate(
     process.env.NEXTGEN_GENERATOR_DISCORD_WEBHOOK as string,
     discordMessage,
