@@ -5,8 +5,8 @@ import {
   CONSOLIDATED_UPLOADS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATIONS_TABLE,
-  DELEGATIONS_TABLE,
   DELEGATION_ALL_ADDRESS,
+  DELEGATIONS_TABLE,
   DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE,
   ENS_TABLE,
@@ -35,9 +35,9 @@ import {
   TRANSACTIONS_MEME_LAB_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
-  USER_TABLE,
   USE_CASE_ALL,
   USE_CASE_MINTING,
+  USER_TABLE,
   WALLETS_TDH_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
@@ -1619,7 +1619,8 @@ async function enhanceDataWithHandlesAndLevel(
   );
   const walletsToHandlesAndIds =
     await profilesService.getProfileIdsAndHandlesByPrimaryWallets(
-      resultWallets
+      resultWallets,
+      { useReadDbOnReads: true }
     );
   const profileIds = Object.values(walletsToHandlesAndIds).map((it) => it.id);
   const profileReps = await repService.getAggregatedRepForProfiles(profileIds);

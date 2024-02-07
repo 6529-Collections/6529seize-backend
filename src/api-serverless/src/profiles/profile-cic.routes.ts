@@ -24,6 +24,7 @@ import {
   getRaterInfoFromRequest,
   RateProfileRequest
 } from './rating.helper';
+import { isSafeToUseReadEndpointInProfileApi } from '../api-helpers';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -49,22 +50,27 @@ router.get(
     const raterHandleOrWallet = req.params.raterHandleOrWallet.toLowerCase();
     const profileAndConsolidationsOfTarget =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
+        handleOrWallet,
+        { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
       );
     const targetProfile = profileAndConsolidationsOfTarget?.profile;
     const profileAndConsolidationsOfRater =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        raterHandleOrWallet
+        raterHandleOrWallet,
+        { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
       );
     const raterProfile = profileAndConsolidationsOfRater?.profile;
     if (raterProfile && targetProfile) {
       const { rating: cicRatingByRater } =
-        await ratingsService.getAggregatedRatingOnMatter({
-          rater_profile_id: raterProfile.external_id,
-          matter: RateMatter.CIC,
-          matter_category: RateMatter.CIC,
-          matter_target_id: targetProfile.external_id
-        });
+        await ratingsService.getAggregatedRatingOnMatter(
+          {
+            rater_profile_id: raterProfile.external_id,
+            matter: RateMatter.CIC,
+            matter_category: RateMatter.CIC,
+            matter_target_id: targetProfile.external_id
+          },
+          { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
+        );
       const cicRatingsLeftToGiveByRater =
         await ratingsService.getRatesLeftOnMatterForProfile({
           profile_id: raterProfile.external_id,
@@ -89,11 +95,14 @@ router.get(
     req: GetProfileRatingsRequest,
     res: Response<ApiResponse<Page<RatingWithProfileInfoAndLevel>>>
   ) {
-    const result = await ratingsService.getRatingsByRatersForMatter({
-      queryParams: req.query,
-      handleOrWallet: req.params.handleOrWallet,
-      matter: RateMatter.CIC
-    });
+    const result = await ratingsService.getRatingsByRatersForMatter(
+      {
+        queryParams: req.query,
+        handleOrWallet: req.params.handleOrWallet,
+        matter: RateMatter.CIC
+      },
+      { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
+    );
     res.send(result);
   }
 );
@@ -120,7 +129,8 @@ router.post(
     });
     const updatedProfileInfo =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
+        handleOrWallet,
+        { useReadDbOnReads: false }
       );
     res.status(201).send(updatedProfileInfo!);
   }
@@ -143,13 +153,16 @@ router.get(
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profileAndConsolidations =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
+        handleOrWallet,
+        { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
       );
     const profileId = profileAndConsolidations?.profile?.external_id;
     if (!profileId) {
       throw new NotFoundException(`No profile found for ${handleOrWallet}`);
     }
-    const statements = await cicService.getCicStatementsByProfileId(profileId);
+    const statements = await cicService.getCicStatementsByProfileId(profileId, {
+      useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req)
+    });
     res.status(200).send(statements);
   }
 );
@@ -173,7 +186,8 @@ router.get(
     const statementId = req.params.statementId;
     const profileAndConsolidations =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
+        handleOrWallet,
+        { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
       );
     const profileId = profileAndConsolidations?.profile?.external_id;
     if (!profileId) {
@@ -206,7 +220,8 @@ router.delete(
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profileAndConsolidations =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
+        handleOrWallet,
+        { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
       );
     if (!isAuthenticatedWalletProfileOwner(req, profileAndConsolidations)) {
       throw new ForbiddenException(
@@ -244,7 +259,8 @@ router.post(
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profileAndConsolidations =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
+        handleOrWallet,
+        { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
       );
     if (!isAuthenticatedWalletProfileOwner(req, profileAndConsolidations)) {
       throw new ForbiddenException(
