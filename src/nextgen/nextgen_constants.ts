@@ -45,7 +45,7 @@ export const NEXTGEN_CORE_CONTRACT = {
 export const NEXTGEN_START_BLOCK = {
   [Network.ETH_GOERLI]: 10272665,
   [Network.ETH_SEPOLIA]: 5176112,
-  [Network.ETH_MAINNET]: 18827665
+  [Network.ETH_MAINNET]: 19133749
 };
 
 export const NEXTGEN_MINTER_CONTRACT = {
