@@ -13,7 +13,7 @@ import {
 } from '../entities/INextGen';
 import { Logger } from '../logging';
 import { EntityManager } from 'typeorm';
-import { getNftMaxSupply } from '../db';
+import { NFTS_TABLE } from '../constants';
 
 const logger = Logger.get('NEXTGEN_TOKENS');
 
@@ -228,9 +228,16 @@ async function processCollectionHodlRate(
   collection: NextGenCollection,
   tokens: number
 ) {
-  const nftMaxSupply = await getNftMaxSupply();
+  const nftMaxSupply = (
+    await entityManager.query(
+      `SELECT MAX(supply) AS maxSupply FROM ${NFTS_TABLE}`
+    )
+  )[0].maxSupply;
 
-  const hodlRate = nftMaxSupply / tokens;
+  let hodlRate = 0;
+  if (tokens > 0) {
+    hodlRate = nftMaxSupply / tokens;
+  }
 
   logger.info(
     `[COLLECTION ${collection.id}] : [TOKENS ${tokens}] : [NFT MAX SUPPLY ${nftMaxSupply}] : [HODL RATE ${hodlRate}]`
