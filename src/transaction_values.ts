@@ -127,8 +127,10 @@ async function resolveValue(t: Transaction) {
   if (transaction) {
     const receipt = await alchemy.core.getTransactionReceipt(transaction?.hash);
     const logCount =
-      receipt?.logs.filter((l) =>
-        areEqualAddresses(l.topics[0], TRANSFER_EVENT)
+      receipt?.logs.filter(
+        (l) =>
+          areEqualAddresses(l.topics[0], TRANSFER_EVENT) &&
+          areEqualAddresses(resolveLogAddress(l.topics[1]), t.to_address)
       ).length || 1;
 
     if (receipt?.gasUsed) {
