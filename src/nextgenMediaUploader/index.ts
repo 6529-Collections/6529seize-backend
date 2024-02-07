@@ -20,6 +20,7 @@ import {
 } from '../nextgen/nextgen_generator';
 import { objectExists } from '../helpers/s3_helpers';
 import { sendDiscordUpdate } from '../notifier-discord';
+import { loadEnv } from '../secrets';
 
 const logger = Logger.get('NEXTGEN_MEDIA_UPLOADER');
 
@@ -35,6 +36,7 @@ export const handler = wrapLambdaHandler(async (event: any) => {
   const start = Time.now();
   logger.info(`[RUNNING]`);
   setup();
+  await loadEnv([]);
   const record = event.Records[0].Sns;
   const snsMessage = record.Message;
   const messageAttributes = record.MessageAttributes;
