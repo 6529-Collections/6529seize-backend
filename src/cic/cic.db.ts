@@ -66,12 +66,13 @@ export class CicDb extends LazyDbAccessCompatibleService {
   }
 
   async getCicStatementsByProfileId(
-    profile_id: string
+    profile_id: string,
+    { useReadDbOnReads }: { useReadDbOnReads: boolean }
   ): Promise<CicStatement[]> {
     return this.db.execute(
       `select * from ${CIC_STATEMENTS_TABLE} where profile_id = :profile_id`,
       { profile_id: profile_id },
-      { forcePool: DbPoolName.WRITE }
+      { forcePool: useReadDbOnReads ? DbPoolName.READ : DbPoolName.WRITE }
     );
   }
 }

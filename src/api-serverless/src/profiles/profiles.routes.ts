@@ -23,6 +23,7 @@ import { profilesService } from '../../../profiles/profiles.service';
 import profileCicRoutes from './profile-cic.routes';
 import profileRepRoutes from './profile-rep.routes';
 import profileCollectedRoutes from './collected/collected.routes';
+import { isSafeToUseReadEndpointInProfileApi } from '../api-helpers';
 
 const router = asyncRouter();
 
@@ -40,10 +41,12 @@ router.get(
     >,
     res: Response<ApiResponse<ProfileAndConsolidations>>
   ) {
+    const useReadDbOnReads = isSafeToUseReadEndpointInProfileApi(req);
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profile =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
+        handleOrWallet,
+        { useReadDbOnReads }
       );
     if (!profile) {
       throw new NotFoundException('Profile not found');
@@ -88,14 +91,16 @@ router.get(
     const authenticatedHandle = maybeAuthenticatedWallet
       ? (
           await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-            maybeAuthenticatedWallet
+            maybeAuthenticatedWallet,
+            { useReadDbOnReads: true }
           )
         )?.profile?.handle
       : null;
     if (proposedHandle.toLowerCase() !== authenticatedHandle?.toLowerCase()) {
       const profile =
         await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-          proposedHandle
+          proposedHandle,
+          { useReadDbOnReads: true }
         );
       if (profile) {
         return res.status(200).send({

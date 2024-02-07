@@ -1,5 +1,10 @@
+import fetch from 'node-fetch';
 import axios, { AxiosResponse } from 'axios';
-import { CONSOLIDATIONS_LIMIT } from './constants';
+import {
+  CONSOLIDATIONS_LIMIT,
+  NULL_ADDRESS,
+  NULL_ADDRESS_DEAD
+} from './constants';
 import * as short from 'short-uuid';
 
 export function areEqualAddresses(w1: string, w2: string) {
@@ -7,6 +12,13 @@ export function areEqualAddresses(w1: string, w2: string) {
     return false;
   }
   return w1.toUpperCase() === w2.toUpperCase();
+}
+
+export function isNullAddress(address: string) {
+  return (
+    areEqualAddresses(address, NULL_ADDRESS) ||
+    areEqualAddresses(address, NULL_ADDRESS_DEAD)
+  );
 }
 
 export function getDaysDiff(t1: Date, t2: Date, floor = true) {
@@ -201,6 +213,15 @@ export function isValidUrl(url: string) {
   }
 }
 
+export function stringToHex(s: string) {
+  let hexString = '';
+  for (let i = 0; i < s.length; i++) {
+    const hex = s.charCodeAt(i).toString(16);
+    hexString += hex;
+  }
+  return hexString;
+}
+
 export function distinct<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
 }
@@ -219,7 +240,39 @@ export const assertUnreachable = (_x: never): never => {
   throw new Error("Didn't expect to get here");
 };
 
+export async function fetchImage(url: string): Promise<ArrayBuffer> {
+  const response = await fetch(url);
+  return await response.arrayBuffer();
+}
+
+export async function compareImages(
+  url1: string,
+  url2: string
+): Promise<boolean> {
+  try {
+    const [image1, image2] = await Promise.all([
+      fetchImage(url1),
+      fetchImage(url2)
+    ]);
+    const data1 = new Uint8Array(image1);
+    const data2 = new Uint8Array(image2);
+    const areImagesEqual = JSON.stringify(data1) === JSON.stringify(data2);
+    return areImagesEqual;
+  } catch (error) {
+    console.error('Error fetching or comparing images:', error);
+    return false;
+  }
+}
+
 export function buildConsolidationKey(wallets: string[]) {
   const sortedWallets = wallets.slice().sort((a, b) => a.localeCompare(b));
   return sortedWallets.join('-');
+}
+
+export function gweiToEth(gwei: number): number {
+  return gwei / 1e9;
+}
+
+export function weiToEth(wei: number): number {
+  return wei / 1e18;
 }

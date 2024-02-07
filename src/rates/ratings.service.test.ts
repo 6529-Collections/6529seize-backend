@@ -51,7 +51,8 @@ describe('RatingsService', () => {
         contributor_count: 2
       });
       const aggregatedRating = await ratingsService.getAggregatedRatingOnMatter(
-        request
+        request,
+        { useReadDbOnReads: true }
       );
 
       expect(aggregatedRating).toEqual({

@@ -25,6 +25,7 @@ import { ConsolidatedTDH } from '../entities/ITDH';
 import { ConsolidatedOwnerMetric, OwnerMetric } from '../entities/IOwner';
 import { Profile } from '../entities/IProfile';
 import * as sentryContext from '../sentry.context';
+import { NextGenTokenTDH } from '../entities/INextGen';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -36,6 +37,7 @@ export const handler = sentryContext.wrapLambdaHandler(
       Consolidation,
       NFTDelegationBlock,
       ConsolidatedTDH,
+      NextGenTokenTDH,
       ConsolidatedOwnerMetric,
       OwnerMetric,
       Profile

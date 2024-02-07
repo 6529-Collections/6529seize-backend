@@ -1,0 +1,30 @@
+service: nextgenMediaUploader
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  memorySize: 512
+  timeout: 900
+
+functions:
+  nextgenMediaUploader:
+    handler: index.handler
+    reservedConcurrency: 1
+    name: nextgenMediaUploader
+    description: ${env:VERSION_DESCRIPTION}
+    events:
+      - sns:
+          arn: arn:aws:sns:us-east-1:987989283142:nextgen-media-proxy-interceptor
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: "nextgenMediaUploader_${opt:stage, self:provider.stage}"

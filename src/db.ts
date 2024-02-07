@@ -10,9 +10,9 @@ import {
 import {
   ARTISTS_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
+  MEME_LAB_ROYALTIES_TABLE,
   CONSOLIDATIONS_TABLE,
   ENS_TABLE,
-  MEME_LAB_ROYALTIES_TABLE,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   NFTS_MEME_LAB_TABLE,
@@ -53,8 +53,8 @@ import {
 } from './entities/ITDH';
 import { Team } from './entities/ITeam';
 import {
-  BaseTransaction,
   LabTransaction,
+  BaseTransaction,
   Transaction
 } from './entities/ITransaction';
 import {
@@ -78,6 +78,19 @@ import {
   formatAddress
 } from './helpers';
 import { getConsolidationsSql } from './sql_helpers';
+import {
+  NextGenAllowlist,
+  NextGenAllowlistBurn,
+  NextGenAllowlistCollection,
+  NextGenCollection,
+  NextGenCollectionBurn,
+  NextGenBlock,
+  NextGenLog,
+  NextGenToken,
+  NextGenTokenTrait,
+  NextGenTokenScore,
+  NextGenTokenTDH
+} from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { Profile, ProfileArchived } from './entities/IProfile';
 import { Logger } from './logging';
@@ -102,7 +115,7 @@ let AppDataSource: DataSource;
 export async function connect(entities: any[] = []) {
   logger.info(`[DB HOST ${process.env.DB_HOST}]`);
 
-  if (process.env.NODE_ENV == 'local') {
+  if (process.env.NODE_ENV === 'local') {
     entities = [
       Owner,
       LabNFT,
@@ -117,6 +130,7 @@ export async function connect(entities: any[] = []) {
       TDH,
       Consolidation,
       ConsolidatedTDH,
+      NextGenTokenTDH,
       ConsolidatedOwnerMetric,
       ConsolidatedOwnerTags,
       ConsolidatedTDHUpload,
@@ -139,6 +153,16 @@ export async function connect(entities: any[] = []) {
       ProfileActivityLog,
       Rating,
       AbusivenessDetectionResult,
+      NextGenAllowlist,
+      NextGenAllowlistBurn,
+      NextGenAllowlistCollection,
+      NextGenCollection,
+      NextGenCollectionBurn,
+      NextGenBlock,
+      NextGenLog,
+      NextGenToken,
+      NextGenTokenTrait,
+      NextGenTokenScore,
       ProcessableEvent,
       ListenerProcessedEvent,
       CicScoreAggregation,
@@ -159,6 +183,7 @@ export async function connect(entities: any[] = []) {
   });
 
   await AppDataSource.initialize().catch((error) => logger.error(error));
+
   setSqlExecutor({
     execute: (
       sql: string,
@@ -169,7 +194,15 @@ export async function connect(entities: any[] = []) {
       return execNativeTransactionally(executable);
     }
   });
-  logger.info('[CONNECTION CREATED]');
+  logger.info(
+    `[CONNECTION CREATED] [APP DATA SOURCE ${
+      !AppDataSource.isInitialized ? 'NOT ' : ''
+    }INITIALIZED]`
+  );
+}
+
+export function getDataSource() {
+  return AppDataSource;
 }
 
 export async function disconnect() {
@@ -451,6 +484,7 @@ export async function fetchAllTDH(wallets?: string[]) {
   const results = await sqlExecutor.execute(sql, { block: tdhBlock, wallets });
   results.map((r: any) => (r.memes = JSON.parse(r.memes)));
   results.map((r: any) => (r.gradients = JSON.parse(r.gradients)));
+  results.map((r: any) => (r.nextgen = JSON.parse(r.nextgen)));
   return results;
 }
 
@@ -549,20 +583,17 @@ export async function fetchDistinctOwnerWallets() {
   return results;
 }
 
-export async function fetchTransactionsFromDate(
-  date: Date | undefined,
-  limit?: number
+export async function fetchTransactionAddressesFromDate(
+  date: Date | undefined
 ) {
+  const table = TRANSACTIONS_TABLE;
+
   let sql = `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE}`;
   const params: any = {};
 
   if (date) {
-    sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at >= :date`;
+    sql += ` WHERE ${table}.created_at >= :date`;
     params.date = date.toISOString();
-  }
-  if (limit) {
-    sql += ` LIMIT :limit`;
-    params.limit = limit;
   }
 
   const results = await sqlExecutor.execute(sql, params);
@@ -883,7 +914,11 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
       const repo = manager.getRepository(OwnerTags);
       await Promise.all(
         ownersTags.map(async (owner) => {
-          if (0 >= owner.memes_balance && 0 >= owner.gradients_balance) {
+          if (
+            0 >= owner.memes_balance &&
+            0 >= owner.gradients_balance &&
+            0 >= owner.nextgen_balance
+          ) {
             await repo.remove(owner);
           } else {
             await repo.upsert(owner, ['wallet']);
@@ -1091,6 +1126,11 @@ export async function persistConsolidatedTDH(
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+export async function persistNextGenTokenTDH(nextgenTdh: NextGenTokenTDH[]) {
+  logger.info(`[NEXTGEN TOKEN TDH] : [${nextgenTdh.length}]`);
+  await AppDataSource.getRepository(NextGenTokenTDH).save(nextgenTdh);
 }
 
 export async function persistENS(ens: ENS[]) {

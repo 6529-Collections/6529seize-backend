@@ -18,13 +18,19 @@ import {
   fetchWalletTransactions,
   fetchDistinctOwnerWallets,
   fetchLastOwnerMetrics,
-  fetchTransactionsFromDate,
+  fetchTransactionAddressesFromDate,
   retrieveWalletConsolidations,
   fetchConsolidationDisplay,
   persistConsolidatedOwnerMetrics
 } from './db';
 import { fetchAllOwnerMetrics } from './db';
 import { Logger } from './logging';
+import { fetchNextgenTokens } from './nextgen/nextgen.db';
+import { NextGenToken } from './entities/INextGen';
+import {
+  NEXTGEN_CORE_CONTRACT,
+  getNextgenNetwork
+} from './nextgen/nextgen_constants';
 
 const logger = Logger.get('OWNER_METRICS');
 
@@ -66,6 +72,7 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
       let memes_balance_season5 = 0;
       let memes_balance_season6 = 0;
       let gradients_balance = 0;
+      let nextgen_balance = 0;
       let purchases_value = 0;
       let purchases_count = 0;
       let purchases_value_memes = 0;
@@ -84,6 +91,8 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
       let purchases_count_memes_season6 = 0;
       let purchases_value_gradients = 0;
       let purchases_count_gradients = 0;
+      let purchases_value_nextgen = 0;
+      let purchases_count_nextgen = 0;
       let purchases_value_primary = 0;
       let purchases_count_primary = 0;
       let purchases_value_primary_memes = 0;
@@ -102,6 +111,8 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
       let purchases_count_primary_memes_season6 = 0;
       let purchases_value_primary_gradients = 0;
       let purchases_count_primary_gradients = 0;
+      let purchases_value_primary_nextgen = 0;
+      let purchases_count_primary_nextgen = 0;
       let purchases_value_secondary = 0;
       let purchases_count_secondary = 0;
       let purchases_value_secondary_memes = 0;
@@ -120,6 +131,8 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
       let purchases_count_secondary_memes_season6 = 0;
       let purchases_value_secondary_gradients = 0;
       let purchases_count_secondary_gradients = 0;
+      let purchases_value_secondary_nextgen = 0;
+      let purchases_count_secondary_nextgen = 0;
       let sales_value = 0;
       let sales_count = 0;
       let sales_value_memes = 0;
@@ -138,6 +151,8 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
       let sales_count_memes_season6 = 0;
       let sales_value_gradients = 0;
       let sales_count_gradients = 0;
+      let sales_value_nextgen = 0;
+      let sales_count_nextgen = 0;
       let transfers_in = 0;
       let transfers_in_memes = 0;
       let transfers_in_memes_season1 = 0;
@@ -147,6 +162,7 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
       let transfers_in_memes_season5 = 0;
       let transfers_in_memes_season6 = 0;
       let transfers_in_gradients = 0;
+      let transfers_in_nextgen = 0;
       let transfers_out = 0;
       let transfers_out_memes = 0;
       let transfers_out_memes_season1 = 0;
@@ -156,6 +172,7 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
       let transfers_out_memes_season5 = 0;
       let transfers_out_memes_season6 = 0;
       let transfers_out_gradients = 0;
+      let transfers_out_nextgen = 0;
 
       consolidatedWalletsMetrics.forEach((com) => {
         balance += com.balance;
@@ -167,6 +184,7 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
         memes_balance_season5 += com.memes_balance_season5;
         memes_balance_season6 += com.memes_balance_season6;
         gradients_balance += com.gradients_balance;
+        nextgen_balance += com.nextgen_balance;
         purchases_value += com.purchases_value;
         purchases_count += com.purchases_count;
         purchases_value_memes += com.purchases_value_memes;
@@ -185,6 +203,8 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
         purchases_count_memes_season6 += com.purchases_count_memes_season6;
         purchases_value_gradients += com.purchases_value_gradients;
         purchases_count_gradients += com.purchases_count_gradients;
+        purchases_value_nextgen += com.purchases_value_nextgen;
+        purchases_count_nextgen += com.purchases_count_nextgen;
         purchases_value_primary += com.purchases_value_primary;
         purchases_count_primary += com.purchases_count_primary;
         purchases_value_primary_memes += com.purchases_value_primary_memes;
@@ -217,6 +237,8 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
           com.purchases_value_primary_gradients;
         purchases_count_primary_gradients +=
           com.purchases_count_primary_gradients;
+        purchases_value_primary_nextgen += com.purchases_value_primary_nextgen;
+        purchases_count_primary_nextgen += com.purchases_count_primary_nextgen;
         purchases_value_secondary += com.purchases_value_secondary;
         purchases_count_secondary += com.purchases_count_secondary;
         purchases_value_secondary_memes += com.purchases_value_secondary_memes;
@@ -249,6 +271,10 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
           com.purchases_value_secondary_gradients;
         purchases_count_secondary_gradients +=
           com.purchases_count_secondary_gradients;
+        purchases_value_secondary_nextgen +=
+          com.purchases_value_secondary_nextgen;
+        purchases_count_secondary_nextgen +=
+          com.purchases_count_secondary_nextgen;
         sales_value += com.sales_value;
         sales_count += com.sales_count;
         sales_value_memes += com.sales_value_memes;
@@ -267,6 +293,8 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
         sales_count_memes_season6 += com.sales_count_memes_season6;
         sales_value_gradients += com.sales_value_gradients;
         sales_count_gradients += com.sales_count_gradients;
+        sales_value_nextgen += com.sales_value_nextgen;
+        sales_count_nextgen += com.sales_count_nextgen;
         transfers_in += com.transfers_in;
         transfers_in_memes += com.transfers_in_memes;
         transfers_in_memes_season1 += com.transfers_in_memes_season1;
@@ -276,6 +304,7 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
         transfers_in_memes_season5 += com.transfers_in_memes_season5;
         transfers_in_memes_season6 += com.transfers_in_memes_season6;
         transfers_in_gradients += com.transfers_in_gradients;
+        transfers_in_nextgen += com.transfers_in_nextgen;
         transfers_out += com.transfers_out;
         transfers_out_memes += com.transfers_out_memes;
         transfers_out_memes_season1 += com.transfers_out_memes_season1;
@@ -285,6 +314,7 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
         transfers_out_memes_season5 += com.transfers_out_memes_season5;
         transfers_out_memes_season6 += com.transfers_out_memes_season6;
         transfers_out_gradients += com.transfers_out_gradients;
+        transfers_out_nextgen += com.transfers_out_nextgen;
       });
 
       const consolidation: ConsolidatedOwnerMetric = {
@@ -301,6 +331,7 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
         memes_balance_season5: memes_balance_season5,
         memes_balance_season6: memes_balance_season6,
         gradients_balance: gradients_balance,
+        nextgen_balance: nextgen_balance,
         purchases_value: purchases_value,
         purchases_count: purchases_count,
         purchases_value_memes: purchases_value_memes,
@@ -319,6 +350,8 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
         purchases_count_memes_season6: purchases_count_memes_season6,
         purchases_value_gradients: purchases_value_gradients,
         purchases_count_gradients: purchases_count_gradients,
+        purchases_value_nextgen: purchases_value_nextgen,
+        purchases_count_nextgen: purchases_count_nextgen,
         purchases_value_primary: purchases_value_primary,
         purchases_count_primary: purchases_count_primary,
         purchases_value_primary_memes: purchases_value_primary_memes,
@@ -349,6 +382,8 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
           purchases_count_primary_memes_season6,
         purchases_value_primary_gradients: purchases_value_primary_gradients,
         purchases_count_primary_gradients: purchases_count_primary_gradients,
+        purchases_value_primary_nextgen: purchases_value_primary_nextgen,
+        purchases_count_primary_nextgen: purchases_count_primary_nextgen,
         purchases_value_secondary: purchases_value_secondary,
         purchases_count_secondary: purchases_count_secondary,
         purchases_value_secondary_memes: purchases_value_secondary_memes,
@@ -381,6 +416,8 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
           purchases_value_secondary_gradients,
         purchases_count_secondary_gradients:
           purchases_count_secondary_gradients,
+        purchases_value_secondary_nextgen: purchases_value_secondary_nextgen,
+        purchases_count_secondary_nextgen: purchases_count_secondary_nextgen,
         sales_value: sales_value,
         sales_count: sales_count,
         sales_value_memes: sales_value_memes,
@@ -399,6 +436,8 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
         sales_count_memes_season6: sales_count_memes_season6,
         sales_value_gradients: sales_value_gradients,
         sales_count_gradients: sales_count_gradients,
+        sales_value_nextgen: sales_value_nextgen,
+        sales_count_nextgen: sales_count_nextgen,
         transfers_in: transfers_in,
         transfers_in_memes: transfers_in_memes,
         transfers_in_memes_season1: transfers_in_memes_season1,
@@ -408,6 +447,7 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
         transfers_in_memes_season5: transfers_in_memes_season5,
         transfers_in_memes_season6: transfers_in_memes_season6,
         transfers_in_gradients: transfers_in_gradients,
+        transfers_in_nextgen: transfers_in_nextgen,
         transfers_out: transfers_out,
         transfers_out_memes: transfers_out_memes,
         transfers_out_memes_season1: transfers_out_memes_season1,
@@ -417,6 +457,7 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
         transfers_out_memes_season5: transfers_out_memes_season5,
         transfers_out_memes_season6: transfers_out_memes_season6,
         transfers_out_gradients: transfers_out_gradients,
+        transfers_out_nextgen: transfers_out_nextgen,
         transaction_reference: new Date()
       };
       consolidatedMetrics.push(consolidation);
@@ -434,26 +475,39 @@ export const consolidateOwnerMetrics = async (startingWallets?: string[]) => {
 
 export const findOwnerMetrics = async (reset?: boolean) => {
   const lastMetricsDate = await fetchLastOwnerMetrics();
-
-  let owners: { wallet: string }[];
-
   const transactionReference = new Date();
 
+  const nextgenNetwork = getNextgenNetwork();
+  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[nextgenNetwork];
+
+  logger.info(
+    `[NEXTGEN_NETWORK ${nextgenNetwork}] : [NEXTGEN_CONTRACT ${NEXTGEN_CONTRACT}]`
+  );
+
+  const addresses = new Set<string>();
   if (!lastMetricsDate || reset) {
-    owners = await fetchDistinctOwnerWallets();
+    const ownersNfts = await fetchDistinctOwnerWallets();
+    ownersNfts.forEach((o: { wallet: string }) => {
+      addresses.add(o.wallet);
+    });
+    const nextgenOwners: NextGenToken[] = await fetchNextgenTokens();
+    nextgenOwners.forEach((n) => {
+      addresses.add(n.owner);
+    });
   } else {
-    const allWallets: { from_address: string; to_address: string }[] =
-      await fetchTransactionsFromDate(new Date(lastMetricsDate));
-    const addresses = new Set<string>();
-    allWallets.forEach((wallet) => {
+    const allTransactionAddresses: {
+      from_address: string;
+      to_address: string;
+    }[] = await fetchTransactionAddressesFromDate(new Date(lastMetricsDate));
+    allTransactionAddresses.forEach((wallet) => {
       addresses.add(wallet.from_address);
       addresses.add(wallet.to_address);
     });
-
-    owners = Array.from(addresses).map((address) => {
-      return { wallet: address };
-    });
   }
+
+  const owners: { wallet: string }[] = Array.from(addresses).map((address) => {
+    return { wallet: address };
+  });
 
   logger.info(
     `[OWNERS ${owners.length}] [lastMetricsDate ${lastMetricsDate}] [transactionReference ${transactionReference}] [RESET ${reset}]`
@@ -465,9 +519,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
     owners.map(async (owner) => {
       const wallet = owner.wallet;
 
-      const walletTransactions: Transaction[] = await fetchWalletTransactions(
-        wallet
-      );
+      const walletTransactions = await fetchWalletTransactions(wallet);
 
       if (walletTransactions.length > 0) {
         const transactionsIn = [...walletTransactions].filter((wt) =>
@@ -539,6 +591,13 @@ export const findOwnerMetrics = async (reset?: boolean) => {
           areEqualAddresses(tr.contract, GRADIENT_CONTRACT)
         );
 
+        const nextgenTransactionsIn = [...transactionsIn].filter((tr) =>
+          areEqualAddresses(tr.contract, NEXTGEN_CONTRACT)
+        );
+        const nextgenTransactionsOut = [...transactionsOut].filter((tr) =>
+          areEqualAddresses(tr.contract, NEXTGEN_CONTRACT)
+        );
+
         const purchases = [...transactionsIn].filter((t) => t.value > 0);
         const purchasesMemes = [...purchases].filter((t) =>
           areEqualAddresses(t.contract, MEMES_CONTRACT)
@@ -565,6 +624,9 @@ export const findOwnerMetrics = async (reset?: boolean) => {
         );
         const purchasesGradients = [...purchases].filter((t) =>
           areEqualAddresses(t.contract, GRADIENT_CONTRACT)
+        );
+        const purchasesNextgen = [...purchases].filter((t) =>
+          areEqualAddresses(t.contract, NEXTGEN_CONTRACT)
         );
         const purchasesPrimary = [...purchases].filter((t) =>
           areEqualAddresses(MANIFOLD, t.from_address)
@@ -595,6 +657,9 @@ export const findOwnerMetrics = async (reset?: boolean) => {
         const purchasesPrimaryGradients = [...purchasesPrimary].filter((t) =>
           areEqualAddresses(t.contract, GRADIENT_CONTRACT)
         );
+        const purchasesPrimaryNextgen = [...purchasesPrimary].filter((t) =>
+          areEqualAddresses(t.contract, NEXTGEN_CONTRACT)
+        );
 
         const purchasesSecondary = [...purchases].filter(
           (t) => !areEqualAddresses(MANIFOLD, t.from_address)
@@ -624,6 +689,9 @@ export const findOwnerMetrics = async (reset?: boolean) => {
         );
         const purchasesSecondaryGradients = [...purchasesSecondary].filter(
           (t) => areEqualAddresses(t.contract, GRADIENT_CONTRACT)
+        );
+        const purchasesSecondaryNextgen = [...purchasesSecondary].filter((t) =>
+          areEqualAddresses(t.contract, NEXTGEN_CONTRACT)
         );
 
         const sales = [...transactionsOut].filter(
@@ -657,6 +725,10 @@ export const findOwnerMetrics = async (reset?: boolean) => {
           areEqualAddresses(t.contract, GRADIENT_CONTRACT)
         );
 
+        const salesNextgen = [...sales].filter((t) =>
+          areEqualAddresses(t.contract, NEXTGEN_CONTRACT)
+        );
+
         const transfersIn = [...transactionsIn].filter((t) => t.value == 0);
         const transfersInMemes = [...transfersIn].filter((t) =>
           areEqualAddresses(t.contract, MEMES_CONTRACT)
@@ -683,6 +755,9 @@ export const findOwnerMetrics = async (reset?: boolean) => {
         );
         const transfersInGradients = [...transfersIn].filter((t) =>
           areEqualAddresses(t.contract, GRADIENT_CONTRACT)
+        );
+        const transfersInNextgen = [...transfersIn].filter((t) =>
+          areEqualAddresses(t.contract, NEXTGEN_CONTRACT)
         );
 
         const transfersOut = [...transactionsOut].filter(
@@ -715,6 +790,9 @@ export const findOwnerMetrics = async (reset?: boolean) => {
         const transfersOutGradients = [...transfersOut].filter((t) =>
           areEqualAddresses(t.contract, GRADIENT_CONTRACT)
         );
+        const transfersOutNextgen = [...transfersOut].filter((t) =>
+          areEqualAddresses(t.contract, NEXTGEN_CONTRACT)
+        );
 
         const ownerMetric: OwnerMetric = {
           created_at: new Date(),
@@ -743,6 +821,8 @@ export const findOwnerMetrics = async (reset?: boolean) => {
           gradients_balance:
             getCount(gradientsTransactionsIn) -
             getCount(gradientsTransactionsOut),
+          nextgen_balance:
+            getCount(nextgenTransactionsIn) - getCount(nextgenTransactionsOut),
           purchases_value: getValue(purchases),
           purchases_count: getCount(purchases),
           purchases_value_memes: getValue(purchasesMemes),
@@ -761,6 +841,8 @@ export const findOwnerMetrics = async (reset?: boolean) => {
           purchases_count_memes_season6: getCount(purchasesMemesS6),
           purchases_value_gradients: getValue(purchasesGradients),
           purchases_count_gradients: getCount(purchasesGradients),
+          purchases_value_nextgen: getValue(purchasesNextgen),
+          purchases_count_nextgen: getCount(purchasesNextgen),
           purchases_value_primary: getValue(purchasesPrimary),
           purchases_count_primary: getCount(purchasesPrimary),
           purchases_value_primary_memes: getValue(purchasesPrimaryMemes),
@@ -807,6 +889,8 @@ export const findOwnerMetrics = async (reset?: boolean) => {
           purchases_count_primary_gradients: getCount(
             purchasesPrimaryGradients
           ),
+          purchases_value_primary_nextgen: getValue(purchasesPrimaryNextgen),
+          purchases_count_primary_nextgen: getCount(purchasesPrimaryNextgen),
           purchases_value_secondary: getValue(purchasesSecondary),
           purchases_count_secondary: getCount(purchasesSecondary),
           purchases_value_secondary_memes: getValue(purchasesSecondaryMemes),
@@ -853,6 +937,12 @@ export const findOwnerMetrics = async (reset?: boolean) => {
           purchases_count_secondary_gradients: getCount(
             purchasesSecondaryGradients
           ),
+          purchases_value_secondary_nextgen: getValue(
+            purchasesSecondaryNextgen
+          ),
+          purchases_count_secondary_nextgen: getCount(
+            purchasesSecondaryNextgen
+          ),
           sales_value: getValue(sales),
           sales_count: getCount(sales),
           sales_value_memes: getValue(salesMemes),
@@ -871,6 +961,8 @@ export const findOwnerMetrics = async (reset?: boolean) => {
           sales_count_memes_season6: getCount(salesMemesS6),
           sales_value_gradients: getValue(salesGradients),
           sales_count_gradients: getCount(salesGradients),
+          sales_value_nextgen: getValue(salesNextgen),
+          sales_count_nextgen: getCount(salesNextgen),
           transfers_in: getCount(transfersIn),
           transfers_in_memes: getCount(transfersInMemes),
           transfers_in_memes_season1: getCount(transfersInMemesS1),
@@ -880,6 +972,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
           transfers_in_memes_season5: getCount(transfersInMemesS5),
           transfers_in_memes_season6: getCount(transfersInMemesS6),
           transfers_in_gradients: getCount(transfersInGradients),
+          transfers_in_nextgen: getCount(transfersInNextgen),
           transfers_out: getCount(transfersOut),
           transfers_out_memes: getCount(transfersOutMemes),
           transfers_out_memes_season1: getCount(transfersOutMemesS1),
@@ -889,6 +982,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
           transfers_out_memes_season5: getCount(transfersOutMemesS5),
           transfers_out_memes_season6: getCount(transfersOutMemesS6),
           transfers_out_gradients: getCount(transfersOutGradients),
+          transfers_out_nextgen: getCount(transfersOutNextgen),
           transaction_reference: transactionReference
         };
         ownerMetrics.push(ownerMetric);

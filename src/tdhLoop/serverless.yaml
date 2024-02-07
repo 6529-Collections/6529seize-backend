@@ -12,6 +12,11 @@ provider:
   memorySize: 1028
   timeout: 900
 
+custom:
+  chainIDs:
+    staging: 11155111
+    prod: 1
+
 functions:
   tdhLoop:
     handler: index.handler
@@ -26,4 +31,5 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: "tdhLoop_${opt:stage, self:provider.stage}"
+      SENTRY_ENVIRONMENT: 'tdhLoop_${opt:stage, self:provider.stage}'
+      NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}

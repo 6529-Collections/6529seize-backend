@@ -5,6 +5,7 @@ import {
   CONSOLIDATED_UPLOADS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATIONS_TABLE,
+  DELEGATION_ALL_ADDRESS,
   DELEGATIONS_TABLE,
   DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE,
@@ -15,8 +16,6 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
-  NEXT_GEN_ALLOWLIST,
-  NEXT_GEN_COLLECTIONS,
   NFTS_HISTORY_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
@@ -36,6 +35,8 @@ import {
   TRANSACTIONS_MEME_LAB_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
+  USE_CASE_ALL,
+  USE_CASE_MINTING,
   USER_TABLE,
   WALLETS_TDH_TABLE
 } from './constants';
@@ -47,7 +48,6 @@ import {
   extractConsolidationWallets
 } from './helpers';
 import { getConsolidationsSql, getProfilePageSql } from './sql_helpers';
-import { getProof } from './merkle_proof';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 
 import * as mysql from 'mysql';
@@ -258,7 +258,7 @@ async function getTeamWallets() {
   return results;
 }
 
-async function fetchPaginated(
+export async function fetchPaginated(
   table: string,
   params: any,
   orderBy: string,
@@ -269,9 +269,10 @@ async function fetchPaginated(
   joins?: string,
   groups?: string
 ) {
-  const countSql = `SELECT COUNT(1) as count FROM (SELECT 1 FROM ${table} ${joins} ${filters}${
-    groups ? ` GROUP BY ${groups}` : ``
-  }) inner_q`;
+  const groupPart = groups ? ` GROUP BY ${groups}` : '';
+  const countSql = `SELECT COUNT(1) as count FROM (SELECT 1 FROM ${table} ${
+    joins ?? ''
+  } ${filters}${groupPart}) inner_q`;
 
   let resultsSql = `SELECT ${fields ? fields : '*'} FROM ${table} ${
     joins ? joins : ''
@@ -282,6 +283,9 @@ async function fetchPaginated(
     const offset = pageSize * (page - 1);
     resultsSql += ` OFFSET ${offset}`;
   }
+
+  logger.debug(`Count sql: '${countSql}`);
+  logger.debug(`Data sql: ${resultsSql}`);
 
   const count = await sqlExecutor
     .execute(countSql, params)
@@ -1615,7 +1619,8 @@ async function enhanceDataWithHandlesAndLevel(
   );
   const walletsToHandlesAndIds =
     await profilesService.getProfileIdsAndHandlesByPrimaryWallets(
-      resultWallets
+      resultWallets,
+      { useReadDbOnReads: true }
     );
   const profileIds = Object.values(walletsToHandlesAndIds).map((it) => it.id);
   const profileReps = await repService.getAggregatedRepForProfiles(profileIds);
@@ -1967,7 +1972,8 @@ export async function fetchConsolidatedOwnerMetrics(
 
   return results;
 }
-function returnEmpty() {
+
+export function returnEmpty() {
   return {
     count: 0,
     page: 0,
@@ -2367,6 +2373,39 @@ export async function fetchDelegations(
   );
 }
 
+export async function fetchMintingDelegations(
+  wallet: string,
+  pageSize: number,
+  page: number
+) {
+  let filter = constructFilters('', `LOWER(from_address) = :wallet`);
+
+  filter = constructFilters(filter, `expiry >= :expiry`);
+  filter = constructFilters(filter, `use_case in (:use_cases)`);
+  filter = constructFilters(filter, `collection in (:collections)`);
+
+  const params = {
+    wallet: wallet.toLowerCase(),
+    expiry: Date.now() / 1000,
+    use_cases: [USE_CASE_ALL, USE_CASE_MINTING],
+    collections: [DELEGATION_ALL_ADDRESS, MEMES_CONTRACT]
+  };
+
+  let joins = `LEFT JOIN ${ENS_TABLE} e1 ON ${DELEGATIONS_TABLE}.from_address=e1.wallet`;
+  joins += ` LEFT JOIN ${ENS_TABLE} e2 ON ${DELEGATIONS_TABLE}.to_address=e2.wallet`;
+
+  return fetchPaginated(
+    DELEGATIONS_TABLE,
+    params,
+    'block desc',
+    pageSize,
+    page,
+    filter,
+    `${DELEGATIONS_TABLE}.*, e1.display as from_display, e2.display as to_display`,
+    joins
+  );
+}
+
 export async function fetchDelegationsByUseCase(
   collections: string,
   useCases: string,
@@ -2427,43 +2466,6 @@ export async function fetchNftHistory(
     page,
     filter
   );
-}
-
-export async function fetchNextGenAllowlist(
-  merkleRoot: string,
-  address: string
-) {
-  const sql1 = `SELECT * FROM ${NEXT_GEN_COLLECTIONS} WHERE merkle_root=:merkle_root`;
-  const collection = (
-    await sqlExecutor.execute(sql1, {
-      merkle_root: merkleRoot
-    })
-  )[0];
-
-  const sql2 = `SELECT * FROM ${NEXT_GEN_ALLOWLIST} WHERE merkle_root=:merkle_root AND address=:address`;
-
-  const allowlist = (
-    await sqlExecutor.execute(sql2, {
-      merkle_root: merkleRoot,
-      address: address
-    })
-  )[0];
-
-  if (collection && allowlist) {
-    const proof = getProof(collection.merkle_tree, allowlist.keccak);
-    return {
-      keccak: allowlist.keccak,
-      spots: allowlist.spots,
-      info: allowlist.info,
-      proof: proof
-    };
-  }
-  return {
-    keccak: null,
-    spots: -1,
-    data: null,
-    proof: []
-  };
 }
 
 export async function fetchRememes(

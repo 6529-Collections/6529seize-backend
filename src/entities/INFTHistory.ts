@@ -1,10 +1,4 @@
-import {
-  Entity,
-  Column,
-  PrimaryColumn,
-  CreateDateColumn,
-  PrimaryGeneratedColumn
-} from 'typeorm';
+import { Entity, Column, PrimaryColumn, CreateDateColumn } from 'typeorm';
 import {
   NFTS_HISTORY_BLOCKS_TABLE,
   NFTS_HISTORY_CLAIMS_TABLE,

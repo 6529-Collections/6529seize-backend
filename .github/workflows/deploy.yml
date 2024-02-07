@@ -39,6 +39,10 @@ on:
           - transactionsLoop
           - transactionsReplayLoop
           - nextgenContractLoop
+          - nextgenMetadataLoop
+          - nextgenMissingImageResolutionsLoop
+          - nextgenMediaProxyInterceptor
+          - nextgenMediaUploader
       branch:
         description: 'Branch name'
         required: true
@@ -53,6 +57,11 @@ jobs:
     name: Build and deploy
     runs-on: ubuntu-latest
     steps:
+      - name: Check preconditions
+        uses: actions/github-script@v3
+        if: (github.event.inputs.service == 'nextgenMediaProxyInterceptor' || github.event.inputs.service == 'nextgenMediaUploader') && github.event.inputs.environment != 'prod'
+        with:
+          script: core.setFailed('Given service can only be deployed to production environment')
       - name: Checkout
         uses: actions/checkout@v3
         with:
@@ -78,7 +87,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ github.event.inputs.environment == 'prod' && 'us-east-1' || 'eu-west-1' }}
       - name: Deploy service
-        if: github.event.inputs.service != 'api'
+        if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor'
         run: |
           export VERSION_DESCRIPTION="$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
           pushd src/${{ github.event.inputs.service }} && npm run sls-deploy:${{ github.event.inputs.environment }} && popd
@@ -88,6 +97,12 @@ jobs:
           aws lambda update-function-code --function-name  seizeAPI --zip-file fileb://src/api-serverless/dist/index.zip
           sleep 10
           aws lambda update-function-configuration --function-name seizeAPI --description "$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
+      - name: Deploy nextgenMediaProxyInterceptor
+        if: github.event.inputs.service == 'nextgenMediaProxyInterceptor'
+        run: |
+          pushd src/nextgenMediaProxyInterceptor
+          sh deploy.sh
+          popd
       - name: Notify about failure
         uses: sarisia/actions-status-discord@v1
         if: failure()

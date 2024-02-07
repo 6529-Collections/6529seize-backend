@@ -2,7 +2,7 @@
   "name": "s3loop",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "index.ts",
   "scripts": {
     "prebuild": "rm -rf dist && ls ../../ffmpeg-installer.js && node ../../ffmpeg-installer.js",
     "build": "esbuild index.ts --bundle --external:sharp --external:imagescript --sourcemap --platform=node --target=es2020 --outfile=dist/index.js && mkdir dist/native_modules && cp -r node_modules/sharp dist/native_modules/sharp/ && cp -r node_modules dist/node_modules",

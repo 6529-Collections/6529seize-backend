@@ -8,12 +8,20 @@ import { Time } from '../time';
 import { Profile } from '../entities/IProfile';
 import { fetchAllConsolidationAddresses } from '../db';
 import * as sentryContext from '../sentry.context';
+import { NextGenTokenTDH } from '../entities/INextGen';
 
 const logger = Logger.get('TDH_CONSOLIDATIONS_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   const start = Time.now();
-  await loadEnv([TDH, ConsolidatedTDH, ProfileTdh, ProfileTdhLog, Profile]);
+  await loadEnv([
+    TDH,
+    ConsolidatedTDH,
+    NextGenTokenTDH,
+    ProfileTdh,
+    ProfileTdhLog,
+    Profile
+  ]);
   const force = process.env.TDH_RESET == 'true';
   logger.info(`[RUNNING force=${force}]`);
   await consolidatedTdhLoop();
