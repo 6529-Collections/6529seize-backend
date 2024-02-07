@@ -3,8 +3,7 @@ import {
   CreateDateColumn,
   PrimaryColumn,
   Column,
-  UpdateDateColumn,
-  Index
+  UpdateDateColumn
 } from 'typeorm';
 import {
   NEXTGEN_ALLOWLIST_BURN_TABLE,

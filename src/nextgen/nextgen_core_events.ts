@@ -14,7 +14,6 @@ import { findTransactionValues } from '../transaction_values';
 import {
   fetchNextGenCollection,
   fetchNextgenToken,
-  persistNextGenCollection,
   persistNextGenLogs,
   persistNextGenToken,
   persistNextGenTraits,

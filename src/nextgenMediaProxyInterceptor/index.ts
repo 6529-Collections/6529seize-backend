@@ -1,8 +1,5 @@
 import { Logger } from '../logging';
-import {
-  GENERATOR_BASE_PATH,
-  NEXTGEN_CF_BASE_PATH
-} from '../nextgen/nextgen_constants';
+import { NEXTGEN_CF_BASE_PATH } from '../nextgen/nextgen_constants';
 import {
   Details,
   getGenDetailsFromUri,
