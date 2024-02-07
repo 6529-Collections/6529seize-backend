@@ -39,7 +39,7 @@ export function getNextgenNetwork() {
 export const NEXTGEN_CORE_CONTRACT = {
   [Network.ETH_GOERLI]: '0x25a972f1bf3c816061ceaea59d2bb3fe4c130766',
   [Network.ETH_SEPOLIA]: '0x60671e59a349589Ad74bE6cd643003a0Abb38cC3',
-  [Network.ETH_MAINNET]: '0x6113fd2c91514e84e6149c6ede47f2e09545253a'
+  [Network.ETH_MAINNET]: '0x45882f9bc325E14FBb298a1Df930C43a874B83ae'
 };
 
 export const NEXTGEN_START_BLOCK = {
