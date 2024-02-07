@@ -15,8 +15,9 @@ const logger = Logger.get('NEXTGEN_CONTRACT');
 const BLOCK_THRESHOLD = 1000;
 
 export async function findNextGenTransactions() {
+  const network = getNextgenNetwork();
   const alchemy = new Alchemy({
-    network: getNextgenNetwork(),
+    network: network,
     maxRetries: 10,
     apiKey: process.env.ALCHEMY_API_KEY
   });

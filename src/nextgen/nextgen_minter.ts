@@ -30,8 +30,9 @@ export async function findMinterTransactions(
   endBlock: number,
   pageKey?: string
 ) {
+  const network = getNextgenNetwork();
   logger.info(
-    `[FINDING TRANSACTIONS] : [START BLOCK ${startBlock}] : [END BLOCK ${endBlock}] : [PAGE KEY ${pageKey}]`
+    `[NETWORK ${network}] : [FINDING TRANSACTIONS] : [START BLOCK ${startBlock}] : [END BLOCK ${endBlock}] : [PAGE KEY ${pageKey}]`
   );
   const settings: AssetTransfersWithMetadataParams = {
     category: [AssetTransfersCategory.EXTERNAL],
@@ -40,7 +41,7 @@ export async function findMinterTransactions(
     fromBlock: `0x${startBlock.toString(16)}`,
     toBlock: `0x${endBlock.toString(16)}`,
     pageKey: pageKey,
-    toAddress: NEXTGEN_MINTER_CONTRACT[getNextgenNetwork()],
+    toAddress: NEXTGEN_MINTER_CONTRACT[network],
     withMetadata: true,
     order: SortingOrder.ASCENDING
   };

@@ -35,12 +35,13 @@ export async function findCoreEvents(
   pageKey?: string
 ) {
   alchemy = a;
+  const network = getNextgenNetwork();
   logger.info(
-    `[FINDING EVENTS] : [START BLOCK ${startBlock}] : [END BLOCK ${endBlock}] : [PAGE KEY ${pageKey}]`
+    `[NETWORK ${network}] : [FINDING EVENTS] : [START BLOCK ${startBlock}] : [END BLOCK ${endBlock}] : [PAGE KEY ${pageKey}]`
   );
 
   const response = await alchemy.core.getLogs({
-    address: NEXTGEN_CORE_CONTRACT[getNextgenNetwork()],
+    address: NEXTGEN_CORE_CONTRACT[network],
     fromBlock: `0x${startBlock.toString(16)}`,
     toBlock: `0x${endBlock.toString(16)}`
   });
