@@ -134,7 +134,7 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
     for (let i = 1; i < wallets.length; i++) {
       const key = `wallet${i + 1}`;
       params[key] = wallets[i];
-      sql += ` or wallet = lower(:${key})`;
+      sql += ` or owner = lower(:${key})`;
     }
     const result: { id: number }[] = await this.db.execute(sql, params);
     return result.reduce((acc, cur) => {
