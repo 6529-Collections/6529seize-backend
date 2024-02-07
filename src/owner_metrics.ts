@@ -477,7 +477,8 @@ export const findOwnerMetrics = async (reset?: boolean) => {
   const lastMetricsDate = await fetchLastOwnerMetrics();
   const transactionReference = new Date();
 
-  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[getNextgenNetwork()];
+  const nextgenNetwork = getNextgenNetwork();
+  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[nextgenNetwork];
 
   const addresses = new Set<string>();
   if (!lastMetricsDate || reset) {
@@ -505,7 +506,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
   });
 
   logger.info(
-    `[OWNERS ${owners.length}] [lastMetricsDate ${lastMetricsDate}] [transactionReference ${transactionReference}] [RESET ${reset}]`
+    `[OWNERS ${owners.length}] [lastMetricsDate ${lastMetricsDate}] [transactionReference ${transactionReference}] [RESET ${reset}] : [NEXTGEN_NETWORK ${nextgenNetwork}]`
   );
 
   const ownerMetrics: OwnerMetric[] = [];
