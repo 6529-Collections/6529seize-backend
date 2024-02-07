@@ -10,6 +10,9 @@ export class RepScoreAggregationDb extends LazyDbAccessCompatibleService {
   async getDataForProfiles(
     profileIds: string[]
   ): Promise<ProfileTotalRepScoreAggregation[]> {
+    if (!profileIds.length) {
+      return [];
+    }
     return this.db.execute(
       `SELECT * FROM ${PROFILE_TOTAL_REP_SCORE_AGGREGATIONS_TABLE} WHERE profile_id IN (:profileIds)`,
       { profileIds }
