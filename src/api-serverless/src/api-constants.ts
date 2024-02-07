@@ -21,6 +21,7 @@ export const corsOptions = {
   allowedHeaders: [
     'Content-Type',
     'x-6529-auth',
+    'x-6529-origin-path',
     'Origin',
     'Accept',
     'X-Requested-With',

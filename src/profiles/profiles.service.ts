@@ -43,7 +43,8 @@ export class ProfilesService {
   ) {}
 
   public async getProfileByEnsName(
-    query: string
+    query: string,
+    { useReadDbOnReads }: { useReadDbOnReads: boolean }
   ): Promise<ProfileAndConsolidations | null> {
     const wallet = await this.supplyAlchemy().core.resolveName(query);
     if (!wallet) {
@@ -60,7 +61,9 @@ export class ProfilesService {
     if (consolidatedWallets.length === 0) {
       return null;
     }
-    const profile = await this.getWalletsNewestProfile(wallet);
+    const profile = await this.getWalletsNewestProfile(wallet, {
+      useReadDbOnReads
+    });
     const walletTdhs = await this.profilesDb.getWalletsTdhs({
       wallets: consolidatedWallets,
       blockNo
@@ -68,7 +71,9 @@ export class ProfilesService {
     const wallets = await this.profilesDb.getPrediscoveredEnsNames(
       consolidatedWallets
     );
-    const cic = await this.getCic(profile);
+    const cic = await this.getCic(profile, {
+      useReadDbOnReads
+    });
     const rep = profile?.external_id
       ? await this.repService.getRepForProfile(profile.external_id)
       : 0;
@@ -90,16 +95,22 @@ export class ProfilesService {
     };
   }
 
-  private async getCic(profile?: Profile) {
+  private async getCic(
+    profile: Profile | undefined,
+    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+  ) {
     const profileId = profile?.external_id;
     return profileId
       ? await this.ratingsService
-          .getAggregatedRatingOnMatter({
-            rater_profile_id: null,
-            matter: RateMatter.CIC,
-            matter_target_id: profileId,
-            matter_category: RateMatter.CIC
-          })
+          .getAggregatedRatingOnMatter(
+            {
+              rater_profile_id: null,
+              matter: RateMatter.CIC,
+              matter_target_id: profileId,
+              matter_category: RateMatter.CIC
+            },
+            { useReadDbOnReads }
+          )
           .then((res) => ({
             cic_rating: res.rating,
             contributor_count: res.contributor_count
@@ -108,7 +119,8 @@ export class ProfilesService {
   }
 
   public async getProfileByWallet(
-    query: string
+    query: string,
+    { useReadDbOnReads }: { useReadDbOnReads: boolean }
   ): Promise<ProfileAndConsolidations | null> {
     const {
       consolidatedWallets,
@@ -121,7 +133,9 @@ export class ProfilesService {
     if (consolidatedWallets.length === 0) {
       return null;
     }
-    const profile = await this.getWalletsNewestProfile(query);
+    const profile = await this.getWalletsNewestProfile(query, {
+      useReadDbOnReads
+    });
     const walletTdhs = await this.profilesDb.getWalletsTdhs({
       wallets: consolidatedWallets,
       blockNo
@@ -129,7 +143,7 @@ export class ProfilesService {
     const wallets = await this.profilesDb.getPrediscoveredEnsNames(
       consolidatedWallets
     );
-    const cic = await this.getCic(profile);
+    const cic = await this.getCic(profile, { useReadDbOnReads });
     const rep = profile?.external_id
       ? await this.repService.getRepForProfile(profile?.external_id)
       : 0;
@@ -151,20 +165,26 @@ export class ProfilesService {
     };
   }
 
-  public async getProfilesByWallets(wallets: string[]): Promise<Profile[]> {
-    return this.profilesDb.getProfilesByWallets(wallets);
+  public async getProfilesByWallets(
+    wallets: string[],
+    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+  ): Promise<Profile[]> {
+    return this.profilesDb.getProfilesByWallets(wallets, { useReadDbOnReads });
   }
 
   public async getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-    handleOrEnsOrWalletAddress: string
+    handleOrEnsOrWalletAddress: string,
+    { useReadDbOnReads }: { useReadDbOnReads: boolean }
   ): Promise<ProfileAndConsolidations | null> {
     const query = handleOrEnsOrWalletAddress.toLowerCase();
     if (query.endsWith('.eth')) {
-      return await this.getProfileByEnsName(query);
+      return await this.getProfileByEnsName(query, { useReadDbOnReads });
     } else if (WALLET_REGEX.exec(query)) {
-      return await this.getProfileByWallet(query);
+      return await this.getProfileByWallet(query, { useReadDbOnReads });
     } else {
-      const profile = await this.profilesDb.getProfileByHandle(query);
+      const profile = await this.profilesDb.getProfileByHandle(query, {
+        useReadDbOnReads
+      });
       if (!profile) {
         return null;
       }
@@ -185,7 +205,9 @@ export class ProfilesService {
       const wallets = await this.profilesDb.getPrediscoveredEnsNames(
         consolidatedWallets
       );
-      const cic = await this.getCic(profile);
+      const cic = await this.getCic(profile, {
+        useReadDbOnReads
+      });
       const rep = profile?.external_id
         ? await this.repService.getRepForProfile(profile?.external_id)
         : 0;
@@ -231,7 +253,8 @@ export class ProfilesService {
     }
 
     const creatorOrUpdaterProfiles = await this.getProfilesByWallets(
-      creatorOrUpdaterWalletConsolidatedWallets
+      creatorOrUpdaterWalletConsolidatedWallets,
+      { useReadDbOnReads: false }
     );
     if (
       !creatorOrUpdaterProfiles.find(
@@ -239,7 +262,8 @@ export class ProfilesService {
       )
     ) {
       const preExistingProfile = await this.profilesDb.getProfileByHandle(
-        handle
+        handle,
+        { useReadDbOnReads: false }
       );
       if (preExistingProfile) {
         throw new BadRequestException(`Handle ${handle} is already taken`);
@@ -346,7 +370,8 @@ export class ProfilesService {
     }
     const updatedProfile =
       await this.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handle
+        handle,
+        { useReadDbOnReads: false }
       );
     return updatedProfile!;
   }
@@ -536,7 +561,8 @@ export class ProfilesService {
     }
     const profile =
       await this.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet
+        handleOrWallet,
+        { useReadDbOnReads: false }
       ).then((it) => {
         if (it?.profile) {
           if (
@@ -582,12 +608,15 @@ export class ProfilesService {
   }
 
   public async getProfileIdsAndHandlesByPrimaryWallets(
-    wallets: string[]
+    wallets: string[],
+    { useReadDbOnReads }: { useReadDbOnReads: boolean }
   ): Promise<Record<string, { id: string; handle: string }>> {
     if (!wallets.length) {
       return {};
     }
-    const profiles = await this.getProfilesByWallets(wallets);
+    const profiles = await this.getProfilesByWallets(wallets, {
+      useReadDbOnReads
+    });
     return wallets.reduce((result, wallet) => {
       const profile = profiles.find(
         (profile) =>
@@ -645,11 +674,14 @@ export class ProfilesService {
   }
 
   private async getWalletsNewestProfile(
-    wallet: string
+    wallet: string,
+    { useReadDbOnReads }: { useReadDbOnReads: boolean }
   ): Promise<Profile | undefined> {
     const { consolidatedWallets } =
       await this.getWalletTdhBlockNoAndConsolidatedWallets(wallet);
-    const profiles = await this.getProfilesByWallets(consolidatedWallets);
+    const profiles = await this.getProfilesByWallets(consolidatedWallets, {
+      useReadDbOnReads
+    });
     return profiles
       .sort((a, d) => d.created_at.getTime() - a.created_at.getTime())
       .at(0);
@@ -747,10 +779,12 @@ export class ProfilesService {
     connectionHolder: ConnectionWrapper<any>
   ) {
     const sourceStatements = await this.cicService.getCicStatementsByProfileId(
-      source.external_id
+      source.external_id,
+      { useReadDbOnReads: false }
     );
     const targetStatements = await this.cicService.getCicStatementsByProfileId(
-      target.external_id
+      target.external_id,
+      { useReadDbOnReads: false }
     );
     const missingTargetStatements = sourceStatements.filter(
       (sourceStatement) => {
@@ -868,7 +902,9 @@ export class ProfilesService {
   private async searchCommunityMemberByWallet(
     wallet: string
   ): Promise<CommunityMemberMinimal[]> {
-    const profileAndConsolidationsInfo = await this.getProfileByWallet(wallet);
+    const profileAndConsolidationsInfo = await this.getProfileByWallet(wallet, {
+      useReadDbOnReads: true
+    });
     if (!profileAndConsolidationsInfo) {
       return [];
     }

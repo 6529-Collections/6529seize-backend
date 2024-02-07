@@ -116,7 +116,7 @@ describe('CicService', () => {
         crated_at: new Date()
       }));
       when(cicDb.getCicStatementsByProfileId)
-        .calledWith(aProfileId)
+        .calledWith(aProfileId, { useReadDbOnReads: false })
         .mockResolvedValue([]);
     });
 
@@ -2034,7 +2034,7 @@ describe('CicService', () => {
         statement_comment: 'a comment'
       };
       when(cicDb.getCicStatementsByProfileId)
-        .calledWith(aProfileId)
+        .calledWith(aProfileId, { useReadDbOnReads: false })
         .mockResolvedValue([
           {
             ...addCicStatement,

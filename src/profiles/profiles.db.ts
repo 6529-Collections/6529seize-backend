@@ -67,34 +67,6 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       );
   }
 
-  public async getProfileIdsByWalletsNewestFirst(
-    wallets: string[]
-  ): Promise<string[]> {
-    return this.db
-      .execute(
-        `select external_id from ${PROFILES_TABLE} where lower(primary_wallet) in (:wallets) order by created_at desc`,
-        {
-          wallets: wallets
-        }
-      )
-      ?.then((result) =>
-        result.map((it: { external_id: string }) => it.external_id)
-      );
-  }
-
-  public async getPrimaryWalletByExternalId(
-    external_id: string
-  ): Promise<string | null> {
-    return this.db
-      .execute(
-        `select primary_wallet from ${PROFILES_TABLE} where external_id = :externalId limit 1`,
-        {
-          externalId: external_id
-        }
-      )
-      ?.then((result) => result.at(0)?.primary_wallet ?? null);
-  }
-
   public async getPrediscoveredEnsNames(
     walletAddresses: string[]
   ): Promise<Wallet[]> {
@@ -116,7 +88,10 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     }));
   }
 
-  public async getProfilesByWallets(wallets: string[]): Promise<Profile[]> {
+  public async getProfilesByWallets(
+    wallets: string[],
+    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+  ): Promise<Profile[]> {
     if (wallets.length === 0) {
       return [];
     }
@@ -124,7 +99,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       .execute(
         `select * from ${PROFILES_TABLE} where primary_wallet in (:wallets)`,
         { wallets: wallets.map((w) => w.toLowerCase()) },
-        { forcePool: DbPoolName.WRITE }
+        { forcePool: useReadDbOnReads ? DbPoolName.READ : DbPoolName.WRITE }
       )
       .then((result) =>
         result.map((profile: Profile) => {
@@ -168,13 +143,19 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
 
   public async getProfileByHandle(
     handle: string,
-    connection?: ConnectionWrapper<any>
+    {
+      useReadDbOnReads,
+      connection
+    }: { useReadDbOnReads: boolean; connection?: ConnectionWrapper<any> }
   ): Promise<Profile | null> {
     const result = await this.db
       .execute(
         `select * from ${PROFILES_TABLE} where normalised_handle = :handle`,
         { handle: handle.toLowerCase() },
-        { forcePool: DbPoolName.WRITE, wrappedConnection: connection }
+        {
+          forcePool: useReadDbOnReads ? DbPoolName.READ : DbPoolName.WRITE,
+          wrappedConnection: connection
+        }
       )
       .then((result) =>
         result.map((profile: Profile) => {
@@ -271,10 +252,10 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       },
       { wrappedConnection: connectionHolder }
     );
-    const profile = await this.getProfileByHandle(
-      command.handle,
-      connectionHolder
-    );
+    const profile = await this.getProfileByHandle(command.handle, {
+      useReadDbOnReads: false,
+      connection: connectionHolder
+    });
     if (profile) {
       await this.insertProfileArchiveRecord(profile, connectionHolder);
     }
@@ -324,10 +305,10 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       },
       { wrappedConnection: connectionHolder }
     );
-    const profile = await this.getProfileByHandle(
-      command.handle,
-      connectionHolder
-    );
+    const profile = await this.getProfileByHandle(command.handle, {
+      connection: connectionHolder,
+      useReadDbOnReads: false
+    });
     if (profile) {
       await this.insertProfileArchiveRecord(profile, connectionHolder);
     }

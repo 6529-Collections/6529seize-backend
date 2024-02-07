@@ -191,9 +191,12 @@ export class CicService {
   }
 
   async getCicStatementsByProfileId(
-    profile_id: string
+    profile_id: string,
+    { useReadDbOnReads }: { useReadDbOnReads: boolean }
   ): Promise<CicStatement[]> {
-    return this.cicDb.getCicStatementsByProfileId(profile_id);
+    return this.cicDb.getCicStatementsByProfileId(profile_id, {
+      useReadDbOnReads
+    });
   }
 
   private validateCicStatement({
@@ -225,7 +228,8 @@ export class CicService {
   }) {
     this.validateCicStatement(statement);
     const existingStatements = await this.cicDb.getCicStatementsByProfileId(
-      statement.profile_id
+      statement.profile_id,
+      { useReadDbOnReads: false }
     );
     const preexistingStatement = existingStatements.find(
       (existingStatement) =>

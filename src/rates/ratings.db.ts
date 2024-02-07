@@ -13,12 +13,15 @@ import { DbPoolName } from '../db-query.options';
 import { Page } from '../api-serverless/src/page-request';
 
 export class RatingsDb extends LazyDbAccessCompatibleService {
-  async getAggregatedRatingOnMatter({
-    rater_profile_id,
-    matter,
-    matter_category,
-    matter_target_id
-  }: AggregatedRatingRequest): Promise<AggregatedRating> {
+  async getAggregatedRatingOnMatter(
+    {
+      rater_profile_id,
+      matter,
+      matter_category,
+      matter_target_id
+    }: AggregatedRatingRequest,
+    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+  ): Promise<AggregatedRating> {
     let sql = `
     select sum(rating) as rating,
     count(distinct rater_profile_id) as contributor_count
@@ -38,20 +41,27 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
       sql += ' and rater_profile_id = :rater_profile_id';
       params.rater_profile_id = rater_profile_id;
     }
-    return this.db.execute(sql, params, { forcePool: DbPoolName.WRITE }).then(
-      (results) =>
-        results[0] ?? {
-          rating: 0,
-          contributor_count: 0
-        }
-    );
+    return this.db
+      .execute(sql, params, {
+        forcePool: useReadDbOnReads ? DbPoolName.READ : DbPoolName.WRITE
+      })
+      .then(
+        (results) =>
+          results[0] ?? {
+            rating: 0,
+            contributor_count: 0
+          }
+      );
   }
 
-  async getRatingStatsOnMatterGroupedByCategories({
-    rater_profile_id,
-    matter,
-    matter_target_id
-  }: Omit<AggregatedRatingRequest, 'matter_category'>): Promise<RatingStats[]> {
+  async getRatingStatsOnMatterGroupedByCategories(
+    {
+      rater_profile_id,
+      matter,
+      matter_target_id
+    }: Omit<AggregatedRatingRequest, 'matter_category'>,
+    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+  ): Promise<RatingStats[]> {
     const sql = `
 with general_stats as (select matter_category                  as category,
                           sum(rating)                      as rating,
@@ -83,7 +93,9 @@ from general_stats
       rater_profile_id: rater_profile_id ?? '-'
     };
     return this.db
-      .execute(sql, params, { forcePool: DbPoolName.WRITE })
+      .execute(sql, params, {
+        forcePool: useReadDbOnReads ? DbPoolName.READ : DbPoolName.WRITE
+      })
       .then((results) => {
         if (!rater_profile_id) {
           return results.map((result: RatingStats) => ({
