@@ -12,7 +12,7 @@ import { Logger } from '../logging';
 
 const logger = Logger.get('NEXTGEN_CONTRACT');
 
-const BLOCK_THRESHOLD = 1000;
+const BLOCK_THRESHOLD = 100000;
 
 export async function findNextGenTransactions() {
   const network = getNextgenNetwork();
