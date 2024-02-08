@@ -30,7 +30,7 @@ const logger = Logger.get('NEW_NEXTGEN_UPLOADER');
 let s3: S3Client;
 let cloudfront: CloudFrontClient;
 
-const BATCH_SIZE = 3;
+const BATCH_SIZE = 5;
 
 const START_INDEX = 10000000000;
 const END_INDEX = 10000000999;
