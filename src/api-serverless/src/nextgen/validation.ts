@@ -10,7 +10,7 @@ import {
   getNextGenChainId
 } from './abis';
 import { Logger } from '../../../logging';
-import { goerli, mainnet, sepolia } from '@wagmi/chains';
+import { goerli, sepolia } from '@wagmi/chains';
 const { keccak256 } = require('@ethersproject/keccak256');
 const { MerkleTree } = require('merkletreejs');
 
@@ -380,11 +380,11 @@ function getUrl(chainId: number) {
   let network: string;
 
   if (chainId === goerli.id) {
-    network = goerli.name;
+    network = 'goerli';
   } else if (chainId === sepolia.id) {
-    network = sepolia.name;
+    network = 'sepolia';
   } else {
-    network = mainnet.name;
+    network = 'mainnet';
   }
 
   return `https://eth-${network.toLowerCase()}.g.alchemy.com/v2/${
