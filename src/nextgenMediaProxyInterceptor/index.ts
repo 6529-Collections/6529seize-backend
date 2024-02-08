@@ -24,9 +24,9 @@ export const handler = async (event: any) => {
     if (response.status === '403') {
       const uri = request.uri;
 
-      triggerGenerator(uri);
+      // triggerGenerator(uri);
 
-      await notifyMissingNextgenMedia(uri);
+      // await notifyMissingNextgenMedia(uri);
 
       const details = getGenDetailsFromUri(uri);
       const image = getImagePath(details);
