@@ -30,6 +30,11 @@ const logger = Logger.get('NEW_NEXTGEN_UPLOADER');
 let s3: S3Client;
 let cloudfront: CloudFrontClient;
 
+const BATCH_SIZE = 3;
+
+const START_INDEX = 10000000000;
+const END_INDEX = 10000000999;
+
 async function setup() {
   s3 = new S3Client({ region: NEXTGEN_BUCKET_AWS_REGION });
   cloudfront = new CloudFrontClient({ region: NEXTGEN_BUCKET_AWS_REGION });
@@ -46,13 +51,60 @@ export const handler = async (event: any) => {
 
   if (currentImageCount) {
     logger.info(`[CURRENT IMAGE COUNT] : [COUNT ${currentImageCount}]`);
-    const nextImage = currentImageCount + 10000000000;
-    const nextPath = `/mainnet/metadata/${nextImage}`;
-    await uploadMissingNextgenMedia(nextPath);
+
+    const allExisting = await listS3Objects(pngPath);
+    const nextBatch = await getNextBatch(allExisting);
+    if (nextBatch.length) {
+      await uploadBatch(nextBatch);
+    } else {
+      logger.info(`[NO MISSING IMAGES]`);
+    }
   }
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
 };
+
+async function getNextBatch(allExisting: number[]): Promise<number[]> {
+  const nextBatch = [];
+  for (let i = START_INDEX; i <= END_INDEX; i++) {
+    if (!allExisting.includes(i)) {
+      nextBatch.push(i);
+    }
+    if (nextBatch.length >= BATCH_SIZE) {
+      break;
+    }
+  }
+  return nextBatch;
+}
+
+async function listS3Objects(path: string): Promise<number[]> {
+  const command = new ListObjectsCommand({
+    Bucket: NEXTGEN_BUCKET,
+    Prefix: path
+  });
+  const contents: number[] = [];
+  try {
+    const response = await s3.send(command);
+    response.Contents?.forEach((object) => {
+      if (object.Key) {
+        contents.push(parseInt(object.Key?.replace(path, '')));
+      }
+    });
+  } catch (error) {
+    logger.error(`[S3 LIST ERROR] : [PATH ${path}] : [ERROR ${error}]`);
+  }
+  return contents;
+}
+
+async function uploadBatch(batch: number[]) {
+  logger.info(`[UPLOADING BATCH] : [BATCH ${JSON.stringify(batch)}]`);
+  const promises = [];
+  for (let i = 0; i < batch.length; i++) {
+    const nextPath = `/mainnet/metadata/${batch[i]}`;
+    promises.push(uploadMissingNextgenMedia(nextPath));
+  }
+  await Promise.all(promises);
+}
 
 async function getCurrentImageCountFromS3(path: string): Promise<number> {
   const command = new ListObjectsCommand({
@@ -87,6 +139,9 @@ async function uploadMissingNextgenMedia(path: string) {
   logger.info(
     `[UPLOADING MISSING NEXTGEN MEDIA] : [PATH ${path}]: [METADATA EXISTS ${metadataExists}] : [IMAGE EXISTS ${imageExists}] : [HTML EXISTS ${htmlExists}]`
   );
+
+  return;
+
   if (!path.includes('/metadata/')) {
     logger.info(`[NOT A METADATA PATH] : [SKIPPING] : [PATH ${path}]`);
     return;
