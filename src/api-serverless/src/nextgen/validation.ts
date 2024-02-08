@@ -382,9 +382,9 @@ function getUrl(chainId: number) {
   if (chainId === goerli.id) {
     network = goerli.name;
   } else if (chainId === sepolia.id) {
-    network = sepolia.name;
+    network = 'sepolia';
   } else {
-    network = mainnet.name;
+    network = 'mainnet';
   }
 
   return `https://eth-${network.toLowerCase()}.g.alchemy.com/v2/${
