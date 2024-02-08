@@ -380,7 +380,7 @@ function getUrl(chainId: number) {
   let network: string;
 
   if (chainId === goerli.id) {
-    network = goerli.name;
+    network = 'goerli';
   } else if (chainId === sepolia.id) {
     network = 'sepolia';
   } else {
