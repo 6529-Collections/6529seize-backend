@@ -140,8 +140,6 @@ async function uploadMissingNextgenMedia(path: string) {
     `[UPLOADING MISSING NEXTGEN MEDIA] : [PATH ${path}]: [METADATA EXISTS ${metadataExists}] : [IMAGE EXISTS ${imageExists}] : [HTML EXISTS ${htmlExists}]`
   );
 
-  return;
-
   if (!path.includes('/metadata/')) {
     logger.info(`[NOT A METADATA PATH] : [SKIPPING] : [PATH ${path}]`);
     return;
