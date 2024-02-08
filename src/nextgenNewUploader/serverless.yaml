@@ -1,4 +1,4 @@
-service: newNextgenUploader
+service: nextgenNewUploader
 
 package:
   artifact: dist/index.zip
@@ -18,9 +18,9 @@ custom:
     prod: 1
 
 functions:
-  newNextgenUploader:
+  nextgenNewUploader:
     handler: index.handler
-    name: newNextgenUploader
+    name: nextgenNewUploader
     description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
@@ -31,5 +31,5 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: 'newNextgenUploader_${opt:stage, self:provider.stage}'
+      SENTRY_ENVIRONMENT: 'nextgenNewUploader_${opt:stage, self:provider.stage}'
       NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
