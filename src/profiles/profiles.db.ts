@@ -18,14 +18,16 @@ import {
 } from '../constants';
 import { Wallet } from '../entities/IWallet';
 import { Profile } from '../entities/IProfile';
-import { DbPoolName } from '../db-query.options';
 import { CreateOrUpdateProfileCommand } from './profile.types';
 import { randomUUID } from 'crypto';
 import { ProfileTdh } from '../entities/IProfileTDH';
 import { distinct } from '../helpers';
 
 export class ProfilesDb extends LazyDbAccessCompatibleService {
-  public async getConsolidationInfoForWallet(wallet: string): Promise<
+  public async getConsolidationInfoForWallet(
+    wallet: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<
     {
       tdh: number;
       wallets: string[];
@@ -37,10 +39,12 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       balance: number;
     }[]
   > {
+    const opts = connection ? { wrappedConnection: connection } : undefined;
     return this.db
       .execute(
         `SELECT t.block, t.balance, t.boosted_tdh as tdh, t.tdh as raw_tdh, b.created_at as block_date, t.wallets, t.consolidation_key, t.consolidation_display, t.block FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} t LEFT JOIN ${TDH_BLOCKS_TABLE} b on t.block = b.block_number WHERE LOWER(t.consolidation_key) LIKE :wallet`,
-        { wallet: `%${wallet.toLowerCase()}%` }
+        { wallet: `%${wallet.toLowerCase()}%` },
+        opts
       )
       .then((result) =>
         result.map(
@@ -68,18 +72,21 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
   }
 
   public async getPrediscoveredEnsNames(
-    walletAddresses: string[]
+    walletAddresses: string[],
+    connection?: ConnectionWrapper<any>
   ): Promise<Wallet[]> {
     if (!walletAddresses.length) {
       return [];
     }
+    const opts = connection ? { wrappedConnection: connection } : undefined;
     const results: Wallet[] = await this.db.execute(
       `SELECT wallet as address, display as ens FROM ${ENS_TABLE} WHERE LOWER(wallet) IN (:walletAddresses)`,
       {
         walletAddresses: walletAddresses.map((walletAddress) =>
           walletAddress.toLowerCase()
         )
-      }
+      },
+      opts
     );
     return walletAddresses.map((walletAddress) => ({
       address: walletAddress,
@@ -90,16 +97,17 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
 
   public async getProfilesByWallets(
     wallets: string[],
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+    connection?: ConnectionWrapper<any>
   ): Promise<Profile[]> {
     if (wallets.length === 0) {
       return [];
     }
+    const opts = connection ? { wrappedConnection: connection } : undefined;
     return this.db
       .execute(
         `select * from ${PROFILES_TABLE} where primary_wallet in (:wallets)`,
         { wallets: wallets.map((w) => w.toLowerCase()) },
-        { forcePool: useReadDbOnReads ? DbPoolName.READ : DbPoolName.WRITE }
+        opts
       )
       .then((result) =>
         result.map((profile: Profile) => {
@@ -112,23 +120,28 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       );
   }
 
-  public async getWalletsTdhs({
-    wallets,
-    blockNo
-  }: {
-    wallets: string[];
-    blockNo: number;
-  }): Promise<Record<string, number>> {
+  public async getWalletsTdhs(
+    {
+      wallets,
+      blockNo
+    }: {
+      wallets: string[];
+      blockNo: number;
+    },
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<string, number>> {
     const normalisedWallets = wallets.map((w) => w.toLowerCase());
     if (!normalisedWallets.length) {
       return {};
     }
+    const opts = connection ? { wrappedConnection: connection } : undefined;
     const result: { wallet: string; tdh: number }[] = await this.db.execute(
       `select lower(wallet) as wallet, boosted_tdh as tdh from ${WALLETS_TDH_TABLE} where block = :blockNo and lower(wallet) in (:wallets)`,
       {
         blockNo,
         wallets: normalisedWallets
-      }
+      },
+      opts
     );
     return normalisedWallets.reduce(
       (acc: Record<string, number>, wallet: string) => {
@@ -143,19 +156,14 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
 
   public async getProfileByHandle(
     handle: string,
-    {
-      useReadDbOnReads,
-      connection
-    }: { useReadDbOnReads: boolean; connection?: ConnectionWrapper<any> }
+    connection?: ConnectionWrapper<any>
   ): Promise<Profile | null> {
+    const opts = connection ? { wrappedConnection: connection } : undefined;
     const result = await this.db
       .execute(
         `select * from ${PROFILES_TABLE} where normalised_handle = :handle`,
         { handle: handle.toLowerCase() },
-        {
-          forcePool: useReadDbOnReads ? DbPoolName.READ : DbPoolName.WRITE,
-          wrappedConnection: connection
-        }
+        opts
       )
       .then((result) =>
         result.map((profile: Profile) => {
@@ -225,7 +233,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       command: CreateOrUpdateProfileCommand;
       oldHandle: string;
     },
-    connectionHolder: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>
   ): Promise<void> {
     await this.db.execute(
       `update ${PROFILES_TABLE}
@@ -250,14 +258,11 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         website: command.website ?? null,
         classification: command.classification
       },
-      { wrappedConnection: connectionHolder }
+      { wrappedConnection: connection }
     );
-    const profile = await this.getProfileByHandle(command.handle, {
-      useReadDbOnReads: false,
-      connection: connectionHolder
-    });
+    const profile = await this.getProfileByHandle(command.handle, connection);
     if (profile) {
-      await this.insertProfileArchiveRecord(profile, connectionHolder);
+      await this.insertProfileArchiveRecord(profile, connection);
     }
   }
 
@@ -267,7 +272,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     }: {
       command: CreateOrUpdateProfileCommand;
     },
-    connectionHolder: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>
   ): Promise<string> {
     const profileId = randomUUID();
     await this.db.execute(
@@ -303,25 +308,27 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         classification: command.classification,
         externalId: profileId
       },
-      { wrappedConnection: connectionHolder }
+      { wrappedConnection: connection }
     );
-    const profile = await this.getProfileByHandle(command.handle, {
-      connection: connectionHolder,
-      useReadDbOnReads: false
-    });
+    const profile = await this.getProfileByHandle(command.handle, connection);
     if (profile) {
-      await this.insertProfileArchiveRecord(profile, connectionHolder);
+      await this.insertProfileArchiveRecord(profile, connection);
     }
     return profileId;
   }
 
-  public async getMemeThumbnailUriById(id: number): Promise<string | null> {
+  public async getMemeThumbnailUriById(
+    id: number,
+    connection?: ConnectionWrapper<any>
+  ): Promise<string | null> {
+    const opts = connection ? { wrappedConnection: connection } : undefined;
     const result = await this.db.execute(
       `select thumbnail from ${NFTS_TABLE} where id = :id and contract = :contract order by id asc limit 1`,
       {
         id,
         contract: MEMES_CONTRACT
-      }
+      },
+      opts
     );
     return result.at(0)?.thumbnail ?? null;
   }

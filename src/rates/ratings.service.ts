@@ -47,11 +47,9 @@ export class RatingsService {
 
   public async getAggregatedRatingOnMatter(
     request: AggregatedRatingRequest,
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+    connection?: ConnectionWrapper<any>
   ): Promise<AggregatedRating> {
-    return this.ratingsDb.getAggregatedRatingOnMatter(request, {
-      useReadDbOnReads
-    });
+    return this.ratingsDb.getAggregatedRatingOnMatter(request, connection);
   }
 
   public async getRatesLeftOnMatterForProfile({
@@ -400,17 +398,12 @@ export class RatingsService {
     }, {} as Record<string, number>);
   }
 
-  async getAllRatingsForMatterOnProfileGroupedByCategories(
-    param: {
-      matter_target_id: string;
-      rater_profile_id: string | null;
-      matter: RateMatter;
-    },
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
-  ): Promise<RatingStats[]> {
-    return this.ratingsDb.getRatingStatsOnMatterGroupedByCategories(param, {
-      useReadDbOnReads
-    });
+  async getAllRatingsForMatterOnProfileGroupedByCategories(param: {
+    matter_target_id: string;
+    rater_profile_id: string | null;
+    matter: RateMatter;
+  }): Promise<RatingStats[]> {
+    return this.ratingsDb.getRatingStatsOnMatterGroupedByCategories(param);
   }
 
   async getRatingsForMatterAndCategoryOnProfileWithRatersInfo(param: {
@@ -440,26 +433,20 @@ export class RatingsService {
     return this.ratingsDb.getNumberOfRatersForMatterOnProfile(param);
   }
 
-  async getRatingsByRatersForMatter(
-    {
+  async getRatingsByRatersForMatter({
+    queryParams,
+    handleOrWallet,
+    matter
+  }: {
+    queryParams: GetProfileRatingsRequest['query'];
+    handleOrWallet: string;
+    matter: RateMatter;
+  }): Promise<Page<RatingWithProfileInfoAndLevel>> {
+    const params = await this.getRatingsSearchParamsFromRequest({
       queryParams,
       handleOrWallet,
       matter
-    }: {
-      queryParams: GetProfileRatingsRequest['query'];
-      handleOrWallet: string;
-      matter: RateMatter;
-    },
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
-  ): Promise<Page<RatingWithProfileInfoAndLevel>> {
-    const params = await this.getRatingsSearchParamsFromRequest(
-      {
-        queryParams,
-        handleOrWallet,
-        matter
-      },
-      { useReadDbOnReads }
-    );
+    });
     return this.ratingsDb
       .getRatingsByRatersForMatter(params)
       .then(async (page) => {
@@ -478,18 +465,15 @@ export class RatingsService {
       });
   }
 
-  private async getRatingsSearchParamsFromRequest(
-    {
-      queryParams,
-      handleOrWallet,
-      matter
-    }: {
-      queryParams: GetProfileRatingsRequest['query'];
-      handleOrWallet: string;
-      matter: RateMatter;
-    },
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
-  ): Promise<GetRatingsByRatersForMatterParams> {
+  private async getRatingsSearchParamsFromRequest({
+    queryParams,
+    handleOrWallet,
+    matter
+  }: {
+    queryParams: GetProfileRatingsRequest['query'];
+    handleOrWallet: string;
+    matter: RateMatter;
+  }): Promise<GetRatingsByRatersForMatterParams> {
     const given = queryParams.given === 'true';
     const page = queryParams.page ? parseInt(queryParams.page) : 1;
     const page_size = queryParams.page_size
@@ -502,8 +486,7 @@ export class RatingsService {
         : 'last_modified';
     const profile =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet.toLocaleLowerCase(),
-        { useReadDbOnReads }
+        handleOrWallet.toLocaleLowerCase()
       );
     const profile_id = profile?.profile?.external_id;
     if (!profile_id) {

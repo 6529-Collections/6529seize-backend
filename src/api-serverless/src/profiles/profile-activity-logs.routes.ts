@@ -8,7 +8,6 @@ import {
 import { Request, Response } from 'express';
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { profilesService } from '../../../profiles/profiles.service';
-import { isSafeToUseReadEndpointInProfileApi } from '../api-helpers';
 
 const router = asyncRouter();
 
@@ -42,18 +41,13 @@ router.get(
     let profileId = undefined;
     if (profile) {
       profileId = await profilesService
-        .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(profile, {
-          useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req)
-        })
+        .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(profile)
         .then((result) => result?.profile?.external_id ?? '-');
     }
     const targetId = queryParams.target
       ? await profilesService
           .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-            queryParams.target,
-            {
-              useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req)
-            }
+            queryParams.target
           )
           .then((result) => result?.profile?.external_id ?? queryParams.target)
       : queryParams.target;

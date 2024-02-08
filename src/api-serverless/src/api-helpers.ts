@@ -8,7 +8,7 @@ import {
   JSON_HEADER_VALUE,
   PaginatedResponse
 } from './api-constants';
-import { RESERVED_HANDLES } from './profiles/profiles.constants';
+import { Time } from '../../time';
 
 const converter = require('json-2-csv');
 
@@ -103,27 +103,10 @@ export function resolveIntParam(param: string | string[] | undefined) {
   return undefined;
 }
 
-export function getOriginPathHeader(req: Request): string | undefined {
-  return req.headers['x-6529-origin-path'] as string;
-}
-
-export function isSafeToUseReadEndpointInProfileApi(req: any): boolean {
-  const originPath = req.headers['x-6529-origin-path'];
-  if (!originPath) {
-    return false;
-  }
-  if (typeof originPath !== 'string') {
-    return false;
-  }
-  let op = originPath;
-  if (op.startsWith('/')) {
-    op = op.slice(1);
-  }
-  const originPathParts = op.split('/');
-  const originPathParts1 = originPathParts[0];
-  return !!RESERVED_HANDLES.find(
-    (it) => it.toLowerCase() === originPathParts1.toLowerCase()
-  );
+export function giveReadReplicaTimeToCatchUp() {
+  const millisToGive =
+    parseNumberOrNull(process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE) ?? 500;
+  return Time.millis(millisToGive).sleep();
 }
 
 export function parseNumberOrNull(input: any): number | null {

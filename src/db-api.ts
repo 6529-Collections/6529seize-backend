@@ -1619,8 +1619,7 @@ async function enhanceDataWithHandlesAndLevel(
   );
   const walletsToHandlesAndIds =
     await profilesService.getProfileIdsAndHandlesByPrimaryWallets(
-      resultWallets,
-      { useReadDbOnReads: true }
+      resultWallets
     );
   const profileIds = Object.values(walletsToHandlesAndIds).map((it) => it.id);
   const profileReps = await repService.getAggregatedRepForProfiles(profileIds);
