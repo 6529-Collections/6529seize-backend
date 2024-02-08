@@ -30,7 +30,7 @@ import {
   repService,
   RepService
 } from '../api-serverless/src/profiles/rep.service';
-import { profilesService, ProfilesService } from '../profiles/profiles.service';
+import { profilesService } from '../profiles/profiles.service';
 import { Request } from 'express';
 import { eventScheduler, EventScheduler } from '../events/event.scheduler';
 
@@ -39,7 +39,6 @@ export class RatingsService {
 
   constructor(
     private readonly ratingsDb: RatingsDb,
-    private readonly profilesService: ProfilesService,
     private readonly profilesDb: ProfilesDb,
     private readonly repService: RepService,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
@@ -486,7 +485,7 @@ export class RatingsService {
         ? 'rating'
         : 'last_modified';
     const profile =
-      await this.profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
         handleOrWallet.toLocaleLowerCase()
       );
     const profile_id = profile?.profile?.external_id;
@@ -537,7 +536,6 @@ export type RatingWithProfileInfoAndLevel = RatingWithProfileInfo & {
 
 export const ratingsService: RatingsService = new RatingsService(
   ratingsDb,
-  profilesService,
   profilesDb,
   repService,
   profileActivityLogsDb,
