@@ -17,14 +17,13 @@ import { getRaterInfoFromRequest, RateProfileRequest } from './rating.helper';
 import { profilesService } from '../../../profiles/profiles.service';
 import { RatingStats } from '../../../rates/ratings.db';
 import { Page } from '../page-request';
-import { isSafeToUseReadEndpointInProfileApi } from '../api-helpers';
+import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 
 const router = asyncRouter({ mergeParams: true });
 
 async function getReceivedRatingsStats(
   raterProfileId: string | null,
-  targetProfileId: string,
-  { useReadDbOnReads }: { useReadDbOnReads: boolean }
+  targetProfileId: string
 ): Promise<ApiProfileReceivedRepRatesState> {
   const repRatesLeftForRater = raterProfileId
     ? await ratingsService.getRatesLeftOnMatterForProfile({
@@ -34,14 +33,11 @@ async function getReceivedRatingsStats(
     : null;
 
   const ratingStats =
-    await ratingsService.getAllRatingsForMatterOnProfileGroupedByCategories(
-      {
-        matter: RateMatter.REP,
-        matter_target_id: targetProfileId,
-        rater_profile_id: raterProfileId ?? null
-      },
-      { useReadDbOnReads }
-    );
+    await ratingsService.getAllRatingsForMatterOnProfileGroupedByCategories({
+      matter: RateMatter.REP,
+      matter_target_id: targetProfileId,
+      rater_profile_id: raterProfileId ?? null
+    });
 
   const numberOfProfileReppers =
     await ratingsService.getNumberOfRatersForMatterOnProfile({
@@ -69,14 +65,11 @@ router.get(
     req: GetProfileRatingsRequest,
     res: Response<ApiResponse<Page<RatingWithProfileInfoAndLevel>>>
   ) {
-    const result = await ratingsService.getRatingsByRatersForMatter(
-      {
-        queryParams: req.query,
-        handleOrWallet: req.params.handleOrWallet,
-        matter: RateMatter.REP
-      },
-      { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
-    );
+    const result = await ratingsService.getRatingsByRatersForMatter({
+      queryParams: req.query,
+      handleOrWallet: req.params.handleOrWallet,
+      matter: RateMatter.REP
+    });
     res.send(result);
   }
 );
@@ -100,16 +93,14 @@ router.get(
 
     const targetProfileAndConsolidations =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        targetHandleOrWallet,
-        { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
+        targetHandleOrWallet
       );
     const targetProfileId =
       targetProfileAndConsolidations?.profile?.external_id;
     const raterProfileAndConsolidations = !raterHandleOrWallet
       ? null
       : await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-          raterHandleOrWallet,
-          { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
+          raterHandleOrWallet
         );
     const raterProfileId = raterProfileAndConsolidations?.profile?.external_id;
     if (!targetProfileId) {
@@ -119,8 +110,7 @@ router.get(
     }
     const response = await getReceivedRatingsStats(
       raterProfileId ?? null,
-      targetProfileId,
-      { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
+      targetProfileId
     );
     res.send(response);
   }
@@ -148,8 +138,7 @@ router.get(
 
     const targetProfileAndConsolidations =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        targetHandleOrWallet,
-        { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
+        targetHandleOrWallet
       );
     const targetProfileId =
       targetProfileAndConsolidations?.profile?.external_id;
@@ -202,10 +191,10 @@ router.post(
       matter_target_id: targetProfileId,
       rating: amount
     });
+    await giveReadReplicaTimeToCatchUp();
     const response = await getReceivedRatingsStats(
       raterProfileId,
-      targetProfileId,
-      { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
+      targetProfileId
     );
     res.send(response);
   }

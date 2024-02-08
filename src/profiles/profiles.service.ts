@@ -44,7 +44,7 @@ export class ProfilesService {
 
   public async getProfileByEnsName(
     query: string,
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+    connection?: ConnectionWrapper<any>
   ): Promise<ProfileAndConsolidations | null> {
     const wallet = await this.supplyAlchemy().core.resolveName(query);
     if (!wallet) {
@@ -57,25 +57,28 @@ export class ProfilesService {
       consolidation_key,
       consolidation_display,
       balance
-    } = await this.getWalletTdhBlockNoAndConsolidatedWallets(wallet);
+    } = await this.getWalletTdhBlockNoAndConsolidatedWallets(
+      wallet,
+      connection
+    );
     if (consolidatedWallets.length === 0) {
       return null;
     }
-    const profile = await this.getWalletsNewestProfile(wallet, {
-      useReadDbOnReads
-    });
-    const walletTdhs = await this.profilesDb.getWalletsTdhs({
-      wallets: consolidatedWallets,
-      blockNo
-    });
-    const wallets = await this.profilesDb.getPrediscoveredEnsNames(
-      consolidatedWallets
+    const profile = await this.getWalletsNewestProfile(wallet, connection);
+    const walletTdhs = await this.profilesDb.getWalletsTdhs(
+      {
+        wallets: consolidatedWallets,
+        blockNo
+      },
+      connection
     );
-    const cic = await this.getCic(profile, {
-      useReadDbOnReads
-    });
+    const wallets = await this.profilesDb.getPrediscoveredEnsNames(
+      consolidatedWallets,
+      connection
+    );
+    const cic = await this.getCic(profile, connection);
     const rep = profile?.external_id
-      ? await this.repService.getRepForProfile(profile.external_id)
+      ? await this.repService.getRepForProfile(profile.external_id, connection)
       : 0;
     return {
       profile: profile ?? null,
@@ -97,7 +100,7 @@ export class ProfilesService {
 
   private async getCic(
     profile: Profile | undefined,
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+    connection?: ConnectionWrapper<any>
   ) {
     const profileId = profile?.external_id;
     return profileId
@@ -109,7 +112,7 @@ export class ProfilesService {
               matter_target_id: profileId,
               matter_category: RateMatter.CIC
             },
-            { useReadDbOnReads }
+            connection
           )
           .then((res) => ({
             cic_rating: res.rating,
@@ -120,7 +123,7 @@ export class ProfilesService {
 
   public async getProfileByWallet(
     query: string,
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+    connection?: ConnectionWrapper<any>
   ): Promise<ProfileAndConsolidations | null> {
     const {
       consolidatedWallets,
@@ -129,23 +132,25 @@ export class ProfilesService {
       consolidation_key,
       consolidation_display,
       balance
-    } = await this.getWalletTdhBlockNoAndConsolidatedWallets(query);
+    } = await this.getWalletTdhBlockNoAndConsolidatedWallets(query, connection);
     if (consolidatedWallets.length === 0) {
       return null;
     }
-    const profile = await this.getWalletsNewestProfile(query, {
-      useReadDbOnReads
-    });
-    const walletTdhs = await this.profilesDb.getWalletsTdhs({
-      wallets: consolidatedWallets,
-      blockNo
-    });
-    const wallets = await this.profilesDb.getPrediscoveredEnsNames(
-      consolidatedWallets
+    const profile = await this.getWalletsNewestProfile(query, connection);
+    const walletTdhs = await this.profilesDb.getWalletsTdhs(
+      {
+        wallets: consolidatedWallets,
+        blockNo
+      },
+      connection
     );
-    const cic = await this.getCic(profile, { useReadDbOnReads });
+    const wallets = await this.profilesDb.getPrediscoveredEnsNames(
+      consolidatedWallets,
+      connection
+    );
+    const cic = await this.getCic(profile, connection);
     const rep = profile?.external_id
-      ? await this.repService.getRepForProfile(profile?.external_id)
+      ? await this.repService.getRepForProfile(profile?.external_id, connection)
       : 0;
     return {
       profile: profile ?? null,
@@ -167,24 +172,25 @@ export class ProfilesService {
 
   public async getProfilesByWallets(
     wallets: string[],
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+    connection?: ConnectionWrapper<any>
   ): Promise<Profile[]> {
-    return this.profilesDb.getProfilesByWallets(wallets, { useReadDbOnReads });
+    return this.profilesDb.getProfilesByWallets(wallets, connection);
   }
 
   public async getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
     handleOrEnsOrWalletAddress: string,
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+    connection?: ConnectionWrapper<any>
   ): Promise<ProfileAndConsolidations | null> {
     const query = handleOrEnsOrWalletAddress.toLowerCase();
     if (query.endsWith('.eth')) {
-      return await this.getProfileByEnsName(query, { useReadDbOnReads });
+      return await this.getProfileByEnsName(query, connection);
     } else if (WALLET_REGEX.exec(query)) {
-      return await this.getProfileByWallet(query, { useReadDbOnReads });
+      return await this.getProfileByWallet(query, connection);
     } else {
-      const profile = await this.profilesDb.getProfileByHandle(query, {
-        useReadDbOnReads
-      });
+      const profile = await this.profilesDb.getProfileByHandle(
+        query,
+        connection
+      );
       if (!profile) {
         return null;
       }
@@ -196,20 +202,26 @@ export class ProfilesService {
         consolidation_display,
         balance
       } = await tdh_consolidation.getWalletTdhAndConsolidatedWallets(
-        profile.primary_wallet.toLowerCase()
+        profile.primary_wallet.toLowerCase(),
+        connection
       );
-      const walletTdhs = await tdhs.getWalletsTdhs({
-        wallets: consolidatedWallets,
-        blockNo
-      });
+      const walletTdhs = await tdhs.getWalletsTdhs(
+        {
+          wallets: consolidatedWallets,
+          blockNo
+        },
+        connection
+      );
       const wallets = await this.profilesDb.getPrediscoveredEnsNames(
-        consolidatedWallets
+        consolidatedWallets,
+        connection
       );
-      const cic = await this.getCic(profile, {
-        useReadDbOnReads
-      });
+      const cic = await this.getCic(profile, connection);
       const rep = profile?.external_id
-        ? await this.repService.getRepForProfile(profile?.external_id)
+        ? await this.repService.getRepForProfile(
+            profile?.external_id,
+            connection
+          )
         : 0;
       return {
         profile: profile ?? null,
@@ -239,39 +251,41 @@ export class ProfilesService {
     creator_or_updater_wallet,
     classification
   }: CreateOrUpdateProfileCommand): Promise<ProfileAndConsolidations> {
-    const { consolidatedWallets: creatorOrUpdaterWalletConsolidatedWallets } =
-      await this.getWalletTdhBlockNoAndConsolidatedWallets(
-        creator_or_updater_wallet
-      );
-    const isPrimaryWalletValid = creatorOrUpdaterWalletConsolidatedWallets
-      .map((it) => it.toLowerCase())
-      .includes(primary_wallet.toLowerCase());
-    if (!isPrimaryWalletValid) {
-      throw new BadRequestException(
-        `Primary wallet ${primary_wallet} is not in the same consolidation group as authenticated wallet ${creator_or_updater_wallet}`
-      );
-    }
+    return await this.profilesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const {
+          consolidatedWallets: creatorOrUpdaterWalletConsolidatedWallets
+        } = await this.getWalletTdhBlockNoAndConsolidatedWallets(
+          creator_or_updater_wallet,
+          connection
+        );
+        const isPrimaryWalletValid = creatorOrUpdaterWalletConsolidatedWallets
+          .map((it) => it.toLowerCase())
+          .includes(primary_wallet.toLowerCase());
+        if (!isPrimaryWalletValid) {
+          throw new BadRequestException(
+            `Primary wallet ${primary_wallet} is not in the same consolidation group as authenticated wallet ${creator_or_updater_wallet}`
+          );
+        }
 
-    const creatorOrUpdaterProfiles = await this.getProfilesByWallets(
-      creatorOrUpdaterWalletConsolidatedWallets,
-      { useReadDbOnReads: false }
-    );
-    if (
-      !creatorOrUpdaterProfiles.find(
-        (p) => p.normalised_handle === handle.toLowerCase()
-      )
-    ) {
-      const preExistingProfile = await this.profilesDb.getProfileByHandle(
-        handle,
-        { useReadDbOnReads: false }
-      );
-      if (preExistingProfile) {
-        throw new BadRequestException(`Handle ${handle} is already taken`);
-      }
-    }
-    if (creatorOrUpdaterProfiles.length === 0) {
-      await this.profilesDb.executeNativeQueriesInTransaction(
-        async (connectionHolder) => {
+        const creatorOrUpdaterProfiles = await this.getProfilesByWallets(
+          creatorOrUpdaterWalletConsolidatedWallets,
+          connection
+        );
+        if (
+          !creatorOrUpdaterProfiles.find(
+            (p) => p.normalised_handle === handle.toLowerCase()
+          )
+        ) {
+          const preExistingProfile = await this.profilesDb.getProfileByHandle(
+            handle,
+            connection
+          );
+          if (preExistingProfile) {
+            throw new BadRequestException(`Handle ${handle} is already taken`);
+          }
+        }
+        if (creatorOrUpdaterProfiles.length === 0) {
           const profileId = await this.profilesDb.insertProfileRecord(
             {
               command: {
@@ -284,11 +298,12 @@ export class ProfilesService {
                 classification
               }
             },
-            connectionHolder
+            connection
           );
-          await this.refreshPrimaryWalletEns(primary_wallet, connectionHolder);
+          await this.refreshPrimaryWalletEns(primary_wallet, connection);
           const tdhInfo = await this.getWalletTdhBlockNoAndConsolidatedWallets(
-            primary_wallet
+            primary_wallet,
+            connection
           );
           if (tdhInfo.block_date) {
             await this.profilesDb.insertProfileTdh(
@@ -300,7 +315,7 @@ export class ProfilesService {
                 created_at: new Date(),
                 block_date: tdhInfo.block_date
               },
-              connectionHolder
+              connection
             );
           }
           await this.createProfileEditLogs({
@@ -312,33 +327,31 @@ export class ProfilesService {
             newBanner2: banner_2,
             authenticatedWallet: creator_or_updater_wallet,
             newClassification: classification,
-            connectionHolder
+            connectionHolder: connection
           });
-        }
-      );
-    } else {
-      const latestProfile = creatorOrUpdaterProfiles
-        .sort((a, d) => d.created_at.getTime() - a.created_at.getTime())
-        .at(0)!;
-      const isNameTaken =
-        creatorOrUpdaterProfiles
-          .sort((a, d) => d.created_at.getTime() - a.created_at.getTime())
-          .findIndex((p) => p.normalised_handle === handle.toLowerCase()) > 0;
-      const isPrimaryWalletTaken =
-        creatorOrUpdaterProfiles
-          .sort((a, d) => d.created_at.getTime() - a.created_at.getTime())
-          .findIndex(
-            (p) =>
-              p.primary_wallet.toLowerCase() === primary_wallet.toLowerCase()
-          ) > 0;
-      if (isNameTaken || isPrimaryWalletTaken) {
-        throw new BadRequestException(
-          `Handle ${handle} or primary wallet ${primary_wallet} is already taken`
-        );
-      }
-      await this.profilesDb.executeNativeQueriesInTransaction(
-        async (connectionHolder) => {
-          await this.refreshPrimaryWalletEns(primary_wallet, connectionHolder);
+        } else {
+          const latestProfile = creatorOrUpdaterProfiles
+            .sort((a, d) => d.created_at.getTime() - a.created_at.getTime())
+            .at(0)!;
+          const isNameTaken =
+            creatorOrUpdaterProfiles
+              .sort((a, d) => d.created_at.getTime() - a.created_at.getTime())
+              .findIndex((p) => p.normalised_handle === handle.toLowerCase()) >
+            0;
+          const isPrimaryWalletTaken =
+            creatorOrUpdaterProfiles
+              .sort((a, d) => d.created_at.getTime() - a.created_at.getTime())
+              .findIndex(
+                (p) =>
+                  p.primary_wallet.toLowerCase() ===
+                  primary_wallet.toLowerCase()
+              ) > 0;
+          if (isNameTaken || isPrimaryWalletTaken) {
+            throw new BadRequestException(
+              `Handle ${handle} or primary wallet ${primary_wallet} is already taken`
+            );
+          }
+          await this.refreshPrimaryWalletEns(primary_wallet, connection);
           await this.profilesDb.updateProfileRecord(
             {
               oldHandle: latestProfile.normalised_handle,
@@ -352,7 +365,7 @@ export class ProfilesService {
                 classification
               }
             },
-            connectionHolder
+            connection
           );
           await this.createProfileEditLogs({
             profileId: latestProfile.external_id,
@@ -363,17 +376,17 @@ export class ProfilesService {
             newBanner2: banner_2,
             authenticatedWallet: creator_or_updater_wallet,
             newClassification: classification,
-            connectionHolder
+            connectionHolder: connection
           });
         }
-      );
-    }
-    const updatedProfile =
-      await this.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handle,
-        { useReadDbOnReads: false }
-      );
-    return updatedProfile!;
+        const updatedProfile =
+          await this.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+            handle,
+            connection
+          );
+        return updatedProfile!;
+      }
+    );
   }
 
   public async mergeProfiles(connectionHolder: ConnectionWrapper<any>) {
@@ -559,28 +572,32 @@ export class ProfilesService {
     if (!meme && !file) {
       throw new BadRequestException('No PFP provided');
     }
-    const profile =
-      await this.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet,
-        { useReadDbOnReads: false }
-      ).then((it) => {
-        if (it?.profile) {
-          if (
-            it.consolidation.wallets.some(
-              (it) => it.wallet.address === authenticatedWallet
-            )
-          ) {
-            return it.profile;
-          }
-          throw new BadRequestException(`Not authorised to update profile`);
-        }
-        throw new BadRequestException(
-          `Profile for ${handleOrWallet} not found`
-        );
-      });
-    const thumbnailUri = await this.getOrCreatePfpFileUri({ meme, file });
-    await this.profilesDb.executeNativeQueriesInTransaction(
+    return await this.profilesDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        const profile =
+          await this.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+            handleOrWallet,
+            connection
+          ).then((it) => {
+            if (it?.profile) {
+              if (
+                it.consolidation.wallets.some(
+                  (it) => it.wallet.address === authenticatedWallet
+                )
+              ) {
+                return it.profile;
+              }
+              throw new BadRequestException(`Not authorised to update profile`);
+            }
+            throw new BadRequestException(
+              `Profile for ${handleOrWallet} not found`
+            );
+          });
+        const thumbnailUri = await this.getOrCreatePfpFileUri(
+          { meme, file },
+          connection
+        );
+
         await this.profilesDb.updateProfilePfpUri(
           thumbnailUri,
           profile,
@@ -601,22 +618,18 @@ export class ProfilesService {
             connection
           );
         }
+        return { pfp_url: thumbnailUri };
       }
     );
-
-    return { pfp_url: thumbnailUri };
   }
 
   public async getProfileIdsAndHandlesByPrimaryWallets(
-    wallets: string[],
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+    wallets: string[]
   ): Promise<Record<string, { id: string; handle: string }>> {
     if (!wallets.length) {
       return {};
     }
-    const profiles = await this.getProfilesByWallets(wallets, {
-      useReadDbOnReads
-    });
+    const profiles = await this.getProfilesByWallets(wallets);
     return wallets.reduce((result, wallet) => {
       const profile = profiles.find(
         (profile) =>
@@ -675,20 +688,22 @@ export class ProfilesService {
 
   private async getWalletsNewestProfile(
     wallet: string,
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+    connection?: ConnectionWrapper<any>
   ): Promise<Profile | undefined> {
     const { consolidatedWallets } =
       await this.getWalletTdhBlockNoAndConsolidatedWallets(wallet);
-    const profiles = await this.getProfilesByWallets(consolidatedWallets, {
-      useReadDbOnReads
-    });
+    const profiles = await this.getProfilesByWallets(
+      consolidatedWallets,
+      connection
+    );
     return profiles
       .sort((a, d) => d.created_at.getTime() - a.created_at.getTime())
       .at(0);
   }
 
   private async getWalletTdhBlockNoAndConsolidatedWallets(
-    wallet: string
+    wallet: string,
+    connection?: ConnectionWrapper<any>
   ): Promise<{
     tdh: number;
     consolidatedWallets: string[];
@@ -713,7 +728,7 @@ export class ProfilesService {
       };
     }
     return this.profilesDb
-      .getConsolidationInfoForWallet(normalisedWallet)
+      .getConsolidationInfoForWallet(normalisedWallet, connection)
       .then((resultRows) => {
         if (!resultRows.length) {
           return {
@@ -748,20 +763,25 @@ export class ProfilesService {
       });
   }
 
-  private async getOrCreatePfpFileUri({
-    meme,
-    file
-  }: {
-    file?: Express.Multer.File;
-    meme?: number;
-  }): Promise<string> {
+  private async getOrCreatePfpFileUri(
+    {
+      meme,
+      file
+    }: {
+      file?: Express.Multer.File;
+      meme?: number;
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<string> {
     if (meme) {
-      return await this.profilesDb.getMemeThumbnailUriById(meme).then((uri) => {
-        if (uri) {
-          return uri;
-        }
-        throw new BadRequestException(`Meme ${meme} not found`);
-      });
+      return await this.profilesDb
+        .getMemeThumbnailUriById(meme, connection)
+        .then((uri) => {
+          if (uri) {
+            return uri;
+          }
+          throw new BadRequestException(`Meme ${meme} not found`);
+        });
     } else if (file) {
       const extension = path.extname(file.originalname)?.toLowerCase();
       if (!['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(extension)) {
@@ -776,15 +796,15 @@ export class ProfilesService {
   private async mergeProfileStatements(
     source: Profile,
     target: Profile,
-    connectionHolder: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>
   ) {
     const sourceStatements = await this.cicService.getCicStatementsByProfileId(
       source.external_id,
-      { useReadDbOnReads: false }
+      connection
     );
     const targetStatements = await this.cicService.getCicStatementsByProfileId(
       target.external_id,
-      { useReadDbOnReads: false }
+      connection
     );
     const missingTargetStatements = sourceStatements.filter(
       (sourceStatement) => {
@@ -805,11 +825,11 @@ export class ProfilesService {
           ...statement,
           profile_id: target.external_id
         },
-        connectionHolder
+        connection
       );
     }
     for (const sourceStatement of sourceStatements) {
-      await this.cicService.deleteStatement(sourceStatement, connectionHolder);
+      await this.cicService.deleteStatement(sourceStatement, connection);
     }
   }
 
@@ -902,9 +922,7 @@ export class ProfilesService {
   private async searchCommunityMemberByWallet(
     wallet: string
   ): Promise<CommunityMemberMinimal[]> {
-    const profileAndConsolidationsInfo = await this.getProfileByWallet(wallet, {
-      useReadDbOnReads: true
-    });
+    const profileAndConsolidationsInfo = await this.getProfileByWallet(wallet);
     if (!profileAndConsolidationsInfo) {
       return [];
     }

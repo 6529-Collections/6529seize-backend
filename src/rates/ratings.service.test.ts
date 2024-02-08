@@ -14,10 +14,12 @@ import { Time } from '../time';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { RepService } from '../api-serverless/src/profiles/rep.service';
 import { EventScheduler } from '../events/event.scheduler';
+import { ProfilesService } from '../profiles/profiles.service';
 
 describe('RatingsService', () => {
   let ratingsService: RatingsService;
   let ratingsDb: Mock<RatingsDb>;
+  let profilesService: Mock<ProfilesService>;
   let profilesDb: Mock<ProfilesDb>;
   let repService: Mock<RepService>;
   let profileActivityLogsDb: Mock<ProfileActivityLogsDb>;
@@ -26,11 +28,13 @@ describe('RatingsService', () => {
   beforeEach(() => {
     profilesDb = mockDbService();
     ratingsDb = mockDbService();
+    profilesService = mock(ProfilesService);
     profileActivityLogsDb = mockDbService();
     eventScheduler = mock(EventScheduler);
     repService = mock(RepService);
     ratingsService = new RatingsService(
       ratingsDb,
+      profilesService,
       profilesDb,
       repService,
       profileActivityLogsDb,
@@ -51,8 +55,7 @@ describe('RatingsService', () => {
         contributor_count: 2
       });
       const aggregatedRating = await ratingsService.getAggregatedRatingOnMatter(
-        request,
-        { useReadDbOnReads: true }
+        request
       );
 
       expect(aggregatedRating).toEqual({

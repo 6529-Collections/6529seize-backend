@@ -30,7 +30,7 @@ import {
   repService,
   RepService
 } from '../api-serverless/src/profiles/rep.service';
-import { profilesService } from '../profiles/profiles.service';
+import { profilesService, ProfilesService } from '../profiles/profiles.service';
 import { Request } from 'express';
 import { eventScheduler, EventScheduler } from '../events/event.scheduler';
 
@@ -39,6 +39,7 @@ export class RatingsService {
 
   constructor(
     private readonly ratingsDb: RatingsDb,
+    private readonly profilesService: ProfilesService,
     private readonly profilesDb: ProfilesDb,
     private readonly repService: RepService,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
@@ -47,11 +48,9 @@ export class RatingsService {
 
   public async getAggregatedRatingOnMatter(
     request: AggregatedRatingRequest,
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+    connection?: ConnectionWrapper<any>
   ): Promise<AggregatedRating> {
-    return this.ratingsDb.getAggregatedRatingOnMatter(request, {
-      useReadDbOnReads
-    });
+    return this.ratingsDb.getAggregatedRatingOnMatter(request, connection);
   }
 
   public async getRatesLeftOnMatterForProfile({
@@ -400,17 +399,12 @@ export class RatingsService {
     }, {} as Record<string, number>);
   }
 
-  async getAllRatingsForMatterOnProfileGroupedByCategories(
-    param: {
-      matter_target_id: string;
-      rater_profile_id: string | null;
-      matter: RateMatter;
-    },
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
-  ): Promise<RatingStats[]> {
-    return this.ratingsDb.getRatingStatsOnMatterGroupedByCategories(param, {
-      useReadDbOnReads
-    });
+  async getAllRatingsForMatterOnProfileGroupedByCategories(param: {
+    matter_target_id: string;
+    rater_profile_id: string | null;
+    matter: RateMatter;
+  }): Promise<RatingStats[]> {
+    return this.ratingsDb.getRatingStatsOnMatterGroupedByCategories(param);
   }
 
   async getRatingsForMatterAndCategoryOnProfileWithRatersInfo(param: {
@@ -440,26 +434,20 @@ export class RatingsService {
     return this.ratingsDb.getNumberOfRatersForMatterOnProfile(param);
   }
 
-  async getRatingsByRatersForMatter(
-    {
+  async getRatingsByRatersForMatter({
+    queryParams,
+    handleOrWallet,
+    matter
+  }: {
+    queryParams: GetProfileRatingsRequest['query'];
+    handleOrWallet: string;
+    matter: RateMatter;
+  }): Promise<Page<RatingWithProfileInfoAndLevel>> {
+    const params = await this.getRatingsSearchParamsFromRequest({
       queryParams,
       handleOrWallet,
       matter
-    }: {
-      queryParams: GetProfileRatingsRequest['query'];
-      handleOrWallet: string;
-      matter: RateMatter;
-    },
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
-  ): Promise<Page<RatingWithProfileInfoAndLevel>> {
-    const params = await this.getRatingsSearchParamsFromRequest(
-      {
-        queryParams,
-        handleOrWallet,
-        matter
-      },
-      { useReadDbOnReads }
-    );
+    });
     return this.ratingsDb
       .getRatingsByRatersForMatter(params)
       .then(async (page) => {
@@ -478,18 +466,15 @@ export class RatingsService {
       });
   }
 
-  private async getRatingsSearchParamsFromRequest(
-    {
-      queryParams,
-      handleOrWallet,
-      matter
-    }: {
-      queryParams: GetProfileRatingsRequest['query'];
-      handleOrWallet: string;
-      matter: RateMatter;
-    },
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
-  ): Promise<GetRatingsByRatersForMatterParams> {
+  private async getRatingsSearchParamsFromRequest({
+    queryParams,
+    handleOrWallet,
+    matter
+  }: {
+    queryParams: GetProfileRatingsRequest['query'];
+    handleOrWallet: string;
+    matter: RateMatter;
+  }): Promise<GetRatingsByRatersForMatterParams> {
     const given = queryParams.given === 'true';
     const page = queryParams.page ? parseInt(queryParams.page) : 1;
     const page_size = queryParams.page_size
@@ -501,9 +486,8 @@ export class RatingsService {
         ? 'rating'
         : 'last_modified';
     const profile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet.toLocaleLowerCase(),
-        { useReadDbOnReads }
+      await this.profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        handleOrWallet.toLocaleLowerCase()
       );
     const profile_id = profile?.profile?.external_id;
     if (!profile_id) {
@@ -553,6 +537,7 @@ export type RatingWithProfileInfoAndLevel = RatingWithProfileInfo & {
 
 export const ratingsService: RatingsService = new RatingsService(
   ratingsDb,
+  profilesService,
   profilesDb,
   repService,
   profileActivityLogsDb,
