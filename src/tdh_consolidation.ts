@@ -1,11 +1,11 @@
 import { ConsolidatedTDH, TDHENS } from './entities/ITDH';
 import {
-  retrieveWalletConsolidations,
-  fetchAllTDH,
   fetchAllNFTs,
-  persistConsolidatedTDH,
+  fetchAllTDH,
   fetchConsolidationDisplay,
-  fetchLatestTDHBlockNumber
+  fetchLatestTDHBlockNumber,
+  persistConsolidatedTDH,
+  retrieveWalletConsolidations
 } from './db';
 import { areEqualAddresses, buildConsolidationKey } from './helpers';
 import { calculateBoosts, calculateRanks, createMemesData } from './tdh';
@@ -19,7 +19,7 @@ import {
   SZN5_INDEX,
   SZN6_INDEX
 } from './constants';
-import { sqlExecutor } from './sql-executor';
+import { ConnectionWrapper, sqlExecutor } from './sql-executor';
 import { Logger } from './logging';
 import { NextGenToken } from './entities/INextGen';
 import { fetchNextgenTokens } from './nextgen/nextgen.db';
@@ -27,7 +27,8 @@ import { fetchNextgenTokens } from './nextgen/nextgen.db';
 const logger = Logger.get('TDH_CONSOLIDATION');
 
 export async function getWalletTdhAndConsolidatedWallets(
-  wallet: string
+  wallet: string,
+  connection?: ConnectionWrapper<any>
 ): Promise<{
   tdh: number;
   consolidatedWallets: string[];
@@ -46,9 +47,11 @@ export async function getWalletTdhAndConsolidatedWallets(
       balance: 0
     };
   }
+  const opts = connection ? { wrappedConnection: connection } : {};
   const tdhSqlResult = await sqlExecutor.execute(
     `SELECT consolidation_key, consolidation_display, block, boosted_tdh as tdh, balance, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
-    { wallet: `%${wallet.toLowerCase()}%` }
+    { wallet: `%${wallet.toLowerCase()}%` },
+    opts
   );
   const row = tdhSqlResult?.at(0);
   const consolidatedWallets = JSON.parse(row?.wallets ?? '[]').map(

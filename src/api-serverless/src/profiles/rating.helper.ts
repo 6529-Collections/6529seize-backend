@@ -2,7 +2,6 @@ import { Request } from 'express';
 import { getWalletOrThrow } from '../auth/auth';
 import { profilesService } from '../../../profiles/profiles.service';
 import { NotFoundException } from '../../../exceptions';
-import { isSafeToUseReadEndpointInProfileApi } from '../api-helpers';
 
 export async function getRaterInfoFromRequest(
   req: Request<{ handleOrWallet: string }, any, any, any, any>
@@ -11,16 +10,14 @@ export async function getRaterInfoFromRequest(
   const raterWallet = getWalletOrThrow(req);
   const targetProfile =
     await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-      handleOrWallet,
-      { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
+      handleOrWallet
     );
   if (!targetProfile?.profile) {
     throw new NotFoundException(`No profile found for ${handleOrWallet}`);
   }
   const raterProfile =
     await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-      raterWallet,
-      { useReadDbOnReads: isSafeToUseReadEndpointInProfileApi(req) }
+      raterWallet
     );
   if (!raterProfile?.profile) {
     throw new NotFoundException(

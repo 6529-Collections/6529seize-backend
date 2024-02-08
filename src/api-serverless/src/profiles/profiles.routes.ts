@@ -23,7 +23,7 @@ import { profilesService } from '../../../profiles/profiles.service';
 import profileCicRoutes from './profile-cic.routes';
 import profileRepRoutes from './profile-rep.routes';
 import profileCollectedRoutes from './collected/collected.routes';
-import { isSafeToUseReadEndpointInProfileApi } from '../api-helpers';
+import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 
 const router = asyncRouter();
 
@@ -41,12 +41,10 @@ router.get(
     >,
     res: Response<ApiResponse<ProfileAndConsolidations>>
   ) {
-    const useReadDbOnReads = isSafeToUseReadEndpointInProfileApi(req);
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profile =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-        handleOrWallet,
-        { useReadDbOnReads }
+        handleOrWallet
       );
     if (!profile) {
       throw new NotFoundException('Profile not found');
@@ -91,16 +89,14 @@ router.get(
     const authenticatedHandle = maybeAuthenticatedWallet
       ? (
           await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-            maybeAuthenticatedWallet,
-            { useReadDbOnReads: true }
+            maybeAuthenticatedWallet
           )
         )?.profile?.handle
       : null;
     if (proposedHandle.toLowerCase() !== authenticatedHandle?.toLowerCase()) {
       const profile =
         await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
-          proposedHandle,
-          { useReadDbOnReads: true }
+          proposedHandle
         );
       if (profile) {
         return res.status(200).send({
@@ -146,6 +142,7 @@ router.post(
     const profile = await profilesService.createOrUpdateProfile(
       createProfileCommand
     );
+    await giveReadReplicaTimeToCatchUp();
     res.status(201).send(profile);
   }
 );
@@ -178,6 +175,7 @@ router.post(
       handleOrWallet,
       memeOrFile: { file, meme }
     });
+    await giveReadReplicaTimeToCatchUp();
     res.status(201).send(response);
   }
 );

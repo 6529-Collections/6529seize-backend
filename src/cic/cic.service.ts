@@ -192,11 +192,9 @@ export class CicService {
 
   async getCicStatementsByProfileId(
     profile_id: string,
-    { useReadDbOnReads }: { useReadDbOnReads: boolean }
+    connection?: ConnectionWrapper<any>
   ): Promise<CicStatement[]> {
-    return this.cicDb.getCicStatementsByProfileId(profile_id, {
-      useReadDbOnReads
-    });
+    return this.cicDb.getCicStatementsByProfileId(profile_id, connection);
   }
 
   private validateCicStatement({
@@ -227,17 +225,17 @@ export class CicService {
     profile: Profile;
   }) {
     this.validateCicStatement(statement);
-    const existingStatements = await this.cicDb.getCicStatementsByProfileId(
-      statement.profile_id,
-      { useReadDbOnReads: false }
-    );
-    const preexistingStatement = existingStatements.find(
-      (existingStatement) =>
-        existingStatement.statement_type === statement.statement_type &&
-        existingStatement.statement_value === statement.statement_value
-    );
     return await this.cicDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        const existingStatements = await this.cicDb.getCicStatementsByProfileId(
+          statement.profile_id,
+          connection
+        );
+        const preexistingStatement = existingStatements.find(
+          (existingStatement) =>
+            existingStatement.statement_type === statement.statement_type &&
+            existingStatement.statement_value === statement.statement_value
+        );
         if (
           statement.statement_group === CicStatementGroup.GENERAL &&
           statement.statement_type === 'BIO'
