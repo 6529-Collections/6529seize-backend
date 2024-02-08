@@ -43,6 +43,7 @@ on:
           - nextgenMissingImageResolutionsLoop
           - nextgenMediaProxyInterceptor
           - nextgenMediaUploader
+          - newNextgenUploader
       branch:
         description: 'Branch name'
         required: true
