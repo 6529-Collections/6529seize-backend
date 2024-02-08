@@ -380,12 +380,14 @@ function getUrl(chainId: number) {
   let network: string;
 
   if (chainId === goerli.id) {
-    network = goerli.network;
+    network = goerli.name;
   } else if (chainId === sepolia.id) {
-    network = sepolia.network;
+    network = sepolia.name;
   } else {
-    network = mainnet.network;
+    network = mainnet.name;
   }
 
-  return `https://eth-${network}.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
+  return `https://eth-${network.toLowerCase()}.g.alchemy.com/v2/${
+    process.env.ALCHEMY_API_KEY
+  }`;
 }
