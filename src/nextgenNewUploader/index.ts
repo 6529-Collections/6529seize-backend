@@ -1,11 +1,6 @@
-import {
-  ListObjectsCommand,
-  PutObjectCommand,
-  S3Client
-} from '@aws-sdk/client-s3';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Logger } from '../logging';
 import {
-  CLOUDFRONT_DISTRIBUTION,
   GENERATOR_BASE_PATH,
   NEXTGEN_BUCKET,
   NEXTGEN_BUCKET_AWS_REGION,
@@ -15,13 +10,13 @@ import { Time } from '../time';
 import {
   getGenDetailsFromUri,
   getImageBlobFromGenerator,
-  s3UploadNextgenImage
+  listS3Objects,
+  getNextBatch,
+  s3UploadNextgenImage,
+  invalidatePath
 } from '../nextgen/nextgen_generator';
 import { loadEnv } from '../secrets';
-import {
-  CloudFrontClient,
-  CreateInvalidationCommand
-} from '@aws-sdk/client-cloudfront';
+import { CloudFrontClient } from '@aws-sdk/client-cloudfront';
 import { objectExists } from '../helpers/s3_helpers';
 import { sendDiscordUpdate } from '../notifier-discord';
 
@@ -30,10 +25,12 @@ const logger = Logger.get('NEW_NEXTGEN_UPLOADER');
 let s3: S3Client;
 let cloudfront: CloudFrontClient;
 
-const BATCH_SIZE = 15;
-
 const START_INDEX = 10000000000;
 const END_INDEX = 10000000999;
+
+const BATCH_SIZE = 15;
+
+const CURRENT_PATH = 'mainnet/png/';
 
 async function setup() {
   s3 = new S3Client({ region: NEXTGEN_BUCKET_AWS_REGION });
@@ -46,55 +43,25 @@ export const handler = async (event: any) => {
   await loadEnv([]);
   setup();
 
-  const pngPath = 'mainnet/png/';
-  const currentImageCount = await getCurrentImageCountFromS3(pngPath);
+  const allExisting = await listS3Objects(s3, CURRENT_PATH);
 
-  if (currentImageCount) {
-    logger.info(`[CURRENT IMAGE COUNT] : [COUNT ${currentImageCount}]`);
+  logger.info(`[CURRENT IMAGE COUNT ${allExisting.length}]`);
 
-    const allExisting = await listS3Objects(pngPath);
-    const nextBatch = await getNextBatch(allExisting);
-    if (nextBatch.length) {
-      await uploadBatch(nextBatch);
-    } else {
-      logger.info(`[NO MISSING IMAGES]`);
-    }
+  const nextBatch = await getNextBatch(
+    allExisting,
+    START_INDEX,
+    END_INDEX,
+    BATCH_SIZE
+  );
+  if (nextBatch.length) {
+    await uploadBatch(nextBatch);
+  } else {
+    logger.info(`[NO MISSING IMAGES]`);
   }
+
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
 };
-
-async function getNextBatch(allExisting: number[]): Promise<number[]> {
-  const nextBatch = [];
-  for (let i = START_INDEX; i <= END_INDEX; i++) {
-    if (!allExisting.includes(i)) {
-      nextBatch.push(i);
-    }
-    if (nextBatch.length >= BATCH_SIZE) {
-      break;
-    }
-  }
-  return nextBatch;
-}
-
-async function listS3Objects(path: string): Promise<number[]> {
-  const command = new ListObjectsCommand({
-    Bucket: NEXTGEN_BUCKET,
-    Prefix: path
-  });
-  const contents: number[] = [];
-  try {
-    const response = await s3.send(command);
-    response.Contents?.forEach((object) => {
-      if (object.Key) {
-        contents.push(parseInt(object.Key?.replace(path, '')));
-      }
-    });
-  } catch (error) {
-    logger.error(`[S3 LIST ERROR] : [PATH ${path}] : [ERROR ${error}]`);
-  }
-  return contents;
-}
 
 async function uploadBatch(batch: number[]) {
   logger.info(`[UPLOADING BATCH] : [BATCH ${JSON.stringify(batch)}]`);
@@ -104,20 +71,6 @@ async function uploadBatch(batch: number[]) {
     promises.push(uploadMissingNextgenMedia(nextPath));
   }
   await Promise.all(promises);
-}
-
-async function getCurrentImageCountFromS3(path: string): Promise<number> {
-  const command = new ListObjectsCommand({
-    Bucket: NEXTGEN_BUCKET,
-    Prefix: path
-  });
-  try {
-    const response = await s3.send(command);
-    return response.Contents?.length || 0;
-  } catch (error) {
-    logger.error(`[S3 LIST ERROR] : [PATH ${path}] : [ERROR ${error}]`);
-  }
-  return 0;
 }
 
 async function uploadMissingNextgenMedia(path: string) {
@@ -238,31 +191,4 @@ async function uploadMissingNextgenMedia(path: string) {
     discordMessage,
     'NEXTGEN_GENERATOR'
   );
-}
-
-async function invalidatePath(path: string) {
-  if (!path.startsWith('/')) {
-    path = `/${path}`;
-  }
-  const pathParts = path.split('/', 3);
-  const invalidationPath = `/${pathParts[1]}/*`;
-  logger.info(`[INVALIDATING PATH] : [PATH ${invalidationPath}]`);
-  try {
-    await cloudfront.send(
-      new CreateInvalidationCommand({
-        DistributionId: CLOUDFRONT_DISTRIBUTION,
-        InvalidationBatch: {
-          CallerReference: Date.now().toString(),
-          Paths: {
-            Quantity: 1,
-            Items: [invalidationPath]
-          }
-        }
-      })
-    );
-  } catch (e) {
-    logger.info(
-      `[INVALIDATE ERROR] : [PATH ${invalidationPath}] : [ERROR ${e}]`
-    );
-  }
 }

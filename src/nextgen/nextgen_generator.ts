@@ -1,4 +1,8 @@
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  ListObjectsCommand
+} from '@aws-sdk/client-s3';
 import { GENERATOR_BASE_PATH, NEXTGEN_BUCKET } from './nextgen_constants';
 import { Logger } from '../logging';
 import axios from 'axios';
@@ -9,6 +13,46 @@ export interface Details {
   network: string;
   tokenId?: number;
   collection?: number;
+}
+
+export async function listS3Objects(
+  s3: S3Client,
+  path: string
+): Promise<number[]> {
+  const command = new ListObjectsCommand({
+    Bucket: NEXTGEN_BUCKET,
+    Prefix: path
+  });
+  const contents: number[] = [];
+  try {
+    const response = await s3.send(command);
+    response.Contents?.forEach((object) => {
+      if (object.Key) {
+        contents.push(parseInt(object.Key?.replace(path, '')));
+      }
+    });
+  } catch (error) {
+    logger.error(`[S3 LIST ERROR] : [PATH ${path}] : [ERROR ${error}]`);
+  }
+  return contents;
+}
+
+export async function getNextBatch(
+  allExisting: number[],
+  startIndex: number,
+  endIndex: number,
+  batchSize: number
+): Promise<number[]> {
+  const nextBatch = [];
+  for (let i = startIndex; i <= endIndex; i++) {
+    if (!allExisting.includes(i)) {
+      nextBatch.push(i);
+    }
+    if (nextBatch.length >= batchSize) {
+      break;
+    }
+  }
+  return nextBatch;
 }
 
 export function getGenDetailsFromUri(uri: string): Details {
@@ -68,14 +112,29 @@ export async function s3UploadNextgenImage(
   );
 }
 
-export function triggerGenerator(uri: string) {
-  let metadataPath = uri.startsWith('/') ? uri.slice(1) : uri;
-  triggerGeneratorPath(metadataPath);
-  const imagePath = metadataPath.replace('/metadata/', '/png/');
-  triggerGeneratorPath(imagePath);
-}
-
-export function triggerGeneratorPath(path: string) {
-  const genPath = `${GENERATOR_BASE_PATH}/${path}`;
-  fetch(genPath);
+export async function invalidatePath(path: string) {
+  if (!path.startsWith('/')) {
+    path = `/${path}`;
+  }
+  const pathParts = path.split('/', 3);
+  const invalidationPath = `/${pathParts[1]}/*`;
+  logger.info(`[INVALIDATING PATH] : [PATH ${invalidationPath}]`);
+  try {
+    await cloudfront.send(
+      new CreateInvalidationCommand({
+        DistributionId: CLOUDFRONT_DISTRIBUTION,
+        InvalidationBatch: {
+          CallerReference: Date.now().toString(),
+          Paths: {
+            Quantity: 1,
+            Items: [invalidationPath]
+          }
+        }
+      })
+    );
+  } catch (e) {
+    logger.info(
+      `[INVALIDATE ERROR] : [PATH ${invalidationPath}] : [ERROR ${e}]`
+    );
+  }
 }

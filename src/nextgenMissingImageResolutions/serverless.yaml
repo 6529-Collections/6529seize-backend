@@ -1,4 +1,4 @@
-service: nextgenMediaUploader
+service: nextgenMissingImageResolutions
 
 package:
   artifact: dist/index.zip
@@ -9,22 +9,27 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 512
+  memorySize: 1028
   timeout: 900
 
+custom:
+  chainIDs:
+    staging: 11155111
+    prod: 1
+
 functions:
-  nextgenMediaUploader:
+  nextgenMissingImageResolutions:
     handler: index.handler
-    reservedConcurrency: 1
-    name: nextgenMediaUploader
+    name: nextgenMissingImageResolutions
     description: ${env:VERSION_DESCRIPTION}
-    events:
-      - sns:
-          arn: arn:aws:sns:us-east-1:987989283142:nextgen-media-proxy-interceptor
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule: rate(1 minute)
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: "nextgenMediaUploader_${opt:stage, self:provider.stage}"
+      SENTRY_ENVIRONMENT: 'nextgenMissingImageResolutions_${opt:stage, self:provider.stage}'
+      NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
