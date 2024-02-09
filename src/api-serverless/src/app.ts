@@ -3,8 +3,6 @@ import * as db from '../../db-api';
 import { loadLocalConfig, loadSecrets } from '../../secrets';
 import { isNumber } from '../../helpers';
 
-import { validateUser } from './users/user_validation';
-
 import profilesRoutes from './profiles/profiles.routes';
 import communityMembersSearchRoutes from './profiles/community-members-search.routes';
 import authRoutes from './auth/auth.routes';
@@ -41,21 +39,21 @@ import {
   returnPaginatedResult
 } from './api-helpers';
 import {
+  CACHE_TIME_MS,
   corsOptions,
   DEFAULT_PAGE_SIZE,
-  SEIZE_SETTINGS,
+  DISTRIBUTION_PAGE_SIZE,
   NFTS_PAGE_SIZE,
-  SORT_DIRECTIONS,
-  CACHE_TIME_MS,
-  DISTRIBUTION_PAGE_SIZE
+  SEIZE_SETTINGS,
+  SORT_DIRECTIONS
 } from './api-constants';
 import {
+  DISTRIBUTION_SORT,
   MEME_LAB_OWNERS_SORT,
-  TRANSACTION_FILTERS,
   NFT_TDH_SORT,
-  TDH_SORT,
   TAGS_FILTERS,
-  DISTRIBUTION_SORT
+  TDH_SORT,
+  TRANSACTION_FILTERS
 } from './api-filters';
 import { parseTdhResults } from '../../sql_helpers';
 
@@ -588,18 +586,6 @@ loadApi().then(() => {
     const address = req.params.address;
 
     db.fetchEns(address).then((result) => {
-      if (result.length == 1) {
-        returnJsonResult(result[0], req, res);
-      } else {
-        returnJsonResult({}, req, res);
-      }
-    });
-  });
-
-  apiRouter.get(`/user/:address/`, function (req: any, res: any) {
-    const address = req.params.address;
-
-    db.fetchUser(address).then((result) => {
       if (result.length == 1) {
         returnJsonResult(result[0], req, res);
       } else {
@@ -1240,25 +1226,6 @@ loadApi().then(() => {
       res
     );
   });
-
-  apiRouter.post(
-    `/user`,
-    upload.single('pfp'),
-    validateUser,
-    function (req: any, res: any) {
-      const body = req.validatedBody;
-      const valid = body.valid;
-      if (valid) {
-        db.updateUser(body.user).then((result) => {
-          res.status(200);
-          returnJsonResult(body, req, res);
-        });
-      } else {
-        res.status(400);
-        returnJsonResult(body, req, res);
-      }
-    }
-  );
 
   rootRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();

@@ -26,7 +26,6 @@ export const PROFILES_ACTIVITY_LOGS_TABLE = 'profile_activity_logs';
 export const PROFILE_TDHS_TABLE = 'profile_tdhs';
 export const PROFILE_TDH_LOGS_TABLE = 'profile_tdh_logs';
 export const PROFILES_ARCHIVE_TABLE = 'profiles_archive';
-export const USER_TABLE = 'user';
 export const TEAM_TABLE = 'team';
 export const DISTRIBUTION_TABLE = 'distribution';
 export const DISTRIBUTION_PHOTO_TABLE = 'distribution_photo';
