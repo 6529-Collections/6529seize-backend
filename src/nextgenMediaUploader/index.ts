@@ -37,7 +37,7 @@ async function setup() {
   cloudfront = new CloudFrontClient({ region: NEXTGEN_BUCKET_AWS_REGION });
 }
 
-export const handler = async (event: any) => {
+export const handler = async () => {
   const start = Time.now();
   logger.info(`[RUNNING]`);
   await loadEnv([]);
@@ -65,15 +65,11 @@ export const handler = async (event: any) => {
 
 async function uploadBatch(batch: number[]) {
   logger.info(`[UPLOADING BATCH] : [BATCH ${JSON.stringify(batch)}]`);
-  const promises = [];
-  for (let item of batch) {
-    const nextPath = `/mainnet/metadata/${item}`;
-    promises.push(uploadMissingNextgenMedia(nextPath));
-  }
-  await Promise.all(promises);
+  await Promise.all(batch.map((item) => uploadMissingNextgenMedia(item)));
 }
 
-async function uploadMissingNextgenMedia(path: string) {
+async function uploadMissingNextgenMedia(item: number) {
+  const path = `/mainnet/metadata/${item}`;
   const metadataPath = path.startsWith('/') ? path.slice(1) : path;
   const imagePath = metadataPath.replace('/metadata/', '/png/');
   const htmlPath = metadataPath.replace('/metadata/', '/html/');
@@ -150,7 +146,7 @@ async function uploadMissingNextgenMedia(path: string) {
 
   const imageBlob = await getImageBlobFromGenerator(imagePath);
   if (!imageBlob) {
-    logger.info(`[IMAGE BLOB ERROR] : [EXITING]`);
+    logger.error(`[IMAGE BLOB ERROR] : [EXITING]`);
     return;
   }
 

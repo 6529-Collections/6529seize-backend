@@ -32,7 +32,7 @@ const END_INDEX = 10000000999;
 
 const BATCH_SIZE = 15;
 
-export const handler = async (event: any) => {
+export const handler = async () => {
   const start = Time.now();
   logger.info(`[RUNNING]`);
   await loadEnv([]);
@@ -84,11 +84,9 @@ async function uploadBatch(batch: number[], path: string, resolution: string) {
       batch
     )}]`
   );
-  const promises = [];
-  for (let item of batch) {
-    promises.push(uploadMissingNextgenImage(item, resolution));
-  }
-  await Promise.all(promises);
+  await Promise.all(
+    batch.map((item) => uploadMissingNextgenImage(item, resolution))
+  );
 }
 
 async function uploadMissingNextgenImage(tokenId: number, resolution: string) {
