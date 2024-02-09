@@ -37,11 +37,9 @@ import {
   UPLOADS_TABLE,
   USE_CASE_ALL,
   USE_CASE_MINTING,
-  USER_TABLE,
   WALLETS_TDH_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
-import { User } from './entities/IUser';
 import {
   areEqualAddresses,
   distinct,
@@ -1986,21 +1984,6 @@ export async function fetchEns(address: string) {
   return sqlExecutor.execute(sql, { address: address });
 }
 
-export async function fetchUser(address: string) {
-  const sql = `SELECT 
-      ${ENS_TABLE}.*, 
-      ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key,
-      ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance, 
-      ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
-      ${USER_TABLE}.pfp, ${USER_TABLE}.banner_1, ${USER_TABLE}.banner_2, ${USER_TABLE}.website 
-    FROM ${ENS_TABLE} 
-    LEFT JOIN ${CONSOLIDATED_OWNERS_METRICS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key LIKE CONCAT('%', ${ENS_TABLE}.wallet, '%') 
-    LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key 
-    LEFT JOIN ${USER_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key LIKE CONCAT('%', ${USER_TABLE}.wallet, '%') 
-    WHERE LOWER(${ENS_TABLE}.wallet)=LOWER(:address) OR LOWER(display)=LOWER(:address) ORDER BY ${USER_TABLE}.updated_at desc limit 1`;
-  return sqlExecutor.execute(sql, { address: address });
-}
-
 export async function fetchRanksForWallet(address: string) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   const sqlTdh = `SELECT * FROM ${WALLETS_TDH_TABLE} WHERE block=${tdhBlock} and wallet=:address`;
@@ -2668,26 +2651,6 @@ export async function fetchTDHHistory(
     filters
   );
 }
-
-export async function updateUser(user: User) {
-  const sql = `INSERT INTO ${USER_TABLE} (wallet, pfp, banner_1, banner_2, website) 
-    VALUES (:wallet, :pfp, :banner_1, :banner_2, :website) 
-    ON DUPLICATE KEY UPDATE 
-    pfp = IF(:pfp IS NOT NULL AND LENGTH(:pfp) > 0, :pfp, pfp),
-    banner_1 = :banner_1, 
-    banner_2 = :banner_2, 
-    website = :website`;
-  const params = {
-    wallet: user.wallet,
-    pfp: user.pfp,
-    banner_1: user.banner_1,
-    banner_2: user.banner_2,
-    website: user.website
-  };
-
-  await sqlExecutor.execute(sql, params);
-}
-
 export async function fetchRoyaltiesUploads(pageSize: number, page: number) {
   return fetchPaginated(
     ROYALTIES_UPLOADS_TABLE,
