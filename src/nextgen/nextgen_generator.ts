@@ -32,16 +32,12 @@ export async function listS3Objects(
     Prefix: path
   });
   const contents: number[] = [];
-  try {
-    const response = await s3.send(command);
-    response.Contents?.forEach((object) => {
-      if (object.Key) {
-        contents.push(parseInt(object.Key?.replace(path, '')));
-      }
-    });
-  } catch (error) {
-    logger.error(`[S3 LIST ERROR] : [PATH ${path}] : [ERROR ${error}]`);
-  }
+  const response = await s3.send(command);
+  response.Contents?.forEach((object) => {
+    if (object.Key) {
+      contents.push(parseInt(object.Key?.replace(path, '')));
+    }
+  });
   return contents;
 }
 
