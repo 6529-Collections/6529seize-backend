@@ -104,7 +104,7 @@ async function uploadMissingNextgenImage(tokenId: number, resolution: string) {
 
   await s3UploadNextgenImage(s3, imageBlob, s3Path);
 
-  const discordMessage = `New Resolution (${resolution}) for Token #${tokenId} Generated\n${NEXTGEN_CF_BASE_PATH}/${s3Path}`;
+  const discordMessage = `New Resolution (${resolution.toUpperCase()}) for Token #${tokenId} Generated\n${NEXTGEN_CF_BASE_PATH}/${s3Path}`;
   await sendDiscordUpdate(
     process.env.NEXTGEN_GENERATOR_DISCORD_WEBHOOK as string,
     discordMessage,
