@@ -85,8 +85,8 @@ async function uploadBatch(batch: number[], path: string, resolution: string) {
     )}]`
   );
   const promises = [];
-  for (let i = 0; i < batch.length; i++) {
-    promises.push(uploadMissingNextgenImage(batch[i], resolution));
+  for (let item of batch) {
+    promises.push(uploadMissingNextgenImage(item, resolution));
   }
   await Promise.all(promises);
 }
@@ -96,8 +96,10 @@ async function uploadMissingNextgenImage(tokenId: number, resolution: string) {
   const s3Path = `mainnet/png${resolution}/${tokenId}`;
 
   logger.info(
-    `[TOKEN ID ${tokenId}] : [RESOLUTION ${resolution}] : [GENERATOR PATH ${generatorPath}] : [S3 PATH ${s3Path}]`
+    `[TOKEN_ID ${tokenId}] : [RESOLUTION ${resolution.toUpperCase()}] : [GENERATOR PATH ${generatorPath}] : [S3 PATH ${s3Path}]`
   );
+
+  return;
 
   const imageBlob = await getImageBlobFromGenerator(generatorPath);
   if (!imageBlob) {

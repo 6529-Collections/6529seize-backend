@@ -1,7 +1,6 @@
 import { Logger } from '../logging';
 import { NEXTGEN_CF_BASE_PATH } from '../nextgen/nextgen_constants';
 import { Details, getGenDetailsFromUri } from '../nextgen/nextgen_generator';
-import { notifyMissingNextgenMedia } from '../notifier';
 
 const logger = Logger.get('NEXTGEN_MEDIA_INTERCEPTOR');
 

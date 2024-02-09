@@ -66,8 +66,8 @@ export const handler = async (event: any) => {
 async function uploadBatch(batch: number[]) {
   logger.info(`[UPLOADING BATCH] : [BATCH ${JSON.stringify(batch)}]`);
   const promises = [];
-  for (let i = 0; i < batch.length; i++) {
-    const nextPath = `/mainnet/metadata/${batch[i]}`;
+  for (let item of batch) {
+    const nextPath = `/mainnet/metadata/${item}`;
     promises.push(uploadMissingNextgenMedia(nextPath));
   }
   await Promise.all(promises);
