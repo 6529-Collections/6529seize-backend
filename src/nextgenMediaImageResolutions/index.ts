@@ -1,7 +1,6 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import { Logger } from '../logging';
 import {
-  GENERATOR_BASE_PATH,
   NEXTGEN_BUCKET_AWS_REGION,
   NEXTGEN_CF_BASE_PATH
 } from '../nextgen/nextgen_constants';
@@ -90,7 +89,7 @@ async function uploadBatch(batch: number[], path: string, resolution: string) {
 }
 
 async function uploadMissingNextgenImage(tokenId: number, resolution: string) {
-  const generatorPath = `${GENERATOR_BASE_PATH}/mainnet/png/${tokenId}/${resolution}`;
+  const generatorPath = `/mainnet/png/${tokenId}/${resolution}`;
   const s3Path = `mainnet/png${resolution}/${tokenId}`;
 
   logger.info(
