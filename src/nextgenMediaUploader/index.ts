@@ -1,54 +1,75 @@
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import {
-  CloudFrontClient,
-  CreateInvalidationCommand
-} from '@aws-sdk/client-cloudfront';
 import { Logger } from '../logging';
-import { Time } from '../time';
 import {
-  CLOUDFRONT_DISTRIBUTION,
   GENERATOR_BASE_PATH,
   NEXTGEN_BUCKET,
   NEXTGEN_BUCKET_AWS_REGION,
   NEXTGEN_CF_BASE_PATH
 } from '../nextgen/nextgen_constants';
-import { wrapLambdaHandler } from '../sentry.context';
+import { Time } from '../time';
 import {
   getGenDetailsFromUri,
   getImageBlobFromGenerator,
-  s3UploadNextgenImage
+  listS3Objects,
+  getNextBatch,
+  s3UploadNextgenImage,
+  invalidatePath
 } from '../nextgen/nextgen_generator';
+import { loadEnv } from '../secrets';
+import { CloudFrontClient } from '@aws-sdk/client-cloudfront';
 import { objectExists } from '../helpers/s3_helpers';
 import { sendDiscordUpdate } from '../notifier-discord';
-import { loadEnv } from '../secrets';
 
-const logger = Logger.get('NEXTGEN_MEDIA_UPLOADER');
+const logger = Logger.get('NEW_NEXTGEN_UPLOADER');
 
 let s3: S3Client;
 let cloudfront: CloudFrontClient;
+
+const START_INDEX = 10000000000;
+const END_INDEX = 10000000999;
+
+const BATCH_SIZE = 15;
+
+const CURRENT_PATH = 'mainnet/png/';
 
 async function setup() {
   s3 = new S3Client({ region: NEXTGEN_BUCKET_AWS_REGION });
   cloudfront = new CloudFrontClient({ region: NEXTGEN_BUCKET_AWS_REGION });
 }
 
-export const handler = wrapLambdaHandler(async (event: any) => {
+export const handler = async () => {
   const start = Time.now();
   logger.info(`[RUNNING]`);
-  setup();
   await loadEnv([]);
-  const record = event.Records[0].Sns;
-  const snsMessage = record.Message;
-  const messageAttributes = record.MessageAttributes;
-  const requestUri = messageAttributes.RequestURI;
-  const missingPath = requestUri.Value;
-  logger.info(`[SNS MESSAGE] : ${snsMessage} : ${missingPath}`);
-  await uploadMissingNextgenMedia(missingPath);
+  setup();
+
+  const allExisting = await listS3Objects(s3, CURRENT_PATH);
+
+  logger.info(`[CURRENT IMAGE COUNT ${allExisting.length}]`);
+
+  const nextBatch = await getNextBatch(
+    allExisting,
+    START_INDEX,
+    END_INDEX,
+    BATCH_SIZE
+  );
+  if (nextBatch.length) {
+    await uploadBatch(nextBatch);
+  } else {
+    logger.info(`[NO MISSING IMAGES]`);
+  }
+
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
-});
+};
 
-async function uploadMissingNextgenMedia(path: string) {
+async function uploadBatch(batch: number[]) {
+  logger.info(`[UPLOADING BATCH] : [BATCH ${JSON.stringify(batch)}]`);
+  await Promise.all(batch.map((item) => uploadMissingNextgenMedia(item)));
+}
+
+async function uploadMissingNextgenMedia(item: number) {
+  const path = `/mainnet/metadata/${item}`;
   const metadataPath = path.startsWith('/') ? path.slice(1) : path;
   const imagePath = metadataPath.replace('/metadata/', '/png/');
   const htmlPath = metadataPath.replace('/metadata/', '/html/');
@@ -67,6 +88,7 @@ async function uploadMissingNextgenMedia(path: string) {
   logger.info(
     `[UPLOADING MISSING NEXTGEN MEDIA] : [PATH ${path}]: [METADATA EXISTS ${metadataExists}] : [IMAGE EXISTS ${imageExists}] : [HTML EXISTS ${htmlExists}]`
   );
+
   if (!path.includes('/metadata/')) {
     logger.info(`[NOT A METADATA PATH] : [SKIPPING] : [PATH ${path}]`);
     return;
@@ -124,7 +146,7 @@ async function uploadMissingNextgenMedia(path: string) {
 
   const imageBlob = await getImageBlobFromGenerator(imagePath);
   if (!imageBlob) {
-    logger.info(`[IMAGE BLOB ERROR] : [EXITING]`);
+    logger.error(`[IMAGE BLOB ERROR] : [EXITING]`);
     return;
   }
 
@@ -157,7 +179,7 @@ async function uploadMissingNextgenMedia(path: string) {
     })
   );
 
-  await invalidatePath(path);
+  await invalidatePath(cloudfront, path);
 
   const discordMessage = `New Token Generated\n${NEXTGEN_CF_BASE_PATH}/${imagePath}`;
   await sendDiscordUpdate(
@@ -165,31 +187,4 @@ async function uploadMissingNextgenMedia(path: string) {
     discordMessage,
     'NEXTGEN_GENERATOR'
   );
-}
-
-async function invalidatePath(path: string) {
-  if (!path.startsWith('/')) {
-    path = `/${path}`;
-  }
-  const pathParts = path.split('/', 3);
-  const invalidationPath = `/${pathParts[1]}/*`;
-  logger.info(`[INVALIDATING PATH] : [PATH ${invalidationPath}]`);
-  try {
-    await cloudfront.send(
-      new CreateInvalidationCommand({
-        DistributionId: CLOUDFRONT_DISTRIBUTION,
-        InvalidationBatch: {
-          CallerReference: Date.now().toString(),
-          Paths: {
-            Quantity: 1,
-            Items: [invalidationPath]
-          }
-        }
-      })
-    );
-  } catch (e) {
-    logger.info(
-      `[INVALIDATE ERROR] : [PATH ${invalidationPath}] : [ERROR ${e}]`
-    );
-  }
 }
