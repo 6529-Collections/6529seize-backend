@@ -14,48 +14,53 @@ import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses, getDaysDiff } from './helpers';
 import { Alchemy } from 'alchemy-sdk';
 import {
-  fetchLatestTransactionsBlockNumber,
+  consolidateTransactions,
+  fetchAllConsolidationAddresses,
   fetchAllNFTs,
   fetchAllOwnersAddresses,
+  fetchAllProfiles,
+  fetchHasEns,
+  fetchLatestTransactionsBlockNumber,
   fetchWalletTransactions,
   persistTDH,
-  retrieveWalletConsolidations,
-  consolidateTransactions,
-  fetchHasEns,
-  fetchAllProfiles,
-  fetchAllConsolidationAddresses
+  retrieveWalletConsolidations
 } from './db';
-import { sqlExecutor } from './sql-executor';
+import { ConnectionWrapper, sqlExecutor } from './sql-executor';
 import { Logger } from './logging';
 import { fetchNextgenTokens } from './nextgen/nextgen.db';
 import { NextGenToken } from './entities/INextGen';
 import { NFT } from './entities/INFT';
 import {
-  NEXTGEN_CORE_CONTRACT,
-  getNextgenNetwork
+  getNextgenNetwork,
+  NEXTGEN_CORE_CONTRACT
 } from './nextgen/nextgen_constants';
 
 const logger = Logger.get('TDH');
 
 let alchemy: Alchemy;
 
-export async function getWalletsTdhs({
-  wallets,
-  blockNo
-}: {
-  wallets: string[];
-  blockNo: number;
-}): Promise<Record<string, number>> {
+export async function getWalletsTdhs(
+  {
+    wallets,
+    blockNo
+  }: {
+    wallets: string[];
+    blockNo: number;
+  },
+  connection?: ConnectionWrapper<any>
+): Promise<Record<string, number>> {
   const normalisedWallets = wallets.map((w) => w.toLowerCase());
   if (!normalisedWallets.length) {
     return {};
   }
+  const opts = connection ? { wrappedConnection: connection } : {};
   const result: { wallet: string; tdh: number }[] = await sqlExecutor.execute(
     `select wallet, boosted_tdh as tdh from ${WALLETS_TDH_TABLE} where block = :blockNo and lower(wallet) in (:wallets)`,
     {
       blockNo,
       wallets: normalisedWallets
-    }
+    },
+    opts
   );
   return normalisedWallets.reduce(
     (acc: Record<string, number>, wallet: string) => {
