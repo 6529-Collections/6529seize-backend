@@ -3,9 +3,17 @@ import {
   PutObjectCommand,
   ListObjectsCommand
 } from '@aws-sdk/client-s3';
-import { GENERATOR_BASE_PATH, NEXTGEN_BUCKET } from './nextgen_constants';
+import {
+  CLOUDFRONT_DISTRIBUTION,
+  GENERATOR_BASE_PATH,
+  NEXTGEN_BUCKET
+} from './nextgen_constants';
 import { Logger } from '../logging';
 import axios from 'axios';
+import {
+  CloudFrontClient,
+  CreateInvalidationCommand
+} from '@aws-sdk/client-cloudfront';
 
 const logger = Logger.get('NEXTGEN_GENERATOR');
 
@@ -112,7 +120,10 @@ export async function s3UploadNextgenImage(
   );
 }
 
-export async function invalidatePath(path: string) {
+export async function invalidatePath(
+  cloudfront: CloudFrontClient,
+  path: string
+) {
   if (!path.startsWith('/')) {
     path = `/${path}`;
   }

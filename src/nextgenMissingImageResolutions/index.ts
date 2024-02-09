@@ -57,6 +57,13 @@ async function findMissingImages(resolution: string) {
   const resolutionPath = `${networkPath}/png${resolution}/`;
 
   const allExisting = await listS3Objects(s3, resolutionPath);
+
+  logger.info(
+    `[RESOLUTION ${resolution.toUpperCase()}] : [RESOLUTON_PATH ${resolutionPath}] : [CURRENT IMAGE COUNT ${
+      allExisting.length
+    }]`
+  );
+
   const nextBatch = await getNextBatch(
     allExisting,
     START_INDEX,
@@ -72,7 +79,11 @@ async function findMissingImages(resolution: string) {
 }
 
 async function uploadBatch(batch: number[], path: string, resolution: string) {
-  logger.info(`[UPLOADING BATCH] : [BATCH ${JSON.stringify(batch)}]`);
+  logger.info(
+    `[UPLOADING BATCH] : [RESOLUTION: ${resolution.toUpperCase()}] : [BATCH ${JSON.stringify(
+      batch
+    )}]`
+  );
   const promises = [];
   for (let i = 0; i < batch.length; i++) {
     promises.push(uploadMissingNextgenImage(batch[i], resolution));
@@ -81,16 +92,19 @@ async function uploadBatch(batch: number[], path: string, resolution: string) {
 }
 
 async function uploadMissingNextgenImage(tokenId: number, resolution: string) {
-  logger.info(`[TOKEN ID ${tokenId}] : [RESOLUTION ${resolution}]`);
-
   const generatorPath = `${GENERATOR_BASE_PATH}/mainnet/png/${tokenId}/${resolution}`;
+  const s3Path = `mainnet/png${resolution}/${tokenId}`;
+
+  logger.info(
+    `[TOKEN ID ${tokenId}] : [RESOLUTION ${resolution}] : [GENERATOR PATH ${generatorPath}] : [S3 PATH ${s3Path}]`
+  );
+
   const imageBlob = await getImageBlobFromGenerator(generatorPath);
   if (!imageBlob) {
     logger.info(`[IMAGE BLOB ERROR] : [EXITING]`);
     return;
   }
 
-  const s3Path = `mainnet/png${resolution}/${tokenId}`;
   await s3UploadNextgenImage(s3, imageBlob, s3Path);
 
   const discordMessage = `New Resolution (${resolution}) for Token #${tokenId} Generated\n${NEXTGEN_CF_BASE_PATH}/${s3Path}`;

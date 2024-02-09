@@ -183,7 +183,7 @@ async function uploadMissingNextgenMedia(path: string) {
     })
   );
 
-  await invalidatePath(path);
+  await invalidatePath(cloudfront, path);
 
   const discordMessage = `New Token Generated\n${NEXTGEN_CF_BASE_PATH}/${imagePath}`;
   await sendDiscordUpdate(
