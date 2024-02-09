@@ -40,8 +40,10 @@ export const handler = async () => {
   for (let resolution of resolutions) {
     const isFinished = await findMissingImages(resolution);
     if (!isFinished) {
+      logger.info(`[RESOLUTION ${resolution.toUpperCase()}] : [NOT FINISHED]`);
       break;
     }
+    logger.info(`[RESOLUTION ${resolution.toUpperCase()}] : [FINISHED]`);
   }
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
