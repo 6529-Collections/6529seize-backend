@@ -11,7 +11,7 @@ import { refreshNextgenMetadata } from '../nextgen/nextgen_metadata_refresh';
 
 const logger = Logger.get('NEXTGEN_METADATA_LOOP');
 
-export const handler = async (event: any) => {
+export const handler = async () => {
   const start = Time.now();
   logger.info(`[RUNNING]`);
   await loadEnv([

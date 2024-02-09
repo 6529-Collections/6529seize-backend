@@ -1,11 +1,6 @@
 import { Logger } from '../logging';
 import { NEXTGEN_CF_BASE_PATH } from '../nextgen/nextgen_constants';
-import {
-  Details,
-  getGenDetailsFromUri,
-  triggerGenerator
-} from '../nextgen/nextgen_generator';
-import { notifyMissingNextgenMedia } from '../notifier';
+import { Details, getGenDetailsFromUri } from '../nextgen/nextgen_generator';
 
 const logger = Logger.get('NEXTGEN_MEDIA_INTERCEPTOR');
 
@@ -23,10 +18,6 @@ export const handler = async (event: any) => {
   try {
     if (response.status === '403') {
       const uri = request.uri;
-
-      triggerGenerator(uri);
-
-      await notifyMissingNextgenMedia(uri);
 
       const details = getGenDetailsFromUri(uri);
       const image = getImagePath(details);

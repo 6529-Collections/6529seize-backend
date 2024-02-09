@@ -18,7 +18,7 @@ import { Transaction } from '../entities/ITransaction';
 
 const logger = Logger.get('NEXTGEN_CONTRACT_LOOP');
 
-export const handler = async (event: any) => {
+export const handler = async () => {
   const start = Time.now();
   logger.info(`[RUNNING]`);
   await loadEnv([

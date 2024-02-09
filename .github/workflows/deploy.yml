@@ -40,9 +40,10 @@ on:
           - transactionsReplayLoop
           - nextgenContractLoop
           - nextgenMetadataLoop
-          - nextgenMissingImageResolutionsLoop
           - nextgenMediaProxyInterceptor
           - nextgenMediaUploader
+          - nextgenMediaImageResolutions
+
       branch:
         description: 'Branch name'
         required: true
@@ -59,7 +60,7 @@ jobs:
     steps:
       - name: Check preconditions
         uses: actions/github-script@v3
-        if: (github.event.inputs.service == 'nextgenMediaProxyInterceptor' || github.event.inputs.service == 'nextgenMediaUploader') && github.event.inputs.environment != 'prod'
+        if: (github.event.inputs.service == 'nextgenMediaProxyInterceptor' || github.event.inputs.service == 'nextgenMediaUploader' || github.event.inputs.service == 'nextgenMediaImageResolutions') && github.event.inputs.environment != 'prod'
         with:
           script: core.setFailed('Given service can only be deployed to production environment')
       - name: Checkout
