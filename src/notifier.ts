@@ -1,7 +1,6 @@
 import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { randomUUID } from 'crypto';
 import { Logger } from './logging';
-import { NEXTGEN_BUCKET_AWS_REGION } from './nextgen/nextgen_constants';
 
 const logger = Logger.get('NOTIFIER');
 
