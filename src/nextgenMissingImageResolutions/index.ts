@@ -99,8 +99,6 @@ async function uploadMissingNextgenImage(tokenId: number, resolution: string) {
     `[TOKEN_ID ${tokenId}] : [RESOLUTION ${resolution.toUpperCase()}] : [GENERATOR PATH ${generatorPath}] : [S3 PATH ${s3Path}]`
   );
 
-  return;
-
   const imageBlob = await getImageBlobFromGenerator(generatorPath);
   if (!imageBlob) {
     logger.info(`[IMAGE BLOB ERROR] : [EXITING]`);
