@@ -10,9 +10,9 @@ import {
 import {
   ARTISTS_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
-  MEME_LAB_ROYALTIES_TABLE,
   CONSOLIDATIONS_TABLE,
   ENS_TABLE,
+  MEME_LAB_ROYALTIES_TABLE,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   NFTS_MEME_LAB_TABLE,
@@ -29,7 +29,6 @@ import {
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
-import { User } from './entities/IUser';
 
 import {
   LabExtendedData,
@@ -53,8 +52,8 @@ import {
 } from './entities/ITDH';
 import { Team } from './entities/ITeam';
 import {
-  LabTransaction,
   BaseTransaction,
+  LabTransaction,
   Transaction
 } from './entities/ITransaction';
 import {
@@ -82,14 +81,14 @@ import {
   NextGenAllowlist,
   NextGenAllowlistBurn,
   NextGenAllowlistCollection,
+  NextGenBlock,
   NextGenCollection,
   NextGenCollectionBurn,
-  NextGenBlock,
   NextGenLog,
   NextGenToken,
-  NextGenTokenTrait,
   NextGenTokenScore,
-  NextGenTokenTDH
+  NextGenTokenTDH,
+  NextGenTokenTrait
 } from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { Profile, ProfileArchived } from './entities/IProfile';
@@ -144,7 +143,6 @@ export async function connect(entities: any[] = []) {
       TDHHistory,
       GlobalTDHHistory,
       ENS,
-      User,
       Profile,
       ProfileArchived,
       ProfileTdh,
