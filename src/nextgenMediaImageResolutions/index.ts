@@ -29,7 +29,7 @@ async function setup() {
 const START_INDEX = 10000000000;
 const END_INDEX = 10000000999;
 
-const BATCH_SIZE = 15;
+const BATCH_SIZE = 30;
 
 export const handler = async () => {
   const start = Time.now();
