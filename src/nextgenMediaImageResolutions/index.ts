@@ -38,7 +38,10 @@ export const handler = async () => {
   setup();
   const resolutions = ['2k', '4k'];
   for (let resolution of resolutions) {
-    await findMissingImages(resolution);
+    const isFinished = await findMissingImages(resolution);
+    if (!isFinished) {
+      break;
+    }
   }
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
@@ -72,8 +75,10 @@ async function findMissingImages(resolution: string) {
 
   if (nextBatch.length) {
     await uploadBatch(nextBatch, resolutionPath, resolution);
+    return false;
   } else {
     logger.info(`[NO MISSING IMAGES]`);
+    return true;
   }
 }
 
