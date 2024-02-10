@@ -89,7 +89,7 @@ export async function getImageBlobFromGenerator(path: string) {
   try {
     const genImageResponse = await axios.get(`${GENERATOR_BASE_PATH}/${path}`, {
       responseType: 'arraybuffer',
-      timeout: 300000 // (5 minutes)
+      timeout: 720000 // (12 minutes)
     });
     if (genImageResponse.status !== 200) {
       return returnError(`STATUS ${genImageResponse.status}`);
