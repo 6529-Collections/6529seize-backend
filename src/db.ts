@@ -12,6 +12,7 @@ import {
   CONSOLIDATED_UPLOADS_TABLE,
   CONSOLIDATIONS_TABLE,
   ENS_TABLE,
+  GRADIENT_CONTRACT,
   MEME_LAB_ROYALTIES_TABLE,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
@@ -385,6 +386,9 @@ export async function fetchLatestTransactionsBlockNumber(beforeDate?: Date) {
   if (beforeDate) {
     sql += ` WHERE UNIX_TIMESTAMP(transaction_date) <= :date`;
     params.date = beforeDate.getTime() / 1000;
+  } else {
+    sql += ` WHERE contract in (:contracts)`;
+    params.contracts = [MEMES_CONTRACT, GRADIENT_CONTRACT];
   }
   sql += ` order by block desc limit 1;`;
   const r = await sqlExecutor.execute(sql, params);

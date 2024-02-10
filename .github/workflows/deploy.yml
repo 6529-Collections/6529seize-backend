@@ -110,7 +110,7 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         with:
-          title: Seize ${{ github.event.inputs.environment }} ${{ github.event.inputs.service }} DEPLOY CI pipeline is broken!!!
+          title: Seize-Lambda ${{ github.event.inputs.environment }} ${{ github.event.inputs.service }} DEPLOY CI pipeline is broken!!!
           description: Branch ${{ github.event.inputs.branch }} - Version ${{ env.COMMIT_SHA }} - ${{ env.COMMIT_MESSAGE }}
           content: '@everyone'
           color: 0xff0000
@@ -121,6 +121,6 @@ jobs:
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         with:
-          title: Seize ${{ github.event.inputs.environment }} ${{ github.event.inputs.service }} DEPLOY CI pipeline complete
+          title: Seize-Lambda ${{ github.event.inputs.environment }} ${{ github.event.inputs.service }} DEPLOY CI pipeline complete
           description: Branch ${{ github.event.inputs.branch }} - Version ${{ env.COMMIT_SHA }} - ${{ env.COMMIT_MESSAGE }}
           color: 0x00ff00

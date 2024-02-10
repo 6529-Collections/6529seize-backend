@@ -130,7 +130,7 @@ async function resolveValue(t: Transaction) {
       receipt?.logs.filter(
         (l) =>
           areEqualAddresses(l.topics[0], TRANSFER_EVENT) &&
-          areEqualAddresses(resolveLogAddress(l.topics[1]), t.to_address)
+          areEqualAddresses(resolveLogAddress(l.topics[2]), t.to_address)
       ).length || 1;
 
     if (receipt?.gasUsed) {
