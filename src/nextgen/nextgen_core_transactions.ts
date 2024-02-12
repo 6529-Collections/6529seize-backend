@@ -33,7 +33,7 @@ export async function findCoreTransactions(
   startBlock: number,
   endBlock: number,
   pageKey?: string
-) {
+): Promise<number> {
   const network = getNextgenNetwork();
   logger.info(
     `[NETWORK ${network}] : [FINDING TRANSACTIONS] : [START BLOCK ${startBlock}] : [END BLOCK ${endBlock}] : [PAGE KEY ${pageKey}]`
@@ -41,7 +41,7 @@ export async function findCoreTransactions(
   const settings: AssetTransfersWithMetadataParams = {
     category: [AssetTransfersCategory.EXTERNAL],
     excludeZeroValue: false,
-    maxCount: 100,
+    maxCount: 150,
     fromBlock: `0x${startBlock.toString(16)}`,
     toBlock: `0x${endBlock.toString(16)}`,
     pageKey: pageKey,
@@ -93,15 +93,16 @@ export async function findCoreTransactions(
 
   await persistNextGenLogs(entityManager, logs);
 
-  if (response.pageKey) {
-    await findCoreTransactions(
-      entityManager,
-      alchemy,
-      startBlock,
-      endBlock,
-      response.pageKey
-    );
-  }
+  // if (response.pageKey) {
+  //   await findCoreTransactions(
+  //     entityManager,
+  //     alchemy,
+  //     startBlock,
+  //     endBlock,
+  //     response.pageKey
+  //   );
+  // }
+  return Number(response.transfers[response.transfers.length - 1].blockNum);
 }
 
 async function processLog(

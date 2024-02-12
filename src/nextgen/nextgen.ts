@@ -37,7 +37,12 @@ export async function findNextGenTransactions() {
       blockAdjusted = true;
     }
 
-    await findCoreTransactions(entityManager, alchemy, startBlock, endBlock);
+    endBlock = await findCoreTransactions(
+      entityManager,
+      alchemy,
+      startBlock,
+      endBlock
+    );
     await findMinterTransactions(entityManager, alchemy, startBlock, endBlock);
     await findCoreEvents(entityManager, alchemy, startBlock, endBlock);
 
