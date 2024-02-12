@@ -29,7 +29,7 @@ export async function findMinterTransactions(
   startBlock: number,
   endBlock: number,
   pageKey?: string
-) {
+): Promise<number> {
   const network = getNextgenNetwork();
   logger.info(
     `[NETWORK ${network}] : [FINDING TRANSACTIONS] : [START BLOCK ${startBlock}] : [END BLOCK ${endBlock}] : [PAGE KEY ${pageKey}]`
@@ -76,15 +76,16 @@ export async function findMinterTransactions(
 
   await persistNextGenLogs(entityManager, logs);
 
-  if (response.pageKey) {
-    await findMinterTransactions(
-      entityManager,
-      alchemy,
-      startBlock,
-      endBlock,
-      response.pageKey
-    );
-  }
+  // if (response.pageKey) {
+  //   await findMinterTransactions(
+  //     entityManager,
+  //     alchemy,
+  //     startBlock,
+  //     endBlock,
+  //     response.pageKey
+  //   );
+  // }
+  return Number(response.transfers[response.transfers.length - 1].blockNum);
 }
 
 async function processLog(

@@ -37,13 +37,16 @@ export async function findNextGenTransactions() {
       blockAdjusted = true;
     }
 
-    endBlock = await findCoreTransactions(
-      entityManager,
-      alchemy,
-      startBlock,
-      endBlock
+    endBlock = Math.min(
+      endBlock,
+      await findCoreTransactions(entityManager, alchemy, startBlock, endBlock)
     );
-    await findMinterTransactions(entityManager, alchemy, startBlock, endBlock);
+    logger.info(`NEW END BLOCK TRANSACTIONS ${endBlock}`);
+    endBlock = Math.min(
+      endBlock,
+      await findMinterTransactions(entityManager, alchemy, startBlock, endBlock)
+    );
+    logger.info(`NEW END BLOCK MINTER ${endBlock}`);
     await findCoreEvents(entityManager, alchemy, startBlock, endBlock);
 
     const blockTimestamp = (await alchemy.core.getBlock(endBlock)).timestamp;
