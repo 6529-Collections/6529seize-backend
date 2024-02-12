@@ -268,7 +268,7 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
   ): Promise<NftsCollectionOwnershipData> {
     return this.db
       .execute(
-        `select nextgen, nextgen_ranks from ${WALLETS_TDH_TABLE} where block = (select max(block_number) from ${TDH_BLOCKS_TABLE}) and lower(wallet) = lower(:wallet)`,
+        `select nextgen, nextgen_ranks, boost from ${WALLETS_TDH_TABLE} where block = (select max(block_number) from ${TDH_BLOCKS_TABLE}) and lower(wallet) = lower(:wallet)`,
         { wallet }
       )
       .then((result) => {
@@ -284,7 +284,10 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
                 acc: Record<number, { tdh: number; balance: number }>,
                 cur: any
               ) => {
-                acc[cur.id] = { tdh: cur.tdh, balance: cur.balance };
+                acc[cur.id] = {
+                  tdh: (cur.tdh ?? 0) * (result[0].boost ?? 1),
+                  balance: cur.balance
+                };
                 return acc;
               },
               {} as Record<number, { tdh: number; balance: number }>
