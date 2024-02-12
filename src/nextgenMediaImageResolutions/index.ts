@@ -36,9 +36,14 @@ export const handler = async () => {
   logger.info(`[RUNNING]`);
   await loadEnv([]);
   setup();
-  const resolutions = ['2k', '4k'];
+  const resolutions = ['2k', '4k', '8k'];
   for (let resolution of resolutions) {
-    await findMissingImages(resolution);
+    const isFinished = await findMissingImages(resolution);
+    if (!isFinished) {
+      logger.info(`[RESOLUTION ${resolution.toUpperCase()}] : [NOT FINISHED]`);
+      break;
+    }
+    logger.info(`[RESOLUTION ${resolution.toUpperCase()}] : [FINISHED]`);
   }
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
@@ -72,8 +77,10 @@ async function findMissingImages(resolution: string) {
 
   if (nextBatch.length) {
     await uploadBatch(nextBatch, resolutionPath, resolution);
+    return false;
   } else {
     logger.info(`[NO MISSING IMAGES]`);
+    return true;
   }
 }
 
