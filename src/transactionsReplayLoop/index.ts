@@ -10,13 +10,12 @@ import { sqlExecutor } from '../sql-executor';
 import { NULL_ADDRESS, TRANSACTIONS_TABLE } from '../constants';
 import { findTransactionValues } from '../transaction_values';
 import { persistTransactions } from '../db';
+import { Time } from '../time';
 
 const logger = Logger.get('TRANSACTIONS_REPLAY_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
-  const fromBlock = 0;
-  const toBlock = undefined;
-  logger.info(`[RUNNING] [FROM BLOCK ${fromBlock}] [TO BLOCK ${toBlock}]`);
+  logger.info(`[RUNNING]`);
   await loadEnv([Transaction, LabTransaction]);
   await replayTransactions();
   await unload();
@@ -62,7 +61,7 @@ async function replayTransactions() {
     logger.info(
       `[BATCH PROCESSED ${transactionsWithValues.length} / ${transactions.length}]`
     );
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    await Time.seconds(5).sleep();
     logger.info(`[EXECUTING NEXT BATCH]`);
   }
 
