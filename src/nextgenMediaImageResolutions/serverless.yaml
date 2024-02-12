@@ -14,7 +14,7 @@ provider:
 
 custom:
   chainIDs:
-    staging: 11155111
+    staging: 1
     prod: 1
 
 functions:
