@@ -105,6 +105,8 @@ import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResu
 import { ListenerProcessedEvent, ProcessableEvent } from './entities/IEvent';
 import { CicScoreAggregation } from './entities/ICicScoreAggregation';
 import { ProfileTotalRepScoreAggregation } from './entities/IRepScoreAggregations';
+import { CommunityMember } from './entities/ICommunityMember';
+import { synchroniseCommunityMembersTable } from './community/community-members';
 
 const mysql = require('mysql');
 
@@ -165,7 +167,8 @@ export async function connect(entities: any[] = []) {
       ProcessableEvent,
       ListenerProcessedEvent,
       CicScoreAggregation,
-      ProfileTotalRepScoreAggregation
+      ProfileTotalRepScoreAggregation,
+      CommunityMember
     ];
   }
 
@@ -1125,6 +1128,7 @@ export async function persistConsolidatedTDH(
     await profilesService.mergeProfiles({
       connection: manager
     });
+    await synchroniseCommunityMembersTable({ connection: manager });
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
