@@ -31,7 +31,8 @@ export async function refreshNextgenMetadata() {
             token.mint_date,
             token.mint_price,
             token.burnt_date,
-            token.hodl_rate
+            token.hodl_rate,
+            token.mint_data
           );
         })
       );

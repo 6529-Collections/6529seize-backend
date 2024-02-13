@@ -39,6 +39,16 @@ const logger = Logger.get('NEXTGEN_API');
 
 const router = asyncRouter();
 
+interface TokenValueCount {
+  key: string;
+  count: number;
+}
+interface TokenTraitWithCount {
+  trait: string;
+  values: string[];
+  value_counts: TokenValueCount[];
+}
+
 router.post(
   '/create_allowlist',
   initMulterSingleMiddleware('allowlist'),
@@ -396,20 +406,23 @@ router.get(
             uniqueKeys.push(r.trait);
           }
         });
-        const traits: {
-          trait: string;
-          values: string[];
-        }[] = [];
+
+        const traits: TokenTraitWithCount[] = [];
         uniqueKeys.forEach((key) => {
-          const trait: {
-            trait: string;
-            values: string[];
-          } = {
+          const values = result
+            .filter((r: any) => r.trait === key)
+            .map((r: any) => {
+              return {
+                key: r.value,
+                count: r.count
+              };
+            });
+          const trait: TokenTraitWithCount = {
             trait: key,
-            values: result
-              .filter((r: any) => r.trait === key)
-              .map((r: any) => r.value)
+            values: values.map((v: TokenValueCount) => v.key),
+            value_counts: values
           };
+
           traits.push(trait);
         });
         return returnJsonResult(traits, req, res);

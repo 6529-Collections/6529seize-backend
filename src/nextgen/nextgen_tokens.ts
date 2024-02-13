@@ -19,7 +19,6 @@ const logger = Logger.get('NEXTGEN_TOKENS');
 
 export async function refreshNextgenTokens(entityManager: EntityManager) {
   const collections = await fetchNextGenCollections(entityManager);
-
   await processCollections(entityManager, collections);
 }
 

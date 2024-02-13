@@ -3,7 +3,10 @@ import { NextGenBlock } from '../entities/INextGen';
 import { findCoreEvents } from './nextgen_core_events';
 import { findCoreTransactions } from './nextgen_core_transactions';
 import { findMinterTransactions } from './nextgen_minter';
-import { processPendingTokens } from './nextgen_pending';
+import {
+  processPendingTokens,
+  processMissingTokenData
+} from './nextgen_pending';
 import { refreshNextgenTokens } from './nextgen_tokens';
 import { fetchNextGenLatestBlock, persistNextGenBlock } from './nextgen.db';
 import { getDataSource } from '../db';
@@ -51,6 +54,7 @@ export async function findNextGenTransactions() {
 
     if (!blockAdjusted) {
       await processPendingTokens(entityManager);
+      await processMissingTokenData(entityManager);
       await refreshNextgenTokens(entityManager);
     }
   });

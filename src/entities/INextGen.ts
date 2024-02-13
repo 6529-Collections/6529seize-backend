@@ -422,6 +422,9 @@ export class NextGenToken {
   @Column({ type: 'double' })
   mint_price!: number;
 
+  @Column({ type: 'text', nullable: true })
+  mint_data?: string | undefined;
+
   @Column({ type: 'text' })
   metadata_url!: string;
 

@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
 import * as Joi from 'joi';
 import { hashMessage } from '@ethersproject/hash';
-import { areEqualAddresses, stringToHex } from '../../../helpers';
+import { areEqualAddresses, stringToHex, getRpcUrl } from '../../../helpers';
 import { Readable } from 'stream';
 import {
   NEXTGEN_ADMIN,
@@ -340,7 +340,7 @@ async function computeMerkleBurn(
 
 async function validateAdmin(collection_id: number, address: string) {
   const chainId = getNextGenChainId();
-  const rpcUrl = getUrl(chainId);
+  const rpcUrl = getRpcUrl(chainId);
   const provider = new ethers.providers.JsonRpcProvider(rpcUrl);
 
   const contract = new ethers.Contract(
@@ -374,20 +374,4 @@ async function validateAdmin(collection_id: number, address: string) {
     console.error('Error calling retrieveGlobalAdmin method:', rpcUrl, error);
     return false;
   }
-}
-
-function getUrl(chainId: number) {
-  let network: string;
-
-  if (chainId === goerli.id) {
-    network = 'goerli';
-  } else if (chainId === sepolia.id) {
-    network = 'sepolia';
-  } else {
-    network = 'mainnet';
-  }
-
-  return `https://eth-${network.toLowerCase()}.g.alchemy.com/v2/${
-    process.env.ALCHEMY_API_KEY
-  }`;
 }
