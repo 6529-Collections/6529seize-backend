@@ -302,5 +302,7 @@ export function getRpcUrl(chainId: number) {
 export function capitalizeEveryWord(input: string): string {
   return input
     .toLocaleLowerCase()
-    .replace(/^(.)|\s+(.)/g, (match: string) => match.toUpperCase());
+    .split(' ')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }

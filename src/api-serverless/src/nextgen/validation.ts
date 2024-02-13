@@ -10,7 +10,6 @@ import {
   getNextGenChainId
 } from './abis';
 import { Logger } from '../../../logging';
-import { goerli, sepolia } from '@wagmi/chains';
 const { keccak256 } = require('@ethersproject/keccak256');
 const { MerkleTree } = require('merkletreejs');
 

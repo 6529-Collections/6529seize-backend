@@ -423,7 +423,7 @@ export class NextGenToken {
   mint_price!: number;
 
   @Column({ type: 'text', nullable: true })
-  mint_data?: string | undefined;
+  mint_data?: string;
 
   @Column({ type: 'text' })
   metadata_url!: string;
