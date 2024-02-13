@@ -17,7 +17,6 @@ import { OwnerMetric } from '../entities/IOwner';
 import * as notifier from '../notifier';
 import { Logger } from '../logging';
 import { Time } from '../time';
-import { ProfileTdh, ProfileTdhLog } from '../entities/IProfileTDH';
 import { Profile } from '../entities/IProfile';
 import * as sentryContext from '../sentry.context';
 import { NextGenTokenTDH } from '../entities/INextGen';
@@ -36,8 +35,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     TDHHistory,
     GlobalTDHHistory,
     Profile,
-    ProfileTdh,
-    ProfileTdhLog,
     CommunityMember
   ]);
   const force = process.env.TDH_RESET == 'true';

@@ -4,12 +4,11 @@ import {
   LazyDbAccessCompatibleService
 } from '../sql-executor';
 import {
+  COMMUNITY_MEMBERS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   ENS_TABLE,
   MEMES_CONTRACT,
   NFTS_TABLE,
-  PROFILE_TDH_LOGS_TABLE,
-  PROFILE_TDHS_TABLE,
   PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
   RATINGS_TABLE,
@@ -20,7 +19,6 @@ import { Wallet } from '../entities/IWallet';
 import { Profile } from '../entities/IProfile';
 import { CreateOrUpdateProfileCommand } from './profile.types';
 import { randomUUID } from 'crypto';
-import { ProfileTdh } from '../entities/IProfileTDH';
 import { distinct } from '../helpers';
 
 export class ProfilesDb extends LazyDbAccessCompatibleService {
@@ -42,8 +40,22 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     const opts = connection ? { wrappedConnection: connection } : undefined;
     return this.db
       .execute(
-        `SELECT t.block, t.balance, t.boosted_tdh as tdh, t.tdh as raw_tdh, b.created_at as block_date, t.wallets, t.consolidation_key, t.consolidation_display, t.block FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} t LEFT JOIN ${TDH_BLOCKS_TABLE} b on t.block = b.block_number WHERE LOWER(t.consolidation_key) LIKE :wallet`,
-        { wallet: `%${wallet.toLowerCase()}%` },
+        `
+        SELECT t.block,
+               t.balance,
+               t.boosted_tdh as tdh,
+               t.tdh         as raw_tdh,
+               b.created_at  as block_date,
+               t.wallets,
+               t.consolidation_key,
+               t.consolidation_display,
+               t.block
+        FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} t
+                 join ${COMMUNITY_MEMBERS_TABLE} c on c.consolidation_key = t.consolidation_key
+                 LEFT JOIN ${TDH_BLOCKS_TABLE} b on t.block = b.block_number
+        WHERE c.wallet1 = :wallet or c.wallet2 = :wallet or c.wallet3 = :wallet;
+        `,
+        { wallet: wallet.toLowerCase() },
         opts
       )
       .then((result) =>
@@ -361,127 +373,19 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     });
   }
 
-  public async getAllPotentialProfileTdhs(
-    blockNo: number,
-    connectionHolder: ConnectionWrapper<any>
-  ): Promise<ProfileTdh[]> {
-    const now = new Date();
-    const blockDate = await this.getBlockDateByBlockNo(blockNo);
-    return this.db
-      .execute(
-        `select 
-        p.external_id as profile_id, 
-        c.tdh as tdh,
-        c.block as block,
-        c.boosted_tdh as boosted_tdh from ${PROFILES_TABLE} p 
-        left join ${CONSOLIDATED_WALLETS_TDH_TABLE} c on LOWER(c.consolidation_key) LIKE concat('%', LOWER(p.primary_wallet), '%')
-        where c.block = :blockNo`,
-        {
-          blockNo
-        },
-        {
-          wrappedConnection: connectionHolder
-        }
-      )
-      .then((result) =>
-        result.map(
-          (it: {
-            profile_id: string;
-            tdh: number | null;
-            boosted_tdh: number | null;
-            block: number;
-          }) => ({
-            profile_id: it.profile_id,
-            tdh: it.tdh ?? 0,
-            boosted_tdh: it.boosted_tdh ?? 0,
-            created_at: now,
-            block: it.block,
-            block_date: blockDate
-          })
-        )
-      );
-  }
-
-  public async getMaxRecordedProfileTdhBlock(
-    connectionHolder: ConnectionWrapper<any>
-  ): Promise<number> {
-    return this.db
-      .execute(
-        `select max(block) as block from ${PROFILE_TDH_LOGS_TABLE}`,
-        undefined,
-        {
-          wrappedConnection: connectionHolder
-        }
-      )
-      .then((result) => result.at(0)?.block ?? 0);
-  }
-
-  async deleteProfileTdhLogsByBlock(
-    block: number,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    await this.db.execute(
-      `delete from ${PROFILE_TDH_LOGS_TABLE} where block = :block`,
-      { block },
-      { wrappedConnection: connectionHolder }
-    );
-  }
-
   async getProfileTdh(profileId: string): Promise<number> {
     return this.db
       .execute(
-        `select boosted_tdh from ${PROFILE_TDHS_TABLE} where profile_id = :profileId`,
+        `
+        select tc.boosted_tdh as boosted_tdh
+        from ${PROFILES_TABLE} p
+        join ${COMMUNITY_MEMBERS_TABLE} c
+              on c.wallet1 = p.primary_wallet or c.wallet2 = p.primary_wallet or c.wallet3 = p.primary_wallet
+        join ${CONSOLIDATED_WALLETS_TDH_TABLE} tc on tc.consolidation_key = c.consolidation_key
+              where p.external_id = :profileId`,
         { profileId }
       )
       .then((result) => result.at(0)?.boosted_tdh ?? 0);
-  }
-
-  async updateProfileTdhs(
-    newProfileTdhs: ProfileTdh[],
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    await this.db.execute(`delete from  ${PROFILE_TDHS_TABLE}`, {
-      wrappedConnection: connectionHolder
-    });
-    for (const newProfileTdh of newProfileTdhs) {
-      await this.insertProfileTdh(newProfileTdh, connectionHolder);
-    }
-  }
-
-  public async insertProfileTdh(
-    newProfileTdh: ProfileTdh,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    await this.db.execute(
-      `insert into ${PROFILE_TDH_LOGS_TABLE} (profile_id, tdh, boosted_tdh, block, created_at, block_date)
-       values (:profileId, :tdh, :boostedTdh, :block, :createdAt, :blockDate)`,
-      {
-        profileId: newProfileTdh.profile_id,
-        tdh: newProfileTdh.tdh,
-        boostedTdh: newProfileTdh.boosted_tdh,
-        block: newProfileTdh.block,
-        createdAt: newProfileTdh.created_at,
-        blockDate: newProfileTdh.block_date
-      },
-      {
-        wrappedConnection: connectionHolder
-      }
-    );
-    await this.db.execute(
-      `insert into ${PROFILE_TDHS_TABLE} (profile_id, tdh, boosted_tdh, created_at, block, block_date)
-       values (:profileId, :tdh, :boostedTdh, :createdAt, :block, :blockDate)`,
-      {
-        profileId: newProfileTdh.profile_id,
-        tdh: newProfileTdh.tdh,
-        boostedTdh: newProfileTdh.boosted_tdh,
-        createdAt: newProfileTdh.created_at,
-        block: newProfileTdh.block,
-        blockDate: newProfileTdh.block_date
-      },
-      {
-        wrappedConnection: connectionHolder
-      }
-    );
   }
 
   async getProfileHandlesByIds(
@@ -512,19 +416,6 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       );
   }
 
-  private async getBlockDateByBlockNo(blockNo: number): Promise<Date> {
-    const blockDateStr = await this.db
-      .execute(
-        `select created_at from ${TDH_BLOCKS_TABLE} where block_number = :blockNo`,
-        { blockNo }
-      )
-      .then((result) => result.at(0)?.created_at);
-    if (!blockDateStr) {
-      throw new Error(`Block date not found for block ${blockNo}`);
-    }
-    return new Date(blockDateStr);
-  }
-
   async searchCommunityMembersWhereEnsLike({
     limit,
     handle
@@ -537,17 +428,17 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     }
     {
       const sql = `
-    select ${PROFILES_TABLE}.*, 
-      ${PROFILES_TABLE}.*, 
-      if(${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh is null, 0, ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh) as tdh,
-      coalesce(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, ${ENS_TABLE}.display, ${PROFILES_TABLE}.primary_wallet) as display,
-      ${ENS_TABLE}.wallet as wallet
-    from ${ENS_TABLE}
-    left join ${CONSOLIDATED_WALLETS_TDH_TABLE} on lower(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key) like concat('%', lower(${ENS_TABLE}.wallet), '%')
-    left join ${PROFILES_TABLE} on lower(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key) like concat('%', lower(${PROFILES_TABLE}.primary_wallet), '%')
-    where ${ENS_TABLE}.display like concat('%',:handle,'%')
-    order by ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh desc
-    limit :limit
+      select p.*,
+             if(t.boosted_tdh is null, 0, t.boosted_tdh) as tdh,
+             coalesce(t.consolidation_display, e.display, p.primary_wallet) as display,
+             e.wallet as wallet
+      from ${ENS_TABLE} e
+               left join ${COMMUNITY_MEMBERS_TABLE} c on c.wallet1 = lower(e.wallet) or c.wallet2 = lower(e.wallet) or c.wallet3 = lower(e.wallet)
+               left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = c.consolidation_key
+               left join ${PROFILES_TABLE} p on p.primary_wallet = c.wallet1 or p.primary_wallet = c.wallet2 or p.primary_wallet = c.wallet3
+      where e.display like concat('%', :handle ,'%')
+      order by t.boosted_tdh desc
+      limit :limit
     `;
       return this.db.execute(sql, { handle, limit });
     }
@@ -561,17 +452,18 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     handle: string;
   }): Promise<(Profile & { tdh: number; display: string; wallet: string })[]> {
     const sql = `
-    select 
-      ${PROFILES_TABLE}.*, 
-      if(${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh is null, 0, ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh) as tdh,
-      coalesce(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, ${ENS_TABLE}.display, ${PROFILES_TABLE}.primary_wallet) as display,
-      ${PROFILES_TABLE}.primary_wallet as wallet
-    from ${PROFILES_TABLE}
-    left join ${CONSOLIDATED_WALLETS_TDH_TABLE} on lower(${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key) like concat('%', lower(${PROFILES_TABLE}.primary_wallet), '%')
-    left join ${ENS_TABLE} on lower(${ENS_TABLE}.wallet) = concat('%', lower(${PROFILES_TABLE}.primary_wallet), '%')
-    where ${PROFILES_TABLE}.handle like concat('%', lower(:handle), '%')
-    order by ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh desc
-    limit :limit
+      select
+          p.*,
+          if(t.boosted_tdh is null, 0, t.boosted_tdh) as tdh,
+          coalesce(t.consolidation_display, e.display, p.primary_wallet) as display,
+          p.primary_wallet as wallet
+      from ${PROFILES_TABLE} p
+               left join ${COMMUNITY_MEMBERS_TABLE} c on c.wallet1 = p.primary_wallet or c.wallet2 = p.primary_wallet or c.wallet3 = p.primary_wallet
+               left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = c.consolidation_key
+               left join ${ENS_TABLE} e on lower(e.wallet) = concat('%', lower(p.primary_wallet), '%')
+      where p.normalised_handle like concat('%', lower(:handle), '%')
+      order by t.boosted_tdh desc
+      limit :limit
     `;
     return this.db.execute(sql, { handle, limit });
   }
@@ -598,9 +490,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
                        group by 1),
               profile_and_consolidation_key as (select p.*, lower(c.consolidation_key) as consolidation_key
                                                 from ${PROFILES_TABLE} p
-                                                         join ${CONSOLIDATED_WALLETS_TDH_TABLE} c
-                                                              on lower(c.consolidation_key) like
-                                                                 concat('%', lower(p.primary_wallet), '%')),
+                                                         join ${COMMUNITY_MEMBERS_TABLE} co on p.primary_wallet = co.wallet1 or p.primary_wallet = co.wallet2 or p.primary_wallet = co.wallet3
+                                                         join ${CONSOLIDATED_WALLETS_TDH_TABLE} c on co.consolidation_key = c.consolidation_key),
               conflicting_profiles as (select consolidation_key
                                        from profile_and_consolidation_key
                                        group by 1

@@ -10,6 +10,7 @@ import {
 import { areEqualAddresses, buildConsolidationKey } from './helpers';
 import { calculateBoosts, calculateRanks, createMemesData } from './tdh';
 import {
+  COMMUNITY_MEMBERS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   MEMES_CONTRACT,
   SZN1_INDEX,
@@ -49,8 +50,15 @@ export async function getWalletTdhAndConsolidatedWallets(
   }
   const opts = connection ? { wrappedConnection: connection } : {};
   const tdhSqlResult = await sqlExecutor.execute(
-    `SELECT consolidation_key, consolidation_display, block, boosted_tdh as tdh, balance, wallets FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} WHERE LOWER(consolidation_key) LIKE :wallet`,
-    { wallet: `%${wallet.toLowerCase()}%` },
+    `
+    select t.consolidation_key, t.consolidation_display, t.block, t.boosted_tdh as tdh, t.balance, t.wallets
+    from ${COMMUNITY_MEMBERS_TABLE} c
+             join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = c.consolidation_key
+    where c.wallet1 = :wallet
+       or c.wallet2 = :wallet
+       or c.wallet3 = :wallet
+    `,
+    { wallet: wallet.toLowerCase() },
     opts
   );
   const row = tdhSqlResult?.at(0);
@@ -68,19 +76,6 @@ export async function getWalletTdhAndConsolidatedWallets(
     blockNo: row?.block ?? 0,
     balance: row?.balance ?? 0
   };
-}
-
-export async function getAllTdhs(): Promise<
-  { tdh: number; wallets: string[] }[]
-> {
-  return sqlExecutor
-    .execute(`select tdh, wallets from ${CONSOLIDATED_WALLETS_TDH_TABLE}`)
-    .then((rows) =>
-      rows.map((row: any) => ({
-        ...row,
-        wallets: JSON.parse(row.wallets).map((it: string) => it.toLowerCase())
-      }))
-    );
 }
 
 export async function consolidateTDHForWallets(
