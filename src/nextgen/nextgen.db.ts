@@ -5,7 +5,7 @@ import {
   NextGenToken,
   NextGenTokenTrait
 } from '../entities/INextGen';
-import { EntityManager } from 'typeorm';
+import { EntityManager, IsNull } from 'typeorm';
 import {
   NEXTGEN_START_BLOCK,
   NEXTGEN_TOKENS_TABLE,
@@ -104,6 +104,14 @@ export async function fetchPendingNextgenTokens(manager: EntityManager) {
   return await manager.getRepository(NextGenToken).find({
     where: {
       pending: true
+    }
+  });
+}
+
+export async function fetchMissingDataNextgenTokens(manager: EntityManager) {
+  return await manager.getRepository(NextGenToken).find({
+    where: {
+      mint_data: IsNull()
     }
   });
 }
