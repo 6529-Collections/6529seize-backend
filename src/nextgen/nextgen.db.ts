@@ -3,6 +3,7 @@ import {
   NextGenCollection,
   NextGenLog,
   NextGenToken,
+  NextGenTokenScore,
   NextGenTokenTrait
 } from '../entities/INextGen';
 import { EntityManager, IsNull } from 'typeorm';
@@ -79,6 +80,13 @@ export async function persistNextGenTraits(
 ) {
   const repo = manager.getRepository(NextGenTokenTrait);
   await repo.upsert(tokenTraits, ['token_id', 'trait']);
+}
+
+export async function persistNextGenTraitScores(
+  manager: EntityManager,
+  traitScores: NextGenTokenScore[]
+) {
+  await manager.getRepository(NextGenTokenScore).save(traitScores);
 }
 
 export async function persistNextgenTransaction(
