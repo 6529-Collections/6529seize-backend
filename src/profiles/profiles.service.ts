@@ -301,23 +301,6 @@ export class ProfilesService {
             connection
           );
           await this.refreshPrimaryWalletEns(primary_wallet, connection);
-          const tdhInfo = await this.getWalletTdhBlockNoAndConsolidatedWallets(
-            primary_wallet,
-            connection
-          );
-          if (tdhInfo.block_date) {
-            await this.profilesDb.insertProfileTdh(
-              {
-                profile_id: profileId,
-                block: tdhInfo.blockNo,
-                tdh: tdhInfo.tdh,
-                boosted_tdh: tdhInfo.tdh,
-                created_at: new Date(),
-                block_date: tdhInfo.block_date
-              },
-              connection
-            );
-          }
           await this.createProfileEditLogs({
             profileId: profileId,
             profileBeforeChange: null,
@@ -643,47 +626,6 @@ export class ProfilesService {
       }
       return result;
     }, {} as Record<string, { id: string; handle: string }>);
-  }
-
-  public async updateProfileTdhs(
-    blockNo: number,
-    connectionHolder?: ConnectionWrapper<any>
-  ) {
-    if (connectionHolder) {
-      await this.updateProfileTdhsInternal(blockNo, connectionHolder);
-    } else {
-      await this.profilesDb.executeNativeQueriesInTransaction(
-        async (connectionHolder) => {
-          await this.updateProfileTdhsInternal(blockNo, connectionHolder);
-        }
-      );
-    }
-  }
-
-  private async updateProfileTdhsInternal(
-    blockNo: number,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    this.logger.info(`Starting to update profile TDHs for block ${blockNo}`);
-    const start = Time.now();
-    const maxRecordedBlock =
-      await this.profilesDb.getMaxRecordedProfileTdhBlock(connectionHolder);
-    if (maxRecordedBlock >= blockNo) {
-      await this.profilesDb.deleteProfileTdhLogsByBlock(
-        blockNo,
-        connectionHolder
-      );
-    }
-    const newProfileTdhs = await profilesDb.getAllPotentialProfileTdhs(
-      blockNo,
-      connectionHolder
-    );
-    await profilesDb.updateProfileTdhs(newProfileTdhs, connectionHolder);
-    this.logger.info(
-      `Finished profile TDHs update for block ${blockNo} with ${
-        newProfileTdhs.length
-      } records in ${start.diffFromNow()}`
-    );
   }
 
   private async getWalletsNewestProfile(

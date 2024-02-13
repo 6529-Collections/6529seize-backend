@@ -1,11 +1,11 @@
-import { ConnectionWrapper, dbSupplier } from '../sql-executor';
-import { buildConsolidationKey } from '../helpers';
+import { ConnectionWrapper, dbSupplier } from './sql-executor';
+import { buildConsolidationKey } from './helpers';
 import {
   COMMUNITY_MEMBERS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE
-} from '../constants';
-import { Time } from '../time';
-import { Logger } from '../logging';
+} from './constants';
+import { Time } from './time';
+import { Logger } from './logging';
 
 const logger = Logger.get('COMMUNITY_MEMBERS');
 

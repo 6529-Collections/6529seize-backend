@@ -3,7 +3,6 @@ import { consolidateTDH } from '../tdh_consolidation';
 import { loadEnv, unload } from '../secrets';
 import { ConsolidatedTDH, TDH } from '../entities/ITDH';
 import { Logger } from '../logging';
-import { ProfileTdh, ProfileTdhLog } from '../entities/IProfileTDH';
 import { Time } from '../time';
 import { Profile } from '../entities/IProfile';
 import { fetchAllConsolidationAddresses } from '../db';
@@ -19,8 +18,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     TDH,
     ConsolidatedTDH,
     NextGenTokenTDH,
-    ProfileTdh,
-    ProfileTdhLog,
     CommunityMember,
     Profile
   ]);
