@@ -98,7 +98,6 @@ import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
 import { CicStatement } from './entities/ICICStatement';
 import { profilesService } from './profiles/profiles.service';
-import { ProfileTdh, ProfileTdhLog } from './entities/IProfileTDH';
 import { ProfileActivityLog } from './entities/IProfileActivityLog';
 import { Rating } from './entities/IRating';
 import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
@@ -106,7 +105,7 @@ import { ListenerProcessedEvent, ProcessableEvent } from './entities/IEvent';
 import { CicScoreAggregation } from './entities/ICicScoreAggregation';
 import { ProfileTotalRepScoreAggregation } from './entities/IRepScoreAggregations';
 import { CommunityMember } from './entities/ICommunityMember';
-import { synchroniseCommunityMembersTable } from './community/community-members';
+import { synchroniseCommunityMembersTable } from './community-members';
 
 const mysql = require('mysql');
 
@@ -148,8 +147,6 @@ export async function connect(entities: any[] = []) {
       ENS,
       Profile,
       ProfileArchived,
-      ProfileTdh,
-      ProfileTdhLog,
       CicStatement,
       ProfileActivityLog,
       Rating,
@@ -1121,10 +1118,6 @@ export async function persistConsolidatedTDH(
     }
     await repo.save(tdh);
 
-    const tdhBlock = await fetchLatestTDHBlockNumber();
-    await profilesService.updateProfileTdhs(tdhBlock, {
-      connection: manager
-    });
     await profilesService.mergeProfiles({
       connection: manager
     });

@@ -5,7 +5,8 @@ import {
 } from '../sql-executor';
 import { RateMatter, Rating } from '../entities/IRating';
 import {
-  PROFILE_TDHS_TABLE,
+  COMMUNITY_MEMBERS_TABLE,
+  CONSOLIDATED_WALLETS_TDH_TABLE,
   PROFILES_TABLE,
   RATINGS_TABLE
 } from '../constants';
@@ -185,10 +186,12 @@ from general_stats
                                        sum(r.rating) as tally
                                 from ${RATINGS_TABLE} r
                                 group by 1, 2)
-          select rt.rater_profile_id, rt.matter, rt.tally, pt.boosted_tdh as rater_tdh
+          select rt.rater_profile_id, rt.matter, rt.tally, tc.boosted_tdh as rater_tdh
           from rate_tallies rt
-                   join ${PROFILE_TDHS_TABLE} pt on rt.rater_profile_id = pt.profile_id
-          where pt.boosted_tdh < abs(rt.tally);
+                   join ${PROFILES_TABLE} p on rt.rater_profile_id = p.external_id
+                   join ${COMMUNITY_MEMBERS_TABLE} c on c.wallet1 = p.primary_wallet or c.wallet2 = p.primary_wallet or c.wallet3 = p.primary_wallet
+                   join ${CONSOLIDATED_WALLETS_TDH_TABLE} tc on tc.consolidation_key = c.consolidation_key
+          where tc.boosted_tdh < abs(rt.tally)
       `
     );
   }
@@ -280,30 +283,32 @@ from general_stats
   }): Promise<RatingWithProfileInfo[]> {
     return this.db.execute(
       `
-with grouped_rates as (select r.rater_profile_id as profile_id, sum(r.rating) as rating, max(last_modified) as last_modified
-                       from ${RATINGS_TABLE} r
-                       where r.matter_target_id = :matter_target_id
-                         and r.matter = :matter
-                         and r.matter_category = :matter_category
-                         and r.rating <> 0
-                       group by 1),
-     rater_cic_ratings as (select matter_target_id as profile_id, sum(rating) as cic
-                           from ${RATINGS_TABLE}
-                           where matter = 'CIC'
-                             and rating <> 0
-                           group by 1)
-select 
-       p.external_id as profile_id,
-       p.handle                           as handle,
-       coalesce(ptdh.boosted_tdh, 0)      as tdh,
-       r.rating,
-       r.last_modified,
-       coalesce(rater_cic_ratings.cic, 0) as cic
-from grouped_rates r
-         join ${PROFILES_TABLE} p on p.external_id = r.profile_id
-         left join ${PROFILE_TDHS_TABLE} ptdh on ptdh.profile_id = r.profile_id
-         left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id
-         order by 4 desc, 2 desc`,
+          with grouped_rates as (select r.rater_profile_id as profile_id, sum(r.rating) as rating, max(last_modified) as last_modified
+                                 from ${RATINGS_TABLE} r
+                                 where r.matter_target_id = :matter_target_id
+                                   and r.matter = :matter
+                                   and r.matter_category = :matter_category
+                                   and r.rating <> 0
+                                 group by 1),
+               rater_cic_ratings as (select matter_target_id as profile_id, sum(rating) as cic
+                                     from ${RATINGS_TABLE}
+                                     where matter = 'CIC'
+                                       and rating <> 0
+                                     group by 1)
+          select
+              p.external_id as profile_id,
+              p.handle                           as handle,
+              coalesce(t.boosted_tdh, 0)      as tdh,
+              r.rating,
+              r.last_modified,
+              coalesce(rater_cic_ratings.cic, 0) as cic
+          from grouped_rates r
+                   join ${PROFILES_TABLE} p on p.external_id = r.profile_id
+                   left join ${COMMUNITY_MEMBERS_TABLE} c on p.primary_wallet = c.wallet1 or p.primary_wallet = c.wallet2 or p.primary_wallet = c.wallet3
+                   left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = c.consolidation_key
+                   left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id
+          order by 4 desc, 2 desc
+          `,
       param
     );
   }
@@ -355,15 +360,16 @@ from grouped_rates r
     const [results, count] = await Promise.all([
       this.db.execute(
         `${sql_start} select p.handle                           as handle,
-             coalesce(ptdh.boosted_tdh, 0)      as tdh,
-             r.profile_id,
-             r.rating,
-             r.last_modified,
-             coalesce(rater_cic_ratings.cic, 0) as cic
-      from grouped_rates r
-               join ${PROFILES_TABLE} p on p.external_id = r.profile_id
-               left join ${PROFILE_TDHS_TABLE} ptdh on ptdh.profile_id = r.profile_id
-               left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id order by ${order_by} ${order}  limit ${limit} offset ${offset}`,
+       coalesce(t.boosted_tdh, 0)      as tdh,
+       r.profile_id,
+       r.rating,
+       r.last_modified,
+       coalesce(rater_cic_ratings.cic, 0) as cic
+from grouped_rates r
+         join ${PROFILES_TABLE} p on p.external_id = r.profile_id
+         left join ${COMMUNITY_MEMBERS_TABLE} c on p.primary_wallet = c.wallet1 or p.primary_wallet = c.wallet2 or p.primary_wallet = c.wallet3
+         left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on c.consolidation_key = t.consolidation_key
+         left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id order by ${order_by} ${order}  limit ${limit} offset ${offset}`,
         sqlParams
       ),
       this.db
@@ -371,7 +377,8 @@ from grouped_rates r
           `${sql_start} select count(*) as cnt
           from grouped_rates r
                    join ${PROFILES_TABLE} p on p.external_id = r.profile_id
-                   left join ${PROFILE_TDHS_TABLE} ptdh on ptdh.profile_id = r.profile_id
+                   left join ${COMMUNITY_MEMBERS_TABLE} c on p.primary_wallet = c.wallet1 or p.primary_wallet = c.wallet2 or p.primary_wallet = c.wallet3
+                   left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on c.consolidation_key = t.consolidation_key
                    left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id`,
           sqlParams
         )
