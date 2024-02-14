@@ -8,11 +8,16 @@ import {
   AbusivenessDetectionResult,
   REP_CATEGORY_PATTERN
 } from '../entities/IAbusivenessDetectionResult';
+import { discord, Discord, DiscordChannel } from '../discord';
+import { Logger } from '../logging';
 
 export class AbusivenessCheckService {
+  private logger = Logger.get(AbusivenessCheckService.name);
+
   constructor(
     private readonly openAiAbusivenessDetectionService: OpenAiAbusivenessDetectionService,
-    private readonly abusivenessCheckDb: AbusivenessCheckDb
+    private readonly abusivenessCheckDb: AbusivenessCheckDb,
+    private readonly discord: Discord
   ) {}
 
   async checkRepPhrase(text: string): Promise<AbusivenessDetectionResult> {
@@ -29,10 +34,25 @@ export class AbusivenessCheckService {
     if (existingResult) {
       return existingResult;
     }
-    const result =
-      await this.openAiAbusivenessDetectionService.checkRepPhraseText(txt);
-    await this.abusivenessCheckDb.saveResult(result);
-    return result;
+    try {
+      const result =
+        await this.openAiAbusivenessDetectionService.checkRepPhraseText(txt);
+      await this.abusivenessCheckDb.saveResult(result);
+      return result;
+    } catch (e) {
+      this.logger.error('OpenAI check threw an error');
+      this.logger.error(e);
+      await this.discord.sendMessage(
+        DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
+        `Rep phrase: ${txt}\n\nOpenAI check failed with error: ${e}`
+      );
+      return {
+        text: txt,
+        status: 'ALLOWED',
+        explanation: null,
+        external_check_performed_at: new Date()
+      };
+    }
   }
 
   async checkBio(query: {
@@ -54,5 +74,6 @@ export class AbusivenessCheckService {
 
 export const abusivenessCheckService = new AbusivenessCheckService(
   openAiAbusivenessDetectionService,
-  abusivenessCheckDb
+  abusivenessCheckDb,
+  discord
 );
