@@ -20,7 +20,8 @@ import {
   NEXTGEN_TOKENS_TABLE,
   NEXTGEN_TOKENS_TDH_TABLE,
   NEXTGEN_TOKEN_SCORES_TABLE,
-  NEXTGEN_TOKEN_TRAITS_TABLE
+  NEXTGEN_TOKEN_TRAITS_TABLE,
+  MINT_TYPE_TRAIT
 } from '../../../nextgen/nextgen_constants';
 import { PageSortDirection } from '../page-request';
 import { NEXTGEN_CORE, getNextGenChainId } from './abis';
@@ -340,26 +341,40 @@ export async function fetchNextGenTokenTransactions(
 
 export async function fetchNextGenCollectionTraits(collectionId: number) {
   return sqlExecutor.execute(
-    `SELECT DISTINCT trait, value
+    `SELECT DISTINCT trait, value, COUNT(*) as count
     FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} where collection_id=:collectionId
+    GROUP BY trait, value
     ORDER BY 
+      CASE 
+        WHEN trait LIKE CONCAT(:mintTypeTrait, '%') THEN 0
+        ELSE 1
+      END,
       trait, 
       CASE 
         WHEN value REGEXP '^[0-9]+$' THEN CAST(value AS UNSIGNED)
-        ELSE 9999999 -- A high number to ensure non-numeric values are sorted after numeric values
+        ELSE 9999999
       END,
       value`,
     {
-      collectionId
+      collectionId,
+      mintTypeTrait: MINT_TYPE_TRAIT
     }
   );
 }
 
 export async function fetchNextGenTokenTraits(tokenId: number) {
   return sqlExecutor.execute(
-    `SELECT * FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} WHERE token_id=:tokenId ORDER BY trait ASC`,
+    `SELECT * FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} 
+      WHERE token_id=:tokenId 
+      ORDER BY 
+        CASE 
+          WHEN trait LIKE CONCAT(:mintTypeTrait, '%') THEN 0
+          ELSE 1
+        END,
+        trait ASC`,
     {
-      tokenId: tokenId
+      tokenId: tokenId,
+      mintTypeTrait: MINT_TYPE_TRAIT
     }
   );
 }

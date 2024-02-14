@@ -176,6 +176,7 @@ async function processTransfer(
     let mintDate: Date;
     let mintPrice;
     let burnDate: Date | undefined;
+    let mintData = undefined;
     if (isMint) {
       mintDate = transactionWithValue.transaction_date;
       mintPrice = transactionWithValue.value;
@@ -184,6 +185,7 @@ async function processTransfer(
       hodlRate = dbToken?.hodl_rate ?? 0;
       mintDate = dbToken?.mint_date ?? new Date();
       mintPrice = dbToken?.mint_price ?? 0;
+      mintData = dbToken?.mint_data;
       if (isBurn) {
         burnDate = transactionWithValue.transaction_date;
       } else {
@@ -199,7 +201,8 @@ async function processTransfer(
       mintDate,
       mintPrice,
       burnDate,
-      hodlRate
+      hodlRate,
+      mintData
     );
   }
 
@@ -219,7 +222,8 @@ export async function upsertToken(
   mintDate: Date,
   mintPrice: number,
   burnDate: Date | undefined,
-  hodlRate: number
+  hodlRate: number,
+  mintData: string | undefined
 ) {
   const metadataLink = `${collection.base_uri}${tokenId}`;
 
@@ -246,7 +250,8 @@ export async function upsertToken(
     pending: pending,
     burnt: !!burnDate,
     burnt_date: burnDate,
-    hodl_rate: hodlRate
+    hodl_rate: hodlRate,
+    mint_data: mintData
   };
 
   await persistNextGenToken(entityManager, nextGenToken);

@@ -130,10 +130,13 @@ async function processLog(
       return await updateImagesAndAttributes(entityManager, args);
     case 'addRandomizer':
       return await addRandomizer(args);
-    case 'setApprovalForAll':
-      return [];
     case 'changeTokenData':
       return await changeTokenData(args);
+    case 'setApprovalForAll':
+    case 'safeTransferFrom':
+    case 'transferFrom':
+      logger.info(`[METHOD NAME ${methodName}] : [SKIPPING...]`);
+      return [];
   }
 
   let methodNameParts = methodName

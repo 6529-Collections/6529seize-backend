@@ -4,7 +4,8 @@ import {
   fetchNextGenTokenTraits,
   fetchNextGenTokensForCollection,
   persistNextGenCollectionHodlRate,
-  persistNextGenCollection
+  persistNextGenCollection,
+  persistNextGenTraitScores
 } from './nextgen.db';
 import {
   NextGenCollection,
@@ -14,12 +15,15 @@ import {
 import { Logger } from '../logging';
 import { EntityManager } from 'typeorm';
 import { NFTS_TABLE } from '../constants';
+import { MINT_TYPE_TRAIT } from './nextgen_constants';
 
 const logger = Logger.get('NEXTGEN_TOKENS');
 
-export async function refreshNextgenTokens(entityManager: EntityManager) {
-  const collections = await fetchNextGenCollections(entityManager);
+const mintTypeTraitLower = MINT_TYPE_TRAIT.toLowerCase();
 
+export async function refreshNextgenTokens(entityManager: EntityManager) {
+  logger.info(`[REFRESHING NEXTGEN TOKENS]`);
+  const collections = await fetchNextGenCollections(entityManager);
   await processCollections(entityManager, collections);
 }
 
@@ -27,10 +31,10 @@ async function processCollections(
   entityManager: EntityManager,
   collections: NextGenCollection[]
 ) {
-  const tokenTraits = await fetchNextGenTokenTraits(entityManager);
+  const allTokenTraits = await fetchNextGenTokenTraits(entityManager);
 
   for (const collection of collections) {
-    const collectionTokenTraits = tokenTraits.filter(
+    const collectionTokenTraits = allTokenTraits.filter(
       (tt) => tt.collection_id === collection.id
     );
     await processCollectionTraitScores(
@@ -47,7 +51,11 @@ async function processCollectionTraitScores(
   tokenTraits: NextGenTokenTrait[]
 ) {
   const tokenCount = new Set(tokenTraits.map((item) => item.token_id)).size;
-  const traitsCount = new Set(tokenTraits.map((item) => item.trait)).size;
+  const traitsCount = new Set(
+    tokenTraits
+      .filter((t) => !t.trait.toLowerCase().startsWith(mintTypeTraitLower))
+      .map((item) => item.trait)
+  ).size;
 
   logger.info(
     `[PROCESSING TRAIT SCORES] : [COLLECTION ${collection.id}] : [TOKEN COUNT ${tokenCount}]`
@@ -64,21 +72,30 @@ async function processCollectionTraitScores(
     const valueCount = sharedKey.filter((tt) => tt.value === value).length;
     tt.value_count = valueCount;
 
-    const sharedKeyValue = sharedKey.filter((tt) => tt.value === value).length;
-    tt.statistical_rarity = sharedKeyValue / tokenCount;
-    tt.rarity_score = tokenCount / sharedKeyValue;
+    if (name.toLowerCase().startsWith(mintTypeTraitLower)) {
+      tt.statistical_rarity = -1;
+      tt.rarity_score = -1;
+      tt.rarity_score_normalised = -1;
+    } else {
+      const sharedKeyValue = sharedKey.filter(
+        (tt) => tt.value === value
+      ).length;
 
-    const valuesCountForTrait = new Set(sharedKey.map((item) => item.value))
-      .size;
+      const valuesCountForTrait = new Set(sharedKey.map((item) => item.value))
+        .size;
 
-    tt.rarity_score_normalised =
-      ((1 / sharedKeyValue) * 1000000) /
-      ((traitsCount + 1) * (valuesCountForTrait + 1));
+      tt.statistical_rarity = sharedKeyValue / tokenCount;
+      tt.rarity_score = tokenCount / sharedKeyValue;
+      tt.rarity_score_normalised =
+        ((1 / sharedKeyValue) * 1000000) /
+        ((traitsCount + 1) * valuesCountForTrait);
+    }
   });
 
   let rankedTraits = calulateTokenRanks(tokenTraits, 'rarity_score');
   rankedTraits = calulateTokenRanks(rankedTraits, 'rarity_score_normalised');
   rankedTraits = calulateTokenRanks(rankedTraits, 'statistical_rarity');
+
   await persistNextGenTraits(entityManager, rankedTraits);
 
   await processTokens(entityManager, collection);
@@ -97,14 +114,21 @@ async function processTokens(
 
   const traitScores: NextGenTokenScore[] = [];
   for (const token of tokens) {
-    const traits = await entityManager.getRepository(NextGenTokenTrait).find({
-      where: {
-        token_id: token.id
-      }
+    const tokenTraits = await entityManager
+      .getRepository(NextGenTokenTrait)
+      .find({
+        where: {
+          token_id: token.id
+        }
+      });
+
+    const filteredTokenTraits = tokenTraits.filter((tt) => {
+      const traitLower = tt.trait.toLowerCase();
+      return !traitLower.startsWith(mintTypeTraitLower);
     });
 
     const { rarityScore, rarityScoreNormalised, statisticalScore } =
-      traits.reduce(
+      filteredTokenTraits.reduce(
         (acc, tt) => {
           acc.rarityScore += tt.rarity_score;
           acc.rarityScoreNormalised += tt.rarity_score_normalised;
@@ -115,8 +139,10 @@ async function processTokens(
       );
 
     let singleTraitRarity = 0;
-    if (traits.length > 0) {
-      singleTraitRarity = Math.min(...traits.map((t) => t.statistical_rarity));
+    if (filteredTokenTraits.length > 0) {
+      singleTraitRarity = Math.min(
+        ...filteredTokenTraits.map((t) => t.statistical_rarity)
+      );
     }
 
     traitScores.push({
@@ -153,7 +179,7 @@ async function processTokens(
     single_trait_rarity_score_rank: singleTraitScoreRanks.get(score.id)
   }));
 
-  await entityManager.getRepository(NextGenTokenScore).save(rankedTraitScores);
+  await persistNextGenTraitScores(entityManager, rankedTraitScores);
 }
 
 const calculateRanks = (

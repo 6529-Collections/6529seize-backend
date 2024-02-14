@@ -3,9 +3,10 @@ import {
   NextGenCollection,
   NextGenLog,
   NextGenToken,
+  NextGenTokenScore,
   NextGenTokenTrait
 } from '../entities/INextGen';
-import { EntityManager } from 'typeorm';
+import { EntityManager, IsNull } from 'typeorm';
 import {
   NEXTGEN_START_BLOCK,
   NEXTGEN_TOKENS_TABLE,
@@ -81,6 +82,13 @@ export async function persistNextGenTraits(
   await repo.upsert(tokenTraits, ['token_id', 'trait']);
 }
 
+export async function persistNextGenTraitScores(
+  manager: EntityManager,
+  traitScores: NextGenTokenScore[]
+) {
+  await manager.getRepository(NextGenTokenScore).save(traitScores);
+}
+
 export async function persistNextgenTransaction(
   manager: EntityManager,
   transaction: Transaction
@@ -104,6 +112,14 @@ export async function fetchPendingNextgenTokens(manager: EntityManager) {
   return await manager.getRepository(NextGenToken).find({
     where: {
       pending: true
+    }
+  });
+}
+
+export async function fetchMissingDataNextgenTokens(manager: EntityManager) {
+  return await manager.getRepository(NextGenToken).find({
+    where: {
+      mint_data: IsNull()
     }
   });
 }
