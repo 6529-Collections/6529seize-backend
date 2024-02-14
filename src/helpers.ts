@@ -267,7 +267,10 @@ export async function compareImages(
 }
 
 export function buildConsolidationKey(wallets: string[]) {
-  const sortedWallets = wallets.slice().sort((a, b) => a.localeCompare(b));
+  const sortedWallets = wallets
+    .map((it) => it.toLowerCase())
+    .slice()
+    .sort((a, b) => a.localeCompare(b));
   return sortedWallets.join('-');
 }
 
