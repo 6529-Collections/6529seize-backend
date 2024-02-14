@@ -5,6 +5,7 @@ import { mock } from 'ts-jest-mocker';
 import { when } from 'jest-when';
 import { Time } from '../time';
 import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
+import { Discord, DiscordChannel } from '../discord';
 
 const anAbusivenessCheckResult: AbusivenessDetectionResult = {
   text: 'text',
@@ -17,13 +18,16 @@ describe(`AbusivenessCheckService`, () => {
   let abusivenessCheckService: AbusivenessCheckService;
   let abusivenessCheckDb: AbusivenessCheckDb;
   let openAiAbusivenessDetectionService: OpenAiAbusivenessDetectionService;
+  let discord: Discord;
 
   beforeEach(() => {
     abusivenessCheckDb = mock();
     openAiAbusivenessDetectionService = mock();
+    discord = mock();
     abusivenessCheckService = new AbusivenessCheckService(
       openAiAbusivenessDetectionService,
-      abusivenessCheckDb
+      abusivenessCheckDb,
+      discord
     );
   });
 
@@ -84,11 +88,29 @@ describe(`AbusivenessCheckService`, () => {
     );
   });
 
-  it(`should throw BadRequestException if text special characters`, async () => {
+  it(`should throw BadRequestException if text contains special characters`, async () => {
     await expect(
       abusivenessCheckService.checkRepPhrase('Hey%you')
     ).rejects.toThrow(
       'Rep statement contains invalid characters, is shorter than one character or is longer than 100 characters. Only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes are allowed.'
+    );
+  });
+
+  it(`should allow if OpenAI check for REP fails with unknown error, but should send a notification to Discord`, async () => {
+    when(
+      openAiAbusivenessDetectionService.checkRepPhraseText
+    ).mockRejectedValue(`Some error`);
+    await expect(
+      abusivenessCheckService.checkRepPhrase('Hello')
+    ).resolves.toEqual({
+      text: 'Hello',
+      status: 'ALLOWED',
+      explanation: null,
+      external_check_performed_at: expect.any(Date)
+    });
+    expect(discord.sendMessage).toHaveBeenCalledWith(
+      DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
+      `Rep phrase: Hello\n\nOpenAI check failed with error: Some error`
     );
   });
 });
