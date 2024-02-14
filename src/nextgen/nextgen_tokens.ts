@@ -51,7 +51,11 @@ async function processCollectionTraitScores(
   tokenTraits: NextGenTokenTrait[]
 ) {
   const tokenCount = new Set(tokenTraits.map((item) => item.token_id)).size;
-  const traitsCount = new Set(tokenTraits.map((item) => item.trait)).size;
+  const traitsCount = new Set(
+    tokenTraits
+      .filter((t) => !t.trait.toLowerCase().startsWith(mintTypeTraitLower))
+      .map((item) => item.trait)
+  ).size;
 
   logger.info(
     `[PROCESSING TRAIT SCORES] : [COLLECTION ${collection.id}] : [TOKEN COUNT ${tokenCount}]`
@@ -84,7 +88,7 @@ async function processCollectionTraitScores(
       tt.rarity_score = tokenCount / sharedKeyValue;
       tt.rarity_score_normalised =
         ((1 / sharedKeyValue) * 1000000) /
-        ((traitsCount + 1) * (valuesCountForTrait + 1));
+        ((traitsCount + 1) * valuesCountForTrait);
     }
   });
 
