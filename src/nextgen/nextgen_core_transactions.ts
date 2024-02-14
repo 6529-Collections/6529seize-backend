@@ -135,6 +135,7 @@ async function processLog(
     case 'setApprovalForAll':
     case 'safeTransferFrom':
     case 'transferFrom':
+      logger.info(`[METHOD NAME ${methodName}] : [SKIPPING...]`);
       return [];
   }
 
