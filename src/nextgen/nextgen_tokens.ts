@@ -15,12 +15,11 @@ import {
 import { Logger } from '../logging';
 import { EntityManager } from 'typeorm';
 import { NFTS_TABLE } from '../constants';
-import { COLLECTION_NAME_TRAIT, MINT_TYPE_TRAIT } from './nextgen_constants';
+import { MINT_TYPE_TRAIT } from './nextgen_constants';
 
 const logger = Logger.get('NEXTGEN_TOKENS');
 
 const mintTypeTraitLower = MINT_TYPE_TRAIT.toLowerCase();
-const collectionNameTraitLower = COLLECTION_NAME_TRAIT.toLowerCase();
 
 export async function refreshNextgenTokens(entityManager: EntityManager) {
   logger.info(`[REFRESHING NEXTGEN TOKENS]`);
@@ -69,10 +68,7 @@ async function processCollectionTraitScores(
     const valueCount = sharedKey.filter((tt) => tt.value === value).length;
     tt.value_count = valueCount;
 
-    if (
-      name.toLowerCase().startsWith(mintTypeTraitLower) ||
-      name.toLowerCase() === collectionNameTraitLower
-    ) {
+    if (name.toLowerCase().startsWith(mintTypeTraitLower)) {
       tt.statistical_rarity = -1;
       tt.rarity_score = -1;
       tt.rarity_score_normalised = -1;
@@ -124,10 +120,7 @@ async function processTokens(
 
     const filteredTokenTraits = tokenTraits.filter((tt) => {
       const traitLower = tt.trait.toLowerCase();
-      return (
-        !traitLower.startsWith(mintTypeTraitLower) &&
-        traitLower !== collectionNameTraitLower
-      );
+      return !traitLower.startsWith(mintTypeTraitLower);
     });
 
     const { rarityScore, rarityScoreNormalised, statisticalScore } =

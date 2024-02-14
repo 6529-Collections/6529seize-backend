@@ -24,7 +24,6 @@ export const NEXTGEN_ROYALTIES_ADDRESS =
   '0xC8ed02aFEBD9aCB14c33B5330c803feacAF01377';
 
 export const MINT_TYPE_TRAIT = 'Mint Type';
-export const COLLECTION_NAME_TRAIT = 'Collection Name';
 
 export function getNextgenNetwork() {
   if (process.env.NEXTGEN_CHAIN_ID) {
