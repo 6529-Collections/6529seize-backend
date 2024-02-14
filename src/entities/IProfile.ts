@@ -1,7 +1,23 @@
 import { Column, Entity, PrimaryColumn, PrimaryGeneratedColumn } from 'typeorm';
 import { PROFILES_ARCHIVE_TABLE, PROFILES_TABLE } from '../constants';
 
-class ProfileBase {
+export interface ProfileType {
+  external_id: string;
+  normalised_handle: string;
+  handle: string;
+  primary_wallet: string;
+  created_at: Date;
+  created_by_wallet: string;
+  updated_at?: Date | null;
+  updated_by_wallet?: string;
+  pfp_url?: string;
+  banner_1?: string;
+  banner_2?: string;
+  website?: string;
+  classification?: ProfileClassification | null;
+}
+
+class ProfileBase implements Omit<ProfileType, 'normalised_handle'> {
   @Column({ type: 'varchar', length: 100 })
   external_id!: string;
 
@@ -40,13 +56,13 @@ class ProfileBase {
 }
 
 @Entity(PROFILES_TABLE)
-export class Profile extends ProfileBase {
+export class Profile extends ProfileBase implements ProfileType {
   @PrimaryColumn({ type: 'varchar', length: 100 })
   normalised_handle!: string;
 }
 
 @Entity(PROFILES_ARCHIVE_TABLE)
-export class ProfileArchived extends ProfileBase {
+export class ProfileArchived extends ProfileBase implements ProfileType {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   id!: number;
 

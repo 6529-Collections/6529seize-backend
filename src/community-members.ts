@@ -2,7 +2,8 @@ import { ConnectionWrapper, dbSupplier } from './sql-executor';
 import { buildConsolidationKey } from './helpers';
 import {
   COMMUNITY_MEMBERS_TABLE,
-  CONSOLIDATED_WALLETS_TDH_TABLE
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  ENS_TABLE
 } from './constants';
 import { Time } from './time';
 import { Logger } from './logging';
@@ -15,6 +16,13 @@ export async function synchroniseCommunityMembersTable(
   logger.info(`Refreshing community members table...`);
   const db = dbSupplier();
   const time = Time.now();
+  const ensWallets: Set<string> = await db
+    .execute(`select lower(wallet) as wallet from ${ENS_TABLE}`, undefined, {
+      wrappedConnection: connection.connection
+    })
+    .then(
+      (result: { wallet: string }[]) => new Set(result.map((it) => it.wallet))
+    );
   const tdhWalletsResponse: { wallets: string }[] = await db.execute(
     `select wallets from ${CONSOLIDATED_WALLETS_TDH_TABLE}`,
     undefined,
@@ -23,6 +31,7 @@ export async function synchroniseCommunityMembersTable(
   const communityMembers = tdhWalletsResponse.reduce(
     (groups, walletsWrapped) => {
       const wallets: string[] = JSON.parse(walletsWrapped.wallets);
+      wallets.forEach((it) => ensWallets.delete(it.toLowerCase()));
       groups[buildConsolidationKey(wallets)] = wallets.map((it) =>
         it.toLowerCase()
       );
@@ -30,6 +39,9 @@ export async function synchroniseCommunityMembersTable(
     },
     {} as Record<string, string[]>
   );
+  for (const ensWallet of Array.from(ensWallets)) {
+    communityMembers[buildConsolidationKey([ensWallet])] = [ensWallet];
+  }
   const newKeys = Object.keys(communityMembers);
   const oldKeys = await db
     .execute(
