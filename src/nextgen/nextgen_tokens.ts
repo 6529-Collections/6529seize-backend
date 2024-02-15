@@ -76,6 +76,9 @@ async function processCollectionTraitScores(
       tt.statistical_rarity = -1;
       tt.rarity_score = -1;
       tt.rarity_score_normalised = -1;
+      tt.rarity_score_trait_count_normalised = -1;
+      tt.statistical_rarity_normalised = -1;
+      tt.single_trait_rarity_score_normalised = -1;
     } else {
       const sharedKeyValue = sharedKey.filter(
         (tt) => tt.value === value
@@ -89,7 +92,7 @@ async function processCollectionTraitScores(
       tt.single_trait_rarity_score_normalised =
         statisticalScore * valuesCountForTrait;
       tt.statistical_rarity_normalised =
-        statisticalScore ^ (1 / valuesCountForTrait);
+        statisticalScore ** (1 / valuesCountForTrait);
       tt.rarity_score = tokenCount / sharedKeyValue;
 
       tt.rarity_score_normalised =
@@ -104,6 +107,18 @@ async function processCollectionTraitScores(
   let rankedTraits = calulateTokenRanks(tokenTraits, 'rarity_score');
   rankedTraits = calulateTokenRanks(rankedTraits, 'rarity_score_normalised');
   rankedTraits = calulateTokenRanks(rankedTraits, 'statistical_rarity');
+  rankedTraits = calulateTokenRanks(
+    rankedTraits,
+    'statistical_rarity_normalised'
+  );
+  rankedTraits = calulateTokenRanks(
+    rankedTraits,
+    'single_trait_rarity_score_normalised'
+  );
+  rankedTraits = calulateTokenRanks(
+    rankedTraits,
+    'rarity_score_trait_count_normalised'
+  );
 
   await persistNextGenTraits(entityManager, rankedTraits);
 
@@ -217,8 +232,7 @@ async function processTokens(
 
     const statisticalScoreTraitCountNormalised =
       statisticalScoreNormalised *
-      ((denominator / tokens.length) ^
-        (1 / (traitCategoriesWithNone.size + 1)));
+      (denominator / tokens.length) ** (1 / (traitCategoriesWithNone.size + 1));
 
     const singleTraitRarityTraitCount = Math.min(
       singleTraitRarity,
@@ -235,12 +249,6 @@ async function processTokens(
     const singleTraitRarityTraitCountNormalised = Math.min(
       minSingleTraitRarityNormalised,
       singleTraitRarityTraitCountNormalization
-    );
-
-    console.log(token.id);
-    console.log(
-      minSingleTraitRarityNormalised,
-      singleTraitRarityTraitCountNormalised
     );
 
     traitScores.push({
@@ -264,6 +272,7 @@ async function processTokens(
     });
   }
 
+  // rarity_score ranks
   const rarityScoreRanks = calculateRanks(traitScores, 'rarity_score');
   const rarityScoreTraitCountRanks = calculateRanks(
     traitScores,
@@ -273,6 +282,12 @@ async function processTokens(
     traitScores,
     'rarity_score_normalised'
   );
+  const rarityScoreTraitCountNormalisedRanks = calculateRanks(
+    traitScores,
+    'rarity_score_trait_count_normalised'
+  );
+
+  // statistical_score ranks
   const statisticalScoreRanks = calculateRanks(
     traitScores,
     'statistical_score',
@@ -283,9 +298,36 @@ async function processTokens(
     'statistical_score_trait_count',
     true
   );
+  const statisticalScoreNormalisedRanks = calculateRanks(
+    traitScores,
+    'statistical_score_normalised',
+    true
+  );
+  const statisticalScoreTraitCountNormalisedRanks = calculateRanks(
+    traitScores,
+    'statistical_score_trait_count_normalised',
+    true
+  );
+
+  // single_trait_rarity_score ranks
   const singleTraitScoreRanks = calculateRanks(
     traitScores,
     'single_trait_rarity_score',
+    true
+  );
+  const singleTraitScoreTraitCountRanks = calculateRanks(
+    traitScores,
+    'single_trait_rarity_score_trait_count',
+    true
+  );
+  const singleTraitScoreNormalisedRanks = calculateRanks(
+    traitScores,
+    'single_trait_rarity_score_normalised',
+    true
+  );
+  const singleTraitScoreTraitCountNormalisedRanks = calculateRanks(
+    traitScores,
+    'single_trait_rarity_score_trait_count_normalised',
     true
   );
 
@@ -293,8 +335,25 @@ async function processTokens(
     ...score,
     rarity_score_rank: rarityScoreRanks.get(score.id),
     rarity_score_normalised_rank: rarityScoreNormalisedRanks.get(score.id),
+    rarity_score_trait_count_rank: rarityScoreTraitCountRanks.get(score.id),
+    rarity_score_trait_count_normalised_rank:
+      rarityScoreTraitCountNormalisedRanks.get(score.id),
     statistical_score_rank: statisticalScoreRanks.get(score.id),
-    single_trait_rarity_score_rank: singleTraitScoreRanks.get(score.id)
+    statistical_score_normalised_rank: statisticalScoreNormalisedRanks.get(
+      score.id
+    ),
+    statistical_score_trait_count_rank: statisticalScoreTraitCountRanks.get(
+      score.id
+    ),
+    statistical_score_trait_count_normalised_rank:
+      statisticalScoreTraitCountNormalisedRanks.get(score.id),
+    single_trait_rarity_score_rank: singleTraitScoreRanks.get(score.id),
+    single_trait_rarity_score_normalised_rank:
+      singleTraitScoreNormalisedRanks.get(score.id),
+    single_trait_rarity_score_trait_count_rank:
+      singleTraitScoreTraitCountRanks.get(score.id),
+    single_trait_rarity_score_trait_count_normalised_rank:
+      singleTraitScoreTraitCountNormalisedRanks.get(score.id)
   }));
 
   await persistNextGenTraitScores(entityManager, rankedTraitScores);

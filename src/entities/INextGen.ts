@@ -513,18 +513,6 @@ export class NextGenTokenTrait {
   value!: string;
 
   @Column({ type: 'double' })
-  statistical_rarity!: number;
-
-  @Column({ type: 'double' })
-  statistical_rarity_normalised!: number;
-
-  @Column({ type: 'double' })
-  single_trait_rarity_score_normalised!: number;
-
-  @Column({ type: 'double' })
-  statistical_rarity_rank!: number;
-
-  @Column({ type: 'double' })
   rarity_score!: number;
 
   @Column({ type: 'int' })
@@ -533,11 +521,32 @@ export class NextGenTokenTrait {
   @Column({ type: 'double' })
   rarity_score_normalised!: number;
 
+  @Column({ type: 'int' })
+  rarity_score_normalised_rank!: number;
+
   @Column({ type: 'double' })
   rarity_score_trait_count_normalised!: number;
 
   @Column({ type: 'int' })
-  rarity_score_normalised_rank!: number;
+  rarity_score_trait_count_normalised_rank!: number;
+
+  @Column({ type: 'double' })
+  statistical_rarity!: number;
+
+  @Column({ type: 'int' })
+  statistical_rarity_rank!: number;
+
+  @Column({ type: 'double' })
+  statistical_rarity_normalised!: number;
+
+  @Column({ type: 'int' })
+  statistical_rarity_normalised_rank!: number;
+
+  @Column({ type: 'double' })
+  single_trait_rarity_score_normalised!: number;
+
+  @Column({ type: 'int' })
+  single_trait_rarity_score_normalised_rank!: number;
 
   @Column({ type: 'int' })
   token_count!: number;
@@ -566,48 +575,72 @@ export class NextGenTokenScore {
   @Column({ type: 'double' })
   rarity_score!: number;
 
+  @Column({ type: 'int' })
+  rarity_score_rank?: number;
+
   @Column({ type: 'double' })
   rarity_score_normalised!: number;
 
-  @Column({ type: 'double' })
-  statistical_score!: number;
-
-  @Column({ type: 'double' })
-  statistical_score_normalised!: number;
-
-  @Column({ type: 'double' })
-  single_trait_rarity_score!: number;
-
-  @Column({ type: 'double' })
-  single_trait_rarity_score_trait_count!: number;
-
-  @Column({ type: 'double' })
-  single_trait_rarity_score_normalised!: number;
-
-  @Column({ type: 'double' })
-  single_trait_rarity_score_trait_count_normalised!: number;
+  @Column({ type: 'int' })
+  rarity_score_normalised_rank?: number;
 
   @Column({ type: 'double' })
   rarity_score_trait_count!: number;
 
+  @Column({ type: 'int' })
+  rarity_score_trait_count_rank?: number;
+
   @Column({ type: 'double' })
   rarity_score_trait_count_normalised!: number;
 
+  @Column({ type: 'int' })
+  rarity_score_trait_count_normalised_rank?: number;
+
+  @Column({ type: 'double' })
+  statistical_score!: number;
+
+  @Column({ type: 'int' })
+  statistical_score_rank?: number;
+
+  @Column({ type: 'double' })
+  statistical_score_normalised!: number;
+
+  @Column({ type: 'int' })
+  statistical_score_normalised_rank?: number;
+
   @Column({ type: 'double' })
   statistical_score_trait_count!: number;
+
+  @Column({ type: 'int' })
+  statistical_score_trait_count_rank?: number;
 
   @Column({ type: 'double' })
   statistical_score_trait_count_normalised!: number;
 
   @Column({ type: 'int' })
-  rarity_score_rank?: number;
+  statistical_score_trait_count_normalised_rank?: number;
 
-  @Column({ type: 'int' })
-  rarity_score_normalised_rank?: number;
-
-  @Column({ type: 'int' })
-  statistical_score_rank?: number;
+  @Column({ type: 'double' })
+  single_trait_rarity_score!: number;
 
   @Column({ type: 'int' })
   single_trait_rarity_score_rank?: number;
+
+  @Column({ type: 'double' })
+  single_trait_rarity_score_normalised!: number;
+
+  @Column({ type: 'int' })
+  single_trait_rarity_score_normalised_rank?: number;
+
+  @Column({ type: 'double' })
+  single_trait_rarity_score_trait_count!: number;
+
+  @Column({ type: 'int' })
+  single_trait_rarity_score_trait_count_rank?: number;
+
+  @Column({ type: 'double' })
+  single_trait_rarity_score_trait_count_normalised!: number;
+
+  @Column({ type: 'int' })
+  single_trait_rarity_score_trait_count_normalised_rank?: number;
 }
