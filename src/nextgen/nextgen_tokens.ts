@@ -213,7 +213,7 @@ async function processTokens(
       );
     }
 
-    const traitCount = traitCountPerToken.get(token.id) || 0;
+    const traitCount = traitCountPerToken.get(token.id) ?? 0;
     let denominator = Array.from(traitCountPerToken.values()).filter(
       (tc) => tc === traitCount
     ).length;
