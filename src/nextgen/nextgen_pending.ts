@@ -110,11 +110,14 @@ export async function processMissingTokenData(entityManager: EntityManager) {
           trait: newTrait,
           value: newTraitValue,
           statistical_rarity: 0,
+          statistical_rarity_normalised: 0,
           statistical_rarity_rank: 0,
           rarity_score: 0,
           rarity_score_rank: 0,
           rarity_score_normalised: 0,
+          rarity_score_trait_count_normalised: 0,
           rarity_score_normalised_rank: 0,
+          single_trait_rarity_score_normalised: 0,
           token_count: 0,
           trait_count: 0
         };

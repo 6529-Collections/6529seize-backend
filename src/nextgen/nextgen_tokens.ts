@@ -84,9 +84,18 @@ async function processCollectionTraitScores(
       const valuesCountForTrait = new Set(sharedKey.map((item) => item.value))
         .size;
 
-      tt.statistical_rarity = sharedKeyValue / tokenCount;
+      const statisticalScore = sharedKeyValue / tokenCount;
+      tt.statistical_rarity = statisticalScore;
+      tt.single_trait_rarity_score_normalised =
+        statisticalScore * valuesCountForTrait;
+      tt.statistical_rarity_normalised =
+        statisticalScore ^ (1 / valuesCountForTrait);
       tt.rarity_score = tokenCount / sharedKeyValue;
+
       tt.rarity_score_normalised =
+        ((1 / sharedKeyValue) * 1000000) / (traitsCount * valuesCountForTrait);
+
+      tt.rarity_score_trait_count_normalised =
         ((1 / sharedKeyValue) * 1000000) /
         ((traitsCount + 1) * valuesCountForTrait);
     }
@@ -113,6 +122,11 @@ async function processTokens(
   await processCollectionHodlRate(entityManager, collection, tokens.length);
 
   const traitScores: NextGenTokenScore[] = [];
+  const traitCountPerToken = new Map<number, number>();
+  const traitsPerToken = new Map<number, NextGenTokenTrait[]>();
+
+  const traitCategories = new Set<string>();
+  const traitCategoriesWithNone = new Set<string>();
   for (const token of tokens) {
     const tokenTraits = await entityManager
       .getRepository(NextGenTokenTrait)
@@ -127,23 +141,107 @@ async function processTokens(
       return !traitLower.startsWith(mintTypeTraitLower);
     });
 
-    const { rarityScore, rarityScoreNormalised, statisticalScore } =
-      filteredTokenTraits.reduce(
-        (acc, tt) => {
-          acc.rarityScore += tt.rarity_score;
-          acc.rarityScoreNormalised += tt.rarity_score_normalised;
-          acc.statisticalScore *= tt.statistical_rarity;
-          return acc;
-        },
-        { rarityScore: 0, rarityScoreNormalised: 0, statisticalScore: 1 }
-      );
+    filteredTokenTraits.forEach((t) => {
+      if (t.value.toLowerCase().startsWith('none')) {
+        traitCategoriesWithNone.add(t.trait);
+      }
+      traitCategories.add(t.trait);
+    });
+
+    const traitCount = new Set(
+      filteredTokenTraits
+        .filter((t) => !t.value.toLowerCase().startsWith('none'))
+        .map((t) => t.trait)
+    ).size;
+
+    traitCountPerToken.set(token.id, traitCount);
+    traitsPerToken.set(token.id, filteredTokenTraits);
+  }
+
+  for (const token of tokens) {
+    const filteredTokenTraits = traitsPerToken.get(token.id) || [];
+    const {
+      rarityScore,
+      rarityScoreNormalised,
+      rarityScoreTraitCountNormalised,
+      statisticalScore,
+      statisticalScoreNormalised
+    } = filteredTokenTraits.reduce(
+      (acc, tt) => {
+        acc.rarityScore += tt.rarity_score;
+        acc.rarityScoreNormalised += tt.rarity_score_normalised;
+        acc.rarityScoreTraitCountNormalised +=
+          tt.rarity_score_trait_count_normalised;
+        acc.statisticalScore *= tt.statistical_rarity;
+        acc.statisticalScoreNormalised *= tt.statistical_rarity_normalised;
+        return acc;
+      },
+      {
+        rarityScore: 0,
+        rarityScoreNormalised: 0,
+        rarityScoreTraitCountNormalised: 0,
+        statisticalScore: 1,
+        statisticalScoreNormalised: 1
+      }
+    );
 
     let singleTraitRarity = 0;
+    let singleTraitRarityNormalised = 0;
     if (filteredTokenTraits.length > 0) {
       singleTraitRarity = Math.min(
         ...filteredTokenTraits.map((t) => t.statistical_rarity)
       );
+      singleTraitRarityNormalised = Math.min(
+        ...filteredTokenTraits.map(
+          (t) => t.single_trait_rarity_score_normalised
+        )
+      );
     }
+
+    const traitCount = traitCountPerToken.get(token.id) || 0;
+    let denominator = Array.from(traitCountPerToken.values()).filter(
+      (tc) => tc === traitCount
+    ).length;
+    const rarityScoreTraitCount = tokens.length / denominator + rarityScore;
+
+    const rarityScoreTraitCountNormalisedAdjustement =
+      ((1 / denominator) * 1000000) /
+      ((traitCategories.size + 1) * (traitCategoriesWithNone.size + 1));
+
+    const rarityScoreTraitCountNormalisedAdjusted =
+      rarityScoreTraitCountNormalised +
+      rarityScoreTraitCountNormalisedAdjustement;
+
+    const statisticalScoreTraitCount =
+      statisticalScore * (denominator / tokens.length);
+
+    const statisticalScoreTraitCountNormalised =
+      statisticalScoreNormalised *
+      ((denominator / tokens.length) ^
+        (1 / (traitCategoriesWithNone.size + 1)));
+
+    const singleTraitRarityTraitCount = Math.min(
+      singleTraitRarity,
+      denominator / tokens.length
+    );
+
+    const singleTraitRarityTraitCountNormalization =
+      (denominator / tokens.length) * (traitCategoriesWithNone.size + 1);
+
+    const minSingleTraitRarityNormalised = Math.min(
+      ...filteredTokenTraits.map((t) => t.single_trait_rarity_score_normalised)
+    );
+
+    const singleTraitRarityTraitCountNormalised = Math.min(
+      minSingleTraitRarityNormalised,
+      singleTraitRarityTraitCountNormalization
+    );
+
+    console.log(token.id);
+    console.log(
+      minSingleTraitRarityNormalised,
+      singleTraitRarityTraitCountNormalised
+    );
 
     traitScores.push({
       id: token.id,
@@ -151,11 +249,26 @@ async function processTokens(
       rarity_score: rarityScore,
       rarity_score_normalised: rarityScoreNormalised,
       statistical_score: statisticalScore,
-      single_trait_rarity_score: singleTraitRarity
+      statistical_score_normalised: statisticalScoreNormalised,
+      single_trait_rarity_score: singleTraitRarity,
+      single_trait_rarity_score_trait_count: singleTraitRarityTraitCount,
+      single_trait_rarity_score_normalised: singleTraitRarityNormalised,
+      single_trait_rarity_score_trait_count_normalised:
+        singleTraitRarityTraitCountNormalised,
+      rarity_score_trait_count: rarityScoreTraitCount,
+      rarity_score_trait_count_normalised:
+        rarityScoreTraitCountNormalisedAdjusted,
+      statistical_score_trait_count: statisticalScoreTraitCount,
+      statistical_score_trait_count_normalised:
+        statisticalScoreTraitCountNormalised
     });
   }
 
   const rarityScoreRanks = calculateRanks(traitScores, 'rarity_score');
+  const rarityScoreTraitCountRanks = calculateRanks(
+    traitScores,
+    'rarity_score_trait_count'
+  );
   const rarityScoreNormalisedRanks = calculateRanks(
     traitScores,
     'rarity_score_normalised'
@@ -163,6 +276,11 @@ async function processTokens(
   const statisticalScoreRanks = calculateRanks(
     traitScores,
     'statistical_score',
+    true
+  );
+  const statisticalScoreTraitCountRanks = calculateRanks(
+    traitScores,
+    'statistical_score_trait_count',
     true
   );
   const singleTraitScoreRanks = calculateRanks(
