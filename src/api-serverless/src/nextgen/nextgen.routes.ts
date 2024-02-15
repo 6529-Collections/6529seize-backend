@@ -416,16 +416,20 @@ router.get(
                 key: r.value,
                 count: r.count
               };
-            });
+            })
+            .sort((a: any, b: any) => a.key.localeCompare(b.key))
+            .sort((a: any, b: any) => a.count - b.count);
           const trait: TokenTraitWithCount = {
             trait: key,
             values: values.map((v: TokenValueCount) => v.key),
             value_counts: values
           };
-
           traits.push(trait);
         });
-        return returnJsonResult(traits, req, res);
+        const sortedTraits = traits
+          .sort((a, b) => a.trait.localeCompare(b.trait))
+          .sort((a, b) => b.values.length - a.values.length);
+        return returnJsonResult(sortedTraits, req, res);
       });
     } else {
       return res.status(404).send({});

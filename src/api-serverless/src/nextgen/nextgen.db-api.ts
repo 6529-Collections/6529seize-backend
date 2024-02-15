@@ -345,10 +345,6 @@ export async function fetchNextGenCollectionTraits(collectionId: number) {
     FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} where collection_id=:collectionId
     GROUP BY trait, value
     ORDER BY 
-      CASE 
-        WHEN trait LIKE CONCAT(:mintTypeTrait, '%') THEN 0
-        ELSE 1
-      END,
       trait, 
       CASE 
         WHEN value REGEXP '^[0-9]+$' THEN CAST(value AS UNSIGNED)
