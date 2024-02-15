@@ -391,6 +391,9 @@ export class NextGenCollection {
 
   @Column({ type: 'text', nullable: true })
   merkle_root?: string;
+
+  @Column({ type: 'text', nullable: true })
+  opensea_link?: string;
 }
 
 @Entity(NEXTGEN_TOKENS_TABLE)
