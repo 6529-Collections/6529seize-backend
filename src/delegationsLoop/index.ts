@@ -26,7 +26,11 @@ import { ConsolidatedOwnerMetric, OwnerMetric } from '../entities/IOwner';
 import { Profile } from '../entities/IProfile';
 import * as sentryContext from '../sentry.context';
 import { NextGenTokenTDH } from '../entities/INextGen';
-import { CommunityMember } from '../entities/ICommunityMember';
+import {
+  CommunityMember,
+  ProfileFullView,
+  WalletConsolidationKeyView
+} from '../entities/ICommunityMember';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -41,7 +45,9 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     NextGenTokenTDH,
     ConsolidatedOwnerMetric,
     OwnerMetric,
-    Profile
+    Profile,
+    ProfileFullView,
+    WalletConsolidationKeyView
   ]);
   const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
   const startBlock =

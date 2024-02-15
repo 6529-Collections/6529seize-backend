@@ -22,6 +22,8 @@ export const ABUSIVENESS_DETECTION_RESULTS_TABLE =
   'abusiveness_detection_results';
 export const CIC_STATEMENTS_TABLE = 'cic_statements';
 export const COMMUNITY_MEMBERS_TABLE = 'community_members';
+export const WALLETS_CONSOLIDATION_KEYS_VIEW = 'wallet_consolidation_key';
+export const PROFILE_FULL = 'profile_full';
 export const PROFILES_TABLE = 'profiles';
 export const PROFILES_ACTIVITY_LOGS_TABLE = 'profile_activity_logs';
 export const PROFILES_ARCHIVE_TABLE = 'profiles_archive';

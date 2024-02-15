@@ -281,7 +281,6 @@ export async function fetchPaginated(
     const offset = pageSize * (page - 1);
     resultsSql += ` OFFSET ${offset}`;
   }
-
   logger.debug(`Count sql: '${countSql}`);
   logger.debug(`Data sql: ${resultsSql}`);
 

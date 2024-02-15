@@ -8,7 +8,11 @@ import { Profile } from '../entities/IProfile';
 import { fetchAllConsolidationAddresses } from '../db';
 import * as sentryContext from '../sentry.context';
 import { NextGenTokenTDH } from '../entities/INextGen';
-import { CommunityMember } from '../entities/ICommunityMember';
+import {
+  CommunityMember,
+  ProfileFullView,
+  WalletConsolidationKeyView
+} from '../entities/ICommunityMember';
 
 const logger = Logger.get('TDH_CONSOLIDATIONS_LOOP');
 
@@ -19,7 +23,9 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     ConsolidatedTDH,
     NextGenTokenTDH,
     CommunityMember,
-    Profile
+    Profile,
+    ProfileFullView,
+    WalletConsolidationKeyView
   ]);
   const force = process.env.TDH_RESET == 'true';
   logger.info(`[RUNNING force=${force}]`);

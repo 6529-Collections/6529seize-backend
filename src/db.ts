@@ -104,7 +104,11 @@ import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResu
 import { ListenerProcessedEvent, ProcessableEvent } from './entities/IEvent';
 import { CicScoreAggregation } from './entities/ICicScoreAggregation';
 import { ProfileTotalRepScoreAggregation } from './entities/IRepScoreAggregations';
-import { CommunityMember } from './entities/ICommunityMember';
+import {
+  CommunityMember,
+  ProfileFullView,
+  WalletConsolidationKeyView
+} from './entities/ICommunityMember';
 import { synchroniseCommunityMembersTable } from './community-members';
 
 const mysql = require('mysql');
@@ -165,7 +169,9 @@ export async function connect(entities: any[] = []) {
       ListenerProcessedEvent,
       CicScoreAggregation,
       ProfileTotalRepScoreAggregation,
-      CommunityMember
+      CommunityMember,
+      ProfileFullView,
+      WalletConsolidationKeyView
     ];
   }
 
