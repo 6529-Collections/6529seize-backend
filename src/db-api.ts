@@ -24,6 +24,7 @@ import {
   OWNERS_METRICS_TABLE,
   OWNERS_TABLE,
   OWNERS_TAGS_TABLE,
+  PROFILE_FULL,
   REMEMES_TABLE,
   REMEMES_UPLOADS,
   ROYALTIES_UPLOADS_TABLE,
@@ -37,6 +38,7 @@ import {
   UPLOADS_TABLE,
   USE_CASE_ALL,
   USE_CASE_MINTING,
+  WALLETS_CONSOLIDATION_KEYS_VIEW,
   WALLETS_TDH_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
@@ -963,8 +965,10 @@ export async function fetchNftTdh(
     contract
   )} and ${OWNERS_TABLE}.token_id=${nftId}) as dense_table ON ${WALLETS_TDH_TABLE}.wallet = dense_table.wallet`;
   joins += ` LEFT JOIN ${OWNERS_METRICS_TABLE} on ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet`;
+  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} wc on wc.wallet = tdh.wallet`;
+  joins += ` LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = wc.consolidation_key`;
 
-  const fields = ` ${OWNERS_METRICS_TABLE}.balance, ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, dense_table.dense_rank_balance `;
+  const fields = `p.handle as handle, p.rep_score as rep_score, p.cic_score as cic_score, p.profile_tdh as profile_tdh, ${OWNERS_METRICS_TABLE}.balance, ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, dense_table.dense_rank_balance `;
 
   switch (sort) {
     case 'card_tdh':
@@ -997,7 +1001,12 @@ export async function fetchNftTdh(
     fields,
     joins
   );
-  result.data = await enhanceDataWithHandlesAndLevel(result.data);
+  result.data.forEach((d: any) => {
+    d.level = calculateLevel({
+      tdh: d.profile_tdh ?? d.boosted_tdh,
+      rep: d.rep_score
+    });
+  });
   return result;
 }
 
