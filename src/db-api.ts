@@ -1057,8 +1057,9 @@ export async function fetchConsolidatedNftTdh(
 
   joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_METRICS_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key`;
   joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key `;
+  joins += ` LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
 
-  const fields = ` ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance, ${CONSOLIDATED_WALLETS_TDH_TABLE}.* `;
+  const fields = ` p.handle as handle, p.rep_score as rep_score, p.cic_score as cic_score, p.profile_tdh as profile_tdh, ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance, ${CONSOLIDATED_WALLETS_TDH_TABLE}.* `;
 
   switch (sort) {
     case 'card_tdh':
@@ -1091,7 +1092,12 @@ export async function fetchConsolidatedNftTdh(
     fields,
     joins
   );
-  result.data = await enhanceDataWithHandlesAndLevel(result.data);
+  result.data.forEach((d: any) => {
+    d.level = calculateLevel({
+      tdh: d.profile_tdh ?? d.boosted_tdh,
+      rep: d.rep_score
+    });
+  });
   return result;
 }
 
