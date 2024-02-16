@@ -289,24 +289,27 @@ router.get(
   `/collections/:id/tokens`,
   async function (req: any, res: any, next: any) {
     const id: number = parseInt(req.params.id);
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    const traits = req.query.traits ? req.query.traits.split(',') : [];
-
-    const sortDir: PageSortDirection =
-      PageSortDirection[
-        req.query.sort_direction?.toUpperCase() as keyof typeof PageSortDirection
-      ] || PageSortDirection.ASC;
-
-    const sort: db.TokensSort =
-      db.TokensSort[
-        req.query.sort?.toUpperCase() as keyof typeof db.TokensSort
-      ] || db.TokensSort.ID;
 
     if (!isNaN(id)) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const traits = req.query.traits ? req.query.traits.split(',') : [];
+      const sortDir: PageSortDirection =
+        PageSortDirection[
+          req.query.sort_direction?.toUpperCase() as keyof typeof PageSortDirection
+        ] || PageSortDirection.ASC;
+
+      const sort: db.TokensSort =
+        db.TokensSort[
+          req.query.sort?.toUpperCase() as keyof typeof db.TokensSort
+        ] || db.TokensSort.ID;
+
+      const showNormalised = req.query.show_normalised === 'true';
+      const showTraitCount = req.query.show_trait_count === 'true';
+
       logger.info(`[FETCHING TOKENS FOR COLLECTION ID ${id}]`);
       db.fetchNextGenCollectionTokens(
         id,
@@ -314,7 +317,9 @@ router.get(
         page,
         traits,
         sort,
-        sortDir
+        sortDir,
+        showNormalised,
+        showTraitCount
       ).then((result) => {
         return returnPaginatedResult(result, req, res);
       });
