@@ -225,52 +225,57 @@ export async function fetchNextGenCollectionTokens(
 
   const joins = `LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_SCORES_TABLE}.id`;
 
-  const sortColumnMap = {
-    [TokensSort.ID]: 'id',
-    [TokensSort.RARITY_SCORE]: {
-      base: 'rarity_score_rank',
-      normalised: 'rarity_score_normalised_rank',
-      traitCount: 'rarity_score_trait_count_rank',
-      both: 'rarity_score_trait_count_normalised_rank'
-    },
-    [TokensSort.STATISTICAL_SCORE]: {
-      base: 'statistical_score_rank',
-      normalised: 'statistical_score_normalised_rank',
-      traitCount: 'statistical_score_trait_count_rank',
-      both: 'statistical_score_trait_count_normalised_rank'
-    },
-    [TokensSort.SINGLE_TRAIT_RARITY]: {
-      base: 'single_trait_rarity_score_rank',
-      normalised: 'single_trait_rarity_score_normalised_rank',
-      traitCount: 'single_trait_rarity_score_trait_count_rank',
-      both: 'single_trait_rarity_score_trait_count_normalised_rank'
-    }
-  };
-
-  let key = '';
-  if (showNormalised && showTraitCount) {
-    key = 'both';
-  } else if (showNormalised) {
-    key = 'normalised';
-  } else if (showTraitCount) {
-    key = 'traitCount';
+  let sortQuery: string;
+  if (sort === TokensSort.RANDOM) {
+    sortQuery = `pending, RAND()`;
   } else {
-    key = 'base';
+    let sortColumn = '';
+    switch (sort) {
+      case TokensSort.ID:
+        sortColumn = 'id';
+        break;
+      case TokensSort.RARITY_SCORE:
+        if (showNormalised && showTraitCount) {
+          sortColumn = 'rarity_score_trait_count_normalised_rank';
+        } else if (showNormalised) {
+          sortColumn = 'rarity_score_normalised_rank';
+        } else if (showTraitCount) {
+          sortColumn = 'rarity_score_trait_count_rank';
+        } else {
+          sortColumn = 'rarity_score_rank';
+        }
+        break;
+      case TokensSort.STATISTICAL_SCORE:
+        if (showNormalised && showTraitCount) {
+          sortColumn = 'statistical_score_trait_count_normalised_rank';
+        } else if (showNormalised) {
+          sortColumn = 'statistical_score_normalised_rank';
+        } else if (showTraitCount) {
+          sortColumn = 'statistical_score_trait_count_rank';
+        } else {
+          sortColumn = 'statistical_score_rank';
+        }
+        break;
+      case TokensSort.SINGLE_TRAIT_RARITY:
+        if (showNormalised && showTraitCount) {
+          sortColumn = 'single_trait_rarity_score_trait_count_normalised_rank';
+        } else if (showNormalised) {
+          sortColumn = 'single_trait_rarity_score_normalised_rank';
+        } else if (showTraitCount) {
+          sortColumn = 'single_trait_rarity_score_trait_count_rank';
+        } else {
+          sortColumn = 'single_trait_rarity_score_rank';
+        }
+        break;
+    }
+    if (sortColumn.endsWith('rank')) {
+      sortDirection =
+        sortDirection === PageSortDirection.ASC
+          ? PageSortDirection.DESC
+          : PageSortDirection.ASC;
+    }
+    sortQuery = `${NEXTGEN_TOKEN_SCORES_TABLE}.${sortColumn} ${sortDirection}, ${NEXTGEN_TOKEN_SCORES_TABLE}.id asc`;
   }
-
-  let sortColumn =
-    sortColumnMap[sort] instanceof Object
-      ? sortColumnMap[sort][key]
-      : sortColumnMap[sort];
-
-  if (sortColumn.endsWith('rank')) {
-    sortDirection =
-      sortDirection === PageSortDirection.ASC
-        ? PageSortDirection.DESC
-        : PageSortDirection.ASC;
-  }
-
-  const sortQuery: string = `${NEXTGEN_TOKEN_SCORES_TABLE}.${sortColumn} ${sortDirection}, ${NEXTGEN_TOKEN_SCORES_TABLE}.id asc`;
 
   return fetchPaginated(
     NEXTGEN_TOKENS_TABLE,
