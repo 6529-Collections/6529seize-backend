@@ -1,8 +1,8 @@
-import { Column, Entity, PrimaryColumn, Index } from 'typeorm';
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
-  TDH_HISTORY_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
+  TDH_HISTORY_TABLE,
   WALLETS_TDH_TABLE
 } from '../constants';
 
@@ -234,6 +234,7 @@ export class ConsolidatedTDH extends BaseTDH {
   consolidation_display!: string;
 
   @Column({ type: 'varchar', length: 200 })
+  @Index()
   consolidation_key!: string;
 
   @Column({ type: 'json', nullable: false })
