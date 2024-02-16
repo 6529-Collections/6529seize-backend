@@ -172,59 +172,12 @@ export async function fetchNextGenCollectionByName(name: string) {
   return returnEmpty();
 }
 
-export async function fetchNextGenCollectionTokens(
-  collectionId: number,
-  pageSize: number,
-  page: number,
-  traits: string[],
+function getNextGenCollectionTokensSortQuery(
   sort: TokensSort,
   sortDirection: PageSortDirection,
   showNormalised: boolean,
   showTraitCount: boolean
 ) {
-  let filters = constructFilters(
-    '',
-    `${NEXTGEN_TOKENS_TABLE}.collection_id=:collectionId`
-  );
-  let params: any = {
-    collectionId: collectionId
-  };
-  if (traits.length > 0) {
-    const groupedTraits: {
-      [key: string]: string[];
-    } = {};
-    traits.forEach((trait) => {
-      const [key, value] = trait.split(':');
-      if (!groupedTraits[key]) {
-        groupedTraits[key] = [];
-      }
-      groupedTraits[key].push(value);
-    });
-
-    Object.entries(groupedTraits).forEach(([key, values], index) => {
-      const orConditions = values
-        .map((value, valueIndex) => {
-          const conditionIndex = `${index}_${valueIndex}`;
-          params[`trait${conditionIndex}`] = key;
-          params[`value${conditionIndex}`] = value;
-          return `(${NEXTGEN_TOKEN_TRAITS_TABLE}.trait = :trait${conditionIndex} AND ${NEXTGEN_TOKEN_TRAITS_TABLE}.value = :value${conditionIndex})`;
-        })
-        .join(' OR ');
-
-      filters = constructFilters(
-        filters,
-        `EXISTS (
-            SELECT 1
-            FROM ${NEXTGEN_TOKEN_TRAITS_TABLE}
-            WHERE ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id = ${NEXTGEN_TOKENS_TABLE}.id
-            AND (${orConditions})
-          )`
-      );
-    });
-  }
-
-  const joins = `LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_SCORES_TABLE}.id`;
-
   let sortQuery: string;
   if (sort === TokensSort.RANDOM) {
     sortQuery = `pending, RAND()`;
@@ -276,14 +229,84 @@ export async function fetchNextGenCollectionTokens(
     }
     sortQuery = `${NEXTGEN_TOKEN_SCORES_TABLE}.${sortColumn} ${sortDirection}, ${NEXTGEN_TOKEN_SCORES_TABLE}.id asc`;
   }
+  return sortQuery;
+}
+
+function getNextGenCollectionTokensFilters(
+  collectionId: number,
+  traits: string[]
+) {
+  let filters = constructFilters(
+    '',
+    `${NEXTGEN_TOKENS_TABLE}.collection_id=:collectionId`
+  );
+  let params: any = {
+    collectionId: collectionId
+  };
+  if (traits.length > 0) {
+    const groupedTraits: {
+      [key: string]: string[];
+    } = {};
+    traits.forEach((trait) => {
+      const [key, value] = trait.split(':');
+      if (!groupedTraits[key]) {
+        groupedTraits[key] = [];
+      }
+      groupedTraits[key].push(value);
+    });
+    Object.entries(groupedTraits).forEach(([key, values], index) => {
+      const orConditions = values
+        .map((value, valueIndex) => {
+          const conditionIndex = `${index}_${valueIndex}`;
+          params[`trait${conditionIndex}`] = key;
+          params[`value${conditionIndex}`] = value;
+          return `(${NEXTGEN_TOKEN_TRAITS_TABLE}.trait = :trait${conditionIndex} AND ${NEXTGEN_TOKEN_TRAITS_TABLE}.value = :value${conditionIndex})`;
+        })
+        .join(' OR ');
+
+      filters = constructFilters(
+        filters,
+        `EXISTS (
+            SELECT 1
+            FROM ${NEXTGEN_TOKEN_TRAITS_TABLE}
+            WHERE ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id = ${NEXTGEN_TOKENS_TABLE}.id
+            AND (${orConditions})
+          )`
+      );
+    });
+  }
+  return {
+    filters,
+    params
+  };
+}
+
+export async function fetchNextGenCollectionTokens(
+  collectionId: number,
+  pageSize: number,
+  page: number,
+  traits: string[],
+  sort: TokensSort,
+  sortDirection: PageSortDirection,
+  showNormalised: boolean,
+  showTraitCount: boolean
+) {
+  const filters = getNextGenCollectionTokensFilters(collectionId, traits);
+  const joins = `LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_SCORES_TABLE}.id`;
+  const sortQuery: string = getNextGenCollectionTokensSortQuery(
+    sort,
+    sortDirection,
+    showNormalised,
+    showTraitCount
+  );
 
   return fetchPaginated(
     NEXTGEN_TOKENS_TABLE,
-    params,
+    filters.params,
     sortQuery,
     pageSize,
     page,
-    filters,
+    filters.filters,
     `${NEXTGEN_TOKENS_TABLE}.*, ${NEXTGEN_TOKEN_SCORES_TABLE}.*`,
     joins
   );
