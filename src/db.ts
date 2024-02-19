@@ -13,12 +13,11 @@ import {
   CONSOLIDATIONS_TABLE,
   ENS_TABLE,
   GRADIENT_CONTRACT,
-  MEME_LAB_ROYALTIES_TABLE,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
+  MEME_LAB_ROYALTIES_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
-  NULL_ADDRESS,
   OWNERS_MEME_LAB_TABLE,
   OWNERS_METRICS_TABLE,
   OWNERS_TABLE,
@@ -37,7 +36,6 @@ import {
   MemesExtendedData,
   NFT
 } from './entities/INFT';
-import { ConsolidatedTDHUpload } from './entities/IUpload';
 import {
   ConsolidatedOwnerMetric,
   ConsolidatedOwnerTags,
@@ -75,40 +73,17 @@ import { Rememe, RememeUpload } from './entities/IRememe';
 import {
   areEqualAddresses,
   extractConsolidationWallets,
-  formatAddress
+  formatAddress,
+  isNullAddress
 } from './helpers';
 import { getConsolidationsSql } from './sql_helpers';
-import {
-  NextGenAllowlist,
-  NextGenAllowlistBurn,
-  NextGenAllowlistCollection,
-  NextGenBlock,
-  NextGenCollection,
-  NextGenCollectionBurn,
-  NextGenLog,
-  NextGenToken,
-  NextGenTokenScore,
-  NextGenTokenTDH,
-  NextGenTokenTrait
-} from './entities/INextGen';
+import { NextGenTokenTDH } from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
-import { Profile, ProfileArchived } from './entities/IProfile';
+import { Profile } from './entities/IProfile';
 import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
-import { CicStatement } from './entities/ICICStatement';
 import { profilesService } from './profiles/profiles.service';
-import { ProfileActivityLog } from './entities/IProfileActivityLog';
-import { Rating } from './entities/IRating';
-import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
-import { ListenerProcessedEvent, ProcessableEvent } from './entities/IEvent';
-import { CicScoreAggregation } from './entities/ICicScoreAggregation';
-import { ProfileTotalRepScoreAggregation } from './entities/IRepScoreAggregations';
-import {
-  CommunityMember,
-  ProfileFullView,
-  WalletConsolidationKeyView
-} from './entities/ICommunityMember';
 import { synchroniseCommunityMembersTable } from './community-members';
 
 const mysql = require('mysql');
@@ -119,61 +94,6 @@ let AppDataSource: DataSource;
 
 export async function connect(entities: any[] = []) {
   logger.info(`[DB HOST ${process.env.DB_HOST}]`);
-
-  if (process.env.NODE_ENV === 'local') {
-    entities = [
-      Owner,
-      LabNFT,
-      LabExtendedData,
-      Transaction,
-      OwnerMetric,
-      NFT,
-      Team,
-      LabTransaction,
-      RoyaltiesUpload,
-      OwnerTags,
-      TDH,
-      Consolidation,
-      ConsolidatedTDH,
-      NextGenTokenTDH,
-      ConsolidatedOwnerMetric,
-      ConsolidatedOwnerTags,
-      ConsolidatedTDHUpload,
-      Delegation,
-      NFTDelegationBlock,
-      NFTHistory,
-      NFTHistoryBlock,
-      NFTHistoryClaim,
-      Rememe,
-      RememeUpload,
-      TDHHistory,
-      GlobalTDHHistory,
-      ENS,
-      Profile,
-      ProfileArchived,
-      CicStatement,
-      ProfileActivityLog,
-      Rating,
-      AbusivenessDetectionResult,
-      NextGenAllowlist,
-      NextGenAllowlistBurn,
-      NextGenAllowlistCollection,
-      NextGenCollection,
-      NextGenCollectionBurn,
-      NextGenBlock,
-      NextGenLog,
-      NextGenToken,
-      NextGenTokenTrait,
-      NextGenTokenScore,
-      ProcessableEvent,
-      ListenerProcessedEvent,
-      CicScoreAggregation,
-      ProfileTotalRepScoreAggregation,
-      CommunityMember,
-      ProfileFullView,
-      WalletConsolidationKeyView
-    ];
-  }
 
   AppDataSource = new DataSource({
     type: 'mysql',
@@ -303,14 +223,6 @@ export async function fetchLastOwnerMetrics(): Promise<any> {
   const sql = `SELECT transaction_reference FROM ${OWNERS_METRICS_TABLE} ORDER BY transaction_reference DESC LIMIT 1;`;
   const results = await sqlExecutor.execute(sql);
   return results ? results[0].transaction_reference : null;
-}
-
-export async function findReplayTransactions(): Promise<Transaction[]> {
-  const sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE value=0 AND from_address != ${mysql.escape(
-    NULL_ADDRESS
-  )};`;
-  const results = await sqlExecutor.execute(sql);
-  return results;
 }
 
 export async function findDuplicateTransactionHashes(): Promise<string[]> {
@@ -583,11 +495,8 @@ export async function fetchDistinctOwnerWallets() {
   const sql = `SELECT DISTINCT ${OWNERS_TABLE}.wallet, 
     ${OWNERS_METRICS_TABLE}.created_at 
     FROM ${OWNERS_TABLE} LEFT JOIN ${OWNERS_METRICS_TABLE} 
-    ON ${OWNERS_TABLE}.wallet = ${OWNERS_METRICS_TABLE}.wallet 
-    WHERE ${OWNERS_TABLE}.wallet != :null_address;`;
-  const results = await sqlExecutor.execute(sql, {
-    null_address: NULL_ADDRESS
-  });
+    ON ${OWNERS_TABLE}.wallet = ${OWNERS_METRICS_TABLE}.wallet;`;
+  const results = await sqlExecutor.execute(sql);
   return results;
 }
 
@@ -609,10 +518,8 @@ export async function fetchTransactionAddressesFromDate(
 }
 
 export async function fetchAllOwnersAddresses() {
-  const sql = `SELECT distinct wallet FROM ${OWNERS_TABLE} WHERE wallet != :null_address;`;
-  const results = await sqlExecutor.execute(sql, {
-    null_address: NULL_ADDRESS
-  });
+  const sql = `SELECT distinct wallet FROM ${OWNERS_TABLE};`;
+  const results = await sqlExecutor.execute(sql);
   return results;
 }
 
@@ -631,12 +538,18 @@ export async function fetchWalletTransactions(wallet: string, block?: number) {
   const sql = `SELECT * FROM ${TRANSACTIONS_TABLE}`;
   const params: any = {};
 
-  let filters = constructFilters(
-    'filters',
-    `(from_address = :from_address OR to_address = :to_address)`
-  );
-  params.from_address = wallet;
-  params.to_address = wallet;
+  let filters;
+  if (isNullAddress(wallet)) {
+    filters = constructFilters('filters', `to_address = :wallet`);
+    params.wallet = wallet;
+  } else {
+    filters = constructFilters(
+      'filters',
+      `(from_address = :from_address OR to_address = :to_address)`
+    );
+    params.from_address = wallet;
+    params.to_address = wallet;
+  }
 
   if (block) {
     filters = constructFilters(filters, `block <= :block`);
@@ -940,59 +853,7 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
 }
 
 export async function persistMemesExtendedData(data: MemesExtendedData[]) {
-  if (data.length > 0) {
-    logger.info(
-      `[MEMES EXTENDED DATA] [PERSISTING ${data.length} MEMES EXTENDED DATA]`
-    );
-    await Promise.all(
-      data.map(async (md) => {
-        const sql = `REPLACE INTO ${MEMES_EXTENDED_DATA_TABLE} SET 
-            id=:id, 
-            created_at=:created_at, 
-            season=:season, 
-            meme=:meme, 
-            meme_name=:meme_name, 
-            collection_size=:collection_size, 
-            edition_size=:edition_size, 
-            edition_size_rank=:edition_size_rank, 
-            museum_holdings=:museum_holdings, 
-            museum_holdings_rank=:museum_holdings_rank, 
-            edition_size_cleaned=:edition_size_cleaned, 
-            edition_size_cleaned_rank=:edition_size_cleaned_rank, 
-            hodlers=:hodlers, 
-            hodlers_rank=:hodlers_rank, 
-            percent_unique=:percent_unique, 
-            percent_unique_rank=:percent_unique_rank, 
-            percent_unique_cleaned=:percent_unique_cleaned, 
-            percent_unique_cleaned_rank=:percent_unique_cleaned_rank`;
-
-        const params = {
-          id: md.id,
-          created_at: new Date(),
-          season: md.season,
-          meme: md.meme,
-          meme_name: md.meme_name,
-          collection_size: md.collection_size,
-          edition_size: md.edition_size,
-          edition_size_rank: md.edition_size_rank,
-          museum_holdings: md.museum_holdings,
-          museum_holdings_rank: md.museum_holdings_rank,
-          edition_size_cleaned: md.edition_size_cleaned,
-          edition_size_cleaned_rank: md.edition_size_cleaned_rank,
-          hodlers: md.hodlers,
-          hodlers_rank: md.hodlers_rank,
-          percent_unique: md.percent_unique,
-          percent_unique_rank: md.percent_unique_rank,
-          percent_unique_cleaned: md.percent_unique_cleaned,
-          percent_unique_cleaned_rank: md.percent_unique_cleaned_rank
-        };
-        await sqlExecutor.execute(sql, params);
-      })
-    );
-    logger.info(
-      `[MEMES EXTENDED DATA] [ALL ${data.length} MEMES EXTENDED DATA PERSISTED]`
-    );
-  }
+  await AppDataSource.getRepository(MemesExtendedData).save(data);
 }
 
 export async function findVolumeNFTs(nft: NFT): Promise<{

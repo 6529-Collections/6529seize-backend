@@ -16,10 +16,12 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
+  MEME_8_EDITION_BURN_ADJUSTMENT,
   NFTS_HISTORY_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
   NULL_ADDRESS,
+  NULL_ADDRESS_DEAD,
   OWNERS_MEME_LAB_TABLE,
   OWNERS_METRICS_TABLE,
   OWNERS_TABLE,
@@ -470,7 +472,7 @@ export async function fetchLabNFTs(
   const joinClause = `
     LEFT JOIN distribution d ON d.card_id = ${NFTS_MEME_LAB_TABLE}.id AND d.contract = :meme_lab_contract
   `;
-  const groupBy = `${NFTS_MEME_LAB_TABLE}.id`;
+  const groupBy = `${NFTS_MEME_LAB_TABLE}.id, ${NFTS_MEME_LAB_TABLE}.contract`;
   params.meme_lab_contract = MEMELAB_CONTRACT;
 
   return fetchPaginated(
@@ -684,7 +686,7 @@ export async function fetchOwners(
   nfts: string
 ) {
   let filters = '';
-  const params: any = {};
+  let params: any = {};
 
   if (wallets) {
     filters = constructFilters(
@@ -702,7 +704,25 @@ export async function fetchOwners(
     params.nfts = nfts.split(',');
   }
 
-  const fields = ` ${OWNERS_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
+  const fields = ` 
+    ${OWNERS_TABLE}.created_at, 
+    ${OWNERS_TABLE}.wallet, 
+    ${OWNERS_TABLE}.token_id, 
+    ${OWNERS_TABLE}.contract, 
+    CAST(
+        CASE 
+            WHEN ${OWNERS_TABLE}.wallet = :null_address AND ${OWNERS_TABLE}.token_id = :card_8 AND ${OWNERS_TABLE}.contract = :memes_contract THEN balance + :adjustment 
+            ELSE balance 
+        END 
+        AS SIGNED
+    ) as balance, 
+    ${ENS_TABLE}.display as wallet_display `;
+
+  params.null_address = NULL_ADDRESS;
+  params.card_8 = 8;
+  params.memes_contract = MEMES_CONTRACT;
+  params.adjustment = MEME_8_EDITION_BURN_ADJUSTMENT;
+
   const joins = `LEFT JOIN ${ENS_TABLE} ON ${OWNERS_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
   return fetchPaginated(
@@ -788,7 +808,7 @@ async function getTransactionFilters(
 
     if (type_filter == 'purchases') {
       filters = constructFilters(filters, `to_address in (:wallets)`);
-    } else if (type_filter === 'sales') {
+    } else if (type_filter === 'sales' || type_filter === 'burns') {
       filters = constructFilters(filters, `from_address in (:wallets)`);
     } else {
       filters = constructFilters(
@@ -807,7 +827,7 @@ async function getTransactionFilters(
     switch (type_filter) {
       case 'sales':
       case 'purchases':
-        newTypeFilter += `value > 0 AND from_address != :null_address and from_address != :manifold and to_address != :null_address`;
+        newTypeFilter += `value > 0 AND from_address != :null_address and from_address != :manifold and to_address != :null_address and to_address != :dead_address`;
         break;
       case 'airdrops':
         newTypeFilter += `value = 0 AND from_address = :null_address`;
@@ -816,15 +836,16 @@ async function getTransactionFilters(
         newTypeFilter += `value > 0 AND (from_address = :null_address OR from_address = :manifold)`;
         break;
       case 'transfers':
-        newTypeFilter += `value = 0 and from_address != :null_address and to_address != :null_address`;
+        newTypeFilter += `value = 0 and from_address != :null_address and to_address != :null_address and to_address != :dead_address`;
         break;
       case 'burns':
-        newTypeFilter += `to_address = :null_address`;
+        newTypeFilter += `(to_address = :null_address or to_address = :dead_address)`;
         break;
     }
     if (newTypeFilter) {
       filters = constructFilters(filters, newTypeFilter);
       params.null_address = NULL_ADDRESS;
+      params.dead_address = NULL_ADDRESS_DEAD;
       params.manifold = MANIFOLD;
     }
   }
@@ -877,8 +898,9 @@ export async function fetchTransactions(
   if (contracts) {
     filters.filters = constructFilters(
       filters.filters,
-      `contract in (${mysql.escape(contracts.split(','))})`
+      `contract in (:contracts)`
     );
+    filters.params.contracts = contracts.split(',');
   }
 
   const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;

@@ -2,6 +2,9 @@ import {
   GRADIENT_CONTRACT,
   MANIFOLD,
   MEMES_CONTRACT,
+  MEME_8_BURN_TRANSACTION,
+  NULL_ADDRESS,
+  NULL_ADDRESS_DEAD,
   PUNK_6529,
   SZN1_INDEX,
   SZN2_INDEX,
@@ -12,7 +15,11 @@ import {
 } from './constants';
 import { ConsolidatedOwnerMetric, OwnerMetric } from './entities/IOwner';
 import { Transaction } from './entities/ITransaction';
-import { areEqualAddresses, buildConsolidationKey } from './helpers';
+import {
+  areEqualAddresses,
+  buildConsolidationKey,
+  isNullAddress
+} from './helpers';
 import {
   persistOwnerMetrics,
   fetchWalletTransactions,
@@ -503,6 +510,8 @@ export const findOwnerMetrics = async (reset?: boolean) => {
       addresses.add(wallet.from_address);
       addresses.add(wallet.to_address);
     });
+    addresses.add(NULL_ADDRESS);
+    addresses.add(NULL_ADDRESS_DEAD);
   }
 
   const owners: { wallet: string }[] = Array.from(addresses).map((address) => {
@@ -519,7 +528,24 @@ export const findOwnerMetrics = async (reset?: boolean) => {
     owners.map(async (owner) => {
       const wallet = owner.wallet;
 
-      const walletTransactions = await fetchWalletTransactions(wallet);
+      let walletTransactions: Transaction[] = await fetchWalletTransactions(
+        wallet
+      );
+
+      if (isNullAddress(wallet)) {
+        walletTransactions.forEach((wt) => {
+          wt.value = 0;
+        });
+      }
+
+      if (areEqualAddresses(wallet, NULL_ADDRESS)) {
+        logger.info(
+          `[WALLET ${wallet}] [SKIPPING MEME CARD 8 BURN TRANSACTION ${MEME_8_BURN_TRANSACTION}]`
+        );
+        walletTransactions = walletTransactions.filter(
+          (t) => !areEqualAddresses(t.transaction, MEME_8_BURN_TRANSACTION)
+        );
+      }
 
       if (walletTransactions.length > 0) {
         const transactionsIn = [...walletTransactions].filter((wt) =>

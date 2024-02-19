@@ -309,3 +309,17 @@ export function capitalizeEveryWord(input: string): string {
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 }
+
+export function replaceEmojisWithHex(inputString: string) {
+  return inputString.replace(
+    /[\u{1F300}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}]/gu,
+    (match: string) => {
+      const codePoint = match.codePointAt(0);
+      if (codePoint) {
+        const emojiHex = codePoint.toString(16).toUpperCase();
+        return `U+${emojiHex}`;
+      }
+      return match;
+    }
+  );
+}
