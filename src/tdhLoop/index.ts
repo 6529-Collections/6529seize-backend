@@ -17,9 +17,14 @@ import { OwnerMetric } from '../entities/IOwner';
 import * as notifier from '../notifier';
 import { Logger } from '../logging';
 import { Time } from '../time';
-import { ProfileTdh, ProfileTdhLog } from '../entities/IProfileTDH';
 import { Profile } from '../entities/IProfile';
 import * as sentryContext from '../sentry.context';
+import { NextGenTokenTDH } from '../entities/INextGen';
+import {
+  CommunityMember,
+  ProfileFullView,
+  WalletConsolidationKeyView
+} from '../entities/ICommunityMember';
 
 const logger = Logger.get('TDH_LOOP');
 
@@ -27,14 +32,16 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   await loadEnv([
     TDH,
     ConsolidatedTDH,
+    NextGenTokenTDH,
     ConsolidatedTDHUpload,
     NFT,
     OwnerMetric,
     TDHHistory,
     GlobalTDHHistory,
     Profile,
-    ProfileTdh,
-    ProfileTdhLog
+    CommunityMember,
+    ProfileFullView,
+    WalletConsolidationKeyView
   ]);
   const force = process.env.TDH_RESET == 'true';
   logger.info(`[RUNNING force=${force}]`);

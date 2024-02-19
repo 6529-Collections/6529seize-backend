@@ -66,12 +66,14 @@ export class CicDb extends LazyDbAccessCompatibleService {
   }
 
   async getCicStatementsByProfileId(
-    profile_id: string
+    profile_id: string,
+    connection?: ConnectionWrapper<any>
   ): Promise<CicStatement[]> {
+    const opts = connection ? { wrappedConnection: connection } : {};
     return this.db.execute(
       `select * from ${CIC_STATEMENTS_TABLE} where profile_id = :profile_id`,
       { profile_id: profile_id },
-      { forcePool: DbPoolName.WRITE }
+      opts
     );
   }
 }

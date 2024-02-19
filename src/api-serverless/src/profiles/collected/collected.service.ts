@@ -13,11 +13,12 @@ import { WALLET_REGEX } from '../../../../constants';
 import {
   collectedDb,
   CollectedDb,
+  MemesAndGradientsOwnershipData,
   NftData,
-  NftsOwnershipData
+  NftsCollectionOwnershipData
 } from './collected.db';
 import { parseNumberOrNull } from '../../api-helpers';
-import { assertUnreachable } from '../../../../helpers';
+import { assertUnreachable, distinct } from '../../../../helpers';
 
 export class CollectedService {
   constructor(
@@ -28,7 +29,9 @@ export class CollectedService {
   private async getWalletsToSearchBy(query: CollectedQuery): Promise<string[]> {
     if (
       query.collection &&
-      query.collection !== CollectionType.MEMES &&
+      ![CollectionType.MEMES, CollectionType.NEXTGEN].includes(
+        query.collection
+      ) &&
       query.szn
     ) {
       return [];
@@ -64,12 +67,17 @@ export class CollectedService {
     if (walletsToSearchBy.length === 0) {
       return emptyPage();
     }
-    const { nfts, memesAndGradientsStats, memeLabOwnerBalancesByTokenIds } =
-      await this.getDataFromDb(walletsToSearchBy);
+    const {
+      nfts,
+      memesAndGradientsStats,
+      nextgenStats,
+      memeLabOwnerBalancesByTokenIds
+    } = await this.getDataFromDb(walletsToSearchBy);
     const cards = await this.mergeNftsWithOwnersipData(
       nfts,
       memesAndGradientsStats,
-      memeLabOwnerBalancesByTokenIds
+      memeLabOwnerBalancesByTokenIds,
+      nextgenStats
     ).then((cards) => this.filterCards(query, cards));
     const pageOfCards = this.getPageData(cards, query);
     const count = cards.length;
@@ -129,31 +137,55 @@ export class CollectedService {
 
   private async mergeNftsWithOwnersipData(
     nfts: NftData[],
-    memesAndGradientsStats: NftsOwnershipData,
-    memeLabOwnerBalancesByTokenIds: Record<number, number>
+    memesAndGradientsStats: MemesAndGradientsOwnershipData,
+    memeLabOwnerBalancesByTokenIds: Record<number, number>,
+    nextgenStats: NftsCollectionOwnershipData
   ): Promise<CollectedCard[]> {
     return nfts.map<CollectedCard>((nft) => {
       let tdh = null;
       let rank = null;
       let seized = null;
-      if (nft.collection === CollectionType.MEMELAB) {
-        seized = memeLabOwnerBalancesByTokenIds[nft.token_id] ?? null;
-      } else if (nft.collection === CollectionType.MEMES) {
-        tdh = memesAndGradientsStats.memes[nft.token_id]?.tdh ?? null;
-        rank = memesAndGradientsStats.memes_ranks[nft.token_id] ?? null;
-        seized = memesAndGradientsStats.memes[nft.token_id]?.balance ?? null;
-      } else if (nft.collection === CollectionType.GRADIENTS) {
-        tdh = memesAndGradientsStats.gradients[nft.token_id]?.tdh ?? null;
-        rank = memesAndGradientsStats.gradients_ranks[nft.token_id] ?? null;
-        seized =
-          memesAndGradientsStats.gradients[nft.token_id]?.balance ?? null;
+      switch (nft.collection) {
+        case CollectionType.MEMELAB: {
+          seized = memeLabOwnerBalancesByTokenIds[nft.token_id] ?? null;
+          break;
+        }
+        case CollectionType.MEMES: {
+          tdh =
+            memesAndGradientsStats.memes.tdhsAndBalances[nft.token_id]?.tdh ??
+            null;
+          rank = memesAndGradientsStats.memes.ranks[nft.token_id] ?? null;
+          seized =
+            memesAndGradientsStats.memes.tdhsAndBalances[nft.token_id]
+              ?.balance ?? null;
+          break;
+        }
+        case CollectionType.GRADIENTS: {
+          tdh =
+            memesAndGradientsStats.gradients.tdhsAndBalances[nft.token_id]
+              ?.tdh ?? null;
+          rank = memesAndGradientsStats.gradients.ranks[nft.token_id] ?? null;
+          seized =
+            memesAndGradientsStats.gradients.tdhsAndBalances[nft.token_id]
+              ?.balance ?? null;
+          break;
+        }
+        case CollectionType.NEXTGEN: {
+          tdh = nextgenStats.tdhsAndBalances[nft.token_id]?.tdh ?? null;
+          rank = nextgenStats.ranks[nft.token_id] ?? null;
+          seized = nextgenStats.tdhsAndBalances[nft.token_id]?.balance ?? null;
+          break;
+        }
+        default: {
+          assertUnreachable(nft.collection);
+        }
       }
       return {
         collection: nft.collection,
         token_id: nft.token_id,
         token_name: nft.name,
         img: nft.thumbnail,
-        szn: parseNumberOrNull(nft.season),
+        szn: nft.season,
         tdh: tdh,
         rank: rank,
         seized_count: seized
@@ -163,25 +195,116 @@ export class CollectedService {
 
   private async getDataFromDb(walletsToSearchBy: string[]): Promise<{
     nfts: NftData[];
-    memesAndGradientsStats: NftsOwnershipData;
+    memesAndGradientsStats: MemesAndGradientsOwnershipData;
+    nextgenStats: NftsCollectionOwnershipData;
     memeLabOwnerBalancesByTokenIds: Record<number, number>;
   }> {
     const data = await Promise.all([
       this.collectedDb.getAllNfts(),
-      walletsToSearchBy.length > 1
-        ? this.collectedDb.getWalletConsolidatedMemesAndGradientsMetrics(
-            walletsToSearchBy[0]
-          )
-        : this.collectedDb.getWalletMemesAndGradientsMetrics(
-            walletsToSearchBy[0]
-          ),
+      this.getMemesAndGradientsOwnershipData(walletsToSearchBy),
+      this.getNextgenOwnershipData(walletsToSearchBy),
       this.collectedDb.getWalletsMemeLabsBalancesByTokens(walletsToSearchBy)
     ]);
+    const nfts = data[0];
+    const memesAndGradients = data[1];
+    const nextgenStats = data[2];
+    const memeLabsBalances = data[3];
+    await this.adjustBalancesWithLiveData(
+      walletsToSearchBy,
+      memesAndGradients,
+      nextgenStats
+    );
     return {
-      nfts: data[0],
-      memesAndGradientsStats: data[1],
-      memeLabOwnerBalancesByTokenIds: data[2]
+      nfts: nfts,
+      memesAndGradientsStats: memesAndGradients,
+      nextgenStats: nextgenStats,
+      memeLabOwnerBalancesByTokenIds: memeLabsBalances
     };
+  }
+
+  private async adjustBalancesWithLiveData(
+    walletsToSearchBy: string[],
+    memesAndGradients: MemesAndGradientsOwnershipData,
+    nextgenStats: NftsCollectionOwnershipData
+  ) {
+    const nextgenLiveBalances = await this.collectedDb.getNextgenLiveBalances(
+      walletsToSearchBy
+    );
+    const { gradients: gradientsLiveBalances, memes: memesLiveBalances } =
+      await this.collectedDb.getGradientsAndMemesLiveBalancesByTokenIds(
+        walletsToSearchBy
+      );
+    distinct([
+      ...Object.keys(memesAndGradients.memes.tdhsAndBalances),
+      ...Object.keys(memesLiveBalances)
+    ]).forEach((id) => {
+      const tokenId = parseNumberOrNull(id);
+      if (tokenId !== null) {
+        const liveBalance = memesLiveBalances[tokenId] ?? 0;
+        if (liveBalance === 0) {
+          delete memesAndGradients.memes.tdhsAndBalances[tokenId];
+        } else {
+          memesAndGradients.memes.tdhsAndBalances[tokenId] = {
+            balance: liveBalance,
+            tdh: memesAndGradients.memes.tdhsAndBalances[tokenId]?.tdh ?? 0
+          };
+        }
+      }
+    });
+    distinct([
+      ...Object.keys(memesAndGradients.gradients.tdhsAndBalances),
+      ...Object.keys(gradientsLiveBalances)
+    ]).forEach((id) => {
+      const tokenId = parseNumberOrNull(id);
+      if (tokenId !== null) {
+        const liveBalance = gradientsLiveBalances[tokenId] ?? 0;
+        if (liveBalance === 0) {
+          delete memesAndGradients.gradients.tdhsAndBalances[tokenId];
+        } else {
+          memesAndGradients.gradients.tdhsAndBalances[tokenId] = {
+            balance: liveBalance,
+            tdh: memesAndGradients.gradients.tdhsAndBalances[tokenId]?.tdh ?? 0
+          };
+        }
+      }
+    });
+    distinct([
+      ...Object.keys(nextgenStats.tdhsAndBalances),
+      ...Object.keys(nextgenLiveBalances)
+    ]).forEach((id) => {
+      const tokenId = parseNumberOrNull(id);
+      if (tokenId !== null) {
+        const liveBalance = nextgenLiveBalances[tokenId] ?? 0;
+        if (liveBalance === 0) {
+          delete nextgenStats.tdhsAndBalances[tokenId];
+        } else {
+          nextgenStats.tdhsAndBalances[tokenId] = {
+            balance: liveBalance,
+            tdh: nextgenStats.tdhsAndBalances[tokenId]?.tdh ?? 0
+          };
+        }
+      }
+    });
+  }
+
+  private getMemesAndGradientsOwnershipData(
+    walletsToSearchBy: string[]
+  ): Promise<MemesAndGradientsOwnershipData> {
+    return walletsToSearchBy.length > 1
+      ? this.collectedDb.getWalletConsolidatedMemesAndGradientsMetrics(
+          walletsToSearchBy[0]
+        )
+      : this.collectedDb.getWalletMemesAndGradientsMetrics(
+          walletsToSearchBy[0]
+        );
+  }
+
+  private async getNextgenOwnershipData(
+    walletsToSearchBy: string[]
+  ): Promise<NftsCollectionOwnershipData> {
+    return walletsToSearchBy.length > 1
+      ? this.collectedDb.getConsolidatedNextgenMetrics(walletsToSearchBy)
+      : this.collectedDb.getWalletNextgenMetrics(walletsToSearchBy[0]);
   }
 }
 

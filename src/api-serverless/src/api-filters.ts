@@ -155,3 +155,9 @@ export const TRANSACTION_FILTERS = [
   'mints',
   'burns'
 ];
+
+export enum NextGenCollectionStatus {
+  LIVE = 'live',
+  UPCOMING = 'upcoming',
+  COMPLETED = 'completed'
+}

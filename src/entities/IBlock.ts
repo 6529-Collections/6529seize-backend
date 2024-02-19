@@ -8,7 +8,7 @@ export interface Block {
 
 export abstract class BlockEntity {
   @CreateDateColumn()
-  created_at!: Date;
+  created_at?: Date;
 
   @PrimaryColumn({ type: 'int' })
   block!: number;

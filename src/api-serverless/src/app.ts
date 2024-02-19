@@ -2,39 +2,12 @@ import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { loadLocalConfig, loadSecrets } from '../../secrets';
 import { isNumber } from '../../helpers';
-import {
-  validateRememe,
-  validateRememeAdd
-} from './rememes/rememes_validation';
-import {
-  CACHE_TIME_MS,
-  corsOptions,
-  DEFAULT_PAGE_SIZE,
-  DISTRIBUTION_PAGE_SIZE,
-  NFTS_PAGE_SIZE,
-  SEIZE_SETTINGS,
-  SORT_DIRECTIONS
-} from './api-constants';
-import {
-  cacheKey,
-  returnCSVResult,
-  returnJsonResult,
-  returnPaginatedResult
-} from './api-helpers';
-import {
-  DISTRIBUTION_SORT,
-  MEME_LAB_OWNERS_SORT,
-  NFT_TDH_SORT,
-  REMEMES_SORT,
-  TAGS_FILTERS,
-  TDH_SORT,
-  TRANSACTION_FILTERS
-} from './api-filters';
-import { validateUser } from './users/user_validation';
 
 import profilesRoutes from './profiles/profiles.routes';
 import communityMembersSearchRoutes from './profiles/community-members-search.routes';
 import authRoutes from './auth/auth.routes';
+import rememesRoutes from './rememes/rememes.routes';
+import nextgenRoutes from './nextgen/nextgen.routes';
 import analyticsRoutes from './analytics/analytics.routes';
 import royaltiesRoutes from './royalties/royalties.routes';
 import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
@@ -53,11 +26,36 @@ import * as sentryContext from '../../sentry.context';
 import * as Sentry from '@sentry/serverless';
 import { asyncRouter } from './async.router';
 import { ApiCompliantException } from '../../exceptions';
+
 import { Strategy as AnonymousStrategy } from 'passport-anonymous';
 import { Logger } from '../../logging';
 import * as awsServerlessExpressMiddleware from 'aws-serverless-express/middleware';
 import * as process from 'process';
 import * as mcache from 'memory-cache';
+import {
+  cacheKey,
+  returnCSVResult,
+  returnJsonResult,
+  returnPaginatedResult
+} from './api-helpers';
+import {
+  CACHE_TIME_MS,
+  corsOptions,
+  DEFAULT_PAGE_SIZE,
+  DISTRIBUTION_PAGE_SIZE,
+  NFTS_PAGE_SIZE,
+  SEIZE_SETTINGS,
+  SORT_DIRECTIONS
+} from './api-constants';
+import {
+  DISTRIBUTION_SORT,
+  MEME_LAB_OWNERS_SORT,
+  NFT_TDH_SORT,
+  TAGS_FILTERS,
+  TDH_SORT,
+  TRANSACTION_FILTERS
+} from './api-filters';
+import { parseTdhResults } from '../../sql_helpers';
 
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
@@ -579,12 +577,7 @@ loadApi().then(() => {
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
     db.fetchGradientTdh(pageSize, page).then((result) => {
-      result.data.map((d: any) => {
-        d.memes = JSON.parse(d.memes);
-        d.memes_ranks = JSON.parse(d.memes_ranks);
-        d.gradients = JSON.parse(d.gradients);
-        d.gradients_ranks = JSON.parse(d.gradients_ranks);
-      });
+      result = parseTdhResults(result);
       returnPaginatedResult(result, req, res);
     });
   });
@@ -593,18 +586,6 @@ loadApi().then(() => {
     const address = req.params.address;
 
     db.fetchEns(address).then((result) => {
-      if (result.length == 1) {
-        returnJsonResult(result[0], req, res);
-      } else {
-        returnJsonResult({}, req, res);
-      }
-    });
-  });
-
-  apiRouter.get(`/user/:address/`, function (req: any, res: any) {
-    const address = req.params.address;
-
-    db.fetchUser(address).then((result) => {
       if (result.length == 1) {
         returnJsonResult(result[0], req, res);
       } else {
@@ -645,12 +626,7 @@ loadApi().then(() => {
       sort,
       sortDir
     ).then((result) => {
-      result.data.map((d: any) => {
-        d.memes = JSON.parse(d.memes);
-        d.memes_ranks = JSON.parse(d.memes_ranks);
-        d.gradients = JSON.parse(d.gradients);
-        d.gradients_ranks = JSON.parse(d.gradients_ranks);
-      });
+      result = parseTdhResults(result);
       returnPaginatedResult(result, req, res);
     });
   });
@@ -688,13 +664,7 @@ loadApi().then(() => {
         sort,
         sortDir
       ).then((result) => {
-        result.data.map((d: any) => {
-          d.memes = JSON.parse(d.memes);
-          d.memes_ranks = JSON.parse(d.memes_ranks);
-          d.gradients = JSON.parse(d.gradients);
-          d.gradients_ranks = JSON.parse(d.gradients_ranks);
-          d.wallets = JSON.parse(d.wallets);
-        });
+        result = parseTdhResults(result);
         returnPaginatedResult(result, req, res);
       });
     }
@@ -740,12 +710,7 @@ loadApi().then(() => {
       hideMuseum,
       hideTeam
     ).then((result) => {
-      result.data.map((d: any) => {
-        d.memes = JSON.parse(d.memes);
-        d.memes_ranks = JSON.parse(d.memes_ranks);
-        d.gradients = JSON.parse(d.gradients);
-        d.gradients_ranks = JSON.parse(d.gradients_ranks);
-      });
+      result = parseTdhResults(result);
       returnPaginatedResult(result, req, res);
     });
   });
@@ -807,25 +772,14 @@ loadApi().then(() => {
           delete d.memes_ranks;
           delete d.gradients;
           delete d.gradients_ranks;
+          delete d.nextgen;
+          delete d.nextgen_ranks;
           if (!d.handle) {
             d.handle = '';
           }
         });
       } else {
-        result.data.map((d: any) => {
-          if (d.memes) {
-            d.memes = JSON.parse(d.memes);
-          }
-          if (d.memes_ranks) {
-            d.memes_ranks = JSON.parse(d.memes_ranks);
-          }
-          if (d.gradients) {
-            d.gradients = JSON.parse(d.gradients);
-          }
-          if (d.gradients_ranks) {
-            d.gradients_ranks = JSON.parse(d.gradients_ranks);
-          }
-        });
+        result = parseTdhResults(result);
       }
       if (downloadAll || downloadPage) {
         returnCSVResult('consolidated_owner_metrics', result.data, res);
@@ -937,6 +891,8 @@ loadApi().then(() => {
           delete d.memes_ranks;
           delete d.gradients;
           delete d.gradients_ranks;
+          delete d.nextgen;
+          delete d.nextgen_ranks;
           if (!d.handle) {
             d.handle = '';
           }
@@ -1127,6 +1083,20 @@ loadApi().then(() => {
     });
   });
 
+  apiRouter.get(`/delegations/minting/:wallet`, function (req: any, res: any) {
+    const wallet = req.params.wallet;
+
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+    db.fetchMintingDelegations(wallet, pageSize, page).then((result) => {
+      returnPaginatedResult(result, req, res);
+    });
+  });
+
   apiRouter.get(`/delegations`, function (req: any, res: any) {
     const use_cases = req.query.use_case;
     const collections = req.query.collection;
@@ -1190,88 +1160,6 @@ loadApi().then(() => {
     const json = await response.json();
     return res.send(json);
   });
-
-  apiRouter.get(
-    `/next_gen/:merkle_root/:address`,
-    async function (req: any, res: any) {
-      const merkleRoot = req.params.merkle_root;
-      const address = req.params.address;
-
-      db.fetchNextGenAllowlist(merkleRoot, address).then((result) => {
-        returnJsonResult(result, req, res);
-      });
-    }
-  );
-
-  apiRouter.get(`/rememes`, function (req: any, res: any) {
-    const memeIds = req.query.meme_id;
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    const contract = req.query.contract;
-    const id = req.query.id;
-    const tokenType = req.query.token_type;
-
-    const sort =
-      req.query.sort && REMEMES_SORT.includes(req.query.sort)
-        ? req.query.sort
-        : undefined;
-
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'desc';
-    db.fetchRememes(
-      memeIds,
-      pageSize,
-      page,
-      contract,
-      id,
-      tokenType,
-      sort,
-      sortDir
-    ).then((result) => {
-      result.data.map((a: any) => {
-        a.metadata = JSON.parse(a.metadata);
-        a.media = JSON.parse(a.media);
-        a.contract_opensea_data = JSON.parse(a.contract_opensea_data);
-        a.meme_references = JSON.parse(a.meme_references);
-        a.replicas = a.replicas.split(',');
-      });
-      returnPaginatedResult(result, req, res, true);
-    });
-  });
-
-  apiRouter.post(
-    `/rememes/validate`,
-    validateRememe,
-    function (req: any, res: any) {
-      const body = req.validatedBody;
-      res.status(body.valid ? 200 : 400);
-      returnJsonResult(body, req, res);
-    }
-  );
-
-  apiRouter.post(
-    `/rememes/add`,
-    validateRememeAdd,
-    function (req: any, res: any) {
-      const body = req.validatedBody;
-      const valid = body.valid;
-      if (valid) {
-        db.addRememe(req.body.address, body).then((result) => {
-          res.status(201);
-          returnJsonResult(body, req, res);
-        });
-      } else {
-        res.status(400);
-        returnJsonResult(body, req, res);
-      }
-    }
-  );
 
   apiRouter.get(`/rememes_uploads`, function (req: any, res: any) {
     const pageSize: number =
@@ -1339,25 +1227,6 @@ loadApi().then(() => {
     );
   });
 
-  apiRouter.post(
-    `/user`,
-    upload.single('pfp'),
-    validateUser,
-    function (req: any, res: any) {
-      const body = req.validatedBody;
-      const valid = body.valid;
-      if (valid) {
-        db.updateUser(body.user).then((result) => {
-          res.status(200);
-          returnJsonResult(body, req, res);
-        });
-      } else {
-        res.status(400);
-        returnJsonResult(body, req, res);
-      }
-    }
-  );
-
   rootRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
     returnJsonResult(
@@ -1374,6 +1243,8 @@ loadApi().then(() => {
   apiRouter.use(`/analytics`, analyticsRoutes);
   apiRouter.use(`/community-members`, communityMembersSearchRoutes);
   apiRouter.use(`/auth`, authRoutes);
+  apiRouter.use(`/rememes`, rememesRoutes);
+  apiRouter.use(`/nextgen`, nextgenRoutes);
   apiRouter.use(`/gas`, gasRoutes);
   apiRouter.use(`/royalties`, royaltiesRoutes);
   apiRouter.use(`/profile-logs`, profileActivityLogsRoutes);

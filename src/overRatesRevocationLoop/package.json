@@ -2,7 +2,7 @@
   "name": "overratesrevocationloop",
   "version": "1.0.0",
   "description": "",
-  "main": "index.js",
+  "main": "index.ts",
   "scripts": {
     "prebuild": "rm -rf dist",
     "build": "esbuild index.ts --bundle --sourcemap --platform=node --target=es2020 --outfile=dist/index.js",
@@ -16,6 +16,5 @@
     "@types/aws-lambda": "^8.10.110",
     "esbuild": "^0.17.5"
   },
-  "dependencies": {
-  }
+  "dependencies": {}
 }

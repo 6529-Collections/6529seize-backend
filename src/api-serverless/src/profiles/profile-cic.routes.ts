@@ -24,6 +24,7 @@ import {
   getRaterInfoFromRequest,
   RateProfileRequest
 } from './rating.helper';
+import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -118,6 +119,7 @@ router.post(
       matter_target_id: targetProfileId,
       rating: amount
     });
+    await giveReadReplicaTimeToCatchUp();
     const updatedProfileInfo =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
         handleOrWallet
@@ -222,6 +224,7 @@ router.delete(
       id: statementId,
       profile_id: profileId
     });
+    await giveReadReplicaTimeToCatchUp();
     res.status(201).send();
   }
 );
@@ -267,6 +270,7 @@ router.post(
         ...requestPayload
       }
     });
+    await giveReadReplicaTimeToCatchUp();
     res.status(201).send(updatedStatement);
   }
 );

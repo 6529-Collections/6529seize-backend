@@ -1,3 +1,4 @@
+import fetch from 'node-fetch';
 import axios, { AxiosResponse } from 'axios';
 import {
   CONSOLIDATIONS_LIMIT,
@@ -5,6 +6,8 @@ import {
   NULL_ADDRESS_DEAD
 } from './constants';
 import * as short from 'short-uuid';
+import { goerli, sepolia } from '@wagmi/chains';
+import { Network } from 'alchemy-sdk';
 
 export function areEqualAddresses(w1: string, w2: string) {
   if (!w1 || !w2) {
@@ -212,6 +215,15 @@ export function isValidUrl(url: string) {
   }
 }
 
+export function stringToHex(s: string) {
+  let hexString = '';
+  for (let i = 0; i < s.length; i++) {
+    const hex = s.charCodeAt(i).toString(16);
+    hexString += hex;
+  }
+  return hexString;
+}
+
 export function distinct<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
 }
@@ -230,7 +242,70 @@ export const assertUnreachable = (_x: never): never => {
   throw new Error("Didn't expect to get here");
 };
 
+export async function fetchImage(url: string): Promise<ArrayBuffer> {
+  const response = await fetch(url);
+  return await response.arrayBuffer();
+}
+
+export async function compareImages(
+  url1: string,
+  url2: string
+): Promise<boolean> {
+  try {
+    const [image1, image2] = await Promise.all([
+      fetchImage(url1),
+      fetchImage(url2)
+    ]);
+    const data1 = new Uint8Array(image1);
+    const data2 = new Uint8Array(image2);
+    const areImagesEqual = JSON.stringify(data1) === JSON.stringify(data2);
+    return areImagesEqual;
+  } catch (error) {
+    console.error('Error fetching or comparing images:', error);
+    return false;
+  }
+}
+
 export function buildConsolidationKey(wallets: string[]) {
-  const sortedWallets = wallets.slice().sort((a, b) => a.localeCompare(b));
+  const sortedWallets = wallets
+    .map((it) => it.toLowerCase())
+    .slice()
+    .sort((a, b) => a.localeCompare(b));
   return sortedWallets.join('-');
+}
+
+export function gweiToEth(gwei: number): number {
+  return gwei / 1e9;
+}
+
+export function weiToEth(wei: number): number {
+  return wei / 1e18;
+}
+
+export function getRpcUrlFromNetwork(network: Network) {
+  return `https://${network.toLowerCase()}.g.alchemy.com/v2/${
+    process.env.ALCHEMY_API_KEY
+  }`;
+}
+
+export function getRpcUrl(chainId: number) {
+  let network: Network;
+
+  if (chainId === goerli.id) {
+    network = Network.ETH_GOERLI;
+  } else if (chainId === sepolia.id) {
+    network = Network.ETH_SEPOLIA;
+  } else {
+    network = Network.ETH_MAINNET;
+  }
+
+  return getRpcUrlFromNetwork(network);
+}
+
+export function capitalizeEveryWord(input: string): string {
+  return input
+    .toLocaleLowerCase()
+    .split(' ')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }

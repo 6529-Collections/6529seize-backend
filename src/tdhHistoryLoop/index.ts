@@ -383,6 +383,7 @@ async function calculateGlobalTDHHistory(
   let walletsLength = 0;
   let memesLength = 0;
   let gradientsLength = 0;
+  let nextgenLength = 0;
 
   tdhData.forEach((h: any) => {
     totalBoostedTdh += parseFloat(h.boosted_tdh);
@@ -398,6 +399,7 @@ async function calculateGlobalTDHHistory(
     walletsLength += h.wallets.length;
     memesLength += h.memes.length;
     gradientsLength += h.gradients.length;
+    nextgenLength += h.nextgen?.length ?? 0;
   });
 
   const consolidationWallets = tdhData.length;
@@ -419,6 +421,7 @@ async function calculateGlobalTDHHistory(
     net_balance: totalNetBalance,
     memes_balance: memesLength,
     gradients_balance: gradientsLength,
+    nextgen_balance: nextgenLength,
     total_boosted_tdh: totalBoostedTdh,
     total_tdh: totalTdh,
     total_tdh__raw: totalTdhRaw,

@@ -8,6 +8,7 @@ import {
   JSON_HEADER_VALUE,
   PaginatedResponse
 } from './api-constants';
+import { Time } from '../../time';
 
 const converter = require('json-2-csv');
 
@@ -100,6 +101,12 @@ export function resolveIntParam(param: string | string[] | undefined) {
     }
   }
   return undefined;
+}
+
+export function giveReadReplicaTimeToCatchUp() {
+  const millisToGive =
+    parseNumberOrNull(process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE) ?? 500;
+  return Time.millis(millisToGive).sleep();
 }
 
 export function parseNumberOrNull(input: any): number | null {

@@ -4,6 +4,7 @@ import {
   repScoreAggregationDb,
   RepScoreAggregationDb
 } from '../../../aggregations/rep-score-aggregation.db';
+import { ConnectionWrapper } from '../../../sql-executor';
 
 export class RepService {
   constructor(
@@ -12,12 +13,16 @@ export class RepService {
   ) {}
 
   async getRepForProfiles(
-    profileIds: string[]
+    profileIds: string[],
+    connection?: ConnectionWrapper<any>
   ): Promise<Record<string, number>> {
-    const foundRatings = await this.ratingsDb.getRatingsForTargetsOnMatters({
-      targetIds: profileIds,
-      matter: RateMatter.REP
-    });
+    const foundRatings = await this.ratingsDb.getRatingsForTargetsOnMatters(
+      {
+        targetIds: profileIds,
+        matter: RateMatter.REP
+      },
+      connection
+    );
     return profileIds.reduce((acc, profileId) => {
       return {
         ...acc,
@@ -43,11 +48,17 @@ export class RepService {
     );
   }
 
-  async getRepForProfile(profileId: string): Promise<number> {
-    const foundRatings = await this.ratingsDb.getRatingsForTargetsOnMatters({
-      targetIds: [profileId],
-      matter: RateMatter.REP
-    });
+  async getRepForProfile(
+    profileId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
+    const foundRatings = await this.ratingsDb.getRatingsForTargetsOnMatters(
+      {
+        targetIds: [profileId],
+        matter: RateMatter.REP
+      },
+      connection
+    );
     return foundRatings.at(0)?.rating ?? 0;
   }
 }

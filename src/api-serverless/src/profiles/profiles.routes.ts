@@ -23,6 +23,7 @@ import { profilesService } from '../../../profiles/profiles.service';
 import profileCicRoutes from './profile-cic.routes';
 import profileRepRoutes from './profile-rep.routes';
 import profileCollectedRoutes from './collected/collected.routes';
+import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 
 const router = asyncRouter();
 
@@ -141,6 +142,7 @@ router.post(
     const profile = await profilesService.createOrUpdateProfile(
       createProfileCommand
     );
+    await giveReadReplicaTimeToCatchUp();
     res.status(201).send(profile);
   }
 );
@@ -173,6 +175,7 @@ router.post(
       handleOrWallet,
       memeOrFile: { file, meme }
     });
+    await giveReadReplicaTimeToCatchUp();
     res.status(201).send(response);
   }
 );

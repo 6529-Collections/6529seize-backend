@@ -5,6 +5,7 @@ import {
   CONSOLIDATED_UPLOADS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATIONS_TABLE,
+  DELEGATION_ALL_ADDRESS,
   DELEGATIONS_TABLE,
   DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE,
@@ -16,8 +17,6 @@ import {
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   MEME_8_EDITION_BURN_ADJUSTMENT,
-  NEXT_GEN_ALLOWLIST,
-  NEXT_GEN_COLLECTIONS,
   NFTS_HISTORY_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
@@ -27,6 +26,7 @@ import {
   OWNERS_METRICS_TABLE,
   OWNERS_TABLE,
   OWNERS_TAGS_TABLE,
+  PROFILE_FULL,
   REMEMES_TABLE,
   REMEMES_UPLOADS,
   ROYALTIES_UPLOADS_TABLE,
@@ -38,18 +38,18 @@ import {
   TRANSACTIONS_MEME_LAB_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
-  USER_TABLE,
+  USE_CASE_ALL,
+  USE_CASE_MINTING,
+  WALLETS_CONSOLIDATION_KEYS_VIEW,
   WALLETS_TDH_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
-import { User } from './entities/IUser';
 import {
   areEqualAddresses,
   distinct,
   extractConsolidationWallets
 } from './helpers';
 import { getConsolidationsSql, getProfilePageSql } from './sql_helpers';
-import { getProof } from './merkle_proof';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 
 import * as mysql from 'mysql';
@@ -260,7 +260,7 @@ async function getTeamWallets() {
   return results;
 }
 
-async function fetchPaginated(
+export async function fetchPaginated(
   table: string,
   params: any,
   orderBy: string,
@@ -271,9 +271,10 @@ async function fetchPaginated(
   joins?: string,
   groups?: string
 ) {
-  const countSql = `SELECT COUNT(1) as count FROM (SELECT 1 FROM ${table} ${joins} ${filters}${
-    groups ? ` GROUP BY ${groups}` : ``
-  }) inner_q`;
+  const groupPart = groups ? ` GROUP BY ${groups}` : '';
+  const countSql = `SELECT COUNT(1) as count FROM (SELECT 1 FROM ${table} ${
+    joins ?? ''
+  } ${filters}${groupPart}) inner_q`;
 
   let resultsSql = `SELECT ${fields ? fields : '*'} FROM ${table} ${
     joins ? joins : ''
@@ -284,6 +285,8 @@ async function fetchPaginated(
     const offset = pageSize * (page - 1);
     resultsSql += ` OFFSET ${offset}`;
   }
+  logger.debug(`Count sql: '${countSql}`);
+  logger.debug(`Data sql: ${resultsSql}`);
 
   const count = await sqlExecutor
     .execute(countSql, params)
@@ -984,8 +987,10 @@ export async function fetchNftTdh(
     contract
   )} and ${OWNERS_TABLE}.token_id=${nftId}) as dense_table ON ${WALLETS_TDH_TABLE}.wallet = dense_table.wallet`;
   joins += ` LEFT JOIN ${OWNERS_METRICS_TABLE} on ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet`;
+  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} wc on wc.wallet = tdh.wallet`;
+  joins += ` LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = wc.consolidation_key`;
 
-  const fields = ` ${OWNERS_METRICS_TABLE}.balance, ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, dense_table.dense_rank_balance `;
+  const fields = `p.handle as handle, p.rep_score as rep_score, p.cic_score as cic_score, p.profile_tdh as profile_tdh, ${OWNERS_METRICS_TABLE}.balance, ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, dense_table.dense_rank_balance `;
 
   switch (sort) {
     case 'card_tdh':
@@ -1018,7 +1023,12 @@ export async function fetchNftTdh(
     fields,
     joins
   );
-  result.data = await enhanceDataWithHandlesAndLevel(result.data);
+  result.data.forEach((d: any) => {
+    d.level = calculateLevel({
+      tdh: d.profile_tdh ?? d.boosted_tdh,
+      rep: d.rep_score
+    });
+  });
   return result;
 }
 
@@ -1069,8 +1079,9 @@ export async function fetchConsolidatedNftTdh(
 
   joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_METRICS_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key`;
   joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key `;
+  joins += ` LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
 
-  const fields = ` ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance, ${CONSOLIDATED_WALLETS_TDH_TABLE}.* `;
+  const fields = ` p.handle as handle, p.rep_score as rep_score, p.cic_score as cic_score, p.profile_tdh as profile_tdh, ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance, ${CONSOLIDATED_WALLETS_TDH_TABLE}.* `;
 
   switch (sort) {
     case 'card_tdh':
@@ -1103,7 +1114,12 @@ export async function fetchConsolidatedNftTdh(
     fields,
     joins
   );
-  result.data = await enhanceDataWithHandlesAndLevel(result.data);
+  result.data.forEach((d: any) => {
+    d.level = calculateLevel({
+      tdh: d.profile_tdh ?? d.boosted_tdh,
+      rep: d.rep_score
+    });
+  });
   return result;
 }
 
@@ -1989,7 +2005,8 @@ export async function fetchConsolidatedOwnerMetrics(
 
   return results;
 }
-function returnEmpty() {
+
+export function returnEmpty() {
   return {
     count: 0,
     page: 0,
@@ -2000,21 +2017,6 @@ function returnEmpty() {
 
 export async function fetchEns(address: string) {
   const sql = `SELECT * FROM ${ENS_TABLE} WHERE LOWER(wallet)=LOWER(:address) OR LOWER(display)=LOWER(:address)`;
-  return sqlExecutor.execute(sql, { address: address });
-}
-
-export async function fetchUser(address: string) {
-  const sql = `SELECT 
-      ${ENS_TABLE}.*, 
-      ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key,
-      ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance, 
-      ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
-      ${USER_TABLE}.pfp, ${USER_TABLE}.banner_1, ${USER_TABLE}.banner_2, ${USER_TABLE}.website 
-    FROM ${ENS_TABLE} 
-    LEFT JOIN ${CONSOLIDATED_OWNERS_METRICS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key LIKE CONCAT('%', ${ENS_TABLE}.wallet, '%') 
-    LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key 
-    LEFT JOIN ${USER_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key LIKE CONCAT('%', ${USER_TABLE}.wallet, '%') 
-    WHERE LOWER(${ENS_TABLE}.wallet)=LOWER(:address) OR LOWER(display)=LOWER(:address) ORDER BY ${USER_TABLE}.updated_at desc limit 1`;
   return sqlExecutor.execute(sql, { address: address });
 }
 
@@ -2389,6 +2391,39 @@ export async function fetchDelegations(
   );
 }
 
+export async function fetchMintingDelegations(
+  wallet: string,
+  pageSize: number,
+  page: number
+) {
+  let filter = constructFilters('', `LOWER(from_address) = :wallet`);
+
+  filter = constructFilters(filter, `expiry >= :expiry`);
+  filter = constructFilters(filter, `use_case in (:use_cases)`);
+  filter = constructFilters(filter, `collection in (:collections)`);
+
+  const params = {
+    wallet: wallet.toLowerCase(),
+    expiry: Date.now() / 1000,
+    use_cases: [USE_CASE_ALL, USE_CASE_MINTING],
+    collections: [DELEGATION_ALL_ADDRESS, MEMES_CONTRACT]
+  };
+
+  let joins = `LEFT JOIN ${ENS_TABLE} e1 ON ${DELEGATIONS_TABLE}.from_address=e1.wallet`;
+  joins += ` LEFT JOIN ${ENS_TABLE} e2 ON ${DELEGATIONS_TABLE}.to_address=e2.wallet`;
+
+  return fetchPaginated(
+    DELEGATIONS_TABLE,
+    params,
+    'block desc',
+    pageSize,
+    page,
+    filter,
+    `${DELEGATIONS_TABLE}.*, e1.display as from_display, e2.display as to_display`,
+    joins
+  );
+}
+
 export async function fetchDelegationsByUseCase(
   collections: string,
   useCases: string,
@@ -2449,43 +2484,6 @@ export async function fetchNftHistory(
     page,
     filter
   );
-}
-
-export async function fetchNextGenAllowlist(
-  merkleRoot: string,
-  address: string
-) {
-  const sql1 = `SELECT * FROM ${NEXT_GEN_COLLECTIONS} WHERE merkle_root=:merkle_root`;
-  const collection = (
-    await sqlExecutor.execute(sql1, {
-      merkle_root: merkleRoot
-    })
-  )[0];
-
-  const sql2 = `SELECT * FROM ${NEXT_GEN_ALLOWLIST} WHERE merkle_root=:merkle_root AND address=:address`;
-
-  const allowlist = (
-    await sqlExecutor.execute(sql2, {
-      merkle_root: merkleRoot,
-      address: address
-    })
-  )[0];
-
-  if (collection && allowlist) {
-    const proof = getProof(collection.merkle_tree, allowlist.keccak);
-    return {
-      keccak: allowlist.keccak,
-      spots: allowlist.spots,
-      info: allowlist.info,
-      proof: proof
-    };
-  }
-  return {
-    keccak: null,
-    spots: -1,
-    data: null,
-    proof: []
-  };
 }
 
 export async function fetchRememes(
@@ -2689,26 +2687,6 @@ export async function fetchTDHHistory(
     filters
   );
 }
-
-export async function updateUser(user: User) {
-  const sql = `INSERT INTO ${USER_TABLE} (wallet, pfp, banner_1, banner_2, website) 
-    VALUES (:wallet, :pfp, :banner_1, :banner_2, :website) 
-    ON DUPLICATE KEY UPDATE 
-    pfp = IF(:pfp IS NOT NULL AND LENGTH(:pfp) > 0, :pfp, pfp),
-    banner_1 = :banner_1, 
-    banner_2 = :banner_2, 
-    website = :website`;
-  const params = {
-    wallet: user.wallet,
-    pfp: user.pfp,
-    banner_1: user.banner_1,
-    banner_2: user.banner_2,
-    website: user.website
-  };
-
-  await sqlExecutor.execute(sql, params);
-}
-
 export async function fetchRoyaltiesUploads(pageSize: number, page: number) {
   return fetchPaginated(
     ROYALTIES_UPLOADS_TABLE,

@@ -46,9 +46,10 @@ export class RatingsService {
   ) {}
 
   public async getAggregatedRatingOnMatter(
-    request: AggregatedRatingRequest
+    request: AggregatedRatingRequest,
+    connection?: ConnectionWrapper<any>
   ): Promise<AggregatedRating> {
-    return this.ratingsDb.getAggregatedRatingOnMatter(request);
+    return this.ratingsDb.getAggregatedRatingOnMatter(request, connection);
   }
 
   public async getRatesLeftOnMatterForProfile({

@@ -12,6 +12,11 @@ provider:
   memorySize: 1028
   timeout: 900
 
+custom:
+  chainIDs:
+    staging: 1
+    prod: 1
+
 functions:
   ownerMetricsLoop:
     handler: index.handler
@@ -27,4 +32,5 @@ functions:
       RESET: false
       METRICS_RESET: true
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: "ownerMetricsLoop_${opt:stage, self:provider.stage}"
+      SENTRY_ENVIRONMENT: 'ownerMetricsLoop_${opt:stage, self:provider.stage}'
+      NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}

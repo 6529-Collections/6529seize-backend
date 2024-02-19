@@ -1,0 +1,35 @@
+service: nextgenMetadataLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  memorySize: 1028
+  timeout: 900
+
+custom:
+  chainIDs:
+    staging: 1
+    prod: 1
+
+functions:
+  nextgenMetadataLoop:
+    handler: index.handler
+    name: nextgenMetadataLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule: rate(1 hour)
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'nextgenMetadataLoop_${opt:stage, self:provider.stage}'
+      NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}

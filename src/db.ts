@@ -12,6 +12,7 @@ import {
   CONSOLIDATED_UPLOADS_TABLE,
   CONSOLIDATIONS_TABLE,
   ENS_TABLE,
+  GRADIENT_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   MEME_LAB_ROYALTIES_TABLE,
@@ -28,7 +29,6 @@ import {
 } from './constants';
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
-import { User } from './entities/IUser';
 
 import {
   LabExtendedData,
@@ -78,6 +78,19 @@ import {
   isNullAddress
 } from './helpers';
 import { getConsolidationsSql } from './sql_helpers';
+import {
+  NextGenAllowlist,
+  NextGenAllowlistBurn,
+  NextGenAllowlistCollection,
+  NextGenBlock,
+  NextGenCollection,
+  NextGenCollectionBurn,
+  NextGenLog,
+  NextGenToken,
+  NextGenTokenScore,
+  NextGenTokenTDH,
+  NextGenTokenTrait
+} from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { Profile, ProfileArchived } from './entities/IProfile';
 import { Logger } from './logging';
@@ -85,13 +98,18 @@ import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
 import { CicStatement } from './entities/ICICStatement';
 import { profilesService } from './profiles/profiles.service';
-import { ProfileTdh, ProfileTdhLog } from './entities/IProfileTDH';
 import { ProfileActivityLog } from './entities/IProfileActivityLog';
 import { Rating } from './entities/IRating';
 import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
 import { ListenerProcessedEvent, ProcessableEvent } from './entities/IEvent';
 import { CicScoreAggregation } from './entities/ICicScoreAggregation';
 import { ProfileTotalRepScoreAggregation } from './entities/IRepScoreAggregations';
+import {
+  CommunityMember,
+  ProfileFullView,
+  WalletConsolidationKeyView
+} from './entities/ICommunityMember';
+import { synchroniseCommunityMembersTable } from './community-members';
 
 const mysql = require('mysql');
 
@@ -102,7 +120,7 @@ let AppDataSource: DataSource;
 export async function connect(entities: any[] = []) {
   logger.info(`[DB HOST ${process.env.DB_HOST}]`);
 
-  if (process.env.NODE_ENV == 'local') {
+  if (process.env.NODE_ENV === 'local') {
     entities = [
       Owner,
       LabNFT,
@@ -118,6 +136,7 @@ export async function connect(entities: any[] = []) {
       TDH,
       Consolidation,
       ConsolidatedTDH,
+      NextGenTokenTDH,
       ConsolidatedOwnerMetric,
       ConsolidatedOwnerTags,
       ConsolidatedTDHUpload,
@@ -131,19 +150,29 @@ export async function connect(entities: any[] = []) {
       TDHHistory,
       GlobalTDHHistory,
       ENS,
-      User,
       Profile,
       ProfileArchived,
-      ProfileTdh,
-      ProfileTdhLog,
       CicStatement,
       ProfileActivityLog,
       Rating,
       AbusivenessDetectionResult,
+      NextGenAllowlist,
+      NextGenAllowlistBurn,
+      NextGenAllowlistCollection,
+      NextGenCollection,
+      NextGenCollectionBurn,
+      NextGenBlock,
+      NextGenLog,
+      NextGenToken,
+      NextGenTokenTrait,
+      NextGenTokenScore,
       ProcessableEvent,
       ListenerProcessedEvent,
       CicScoreAggregation,
-      ProfileTotalRepScoreAggregation
+      ProfileTotalRepScoreAggregation,
+      CommunityMember,
+      ProfileFullView,
+      WalletConsolidationKeyView
     ];
   }
 
@@ -160,6 +189,7 @@ export async function connect(entities: any[] = []) {
   });
 
   await AppDataSource.initialize().catch((error) => logger.error(error));
+
   setSqlExecutor({
     execute: (
       sql: string,
@@ -170,7 +200,15 @@ export async function connect(entities: any[] = []) {
       return execNativeTransactionally(executable);
     }
   });
-  logger.info('[CONNECTION CREATED]');
+  logger.info(
+    `[CONNECTION CREATED] [APP DATA SOURCE ${
+      !AppDataSource.isInitialized ? 'NOT ' : ''
+    }INITIALIZED]`
+  );
+}
+
+export function getDataSource() {
+  return AppDataSource;
 }
 
 export async function disconnect() {
@@ -347,6 +385,9 @@ export async function fetchLatestTransactionsBlockNumber(beforeDate?: Date) {
   if (beforeDate) {
     sql += ` WHERE UNIX_TIMESTAMP(transaction_date) <= :date`;
     params.date = beforeDate.getTime() / 1000;
+  } else {
+    sql += ` WHERE contract in (:contracts)`;
+    params.contracts = [MEMES_CONTRACT, GRADIENT_CONTRACT];
   }
   sql += ` order by block desc limit 1;`;
   const r = await sqlExecutor.execute(sql, params);
@@ -444,6 +485,7 @@ export async function fetchAllTDH(wallets?: string[]) {
   const results = await sqlExecutor.execute(sql, { block: tdhBlock, wallets });
   results.map((r: any) => (r.memes = JSON.parse(r.memes)));
   results.map((r: any) => (r.gradients = JSON.parse(r.gradients)));
+  results.map((r: any) => (r.nextgen = JSON.parse(r.nextgen)));
   return results;
 }
 
@@ -539,20 +581,17 @@ export async function fetchDistinctOwnerWallets() {
   return results;
 }
 
-export async function fetchTransactionsFromDate(
-  date: Date | undefined,
-  limit?: number
+export async function fetchTransactionAddressesFromDate(
+  date: Date | undefined
 ) {
+  const table = TRANSACTIONS_TABLE;
+
   let sql = `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE}`;
   const params: any = {};
 
   if (date) {
-    sql += ` WHERE ${TRANSACTIONS_TABLE}.created_at >= :date`;
+    sql += ` WHERE ${table}.created_at >= :date`;
     params.date = date.toISOString();
-  }
-  if (limit) {
-    sql += ` LIMIT :limit`;
-    params.limit = limit;
   }
 
   const results = await sqlExecutor.execute(sql, params);
@@ -684,15 +723,17 @@ export async function persistTransactions(
       logger.info(
         `[LAB TRANSACTIONS] [PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
       );
-      await AppDataSource.getRepository(LabTransaction).save(
-        consolidatedTransactions
+      await AppDataSource.getRepository(LabTransaction).upsert(
+        consolidatedTransactions,
+        ['transaction', 'contract', 'from_address', 'to_address', 'token_id']
       );
     } else {
       logger.info(
         `[TRANSACTIONS] [PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
       );
-      await AppDataSource.getRepository(Transaction).save(
-        consolidatedTransactions
+      await AppDataSource.getRepository(Transaction).upsert(
+        consolidatedTransactions,
+        ['transaction', 'contract', 'from_address', 'to_address', 'token_id']
       );
     }
 
@@ -875,7 +916,11 @@ export async function persistOwnerTags(ownersTags: OwnerTags[]) {
       const repo = manager.getRepository(OwnerTags);
       await Promise.all(
         ownersTags.map(async (owner) => {
-          if (0 >= owner.memes_balance && 0 >= owner.gradients_balance) {
+          if (
+            0 >= owner.memes_balance &&
+            0 >= owner.gradients_balance &&
+            0 >= owner.nextgen_balance
+          ) {
             await repo.remove(owner);
           } else {
             await repo.upsert(owner, ['wallet']);
@@ -1021,16 +1066,18 @@ export async function persistConsolidatedTDH(
     }
     await repo.save(tdh);
 
-    const tdhBlock = await fetchLatestTDHBlockNumber();
-    await profilesService.updateProfileTdhs(tdhBlock, {
-      connection: manager
-    });
     await profilesService.mergeProfiles({
       connection: manager
     });
+    await synchroniseCommunityMembersTable({ connection: manager });
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+export async function persistNextGenTokenTDH(nextgenTdh: NextGenTokenTDH[]) {
+  logger.info(`[NEXTGEN TOKEN TDH] : [${nextgenTdh.length}]`);
+  await AppDataSource.getRepository(NextGenTokenTDH).save(nextgenTdh);
 }
 
 export async function persistENS(ens: ENS[]) {

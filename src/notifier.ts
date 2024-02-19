@@ -6,9 +6,10 @@ const logger = Logger.get('NOTIFIER');
 
 let snsClient: SNSClient;
 
-function getSnsClient(): SNSClient {
+function getSnsClient(region?: string): SNSClient {
+  const regionOption = region ? { region } : {};
   if (!snsClient) {
-    snsClient = new SNSClient();
+    snsClient = new SNSClient(regionOption);
   }
   return snsClient;
 }

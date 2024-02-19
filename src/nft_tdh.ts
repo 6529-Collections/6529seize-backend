@@ -1,9 +1,16 @@
 import { GRADIENT_CONTRACT, MEMES_CONTRACT } from './constants';
 import { NFT } from './entities/INFT';
 import { areEqualAddresses } from './helpers';
-import { fetchAllConsolidatedTdh, fetchAllNFTs, persistNFTs } from './db';
+import {
+  fetchAllConsolidatedTdh,
+  fetchAllNFTs,
+  persistNFTs,
+  persistNextGenTokenTDH
+} from './db';
 import { ConsolidatedTDH } from './entities/ITDH';
 import { Logger } from './logging';
+import { NextGenToken, NextGenTokenTDH } from './entities/INextGen';
+import { fetchNextgenTokens } from './nextgen/nextgen.db';
 
 const logger = Logger.get('NFT_TDH');
 
@@ -14,6 +21,9 @@ export const findNftTDH = async () => {
 
   const nfts: NFT[] = await fetchAllNFTs();
   const nftTDH: NFT[] = [];
+
+  const nextgenNfts: NextGenToken[] = await fetchNextgenTokens();
+  const nextgenTdh: NextGenTokenTDH[] = [];
 
   tdhs.forEach((tdh) => {
     tdh.memes.map((meme: any) => {
@@ -82,6 +92,22 @@ export const findNftTDH = async () => {
         }
       }
     });
+    tdh.nextgen?.map((nextgen: any) => {
+      const token = nextgenNfts.find((n) => n.id == nextgen.id);
+      if (token) {
+        nextgenTdh.push({
+          id: nextgen.id,
+          normalised_id: token.normalised_id,
+          consolidation_key: tdh.consolidation_key,
+          collection_id: token.collection_id,
+          block: tdh.block,
+          tdh: nextgen.tdh,
+          boosted_tdh: nextgen.tdh * tdh.boost,
+          tdh__raw: nextgen.tdh__raw,
+          tdh_rank: nextgen.rank
+        });
+      }
+    });
   });
 
   nftTDH
@@ -89,6 +115,7 @@ export const findNftTDH = async () => {
     .forEach((n, index) => (n.tdh_rank = index + 1));
 
   await persistNFTs(nftTDH);
+  await persistNextGenTokenTDH(nextgenTdh);
 
   return nftTDH;
 };

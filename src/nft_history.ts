@@ -37,6 +37,7 @@ const MINT_BASE_NEW_METHOD = '0xfeeb5a9a';
 const SET_TOKEN_URI_METHOD = '0x162094c4';
 const INITIALIZE_CLAIM_METHOD_1 = '0xcc3d8ab3';
 const INITIALIZE_CLAIM_METHOD_2 = '0xd670c080';
+const INITIALIZE_CLAIM_METHOD_3 = '0x809e7c37';
 const AIRDROP_METHOD = '0xbd04e411';
 const INITIALIZE_BURN_METHOD = '0x38ec8995';
 const UPDATE_CLAIM_METHOD_1 = '0xa310099c';
@@ -310,10 +311,6 @@ export const getDeployerTransactions = async (
     return timestampA - timestampB;
   });
 
-  logger.info(
-    `[DEPLOYER] [PARSED ${sortedTransactionsResponse.length} TRANSACTIONS]`
-  );
-
   for (const tr of sortedTransactionsResponse) {
     const t = tr.t;
     const tx = tr.tx;
@@ -396,6 +393,25 @@ export const getDeployerTransactions = async (
         }
       } catch (e: any) {
         logger.error(`[ERROR PARSING TX ${tx.hash}] [${e}]`);
+      }
+    } else if (tx?.data.startsWith(INITIALIZE_CLAIM_METHOD_3)) {
+      const data = tx.data;
+      try {
+        const parsed = NFT_HISTORY_IFACE.parseTransaction({
+          data,
+          value: 0
+        });
+        const instanceId = parsed.args.instanceId.toNumber();
+        const location = parsed.args.claimParameters.location;
+        const contract = parsed.args.creatorContractAddress;
+        const claim: NFTHistoryClaim = {
+          claimIndex: instanceId,
+          location,
+          contract
+        };
+        await persistNftClaims([claim]);
+      } catch (e: any) {
+        logger.info(`[ERROR PARSING TX ${tx.hash}] [${e.message}]`);
       }
     } else if (tx?.data.startsWith(INITIALIZE_BURN_METHOD)) {
       const data = tx.data;

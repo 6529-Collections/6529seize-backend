@@ -6,9 +6,9 @@ import { getValidatedByJoiOrThrow } from '../validation';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import * as Joi from 'joi';
 import {
-  RatingWithProfileInfoAndLevel,
+  GetProfileRatingsRequest,
   ratingsService,
-  GetProfileRatingsRequest
+  RatingWithProfileInfoAndLevel
 } from '../../../rates/ratings.service';
 import { RateMatter } from '../../../entities/IRating';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
@@ -17,6 +17,7 @@ import { getRaterInfoFromRequest, RateProfileRequest } from './rating.helper';
 import { profilesService } from '../../../profiles/profiles.service';
 import { RatingStats } from '../../../rates/ratings.db';
 import { Page } from '../page-request';
+import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -190,6 +191,7 @@ router.post(
       matter_target_id: targetProfileId,
       rating: amount
     });
+    await giveReadReplicaTimeToCatchUp();
     const response = await getReceivedRatingsStats(
       raterProfileId,
       targetProfileId

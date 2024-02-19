@@ -3,17 +3,30 @@ import { consolidateTDH } from '../tdh_consolidation';
 import { loadEnv, unload } from '../secrets';
 import { ConsolidatedTDH, TDH } from '../entities/ITDH';
 import { Logger } from '../logging';
-import { ProfileTdh, ProfileTdhLog } from '../entities/IProfileTDH';
 import { Time } from '../time';
 import { Profile } from '../entities/IProfile';
 import { fetchAllConsolidationAddresses } from '../db';
 import * as sentryContext from '../sentry.context';
+import { NextGenTokenTDH } from '../entities/INextGen';
+import {
+  CommunityMember,
+  ProfileFullView,
+  WalletConsolidationKeyView
+} from '../entities/ICommunityMember';
 
 const logger = Logger.get('TDH_CONSOLIDATIONS_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   const start = Time.now();
-  await loadEnv([TDH, ConsolidatedTDH, ProfileTdh, ProfileTdhLog, Profile]);
+  await loadEnv([
+    TDH,
+    ConsolidatedTDH,
+    NextGenTokenTDH,
+    CommunityMember,
+    Profile,
+    ProfileFullView,
+    WalletConsolidationKeyView
+  ]);
   const force = process.env.TDH_RESET == 'true';
   logger.info(`[RUNNING force=${force}]`);
   await consolidatedTdhLoop();

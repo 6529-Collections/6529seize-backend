@@ -55,7 +55,7 @@ const ApiGetCollectedCardsRequestSchema: Joi.ObjectSchema<CollectedQuery> =
     seized: Joi.valid(...Object.values(CardSeizedStatus))
       .optional()
       .default(CardSeizedStatus.ALL),
-    szn: Joi.number().integer().positive().optional(),
+    szn: Joi.string().optional(),
     page: Joi.number().integer().positive().optional().default(1),
     page_size: Joi.number()
       .integer()
