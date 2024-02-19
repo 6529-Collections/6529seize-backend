@@ -1467,7 +1467,9 @@ export async function fetchOwnerMetrics(
   const results = await fetchPaginated(
     OWNERS_METRICS_TABLE,
     params,
-    `${sort} ${sortDir}, ${OWNERS_METRICS_TABLE}.balance ${sortDir}, boosted_tdh ${sortDir}`,
+    `${
+      sort === 'level' ? 'p.profile_tdh + p.rep_score' : sort
+    } ${sortDir}, ${OWNERS_METRICS_TABLE}.balance ${sortDir}, boosted_tdh ${sortDir}`,
     pageSize,
     page,
     filters,
@@ -1910,6 +1912,9 @@ export async function fetchConsolidatedOwnerMetrics(
     sort == 'unique_memes_szn6'
   ) {
     sort = `${CONSOLIDATED_OWNERS_TAGS_TABLE}.${sort}`;
+  }
+  if (sort === 'level') {
+    sort = 'p.profile_tdh + p.rep_score';
   }
 
   if (wallets) {
