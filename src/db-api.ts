@@ -1401,13 +1401,18 @@ export async function fetchOwnerMetrics(
     ${WALLETS_TDH_TABLE}.memes,
     ${WALLETS_TDH_TABLE}.memes_ranks, 
     ${WALLETS_TDH_TABLE}.gradients, 
-    ${WALLETS_TDH_TABLE}.gradients_ranks`;
+    ${WALLETS_TDH_TABLE}.gradients_ranks,
+    p.handle as handle, 
+    p.rep_score as rep_score, 
+    p.cic_score as cic_score, 
+    p.profile_tdh as profile_tdh `;
 
   const fields = ` ${ownerMetricsSelect},${ENS_TABLE}.display as wallet_display, ${walletsTdhTableSelect} , ${OWNERS_TAGS_TABLE}.* `;
   let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
   joins += ` LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet `;
   joins += ` LEFT JOIN ${ENS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${ENS_TABLE}.wallet `;
-
+  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} wc on wc.wallet = ${OWNERS_METRICS_TABLE}.wallet`;
+  joins += ` LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = wc.consolidation_key`;
   if (
     sort == 'balance' ||
     sort == 'memes_balance' ||
@@ -1475,13 +1480,18 @@ export async function fetchOwnerMetrics(
     fields,
     joins
   );
+  results.data.forEach((d: any) => {
+    d.level = calculateLevel({
+      tdh: d.profile_tdh ?? 0,
+      rep: d.rep_score ?? 0
+    });
+  });
 
-  if (results.data.length == 0 && wallets && profilePage) {
+  if (results.data.length === 0 && wallets && profilePage) {
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length > 0) {
       const sql = getProfilePageSql(resolvedWallets);
-      let results2 = await sqlExecutor.execute(sql.sql, sql.params);
-      results2 = await enhanceDataWithHandlesAndLevel(results2);
+      const results2 = await sqlExecutor.execute(sql.sql, sql.params);
       return {
         count: results2.length,
         page: 1,
@@ -1490,7 +1500,6 @@ export async function fetchOwnerMetrics(
       };
     }
   }
-  results.data = await enhanceDataWithHandlesAndLevel(results.data);
   return results;
 }
 
