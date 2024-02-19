@@ -15,7 +15,11 @@ import {
 } from './constants';
 import { NFT } from './entities/INFT';
 import { Transaction } from './entities/ITransaction';
-import { areEqualAddresses, isNullAddress } from './helpers';
+import {
+  areEqualAddresses,
+  isNullAddress,
+  replaceEmojisWithHex
+} from './helpers';
 import {
   fetchAllNFTs,
   fetchAllTransactions,
@@ -173,7 +177,7 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
         collection: 'The Memes by 6529',
         token_type: 'ERC1155',
         hodl_rate: 0,
-        description: fullMetadata.description,
+        description: replaceEmojisWithHex(fullMetadata.description),
         artist: fullMetadata.attributes?.find(
           (a: any) => a.trait_type === 'Artist'
         )?.value,
@@ -269,7 +273,7 @@ async function processGradients(
           collection: '6529 Gradient',
           token_type: 'ERC721',
           hodl_rate: 0,
-          description: fullMetadata.description,
+          description: replaceEmojisWithHex(fullMetadata.description),
           artist: '6529er',
           uri: fullMetadata.tokenUri?.raw,
           icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,

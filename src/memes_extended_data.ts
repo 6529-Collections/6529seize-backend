@@ -66,7 +66,7 @@ export const findMemesExtendedData = async () => {
     });
 
     const season = parseInt(
-      nft.metadata!.attributes?.find(
+      nft.metadata.attributes?.find(
         (a: any) => a.trait_type === 'Type - Season'
       )?.value
     );

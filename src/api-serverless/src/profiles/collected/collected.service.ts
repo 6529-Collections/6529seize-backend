@@ -9,7 +9,10 @@ import {
   profilesService,
   ProfilesService
 } from '../../../../profiles/profiles.service';
-import { WALLET_REGEX } from '../../../../constants';
+import {
+  MEME_8_EDITION_BURN_ADJUSTMENT,
+  WALLET_REGEX
+} from '../../../../constants';
 import {
   collectedDb,
   CollectedDb,
@@ -158,6 +161,9 @@ export class CollectedService {
           seized =
             memesAndGradientsStats.memes.tdhsAndBalances[nft.token_id]
               ?.balance ?? null;
+          if (nft.token_id === 8) {
+            seized += MEME_8_EDITION_BURN_ADJUSTMENT;
+          }
           break;
         }
         case CollectionType.GRADIENTS: {

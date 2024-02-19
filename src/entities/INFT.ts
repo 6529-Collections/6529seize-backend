@@ -147,18 +147,6 @@ export class ExtendedDataBase {
 
   @Column({ type: 'int' })
   percent_unique_cleaned_rank!: number;
-}
-
-@Entity(MEMES_EXTENDED_DATA_TABLE)
-export class MemesExtendedData extends ExtendedDataBase {
-  @Column({ type: 'int' })
-  season!: number;
-
-  @Column({ type: 'int' })
-  meme!: number;
-
-  @Column({ type: 'text' })
-  meme_name!: string;
 
   @Column({ type: 'int' })
   burnt!: number;
@@ -174,6 +162,18 @@ export class MemesExtendedData extends ExtendedDataBase {
 
   @Column({ type: 'int' })
   percent_unique_not_burnt_rank!: number;
+}
+
+@Entity(MEMES_EXTENDED_DATA_TABLE)
+export class MemesExtendedData extends ExtendedDataBase {
+  @Column({ type: 'int' })
+  season!: number;
+
+  @Column({ type: 'int' })
+  meme!: number;
+
+  @Column({ type: 'text' })
+  meme_name!: string;
 }
 
 export interface NFTWithExtendedData extends NFT, MemesExtendedData {}

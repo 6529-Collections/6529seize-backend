@@ -472,7 +472,7 @@ export async function fetchLabNFTs(
   const joinClause = `
     LEFT JOIN distribution d ON d.card_id = ${NFTS_MEME_LAB_TABLE}.id AND d.contract = :meme_lab_contract
   `;
-  const groupBy = `${NFTS_MEME_LAB_TABLE}.id`;
+  const groupBy = `${NFTS_MEME_LAB_TABLE}.id, ${NFTS_MEME_LAB_TABLE}.contract`;
   params.meme_lab_contract = MEMELAB_CONTRACT;
 
   return fetchPaginated(
