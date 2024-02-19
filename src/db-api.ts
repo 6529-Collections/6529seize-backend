@@ -42,11 +42,7 @@ import {
   WALLETS_TDH_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
-import {
-  areEqualAddresses,
-  distinct,
-  extractConsolidationWallets
-} from './helpers';
+import { areEqualAddresses, extractConsolidationWallets } from './helpers';
 import { getConsolidationsSql, getProfilePageSql } from './sql_helpers';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 
@@ -60,8 +56,6 @@ import {
   constructFilters,
   constructFiltersOR
 } from './api-serverless/src/api-helpers';
-import { profilesService } from './profiles/profiles.service';
-import { repService } from './api-serverless/src/profiles/rep.service';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -1635,51 +1629,6 @@ export async function fetchConsolidatedOwnerMetricsForKey(
   }
 }
 
-async function enhanceDataWithHandlesAndLevel(
-  data: { wallets?: string; wallet?: string; boostedTdh?: number }[]
-) {
-  const resultWallets: string[] = distinct(
-    data
-      .map((d: { wallets?: string; wallet?: string }) =>
-        d.wallet ? [d.wallet] : d.wallets ? JSON.parse(d.wallets) : []
-      )
-      .flat()
-  );
-  const walletsToHandlesAndIds =
-    await profilesService.getProfileIdsAndHandlesByPrimaryWallets(
-      resultWallets
-    );
-  const profileIds = Object.values(walletsToHandlesAndIds).map((it) => it.id);
-  const profileReps = await repService.getAggregatedRepForProfiles(profileIds);
-  return data.map(
-    (d: { wallets?: string; wallet?: string; boosted_tdh?: number }) => {
-      const parsedWallets = d.wallet
-        ? [d.wallet]
-        : d.wallets
-        ? JSON.parse(d.wallets)
-        : [];
-      const resolvedWallet = parsedWallets.find(
-        (w: string) => walletsToHandlesAndIds[w.toLowerCase()]
-      );
-      (d as any).level = calculateLevel({
-        tdh: d.boosted_tdh ?? 0,
-        rep: !resolvedWallet
-          ? 0
-          : profileReps[
-              walletsToHandlesAndIds[resolvedWallet.toLowerCase()]?.id
-            ] ?? 0
-      });
-      if (!resolvedWallet) {
-        return d;
-      }
-      return {
-        ...d,
-        handle: walletsToHandlesAndIds[resolvedWallet.toLowerCase()]?.handle
-      };
-    }
-  );
-}
-
 export async function fetchConsolidatedOwnerMetrics(
   pageSize: number,
   page: number,
@@ -1893,11 +1842,16 @@ export async function fetchConsolidatedOwnerMetrics(
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_ranks,
     COALESCE(${TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change,
-    COALESCE(${TDH_HISTORY_TABLE}.net_tdh, 0) as day_change_unboosted`;
+    COALESCE(${TDH_HISTORY_TABLE}.net_tdh, 0) as day_change_unboosted, 
+    p.handle as handle, 
+    p.rep_score as rep_score, 
+    p.cic_score as cic_score, 
+    p.profile_tdh as profile_tdh `;
 
   const fields = ` ${ownerMetricsSelect}, ${walletsTdhTableSelect} , ${CONSOLIDATED_OWNERS_TAGS_TABLE}.* `;
   let joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key`;
   joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key `;
+  joins += ` LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
 
   const tdhHistoryBlock = await fetchLatestTDHHistoryBlockNumber();
   joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${TDH_HISTORY_TABLE}.consolidation_key and ${TDH_HISTORY_TABLE}.block=${tdhHistoryBlock} `;
@@ -1976,9 +1930,8 @@ export async function fetchConsolidatedOwnerMetrics(
     const resolvedWallets = await resolveEns(wallets);
     if (resolvedWallets.length > 0) {
       const sql = getProfilePageSql(resolvedWallets);
-      let results2 = await sqlExecutor.execute(sql.sql, sql.params);
+      const results2 = await sqlExecutor.execute(sql.sql, sql.params);
       results2[0].wallets = resolvedWallets;
-      results2 = await enhanceDataWithHandlesAndLevel(results2);
       return {
         count: results2.length,
         page: 1,
@@ -1995,7 +1948,12 @@ export async function fetchConsolidatedOwnerMetrics(
       })
     );
   }
-  results.data = await enhanceDataWithHandlesAndLevel(results.data);
+  results.data.forEach((d: any) => {
+    d.level = calculateLevel({
+      tdh: d.profile_tdh ?? 0,
+      rep: d.rep_score ?? 0
+    });
+  });
 
   return results;
 }
