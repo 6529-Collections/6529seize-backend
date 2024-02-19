@@ -606,28 +606,6 @@ export class ProfilesService {
     );
   }
 
-  public async getProfileIdsAndHandlesByPrimaryWallets(
-    wallets: string[]
-  ): Promise<Record<string, { id: string; handle: string }>> {
-    if (!wallets.length) {
-      return {};
-    }
-    const profiles = await this.getProfilesByWallets(wallets);
-    return wallets.reduce((result, wallet) => {
-      const profile = profiles.find(
-        (profile) =>
-          profile.primary_wallet.toLowerCase() === wallet.toLowerCase()
-      );
-      if (profile) {
-        result[wallet.toLowerCase()] = {
-          id: profile.external_id,
-          handle: profile.handle
-        };
-      }
-      return result;
-    }, {} as Record<string, { id: string; handle: string }>);
-  }
-
   private async getWalletsNewestProfile(
     wallet: string,
     connection?: ConnectionWrapper<any>
