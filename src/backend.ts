@@ -15,7 +15,7 @@ async function start() {
   // await transactionsLoop.handler();
   await nftsLoop.handler();
   // await ownersLoop.handler();
-  // await ownerMetricsLoop.handler();
+  await ownerMetricsLoop.handler();
   // await tdhLoop.handler();
 
   const diff = start.diffFromNow().formatAsDuration();
