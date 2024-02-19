@@ -18,7 +18,7 @@ export async function synchroniseCommunityMembersTable(
   const time = Time.now();
   const ensWallets: Set<string> = await db
     .execute(`select lower(wallet) as wallet from ${ENS_TABLE}`, undefined, {
-      wrappedConnection: connection.connection
+      wrappedConnection: connection
     })
     .then(
       (result: { wallet: string }[]) => new Set(result.map((it) => it.wallet))
@@ -26,7 +26,7 @@ export async function synchroniseCommunityMembersTable(
   const tdhWalletsResponse: { wallets: string }[] = await db.execute(
     `select wallets from ${CONSOLIDATED_WALLETS_TDH_TABLE}`,
     undefined,
-    { wrappedConnection: connection.connection }
+    { wrappedConnection: connection }
   );
   const communityMembers = tdhWalletsResponse.reduce(
     (groups, walletsWrapped) => {
