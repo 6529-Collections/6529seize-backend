@@ -1102,8 +1102,9 @@ export async function persistConsolidatedTDH(
   wallets?: string[]
 ) {
   logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
-
-  await AppDataSource.transaction(async (manager) => {
+  await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
+    const queryRunner = qrHolder.connection as QueryRunner;
+    const manager = queryRunner.manager;
     const repo = manager.getRepository(ConsolidatedTDH);
     if (wallets && wallets.length > 0) {
       logger.info(`[CONSOLIDATED TDH] [DELETING ${wallets.length} WALLETS]`);
@@ -1124,10 +1125,8 @@ export async function persistConsolidatedTDH(
     }
     await repo.save(tdh);
 
-    await profilesService.mergeProfiles({
-      connection: manager
-    });
-    await synchroniseCommunityMembersTable({ connection: manager });
+    await profilesService.mergeProfiles(qrHolder);
+    await synchroniseCommunityMembersTable(qrHolder);
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
