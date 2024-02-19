@@ -5,10 +5,7 @@ import {
   SZN3_INDEX,
   SZN4_INDEX,
   GRADIENT_CONTRACT,
-  CONSOLIDATIONS_TABLE,
-  MEME_8_EDITION_BURN_ADJUSTMENT,
-  NULL_ADDRESS,
-  OWNERS_TABLE
+  CONSOLIDATIONS_TABLE
 } from './constants';
 
 const mysql = require('mysql');

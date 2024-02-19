@@ -36,7 +36,6 @@ import {
   MemesExtendedData,
   NFT
 } from './entities/INFT';
-import { ConsolidatedTDHUpload } from './entities/IUpload';
 import {
   ConsolidatedOwnerMetric,
   ConsolidatedOwnerTags,
@@ -78,37 +77,13 @@ import {
   isNullAddress
 } from './helpers';
 import { getConsolidationsSql } from './sql_helpers';
-import {
-  NextGenAllowlist,
-  NextGenAllowlistBurn,
-  NextGenAllowlistCollection,
-  NextGenBlock,
-  NextGenCollection,
-  NextGenCollectionBurn,
-  NextGenLog,
-  NextGenToken,
-  NextGenTokenScore,
-  NextGenTokenTDH,
-  NextGenTokenTrait
-} from './entities/INextGen';
+import { NextGenTokenTDH } from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
-import { Profile, ProfileArchived } from './entities/IProfile';
+import { Profile } from './entities/IProfile';
 import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
-import { CicStatement } from './entities/ICICStatement';
 import { profilesService } from './profiles/profiles.service';
-import { ProfileActivityLog } from './entities/IProfileActivityLog';
-import { Rating } from './entities/IRating';
-import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
-import { ListenerProcessedEvent, ProcessableEvent } from './entities/IEvent';
-import { CicScoreAggregation } from './entities/ICicScoreAggregation';
-import { ProfileTotalRepScoreAggregation } from './entities/IRepScoreAggregations';
-import {
-  CommunityMember,
-  ProfileFullView,
-  WalletConsolidationKeyView
-} from './entities/ICommunityMember';
 import { synchroniseCommunityMembersTable } from './community-members';
 
 const mysql = require('mysql');
