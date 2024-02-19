@@ -510,8 +510,10 @@ export async function fetchLabOwners(
     params.nfts = nfts.split(',');
   }
 
-  const fields = ` ${OWNERS_MEME_LAB_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
-  const joins = `LEFT JOIN ${ENS_TABLE} ON ${OWNERS_MEME_LAB_TABLE}.wallet=${ENS_TABLE}.wallet`;
+  const fields = ` ${OWNERS_MEME_LAB_TABLE}.*,${ENS_TABLE}.display as wallet_display, p.handle as handle, p.rep_score as rep_score, p.cic_score as cic_score, p.profile_tdh as profile_tdh `;
+  let joins = `LEFT JOIN ${ENS_TABLE} ON ${OWNERS_MEME_LAB_TABLE}.wallet=${ENS_TABLE}.wallet `;
+  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} wc on wc.wallet = ${OWNERS_MEME_LAB_TABLE}.wallet`;
+  joins += ` LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = wc.consolidation_key`;
 
   const result = await fetchPaginated(
     OWNERS_MEME_LAB_TABLE,
@@ -523,7 +525,12 @@ export async function fetchLabOwners(
     fields,
     joins
   );
-  result.data = await enhanceDataWithHandlesAndLevel(result.data);
+  result.data.forEach((d: any) => {
+    d.level = calculateLevel({
+      tdh: d.profile_tdh ?? 0,
+      rep: d.rep_score
+    });
+  });
   return result;
 }
 
