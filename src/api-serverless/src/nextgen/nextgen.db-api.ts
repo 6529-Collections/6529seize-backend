@@ -30,6 +30,7 @@ export enum TokensSort {
   ID = 'id',
   RARITY_SCORE = 'rarity_score',
   STATISTICAL_SCORE = 'statistical_score',
+  SINGLE_TRAIT_RARITY = 'single_trait_rarity',
   RANDOM = 'random'
 }
 
@@ -171,13 +172,69 @@ export async function fetchNextGenCollectionByName(name: string) {
   return returnEmpty();
 }
 
-export async function fetchNextGenCollectionTokens(
-  collectionId: number,
-  pageSize: number,
-  page: number,
-  traits: string[],
+function getNextGenCollectionTokensSortQuery(
   sort: TokensSort,
-  sortDirection: PageSortDirection
+  sortDirection: PageSortDirection,
+  showNormalised: boolean,
+  showTraitCount: boolean
+) {
+  let sortQuery: string;
+  if (sort === TokensSort.RANDOM) {
+    sortQuery = `pending, RAND()`;
+  } else {
+    let sortColumn = '';
+    switch (sort) {
+      case TokensSort.ID:
+        sortColumn = 'id';
+        break;
+      case TokensSort.RARITY_SCORE:
+        if (showNormalised && showTraitCount) {
+          sortColumn = 'rarity_score_trait_count_normalised_rank';
+        } else if (showNormalised) {
+          sortColumn = 'rarity_score_normalised_rank';
+        } else if (showTraitCount) {
+          sortColumn = 'rarity_score_trait_count_rank';
+        } else {
+          sortColumn = 'rarity_score_rank';
+        }
+        break;
+      case TokensSort.STATISTICAL_SCORE:
+        if (showNormalised && showTraitCount) {
+          sortColumn = 'statistical_score_trait_count_normalised_rank';
+        } else if (showNormalised) {
+          sortColumn = 'statistical_score_normalised_rank';
+        } else if (showTraitCount) {
+          sortColumn = 'statistical_score_trait_count_rank';
+        } else {
+          sortColumn = 'statistical_score_rank';
+        }
+        break;
+      case TokensSort.SINGLE_TRAIT_RARITY:
+        if (showNormalised && showTraitCount) {
+          sortColumn = 'single_trait_rarity_score_trait_count_normalised_rank';
+        } else if (showNormalised) {
+          sortColumn = 'single_trait_rarity_score_normalised_rank';
+        } else if (showTraitCount) {
+          sortColumn = 'single_trait_rarity_score_trait_count_rank';
+        } else {
+          sortColumn = 'single_trait_rarity_score_rank';
+        }
+        break;
+    }
+    if (sortColumn.endsWith('rank')) {
+      sortDirection =
+        sortDirection === PageSortDirection.ASC
+          ? PageSortDirection.DESC
+          : PageSortDirection.ASC;
+    }
+    sortQuery = `${NEXTGEN_TOKEN_SCORES_TABLE}.${sortColumn} ${sortDirection}, ${NEXTGEN_TOKEN_SCORES_TABLE}.id asc`;
+  }
+  return sortQuery;
+}
+
+function getNextGenCollectionTokensFilters(
+  collectionId: number,
+  traits: string[]
 ) {
   let filters = constructFilters(
     '',
@@ -197,7 +254,6 @@ export async function fetchNextGenCollectionTokens(
       }
       groupedTraits[key].push(value);
     });
-
     Object.entries(groupedTraits).forEach(([key, values], index) => {
       const orConditions = values
         .map((value, valueIndex) => {
@@ -219,22 +275,38 @@ export async function fetchNextGenCollectionTokens(
       );
     });
   }
+  return {
+    filters,
+    params
+  };
+}
 
+export async function fetchNextGenCollectionTokens(
+  collectionId: number,
+  pageSize: number,
+  page: number,
+  traits: string[],
+  sort: TokensSort,
+  sortDirection: PageSortDirection,
+  showNormalised: boolean,
+  showTraitCount: boolean
+) {
+  const filters = getNextGenCollectionTokensFilters(collectionId, traits);
   const joins = `LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_SCORES_TABLE}.id`;
+  const sortQuery: string = getNextGenCollectionTokensSortQuery(
+    sort,
+    sortDirection,
+    showNormalised,
+    showTraitCount
+  );
 
-  let sortQuery: string;
-  if (sort === TokensSort.RANDOM) {
-    sortQuery = `pending, RAND()`;
-  } else {
-    sortQuery = `${NEXTGEN_TOKEN_SCORES_TABLE}.${sort} ${sortDirection}, ${NEXTGEN_TOKEN_SCORES_TABLE}.id asc`;
-  }
   return fetchPaginated(
     NEXTGEN_TOKENS_TABLE,
-    params,
+    filters.params,
     sortQuery,
     pageSize,
     page,
-    filters,
+    filters.filters,
     `${NEXTGEN_TOKENS_TABLE}.*, ${NEXTGEN_TOKEN_SCORES_TABLE}.*`,
     joins
   );
