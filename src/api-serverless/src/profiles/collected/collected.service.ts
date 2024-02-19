@@ -11,6 +11,7 @@ import {
 } from '../../../../profiles/profiles.service';
 import {
   MEME_8_EDITION_BURN_ADJUSTMENT,
+  NULL_ADDRESS,
   WALLET_REGEX
 } from '../../../../constants';
 import {
@@ -21,7 +22,11 @@ import {
   NftsCollectionOwnershipData
 } from './collected.db';
 import { parseNumberOrNull } from '../../api-helpers';
-import { assertUnreachable, distinct } from '../../../../helpers';
+import {
+  areEqualAddresses,
+  assertUnreachable,
+  distinct
+} from '../../../../helpers';
 
 export class CollectedService {
   constructor(
@@ -80,7 +85,8 @@ export class CollectedService {
       nfts,
       memesAndGradientsStats,
       memeLabOwnerBalancesByTokenIds,
-      nextgenStats
+      nextgenStats,
+      walletsToSearchBy
     ).then((cards) => this.filterCards(query, cards));
     const pageOfCards = this.getPageData(cards, query);
     const count = cards.length;
@@ -142,7 +148,8 @@ export class CollectedService {
     nfts: NftData[],
     memesAndGradientsStats: MemesAndGradientsOwnershipData,
     memeLabOwnerBalancesByTokenIds: Record<number, number>,
-    nextgenStats: NftsCollectionOwnershipData
+    nextgenStats: NftsCollectionOwnershipData,
+    walletsToSearchBy: string[]
   ): Promise<CollectedCard[]> {
     return nfts.map<CollectedCard>((nft) => {
       let tdh = null;
@@ -161,7 +168,10 @@ export class CollectedService {
           seized =
             memesAndGradientsStats.memes.tdhsAndBalances[nft.token_id]
               ?.balance ?? null;
-          if (nft.token_id === 8) {
+          if (
+            nft.token_id === 8 &&
+            walletsToSearchBy.some((w) => areEqualAddresses(w, NULL_ADDRESS))
+          ) {
             seized += MEME_8_EDITION_BURN_ADJUSTMENT;
           }
           break;
