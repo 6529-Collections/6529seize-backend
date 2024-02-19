@@ -5,7 +5,7 @@ export class BaseNFT {
   @PrimaryColumn({ type: 'int' })
   id!: number;
 
-  @Column({ type: 'varchar', length: 50 })
+  @PrimaryColumn({ type: 'varchar', length: 50 })
   contract!: string;
 
   @Column({ type: 'timestamp' })
@@ -85,7 +85,7 @@ export class LabNFT extends BaseNFT {
 }
 
 @Entity('nfts')
-export class NFT {
+export class NFT extends BaseNFT {
   @Column({ type: 'double' })
   hodl_rate!: number;
 
