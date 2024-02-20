@@ -731,8 +731,7 @@ loadApi().then(() => {
 
     const wallets = req.query.wallet;
     const sort =
-      req.query.sort &&
-      (TDH_SORT.includes(req.query.sort) || req.query.sort == 'level')
+      req.query.sort && TDH_SORT.includes(req.query.sort)
         ? req.query.sort
         : 'boosted_tdh';
 
