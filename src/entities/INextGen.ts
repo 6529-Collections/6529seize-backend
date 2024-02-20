@@ -662,4 +662,10 @@ export class NextGenTokenListing {
 
   @Column({ type: 'double' })
   opensea_royalty!: number;
+
+  @Column({ type: 'double' })
+  opensea_listing_time!: number;
+
+  @Column({ type: 'double' })
+  opensea_expiration_time!: number;
 }
