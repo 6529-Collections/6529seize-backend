@@ -629,7 +629,7 @@ export async function fetchNextGenCollectionTraitSets(
     ${PROFILE_FULL}.rep_score,
     COUNT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.value) AS distinct_values_count,
     GROUP_CONCAT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id ORDER BY ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id) AS token_ids,
-    GROUP_CONCAT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.value ORDER BY ${NEXTGEN_TOKEN_TRAITS_TABLE}.value) AS palette_values`;
+    GROUP_CONCAT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.value ORDER BY ${NEXTGEN_TOKEN_TRAITS_TABLE}.value) AS distinct_values`;
 
   const filters = constructFilters(
     '',
@@ -662,6 +662,8 @@ export async function fetchNextGenCollectionTraitSets(
       tdh: d.tdh ?? 0,
       rep: d.rep_score
     });
+    d.token_ids = d.token_ids.split(',').map(Number);
+    d.distinct_values = d.distinct_values.split(',');
   });
 
   return results;
