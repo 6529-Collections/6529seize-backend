@@ -423,12 +423,12 @@ export async function memeLabExtendedData() {
 
   const labMeta: LabExtendedData[] = [];
 
-  const nonBurntTokenWallets = [...owners].filter(
-    (o) => !isNullAddress(o.wallet)
-  ).length;
-
   nfts.forEach((nft) => {
     const tokenWallets = owners.filter((tw) => tw.token_id == nft.id);
+
+    const nonBurntTokenWallets = [...tokenWallets].filter(
+      (o) => !isNullAddress(o.wallet)
+    ).length;
 
     let edition_size = 0;
     let museum_holdings = 0;
@@ -546,17 +546,6 @@ export async function memeLabExtendedData() {
           return m;
         }
         if (m.hodlers == lm.hodlers) {
-          if (lm.id > m.id) {
-            return m;
-          }
-        }
-      }).length + 1;
-    lm.percent_unique_rank =
-      labMeta.filter((m) => {
-        if (m.percent_unique > lm.percent_unique) {
-          return m;
-        }
-        if (m.percent_unique == lm.percent_unique) {
           if (lm.id > m.id) {
             return m;
           }
