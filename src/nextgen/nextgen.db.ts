@@ -3,6 +3,7 @@ import {
   NextGenCollection,
   NextGenLog,
   NextGenToken,
+  NextGenTokenListing,
   NextGenTokenScore,
   NextGenTokenTrait
 } from '../entities/INextGen';
@@ -184,4 +185,12 @@ export async function persistNextGenCollectionHodlRate(
     },
     { hodl_rate: hodlRate }
   );
+}
+
+export async function persitNextgenTokenListings(
+  manager: EntityManager,
+  listings: any
+) {
+  const repo = manager.getRepository(NextGenTokenListing);
+  await repo.upsert(listings, ['id']);
 }

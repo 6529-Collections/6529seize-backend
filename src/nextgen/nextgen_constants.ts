@@ -5,6 +5,7 @@ export const NEXTGEN_BLOCKS_TABLE = 'nextgen_blocks';
 export const NEXTGEN_LOGS_TABLE = 'nextgen_logs';
 export const NEXTGEN_COLLECTIONS_TABLE = 'nextgen_collections';
 export const NEXTGEN_TOKENS_TABLE = 'nextgen_tokens';
+export const NEXTGEN_TOKEN_LISTINGS_TABLE = 'nextgen_token_listings';
 export const NEXTGEN_ALLOWLIST_TABLE = 'nextgen_allowlist';
 export const NEXTGEN_TOKEN_TRAITS_TABLE = 'nextgen_token_traits';
 export const NEXTGEN_TOKEN_SCORES_TABLE = 'nextgen_token_scores';

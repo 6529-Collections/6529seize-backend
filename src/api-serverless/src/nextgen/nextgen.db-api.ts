@@ -21,7 +21,8 @@ import {
   NEXTGEN_TOKENS_TDH_TABLE,
   NEXTGEN_TOKEN_SCORES_TABLE,
   NEXTGEN_TOKEN_TRAITS_TABLE,
-  MINT_TYPE_TRAIT
+  MINT_TYPE_TRAIT,
+  NEXTGEN_TOKEN_LISTINGS_TABLE
 } from '../../../nextgen/nextgen_constants';
 import { PageSortDirection } from '../page-request';
 import { NEXTGEN_CORE, getNextGenChainId } from './abis';
@@ -312,18 +313,19 @@ export async function fetchNextGenCollectionTokens(
   );
 }
 
-export async function fetchNextGenToken(tokendId: number) {
+export async function fetchNextGenToken(tokenId: number) {
   const sql = `
     SELECT 
       t.*,
-      s.*
+      s.*,
+      l.*
     FROM ${NEXTGEN_TOKENS_TABLE} t
     LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} s ON t.id = s.id 
+    LEFT JOIN ${NEXTGEN_TOKEN_LISTINGS_TABLE} l ON t.id = l.id 
     WHERE t.id = :id
   `;
   const results = await sqlExecutor.execute(sql, {
-    id: tokendId,
-    nullAddresses: [NULL_ADDRESS, NULL_ADDRESS_DEAD]
+    id: tokenId
   });
   if (results.length === 1) {
     const r = results[0];
