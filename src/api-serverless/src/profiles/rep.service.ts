@@ -33,21 +33,6 @@ export class RepService {
     }, {} as Record<string, number>);
   }
 
-  async getAggregatedRepForProfiles(
-    profileIds: string[]
-  ): Promise<Record<string, number>> {
-    const data = await this.repScoreAggregationDb.getDataForProfiles(
-      profileIds
-    );
-    return profileIds.reduce(
-      (acc, profileId) => ({
-        ...acc,
-        [profileId]: data.find((it) => it.profile_id === profileId)?.score ?? 0
-      }),
-      {} as Record<string, number>
-    );
-  }
-
   async getRepForProfile(
     profileId: string,
     connection?: ConnectionWrapper<any>
