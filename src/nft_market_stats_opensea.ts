@@ -22,7 +22,6 @@ export const findNftMarketStatsOpensea = async (contract: string) => {
       30
     );
 
-    // await processBatch(entityManager, batchedTokens[0], contract);
     for (const batch of batchedTokens) {
       await processBatch(entityManager, batch, contract);
     }
@@ -34,7 +33,7 @@ async function processBatch(
   tokens: NextGenToken[],
   contract: string
 ) {
-  let url = `https://api.opensea.io/api/v2/orders/ethereum/seaport/listings?asset_contract_address=${contract}&limit=50`;
+  let url = `https://api.opensea.io/api/v2/orders/ethereum/seaport/listings?asset_contract_address=${contract}&limit=${tokens.length}`;
   for (const token of tokens) {
     url += `&token_ids=${token.id}`;
   }
@@ -51,23 +50,29 @@ async function processBatch(
   for (const token of tokens) {
     let price = 0;
     let royalty = 0;
-    const order = orders.find(
+    let listing_time = 0;
+    let expiration_time = 0;
+    const order = orders?.find(
       (o) =>
         o.protocol_data.parameters.offer[0].identifierOrCriteria ===
         token.id.toString()
     );
     if (order) {
       price = weiToEth(order.current_price);
-      const listingRoyalty = order.maker_fees.find((f: any) =>
+      const listingRoyalty = order.maker_fees?.find((f: any) =>
         areEqualAddresses(f.account.address, NEXTGEN_ROYALTIES_ADDRESS)
       );
       royalty = listingRoyalty ? listingRoyalty.basis_points / 100 : 0;
+      listing_time = order.listing_time;
+      expiration_time = order.expiration_time;
     }
 
     const listing: NextGenTokenListing = {
       id: token.id,
       opensea_price: price,
-      opensea_royalty: royalty
+      opensea_royalty: royalty,
+      opensea_listing_time: listing_time,
+      opensea_expiration_time: expiration_time
     };
     listings.push(listing);
   }

@@ -32,7 +32,14 @@ export enum TokensSort {
   RARITY_SCORE = 'rarity_score',
   STATISTICAL_SCORE = 'statistical_score',
   SINGLE_TRAIT_RARITY = 'single_trait_rarity',
-  RANDOM = 'random'
+  RANDOM = 'random',
+  LISTED_PRICE = 'listed_price'
+}
+
+export enum ListedType {
+  ALL = 'All',
+  LISTED = 'Listed',
+  NOT_LISTED = 'Not Listed'
 }
 
 export async function fetchNextGenAllowlistCollection(merkleRoot: string) {
@@ -183,6 +190,9 @@ function getNextGenCollectionTokensSortQuery(
   if (sort === TokensSort.RANDOM) {
     sortQuery = `pending, RAND()`;
   } else {
+    if (sort === TokensSort.LISTED_PRICE) {
+      return `${NEXTGEN_TOKEN_LISTINGS_TABLE}.opensea_price ${sortDirection}, ${NEXTGEN_TOKENS_TABLE}.id asc`;
+    }
     let sortColumn = '';
     switch (sort) {
       case TokensSort.ID:
@@ -290,10 +300,25 @@ export async function fetchNextGenCollectionTokens(
   sort: TokensSort,
   sortDirection: PageSortDirection,
   showNormalised: boolean,
-  showTraitCount: boolean
+  showTraitCount: boolean,
+  listedType: ListedType
 ) {
   const filters = getNextGenCollectionTokensFilters(collectionId, traits);
-  const joins = `LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_SCORES_TABLE}.id`;
+  let joins = `LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_SCORES_TABLE}.id`;
+  joins += ` LEFT JOIN ${NEXTGEN_TOKEN_LISTINGS_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_LISTINGS_TABLE}.id `;
+
+  if (listedType === ListedType.LISTED) {
+    filters.filters = constructFilters(
+      filters.filters,
+      `${NEXTGEN_TOKEN_LISTINGS_TABLE}.opensea_price > 0`
+    );
+  } else if (listedType === ListedType.NOT_LISTED) {
+    filters.filters = constructFilters(
+      filters.filters,
+      `${NEXTGEN_TOKEN_LISTINGS_TABLE}.opensea_price IS NULL OR ${NEXTGEN_TOKEN_LISTINGS_TABLE}.opensea_price = 0`
+    );
+  }
+
   const sortQuery: string = getNextGenCollectionTokensSortQuery(
     sort,
     sortDirection,
@@ -308,7 +333,7 @@ export async function fetchNextGenCollectionTokens(
     pageSize,
     page,
     filters.filters,
-    `${NEXTGEN_TOKENS_TABLE}.*, ${NEXTGEN_TOKEN_SCORES_TABLE}.*`,
+    `${NEXTGEN_TOKENS_TABLE}.*, ${NEXTGEN_TOKEN_SCORES_TABLE}.*, ${NEXTGEN_TOKEN_LISTINGS_TABLE}.*`,
     joins
   );
 }
