@@ -1,10 +1,13 @@
 import { NextGenCollectionStatus } from '../api-filters';
 import { constructFilters } from '../api-helpers';
 import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
   ENS_TABLE,
   NULL_ADDRESS,
   NULL_ADDRESS_DEAD,
-  TRANSACTIONS_TABLE
+  PROFILE_FULL,
+  TRANSACTIONS_TABLE,
+  WALLETS_CONSOLIDATION_KEYS_VIEW
 } from '../../../constants';
 import { getProof } from '../../../merkle_proof';
 import { sqlExecutor } from '../../../sql-executor';
@@ -25,6 +28,8 @@ import {
 } from '../../../nextgen/nextgen_constants';
 import { PageSortDirection } from '../page-request';
 import { NEXTGEN_CORE, getNextGenChainId } from './abis';
+import { profilesService } from '../../../profiles/profiles.service';
+import { calculateLevel } from '../../../profiles/profile-level';
 
 export enum TokensSort {
   ID = 'id',
@@ -607,4 +612,57 @@ export async function fetchNextGenTokenTDH(
     page,
     filters
   );
+}
+
+export async function fetchNextGenCollectionTraitSets(
+  collectionId: number,
+  trait: string,
+  pageSize: number,
+  page: number
+) {
+  const fields = `
+    ${NEXTGEN_TOKENS_TABLE}.owner, 
+    ${PROFILE_FULL}.normalised_handle,
+    ${PROFILE_FULL}.handle,
+    0 as level,
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as tdh,
+    ${PROFILE_FULL}.rep_score,
+    COUNT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.value) AS distinct_values_count,
+    GROUP_CONCAT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id ORDER BY ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id) AS token_ids,
+    GROUP_CONCAT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.value ORDER BY ${NEXTGEN_TOKEN_TRAITS_TABLE}.value) AS palette_values`;
+
+  const filters = constructFilters(
+    '',
+    `${NEXTGEN_TOKENS_TABLE}.collection_id = :collectionId AND LOWER(${NEXTGEN_TOKEN_TRAITS_TABLE}.trait) = :trait`
+  );
+  const groups = `${NEXTGEN_TOKENS_TABLE}.owner, ${PROFILE_FULL}.normalised_handle, ${PROFILE_FULL}.handle, ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, ${PROFILE_FULL}.rep_score`;
+
+  let joins = `JOIN ${NEXTGEN_TOKEN_TRAITS_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id`;
+  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} on ${WALLETS_CONSOLIDATION_KEYS_VIEW}.wallet = ${NEXTGEN_TOKENS_TABLE}.owner`;
+  joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} on ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
+  joins += ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
+
+  const results = await fetchPaginated(
+    NEXTGEN_TOKENS_TABLE,
+    {
+      collectionId: collectionId,
+      trait: trait.toLowerCase()
+    },
+    'distinct_values_count DESC',
+    pageSize,
+    page,
+    filters,
+    fields,
+    joins,
+    groups
+  );
+
+  results.data.forEach((d: any) => {
+    d.level = calculateLevel({
+      tdh: d.tdh ?? 0,
+      rep: d.rep_score
+    });
+  });
+
+  return results;
 }
