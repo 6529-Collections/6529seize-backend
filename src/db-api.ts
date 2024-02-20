@@ -13,10 +13,10 @@ import {
   GRADIENT_CONTRACT,
   LAB_EXTENDED_DATA_TABLE,
   MANIFOLD,
+  MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
-  MEME_8_EDITION_BURN_ADJUSTMENT,
   NFTS_HISTORY_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
@@ -687,7 +687,7 @@ export async function fetchOwners(
   nfts: string
 ) {
   let filters = '';
-  let params: any = {};
+  const params: any = {};
 
   if (wallets) {
     filters = constructFilters(
@@ -1395,18 +1395,12 @@ export async function fetchOwnerMetrics(
     ${WALLETS_TDH_TABLE}.memes,
     ${WALLETS_TDH_TABLE}.memes_ranks, 
     ${WALLETS_TDH_TABLE}.gradients, 
-    ${WALLETS_TDH_TABLE}.gradients_ranks,
-    p.handle as handle, 
-    p.rep_score as rep_score, 
-    p.cic_score as cic_score, 
-    p.profile_tdh as profile_tdh `;
+    ${WALLETS_TDH_TABLE}.gradients_ranks`;
 
   const fields = ` ${ownerMetricsSelect},${ENS_TABLE}.display as wallet_display, ${walletsTdhTableSelect} , ${OWNERS_TAGS_TABLE}.* `;
   let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
   joins += ` LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet `;
   joins += ` LEFT JOIN ${ENS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${ENS_TABLE}.wallet `;
-  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} wc on wc.wallet = ${OWNERS_METRICS_TABLE}.wallet`;
-  joins += ` LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = wc.consolidation_key`;
   if (
     sort == 'balance' ||
     sort == 'memes_balance' ||
@@ -1467,21 +1461,13 @@ export async function fetchOwnerMetrics(
   const results = await fetchPaginated(
     OWNERS_METRICS_TABLE,
     params,
-    `${
-      sort === 'level' ? 'p.profile_tdh + p.rep_score' : sort
-    } ${sortDir}, ${OWNERS_METRICS_TABLE}.balance ${sortDir}, boosted_tdh ${sortDir}`,
+    `${sort} ${sortDir}, ${OWNERS_METRICS_TABLE}.balance ${sortDir}, boosted_tdh ${sortDir}`,
     pageSize,
     page,
     filters,
     fields,
     joins
   );
-  results.data.forEach((d: any) => {
-    d.level = calculateLevel({
-      tdh: d.profile_tdh ?? 0,
-      rep: d.rep_score ?? 0
-    });
-  });
 
   if (results.data.length === 0 && wallets && profilePage) {
     const resolvedWallets = await resolveEns(wallets);
@@ -1870,7 +1856,8 @@ export async function fetchConsolidatedOwnerMetrics(
     p.handle as handle, 
     p.rep_score as rep_score, 
     p.cic_score as cic_score, 
-    p.profile_tdh as profile_tdh `;
+    p.profile_tdh as profile_tdh,
+    ifnull(p.profile_tdh, ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh) + ifnull(p.rep_score, 0) as level_components`;
 
   const fields = ` ${ownerMetricsSelect}, ${walletsTdhTableSelect} , ${CONSOLIDATED_OWNERS_TAGS_TABLE}.* `;
   let joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key`;
@@ -1914,7 +1901,7 @@ export async function fetchConsolidatedOwnerMetrics(
     sort = `${CONSOLIDATED_OWNERS_TAGS_TABLE}.${sort}`;
   }
   if (sort === 'level') {
-    sort = 'p.profile_tdh + p.rep_score';
+    sort = 'level_components';
   }
 
   if (wallets) {
@@ -1977,7 +1964,7 @@ export async function fetchConsolidatedOwnerMetrics(
   }
   results.data.forEach((d: any) => {
     d.level = calculateLevel({
-      tdh: d.profile_tdh ?? 0,
+      tdh: d.profile_tdh ?? d.boosted_tdh ?? 0,
       rep: d.rep_score ?? 0
     });
   });
