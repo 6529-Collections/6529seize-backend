@@ -1,4 +1,9 @@
-import { GRADIENT_CONTRACT, MEMES_CONTRACT } from './constants';
+import {
+  GRADIENT_CONTRACT,
+  MEMES_CONTRACT,
+  MEME_8_EDITION_BURN_ADJUSTMENT,
+  NULL_ADDRESS
+} from './constants';
 import { NFT } from './entities/INFT';
 import { ConsolidatedOwnerTags, Owner, OwnerTags } from './entities/IOwner';
 import { areEqualAddresses, buildConsolidationKey } from './helpers';
@@ -54,12 +59,20 @@ export const findOwnerTags = async () => {
   const ownersTagsDelta: OwnerTags[] = [];
 
   uniqueOwners.forEach((owner) => {
-    const walletNFTs = [...startingOwners].filter((o) =>
+    let walletNFTs = [...startingOwners].filter((o) =>
       areEqualAddresses(o.wallet, owner)
     );
     const walletNextgenNfts = [...nextgenTokens].filter((n) =>
       areEqualAddresses(n.owner, owner)
     );
+
+    if (areEqualAddresses(owner, NULL_ADDRESS)) {
+      walletNFTs.find(
+        (n) => areEqualAddresses(n.contract, MEMES_CONTRACT) && n.token_id == 8
+      )!.balance += MEME_8_EDITION_BURN_ADJUSTMENT;
+    }
+
+    walletNFTs = walletNFTs.filter((n) => n.balance > 0);
 
     const oTags = buildTagsFromNfts(
       walletNFTs,
@@ -135,9 +148,18 @@ export const findOwnerTags = async () => {
           areEqualAddresses(wallet, pw)
         )
       ) {
-        const walletNFTs = [...startingOwners].filter((o) =>
+        let walletNFTs = [...startingOwners].filter((o) =>
           consolidations.some((s) => areEqualAddresses(s, o.wallet))
         );
+
+        if (areEqualAddresses(wallet, NULL_ADDRESS)) {
+          walletNFTs.find(
+            (n) =>
+              areEqualAddresses(n.contract, MEMES_CONTRACT) && n.token_id == 8
+          )!.balance += MEME_8_EDITION_BURN_ADJUSTMENT;
+        }
+
+        walletNFTs = walletNFTs.filter((n) => n.balance > 0);
 
         const processedWalletNfts: Owner[] = [];
         walletNFTs.forEach((wNft) => {
