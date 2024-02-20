@@ -323,3 +323,14 @@ export function replaceEmojisWithHex(inputString: string) {
     }
   );
 }
+
+export function batchArray<T>(array: T[], batchSize: number): T[][] {
+  const batchedArray: T[][] = [];
+
+  for (let index = 0; index < array.length; index += batchSize) {
+    const batch = array.slice(index, index + batchSize);
+    batchedArray.push(batch);
+  }
+
+  return batchedArray;
+}
