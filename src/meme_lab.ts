@@ -18,7 +18,12 @@ import {
 } from './constants';
 import { LabExtendedData, LabNFT, NFTWithExtendedData } from './entities/INFT';
 import { LabTransaction } from './entities/ITransaction';
-import { areEqualAddresses, areEqualObjects } from './helpers';
+import {
+  areEqualAddresses,
+  areEqualObjects,
+  isNullAddress,
+  replaceEmojisWithHex
+} from './helpers';
 import {
   fetchAllMemeLabNFTs,
   persistTransactions,
@@ -227,7 +232,7 @@ async function processNFTs(
         name: fullMetadata.name,
         collection: 'Meme Lab by 6529',
         token_type: 'ERC1155',
-        description: fullMetadata.description,
+        description: replaceEmojisWithHex(fullMetadata.description),
         artist: artists.join(', '),
         uri: fullMetadata.tokenUri?.raw,
         icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
@@ -419,20 +424,29 @@ export async function memeLabExtendedData() {
   const labMeta: LabExtendedData[] = [];
 
   nfts.forEach((nft) => {
-    const tokenWallets = owners.filter(
-      (tw) =>
-        !areEqualAddresses(NULL_ADDRESS, tw.wallet) && tw.token_id == nft.id
-    );
+    const tokenWallets = owners.filter((tw) => tw.token_id == nft.id);
+
+    const nonBurntTokenWallets = [...tokenWallets].filter(
+      (o) => !isNullAddress(o.wallet)
+    ).length;
 
     let edition_size = 0;
     let museum_holdings = 0;
+    let burnt = 0;
+    let edition_size_not_burnt = 0;
     let edition_size_cleaned = 0;
     tokenWallets.forEach((tw) => {
-      if (!areEqualAddresses(tw.wallet, SIX529_MUSEUM.toUpperCase())) {
-        edition_size_cleaned += tw.balance;
+      if (isNullAddress(tw.wallet)) {
+        burnt += tw.balance;
       } else {
-        museum_holdings += tw.balance;
+        edition_size_not_burnt += tw.balance;
+        if (!areEqualAddresses(tw.wallet, SIX529_MUSEUM)) {
+          edition_size_cleaned += tw.balance;
+        } else {
+          museum_holdings += tw.balance;
+        }
       }
+
       edition_size += tw.balance;
     });
 
@@ -471,7 +485,12 @@ export async function memeLabExtendedData() {
       hodlers_rank: -1,
       percent_unique_rank: -1,
       percent_unique_cleaned_rank: -1,
-      website: website
+      website: website,
+      burnt: burnt,
+      edition_size_not_burnt: edition_size_not_burnt,
+      edition_size_not_burnt_rank: -1,
+      percent_unique_not_burnt: nonBurntTokenWallets / edition_size_not_burnt,
+      percent_unique_not_burnt_rank: -1
     };
     labMeta.push(meta);
   });
@@ -499,6 +518,17 @@ export async function memeLabExtendedData() {
           }
         }
       }).length + 1;
+    lm.edition_size_not_burnt_rank =
+      labMeta.filter((m) => {
+        if (lm.edition_size_not_burnt > m.edition_size_not_burnt) {
+          return m;
+        }
+        if (m.edition_size_not_burnt == lm.edition_size_not_burnt) {
+          if (lm.id > m.id) {
+            return m;
+          }
+        }
+      }).length + 1;
     lm.edition_size_cleaned_rank =
       labMeta.filter((m) => {
         if (lm.edition_size_cleaned > m.edition_size_cleaned) {
@@ -521,6 +551,17 @@ export async function memeLabExtendedData() {
           }
         }
       }).length + 1;
+    lm.percent_unique_cleaned_rank =
+      labMeta.filter((m) => {
+        if (m.percent_unique_cleaned > lm.percent_unique_cleaned) {
+          return m;
+        }
+        if (m.percent_unique_cleaned == lm.percent_unique_cleaned) {
+          if (lm.id > m.id) {
+            return m;
+          }
+        }
+      }).length + 1;
     lm.percent_unique_rank =
       labMeta.filter((m) => {
         if (m.percent_unique > lm.percent_unique) {
@@ -532,12 +573,12 @@ export async function memeLabExtendedData() {
           }
         }
       }).length + 1;
-    lm.percent_unique_cleaned_rank =
+    lm.percent_unique_not_burnt_rank =
       labMeta.filter((m) => {
-        if (m.percent_unique_cleaned > lm.percent_unique_cleaned) {
+        if (m.percent_unique_not_burnt > lm.percent_unique_not_burnt) {
           return m;
         }
-        if (m.percent_unique_cleaned == lm.percent_unique_cleaned) {
+        if (m.percent_unique_not_burnt == lm.percent_unique_not_burnt) {
           if (lm.id > m.id) {
             return m;
           }

@@ -16,6 +16,7 @@ import {
 import { Wallet } from './entities/IWallet';
 import { sqlExecutor } from './sql-executor';
 import { Logger } from './logging';
+import { replaceEmojisWithHex } from './helpers';
 
 const logger = Logger.get('ENS');
 
@@ -184,17 +185,6 @@ export async function refreshEns() {
   while (processing) {
     processing = await refreshEnsLoop();
   }
-}
-
-function replaceEmojisWithHex(inputString: string) {
-  return inputString.replace(/[\u{1F300}-\u{1F6FF}]/gu, (match: string) => {
-    const codePoint = match.codePointAt(0);
-    if (codePoint) {
-      const emojiHex = codePoint.toString(16).toUpperCase();
-      return `U+${emojiHex}`;
-    }
-    return match;
-  });
 }
 
 function initializeAlchemy() {
