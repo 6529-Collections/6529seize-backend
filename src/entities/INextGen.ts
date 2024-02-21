@@ -16,7 +16,8 @@ import {
   NEXTGEN_TOKENS_TABLE,
   NEXTGEN_TOKEN_TRAITS_TABLE,
   NEXTGEN_TOKEN_SCORES_TABLE,
-  NEXTGEN_TOKENS_TDH_TABLE
+  NEXTGEN_TOKENS_TDH_TABLE,
+  NEXTGEN_TOKEN_LISTINGS_TABLE
 } from '../nextgen/nextgen_constants';
 import { BlockEntity } from './IBlock';
 
@@ -643,4 +644,28 @@ export class NextGenTokenScore {
 
   @Column({ type: 'int' })
   single_trait_rarity_score_trait_count_normalised_rank?: number;
+}
+
+@Entity(NEXTGEN_TOKEN_LISTINGS_TABLE)
+export class NextGenTokenListing {
+  @CreateDateColumn({ type: 'datetime' })
+  created_at?: Date;
+
+  @UpdateDateColumn({ type: 'datetime' })
+  updated_at?: Date;
+
+  @PrimaryColumn({ type: 'bigint' })
+  id!: number;
+
+  @Column({ type: 'double' })
+  opensea_price!: number;
+
+  @Column({ type: 'double' })
+  opensea_royalty!: number;
+
+  @Column({ type: 'double' })
+  opensea_listing_time!: number;
+
+  @Column({ type: 'double' })
+  opensea_expiration_time!: number;
 }

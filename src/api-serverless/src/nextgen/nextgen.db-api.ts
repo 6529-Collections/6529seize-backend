@@ -3,7 +3,6 @@ import { constructFilters } from '../api-helpers';
 import {
   ENS_TABLE,
   NULL_ADDRESS,
-  NULL_ADDRESS_DEAD,
   TRANSACTIONS_TABLE
 } from '../../../constants';
 import { getProof } from '../../../merkle_proof';
@@ -21,7 +20,8 @@ import {
   NEXTGEN_TOKENS_TDH_TABLE,
   NEXTGEN_TOKEN_SCORES_TABLE,
   NEXTGEN_TOKEN_TRAITS_TABLE,
-  MINT_TYPE_TRAIT
+  MINT_TYPE_TRAIT,
+  NEXTGEN_TOKEN_LISTINGS_TABLE
 } from '../../../nextgen/nextgen_constants';
 import { PageSortDirection } from '../page-request';
 import { NEXTGEN_CORE, getNextGenChainId } from './abis';
@@ -31,7 +31,16 @@ export enum TokensSort {
   RARITY_SCORE = 'rarity_score',
   STATISTICAL_SCORE = 'statistical_score',
   SINGLE_TRAIT_RARITY = 'single_trait_rarity',
-  RANDOM = 'random'
+  RANDOM = 'random',
+  LISTED_PRICE = 'listed_price',
+  LAST_SALE = 'last_sale',
+  HIGHEST_SALE = 'highest_sale'
+}
+
+export enum ListedType {
+  ALL = 'All',
+  LISTED = 'Listed',
+  NOT_LISTED = 'Not Listed'
 }
 
 export async function fetchNextGenAllowlistCollection(merkleRoot: string) {
@@ -182,6 +191,15 @@ function getNextGenCollectionTokensSortQuery(
   if (sort === TokensSort.RANDOM) {
     sortQuery = `pending, RAND()`;
   } else {
+    if (sort === TokensSort.LISTED_PRICE) {
+      return `${NEXTGEN_TOKEN_LISTINGS_TABLE}.opensea_price ${sortDirection}, ${NEXTGEN_TOKENS_TABLE}.id asc`;
+    }
+    if (sort === TokensSort.LAST_SALE) {
+      return `last_sale.transaction_date ${sortDirection}, last_sale.value ${sortDirection}, ${NEXTGEN_TOKENS_TABLE}.id asc`;
+    }
+    if (sort === TokensSort.HIGHEST_SALE) {
+      return `max_sale.value ${sortDirection}, max_sale.transaction_date ${sortDirection}, ${NEXTGEN_TOKENS_TABLE}.id asc`;
+    }
     let sortColumn = '';
     switch (sort) {
       case TokensSort.ID:
@@ -289,10 +307,51 @@ export async function fetchNextGenCollectionTokens(
   sort: TokensSort,
   sortDirection: PageSortDirection,
   showNormalised: boolean,
-  showTraitCount: boolean
+  showTraitCount: boolean,
+  listedType: ListedType
 ) {
   const filters = getNextGenCollectionTokensFilters(collectionId, traits);
-  const joins = `LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_SCORES_TABLE}.id`;
+  let joins = `LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_SCORES_TABLE}.id`;
+  joins += ` LEFT JOIN ${NEXTGEN_TOKEN_LISTINGS_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_LISTINGS_TABLE}.id `;
+
+  if (sort === TokensSort.LAST_SALE) {
+    joins += ` LEFT JOIN (
+              SELECT token_id, MAX(transaction_date) AS transaction_date, value
+              FROM ${TRANSACTIONS_TABLE}
+              WHERE value > 0 and contract = :nextgenContract and from_address != :nullAddress
+              GROUP BY token_id, value) 
+            AS last_sale ON ${NEXTGEN_TOKENS_TABLE}.id = last_sale.token_id`;
+    filters.params.nextgenContract = NEXTGEN_CORE[getNextGenChainId()];
+    filters.params.nullAddress = NULL_ADDRESS;
+  }
+
+  if (sort === TokensSort.HIGHEST_SALE) {
+    joins += ` LEFT JOIN (
+              SELECT t1.token_id, t1.value, t1.transaction_date
+              FROM ${TRANSACTIONS_TABLE} t1
+              INNER JOIN (
+                  SELECT token_id, MAX(value) AS max_value
+                  FROM ${TRANSACTIONS_TABLE}
+                  where contract = :nextgenContract and from_address != :nullAddress
+                  GROUP BY token_id
+              ) t2 ON t1.token_id = t2.token_id AND t1.value = t2.max_value
+            ) AS max_sale ON ${NEXTGEN_TOKENS_TABLE}.id = max_sale.token_id`;
+    filters.params.nextgenContract = NEXTGEN_CORE[getNextGenChainId()];
+    filters.params.nullAddress = NULL_ADDRESS;
+  }
+
+  if (listedType === ListedType.LISTED) {
+    filters.filters = constructFilters(
+      filters.filters,
+      `${NEXTGEN_TOKEN_LISTINGS_TABLE}.opensea_price > 0`
+    );
+  } else if (listedType === ListedType.NOT_LISTED) {
+    filters.filters = constructFilters(
+      filters.filters,
+      `${NEXTGEN_TOKEN_LISTINGS_TABLE}.opensea_price IS NULL OR ${NEXTGEN_TOKEN_LISTINGS_TABLE}.opensea_price = 0`
+    );
+  }
+
   const sortQuery: string = getNextGenCollectionTokensSortQuery(
     sort,
     sortDirection,
@@ -300,34 +359,59 @@ export async function fetchNextGenCollectionTokens(
     showTraitCount
   );
 
-  return fetchPaginated(
+  let fields = `
+      ${NEXTGEN_TOKENS_TABLE}.*, 
+      ${NEXTGEN_TOKEN_SCORES_TABLE}.*, 
+      ${NEXTGEN_TOKEN_LISTINGS_TABLE}.*`;
+
+  if (sort === TokensSort.LAST_SALE) {
+    fields += `,
+      last_sale.value AS last_sale_value, 
+      last_sale.transaction_date AS last_sale_date`;
+  }
+  if (sort === TokensSort.HIGHEST_SALE) {
+    fields += `,
+      max_sale.value AS max_sale_value,
+      max_sale.transaction_date AS max_sale_date`;
+  }
+
+  const results = await fetchPaginated(
     NEXTGEN_TOKENS_TABLE,
     filters.params,
     sortQuery,
     pageSize,
     page,
     filters.filters,
-    `${NEXTGEN_TOKENS_TABLE}.*, ${NEXTGEN_TOKEN_SCORES_TABLE}.*`,
+    fields,
     joins
   );
+
+  results.data.forEach((token: any) => {
+    token.generator = JSON.parse(token.generator);
+    token.mint_data = JSON.parse(token.mint_data);
+  });
+
+  return results;
 }
 
-export async function fetchNextGenToken(tokendId: number) {
+export async function fetchNextGenToken(tokenId: number) {
   const sql = `
     SELECT 
       t.*,
-      s.*
+      s.*,
+      l.*
     FROM ${NEXTGEN_TOKENS_TABLE} t
     LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} s ON t.id = s.id 
+    LEFT JOIN ${NEXTGEN_TOKEN_LISTINGS_TABLE} l ON t.id = l.id 
     WHERE t.id = :id
   `;
   const results = await sqlExecutor.execute(sql, {
-    id: tokendId,
-    nullAddresses: [NULL_ADDRESS, NULL_ADDRESS_DEAD]
+    id: tokenId
   });
   if (results.length === 1) {
     const r = results[0];
     r.generator = JSON.parse(r.generator);
+    r.mint_data = JSON.parse(r.mint_data);
     return r;
   }
   return returnEmpty();
