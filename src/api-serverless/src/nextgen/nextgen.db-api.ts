@@ -1,11 +1,6 @@
 import { NextGenCollectionStatus } from '../api-filters';
 import { constructFilters } from '../api-helpers';
-import {
-  ENS_TABLE,
-  NULL_ADDRESS,
-  NULL_ADDRESS_DEAD,
-  TRANSACTIONS_TABLE
-} from '../../../constants';
+import { ENS_TABLE, TRANSACTIONS_TABLE } from '../../../constants';
 import { getProof } from '../../../merkle_proof';
 import { sqlExecutor } from '../../../sql-executor';
 import { Time } from '../../../time';
