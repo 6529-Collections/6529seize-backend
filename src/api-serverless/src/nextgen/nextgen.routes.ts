@@ -310,6 +310,13 @@ router.get(
       const showNormalised = req.query.show_normalised === 'true';
       const showTraitCount = req.query.show_trait_count === 'true';
 
+      let listed: db.ListedType = db.ListedType.ALL;
+      if (req.query.listed === 'true') {
+        listed = db.ListedType.LISTED;
+      } else if (req.query.listed === 'false') {
+        listed = db.ListedType.NOT_LISTED;
+      }
+
       logger.info(`[FETCHING TOKENS FOR COLLECTION ID ${id}]`);
       db.fetchNextGenCollectionTokens(
         id,
@@ -319,7 +326,8 @@ router.get(
         sort,
         sortDir,
         showNormalised,
-        showTraitCount
+        showTraitCount,
+        listed
       ).then((result) => {
         return returnPaginatedResult(result, req, res);
       });
