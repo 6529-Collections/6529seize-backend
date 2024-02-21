@@ -1,6 +1,10 @@
 import { NextGenCollectionStatus } from '../api-filters';
 import { constructFilters } from '../api-helpers';
-import { ENS_TABLE, TRANSACTIONS_TABLE } from '../../../constants';
+import {
+  ENS_TABLE,
+  NULL_ADDRESS,
+  TRANSACTIONS_TABLE
+} from '../../../constants';
 import { getProof } from '../../../merkle_proof';
 import { sqlExecutor } from '../../../sql-executor';
 import { Time } from '../../../time';
@@ -314,9 +318,11 @@ export async function fetchNextGenCollectionTokens(
     joins += ` LEFT JOIN (
               SELECT token_id, MAX(transaction_date) AS transaction_date, value
               FROM ${TRANSACTIONS_TABLE}
-              WHERE value > 0
+              WHERE value > 0 and contract = :nextgenContract and from_address != :nullAddress
               GROUP BY token_id, value) 
             AS last_sale ON ${NEXTGEN_TOKENS_TABLE}.id = last_sale.token_id`;
+    filters.params.nextgenContract = NEXTGEN_CORE[getNextGenChainId()];
+    filters.params.nullAddress = NULL_ADDRESS;
   }
 
   if (sort === TokensSort.HIGHEST_SALE) {
@@ -326,9 +332,12 @@ export async function fetchNextGenCollectionTokens(
               INNER JOIN (
                   SELECT token_id, MAX(value) AS max_value
                   FROM ${TRANSACTIONS_TABLE}
+                  where contract = :nextgenContract and from_address != :nullAddress
                   GROUP BY token_id
               ) t2 ON t1.token_id = t2.token_id AND t1.value = t2.max_value
             ) AS max_sale ON ${NEXTGEN_TOKENS_TABLE}.id = max_sale.token_id`;
+    filters.params.nextgenContract = NEXTGEN_CORE[getNextGenChainId()];
+    filters.params.nullAddress = NULL_ADDRESS;
   }
 
   if (listedType === ListedType.LISTED) {
