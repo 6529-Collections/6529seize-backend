@@ -7,6 +7,7 @@ import { RateMatter, Rating } from '../entities/IRating';
 import {
   COMMUNITY_MEMBERS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  PROFILE_FULL,
   PROFILES_TABLE,
   RATINGS_TABLE
 } from '../constants';
@@ -186,12 +187,10 @@ from general_stats
                                        sum(r.rating) as tally
                                 from ${RATINGS_TABLE} r
                                 group by 1, 2)
-          select rt.rater_profile_id, rt.matter, rt.tally, tc.boosted_tdh as rater_tdh
+          select rt.rater_profile_id, rt.matter, rt.tally, p.profile_tdh as rater_tdh
           from rate_tallies rt
-                   join ${PROFILES_TABLE} p on rt.rater_profile_id = p.external_id
-                   join ${COMMUNITY_MEMBERS_TABLE} c on c.wallet1 = p.primary_wallet or c.wallet2 = p.primary_wallet or c.wallet3 = p.primary_wallet
-                   join ${CONSOLIDATED_WALLETS_TDH_TABLE} tc on tc.consolidation_key = c.consolidation_key
-          where tc.boosted_tdh < abs(rt.tally)
+                   left join ${PROFILE_FULL} p on rt.rater_profile_id = p.external_id
+          where p.profile_tdh < abs(rt.tally)
       `
     );
   }
