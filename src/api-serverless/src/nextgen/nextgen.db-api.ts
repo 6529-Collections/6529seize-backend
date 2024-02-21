@@ -28,7 +28,6 @@ import {
 } from '../../../nextgen/nextgen_constants';
 import { PageSortDirection } from '../page-request';
 import { NEXTGEN_CORE, getNextGenChainId } from './abis';
-import { profilesService } from '../../../profiles/profiles.service';
 import { calculateLevel } from '../../../profiles/profile-level';
 
 export enum TokensSort {
@@ -704,6 +703,14 @@ export async function fetchNextGenCollectionTraitSets(
   pageSize: number,
   page: number
 ) {
+  const tokenTraits = await sqlExecutor.execute(
+    `SELECT token_id, value FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} 
+      WHERE trait=:trait`,
+    {
+      trait: trait
+    }
+  );
+
   const fields = `
     ${NEXTGEN_TOKENS_TABLE}.owner, 
     ${PROFILE_FULL}.normalised_handle,
@@ -753,8 +760,23 @@ export async function fetchNextGenCollectionTraitSets(
       tdh: d.tdh ?? 0,
       rep: d.rep_score
     });
-    d.token_ids = d.token_ids.split(',').map(Number);
-    d.distinct_values = d.distinct_values.split(',');
+
+    const distinctValues = d.distinct_values.split(',');
+    const tokenIds = d.token_ids.split(',').map(Number);
+    const tokenValues = [];
+    distinctValues.forEach((value: string) => {
+      const traitTokens = tokenTraits
+        .filter((t: any) => t.value === value && tokenIds.includes(t.token_id))
+        .map((t: any) => t.token_id);
+      tokenValues.push({
+        value: value,
+        tokens: traitTokens
+      });
+    });
+
+    delete d.distinct_values;
+    delete d.token_ids;
+    d.token_values = tokenValues;
   });
 
   return results;
