@@ -1,7 +1,7 @@
 import { EntityManager } from 'typeorm';
 import { getDataSource } from './db';
 import { NextGenToken, NextGenTokenListing } from './entities/INextGen';
-import { areEqualAddresses, batchArray, gweiToEth, weiToEth } from './helpers';
+import { areEqualAddresses, batchArray, weiToEth } from './helpers';
 import { Logger } from './logging';
 import {
   fetchNextgenTokens,
@@ -17,10 +17,8 @@ export const findNftMarketStatsOpensea = async (contract: string) => {
   const dataSource = getDataSource();
   await dataSource.transaction(async (entityManager) => {
     const tokens: NextGenToken[] = await fetchNextgenTokens(entityManager);
-    const batchedTokens = batchArray(
-      tokens.sort((a, b) => a.id - b.id),
-      30
-    );
+    const sortedTokens = tokens.slice().sort((a, b) => a.id - b.id);
+    const batchedTokens = batchArray(sortedTokens, 30);
 
     for (const batch of batchedTokens) {
       await processBatch(entityManager, batch, contract);

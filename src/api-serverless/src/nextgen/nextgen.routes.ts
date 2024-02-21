@@ -310,12 +310,12 @@ router.get(
       const showNormalised = req.query.show_normalised === 'true';
       const showTraitCount = req.query.show_trait_count === 'true';
 
-      const listed: db.ListedType =
-        req.query.listed == 'true'
-          ? db.ListedType.LISTED
-          : req.query.listed == 'false'
-          ? db.ListedType.NOT_LISTED
-          : db.ListedType.ALL;
+      let listed: db.ListedType = db.ListedType.ALL;
+      if (req.query.listed === 'true') {
+        listed = db.ListedType.LISTED;
+      } else if (req.query.listed === 'false') {
+        listed = db.ListedType.NOT_LISTED;
+      }
 
       logger.info(`[FETCHING TOKENS FOR COLLECTION ID ${id}]`);
       db.fetchNextGenCollectionTokens(
