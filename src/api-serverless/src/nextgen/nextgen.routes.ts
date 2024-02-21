@@ -452,6 +452,33 @@ router.get(
   }
 );
 
+router.get(
+  `/collections/:id/trait_sets/:trait`,
+  async function (req: any, res: any, next: any) {
+    const id: number = parseInt(req.params.id);
+    const trait: string = req.params.trait;
+
+    if (!isNaN(id)) {
+      logger.info(
+        `[FETCHING TRAIT SETS FOR COLLECTION ID ${id} TRAIT ${trait}]`
+      );
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+      db.fetchNextGenCollectionTraitSets(id, trait, pageSize, page).then(
+        (result) => {
+          return returnJsonResult(result, req, res);
+        }
+      );
+    } else {
+      return res.status(404).send({});
+    }
+  }
+);
+
 router.get(`/tokens/:id`, async function (req: any, res: any, next: any) {
   const id: number = parseInt(req.params.id);
   if (!isNaN(id)) {
