@@ -626,6 +626,7 @@ export async function fetchNextGenCollectionTraitSets(
     ${PROFILE_FULL}.handle,
     0 as level,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as tdh,
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
     ${PROFILE_FULL}.rep_score,
     COUNT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.value) AS distinct_values_count,
     GROUP_CONCAT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id ORDER BY ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id) AS token_ids,
@@ -635,7 +636,13 @@ export async function fetchNextGenCollectionTraitSets(
     '',
     `${NEXTGEN_TOKENS_TABLE}.collection_id = :collectionId AND LOWER(${NEXTGEN_TOKEN_TRAITS_TABLE}.trait) = :trait`
   );
-  const groups = `${NEXTGEN_TOKENS_TABLE}.owner, ${PROFILE_FULL}.normalised_handle, ${PROFILE_FULL}.handle, ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, ${PROFILE_FULL}.rep_score`;
+  const groups = `
+    ${NEXTGEN_TOKENS_TABLE}.owner, 
+    ${PROFILE_FULL}.normalised_handle, 
+    ${PROFILE_FULL}.handle, 
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, 
+    ${PROFILE_FULL}.rep_score`;
 
   let joins = `JOIN ${NEXTGEN_TOKEN_TRAITS_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id`;
   joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} on ${WALLETS_CONSOLIDATION_KEYS_VIEW}.wallet = ${NEXTGEN_TOKENS_TABLE}.owner`;
