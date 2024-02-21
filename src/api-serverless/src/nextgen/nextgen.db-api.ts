@@ -763,7 +763,10 @@ export async function fetchNextGenCollectionTraitSets(
 
     const distinctValues = d.distinct_values.split(',');
     const tokenIds = d.token_ids.split(',').map(Number);
-    const tokenValues = [];
+    const tokenValues: {
+      value: string;
+      tokens: number[];
+    }[] = [];
     distinctValues.forEach((value: string) => {
       const traitTokens = tokenTraits
         .filter((t: any) => t.value === value && tokenIds.includes(t.token_id))
