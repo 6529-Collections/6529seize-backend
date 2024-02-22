@@ -769,7 +769,7 @@ export async function fetchOwnersTags(
   );
 }
 
-async function resolveEns(walletsStr: string) {
+export async function resolveEns(walletsStr: string) {
   const wallets = walletsStr.split(',');
   const sql = `SELECT wallet,display FROM ${ENS_TABLE} WHERE wallet IN (:wallets) OR display IN (:wallets)`;
   const results = await sqlExecutor.execute(sql, {

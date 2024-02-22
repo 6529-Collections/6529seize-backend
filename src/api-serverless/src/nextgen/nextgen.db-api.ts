@@ -1,5 +1,5 @@
 import { NextGenCollectionStatus } from '../api-filters';
-import { constructFilters } from '../api-helpers';
+import { constructFilters, constructFiltersOR } from '../api-helpers';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   ENS_TABLE,
@@ -11,7 +11,7 @@ import {
 import { getProof } from '../../../merkle_proof';
 import { sqlExecutor } from '../../../sql-executor';
 import { Time } from '../../../time';
-import { fetchPaginated, returnEmpty } from '../../../db-api';
+import { fetchPaginated, resolveEns, returnEmpty } from '../../../db-api';
 import {
   NEXTGEN_ALLOWLIST_BURN_TABLE,
   NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
@@ -701,7 +701,8 @@ export async function fetchNextGenCollectionTraitSets(
   collectionId: number,
   trait: string,
   pageSize: number,
-  page: number
+  page: number,
+  searchStr: string
 ) {
   const tokenTraits = await sqlExecutor.execute(
     `SELECT token_id, value FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} 
@@ -723,7 +724,7 @@ export async function fetchNextGenCollectionTraitSets(
     GROUP_CONCAT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id ORDER BY ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id) AS token_ids,
     GROUP_CONCAT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.value ORDER BY ${NEXTGEN_TOKEN_TRAITS_TABLE}.value) AS distinct_values`;
 
-  const filters = constructFilters(
+  let filters = constructFilters(
     '',
     `${NEXTGEN_TOKENS_TABLE}.collection_id = :collectionId AND LOWER(${NEXTGEN_TOKEN_TRAITS_TABLE}.trait) = :trait`
   );
@@ -740,12 +741,38 @@ export async function fetchNextGenCollectionTraitSets(
   joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} on ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
   joins += ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
 
+  const props: any = {
+    collectionId: collectionId,
+    trait: trait.toLowerCase()
+  };
+
+  if (searchStr) {
+    const resolvedAddresses = await resolveEns(searchStr);
+    let walletFilters = constructFiltersOR(
+      '',
+      `${NEXTGEN_TOKENS_TABLE}.owner in (:addresses)`
+    );
+    props.addresses = resolvedAddresses.map((a: any) => a.toLowerCase());
+
+    searchStr
+      .toLowerCase()
+      .split(',')
+      .forEach((s: string, index: number) => {
+        props[`search${index}`] = `%${s}%`;
+        walletFilters = constructFiltersOR(
+          walletFilters,
+          `${PROFILE_FULL}.normalised_handle like :search${index} or ${PROFILE_FULL}.handle like :search${index}`
+        );
+      });
+
+    console.log('walletFilters', walletFilters);
+
+    filters = constructFilters(filters, `(${walletFilters})`);
+  }
+
   const results = await fetchPaginated(
     NEXTGEN_TOKENS_TABLE,
-    {
-      collectionId: collectionId,
-      trait: trait.toLowerCase()
-    },
+    props,
     'distinct_values_count DESC',
     pageSize,
     page,
@@ -783,4 +810,93 @@ export async function fetchNextGenCollectionTraitSets(
   });
 
   return results;
+}
+
+export async function fetchNextGenCollectionTraitSetsUltimate(
+  collectionId: number,
+  traitsStr: string,
+  pageSize: number,
+  page: number
+) {
+  const traits = traitsStr.split(',');
+
+  const countsPerTrait = await sqlExecutor.execute(
+    `SELECT DISTINCT trait, trait_count FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} 
+      WHERE trait in (:traits)`,
+    {
+      traits: traits
+    }
+  );
+
+  let fields = `
+    ${NEXTGEN_TOKENS_TABLE}.owner,
+    ${PROFILE_FULL}.normalised_handle,
+    ${PROFILE_FULL}.handle,
+    0 as level,
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as tdh,
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
+    ${PROFILE_FULL}.rep_score`;
+
+  const params: any = {
+    traits: traits,
+    collectionId: collectionId
+  };
+  let filters = constructFilters(
+    '',
+    `${NEXTGEN_TOKEN_TRAITS_TABLE}.trait in (:traits)`
+  );
+  filters = constructFilters(
+    filters,
+    `${NEXTGEN_TOKENS_TABLE}.collection_id = :collectionId`
+  );
+  let havingQuery = ``;
+  countsPerTrait.forEach((ct: any, index: number) => {
+    const field = `${ct.trait.toLowerCase()}_sets`;
+    const paramName = `trait_${index}`;
+    fields += `, COUNT(DISTINCT CASE WHEN ${NEXTGEN_TOKEN_TRAITS_TABLE}.trait = :${paramName} THEN ${NEXTGEN_TOKEN_TRAITS_TABLE}.value ELSE NULL END) AS ${field}`;
+    params[paramName] = ct.trait;
+    params[field] = ct.trait_count;
+    havingQuery += ` ${index > 0 ? 'AND' : ''} ${field} = :${field}`;
+  });
+
+  let joins = `JOIN ${NEXTGEN_TOKEN_TRAITS_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id`;
+  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} on ${WALLETS_CONSOLIDATION_KEYS_VIEW}.wallet = ${NEXTGEN_TOKENS_TABLE}.owner`;
+  joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} on ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
+  joins += ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
+
+  const groups = `
+    ${NEXTGEN_TOKENS_TABLE}.owner, 
+    ${PROFILE_FULL}.normalised_handle, 
+    ${PROFILE_FULL}.handle, 
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, 
+    ${PROFILE_FULL}.rep_score`;
+
+  const limit = `LIMIT ${pageSize}`;
+  const offset = page > 1 ? `OFFSET ${pageSize * (page - 1)}` : '';
+  const sqlQuery = `SELECT ${fields} FROM ${NEXTGEN_TOKENS_TABLE} ${joins} ${filters} GROUP BY ${groups} HAVING ${havingQuery}`;
+  const countSql = `SELECT COUNT(1) as count FROM (${sqlQuery}) inner_q`;
+
+  const count = await sqlExecutor
+    .execute(countSql, params)
+    .then((r) => r[0].count);
+
+  const data = await sqlExecutor.execute(
+    `${sqlQuery} ${limit} ${offset}`,
+    params
+  );
+
+  data.forEach((d: any) => {
+    d.level = calculateLevel({
+      tdh: d.tdh ?? 0,
+      rep: d.rep_score
+    });
+  });
+
+  return {
+    count,
+    page,
+    next: count > pageSize * page,
+    data
+  };
 }

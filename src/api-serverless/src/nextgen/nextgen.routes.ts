@@ -453,6 +453,37 @@ router.get(
 );
 
 router.get(
+  `/collections/:id/ultimate_trait_set`,
+  async function (req: any, res: any, next: any) {
+    const id: number = parseInt(req.params.id);
+    const traits = req.query.trait;
+
+    if (isNaN(id)) {
+      return res.status(404).send({});
+    }
+
+    if (!traits) {
+      return res.status(400).send({});
+    }
+
+    logger.info(
+      `[FETCHING ULTIMATE TRAIT SETS FOR COLLECTION ID ${id} TRAITS ${traits}]`
+    );
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+    db.fetchNextGenCollectionTraitSetsUltimate(id, traits, pageSize, page).then(
+      (result) => {
+        return returnJsonResult(result, req, res);
+      }
+    );
+  }
+);
+
+router.get(
   `/collections/:id/trait_sets/:trait`,
   async function (req: any, res: any, next: any) {
     const id: number = parseInt(req.params.id);
@@ -467,12 +498,17 @@ router.get(
           ? parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const search = req.query.search;
 
-      db.fetchNextGenCollectionTraitSets(id, trait, pageSize, page).then(
-        (result) => {
-          return returnJsonResult(result, req, res);
-        }
-      );
+      db.fetchNextGenCollectionTraitSets(
+        id,
+        trait,
+        pageSize,
+        page,
+        search
+      ).then((result) => {
+        return returnJsonResult(result, req, res);
+      });
     } else {
       return res.status(404).send({});
     }
