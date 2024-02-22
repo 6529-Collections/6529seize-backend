@@ -1,5 +1,5 @@
 import { NextGenCollectionStatus } from '../api-filters';
-import { constructFilters } from '../api-helpers';
+import { constructFilters, constructFiltersOR } from '../api-helpers';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   ENS_TABLE,
@@ -11,7 +11,7 @@ import {
 import { getProof } from '../../../merkle_proof';
 import { sqlExecutor } from '../../../sql-executor';
 import { Time } from '../../../time';
-import { fetchPaginated, returnEmpty } from '../../../db-api';
+import { fetchPaginated, resolveEns, returnEmpty } from '../../../db-api';
 import {
   NEXTGEN_ALLOWLIST_BURN_TABLE,
   NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
@@ -701,7 +701,8 @@ export async function fetchNextGenCollectionTraitSets(
   collectionId: number,
   trait: string,
   pageSize: number,
-  page: number
+  page: number,
+  searchStr: string
 ) {
   const tokenTraits = await sqlExecutor.execute(
     `SELECT token_id, value FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} 
@@ -723,7 +724,7 @@ export async function fetchNextGenCollectionTraitSets(
     GROUP_CONCAT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id ORDER BY ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id) AS token_ids,
     GROUP_CONCAT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.value ORDER BY ${NEXTGEN_TOKEN_TRAITS_TABLE}.value) AS distinct_values`;
 
-  const filters = constructFilters(
+  let filters = constructFilters(
     '',
     `${NEXTGEN_TOKENS_TABLE}.collection_id = :collectionId AND LOWER(${NEXTGEN_TOKEN_TRAITS_TABLE}.trait) = :trait`
   );
@@ -740,12 +741,38 @@ export async function fetchNextGenCollectionTraitSets(
   joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} on ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
   joins += ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
 
+  const props: any = {
+    collectionId: collectionId,
+    trait: trait.toLowerCase()
+  };
+
+  if (searchStr) {
+    const resolvedAddresses = await resolveEns(searchStr);
+    let walletFilters = constructFiltersOR(
+      '',
+      `${NEXTGEN_TOKENS_TABLE}.owner in (:addresses)`
+    );
+    props.addresses = resolvedAddresses.map((a: any) => a.toLowerCase());
+
+    searchStr
+      .toLowerCase()
+      .split(',')
+      .forEach((s: string, index: number) => {
+        props[`search${index}`] = `%${s}%`;
+        walletFilters = constructFiltersOR(
+          walletFilters,
+          `${PROFILE_FULL}.normalised_handle like :search${index} or ${PROFILE_FULL}.handle like :search${index}`
+        );
+      });
+
+    console.log('walletFilters', walletFilters);
+
+    filters = constructFilters(filters, `(${walletFilters})`);
+  }
+
   const results = await fetchPaginated(
     NEXTGEN_TOKENS_TABLE,
-    {
-      collectionId: collectionId,
-      trait: trait.toLowerCase()
-    },
+    props,
     'distinct_values_count DESC',
     pageSize,
     page,

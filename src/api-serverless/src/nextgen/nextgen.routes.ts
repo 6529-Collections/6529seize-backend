@@ -498,12 +498,17 @@ router.get(
           ? parseInt(req.query.page_size)
           : DEFAULT_PAGE_SIZE;
       const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const search = req.query.search;
 
-      db.fetchNextGenCollectionTraitSets(id, trait, pageSize, page).then(
-        (result) => {
-          return returnJsonResult(result, req, res);
-        }
-      );
+      db.fetchNextGenCollectionTraitSets(
+        id,
+        trait,
+        pageSize,
+        page,
+        search
+      ).then((result) => {
+        return returnJsonResult(result, req, res);
+      });
     } else {
       return res.status(404).send({});
     }
