@@ -784,3 +784,92 @@ export async function fetchNextGenCollectionTraitSets(
 
   return results;
 }
+
+export async function fetchNextGenCollectionTraitSetsUltimate(
+  collectionId: number,
+  traitsStr: string,
+  pageSize: number,
+  page: number
+) {
+  const traits = traitsStr.split(',');
+
+  const countsPerTrait = await sqlExecutor.execute(
+    `SELECT DISTINCT trait, trait_count FROM ${NEXTGEN_TOKEN_TRAITS_TABLE} 
+      WHERE trait in (:traits)`,
+    {
+      traits: traits
+    }
+  );
+
+  let fields = `
+    ${NEXTGEN_TOKENS_TABLE}.owner,
+    ${PROFILE_FULL}.normalised_handle,
+    ${PROFILE_FULL}.handle,
+    0 as level,
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as tdh,
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
+    ${PROFILE_FULL}.rep_score`;
+
+  const params = {
+    traits: traits,
+    collectionId: collectionId
+  };
+  let filters = constructFilters(
+    '',
+    `${NEXTGEN_TOKEN_TRAITS_TABLE}.trait in (:traits)`
+  );
+  filters = constructFilters(
+    filters,
+    `${NEXTGEN_TOKENS_TABLE}.collection_id = :collectionId`
+  );
+  let havingQuery = ``;
+  countsPerTrait.forEach((ct: any, index: number) => {
+    const field = `${ct.trait.toLowerCase()}_sets`;
+    const paramName = `trait_${index}`;
+    fields += `, COUNT(DISTINCT CASE WHEN ${NEXTGEN_TOKEN_TRAITS_TABLE}.trait = :${paramName} THEN ${NEXTGEN_TOKEN_TRAITS_TABLE}.value ELSE NULL END) AS ${field}`;
+    params[paramName] = ct.trait;
+    params[field] = ct.trait_count;
+    havingQuery += ` ${index > 0 ? 'AND' : ''} ${field} = :${field}`;
+  });
+
+  let joins = `JOIN ${NEXTGEN_TOKEN_TRAITS_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id`;
+  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} on ${WALLETS_CONSOLIDATION_KEYS_VIEW}.wallet = ${NEXTGEN_TOKENS_TABLE}.owner`;
+  joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} on ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
+  joins += ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
+
+  const groups = `
+    ${NEXTGEN_TOKENS_TABLE}.owner, 
+    ${PROFILE_FULL}.normalised_handle, 
+    ${PROFILE_FULL}.handle, 
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, 
+    ${PROFILE_FULL}.rep_score`;
+
+  const limit = `LIMIT ${pageSize}`;
+  const offset = page > 1 ? `OFFSET ${pageSize * (page - 1)}` : '';
+  const sqlQuery = `SELECT ${fields} FROM ${NEXTGEN_TOKENS_TABLE} ${joins} ${filters} GROUP BY ${groups} HAVING ${havingQuery}`;
+  const countSql = `SELECT COUNT(1) as count FROM (${sqlQuery}) inner_q`;
+
+  const count = await sqlExecutor
+    .execute(countSql, params)
+    .then((r) => r[0].count);
+
+  const data = await sqlExecutor.execute(
+    `${sqlQuery} ${limit} ${offset}`,
+    params
+  );
+
+  data.forEach((d: any) => {
+    d.level = calculateLevel({
+      tdh: d.tdh ?? 0,
+      rep: d.rep_score
+    });
+  });
+
+  return {
+    count,
+    page,
+    next: count > pageSize * page,
+    data
+  };
+}
