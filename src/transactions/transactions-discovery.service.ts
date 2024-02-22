@@ -241,7 +241,7 @@ export class TransactionsDiscoveryService {
         .filter((t: Transaction | null) => t !== null) as Transaction[];
     }
     this.logger.warn(
-      `Could not map transaction ${t.hash}. It was for neither for ERC721 or ERC1155.`
+      `Could not map transaction ${t.hash}. It was for neither ERC721 nor ERC1155.`
     );
     return [];
   }
