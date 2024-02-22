@@ -15,6 +15,7 @@ import { Transaction } from '../entities/ITransaction';
 import { findTransactionValues } from '../transaction_values';
 import { consolidateTransactions } from '../db';
 import { Time } from '../time';
+import { discoverEns } from '../ens';
 
 export class TransactionsDiscoveryService {
   private readonly logger = Logger.get(TransactionsDiscoveryService.name);
@@ -35,6 +36,7 @@ export class TransactionsDiscoveryService {
     contract: string,
     startingBlock: number | null
   ): Promise<void> {
+    const now = new Date();
     startingBlock =
       startingBlock ?? (await this.getBlockFromWhichToSearchFor(contract));
     this.logger.info(
@@ -56,10 +58,16 @@ export class TransactionsDiscoveryService {
             transactions.length
           } transactions (blocks ${minBlock}-${maxBlock}) in ${start.diffFromNow()}`
         );
+        this.logger.info(`Registering new addresses for ENS`);
+        const ensStart = Time.now();
+        await discoverEns(now);
+        this.logger.info(
+          `New addresses registered for ENS in ${ensStart.diffFromNow()}`
+        );
       }
     }
     this.logger.info(
-      `Finished discovering transactions for contract ${contract}. Everything is up to date.`
+      `Transactions discovery complete for contract ${contract}`
     );
   }
 
