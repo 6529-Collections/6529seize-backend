@@ -810,7 +810,7 @@ export async function fetchNextGenCollectionTraitSetsUltimate(
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
     ${PROFILE_FULL}.rep_score`;
 
-  const params = {
+  const params: any = {
     traits: traits,
     collectionId: collectionId
   };
