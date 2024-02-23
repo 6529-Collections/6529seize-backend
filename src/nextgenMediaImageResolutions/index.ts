@@ -48,7 +48,7 @@ export const handler = async () => {
 
   for (let resolution of resolutions) {
     const path =
-      resolution == Resolution['thumbnail'] ? 'thumbnail' : `png${resolution}`;
+      resolution == Resolution['thumbnail'] ? resolution : `png${resolution}`;
     const isFinished = await findMissingImages(resolution, path);
     if (!isFinished) {
       logger.info(`[RESOLUTION ${resolution.toUpperCase()}] : [NOT FINISHED]`);
