@@ -34,17 +34,19 @@ export class TransactionsDiscoveryService {
 
   async getAndSaveTransactionsForContract(
     contract: string,
-    startingBlock: number | null
+    startingBlock: number | null,
+    endBlock: number | null
   ): Promise<void> {
     const now = new Date();
     startingBlock =
       startingBlock ?? (await this.getBlockFromWhichToSearchFor(contract));
     this.logger.info(
-      `Discovering new transactions for contract ${contract}. Looking from block ${startingBlock}.`
+      `Discovering new transactions for contract ${contract}. Looking from block ${startingBlock} to block ${endBlock}.`
     );
     for await (const transactions of this.getTransactionsFullBlocks(
       contract,
-      startingBlock
+      startingBlock,
+      endBlock
     )) {
       if (transactions.length) {
         const start = Time.now();
@@ -75,103 +77,71 @@ export class TransactionsDiscoveryService {
   // Finishes if it has gotten to current block and there are no more transactions.
   private async *getTransactionsFullBlocks(
     contract: string,
-    startingBlock: number
+    startingBlock: number,
+    endBlock: number | null
   ): AsyncGenerator<Transaction[], void, void> {
     let pageKey: string | undefined = undefined;
     let transactionsBuffer: Transaction[] = [];
-    let fullBlockLastTransactionIndex = -1;
     let timer = Time.now(); // For measuring time between each yield
     do {
       const alchemyParams = this.getAlchemyAssetTransfersParams(
         startingBlock,
+        endBlock,
         contract,
         pageKey
       );
       const { transfers, pageKey: nextPageKey } =
         await this.alchemy.core.getAssetTransfers(alchemyParams);
 
-      for (const transfer of transfers) {
-        const transactions =
-          this.mapAlchemyTransferToTransactionEntities(transfer);
-        for (const transaction of transactions) {
-          if (this.movedToNewBlock(transactionsBuffer, transaction)) {
-            fullBlockLastTransactionIndex = transactionsBuffer.length - 1;
-          }
-          const isReadyForBufferFlush = this.readyToFlushBuffer(
-            transactionsBuffer,
-            fullBlockLastTransactionIndex
-          );
-          if (isReadyForBufferFlush) {
-            const transactionsReadyForPostprocessing = transactionsBuffer.slice(
-              0,
-              fullBlockLastTransactionIndex + 1
-            );
-            const enhancedTransactions =
-              await this.enhanceTransactionsWithDetails(
-                transactionsReadyForPostprocessing
-              );
-            transactionsBuffer = transactionsBuffer.slice(
-              fullBlockLastTransactionIndex + 1
-            );
-            this.logger.info(
-              `Found and processed ${
-                enhancedTransactions.length
-              } transactions in ${timer.diffFromNow()}`
-            );
-            timer = Time.now(); // reset timer
-            fullBlockLastTransactionIndex = -1;
-            yield enhancedTransactions;
-          }
-          transactionsBuffer.push(transaction);
-        }
+      transactionsBuffer.push(
+        ...transfers.map(this.mapAlchemyTransferToTransactionEntities).flat()
+      );
+      const indexUntilWhichToCommit = !nextPageKey
+        ? transactionsBuffer.length - 1
+        : this.getLastFullBlockIndex(transactionsBuffer);
+      if (indexUntilWhichToCommit >= 0) {
+        const transactionsToFlush = await this.enhanceTransactionsWithDetails(
+          transactionsBuffer.slice(0, indexUntilWhichToCommit + 1)
+        );
+        transactionsBuffer = transactionsBuffer.slice(
+          indexUntilWhichToCommit + 1
+        );
+        yield transactionsToFlush;
+        this.logger.info(
+          `Found and processed ${
+            transactionsToFlush.length
+          } transactions in ${timer.diffFromNow()}`
+        );
+        timer = Time.now(); // reset timer
       }
       pageKey = nextPageKey;
     } while (pageKey);
+  }
 
-    if (transactionsBuffer.length) {
-      const enhancedTransactions = await this.enhanceTransactionsWithDetails(
-        transactionsBuffer
-      );
-      this.logger.info(
-        `Found and processed ${
-          enhancedTransactions.length
-        } transactions in ${timer.diffFromNow()}`
-      );
-      yield enhancedTransactions;
+  private getLastFullBlockIndex(transactions: Transaction[]) {
+    for (let i = transactions.length - 1; i >= 1; i--) {
+      if (transactions[i].block !== transactions[i - 1].block) {
+        return i - 1;
+      }
     }
-  }
-
-  private readyToFlushBuffer(
-    transactionsBuffer: Transaction[],
-    fullBlockLastTransactionIndex: number
-  ) {
-    return (
-      transactionsBuffer.length > 150 && fullBlockLastTransactionIndex >= 0
-    );
-  }
-
-  private movedToNewBlock(
-    transactionsBuffer: Transaction[],
-    transaction: Transaction
-  ) {
-    return (
-      transactionsBuffer.length &&
-      transactionsBuffer.at(-1)!.block !== transaction.block
-    );
+    return -1;
   }
 
   private getAlchemyAssetTransfersParams(
     startingBlock: number,
+    endBlock: number | null,
     contract: string,
     pageKey?: string
   ): AssetTransfersWithMetadataParams {
     const startingBlockHex = `0x${startingBlock.toString(16)}`;
+    const toBlockHex = endBlock ? `0x${endBlock.toString(16)}` : undefined;
     return {
       category: [AssetTransfersCategory.ERC1155, AssetTransfersCategory.ERC721],
       contractAddresses: [contract],
       withMetadata: true,
       maxCount: 150,
       fromBlock: startingBlockHex,
+      toBlock: toBlockHex,
       pageKey: pageKey
     };
   }

@@ -18,9 +18,11 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   const startingBlock = parseNumberOrNull(
     process.env.TRANSACTIONS_LOOP_START_BLOCK
   );
+  const endBlock = parseNumberOrNull(process.env.TRANSACTIONS_LOOP_END_BLOCK);
   await transactionsDiscoveryService.getAndSaveTransactionsForContract(
     contract,
-    startingBlock
+    startingBlock,
+    endBlock
   );
   await unload();
   logger.info('[COMPLETE]');
