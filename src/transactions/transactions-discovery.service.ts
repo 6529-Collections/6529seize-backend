@@ -119,6 +119,7 @@ export class TransactionsDiscoveryService {
               } transactions in ${timer.diffFromNow()}`
             );
             timer = Time.now(); // reset timer
+            fullBlockLastTransactionIndex = -1;
             yield enhancedTransactions;
           }
           transactionsBuffer.push(transaction);
