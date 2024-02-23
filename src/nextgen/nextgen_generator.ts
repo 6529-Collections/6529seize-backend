@@ -83,7 +83,7 @@ export function getGenDetailsFromUri(uri: string): Details {
 
 export async function getImageBlobFromGenerator(path: string) {
   const returnError = (error: string) => {
-    logger.error(`[GENERATOR IMAGE ERROR] : [PATH ${path}] : [ERROR ${error}]`);
+    logger.error(`[GENERATOR IMAGE ERROR] : [PATH ${path}] : [${error}]`);
   };
 
   try {

@@ -13,32 +13,46 @@ import {
 } from '../nextgen/nextgen_generator';
 import { sepolia } from '@wagmi/chains';
 import { loadEnv } from '../secrets';
-import { CloudFrontClient } from '@aws-sdk/client-cloudfront';
 import { sendDiscordUpdate } from '../notifier-discord';
 
 const logger = Logger.get('NEXTGEN_IMAGES_LOOP');
 
 let s3: S3Client;
-let cloudfront: CloudFrontClient;
 
 async function setup() {
   s3 = new S3Client({ region: NEXTGEN_BUCKET_AWS_REGION });
-  cloudfront = new CloudFrontClient({ region: NEXTGEN_BUCKET_AWS_REGION });
+}
+
+enum Resolution {
+  'thumbnail',
+  '0.5k',
+  '1k',
+  '2k',
+  '4k',
+  '8k',
+  '16k'
 }
 
 const START_INDEX = 10000000000;
 const END_INDEX = 10000000999;
 
-const BATCH_SIZE = 30;
+const BATCH_SIZE = 60;
 
 export const handler = async () => {
   const start = Time.now();
   logger.info(`[RUNNING]`);
   await loadEnv([]);
   setup();
-  const resolutions = ['2k', '4k', '8k'];
-  for (let resolution of resolutions) {
-    const isFinished = await findMissingImages(resolution);
+
+  const resolutions = [Resolution['thumbnail'], Resolution['0.5k']];
+
+  for (let resolutionEnum of resolutions) {
+    const resolution = Resolution[resolutionEnum].toString();
+    const path =
+      resolutionEnum == Resolution['thumbnail']
+        ? 'thumbnail'
+        : `png${resolution}`;
+    const isFinished = await findMissingImages(resolution, path);
     if (!isFinished) {
       logger.info(`[RESOLUTION ${resolution.toUpperCase()}] : [NOT FINISHED]`);
       break;
@@ -56,9 +70,10 @@ function getNetworkPath() {
   return `mainnet`;
 }
 
-async function findMissingImages(resolution: string) {
+async function findMissingImages(resolution: string, path: string) {
   const networkPath = getNetworkPath();
-  const resolutionPath = `${networkPath}/png${resolution}/`;
+
+  const resolutionPath = `${networkPath}/${path}/`;
 
   const allExisting = await listS3Objects(s3, resolutionPath);
 
@@ -76,7 +91,7 @@ async function findMissingImages(resolution: string) {
   );
 
   if (nextBatch.length) {
-    await uploadBatch(nextBatch, resolutionPath, resolution);
+    await uploadBatch(networkPath, nextBatch, resolutionPath, resolution);
     return false;
   } else {
     logger.info(`[NO MISSING IMAGES]`);
@@ -84,20 +99,32 @@ async function findMissingImages(resolution: string) {
   }
 }
 
-async function uploadBatch(batch: number[], path: string, resolution: string) {
+async function uploadBatch(
+  networkPath: string,
+  batch: number[],
+  path: string,
+  resolution: string
+) {
   logger.info(
     `[UPLOADING BATCH] : [RESOLUTION: ${resolution.toUpperCase()}] : [BATCH ${JSON.stringify(
       batch
     )}]`
   );
   await Promise.all(
-    batch.map((item) => uploadMissingNextgenImage(item, resolution))
+    batch.map((item) =>
+      uploadMissingNextgenImage(networkPath, item, resolution, path)
+    )
   );
 }
 
-async function uploadMissingNextgenImage(tokenId: number, resolution: string) {
-  const generatorPath = `/mainnet/png/${tokenId}/${resolution}`;
-  const s3Path = `mainnet/png${resolution}/${tokenId}`;
+async function uploadMissingNextgenImage(
+  networkPath: string,
+  tokenId: number,
+  resolution: string,
+  path: string
+) {
+  const generatorPath = `/${networkPath}/png/${tokenId}/${resolution}`;
+  const s3Path = `${path}${tokenId}`;
 
   logger.info(
     `[TOKEN_ID ${tokenId}] : [RESOLUTION ${resolution.toUpperCase()}] : [GENERATOR PATH ${generatorPath}] : [S3 PATH ${s3Path}]`
