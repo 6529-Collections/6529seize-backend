@@ -24,13 +24,13 @@ async function setup() {
 }
 
 enum Resolution {
-  'thumbnail',
-  '0.5k',
-  '1k',
-  '2k',
-  '4k',
-  '8k',
-  '16k'
+  'thumbnail' = 'thumbnail',
+  '0.5k' = '0.5k',
+  '1k' = '1k',
+  '2k' = '2k',
+  '4k' = '4k',
+  '8k' = '8k',
+  '16k' = '16k'
 }
 
 const START_INDEX = 10000000000;
@@ -46,12 +46,9 @@ export const handler = async () => {
 
   const resolutions = [Resolution['thumbnail'], Resolution['0.5k']];
 
-  for (let resolutionEnum of resolutions) {
-    const resolution = Resolution[resolutionEnum].toString();
+  for (let resolution of resolutions) {
     const path =
-      resolutionEnum == Resolution['thumbnail']
-        ? 'thumbnail'
-        : `png${resolution}`;
+      resolution == Resolution['thumbnail'] ? resolution : `png${resolution}`;
     const isFinished = await findMissingImages(resolution, path);
     if (!isFinished) {
       logger.info(`[RESOLUTION ${resolution.toUpperCase()}] : [NOT FINISHED]`);
@@ -70,7 +67,7 @@ function getNetworkPath() {
   return `mainnet`;
 }
 
-async function findMissingImages(resolution: string, path: string) {
+async function findMissingImages(resolution: Resolution, path: string) {
   const networkPath = getNetworkPath();
 
   const resolutionPath = `${networkPath}/${path}/`;
@@ -103,7 +100,7 @@ async function uploadBatch(
   networkPath: string,
   batch: number[],
   path: string,
-  resolution: string
+  resolution: Resolution
 ) {
   logger.info(
     `[UPLOADING BATCH] : [RESOLUTION: ${resolution.toUpperCase()}] : [BATCH ${JSON.stringify(
@@ -120,7 +117,7 @@ async function uploadBatch(
 async function uploadMissingNextgenImage(
   networkPath: string,
   tokenId: number,
-  resolution: string,
+  resolution: Resolution,
   path: string
 ) {
   const generatorPath = `/${networkPath}/png/${tokenId}/${resolution}`;
