@@ -1000,27 +1000,28 @@ export async function persistNextGenTokenTDH(nextgenTdh: NextGenTokenTDH[]) {
 
 export async function persistENS(ens: ENS[]) {
   logger.info(`[ENS] PERSISTING ENS [${ens.length}]`);
-
+  const sql = `REPLACE INTO ${ENS_TABLE} SET
+            wallet = :wallet,
+                display = :display`;
   await Promise.all(
     ens.map(async (t) => {
       if ((t.display && t.display.length < 150) || !t.display) {
-        const sql = `REPLACE INTO ${ENS_TABLE} SET
-            wallet = :wallet,
-                display = :display`;
         try {
           await sqlExecutor.execute(sql, {
             wallet: t.wallet,
             display: t.display
           });
         } catch (e) {
-          logger.error(`[ENS] ERROR PERSISTING ENS [${t.wallet}] [${e}]`);
-          await sqlExecutor.execute(
-            `REPLACE INTO ${ENS_TABLE} SET
-                wallet = ?,
-                    display = ?`,
-            [t.wallet, null]
-          );
+          await sqlExecutor.execute(sql, {
+            wallet: t.wallet,
+            display: null
+          });
         }
+      } else {
+        await sqlExecutor.execute(sql, {
+          wallet: t.wallet,
+          display: null
+        });
       }
     })
   );
