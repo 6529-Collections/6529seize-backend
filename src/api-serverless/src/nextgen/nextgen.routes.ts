@@ -34,6 +34,7 @@ import {
   NEXTGEN_ALLOWLIST_BURN_TABLE
 } from '../../../nextgen/nextgen_constants';
 import { PageSortDirection } from '../page-request';
+import { BadRequestException } from '../../../exceptions';
 
 const logger = Logger.get('NEXTGEN_API');
 
@@ -290,50 +291,50 @@ router.get(
   async function (req: any, res: any, next: any) {
     const id: number = parseInt(req.params.id);
 
-    if (!isNaN(id)) {
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
-      const traits = req.query.traits ? req.query.traits.split(',') : [];
-      const sortDir: PageSortDirection =
-        PageSortDirection[
-          req.query.sort_direction?.toUpperCase() as keyof typeof PageSortDirection
-        ] || PageSortDirection.ASC;
-
-      const sort: db.TokensSort =
-        db.TokensSort[
-          req.query.sort?.toUpperCase() as keyof typeof db.TokensSort
-        ] || db.TokensSort.ID;
-
-      const showNormalised = req.query.show_normalised === 'true';
-      const showTraitCount = req.query.show_trait_count === 'true';
-
-      let listed: db.ListedType = db.ListedType.ALL;
-      if (req.query.listed === 'true') {
-        listed = db.ListedType.LISTED;
-      } else if (req.query.listed === 'false') {
-        listed = db.ListedType.NOT_LISTED;
-      }
-
-      logger.info(`[FETCHING TOKENS FOR COLLECTION ID ${id}]`);
-      db.fetchNextGenCollectionTokens(
-        id,
-        pageSize,
-        page,
-        traits,
-        sort,
-        sortDir,
-        showNormalised,
-        showTraitCount,
-        listed
-      ).then((result) => {
-        return returnPaginatedResult(result, req, res);
-      });
-    } else {
-      return res.status(404).send({});
+    if (isNaN(id)) {
+      throw new BadRequestException('Collection ID must be a number.');
     }
+
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const traits = req.query.traits ? req.query.traits.split(',') : [];
+    const sortDir: PageSortDirection =
+      PageSortDirection[
+        req.query.sort_direction?.toUpperCase() as keyof typeof PageSortDirection
+      ] || PageSortDirection.ASC;
+
+    const sort: db.TokensSort =
+      db.TokensSort[
+        req.query.sort?.toUpperCase() as keyof typeof db.TokensSort
+      ] || db.TokensSort.ID;
+
+    const showNormalised = req.query.show_normalised === 'true';
+    const showTraitCount = req.query.show_trait_count === 'true';
+
+    let listed: db.ListedType = db.ListedType.ALL;
+    if (req.query.listed === 'true') {
+      listed = db.ListedType.LISTED;
+    } else if (req.query.listed === 'false') {
+      listed = db.ListedType.NOT_LISTED;
+    }
+
+    logger.info(`[FETCHING TOKENS FOR COLLECTION ID ${id}]`);
+    db.fetchNextGenCollectionTokens(
+      id,
+      pageSize,
+      page,
+      traits,
+      sort,
+      sortDir,
+      showNormalised,
+      showTraitCount,
+      listed
+    ).then((result) => {
+      return returnPaginatedResult(result, req, res);
+    });
   }
 );
 
@@ -342,19 +343,22 @@ router.get(
   async function (req: any, res: any, next: any) {
     const id: number = parseInt(req.params.id);
     const token: number = parseInt(req.params.token);
-    if (!isNaN(id) && !isNaN(token)) {
-      const tokenId = id * 10000000000 + token;
-      logger.info(`[FETCHING TOKEN ${id}]`);
-      db.fetchNextGenToken(tokenId).then((result) => {
-        if (result.id) {
-          return returnJsonResult(result, req, res);
-        } else {
-          return res.status(404).send({});
-        }
-      });
-    } else {
-      return res.status(404).send({});
+    if (isNaN(id)) {
+      throw new BadRequestException('Collection ID must be a number.');
     }
+    if (isNaN(token)) {
+      throw new BadRequestException('Token must be a number.');
+    }
+
+    const tokenId = id * 10000000000 + token;
+    logger.info(`[FETCHING TOKEN ${id}]`);
+    db.fetchNextGenToken(tokenId).then((result) => {
+      if (result.id) {
+        return returnJsonResult(result, req, res);
+      } else {
+        return res.status(404).send({});
+      }
+    });
   }
 );
 
@@ -368,14 +372,14 @@ router.get(
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    if (!isNaN(id)) {
-      logger.info(`[FETCHING LOGS FOR COLLECTION ID ${id}]`);
-      db.fetchNextGenCollectionLogs(id, pageSize, page).then((result) => {
-        return returnJsonResult(result, req, res);
-      });
-    } else {
-      return res.status(404).send({});
+    if (isNaN(id)) {
+      throw new BadRequestException('Collection ID must be a number.');
     }
+
+    logger.info(`[FETCHING LOGS FOR COLLECTION ID ${id}]`);
+    db.fetchNextGenCollectionLogs(id, pageSize, page).then((result) => {
+      return returnJsonResult(result, req, res);
+    });
   }
 );
 
@@ -384,24 +388,26 @@ router.get(
   async function (req: any, res: any, next: any) {
     const id: number = parseInt(req.params.id);
     const tokenId = parseInt(req.params.tokenId);
+
+    if (isNaN(id)) {
+      throw new BadRequestException('Collection ID must be a number.');
+    }
+    if (isNaN(tokenId)) {
+      throw new BadRequestException('Token ID must be a number.');
+    }
+
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    if (!isNaN(id) && !isNaN(tokenId)) {
-      logger.info(
-        `[FETCHING LOGS FOR COLLECTION ID ${id} TOKEN ID ${tokenId}]`
-      );
-      db.fetchNextGenCollectionAndTokenLogs(id, tokenId, pageSize, page).then(
-        (result) => {
-          return returnJsonResult(result, req, res);
-        }
-      );
-    } else {
-      return res.status(404).send({});
-    }
+    logger.info(`[FETCHING LOGS FOR COLLECTION ID ${id} TOKEN ID ${tokenId}]`);
+    db.fetchNextGenCollectionAndTokenLogs(id, tokenId, pageSize, page).then(
+      (result) => {
+        return returnJsonResult(result, req, res);
+      }
+    );
   }
 );
 
@@ -410,45 +416,45 @@ router.get(
   async function (req: any, res: any, next: any) {
     const id: number = parseInt(req.params.id);
 
-    if (!isNaN(id)) {
-      logger.info(`[FETCHING TRAITS FOR COLLECTION ID ${id}]`);
-      db.fetchNextGenCollectionTraits(id).then((result) => {
-        const uniqueKeys: string[] = [];
-        result.forEach((r: any) => {
-          if (!uniqueKeys.includes(r.trait)) {
-            uniqueKeys.push(r.trait);
-          }
-        });
-
-        const traits: TokenTraitWithCount[] = [];
-        uniqueKeys.forEach((key) => {
-          const values = result
-            .filter((r: any) => r.trait === key)
-            .map((r: any) => {
-              return {
-                key: r.value,
-                count: r.count
-              };
-            });
-          const sortedValues = values
-            .sort((a: any, b: any) => a.key.localeCompare(b.key))
-            .sort((a: any, b: any) => a.count - b.count);
-          const trait: TokenTraitWithCount = {
-            trait: key,
-            values: sortedValues.map((v: TokenValueCount) => v.key),
-            value_counts: sortedValues
-          };
-
-          traits.push(trait);
-        });
-        const sortedTraits = traits
-          .sort((a, b) => a.trait.localeCompare(b.trait))
-          .sort((a, b) => b.values.length - a.values.length);
-        return returnJsonResult(sortedTraits, req, res);
-      });
-    } else {
-      return res.status(404).send({});
+    if (isNaN(id)) {
+      throw new BadRequestException('Collection ID must be a number.');
     }
+
+    logger.info(`[FETCHING TRAITS FOR COLLECTION ID ${id}]`);
+    db.fetchNextGenCollectionTraits(id).then((result) => {
+      const uniqueKeys: string[] = [];
+      result.forEach((r: any) => {
+        if (!uniqueKeys.includes(r.trait)) {
+          uniqueKeys.push(r.trait);
+        }
+      });
+
+      const traits: TokenTraitWithCount[] = [];
+      uniqueKeys.forEach((key) => {
+        const values = result
+          .filter((r: any) => r.trait === key)
+          .map((r: any) => {
+            return {
+              key: r.value,
+              count: r.count
+            };
+          });
+        const sortedValues = values
+          .sort((a: any, b: any) => a.key.localeCompare(b.key))
+          .sort((a: any, b: any) => a.count - b.count);
+        const trait: TokenTraitWithCount = {
+          trait: key,
+          values: sortedValues.map((v: TokenValueCount) => v.key),
+          value_counts: sortedValues
+        };
+
+        traits.push(trait);
+      });
+      const sortedTraits = traits
+        .sort((a, b) => a.trait.localeCompare(b.trait))
+        .sort((a, b) => b.values.length - a.values.length);
+      return returnJsonResult(sortedTraits, req, res);
+    });
   }
 );
 
@@ -459,16 +465,13 @@ router.get(
     const traits = req.query.trait;
 
     if (isNaN(id)) {
-      return res.status(404).send({});
+      throw new BadRequestException('Collection ID must be a number.');
     }
 
     if (!traits) {
-      return res.status(400).send({});
+      throw new BadRequestException('Traits must be supplied.');
     }
 
-    logger.info(
-      `[FETCHING ULTIMATE TRAIT SETS FOR COLLECTION ID ${id} TRAITS ${traits}]`
-    );
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -489,66 +492,60 @@ router.get(
     const id: number = parseInt(req.params.id);
     const trait: string = req.params.trait;
 
-    if (!isNaN(id)) {
-      logger.info(
-        `[FETCHING TRAIT SETS FOR COLLECTION ID ${id} TRAIT ${trait}]`
-      );
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
-      const search = req.query.search;
-
-      db.fetchNextGenCollectionTraitSets(
-        id,
-        trait,
-        pageSize,
-        page,
-        search
-      ).then((result) => {
-        return returnJsonResult(result, req, res);
-      });
-    } else {
-      return res.status(404).send({});
+    if (isNaN(id)) {
+      throw new BadRequestException('Collection ID must be a number.');
     }
+
+    logger.info(`[FETCHING TRAIT SETS FOR COLLECTION ID ${id} TRAIT ${trait}]`);
+    const pageSize: number =
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+        ? parseInt(req.query.page_size)
+        : DEFAULT_PAGE_SIZE;
+    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+    const search = req.query.search;
+
+    db.fetchNextGenCollectionTraitSets(id, trait, pageSize, page, search).then(
+      (result) => {
+        return returnJsonResult(result, req, res);
+      }
+    );
   }
 );
 
 router.get(`/tokens/:id`, async function (req: any, res: any, next: any) {
   const id: number = parseInt(req.params.id);
-  if (!isNaN(id)) {
-    logger.info(`[FETCHING TOKEN ${id}]`);
-    db.fetchNextGenToken(id).then((result) => {
-      if (result.id) {
-        return returnJsonResult(result, req, res);
-      } else {
-        return res.status(404).send({});
-      }
-    });
-  } else {
-    return res.status(404).send({});
+  if (isNaN(id)) {
+    throw new BadRequestException('Collection ID must be a number.');
   }
+
+  logger.info(`[FETCHING TOKEN ${id}]`);
+  db.fetchNextGenToken(id).then((result) => {
+    if (result.id) {
+      return returnJsonResult(result, req, res);
+    } else {
+      return res.status(404).send({});
+    }
+  });
 });
 
 router.get(
   `/tokens/:id/transactions`,
   async function (req: any, res: any, next: any) {
     const id: number = parseInt(req.params.id);
+    if (isNaN(id)) {
+      throw new BadRequestException('Collection ID must be a number.');
+    }
+
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    if (!isNaN(id)) {
-      logger.info(`[FETCHING TOKEN ${id} TRANSACTIONS]`);
-      db.fetchNextGenTokenTransactions(id, pageSize, page).then((result) => {
-        return returnJsonResult(result, req, res);
-      });
-    } else {
-      return res.status(404).send({});
-    }
+    logger.info(`[FETCHING TOKEN ${id} TRANSACTIONS]`);
+    db.fetchNextGenTokenTransactions(id, pageSize, page).then((result) => {
+      return returnJsonResult(result, req, res);
+    });
   }
 );
 
@@ -556,15 +553,14 @@ router.get(
   `/tokens/:id/traits`,
   async function (req: any, res: any, next: any) {
     const id: number = parseInt(req.params.id);
-
-    if (!isNaN(id)) {
-      logger.info(`[FETCHING TOKEN ${id} TRAITS]`);
-      db.fetchNextGenTokenTraits(id).then((result) => {
-        return returnJsonResult(result, req, res);
-      });
-    } else {
-      return res.status(404).send({});
+    if (isNaN(id)) {
+      throw new BadRequestException('Collection ID must be a number.');
     }
+
+    logger.info(`[FETCHING TOKEN ${id} TRAITS]`);
+    db.fetchNextGenTokenTraits(id).then((result) => {
+      return returnJsonResult(result, req, res);
+    });
   }
 );
 
