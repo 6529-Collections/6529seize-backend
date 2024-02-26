@@ -506,7 +506,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
       from_address: string;
       to_address: string;
     }[] = await fetchTransactionAddressesFromDate(
-      [MEMES_CONTRACT, GRADIENT_CONTRACT],
+      [MEMES_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT],
       new Date(lastMetricsDate)
     );
     allTransactionAddresses.forEach((wallet) => {
