@@ -225,13 +225,6 @@ export async function fetchLastOwnerMetrics(): Promise<any> {
   return results ? results[0].transaction_reference : null;
 }
 
-export async function findDuplicateTransactionHashes(): Promise<string[]> {
-  const sql = `SELECT transaction FROM ${TRANSACTIONS_TABLE} GROUP BY transaction HAVING COUNT(*) > 1;`;
-  const results = await sqlExecutor.execute(sql);
-  const hashes: string[] = results.map((r: Transaction) => r.transaction);
-  return hashes;
-}
-
 export async function findTransactionsByHash(
   table: string,
   hashes: string[]
@@ -349,19 +342,6 @@ export async function fetchNftsForContract(contract: string, orderBy?: string) {
   const results = await sqlExecutor.execute(sql, params);
   results.map((r: any) => {
     r.metadata = JSON.parse(r.metadata);
-  });
-  return results;
-}
-
-export async function fetchTransactionsWithoutValue(
-  pageSize: number,
-  page: number
-) {
-  const offset = pageSize * (page - 1);
-  const sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE value=0 LIMIT :limit OFFSET :offset;`;
-  const results = await sqlExecutor.execute(sql, {
-    limit: pageSize,
-    offset: offset
   });
   return results;
 }
@@ -530,9 +510,15 @@ export async function fetchAllConsolidationAddresses() {
   return results;
 }
 
-export async function fetchWalletTransactions(wallet: string, block?: number) {
+export async function fetchWalletTransactions(
+  contracts: string[],
+  wallet: string,
+  block?: number
+) {
   const sql = `SELECT * FROM ${TRANSACTIONS_TABLE}`;
-  const params: any = {};
+  const params: any = {
+    contracts: contracts.map((it) => it.toLowerCase())
+  };
 
   let filters;
   if (isNullAddress(wallet)) {
@@ -552,10 +538,11 @@ export async function fetchWalletTransactions(wallet: string, block?: number) {
     params.block = block;
   }
 
+  filters = constructFilters(filters, `contract in (:contracts)`);
+
   const fullSql = `${sql} ${filters}`;
 
-  const results = await sqlExecutor.execute(fullSql, params);
-  return results;
+  return await sqlExecutor.execute(fullSql, params);
 }
 
 export async function fetchEnsRefresh() {
