@@ -50,6 +50,15 @@ interface TokenTraitWithCount {
   value_counts: TokenValueCount[];
 }
 
+function validateCollectionId(req: any, res: any, next: any) {
+  const id: number = parseInt(req.params.collection_id);
+  if (!isNaN(id)) {
+    throw new BadRequestException('Collection ID must be a number.');
+  }
+  req.params.id = id;
+  next();
+}
+
 router.post(
   '/create_allowlist',
   initMulterSingleMiddleware('allowlist'),
@@ -288,13 +297,9 @@ router.get(`/collections/:id`, async function (req: any, res: any, next: any) {
 
 router.get(
   `/collections/:id/tokens`,
+  validateCollectionId,
   async function (req: any, res: any, next: any) {
-    const id: number = parseInt(req.params.id);
-
-    if (isNaN(id)) {
-      throw new BadRequestException('Collection ID must be a number.');
-    }
-
+    const id: number = req.params.id;
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -340,12 +345,11 @@ router.get(
 
 router.get(
   `/collections/:id/tokens/:token`,
+  validateCollectionId,
   async function (req: any, res: any, next: any) {
-    const id: number = parseInt(req.params.id);
+    const id: number = req.params.id;
     const token: number = parseInt(req.params.token);
-    if (isNaN(id)) {
-      throw new BadRequestException('Collection ID must be a number.');
-    }
+
     if (isNaN(token)) {
       throw new BadRequestException('Token must be a number.');
     }
@@ -364,17 +368,14 @@ router.get(
 
 router.get(
   `/collections/:id/logs`,
+  validateCollectionId,
   async function (req: any, res: any, next: any) {
-    const id: number = parseInt(req.params.id);
+    const id: number = req.params.id;
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    if (isNaN(id)) {
-      throw new BadRequestException('Collection ID must be a number.');
-    }
 
     logger.info(`[FETCHING LOGS FOR COLLECTION ID ${id}]`);
     db.fetchNextGenCollectionLogs(id, pageSize, page).then((result) => {
@@ -385,13 +386,11 @@ router.get(
 
 router.get(
   `/collections/:id/logs/:tokenId`,
+  validateCollectionId,
   async function (req: any, res: any, next: any) {
-    const id: number = parseInt(req.params.id);
+    const id: number = req.params.id;
     const tokenId = parseInt(req.params.tokenId);
 
-    if (isNaN(id)) {
-      throw new BadRequestException('Collection ID must be a number.');
-    }
     if (isNaN(tokenId)) {
       throw new BadRequestException('Token ID must be a number.');
     }
@@ -413,12 +412,9 @@ router.get(
 
 router.get(
   `/collections/:id/traits`,
+  validateCollectionId,
   async function (req: any, res: any, next: any) {
-    const id: number = parseInt(req.params.id);
-
-    if (isNaN(id)) {
-      throw new BadRequestException('Collection ID must be a number.');
-    }
+    const id: number = req.params.id;
 
     logger.info(`[FETCHING TRAITS FOR COLLECTION ID ${id}]`);
     db.fetchNextGenCollectionTraits(id).then((result) => {
@@ -460,13 +456,10 @@ router.get(
 
 router.get(
   `/collections/:id/ultimate_trait_set`,
+  validateCollectionId,
   async function (req: any, res: any, next: any) {
-    const id: number = parseInt(req.params.id);
+    const id: number = req.params.id;
     const traits = req.query.trait;
-
-    if (isNaN(id)) {
-      throw new BadRequestException('Collection ID must be a number.');
-    }
 
     if (!traits) {
       throw new BadRequestException('Traits must be supplied.');
@@ -488,13 +481,10 @@ router.get(
 
 router.get(
   `/collections/:id/trait_sets/:trait`,
+  validateCollectionId,
   async function (req: any, res: any, next: any) {
-    const id: number = parseInt(req.params.id);
+    const id: number = req.params.id;
     const trait: string = req.params.trait;
-
-    if (isNaN(id)) {
-      throw new BadRequestException('Collection ID must be a number.');
-    }
 
     logger.info(`[FETCHING TRAIT SETS FOR COLLECTION ID ${id} TRAIT ${trait}]`);
     const pageSize: number =
@@ -515,7 +505,7 @@ router.get(
 router.get(`/tokens/:id`, async function (req: any, res: any, next: any) {
   const id: number = parseInt(req.params.id);
   if (isNaN(id)) {
-    throw new BadRequestException('Collection ID must be a number.');
+    throw new BadRequestException('Token ID must be a number.');
   }
 
   logger.info(`[FETCHING TOKEN ${id}]`);
@@ -533,7 +523,7 @@ router.get(
   async function (req: any, res: any, next: any) {
     const id: number = parseInt(req.params.id);
     if (isNaN(id)) {
-      throw new BadRequestException('Collection ID must be a number.');
+      throw new BadRequestException('Token ID must be a number.');
     }
 
     const pageSize: number =
@@ -554,7 +544,7 @@ router.get(
   async function (req: any, res: any, next: any) {
     const id: number = parseInt(req.params.id);
     if (isNaN(id)) {
-      throw new BadRequestException('Collection ID must be a number.');
+      throw new BadRequestException('Token ID must be a number.');
     }
 
     logger.info(`[FETCHING TOKEN ${id} TRAITS]`);
