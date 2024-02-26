@@ -5,7 +5,6 @@ import {
 import { Logger } from '../logging';
 import { EntityManager } from 'typeorm';
 import {
-  NEXTGEN_BUCKET,
   NEXTGEN_BUCKET_AWS_REGION,
   NEXTGEN_CF_BASE_PATH,
   getNextgenNetwork
