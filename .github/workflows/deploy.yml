@@ -36,7 +36,7 @@ on:
           - tdhHistoryLoop
           - tdhLoop
           - teamLoop
-          - transactionsLoop
+          - transactionsLoopV2
           - transactionsReplayLoop
           - nextgenContractLoop
           - nextgenMetadataLoop

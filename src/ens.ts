@@ -7,11 +7,11 @@ import {
 } from './constants';
 import { ENS } from './entities/IENS';
 import {
-  fetchEnsRefresh,
-  persistENS,
-  fetchMissingEns,
   fetchBrokenEnsRefresh,
-  fetchMissingEnsNFTDelegation
+  fetchEnsRefresh,
+  fetchMissingEns,
+  fetchMissingEnsNFTDelegation,
+  persistENS
 } from './db';
 import { Wallet } from './entities/IWallet';
 import { sqlExecutor } from './sql-executor';

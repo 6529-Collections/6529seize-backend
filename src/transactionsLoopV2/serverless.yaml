@@ -1,0 +1,45 @@
+service: transactionsLoopV2
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  memorySize: 1028
+  timeout: 900
+
+functions:
+  memesTransactionsLoop:
+    handler: index.handler
+    name: memesTransactionsLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule: rate(1 minute)
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'memesTransactionsLoop_${opt:stage, self:provider.stage}'
+      TRANSACTIONS_CONTRACT_ADDRESS: '0x33fd426905f149f8376e227d0c9d3340aad17af1'
+  gradientsTransactionsLoop:
+    handler: index.handler
+    name: gradientsTransactionsLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule: rate(1 minute)
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'gradientsTransactionsLoop_${opt:stage, self:provider.stage}'
+      TRANSACTIONS_CONTRACT_ADDRESS: '0x0c58ef43ff3032005e472cb5709f8908acb00205'

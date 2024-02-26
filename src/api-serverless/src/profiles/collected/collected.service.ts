@@ -21,11 +21,11 @@ import {
   NftData,
   NftsCollectionOwnershipData
 } from './collected.db';
-import { parseNumberOrNull } from '../../api-helpers';
 import {
   areEqualAddresses,
   assertUnreachable,
-  distinct
+  distinct,
+  parseNumberOrNull
 } from '../../../../helpers';
 
 export class CollectedService {
