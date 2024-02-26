@@ -9,6 +9,7 @@ import {
   PaginatedResponse
 } from './api-constants';
 import { Time } from '../../time';
+import { parseNumberOrNull } from '../../helpers';
 
 const converter = require('json-2-csv');
 
@@ -107,15 +108,4 @@ export function giveReadReplicaTimeToCatchUp() {
   const millisToGive =
     parseNumberOrNull(process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE) ?? 500;
   return Time.millis(millisToGive).sleep();
-}
-
-export function parseNumberOrNull(input: any): number | null {
-  if (input === null || input === undefined) {
-    return null;
-  }
-  const parsed = parseInt(input);
-  if (isNaN(parsed)) {
-    return null;
-  }
-  return parsed;
 }

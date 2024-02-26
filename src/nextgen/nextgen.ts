@@ -3,15 +3,14 @@ import { NextGenBlock } from '../entities/INextGen';
 import { findCoreEvents } from './nextgen_core_events';
 import { findCoreTransactions } from './nextgen_core_transactions';
 import { findMinterTransactions } from './nextgen_minter';
-import {
-  processPendingTokens,
-  processMissingTokenData
-} from './nextgen_pending';
+import { processPendingMetadataTokens } from './nextgen_pending_metadata';
 import { refreshNextgenTokens } from './nextgen_tokens';
 import { fetchNextGenLatestBlock, persistNextGenBlock } from './nextgen.db';
 import { getDataSource } from '../db';
 import { getNextgenNetwork } from './nextgen_constants';
 import { Logger } from '../logging';
+import { processMissingMintData } from './nextgen_pending_mint_data';
+import { processMissingThumbnails } from './nextgen_pending_thumbnails';
 
 const logger = Logger.get('NEXTGEN_CONTRACT');
 
@@ -53,9 +52,10 @@ export async function findNextGenTransactions() {
     await persistNextGenBlock(entityManager, nextgenBlock);
 
     if (!blockAdjusted) {
-      await processPendingTokens(entityManager);
-      await processMissingTokenData(entityManager);
+      await processPendingMetadataTokens(entityManager);
+      await processMissingMintData(entityManager);
       await refreshNextgenTokens(entityManager);
+      await processMissingThumbnails(entityManager);
     }
   });
 }

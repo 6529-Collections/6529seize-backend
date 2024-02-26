@@ -44,7 +44,9 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
                    token.id                      as token_id,
                    token.name                    as name,
                    token.collection_name         as season,
-                   token.image_url               as thumbnail
+                   COALESCE(
+                    token.thumbnail_url, 
+                    token.image_url)             as thumbnail
             from nextgen_tokens token
     `
     );
