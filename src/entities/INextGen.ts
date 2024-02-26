@@ -435,6 +435,12 @@ export class NextGenToken {
   @Column({ type: 'text' })
   image_url!: string;
 
+  @Column({ nullable: true, type: 'text' })
+  icon_url?: string;
+
+  @Column({ nullable: true, type: 'text' })
+  thumbnail_url?: string;
+
   @Column({ type: 'text', nullable: true })
   animation_url!: string;
 

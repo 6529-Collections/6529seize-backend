@@ -117,7 +117,9 @@ export async function fetchPendingNextgenTokens(manager: EntityManager) {
   });
 }
 
-export async function fetchMissingDataNextgenTokens(manager: EntityManager) {
+export async function fetchMissingMintDataNextgenTokens(
+  manager: EntityManager
+) {
   return await manager.getRepository(NextGenToken).find({
     where: {
       mint_data: IsNull()
@@ -193,4 +195,10 @@ export async function persitNextgenTokenListings(
 ) {
   const repo = manager.getRepository(NextGenTokenListing);
   await repo.upsert(listings, ['id']);
+}
+
+export async function fetchPendingNextgenThumbnails(manager: EntityManager) {
+  return await manager.getRepository(NextGenToken).find({
+    where: [{ icon_url: IsNull() }, { thumbnail_url: IsNull() }]
+  });
 }
