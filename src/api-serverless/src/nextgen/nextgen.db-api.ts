@@ -765,8 +765,6 @@ export async function fetchNextGenCollectionTraitSets(
         );
       });
 
-    console.log('walletFilters', walletFilters);
-
     filters = constructFilters(filters, `(${walletFilters})`);
   }
 
@@ -793,15 +791,14 @@ export async function fetchNextGenCollectionTraitSets(
     const tokenValues: {
       value: string;
       tokens: number[];
-    }[] = [];
-    distinctValues.forEach((value: string) => {
+    }[] = distinctValues.map((value: string) => {
       const traitTokens = tokenTraits
         .filter((t: any) => t.value === value && tokenIds.includes(t.token_id))
         .map((t: any) => t.token_id);
-      tokenValues.push({
+      return {
         value: value,
         tokens: traitTokens
-      });
+      };
     });
 
     delete d.distinct_values;
@@ -877,14 +874,10 @@ export async function fetchNextGenCollectionTraitSetsUltimate(
   const sqlQuery = `SELECT ${fields} FROM ${NEXTGEN_TOKENS_TABLE} ${joins} ${filters} GROUP BY ${groups} HAVING ${havingQuery}`;
   const countSql = `SELECT COUNT(1) as count FROM (${sqlQuery}) inner_q`;
 
-  const count = await sqlExecutor
-    .execute(countSql, params)
-    .then((r) => r[0].count);
-
-  const data = await sqlExecutor.execute(
-    `${sqlQuery} ${limit} ${offset}`,
-    params
-  );
+  const [count, data] = await Promise.all([
+    sqlExecutor.execute(countSql, params).then((r) => r[0].count),
+    sqlExecutor.execute(`${sqlQuery} ${limit} ${offset}`, params)
+  ]);
 
   data.forEach((d: any) => {
     d.level = calculateLevel({
