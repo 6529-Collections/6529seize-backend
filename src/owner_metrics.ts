@@ -532,6 +532,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
       const wallet = owner.wallet;
 
       let walletTransactions: Transaction[] = await fetchWalletTransactions(
+        [MEMES_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT],
         wallet
       );
 
