@@ -501,20 +501,16 @@ export async function fetchDistinctOwnerWallets() {
 }
 
 export async function fetchTransactionAddressesFromDate(
-  date: Date | undefined
+  contracts: string[],
+  date: Date
 ) {
-  const table = TRANSACTIONS_TABLE;
-
-  let sql = `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE}`;
-  const params: any = {};
-
-  if (date) {
-    sql += ` WHERE ${table}.created_at >= :date`;
-    params.date = date.toISOString();
-  }
-
-  const results = await sqlExecutor.execute(sql, params);
-  return results;
+  return await sqlExecutor.execute(
+    `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE} WHERE created_at >= :date and contract in (:contracts)`,
+    {
+      contracts: contracts.map((it) => it.toLowerCase()),
+      date
+    }
+  );
 }
 
 export async function fetchAllOwnersAddresses() {
