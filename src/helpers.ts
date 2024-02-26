@@ -334,3 +334,14 @@ export function batchArray<T>(array: T[], batchSize: number): T[][] {
 
   return batchedArray;
 }
+
+export function parseNumberOrNull(input: any): number | null {
+  if (input === null || input === undefined) {
+    return null;
+  }
+  const parsed = parseInt(input);
+  if (isNaN(parsed)) {
+    return null;
+  }
+  return parsed;
+}
