@@ -1905,8 +1905,12 @@ export async function fetchConsolidatedOwnerMetrics(
   }
 
   if (wallets) {
+    const innerSort =
+      sort === 'level_components'
+        ? '(ifnull(p.profile_tdh, 0) + ifnull(p.rep_score, 0))'
+        : sort;
     joins += ` JOIN (
-      SELECT ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key, RANK() OVER(ORDER BY ${sort} DESC) AS dense_rank_sort, 
+      SELECT ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key, RANK() OVER(ORDER BY ${innerSort} DESC) AS dense_rank_sort, 
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes+${CONSOLIDATED_OWNERS_TAGS_TABLE}.gradients_balance DESC) AS dense_rank_unique,
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, 
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, 
@@ -1925,7 +1929,9 @@ export async function fetchConsolidatedOwnerMetrics(
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn5 DESC) AS dense_rank_unique_memes_season5,
         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn6 DESC) AS dense_rank_unique_memes_season6 
       FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} 
-        LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key ${hideWalletFilters})
+        LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key 
+        LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key
+        LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key ${hideWalletFilters})
       AS dense_table ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key = dense_table.consolidation_key `;
   }
 
