@@ -251,7 +251,6 @@ router.get(
 );
 
 router.get(`/featured`, async function (req: any, res: any, next: any) {
-  logger.info(`[FETCHING FEATURED COLLECTION]`);
   db.fetchFeaturedCollection().then((result) => {
     return returnJsonResult(result, req, res);
   });
@@ -269,9 +268,6 @@ router.get(`/collections`, async function (req: any, res: any, next: any) {
     statusKey in NextGenCollectionStatus
       ? NextGenCollectionStatus[statusKey]
       : null;
-  logger.info(
-    `[FETCHING ALL COLLECTIONS] : [PAGE SIZE ${pageSize}] : [PAGE ${page}] : [STATUS ${status}]`
-  );
   db.fetchNextGenCollections(pageSize, page, status).then((result) => {
     return returnPaginatedResult(result, req, res);
   });
@@ -281,11 +277,11 @@ router.get(`/collections/:id`, async function (req: any, res: any, next: any) {
   const id: number = parseInt(req.params.id);
   let result: any;
   if (!isNaN(id)) {
-    logger.info(`[FETCHING COLLECTION ID ${id}]`);
+    logger.info(`[FETCHING COLLECTION BY ID ${id}]`);
     result = await db.fetchNextGenCollectionById(id);
   } else {
     const name = req.params.id.replace(/-/g, ' ');
-    logger.info(`[FETCHING COLLECTION NAME ${name}]`);
+    logger.info(`[FETCHING COLLECTION BY NAME ${name}]`);
     result = await db.fetchNextGenCollectionByName(name);
   }
   if (result?.id) {
@@ -326,7 +322,6 @@ router.get(
       listed = db.ListedType.NOT_LISTED;
     }
 
-    logger.info(`[FETCHING TOKENS FOR COLLECTION ID ${id}]`);
     db.fetchNextGenCollectionTokens(
       id,
       pageSize,
@@ -355,7 +350,6 @@ router.get(
     }
 
     const tokenId = id * 10000000000 + token;
-    logger.info(`[FETCHING TOKEN ${id}]`);
     db.fetchNextGenToken(tokenId).then((result) => {
       if (result.id) {
         return returnJsonResult(result, req, res);
@@ -377,7 +371,6 @@ router.get(
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    logger.info(`[FETCHING LOGS FOR COLLECTION ID ${id}]`);
     db.fetchNextGenCollectionLogs(id, pageSize, page).then((result) => {
       return returnJsonResult(result, req, res);
     });
@@ -401,7 +394,6 @@ router.get(
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    logger.info(`[FETCHING LOGS FOR COLLECTION ID ${id} TOKEN ID ${tokenId}]`);
     db.fetchNextGenCollectionAndTokenLogs(id, tokenId, pageSize, page).then(
       (result) => {
         return returnJsonResult(result, req, res);
@@ -416,7 +408,6 @@ router.get(
   async function (req: any, res: any, next: any) {
     const id: number = req.params.id;
 
-    logger.info(`[FETCHING TRAITS FOR COLLECTION ID ${id}]`);
     db.fetchNextGenCollectionTraits(id).then((result) => {
       const uniqueKeys: string[] = [];
       result.forEach((r: any) => {
@@ -486,7 +477,6 @@ router.get(
     const id: number = req.params.id;
     const trait: string = req.params.trait;
 
-    logger.info(`[FETCHING TRAIT SETS FOR COLLECTION ID ${id} TRAIT ${trait}]`);
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -508,7 +498,6 @@ router.get(`/tokens/:id`, async function (req: any, res: any, next: any) {
     throw new BadRequestException('Token ID must be a number.');
   }
 
-  logger.info(`[FETCHING TOKEN ${id}]`);
   db.fetchNextGenToken(id).then((result) => {
     if (result.id) {
       return returnJsonResult(result, req, res);
@@ -532,7 +521,6 @@ router.get(
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    logger.info(`[FETCHING TOKEN ${id} TRANSACTIONS]`);
     db.fetchNextGenTokenTransactions(id, pageSize, page).then((result) => {
       return returnJsonResult(result, req, res);
     });
@@ -547,7 +535,6 @@ router.get(
       throw new BadRequestException('Token ID must be a number.');
     }
 
-    logger.info(`[FETCHING TOKEN ${id} TRAITS]`);
     db.fetchNextGenTokenTraits(id).then((result) => {
       return returnJsonResult(result, req, res);
     });
