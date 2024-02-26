@@ -771,7 +771,7 @@ export async function fetchNextGenCollectionTraitSets(
   const results = await fetchPaginated(
     NEXTGEN_TOKENS_TABLE,
     props,
-    'distinct_values_count DESC',
+    'distinct_values_count DESC, owner ASC',
     pageSize,
     page,
     filters,
