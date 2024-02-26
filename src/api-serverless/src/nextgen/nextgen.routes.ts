@@ -51,8 +51,8 @@ interface TokenTraitWithCount {
 }
 
 function validateCollectionId(req: any, res: any, next: any) {
-  const id: number = parseInt(req.params.collection_id);
-  if (!isNaN(id)) {
+  const id: number = parseInt(req.params.id);
+  if (isNaN(id)) {
     throw new BadRequestException('Collection ID must be a number.');
   }
   req.params.id = id;
