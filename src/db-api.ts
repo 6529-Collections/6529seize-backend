@@ -35,7 +35,6 @@ import {
   TDH_GLOBAL_HISTORY_TABLE,
   TDH_HISTORY_TABLE,
   TEAM_TABLE,
-  TRANSACTIONS_MEME_LAB_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   USE_CASE_ALL,
@@ -868,11 +867,15 @@ export async function fetchLabTransactions(
     return returnEmpty();
   }
 
-  const fields = `${TRANSACTIONS_MEME_LAB_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
-  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_MEME_LAB_TABLE}.to_address=ens2.wallet`;
-
+  const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
+  filters.filters = constructFilters(
+    filters.filters,
+    `contract = :memeLabContract`
+  );
+  filters.params.memeLabContract = MEMELAB_CONTRACT;
   return fetchPaginated(
-    TRANSACTIONS_MEME_LAB_TABLE,
+    TRANSACTIONS_TABLE,
     filters.params,
     'transaction_date desc',
     pageSize,
@@ -2103,16 +2106,11 @@ export async function fetchDistributionForNFT(
 
   let joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
 
-  let transactionsTable = TRANSACTIONS_TABLE;
-  if (areEqualAddresses(contract, MEMELAB_CONTRACT)) {
-    transactionsTable = TRANSACTIONS_MEME_LAB_TABLE;
-  }
-
-  joins += ` LEFT JOIN ${transactionsTable} ON ${DISTRIBUTION_TABLE}.contract = ${transactionsTable}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${transactionsTable}.token_id AND (${transactionsTable}.from_address=${mysql.escape(
+  joins += ` LEFT JOIN ${TRANSACTIONS_TABLE} ON ${DISTRIBUTION_TABLE}.contract = ${TRANSACTIONS_TABLE}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${TRANSACTIONS_TABLE}.token_id AND (${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
     MANIFOLD
-  )} OR ${transactionsTable}.from_address=${mysql.escape(
+  )} OR ${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
     NULL_ADDRESS
-  )}) AND ${DISTRIBUTION_TABLE}.wallet=${transactionsTable}.to_address and value > 0`;
+  )}) AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_TABLE}.to_address and value > 0`;
 
   return fetchPaginated(
     DISTRIBUTION_TABLE,
@@ -2125,7 +2123,7 @@ export async function fetchDistributionForNFT(
     pageSize,
     page,
     filters,
-    `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display, SUM(${transactionsTable}.token_count) as card_mint_count`,
+    `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display, SUM(${TRANSACTIONS_TABLE}.token_count) as card_mint_count`,
     joins,
     `${DISTRIBUTION_TABLE}.wallet, ${DISTRIBUTION_TABLE}.created_at, ${DISTRIBUTION_TABLE}.phase, ${ENS_TABLE}.display`
   );
@@ -2178,11 +2176,6 @@ export async function fetchDistributions(
   )} OR ${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
     NULL_ADDRESS
   )}) AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_TABLE}.to_address AND ${TRANSACTIONS_TABLE}.value > 0`;
-  joins += ` LEFT JOIN ${TRANSACTIONS_MEME_LAB_TABLE} ON ${DISTRIBUTION_TABLE}.contract = ${TRANSACTIONS_MEME_LAB_TABLE}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${TRANSACTIONS_MEME_LAB_TABLE}.token_id AND (${TRANSACTIONS_MEME_LAB_TABLE}.from_address=${mysql.escape(
-    MANIFOLD
-  )} OR ${TRANSACTIONS_MEME_LAB_TABLE}.from_address=${mysql.escape(
-    NULL_ADDRESS
-  )}) AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_MEME_LAB_TABLE}.to_address AND ${TRANSACTIONS_MEME_LAB_TABLE}.value > 0`;
   joins += ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
 
   return fetchPaginated(
@@ -2205,7 +2198,7 @@ export async function fetchDistributions(
     ${ENS_TABLE}.display,
     ${DISTRIBUTION_TABLE}.contract,
     ${DISTRIBUTION_TABLE}.card_id,
-    COALESCE(SUM(${TRANSACTIONS_TABLE}.token_count), SUM(${TRANSACTIONS_MEME_LAB_TABLE}.token_count), 0) AS total_minted,
+    COALESCE(SUM(${TRANSACTIONS_TABLE}.token_count), 0) AS total_minted,
     COALESCE(${NFTS_TABLE}.name, ${NFTS_MEME_LAB_TABLE}.name) as card_name,
     COALESCE(${NFTS_TABLE}.mint_date, ${NFTS_MEME_LAB_TABLE}.mint_date, now()) AS card_mint_date,
     ${DISTRIBUTION_TABLE}.airdrop,

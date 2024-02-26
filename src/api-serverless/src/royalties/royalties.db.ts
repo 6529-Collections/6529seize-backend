@@ -1,16 +1,15 @@
 import { constructFilters } from '../api-helpers';
 import {
-  TRANSACTIONS_TABLE,
-  TRANSACTIONS_MEME_LAB_TABLE,
-  NFTS_TABLE,
-  NFTS_MEME_LAB_TABLE,
-  MEMES_CONTRACT,
-  MEMELAB_CONTRACT,
-  MEMES_ROYALTIES_RATE,
-  MEME_LAB_ROYALTIES_TABLE,
-  NULL_ADDRESS,
+  ACK_DEPLOYER,
   MANIFOLD,
-  ACK_DEPLOYER
+  MEME_LAB_ROYALTIES_TABLE,
+  MEMELAB_CONTRACT,
+  MEMES_CONTRACT,
+  MEMES_ROYALTIES_RATE,
+  NFTS_MEME_LAB_TABLE,
+  NFTS_TABLE,
+  NULL_ADDRESS,
+  TRANSACTIONS_TABLE
 } from '../../../constants';
 import { Time } from '../../../time';
 import { sqlExecutor } from '../../../sql-executor';
@@ -37,8 +36,6 @@ export function getRoyaltiesSql(
   fromBlock: number | undefined,
   toBlock: number | undefined
 ) {
-  const transactionsTable =
-    type === 'memes' ? TRANSACTIONS_TABLE : TRANSACTIONS_MEME_LAB_TABLE;
   const nftsTable = type === 'memes' ? NFTS_TABLE : NFTS_MEME_LAB_TABLE;
   const contract = type === 'memes' ? MEMES_CONTRACT : MEMELAB_CONTRACT;
   const primaryRoyaltySplitSource =
@@ -50,7 +47,10 @@ export function getRoyaltiesSql(
       ? MEMES_ROYALTIES_RATE
       : `${MEME_LAB_ROYALTIES_TABLE}.secondary_royalty_split`;
 
-  let filters = constructFilters('', `${transactionsTable}.contract=:contract`);
+  let filters = constructFilters(
+    '',
+    `${TRANSACTIONS_TABLE}.contract=:contract`
+  );
   const params: any = {
     contract: contract,
     no_royalty_artist: '%6529%',
@@ -59,7 +59,7 @@ export function getRoyaltiesSql(
     ack_deployer: ACK_DEPLOYER
   };
 
-  filters = constructFilters(filters, `${transactionsTable}.value > 0`);
+  filters = constructFilters(filters, `${TRANSACTIONS_TABLE}.value > 0`);
 
   let nftFilters = constructFilters('', `${nftsTable}.contract=:contract`);
   if (artist) {
@@ -73,7 +73,7 @@ export function getRoyaltiesSql(
   if (fromDate) {
     filters = constructFilters(
       filters,
-      `${transactionsTable}.transaction_date >= :from_date`
+      `${TRANSACTIONS_TABLE}.transaction_date >= :from_date`
     );
     params.from_date = fromDate;
   }
@@ -81,21 +81,21 @@ export function getRoyaltiesSql(
     const nextDay = Time.fromString(toDate).plusDays(1).toIsoDateString();
     filters = constructFilters(
       filters,
-      `${transactionsTable}.transaction_date < :to_date`
+      `${TRANSACTIONS_TABLE}.transaction_date < :to_date`
     );
     params.to_date = nextDay;
   }
   if (fromBlock) {
     filters = constructFilters(
       filters,
-      `${transactionsTable}.block >= :from_block`
+      `${TRANSACTIONS_TABLE}.block >= :from_block`
     );
     params.from_block = fromBlock;
   }
   if (toBlock) {
     filters = constructFilters(
       filters,
-      `${transactionsTable}.block <= :to_block`
+      `${TRANSACTIONS_TABLE}.block <= :to_block`
     );
     params.to_block = toBlock;
   }
@@ -148,7 +148,7 @@ export function getRoyaltiesSql(
         SUM(CASE WHEN from_address IN (:null_address, :manifold) ${specialCasePrimary} THEN value ELSE 0 END) AS primary_total_volume,
         SUM(CASE WHEN from_address IN (:null_address, :manifold) ${specialCasePrimary} THEN primary_proceeds ELSE 0 END) AS primary_total_proceeds
       FROM 
-        ${transactionsTable}
+        ${TRANSACTIONS_TABLE}
       WHERE contract=:contract
       GROUP BY 
         token_id) AS primaryVolume
@@ -166,7 +166,7 @@ export function getRoyaltiesSql(
         SUM(CASE WHEN from_address NOT IN (:null_address, :manifold) ${specialCaseSecondary} THEN value ELSE 0 END) AS secondary_total_volume,
         SUM(CASE WHEN from_address NOT IN (:null_address, :manifold) ${specialCaseSecondary} THEN royalties ELSE 0 END) AS total_royalties
       FROM 
-        ${transactionsTable}
+        ${TRANSACTIONS_TABLE}
       ${filters}
       GROUP BY 
         token_id) AS aggregated

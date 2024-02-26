@@ -1,9 +1,5 @@
 import { loadEnv, unload } from '../secrets';
-import {
-  Transaction,
-  LabTransaction,
-  BaseTransaction
-} from '../entities/ITransaction';
+import { BaseTransaction, Transaction } from '../entities/ITransaction';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { sqlExecutor } from '../sql-executor';
@@ -16,7 +12,7 @@ const logger = Logger.get('TRANSACTIONS_REPLAY_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   logger.info(`[RUNNING]`);
-  await loadEnv([Transaction, LabTransaction]);
+  await loadEnv([Transaction]);
   await replayTransactions();
   await unload();
   logger.info('[COMPLETE]');

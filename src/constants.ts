@@ -2,8 +2,6 @@ import { Network } from 'alchemy-sdk';
 
 export const TDH_BLOCKS_TABLE = 'tdh_blocks';
 export const TRANSACTIONS_TABLE = 'transactions';
-export const TRANSACTIONS_MEME_LAB_TABLE = 'transactions_meme_lab';
-export const TRANSACTIONS_REMAKE_TABLE = 'transactions_remake';
 export const NFTS_TABLE = 'nfts';
 export const NFTS_MEME_LAB_TABLE = 'nfts_meme_lab';
 export const MEME_LAB_ROYALTIES_TABLE = 'meme_lab_royalties';

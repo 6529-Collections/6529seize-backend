@@ -2,22 +2,22 @@ import {
   Alchemy,
   AssetTransfersCategory,
   AssetTransfersParams,
+  fromHex,
   Network,
-  Utils,
-  fromHex
+  Utils
 } from 'alchemy-sdk';
 import {
+  ACK_DEPLOYER,
   ALCHEMY_SETTINGS,
-  WETH_TOKEN_ADDRESS,
+  MANIFOLD,
   MEMELAB_CONTRACT,
   MEMELAB_ROYALTIES_ADDRESS,
+  MEMES_DEPLOYER,
   NULL_ADDRESS,
   OPENSEA_ADDRESS,
   ROYALTIES_ADDRESS,
-  MANIFOLD,
-  TRANSACTIONS_MEME_LAB_TABLE,
-  ACK_DEPLOYER,
-  MEMES_DEPLOYER
+  TRANSACTIONS_TABLE,
+  WETH_TOKEN_ADDRESS
 } from './constants';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
@@ -25,8 +25,8 @@ import { ethers } from 'ethers';
 import { findTransactionsByHash } from './db';
 import { Logger } from './logging';
 import {
-  NEXTGEN_CORE_CONTRACT,
   getNextgenNetwork,
+  NEXTGEN_CORE_CONTRACT,
   NEXTGEN_ROYALTIES_ADDRESS
 } from './nextgen/nextgen_constants';
 
@@ -349,7 +349,7 @@ export const debugValues = async () => {
 
   await Promise.all(
     transactions.map(async (transactionHash) => {
-      const tr = await findTransactionsByHash(TRANSACTIONS_MEME_LAB_TABLE, [
+      const tr = await findTransactionsByHash(TRANSACTIONS_TABLE, [
         transactionHash
       ]);
 
