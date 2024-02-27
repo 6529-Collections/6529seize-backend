@@ -1,7 +1,4 @@
-import { findTransactions } from './transactions';
 import { getAllOwners, getOwnersDelta } from './owners';
-import { findTransactionValues } from './transaction_values';
-import { discoverEns } from './ens';
 import { Alchemy, fromHex, Nft, Utils } from 'alchemy-sdk';
 import {
   ALCHEMY_SETTINGS,
@@ -17,7 +14,7 @@ import {
   SIX529_MUSEUM
 } from './constants';
 import { LabExtendedData, LabNFT, NFTWithExtendedData } from './entities/INFT';
-import { LabTransaction } from './entities/ITransaction';
+import { Transaction } from './entities/ITransaction';
 import {
   areEqualAddresses,
   areEqualObjects,
@@ -25,18 +22,16 @@ import {
   replaceEmojisWithHex
 } from './helpers';
 import {
-  fetchAllMemeLabNFTs,
-  persistTransactions,
-  fetchLatestLabTransactionsBlockNumber,
-  fetchAllMemeLabTransactions,
-  persistLabNFTS,
   fetchAllArtists,
-  persistArtists,
   fetchAllLabOwners,
-  persistOwners,
+  fetchAllMemeLabNFTs,
+  fetchAllMemeLabTransactions,
   fetchMemesWithSeason,
+  persistArtists,
   persistLabExtendedData,
-  persistLabNFTRoyalties
+  persistLabNFTRoyalties,
+  persistLabNFTS,
+  persistOwners
 } from './db';
 import { Artist } from './entities/IArtist';
 import { findArtists } from './artists';
@@ -67,7 +62,7 @@ async function getAllNFTs(nfts: Nft[] = [], key = ''): Promise<Nft[]> {
 
 async function processNFTs(
   startingNFTS: LabNFT[],
-  startingTransactions: LabTransaction[],
+  startingTransactions: Transaction[],
   owners: Owner[]
 ) {
   const allNFTS = await getAllNFTs();
@@ -267,7 +262,7 @@ async function processNFTs(
 
 export const findNFTs = async (
   startingNFTS: LabNFT[],
-  startingTransactions: LabTransaction[],
+  startingTransactions: Transaction[],
   owners: Owner[],
   reset?: boolean
 ) => {
@@ -321,7 +316,7 @@ export async function memeLabNfts(reset?: boolean) {
   });
 
   const nfts: LabNFT[] = await fetchAllMemeLabNFTs();
-  const transactions: LabTransaction[] = await fetchAllMemeLabTransactions();
+  const transactions: Transaction[] = await fetchAllMemeLabTransactions();
   const owners: Owner[] = await fetchAllLabOwners();
   const artists: Artist[] = await fetchAllArtists();
 
@@ -330,51 +325,6 @@ export async function memeLabNfts(reset?: boolean) {
   await persistLabNFTS(newNfts);
   await persistLabNFTRoyalties();
   await persistArtists(newArtists);
-}
-
-export async function memeLabTransactions() {
-  const now = new Date();
-  await fetchAndPersistTransactions();
-  await discoverEns(now);
-}
-
-export async function fetchAndPersistTransactions(
-  startingBlock?: number,
-  latestBlock?: number,
-  pageKey?: string
-) {
-  try {
-    let startingBlockResolved: number;
-    if (startingBlock == undefined) {
-      startingBlockResolved = await fetchLatestLabTransactionsBlockNumber();
-    } else {
-      startingBlockResolved = startingBlock;
-    }
-
-    const response = await findTransactions(
-      startingBlockResolved,
-      latestBlock,
-      pageKey,
-      [MEMELAB_CONTRACT]
-    );
-
-    const transactionsWithValues = await findTransactionValues(
-      response.transactions
-    );
-
-    await persistTransactions(transactionsWithValues, true);
-
-    if (response.pageKey) {
-      await fetchAndPersistTransactions(
-        startingBlockResolved,
-        response.latestBlock,
-        response.pageKey
-      );
-    }
-  } catch (e: any) {
-    logger.error(`[TRANSACTIONS] [ETIMEDOUT!] [RETRYING PROCESS] [${e}]`);
-    await fetchAndPersistTransactions(startingBlock, latestBlock, pageKey);
-  }
 }
 
 export async function memeLabOwners() {

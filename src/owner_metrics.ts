@@ -1,8 +1,8 @@
 import {
   GRADIENT_CONTRACT,
   MANIFOLD,
-  MEMES_CONTRACT,
   MEME_8_BURN_TRANSACTION,
+  MEMES_CONTRACT,
   NULL_ADDRESS,
   NULL_ADDRESS_DEAD,
   PUNK_6529,
@@ -21,22 +21,22 @@ import {
   isNullAddress
 } from './helpers';
 import {
-  persistOwnerMetrics,
-  fetchWalletTransactions,
+  fetchAllOwnerMetrics,
+  fetchConsolidationDisplay,
   fetchDistinctOwnerWallets,
   fetchLastOwnerMetrics,
   fetchTransactionAddressesFromDate,
-  retrieveWalletConsolidations,
-  fetchConsolidationDisplay,
-  persistConsolidatedOwnerMetrics
+  fetchWalletTransactions,
+  persistConsolidatedOwnerMetrics,
+  persistOwnerMetrics,
+  retrieveWalletConsolidations
 } from './db';
-import { fetchAllOwnerMetrics } from './db';
 import { Logger } from './logging';
 import { fetchNextgenTokens } from './nextgen/nextgen.db';
 import { NextGenToken } from './entities/INextGen';
 import {
-  NEXTGEN_CORE_CONTRACT,
-  getNextgenNetwork
+  getNextgenNetwork,
+  NEXTGEN_CORE_CONTRACT
 } from './nextgen/nextgen_constants';
 
 const logger = Logger.get('OWNER_METRICS');
@@ -505,7 +505,10 @@ export const findOwnerMetrics = async (reset?: boolean) => {
     const allTransactionAddresses: {
       from_address: string;
       to_address: string;
-    }[] = await fetchTransactionAddressesFromDate(new Date(lastMetricsDate));
+    }[] = await fetchTransactionAddressesFromDate(
+      [MEMES_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT],
+      new Date(lastMetricsDate)
+    );
     allTransactionAddresses.forEach((wallet) => {
       addresses.add(wallet.from_address);
       addresses.add(wallet.to_address);
@@ -529,6 +532,7 @@ export const findOwnerMetrics = async (reset?: boolean) => {
       const wallet = owner.wallet;
 
       let walletTransactions: Transaction[] = await fetchWalletTransactions(
+        [MEMES_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT],
         wallet
       );
 

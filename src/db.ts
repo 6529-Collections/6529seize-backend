@@ -14,6 +14,7 @@ import {
   ENS_TABLE,
   GRADIENT_CONTRACT,
   MEME_LAB_ROYALTIES_TABLE,
+  MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
   NFTS_MEME_LAB_TABLE,
@@ -22,7 +23,6 @@ import {
   OWNERS_METRICS_TABLE,
   OWNERS_TABLE,
   TDH_BLOCKS_TABLE,
-  TRANSACTIONS_MEME_LAB_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
   WALLETS_TDH_TABLE
@@ -50,11 +50,7 @@ import {
   TDHHistory
 } from './entities/ITDH';
 import { Team } from './entities/ITeam';
-import {
-  BaseTransaction,
-  LabTransaction,
-  Transaction
-} from './entities/ITransaction';
+import { BaseTransaction, Transaction } from './entities/ITransaction';
 import {
   Consolidation,
   ConsolidationEvent,
@@ -225,13 +221,6 @@ export async function fetchLastOwnerMetrics(): Promise<any> {
   return results ? results[0].transaction_reference : null;
 }
 
-export async function findDuplicateTransactionHashes(): Promise<string[]> {
-  const sql = `SELECT transaction FROM ${TRANSACTIONS_TABLE} GROUP BY transaction HAVING COUNT(*) > 1;`;
-  const results = await sqlExecutor.execute(sql);
-  const hashes: string[] = results.map((r: Transaction) => r.transaction);
-  return hashes;
-}
-
 export async function findTransactionsByHash(
   table: string,
   hashes: string[]
@@ -244,8 +233,10 @@ export async function findTransactionsByHash(
 }
 
 export async function fetchLatestLabTransactionsBlockNumber(beforeDate?: Date) {
-  let sql = `SELECT block FROM ${TRANSACTIONS_MEME_LAB_TABLE}`;
-  const params: any = {};
+  let sql = `SELECT block FROM ${TRANSACTIONS_TABLE} where contract = :contract`;
+  const params: any = {
+    contract: MEMELAB_CONTRACT
+  };
   if (beforeDate) {
     sql += ` WHERE UNIX_TIMESTAMP(transaction_date) <= :date`;
     params.date = Math.floor(beforeDate.getTime() / 1000);
@@ -332,9 +323,10 @@ export async function fetchAllTransactions() {
 }
 
 export async function fetchAllMemeLabTransactions() {
-  const sql = `SELECT * FROM ${TRANSACTIONS_MEME_LAB_TABLE};`;
-  const results = await sqlExecutor.execute(sql);
-  return results;
+  const sql = `SELECT * FROM ${TRANSACTIONS_TABLE} where contract = :memeLabContract;`;
+  return await sqlExecutor.execute(sql, {
+    memeLabContract: MEMELAB_CONTRACT
+  });
 }
 
 export async function fetchNftsForContract(contract: string, orderBy?: string) {
@@ -349,19 +341,6 @@ export async function fetchNftsForContract(contract: string, orderBy?: string) {
   const results = await sqlExecutor.execute(sql, params);
   results.map((r: any) => {
     r.metadata = JSON.parse(r.metadata);
-  });
-  return results;
-}
-
-export async function fetchTransactionsWithoutValue(
-  pageSize: number,
-  page: number
-) {
-  const offset = pageSize * (page - 1);
-  const sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE value=0 LIMIT :limit OFFSET :offset;`;
-  const results = await sqlExecutor.execute(sql, {
-    limit: pageSize,
-    offset: offset
   });
   return results;
 }
@@ -501,20 +480,16 @@ export async function fetchDistinctOwnerWallets() {
 }
 
 export async function fetchTransactionAddressesFromDate(
-  date: Date | undefined
+  contracts: string[],
+  date: Date
 ) {
-  const table = TRANSACTIONS_TABLE;
-
-  let sql = `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE}`;
-  const params: any = {};
-
-  if (date) {
-    sql += ` WHERE ${table}.created_at >= :date`;
-    params.date = date.toISOString();
-  }
-
-  const results = await sqlExecutor.execute(sql, params);
-  return results;
+  return await sqlExecutor.execute(
+    `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE} WHERE created_at >= :date and contract in (:contracts)`,
+    {
+      contracts: contracts.map((it) => it.toLowerCase()),
+      date
+    }
+  );
 }
 
 export async function fetchAllOwnersAddresses() {
@@ -534,9 +509,15 @@ export async function fetchAllConsolidationAddresses() {
   return results;
 }
 
-export async function fetchWalletTransactions(wallet: string, block?: number) {
+export async function fetchWalletTransactions(
+  contracts: string[],
+  wallet: string,
+  block?: number
+) {
   const sql = `SELECT * FROM ${TRANSACTIONS_TABLE}`;
-  const params: any = {};
+  const params: any = {
+    contracts: contracts.map((it) => it.toLowerCase())
+  };
 
   let filters;
   if (isNullAddress(wallet)) {
@@ -556,10 +537,11 @@ export async function fetchWalletTransactions(wallet: string, block?: number) {
     params.block = block;
   }
 
+  filters = constructFilters(filters, `contract in (:contracts)`);
+
   const fullSql = `${sql} ${filters}`;
 
-  const results = await sqlExecutor.execute(fullSql, params);
-  return results;
+  return await sqlExecutor.execute(fullSql, params);
 }
 
 export async function fetchEnsRefresh() {
@@ -631,30 +613,16 @@ export async function fetchMissingEnsNFTDelegation(table: string) {
   return structuredResults;
 }
 
-export async function persistTransactions(
-  transactions: BaseTransaction[],
-  isLab?: boolean
-) {
+export async function persistTransactions(transactions: BaseTransaction[]) {
   if (transactions.length > 0) {
     const consolidatedTransactions = consolidateTransactions(transactions);
-
-    if (isLab) {
-      logger.info(
-        `[LAB TRANSACTIONS] [PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
-      );
-      await AppDataSource.getRepository(LabTransaction).upsert(
-        consolidatedTransactions,
-        ['transaction', 'contract', 'from_address', 'to_address', 'token_id']
-      );
-    } else {
-      logger.info(
-        `[TRANSACTIONS] [PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
-      );
-      await AppDataSource.getRepository(Transaction).upsert(
-        consolidatedTransactions,
-        ['transaction', 'contract', 'from_address', 'to_address', 'token_id']
-      );
-    }
+    logger.info(
+      `[TRANSACTIONS] [PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
+    );
+    await AppDataSource.getRepository(Transaction).upsert(
+      consolidatedTransactions,
+      ['transaction', 'contract', 'from_address', 'to_address', 'token_id']
+    );
 
     logger.info(
       `[TRANSACTIONS] [ALL ${consolidatedTransactions.length} TRANSACTIONS PERSISTED]`
@@ -871,7 +839,7 @@ export async function findVolumeLab(nft: LabNFT): Promise<{
   total_volume_last_1_month: number;
   total_volume: number;
 }> {
-  return findVolume(TRANSACTIONS_MEME_LAB_TABLE, nft.id, nft.contract);
+  return findVolume(TRANSACTIONS_TABLE, nft.id, nft.contract);
 }
 
 async function findVolume(

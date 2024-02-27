@@ -1,14 +1,13 @@
 import { constructFilters } from '../api-helpers';
 import {
-  TRANSACTIONS_TABLE,
-  TRANSACTIONS_MEME_LAB_TABLE,
-  NFTS_TABLE,
-  NFTS_MEME_LAB_TABLE,
-  MEMES_CONTRACT,
-  MEMELAB_CONTRACT,
-  NULL_ADDRESS,
+  ACK_DEPLOYER,
   MANIFOLD,
-  ACK_DEPLOYER
+  MEMELAB_CONTRACT,
+  MEMES_CONTRACT,
+  NFTS_MEME_LAB_TABLE,
+  NFTS_TABLE,
+  NULL_ADDRESS,
+  TRANSACTIONS_TABLE
 } from '../../../constants';
 import { Time } from '../../../time';
 import { sqlExecutor } from '../../../sql-executor';
@@ -31,8 +30,6 @@ function getGasSql(
   fromBlock: number | undefined,
   toBlock: number | undefined
 ) {
-  const transactionsTable =
-    type === 'memes' ? TRANSACTIONS_TABLE : TRANSACTIONS_MEME_LAB_TABLE;
   const nftsTable = type === 'memes' ? NFTS_TABLE : NFTS_MEME_LAB_TABLE;
   const contract = type === 'memes' ? MEMES_CONTRACT : MEMELAB_CONTRACT;
 
@@ -105,7 +102,7 @@ function getGasSql(
       ${nftsTable}.artist,
       ${nftsTable}.thumbnail`;
 
-  let joinClause = '';
+  let joinClause: string;
   if (isPrimary) {
     selectClause += `,
       COALESCE(primary_gas.primary_gas, 0) as gas`;
@@ -119,7 +116,7 @@ function getGasSql(
             ELSE 0
             END) AS primary_gas
       FROM
-        (SELECT DISTINCT transaction, token_id, contract, gas, from_address FROM ${transactionsTable}) AS ${transactionsAlias}
+        (SELECT DISTINCT transaction, token_id, contract, gas, from_address FROM ${TRANSACTIONS_TABLE}) AS ${transactionsAlias}
       ${filters}
       GROUP BY token_id) AS primary_gas
       ON ${nftsTable}.id = primary_gas.token_id`;
@@ -136,7 +133,7 @@ function getGasSql(
             ELSE 0
             END) AS secondary_gas
       FROM
-        (SELECT DISTINCT transaction, token_id, contract, gas, from_address, transaction_date, block FROM ${transactionsTable}) AS ${transactionsAlias}
+        (SELECT DISTINCT transaction, token_id, contract, gas, from_address, transaction_date, block FROM ${TRANSACTIONS_TABLE}) AS ${transactionsAlias}
       ${filters}
       GROUP BY token_id) AS secondary_gas
       ON ${nftsTable}.id = secondary_gas.token_id`;

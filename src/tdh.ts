@@ -1,8 +1,8 @@
 import {
   ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
-  MEMES_CONTRACT,
   MEME_8_BURN_TRANSACTION,
+  MEMES_CONTRACT,
   NULL_ADDRESS,
   SZN1_INDEX,
   SZN2_INDEX,
@@ -194,6 +194,7 @@ export const findTDH = async (lastTDHCalc: Date) => {
       let nextgenTDH__raw = 0;
 
       const walletTransactionsDB: Transaction[] = await fetchWalletTransactions(
+        [MEMES_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT],
         wallet,
         block
       );
@@ -211,7 +212,11 @@ export const findTDH = async (lastTDHCalc: Date) => {
       await Promise.all(
         consolidations.map(async (c) => {
           if (!areEqualAddresses(c, wallet)) {
-            const transactions = await fetchWalletTransactions(c, block);
+            const transactions = await fetchWalletTransactions(
+              [MEMES_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT],
+              c,
+              block
+            );
             consolidationTransactions =
               consolidationTransactions.concat(transactions);
           }
