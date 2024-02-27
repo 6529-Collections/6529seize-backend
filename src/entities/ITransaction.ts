@@ -58,9 +58,6 @@ export class BaseTransaction {
 @Entity('transactions')
 export class Transaction extends BaseTransaction {}
 
-@Entity('transactions_meme_lab')
-export class LabTransaction extends BaseTransaction {}
-
 export interface TransactionValue {
   transaction: string;
   value: number;
