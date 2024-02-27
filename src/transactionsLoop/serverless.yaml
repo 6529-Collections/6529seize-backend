@@ -1,4 +1,4 @@
-service: transactionsLoopV2
+service: transactionsLoop
 
 package:
   artifact: dist/index.zip
