@@ -34,9 +34,9 @@ enum Resolution {
 }
 
 const START_INDEX = 10000000000;
-const END_INDEX = 10000000999;
-
-const BATCH_SIZE = 60;
+const END_INDEX = 10000000024;
+const BATCH_SIZE = 15;
+const PUBLIC_RUN = false;
 
 export const handler = async () => {
   const start = Time.now();
@@ -44,7 +44,13 @@ export const handler = async () => {
   await loadEnv([]);
   setup();
 
-  const resolutions = [Resolution['thumbnail'], Resolution['0.5k']];
+  const resolutions = [
+    Resolution['4k'],
+    Resolution['16k'],
+    Resolution['8k'],
+    Resolution['2k'],
+    Resolution['1k']
+  ];
 
   for (let resolution of resolutions) {
     const path =
@@ -70,7 +76,7 @@ function getNetworkPath() {
 async function findMissingImages(resolution: Resolution, path: string) {
   const networkPath = getNetworkPath();
 
-  const resolutionPath = `${networkPath}/${path}/`;
+  const resolutionPath = `${networkPath}/scriptV2/${path}/`;
 
   const allExisting = await listS3Objects(s3, resolutionPath);
 
@@ -136,9 +142,14 @@ async function uploadMissingNextgenImage(
   await s3UploadNextgenImage(s3, imageBlob, s3Path);
 
   const discordMessage = `New Resolution (${resolution.toUpperCase()}) for Token #${tokenId} Generated\n${NEXTGEN_CF_BASE_PATH}/${s3Path}`;
-  await sendDiscordUpdate(
-    process.env.NEXTGEN_GENERATOR_DISCORD_WEBHOOK as string,
-    discordMessage,
-    'NEXTGEN_GENERATOR'
-  );
+
+  let discordWebhook;
+  if (PUBLIC_RUN) {
+    discordWebhook = process.env.NEXTGEN_GENERATOR_DISCORD_WEBHOOK as string;
+  } else {
+    discordWebhook = process.env
+      .NEXTGEN_GENERATOR_DISCORD_WEBHOOK_INTERNAL as string;
+  }
+
+  await sendDiscordUpdate(discordWebhook, discordMessage, 'NEXTGEN_GENERATOR');
 }
