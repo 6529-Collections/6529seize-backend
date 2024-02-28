@@ -35,6 +35,9 @@ export class BaseNFT {
   @Column({ type: 'text' })
   artist!: string;
 
+  @Column({ type: 'text' })
+  artist_seize_handle!: string;
+
   @Column({ nullable: true, type: 'text' })
   uri?: string;
 
