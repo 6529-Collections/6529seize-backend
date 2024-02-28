@@ -34,8 +34,8 @@ enum Resolution {
 }
 
 const START_INDEX = 10000000000;
-const END_INDEX = 10000000024;
-const BATCH_SIZE = 15;
+const END_INDEX = 10000000999;
+const BATCH_SIZE = 60;
 const PUBLIC_RUN = false;
 
 export const handler = async () => {
@@ -45,11 +45,13 @@ export const handler = async () => {
   setup();
 
   const resolutions = [
-    Resolution['4k'],
     Resolution['16k'],
     Resolution['8k'],
+    Resolution['4k'],
     Resolution['2k'],
-    Resolution['1k']
+    Resolution['1k'],
+    Resolution['0.5k'],
+    Resolution['thumbnail']
   ];
 
   for (let resolution of resolutions) {
@@ -76,7 +78,7 @@ function getNetworkPath() {
 async function findMissingImages(resolution: Resolution, path: string) {
   const networkPath = getNetworkPath();
 
-  const resolutionPath = `${networkPath}/scriptV2/${path}/`;
+  const resolutionPath = `${networkPath}/finalscript/${path}/`;
 
   const allExisting = await listS3Objects(s3, resolutionPath);
 
