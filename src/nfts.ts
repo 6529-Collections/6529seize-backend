@@ -181,6 +181,9 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
         artist: fullMetadata.attributes?.find(
           (a: any) => a.trait_type === 'Artist'
         )?.value,
+        artist_seize_handle: fullMetadata.attributes?.find(
+          (a: any) => a.trait_type.toUpperCase() === 'SEIZE ARTIST PROFILE'
+        )?.value,
         uri: fullMetadata.tokenUri?.raw,
         icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
         thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
@@ -275,6 +278,7 @@ async function processGradients(
           hodl_rate: 0,
           description: replaceEmojisWithHex(fullMetadata.description),
           artist: '6529er',
+          artist_seize_handle: '6529er',
           uri: fullMetadata.tokenUri?.raw,
           icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
           thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
