@@ -394,11 +394,9 @@ router.get(
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    db.fetchNextGenCollectionAndTokenLogs(id, tokenId, pageSize, page).then(
-      (result) => {
-        return returnJsonResult(result, req, res);
-      }
-    );
+    db.fetchNextGenCollectionOnlyLogs(id, pageSize, page).then((result) => {
+      return returnJsonResult(result, req, res);
+    });
   }
 );
 

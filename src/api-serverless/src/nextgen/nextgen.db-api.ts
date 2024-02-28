@@ -443,22 +443,20 @@ export async function fetchNextGenCollectionLogs(
   );
 }
 
-export async function fetchNextGenCollectionAndTokenLogs(
+export async function fetchNextGenCollectionOnlyLogs(
   collectionId: number,
-  tokenId: number,
   pageSize: number,
   page: number
 ) {
   let filters = constructFilters(
     '',
-    `(${NEXTGEN_LOGS_TABLE}.collection_id = :collectionId OR ${NEXTGEN_LOGS_TABLE}.collection_id = 0) AND (token_id is NULL OR token_id = :tokenId)`
+    `(${NEXTGEN_LOGS_TABLE}.collection_id = :collectionId OR ${NEXTGEN_LOGS_TABLE}.collection_id = 0) AND token_id is NULL`
   );
 
   return fetchPaginated(
     NEXTGEN_LOGS_TABLE,
     {
-      collectionId: collectionId,
-      tokenId: tokenId
+      collectionId: collectionId
     },
     'block desc, log desc',
     pageSize,
