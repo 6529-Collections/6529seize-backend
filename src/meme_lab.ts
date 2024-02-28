@@ -233,7 +233,7 @@ async function processNFTs(
         token_type: 'ERC1155',
         description: replaceEmojisWithHex(fullMetadata.description),
         artist: artists.join(', '),
-        artist_seize_handle: artistSeizeProfile,
+        artist_seize_handle: artistSeizeProfile ?? '',
         uri: fullMetadata.tokenUri?.raw,
         icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
         thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
