@@ -35,7 +35,7 @@ enum Resolution {
 
 const START_INDEX = 10000000000;
 const END_INDEX = 10000000999;
-const BATCH_SIZE = 60;
+const BATCH_SIZE = 90;
 const PUBLIC_RUN = false;
 
 export const handler = async () => {
