@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 
 const TARGET_HEIGHT = 500;
@@ -28,7 +28,7 @@ export const scalePfpAndPersistToS3 = async (
     })
   );
   if (uploadedScaledImage.$metadata.httpStatusCode == 200) {
-    return `https://6529bucket.s3.eu-west-1.amazonaws.com/${key}?d=${Date.now()}`;
+    return `https://d3lqz0a4bldqgf.cloudfront.net/${key}?d=${Date.now()}`;
   }
   throw new Error('Failed to upload image');
 };
