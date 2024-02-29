@@ -38,6 +38,7 @@ on:
           - teamLoop
           - transactionsLoop
           - transactionsReplayLoop
+          - mediaResizerLoop
           - nextgenContractLoop
           - nextgenMetadataLoop
           - nextgenMediaProxyInterceptor
@@ -60,7 +61,7 @@ jobs:
     steps:
       - name: Check preconditions
         uses: actions/github-script@v3
-        if: (github.event.inputs.service == 'nextgenMediaProxyInterceptor' || github.event.inputs.service == 'nextgenMediaUploader' || github.event.inputs.service == 'nextgenMediaImageResolutions') && github.event.inputs.environment != 'prod'
+        if: (github.event.inputs.service == 'mediaResizerLoop' || github.event.inputs.service == 'nextgenMediaProxyInterceptor' || github.event.inputs.service == 'nextgenMediaUploader' || github.event.inputs.service == 'nextgenMediaImageResolutions') && github.event.inputs.environment != 'prod'
         with:
           script: core.setFailed('Given service can only be deployed to production environment')
       - name: Checkout
@@ -88,7 +89,7 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ github.event.inputs.environment == 'prod' && 'us-east-1' || 'eu-west-1' }}
       - name: Deploy service
-        if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor'
+        if: github.event.inputs.service != 'api' && github.event.inputs.service != 'nextgenMediaProxyInterceptor' && github.event.inputs.service != 'mediaResizerLoop'
         run: |
           export VERSION_DESCRIPTION="$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
           pushd src/${{ github.event.inputs.service }} && npm run sls-deploy:${{ github.event.inputs.environment }} && popd
@@ -98,6 +99,12 @@ jobs:
           aws lambda update-function-code --function-name  seizeAPI --zip-file fileb://src/api-serverless/dist/index.zip
           sleep 10
           aws lambda update-function-configuration --function-name seizeAPI --description "$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
+      - name: Deploy mediaResizerLoop
+        if: github.event.inputs.service == 'mediaResizerLoop'
+        run: |
+          aws lambda update-function-code --function-name  mediaResizerLoop --zip-file fileb://src/mediaResizerLoop/dist/index.zip
+          sleep 10
+          aws lambda update-function-configuration --function-name mediaResizerLoop --description "$(date) - $(git rev-parse --abbrev-ref HEAD) - $(git show -s --format=%s)"
       - name: Deploy nextgenMediaProxyInterceptor
         if: github.event.inputs.service == 'nextgenMediaProxyInterceptor'
         run: |
