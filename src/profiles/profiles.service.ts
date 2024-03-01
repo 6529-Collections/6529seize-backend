@@ -12,7 +12,6 @@ import * as tdh_consolidation from '../tdh_consolidation';
 import * as tdhs from '../tdh';
 import { BadRequestException } from '../exceptions';
 import * as path from 'path';
-import { scalePfpAndPersistToS3 } from '../api-serverless/src/users/s3';
 import { ConnectionWrapper } from '../sql-executor';
 import { Logger } from '../logging';
 import { Time } from '../time';
@@ -29,6 +28,8 @@ import {
   RepService,
   repService
 } from '../api-serverless/src/profiles/rep.service';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { randomUUID } from 'crypto';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -707,7 +708,7 @@ export class ProfilesService {
       if (!['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(extension)) {
         throw new BadRequestException('Invalid file type');
       }
-      return await scalePfpAndPersistToS3(file, extension);
+      return await this.uploadPfpToS3(file, extension);
     } else {
       throw new BadRequestException('No PFP provided');
     }
@@ -878,6 +879,29 @@ export class ProfilesService {
   ) {
     const ensName = await this.supplyAlchemy().core.lookupAddress(wallet);
     await this.profilesDb.updateWalletsEnsName({ wallet, ensName }, connection);
+  }
+
+  private async uploadPfpToS3(file: any, fileExtension: string) {
+    const s3 = new S3Client({ region: 'eu-west-1' });
+
+    const myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
+
+    const keyExtension: string = fileExtension !== '.gif' ? 'webp' : 'gif';
+
+    const key = `pfp/${process.env.NODE_ENV}/${randomUUID()}.${keyExtension}`;
+
+    const uploadedScaledImage = await s3.send(
+      new PutObjectCommand({
+        Bucket: myBucket,
+        Key: key,
+        Body: file.buffer,
+        ContentType: `image/${keyExtension}`
+      })
+    );
+    if (uploadedScaledImage.$metadata.httpStatusCode == 200) {
+      return `https://d3lqz0a4bldqgf.cloudfront.net/${key}?d=${Date.now()}`;
+    }
+    throw new Error('Failed to upload image');
   }
 }
 
