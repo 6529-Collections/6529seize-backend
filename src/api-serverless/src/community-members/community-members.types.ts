@@ -7,6 +7,8 @@ export interface CommunityMemberOverview {
   readonly tdh: number;
   readonly rep: number;
   readonly cic: number;
+  readonly pfp: string | null;
+  readonly last_activity: number | null;
 }
 
 export enum CommunityMembersSortOption {

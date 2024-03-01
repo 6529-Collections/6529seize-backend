@@ -13,19 +13,27 @@ export class CommunityMembersService {
     query: CommunityMembersQuery
   ): Promise<Page<CommunityMemberOverview>> {
     const [data, count] = await Promise.all([
-      this.communityMembersDb.getCommunityMembers(query).then((members) =>
-        members.map(
-          (member) =>
-            ({
-              display: member.display,
-              detail_view_key: member.detail_view_key,
-              level: calculateLevel({ tdh: member.tdh, rep: member.rep }),
-              tdh: member.tdh,
-              rep: member.rep,
-              cic: member.cic
-            } as CommunityMemberOverview)
-        )
-      ),
+      this.communityMembersDb
+        .getCommunityMembers(query)
+        .then(async (members) => {
+          const consolidationKeys = members.map(
+            (member) => member.consolidation_key
+          );
+          const lastActivities =
+            await this.communityMembersDb.getCommunityMembersLastActivitiesByConsolidationKeys(
+              consolidationKeys
+            );
+          return members.map((member) => ({
+            display: member.display,
+            detail_view_key: member.detail_view_key,
+            level: calculateLevel({ tdh: member.tdh, rep: member.rep }),
+            tdh: member.tdh,
+            rep: member.rep,
+            cic: member.cic,
+            last_activity: lastActivities[member.consolidation_key] ?? null,
+            pfp: member.pfp
+          }));
+        }),
       this.communityMembersDb.countCommunityMembers()
     ]);
     return {
