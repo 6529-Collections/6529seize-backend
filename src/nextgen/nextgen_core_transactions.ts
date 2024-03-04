@@ -323,13 +323,17 @@ async function setCollectionData(
   await persistNextGenCollection(entityManager, collection);
 
   const artistEns = await getEns(artistAddress);
+  const finalSupplyDisplay =
+    finalSupplyAfterMint > 0
+      ? ` - Final Supply After Mint: ${finalSupplyAfterMint.toLocaleString()}`
+      : '';
 
   return [
     {
       id: id,
       description: `Collection Data Set - Artist Address: ${
         artistEns ? `${artistEns} (${artistAddress})` : artistAddress
-      } - Max Purchases: ${maxPurchases.toLocaleString()} - Total Supply: ${totalSupply.toLocaleString()} - Final Supply After Mint: ${finalSupplyAfterMint.toLocaleString()}`
+      } - Max Purchases: ${maxPurchases.toLocaleString()} - Total Supply: ${totalSupply.toLocaleString()}${finalSupplyDisplay}`
     }
   ];
 }
