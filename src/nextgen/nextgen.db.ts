@@ -57,7 +57,7 @@ export async function fetchNextGenCollectionIndex(
       .select('MAX(id)', 'max_id')
       .getRawOne();
 
-    return index.max_id + 1 ?? 1;
+    return (index.max_id ?? 0) + 1;
   }
 }
 

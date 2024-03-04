@@ -24,7 +24,6 @@ import {
 } from './nextgen_constants';
 import { CLOUDFRONT_LINK } from '../constants';
 import { getAlchemyInstance, getEns } from '../alchemy';
-import { areEqualAddresses, getRpcUrlFromNetwork } from '../helpers';
 import { getSourceCodeForContract } from '../etherscan';
 
 const logger = Logger.get('NEXTGEN_CORE_TRANSACTIONS');
@@ -236,7 +235,6 @@ async function updateCollectionInfo(
   let description: string;
   if (scriptIndex === 1000000) {
     description = getCollectionLog(collection, true);
-    description = 'Collection Info Updated';
   } else if (scriptIndex === 999999) {
     description = 'Collection Base URI Updated';
   } else {
@@ -409,7 +407,6 @@ async function addRandomizer(args: ethers.utils.Result): Promise<
 > {
   const collectionId = parseInt(args[0]);
   const randomizer = args[1];
-  const alchemy = getAlchemyInstance();
   const randomizerSource: any = await getSourceCodeForContract(randomizer);
   const randomizerName = randomizerSource?.result[0]?.ContractName;
   return [

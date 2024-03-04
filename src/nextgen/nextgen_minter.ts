@@ -427,8 +427,13 @@ async function proposeAddressesAndPercentages(
   const _add2Percentage = parseInt(args[5]);
   const _add3Percentage = parseInt(args[6]);
 
-  const getAddressLog = (address: string, ens: string | null) =>
-    `${ens ? `${ens} (${address})` : address}`;
+  const getAddressLog = (address: string, ens: string | null) => {
+    if (ens) {
+      return ens + ' (' + address + ')';
+    } else {
+      return address;
+    }
+  };
 
   const getLog = (percentage: number, address: string, ens: string | null) =>
     ` - ${percentage}% to ${getAddressLog(address, ens)}`;
