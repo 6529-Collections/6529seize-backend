@@ -20,6 +20,7 @@ import {
   NEXTGEN_MINTER_CONTRACT,
   getNextgenNetwork
 } from './nextgen_constants';
+import { getEns } from '../alchemy';
 
 const logger = Logger.get('NEXTGEN_MINTER');
 
@@ -87,7 +88,7 @@ export async function findMinterTransactions(
   }
 }
 
-async function processLog(
+export async function processLog(
   entityManager: EntityManager,
   methodName: string,
   args: ethers.utils.Result
@@ -114,6 +115,18 @@ async function processLog(
     case 'burnToMint':
       // skip - handled by Transfer
       return [];
+    case 'payArtist':
+      return await payArtist(args);
+    case 'setPrimaryAndSecondarySplits':
+      return await setPrimaryAndSecondarySplits(args);
+    case 'acceptAddressesAndPercentages':
+      return await acceptAddressesAndPercentages(args);
+    case 'proposePrimaryAddressesAndPercentages':
+      return await proposeAddressesAndPercentages('Primary', args);
+    case 'proposeSecondaryAddressesAndPercentages':
+      return await proposeAddressesAndPercentages('Secondary', args);
+    case 'updateCoreContract':
+      return await updateCoreContract(args);
   }
 
   let methodNameParts = methodName
@@ -291,10 +304,166 @@ async function setCollectionPhases(
 
   await persistNextGenCollection(entityManager, collection);
 
+  let allowListLog = 'n/a';
+  if (alStart > 0 && alEnd > 0) {
+    allowListLog = `${Time.millis(
+      alStart * 1000
+    ).toIsoDateTimeString()} - ${Time.millis(
+      alEnd * 1000
+    ).toIsoDateTimeString()}`;
+  }
+
+  let publicLog = 'n/a';
+  if (publicStart > 0 && publicEnd > 0) {
+    publicLog = `${Time.millis(
+      publicStart * 1000
+    ).toIsoDateTimeString()} - ${Time.millis(
+      publicEnd * 1000
+    ).toIsoDateTimeString()}`;
+  }
+
+  const log = `Collection Phases Set - Allowlist: ${allowListLog}, Public: ${publicLog}`;
   return [
     {
       id: id,
-      description: 'Collection Phases Set'
+      description: log
+    }
+  ];
+}
+
+async function payArtist(args: ethers.utils.Result): Promise<
+  {
+    id: number;
+    description: string;
+  }[]
+> {
+  const collectionId = parseInt(args[0]);
+  const _team1 = args[1];
+  const _team2 = args[2];
+  const _teamperc1 = parseInt(args[3]);
+  const _teamperc2 = parseInt(args[4]);
+
+  let log = 'Pay Artist';
+  if (_teamperc1 > 0 || _teamperc2 > 0) {
+    log += ' - Team: ';
+  }
+  if (_teamperc1 > 0) {
+    log += `${_teamperc1}% to ${_team1}`;
+  }
+  if (_teamperc2 > 0) {
+    log += `${_teamperc1 > 0 ? ', ' : ''}${_teamperc2}% to ${_team2}`;
+  }
+
+  return [
+    {
+      id: collectionId,
+      description: log
+    }
+  ];
+}
+
+async function setPrimaryAndSecondarySplits(args: ethers.utils.Result): Promise<
+  {
+    id: number;
+    description: string;
+  }[]
+> {
+  const collectionId = parseInt(args[0]);
+  const _artistPrSplit = parseInt(args[1]);
+  const _teamPrSplit = parseInt(args[2]);
+  const _artistSecSplit = parseInt(args[3]);
+  const _teamSecSplit = parseInt(args[4]);
+
+  const log = `Splits Set - Primary: Artist ${_artistPrSplit}% / Team ${_teamPrSplit}% - Secondary: Artist ${_artistSecSplit}% / Team ${_teamSecSplit}%`;
+
+  return [
+    {
+      id: collectionId,
+      description: log
+    }
+  ];
+}
+
+async function acceptAddressesAndPercentages(
+  args: ethers.utils.Result
+): Promise<
+  {
+    id: number;
+    description: string;
+  }[]
+> {
+  const collectionId = parseInt(args[0]);
+  const primary: boolean = args[1];
+  const secondary: boolean = args[2];
+
+  const primaryLog = primary ? 'Accepted' : 'Rejected';
+  const secondaryLog = secondary ? 'Accepted' : 'Rejected';
+
+  return [
+    {
+      id: collectionId,
+      description: `Addresses and Percentages - Primary: ${primaryLog}, Secondary: ${secondaryLog}`
+    }
+  ];
+}
+
+async function proposeAddressesAndPercentages(
+  type: 'Primary' | 'Secondary',
+  args: ethers.utils.Result
+): Promise<
+  {
+    id: number;
+    description: string;
+  }[]
+> {
+  const collectionId = parseInt(args[0]);
+  const add1 = args[1];
+  const add2 = args[2];
+  const add3 = args[3];
+  const add1Ens = await getEns(add1);
+  const add2Ens = await getEns(add2);
+  const add3Ens = await getEns(add3);
+  const _add1Percentage = parseInt(args[4]);
+  const _add2Percentage = parseInt(args[5]);
+  const _add3Percentage = parseInt(args[6]);
+
+  const getAddressLog = (address: string, ens: string | null) =>
+    `${ens ? `${ens} (${address})` : address}`;
+
+  const getLog = (percentage: number, address: string, ens: string | null) =>
+    ` - ${percentage}% to ${getAddressLog(address, ens)}`;
+
+  let log = `${type} Addresses and Percentages Proposed`;
+  if (_add1Percentage > 0) {
+    log += getLog(_add1Percentage, add1, add1Ens);
+  }
+  if (_add2Percentage > 0) {
+    log += getLog(_add2Percentage, add2, add2Ens);
+  }
+  if (_add3Percentage > 0) {
+    log += getLog(_add3Percentage, add3, add3Ens);
+  }
+
+  return [
+    {
+      id: collectionId,
+      description: log
+    }
+  ];
+}
+
+async function updateCoreContract(args: ethers.utils.Result): Promise<
+  {
+    id: number;
+    description: string;
+  }[]
+> {
+  const newCoreContract = args[0];
+
+  return [
+    {
+      id: 0,
+      description: `Minter's Core Contract Updated to ${newCoreContract}`
     }
   ];
 }

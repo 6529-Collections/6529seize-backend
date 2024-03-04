@@ -22,6 +22,7 @@ import {
 import { EntityManager } from 'typeorm';
 import { NEXTGEN_CORE_CONTRACT, getNextgenNetwork } from './nextgen_constants';
 import { Transaction } from '../entities/ITransaction';
+import { getEns } from '../alchemy';
 
 const logger = Logger.get('NEXTGEN_CORE_EVENTS');
 
@@ -70,7 +71,7 @@ export async function findCoreEvents(
   await persistNextGenLogs(entityManager, logs);
 }
 
-async function processLog(
+export async function processLog(
   entityManager: EntityManager,
   log: Log
 ): Promise<{
@@ -80,17 +81,29 @@ async function processLog(
 } | null> {
   const parsedLog = NEXTGEN_CORE_IFACE.parseLog(log);
 
+  const previousOwner = parsedLog.args.previousOwner;
+  const newOwner = parsedLog.args.newOwner;
+
+  const previousOwnerEns = await getEns(previousOwner);
+  const newOwnerEns = await getEns(newOwner);
+
   switch (parsedLog.name) {
     case 'OwnershipTransferred':
       if (areEqualAddresses(NULL_ADDRESS, parsedLog.args.previousOwner)) {
         return {
           id: 0,
-          description: 'NextGen Contract Deployed'
+          description: `NextGen Contract Deployed. Owner: ${
+            newOwnerEns ? `${newOwnerEns} (${newOwner})` : newOwner
+          }`
         };
       } else {
         return {
           id: 0,
-          description: 'Ownership Transferred'
+          description: `Ownership Transferred from ${
+            previousOwnerEns
+              ? `${previousOwnerEns} (${previousOwner})`
+              : previousOwner
+          } to ${newOwnerEns ? `${newOwnerEns} (${newOwner})` : newOwner}`
         };
       }
     case 'Transfer':

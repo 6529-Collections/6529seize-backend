@@ -23,7 +23,9 @@ import {
   getNextgenNetwork
 } from './nextgen_constants';
 import { CLOUDFRONT_LINK } from '../constants';
-import { getAlchemyInstance } from '../alchemy';
+import { getAlchemyInstance, getEns } from '../alchemy';
+import { areEqualAddresses, getRpcUrlFromNetwork } from '../helpers';
+import { getSourceCodeForContract } from '../etherscan';
 
 const logger = Logger.get('NEXTGEN_CORE_TRANSACTIONS');
 
@@ -104,7 +106,7 @@ export async function findCoreTransactions(
   }
 }
 
-async function processLog(
+export async function processLog(
   entityManager: EntityManager,
   methodName: string,
   args: ethers.utils.Result
@@ -137,6 +139,10 @@ async function processLog(
     case 'transferFrom':
       logger.info(`[METHOD NAME ${methodName}] : [SKIPPING...]`);
       return [];
+    case 'transferOwnership':
+      return await transferOwnership(args);
+    case 'updateContracts':
+      return await updateContracts(args);
   }
 
   let methodNameParts = methodName
@@ -163,15 +169,20 @@ async function createCollection(
     description: string;
   }[]
 > {
-  const latestId = await fetchNextGenCollectionIndex(entityManager);
-  const newId = latestId + 1;
-  const image = getCollectionImage(newId);
-  const banner = getCollectionBanner(newId);
-  const distributionPlan = getCollectionDistribution(newId);
+  const name = args[0];
+  const artist = args[1];
+  const collectionId = await fetchNextGenCollectionIndex(
+    entityManager,
+    name,
+    artist
+  );
+  const image = getCollectionImage(collectionId);
+  const banner = getCollectionBanner(collectionId);
+  const distributionPlan = getCollectionDistribution(collectionId);
   const collection: NextGenCollection = {
-    id: newId,
-    name: args[0],
-    artist: args[1],
+    id: collectionId,
+    name: name,
+    artist: artist,
     description: args[2],
     website: args[3],
     licence: args[4],
@@ -184,10 +195,11 @@ async function createCollection(
     mint_count: 0
   };
   await persistNextGenCollection(entityManager, collection);
+
   return [
     {
-      id: newId,
-      description: 'Collection Created'
+      id: collectionId,
+      description: getCollectionLog(collection)
     }
   ];
 }
@@ -223,6 +235,7 @@ async function updateCollectionInfo(
   const scriptIndex = parseInt(args[9]);
   let description: string;
   if (scriptIndex === 1000000) {
+    description = getCollectionLog(collection, true);
     description = 'Collection Info Updated';
   } else if (scriptIndex === 999999) {
     description = 'Collection Base URI Updated';
@@ -271,14 +284,14 @@ async function artistSignature(
     logger.error(`[LOOKUP ARTIST ADDRESS ERROR] : [ADDRESS ${artistAddress}]`);
   }
 
-  const artistDisplay = `(${artistAddress}${
-    artistEns ? ` - ${artistEns}` : ''
-  })`;
+  const artistDisplay = `${
+    artistEns ? `${artistEns} (${artistAddress})` : artistAddress
+  }`;
 
   return [
     {
       id: id,
-      description: `Artist Signature Added ${artistDisplay}`
+      description: `Artist Signature Added - By: ${artistDisplay} - Signature: ${signature}`
     }
   ];
 }
@@ -311,10 +324,14 @@ async function setCollectionData(
   collection.final_supply_after_mint = finalSupplyAfterMint;
   await persistNextGenCollection(entityManager, collection);
 
+  const artistEns = await getEns(artistAddress);
+
   return [
     {
       id: id,
-      description: 'Collection Data Set'
+      description: `Collection Data Set - Artist Address: ${
+        artistEns ? `${artistEns} (${artistAddress})` : artistAddress
+      } - Max Purchases: ${maxPurchases.toLocaleString()} - Total Supply: ${totalSupply.toLocaleString()} - Final Supply After Mint: ${finalSupplyAfterMint.toLocaleString()}`
     }
   ];
 }
@@ -391,11 +408,16 @@ async function addRandomizer(args: ethers.utils.Result): Promise<
   }[]
 > {
   const collectionId = parseInt(args[0]);
-
+  const randomizer = args[1];
+  const alchemy = getAlchemyInstance();
+  const randomizerSource: any = await getSourceCodeForContract(randomizer);
+  const randomizerName = randomizerSource?.result[0]?.ContractName;
   return [
     {
       id: collectionId,
-      description: `Randomizer Added`
+      description: `Randomizer Added - ${
+        randomizerName ? `${randomizerName} (${randomizer})` : randomizer
+      }`
     }
   ];
 }
@@ -420,6 +442,51 @@ async function changeTokenData(args: ethers.utils.Result): Promise<
   ];
 }
 
+async function transferOwnership(args: ethers.utils.Result): Promise<
+  {
+    id: number;
+    description: string;
+  }[]
+> {
+  const newOwner = args[0];
+  const newOwnerEns = await getEns(newOwner);
+
+  return [
+    {
+      id: 0,
+      description: `Ownership Transferred to ${
+        newOwnerEns ? `${newOwnerEns} (${newOwner})` : newOwner
+      }`
+    }
+  ];
+}
+
+async function updateContracts(args: ethers.utils.Result): Promise<
+  {
+    id: number;
+    description: string;
+  }[]
+> {
+  const _opt = parseInt(args[0]);
+  const contract = args[1];
+  const optLog =
+    _opt === 1
+      ? 'Admin '
+      : _opt === 2
+      ? 'Minter '
+      : _opt === 3
+      ? 'Dependency Registry '
+      : '';
+  const log = `${optLog}Contract Updated to ${contract}`;
+
+  return [
+    {
+      id: 0,
+      description: log
+    }
+  ];
+}
+
 function getCollectionImage(collectionId: number): string {
   const network = getNextgenNetwork();
   return `${NEXTGEN_CF_BASE_PATH}/${
@@ -435,4 +502,22 @@ function getCollectionBanner(collectionId: number): string {
 
 function getCollectionDistribution(collectionId: number): string {
   return `${CLOUDFRONT_LINK}/nextgen/assets/${collectionId}/distribution.pdf`;
+}
+
+function getCollectionLog(
+  collection: NextGenCollection,
+  isUpdate?: boolean
+): string {
+  const scriptLog =
+    collection.dependency_script.split('0x')[1].replace(/0/g, '').length === 0
+      ? 'None'
+      : collection.dependency_script;
+  const log = `Collection ${isUpdate ? 'Updated' : 'Created'} - #${
+    collection.id
+  } ${collection.name} by ${collection.artist} - Website: ${
+    collection.website
+  } - Licence: ${collection.licence} - Base URI: ${
+    collection.base_uri
+  } - Library: ${collection.library} - Dependency Script: ${scriptLog} `;
+  return log;
 }

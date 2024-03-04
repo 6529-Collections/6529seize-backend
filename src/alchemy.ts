@@ -12,3 +12,14 @@ export function getAlchemyInstance(): Alchemy {
   }
   return alchemy;
 }
+
+export async function getEns(address: string) {
+  let ens: string | null;
+  try {
+    const alchemy = getAlchemyInstance();
+    ens = await alchemy.core.lookupAddress(address);
+  } catch (error) {
+    ens = null;
+  }
+  return ens;
+}
