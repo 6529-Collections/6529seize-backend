@@ -152,6 +152,7 @@ async function replay() {
       processedTransactions.add(log.transaction);
     }
 
+    await entityManager.getRepository(NextGenLog).remove(nextgenLogs);
     await persistNextGenLogs(entityManager, newLogs);
   });
 }

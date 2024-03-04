@@ -136,10 +136,9 @@ export async function processLog(
     case 'setApprovalForAll':
     case 'safeTransferFrom':
     case 'transferFrom':
+    case 'transferOwnership':
       logger.info(`[METHOD NAME ${methodName}] : [SKIPPING...]`);
       return [];
-    case 'transferOwnership':
-      return await transferOwnership(args);
     case 'updateContracts':
       return await updateContracts(args);
   }
@@ -439,25 +438,6 @@ async function changeTokenData(args: ethers.utils.Result): Promise<
       id: collectionId,
       token_id: tokenId,
       description: `Change token data for #${normalisedTokenId}`
-    }
-  ];
-}
-
-async function transferOwnership(args: ethers.utils.Result): Promise<
-  {
-    id: number;
-    description: string;
-  }[]
-> {
-  const newOwner = args[0];
-  const newOwnerEns = await getEns(newOwner);
-
-  return [
-    {
-      id: 0,
-      description: `Ownership Transferred to ${
-        newOwnerEns ? `${newOwnerEns} (${newOwner})` : newOwner
-      }`
     }
   ];
 }
