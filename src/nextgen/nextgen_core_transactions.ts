@@ -23,7 +23,7 @@ import {
   getNextgenNetwork
 } from './nextgen_constants';
 import { CLOUDFRONT_LINK } from '../constants';
-import { getAlchemyInstance, getEns } from '../alchemy';
+import { getEns } from '../alchemy';
 import { getSourceCodeForContract } from '../etherscan';
 
 const logger = Logger.get('NEXTGEN_CORE_TRANSACTIONS');
