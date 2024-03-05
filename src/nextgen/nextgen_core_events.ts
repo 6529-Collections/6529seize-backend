@@ -100,14 +100,17 @@ export async function processLog(
           }`
         };
       } else {
+        const fromDescription = previousOwnerEns
+          ? `${previousOwnerEns} (${previousOwner})`
+          : previousOwner;
+        const toDescription = newOwnerEns
+          ? `${newOwnerEns} (${newOwner})`
+          : newOwner;
+
         return {
           id: 0,
           title: 'Ownership Transferred',
-          description: `Ownership Transferred from ${
-            previousOwnerEns
-              ? `${previousOwnerEns} (${previousOwner})`
-              : previousOwner
-          } to ${newOwnerEns ? `${newOwnerEns} (${newOwner})` : newOwner}`
+          description: `Ownership Transferred from ${fromDescription} to ${toDescription}`
         };
       }
     case 'Transfer':
