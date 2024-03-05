@@ -476,14 +476,14 @@ async function updateContracts(args: ethers.utils.Result): Promise<
 > {
   const _opt = parseInt(args[0]);
   const contract = args[1];
-  const optLog =
-    _opt === 1
-      ? 'Admin '
-      : _opt === 2
-      ? 'Minter '
-      : _opt === 3
-      ? 'Dependency Registry '
-      : '';
+  let optLog = '';
+  if (_opt === 1) {
+    optLog = 'Admin ';
+  } else if (_opt === 2) {
+    optLog = 'Minter ';
+  } else if (_opt === 3) {
+    optLog = 'Dependency Registry ';
+  }
   const log = `${optLog}Contract Updated to: ${contract}`;
 
   return [
