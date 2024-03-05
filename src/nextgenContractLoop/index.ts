@@ -1,6 +1,7 @@
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { loadEnv } from '../secrets';
+import * as sentryContext from '../sentry.context';
 import {
   NextGenCollectionBurn,
   NextGenBlock,
@@ -18,7 +19,7 @@ import { Transaction } from '../entities/ITransaction';
 
 const logger = Logger.get('NEXTGEN_CONTRACT_LOOP');
 
-export const handler = async () => {
+export const handler = sentryContext.wrapLambdaHandler(async () => {
   const start = Time.now();
   logger.info(`[RUNNING]`);
   await loadEnv([
@@ -37,4 +38,4 @@ export const handler = async () => {
   await findNextGenTransactions();
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
-};
+});

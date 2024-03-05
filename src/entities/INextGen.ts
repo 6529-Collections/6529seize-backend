@@ -301,6 +301,9 @@ export class NextGenLog {
   block_timestamp!: number;
 
   @Column({ type: 'text' })
+  heading!: string;
+
+  @Column({ type: 'text' })
   log!: string;
 
   @Column({ type: 'int' })

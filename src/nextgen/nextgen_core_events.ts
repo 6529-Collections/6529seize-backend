@@ -22,7 +22,7 @@ import {
 import { EntityManager } from 'typeorm';
 import { NEXTGEN_CORE_CONTRACT, getNextgenNetwork } from './nextgen_constants';
 import { Transaction } from '../entities/ITransaction';
-import { getEns } from '../alchemy';
+import { getAlchemyInstance, getEns } from '../alchemy';
 
 const logger = Logger.get('NEXTGEN_CORE_EVENTS');
 
@@ -59,6 +59,7 @@ export async function findCoreEvents(
         block: log.blockNumber,
         block_timestamp: blockTimestamp,
         collection_id: processedLog.id,
+        heading: processedLog.title,
         log: processedLog.description,
         source: 'events'
       };
@@ -77,6 +78,7 @@ export async function processLog(
 ): Promise<{
   id: number;
   token_id?: number;
+  title: string;
   description: string;
 } | null> {
   const parsedLog = NEXTGEN_CORE_IFACE.parseLog(log);
@@ -92,13 +94,15 @@ export async function processLog(
       if (areEqualAddresses(NULL_ADDRESS, parsedLog.args.previousOwner)) {
         return {
           id: 0,
-          description: `NextGen Contract Deployed. Owner: ${
+          title: 'NextGen Contract Deployed',
+          description: `Owner: ${
             newOwnerEns ? `${newOwnerEns} (${newOwner})` : newOwner
           }`
         };
       } else {
         return {
           id: 0,
+          title: 'Ownership Transferred',
           description: `Ownership Transferred from ${
             previousOwnerEns
               ? `${previousOwnerEns} (${previousOwner})`
@@ -120,9 +124,14 @@ async function processTransfer(
 ): Promise<{
   id: number;
   token_id: number;
+  title: string;
   description: string;
 }> {
   const network = getNextgenNetwork();
+  if (!alchemy) {
+    const network = getNextgenNetwork();
+    alchemy = getAlchemyInstance(network);
+  }
 
   const blockTimestamp = (await alchemy.core.getBlock(log.blockNumber))
     .timestamp;
@@ -222,6 +231,7 @@ async function processTransfer(
   return {
     id: collectionId,
     token_id: tokenId,
+    title: description,
     description: description
   };
 }

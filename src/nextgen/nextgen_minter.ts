@@ -67,6 +67,7 @@ export async function findMinterTransactions(
           block: parseInt(transfer.blockNum, 16),
           block_timestamp: timestamp.getTime() / 1000,
           collection_id: processedLog.id,
+          heading: processedLog.title,
           log: processedLog.description,
           source: 'minter'
         };
@@ -95,6 +96,7 @@ export async function processLog(
 ): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -139,7 +141,8 @@ export async function processLog(
   return [
     {
       id: 0,
-      description: methodNameParts.join(' ')
+      title: methodNameParts.join(' '),
+      description: ''
     }
   ];
 }
@@ -150,6 +153,7 @@ async function initializeBurn(
 ): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -173,17 +177,19 @@ async function initializeBurn(
     return [];
   }
 
-  let description = 'Burn';
+  let title = 'Burn';
   if (status) {
-    description += ` Initialized`;
+    title += ` Initialized`;
   } else {
-    description += ` Deactivated`;
+    title += ` Deactivated`;
   }
-  description += ` for Collection #${burnCollectionId} - ${burnCollection.name} for Mint Collection #${mintCollectionId} - ${mintCollection.name}`;
+
+  const description = `Burn Collection #${burnCollectionId} - ${burnCollection.name} / Mint Collection #${mintCollectionId} - ${mintCollection.name}`;
 
   return [
     {
       id: mintCollectionId,
+      title: title,
       description: description
     }
   ];
@@ -192,6 +198,7 @@ async function initializeBurn(
 async function initializeExternalBurnOrSwap(args: ethers.utils.Result): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -203,19 +210,21 @@ async function initializeExternalBurnOrSwap(args: ethers.utils.Result): Promise<
   const burnAddress = args[5];
   const status: boolean = args[6];
 
-  let description = 'External Burn or Swap';
+  let title = 'External Burn or Swap';
   if (status) {
-    description += ` Initialized`;
+    title += ` Initialized`;
   } else {
-    description += ` Deactivated`;
+    title += ` Deactivated`;
   }
-  description += ` for Collection ${burnCollection} ${
+
+  const description = `Burn Collection ${burnCollection} ${
     burnCollectionId ? `(ID ${burnCollectionId})` : ''
   } for tokens ${tokenMin} - ${tokenMax} (Burn Address ${burnAddress})`;
 
   return [
     {
       id: mintCollectionId,
+      title: title,
       description: description
     }
   ];
@@ -224,6 +233,7 @@ async function initializeExternalBurnOrSwap(args: ethers.utils.Result): Promise<
 async function setCollectionCosts(args: ethers.utils.Result): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -268,7 +278,8 @@ async function setCollectionCosts(args: ethers.utils.Result): Promise<
   return [
     {
       id: collectionId,
-      description: `Collection Costs Set - Sales Model: ${salesOptionDescription}, ${mintCostDescription}, ${endMintCosetDescription}`
+      title: 'Collection Costs Set',
+      description: `Sales Model: ${salesOptionDescription}, ${mintCostDescription}, ${endMintCosetDescription}`
     }
   ];
 }
@@ -279,6 +290,7 @@ async function setCollectionPhases(
 ): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -322,10 +334,11 @@ async function setCollectionPhases(
     ).toIsoDateTimeString()}`;
   }
 
-  const log = `Collection Phases Set - Allowlist: ${allowListLog}, Public: ${publicLog}`;
+  const log = `Allowlist: ${allowListLog}, Public: ${publicLog}`;
   return [
     {
       id: id,
+      title: 'Collection Phases Set',
       description: log
     }
   ];
@@ -334,6 +347,7 @@ async function setCollectionPhases(
 async function payArtist(args: ethers.utils.Result): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -343,20 +357,25 @@ async function payArtist(args: ethers.utils.Result): Promise<
   const _teamperc1 = parseInt(args[3]);
   const _teamperc2 = parseInt(args[4]);
 
-  let log = 'Pay Artist';
+  const title = 'Pay Artist';
+  let teamLog = '';
   if (_teamperc1 > 0 || _teamperc2 > 0) {
-    log += ' - Team: ';
+    teamLog += ' - Team: ';
   }
   if (_teamperc1 > 0) {
-    log += `${_teamperc1}% to ${_team1}`;
+    teamLog += `${_teamperc1}% to ${_team1}`;
   }
   if (_teamperc2 > 0) {
-    log += `${_teamperc1 > 0 ? ', ' : ''}${_teamperc2}% to ${_team2}`;
+    teamLog += `${_teamperc1 > 0 ? ', ' : ''}${_teamperc2}% to ${_team2}`;
   }
+
+  const artistPerc = 100 - _teamperc1 - _teamperc2;
+  const log = `Artist: ${artistPerc}%${teamLog}`;
 
   return [
     {
       id: collectionId,
+      title: title,
       description: log
     }
   ];
@@ -365,6 +384,7 @@ async function payArtist(args: ethers.utils.Result): Promise<
 async function setPrimaryAndSecondarySplits(args: ethers.utils.Result): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -374,11 +394,12 @@ async function setPrimaryAndSecondarySplits(args: ethers.utils.Result): Promise<
   const _artistSecSplit = parseInt(args[3]);
   const _teamSecSplit = parseInt(args[4]);
 
-  const log = `Splits Set - Primary: Artist ${_artistPrSplit}% / Team ${_teamPrSplit}% - Secondary: Artist ${_artistSecSplit}% / Team ${_teamSecSplit}%`;
+  const log = `Primary: Artist ${_artistPrSplit}% / Team ${_teamPrSplit}% - Secondary: Artist ${_artistSecSplit}% / Team ${_teamSecSplit}%`;
 
   return [
     {
       id: collectionId,
+      title: 'Primary and Secondary Splits Set',
       description: log
     }
   ];
@@ -389,6 +410,7 @@ async function acceptAddressesAndPercentages(
 ): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -402,7 +424,8 @@ async function acceptAddressesAndPercentages(
   return [
     {
       id: collectionId,
-      description: `Addresses and Percentages - Primary: ${primaryLog}, Secondary: ${secondaryLog}`
+      title: 'Addresses and Percentages',
+      description: `Primary: ${primaryLog}, Secondary: ${secondaryLog}`
     }
   ];
 }
@@ -413,6 +436,7 @@ async function proposeAddressesAndPercentages(
 ): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -436,22 +460,29 @@ async function proposeAddressesAndPercentages(
   };
 
   const getLog = (percentage: number, address: string, ens: string | null) =>
-    ` - ${percentage}% to ${getAddressLog(address, ens)}`;
+    `${percentage}% to ${getAddressLog(address, ens)}`;
 
-  let log = `${type} Addresses and Percentages Proposed`;
+  let log = '';
   if (_add1Percentage > 0) {
     log += getLog(_add1Percentage, add1, add1Ens);
   }
   if (_add2Percentage > 0) {
+    if (log) {
+      log += ' - ';
+    }
     log += getLog(_add2Percentage, add2, add2Ens);
   }
   if (_add3Percentage > 0) {
+    if (log) {
+      log += ' - ';
+    }
     log += getLog(_add3Percentage, add3, add3Ens);
   }
 
   return [
     {
       id: collectionId,
+      title: `${type} Addresses and Percentages Proposed`,
       description: log
     }
   ];
@@ -460,6 +491,7 @@ async function proposeAddressesAndPercentages(
 async function updateCoreContract(args: ethers.utils.Result): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -468,6 +500,7 @@ async function updateCoreContract(args: ethers.utils.Result): Promise<
   return [
     {
       id: 0,
+      title: 'Core Contract Updated',
       description: `Minter's Core Contract Updated to ${newCoreContract}`
     }
   ];

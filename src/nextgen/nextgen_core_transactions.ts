@@ -81,6 +81,7 @@ export async function findCoreTransactions(
           block: parseInt(transfer.blockNum, 16),
           block_timestamp: timestamp.getTime() / 1000,
           collection_id: processedLog.id,
+          heading: processedLog.title,
           log: processedLog.description,
           source: 'transactions'
         };
@@ -113,6 +114,7 @@ export async function processLog(
   {
     id: number;
     token_id?: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -153,7 +155,8 @@ export async function processLog(
   return [
     {
       id: 0,
-      description: methodNameParts.join(' ')
+      title: methodNameParts.join(' '),
+      description: ''
     }
   ];
 }
@@ -164,6 +167,7 @@ async function createCollection(
 ): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -194,10 +198,12 @@ async function createCollection(
   };
   await persistNextGenCollection(entityManager, collection);
 
+  const log = getCollectionLog(collection);
   return [
     {
       id: collectionId,
-      description: getCollectionLog(collection)
+      title: log.title,
+      description: log.log
     }
   ];
 }
@@ -208,6 +214,7 @@ async function updateCollectionInfo(
 ): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -231,18 +238,25 @@ async function updateCollectionInfo(
     mint_count: 0
   };
   const scriptIndex = parseInt(args[9]);
+  const newScript = args[10];
+  let title: string;
   let description: string;
   if (scriptIndex === 1000000) {
-    description = getCollectionLog(collection, true);
+    const log = getCollectionLog(collection, true);
+    title = log.title;
+    description = log.log;
   } else if (scriptIndex === 999999) {
-    description = 'Collection Base URI Updated';
+    title = 'Collection Base URI Updated';
+    description = `Base URI updated to: ${collection.base_uri}`;
   } else {
-    description = `Script at index ${scriptIndex} updated`;
+    title = `Script at index ${scriptIndex} Updated`;
+    description = `Script at index ${scriptIndex} updated to: ${newScript}`;
   }
   await persistNextGenCollection(entityManager, collection);
   return [
     {
       id: collectionId,
+      title: title,
       description: description
     }
   ];
@@ -254,6 +268,7 @@ async function artistSignature(
 ): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -272,8 +287,7 @@ async function artistSignature(
 
   let artistEns;
   try {
-    const alchemy = getAlchemyInstance();
-    artistEns = await alchemy.core.lookupAddress(artistAddress);
+    artistEns = await getEns(artistAddress);
     logger.info(
       `[LOOKUP ARTIST ADDRESS] : [ADDRESS ${artistAddress}] : [ENS ${artistEns}]`
     );
@@ -288,7 +302,8 @@ async function artistSignature(
   return [
     {
       id: id,
-      description: `Artist Signature Added - By: ${artistDisplay} - Signature: ${signature}`
+      title: 'Artist Signature Added',
+      description: `By: ${artistDisplay} - Signature: ${signature}`
     }
   ];
 }
@@ -299,6 +314,7 @@ async function setCollectionData(
 ): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -330,7 +346,8 @@ async function setCollectionData(
   return [
     {
       id: id,
-      description: `Collection Data Set - Artist Address: ${
+      title: 'Collection Data Set',
+      description: `Artist Address: ${
         artistEns ? `${artistEns} (${artistAddress})` : artistAddress
       } - Max Purchases: ${maxPurchases.toLocaleString()} - Total Supply: ${totalSupply.toLocaleString()}${finalSupplyDisplay}`
     }
@@ -343,6 +360,7 @@ async function changeMetadataView(
 ): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -362,7 +380,8 @@ async function changeMetadataView(
   return [
     {
       id: id,
-      description: `Metadata View Changed to ${
+      title: 'Metadata View Changed',
+      description: `Metadata View Changed to: ${
         onChain ? 'On-Chain' : 'Off-Chain'
       }`
     }
@@ -375,6 +394,7 @@ async function updateImagesAndAttributes(
 ): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -405,6 +425,7 @@ async function updateImagesAndAttributes(
 async function addRandomizer(args: ethers.utils.Result): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -415,6 +436,7 @@ async function addRandomizer(args: ethers.utils.Result): Promise<
   return [
     {
       id: collectionId,
+      title: 'Randomizer Added',
       description: `Randomizer Added - ${
         randomizerName ? `${randomizerName} (${randomizer})` : randomizer
       }`
@@ -426,10 +448,12 @@ async function changeTokenData(args: ethers.utils.Result): Promise<
   {
     id: number;
     token_id: number;
+    title: string;
     description: string;
   }[]
 > {
   const tokenId = parseInt(args[0]);
+  const newData = args[1];
   const collectionId = Math.round(tokenId / 10000000000);
   const normalisedTokenId = tokenId - collectionId * 10000000000;
 
@@ -437,7 +461,8 @@ async function changeTokenData(args: ethers.utils.Result): Promise<
     {
       id: collectionId,
       token_id: tokenId,
-      description: `Change token data for #${normalisedTokenId}`
+      title: 'Token Data Changed',
+      description: `Token data for token #${normalisedTokenId} changed to: ${newData}`
     }
   ];
 }
@@ -445,6 +470,7 @@ async function changeTokenData(args: ethers.utils.Result): Promise<
 async function updateContracts(args: ethers.utils.Result): Promise<
   {
     id: number;
+    title: string;
     description: string;
   }[]
 > {
@@ -458,11 +484,12 @@ async function updateContracts(args: ethers.utils.Result): Promise<
       : _opt === 3
       ? 'Dependency Registry '
       : '';
-  const log = `${optLog}Contract Updated to ${contract}`;
+  const log = `${optLog}Contract Updated to: ${contract}`;
 
   return [
     {
       id: 0,
+      title: `${optLog}Contract Updated`,
       description: log
     }
   ];
@@ -488,17 +515,18 @@ function getCollectionDistribution(collectionId: number): string {
 function getCollectionLog(
   collection: NextGenCollection,
   isUpdate?: boolean
-): string {
+): {
+  title: string;
+  log: string;
+} {
   const scriptLog =
     collection.dependency_script.split('0x')[1].replace(/0/g, '').length === 0
       ? 'None'
       : collection.dependency_script;
-  const log = `Collection ${isUpdate ? 'Updated' : 'Created'} - #${
-    collection.id
-  } ${collection.name} by ${collection.artist} - Website: ${
-    collection.website
-  } - Licence: ${collection.licence} - Base URI: ${
-    collection.base_uri
-  } - Library: ${collection.library} - Dependency Script: ${scriptLog} `;
-  return log;
+  const title = `Collection ${isUpdate ? 'Updated' : 'Created'}`;
+  const log = `#${collection.id} ${collection.name} by ${collection.artist} - Website: ${collection.website} - Licence: ${collection.licence} - Base URI: ${collection.base_uri} - Library: ${collection.library} - Dependency Script: ${scriptLog} `;
+  return {
+    title,
+    log
+  };
 }

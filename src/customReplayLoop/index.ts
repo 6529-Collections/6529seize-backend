@@ -2,9 +2,12 @@ import { loadEnv, unload } from '../secrets';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { getDataSource } from '../db';
-import { NextGenCollection, NextGenLog } from '../entities/INextGen';
-import { IsNull } from 'typeorm';
-import { Alchemy } from 'alchemy-sdk';
+import {
+  NextGenCollection,
+  NextGenLog,
+  NextGenToken,
+  NextGenTokenTrait
+} from '../entities/INextGen';
 import { NEXTGEN_CORE_IFACE, NEXTGEN_MINTER_IFACE } from '../abis/nextgen';
 import { persistNextGenLogs } from '../nextgen/nextgen.db';
 import {
@@ -14,12 +17,20 @@ import {
 import { processLog as processMinterLog } from '../nextgen/nextgen_minter';
 import { processLog as processEventLog } from '../nextgen/nextgen_core_events';
 import { processLog as processTransactionLog } from '../nextgen/nextgen_core_transactions';
+import { getAlchemyInstance } from '../alchemy';
+import { Transaction } from '../entities/ITransaction';
 
 const logger = Logger.get('CUSTOM_REPLAY_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   logger.info(`[RUNNING]`);
-  await loadEnv([NextGenLog, NextGenCollection]);
+  await loadEnv([
+    NextGenLog,
+    NextGenCollection,
+    NextGenToken,
+    NextGenTokenTrait,
+    Transaction
+  ]);
   await replay();
   await unload();
   logger.info('[COMPLETE]');
@@ -28,18 +39,10 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 async function replay() {
   const dataSource = getDataSource();
   await dataSource.transaction(async (entityManager) => {
-    const nextgenLogs = await entityManager.getRepository(NextGenLog).find({
-      where: {
-        token_id: IsNull()
-      }
-    });
+    const nextgenLogs = await entityManager.getRepository(NextGenLog).find();
 
     const network = getNextgenNetwork();
-    const alchemy = new Alchemy({
-      network: network,
-      maxRetries: 10,
-      apiKey: process.env.ALCHEMY_API_KEY
-    });
+    const alchemy = getAlchemyInstance(network);
 
     const newLogs: NextGenLog[] = [];
 
@@ -69,6 +72,7 @@ async function replay() {
             block: log.block,
             block_timestamp: log.block_timestamp,
             collection_id: processedLog.id,
+            heading: processedLog.title,
             log: processedLog.description,
             source: 'minter'
           };
@@ -100,6 +104,7 @@ async function replay() {
             block: log.blockNumber,
             block_timestamp: blockTimestamp,
             collection_id: processedLog.id,
+            heading: processedLog.title,
             log: processedLog.description,
             source: 'events'
           };
@@ -140,6 +145,7 @@ async function replay() {
             block: log.block,
             block_timestamp: log.block_timestamp,
             collection_id: processedLog.id,
+            heading: processedLog.title,
             log: processedLog.description,
             source: 'transactions'
           };
