@@ -1877,6 +1877,7 @@ export async function fetchConsolidatedOwnerMetrics(
     p.rep_score as rep_score, 
     p.cic_score as cic_score, 
     p.profile_tdh as profile_tdh,
+    p.pfp_url as pfp,
     ifnull(p.profile_tdh, ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh) + ifnull(p.rep_score, 0) as level_components`;
 
   const fields = ` ${ownerMetricsSelect}, ${walletsTdhTableSelect} , ${CONSOLIDATED_OWNERS_TAGS_TABLE}.* `;
