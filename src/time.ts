@@ -219,6 +219,14 @@ export class Time {
     return this.toIsoString().split('T')[0];
   }
 
+  public toIsoTimeString(): string {
+    return this.toIsoString().split('T')[1].split('.')[0];
+  }
+
+  public toIsoDateTimeString(): string {
+    return `${this.toIsoDateString()} ${this.toIsoTimeString()}`;
+  }
+
   public toString = (): string => {
     return this.formatAsDuration();
   };

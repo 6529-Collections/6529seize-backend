@@ -37,21 +37,35 @@ export async function fetchNextGenCollection(
   return c;
 }
 
-export async function fetchNextGenCollectionIndex(manager: EntityManager) {
-  const index = await manager
-    .getRepository(NextGenCollection)
-    .createQueryBuilder()
-    .select('MAX(id)', 'max_id')
-    .getRawOne();
+export async function fetchNextGenCollectionIndex(
+  manager: EntityManager,
+  name: string,
+  artist: string
+) {
+  const collection = await manager.getRepository(NextGenCollection).findOne({
+    where: {
+      name: name,
+      artist: artist
+    }
+  });
+  if (collection) {
+    return collection.id;
+  } else {
+    const index = await manager
+      .getRepository(NextGenCollection)
+      .createQueryBuilder()
+      .select('MAX(id)', 'max_id')
+      .getRawOne();
 
-  return index.max_id ?? 0;
+    return (index.max_id ?? 0) + 1;
+  }
 }
 
 export async function persistNextGenLogs(
   manager: EntityManager,
   logs: NextGenLog[]
 ) {
-  await manager.getRepository(NextGenLog).save(logs);
+  await manager.getRepository(NextGenLog).upsert(logs, ['id']);
 }
 
 export async function persistNextGenCollection(

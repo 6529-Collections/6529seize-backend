@@ -38,6 +38,7 @@ on:
           - teamLoop
           - transactionsLoop
           - transactionsReplayLoop
+          - customReplayLoop
           - mediaResizerLoop
           - nextgenContractLoop
           - nextgenMetadataLoop
