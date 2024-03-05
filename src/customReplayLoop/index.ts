@@ -39,14 +39,26 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 async function replay() {
   const dataSource = getDataSource();
   await dataSource.transaction(async (entityManager) => {
-    const nextgenLogs = await entityManager.getRepository(NextGenLog).find();
+    const allNextgenLogs = await entityManager.getRepository(NextGenLog).find();
+
+    const logsTokenIdNull = allNextgenLogs.filter(
+      (log) => log.token_id === null
+    );
+
+    const logsTokenIdNotNull = allNextgenLogs.filter(
+      (log) => log.token_id !== null
+    );
+
+    logger.info(
+      `[FOUND ${allNextgenLogs.length} LOGS] : [NULL TOKEN_ID ${logsTokenIdNull.length}] : [NOT NULL TOKEN_ID ${logsTokenIdNotNull.length}]`
+    );
 
     const network = getNextgenNetwork();
     const alchemy = getAlchemyInstance(network);
 
     const newLogs: NextGenLog[] = [];
 
-    const minter = nextgenLogs.filter((log) => log.source === 'minter');
+    const minter = logsTokenIdNull.filter((log) => log.source === 'minter');
     const processedMinter = new Set<string>();
     for (const log of minter) {
       if (processedMinter.has(log.transaction)) {
@@ -82,7 +94,7 @@ async function replay() {
       }
     }
 
-    const events = nextgenLogs.filter((log) => log.source === 'events');
+    const events = logsTokenIdNull.filter((log) => log.source === 'events');
     const processedEvents = new Set<string>();
     for (const log of events) {
       if (processedEvents.has(log.transaction)) {
@@ -117,7 +129,7 @@ async function replay() {
       processedEvents.add(log.transaction);
     }
 
-    const transactions = nextgenLogs.filter(
+    const transactions = logsTokenIdNull.filter(
       (log) => log.source === 'transactions'
     );
     const processedTransactions = new Set<string>();
@@ -158,7 +170,14 @@ async function replay() {
       processedTransactions.add(log.transaction);
     }
 
-    await entityManager.getRepository(NextGenLog).remove(nextgenLogs);
+    logsTokenIdNotNull.forEach((log) => {
+      log.heading = log.log;
+      newLogs.push(log);
+    });
+
+    await entityManager.getRepository(NextGenLog).clear();
     await persistNextGenLogs(entityManager, newLogs);
+
+    logger.info(`[NEW LOGS PERSISTED ${newLogs.length}]`);
   });
 }
