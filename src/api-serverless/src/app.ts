@@ -548,6 +548,17 @@ loadApi().then(() => {
     );
   });
 
+  apiRouter.get(`/transactions/:hash`, function (req: any, res: any) {
+    const hash = req.params.hash;
+    db.fetchTransactionByHash(hash).then((result) => {
+      if (result.data.length == 1) {
+        returnJsonResult(result.data[0], req, res);
+      } else {
+        returnJsonResult({}, req, res);
+      }
+    });
+  });
+
   apiRouter.get(`/transactions_memelab`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE

@@ -431,15 +431,31 @@ export async function fetchNextGenCollectionLogs(
     `${NEXTGEN_LOGS_TABLE}.collection_id = :collectionId OR ${NEXTGEN_LOGS_TABLE}.collection_id = 0`
   );
 
+  const fields = `
+    ${NEXTGEN_LOGS_TABLE}.*, 
+    ${TRANSACTIONS_TABLE}.from_address, 
+    ${TRANSACTIONS_TABLE}.to_address, 
+    ens1.display as from_display, 
+    ens2.display as to_display,
+    ${TRANSACTIONS_TABLE}.value,
+    ${TRANSACTIONS_TABLE}.royalties,
+    ${TRANSACTIONS_TABLE}.gas_gwei,
+    ${TRANSACTIONS_TABLE}.gas_price,
+    ${TRANSACTIONS_TABLE}.gas,
+    ${TRANSACTIONS_TABLE}.gas_price_gwei`;
+  const joins = `LEFT JOIN ${TRANSACTIONS_TABLE} on ${NEXTGEN_LOGS_TABLE}.transaction=${TRANSACTIONS_TABLE}.transaction LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
+
   return fetchPaginated(
     NEXTGEN_LOGS_TABLE,
     {
       collectionId: collectionId
     },
-    'block desc, log desc',
+    `${NEXTGEN_LOGS_TABLE}.block desc, log desc`,
     pageSize,
     page,
-    filters
+    filters,
+    fields,
+    joins
   );
 }
 

@@ -907,6 +907,23 @@ export async function fetchTransactions(
     filters.params.contracts = contracts.split(',');
   }
 
+  return fetchPaginatedTransactions(pageSize, page, filters);
+}
+
+export async function fetchTransactionByHash(hash: string) {
+  const filters = constructFilters('', `transaction = :hash`);
+  const params = {
+    hash
+  };
+
+  return fetchPaginatedTransactions(1, 1, { filters, params });
+}
+
+async function fetchPaginatedTransactions(
+  pageSize: number,
+  page: number,
+  filters: { filters: string; params: any }
+) {
   const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
   const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
 

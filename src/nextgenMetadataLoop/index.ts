@@ -1,6 +1,7 @@
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { loadEnv } from '../secrets';
+import * as sentryContext from '../sentry.context';
 import {
   NextGenCollection,
   NextGenToken,
@@ -11,7 +12,7 @@ import { refreshNextgenMetadata } from '../nextgen/nextgen_metadata_refresh';
 
 const logger = Logger.get('NEXTGEN_METADATA_LOOP');
 
-export const handler = async () => {
+export const handler = sentryContext.wrapLambdaHandler(async () => {
   const start = Time.now();
   logger.info(`[RUNNING]`);
   await loadEnv([
@@ -23,4 +24,4 @@ export const handler = async () => {
   await refreshNextgenMetadata();
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
-};
+});
