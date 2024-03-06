@@ -411,3 +411,13 @@ export function calculateLevel({
 }): number {
   return LEVELS.find((l) => tdh + rep >= l.minTdh)?.level ?? 0;
 }
+
+export function getLevelComponentsBorderByLevel(level: number): number {
+  if (level < 0) {
+    return 0;
+  }
+  if (level > 100) {
+    return 25000000;
+  }
+  return LEVELS.find((l) => l.level === level)?.minTdh ?? 0;
+}

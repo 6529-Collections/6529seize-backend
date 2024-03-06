@@ -7,12 +7,23 @@ import {
   ProfileActivityLog,
   ProfileActivityLogType
 } from '../../../entities/IProfileActivityLog';
-import { Page, PageRequest } from '../page-request';
+import { Chunk, PageRequest } from '../page-request';
 import { profilesDb, ProfilesDb } from '../../../profiles/profiles.db';
 import {
   getMattersWhereTargetIsProfile,
   RateMatter
 } from '../../../entities/IRating';
+import { CommunitySearchCriteria } from '../../../community-search/community-search-criteria.types';
+
+export interface ProfileActivityLogsSearchRequest {
+  profileId?: string;
+  targetId?: string;
+  logType?: ProfileActivityLogType[];
+  includeProfileIdToIncoming: boolean;
+  ratingMatter?: string;
+  pageRequest: PageRequest;
+  order: 'desc' | 'asc';
+}
 
 export class ProfileActivityLogsApiService {
   constructor(
@@ -20,23 +31,15 @@ export class ProfileActivityLogsApiService {
     private readonly profilesDb: ProfilesDb
   ) {}
 
-  async getProfileActivityLogs({
-    profileId,
-    order,
-    pageRequest,
-    includeProfileIdToIncoming,
-    ratingMatter,
-    targetId,
-    logType
-  }: {
-    profileId?: string;
-    targetId?: string;
-    logType?: ProfileActivityLogType[];
-    includeProfileIdToIncoming: boolean;
-    ratingMatter?: string;
-    pageRequest: PageRequest;
-    order: 'desc' | 'asc';
-  }): Promise<Page<ApiProfileActivityLog>> {
+  private prepSearchParams(
+    order: 'desc' | 'asc',
+    pageRequest: PageRequest,
+    includeProfileIdToIncoming: boolean,
+    profileId: string,
+    targetId: string,
+    logType: ProfileActivityLogType[],
+    ratingMatter: string
+  ) {
     const params: ProfileLogSearchParams = {
       order,
       pageRequest,
@@ -57,8 +60,41 @@ export class ProfileActivityLogsApiService {
         params.rating_matter = ratingMatter as RateMatter;
       }
     }
-    const foundLogs = await this.profileActivityLogsDb.searchLogs(params);
-    const profileIdsInLogs = foundLogs.data.reduce((acc, log) => {
+    return params;
+  }
+
+  async getProfileActivityLogsFiltered(
+    {
+      profileId,
+      order,
+      pageRequest,
+      includeProfileIdToIncoming,
+      ratingMatter,
+      targetId,
+      logType
+    }: ProfileActivityLogsSearchRequest,
+    filters: CommunitySearchCriteria
+  ): Promise<Chunk<ApiProfileActivityLog>> {
+    const params = this.prepSearchParams(
+      order,
+      pageRequest,
+      includeProfileIdToIncoming,
+      profileId,
+      targetId,
+      logType,
+      ratingMatter
+    );
+    const foundLogs = await this.profileActivityLogsDb.searchLogs(
+      {
+        ...params,
+        pageRequest: {
+          ...params.pageRequest,
+          page_size: params.pageRequest.page_size + 1
+        }
+      },
+      filters
+    );
+    const profileIdsInLogs = foundLogs.reduce((acc, log) => {
       acc.push(log.profile_id);
       if (log.target_id) {
         acc.push(log.target_id);
@@ -68,7 +104,7 @@ export class ProfileActivityLogsApiService {
     const profilesHandlesByIds = await this.profilesDb.getProfileHandlesByIds(
       profileIdsInLogs
     );
-    const convertedData = foundLogs.data.map((log) => {
+    const convertedData = foundLogs.map((log) => {
       const logContents = JSON.parse(log.contents);
       return {
         ...log,
@@ -82,8 +118,9 @@ export class ProfileActivityLogsApiService {
       };
     });
     return {
-      ...foundLogs,
-      data: convertedData
+      page: pageRequest.page,
+      next: foundLogs.length > pageRequest.page_size,
+      data: convertedData.slice(0, pageRequest.page_size)
     };
   }
 }

@@ -8,6 +8,7 @@ import { ratingsService } from '../rates/ratings.service';
 import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
 import * as sentryContext from '../sentry.context';
 import {
+  CommunityMemberView,
   ProfileFullView,
   WalletConsolidationKeyView
 } from '../entities/ICommunityMember';
@@ -24,7 +25,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     Rating,
     AbusivenessDetectionResult,
     ProfileFullView,
-    WalletConsolidationKeyView
+    WalletConsolidationKeyView,
+    CommunityMemberView
   ]);
   await ratingsService.reduceOverRates();
   await unload();
