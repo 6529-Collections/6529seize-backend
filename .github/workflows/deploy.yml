@@ -18,13 +18,20 @@ on:
         default: api
         options:
           - api
-          - overRatesRevocationLoop
+          - customReplayLoop
           - delegationsLoop
           - discoverEnsLoop
           - marketStatsLoop
+          - mediaResizerLoop
           - memeLabLoop
+          - nextgenContractLoop
+          - nextgenMediaImageResolutions
+          - nextgenMediaProxyInterceptor
+          - nextgenMediaUploader
+          - nextgenMetadataLoop
           - nftHistoryLoop
           - nftsLoop
+          - overRatesRevocationLoop
           - ownerMetricsLoop
           - ownersLoop
           - rateEventProcessingLoop
@@ -37,14 +44,6 @@ on:
           - tdhLoop
           - teamLoop
           - transactionsLoop
-          - transactionsReplayLoop
-          - customReplayLoop
-          - mediaResizerLoop
-          - nextgenContractLoop
-          - nextgenMetadataLoop
-          - nextgenMediaProxyInterceptor
-          - nextgenMediaUploader
-          - nextgenMediaImageResolutions
 
       branch:
         description: 'Branch name'
