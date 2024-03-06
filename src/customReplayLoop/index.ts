@@ -12,4 +12,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   logger.info('[COMPLETE]');
 });
 
-async function replay() {}
+async function replay() {
+  logger.info(`[CUSTOM REPLAY NOT IMPLEMENTED]`);
+}
