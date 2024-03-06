@@ -1,9 +1,9 @@
 import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
 import {
+  Chunk,
   DEFAULT_MAX_SIZE,
   DEFAULT_PAGE_SIZE,
-  Page,
   PageSortDirection
 } from '../page-request';
 import { getValidatedByJoiOrThrow } from '../validation';
@@ -19,6 +19,7 @@ import {
   CommunityMembersSortOption
 } from './community-members.types';
 import { communityMembersService } from './community-members.service';
+import { CommunitySearchCriteria } from '../../../community-search/community-search-criteria.types';
 
 const router = asyncRouter();
 
@@ -51,18 +52,19 @@ router.get(
   }
 );
 
-router.get(
+router.post(
   '/top',
   async (
-    req: Request<any, any, any, CommunityMembersQuery, any>,
-    res: Response<ApiResponse<Page<CommunityMemberOverview>>>
+    req: Request<any, any, CommunitySearchCriteria, CommunityMembersQuery, any>,
+    res: Response<ApiResponse<Chunk<CommunityMemberOverview>>>
   ) => {
     const query = getValidatedByJoiOrThrow(
       req.query,
       CommunityMembersQuerySchema
     );
-    const response = await communityMembersService.getCommunityMembersPage(
-      query
+    const response = await communityMembersService.getCommunityMembersChunk(
+      query,
+      req.body
     );
     res.send(response);
   }
