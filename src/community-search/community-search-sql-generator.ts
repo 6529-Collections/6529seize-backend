@@ -142,7 +142,7 @@ export class CommunitySearchSqlGenerator {
         params.cic_amount_max = cicCriteria.max;
       }
       if (cicCriteria.min !== null) {
-        cicPart += `and rating <= :cic_amount_min `;
+        cicPart += `and rating >= :cic_amount_min `;
         params.cic_amount_min = cicCriteria.min;
       }
       cicPart += `) `;
