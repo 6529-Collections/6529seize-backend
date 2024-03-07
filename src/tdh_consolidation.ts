@@ -221,7 +221,8 @@ export async function consolidateTDHForWallets(
         nextgen_tdh__raw: nextgenTDH__raw,
         nextgen_balance: nextgenBalance,
         nextgen: consolidationNextgen,
-        nextgen_ranks: []
+        nextgen_ranks: [],
+        boost_breakdown: {}
       };
       consolidationGradients.forEach((wg) => {
         allGradientsTDH.push(wg);
@@ -330,7 +331,8 @@ export const consolidateMissingWallets = async (
         nextgen_tdh__raw: 0,
         nextgen_balance: 0,
         nextgen: [],
-        nextgen_ranks: []
+        nextgen_ranks: [],
+        boost_breakdown: {}
       });
       consolidations.forEach((c) => {
         processedWallets.add(c);
