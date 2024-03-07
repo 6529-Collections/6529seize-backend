@@ -106,7 +106,6 @@ export async function processLog(
         const toDescription = newOwnerEns
           ? `${newOwnerEns} (${newOwner})`
           : newOwner;
-
         return {
           id: 0,
           title: 'Ownership Transferred',
