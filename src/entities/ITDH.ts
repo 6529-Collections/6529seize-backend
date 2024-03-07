@@ -207,6 +207,9 @@ export class BaseTDH {
 
   @Column({ type: 'json', nullable: true })
   nextgen_ranks?: any;
+
+  @Column({ type: 'json', nullable: true })
+  boost_breakdown!: any;
 }
 
 @Entity(WALLETS_TDH_TABLE)
