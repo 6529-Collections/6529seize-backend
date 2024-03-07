@@ -824,6 +824,9 @@ loadApi().then(() => {
             if (d.gradients_ranks) {
               d.gradients_ranks = JSON.parse(d.gradients_ranks);
             }
+            if (d.boost_breakdown) {
+              d.boost_breakdown = JSON.parse(d.boost_breakdown);
+            }
             mcache.put(cacheKey(req), d, CACHE_TIME_MS);
             returnJsonResult(d, req, res);
           } else {

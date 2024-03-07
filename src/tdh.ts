@@ -408,7 +408,8 @@ export const findTDH = async (lastTDHCalc: Date) => {
           nextgen_tdh__raw: nextgenTDH__raw,
           nextgen_balance: nextgenBalance,
           nextgen: walletNextgen,
-          nextgen_ranks: []
+          nextgen_ranks: [],
+          boost_breakdown: {}
         };
         walletGradients.forEach((wg) => {
           allGradientsTDH.push(wg);
@@ -462,12 +463,60 @@ export function calculateBoost(
   hasProfile: boolean
 ) {
   let boost = 1;
+  let breakdown = {
+    memes_card_sets: {
+      available: 0.29,
+      acquired: 0
+    },
+    memes_szn1: {
+      available: 0.05,
+      acquired: 0
+    },
+    memes_szn2: {
+      available: 0.05,
+      acquired: 0
+    },
+    memes_szn3: {
+      available: 0.05,
+      acquired: 0
+    },
+    memes_szn4: {
+      available: 0.05,
+      acquired: 0
+    },
+    memes_szn5: {
+      available: 0.05,
+      acquired: 0
+    },
+    memes_genesis: {
+      available: 0.01,
+      acquired: 0
+    },
+    memes_nakamoto: {
+      available: 0.01,
+      acquired: 0
+    },
+    gradients: {
+      available: 0.06,
+      acquired: 0
+    },
+    ens: {
+      available: 0.01,
+      acquired: 0
+    },
+    profile: {
+      available: 0.03,
+      acquired: 0
+    }
+  };
 
   // Category A
   if (cardSets > 0) {
-    boost += 0.25;
+    let cardSetBreakdown = 0.25;
     // additional full sets up to 2
-    boost += Math.min((cardSets - 1) * 0.02, 0.04);
+    cardSetBreakdown += Math.min((cardSets - 1) * 0.02, 0.04);
+    boost += cardSetBreakdown;
+    breakdown.memes_card_sets.acquired = cardSetBreakdown;
   }
 
   const cardSetS1 = uniqueS1 == SZN1_INDEX.count;
@@ -480,43 +529,61 @@ export function calculateBoost(
   if (cardSets == 0) {
     if (cardSetS1) {
       boost += 0.05;
+      breakdown.memes_szn1.acquired = 0.05;
     } else {
       if (genesis) {
         boost += 0.01;
+        breakdown.memes_genesis.acquired = 0.01;
       }
       // NAKAMOTO
       if (nakamoto) {
         boost += 0.01;
+        breakdown.memes_nakamoto.acquired = 0.01;
       }
     }
     if (cardSetS2) {
       boost += 0.05;
+      breakdown.memes_szn2.acquired = 0.05;
     }
     if (cardSetS3) {
       boost += 0.05;
+      breakdown.memes_szn3.acquired = 0.05;
     }
     if (cardSetS4) {
       boost += 0.05;
+      breakdown.memes_szn4.acquired = 0.05;
     }
     if (cardSetS5) {
       boost += 0.05;
+      breakdown.memes_szn5.acquired = 0.05;
     }
   }
 
   // gradients up to 3
-  boost += Math.min(gradients.length * 0.02, 0.06);
+  const gradientsBoost = Math.min(gradients.length * 0.02, 0.06);
+  if (gradientsBoost > 0) {
+    breakdown.gradients.acquired = gradientsBoost;
+    boost += gradientsBoost;
+  }
 
   // ENS
   if (hasENS) {
     boost += 0.01;
+    breakdown.ens.acquired = 0.01;
   }
 
   // Profile
   if (hasProfile) {
     boost += 0.03;
+    breakdown.profile.acquired = 0.03;
   }
 
-  return Math.round(boost * 100) / 100;
+  const total = Math.round(boost * 100) / 100;
+
+  return {
+    total: total,
+    breakdown: breakdown
+  };
 }
 
 function getTokenTdh(
@@ -635,7 +702,7 @@ export async function calculateBoosts(walletsTDH: any[]) {
           : areEqualAddresses(w.wallet, p.primary_wallet)
       );
 
-      const boost = calculateBoost(
+      const boostBreakdown = calculateBoost(
         w.memes_cards_sets,
         w.unique_memes_season1,
         w.unique_memes_season2,
@@ -649,6 +716,7 @@ export async function calculateBoosts(walletsTDH: any[]) {
         hasProfile
       );
 
+      const boost = boostBreakdown.total;
       w.boost = boost;
       w.boosted_tdh = w.tdh * boost;
       w.boosted_memes_tdh = w.memes_tdh * boost;
@@ -660,6 +728,7 @@ export async function calculateBoosts(walletsTDH: any[]) {
       w.boosted_memes_tdh_season6 = w.memes_tdh_season6 * boost;
       w.boosted_gradients_tdh = w.gradients_tdh * boost;
       w.boosted_nextgen_tdh = w.nextgen_tdh * boost;
+      w.boost_breakdown = boostBreakdown.breakdown;
       boostedTDH.push(w);
     })
   );
