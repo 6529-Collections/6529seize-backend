@@ -3,13 +3,11 @@ import {
   FilterDirection
 } from './community-search-criteria.types';
 import { ALL_COMMUNITY_MEMBERS_VIEW, RATINGS_TABLE } from '../constants';
-import { profilesService, ProfilesService } from '../profiles/profiles.service';
+import { profilesService } from '../profiles/profiles.service';
 import { getLevelComponentsBorderByLevel } from '../profiles/profile-level';
 
 export class CommunitySearchSqlGenerator {
   public static GENERATED_VIEW = 'community_search_view';
-
-  constructor(private readonly profilesService: ProfilesService) {}
 
   public async getSqlAndParams(criteria: CommunitySearchCriteria): Promise<{
     sql: string;
@@ -20,7 +18,7 @@ export class CommunitySearchSqlGenerator {
     ) as string[];
     const userIds = await Promise.all(
       filterUsers.map((user) =>
-        this.profilesService
+        profilesService
           .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(user)
           .then((result) => result?.profile?.external_id ?? null)
       )
@@ -185,5 +183,4 @@ export class CommunitySearchSqlGenerator {
   }
 }
 
-export const communitySearchSqlGenerator: CommunitySearchSqlGenerator =
-  new CommunitySearchSqlGenerator(profilesService);
+export const communitySearchSqlGenerator = new CommunitySearchSqlGenerator();

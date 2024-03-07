@@ -463,7 +463,7 @@ export function calculateBoost(
   hasProfile: boolean
 ) {
   let boost = 1;
-  let breakdown = {
+  const breakdown = {
     memes_card_sets: {
       available: 0.29,
       acquired: 0
