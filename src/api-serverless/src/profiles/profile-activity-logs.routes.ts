@@ -9,7 +9,6 @@ import {
 import { Request, Response } from 'express';
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { profilesService } from '../../../profiles/profiles.service';
-import { CommunityMembersCurationCriteria } from '../community-members/community-search-criteria.types';
 
 const router = asyncRouter();
 
@@ -17,7 +16,7 @@ async function getBaseSearchRequest(
   req: Request<
     any,
     any,
-    CommunityMembersCurationCriteria,
+    any,
     {
       order?: string;
       profile?: string;
@@ -81,13 +80,13 @@ async function getBaseSearchRequest(
   };
 }
 
-router.post(
+router.get(
   `/`,
   async function (
     req: Request<
       any,
       any,
-      CommunityMembersCurationCriteria,
+      any,
       {
         curation_criteria_id?: string;
         order?: string;

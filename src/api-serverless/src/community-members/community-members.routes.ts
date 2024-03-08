@@ -51,7 +51,7 @@ router.get(
   }
 );
 
-router.post(
+router.get(
   '/top',
   async (
     req: Request<any, any, any, CommunityMembersQuery, any>,

@@ -22,6 +22,49 @@ import {
 
 const router = asyncRouter();
 
+router.get(
+  '/',
+  async (
+    req: Request<
+      any,
+      any,
+      { curation_criteria_name: string; curation_criteria_user: string },
+      any,
+      any
+    >,
+    res: Response<ApiResponse<CommunityMembersCurationCriteriaEntity[]>>
+  ) => {
+    const curationCriteriaName = req.query.curation_criteria_name ?? null;
+    let curationCriteriaUserId: string | null = null;
+    if (req.query.curation_criteria_user) {
+      curationCriteriaUserId = await profilesService
+        .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+          req.query.curation_criteria_user
+        )
+        .then((result) => result?.profile?.external_id ?? null);
+    }
+    const response = await communityMemberCriteriaService.searchCriteria(
+      curationCriteriaName,
+      curationCriteriaUserId
+    );
+    res.send(response);
+  }
+);
+
+router.get(
+  '/:criteria_id',
+  async (
+    req: Request<any, any, any, any, any>,
+    res: Response<ApiResponse<CommunityMembersCurationCriteriaEntity>>
+  ) => {
+    const response =
+      await communityMemberCriteriaService.getCriteriaByIdOrThrow(
+        req.params.criteria_id
+      );
+    res.send(response);
+  }
+);
+
 router.post(
   '/',
   needsAuthenticatedUser(),

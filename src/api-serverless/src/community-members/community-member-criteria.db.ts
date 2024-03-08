@@ -60,6 +60,24 @@ export class CommunityMemberCriteriaDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: connection }
     );
   }
+
+  async searchCriteria(
+    curationCriteriaName: string | null,
+    curationCriteriaUserId: string | null
+  ): Promise<CommunityMembersCurationCriteriaEntity[]> {
+    let sql = `select * from ${COMMUNITY_MEMBERS_CURATION_CRITERIA_TABLE} where 1=1 `;
+    const params: Record<string, any> = {};
+    if (curationCriteriaName) {
+      sql += ` and name like :name `;
+      params.name = `${curationCriteriaName}%`;
+    }
+    if (curationCriteriaUserId) {
+      sql += ` and created_by = :created_by `;
+      params.created_by = curationCriteriaUserId;
+    }
+    sql += ` order by name limit 20`;
+    return this.db.execute(sql);
+  }
 }
 
 export const communityMemberCriteriaDb = new CommunityMemberCriteriaDb(

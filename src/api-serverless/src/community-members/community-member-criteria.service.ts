@@ -114,7 +114,7 @@ export class CommunityMemberCriteriaService {
     return updatedCriteriaEntity;
   }
 
-  private async getCriteriaByIdOrThrow(
+  public async getCriteriaByIdOrThrow(
     id: string,
     connection?: ConnectionWrapper<any>
   ): Promise<CommunityMembersCurationCriteriaEntity> {
@@ -335,6 +335,16 @@ export class CommunityMemberCriteriaService {
       sql,
       params
     };
+  }
+
+  async searchCriteria(
+    curationCriteriaName: string | null,
+    curationCriteriaUserId: string | null
+  ): Promise<CommunityMembersCurationCriteriaEntity[]> {
+    return await this.communityMemberCriteriaDb.searchCriteria(
+      curationCriteriaName,
+      curationCriteriaUserId
+    );
   }
 }
 
