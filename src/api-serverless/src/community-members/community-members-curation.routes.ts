@@ -129,7 +129,7 @@ router.post(
 );
 
 const DirectionSchema: Joi.StringSchema = Joi.string()
-  .valid(Object.values(FilterDirection))
+  .valid(...Object.values(FilterDirection))
   .optional()
   .allow(null)
   .default(null);

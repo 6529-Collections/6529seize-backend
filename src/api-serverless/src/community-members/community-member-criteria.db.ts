@@ -30,7 +30,7 @@ export class CommunityMemberCriteriaDb extends LazyDbAccessCompatibleService {
       `
       insert into ${COMMUNITY_MEMBERS_CURATION_CRITERIA_TABLE} (id, name, criteria, created_at, created_by, visible) values (:id, :name, :criteria, :created_at, :created_by, :visible)
     `,
-      entity,
+      { ...entity, criteria: JSON.stringify(entity.criteria) },
       { wrappedConnection: connection }
     );
   }
