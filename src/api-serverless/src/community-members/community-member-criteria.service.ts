@@ -1,15 +1,170 @@
 import {
-  CommunitySearchCriteria,
+  CommunityMembersCurationCriteria,
   FilterDirection
 } from './community-search-criteria.types';
-import { ALL_COMMUNITY_MEMBERS_VIEW, RATINGS_TABLE } from '../constants';
-import { profilesService } from '../profiles/profiles.service';
-import { getLevelComponentsBorderByLevel } from '../profiles/profile-level';
+import { ALL_COMMUNITY_MEMBERS_VIEW, RATINGS_TABLE } from '../../../constants';
+import { profilesService } from '../../../profiles/profiles.service';
+import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
+import { CommunityMembersCurationCriteriaEntity } from '../../../entities/ICommunityMembersCurationCriteriaEntity';
+import {
+  communityMemberCriteriaDb,
+  CommunityMemberCriteriaDb
+} from './community-member-criteria.db';
+import slugify from 'slugify';
+import { uniqueShortId } from '../../../helpers';
+import { ConnectionWrapper } from '../../../sql-executor';
+import { BadRequestException, NotFoundException } from '../../../exceptions';
+import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 
-export class CommunitySearchSqlGenerator {
+export type NewCommunityMembersCurationCriteria = Omit<
+  CommunityMembersCurationCriteriaEntity,
+  'id' | 'created_at' | 'created_by'
+>;
+
+export interface ChangeCommunityMembersCurationCriteriaVisibility {
+  criteria_id: string;
+  visible: boolean;
+  old_version_id: string | null;
+  profile_id: string;
+}
+
+export class CommunityMemberCriteriaService {
   public static GENERATED_VIEW = 'community_search_view';
 
-  public async getSqlAndParams(criteria: CommunitySearchCriteria): Promise<{
+  constructor(
+    private readonly communityMemberCriteriaDb: CommunityMemberCriteriaDb
+  ) {}
+
+  async saveCurationCriteria(
+    criteria: NewCommunityMembersCurationCriteria,
+    createdBy: string
+  ): Promise<CommunityMembersCurationCriteriaEntity> {
+    const savedEntity =
+      await this.communityMemberCriteriaDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const id =
+            slugify(criteria.name, {
+              replacement: '-',
+              lower: true,
+              strict: true
+            }).slice(0, 50) +
+            '-' +
+            uniqueShortId();
+          await this.communityMemberCriteriaDb.save(
+            {
+              ...criteria,
+              id,
+              created_at: new Date(),
+              created_by: createdBy,
+              visible: false
+            },
+            connection
+          );
+          return await this.getCriteriaByIdOrThrow(id, connection);
+        }
+      );
+    await giveReadReplicaTimeToCatchUp();
+    return savedEntity;
+  }
+
+  async changeCriteriaVisibility({
+    criteria_id,
+    old_version_id,
+    visible,
+    profile_id
+  }: ChangeCommunityMembersCurationCriteriaVisibility): Promise<CommunityMembersCurationCriteriaEntity> {
+    const updatedCriteriaEntity =
+      await this.communityMemberCriteriaDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          const criteriaEntity = await this.getCriteriaByIdOrThrow(criteria_id);
+          if (old_version_id) {
+            if (old_version_id === criteriaEntity.id) {
+              throw new BadRequestException(
+                'Old version id should not be the same as the current'
+              );
+            }
+            const oldCriteriaEntity = await this.getCriteriaByIdOrThrow(
+              old_version_id
+            );
+            if (oldCriteriaEntity.created_by !== profile_id) {
+              throw new BadRequestException(
+                `You are not allowed to change criteria ${old_version_id}. You can save a new one instead.`
+              );
+            }
+            await this.communityMemberCriteriaDb.changeCriteriaVisibility(
+              old_version_id,
+              false,
+              connection
+            );
+          }
+          if (criteriaEntity.created_by !== profile_id) {
+            throw new BadRequestException(
+              `You are not allowed to change criteria ${criteria_id}. You can save a new one instead.`
+            );
+          }
+          await this.communityMemberCriteriaDb.changeCriteriaVisibility(
+            criteria_id,
+            visible,
+            connection
+          );
+          return await this.getCriteriaByIdOrThrow(criteria_id, connection);
+        }
+      );
+    await giveReadReplicaTimeToCatchUp();
+    return updatedCriteriaEntity;
+  }
+
+  public async getCriteriaByIdOrThrow(
+    id: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<CommunityMembersCurationCriteriaEntity> {
+    const criteria = await this.communityMemberCriteriaDb.getById(
+      id,
+      connection
+    );
+    if (!criteria) {
+      throw new NotFoundException(`Criteria with id ${id} not found`);
+    }
+    return criteria;
+  }
+
+  public async getSqlAndParamsByCriteriaId(criteriaId: string | null): Promise<{
+    sql: string;
+    params: Record<string, any>;
+  } | null> {
+    if (criteriaId === null) {
+      return await this.getSqlAndParams({
+        cic: {
+          min: null,
+          max: null,
+          user: null,
+          direction: null
+        },
+        rep: {
+          min: null,
+          max: null,
+          user: null,
+          direction: null,
+          category: null
+        },
+        level: {
+          min: null,
+          max: null
+        },
+        tdh: {
+          min: null,
+          max: null
+        }
+      });
+    } else {
+      const criteria = await this.getCriteriaByIdOrThrow(criteriaId);
+      return await this.getSqlAndParams(criteria.criteria);
+    }
+  }
+
+  private async getSqlAndParams(
+    criteria: CommunityMembersCurationCriteria
+  ): Promise<{
     sql: string;
     params: Record<string, any>;
   } | null> {
@@ -56,7 +211,7 @@ export class CommunitySearchSqlGenerator {
       if (repCriteria.user) {
         params.rep_user = repCriteria.user;
       }
-      let groupedRepQuery = '';
+      let groupedRepQuery: string;
       if (repCriteria.user !== null && repCriteria.category !== null) {
         groupedRepQuery = `grouped_reps as (select ${
           direction === FilterDirection.RECEIVED
@@ -147,7 +302,7 @@ export class CommunitySearchSqlGenerator {
     }
     let cmPart = ` ${repPart || cicPart ? ',' : ''}
     ${
-      CommunitySearchSqlGenerator.GENERATED_VIEW
+      CommunityMemberCriteriaService.GENERATED_VIEW
     } as (select a.* from ${ALL_COMMUNITY_MEMBERS_VIEW} a
     `;
     if (repPart !== null) {
@@ -181,6 +336,17 @@ export class CommunitySearchSqlGenerator {
       params
     };
   }
+
+  async searchCriteria(
+    curationCriteriaName: string | null,
+    curationCriteriaUserId: string | null
+  ): Promise<CommunityMembersCurationCriteriaEntity[]> {
+    return await this.communityMemberCriteriaDb.searchCriteria(
+      curationCriteriaName,
+      curationCriteriaUserId
+    );
+  }
 }
 
-export const communitySearchSqlGenerator = new CommunitySearchSqlGenerator();
+export const communityMemberCriteriaService =
+  new CommunityMemberCriteriaService(communityMemberCriteriaDb);

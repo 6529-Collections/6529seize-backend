@@ -12,6 +12,7 @@ import {
   ProfileFullView,
   WalletConsolidationKeyView
 } from '../entities/ICommunityMember';
+import { CommunityMembersCurationCriteriaEntity } from '../entities/ICommunityMembersCurationCriteriaEntity';
 
 const logger = Logger.get('OVER_RATES_REVOCATION_LOOP');
 
@@ -26,7 +27,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     AbusivenessDetectionResult,
     ProfileFullView,
     WalletConsolidationKeyView,
-    CommunityMemberView
+    CommunityMemberView,
+    CommunityMembersCurationCriteriaEntity
   ]);
   await ratingsService.reduceOverRates();
   await unload();

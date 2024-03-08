@@ -13,7 +13,6 @@ import {
   getMattersWhereTargetIsProfile,
   RateMatter
 } from '../../../entities/IRating';
-import { CommunitySearchCriteria } from '../../../community-search/community-search-criteria.types';
 
 export interface ProfileActivityLogsSearchRequest {
   profileId?: string;
@@ -23,6 +22,7 @@ export interface ProfileActivityLogsSearchRequest {
   ratingMatter?: string;
   pageRequest: PageRequest;
   order: 'desc' | 'asc';
+  curation_criteria_id: string | null;
 }
 
 export class ProfileActivityLogsApiService {
@@ -35,15 +35,17 @@ export class ProfileActivityLogsApiService {
     order: 'desc' | 'asc',
     pageRequest: PageRequest,
     includeProfileIdToIncoming: boolean,
-    profileId: string,
-    targetId: string,
-    logType: ProfileActivityLogType[],
-    ratingMatter: string
+    profileId: string | undefined,
+    targetId: string | undefined,
+    logType: ProfileActivityLogType[] | undefined,
+    ratingMatter: string | undefined,
+    curationsCriteriaId: string | null
   ) {
     const params: ProfileLogSearchParams = {
       order,
       pageRequest,
-      includeProfileIdToIncoming
+      includeProfileIdToIncoming,
+      curation_criteria_id: curationsCriteriaId ?? null
     };
 
     if (profileId) {
@@ -63,18 +65,16 @@ export class ProfileActivityLogsApiService {
     return params;
   }
 
-  async getProfileActivityLogsFiltered(
-    {
-      profileId,
-      order,
-      pageRequest,
-      includeProfileIdToIncoming,
-      ratingMatter,
-      targetId,
-      logType
-    }: ProfileActivityLogsSearchRequest,
-    filters: CommunitySearchCriteria
-  ): Promise<Chunk<ApiProfileActivityLog>> {
+  async getProfileActivityLogsFiltered({
+    profileId,
+    order,
+    pageRequest,
+    includeProfileIdToIncoming,
+    ratingMatter,
+    targetId,
+    logType,
+    curation_criteria_id
+  }: ProfileActivityLogsSearchRequest): Promise<Chunk<ApiProfileActivityLog>> {
     const params = this.prepSearchParams(
       order,
       pageRequest,
@@ -82,18 +82,16 @@ export class ProfileActivityLogsApiService {
       profileId,
       targetId,
       logType,
-      ratingMatter
+      ratingMatter,
+      curation_criteria_id ?? null
     );
-    const foundLogs = await this.profileActivityLogsDb.searchLogs(
-      {
-        ...params,
-        pageRequest: {
-          ...params.pageRequest,
-          page_size: params.pageRequest.page_size + 1
-        }
-      },
-      filters
-    );
+    const foundLogs = await this.profileActivityLogsDb.searchLogs({
+      ...params,
+      pageRequest: {
+        ...params.pageRequest,
+        page_size: params.pageRequest.page_size + 1
+      }
+    });
     const profileIdsInLogs = foundLogs.reduce((acc, log) => {
       acc.push(log.profile_id);
       if (log.target_id) {

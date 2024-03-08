@@ -19,7 +19,6 @@ import {
   CommunityMembersSortOption
 } from './community-members.types';
 import { communityMembersService } from './community-members.service';
-import { CommunitySearchCriteria } from '../../../community-search/community-search-criteria.types';
 
 const router = asyncRouter();
 
@@ -52,10 +51,10 @@ router.get(
   }
 );
 
-router.post(
+router.get(
   '/top',
   async (
-    req: Request<any, any, CommunitySearchCriteria, CommunityMembersQuery, any>,
+    req: Request<any, any, any, CommunityMembersQuery, any>,
     res: Response<ApiResponse<Chunk<CommunityMemberOverview>>>
   ) => {
     const query = getValidatedByJoiOrThrow(
@@ -63,8 +62,7 @@ router.post(
       CommunityMembersQuerySchema
     );
     const response = await communityMembersService.getCommunityMembersChunk(
-      query,
-      req.body
+      query
     );
     res.send(response);
   }
@@ -89,7 +87,8 @@ const CommunityMembersQuerySchema: Joi.ObjectSchema<CommunityMembersQuery> =
       .max(DEFAULT_MAX_SIZE)
       .optional()
       .allow(null)
-      .default(DEFAULT_PAGE_SIZE)
+      .default(DEFAULT_PAGE_SIZE),
+    curation_criteria_id: Joi.string().optional().default(null).allow(null)
   });
 
 export default router;

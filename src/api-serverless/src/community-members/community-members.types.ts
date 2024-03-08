@@ -19,4 +19,7 @@ export enum CommunityMembersSortOption {
   CIC = 'cic'
 }
 
-export type CommunityMembersQuery = FullPageRequest<CommunityMembersSortOption>;
+export interface CommunityMembersQuery
+  extends FullPageRequest<CommunityMembersSortOption> {
+  readonly curation_criteria_id: string | null;
+}
