@@ -76,7 +76,7 @@ export class CommunityMemberCriteriaDb extends LazyDbAccessCompatibleService {
       params.created_by = curationCriteriaUserId;
     }
     sql += ` order by name limit 20`;
-    return this.db.execute(sql);
+    return this.db.execute(sql).then((res) => res.map(this.toEntity));
   }
 }
 
