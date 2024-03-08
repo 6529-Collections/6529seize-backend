@@ -12,16 +12,15 @@ import { uniqueShortId } from '../helpers';
 import { PROFILES_ACTIVITY_LOGS_TABLE } from '../constants';
 import { PageRequest } from '../api-serverless/src/page-request';
 import { RateMatter } from '../entities/IRating';
-import { CommunitySearchCriteria } from '../community-search/community-search-criteria.types';
 import {
-  communitySearchSqlGenerator,
-  CommunitySearchSqlGenerator
-} from '../community-search/community-search-sql-generator';
+  CommunityMemberCriteriaService,
+  communityMemberCriteriaService
+} from '../api-serverless/src/community-members/community-member-criteria.service';
 
 export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   constructor(
     dbSupplier: () => SqlExecutor,
-    private readonly communitySearchSqlGenerator: CommunitySearchSqlGenerator
+    private readonly communitySearchSqlGenerator: CommunityMemberCriteriaService
   ) {
     super(dbSupplier);
   }
@@ -68,12 +67,12 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   }
 
   public async searchLogs(
-    params: ProfileLogSearchParams,
-    filters: CommunitySearchCriteria
+    params: ProfileLogSearchParams
   ): Promise<ProfileActivityLog[]> {
-    const viewResult = await this.communitySearchSqlGenerator.getSqlAndParams(
-      filters
-    );
+    const viewResult =
+      await this.communitySearchSqlGenerator.getSqlAndParamsByCriteriaId(
+        params.curation_criteria_id
+      );
     if (viewResult === null) {
       return [];
     }
@@ -82,7 +81,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       params.pageRequest.page_size < 1 || params.pageRequest.page_size > 2000
         ? 2000
         : params.pageRequest.page_size;
-    let sql = `${viewResult.sql} select pa_logs.* from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs join ${CommunitySearchSqlGenerator.GENERATED_VIEW} crit_view on crit_view.profile_id = pa_logs.profile_id where 1=1`;
+    let sql = `${viewResult.sql} select pa_logs.* from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs join ${CommunityMemberCriteriaService.GENERATED_VIEW} crit_view on crit_view.profile_id = pa_logs.profile_id where 1=1`;
     const sqlParams: Record<string, any> = {
       ...viewResult.params,
       offset: (page - 1) * page_size,
@@ -126,6 +125,7 @@ export type NewProfileActivityLog = Omit<
 >;
 
 export interface ProfileLogSearchParams {
+  readonly curation_criteria_id: string | null;
   profile_id?: string;
   target_id?: string;
   rating_matter?: RateMatter;
@@ -137,5 +137,5 @@ export interface ProfileLogSearchParams {
 
 export const profileActivityLogsDb = new ProfileActivityLogsDb(
   dbSupplier,
-  communitySearchSqlGenerator
+  communityMemberCriteriaService
 );

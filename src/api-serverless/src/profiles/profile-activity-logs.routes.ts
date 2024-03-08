@@ -9,7 +9,7 @@ import {
 import { Request, Response } from 'express';
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { profilesService } from '../../../profiles/profiles.service';
-import { CommunitySearchCriteria } from '../../../community-search/community-search-criteria.types';
+import { CommunityMembersCurationCriteria } from '../community-members/community-search-criteria.types';
 
 const router = asyncRouter();
 
@@ -17,12 +17,13 @@ async function getBaseSearchRequest(
   req: Request<
     any,
     any,
-    CommunitySearchCriteria,
+    CommunityMembersCurationCriteria,
     {
       order?: string;
       profile?: string;
       target?: string;
       log_type?: ProfileActivityLogType;
+      curation_criteria_id?: string;
       page?: string;
       page_size?: string;
       rating_matter?: string;
@@ -66,6 +67,7 @@ async function getBaseSearchRequest(
   const sizeProposal = parseInt(queryParams.page_size || '2000');
   const size = !isNaN(sizeProposal) && sizeProposal > 0 ? sizeProposal : 50;
   return {
+    curation_criteria_id: req.query.curation_criteria_id ?? null,
     profileId,
     order,
     includeProfileIdToIncoming,
@@ -85,8 +87,9 @@ router.post(
     req: Request<
       any,
       any,
-      CommunitySearchCriteria,
+      CommunityMembersCurationCriteria,
       {
+        curation_criteria_id?: string;
         order?: string;
         profile?: string;
         target?: string;
@@ -103,8 +106,7 @@ router.post(
     const profileActivityLogsSearchRequest = await getBaseSearchRequest(req);
     const results =
       await profileActivityLogsApiService.getProfileActivityLogsFiltered(
-        profileActivityLogsSearchRequest,
-        req.body
+        profileActivityLogsSearchRequest
       );
     res.status(200).send(results);
   }

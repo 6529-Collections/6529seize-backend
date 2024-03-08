@@ -13,11 +13,10 @@ import {
   TRANSACTIONS_TABLE,
   WALLETS_CONSOLIDATION_KEYS_VIEW
 } from '../../../constants';
-import { CommunitySearchCriteria } from '../../../community-search/community-search-criteria.types';
 import {
-  communitySearchSqlGenerator,
-  CommunitySearchSqlGenerator
-} from '../../../community-search/community-search-sql-generator';
+  CommunityMemberCriteriaService,
+  communityMemberCriteriaService
+} from './community-member-criteria.service';
 
 export interface CommunityMemberFromDb
   extends Omit<CommunityMemberOverview, 'last_activity'> {
@@ -27,18 +26,18 @@ export interface CommunityMemberFromDb
 export class CommunityMembersDb extends LazyDbAccessCompatibleService {
   constructor(
     dbSupplier: () => SqlExecutor,
-    private readonly communitySearchSqlGenerator: CommunitySearchSqlGenerator
+    private readonly communitySearchSqlGenerator: CommunityMemberCriteriaService
   ) {
     super(dbSupplier);
   }
 
   async getCommunityMembers(
-    query: CommunityMembersQuery,
-    filter: CommunitySearchCriteria
+    query: CommunityMembersQuery
   ): Promise<CommunityMemberFromDb[]> {
-    const viewResult = await this.communitySearchSqlGenerator.getSqlAndParams(
-      filter
-    );
+    const viewResult =
+      await this.communitySearchSqlGenerator.getSqlAndParamsByCriteriaId(
+        query.curation_criteria_id
+      );
     if (viewResult === null) {
       return [];
     }
@@ -55,7 +54,7 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
         cm.rep as rep,
         cm.pfp as pfp,
         cm.consolidation_key as consolidation_key
-      from ${CommunitySearchSqlGenerator.GENERATED_VIEW} cm order by cm.${query.sort} ${query.sort_direction} limit ${query.page_size} offset ${offset}
+      from ${CommunityMemberCriteriaService.GENERATED_VIEW} cm order by cm.${query.sort} ${query.sort_direction} limit ${query.page_size} offset ${offset}
     `,
       viewResult.params
     );
@@ -112,5 +111,5 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
 
 export const communityMembersDb = new CommunityMembersDb(
   dbSupplier,
-  communitySearchSqlGenerator
+  communityMemberCriteriaService
 );

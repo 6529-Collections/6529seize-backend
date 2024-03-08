@@ -5,17 +5,15 @@ import {
 import { communityMembersDb, CommunityMembersDb } from './community-members.db';
 import { Chunk } from '../page-request';
 import { calculateLevel } from '../../../profiles/profile-level';
-import { CommunitySearchCriteria } from '../../../community-search/community-search-criteria.types';
 
 export class CommunityMembersService {
   constructor(private readonly communityMembersDb: CommunityMembersDb) {}
 
   async getCommunityMembersChunk(
-    query: CommunityMembersQuery,
-    filter: CommunitySearchCriteria
+    query: CommunityMembersQuery
   ): Promise<Chunk<CommunityMemberOverview>> {
     const data = await this.communityMembersDb
-      .getCommunityMembers({ ...query, page_size: query.page_size + 1 }, filter)
+      .getCommunityMembers({ ...query, page_size: query.page_size + 1 })
       .then(async (members) => {
         const consolidationKeys = members.map(
           (member) => member.consolidation_key
