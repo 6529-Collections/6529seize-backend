@@ -1,6 +1,5 @@
 import { asyncRouter } from '../async.router';
 import { ApiResponse } from '../api-response';
-import { Chunk } from '../page-request';
 import {
   ApiProfileActivityLog,
   profileActivityLogsApiService,
@@ -9,6 +8,7 @@ import {
 import { Request, Response } from 'express';
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { profilesService } from '../../../profiles/profiles.service';
+import { Page } from '../page-request';
 
 const router = asyncRouter();
 
@@ -100,7 +100,7 @@ router.get(
       },
       any
     >,
-    res: Response<ApiResponse<Chunk<ApiProfileActivityLog>>>
+    res: Response<ApiResponse<Page<ApiProfileActivityLog>>>
   ) {
     const profileActivityLogsSearchRequest = await getBaseSearchRequest(req);
     const results =

@@ -117,6 +117,43 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       }))
     );
   }
+
+  public async countLogs(params: ProfileLogSearchParams): Promise<number> {
+    const viewResult =
+      await this.communitySearchSqlGenerator.getSqlAndParamsByCriteriaId(
+        params.curation_criteria_id
+      );
+    if (viewResult === null) {
+      return 0;
+    }
+    let sql = `${viewResult.sql} select count(*) as cnt from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs join ${CommunityMemberCriteriaService.GENERATED_VIEW} crit_view on crit_view.profile_id = pa_logs.profile_id where 1=1`;
+    const sqlParams: Record<string, any> = {
+      ...viewResult.params
+    };
+    if (params.profile_id) {
+      if (params.includeProfileIdToIncoming) {
+        sql += ` and (pa_logs.profile_id = :profile_id or pa_logs.target_id = :profile_id)`;
+      } else {
+        sql += ` and pa_logs.profile_id = :profile_id`;
+      }
+      sqlParams.profile_id = params.profile_id;
+    }
+    if (params.rating_matter) {
+      sql += ` and JSON_UNQUOTE(JSON_EXTRACT(pa_logs.contents, '$.rating_matter')) = :rating_matter`;
+      sqlParams.rating_matter = params.rating_matter;
+    }
+    if (params.target_id) {
+      sql += ` and pa_logs.target_id = :target_id`;
+      sqlParams.target_id = params.target_id;
+    }
+    if (params.type?.length) {
+      sql += ` and pa_logs.type in (:type)`;
+      sqlParams.type = params.type;
+    }
+    return await this.db
+      .execute(sql, sqlParams)
+      .then((rows) => rows[0].cnt as number);
+  }
 }
 
 export type NewProfileActivityLog = Omit<
