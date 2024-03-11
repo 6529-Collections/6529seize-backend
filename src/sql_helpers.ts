@@ -225,9 +225,7 @@ export function getProfilePageSql(wallets: string[]) {
 }
 
 export function parseTdhResultsFromDB(results: any) {
-  results.data.map((d: any) => {
-    d = parseTdhDataFromDB(d);
-  });
+  results.data.map((d: any) => parseTdhDataFromDB(d));
   return results;
 }
 
