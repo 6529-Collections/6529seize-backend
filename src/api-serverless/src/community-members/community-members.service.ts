@@ -3,17 +3,32 @@ import {
   CommunityMembersQuery
 } from './community-members.types';
 import { communityMembersDb, CommunityMembersDb } from './community-members.db';
-import { Chunk } from '../page-request';
 import { calculateLevel } from '../../../profiles/profile-level';
+import { Page } from '../page-request';
 
 export class CommunityMembersService {
   constructor(private readonly communityMembersDb: CommunityMembersDb) {}
 
   async getCommunityMembersChunk(
     query: CommunityMembersQuery
-  ): Promise<Chunk<CommunityMemberOverview>> {
-    const data = await this.communityMembersDb
-      .getCommunityMembers({ ...query, page_size: query.page_size + 1 })
+  ): Promise<Page<CommunityMemberOverview>> {
+    const [data, count] = await Promise.all([
+      this.getAndConvertCommunityMembers(query),
+      this.communityMembersDb.countCommunityMembers(query)
+    ]);
+    return {
+      next: count > query.page_size * query.page,
+      data: data,
+      page: query.page,
+      count: count
+    };
+  }
+
+  private async getAndConvertCommunityMembers(
+    query: CommunityMembersQuery
+  ): Promise<CommunityMemberOverview[]> {
+    return await this.communityMembersDb
+      .getCommunityMembers(query)
       .then(async (members) => {
         const consolidationKeys = members.map(
           (member) => member.consolidation_key
@@ -33,11 +48,6 @@ export class CommunityMembersService {
           pfp: member.pfp
         }));
       });
-    return {
-      next: data.length > query.page_size,
-      data: data.slice(0, query.page_size),
-      page: query.page
-    };
   }
 }
 

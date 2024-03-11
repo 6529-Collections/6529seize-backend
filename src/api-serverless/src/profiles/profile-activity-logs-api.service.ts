@@ -7,7 +7,7 @@ import {
   ProfileActivityLog,
   ProfileActivityLogType
 } from '../../../entities/IProfileActivityLog';
-import { Chunk, PageRequest } from '../page-request';
+import { Page, PageRequest } from '../page-request';
 import { profilesDb, ProfilesDb } from '../../../profiles/profiles.db';
 import {
   getMattersWhereTargetIsProfile,
@@ -40,7 +40,7 @@ export class ProfileActivityLogsApiService {
     targetId,
     logType,
     curation_criteria_id
-  }: ProfileActivityLogsSearchRequest): Promise<Chunk<ApiProfileActivityLog>> {
+  }: ProfileActivityLogsSearchRequest): Promise<Page<ApiProfileActivityLog>> {
     const params: ProfileLogSearchParams = {
       order,
       pageRequest,
@@ -62,13 +62,10 @@ export class ProfileActivityLogsApiService {
         params.rating_matter = ratingMatter as RateMatter;
       }
     }
-    const foundLogs = await this.profileActivityLogsDb.searchLogs({
-      ...params,
-      pageRequest: {
-        ...params.pageRequest,
-        page_size: params.pageRequest.page_size + 1
-      }
-    });
+    const [foundLogs, logCount] = await Promise.all([
+      this.profileActivityLogsDb.searchLogs(params),
+      this.profileActivityLogsDb.countLogs(params)
+    ]);
     const profileIdsInLogs = foundLogs.reduce((acc, log) => {
       acc.push(log.profile_id);
       if (log.target_id) {
@@ -94,8 +91,9 @@ export class ProfileActivityLogsApiService {
     });
     return {
       page: pageRequest.page,
-      next: foundLogs.length > pageRequest.page_size,
-      data: convertedData.slice(0, pageRequest.page_size)
+      next: logCount > pageRequest.page * pageRequest.page_size,
+      data: convertedData,
+      count: logCount
     };
   }
 }

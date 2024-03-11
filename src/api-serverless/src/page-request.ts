@@ -13,12 +13,6 @@ export interface Page<T> {
   data: T[];
 }
 
-export interface Chunk<T> {
-  page: number;
-  next: boolean;
-  data: T[];
-}
-
 export function emptyPage<T>(pageNo = 1): Page<T> {
   return {
     count: 0,
