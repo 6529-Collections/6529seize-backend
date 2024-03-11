@@ -1,71 +1,63 @@
 import {
   dbSupplier,
-  LazyDbAccessCompatibleService
+  LazyDbAccessCompatibleService,
+  SqlExecutor
 } from '../../../sql-executor';
 import {
   CommunityMemberOverview,
-  CommunityMembersQuery,
-  CommunityMembersSortOption
+  CommunityMembersQuery
 } from './community-members.types';
 import {
-  CONSOLIDATED_WALLETS_TDH_TABLE,
   PROFILE_FULL,
   PROFILES_ACTIVITY_LOGS_TABLE,
   TRANSACTIONS_TABLE,
   WALLETS_CONSOLIDATION_KEYS_VIEW
 } from '../../../constants';
+import {
+  CommunityMemberCriteriaService,
+  communityMemberCriteriaService
+} from './community-member-criteria.service';
 
 export interface CommunityMemberFromDb
-  extends Omit<CommunityMemberOverview, 'level' | 'last_activity'> {
+  extends Omit<CommunityMemberOverview, 'last_activity'> {
   readonly consolidation_key: string;
 }
 
 export class CommunityMembersDb extends LazyDbAccessCompatibleService {
+  constructor(
+    dbSupplier: () => SqlExecutor,
+    private readonly communitySearchSqlGenerator: CommunityMemberCriteriaService
+  ) {
+    super(dbSupplier);
+  }
+
   async getCommunityMembers(
     query: CommunityMembersQuery
   ): Promise<CommunityMemberFromDb[]> {
-    const sort =
-      query.sort === CommunityMembersSortOption.LEVEL
-        ? 'level_components'
-        : query.sort;
+    const viewResult =
+      await this.communitySearchSqlGenerator.getSqlAndParamsByCriteriaId(
+        query.curation_criteria_id
+      );
+    if (viewResult === null) {
+      return [];
+    }
     const offset = query.page_size * (query.page - 1);
-    return this.db.execute(`
-      with cm as (
-        select
-            p.handle as display,
-            p.handle as detail_view_key,
-            p.rep_score + p.profile_tdh as level_components,
-            p.profile_tdh as tdh,
-            p.cic_score as cic,
-            p.rep_score as rep,
-            p.pfp_url as pfp,
-            p.consolidation_key as consolidation_key
-        from ${PROFILE_FULL} p
-        union all
-        select
-            t.consolidation_display as display,
-            t.wallets->>'$[0]' as detail_view_key,
-            t.boosted_tdh as level_components,
-            t.boosted_tdh as tdh,
-            0 as cic,
-            0 as rep,
-            null as pfp,
-            t.consolidation_key as consolidation_key
-        from ${CONSOLIDATED_WALLETS_TDH_TABLE} as t
-            left join  ${PROFILE_FULL} as p on t.consolidation_key = p.consolidation_key
-        where p.consolidation_key is null
-      )
+    return this.db.execute(
+      `
+      ${viewResult.sql} 
       select
-          display,
-          detail_view_key,
-          level_components,
-          tdh,
-          cic,
-          rep,
-          pfp,
-          consolidation_key
-      from cm order by ${sort} ${query.sort_direction} limit ${query.page_size} offset ${offset}
-    `);
+        cm.display as display,
+        ifnull(cm.handle, cm.wallet1) as detail_view_key,
+        cm.level as level,
+        cm.tdh as tdh,
+        cm.cic as cic,
+        cm.rep as rep,
+        cm.pfp as pfp,
+        cm.consolidation_key as consolidation_key
+      from ${CommunityMemberCriteriaService.GENERATED_VIEW} cm order by cm.${query.sort} ${query.sort_direction} limit ${query.page_size} offset ${offset}
+    `,
+      viewResult.params
+    );
   }
 
   async getCommunityMembersLastActivitiesByConsolidationKeys(
@@ -115,35 +107,9 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
       return acc;
     }, {} as Record<string, number>);
   }
-
-  async countCommunityMembers(): Promise<number> {
-    return this.db
-      .execute(
-        `
-      with cm as (
-        select
-            p.handle as display,
-            p.handle as detail_view_key,
-            p.rep_score + p.profile_tdh as level_components,
-            p.cic_score as cic_score,
-            p.rep_score as rep_score
-        from ${PROFILE_FULL} p
-        union all
-        select
-            t.consolidation_display as display,
-            t.wallets->>'$[0]'detail_view_key,
-            t.boosted_tdh as level,
-            0 as cic_score,
-            0 as rep_score
-        from ${CONSOLIDATED_WALLETS_TDH_TABLE} as t
-            left join  ${PROFILE_FULL} as p on t.consolidation_key = p.consolidation_key
-        where p.consolidation_key is null
-      )
-      select count(*) as cnt from cm
-    `
-      )
-      .then((result) => result[0].cnt as number);
-  }
 }
 
-export const communityMembersDb = new CommunityMembersDb(dbSupplier);
+export const communityMembersDb = new CommunityMembersDb(
+  dbSupplier,
+  communityMemberCriteriaService
+);

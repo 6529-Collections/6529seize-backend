@@ -13,6 +13,7 @@ import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
 import gasRoutes from './gas/gas.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
+import communityMembersCurationRoutes from './community-members/community-members-curation.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -1257,6 +1258,7 @@ loadApi().then(() => {
   apiRouter.use(`/profiles`, profilesRoutes);
   apiRouter.use(`/analytics`, analyticsRoutes);
   apiRouter.use(`/community-members`, communityMembersRoutes);
+  apiRouter.use(`/community-members-curation`, communityMembersCurationRoutes);
   apiRouter.use(`/auth`, authRoutes);
   apiRouter.use(`/rememes`, rememesRoutes);
   apiRouter.use(`/nextgen`, nextgenRoutes);

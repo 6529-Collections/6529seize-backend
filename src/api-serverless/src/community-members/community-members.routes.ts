@@ -1,9 +1,9 @@
 import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
 import {
+  Chunk,
   DEFAULT_MAX_SIZE,
   DEFAULT_PAGE_SIZE,
-  Page,
   PageSortDirection
 } from '../page-request';
 import { getValidatedByJoiOrThrow } from '../validation';
@@ -55,13 +55,13 @@ router.get(
   '/top',
   async (
     req: Request<any, any, any, CommunityMembersQuery, any>,
-    res: Response<ApiResponse<Page<CommunityMemberOverview>>>
+    res: Response<ApiResponse<Chunk<CommunityMemberOverview>>>
   ) => {
     const query = getValidatedByJoiOrThrow(
       req.query,
       CommunityMembersQuerySchema
     );
-    const response = await communityMembersService.getCommunityMembersPage(
+    const response = await communityMembersService.getCommunityMembersChunk(
       query
     );
     res.send(response);
@@ -87,7 +87,8 @@ const CommunityMembersQuerySchema: Joi.ObjectSchema<CommunityMembersQuery> =
       .max(DEFAULT_MAX_SIZE)
       .optional()
       .allow(null)
-      .default(DEFAULT_PAGE_SIZE)
+      .default(DEFAULT_PAGE_SIZE),
+    curation_criteria_id: Joi.string().optional().default(null).allow(null)
   });
 
 export default router;
