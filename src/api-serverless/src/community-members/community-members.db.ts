@@ -60,6 +60,25 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async countCommunityMembers(query: CommunityMembersQuery): Promise<number> {
+    const viewResult =
+      await this.communitySearchSqlGenerator.getSqlAndParamsByCriteriaId(
+        query.curation_criteria_id
+      );
+    if (viewResult === null) {
+      return 0;
+    }
+    return this.db
+      .execute(
+        `
+      ${viewResult.sql} 
+      select count(*) as cnt from ${CommunityMemberCriteriaService.GENERATED_VIEW} cm
+    `,
+        viewResult.params
+      )
+      .then((rows) => rows[0].cnt as number);
+  }
+
   async getCommunityMembersLastActivitiesByConsolidationKeys(
     consolidationKeys: string[]
   ): Promise<Record<string, number>> {

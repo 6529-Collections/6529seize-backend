@@ -1,9 +1,9 @@
 import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
 import {
-  Chunk,
   DEFAULT_MAX_SIZE,
   DEFAULT_PAGE_SIZE,
+  Page,
   PageSortDirection
 } from '../page-request';
 import { getValidatedByJoiOrThrow } from '../validation';
@@ -55,7 +55,7 @@ router.get(
   '/top',
   async (
     req: Request<any, any, any, CommunityMembersQuery, any>,
-    res: Response<ApiResponse<Chunk<CommunityMemberOverview>>>
+    res: Response<ApiResponse<Page<CommunityMemberOverview>>>
   ) => {
     const query = getValidatedByJoiOrThrow(
       req.query,
