@@ -30,6 +30,7 @@ import {
 } from '../api-serverless/src/profiles/rep.service';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
+import { ProfileMin } from './profile-min';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -902,6 +903,10 @@ export class ProfilesService {
       return `https://d3lqz0a4bldqgf.cloudfront.net/${key}?d=${Date.now()}`;
     }
     throw new Error('Failed to upload image');
+  }
+
+  async getProfileMinsByIds(ids: string[]): Promise<ProfileMin[]> {
+    return this.profilesDb.getProfileMinsByIds(ids);
   }
 }
 

@@ -9,6 +9,7 @@ import {
   ENS_TABLE,
   MEMES_CONTRACT,
   NFTS_TABLE,
+  PROFILE_FULL,
   PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
   RATINGS_TABLE,
@@ -20,6 +21,8 @@ import { Profile } from '../entities/IProfile';
 import { CreateOrUpdateProfileCommand } from './profile.types';
 import { randomUUID } from 'crypto';
 import { distinct } from '../helpers';
+import { ProfileMin } from './profile-min';
+import { calculateLevel } from './profile-level';
 
 export class ProfilesDb extends LazyDbAccessCompatibleService {
   public async getConsolidationInfoForWallet(
@@ -514,6 +517,23 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       param,
       { wrappedConnection: connection }
     );
+  }
+
+  async getProfileMinsByIds(ids: string[]): Promise<ProfileMin[]> {
+    if (!ids.length) {
+      return [];
+    }
+    return this.db
+      .execute(
+        `select external_id as id, handle, pfp_url as pfp, cic_score as cic, rep_score as rep, profile_tdh as tdh from ${PROFILE_FULL} where external_id in (:ids)`,
+        { ids }
+      )
+      .then((result) =>
+        result.map((it: Omit<ProfileMin, 'level'>) => ({
+          ...it,
+          level: calculateLevel({ tdh: it.tdh, rep: it.rep })
+        }))
+      );
   }
 }
 
