@@ -61,7 +61,7 @@ router.get(
       req.query,
       CommunityMembersQuerySchema
     );
-    const response = await communityMembersService.getCommunityMembersPage(
+    const response = await communityMembersService.getCommunityMembersChunk(
       query
     );
     res.send(response);
@@ -87,7 +87,8 @@ const CommunityMembersQuerySchema: Joi.ObjectSchema<CommunityMembersQuery> =
       .max(DEFAULT_MAX_SIZE)
       .optional()
       .allow(null)
-      .default(DEFAULT_PAGE_SIZE)
+      .default(DEFAULT_PAGE_SIZE),
+    curation_criteria_id: Joi.string().optional().default(null).allow(null)
   });
 
 export default router;

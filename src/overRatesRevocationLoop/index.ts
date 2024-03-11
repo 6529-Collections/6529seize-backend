@@ -8,9 +8,11 @@ import { ratingsService } from '../rates/ratings.service';
 import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
 import * as sentryContext from '../sentry.context';
 import {
+  CommunityMemberView,
   ProfileFullView,
   WalletConsolidationKeyView
 } from '../entities/ICommunityMember';
+import { CommunityMembersCurationCriteriaEntity } from '../entities/ICommunityMembersCurationCriteriaEntity';
 
 const logger = Logger.get('OVER_RATES_REVOCATION_LOOP');
 
@@ -24,7 +26,9 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     Rating,
     AbusivenessDetectionResult,
     ProfileFullView,
-    WalletConsolidationKeyView
+    WalletConsolidationKeyView,
+    CommunityMemberView,
+    CommunityMembersCurationCriteriaEntity
   ]);
   await ratingsService.reduceOverRates();
   await unload();

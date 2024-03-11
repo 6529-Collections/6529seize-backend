@@ -20,7 +20,10 @@ export const ABUSIVENESS_DETECTION_RESULTS_TABLE =
   'abusiveness_detection_results';
 export const CIC_STATEMENTS_TABLE = 'cic_statements';
 export const COMMUNITY_MEMBERS_TABLE = 'community_members';
+export const COMMUNITY_MEMBERS_CURATION_CRITERIA_TABLE =
+  'community_members_curation_criteria';
 export const WALLETS_CONSOLIDATION_KEYS_VIEW = 'wallet_consolidation_key';
+export const ALL_COMMUNITY_MEMBERS_VIEW = 'all_community_members';
 export const PROFILE_FULL = 'profile_full';
 export const PROFILES_TABLE = 'profiles';
 export const PROFILES_ACTIVITY_LOGS_TABLE = 'profile_activity_logs';
