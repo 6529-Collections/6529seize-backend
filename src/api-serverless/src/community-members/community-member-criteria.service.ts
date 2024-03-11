@@ -29,7 +29,7 @@ export interface ChangeCommunityMembersCurationCriteriaVisibility {
 }
 
 export class CommunityMemberCriteriaService {
-  public static GENERATED_VIEW = 'community_search_view';
+  public static readonly GENERATED_VIEW = 'community_search_view';
 
   constructor(
     private readonly communityMemberCriteriaDb: CommunityMemberCriteriaDb
@@ -199,6 +199,106 @@ export class CommunityMemberCriteriaService {
       : null;
 
     const params: Record<string, any> = {};
+    const repPart = this.getRepPart(criteria, params);
+    const cicPart = this.getCicPart(criteria, params, repPart);
+    const cmPart = this.getGeneralPart(repPart, cicPart, criteria, params);
+    const sql = `with ${repPart ?? ''}${cicPart ?? ''}${cmPart}`;
+
+    return {
+      sql,
+      params
+    };
+  }
+
+  private getGeneralPart(
+    repPart: string | null,
+    cicPart: string | null,
+    criteria: CommunityMembersCurationCriteria,
+    params: Record<string, any>
+  ) {
+    let cmPart = ` ${repPart || cicPart ? ',' : ''}
+    ${
+      CommunityMemberCriteriaService.GENERATED_VIEW
+    } as (select a.* from ${ALL_COMMUNITY_MEMBERS_VIEW} a
+    `;
+    if (repPart !== null) {
+      cmPart += `join rep_exchanges on a.profile_id = rep_exchanges.profile_id `;
+    }
+    if (cicPart !== null) {
+      cmPart += `join cic_exchanges on a.profile_id = cic_exchanges.profile_id `;
+    }
+    cmPart += `where true `;
+    if (criteria.tdh.min !== null) {
+      cmPart += `and a.tdh >= :tdh_min `;
+      params.tdh_min = criteria.tdh.min;
+    }
+    if (criteria.tdh.max !== null) {
+      cmPart += `and a.tdh <= :tdh_max `;
+      params.tdh_max = criteria.tdh.max;
+    }
+    if (criteria.level.min !== null) {
+      cmPart += `and a.level >= :level_min `;
+      params.level_min = criteria.level.min;
+    }
+    if (criteria.level.max !== null) {
+      cmPart += `and a.level <= :level_max `;
+      params.level_max = criteria.level.max;
+    }
+    cmPart += ') ';
+    return cmPart;
+  }
+
+  private getCicPart(
+    criteria: CommunityMembersCurationCriteria,
+    params: Record<string, any>,
+    repPart: string | null
+  ) {
+    const cicCriteria = criteria.cic;
+    let cicPart = null;
+    if (cicCriteria.user || cicCriteria.min || cicCriteria.max) {
+      const direction = cicCriteria.user
+        ? cicCriteria.direction ?? FilterDirection.RECEIVED
+        : FilterDirection.RECEIVED;
+      if (cicCriteria.user) {
+        params.cic_user = cicCriteria.user;
+      }
+      let groupedCicQuery;
+      if (cicCriteria.user !== null) {
+        groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${
+          direction === FilterDirection.RECEIVED
+            ? 'matter_target_id'
+            : 'rater_profile_id'
+        } as profile_id, rating from ${RATINGS_TABLE} where matter = 'CIC' and ${
+          direction === FilterDirection.RECEIVED
+            ? 'rater_profile_id'
+            : 'matter_target_id'
+        } = :cic_user)`;
+        params.cic_user = cicCriteria.user;
+      } else {
+        groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${
+          direction === FilterDirection.RECEIVED
+            ? 'matter_target_id'
+            : 'rater_profile_id'
+        } as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' group by 1)`;
+      }
+      cicPart = `${groupedCicQuery}, cic_exchanges as (select profile_id from grouped_cics where true `;
+      if (cicCriteria.max !== null) {
+        cicPart += `and rating <= :cic_amount_max `;
+        params.cic_amount_max = cicCriteria.max;
+      }
+      if (cicCriteria.min !== null) {
+        cicPart += `and rating >= :cic_amount_min `;
+        params.cic_amount_min = cicCriteria.min;
+      }
+      cicPart += `) `;
+    }
+    return cicPart;
+  }
+
+  private getRepPart(
+    criteria: CommunityMembersCurationCriteria,
+    params: Record<string, any>
+  ) {
     let repPart = null;
     const repCriteria = criteria.rep;
     if (
@@ -261,80 +361,7 @@ export class CommunityMemberCriteriaService {
       }
       repPart += `) `;
     }
-    const cicCriteria = criteria.cic;
-    let cicPart = null;
-    if (cicCriteria.user || cicCriteria.min || cicCriteria.max) {
-      const direction = cicCriteria.user
-        ? cicCriteria.direction ?? FilterDirection.RECEIVED
-        : FilterDirection.RECEIVED;
-      if (cicCriteria.user) {
-        params.cic_user = cicCriteria.user;
-      }
-      let groupedCicQuery;
-      if (cicCriteria.user !== null) {
-        groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${
-          direction === FilterDirection.RECEIVED
-            ? 'matter_target_id'
-            : 'rater_profile_id'
-        } as profile_id, rating from ${RATINGS_TABLE} where matter = 'CIC' and ${
-          direction === FilterDirection.RECEIVED
-            ? 'rater_profile_id'
-            : 'matter_target_id'
-        } = :cic_user)`;
-        params.cic_user = cicCriteria.user;
-      } else {
-        groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${
-          direction === FilterDirection.RECEIVED
-            ? 'matter_target_id'
-            : 'rater_profile_id'
-        } as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' group by 1)`;
-      }
-      cicPart = `${groupedCicQuery}, cic_exchanges as (select profile_id from grouped_cics where true `;
-      if (cicCriteria.max !== null) {
-        cicPart += `and rating <= :cic_amount_max `;
-        params.cic_amount_max = cicCriteria.max;
-      }
-      if (cicCriteria.min !== null) {
-        cicPart += `and rating >= :cic_amount_min `;
-        params.cic_amount_min = cicCriteria.min;
-      }
-      cicPart += `) `;
-    }
-    let cmPart = ` ${repPart || cicPart ? ',' : ''}
-    ${
-      CommunityMemberCriteriaService.GENERATED_VIEW
-    } as (select a.* from ${ALL_COMMUNITY_MEMBERS_VIEW} a
-    `;
-    if (repPart !== null) {
-      cmPart += `join rep_exchanges on a.profile_id = rep_exchanges.profile_id `;
-    }
-    if (cicPart !== null) {
-      cmPart += `join cic_exchanges on a.profile_id = cic_exchanges.profile_id `;
-    }
-    cmPart += `where true `;
-    if (criteria.tdh.min !== null) {
-      cmPart += `and a.tdh >= :tdh_min `;
-      params.tdh_min = criteria.tdh.min;
-    }
-    if (criteria.tdh.max !== null) {
-      cmPart += `and a.tdh <= :tdh_max `;
-      params.tdh_max = criteria.tdh.max;
-    }
-    if (criteria.level.min !== null) {
-      cmPart += `and a.level >= :level_min `;
-      params.level_min = criteria.level.min;
-    }
-    if (criteria.level.max !== null) {
-      cmPart += `and a.level <= :level_max `;
-      params.level_max = criteria.level.max;
-    }
-    cmPart += ') ';
-    const sql = `with ${repPart ?? ''}${cicPart ?? ''}${cmPart}`;
-
-    return {
-      sql,
-      params
-    };
+    return repPart;
   }
 
   async searchCriteria(

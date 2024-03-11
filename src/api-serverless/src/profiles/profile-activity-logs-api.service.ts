@@ -31,21 +31,21 @@ export class ProfileActivityLogsApiService {
     private readonly profilesDb: ProfilesDb
   ) {}
 
-  private prepSearchParams(
-    order: 'desc' | 'asc',
-    pageRequest: PageRequest,
-    includeProfileIdToIncoming: boolean,
-    profileId: string | undefined,
-    targetId: string | undefined,
-    logType: ProfileActivityLogType[] | undefined,
-    ratingMatter: string | undefined,
-    curationsCriteriaId: string | null
-  ) {
+  async getProfileActivityLogsFiltered({
+    profileId,
+    order,
+    pageRequest,
+    includeProfileIdToIncoming,
+    ratingMatter,
+    targetId,
+    logType,
+    curation_criteria_id
+  }: ProfileActivityLogsSearchRequest): Promise<Chunk<ApiProfileActivityLog>> {
     const params: ProfileLogSearchParams = {
       order,
       pageRequest,
       includeProfileIdToIncoming,
-      curation_criteria_id: curationsCriteriaId ?? null
+      curation_criteria_id: curation_criteria_id ?? null
     };
 
     if (profileId) {
@@ -62,29 +62,6 @@ export class ProfileActivityLogsApiService {
         params.rating_matter = ratingMatter as RateMatter;
       }
     }
-    return params;
-  }
-
-  async getProfileActivityLogsFiltered({
-    profileId,
-    order,
-    pageRequest,
-    includeProfileIdToIncoming,
-    ratingMatter,
-    targetId,
-    logType,
-    curation_criteria_id
-  }: ProfileActivityLogsSearchRequest): Promise<Chunk<ApiProfileActivityLog>> {
-    const params = this.prepSearchParams(
-      order,
-      pageRequest,
-      includeProfileIdToIncoming,
-      profileId,
-      targetId,
-      logType,
-      ratingMatter,
-      curation_criteria_id ?? null
-    );
     const foundLogs = await this.profileActivityLogsDb.searchLogs({
       ...params,
       pageRequest: {
