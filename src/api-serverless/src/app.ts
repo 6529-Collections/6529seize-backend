@@ -55,7 +55,7 @@ import {
   TDH_SORT,
   TRANSACTION_FILTERS
 } from './api-filters';
-import { parseTdhResults } from '../../sql_helpers';
+import { parseTdhDataFromDB, parseTdhResultsFromDB } from '../../sql_helpers';
 
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
@@ -588,7 +588,7 @@ loadApi().then(() => {
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
     db.fetchGradientTdh(pageSize, page).then((result) => {
-      result = parseTdhResults(result);
+      result = parseTdhResultsFromDB(result);
       returnPaginatedResult(result, req, res);
     });
   });
@@ -637,7 +637,7 @@ loadApi().then(() => {
       sort,
       sortDir
     ).then((result) => {
-      result = parseTdhResults(result);
+      result = parseTdhResultsFromDB(result);
       returnPaginatedResult(result, req, res);
     });
   });
@@ -675,7 +675,7 @@ loadApi().then(() => {
         sort,
         sortDir
       ).then((result) => {
-        result = parseTdhResults(result);
+        result = parseTdhResultsFromDB(result);
         returnPaginatedResult(result, req, res);
       });
     }
@@ -721,7 +721,7 @@ loadApi().then(() => {
       hideMuseum,
       hideTeam
     ).then((result) => {
-      result = parseTdhResults(result);
+      result = parseTdhResultsFromDB(result);
       returnPaginatedResult(result, req, res);
     });
   });
@@ -790,7 +790,7 @@ loadApi().then(() => {
           }
         });
       } else {
-        result = parseTdhResults(result);
+        result = parseTdhResultsFromDB(result);
       }
       if (downloadAll || downloadPage) {
         returnCSVResult('consolidated_owner_metrics', result.data, res);
@@ -807,26 +807,7 @@ loadApi().then(() => {
       db.fetchConsolidatedOwnerMetricsForKey(consolidationKey).then(
         async (d) => {
           if (d) {
-            if (d.wallets) {
-              if (!Array.isArray(d.wallets)) {
-                d.wallets = JSON.parse(d.wallets);
-              }
-            }
-            if (d.memes) {
-              d.memes = JSON.parse(d.memes);
-            }
-            if (d.memes_ranks) {
-              d.memes_ranks = JSON.parse(d.memes_ranks);
-            }
-            if (d.gradients) {
-              d.gradients = JSON.parse(d.gradients);
-            }
-            if (d.gradients_ranks) {
-              d.gradients_ranks = JSON.parse(d.gradients_ranks);
-            }
-            if (d.boost_breakdown) {
-              d.boost_breakdown = JSON.parse(d.boost_breakdown);
-            }
+            d = parseTdhDataFromDB(d);
             mcache.put(cacheKey(req), d, CACHE_TIME_MS);
             returnJsonResult(d, req, res);
           } else {
@@ -913,20 +894,7 @@ loadApi().then(() => {
           }
         });
       } else {
-        result.data.map((d: any) => {
-          if (d.memes) {
-            d.memes = JSON.parse(d.memes);
-          }
-          if (d.memes_ranks) {
-            d.memes_ranks = JSON.parse(d.memes_ranks);
-          }
-          if (d.gradients) {
-            d.gradients = JSON.parse(d.gradients);
-          }
-          if (d.gradients_ranks) {
-            d.gradients_ranks = JSON.parse(d.gradients_ranks);
-          }
-        });
+        result = parseTdhResultsFromDB(result);
       }
       if (downloadAll || downloadPage) {
         returnCSVResult('consolidated_owner_metrics', result.data, res);

@@ -72,7 +72,7 @@ import {
   formatAddress,
   isNullAddress
 } from './helpers';
-import { getConsolidationsSql } from './sql_helpers';
+import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { NextGenTokenTDH } from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { Profile } from './entities/IProfile';
@@ -910,12 +910,35 @@ async function persistTdhUploadByTable(
   logger.info(`[TDH UPLOAD IN ${table} PERSISTED]`);
 }
 
-export async function persistTDH(block: number, timestamp: Date, tdh: TDH[]) {
+export async function persistTDH(
+  block: number,
+  timestamp: Date,
+  tdh: TDH[],
+  wallets?: string[]
+) {
   logger.info(`[TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
 
   await AppDataSource.transaction(async (manager) => {
     const repo = manager.getRepository(TDH);
-    await repo.delete({ block: block });
+    if (wallets && wallets.length > 0) {
+      logger.info(`[TDH] [DELETING ${wallets.length} WALLETS]`);
+      await Promise.all(
+        wallets.map(async (wallet) => {
+          repo
+            .createQueryBuilder()
+            .delete()
+            .where('LOWER(wallet) = :wallet AND block = :block ', {
+              wallet: wallet.toLowerCase(),
+              block: block
+            })
+            .execute();
+        })
+      );
+    } else {
+      logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
+      await repo.delete({ block: block });
+    }
+
     await repo.save(tdh);
     await manager.query(
       `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block_number=?, timestamp=?`,
@@ -1062,9 +1085,8 @@ export async function fetchTDHForBlock(block: number) {
   const results = await sqlExecutor.execute(sql, {
     block: block
   });
-  results.map((r: any) => (r.memes = JSON.parse(r.memes)));
-  results.map((r: any) => (r.gradients = JSON.parse(r.gradients)));
-  return results;
+  const parsed = results.map((r: any) => parseTdhDataFromDB(r));
+  return parsed;
 }
 
 export async function persistRoyaltiesUpload(date: Date, url: string) {

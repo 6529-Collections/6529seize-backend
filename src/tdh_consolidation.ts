@@ -1,5 +1,6 @@
 import { ConsolidatedTDH, TDHENS } from './entities/ITDH';
 import {
+  fetchAllConsolidatedTdh,
   fetchAllNFTs,
   fetchAllTDH,
   fetchConsolidationDisplay,
@@ -382,20 +383,41 @@ export const consolidateTDH = async (
     consolidatedBoostedTdh.push(...missingConsolidatedTdh);
   }
 
+  let rankedTdh;
   if (startingWallets) {
-    await persistConsolidatedTDH(consolidatedBoostedTdh, startingWallets);
-    logger.info(`[FINAL ENTRIES ${consolidatedBoostedTdh.length}]`);
+    const allCurrentTdh = await fetchAllConsolidatedTdh();
+    const allTdh = allCurrentTdh
+      .filter(
+        (t: ConsolidatedTDH) =>
+          !startingWallets.some((sw) =>
+            t.wallets.some((tw: string) => areEqualAddresses(tw, sw))
+          )
+      )
+      .concat(consolidatedBoostedTdh);
+    const allRankedTdh = await calculateRanks(
+      allGradientsTDH,
+      allNextgenTDH,
+      allTdh,
+      ADJUSTED_NFTS,
+      NEXTGEN_NFTS
+    );
+    rankedTdh = allRankedTdh.filter((t: ConsolidatedTDH) =>
+      startingWallets.some((sw) =>
+        t.wallets.some((tw: string) => areEqualAddresses(tw, sw))
+      )
+    );
   } else {
-    const sortedConsolidatedTdh = await calculateRanks(
+    rankedTdh = await calculateRanks(
       allGradientsTDH,
       allNextgenTDH,
       consolidatedBoostedTdh,
       ADJUSTED_NFTS,
       NEXTGEN_NFTS
     );
-    await persistConsolidatedTDH(sortedConsolidatedTdh);
-    logger.info(`[FINAL ENTRIES ${sortedConsolidatedTdh.length}]`);
   }
+
+  await persistConsolidatedTDH(rankedTdh, startingWallets);
+  logger.info(`[FINAL ENTRIES ${rankedTdh.length}]`);
 };
 
 function consolidateCards(consolidationTokens: any[], walletTokens: any[]) {
