@@ -23,6 +23,7 @@ import {
   fetchAllProfiles,
   fetchHasEns,
   fetchLatestTransactionsBlockNumber,
+  fetchTDHForBlock,
   fetchWalletTransactions,
   persistTDH,
   retrieveWalletConsolidations
@@ -109,7 +110,10 @@ export function createMemesData() {
   };
 }
 
-export const findTDH = async (lastTDHCalc: Date) => {
+export const findTDH = async (
+  lastTDHCalc: Date,
+  startingWallets?: string[]
+) => {
   alchemy = new Alchemy({
     ...ALCHEMY_SETTINGS,
     apiKey: process.env.ALCHEMY_API_KEY
@@ -117,22 +121,33 @@ export const findTDH = async (lastTDHCalc: Date) => {
 
   const block = await fetchLatestTransactionsBlockNumber(lastTDHCalc);
   const nfts: NFT[] = await fetchAllNFTs();
-  const owners: { wallet: string }[] = await fetchAllOwnersAddresses();
+
   const consolidationAddresses = await fetchAllConsolidationAddresses();
 
   const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
   const nextgenNetwork = getNextgenNetwork();
   const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[nextgenNetwork];
 
-  const combinedAddresses = owners
-    .concat(consolidationAddresses)
-    .concat(NEXTGEN_NFTS.map((nft) => ({ wallet: nft.owner })))
-    .filter(
-      (value, index, self) =>
-        self.findIndex((item) =>
-          areEqualAddresses(item.wallet, value.wallet)
-        ) === index
+  let combinedAddresses: string[];
+  if (startingWallets) {
+    combinedAddresses = startingWallets;
+    logger.info(`[STARTING UNIQUE WALLETS ${combinedAddresses.length}]`);
+  } else {
+    const owners: { wallet: string }[] = await fetchAllOwnersAddresses();
+    combinedAddresses = owners
+      .concat(consolidationAddresses)
+      .concat(NEXTGEN_NFTS.map((nft) => ({ wallet: nft.owner })))
+      .filter(
+        (value, index, self) =>
+          self.findIndex((item) =>
+            areEqualAddresses(item.wallet, value.wallet)
+          ) === index
+      )
+      .map((o) => o.wallet);
+    logger.info(
+      `[OWNER UNIQUE WALLETS ${owners.length}] : [CONSOLIDATIONS UNIQUE WALLETS ${consolidationAddresses.length}] : [COMBINED UNIQUE WALLETS ${combinedAddresses.length}]`
     );
+  }
 
   const ADJUSTED_NFTS = [...nfts].filter(
     (nft) =>
@@ -143,8 +158,6 @@ export const findTDH = async (lastTDHCalc: Date) => {
   const MEMES_COUNT = [...ADJUSTED_NFTS].filter((nft) =>
     areEqualAddresses(nft.contract, MEMES_CONTRACT)
   ).length;
-
-  const walletsTDH: TDH[] = [];
 
   const timestamp = new Date(
     (await alchemy.core.getBlock(block)).timestamp * 1000
@@ -158,15 +171,12 @@ export const findTDH = async (lastTDHCalc: Date) => {
     }] : [NEXTGEN NETWORK ${nextgenNetwork}] : [CALCULATING TDH - START]`
   );
 
-  logger.info(
-    `[OWNER UNIQUE WALLETS ${owners.length}] : [CONSOLIDATIONS UNIQUE WALLETS ${consolidationAddresses.length}] : [COMBINED UNIQUE WALLETS ${combinedAddresses.length}]`
-  );
-
+  const walletsTDH: TDH[] = [];
   const allGradientsTDH: any[] = [];
   const allNextgenTDH: any[] = [];
   await Promise.all(
     combinedAddresses.map(async (owner) => {
-      const wallet = owner.wallet.toLowerCase();
+      const wallet = owner.toLowerCase();
       const consolidations = await retrieveWalletConsolidations(wallet);
 
       const walletMemes: any[] = [];
@@ -423,29 +433,50 @@ export const findTDH = async (lastTDHCalc: Date) => {
   );
 
   logger.info(
-    `[BLOCK ${block}] [WALLETS ${walletsTDH.length}] [CALCULATING RANKS]`
+    `[BLOCK ${block}] [WALLETS ${walletsTDH.length}] [CALCULATING BOOSTS]`
   );
 
   const boostedTdh = await calculateBoosts(walletsTDH);
 
-  const sortedTdh = await calculateRanks(
-    allGradientsTDH,
-    allNextgenTDH,
-    boostedTdh,
-    ADJUSTED_NFTS,
-    NEXTGEN_NFTS
-  );
+  let rankedTdh;
+  if (startingWallets) {
+    const allCurrentTdh = await fetchTDHForBlock(block);
+    const allTdh = allCurrentTdh
+      .filter(
+        (t: TDH) =>
+          !startingWallets.some((sw) => areEqualAddresses(sw, t.wallet))
+      )
+      .concat(boostedTdh);
+    const allRankedTdh = await calculateRanks(
+      allGradientsTDH,
+      allNextgenTDH,
+      allTdh,
+      ADJUSTED_NFTS,
+      NEXTGEN_NFTS
+    );
+    rankedTdh = allRankedTdh.filter((t: TDH) =>
+      startingWallets.some((sw) => areEqualAddresses(sw, t.wallet))
+    );
+  } else {
+    rankedTdh = await calculateRanks(
+      allGradientsTDH,
+      allNextgenTDH,
+      boostedTdh,
+      ADJUSTED_NFTS,
+      NEXTGEN_NFTS
+    );
+  }
 
   logger.info(
-    `[BLOCK ${block}] [WALLETS ${sortedTdh.length}] [CALCULATING TDH - END]`
+    `[BLOCK ${block}] [WALLETS ${rankedTdh.length}] [CALCULATING TDH - END]`
   );
 
-  await persistTDH(block, timestamp, sortedTdh);
+  await persistTDH(block, timestamp, rankedTdh, startingWallets);
 
   return {
     block: block,
     timestamp: timestamp,
-    tdh: sortedTdh
+    tdh: rankedTdh
   };
 };
 
