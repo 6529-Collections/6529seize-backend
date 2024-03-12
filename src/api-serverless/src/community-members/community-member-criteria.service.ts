@@ -15,6 +15,8 @@ import { uniqueShortId } from '../../../helpers';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { ApiCommunityMembersCurationCriteria } from './api-community-members-curation-criteria';
+import { ProfileMin } from '../../../profiles/profile-min';
 
 export type NewCommunityMembersCurationCriteria = Omit<
   CommunityMembersCurationCriteriaEntity,
@@ -38,7 +40,7 @@ export class CommunityMemberCriteriaService {
   async saveCurationCriteria(
     criteria: NewCommunityMembersCurationCriteria,
     createdBy: string
-  ): Promise<CommunityMembersCurationCriteriaEntity> {
+  ): Promise<ApiCommunityMembersCurationCriteria> {
     const savedEntity =
       await this.communityMemberCriteriaDb.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -72,7 +74,7 @@ export class CommunityMemberCriteriaService {
     old_version_id,
     visible,
     profile_id
-  }: ChangeCommunityMembersCurationCriteriaVisibility): Promise<CommunityMembersCurationCriteriaEntity> {
+  }: ChangeCommunityMembersCurationCriteriaVisibility): Promise<ApiCommunityMembersCurationCriteria> {
     const updatedCriteriaEntity =
       await this.communityMemberCriteriaDb.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -86,25 +88,27 @@ export class CommunityMemberCriteriaService {
             const oldCriteriaEntity = await this.getCriteriaByIdOrThrow(
               old_version_id
             );
-            if (oldCriteriaEntity.created_by !== profile_id) {
+            if (oldCriteriaEntity.created_by?.id !== profile_id) {
               throw new BadRequestException(
                 `You are not allowed to change criteria ${old_version_id}. You can save a new one instead.`
               );
             }
-            await this.communityMemberCriteriaDb.changeCriteriaVisibility(
+            await this.communityMemberCriteriaDb.deleteCriteria(
               old_version_id,
-              false,
               connection
             );
           }
-          if (criteriaEntity.created_by !== profile_id) {
+          if (criteriaEntity.created_by?.id !== profile_id) {
             throw new BadRequestException(
               `You are not allowed to change criteria ${criteria_id}. You can save a new one instead.`
             );
           }
-          await this.communityMemberCriteriaDb.changeCriteriaVisibility(
-            criteria_id,
-            visible,
+          await this.communityMemberCriteriaDb.changeCriteriaVisibilityAndSetId(
+            {
+              currentId: criteria_id,
+              newId: old_version_id,
+              visibility: visible
+            },
             connection
           );
           return await this.getCriteriaByIdOrThrow(criteria_id, connection);
@@ -117,7 +121,7 @@ export class CommunityMemberCriteriaService {
   public async getCriteriaByIdOrThrow(
     id: string,
     connection?: ConnectionWrapper<any>
-  ): Promise<CommunityMembersCurationCriteriaEntity> {
+  ): Promise<ApiCommunityMembersCurationCriteria> {
     const criteria = await this.communityMemberCriteriaDb.getById(
       id,
       connection
@@ -125,7 +129,7 @@ export class CommunityMemberCriteriaService {
     if (!criteria) {
       throw new NotFoundException(`Criteria with id ${id} not found`);
     }
-    return criteria;
+    return (await this.mapCriteriaForApi([criteria])).at(0)!;
   }
 
   public async getSqlAndParamsByCriteriaId(criteriaId: string | null): Promise<{
@@ -367,11 +371,29 @@ export class CommunityMemberCriteriaService {
   async searchCriteria(
     curationCriteriaName: string | null,
     curationCriteriaUserId: string | null
-  ): Promise<CommunityMembersCurationCriteriaEntity[]> {
-    return await this.communityMemberCriteriaDb.searchCriteria(
+  ): Promise<ApiCommunityMembersCurationCriteria[]> {
+    const criteria = await this.communityMemberCriteriaDb.searchCriteria(
       curationCriteriaName,
       curationCriteriaUserId
     );
+    return await this.mapCriteriaForApi(criteria);
+  }
+
+  private async mapCriteriaForApi(
+    criteria: CommunityMembersCurationCriteriaEntity[]
+  ): Promise<ApiCommunityMembersCurationCriteria[]> {
+    const relatedProfiles = await profilesService
+      .getProfileMinsByIds(criteria.map((it) => it.created_by))
+      .then((res) =>
+        res.reduce((acc, it) => {
+          acc[it.id] = it;
+          return acc;
+        }, {} as Record<string, ProfileMin>)
+      );
+    return criteria.map((it) => ({
+      ...it,
+      created_by: relatedProfiles[it.created_by] ?? null
+    }));
   }
 }
 

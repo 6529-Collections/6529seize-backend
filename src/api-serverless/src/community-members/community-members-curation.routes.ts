@@ -13,12 +13,12 @@ import {
 import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { profilesService } from '../../../profiles/profiles.service';
 import { ForbiddenException } from '../../../exceptions';
-import { CommunityMembersCurationCriteriaEntity } from '../../../entities/ICommunityMembersCurationCriteriaEntity';
 import {
   ChangeCommunityMembersCurationCriteriaVisibility,
   communityMemberCriteriaService,
   NewCommunityMembersCurationCriteria
 } from './community-member-criteria.service';
+import { ApiCommunityMembersCurationCriteria } from './api-community-members-curation-criteria';
 
 const router = asyncRouter();
 
@@ -32,7 +32,7 @@ router.get(
       any,
       any
     >,
-    res: Response<ApiResponse<CommunityMembersCurationCriteriaEntity[]>>
+    res: Response<ApiResponse<ApiCommunityMembersCurationCriteria[]>>
   ) => {
     const curationCriteriaName = req.query.curation_criteria_name ?? null;
     let curationCriteriaUserId: string | null = null;
@@ -55,7 +55,7 @@ router.get(
   '/:criteria_id',
   async (
     req: Request<any, any, any, any, any>,
-    res: Response<ApiResponse<CommunityMembersCurationCriteriaEntity>>
+    res: Response<ApiResponse<ApiCommunityMembersCurationCriteria>>
   ) => {
     const response =
       await communityMemberCriteriaService.getCriteriaByIdOrThrow(
@@ -70,7 +70,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<any, any, NewCommunityMembersCurationCriteria, any, any>,
-    res: Response<ApiResponse<CommunityMembersCurationCriteriaEntity>>
+    res: Response<ApiResponse<ApiCommunityMembersCurationCriteria>>
   ) => {
     const criteria = getValidatedByJoiOrThrow(
       req.body,
@@ -103,7 +103,7 @@ router.post(
       any,
       any
     >,
-    res: Response<ApiResponse<CommunityMembersCurationCriteriaEntity>>
+    res: Response<ApiResponse<ApiCommunityMembersCurationCriteria>>
   ) => {
     const savingProfileId = await profilesService
       .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(

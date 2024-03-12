@@ -49,34 +49,52 @@ export class CommunityMemberCriteriaDb extends LazyDbAccessCompatibleService {
       .then((res) => (res.length ? this.toEntity(res[0]) : null));
   }
 
-  async changeCriteriaVisibility(
-    id: string,
-    visibility: boolean,
+  async changeCriteriaVisibilityAndSetId(
+    {
+      currentId,
+      newId,
+      visibility
+    }: { currentId: string; newId: string | null; visibility: boolean },
     connection: ConnectionWrapper<any>
   ) {
     await this.db.execute(
-      `update ${COMMUNITY_MEMBERS_CURATION_CRITERIA_TABLE} set visible = :visible where id = :id`,
-      { id, visible: visibility },
+      `update ${COMMUNITY_MEMBERS_CURATION_CRITERIA_TABLE} set visible = :visible where id = :currentId`,
+      { currentId, visible: visibility },
       { wrappedConnection: connection }
     );
+    if (newId) {
+      await this.db.execute(
+        `update ${COMMUNITY_MEMBERS_CURATION_CRITERIA_TABLE} set id = :newId where id = :currentId`,
+        { currentId, newId, visible: visibility },
+        { wrappedConnection: connection }
+      );
+    }
   }
 
   async searchCriteria(
     curationCriteriaName: string | null,
     curationCriteriaUserId: string | null
   ): Promise<CommunityMembersCurationCriteriaEntity[]> {
-    let sql = `select * from ${COMMUNITY_MEMBERS_CURATION_CRITERIA_TABLE} where 1=1 `;
+    let sql = `select * from ${COMMUNITY_MEMBERS_CURATION_CRITERIA_TABLE} where visible is true `;
     const params: Record<string, any> = {};
     if (curationCriteriaName) {
-      sql += ` and name like :name `;
-      params.name = `${curationCriteriaName}%`;
+      sql += ` and name like :crit_name `;
+      params.crit_name = `%${curationCriteriaName}%`;
     }
     if (curationCriteriaUserId) {
       sql += ` and created_by = :created_by `;
       params.created_by = curationCriteriaUserId;
     }
     sql += ` order by name limit 20`;
-    return this.db.execute(sql).then((res) => res.map(this.toEntity));
+    return this.db.execute(sql, params).then((res) => res.map(this.toEntity));
+  }
+
+  async deleteCriteria(id: string, connection: ConnectionWrapper<any>) {
+    await this.db.execute(
+      `delete from ${COMMUNITY_MEMBERS_CURATION_CRITERIA_TABLE} where id = :id`,
+      { id },
+      { wrappedConnection: connection }
+    );
   }
 }
 
