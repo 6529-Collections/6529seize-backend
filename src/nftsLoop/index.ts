@@ -6,19 +6,20 @@ import { MemesExtendedData, NFT } from '../entities/INFT';
 import { Owner } from '../entities/IOwner';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
+import { MemesSeason } from '../entities/ISeason';
 
 const logger = Logger.get('NFTS_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   logger.info(`[RUNNING]`);
-  await loadEnv([NFT, Owner, MemesExtendedData]);
+  await loadEnv([NFT, Owner, MemesExtendedData, MemesSeason]);
   await nftsLoop();
   await unload();
   logger.info(`[COMPLETE]`);
 });
 
 async function nftsLoop() {
-  await nfts();
-  await findOwners();
+  // await nfts();
+  // await findOwners();
   await findMemesExtendedData();
 }

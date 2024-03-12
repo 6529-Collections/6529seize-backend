@@ -51,6 +51,17 @@ export const LISTENER_PROCESSED_EVENTS_TABLE = 'listener_processed_events';
 export const CIC_SCORE_AGGREGATIONS_TABLE = 'cic_score_aggregations';
 export const PROFILE_TOTAL_REP_SCORE_AGGREGATIONS_TABLE =
   'profile_total_rep_score_aggregations';
+export const MEMES_SEASONS_TABLE = 'memes_seasons';
+export const OWNERS_ACTIVITY_TABLE = 'owners_activity';
+export const CONSOLIDATED_OWNERS_ACTIVITY_TABLE =
+  'owners_activity_consolidation';
+export const OWNERS_BALANCES_TABLE = 'owners_balances';
+export const OWNERS_BALANCES_MEMES_TABLE = 'owners_balances_memes';
+export const CONSOLIDATED_OWNERS_BALANCES_TABLE =
+  'owners_balances_consolidation';
+export const CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE =
+  'owners_balances_memes_consolidation';
+
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
 export const GRADIENT_CONTRACT = '0x0c58ef43ff3032005e472cb5709f8908acb00205';
 export const MEMELAB_CONTRACT = '0x4db52a61dc491e15a2f78f5ac001c14ffe3568cb';

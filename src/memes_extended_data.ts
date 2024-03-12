@@ -10,9 +10,11 @@ import { areEqualAddresses, isNullAddress } from './helpers';
 import {
   fetchAllOwners,
   fetchNftsForContract,
-  persistMemesExtendedData
+  persistMemesExtendedData,
+  persistMemesSeasons
 } from './db';
 import { Logger } from './logging';
+import { MemesSeason } from './entities/ISeason';
 
 const logger = Logger.get('MEMES_EXTENDED_DATA');
 
@@ -25,6 +27,7 @@ export const findMemesExtendedData = async () => {
   logger.info(`[NFTS ${nfts.length}]`);
 
   const memesMeta: MemesExtendedData[] = [];
+  const seasons: Set<number> = new Set();
 
   nfts.forEach((nft) => {
     const allTokenWallets = [...owners].filter(
@@ -77,6 +80,9 @@ export const findMemesExtendedData = async () => {
     const meme_name = nft.metadata.attributes.find(
       (a: any) => a.trait_type === 'Meme Name'
     )?.value;
+
+    seasons.add(season);
+
     const meta: MemesExtendedData = {
       id: nft.id,
       created_at: new Date(),
@@ -196,7 +202,23 @@ export const findMemesExtendedData = async () => {
       }).length + 1;
   });
 
+  const memesSeasons: MemesSeason[] = [];
+  seasons.forEach((s) => {
+    const seasonMemes = memesMeta.filter((m) => m.season == s);
+    const season: MemesSeason = {
+      id: s,
+      created_at: new Date(),
+      start_index: Math.min(...seasonMemes.map((m) => m.id)),
+      end_index: Math.max(...seasonMemes.map((m) => m.id)),
+      count: seasonMemes.length,
+      name: `Season ${s}`,
+      display: `SZN${s}`
+    };
+    memesSeasons.push(season);
+  });
+
   await persistMemesExtendedData(memesMeta);
+  await persistMemesSeasons(memesSeasons);
 
   return memesMeta;
 };

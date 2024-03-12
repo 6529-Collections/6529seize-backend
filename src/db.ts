@@ -25,6 +25,7 @@ import {
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
+  WALLETS_CONSOLIDATION_KEYS_VIEW,
   WALLETS_TDH_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
@@ -81,6 +82,8 @@ import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
 import { profilesService } from './profiles/profiles.service';
 import { synchroniseCommunityMembersTable } from './community-members';
+import { MemesSeason } from './entities/ISeason';
+import { WalletConsolidationKeyView } from './entities/ICommunityMember';
 
 const mysql = require('mysql');
 
@@ -1371,4 +1374,19 @@ export async function persistTDHHistory(tdhHistory: TDHHistory[]) {
 export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
   const globalHistoryRepo = AppDataSource.getRepository(GlobalTDHHistory);
   await globalHistoryRepo.upsert(globalHistory, ['date', 'block']);
+}
+
+export async function persistMemesSeasons(seasons: MemesSeason[]) {
+  await AppDataSource.getRepository(MemesSeason).save(seasons);
+}
+
+export async function fetchAllSeasons() {
+  return AppDataSource.getRepository(MemesSeason).find();
+}
+
+export async function fetchWalletConsolidationKeysView(): Promise<
+  WalletConsolidationKeyView[]
+> {
+  const sql = `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW}`;
+  return await sqlExecutor.execute(sql);
 }
