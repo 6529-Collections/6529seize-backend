@@ -182,7 +182,7 @@ export class CommunityMemberCriteriaService {
           .then((result) => result?.profile?.external_id ?? null)
       )
     );
-    if (userIds.find((it) => it === null)) {
+    if (userIds.some((it) => it === null)) {
       return null;
     }
     const usersToUserIds = filterUsers.reduce((acc, user, index) => {
