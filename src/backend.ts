@@ -1,9 +1,8 @@
 import { Logger } from './logging';
 import { Time } from './time';
+import * as customReplayLoop from './customReplayLoop';
 
 const logger = Logger.get('BACKEND');
-
-import * as customReplayLoop from './customReplayLoop';
 
 async function start() {
   const start = Time.now();

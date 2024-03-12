@@ -1,6 +1,5 @@
 import fetch from 'node-fetch';
 import * as db from '../../db-api';
-import { loadLocalConfig, loadSecrets } from '../../secrets';
 import { isNumber } from '../../helpers';
 
 import profilesRoutes from './profiles/profiles.routes';
@@ -57,6 +56,7 @@ import {
   TRANSACTION_FILTERS
 } from './api-filters';
 import { parseTdhDataFromDB, parseTdhResultsFromDB } from '../../sql_helpers';
+import { loadLocalConfig, loadSecrets } from '../../env';
 
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');

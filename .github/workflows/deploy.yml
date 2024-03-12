@@ -19,6 +19,7 @@ on:
         options:
           - api
           - customReplayLoop
+          - dbMigrationsLoop
           - delegationsLoop
           - discoverEnsLoop
           - marketStatsLoop
@@ -111,6 +112,9 @@ jobs:
           pushd src/nextgenMediaProxyInterceptor
           sh deploy.sh
           popd
+      - name: Run lambda
+        if: github.event.inputs.service == 'dbMigrationsLoop'
+        run: sleep 10 && aws lambda invoke --function-name dbMigrationsLoop out > /dev/null
       - name: Notify about failure
         uses: sarisia/actions-status-discord@v1
         if: failure()
