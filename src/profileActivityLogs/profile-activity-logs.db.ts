@@ -99,6 +99,10 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       sql += ` and JSON_UNQUOTE(JSON_EXTRACT(pa_logs.contents, '$.rating_matter')) = :rating_matter`;
       sqlParams.rating_matter = params.rating_matter;
     }
+    if (params.category) {
+      sql += ` and JSON_UNQUOTE(JSON_EXTRACT(pa_logs.contents, '$.rating_category')) = :rating_category`;
+      sqlParams.rating_category = params.category;
+    }
     if (params.target_id) {
       sql += ` and pa_logs.target_id = :target_id`;
       sqlParams.target_id = params.target_id;
@@ -142,6 +146,10 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       sql += ` and JSON_UNQUOTE(JSON_EXTRACT(pa_logs.contents, '$.rating_matter')) = :rating_matter`;
       sqlParams.rating_matter = params.rating_matter;
     }
+    if (params.category) {
+      sql += ` and JSON_UNQUOTE(JSON_EXTRACT(pa_logs.contents, '$.rating_category')) = :rating_category`;
+      sqlParams.rating_category = params.category;
+    }
     if (params.target_id) {
       sql += ` and pa_logs.target_id = :target_id`;
       sqlParams.target_id = params.target_id;
@@ -169,6 +177,7 @@ export interface ProfileLogSearchParams {
   type?: ProfileActivityLogType[];
   pageRequest: PageRequest;
   includeProfileIdToIncoming: boolean;
+  category?: string;
   order: 'asc' | 'desc';
 }
 

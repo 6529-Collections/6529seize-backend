@@ -21,6 +21,7 @@ export interface ProfileActivityLogsSearchRequest {
   includeProfileIdToIncoming: boolean;
   ratingMatter?: string;
   pageRequest: PageRequest;
+  category?: string;
   order: 'desc' | 'asc';
   curation_criteria_id: string | null;
 }
@@ -39,6 +40,7 @@ export class ProfileActivityLogsApiService {
     ratingMatter,
     targetId,
     logType,
+    category,
     curation_criteria_id
   }: ProfileActivityLogsSearchRequest): Promise<Page<ApiProfileActivityLog>> {
     const params: ProfileLogSearchParams = {
@@ -48,6 +50,9 @@ export class ProfileActivityLogsApiService {
       curation_criteria_id: curation_criteria_id ?? null
     };
 
+    if (category) {
+      params.category = category;
+    }
     if (profileId) {
       params.profile_id = profileId;
     }
