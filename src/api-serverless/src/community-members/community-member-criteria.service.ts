@@ -111,7 +111,10 @@ export class CommunityMemberCriteriaService {
             },
             connection
           );
-          return await this.getCriteriaByIdOrThrow(criteria_id, connection);
+          return await this.getCriteriaByIdOrThrow(
+            old_version_id ?? criteria_id,
+            connection
+          );
         }
       );
     await giveReadReplicaTimeToCatchUp();
