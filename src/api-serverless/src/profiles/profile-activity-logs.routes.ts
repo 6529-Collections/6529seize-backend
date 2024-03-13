@@ -27,6 +27,7 @@ async function getBaseSearchRequest(
       page_size?: string;
       rating_matter?: string;
       include_incoming?: string;
+      category?: string;
     },
     any
   >
@@ -34,6 +35,7 @@ async function getBaseSearchRequest(
   const queryParams = req.query;
   const order = queryParams.order?.toLowerCase() === 'asc' ? 'asc' : 'desc';
   const profile = queryParams.profile;
+  const category = queryParams.category;
   const includeProfileIdToIncoming =
     queryParams.include_incoming?.toLowerCase() === 'true';
   const ratingMatter = queryParams.rating_matter;
@@ -71,6 +73,7 @@ async function getBaseSearchRequest(
     order,
     includeProfileIdToIncoming,
     ratingMatter,
+    category,
     pageRequest: {
       page,
       page_size: size
@@ -97,6 +100,7 @@ router.get(
         page_size?: string;
         rating_matter?: string;
         include_incoming?: string;
+        category?: string;
       },
       any
     >,
