@@ -1,0 +1,1 @@
+drop view if exists all_community_members;
