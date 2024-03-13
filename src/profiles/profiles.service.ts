@@ -835,7 +835,8 @@ export class ProfilesService {
           }),
           cic_rating: cic ?? 0,
           display: member.display,
-          wallet: member.wallet
+          wallet: member.wallet,
+          pfp: member.pfp_url ?? null
         };
       });
     }
@@ -869,6 +870,7 @@ export class ProfilesService {
         level: level,
         cic_rating: cic.cic_rating ?? 0,
         display: display,
+        pfp: profile?.pfp_url ?? null,
         wallet
       }
     ];
@@ -919,6 +921,7 @@ export interface CommunityMemberMinimal {
   readonly level: number;
   readonly cic_rating: number;
   readonly wallet: string;
+  readonly pfp: string | null;
 }
 
 export const profilesService = new ProfilesService(
