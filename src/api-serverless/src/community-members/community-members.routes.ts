@@ -61,7 +61,7 @@ router.get(
       req.query,
       CommunityMembersQuerySchema
     );
-    const response = await communityMembersService.getCommunityMembersChunk(
+    const response = await communityMembersService.getCommunityMembersPage(
       query
     );
     res.send(response);
