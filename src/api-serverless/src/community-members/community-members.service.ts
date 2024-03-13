@@ -9,7 +9,7 @@ import { Page } from '../page-request';
 export class CommunityMembersService {
   constructor(private readonly communityMembersDb: CommunityMembersDb) {}
 
-  async getCommunityMembersChunk(
+  async getCommunityMembersPage(
     query: CommunityMembersQuery
   ): Promise<Page<CommunityMemberOverview>> {
     const [data, count] = await Promise.all([
