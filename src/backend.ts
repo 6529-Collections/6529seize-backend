@@ -1,12 +1,14 @@
 import { Logger } from './logging';
 import { Time } from './time';
 import * as customReplayLoop from './customReplayLoop';
+import * as dbMigrationsLoop from './dbMigrationsLoop';
 
 const logger = Logger.get('BACKEND');
 
 async function start() {
   const start = Time.now();
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
+  await dbMigrationsLoop.handler(null, null as any, null as any);
 
   await customReplayLoop.handler(null, null as any, null as any);
 

@@ -13,7 +13,7 @@ provider:
   timeout: 900
 
 functions:
-  delegationsLoop:
+  dbMigrationsLoop:
     handler: index.handler
     name: dbMigrationsLoop
     description: ${env:VERSION_DESCRIPTION}
