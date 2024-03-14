@@ -353,7 +353,7 @@ export class CommunityMemberCriteriaService {
         } as profile_id, null as matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' group by 1, 2)`;
       }
 
-      repPart = `${groupedRepQuery}, rep_exchanges as (select profile_id from grouped_reps where true `;
+      repPart = `${groupedRepQuery}, rep_exchanges as (select distinct profile_id from grouped_reps where true `;
       if (repCriteria.category !== null) {
         repPart += `and matter_category = :rep_category `;
         params.rep_category = repCriteria.category;
