@@ -42,6 +42,10 @@ router.get(
           req.query.curation_criteria_user
         )
         .then((result) => result?.profile?.external_id ?? null);
+      if (!curationCriteriaUserId) {
+        res.send([]);
+        return;
+      }
     }
     const response = await communityMemberCriteriaService.searchCriteria(
       curationCriteriaName,
