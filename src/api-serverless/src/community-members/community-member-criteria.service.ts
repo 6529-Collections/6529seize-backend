@@ -303,7 +303,7 @@ export class CommunityMemberCriteriaService {
           direction === FilterDirection.RECEIVED
             ? 'matter_target_id'
             : 'rater_profile_id'
-        } as profile_id, rating from ${RATINGS_TABLE} where matter = 'CIC' and ${
+        } as profile_id, rating from ${RATINGS_TABLE} where matter = 'CIC' and rating <> 0 and ${
           direction === FilterDirection.RECEIVED
             ? 'rater_profile_id'
             : 'matter_target_id'
@@ -314,7 +314,7 @@ export class CommunityMemberCriteriaService {
           direction === FilterDirection.RECEIVED
             ? 'matter_target_id'
             : 'rater_profile_id'
-        } as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' group by 1)`;
+        } as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' and rating <> 0 group by 1)`;
       }
       cicPart = `${groupedCicQuery}, cic_exchanges as (select profile_id from grouped_cics where true `;
       if (cicCriteria.max !== null) {
@@ -352,7 +352,7 @@ export class CommunityMemberCriteriaService {
           direction === FilterDirection.RECEIVED
             ? 'matter_target_id'
             : 'rater_profile_id'
-        } as profile_id, matter_category, rating from ${RATINGS_TABLE} where matter = 'REP' and ${
+        } as profile_id, matter_category, rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 and ${
           direction === FilterDirection.RECEIVED
             ? 'rater_profile_id'
             : 'matter_target_id'
@@ -362,7 +362,7 @@ export class CommunityMemberCriteriaService {
           direction === FilterDirection.RECEIVED
             ? 'matter_target_id'
             : 'rater_profile_id'
-        } as profile_id, matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and ${
+        } as profile_id, matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 and ${
           direction === FilterDirection.RECEIVED
             ? 'rater_profile_id'
             : 'matter_target_id'
@@ -370,15 +370,15 @@ export class CommunityMemberCriteriaService {
       } else if (repCriteria.user === null && repCriteria.category !== null) {
         groupedRepQuery = `grouped_reps as (select ${
           direction === FilterDirection.RECEIVED
-            ? 'matter_target_id'
-            : 'rater_profile_id'
-        } as profile_id, matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' group by 1, 2)`;
+            ? 'rater_profile_id'
+            : 'matter_target_id'
+        } as profile_id, matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 group by 1, 2)`;
       } else {
         groupedRepQuery = `grouped_reps as (select ${
           direction === FilterDirection.RECEIVED
             ? 'matter_target_id'
             : 'rater_profile_id'
-        } as profile_id, null as matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' group by 1, 2)`;
+        } as profile_id, null as matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 group by 1, 2)`;
       }
 
       repPart = `${groupedRepQuery}, rep_exchanges as (select distinct profile_id from grouped_reps where true `;
