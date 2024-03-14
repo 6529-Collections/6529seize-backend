@@ -85,7 +85,7 @@ export class CommunityMemberCriteriaDb extends LazyDbAccessCompatibleService {
       sql += ` and created_by = :created_by `;
       params.created_by = curationCriteriaUserId;
     }
-    sql += ` order by name limit 20`;
+    sql += ` order by created_at desc limit 20`;
     return this.db.execute(sql, params).then((res) => res.map(this.toEntity));
   }
 
