@@ -16,7 +16,6 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
-  NFT_OWNERS_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
   TDH_BLOCKS_TABLE,
@@ -48,7 +47,8 @@ import {
   Delegation,
   DelegationEvent,
   EventType,
-  NFTDelegationBlock
+  NFTDelegationBlock,
+  WalletConsolidationKey
 } from './entities/IDelegation';
 import { RoyaltiesUpload } from './entities/IRoyalties';
 import {
@@ -73,7 +73,6 @@ import { Time } from './time';
 import { profilesService } from './profiles/profiles.service';
 import { synchroniseCommunityMembersTable } from './community-members';
 import { MemesSeason } from './entities/ISeason';
-import { WalletConsolidationKeyView } from './entities/ICommunityMember';
 
 const mysql = require('mysql');
 
@@ -384,7 +383,7 @@ export async function fetchConsolidationDisplay(
   const displayArray: string[] = [];
   myWallets.forEach((w) => {
     const result = results.find((r: any) => areEqualAddresses(r.wallet, w));
-    if (result && result.display && !result.display.includes('?')) {
+    if (result?.display && !result.display.includes('?')) {
       displayArray.push(result.display);
     } else {
       displayArray.push(w);
@@ -1169,7 +1168,7 @@ export async function fetchAllSeasons() {
 }
 
 export async function fetchWalletConsolidationKeysView(): Promise<
-  WalletConsolidationKeyView[]
+  WalletConsolidationKey[]
 > {
   const sql = `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW}`;
   return await sqlExecutor.execute(sql);
@@ -1177,7 +1176,7 @@ export async function fetchWalletConsolidationKeysView(): Promise<
 
 export async function fetchWalletConsolidationKeysViewForWallet(
   addresses: string[]
-): Promise<WalletConsolidationKeyView[]> {
+): Promise<WalletConsolidationKey[]> {
   const sql = `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE wallet IN (:addresses)`;
   return await sqlExecutor.execute(sql, { addresses });
 }

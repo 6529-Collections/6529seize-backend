@@ -79,3 +79,8 @@ export interface DelegationEvent extends ConsolidationEvent {
 
 @Entity(NFTDELEGATION_BLOCKS_TABLE)
 export class NFTDelegationBlock extends BlockEntity {}
+
+export interface WalletConsolidationKey {
+  wallet: string;
+  consolidation_key: string;
+}

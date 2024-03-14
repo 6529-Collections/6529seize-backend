@@ -17,6 +17,10 @@ import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { ApiCommunityMembersCurationCriteria } from './api-community-members-curation-criteria';
 import { ProfileMin } from '../../../profiles/profile-min';
+import {
+  abusivenessCheckService,
+  AbusivenessCheckService
+} from '../../../profiles/abusiveness-check.service';
 
 export type NewCommunityMembersCurationCriteria = Omit<
   CommunityMembersCurationCriteriaEntity,
@@ -34,12 +38,13 @@ export class CommunityMemberCriteriaService {
   public static readonly GENERATED_VIEW = 'community_search_view';
 
   constructor(
-    private readonly communityMemberCriteriaDb: CommunityMemberCriteriaDb
+    private readonly communityMemberCriteriaDb: CommunityMemberCriteriaDb,
+    private readonly abusivenessCheckService: AbusivenessCheckService
   ) {}
 
   async saveCurationCriteria(
     criteria: NewCommunityMembersCurationCriteria,
-    createdBy: string
+    createdBy: { id: string; handle: string }
   ): Promise<ApiCommunityMembersCurationCriteria> {
     const savedEntity =
       await this.communityMemberCriteriaDb.executeNativeQueriesInTransaction(
@@ -57,7 +62,7 @@ export class CommunityMemberCriteriaService {
               ...criteria,
               id,
               created_at: new Date(),
-              created_by: createdBy,
+              created_by: createdBy.id,
               visible: false
             },
             connection
@@ -93,10 +98,18 @@ export class CommunityMemberCriteriaService {
                 `You are not allowed to change criteria ${old_version_id}. You can save a new one instead.`
               );
             }
+            if (
+              oldCriteriaEntity.name !== criteriaEntity.name ||
+              !oldCriteriaEntity.visible
+            ) {
+              await this.doNameAbusivenessCheck(criteriaEntity);
+            }
             await this.communityMemberCriteriaDb.deleteCriteria(
               old_version_id,
               connection
             );
+          } else {
+            await this.doNameAbusivenessCheck(criteriaEntity);
           }
           if (criteriaEntity.created_by?.id !== profile_id) {
             throw new BadRequestException(
@@ -111,11 +124,29 @@ export class CommunityMemberCriteriaService {
             },
             connection
           );
-          return await this.getCriteriaByIdOrThrow(criteria_id, connection);
+          return await this.getCriteriaByIdOrThrow(
+            old_version_id ?? criteria_id,
+            connection
+          );
         }
       );
     await giveReadReplicaTimeToCatchUp();
     return updatedCriteriaEntity;
+  }
+
+  private async doNameAbusivenessCheck(
+    criteriaEntity: ApiCommunityMembersCurationCriteria
+  ) {
+    const abusivenessDetectionResult =
+      await this.abusivenessCheckService.checkFilterName({
+        text: criteriaEntity.name,
+        handle: criteriaEntity.created_by?.handle ?? ''
+      });
+    if (abusivenessDetectionResult.status !== 'ALLOWED') {
+      throw new BadRequestException(
+        `Criteria name is not allowed: ${abusivenessDetectionResult.explanation}`
+      );
+    }
   }
 
   public async getCriteriaByIdOrThrow(
@@ -182,7 +213,7 @@ export class CommunityMemberCriteriaService {
           .then((result) => result?.profile?.external_id ?? null)
       )
     );
-    if (userIds.find((it) => it === null)) {
+    if (userIds.some((it) => it === null)) {
       return null;
     }
     const usersToUserIds = filterUsers.reduce((acc, user, index) => {
@@ -350,7 +381,7 @@ export class CommunityMemberCriteriaService {
         } as profile_id, null as matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' group by 1, 2)`;
       }
 
-      repPart = `${groupedRepQuery}, rep_exchanges as (select profile_id from grouped_reps where true `;
+      repPart = `${groupedRepQuery}, rep_exchanges as (select distinct profile_id from grouped_reps where true `;
       if (repCriteria.category !== null) {
         repPart += `and matter_category = :rep_category `;
         params.rep_category = repCriteria.category;
@@ -398,4 +429,7 @@ export class CommunityMemberCriteriaService {
 }
 
 export const communityMemberCriteriaService =
-  new CommunityMemberCriteriaService(communityMemberCriteriaDb);
+  new CommunityMemberCriteriaService(
+    communityMemberCriteriaDb,
+    abusivenessCheckService
+  );

@@ -24,15 +24,11 @@ import { ConsolidatedTDH, TDH } from '../entities/ITDH';
 import { Profile } from '../entities/IProfile';
 import * as sentryContext from '../sentry.context';
 import { NextGenTokenTDH } from '../entities/INextGen';
-import {
-  CommunityMember,
-  ProfileFullView,
-  WalletConsolidationKeyView
-} from '../entities/ICommunityMember';
-import { findTDH } from '../tdhLoop/tdh';
 import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
 import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
 import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
+import { CommunityMember } from '../entities/ICommunityMember';
+import { findTDH } from '../tdhLoop/tdh';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -46,9 +42,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     TDH,
     ConsolidatedTDH,
     NextGenTokenTDH,
-    Profile,
-    ProfileFullView,
-    WalletConsolidationKeyView
+    Profile
   ]);
   const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
   const startBlock =

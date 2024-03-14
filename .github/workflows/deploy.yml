@@ -19,6 +19,7 @@ on:
         options:
           - api
           - customReplayLoop
+          - dbMigrationsLoop
           - delegationsLoop
           - discoverEnsLoop
           - marketStatsLoop
@@ -45,18 +46,15 @@ on:
           - teamLoop
           - transactionsLoop
 
-      branch:
-        description: 'Branch name'
-        required: true
-        default: 'main'
-
 env:
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
   SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
+run-name: Deploy ${{ github.event.inputs.service }} to ${{ github.event.inputs.environment }}
+
 jobs:
   build-and-deploy:
-    name: Build and deploy
+    name: Build and deploy ${{ github.event.inputs.service }} to ${{ github.event.inputs.environment }}
     runs-on: ubuntu-latest
     steps:
       - name: Check preconditions
@@ -64,10 +62,14 @@ jobs:
         if: (github.event.inputs.service == 'mediaResizerLoop' || github.event.inputs.service == 'nextgenMediaProxyInterceptor' || github.event.inputs.service == 'nextgenMediaUploader' || github.event.inputs.service == 'nextgenMediaImageResolutions') && github.event.inputs.environment != 'prod'
         with:
           script: core.setFailed('Given service can only be deployed to production environment')
+      - name: Extract branch name
+        shell: bash
+        run: echo "branch=${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}}" >> $GITHUB_OUTPUT
+        id: extract_branch
       - name: Checkout
         uses: actions/checkout@v3
         with:
-          ref: ${{ github.event.inputs.branch }}
+          ref: ${{ steps.extract_branch.outputs.branch }}
       - name: Install root dependencies
         run: npm i
       - name: Install lambda dependencies
@@ -111,6 +113,9 @@ jobs:
           pushd src/nextgenMediaProxyInterceptor
           sh deploy.sh
           popd
+      - name: Run lambda
+        if: github.event.inputs.service == 'dbMigrationsLoop'
+        run: sleep 10 && aws lambda invoke --function-name dbMigrationsLoop out > /dev/null
       - name: Notify about failure
         uses: sarisia/actions-status-discord@v1
         if: failure()
@@ -118,7 +123,6 @@ jobs:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         with:
           title: Seize-Lambda ${{ github.event.inputs.environment }} ${{ github.event.inputs.service }} DEPLOY CI pipeline is broken!!!
-          description: Branch ${{ github.event.inputs.branch }} - Version ${{ env.COMMIT_SHA }} - ${{ env.COMMIT_MESSAGE }}
           content: '@everyone'
           color: 0xff0000
 
@@ -129,5 +133,4 @@ jobs:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         with:
           title: Seize-Lambda ${{ github.event.inputs.environment }} ${{ github.event.inputs.service }} DEPLOY CI pipeline complete
-          description: Branch ${{ github.event.inputs.branch }} - Version ${{ env.COMMIT_SHA }} - ${{ env.COMMIT_MESSAGE }}
           color: 0x00ff00

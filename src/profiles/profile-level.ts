@@ -414,10 +414,10 @@ export function calculateLevel({
 
 export function getLevelComponentsBorderByLevel(level: number): number {
   if (level < 0) {
-    return 0;
+    return level;
   }
   if (level > 100) {
-    return 25000000;
+    return Number.MAX_VALUE;
   }
   return LEVELS.find((l) => l.level === level)?.minTdh ?? 0;
 }

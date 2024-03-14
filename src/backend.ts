@@ -1,8 +1,6 @@
 import { Logger } from './logging';
 import { Time } from './time';
-
-const logger = Logger.get('BACKEND');
-
+import * as dbMigrationsLoop from './dbMigrationsLoop';
 import * as customReplayLoop from './customReplayLoop';
 import * as aggregatedActivity from './aggregatedActivityLoop';
 import * as transactions from './transactionsLoop';
@@ -12,9 +10,12 @@ import * as nfts from './nftsLoop';
 import * as tdh from './tdhLoop';
 import * as memelab from './memeLabLoop';
 
+const logger = Logger.get('BACKEND');
+
 async function start() {
   const start = Time.now();
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
+  await dbMigrationsLoop.handler(null, null as any, null as any);
 
   await nfts.handler(null, null as any, null as any);
   await memelab.handler(null, null as any, null as any);

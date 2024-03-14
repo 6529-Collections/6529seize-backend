@@ -19,13 +19,9 @@ import { Time } from '../time';
 import { Profile } from '../entities/IProfile';
 import * as sentryContext from '../sentry.context';
 import { NextGenTokenTDH } from '../entities/INextGen';
-import {
-  CommunityMember,
-  ProfileFullView,
-  WalletConsolidationKeyView
-} from '../entities/ICommunityMember';
 import { MemesSeason } from '../entities/ISeason';
 import { NFTOwner } from '../entities/INFTOwner';
+import { CommunityMember } from '../entities/ICommunityMember';
 
 const logger = Logger.get('TDH_LOOP');
 
@@ -40,8 +36,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     GlobalTDHHistory,
     Profile,
     CommunityMember,
-    // ProfileFullView,
-    // WalletConsolidationKeyView,
     MemesSeason,
     NFTOwner
   ]);
