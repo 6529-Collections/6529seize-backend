@@ -201,6 +201,128 @@ input
     return await this.formatChatResponse(text, responseMessage);
   }
 
+  public async checkCurationName({
+    text,
+    handle
+  }: {
+    text: string;
+    handle: string;
+  }): Promise<AbusivenessDetectionResult> {
+    const prompt = `
+Background
+
+We operate a social media site in the cryptocurrency space, more specifically in the nft space. This website allows users to create profiles to verify their identity.  
+
+
+Each profile may create search filters that help them in different searches across the website. Each such filter has a name which is freeform text.
+
+Task:
+
+You are going to help us confirm that a user is not using the filter name section to violate the rules and policies of the website.
+
+Username:
+
+We will submit the username of the user whose filter is about to be saved and the filter name you are evaluating
+
+Take their username into account when analyzing the filter name.  They are allowed to make comments about themselves but they are not allowed to use the filter name to make comments about others.
+
+Guidelines
+
+
+Use the following guidelines for what is not allowed:
+
+Hate Speech: We do not allow discriminatory or hate speech of any type
+
+
+Personal Insults: We do not allow personal insults
+ 
+Inappropriate Language: We do not allow language that would would make a normal user in the cryptotwitter community feel bad or uncomfortable. Given the nature of the community (cryptotwitter and NFT twitter) we are more permissive than most social media sites on the following two factors:
+We allow typical cryptotwitter terms. Aka "shitposting" is fine as a term, as is “cryptodickbutt”, and “degen”.
+We allow discussion of artistic nudity as we support nude art photographers.
+
+
+Doxxing of Another Person: Filter name should not contain any personal doxxing Information about other people.  Some illustrative but not comprehensive examples below:
+Disclosing proper names of other people who are not the author (e.g. “I gave 269 rep to John Hammersmith”)
+Indirect workarounds to the above (e.g. “John Hammersmith's father”)
+“Mike Smith works at Goldman Sachs”
+
+
+For avoidance of doubt, users are allowed to dox themselves.   If someone’s profile is “NFTDegen” and their filter name can be “Creator of this filter works at Goldman Sachs and loves NFTs”, it is OK
+
+
+Language
+Note further that people may describe themselves in languages other than English. Apply the same rules in that case, taking into account idiomatic use.
+
+Format
+
+The format of the task is as follows:
+
+We will send our request as a JSON and you will respond with a JSON. Our request JSON contains the following fields: username, filter_name.
+
+
+You will return a JSON with the following fields:
+value - Allowed or Disallowed
+self_dox - This field is only set if you Allowed. If there is a self-dox in the text then the value is “Yes”, otherwise the value is “No”
+reason - This field is only set if you Disallowed and contains the reason you disallowed, picking only from the following values:
+“Hate Speech”
+“Personal Insults”
+“Inappropriate Language”
+“Doxxing of Another Person”
+
+Examples of Input and Output
+
+Example 1:
+
+Our Input: 
+{"username": "NFTGod", "filter_name": "I am an NFT God, king of kings"}
+
+Your Output:
+{"value": "Allowed", "self_dox": "No"}
+
+Example 2:
+
+Our Input: 
+
+{"username": "NFTGod", "filter_name": "I am John Smith and work at Goldman Sachs"}
+
+Your Output:
+{"value": "Allowed", "self_dox": "Yes"}
+
+
+Example 3:
+
+Our Input: 
+{"username": "JohnSmith", "filter_name": "I am just a quiet community member waiting for the rise of the Aryan Nation"}
+
+Your Output:
+{"value": "Disallowed", "reason": "Hate Speech"}
+
+Example 4:
+
+Our Input: 
+
+{"username": "MeMu", "filter_name": "I collect NFTs… don’t you think Punku is really Vitalik?"}
+
+Your Output:
+
+{"value": "Disallowed", "reason": "Doxxing Of Another Person"}
+
+I will now put the classification request after the word "input" and make further requests in that format.
+
+input
+{"username": "${handle}", "filter_name": "${text}"}
+    `.trim();
+    const response = await this.doGptRequest(prompt);
+    if (process.env.NODE_ENV !== 'local') {
+      await this.discord.sendMessage(
+        DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
+        `Curation criteria name check\n\nUsername: ${handle}\n\nInput text:\n${text}\n\nGPT response:\n${response.choices[0].message.content}`
+      );
+    }
+    const responseMessage = response.choices[0].message.content ?? '';
+    return await this.formatChatResponse(text, responseMessage);
+  }
+
   private async formatChatResponse(text: string, response: string) {
     const parsedResponse: GptResponseJson = JSON.parse(response);
     if (!parsedResponse) {

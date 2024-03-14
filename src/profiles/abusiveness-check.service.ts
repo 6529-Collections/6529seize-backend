@@ -70,6 +70,20 @@ export class AbusivenessCheckService {
       profile_type: query.profile_type
     });
   }
+
+  async checkFilterName(query: {
+    text: string;
+    handle: string;
+  }): Promise<AbusivenessDetectionResult> {
+    const txt = query.text.trim();
+    if (txt.length > 100) {
+      throw new BadRequestException(`Text must be up to 100 characters`);
+    }
+    return await this.openAiAbusivenessDetectionService.checkCurationName({
+      text: txt,
+      handle: query.handle
+    });
+  }
 }
 
 export const abusivenessCheckService = new AbusivenessCheckService(
