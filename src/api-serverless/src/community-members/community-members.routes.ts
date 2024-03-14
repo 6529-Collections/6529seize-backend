@@ -31,12 +31,14 @@ router.get(
       any,
       {
         param: string;
+        only_profile_owners?: string;
       },
       any
     >,
     res: Response<ApiResponse<CommunityMemberMinimal[]>>
   ) {
     const param = req.query.param?.toLowerCase();
+    const onlyProfileOwners = req.query.only_profile_owners === 'true';
 
     if (!param) {
       res.send([]);
@@ -44,6 +46,7 @@ router.get(
       const results =
         await profilesService.searchCommunityMemberMinimalsOfClosestMatches({
           param,
+          onlyProfileOwners,
           limit: 10
         });
       res.send(results);
