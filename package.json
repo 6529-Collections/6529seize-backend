@@ -62,6 +62,7 @@
     "arweave": "^1.11.6",
     "axios": "^1.6.4",
     "bignumber.js": "^9.1.1",
+    "bottleneck": "^2.19.5",
     "cors": "^2.8.5",
     "csv-parser": "^3.0.0",
     "discord.js": "^14.14.1",

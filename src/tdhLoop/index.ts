@@ -1,9 +1,9 @@
 import { fetchLatestTDHBDate } from '../db';
 import { getLastTDH } from '../helpers';
-import { findNftTDH } from '../nft_tdh';
-import { findTDH } from '../tdh';
-import { consolidateTDH } from '../tdh_consolidation';
-import { uploadConsolidatedTDH, uploadTDH } from '../tdh_upload';
+import { findNftTDH } from './nft_tdh';
+import { findTDH } from './tdh';
+import { consolidateTDH } from './tdh_consolidation';
+// import { uploadConsolidatedTDH, uploadTDH } from '../tdh_upload';
 import { loadEnv, unload } from '../secrets';
 import { ConsolidatedTDHUpload } from '../entities/IUpload';
 import {
@@ -13,7 +13,6 @@ import {
   TDHHistory
 } from '../entities/ITDH';
 import { NFT } from '../entities/INFT';
-import { OwnerMetric } from '../entities/IOwner';
 import * as notifier from '../notifier';
 import { Logger } from '../logging';
 import { Time } from '../time';
@@ -25,6 +24,8 @@ import {
   ProfileFullView,
   WalletConsolidationKeyView
 } from '../entities/ICommunityMember';
+import { MemesSeason } from '../entities/ISeason';
+import { NFTOwner } from '../entities/INFTOwner';
 
 const logger = Logger.get('TDH_LOOP');
 
@@ -35,13 +36,14 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     NextGenTokenTDH,
     ConsolidatedTDHUpload,
     NFT,
-    OwnerMetric,
     TDHHistory,
     GlobalTDHHistory,
     Profile,
     CommunityMember,
-    ProfileFullView,
-    WalletConsolidationKeyView
+    // ProfileFullView,
+    // WalletConsolidationKeyView,
+    MemesSeason,
+    NFTOwner
   ]);
   const force = process.env.TDH_RESET == 'true';
   logger.info(`[RUNNING force=${force}]`);
@@ -53,8 +55,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 export async function tdhLoop(force?: boolean) {
   await tdh(force);
   await findNftTDH();
-  await uploadTDH(force);
-  await uploadConsolidatedTDH(force);
+  // await uploadTDH(force);
+  // await uploadConsolidatedTDH(force);
   await notifier.notifyTdhCalculationsDone();
 }
 

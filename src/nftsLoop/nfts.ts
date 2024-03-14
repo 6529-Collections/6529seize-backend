@@ -12,26 +12,26 @@ import {
   NFT_VIDEO_LINK,
   NFTS_TABLE,
   NULL_ADDRESS
-} from './constants';
-import { NFT } from './entities/INFT';
-import { Transaction } from './entities/ITransaction';
+} from '../constants';
+import { NFT } from '../entities/INFT';
+import { Transaction } from '../entities/ITransaction';
 import {
   areEqualAddresses,
   isNullAddress,
   replaceEmojisWithHex
-} from './helpers';
+} from '../helpers';
 import {
   fetchAllNFTs,
   fetchAllTransactions,
   fetchAllArtists,
   persistArtists,
   persistNFTs
-} from './db';
-import { findArtists } from './artists';
-import { Artist } from './entities/IArtist';
+} from '../db';
+import { findArtists } from '../artists';
+import { Artist } from '../entities/IArtist';
 import { RequestInfo, RequestInit } from 'node-fetch';
-import { sqlExecutor } from './sql-executor';
-import { Logger } from './logging';
+import { sqlExecutor } from '../sql-executor';
+import { Logger } from '../logging';
 
 const logger = Logger.get('NFTS');
 
@@ -256,11 +256,11 @@ async function processGradients(
           s.id == tokenId && areEqualAddresses(s.contract, GRADIENT_CONTRACT)
       );
 
-      if (fullMetadata && fullMetadata.image) {
-        const format = fullMetadata!.image!.split('.').pop();
+      if (fullMetadata?.image) {
+        const format = fullMetadata.image!.split('.').pop();
         let tokenPath;
-        if (format!.toUpperCase() == 'GIF') {
-          tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.${format!.toUpperCase()}`;
+        if (format.toUpperCase() == 'GIF') {
+          tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.${format.toUpperCase()}`;
         } else {
           tokenPath = `${GRADIENT_CONTRACT}/${tokenId}.WEBP`;
         }
@@ -359,12 +359,11 @@ export const findNFTs = async (
       `[HODL INDEX CHANGED] [DB ${GLOBAL_HODL_INDEX_TOKEN?.supply}] [NEW ${NEW_TOKENS_HODL_INDEX}] [RECALCULATING]`
     );
     allNFTS.forEach((t) => {
-      if (!GLOBAL_HODL_INDEX_TOKEN) {
+      if (
+        !GLOBAL_HODL_INDEX_TOKEN ||
+        t.supply > GLOBAL_HODL_INDEX_TOKEN.supply
+      ) {
         GLOBAL_HODL_INDEX_TOKEN = t;
-      } else {
-        if (t.supply > GLOBAL_HODL_INDEX_TOKEN.supply) {
-          GLOBAL_HODL_INDEX_TOKEN = t;
-        }
       }
     });
     logger.info(

@@ -1,18 +1,21 @@
-import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '../constants';
-import { Owner } from '../entities/IOwner';
+import {
+  GRADIENT_CONTRACT,
+  MEMELAB_CONTRACT,
+  MEMES_CONTRACT
+} from '../constants';
 import { areEqualAddresses } from '../helpers';
 import {
-  fetchAllConsolidatedOwnerBalances,
-  fetchAllConsolidatedOwnerBalancesMemes,
   fetchAllOwnerBalances,
   fetchAllOwnerBalancesMemes,
   persistOwnerBalances,
-  persistConsolidatedOwnerBalances
+  persistConsolidatedOwnerBalances,
+  getMaxBlockReference
 } from './db.owners_balances';
 import {
-  fetchAllOwners,
   fetchAllSeasons,
-  fetchWalletConsolidationKeysView
+  fetchMaxTransactionsBlockNumber,
+  fetchTransactionAddressesFromBlock,
+  fetchWalletConsolidationKeysViewForWallet
 } from '../db';
 import { Logger } from '../logging';
 import {
@@ -22,91 +25,112 @@ import {
   OwnerBalancesMemes
 } from '../entities/IOwnerBalances';
 import { MemesSeason } from '../entities/ISeason';
+import {
+  getNextgenNetwork,
+  NEXTGEN_CORE_CONTRACT
+} from '../nextgen/nextgen_constants';
+import { NFTOwner } from '../entities/INFTOwner';
+import { fetchAllNftOwners } from '../nftOwnersLoop/db.nft_owners';
 
-const logger = Logger.get('OWNER_BALANCES_LOOP');
+const logger = Logger.get('OWNER_BALANCES');
 
 export const findOwnerBalances = async (reset?: boolean) => {
-  const startingOwners: Owner[] = await fetchAllOwners();
-  const startingBalances: OwnerBalances[] = await fetchAllOwnerBalances();
-  const startingBalancesMemes: OwnerBalancesMemes[] =
-    await fetchAllOwnerBalancesMemes();
-  const seasons: MemesSeason[] = await fetchAllSeasons();
+  const lastBalancesBlock = reset ? 0 : await getMaxBlockReference();
 
-  const uniqueOwnerWallets = new Set<string>();
-  [...startingOwners].forEach((o) => {
-    uniqueOwnerWallets.add(o.wallet.toLowerCase());
-  });
+  reset = lastBalancesBlock === 0;
 
-  logger.info({
-    owner_balances: startingBalances.length.toLocaleString(),
-    owner_balances_memes: startingBalancesMemes.length.toLocaleString(),
-    owners: startingOwners.length.toLocaleString(),
-    unique_owners: uniqueOwnerWallets.size.toLocaleString()
-  });
+  const blockReference = await fetchMaxTransactionsBlockNumber();
+  const seasons = await fetchAllSeasons();
 
-  const ownersBalancesDelta: OwnerBalances[] = [];
-  const ownersBalancesMemesDelta: OwnerBalancesMemes[] = [];
+  const nextgenNetwork = getNextgenNetwork();
+  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[nextgenNetwork];
 
-  uniqueOwnerWallets.forEach((owner) => {
-    const owned = [...startingOwners].filter((o) =>
-      areEqualAddresses(o.wallet, owner)
+  const allContracts = [
+    MEMES_CONTRACT,
+    MEMELAB_CONTRACT,
+    GRADIENT_CONTRACT,
+    NEXTGEN_CONTRACT
+  ];
+
+  let addresses = new Set<string>();
+  let owners: NFTOwner[] = [];
+
+  if (reset) {
+    owners = await fetchAllNftOwners(allContracts);
+    addresses.clear();
+    owners.forEach((o) => addresses.add(o.wallet.toLowerCase()));
+  } else {
+    const allTransactionAddresses: {
+      from_address: string;
+      to_address: string;
+    }[] = await fetchTransactionAddressesFromBlock(
+      allContracts,
+      lastBalancesBlock
     );
-
-    const oBalance = buildBalances(owned, seasons, startingBalances);
-    if (oBalance) {
-      ownersBalancesDelta.push(oBalance);
+    allTransactionAddresses.forEach((wallet) => {
+      addresses.add(wallet.from_address.toLowerCase());
+      addresses.add(wallet.to_address.toLowerCase());
+    });
+    if (!addresses.size) {
+      logger.info(`[NO WALLETS TO PROCESS]`);
+      return;
     }
+    owners = await fetchAllNftOwners(allContracts, Array.from(addresses));
+  }
 
-    const oBalancesSeasons = buildSeasonBalances(
-      owned,
+  const ownersBalances: OwnerBalances[] = [];
+  const ownersBalancesMemes: OwnerBalancesMemes[] = [];
+
+  logger.info(
+    `[ADDRESSES ${addresses.size.toLocaleString()}] [lastBalancesBlock ${lastBalancesBlock}] [blockReference ${blockReference}] [RESET ${reset}]`
+  );
+
+  addresses.forEach((address) => {
+    const ownedNfts = owners.filter((o) =>
+      areEqualAddresses(o.wallet, address)
+    );
+    const ownerBalance = buildOwnerBalance(
+      NEXTGEN_CONTRACT,
       seasons,
-      startingBalancesMemes
+      blockReference,
+      address,
+      ownedNfts
     );
-    ownersBalancesMemesDelta.push(...oBalancesSeasons);
+
+    const ownerBalanceMemes = buildSeasonBalances(seasons, address, ownedNfts);
+
+    ownersBalances.push(ownerBalance);
+    ownersBalancesMemes.push(...ownerBalanceMemes);
   });
 
-  startingBalances.forEach((sb) => {
-    if (!uniqueOwnerWallets.has(sb.wallet)) {
-      ownersBalancesDelta.push({
-        ...sb,
-        total_balance: 0
-      });
-    }
-  });
+  await persistOwnerBalances(ownersBalances, ownersBalancesMemes, reset);
 
-  startingBalancesMemes.forEach((sb) => {
-    if (!uniqueOwnerWallets.has(sb.wallet)) {
-      ownersBalancesMemesDelta.push({
-        ...sb,
-        balance: 0
-      });
-    }
-  });
-
-  await persistOwnerBalances(ownersBalancesDelta, ownersBalancesMemesDelta);
-
-  return {
-    ownersBalances: ownersBalancesDelta,
-    ownersBalancesMemes: ownersBalancesMemesDelta
-  };
+  await consolidateOwnerBalances(addresses, reset);
 };
 
-function buildBalances(
-  owned: Owner[],
+function buildOwnerBalance(
+  NEXTGEN_CONTRACT: string,
   seasons: MemesSeason[],
-  startingBalances: OwnerBalances[]
-) {
-  const walletMemes = [...owned].filter((n) =>
-    areEqualAddresses(n.contract, MEMES_CONTRACT)
-  );
-  const walletMemesGenesis = [...walletMemes].filter(
-    (a) => a.token_id == 1 || a.token_id == 2 || a.token_id == 3
-  );
-  const walletMemesNaka = [...walletMemes].filter((a) => a.token_id == 4);
+  blockReference: number,
+  wallet: string,
+  ownedNfts: NFTOwner[]
+): OwnerBalances {
+  const memes = filterContract(ownedNfts, MEMES_CONTRACT);
+  const gradients = filterContract(ownedNfts, GRADIENT_CONTRACT);
+  const nextgen = filterContract(ownedNfts, NEXTGEN_CONTRACT);
+  const memelab = filterContract(ownedNfts, MEMELAB_CONTRACT);
 
-  const walletGradients = [...owned].filter((n) =>
-    areEqualAddresses(n.contract, GRADIENT_CONTRACT)
+  const memeCard1Balance = getTokenIdBalance(memes, 1);
+  const memeCard2Balance = getTokenIdBalance(memes, 1);
+  const memeCard3Balance = getTokenIdBalance(memes, 1);
+
+  const genesis = Math.min(
+    memeCard1Balance,
+    memeCard2Balance,
+    memeCard3Balance
   );
+
+  const naka = getTokenIdBalance(memes, 4);
 
   const maxSeasonIndex = Math.max(...[...seasons].map((s) => s.end_index));
 
@@ -115,25 +139,15 @@ function buildBalances(
   let memesCardSetsMinus2 = 0;
   let walletMemesSet1: any[] = [];
   let walletMemesSet2: any[] = [];
-  if (walletMemes.length == maxSeasonIndex) {
-    memesCardSets = Math.min.apply(
-      Math,
-      [...walletMemes].map(function (o) {
-        return o.balance;
-      })
-    );
-    walletMemesSet1 = [...walletMemes].filter((n) => n.balance > memesCardSets);
+  if (memes.length >= maxSeasonIndex) {
+    memesCardSets = Math.min(...[...memes].map((o) => o.balance));
+    walletMemesSet1 = [...memes].filter((n) => n.balance > memesCardSets);
   } else {
-    walletMemesSet1 = [...walletMemes];
+    walletMemesSet1 = [...memes];
   }
   if (walletMemesSet1.length == maxSeasonIndex - 1) {
     memesCardSetsMinus1 =
-      Math.min.apply(
-        Math,
-        [...walletMemesSet1].map(function (o) {
-          return o.balance;
-        })
-      ) - memesCardSets;
+      Math.min(...[...walletMemesSet1].map((o) => o.balance)) - memesCardSets;
     walletMemesSet2 = [...walletMemesSet1].filter(
       (n) => n.balance > memesCardSetsMinus1
     );
@@ -142,98 +156,48 @@ function buildBalances(
   }
   if (walletMemesSet2.length == maxSeasonIndex - 2) {
     memesCardSetsMinus2 =
-      Math.min.apply(
-        Math,
-        [...walletMemesSet2].map(function (o) {
-          return o.balance;
-        })
-      ) - memesCardSetsMinus1;
+      Math.min(...[...walletMemesSet2].map((o) => o.balance)) -
+      memesCardSetsMinus1;
   }
 
-  const memesNftsGenesis = [1, 2, 3];
-  let genesis = 0;
-  if (walletMemesGenesis.length == memesNftsGenesis.length) {
-    genesis = Math.min.apply(
-      Math,
-      [...walletMemesGenesis].map(function (o) {
-        return o.balance;
-      })
-    );
-  }
+  const memesBalance = memes.reduce((acc, n) => acc + n.balance, 0);
+  const memelabBalance = memelab.reduce((acc, n) => acc + n.balance, 0);
+  const totalBalance =
+    memesBalance + gradients.length + nextgen.length + memelabBalance;
 
-  let nakamoto = 0;
-  if (walletMemesNaka.length > 0) {
-    nakamoto = Math.min.apply(
-      Math,
-      [...walletMemesNaka].map(function (o) {
-        return o.balance;
-      })
-    );
-  }
-
-  let memesBalance = 0;
-  walletMemes.forEach((a) => {
-    memesBalance += a.balance;
-  });
-
-  const wallet = owned[0].wallet;
-
-  const oBalance: OwnerBalances = {
-    wallet: wallet.toLowerCase(),
-    total_balance: memesBalance + walletGradients.length,
-    gradients_balance: walletGradients.length,
+  const ownerBalance: OwnerBalances = {
+    wallet: wallet,
+    total_balance: totalBalance,
+    gradients_balance: gradients.length,
+    nextgen_balance: nextgen.length,
+    memelab_balance: memelabBalance,
+    unique_memelab: memelab.length,
     memes_balance: memesBalance,
-    unique_memes: walletMemes.length,
+    unique_memes: memes.length,
     genesis: genesis,
-    nakamoto: nakamoto,
+    nakamoto: naka,
     memes_cards_sets: memesCardSets,
     memes_cards_sets_minus1: memesCardSetsMinus1,
-    memes_cards_sets_minus2: memesCardSetsMinus2
+    memes_cards_sets_minus2: memesCardSetsMinus2,
+    block_reference: blockReference
   };
-
-  const existingBalances = startingBalances.find((o) =>
-    areEqualAddresses(o.wallet, wallet)
-  );
-  if (existingBalances) {
-    if (
-      existingBalances.genesis != oBalance.genesis ||
-      existingBalances.nakamoto != oBalance.nakamoto ||
-      existingBalances.memes_balance != oBalance.memes_balance ||
-      existingBalances.gradients_balance != oBalance.gradients_balance ||
-      existingBalances.unique_memes != oBalance.unique_memes ||
-      existingBalances.memes_cards_sets != oBalance.memes_cards_sets ||
-      existingBalances.memes_cards_sets_minus1 !=
-        oBalance.memes_cards_sets_minus1 ||
-      existingBalances.memes_cards_sets_minus2 !=
-        oBalance.memes_cards_sets_minus2
-    ) {
-      return oBalance;
-    }
-  } else {
-    return oBalance;
-  }
-
-  return null;
+  return ownerBalance;
 }
 
 function buildSeasonBalances(
-  owned: Owner[],
   seasons: MemesSeason[],
-  startingBalances: OwnerBalancesMemes[]
+  wallet: string,
+  ownedNfts: NFTOwner[]
 ) {
-  const walletMemes = [...owned].filter((n) =>
-    areEqualAddresses(n.contract, MEMES_CONTRACT)
-  );
+  const memes = filterContract(ownedNfts, MEMES_CONTRACT);
 
-  const seasonMemes = new Map<number, Owner[]>();
+  const seasonMemes = new Map<number, NFTOwner[]>();
   seasons.forEach((s) => {
-    const seasonOwned = walletMemes.filter(
+    const seasonOwned = memes.filter(
       (n) => n.token_id >= s.start_index && n.token_id <= s.end_index
     );
     seasonMemes.set(s.id, seasonOwned);
   });
-
-  const wallet = owned[0].wallet;
 
   const seasonBalances: OwnerBalancesMemes[] = [];
   seasonMemes.forEach((owners, seasonId) => {
@@ -241,9 +205,8 @@ function buildSeasonBalances(
     owners.forEach((o) => (seasonBalance += o.balance));
 
     if (seasonBalance > 0) {
-      const seasonSets = Math.min.apply(
-        Math,
-        [...owners].map(function (o) {
+      const seasonSets = Math.min(
+        ...[...owners].map(function (o) {
           return o.balance;
         })
       );
@@ -255,176 +218,175 @@ function buildSeasonBalances(
         unique: owners.length,
         sets: seasonSets
       };
-
-      const existingBalances = startingBalances.find(
-        (o) => areEqualAddresses(o.wallet, wallet) && o.season === seasonId
-      );
-      if (existingBalances) {
-        if (
-          existingBalances.balance != oBalanceMemes.balance ||
-          existingBalances.unique != oBalanceMemes.unique ||
-          existingBalances.sets != oBalanceMemes.sets
-        ) {
-          seasonBalances.push(oBalanceMemes);
-        }
-      } else {
-        seasonBalances.push(oBalanceMemes);
-      }
+      seasonBalances.push(oBalanceMemes);
     }
   });
-
   return seasonBalances;
 }
 
-export async function consolidateOwnerBalances() {
-  const walletConsolidations = await fetchWalletConsolidationKeysView();
+async function getConsolidatedBalances(
+  consolidationKey: string,
+  addresses: string[]
+): Promise<ConsolidatedOwnerBalances> {
+  const consolidationActivity = await fetchAllOwnerBalances(addresses);
 
-  const ownersBalances: OwnerBalances[] = await fetchAllOwnerBalances();
-  const ownersBalancesMemes: OwnerBalancesMemes[] =
-    await fetchAllOwnerBalancesMemes();
+  const consolidatedTotals = consolidationActivity.reduce(
+    (acc, cp) => {
+      acc.total_balance += cp.total_balance;
+      acc.gradients_balance += cp.gradients_balance;
+      acc.nextgen_balance += cp.nextgen_balance;
+      acc.memelab_balance += cp.memelab_balance;
+      acc.unique_memelab += cp.unique_memelab;
+      acc.memes_balance += cp.memes_balance;
+      acc.unique_memes += cp.unique_memes;
+      acc.genesis += cp.genesis;
+      acc.nakamoto += cp.nakamoto;
+      acc.memes_cards_sets += cp.memes_cards_sets;
+      acc.memes_cards_sets_minus1 += cp.memes_cards_sets_minus1;
+      acc.memes_cards_sets_minus2 += cp.memes_cards_sets_minus2;
 
-  const startingConsolidatedOwnersBalances =
-    await fetchAllConsolidatedOwnerBalances();
+      return acc;
+    },
+    {
+      total_balance: 0,
+      gradients_balance: 0,
+      nextgen_balance: 0,
+      memelab_balance: 0,
+      unique_memelab: 0,
+      memes_balance: 0,
+      unique_memes: 0,
+      genesis: 0,
+      nakamoto: 0,
+      memes_cards_sets: 0,
+      memes_cards_sets_minus1: 0,
+      memes_cards_sets_minus2: 0
+    }
+  );
 
-  const startingConsolidatedOwnersBalancesMemes =
-    await fetchAllConsolidatedOwnerBalancesMemes();
+  const cBalance: ConsolidatedOwnerBalances = {
+    consolidation_key: consolidationKey,
+    ...consolidatedTotals
+  };
+
+  return cBalance;
+}
+
+async function getConsolidatedMemesBalances(
+  seasons: MemesSeason[],
+  consolidationKey: string,
+  addresses: string[]
+): Promise<ConsolidatedOwnerBalancesMemes[]> {
+  const consolidationActivity = await fetchAllOwnerBalancesMemes(addresses);
+  if (consolidationActivity.length === 0) {
+    return [];
+  }
+
+  const consolidatedMemesBalances: ConsolidatedOwnerBalancesMemes[] = [];
+  seasons.forEach((season) => {
+    const seasonBalances = consolidationActivity.filter(
+      (ca) => ca.season === season.id
+    );
+
+    const consolidatedTotals = seasonBalances.reduce(
+      (acc, cp) => {
+        acc.balance += cp.balance;
+        acc.unique += cp.unique;
+        acc.sets += cp.sets;
+
+        return acc;
+      },
+      {
+        balance: 0,
+        unique: 0,
+        sets: 0
+      }
+    );
+
+    if (consolidatedTotals.balance === 0) {
+      return;
+    }
+
+    const cBalance: ConsolidatedOwnerBalancesMemes = {
+      consolidation_key: consolidationKey,
+      season: season.id,
+      ...consolidatedTotals
+    };
+    consolidatedMemesBalances.push(cBalance);
+  });
+
+  return consolidatedMemesBalances;
+}
+
+export async function consolidateOwnerBalances(
+  addresses: Set<string>,
+  reset?: boolean
+) {
+  if (reset) {
+    const ownerBalances = await fetchAllOwnerBalances();
+    ownerBalances.forEach((o) => addresses.add(o.wallet));
+  }
+
+  logger.info(
+    `[CONSOLIDATING ${addresses.size.toLocaleString()} ADDRESSES] [RESET ${reset}]`
+  );
+
+  const seasons = await fetchAllSeasons();
 
   const consolidatedOwnersBalances: ConsolidatedOwnerBalances[] = [];
   const consolidatedOwnersBalancesMemes: ConsolidatedOwnerBalancesMemes[] = [];
 
-  const usedOwnerBalances = new Set<string>();
-  ownersBalances.forEach((ob) => {
-    const walletKey = ob.wallet.toLowerCase();
-    if (usedOwnerBalances.has(walletKey)) {
-      return;
-    }
+  await Promise.all(
+    Array.from(addresses).map(async (address) => {
+      const consolidation = (
+        await fetchWalletConsolidationKeysViewForWallet([address])
+      )?.[0];
 
-    const consolidation = walletConsolidations.find((wc) =>
-      wc.consolidation_key.includes(walletKey)
-    );
-
-    if (!consolidation) {
-      const consolidatedOwnerBalance: ConsolidatedOwnerBalances = {
-        ...ob,
-        consolidation_key: walletKey
-      };
-      consolidatedOwnersBalances.push(consolidatedOwnerBalance);
-      usedOwnerBalances.add(walletKey);
-    } else {
-      const consolidationBalances = ownersBalances.filter((oob) =>
-        consolidation.consolidation_key.includes(oob.wallet.toLowerCase())
-      );
-      if (consolidationBalances.length > 0) {
-        const totals = consolidationBalances.reduce(
-          (acc, cp) => {
-            acc.total_balance += cp.total_balance;
-            acc.gradients_balance += cp.gradients_balance;
-            acc.memes_balance += cp.memes_balance;
-            acc.unique_memes += cp.unique_memes;
-            acc.genesis += cp.genesis;
-            acc.nakamoto += cp.nakamoto;
-            acc.memes_cards_sets += cp.memes_cards_sets;
-            acc.memes_cards_sets_minus1 += cp.memes_cards_sets_minus1;
-            acc.memes_cards_sets_minus2 += cp.memes_cards_sets_minus2;
-
-            return acc;
-          },
-          {
-            total_balance: 0,
-            gradients_balance: 0,
-            memes_balance: 0,
-            unique_memes: 0,
-            genesis: 0,
-            nakamoto: 0,
-            memes_cards_sets: 0,
-            memes_cards_sets_minus1: 0,
-            memes_cards_sets_minus2: 0
-          }
-        );
-        const cBalance: ConsolidatedOwnerBalances = {
-          consolidation_key: consolidation.consolidation_key,
-          ...totals
-        };
-        consolidatedOwnersBalances.push(cBalance);
+      let consolidationKey: string;
+      let consolidationAddresses: string[] = [];
+      if (!consolidation) {
+        consolidationKey = address;
+        consolidationAddresses.push(address);
+      } else {
+        consolidationKey = consolidation.consolidation_key;
+        consolidationAddresses = consolidation.consolidation_key.split('-');
       }
-      consolidation.consolidation_key.split('-').forEach((w: string) => {
-        usedOwnerBalances.add(w.toLowerCase());
-      });
-    }
-  });
 
-  const usedOwnerBalancesMemes = new Set<string>();
-  ownersBalancesMemes.forEach((obm) => {
-    const walletKey = obm.wallet.toLowerCase();
-    if (usedOwnerBalancesMemes.has(walletKey)) {
-      return;
-    }
-
-    const consolidation = walletConsolidations.find((wc) =>
-      wc.consolidation_key.includes(walletKey)
-    );
-
-    if (!consolidation) {
-      const consolidatedOwnerBalanceMemes: ConsolidatedOwnerBalancesMemes = {
-        ...obm,
-        consolidation_key: walletKey
-      };
-      consolidatedOwnersBalancesMemes.push(consolidatedOwnerBalanceMemes);
-      usedOwnerBalances.add(walletKey);
-    } else {
-      const consolidationBalances = ownersBalancesMemes.filter(
-        (oobm) =>
-          consolidation.consolidation_key.includes(oobm.wallet.toLowerCase()) &&
-          obm.season === oobm.season
+      const oBalance = await getConsolidatedBalances(
+        consolidationKey,
+        consolidationAddresses
       );
-      if (consolidationBalances.length > 0) {
-        const totals = consolidationBalances.reduce(
-          (acc, cp) => {
-            acc.balance += cp.balance;
-            acc.unique += cp.unique;
-            acc.sets += cp.sets;
+      consolidatedOwnersBalances.push(oBalance);
 
-            return acc;
-          },
-          {
-            balance: 0,
-            unique: 0,
-            sets: 0
-          }
-        );
-        const cBalance: ConsolidatedOwnerBalancesMemes = {
-          consolidation_key: consolidation.consolidation_key,
-          season: obm.season,
-          ...totals
-        };
-        consolidatedOwnersBalancesMemes.push(cBalance);
-      }
-      consolidation.consolidation_key.split('-').forEach((w: string) => {
-        usedOwnerBalances.add(w.toLowerCase());
-      });
-    }
-  });
-
-  startingConsolidatedOwnersBalances.forEach((sb) => {
-    if (!usedOwnerBalances.has(sb.consolidation_key.toLowerCase())) {
-      consolidatedOwnersBalances.push({
-        ...sb,
-        total_balance: 0
-      });
-    }
-  });
-
-  startingConsolidatedOwnersBalancesMemes.forEach((sbm) => {
-    if (!usedOwnerBalances.has(sbm.consolidation_key.toLowerCase())) {
-      consolidatedOwnersBalancesMemes.push({
-        ...sbm,
-        balance: 0
-      });
-    }
-  });
+      const oMemesBalances = await getConsolidatedMemesBalances(
+        seasons,
+        consolidationKey,
+        consolidationAddresses
+      );
+      consolidatedOwnersBalancesMemes.push(...oMemesBalances);
+    })
+  );
 
   await persistConsolidatedOwnerBalances(
     consolidatedOwnersBalances,
-    consolidatedOwnersBalancesMemes
+    consolidatedOwnersBalancesMemes,
+    reset ?? false
   );
+
+  return {
+    consolidatedOwnersBalances,
+    consolidatedOwnersBalancesMemes
+  };
+}
+
+function filterContract(nfts: NFTOwner[], contract: string) {
+  return [...nfts].filter((a) => areEqualAddresses(a.contract, contract));
+}
+
+function getTokenIdBalance(nfts: NFTOwner[], tokenId: number) {
+  const tokenNfts = filterTokenId(nfts, tokenId);
+  return tokenNfts.reduce((acc, n) => acc + n.balance, 0);
+}
+
+function filterTokenId(nfts: NFTOwner[], tokenId: number) {
+  return [...nfts].filter((a) => a.token_id == tokenId);
 }

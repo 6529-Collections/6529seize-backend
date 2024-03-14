@@ -1,7 +1,6 @@
 import 'reflect-metadata';
 import {
   DataSource,
-  In,
   IsNull,
   LessThan,
   MoreThanOrEqual,
@@ -17,11 +16,9 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
+  NFT_OWNERS_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
-  OWNERS_MEME_LAB_TABLE,
-  OWNERS_METRICS_TABLE,
-  OWNERS_TABLE,
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
@@ -37,13 +34,6 @@ import {
   MemesExtendedData,
   NFT
 } from './entities/INFT';
-import {
-  ConsolidatedOwnerMetric,
-  ConsolidatedOwnerTags,
-  Owner,
-  OwnerMetric,
-  OwnerTags
-} from './entities/IOwner';
 import {
   ConsolidatedTDH,
   GlobalTDHHistory,
@@ -216,12 +206,6 @@ export async function fetchLastConsolidatedUpload(): Promise<any> {
   const sql = `SELECT * FROM ${CONSOLIDATED_UPLOADS_TABLE} ORDER BY date DESC LIMIT 1;`;
   const results = await sqlExecutor.execute(sql);
   return results ? results[0] : [];
-}
-
-export async function fetchLastOwnerMetrics(): Promise<any> {
-  const sql = `SELECT transaction_reference FROM ${OWNERS_METRICS_TABLE} ORDER BY transaction_reference DESC LIMIT 1;`;
-  const results = await sqlExecutor.execute(sql);
-  return results ? results[0].transaction_reference : null;
 }
 
 export async function findTransactionsByHash(
@@ -414,25 +398,6 @@ export async function fetchConsolidationDisplay(
   return display;
 }
 
-export async function fetchAllOwnerTags() {
-  const metrics = await AppDataSource.getRepository(OwnerTags)
-    .createQueryBuilder('ot')
-    .innerJoin(OWNERS_TABLE, 'o', 'o.wallet = ot.wallet')
-    .getMany();
-  return metrics;
-}
-
-export async function fetchAllOwnerMetrics(wallets?: string[]) {
-  const repo = AppDataSource.getRepository(OwnerMetric);
-  if (wallets && wallets.length > 0) {
-    return await repo.find({
-      where: { wallet: In(wallets) }
-    });
-  } else {
-    return await repo.find();
-  }
-}
-
 export async function fetchAllConsolidatedOwnerMetrics() {
   const metrics = await AppDataSource.getRepository(ConsolidatedTDH).find();
   return metrics;
@@ -461,44 +426,29 @@ export async function fetchAllArtists() {
   return results;
 }
 
-export async function fetchAllLabOwners() {
-  const sql = `SELECT * FROM ${OWNERS_MEME_LAB_TABLE};`;
+export async function fetchDistinctTransactionWallets() {
+  const sql = `SELECT DISTINCT wallet FROM ${TRANSACTIONS_TABLE} `;
   const results = await sqlExecutor.execute(sql);
   return results;
 }
 
-export async function fetchAllOwners() {
-  const sql = `SELECT * FROM ${OWNERS_TABLE};`;
-  const results = await sqlExecutor.execute(sql);
-  return results;
+export async function fetchMaxTransactionsBlockNumber(): Promise<number> {
+  const sql = `SELECT MAX(block) as max_block FROM ${TRANSACTIONS_TABLE};`;
+  const r = await sqlExecutor.execute(sql);
+  return r.length > 0 ? r[0].max_block : 0;
 }
 
-export async function fetchDistinctOwnerWallets() {
-  const sql = `SELECT DISTINCT ${OWNERS_TABLE}.wallet, 
-    ${OWNERS_METRICS_TABLE}.created_at 
-    FROM ${OWNERS_TABLE} LEFT JOIN ${OWNERS_METRICS_TABLE} 
-    ON ${OWNERS_TABLE}.wallet = ${OWNERS_METRICS_TABLE}.wallet;`;
-  const results = await sqlExecutor.execute(sql);
-  return results;
-}
-
-export async function fetchTransactionAddressesFromDate(
+export async function fetchTransactionAddressesFromBlock(
   contracts: string[],
-  date: Date
+  block: number
 ) {
   return await sqlExecutor.execute(
-    `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE} WHERE created_at >= :date and contract in (:contracts)`,
+    `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE} WHERE block > :block and contract in (:contracts)`,
     {
       contracts: contracts.map((it) => it.toLowerCase()),
-      date
+      block
     }
   );
-}
-
-export async function fetchAllOwnersAddresses() {
-  const sql = `SELECT distinct wallet FROM ${OWNERS_TABLE};`;
-  const results = await sqlExecutor.execute(sql);
-  return results;
 }
 
 export async function fetchAllConsolidationAddresses() {
@@ -654,172 +604,6 @@ export async function persistArtists(artists: Artist[]) {
       })
     );
     logger.info(`[ARTISTS] [ALL ${artists.length} ARTISTS PERSISTED]`);
-  }
-}
-
-export async function persistOwners(owners: Owner[], isLab?: boolean) {
-  if (owners.length > 0) {
-    logger.info(`[OWNERS] [PERSISTING ${owners.length} OWNERS]`);
-
-    await Promise.all(
-      owners.map(async (owner) => {
-        let sql;
-        const table = isLab ? OWNERS_MEME_LAB_TABLE : OWNERS_TABLE;
-        const params: any = {};
-
-        if (0 >= owner.balance) {
-          sql = `DELETE FROM ${table} WHERE wallet=:wallet AND token_id=:token_id AND contract=:contract`;
-          params.wallet = owner.wallet;
-          params.token_id = owner.token_id;
-          params.contract = owner.contract;
-        } else {
-          sql = `REPLACE INTO ${table} SET created_at=:created_at, wallet=:wallet, token_id=:token_id, contract=:contract, balance=:balance`;
-          params.created_at = new Date();
-          params.wallet = owner.wallet;
-          params.token_id = owner.token_id;
-          params.contract = owner.contract;
-          params.balance = owner.balance;
-        }
-
-        await sqlExecutor.execute(sql, params);
-      })
-    );
-
-    logger.info(`[OWNERS] [ALL ${owners.length} OWNERS PERSISTED]`);
-  }
-}
-
-export async function persistOwnerMetrics(
-  ownerMetrics: OwnerMetric[],
-  reset?: boolean
-) {
-  if (ownerMetrics.length > 0) {
-    logger.info(`[OWNERS METRICS] [PERSISTING ${ownerMetrics.length} WALLETS]`);
-
-    if (reset) {
-      const walletIds = ownerMetrics.map((metric) => metric.wallet);
-
-      const result = await AppDataSource.createQueryBuilder()
-        .delete()
-        .from(OwnerMetric)
-        .where('wallet NOT IN (:...walletIds)', { walletIds })
-        .execute();
-
-      logger.info(`[OWNERS METRICS] [RESET] [${JSON.stringify(result)}]`);
-    }
-
-    const repo = AppDataSource.getRepository(OwnerMetric);
-
-    await Promise.all(
-      ownerMetrics.map(async (ownerMetric) => {
-        if (0 >= ownerMetric.balance) {
-          logger.info(
-            `[OWNERS METRICS] [DELETING ${ownerMetric.wallet} BALANCE ${ownerMetric.balance}]`
-          );
-          await repo.remove(ownerMetric);
-        } else {
-          await repo.upsert(ownerMetric, ['wallet']);
-        }
-      })
-    );
-
-    logger.info(
-      `[OWNERS METRICS] [ALL ${ownerMetrics.length} WALLETS PERSISTED]`
-    );
-  }
-}
-
-export async function persistConsolidatedOwnerTags(
-  tags: ConsolidatedOwnerTags[]
-) {
-  logger.info(`[CONSOLIDATED OWNER TAGS] PERSISTING [${tags.length} WALLETS]`);
-
-  await AppDataSource.transaction(async (manager) => {
-    const repo = manager.getRepository(ConsolidatedOwnerTags);
-    await repo.clear();
-    await repo.save(tags);
-  });
-
-  logger.info(`[CONSOLIDATED OWNER TAGS] PERSISTED [${tags.length} WALLETS]`);
-}
-
-export async function persistConsolidatedOwnerMetrics(
-  metrics: ConsolidatedOwnerMetric[],
-  wallets?: string[]
-) {
-  logger.info(
-    `[CONSOLIDATED OWNER METRICS] [PERSISTING ${metrics.length} ENTRIES]`
-  );
-
-  await AppDataSource.transaction(async (manager) => {
-    const repo = manager.getRepository(ConsolidatedOwnerMetric);
-    const consolidationKeys = metrics.map((metric) => metric.consolidation_key);
-    const consolidationDisplays = metrics.map(
-      (metric) => metric.consolidation_display
-    );
-
-    if (wallets && wallets.length > 0) {
-      logger.info(
-        `[CONSOLIDATED OWNER METRICS] [DELETING ${wallets.length} WALLETS]`
-      );
-      await Promise.all(
-        wallets.map(async (wallet) => {
-          repo
-            .createQueryBuilder()
-            .delete()
-            .where('consolidation_key like :walletPattern', {
-              walletPattern: `%${wallet}%`
-            })
-            .execute();
-        })
-      );
-    } else {
-      const deleteResults = await AppDataSource.createQueryBuilder()
-        .delete()
-        .from(ConsolidatedOwnerMetric)
-        .where('consolidation_key NOT IN (:...consolidationKeys)', {
-          consolidationKeys
-        })
-        .orWhere('consolidation_display NOT IN (:...consolidationDisplays)', {
-          consolidationDisplays
-        })
-        .execute();
-
-      logger.info(
-        `[CONSOLIDATED OWNER METRICS] [DELETED ${deleteResults.affected} ENTRIES]`
-      );
-    }
-
-    await repo.save(metrics);
-  });
-
-  logger.info(
-    `[CONSOLIDATED OWNER METRICS] [PERSISTED ${metrics.length} ENTRIES]`
-  );
-}
-
-export async function persistOwnerTags(ownersTags: OwnerTags[]) {
-  if (ownersTags.length > 0) {
-    logger.info(`[OWNERS TAGS] [PERSISTING ${ownersTags.length} WALLETS]`);
-
-    await AppDataSource.transaction(async (manager) => {
-      const repo = manager.getRepository(OwnerTags);
-      await Promise.all(
-        ownersTags.map(async (owner) => {
-          if (
-            0 >= owner.memes_balance &&
-            0 >= owner.gradients_balance &&
-            0 >= owner.nextgen_balance
-          ) {
-            await repo.remove(owner);
-          } else {
-            await repo.upsert(owner, ['wallet']);
-          }
-        })
-      );
-    });
-
-    logger.info(`[OWNERS TAGS] [ALL ${ownersTags.length} WALLETS PERSISTED]`);
   }
 }
 
@@ -1389,4 +1173,11 @@ export async function fetchWalletConsolidationKeysView(): Promise<
 > {
   const sql = `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW}`;
   return await sqlExecutor.execute(sql);
+}
+
+export async function fetchWalletConsolidationKeysViewForWallet(
+  addresses: string[]
+): Promise<WalletConsolidationKeyView[]> {
+  const sql = `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE wallet IN (:addresses)`;
+  return await sqlExecutor.execute(sql, { addresses });
 }

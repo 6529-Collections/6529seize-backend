@@ -17,12 +17,10 @@ import { Logger } from '../logging';
 import { discoverEnsConsolidations, discoverEnsDelegations } from '../ens';
 import { Time } from '../time';
 import { getLastTDH } from '../helpers';
-import { consolidateTDH } from '../tdh_consolidation';
-import { consolidateOwnerMetrics } from '../owner_metrics';
+import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { sqlExecutor } from '../sql-executor';
 import { CONSOLIDATIONS_TABLE } from '../constants';
 import { ConsolidatedTDH, TDH } from '../entities/ITDH';
-import { ConsolidatedOwnerMetric, OwnerMetric } from '../entities/IOwner';
 import { Profile } from '../entities/IProfile';
 import * as sentryContext from '../sentry.context';
 import { NextGenTokenTDH } from '../entities/INextGen';
@@ -31,7 +29,10 @@ import {
   ProfileFullView,
   WalletConsolidationKeyView
 } from '../entities/ICommunityMember';
-import { findTDH } from '../tdh';
+import { findTDH } from '../tdhLoop/tdh';
+import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
+import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
+import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -45,8 +46,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     TDH,
     ConsolidatedTDH,
     NextGenTokenTDH,
-    ConsolidatedOwnerMetric,
-    OwnerMetric,
     Profile,
     ProfileFullView,
     WalletConsolidationKeyView
@@ -152,7 +151,11 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
 
   const lastTDHCalc = getLastTDH();
   const walletsArray = Array.from(distinctWallets);
+
   await findTDH(lastTDHCalc, walletsArray);
   await consolidateTDH(lastTDHCalc, walletsArray);
-  await consolidateOwnerMetrics(walletsArray);
+
+  await consolidateActivity(distinctWallets);
+  await consolidateNftOwners(distinctWallets);
+  await consolidateOwnerBalances(distinctWallets);
 }

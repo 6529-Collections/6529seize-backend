@@ -29,24 +29,6 @@ export class BaseTDH {
   tdh_rank_memes!: number;
 
   @Column({ type: 'int', nullable: false })
-  tdh_rank_memes_szn1!: number;
-
-  @Column({ type: 'int', nullable: false })
-  tdh_rank_memes_szn2!: number;
-
-  @Column({ type: 'int', nullable: false })
-  tdh_rank_memes_szn3!: number;
-
-  @Column({ type: 'int', nullable: false })
-  tdh_rank_memes_szn4!: number;
-
-  @Column({ type: 'int', nullable: false })
-  tdh_rank_memes_szn5!: number;
-
-  @Column({ type: 'int', nullable: false })
-  tdh_rank_memes_szn6!: number;
-
-  @Column({ type: 'int', nullable: false })
   tdh_rank_gradients!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -56,31 +38,16 @@ export class BaseTDH {
   balance!: number;
 
   @Column({ type: 'int', nullable: false })
-  genesis!: boolean;
+  genesis!: number;
+
+  @Column({ type: 'int', nullable: false })
+  nakamoto!: number;
 
   @Column({ type: 'int', nullable: false })
   memes_cards_sets!: number;
 
   @Column({ type: 'int', nullable: false })
   unique_memes!: number;
-
-  @Column({ type: 'int', nullable: false, default: 0 })
-  unique_memes_season1!: number;
-
-  @Column({ type: 'int', nullable: false, default: 0 })
-  unique_memes_season2!: number;
-
-  @Column({ type: 'int', nullable: false, default: 0 })
-  unique_memes_season3!: number;
-
-  @Column({ type: 'int', nullable: false, default: 0 })
-  unique_memes_season4!: number;
-
-  @Column({ type: 'int', nullable: false, default: 0 })
-  unique_memes_season5!: number;
-
-  @Column({ type: 'int', nullable: false, default: 0 })
-  unique_memes_season6!: number;
 
   @Column({ type: 'int', nullable: false })
   boosted_memes_tdh!: number;
@@ -93,78 +60,6 @@ export class BaseTDH {
 
   @Column({ type: 'int', nullable: false })
   memes_balance!: number;
-
-  @Column({ type: 'double', nullable: false })
-  boosted_memes_tdh_season1!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season1!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_balance_season1!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season1__raw!: number;
-
-  @Column({ type: 'double', nullable: false })
-  boosted_memes_tdh_season2!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season2!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_balance_season2!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season2__raw!: number;
-
-  @Column({ type: 'double', nullable: false })
-  boosted_memes_tdh_season3!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season3!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_balance_season3!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season3__raw!: number;
-
-  @Column({ type: 'double', nullable: false })
-  boosted_memes_tdh_season4!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season4!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_balance_season4!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season4__raw!: number;
-
-  @Column({ type: 'double', nullable: false })
-  boosted_memes_tdh_season5!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season5!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_balance_season5!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season5__raw!: number;
-
-  @Column({ type: 'double', nullable: false })
-  boosted_memes_tdh_season6!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season6!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_balance_season6!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season6__raw!: number;
 
   @Column({ type: 'json', nullable: true })
   memes?: any;
@@ -395,7 +290,7 @@ export class TDHHistory {
 }
 
 export interface TokenTDH {
-  id: string;
+  id: number;
   balance: number;
   tdh: number;
   tdh__raw: number;

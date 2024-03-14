@@ -1,19 +1,42 @@
-import {
-  SZN1_INDEX,
-  SZN2_INDEX,
-  SZN3_INDEX,
-  SZN4_INDEX,
-  SZN5_INDEX
-} from '../constants';
-
 const calculateBoost = require('../tdh').calculateBoost;
+
+const snz1_index = {
+  start: 1,
+  end: 47,
+  count: 47
+};
+const snz2_index = {
+  start: 48,
+  end: 86,
+  count: 39
+};
+const snz3_index = {
+  start: 87,
+  end: 118,
+  count: 32
+};
+const snz4_index = {
+  start: 119,
+  end: 151,
+  count: 33
+};
+
+const snz5_index = {
+  start: 152,
+  end: 180,
+  count: 29
+};
+
+const snz6_index = {
+  start: 181
+};
 
 test('calculateBoost should calculate the boost correctly', () => {
   //s1 set
   expect(
     calculateBoost(
       0,
-      SZN1_INDEX.count,
+      snz1_index.count,
       0,
       0,
       0,
@@ -30,7 +53,7 @@ test('calculateBoost should calculate the boost correctly', () => {
     calculateBoost(
       0,
       0,
-      SZN2_INDEX.count,
+      snz2_index.count,
       0,
       0,
       0,
@@ -47,7 +70,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN3_INDEX.count,
+      snz3_index.count,
       0,
       0,
       false,
@@ -64,7 +87,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN4_INDEX.count,
+      snz4_index.count,
       0,
       false,
       false,
@@ -81,7 +104,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN5_INDEX.count,
+      snz5_index.count,
       false,
       false,
       [],
@@ -94,7 +117,7 @@ test('calculateBoost should calculate the boost correctly', () => {
   expect(
     calculateBoost(
       0,
-      SZN1_INDEX.count,
+      snz1_index.count,
       0,
       0,
       0,
@@ -111,7 +134,7 @@ test('calculateBoost should calculate the boost correctly', () => {
     calculateBoost(
       0,
       0,
-      SZN2_INDEX.count,
+      snz2_index.count,
       0,
       0,
       0,
@@ -127,7 +150,7 @@ test('calculateBoost should calculate the boost correctly', () => {
     calculateBoost(
       0,
       0,
-      SZN2_INDEX.count,
+      snz2_index.count,
       0,
       0,
       0,
@@ -143,7 +166,7 @@ test('calculateBoost should calculate the boost correctly', () => {
     calculateBoost(
       0,
       0,
-      SZN2_INDEX.count,
+      snz2_index.count,
       0,
       0,
       0,
@@ -159,7 +182,7 @@ test('calculateBoost should calculate the boost correctly', () => {
     calculateBoost(
       0,
       0,
-      SZN2_INDEX.count,
+      snz2_index.count,
       0,
       0,
       0,
@@ -175,7 +198,7 @@ test('calculateBoost should calculate the boost correctly', () => {
     calculateBoost(
       0,
       0,
-      SZN2_INDEX.count,
+      snz2_index.count,
       0,
       0,
       0,
@@ -191,7 +214,7 @@ test('calculateBoost should calculate the boost correctly', () => {
     calculateBoost(
       0,
       0,
-      SZN2_INDEX.count,
+      snz2_index.count,
       0,
       0,
       0,
@@ -208,7 +231,7 @@ test('calculateBoost should calculate the boost correctly', () => {
     calculateBoost(
       0,
       0,
-      SZN2_INDEX.count,
+      snz2_index.count,
       0,
       0,
       0,
@@ -226,7 +249,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN3_INDEX.count,
+      snz3_index.count,
       0,
       0,
       true,
@@ -242,7 +265,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN3_INDEX.count,
+      snz3_index.count,
       0,
       0,
       false,
@@ -258,7 +281,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN3_INDEX.count,
+      snz3_index.count,
       0,
       0,
       true,
@@ -270,7 +293,7 @@ test('calculateBoost should calculate the boost correctly', () => {
   ).toBe(1.07);
   //s3 set + genesis + ENS
   expect(
-    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, 0, true, true, [], true, false)
+    calculateBoost(0, 0, 0, snz3_index.count, 0, 0, true, true, [], true, false)
       .total
   ).toBe(1.08);
   //s3 set + genesis + 4gradient
@@ -279,7 +302,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN3_INDEX.count,
+      snz3_index.count,
       0,
       0,
       true,
@@ -296,7 +319,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN3_INDEX.count,
+      snz3_index.count,
       0,
       0,
       true,
@@ -312,7 +335,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN3_INDEX.count,
+      snz3_index.count,
       0,
       0,
       false,
@@ -328,7 +351,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN3_INDEX.count,
+      snz3_index.count,
       0,
       0,
       true,
@@ -340,7 +363,7 @@ test('calculateBoost should calculate the boost correctly', () => {
   ).toBe(1.07);
   //s3 set + genesis + ENS
   expect(
-    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, 0, true, true, [], true, false)
+    calculateBoost(0, 0, 0, snz3_index.count, 0, 0, true, true, [], true, false)
       .total
   ).toBe(1.08);
   //s3 set + genesis + 4gradient
@@ -349,7 +372,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN3_INDEX.count,
+      snz3_index.count,
       0,
       0,
       true,
@@ -364,8 +387,8 @@ test('calculateBoost should calculate the boost correctly', () => {
   expect(
     calculateBoost(
       1,
-      SZN1_INDEX.count,
-      SZN2_INDEX.count,
+      snz1_index.count,
+      snz2_index.count,
       0,
       0,
       0,
@@ -380,8 +403,8 @@ test('calculateBoost should calculate the boost correctly', () => {
   expect(
     calculateBoost(
       2,
-      SZN1_INDEX.count,
-      SZN2_INDEX.count,
+      snz1_index.count,
+      snz2_index.count,
       0,
       0,
       0,
@@ -396,8 +419,8 @@ test('calculateBoost should calculate the boost correctly', () => {
   expect(
     calculateBoost(
       3,
-      SZN1_INDEX.count,
-      SZN2_INDEX.count,
+      snz1_index.count,
+      snz2_index.count,
       0,
       0,
       0,
@@ -412,8 +435,8 @@ test('calculateBoost should calculate the boost correctly', () => {
   expect(
     calculateBoost(
       3,
-      SZN1_INDEX.count,
-      SZN2_INDEX.count,
+      snz1_index.count,
+      snz2_index.count,
       0,
       0,
       0,
@@ -428,8 +451,8 @@ test('calculateBoost should calculate the boost correctly', () => {
   expect(
     calculateBoost(
       1,
-      SZN1_INDEX.count,
-      SZN2_INDEX.count,
+      snz1_index.count,
+      snz2_index.count,
       0,
       0,
       0,
@@ -444,8 +467,8 @@ test('calculateBoost should calculate the boost correctly', () => {
   expect(
     calculateBoost(
       1,
-      SZN1_INDEX.count,
-      SZN2_INDEX.count,
+      snz1_index.count,
+      snz2_index.count,
       0,
       0,
       0,
@@ -493,7 +516,7 @@ test('calculateBoost should calculate the boost correctly', () => {
 
   //s4 set
   expect(
-    calculateBoost(0, 0, 0, 0, SZN4_INDEX.count, 0, false, false, [], false)
+    calculateBoost(0, 0, 0, 0, snz4_index.count, 0, false, false, [], false)
       .total
   ).toBe(1.05);
 
@@ -503,8 +526,8 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN3_INDEX.count,
-      SZN4_INDEX.count,
+      snz3_index.count,
+      snz4_index.count,
       0,
       false,
       false,
@@ -521,7 +544,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN4_INDEX.count,
+      snz4_index.count,
       0,
       false,
       false,
@@ -539,7 +562,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN5_INDEX.count,
+      snz5_index.count,
       false,
       false,
       [],
@@ -555,8 +578,8 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN4_INDEX.count,
-      SZN5_INDEX.count,
+      snz4_index.count,
+      snz5_index.count,
       false,
       false,
       [],
@@ -573,7 +596,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN5_INDEX.count,
+      snz5_index.count,
       false,
       false,
       [],
@@ -590,7 +613,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN5_INDEX.count,
+      snz5_index.count,
       false,
       false,
       [],
@@ -607,7 +630,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       0,
       0,
       0,
-      SZN5_INDEX.count,
+      snz5_index.count,
       false,
       false,
       [],

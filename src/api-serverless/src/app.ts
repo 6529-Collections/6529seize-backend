@@ -513,20 +513,6 @@ loadApi().then(() => {
     });
   });
 
-  apiRouter.get(`/owners_tags`, function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    const wallets = req.query.wallet;
-
-    db.fetchOwnersTags(pageSize, page, wallets).then((result) => {
-      returnPaginatedResult(result, req, res);
-    });
-  });
-
   apiRouter.get(`/transactions`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
@@ -706,11 +692,11 @@ loadApi().then(() => {
         ? req.query.filter
         : null;
 
-    const hideMuseum =
-      req.query.hide_museum && req.query.hide_museum == 'true' ? true : false;
+    const hideMuseum = !!(
+      req.query.hide_museum && req.query.hide_museum == 'true'
+    );
 
-    const hideTeam =
-      req.query.hide_team && req.query.hide_team == 'true' ? true : false;
+    const hideTeam = !!(req.query.hide_team && req.query.hide_team == 'true');
 
     db.fetchTDH(
       pageSize,
@@ -758,14 +744,16 @@ loadApi().then(() => {
         ? req.query.filter
         : null;
 
-    const hideMuseum =
-      req.query.hide_museum && req.query.hide_museum == 'true' ? true : false;
+    const hideMuseum = !!(
+      req.query.hide_museum && req.query.hide_museum == 'true'
+    );
 
-    const hideTeam =
-      req.query.hide_team && req.query.hide_team == 'true' ? true : false;
+    const hideTeam = !!(req.query.hide_team && req.query.hide_team == 'true');
 
-    const isProfilePage =
-      req.query.profile_page && req.query.profile_page == 'true' ? true : false;
+    const isProfilePage = !!(
+      req.query.profile_page && req.query.profile_page == 'true'
+    );
+
     db.fetchOwnerMetrics(
       pageSize,
       page,
@@ -853,14 +841,15 @@ loadApi().then(() => {
         ? req.query.filter
         : null;
 
-    const hideMuseum =
-      req.query.hide_museum && req.query.hide_museum == 'true' ? true : false;
+    const hideMuseum = !!(
+      req.query.hide_museum && req.query.hide_museum == 'true'
+    );
 
-    const hideTeam =
-      req.query.hide_team && req.query.hide_team == 'true' ? true : false;
+    const hideTeam = !!(req.query.hide_team && req.query.hide_team == 'true');
 
-    const isProfilePage =
-      req.query.profile_page && req.query.profile_page == 'true' ? true : false;
+    const isProfilePage = !!(
+      req.query.profile_page && req.query.profile_page == 'true'
+    );
 
     db.fetchConsolidatedOwnerMetrics(
       pageSize,
@@ -1006,10 +995,9 @@ loadApi().then(() => {
 
   apiRouter.get(`/consolidations/:wallet`, function (req: any, res: any) {
     const wallet = req.params.wallet;
-    const showIncomplete =
+    const showIncomplete = !!(
       req.query.show_incomplete && req.query.show_incomplete == 'true'
-        ? true
-        : false;
+    );
     db.fetchConsolidationsForWallet(wallet, showIncomplete).then((result) => {
       returnPaginatedResult(result, req, res);
     });
@@ -1039,10 +1027,9 @@ loadApi().then(() => {
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
     const block = req.query.block;
-    const showIncomplete =
+    const showIncomplete = !!(
       req.query.show_incomplete && req.query.show_incomplete == 'true'
-        ? true
-        : false;
+    );
     db.fetchConsolidationTransactions(
       pageSize,
       page,
@@ -1089,8 +1076,9 @@ loadApi().then(() => {
         ? parseInt(req.query.page_size)
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    const showExpired =
-      req.query.show_expired && req.query.show_expired == 'true' ? true : false;
+    const showExpired = !!(
+      req.query.show_expired && req.query.show_expired == 'true'
+    );
     const block = req.query.block;
 
     db.fetchDelegationsByUseCase(

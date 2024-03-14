@@ -26,6 +26,15 @@ export abstract class OwnerBalancesBase {
   gradients_balance!: number;
 
   @Column({ type: 'int', nullable: false })
+  nextgen_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memelab_balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memelab!: number;
+
+  @Column({ type: 'int', nullable: false })
   memes_balance!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -71,6 +80,9 @@ export class OwnerBalancesMemesBase {
 export class OwnerBalances extends OwnerBalancesBase {
   @PrimaryColumn({ type: 'varchar', length: 50 })
   wallet!: string;
+
+  @Column({ type: 'int' })
+  block_reference!: number;
 }
 
 @Entity({ name: OWNERS_BALANCES_MEMES_TABLE })
@@ -79,13 +91,13 @@ export class OwnerBalancesMemes extends OwnerBalancesMemesBase {
   wallet!: string;
 }
 
-@Entity({ name: CONSOLIDATED_OWNERS_BALANCES_TABLE })
+@Entity(CONSOLIDATED_OWNERS_BALANCES_TABLE)
 export class ConsolidatedOwnerBalances extends OwnerBalancesBase {
   @PrimaryColumn({ type: 'varchar', length: 200 })
   consolidation_key!: string;
 }
 
-@Entity({ name: CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE })
+@Entity(CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE)
 export class ConsolidatedOwnerBalancesMemes extends OwnerBalancesMemesBase {
   @PrimaryColumn({ type: 'varchar', length: 200 })
   consolidation_key!: string;

@@ -17,15 +17,12 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
+  NFT_OWNERS_TABLE,
   NFTS_HISTORY_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
   NULL_ADDRESS,
   NULL_ADDRESS_DEAD,
-  OWNERS_MEME_LAB_TABLE,
-  OWNERS_METRICS_TABLE,
-  OWNERS_TABLE,
-  OWNERS_TAGS_TABLE,
   PROFILE_FULL,
   REMEMES_TABLE,
   REMEMES_UPLOADS,
@@ -44,7 +41,7 @@ import {
 } from './constants';
 import { RememeSource } from './entities/IRememe';
 import { areEqualAddresses, extractConsolidationWallets } from './helpers';
-import { getConsolidationsSql, getProfilePageSql } from './sql_helpers';
+import { getConsolidationsSql } from './sql_helpers';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 
 import * as mysql from 'mysql';
@@ -489,12 +486,17 @@ export async function fetchLabOwners(
   sort: string,
   sortDir: string
 ) {
-  let filters = '';
-  const params: any = {};
+  let filters = constructFilters(
+    '',
+    `${NFT_OWNERS_TABLE}.contract = :meme_lab_contract`
+  );
+  const params: any = {
+    meme_lab_contract: MEMELAB_CONTRACT
+  };
   if (wallets) {
     filters = constructFilters(
       filters,
-      `(${OWNERS_MEME_LAB_TABLE}.wallet in (:wallets) OR ${ENS_TABLE}.display in (:wallets))`
+      `(${NFT_OWNERS_TABLE}.wallet in (:wallets) OR ${ENS_TABLE}.display in (:wallets))`
     );
     params.wallets = wallets.split(',');
   }
@@ -503,13 +505,13 @@ export async function fetchLabOwners(
     params.nfts = nfts.split(',');
   }
 
-  const fields = ` ${OWNERS_MEME_LAB_TABLE}.*,${ENS_TABLE}.display as wallet_display, p.handle as handle, p.rep_score as rep_score, p.cic_score as cic_score, p.profile_tdh as profile_tdh `;
-  let joins = `LEFT JOIN ${ENS_TABLE} ON ${OWNERS_MEME_LAB_TABLE}.wallet=${ENS_TABLE}.wallet `;
-  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} wc on wc.wallet = ${OWNERS_MEME_LAB_TABLE}.wallet`;
+  const fields = ` ${NFT_OWNERS_TABLE}.*,${ENS_TABLE}.display as wallet_display, p.handle as handle, p.rep_score as rep_score, p.cic_score as cic_score, p.profile_tdh as profile_tdh `;
+  let joins = `LEFT JOIN ${ENS_TABLE} ON ${NFT_OWNERS_TABLE}.wallet=${ENS_TABLE}.wallet `;
+  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} wc on wc.wallet = ${NFT_OWNERS_TABLE}.wallet`;
   joins += ` LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = wc.consolidation_key`;
 
   const result = await fetchPaginated(
-    OWNERS_MEME_LAB_TABLE,
+    NFT_OWNERS_TABLE,
     params,
     `${sort} ${sortDir}, token_id asc, created_at desc`,
     pageSize,
@@ -584,9 +586,9 @@ export async function fetchGradients(
     gradient_contract: GRADIENT_CONTRACT
   };
 
-  let joins = ` INNER JOIN ${OWNERS_TABLE} ON ${NFTS_TABLE}.contract = ${OWNERS_TABLE}.contract AND ${NFTS_TABLE}.id = ${OWNERS_TABLE}.token_id `;
-  joins += ` LEFT JOIN ${ENS_TABLE} ON ${OWNERS_TABLE}.wallet=${ENS_TABLE}.wallet`;
-  const fields = ` ${NFTS_TABLE}.*, RANK() OVER (ORDER BY boosted_tdh desc, id asc) AS tdh_rank, ${OWNERS_TABLE}.wallet as owner, ${ENS_TABLE}.display as owner_display `;
+  let joins = ` INNER JOIN ${NFT_OWNERS_TABLE} ON ${NFTS_TABLE}.contract = ${NFT_OWNERS_TABLE}.contract AND ${NFTS_TABLE}.id = ${NFT_OWNERS_TABLE}.token_id `;
+  joins += ` LEFT JOIN ${ENS_TABLE} ON ${NFT_OWNERS_TABLE}.wallet=${ENS_TABLE}.wallet`;
+  const fields = ` ${NFTS_TABLE}.*, RANK() OVER (ORDER BY boosted_tdh desc, id asc) AS tdh_rank, ${NFT_OWNERS_TABLE}.wallet as owner, ${ENS_TABLE}.display as owner_display `;
 
   return fetchPaginated(
     NFTS_TABLE,
@@ -691,7 +693,7 @@ export async function fetchOwners(
   if (wallets) {
     filters = constructFilters(
       filters,
-      `(${OWNERS_TABLE}.wallet in (:wallets) OR ${ENS_TABLE}.display in (:wallets))`
+      `(${NFT_OWNERS_TABLE}.wallet in (:wallets) OR ${ENS_TABLE}.display in (:wallets))`
     );
     params.wallets = wallets.split(',');
   }
@@ -705,13 +707,13 @@ export async function fetchOwners(
   }
 
   const fields = ` 
-    ${OWNERS_TABLE}.created_at, 
-    ${OWNERS_TABLE}.wallet, 
-    ${OWNERS_TABLE}.token_id, 
-    ${OWNERS_TABLE}.contract, 
+    ${NFT_OWNERS_TABLE}.created_at, 
+    ${NFT_OWNERS_TABLE}.wallet, 
+    ${NFT_OWNERS_TABLE}.token_id, 
+    ${NFT_OWNERS_TABLE}.contract, 
     CAST(
         CASE 
-            WHEN ${OWNERS_TABLE}.wallet = :null_address AND ${OWNERS_TABLE}.token_id = :card_8 AND ${OWNERS_TABLE}.contract = :memes_contract THEN balance + :adjustment 
+            WHEN ${NFT_OWNERS_TABLE}.wallet = :null_address AND ${NFT_OWNERS_TABLE}.token_id = :card_8 AND ${NFT_OWNERS_TABLE}.contract = :memes_contract THEN balance + :adjustment 
             ELSE balance 
         END 
         AS SIGNED
@@ -723,43 +725,12 @@ export async function fetchOwners(
   params.memes_contract = MEMES_CONTRACT;
   params.adjustment = MEME_8_EDITION_BURN_ADJUSTMENT;
 
-  const joins = `LEFT JOIN ${ENS_TABLE} ON ${OWNERS_TABLE}.wallet=${ENS_TABLE}.wallet`;
+  const joins = `LEFT JOIN ${ENS_TABLE} ON ${NFT_OWNERS_TABLE}.wallet=${ENS_TABLE}.wallet`;
 
   return fetchPaginated(
-    OWNERS_TABLE,
+    NFT_OWNERS_TABLE,
     params,
     'token_id asc, created_at desc',
-    pageSize,
-    page,
-    filters,
-    fields,
-    joins
-  );
-}
-
-export async function fetchOwnersTags(
-  pageSize: number,
-  page: number,
-  wallets: string
-) {
-  let filters = '';
-  const params: any = {};
-
-  if (wallets) {
-    filters = constructFilters(
-      filters,
-      `${OWNERS_TAGS_TABLE}.wallet in (:wallets) OR ${ENS_TABLE}.display in (:wallets)`
-    );
-    params.wallets = wallets.split(',');
-  }
-
-  const fields = ` ${OWNERS_TAGS_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
-  const joins = `LEFT JOIN ${ENS_TABLE} ON ${OWNERS_TAGS_TABLE}.wallet=${ENS_TABLE}.wallet`;
-
-  return fetchPaginated(
-    OWNERS_TAGS_TABLE,
-    params,
-    'memes_balance desc, gradients_balance desc',
     pageSize,
     page,
     filters,

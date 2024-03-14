@@ -1,5 +1,5 @@
 import { getLastTDH } from '../helpers';
-import { consolidateTDH } from '../tdh_consolidation';
+import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { loadEnv, unload } from '../secrets';
 import { ConsolidatedTDH, TDH } from '../entities/ITDH';
 import { Logger } from '../logging';

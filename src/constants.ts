@@ -6,10 +6,8 @@ export const NFTS_TABLE = 'nfts';
 export const NFTS_MEME_LAB_TABLE = 'nfts_meme_lab';
 export const MEME_LAB_ROYALTIES_TABLE = 'meme_lab_royalties';
 export const ARTISTS_TABLE = 'artists';
-export const OWNERS_TABLE = 'owners';
-export const OWNERS_MEME_LAB_TABLE = 'owners_meme_lab';
-export const OWNERS_TAGS_TABLE = 'owners_tags';
-export const OWNERS_METRICS_TABLE = 'owners_metrics';
+export const NFT_OWNERS_TABLE = 'nft_owners';
+export const NFT_OWNERS_CONSOLIDATION_TABLE = 'nft_owners_consolidation';
 export const MEMES_EXTENDED_DATA_TABLE = 'memes_extended_data';
 export const LAB_EXTENDED_DATA_TABLE = 'lab_extended_data';
 export const WALLETS_TDH_TABLE = 'tdh';
@@ -52,9 +50,12 @@ export const CIC_SCORE_AGGREGATIONS_TABLE = 'cic_score_aggregations';
 export const PROFILE_TOTAL_REP_SCORE_AGGREGATIONS_TABLE =
   'profile_total_rep_score_aggregations';
 export const MEMES_SEASONS_TABLE = 'memes_seasons';
-export const OWNERS_ACTIVITY_TABLE = 'owners_activity';
-export const CONSOLIDATED_OWNERS_ACTIVITY_TABLE =
-  'owners_activity_consolidation';
+export const AGGREGATED_ACTIVITY_TABLE = 'aggregated_activity';
+export const AGGREGATED_ACTIVITY_MEMES_TABLE = 'aggregated_activity_memes';
+export const CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE =
+  'aggregated_activity_consolidation';
+export const CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE =
+  'aggregated_activity_memes_consolidation';
 export const OWNERS_BALANCES_TABLE = 'owners_balances';
 export const OWNERS_BALANCES_MEMES_TABLE = 'owners_balances_memes';
 export const CONSOLIDATED_OWNERS_BALANCES_TABLE =
@@ -128,37 +129,6 @@ export const USE_CASE_SUB_DELEGATION = 998;
 export const USE_CASE_CONSOLIDATION = 999;
 export const CONSOLIDATIONS_LIMIT = 3;
 export const NEVER_DATE = 64060588800;
-
-export const SZN1_INDEX = {
-  start: 1,
-  end: 47,
-  count: 47
-};
-export const SZN2_INDEX = {
-  start: 48,
-  end: 86,
-  count: 39
-};
-export const SZN3_INDEX = {
-  start: 87,
-  end: 118,
-  count: 32
-};
-export const SZN4_INDEX = {
-  start: 119,
-  end: 151,
-  count: 33
-};
-
-export const SZN5_INDEX = {
-  start: 152,
-  end: 180,
-  count: 29
-};
-
-export const SZN6_INDEX = {
-  start: 181
-};
 
 export const WALLET_REGEX = /^0x[a-fA-F0-9]{40}$/;
 export const PROFILE_HANDLE_REGEX = /^[a-zA-Z0-9_]{3,15}$/;
