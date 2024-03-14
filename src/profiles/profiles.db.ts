@@ -421,12 +421,14 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
 
   async searchCommunityMembersWhereEnsLike({
     limit,
-    handle
+    onlyProfileOwners,
+    ensCandidate
   }: {
     limit: number;
-    handle: string;
+    onlyProfileOwners: boolean;
+    ensCandidate: string;
   }): Promise<(Profile & { tdh: number; display: string; wallet: string })[]> {
-    if (handle.endsWith('eth') && handle.length <= 6) {
+    if (ensCandidate.endsWith('eth') && ensCandidate.length <= 6) {
       return [];
     }
     {
@@ -438,12 +440,14 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       from ${ENS_TABLE} e
                left join ${COMMUNITY_MEMBERS_TABLE} c on c.wallet1 = lower(e.wallet) or c.wallet2 = lower(e.wallet) or c.wallet3 = lower(e.wallet)
                left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = c.consolidation_key
-               left join ${PROFILES_TABLE} p on p.primary_wallet = c.wallet1 or p.primary_wallet = c.wallet2 or p.primary_wallet = c.wallet3
-      where e.display like concat('%', :handle ,'%')
+               ${
+                 onlyProfileOwners ? '' : 'left'
+               } join ${PROFILES_TABLE} p on p.primary_wallet = c.wallet1 or p.primary_wallet = c.wallet2 or p.primary_wallet = c.wallet3
+      where e.display like concat('%', :ensCandidate ,'%')
       order by t.boosted_tdh desc
       limit :limit
     `;
-      return this.db.execute(sql, { handle, limit });
+      return this.db.execute(sql, { ensCandidate: ensCandidate, limit });
     }
   }
 

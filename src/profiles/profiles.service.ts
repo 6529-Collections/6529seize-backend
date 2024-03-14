@@ -774,16 +774,22 @@ export class ProfilesService {
 
   async searchCommunityMemberMinimalsOfClosestMatches({
     param,
+    onlyProfileOwners,
     limit
   }: {
     param: string;
+    onlyProfileOwners: boolean;
     limit: number;
   }): Promise<CommunityMemberMinimal[]> {
     if (param.length < 3 || param.length > 100) {
       return [];
     }
     if (WALLET_REGEX.exec(param)) {
-      return await this.searchCommunityMemberByWallet(param);
+      const communityMember = await this.searchCommunityMemberByWallet(
+        param,
+        onlyProfileOwners
+      );
+      return communityMember ? [communityMember] : [];
     } else {
       const membersByHandles =
         await this.profilesDb.searchCommunityMembersWhereHandleLike({
@@ -792,7 +798,8 @@ export class ProfilesService {
         });
       const profilesByEnsNames =
         await this.profilesDb.searchCommunityMembersWhereEnsLike({
-          handle: param,
+          ensCandidate: param,
+          onlyProfileOwners,
           limit: limit * 3
         });
       const members = [...membersByHandles, ...profilesByEnsNames]
@@ -843,16 +850,20 @@ export class ProfilesService {
   }
 
   private async searchCommunityMemberByWallet(
-    wallet: string
-  ): Promise<CommunityMemberMinimal[]> {
+    wallet: string,
+    onlyProfileOwners: boolean
+  ): Promise<CommunityMemberMinimal | null> {
     const profileAndConsolidationsInfo = await this.getProfileByWallet(wallet);
-    if (!profileAndConsolidationsInfo) {
-      return [];
+    if (
+      !profileAndConsolidationsInfo ||
+      (onlyProfileOwners && !profileAndConsolidationsInfo.profile)
+    ) {
+      return null;
     }
     const { profile, consolidation, cic, level } = profileAndConsolidationsInfo;
     let display = consolidation.consolidation_display;
     if (!display && !profile) {
-      return [];
+      return null;
     }
     if (!display) {
       const wallets = await this.profilesDb.getPrediscoveredEnsNames([
@@ -861,19 +872,17 @@ export class ProfilesService {
       const walletResp = wallets.at(0);
       display = walletResp?.ens ?? wallet;
     }
-    return [
-      {
-        handle: profile?.handle ?? null,
-        normalised_handle: profile?.normalised_handle ?? null,
-        primary_wallet: profile?.primary_wallet ?? null,
-        tdh: consolidation.tdh,
-        level: level,
-        cic_rating: cic.cic_rating ?? 0,
-        display: display,
-        pfp: profile?.pfp_url ?? null,
-        wallet
-      }
-    ];
+    return {
+      handle: profile?.handle ?? null,
+      normalised_handle: profile?.normalised_handle ?? null,
+      primary_wallet: profile?.primary_wallet ?? null,
+      tdh: consolidation.tdh,
+      level: level,
+      cic_rating: cic.cic_rating ?? 0,
+      display: display,
+      pfp: profile?.pfp_url ?? null,
+      wallet
+    };
   }
 
   private async refreshPrimaryWalletEns(
