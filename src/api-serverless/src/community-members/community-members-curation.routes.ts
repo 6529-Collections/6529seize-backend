@@ -141,38 +141,48 @@ const NullablePositiveIntegerSchema: Joi.NumberSchema = Joi.number()
   .allow(null)
   .default(null);
 
+const NullableIntegerSchema: Joi.NumberSchema = Joi.number()
+  .integer()
+  .optional()
+  .allow(null)
+  .default(null);
+
 const NullableStringSchema: Joi.StringSchema = Joi.string()
   .optional()
   .allow(null)
   .default(null);
 
-const FilterMinMaxSchema: Joi.ObjectSchema<FilterMinMax> = Joi.object({
+const TdhSchema: Joi.ObjectSchema<FilterMinMax> = Joi.object({
   min: NullablePositiveIntegerSchema,
   max: NullablePositiveIntegerSchema
 });
 
-const FilterRepSchema: Joi.ObjectSchema<FilterRep> = Joi.object({
-  min: NullablePositiveIntegerSchema,
-  max: NullablePositiveIntegerSchema,
+const LevelSchema: Joi.ObjectSchema<FilterMinMax> = Joi.object({
+  min: NullableIntegerSchema.min(-100).max(100),
+  max: NullableIntegerSchema.min(-100).max(100)
+});
+
+const RepSchema: Joi.ObjectSchema<FilterRep> = Joi.object({
+  min: NullableIntegerSchema,
+  max: NullableIntegerSchema,
   direction: DirectionSchema,
   user: NullableStringSchema,
   category: NullableStringSchema
 });
 
-const FilterCicSchema: Joi.ObjectSchema<FilterMinMaxDirectionAndUser> =
-  Joi.object({
-    min: NullablePositiveIntegerSchema,
-    max: NullablePositiveIntegerSchema,
-    direction: DirectionSchema,
-    user: NullableStringSchema
-  });
+const CicSchema: Joi.ObjectSchema<FilterMinMaxDirectionAndUser> = Joi.object({
+  min: NullableIntegerSchema,
+  max: NullableIntegerSchema,
+  direction: DirectionSchema,
+  user: NullableStringSchema
+});
 
 const CriteriaSchema: Joi.ObjectSchema<CommunityMembersCurationCriteria> =
   Joi.object({
-    tdh: FilterMinMaxSchema,
-    rep: FilterRepSchema,
-    cic: FilterCicSchema,
-    level: FilterMinMaxSchema
+    tdh: TdhSchema,
+    rep: RepSchema,
+    cic: CicSchema,
+    level: LevelSchema
   });
 
 const NewCommunityMembersCurationCriteriaSchema: Joi.ObjectSchema<NewCommunityMembersCurationCriteria> =
