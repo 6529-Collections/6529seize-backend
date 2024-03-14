@@ -80,7 +80,14 @@ router.post(
       .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
         getWalletOrThrow(req)
       )
-      .then((pc) => pc?.profile?.external_id ?? null);
+      .then((pc) =>
+        pc?.profile?.external_id
+          ? {
+              id: pc.profile.external_id,
+              handle: pc.profile.handle
+            }
+          : null
+      );
     if (!savingProfileId) {
       throw new ForbiddenException(`Please create a profile first.`);
     }
