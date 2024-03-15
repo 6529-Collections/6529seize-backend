@@ -459,8 +459,11 @@ async function retrieveActivityDelta(
   addresses: string[],
   nextgenContract: string
 ) {
-  const aggregatedActivity: AggregatedActivity[] = [];
-  const memesAggregatedActivity: AggregatedActivityMemes[] = [];
+  const aggregatedActivityMap = new Map<string, AggregatedActivity>();
+  const memesAggregatedActivityMap = new Map<
+    string,
+    AggregatedActivityMemes[]
+  >();
 
   await Promise.all(
     addresses.map(async (address) => {
@@ -553,7 +556,7 @@ async function retrieveActivityDelta(
         gradientsActivity,
         nextgenActivity
       );
-      aggregatedActivity.push(aActivity);
+      aggregatedActivityMap.set(address, aActivity);
 
       const memesSeasonActivity = retrieveMemesSeasonActivityForWallet(
         address,
@@ -561,9 +564,14 @@ async function retrieveActivityDelta(
         seasons,
         memesActivity
       );
-      memesAggregatedActivity.push(...memesSeasonActivity);
+      memesAggregatedActivityMap.set(address, memesSeasonActivity);
     })
   );
+
+  const aggregatedActivity = Array.from(aggregatedActivityMap.values());
+  const memesAggregatedActivity = Array.from(
+    memesAggregatedActivityMap.values()
+  ).flat();
 
   return {
     aggregatedActivity,

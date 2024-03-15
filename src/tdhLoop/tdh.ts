@@ -850,7 +850,7 @@ export async function calculateRanks(
       });
   });
 
-  let sortedTdh = boostedTDH
+  boostedTDH
     .sort((a: TDH, b: TDH) => {
       if (a.boosted_tdh > b.boosted_tdh) return -1;
       else if (a.boosted_tdh < b.boosted_tdh) return 1;
@@ -867,7 +867,7 @@ export async function calculateRanks(
       return w;
     });
 
-  sortedTdh = boostedTDH
+  boostedTDH
     .sort((a: TDH, b: TDH) => {
       if (a.boosted_memes_tdh > b.boosted_memes_tdh) return -1;
       else if (a.boosted_memes_tdh < b.boosted_memes_tdh) return 1;
@@ -887,7 +887,7 @@ export async function calculateRanks(
       return w;
     });
 
-  sortedTdh = boostedTDH
+  boostedTDH
     .sort((a: TDH, b: TDH) => {
       if (a.boosted_gradients_tdh > b.boosted_gradients_tdh) return -1;
       else if (a.boosted_gradients_tdh < b.boosted_gradients_tdh) return 1;
@@ -907,7 +907,7 @@ export async function calculateRanks(
       return w;
     });
 
-  sortedTdh = boostedTDH
+  boostedTDH
     .sort((a: TDH, b: TDH) => {
       if (a.boosted_nextgen_tdh > b.boosted_nextgen_tdh) return -1;
       else if (a.boosted_nextgen_tdh < b.boosted_nextgen_tdh) return 1;
@@ -927,7 +927,7 @@ export async function calculateRanks(
       return w;
     });
 
-  return sortedTdh;
+  return boostedTDH;
 }
 
 export function getGenesisAndNaka(memes: TokenTDH[]) {

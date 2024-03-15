@@ -1,4 +1,4 @@
-import { DeleteResult, ObjectLiteral, Repository } from 'typeorm';
+import { ObjectLiteral, Repository } from 'typeorm';
 
 export async function resetRepository<T extends ObjectLiteral>(
   repo: Repository<T>,
