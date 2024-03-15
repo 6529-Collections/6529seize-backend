@@ -370,8 +370,8 @@ export class CommunityMemberCriteriaService {
       } else if (repCriteria.user === null && repCriteria.category !== null) {
         groupedRepQuery = `grouped_reps as (select ${
           direction === FilterDirection.RECEIVED
-            ? 'rater_profile_id'
-            : 'matter_target_id'
+            ? 'matter_target_id'
+            : 'rater_profile_id'
         } as profile_id, matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 group by 1, 2)`;
       } else {
         groupedRepQuery = `grouped_reps as (select ${
