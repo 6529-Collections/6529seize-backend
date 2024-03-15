@@ -266,6 +266,7 @@ export async function consolidateActivity(
 ) {
   if (reset) {
     const allWallets = await fetchAllActivityWallets();
+    addresses.clear();
     allWallets.forEach((wallet) => {
       addresses.add(wallet);
     });
@@ -277,8 +278,15 @@ export async function consolidateActivity(
 
   const seasons = await fetchAllSeasons();
 
-  const consolidatedActivity: ConsolidatedAggregatedActivity[] = [];
-  const consolidatedMemesActivity: ConsolidatedAggregatedActivityMemes[] = [];
+  const consolidatedActivityMap = new Map<
+    string,
+    ConsolidatedAggregatedActivity
+  >();
+  const consolidatedMemesActivityMap = new Map<
+    string,
+    ConsolidatedAggregatedActivityMemes[]
+  >();
+  const deleteDelta = new Set<string>();
 
   await Promise.all(
     Array.from(addresses).map(async (address) => {
@@ -289,8 +297,8 @@ export async function consolidateActivity(
       let consolidationKey: string;
       let consolidationAddresses: string[] = [];
       if (!consolidation) {
-        consolidationKey = address;
-        consolidationAddresses.push(address);
+        consolidationKey = address.toLowerCase();
+        consolidationAddresses.push(address.toLowerCase());
       } else {
         consolidationKey = consolidation.consolidation_key;
         consolidationAddresses = consolidation.consolidation_key.split('-');
@@ -300,20 +308,30 @@ export async function consolidateActivity(
         consolidationKey,
         consolidationAddresses
       );
-      consolidatedActivity.push(cActivity);
+      consolidatedActivityMap.set(consolidationKey, cActivity);
 
       const cMemesActivity = await getConsolidatedMemesActivity(
         seasons,
         consolidationKey,
         consolidationAddresses
       );
-      consolidatedMemesActivity.push(...cMemesActivity);
+      consolidatedMemesActivityMap.set(consolidationKey, cMemesActivity);
+
+      consolidationAddresses.forEach((address) => {
+        deleteDelta.add(address);
+      });
     })
   );
+
+  const consolidatedActivity = Array.from(consolidatedActivityMap.values());
+  const consolidatedMemesActivity = Array.from(
+    consolidatedMemesActivityMap.values()
+  ).flat();
 
   await persistConsolidatedActivity(
     consolidatedActivity,
     consolidatedMemesActivity,
+    deleteDelta,
     reset
   );
 
@@ -330,7 +348,7 @@ export const findAggregatedActivity = async (reset?: boolean) => {
   const seasons = await fetchAllSeasons();
 
   const nextgenNetwork = getNextgenNetwork();
-  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[nextgenNetwork];
+  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[getNextgenNetwork()];
 
   logger.info(
     `[NEXTGEN_NETWORK ${nextgenNetwork}] : [NEXTGEN_CONTRACT ${NEXTGEN_CONTRACT}]`

@@ -8,6 +8,7 @@ import {
   OwnerBalancesMemes
 } from '../entities/IOwnerBalances';
 import { Logger } from '../logging';
+import { deleteConsolidations, resetRepository } from '../orm_helpers';
 
 const logger = Logger.get('DB_OWNER_BALANCES');
 
@@ -69,11 +70,6 @@ async function upsertBalances(
   pk: string,
   reset: boolean
 ) {
-  if (reset) {
-    await balancesRepo.clear();
-    await balancesMemesRepo.clear();
-  }
-
   const removeBalancesArray = reset
     ? []
     : ownerBalances.filter((ob) => ob.total_balance <= 0);
@@ -105,47 +101,74 @@ export async function persistOwnerBalances(
   ownerBalancesMemes: OwnerBalancesMemes[],
   reset: boolean
 ) {
-  await getDataSource().transaction(async (manager) => {
-    const balancesRepo = manager.getRepository(OwnerBalances);
-    const balancesMemesRepo = manager.getRepository(OwnerBalancesMemes);
+  if (reset) {
+    logger.info(`[RESETTING OWNER BALANCES...]`);
+    const balancesRepo = getDataSource().getRepository(OwnerBalances);
+    const balancesMemesRepo = getDataSource().getRepository(OwnerBalancesMemes);
+    await resetRepository(balancesRepo, ownerBalances);
+    await resetRepository(balancesMemesRepo, ownerBalancesMemes);
+  } else {
+    await getDataSource().transaction(async (manager) => {
+      const balancesRepo = manager.getRepository(OwnerBalances);
+      const balancesMemesRepo = manager.getRepository(OwnerBalancesMemes);
 
-    await upsertBalances(
-      balancesRepo,
-      balancesMemesRepo,
-      ownerBalances,
-      ownerBalancesMemes,
-      'wallet',
-      reset
-    );
-  });
-
-  logger.info({
-    message: '[OWNER BALANCES PERSISTED]'
-  });
+      await upsertBalances(
+        balancesRepo,
+        balancesMemesRepo,
+        ownerBalances,
+        ownerBalancesMemes,
+        'wallet',
+        reset
+      );
+      logger.info({
+        message: '[OWNER BALANCES PERSISTED]'
+      });
+    });
+  }
 }
 
 export async function persistConsolidatedOwnerBalances(
   consolidatedOwnerBalances: ConsolidatedOwnerBalances[],
   consolidatedOwnerBalancesMemes: ConsolidatedOwnerBalancesMemes[],
+  deleteDelta: Set<string>,
   reset: boolean
 ) {
-  await getDataSource().transaction(async (manager) => {
-    const balancesRepo = manager.getRepository(ConsolidatedOwnerBalances);
-    const balancesMemesRepo = manager.getRepository(
+  if (reset) {
+    logger.info(`[RESETTING CONSOLIDATED OWNER BALANCES...]`);
+    const balancesRepo = getDataSource().getRepository(
+      ConsolidatedOwnerBalances
+    );
+    const balancesMemesRepo = getDataSource().getRepository(
       ConsolidatedOwnerBalancesMemes
     );
-
-    await upsertBalances(
-      balancesRepo,
-      balancesMemesRepo,
-      consolidatedOwnerBalances,
-      consolidatedOwnerBalancesMemes,
-      'consolidation_key',
-      reset
+    await balancesRepo.clear();
+    await balancesRepo.insert(consolidatedOwnerBalances);
+    await balancesMemesRepo.clear();
+    await balancesMemesRepo.insert(consolidatedOwnerBalancesMemes);
+    logger.info(
+      `[INSERTED ${consolidatedOwnerBalances.length} CONSOLIDATED OWNER BALANCES]`
     );
-  });
+  } else {
+    await getDataSource().transaction(async (manager) => {
+      const balancesRepo = manager.getRepository(ConsolidatedOwnerBalances);
+      const balancesMemesRepo = manager.getRepository(
+        ConsolidatedOwnerBalancesMemes
+      );
 
-  logger.info({
-    message: '[CONSOLIDATED OWNER BALANCES PERSISTED]'
-  });
+      const deleted = await deleteConsolidations(balancesRepo, deleteDelta);
+      const deletedMemes = await deleteConsolidations(
+        balancesMemesRepo,
+        deleteDelta
+      );
+      logger.info(
+        `[DELETED ${deleted} CONSOLIDATED NFT BALANCES] : [DELETED ${deletedMemes} CONSOLIDATED NFT BALANCES MEMES]`
+      );
+      await balancesRepo.insert(consolidatedOwnerBalances);
+      await balancesMemesRepo.insert(consolidatedOwnerBalancesMemes);
+
+      logger.info({
+        message: '[CONSOLIDATED OWNER BALANCES PERSISTED]'
+      });
+    });
+  }
 }

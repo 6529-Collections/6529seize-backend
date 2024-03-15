@@ -1,6 +1,8 @@
-import { Alchemy } from 'alchemy-sdk';
+import {
+  Alchemy,
+  GetOwnersForContractWithTokenBalancesResponse
+} from 'alchemy-sdk';
 import { getAlchemyInstance } from '../alchemy';
-import { NFTOwner } from '../entities/INFTOwner';
 
 export interface OwnedNft {
   wallet: string;
@@ -25,7 +27,7 @@ async function fetchAllPages(
 
   for (const contract of contracts) {
     let pageKey: string | undefined = undefined;
-    let response;
+    let response: GetOwnersForContractWithTokenBalancesResponse;
     do {
       response = await getResponse(alchemy, contract, pageKey);
       response.owners.forEach((owner) => {

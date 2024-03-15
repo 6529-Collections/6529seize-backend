@@ -78,8 +78,8 @@ export const findOwnerBalances = async (reset?: boolean) => {
     owners = await fetchAllNftOwners(allContracts, Array.from(addresses));
   }
 
-  const ownersBalances: OwnerBalances[] = [];
-  const ownersBalancesMemes: OwnerBalancesMemes[] = [];
+  const ownersBalancesMap = new Map<string, OwnerBalances>();
+  const ownersBalancesMemesMap = new Map<string, OwnerBalancesMemes[]>();
 
   logger.info(
     `[ADDRESSES ${addresses.size.toLocaleString()}] [lastBalancesBlock ${lastBalancesBlock}] [blockReference ${blockReference}] [RESET ${reset}]`
@@ -99,10 +99,14 @@ export const findOwnerBalances = async (reset?: boolean) => {
 
     const ownerBalanceMemes = buildSeasonBalances(seasons, address, ownedNfts);
 
-    ownersBalances.push(ownerBalance);
-    ownersBalancesMemes.push(...ownerBalanceMemes);
+    ownersBalancesMap.set(address, ownerBalance);
+    ownersBalancesMemesMap.set(address, ownerBalanceMemes);
   });
 
+  const ownersBalances = Array.from(ownersBalancesMap.values());
+  const ownersBalancesMemes = Array.from(
+    ownersBalancesMemesMap.values()
+  ).flat();
   await persistOwnerBalances(ownersBalances, ownersBalancesMemes, reset);
 
   await consolidateOwnerBalances(addresses, reset);
@@ -204,22 +208,20 @@ function buildSeasonBalances(
     let seasonBalance = 0;
     owners.forEach((o) => (seasonBalance += o.balance));
 
-    if (seasonBalance > 0) {
-      const seasonSets = Math.min(
-        ...[...owners].map(function (o) {
-          return o.balance;
-        })
-      );
+    const seasonSets = Math.min(
+      ...[...owners].map(function (o) {
+        return o.balance;
+      })
+    );
 
-      const oBalanceMemes: OwnerBalancesMemes = {
-        wallet: wallet.toLowerCase(),
-        season: seasonId,
-        balance: seasonBalance,
-        unique: owners.length,
-        sets: seasonSets
-      };
-      seasonBalances.push(oBalanceMemes);
-    }
+    const oBalanceMemes: OwnerBalancesMemes = {
+      wallet: wallet.toLowerCase(),
+      season: seasonId,
+      balance: seasonBalance,
+      unique: owners.length,
+      sets: seasonSets
+    };
+    seasonBalances.push(oBalanceMemes);
   });
   return seasonBalances;
 }
@@ -332,8 +334,15 @@ export async function consolidateOwnerBalances(
 
   const seasons = await fetchAllSeasons();
 
-  const consolidatedOwnersBalances: ConsolidatedOwnerBalances[] = [];
-  const consolidatedOwnersBalancesMemes: ConsolidatedOwnerBalancesMemes[] = [];
+  const consolidatedOwnersBalancesMap = new Map<
+    string,
+    ConsolidatedOwnerBalances
+  >();
+  const consolidatedOwnersBalancesMemesMap = new Map<
+    string,
+    ConsolidatedOwnerBalancesMemes[]
+  >();
+  const deleteDelta = new Set<string>();
 
   await Promise.all(
     Array.from(addresses).map(async (address) => {
@@ -344,8 +353,8 @@ export async function consolidateOwnerBalances(
       let consolidationKey: string;
       let consolidationAddresses: string[] = [];
       if (!consolidation) {
-        consolidationKey = address;
-        consolidationAddresses.push(address);
+        consolidationKey = address.toLowerCase();
+        consolidationAddresses.push(address.toLowerCase());
       } else {
         consolidationKey = consolidation.consolidation_key;
         consolidationAddresses = consolidation.consolidation_key.split('-');
@@ -355,20 +364,31 @@ export async function consolidateOwnerBalances(
         consolidationKey,
         consolidationAddresses
       );
-      consolidatedOwnersBalances.push(oBalance);
+      consolidatedOwnersBalancesMap.set(consolidationKey, oBalance);
 
       const oMemesBalances = await getConsolidatedMemesBalances(
         seasons,
         consolidationKey,
         consolidationAddresses
       );
-      consolidatedOwnersBalancesMemes.push(...oMemesBalances);
+      consolidatedOwnersBalancesMemesMap.set(consolidationKey, oMemesBalances);
+      consolidationAddresses.forEach((address) => {
+        deleteDelta.add(address);
+      });
     })
   );
+
+  const consolidatedOwnersBalances = Array.from(
+    consolidatedOwnersBalancesMap.values()
+  );
+  const consolidatedOwnersBalancesMemes = Array.from(
+    consolidatedOwnersBalancesMemesMap.values()
+  ).flat();
 
   await persistConsolidatedOwnerBalances(
     consolidatedOwnersBalances,
     consolidatedOwnersBalancesMemes,
+    deleteDelta,
     reset ?? false
   );
 

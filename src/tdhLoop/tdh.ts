@@ -27,7 +27,7 @@ import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
 import { Logger } from '../logging';
 import { fetchNextgenTokens } from '../nextgen/nextgen.db';
 import { NextGenToken } from '../entities/INextGen';
-import { MemesExtendedData, NFT } from '../entities/INFT';
+import { NFT } from '../entities/INFT';
 import {
   getNextgenNetwork,
   NEXTGEN_CORE_CONTRACT
@@ -755,6 +755,7 @@ export async function calculateRanks(
       return a.id > b.id ? 1 : -1;
     }
   });
+
   const rankedNextgenTdh = sortedNextgenTdh.map((a, index) => {
     a.rank = index + 1;
     return a;

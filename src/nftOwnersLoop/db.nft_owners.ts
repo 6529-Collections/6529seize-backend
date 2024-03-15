@@ -3,6 +3,11 @@ import { Logger } from '../logging';
 import { ConsolidatedNFTOwner, NFTOwner } from '../entities/INFTOwner';
 import { NFT_OWNERS_TABLE } from '../constants';
 import { EntityTarget } from 'typeorm';
+import {
+  deleteConsolidations,
+  resetRepository,
+  upsertRepository
+} from '../orm_helpers';
 
 const logger = Logger.get('DB_NFT_OWNERS');
 
@@ -74,20 +79,18 @@ export async function persistNftOwners(
   if (reset) {
     logger.info(`[RESETTING NFT OWNERS...]`);
     const repo = getDataSource().getRepository(NFTOwner);
-    await repo.clear();
-    await repo
-      .createQueryBuilder()
-      .insert()
-      .values(upsertDelta)
-      .updateEntity(false)
-      .execute();
+    await resetRepository(repo, upsertDelta);
     logger.info(`[INSERTED ${upsertDelta.length} NFT OWNERS]`);
   } else {
     logger.info(`[UPSERTING NFT OWNERS...]`);
     await getDataSource().transaction(async (manager) => {
       const repo = manager.getRepository(NFTOwner);
-      await repo.remove(deleteDelta);
-      await repo.upsert(upsertDelta, ['wallet', 'contract', 'token_id']);
+      await upsertRepository(
+        repo,
+        ['wallet', 'contract', 'token_id'],
+        upsertDelta,
+        deleteDelta
+      );
     });
     logger.info(
       `[UPSERTED ${upsertDelta.length} NFT OWNERS] : [DELETED ${deleteDelta.length} NFT OWNERS]`
@@ -103,27 +106,14 @@ export async function persistConsolidatedNftOwners(
   if (reset) {
     logger.info(`[RESETTING CONSOLIDATED NFT OWNERS...]`);
     const repo = getDataSource().getRepository(ConsolidatedNFTOwner);
-    await repo.clear();
-    await repo
-      .createQueryBuilder()
-      .insert()
-      .values(upsertDelta)
-      .updateEntity(false)
-      .execute();
+    await resetRepository(repo, upsertDelta);
     logger.info(`[INSERTED ${upsertDelta.length} CONSOLIDATED NFT OWNERS]`);
   } else {
     logger.info(`[UPSERTING CONSOLIDATED NFT OWNERS...]`);
     await getDataSource().transaction(async (manager) => {
       const repo = manager.getRepository(ConsolidatedNFTOwner);
-      const whereClause = Array.from(deleteDelta)
-        .map((wallet) => `consolidation_key LIKE '%${wallet}%'`)
-        .join(' OR ');
-      const deleted = await repo
-        .createQueryBuilder()
-        .delete()
-        .where(whereClause)
-        .execute();
-      logger.info(`[DELETED ${deleted.affected} CONSOLIDATED NFT OWNERS]`);
+      const deleted = await deleteConsolidations(repo, deleteDelta);
+      logger.info(`[DELETED ${deleted} CONSOLIDATED NFT OWNERS]`);
       await repo.insert(upsertDelta);
       logger.info(`[INSERTED ${upsertDelta.length} CONSOLIDATED NFT OWNERS]`);
     });

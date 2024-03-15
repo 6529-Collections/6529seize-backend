@@ -25,26 +25,8 @@ import {
 
 const logger = Logger.get('NFT_OWNERS');
 
-export function getContractFromName(contractName: string) {
-  const nextgenNetwork = getNextgenNetwork();
-  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[nextgenNetwork];
-  switch (contractName) {
-    case 'NEXTGEN':
-      return NEXTGEN_CONTRACT;
-    case 'MEMES':
-      return MEMES_CONTRACT;
-    case 'GRADIENT':
-      return GRADIENT_CONTRACT;
-    case 'MEMELAB':
-      return MEMELAB_CONTRACT;
-    default:
-      return null;
-  }
-}
-
 export const findNftOwners = async (reset?: boolean) => {
-  const nextgenNetwork = getNextgenNetwork();
-  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[nextgenNetwork];
+  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[getNextgenNetwork()];
 
   const allContracts = [
     MEMES_CONTRACT,
@@ -66,7 +48,7 @@ export const findNftOwners = async (reset?: boolean) => {
   logger.info(`[OWNERS ${owners.length.toLocaleString()}]`);
 
   const addresses = new Set<string>();
-  let changedOwners;
+  let changedOwners: OwnedNft[];
   if (reset) {
     changedOwners = owners;
     owners.forEach((o) => {
@@ -99,7 +81,8 @@ export const findNftOwners = async (reset?: boolean) => {
       allContracts,
       blockReference,
       addresses,
-      changedOwners
+      changedOwners,
+      reset
     );
     const upsertDelta = ownersDelta.filter((o) => o.balance > 0);
     const deleteDelta = ownersDelta.filter((o) => 0 >= o.balance);
@@ -111,7 +94,7 @@ export const findNftOwners = async (reset?: boolean) => {
     });
 
     if (upsertDelta.length > 0 || deleteDelta.length > 0) {
-      await persistNftOwners(upsertDelta, deleteDelta, lastOwnersBlock === 0);
+      await persistNftOwners(upsertDelta, deleteDelta, reset);
       await consolidateNftOwners(addresses, reset);
     } else {
       logger.info(`[NO CHANGES]`);
@@ -132,8 +115,21 @@ export async function getOwnersDelta(
   contracts: string[],
   blockReference: number,
   addresses: Set<string>,
-  newOwners: OwnedNft[]
+  newOwners: OwnedNft[],
+  reset: boolean
 ) {
+  if (reset) {
+    return newOwners.map((o) => {
+      return {
+        wallet: o.wallet.toLowerCase(),
+        contract: o.contract.toLowerCase(),
+        token_id: o.token_id,
+        balance: o.balance,
+        block_reference: blockReference
+      };
+    });
+  }
+
   const startingOwners = await fetchAllNftOwners(
     contracts,
     Array.from(addresses)
@@ -197,35 +193,25 @@ export async function consolidateNftOwners(
   const consolidationViews = await fetchWalletConsolidationKeysViewForWallet(
     Array.from(addresses)
   );
-  const uniqueWallets = new Set<string>();
-  consolidationViews.forEach((consolidation) => {
-    uniqueWallets.add(consolidation.wallet);
-  });
-  addresses.forEach((wallet) => {
-    uniqueWallets.add(wallet);
-  });
 
-  const nftOwners = await fetchAllNftOwners(
-    undefined,
-    Array.from(uniqueWallets)
-  );
+  const nftOwners = await fetchAllNftOwners(undefined, Array.from(addresses));
 
   logger.info(
-    `[UNIQUE WALLETS ${uniqueWallets.size.toLocaleString()}] : [OWNERS ${nftOwners.length.toLocaleString()}]`
+    `[UNIQUE WALLETS ${addresses.size.toLocaleString()}] : [OWNERS ${nftOwners.length.toLocaleString()}]`
   );
 
   const usedConsolidationKeys = new Set<string>();
 
   addresses.forEach((wallet) => {
-    const consolidation = consolidationViews.find(
-      (consolidation) => consolidation.wallet === wallet
+    const consolidation = consolidationViews.find((consolidation) =>
+      areEqualAddresses(consolidation.wallet, wallet)
     );
 
     let consolidationKey: string;
     let consolidationAddresses: string[] = [];
     if (!consolidation) {
-      consolidationKey = wallet;
-      consolidationAddresses.push(wallet);
+      consolidationKey = wallet.toLowerCase();
+      consolidationAddresses.push(wallet.toLowerCase());
     } else {
       consolidationKey = consolidation.consolidation_key;
       consolidationAddresses = consolidation.consolidation_key.split('-');

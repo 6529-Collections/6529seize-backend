@@ -425,12 +425,6 @@ export async function fetchAllArtists() {
   return results;
 }
 
-export async function fetchDistinctTransactionWallets() {
-  const sql = `SELECT DISTINCT wallet FROM ${TRANSACTIONS_TABLE} `;
-  const results = await sqlExecutor.execute(sql);
-  return results;
-}
-
 export async function fetchMaxTransactionsBlockNumber(): Promise<number> {
   const sql = `SELECT MAX(block) as max_block FROM ${TRANSACTIONS_TABLE};`;
   const r = await sqlExecutor.execute(sql);
