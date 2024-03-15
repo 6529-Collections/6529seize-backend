@@ -149,7 +149,10 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
       let compressedAnimation;
 
       if (animationDetails) {
-        if (animationDetails.format == 'MP4') {
+        if (
+          animationDetails.format == 'MP4' ||
+          animationDetails.format == 'MOV'
+        ) {
           animation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
           compressedAnimation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/scaledx750/${tokenId}.${animationDetails.format}`;
         }

@@ -223,7 +223,10 @@ export const persistS3 = async (nfts: NFT[]) => {
 
       const animationDetails = n.metadata.animation_details;
 
-      if (animationDetails && animationDetails.format?.toUpperCase() == 'MP4') {
+      if (
+        animationDetails?.format?.toUpperCase() == 'MP4' ||
+        animationDetails?.format?.toUpperCase() == 'MOV'
+      ) {
         const videoFormat = animationDetails.format.toUpperCase();
         const videoKey = `videos/${n.contract}/${n.id}.${videoFormat}`;
         const videoExists = await objectExists(s3, myBucket, videoKey);
@@ -251,7 +254,7 @@ export const persistS3 = async (nfts: NFT[]) => {
               Bucket: myBucket,
               Key: videoKey,
               Body: Buffer.from(blob),
-              ContentType: `video/mp4`
+              ContentType: `video/${videoFormat.toLowerCase()}`
             })
           );
 

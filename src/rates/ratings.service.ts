@@ -129,7 +129,7 @@ export class RatingsService {
 
   private async scheduleEvents(
     request: UpdateRatingRequest,
-    currentRating: Rating & { total_tdh_spent_on_matter: number },
+    currentRating: Rating,
     connection: ConnectionWrapper<any>
   ) {
     if (request.matter === RateMatter.CIC) {
@@ -237,6 +237,17 @@ export class RatingsService {
           change_reason: 'LOST_TDH'
         })
       },
+      connection
+    );
+    await this.scheduleEvents(
+      {
+        matter: oldRating.matter,
+        matter_category: oldRating.matter_category,
+        matter_target_id: oldRating.matter_target_id,
+        rater_profile_id: oldRating.rater_profile_id,
+        rating: newRating
+      },
+      oldRating,
       connection
     );
   }
