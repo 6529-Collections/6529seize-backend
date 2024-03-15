@@ -101,7 +101,7 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
              prof_max_dates as (select p.consolidation_key as consolidation_key, max(l.created_at) as last_activity
                                 from ${PROFILE_FULL} p
                                          join ${PROFILES_ACTIVITY_LOGS_TABLE} l
-                                              on l.profile_id = p.external_id or l.target_id = p.external_id
+                                              on l.profile_id = p.external_id
                                 where p.consolidation_key in (:consolidationKeys)
                                 group by 1),
              last_activities_by_consolidation_key as (select t.consolidation_key,
