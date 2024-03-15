@@ -18,7 +18,7 @@ import {
 
 const logger = Logger.get('DB_AGGREGATED_ACTIVITY');
 
-export async function getMaxBlockReference(): Promise<number> {
+export async function getMaxAggregatedActivityBlockReference(): Promise<number> {
   const maxBlock = await getDataSource()
     .getRepository(AggregatedActivity)
     .createQueryBuilder(AGGREGATED_ACTIVITY_TABLE)

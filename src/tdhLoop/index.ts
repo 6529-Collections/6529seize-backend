@@ -8,9 +8,11 @@ import { loadEnv, unload } from '../secrets';
 import { ConsolidatedTDHUpload } from '../entities/IUpload';
 import {
   ConsolidatedTDH,
+  ConsolidatedTDHMemes,
   GlobalTDHHistory,
   TDH,
-  TDHHistory
+  TDHHistory,
+  TDHMemes
 } from '../entities/ITDH';
 import { NFT } from '../entities/INFT';
 import * as notifier from '../notifier';
@@ -29,6 +31,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   await loadEnv([
     TDH,
     ConsolidatedTDH,
+    TDHMemes,
+    ConsolidatedTDHMemes,
     NextGenTokenTDH,
     ConsolidatedTDHUpload,
     NFT,

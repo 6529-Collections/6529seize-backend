@@ -6,7 +6,7 @@ import {
   NULL_ADDRESS,
   WALLETS_TDH_TABLE
 } from '../constants';
-import { TDH, TokenTDH } from '../entities/ITDH';
+import { TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
 import { Transaction } from '../entities/ITransaction';
 import { areEqualAddresses, getDaysDiff } from '../helpers';
 import { Alchemy } from 'alchemy-sdk';
@@ -34,6 +34,7 @@ import {
 } from '../nextgen/nextgen_constants';
 import { MemesSeason } from '../entities/ISeason';
 import { fetchDistinctNftOwnerWallets } from '../nftOwnersLoop/db.nft_owners';
+import { calculateMemesTdh } from './tdh_memes';
 
 const logger = Logger.get('TDH');
 
@@ -83,6 +84,33 @@ export function createMemesData() {
   };
 }
 
+export const getAdjustedMemesAndSeasons = async (lastTDHCalc: Date) => {
+  const nfts: NFT[] = await fetchAllNFTs();
+  const ADJUSTED_NFTS = [...nfts].filter(
+    (nft) =>
+      lastTDHCalc.getTime() - 28 * 60 * 60 * 1000 >
+      new Date(nft.mint_date).getTime()
+  );
+
+  const MEMES_COUNT = [...ADJUSTED_NFTS].filter((nft) =>
+    areEqualAddresses(nft.contract, MEMES_CONTRACT)
+  ).length;
+
+  const seasons = await fetchAllSeasons();
+  const memeNfts = ADJUSTED_NFTS.filter((nft) =>
+    areEqualAddresses(nft.contract, MEMES_CONTRACT)
+  );
+  const ADJUSTED_SEASONS = seasons.filter(
+    (s) => memeNfts.length >= s.end_index
+  );
+
+  return {
+    ADJUSTED_NFTS,
+    MEMES_COUNT,
+    ADJUSTED_SEASONS
+  };
+};
+
 export const findTDH = async (
   lastTDHCalc: Date,
   startingWallets?: string[]
@@ -93,7 +121,6 @@ export const findTDH = async (
   });
 
   const block = await fetchLatestTransactionsBlockNumber(lastTDHCalc);
-  const nfts: NFT[] = await fetchAllNFTs();
 
   const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
   const nextgenNetwork = getNextgenNetwork();
@@ -121,15 +148,8 @@ export const findTDH = async (
     );
   }
 
-  const ADJUSTED_NFTS = [...nfts].filter(
-    (nft) =>
-      lastTDHCalc.getTime() - 28 * 60 * 60 * 1000 >
-      new Date(nft.mint_date).getTime()
-  );
-
-  const MEMES_COUNT = [...ADJUSTED_NFTS].filter((nft) =>
-    areEqualAddresses(nft.contract, MEMES_CONTRACT)
-  ).length;
+  const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
+    await getAdjustedMemesAndSeasons(lastTDHCalc);
 
   const timestamp = new Date(
     (await alchemy.core.getBlock(block)).timestamp * 1000
@@ -138,7 +158,7 @@ export const findTDH = async (
   logger.info(
     `[BLOCK ${block} - ${timestamp.toUTCString()}] [LAST TDH ${lastTDHCalc.toUTCString()}] [ADJUSTED_NFTS ${
       ADJUSTED_NFTS.length
-    }] : [NEXTGEN_NFTS ${
+    }] : [ADJUSTED_MEMES_SEASONS ${ADJUSTED_SEASONS.length}] : [NEXTGEN_NFTS ${
       NEXTGEN_NFTS.length
     }] : [NEXTGEN NETWORK ${nextgenNetwork}] : [CALCULATING TDH - START]`
   );
@@ -332,9 +352,9 @@ export const findTDH = async (
     `[BLOCK ${block}] [WALLETS ${walletsTDH.length}] [CALCULATING BOOSTS]`
   );
 
-  const boostedTdh = await calculateBoosts(walletsTDH);
+  const boostedTdh = await calculateBoosts(ADJUSTED_SEASONS, walletsTDH);
 
-  let rankedTdh;
+  let rankedTdh: TDH[];
   if (startingWallets) {
     const allCurrentTdh = await fetchTDHForBlock(block);
     const allTdh = allCurrentTdh
@@ -367,7 +387,11 @@ export const findTDH = async (
     `[BLOCK ${block}] [WALLETS ${rankedTdh.length}] [CALCULATING TDH - END]`
   );
 
-  await persistTDH(block, timestamp, rankedTdh, startingWallets);
+  const memesTdh = (await calculateMemesTdh(
+    ADJUSTED_SEASONS,
+    rankedTdh
+  )) as TDHMemes[];
+  await persistTDH(block, timestamp, rankedTdh, memesTdh, startingWallets);
 
   return {
     block: block,
@@ -673,12 +697,13 @@ function getTokenDatesFromConsolidation(
   return tokenDatesMap[currentWallet] || [];
 }
 
-export async function calculateBoosts(walletsTDH: any[]) {
+export async function calculateBoosts(
+  seasons: MemesSeason[],
+  walletsTDH: any[]
+) {
   const boostedTDH: any[] = [];
 
   const profiles = await fetchAllProfiles();
-
-  const seasons = await fetchAllSeasons();
 
   await Promise.all(
     walletsTDH.map(async (w) => {

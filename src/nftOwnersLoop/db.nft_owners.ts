@@ -11,7 +11,7 @@ import {
 
 const logger = Logger.get('DB_NFT_OWNERS');
 
-export async function getMaxBlockReference(): Promise<number> {
+export async function getMaxNftOwnersBlockReference(): Promise<number> {
   const maxBlock = await getDataSource()
     .getRepository(NFTOwner)
     .createQueryBuilder(NFT_OWNERS_TABLE)

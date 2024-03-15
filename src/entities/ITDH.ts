@@ -1,14 +1,22 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import {
+  CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
   TDH_HISTORY_TABLE,
+  WALLETS_TDH_MEMES_TABLE,
   WALLETS_TDH_TABLE
 } from '../constants';
 
-export class BaseTDH {
-  @PrimaryColumn({ type: 'int' })
-  block!: number;
+export class BaseTDHFields {
+  @Column({ type: 'int', nullable: false })
+  balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets!: number;
 
   @Column({ type: 'int', nullable: false })
   tdh!: number;
@@ -24,6 +32,14 @@ export class BaseTDH {
 
   @Column({ type: 'int', nullable: false })
   tdh_rank!: number;
+}
+
+export class BaseTDH extends BaseTDHFields {
+  @PrimaryColumn({ type: 'int' })
+  block!: number;
+
+  @Column({ type: 'datetime' })
+  date!: Date;
 
   @Column({ type: 'int', nullable: false })
   tdh_rank_memes!: number;
@@ -35,19 +51,10 @@ export class BaseTDH {
   tdh_rank_nextgen!: number;
 
   @Column({ type: 'int', nullable: false })
-  balance!: number;
-
-  @Column({ type: 'int', nullable: false })
   genesis!: number;
 
   @Column({ type: 'int', nullable: false })
   nakamoto!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique_memes!: number;
 
   @Column({ type: 'int', nullable: false })
   boosted_memes_tdh!: number;
@@ -62,7 +69,7 @@ export class BaseTDH {
   memes_balance!: number;
 
   @Column({ type: 'json', nullable: true })
-  memes?: any;
+  memes!: TokenTDH[];
 
   @Column({ type: 'json', nullable: true })
   memes_ranks?: any;
@@ -112,9 +119,6 @@ export class BaseTDH {
   where: `"wallet" = lower("wallet")`
 })
 export class TDH extends BaseTDH {
-  @Column({ type: 'datetime' })
-  date!: Date;
-
   @PrimaryColumn({ type: 'varchar', length: 50 })
   wallet!: string;
 }
@@ -125,9 +129,6 @@ export interface TDHENS extends TDH {
 
 @Entity(CONSOLIDATED_WALLETS_TDH_TABLE)
 export class ConsolidatedTDH extends BaseTDH {
-  @Column({ type: 'datetime' })
-  date!: Date;
-
   @PrimaryColumn({ type: 'varchar', length: 500 })
   consolidation_display!: string;
 
@@ -137,6 +138,24 @@ export class ConsolidatedTDH extends BaseTDH {
 
   @Column({ type: 'json', nullable: false })
   wallets?: any;
+}
+
+@Entity(WALLETS_TDH_MEMES_TABLE)
+export class TDHMemes extends BaseTDHFields {
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  wallet!: string;
+
+  @PrimaryColumn({ type: 'int' })
+  season!: number;
+}
+
+@Entity(CONSOLIDATED_WALLETS_TDH_MEMES_TABLE)
+export class ConsolidatedTDHMemes extends BaseTDHFields {
+  @PrimaryColumn({ type: 'varchar', length: 500 })
+  consolidation_key!: string;
+
+  @PrimaryColumn({ type: 'int' })
+  season!: number;
 }
 
 @Entity(TDH_GLOBAL_HISTORY_TABLE)
@@ -294,4 +313,9 @@ export interface TokenTDH {
   balance: number;
   tdh: number;
   tdh__raw: number;
+}
+
+export interface TokenTDHRank {
+  id: number;
+  rank: number;
 }

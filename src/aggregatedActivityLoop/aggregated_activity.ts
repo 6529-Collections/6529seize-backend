@@ -28,7 +28,7 @@ import {
   fetchAllActivity,
   fetchAllActivityWallets,
   fetchAllMemesActivity,
-  getMaxBlockReference,
+  getMaxAggregatedActivityBlockReference,
   persistActivity,
   persistConsolidatedActivity
 } from './db.aggregated_activity';
@@ -36,6 +36,7 @@ import {
   getNextgenNetwork,
   NEXTGEN_CORE_CONTRACT
 } from '../nextgen/nextgen_constants';
+import { getMaxNftOwnersBlockReference } from '../nftOwnersLoop/db.nft_owners';
 
 const logger = Logger.get('AGGREGATED_ACTIVITY');
 interface ActivityBreakdown {
@@ -342,7 +343,7 @@ export async function consolidateActivity(
 }
 
 export const findAggregatedActivity = async (reset?: boolean) => {
-  const lastActivityBlock = reset ? 0 : await getMaxBlockReference();
+  const lastActivityBlock = await getMaxAggregatedActivityBlockReference();
   reset = lastActivityBlock === 0;
   const blockReference = await fetchMaxTransactionsBlockNumber();
   const seasons = await fetchAllSeasons();

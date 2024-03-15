@@ -1,7 +1,7 @@
 import { areEqualAddresses } from '../helpers';
 import {
   fetchAllNftOwners,
-  getMaxBlockReference,
+  getMaxNftOwnersBlockReference,
   persistConsolidatedNftOwners,
   persistNftOwners
 } from './db.nft_owners';
@@ -35,7 +35,7 @@ export const findNftOwners = async (reset?: boolean) => {
     NEXTGEN_CONTRACT
   ];
 
-  const lastOwnersBlock = await getMaxBlockReference();
+  const lastOwnersBlock = await getMaxNftOwnersBlockReference();
 
   reset = reset || lastOwnersBlock === 0;
 

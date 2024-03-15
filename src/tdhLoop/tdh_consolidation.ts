@@ -1,4 +1,8 @@
-import { ConsolidatedTDH, TDHENS } from '../entities/ITDH';
+import {
+  ConsolidatedTDH,
+  ConsolidatedTDHMemes,
+  TDHENS
+} from '../entities/ITDH';
 import {
   fetchAllConsolidatedTdh,
   fetchAllNFTs,
@@ -13,6 +17,7 @@ import {
   calculateBoosts,
   calculateRanks,
   createMemesData,
+  getAdjustedMemesAndSeasons,
   getGenesisAndNaka
 } from './tdh';
 import {
@@ -24,6 +29,7 @@ import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
 import { Logger } from '../logging';
 import { NextGenToken } from '../entities/INextGen';
 import { fetchNextgenTokens } from '../nextgen/nextgen.db';
+import { calculateMemesTdh } from './tdh_memes';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
 
@@ -284,22 +290,18 @@ export const consolidateTDH = async (
   const nfts = await fetchAllNFTs();
   const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
 
-  const ADJUSTED_NFTS = [...nfts].filter(
-    (nft) =>
-      lastTDHCalc.getTime() - 28 * 60 * 60 * 1000 >
-      new Date(nft.mint_date).getTime()
-  );
-
-  const MEMES_COUNT = [...ADJUSTED_NFTS].filter((nft) =>
-    areEqualAddresses(nft.contract, MEMES_CONTRACT)
-  ).length;
+  const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
+    await getAdjustedMemesAndSeasons(lastTDHCalc);
 
   logger.info(`[WALLETS ${tdh.length}]`);
 
   const { consolidatedTdh, allGradientsTDH, allNextgenTDH } =
     await consolidateTDHForWallets(tdh, MEMES_COUNT);
 
-  const consolidatedBoostedTdh = await calculateBoosts(consolidatedTdh);
+  const consolidatedBoostedTdh = await calculateBoosts(
+    ADJUSTED_SEASONS,
+    consolidatedTdh
+  );
 
   if (startingWallets) {
     const missingWallets = startingWallets?.filter(
@@ -348,7 +350,13 @@ export const consolidateTDH = async (
     );
   }
 
-  await persistConsolidatedTDH(rankedTdh, startingWallets);
+  const memesTdh = (await calculateMemesTdh(
+    ADJUSTED_SEASONS,
+    rankedTdh,
+    true
+  )) as ConsolidatedTDHMemes[];
+
+  await persistConsolidatedTDH(rankedTdh, memesTdh, startingWallets);
   logger.info(`[FINAL ENTRIES ${rankedTdh.length}]`);
 };
 

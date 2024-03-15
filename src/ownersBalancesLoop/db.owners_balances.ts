@@ -50,7 +50,7 @@ export async function fetchAllConsolidatedOwnerBalancesMemes() {
     .find();
 }
 
-export async function getMaxBlockReference(): Promise<number> {
+export async function getMaxOwnerBalancesBlockReference(): Promise<number> {
   const maxBlock = await getDataSource()
     .getRepository(OwnerBalances)
     .createQueryBuilder(OWNERS_BALANCES_TABLE)

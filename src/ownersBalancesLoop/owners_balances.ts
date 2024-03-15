@@ -9,11 +9,10 @@ import {
   fetchAllOwnerBalancesMemes,
   persistOwnerBalances,
   persistConsolidatedOwnerBalances,
-  getMaxBlockReference
+  getMaxOwnerBalancesBlockReference
 } from './db.owners_balances';
 import {
   fetchAllSeasons,
-  fetchMaxTransactionsBlockNumber,
   fetchTransactionAddressesFromBlock,
   fetchWalletConsolidationKeysViewForWallet
 } from '../db';
@@ -30,16 +29,19 @@ import {
   NEXTGEN_CORE_CONTRACT
 } from '../nextgen/nextgen_constants';
 import { NFTOwner } from '../entities/INFTOwner';
-import { fetchAllNftOwners } from '../nftOwnersLoop/db.nft_owners';
+import {
+  fetchAllNftOwners,
+  getMaxNftOwnersBlockReference
+} from '../nftOwnersLoop/db.nft_owners';
 
 const logger = Logger.get('OWNER_BALANCES');
 
 export const findOwnerBalances = async (reset?: boolean) => {
-  const lastBalancesBlock = reset ? 0 : await getMaxBlockReference();
+  const lastBalancesBlock = await getMaxOwnerBalancesBlockReference();
 
   reset = lastBalancesBlock === 0;
 
-  const blockReference = await fetchMaxTransactionsBlockNumber();
+  const blockReference = await getMaxNftOwnersBlockReference();
   const seasons = await fetchAllSeasons();
 
   const nextgenNetwork = getNextgenNetwork();

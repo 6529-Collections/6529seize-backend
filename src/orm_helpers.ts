@@ -1,16 +1,23 @@
 import { ObjectLiteral, Repository } from 'typeorm';
 
-export async function resetRepository<T extends ObjectLiteral>(
+export async function insertWithoutUpdate<T extends ObjectLiteral>(
   repo: Repository<T>,
   data: T[]
 ) {
-  await repo.clear();
   await repo
     .createQueryBuilder()
     .insert()
     .values(data)
     .updateEntity(false)
     .execute();
+}
+
+export async function resetRepository<T extends ObjectLiteral>(
+  repo: Repository<T>,
+  data: T[]
+) {
+  await repo.clear();
+  await insertWithoutUpdate(repo, data);
 }
 
 export async function upsertRepository<T extends ObjectLiteral>(
