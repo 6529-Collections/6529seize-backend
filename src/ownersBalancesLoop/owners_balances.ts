@@ -39,7 +39,7 @@ const logger = Logger.get('OWNER_BALANCES');
 export const findOwnerBalances = async (reset?: boolean) => {
   const lastBalancesBlock = await getMaxOwnerBalancesBlockReference();
 
-  reset = lastBalancesBlock === 0;
+  reset = reset || lastBalancesBlock === 0;
 
   const blockReference = await getMaxNftOwnersBlockReference();
   const seasons = await fetchAllSeasons();
@@ -210,11 +210,10 @@ function buildSeasonBalances(
     let seasonBalance = 0;
     owners.forEach((o) => (seasonBalance += o.balance));
 
-    const seasonSets = Math.min(
-      ...[...owners].map(function (o) {
-        return o.balance;
-      })
-    );
+    const seasonSets =
+      owners && owners.length > 0
+        ? Math.min(...owners.map((o) => o.balance))
+        : 0;
 
     const oBalanceMemes: OwnerBalancesMemes = {
       wallet: wallet.toLowerCase(),

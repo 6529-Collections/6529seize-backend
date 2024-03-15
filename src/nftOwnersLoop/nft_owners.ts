@@ -93,12 +93,8 @@ export const findNftOwners = async (reset?: boolean) => {
       deleteDelta: deleteDelta.length.toLocaleString()
     });
 
-    if (upsertDelta.length > 0 || deleteDelta.length > 0) {
-      await persistNftOwners(upsertDelta, deleteDelta, reset);
-      await consolidateNftOwners(addresses, reset);
-    } else {
-      logger.info(`[NO CHANGES]`);
-    }
+    await persistNftOwners(upsertDelta, deleteDelta, reset);
+    await consolidateNftOwners(addresses, reset);
   } else {
     logger.info(`[NO CHANGES]`);
   }
@@ -187,58 +183,49 @@ export async function consolidateNftOwners(
     return;
   }
 
-  const upsertDelta: ConsolidatedNFTOwner[] = [];
+  const upsertDeltaMap = new Map<string, ConsolidatedNFTOwner[]>();
   const deleteDelta = new Set<string>();
 
-  const consolidationViews = await fetchWalletConsolidationKeysViewForWallet(
-    Array.from(addresses)
+  await Promise.all(
+    Array.from(addresses).map(async (address) => {
+      const consolidation = (
+        await fetchWalletConsolidationKeysViewForWallet([address])
+      )?.[0];
+
+      let consolidationKey: string;
+      let consolidationAddresses: string[] = [];
+      if (!consolidation) {
+        consolidationKey = address.toLowerCase();
+        consolidationAddresses.push(address.toLowerCase());
+      } else {
+        consolidationKey = consolidation.consolidation_key;
+        consolidationAddresses = consolidation.consolidation_key.split('-');
+      }
+
+      const owners = await fetchAllNftOwners(
+        undefined,
+        Array.from(consolidationAddresses)
+      );
+
+      const consolidatedOwners = getConsolidatedOwners(
+        consolidationKey,
+        owners
+      );
+
+      upsertDeltaMap.set(consolidationKey, consolidatedOwners);
+
+      consolidationAddresses.forEach((address) => {
+        deleteDelta.add(address);
+      });
+    })
   );
 
-  const nftOwners = await fetchAllNftOwners(undefined, Array.from(addresses));
-
-  logger.info(
-    `[UNIQUE WALLETS ${addresses.size.toLocaleString()}] : [OWNERS ${nftOwners.length.toLocaleString()}]`
-  );
-
-  const usedConsolidationKeys = new Set<string>();
-
-  addresses.forEach((wallet) => {
-    const consolidation = consolidationViews.find((consolidation) =>
-      areEqualAddresses(consolidation.wallet, wallet)
-    );
-
-    let consolidationKey: string;
-    let consolidationAddresses: string[] = [];
-    if (!consolidation) {
-      consolidationKey = wallet.toLowerCase();
-      consolidationAddresses.push(wallet.toLowerCase());
-    } else {
-      consolidationKey = consolidation.consolidation_key;
-      consolidationAddresses = consolidation.consolidation_key.split('-');
-    }
-
-    if (usedConsolidationKeys.has(consolidationKey)) {
-      return;
-    }
-
-    const owners = [...nftOwners].filter((owner) =>
-      consolidationAddresses.some((a) => areEqualAddresses(a, owner.wallet))
-    );
-
-    const consolidatedOwners = getConsolidatedOwners(consolidationKey, owners);
-
-    upsertDelta.push(...consolidatedOwners);
-
-    consolidationAddresses.forEach((address) => {
-      deleteDelta.add(address);
-    });
-    usedConsolidationKeys.add(consolidationKey);
-  });
+  const upsertDelta = Array.from(upsertDeltaMap.values()).flat();
 
   logger.info({
     message: '[OWNERS CONSOLIDATED]',
     upsertDelta: upsertDelta.length.toLocaleString(),
-    deleteDelta: deleteDelta.size.toLocaleString()
+    deleteDeltaWallets: deleteDelta.size.toLocaleString()
   });
   await persistConsolidatedNftOwners(upsertDelta, deleteDelta, reset);
 }
@@ -263,5 +250,7 @@ function getConsolidatedOwners(
     }
     consolidatedOwner.balance += owner.balance;
   });
-  return Array.from(consolidatedOwnersMap.values());
+  return Array.from(consolidatedOwnersMap.values()).filter(
+    (o) => o.balance > 0
+  );
 }

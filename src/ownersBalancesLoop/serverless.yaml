@@ -1,4 +1,4 @@
-service: aggregatedActivityLoop
+service: ownersBalancesLoop
 
 package:
   artifact: dist/index.zip
@@ -18,9 +18,9 @@ custom:
     prod: 1
 
 functions:
-  aggregatedActivityLoop:
+  ownersBalancesLoop:
     handler: index.handler
-    name: aggregatedActivityLoop
+    name: ownersBalancesLoop
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
@@ -30,6 +30,6 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: 'aggregatedActivityLoop_${opt:stage, self:provider.stage}'
+      SENTRY_ENVIRONMENT: 'ownersBalancesLoop_${opt:stage, self:provider.stage}'
       NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
-      ACTIVITY_RESET: false
+      OWNER_BALANCES_RESET: false

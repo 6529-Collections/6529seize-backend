@@ -16,6 +16,7 @@ export async function getOwnersForContracts(
 ): Promise<OwnedNft[]> {
   const alchemy = getAlchemyInstance();
   const owned = await fetchAllPages(alchemy, contracts);
+  console.log('found owned nfts', owned.length);
   return owned;
 }
 

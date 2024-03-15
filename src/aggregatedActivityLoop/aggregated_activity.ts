@@ -344,7 +344,7 @@ export async function consolidateActivity(
 
 export const findAggregatedActivity = async (reset?: boolean) => {
   const lastActivityBlock = await getMaxAggregatedActivityBlockReference();
-  reset = lastActivityBlock === 0;
+  reset = reset || lastActivityBlock === 0;
   const blockReference = await fetchMaxTransactionsBlockNumber();
   const seasons = await fetchAllSeasons();
 
