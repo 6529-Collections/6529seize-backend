@@ -18,14 +18,14 @@ async function start() {
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
   await dbMigrationsLoop.handler(null, null as any, null as any);
 
-  // await delegations.handler(null, null as any, null as any);
+  await delegations.handler(null, null as any, null as any);
   // await nfts.handler(null, null as any, null as any);
   // await memelab.handler(null, null as any, null as any);
-  // await transactions.handler(null, null as any, null as any);
-  // await nftOwners.handler(null, null as any, null as any);
+  await transactions.handler(null, null as any, null as any);
+  await nftOwners.handler(null, null as any, null as any);
   // await nfts.handler(null, null as any, null as any);
-  // await aggregatedActivity.handler(null, null as any, null as any);
-  // await balances.handler(null, null as any, null as any);
+  await aggregatedActivity.handler(null, null as any, null as any);
+  await balances.handler(null, null as any, null as any);
   // await customReplayLoop.handler(null, null as any, null as any);
   // await tdh.handler(null, null as any, null as any);
 

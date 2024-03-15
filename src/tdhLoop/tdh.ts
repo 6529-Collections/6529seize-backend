@@ -473,6 +473,7 @@ function calculateMemesBoostsSeasons(
   const cardSetS3 = getHasSeasonSet(3, seasons, memes);
   const cardSetS4 = getHasSeasonSet(4, seasons, memes);
   const cardSetS5 = getHasSeasonSet(5, seasons, memes);
+
   if (cardSetS1) {
     boost += 0.05;
     breakdown.memes_szn1.acquired = 0.05;
