@@ -4,6 +4,7 @@ import {
   OverRateMatter,
   ratingsDb,
   RatingsDb,
+  RatingSnapshotRow,
   RatingStats,
   RatingWithProfileInfo,
   UpdateRatingRequest
@@ -23,7 +24,7 @@ import {
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
-import { Page } from '../api-serverless/src/page-request';
+import { FullPageRequest, Page } from '../api-serverless/src/page-request';
 import { calculateLevel } from '../profiles/profile-level';
 import { Profile } from '../entities/IProfile';
 import {
@@ -33,6 +34,10 @@ import {
 import { profilesService } from '../profiles/profiles.service';
 import { Request } from 'express';
 import { eventScheduler, EventScheduler } from '../events/event.scheduler';
+import converter from 'json-2-csv';
+import { arweaveFileUploader, ArweaveFileUploader } from '../arweave';
+import { assertUnreachable } from '../helpers';
+import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -42,7 +47,8 @@ export class RatingsService {
     private readonly profilesDb: ProfilesDb,
     private readonly repService: RepService,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
-    private readonly eventScheduler: EventScheduler
+    private readonly eventScheduler: EventScheduler,
+    private readonly arweaveFileUploader: ArweaveFileUploader
   ) {}
 
   public async getAggregatedRatingOnMatter(
@@ -156,6 +162,71 @@ export class RatingsService {
     }
   }
 
+  private async uploadRatesSnapshotsToArweave(
+    connection: ConnectionWrapper<any>
+  ) {
+    const start = Time.now();
+    this.logger.info('Uploading ratings snapshots to Arweave');
+    await Promise.all(
+      Object.values(RateMatter).map((matter) => {
+        return this.uploadMatterRatingsToArweave(matter, connection);
+      })
+    );
+    this.logger.info(
+      `All ratings snapshots uploaded to Arweave in ${start.diffFromNow()}`
+    );
+  }
+
+  private async uploadMatterRatingsToArweave(
+    matter: RateMatter,
+    connection: ConnectionWrapper<any>
+  ) {
+    const now = Time.now();
+    const latestSnaspshot = await this.ratingsDb.getLatestSnapshot(
+      matter,
+      connection
+    );
+    if (
+      latestSnaspshot &&
+      now.minus(Time.millis(latestSnaspshot.snapshot_time)).lt(Time.hours(23))
+    ) {
+      this.logger.info(
+        `Skipping snapshot of ${matter} ratings as there already is a snapshot done in this matter in last 23 hours`
+      );
+      return;
+    }
+    let resp: RatingSnapshotRow[];
+    switch (matter) {
+      case RateMatter.CIC:
+        resp = await this.ratingsDb.getSnapshotOfAllCicRatings(connection);
+        break;
+      case RateMatter.REP:
+        resp = await this.ratingsDb.getSnapshotOfAllRepRatings(connection);
+        break;
+      default:
+        return assertUnreachable(matter);
+    }
+    const respWithTimes = resp.map((it) => ({
+      ...it,
+      snapshot_time: now.toMillis()
+    }));
+    const csv = await converter.json2csvAsync(respWithTimes);
+    this.logger.info(`Uploading snapshot of ${matter} ratings to Arweave`);
+    const { url } = await this.arweaveFileUploader.uploadFile(
+      Buffer.from(csv),
+      'text/csv'
+    );
+    await this.ratingsDb.insertSnapshot(
+      {
+        rating_matter: matter,
+        url,
+        snapshot_time: now.toMillis()
+      },
+      connection
+    );
+    this.logger.info(`Persisted ${matter} snapshot to Arweave at ${url}`);
+  }
+
   public async reduceOverRates() {
     const start = Time.now();
     this.logger.info('Revoking rates for profiles which have lost TDH');
@@ -178,6 +249,11 @@ export class RatingsService {
     }
     this.logger.info(
       `All rates revoked profiles which have lost TDH in ${start.diffFromNow()}`
+    );
+    await this.ratingsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        await this.uploadRatesSnapshotsToArweave(connection);
+      }
     );
   }
 
@@ -513,6 +589,21 @@ export class RatingsService {
       order_by
     };
   }
+
+  async getRatingsSnapshotsPage(
+    pageRequest: RatingsSnapshotsPageRequest
+  ): Promise<Page<RatingsSnapshot>> {
+    const [data, count] = await Promise.all([
+      this.ratingsDb.getRatingsSnapshots(pageRequest),
+      this.ratingsDb.countRatingsSnapshots(pageRequest)
+    ]);
+    return {
+      count,
+      data,
+      next: count > pageRequest.page_size * pageRequest.page,
+      page: pageRequest.page
+    };
+  }
 }
 
 export type GetProfileRatingsRequest = Request<
@@ -545,10 +636,15 @@ export type RatingWithProfileInfoAndLevel = RatingWithProfileInfo & {
   level: number;
 };
 
+export type RatingsSnapshotsPageRequest = FullPageRequest<'snapshot_time'> & {
+  matter: RateMatter | null;
+};
+
 export const ratingsService: RatingsService = new RatingsService(
   ratingsDb,
   profilesDb,
   repService,
   profileActivityLogsDb,
-  eventScheduler
+  eventScheduler,
+  arweaveFileUploader
 );
