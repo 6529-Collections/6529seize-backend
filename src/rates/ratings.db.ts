@@ -9,9 +9,12 @@ import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   PROFILE_FULL,
   PROFILES_TABLE,
+  RATINGS_SNAPSHOTS_TABLE,
   RATINGS_TABLE
 } from '../constants';
 import { Page } from '../api-serverless/src/page-request';
+import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
+import { RatingsSnapshotsPageRequest } from './ratings.service';
 
 export class RatingsDb extends LazyDbAccessCompatibleService {
   async getAggregatedRatingOnMatter(
@@ -418,9 +421,132 @@ from grouped_rates r
       opts
     );
   }
+
+  public async getSnapshotOfAllCicRatings(
+    connection: ConnectionWrapper<any>
+  ): Promise<RatingSnapshotRow[]> {
+    return this.db.execute(
+      `
+      select
+       rater_profile.external_id as rater_profile_id,
+       rater_profile.handle as rater_profile,
+       target_profile.external_id as target_profile_id,
+       target_profile.handle as target_profile,
+       r.rating as rating
+      from ratings r
+               join profiles rater_profile on rater_profile.external_id = r.rater_profile_id
+               join profiles target_profile on target_profile.external_id = r.matter_target_id
+      where r.matter = :matter
+        and r.rating <> 0
+      order by 2
+      `,
+      {
+        matter: RateMatter.CIC
+      },
+      { wrappedConnection: connection }
+    );
+  }
+
+  public async getSnapshotOfAllRepRatings(
+    connection: ConnectionWrapper<any>
+  ): Promise<RatingWithCategorySnapshotRow[]> {
+    return this.db.execute(
+      `
+      select
+       rater_profile.external_id as rater_profile_id,
+       rater_profile.handle as rater_profile,
+       target_profile.external_id as target_profile_id,
+       target_profile.handle as target_profile,
+       r.matter_category as category,
+       r.rating as rating
+      from ratings r
+               join profiles rater_profile on rater_profile.external_id = r.rater_profile_id
+               join profiles target_profile on target_profile.external_id = r.matter_target_id
+      where r.matter = :matter
+        and r.rating <> 0
+      order by 2
+      `,
+      {
+        matter: RateMatter.REP
+      },
+      { wrappedConnection: connection }
+    );
+  }
+
+  async getLatestSnapshot(
+    matter: RateMatter,
+    connection: ConnectionWrapper<any>
+  ): Promise<RatingsSnapshot | null> {
+    return this.db
+      .execute(
+        `select * from ${RATINGS_SNAPSHOTS_TABLE} where rating_matter = :matter order by snapshot_time desc limit 1`,
+        { matter },
+        { wrappedConnection: connection }
+      )
+      .then((results) => results[0] ?? null);
+  }
+
+  async insertSnapshot(
+    param: {
+      snapshot_time: number;
+      rating_matter: RateMatter.CIC | RateMatter.REP;
+      url: string;
+    },
+    connection: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `insert into ${RATINGS_SNAPSHOTS_TABLE} (snapshot_time, rating_matter, url) values (:snapshot_time, :rating_matter, :url)`,
+      param,
+      { wrappedConnection: connection }
+    );
+  }
+
+  async getRatingsSnapshots(
+    pageRequest: RatingsSnapshotsPageRequest
+  ): Promise<RatingsSnapshot[]> {
+    const limit = pageRequest.page_size;
+    const offset = (pageRequest.page - 1) * pageRequest.page_size;
+    const params: Record<string, any> = { limit, offset };
+    let sql = `select * from ${RATINGS_SNAPSHOTS_TABLE} `;
+    if (pageRequest.matter) {
+      sql += ` where rating_matter = :matter `;
+      params.matter = pageRequest.matter;
+    }
+    sql += ` order by ${pageRequest.sort} ${pageRequest.sort_direction} limit :limit offset :offset`;
+    return this.db.execute(sql, params);
+  }
+
+  async countRatingsSnapshots(
+    pageRequest: RatingsSnapshotsPageRequest
+  ): Promise<number> {
+    const params: Record<string, any> = {};
+    let sql = `select count(*) as cnt from ${RATINGS_SNAPSHOTS_TABLE} `;
+    if (pageRequest.matter) {
+      sql += ` where rating_matter = :matter `;
+      params.matter = pageRequest.matter;
+    }
+    return this.db.execute(sql, params).then((results) => results[0]?.cnt ?? 0);
+  }
 }
 
 export type UpdateRatingRequest = Omit<Rating, 'last_modified'>;
+
+export interface RatingSnapshotRow {
+  readonly rater_profile_id: string;
+  readonly rater_profile: string;
+  readonly target_profile_id: string;
+  readonly target_profile: string;
+  readonly rating: number;
+}
+
+export interface RatingWithCategorySnapshotRow {
+  readonly rater_profile_id: string;
+  readonly rater_profile: string;
+  readonly target_profile_id: string;
+  readonly target_profile: string;
+  readonly category: string;
+  readonly rating: number;
+}
 
 export interface RatingWithProfileInfo {
   profile_id: string;

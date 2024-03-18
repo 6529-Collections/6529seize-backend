@@ -10,6 +10,7 @@ import analyticsRoutes from './analytics/analytics.routes';
 import royaltiesRoutes from './royalties/royalties.routes';
 import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
+import ratingsRoutes from './ratings/ratings.routes';
 import gasRoutes from './gas/gas.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
 import communityMembersCurationRoutes from './community-members/community-members-curation.routes';
@@ -1234,6 +1235,7 @@ loadApi().then(() => {
   apiRouter.use(`/royalties`, royaltiesRoutes);
   apiRouter.use(`/profile-logs`, profileActivityLogsRoutes);
   apiRouter.use(`/rep/categories`, repCategorySearchRoutes);
+  apiRouter.use(`/ratings`, ratingsRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 
