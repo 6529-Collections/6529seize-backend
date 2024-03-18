@@ -19,6 +19,7 @@ export const ENS_TABLE = 'ens';
 export const ABUSIVENESS_DETECTION_RESULTS_TABLE =
   'abusiveness_detection_results';
 export const CIC_STATEMENTS_TABLE = 'cic_statements';
+export const RATINGS_SNAPSHOTS_TABLE = 'ratings_snapshots';
 export const COMMUNITY_MEMBERS_TABLE = 'community_members';
 export const COMMUNITY_MEMBERS_CURATION_CRITERIA_TABLE =
   'community_members_curation_criteria';
