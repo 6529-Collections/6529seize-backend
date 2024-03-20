@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { Request } from 'express';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 
@@ -9,7 +9,7 @@ import {
   returnPaginatedResult
 } from 'src/api-helpers';
 import { MetricsContent, MetricsCollector } from 'src/tdh/tdh.db';
-import { areEqualAddresses, resolveEnum } from '../../../helpers';
+import { resolveEnum } from '../../../helpers';
 import {
   fetchAggregatedActivity,
   fetchAggregatedActivityForKey

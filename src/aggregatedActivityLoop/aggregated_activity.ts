@@ -37,7 +37,6 @@ import {
   getNextgenNetwork,
   NEXTGEN_CORE_CONTRACT
 } from '../nextgen/nextgen_constants';
-import { getMaxNftOwnersBlockReference } from '../nftOwnersLoop/db.nft_owners';
 
 const logger = Logger.get('AGGREGATED_ACTIVITY');
 interface ActivityBreakdown {

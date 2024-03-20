@@ -8,7 +8,6 @@ import {
 import { areEqualAddresses } from '../helpers';
 import {
   fetchAllOwnerBalances,
-  fetchAllOwnerBalancesMemes,
   persistOwnerBalances,
   persistConsolidatedOwnerBalances,
   getMaxOwnerBalancesBlockReference
