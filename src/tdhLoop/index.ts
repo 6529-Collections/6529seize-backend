@@ -10,6 +10,7 @@ import {
   ConsolidatedTDH,
   ConsolidatedTDHMemes,
   GlobalTDHHistory,
+  NftTDH,
   TDH,
   TDHHistory,
   TDHMemes
@@ -41,7 +42,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     Profile,
     CommunityMember,
     MemesSeason,
-    NFTOwner
+    NFTOwner,
+    NftTDH
   ]);
   const force = process.env.TDH_RESET == 'true';
   logger.info(`[RUNNING force=${force}]`);

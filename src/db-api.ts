@@ -1,7 +1,5 @@
 import {
   ARTISTS_TABLE,
-  CONSOLIDATED_OWNERS_METRICS_TABLE,
-  CONSOLIDATED_OWNERS_TAGS_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   CONSOLIDATIONS_TABLE,
@@ -17,6 +15,7 @@ import {
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
+  MEMES_SEASONS_TABLE,
   NFT_OWNERS_TABLE,
   NFTS_HISTORY_TABLE,
   NFTS_MEME_LAB_TABLE,
@@ -276,7 +275,7 @@ export async function fetchPaginated(
     resultsSql += ` OFFSET ${offset}`;
   }
   logger.debug(`Count sql: '${countSql}`);
-  logger.debug(`Data sql: ${resultsSql}`);
+  logger.info(`Data sql: ${resultsSql}`);
 
   const count = await sqlExecutor
     .execute(countSql, params)
@@ -659,6 +658,11 @@ export async function fetchMemesSeasons(sortDir: string) {
   return await sqlExecutor.execute(sql);
 }
 
+export async function fetchNewMemesSeasons() {
+  const sql = `SELECT * from ${MEMES_SEASONS_TABLE} order by id asc`;
+  return await sqlExecutor.execute(sql);
+}
+
 export async function fetchMemesLite(sortDir: string) {
   const filters = constructFilters(
     '',
@@ -934,1044 +938,791 @@ export async function fetchGradientTdh(pageSize: number, page: number) {
   );
 }
 
-export async function fetchNftTdh(
-  pageSize: number,
-  page: number,
-  contract: string,
-  nftId: number,
-  wallets: string,
-  sort: string,
-  sortDir: string
-) {
-  const tdhBlock = await fetchLatestTDHBlockNumber();
-  let filters = `WHERE block=:block AND j.id=:nft_id `;
-  const params: any = {
-    block: tdhBlock,
-    nft_id: nftId
-  };
-  if (wallets) {
-    filters += ` AND ${WALLETS_TDH_TABLE}.wallet in (:wallets)`;
-    params.wallets = wallets.split(',');
-  }
+// export async function fetchOwnerMetrics(
+//   pageSize: number,
+//   page: number,
+//   wallets: string,
+//   sort: string,
+//   sortDir: string,
+//   metrics_filter: string,
+//   hideMuseum: boolean,
+//   hideTeam: boolean,
+//   profilePage: boolean
+// ) {
+//   const tdhBlock = await fetchLatestTDHBlockNumber();
+//   let filters = '';
+//   let hideWalletFilters = '';
+//   const params: any = {};
+//   if (hideMuseum) {
+//     filters = constructFilters(
+//       filters,
+//       `${OWNERS_METRICS_TABLE}.wallet != :museum`
+//     );
+//     params.museum = SIX529_MUSEUM;
+//   }
+//   if (hideTeam) {
+//     const team: string[] = await getTeamWallets();
+//     filters = constructFilters(
+//       filters,
+//       `${OWNERS_METRICS_TABLE}.wallet NOT IN (:team)`
+//     );
+//     params.team = team;
+//   }
+//   hideWalletFilters = filters;
+//   if (wallets) {
+//     filters = constructFilters(
+//       filters,
+//       `${OWNERS_METRICS_TABLE}.wallet in (:wallets) OR ${ENS_TABLE}.display in (:wallets)`
+//     );
+//     params.wallets = wallets.split(',').map((w) => w.toLowerCase());
+//   }
+//   if (metrics_filter) {
+//     switch (metrics_filter) {
+//       case 'memes':
+//         filters = constructFilters(
+//           filters,
+//           `${OWNERS_TAGS_TABLE}.memes_balance > 0`
+//         );
+//         break;
+//       case 'memes_set':
+//         filters = constructFilters(
+//           filters,
+//           `${OWNERS_TAGS_TABLE}.memes_cards_sets > 0`
+//         );
+//         break;
+//       case 'memes_genesis':
+//         filters = constructFilters(filters, `${OWNERS_TAGS_TABLE}.genesis > 0`);
+//         break;
+//       case 'gradients':
+//         filters = constructFilters(
+//           filters,
+//           `${OWNERS_TAGS_TABLE}.gradients_balance > 0`
+//         );
+//         break;
+//       case 'memes_set_minus1':
+//         filters = constructFilters(
+//           filters,
+//           `${OWNERS_TAGS_TABLE}.memes_cards_sets_minus1 > 0`
+//         );
+//         break;
+//       case 'memes_set_szn1':
+//         filters = constructFilters(
+//           filters,
+//           `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn1 > 0`
+//         );
+//         break;
+//       case 'memes_set_szn2':
+//         filters = constructFilters(
+//           filters,
+//           `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn2 > 0`
+//         );
+//         break;
+//       case 'memes_set_szn3':
+//         filters = constructFilters(
+//           filters,
+//           `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn3 > 0`
+//         );
+//         break;
+//       case 'memes_set_szn4':
+//         filters = constructFilters(
+//           filters,
+//           `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn4 > 0`
+//         );
+//         break;
+//       case 'memes_set_szn5':
+//         filters = constructFilters(
+//           filters,
+//           `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn5 > 0`
+//         );
+//         break;
+//       case 'memes_set_szn6':
+//         filters = constructFilters(
+//           filters,
+//           `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn6 > 0`
+//         );
+//         break;
+//     }
+//   }
 
-  let joins: string;
-  if (areEqualAddresses(contract, MEMES_CONTRACT)) {
-    joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet CROSS JOIN JSON_TABLE(memes, '$[*]' COLUMNS (
-        id INT PATH '$.id',
-        tdh DOUBLE PATH '$.tdh',
-        tdh__raw varchar(100) PATH '$.tdh__raw',
-        balance INT PATH '$.balance'
-      )
-    ) AS j`;
-  } else if (areEqualAddresses(contract, GRADIENT_CONTRACT)) {
-    joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet CROSS JOIN JSON_TABLE(gradients, '$[*]' COLUMNS (
-        id varchar(100) PATH '$.id',
-        tdh varchar(100) PATH '$.tdh',
-        tdh__raw varchar(100) PATH '$.tdh__raw',
-        balance INT PATH '$.balance',
-      )
-    ) AS j`;
-  } else {
-    return returnEmpty();
-  }
+//   let ownerMetricsSelect: string;
 
-  joins += ` JOIN (SELECT wallet, RANK() OVER(ORDER BY ${OWNERS_TABLE}.balance DESC) AS dense_rank_balance from ${OWNERS_TABLE} where ${OWNERS_TABLE}.contract=${mysql.escape(
-    contract
-  )} and ${OWNERS_TABLE}.token_id=${nftId}) as dense_table ON ${WALLETS_TDH_TABLE}.wallet = dense_table.wallet`;
-  joins += ` LEFT JOIN ${OWNERS_METRICS_TABLE} on ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet`;
-  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} wc on wc.wallet = tdh.wallet`;
-  joins += ` LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = wc.consolidation_key`;
+//   if (!wallets) {
+//     ownerMetricsSelect = ` ${OWNERS_METRICS_TABLE}.*,
+//     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance,
+//     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes,
+//     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1,
+//     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,
+//     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3,
+//     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season4 DESC) AS dense_rank_balance_memes_season4,
+//     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season5 DESC) AS dense_rank_balance_memes_season5,
+//     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season6 DESC) AS dense_rank_balance_memes_season6,
+//     RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients`;
+//   } else {
+//     ownerMetricsSelect = ` ${OWNERS_METRICS_TABLE}.*,
+//     dense_table.dense_rank_sort,
+//     dense_table.dense_rank_balance,
+//     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.balance = ${OWNERS_METRICS_TABLE}2.balance) AS dense_rank_balance__ties,
+//     dense_table.dense_rank_unique,
+//     (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes+${OWNERS_TAGS_TABLE}.gradients_balance = ${OWNERS_TAGS_TABLE}2.unique_memes+${OWNERS_TAGS_TABLE}2.gradients_balance) AS dense_rank_unique__ties,
+//     dense_table.dense_rank_balance_memes,
+//     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance = ${OWNERS_METRICS_TABLE}2.memes_balance) AS dense_rank_balance_memes__ties,
+//     dense_table.dense_rank_balance_memes_season1,
+//     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season1 = ${OWNERS_METRICS_TABLE}2.memes_balance_season1) AS dense_rank_balance_memes_season1__ties,
+//     dense_table.dense_rank_balance_memes_season2,
+//     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season2 = ${OWNERS_METRICS_TABLE}2.memes_balance_season2) AS dense_rank_balance_memes_season2__ties,
+//     dense_table.dense_rank_balance_memes_season3,
+//     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season3 = ${OWNERS_METRICS_TABLE}2.memes_balance_season3) AS dense_rank_balance_memes_season3__ties,
+//     dense_table.dense_rank_balance_memes_season4,
+//     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season4 = ${OWNERS_METRICS_TABLE}2.memes_balance_season4) AS dense_rank_balance_memes_season4__ties,
+//     dense_table.dense_rank_balance_memes_season5,
+//     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season5 = ${OWNERS_METRICS_TABLE}2.memes_balance_season5) AS dense_rank_balance_memes_season5__ties,
+//     dense_table.dense_rank_balance_memes_season6,
+//     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season6 = ${OWNERS_METRICS_TABLE}2.memes_balance_season6) AS dense_rank_balance_memes_season6__ties,
+//     dense_table.dense_rank_balance_gradients,
+//     (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.gradients_balance = ${OWNERS_METRICS_TABLE}2.gradients_balance) AS dense_rank_balance_gradients__ties,
+//     dense_table.dense_rank_unique_memes,
+//     (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes = ${OWNERS_TAGS_TABLE}2.unique_memes) AS dense_rank_unique_memes__ties,
+//     dense_table.dense_rank_unique_memes_season1,
+//     (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn1 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn1) AS dense_rank_unique_memes_season1__ties,
+//     dense_table.dense_rank_unique_memes_season2,
+//     (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn2 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn2) AS dense_rank_unique_memes_season2__ties,
+//     dense_table.dense_rank_unique_memes_season3,
+//     (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn3 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn3) AS dense_rank_unique_memes_season3__ties,
+//     dense_table.dense_rank_unique_memes_season4,
+//     (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn4 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn4) AS dense_rank_unique_memes_season4__ties,
+//     dense_table.dense_rank_unique_memes_season5,
+//     (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn5 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn5) AS dense_rank_unique_memes_season5__ties,
+//     dense_table.dense_rank_unique_memes_season6,
+//     (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn6 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn6) AS dense_rank_unique_memes_season6__ties `;
+//   }
 
-  const fields = `p.handle as handle, p.rep_score as rep_score, p.cic_score as cic_score, p.profile_tdh as profile_tdh, ${OWNERS_METRICS_TABLE}.balance, ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display, dense_table.dense_rank_balance `;
+//   const walletsTdhTableSelect = `
+//     ${WALLETS_TDH_TABLE}.tdh_rank,
+//     ${WALLETS_TDH_TABLE}.tdh_rank_memes,
+//     ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn1,
+//     ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn2,
+//     ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn3,
+//     ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn4,
+//     ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn5,
+//     ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn6,
+//     ${WALLETS_TDH_TABLE}.tdh_rank_gradients,
+//     ${WALLETS_TDH_TABLE}.boost,
+//     ${WALLETS_TDH_TABLE}.boost_breakdown,
+//     ${WALLETS_TDH_TABLE}.boosted_tdh,
+//     ${WALLETS_TDH_TABLE}.boosted_memes_tdh,
+//     ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season1,
+//     ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season2,
+//     ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season3,
+//     ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season4,
+//     ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season5,
+//      ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season6,
+//     ${WALLETS_TDH_TABLE}.boosted_gradients_tdh,
+//     ${WALLETS_TDH_TABLE}.tdh__raw,
+//     ${WALLETS_TDH_TABLE}.memes_tdh__raw,
+//     ${WALLETS_TDH_TABLE}.memes_tdh_season1__raw,
+//     ${WALLETS_TDH_TABLE}.memes_tdh_season2__raw,
+//     ${WALLETS_TDH_TABLE}.memes_tdh_season3__raw,
+//     ${WALLETS_TDH_TABLE}.memes_tdh_season4__raw,
+//     ${WALLETS_TDH_TABLE}.memes_tdh_season5__raw,
+//     ${WALLETS_TDH_TABLE}.memes_tdh_season6__raw,
+//     ${WALLETS_TDH_TABLE}.gradients_tdh__raw,
+//     ${WALLETS_TDH_TABLE}.tdh,
+//     ${WALLETS_TDH_TABLE}.memes_tdh,
+//     ${WALLETS_TDH_TABLE}.memes_tdh_season1,
+//     ${WALLETS_TDH_TABLE}.memes_tdh_season2,
+//     ${WALLETS_TDH_TABLE}.memes_tdh_season3,
+//     ${WALLETS_TDH_TABLE}.memes_tdh_season4,
+//     ${WALLETS_TDH_TABLE}.memes_tdh_season5,
+//     ${WALLETS_TDH_TABLE}.memes_tdh_season6,
+//     ${WALLETS_TDH_TABLE}.gradients_tdh,
+//     ${WALLETS_TDH_TABLE}.memes,
+//     ${WALLETS_TDH_TABLE}.memes_ranks,
+//     ${WALLETS_TDH_TABLE}.gradients,
+//     ${WALLETS_TDH_TABLE}.gradients_ranks`;
 
-  switch (sort) {
-    case 'card_tdh':
-      sort = 'CAST(j.tdh AS DECIMAL)';
-      break;
-    case 'card_tdh__raw':
-      sort = 'CAST(j.tdh__raw AS DECIMAL)';
-      break;
-    case 'card_balance':
-      sort = 'j.balance';
-      break;
-    case 'total_tdh':
-      sort = 'boosted_tdh';
-      break;
-    case 'total_tdh__raw':
-      sort = 'tdh__raw';
-      break;
-    case 'total_balance':
-      sort = `${OWNERS_METRICS_TABLE}.balance`;
-      break;
-  }
+//   const fields = ` ${ownerMetricsSelect},${ENS_TABLE}.display as wallet_display, ${walletsTdhTableSelect} , ${OWNERS_TAGS_TABLE}.* `;
+//   let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
+//   joins += ` LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet `;
+//   joins += ` LEFT JOIN ${ENS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${ENS_TABLE}.wallet `;
+//   if (
+//     sort == 'balance' ||
+//     sort == 'memes_balance' ||
+//     sort == 'memes_balance_season1' ||
+//     sort == 'memes_balance_season2' ||
+//     sort == 'memes_balance_season3' ||
+//     sort == 'memes_balance_season4' ||
+//     sort == 'memes_balance_season5' ||
+//     sort == 'memes_balance_season6' ||
+//     sort == 'gradients_balance'
+//   ) {
+//     sort = `${OWNERS_METRICS_TABLE}.${sort}`;
+//   }
+//   if (
+//     sort == 'memes_cards_sets' ||
+//     sort == 'memes_cards_sets_szn1' ||
+//     sort == 'memes_cards_sets_szn2' ||
+//     sort == 'memes_cards_sets_szn3' ||
+//     sort == 'memes_cards_sets_szn4' ||
+//     sort == 'memes_cards_sets_szn5' ||
+//     sort == 'memes_cards_sets_szn6' ||
+//     sort == 'memes_cards_sets_minus1' ||
+//     sort == 'genesis' ||
+//     sort == 'unique_memes' ||
+//     sort == 'unique_memes_szn1' ||
+//     sort == 'unique_memes_szn2' ||
+//     sort == 'unique_memes_szn3' ||
+//     sort == 'unique_memes_szn4' ||
+//     sort == 'unique_memes_szn5' ||
+//     sort == 'unique_memes_szn6'
+//   ) {
+//     sort = `${OWNERS_TAGS_TABLE}.${sort}`;
+//   }
 
-  const result = await fetchPaginated(
-    WALLETS_TDH_TABLE,
-    params,
-    `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
-    pageSize,
-    page,
-    filters,
-    fields,
-    joins
-  );
-  result.data.forEach((d: any) => {
-    d.level = calculateLevel({
-      tdh: d.profile_tdh ?? d.boosted_tdh,
-      rep: d.rep_score
-    });
-  });
-  return result;
-}
+//   if (wallets) {
+//     joins += ` JOIN (
+//       SELECT ${OWNERS_METRICS_TABLE}.wallet, RANK() OVER(ORDER BY ${sort} DESC) AS dense_rank_sort,
+//       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes+${OWNERS_TAGS_TABLE}.gradients_balance DESC) AS dense_rank_unique,
+//       RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance,
+//       RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes,
+//       RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1,
+//       RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,
+//       RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3,
+//       RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season4 DESC) AS dense_rank_balance_memes_season4,
+//       RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season5 DESC) AS dense_rank_balance_memes_season5,
+//       RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season6 DESC) AS dense_rank_balance_memes_season6,
+//       RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients,
+//       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes DESC) AS dense_rank_unique_memes,
+//       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn1 DESC) AS dense_rank_unique_memes_season1,
+//       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn2 DESC) AS dense_rank_unique_memes_season2,
+//       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn3 DESC) AS dense_rank_unique_memes_season3,
+//       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn4 DESC) AS dense_rank_unique_memes_season4,
+//       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn5 DESC) AS dense_rank_unique_memes_season5,
+//       RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn6 DESC) AS dense_rank_unique_memes_season6
+//       FROM ${OWNERS_METRICS_TABLE} LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock} LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet ${hideWalletFilters}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
+//   }
 
-export async function fetchConsolidatedNftTdh(
-  pageSize: number,
-  page: number,
-  contract: string,
-  nftId: number,
-  wallets: string,
-  sort: string,
-  sortDir: string
-) {
-  let filters = `WHERE j.id=:nft_id `;
-  const params: any = {
-    nft_id: nftId
-  };
-  if (wallets) {
-    wallets.split(',').forEach((w, index) => {
-      const paramName = `wallet${index}`;
-      filters = constructFilters(
-        filters,
-        `LOWER(${CONSOLIDATED_WALLETS_TDH_TABLE}.wallets) LIKE :${paramName}`
-      );
-      params[paramName] = `%${w.toLowerCase()}%`;
-    });
-  }
+//   const results = await fetchPaginated(
+//     OWNERS_METRICS_TABLE,
+//     params,
+//     `${sort} ${sortDir}, ${OWNERS_METRICS_TABLE}.balance ${sortDir}, boosted_tdh ${sortDir}`,
+//     pageSize,
+//     page,
+//     filters,
+//     fields,
+//     joins
+//   );
 
-  let joins: string;
-  if (areEqualAddresses(contract, MEMES_CONTRACT)) {
-    joins = ` CROSS JOIN JSON_TABLE(memes, '$[*]' COLUMNS (
-        id INT PATH '$.id',
-        tdh DOUBLE PATH '$.tdh',
-        tdh__raw varchar(100) PATH '$.tdh__raw',
-        balance INT PATH '$.balance'
-      )
-    ) AS j`;
-  } else if (areEqualAddresses(contract, GRADIENT_CONTRACT)) {
-    joins = ` CROSS JOIN JSON_TABLE(gradients, '$[*]' COLUMNS (
-        id varchar(100) PATH '$.id',
-        tdh varchar(100) PATH '$.tdh',
-        tdh__raw varchar(100) PATH '$.tdh__raw',
-        balance INT PATH '$.balance',
-      )
-    ) AS j`;
-  } else {
-    return returnEmpty();
-  }
+//   if (results.data.length === 0 && wallets && profilePage) {
+//     const resolvedWallets = await resolveEns(wallets);
+//     if (resolvedWallets.length > 0) {
+//       const sql = getProfilePageSql(resolvedWallets);
+//       const results2 = await sqlExecutor.execute(sql.sql, sql.params);
+//       return {
+//         count: results2.length,
+//         page: 1,
+//         next: null,
+//         data: results2
+//       };
+//     }
+//   }
+//   return results;
+// }
 
-  joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_METRICS_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key`;
-  joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key `;
-  joins += ` LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
+// export async function fetchConsolidatedOwnerMetricsForKey(
+//   consolidationkey: string
+// ) {
+//   const filters = constructFilters(
+//     '',
+//     `${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key = :consolidation_key`
+//   );
+//   const params = {
+//     consolidation_key: consolidationkey
+//   };
 
-  const fields = ` p.handle as handle, p.rep_score as rep_score, p.cic_score as cic_score, p.profile_tdh as profile_tdh, ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance, ${CONSOLIDATED_WALLETS_TDH_TABLE}.* `;
+//   const ownerMetricsSelect = ` ${CONSOLIDATED_OWNERS_METRICS_TABLE}.*,
+//     dense_table.dense_rank_balance,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.balance) AS dense_rank_balance__ties,
+//     dense_table.dense_rank_unique,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes+${CONSOLIDATED_OWNERS_TAGS_TABLE}.gradients_balance = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes+${CONSOLIDATED_OWNERS_TAGS_TABLE}2.gradients_balance) AS dense_rank_unique__ties,
+//     dense_table.dense_rank_balance_memes,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance) AS dense_rank_balance_memes__ties,
+//     dense_table.dense_rank_balance_memes_season1,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season1 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season1) AS dense_rank_balance_memes_season1__ties,
+//     dense_table.dense_rank_balance_memes_season2,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season2 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season2) AS dense_rank_balance_memes_season2__ties,
+//     dense_table.dense_rank_balance_memes_season3,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season3 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season3) AS dense_rank_balance_memes_season3__ties,
+//     dense_table.dense_rank_balance_memes_season4,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season4 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season4) AS dense_rank_balance_memes_season4__ties,
+//     dense_table.dense_rank_balance_memes_season5,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season5 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season5) AS dense_rank_balance_memes_season5__ties,
+//     dense_table.dense_rank_balance_memes_season6,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season6 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season6) AS dense_rank_balance_memes_season6__ties,
+//     dense_table.dense_rank_balance_gradients,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.gradients_balance = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.gradients_balance) AS dense_rank_balance_gradients__ties,
+//     dense_table.dense_rank_unique_memes,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes) AS dense_rank_unique_memes__ties,
+//     dense_table.dense_rank_unique_memes_season1,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn1 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn1) AS dense_rank_unique_memes_season1__ties,
+//     dense_table.dense_rank_unique_memes_season2,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn2 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn2) AS dense_rank_unique_memes_season2__ties,
+//     dense_table.dense_rank_unique_memes_season3,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn3 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn3) AS dense_rank_unique_memes_season3__ties,
+//     dense_table.dense_rank_unique_memes_season4,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn4 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn4) AS dense_rank_unique_memes_season4__ties,
+//     dense_table.dense_rank_unique_memes_season5,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn5 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn5) AS dense_rank_unique_memes_season5__ties,
+//     dense_table.dense_rank_unique_memes_season6,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn6 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn6) AS dense_rank_unique_memes_season6__ties `;
 
-  switch (sort) {
-    case 'card_tdh':
-      sort = 'CAST(j.tdh AS DECIMAL)';
-      break;
-    case 'card_tdh__raw':
-      sort = 'CAST(j.tdh__raw AS DECIMAL)';
-      break;
-    case 'card_balance':
-      sort = 'j.balance';
-      break;
-    case 'total_tdh':
-      sort = 'boosted_tdh';
-      break;
-    case 'total_tdh__raw':
-      sort = 'tdh__raw';
-      break;
-    case 'total_balance':
-      sort = `${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance`;
-      break;
-  }
+//   const walletsTdhTableSelect = `
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn1,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn2,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn3,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn4,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn5,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn6,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_gradients,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boost,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boost_breakdown,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season1,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season2,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season3,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season4,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season5,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season6,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_gradients_tdh,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season1__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season2__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season3__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season4__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season5__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season6__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_tdh__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season1,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season2,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season3,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season4,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season5,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season6,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_tdh,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_ranks,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_ranks,
+//     COALESCE(${TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change,
+//     COALESCE(${TDH_HISTORY_TABLE}.net_tdh, 0) as day_change_unboosted`;
 
-  const result = await fetchPaginated(
-    CONSOLIDATED_WALLETS_TDH_TABLE,
-    params,
-    `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
-    pageSize,
-    page,
-    filters,
-    fields,
-    joins
-  );
-  result.data.forEach((d: any) => {
-    d.level = calculateLevel({
-      tdh: d.profile_tdh ?? d.boosted_tdh,
-      rep: d.rep_score
-    });
-  });
-  return result;
-}
+//   const fields = ` ${ownerMetricsSelect}, ${walletsTdhTableSelect} , ${CONSOLIDATED_OWNERS_TAGS_TABLE}.* `;
+//   let joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key`;
+//   joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key `;
 
-export async function fetchTDH(
-  pageSize: number,
-  page: number,
-  wallets: string,
-  sort: string,
-  sortDir: string,
-  tdh_filter: string,
-  hideMuseum: boolean,
-  hideTeam: boolean
-) {
-  const tdhBlock = await fetchLatestTDHBlockNumber();
-  let filters = `WHERE block=:block`;
-  const params: any = {
-    block: tdhBlock
-  };
-  if (hideMuseum) {
-    filters = constructFilters(
-      filters,
-      `${WALLETS_TDH_TABLE}.wallet != :museum`
-    );
-    params.museum = SIX529_MUSEUM;
-  }
-  if (hideTeam) {
-    const team: string[] = await getTeamWallets();
-    filters = constructFilters(
-      filters,
-      `${OWNERS_METRICS_TABLE}.wallet NOT IN (:team)`
-    );
-    params.team = team;
-  }
-  if (wallets) {
-    filters = constructFilters(
-      filters,
-      `${WALLETS_TDH_TABLE}.wallet in (:wallets)`
-    );
-    params.wallets = wallets.split(',');
-  }
-  if (tdh_filter) {
-    switch (tdh_filter) {
-      case 'memes_set':
-        filters = constructFilters(
-          filters,
-          `${WALLETS_TDH_TABLE}.memes_cards_sets > 0`
-        );
-        break;
-      case 'memes_genesis':
-        filters = constructFilters(filters, `${WALLETS_TDH_TABLE}.genesis > 0`);
-        break;
-      case 'gradients':
-        filters = constructFilters(
-          filters,
-          `${WALLETS_TDH_TABLE}.gradients_balance > 0`
-        );
-        break;
-    }
-  }
+//   const tdhHistoryBlock = await fetchLatestTDHHistoryBlockNumber();
+//   joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${TDH_HISTORY_TABLE}.consolidation_key and ${TDH_HISTORY_TABLE}.block=${tdhHistoryBlock} `;
 
-  const fields = ` ${WALLETS_TDH_TABLE}.*,${ENS_TABLE}.display as wallet_display `;
-  const joins = `LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet`;
+//   joins += ` JOIN (
+//       SELECT ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes+${CONSOLIDATED_OWNERS_TAGS_TABLE}.gradients_balance DESC) AS dense_rank_unique,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season4 DESC) AS dense_rank_balance_memes_season4,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season5 DESC) AS dense_rank_balance_memes_season5,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season6 DESC) AS dense_rank_balance_memes_season6,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes DESC) AS dense_rank_unique_memes,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn1 DESC) AS dense_rank_unique_memes_season1,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn2 DESC) AS dense_rank_unique_memes_season2,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn3 DESC) AS dense_rank_unique_memes_season3,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn4 DESC) AS dense_rank_unique_memes_season4,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn5 DESC) AS dense_rank_unique_memes_season5,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn6 DESC) AS dense_rank_unique_memes_season6
+//       FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE}
+//         LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key)
+//       AS dense_table ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key = dense_table.consolidation_key `;
 
-  return fetchPaginated(
-    WALLETS_TDH_TABLE,
-    params,
-    `${sort} ${sortDir}, boosted_tdh ${sortDir}`,
-    pageSize,
-    page,
-    filters,
-    fields,
-    joins
-  );
-}
+//   const results = await fetchPaginated(
+//     CONSOLIDATED_OWNERS_METRICS_TABLE,
+//     params,
+//     `boosted_tdh ASC`,
+//     1,
+//     1,
+//     filters,
+//     fields,
+//     joins
+//   );
 
-export async function fetchOwnerMetrics(
-  pageSize: number,
-  page: number,
-  wallets: string,
-  sort: string,
-  sortDir: string,
-  metrics_filter: string,
-  hideMuseum: boolean,
-  hideTeam: boolean,
-  profilePage: boolean
-) {
-  const tdhBlock = await fetchLatestTDHBlockNumber();
-  let filters = '';
-  let hideWalletFilters = '';
-  const params: any = {};
-  if (hideMuseum) {
-    filters = constructFilters(
-      filters,
-      `${OWNERS_METRICS_TABLE}.wallet != :museum`
-    );
-    params.museum = SIX529_MUSEUM;
-  }
-  if (hideTeam) {
-    const team: string[] = await getTeamWallets();
-    filters = constructFilters(
-      filters,
-      `${OWNERS_METRICS_TABLE}.wallet NOT IN (:team)`
-    );
-    params.team = team;
-  }
-  hideWalletFilters = filters;
-  if (wallets) {
-    filters = constructFilters(
-      filters,
-      `${OWNERS_METRICS_TABLE}.wallet in (:wallets) OR ${ENS_TABLE}.display in (:wallets)`
-    );
-    params.wallets = wallets.split(',').map((w) => w.toLowerCase());
-  }
-  if (metrics_filter) {
-    switch (metrics_filter) {
-      case 'memes':
-        filters = constructFilters(
-          filters,
-          `${OWNERS_TAGS_TABLE}.memes_balance > 0`
-        );
-        break;
-      case 'memes_set':
-        filters = constructFilters(
-          filters,
-          `${OWNERS_TAGS_TABLE}.memes_cards_sets > 0`
-        );
-        break;
-      case 'memes_genesis':
-        filters = constructFilters(filters, `${OWNERS_TAGS_TABLE}.genesis > 0`);
-        break;
-      case 'gradients':
-        filters = constructFilters(
-          filters,
-          `${OWNERS_TAGS_TABLE}.gradients_balance > 0`
-        );
-        break;
-      case 'memes_set_minus1':
-        filters = constructFilters(
-          filters,
-          `${OWNERS_TAGS_TABLE}.memes_cards_sets_minus1 > 0`
-        );
-        break;
-      case 'memes_set_szn1':
-        filters = constructFilters(
-          filters,
-          `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn1 > 0`
-        );
-        break;
-      case 'memes_set_szn2':
-        filters = constructFilters(
-          filters,
-          `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn2 > 0`
-        );
-        break;
-      case 'memes_set_szn3':
-        filters = constructFilters(
-          filters,
-          `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn3 > 0`
-        );
-        break;
-      case 'memes_set_szn4':
-        filters = constructFilters(
-          filters,
-          `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn4 > 0`
-        );
-        break;
-      case 'memes_set_szn5':
-        filters = constructFilters(
-          filters,
-          `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn5 > 0`
-        );
-        break;
-      case 'memes_set_szn6':
-        filters = constructFilters(
-          filters,
-          `${OWNERS_TAGS_TABLE}.memes_cards_sets_szn6 > 0`
-        );
-        break;
-    }
-  }
+//   if (results.data.length == 0) {
+//     const resolvedWallets = consolidationkey.split('-');
+//     const sql = getProfilePageSql(resolvedWallets);
+//     const results2 = await sqlExecutor.execute(sql.sql, sql.params);
+//     if (results2.length == 1) {
+//       const r = results2[0];
+//       r.consolidation_key = consolidationkey;
+//       r.wallets = consolidationkey.split('-');
+//       return r;
+//     } else {
+//       return null;
+//     }
+//   }
 
-  let ownerMetricsSelect: string;
+//   if (results.data.length == 1) {
+//     return results.data[0];
+//   } else {
+//     return null;
+//   }
+// }
 
-  if (!wallets) {
-    ownerMetricsSelect = ` ${OWNERS_METRICS_TABLE}.*, 
-    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance,
-    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, 
-    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
-    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,
-    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3,
-    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season4 DESC) AS dense_rank_balance_memes_season4, 
-    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season5 DESC) AS dense_rank_balance_memes_season5,
-    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season6 DESC) AS dense_rank_balance_memes_season6,
-    RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients`;
-  } else {
-    ownerMetricsSelect = ` ${OWNERS_METRICS_TABLE}.*, 
-    dense_table.dense_rank_sort,
-    dense_table.dense_rank_balance,
-    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.balance = ${OWNERS_METRICS_TABLE}2.balance) AS dense_rank_balance__ties,
-    dense_table.dense_rank_unique,
-    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes+${OWNERS_TAGS_TABLE}.gradients_balance = ${OWNERS_TAGS_TABLE}2.unique_memes+${OWNERS_TAGS_TABLE}2.gradients_balance) AS dense_rank_unique__ties,
-    dense_table.dense_rank_balance_memes, 
-    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance = ${OWNERS_METRICS_TABLE}2.memes_balance) AS dense_rank_balance_memes__ties,
-    dense_table.dense_rank_balance_memes_season1,
-    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season1 = ${OWNERS_METRICS_TABLE}2.memes_balance_season1) AS dense_rank_balance_memes_season1__ties, 
-    dense_table.dense_rank_balance_memes_season2,
-    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season2 = ${OWNERS_METRICS_TABLE}2.memes_balance_season2) AS dense_rank_balance_memes_season2__ties,
-    dense_table.dense_rank_balance_memes_season3,
-    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season3 = ${OWNERS_METRICS_TABLE}2.memes_balance_season3) AS dense_rank_balance_memes_season3__ties, 
-    dense_table.dense_rank_balance_memes_season4,
-    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season4 = ${OWNERS_METRICS_TABLE}2.memes_balance_season4) AS dense_rank_balance_memes_season4__ties,
-    dense_table.dense_rank_balance_memes_season5,
-    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season5 = ${OWNERS_METRICS_TABLE}2.memes_balance_season5) AS dense_rank_balance_memes_season5__ties, 
-    dense_table.dense_rank_balance_memes_season6,
-    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.memes_balance_season6 = ${OWNERS_METRICS_TABLE}2.memes_balance_season6) AS dense_rank_balance_memes_season6__ties, 
-    dense_table.dense_rank_balance_gradients,
-    (SELECT COUNT(*) FROM ${OWNERS_METRICS_TABLE} ${OWNERS_METRICS_TABLE}2 WHERE ${OWNERS_METRICS_TABLE}.gradients_balance = ${OWNERS_METRICS_TABLE}2.gradients_balance) AS dense_rank_balance_gradients__ties,
-    dense_table.dense_rank_unique_memes,
-    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes = ${OWNERS_TAGS_TABLE}2.unique_memes) AS dense_rank_unique_memes__ties,
-    dense_table.dense_rank_unique_memes_season1,
-    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn1 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn1) AS dense_rank_unique_memes_season1__ties,
-    dense_table.dense_rank_unique_memes_season2,
-    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn2 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn2) AS dense_rank_unique_memes_season2__ties,
-    dense_table.dense_rank_unique_memes_season3,
-    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn3 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn3) AS dense_rank_unique_memes_season3__ties,
-    dense_table.dense_rank_unique_memes_season4,
-    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn4 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn4) AS dense_rank_unique_memes_season4__ties,
-    dense_table.dense_rank_unique_memes_season5,
-    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn5 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn5) AS dense_rank_unique_memes_season5__ties,
-    dense_table.dense_rank_unique_memes_season6,
-    (SELECT COUNT(*) FROM ${OWNERS_TAGS_TABLE} ${OWNERS_TAGS_TABLE}2 WHERE ${OWNERS_TAGS_TABLE}.unique_memes_szn6 = ${OWNERS_TAGS_TABLE}2.unique_memes_szn6) AS dense_rank_unique_memes_season6__ties `;
-  }
+// export async function fetchConsolidatedOwnerMetrics(
+//   pageSize: number,
+//   page: number,
+//   wallets: string,
+//   sort: string,
+//   sortDir: string,
+//   metrics_filter: string,
+//   hideMuseum: boolean,
+//   hideTeam: boolean,
+//   profilePage: boolean,
+//   includePrimaryWallet: boolean
+// ) {
+//   let filters = '';
+//   let hideWalletFilters = '';
+//   const params: any = {};
+//   if (hideMuseum) {
+//     filters = constructFilters(
+//       filters,
+//       `LOWER(${CONSOLIDATED_OWNERS_METRICS_TABLE}.wallets) NOT LIKE :museum`
+//     );
+//     params.museum = `%${SIX529_MUSEUM.toLowerCase()}%`;
+//   }
+//   if (hideTeam) {
+//     const team: string[] = await getTeamWallets();
+//     team.forEach((t, index) => {
+//       const paramName = `team${index}`;
+//       filters = constructFilters(
+//         filters,
+//         `LOWER(${CONSOLIDATED_OWNERS_METRICS_TABLE}.wallets) NOT LIKE :${paramName}`
+//       );
+//       params[paramName] = `%${t.toLowerCase()}%`;
+//     });
+//   }
+//   hideWalletFilters = filters;
+//   if (wallets) {
+//     const resolvedWallets = await resolveEns(wallets);
+//     let walletFilters = '';
+//     resolvedWallets.forEach((w, index) => {
+//       const paramName = `wallet${index}`;
+//       walletFilters = constructFiltersOR(
+//         walletFilters,
+//         `LOWER(${CONSOLIDATED_OWNERS_METRICS_TABLE}.wallets) LIKE :${paramName}`
+//       );
+//       params[paramName] = `%${w.toLowerCase()}%`;
+//     });
+//     filters = constructFilters(filters, `(${walletFilters})`);
+//   }
+//   if (metrics_filter) {
+//     switch (metrics_filter) {
+//       case 'memes':
+//         filters = constructFilters(
+//           filters,
+//           `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_balance > 0`
+//         );
+//         break;
+//       case 'memes_set':
+//         filters = constructFilters(
+//           filters,
+//           `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets > 0`
+//         );
+//         break;
+//       case 'memes_genesis':
+//         filters = constructFilters(
+//           filters,
+//           `${CONSOLIDATED_OWNERS_TAGS_TABLE}.genesis > 0`
+//         );
+//         break;
+//       case 'gradients':
+//         filters = constructFilters(
+//           filters,
+//           `${CONSOLIDATED_OWNERS_TAGS_TABLE}.gradients_balance > 0`
+//         );
+//         break;
+//       case 'memes_set_minus1':
+//         filters = constructFilters(
+//           filters,
+//           `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_minus1 > 0`
+//         );
+//         break;
+//       case 'memes_set_szn1':
+//         filters = constructFilters(
+//           filters,
+//           `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_szn1 > 0`
+//         );
+//         break;
+//       case 'memes_set_szn2':
+//         filters = constructFilters(
+//           filters,
+//           `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_szn2 > 0`
+//         );
+//         break;
+//       case 'memes_set_szn3':
+//         filters = constructFilters(
+//           filters,
+//           `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_szn3 > 0`
+//         );
+//         break;
+//       case 'memes_set_szn4':
+//         filters = constructFilters(
+//           filters,
+//           `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_szn4 > 0`
+//         );
+//         break;
+//       case 'memes_set_szn5':
+//         filters = constructFilters(
+//           filters,
+//           `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_szn5 > 0`
+//         );
+//         break;
+//       case 'memes_set_szn6':
+//         filters = constructFilters(
+//           filters,
+//           `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_szn6 > 0`
+//         );
+//         break;
+//     }
+//   }
 
-  const walletsTdhTableSelect = `
-    ${WALLETS_TDH_TABLE}.tdh_rank, 
-    ${WALLETS_TDH_TABLE}.tdh_rank_memes, 
-    ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn1, 
-    ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn2, 
-    ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn3, 
-    ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn4, 
-    ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn5,
-    ${WALLETS_TDH_TABLE}.tdh_rank_memes_szn6, 
-    ${WALLETS_TDH_TABLE}.tdh_rank_gradients, 
-    ${WALLETS_TDH_TABLE}.boost, 
-    ${WALLETS_TDH_TABLE}.boost_breakdown, 
-    ${WALLETS_TDH_TABLE}.boosted_tdh, 
-    ${WALLETS_TDH_TABLE}.boosted_memes_tdh, 
-    ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season1, 
-    ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season2, 
-    ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season3, 
-    ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season4, 
-    ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season5,
-     ${WALLETS_TDH_TABLE}.boosted_memes_tdh_season6,
-    ${WALLETS_TDH_TABLE}.boosted_gradients_tdh,
-    ${WALLETS_TDH_TABLE}.tdh__raw, 
-    ${WALLETS_TDH_TABLE}.memes_tdh__raw, 
-    ${WALLETS_TDH_TABLE}.memes_tdh_season1__raw, 
-    ${WALLETS_TDH_TABLE}.memes_tdh_season2__raw, 
-    ${WALLETS_TDH_TABLE}.memes_tdh_season3__raw,
-    ${WALLETS_TDH_TABLE}.memes_tdh_season4__raw, 
-    ${WALLETS_TDH_TABLE}.memes_tdh_season5__raw, 
-    ${WALLETS_TDH_TABLE}.memes_tdh_season6__raw, 
-    ${WALLETS_TDH_TABLE}.gradients_tdh__raw, 
-    ${WALLETS_TDH_TABLE}.tdh, 
-    ${WALLETS_TDH_TABLE}.memes_tdh, 
-    ${WALLETS_TDH_TABLE}.memes_tdh_season1, 
-    ${WALLETS_TDH_TABLE}.memes_tdh_season2, 
-    ${WALLETS_TDH_TABLE}.memes_tdh_season3, 
-    ${WALLETS_TDH_TABLE}.memes_tdh_season4, 
-    ${WALLETS_TDH_TABLE}.memes_tdh_season5, 
-    ${WALLETS_TDH_TABLE}.memes_tdh_season6, 
-    ${WALLETS_TDH_TABLE}.gradients_tdh,
-    ${WALLETS_TDH_TABLE}.memes,
-    ${WALLETS_TDH_TABLE}.memes_ranks, 
-    ${WALLETS_TDH_TABLE}.gradients, 
-    ${WALLETS_TDH_TABLE}.gradients_ranks`;
+//   let ownerMetricsSelect: string;
 
-  const fields = ` ${ownerMetricsSelect},${ENS_TABLE}.display as wallet_display, ${walletsTdhTableSelect} , ${OWNERS_TAGS_TABLE}.* `;
-  let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock}`;
-  joins += ` LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet `;
-  joins += ` LEFT JOIN ${ENS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${ENS_TABLE}.wallet `;
-  if (
-    sort == 'balance' ||
-    sort == 'memes_balance' ||
-    sort == 'memes_balance_season1' ||
-    sort == 'memes_balance_season2' ||
-    sort == 'memes_balance_season3' ||
-    sort == 'memes_balance_season4' ||
-    sort == 'memes_balance_season5' ||
-    sort == 'memes_balance_season6' ||
-    sort == 'gradients_balance'
-  ) {
-    sort = `${OWNERS_METRICS_TABLE}.${sort}`;
-  }
-  if (
-    sort == 'memes_cards_sets' ||
-    sort == 'memes_cards_sets_szn1' ||
-    sort == 'memes_cards_sets_szn2' ||
-    sort == 'memes_cards_sets_szn3' ||
-    sort == 'memes_cards_sets_szn4' ||
-    sort == 'memes_cards_sets_szn5' ||
-    sort == 'memes_cards_sets_szn6' ||
-    sort == 'memes_cards_sets_minus1' ||
-    sort == 'genesis' ||
-    sort == 'unique_memes' ||
-    sort == 'unique_memes_szn1' ||
-    sort == 'unique_memes_szn2' ||
-    sort == 'unique_memes_szn3' ||
-    sort == 'unique_memes_szn4' ||
-    sort == 'unique_memes_szn5' ||
-    sort == 'unique_memes_szn6'
-  ) {
-    sort = `${OWNERS_TAGS_TABLE}.${sort}`;
-  }
+//   if (!wallets) {
+//     ownerMetricsSelect = ` ${CONSOLIDATED_OWNERS_METRICS_TABLE}.*,
+//     RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance,
+//     RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes,
+//     RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1,
+//     RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,
+//     RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3,
+//     RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season4 DESC) AS dense_rank_balance_memes_season4,
+//     RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season5 DESC) AS dense_rank_balance_memes_season5,
+//     RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season6 DESC) AS dense_rank_balance_memes_season6,
+//     RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients`;
+//   } else {
+//     ownerMetricsSelect = ` ${CONSOLIDATED_OWNERS_METRICS_TABLE}.*,
+//     dense_table.dense_rank_sort,
+//     dense_table.dense_rank_balance,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.balance) AS dense_rank_balance__ties,
+//     dense_table.dense_rank_unique,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes+${CONSOLIDATED_OWNERS_TAGS_TABLE}.gradients_balance = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes+${CONSOLIDATED_OWNERS_TAGS_TABLE}2.gradients_balance) AS dense_rank_unique__ties,
+//     dense_table.dense_rank_balance_memes,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance) AS dense_rank_balance_memes__ties,
+//     dense_table.dense_rank_balance_memes_season1,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season1 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season1) AS dense_rank_balance_memes_season1__ties,
+//     dense_table.dense_rank_balance_memes_season2,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season2 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season2) AS dense_rank_balance_memes_season2__ties,
+//     dense_table.dense_rank_balance_memes_season3,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season3 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season3) AS dense_rank_balance_memes_season3__ties,
+//     dense_table.dense_rank_balance_memes_season4,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season4 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season4) AS dense_rank_balance_memes_season4__ties,
+//     dense_table.dense_rank_balance_memes_season5,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season5 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season5) AS dense_rank_balance_memes_season5__ties,
+//     dense_table.dense_rank_balance_memes_season6,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season6 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season6) AS dense_rank_balance_memes_season6__ties,
+//     dense_table.dense_rank_balance_gradients,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.gradients_balance = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.gradients_balance) AS dense_rank_balance_gradients__ties,
+//     dense_table.dense_rank_unique_memes,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes) AS dense_rank_unique_memes__ties,
+//     dense_table.dense_rank_unique_memes_season1,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn1 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn1) AS dense_rank_unique_memes_season1__ties,
+//     dense_table.dense_rank_unique_memes_season2,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn2 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn2) AS dense_rank_unique_memes_season2__ties,
+//     dense_table.dense_rank_unique_memes_season3,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn3 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn3) AS dense_rank_unique_memes_season3__ties,
+//     dense_table.dense_rank_unique_memes_season4,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn4 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn4) AS dense_rank_unique_memes_season4__ties,
+//     dense_table.dense_rank_unique_memes_season5,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn5 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn5) AS dense_rank_unique_memes_season5__ties,
+//     dense_table.dense_rank_unique_memes_season6,
+//     (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn6 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn6) AS dense_rank_unique_memes_season6__ties `;
+//   }
 
-  if (wallets) {
-    joins += ` JOIN (
-      SELECT ${OWNERS_METRICS_TABLE}.wallet, RANK() OVER(ORDER BY ${sort} DESC) AS dense_rank_sort, 
-      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes+${OWNERS_TAGS_TABLE}.gradients_balance DESC) AS dense_rank_unique,
-      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, 
-      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, 
-      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
-      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2, 
-      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3, 
-      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season4 DESC) AS dense_rank_balance_memes_season4, 
-      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season5 DESC) AS dense_rank_balance_memes_season5, 
-      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.memes_balance_season6 DESC) AS dense_rank_balance_memes_season6, 
-      RANK() OVER(ORDER BY ${OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients, 
-      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes DESC) AS dense_rank_unique_memes,
-      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn1 DESC) AS dense_rank_unique_memes_season1,
-      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn2 DESC) AS dense_rank_unique_memes_season2,
-      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn3 DESC) AS dense_rank_unique_memes_season3,
-      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn4 DESC) AS dense_rank_unique_memes_season4,
-      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn5 DESC) AS dense_rank_unique_memes_season5,
-      RANK() OVER(ORDER BY ${OWNERS_TAGS_TABLE}.unique_memes_szn6 DESC) AS dense_rank_unique_memes_season6  
-      FROM ${OWNERS_METRICS_TABLE} LEFT JOIN ${WALLETS_TDH_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${OWNERS_METRICS_TABLE}.wallet and ${WALLETS_TDH_TABLE}.block=${tdhBlock} LEFT JOIN ${OWNERS_TAGS_TABLE} ON ${OWNERS_METRICS_TABLE}.wallet=${OWNERS_TAGS_TABLE}.wallet ${hideWalletFilters}) as dense_table ON ${OWNERS_METRICS_TABLE}.wallet = dense_table.wallet `;
-  }
+//   const walletsTdhTableSelect = `
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn1,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn2,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn3,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn4,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn5,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn6,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_gradients,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boost,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boost_breakdown,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season1,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season2,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season3,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season4,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season5,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season6,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_gradients_tdh,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season1__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season2__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season3__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season4__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season5__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season6__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_tdh__raw,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season1,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season2,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season3,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season4,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season5,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season6,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_tdh,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_ranks,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients,
+//     ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_ranks,
+//     COALESCE(${TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change,
+//     COALESCE(${TDH_HISTORY_TABLE}.net_tdh, 0) as day_change_unboosted,
+//     p.handle as handle,
+//     p.rep_score as rep_score,
+//     p.cic_score as cic_score,
+//     p.profile_tdh as profile_tdh,
+//     p.pfp_url as pfp,
+//     ifnull(p.profile_tdh, ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh) + ifnull(p.rep_score, 0) as level_components`;
 
-  const results = await fetchPaginated(
-    OWNERS_METRICS_TABLE,
-    params,
-    `${sort} ${sortDir}, ${OWNERS_METRICS_TABLE}.balance ${sortDir}, boosted_tdh ${sortDir}`,
-    pageSize,
-    page,
-    filters,
-    fields,
-    joins
-  );
+//   const fields = ` ${ownerMetricsSelect}, ${walletsTdhTableSelect} , ${CONSOLIDATED_OWNERS_TAGS_TABLE}.* `;
+//   let joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key`;
+//   joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key `;
+//   joins += ` LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
 
-  if (results.data.length === 0 && wallets && profilePage) {
-    const resolvedWallets = await resolveEns(wallets);
-    if (resolvedWallets.length > 0) {
-      const sql = getProfilePageSql(resolvedWallets);
-      const results2 = await sqlExecutor.execute(sql.sql, sql.params);
-      return {
-        count: results2.length,
-        page: 1,
-        next: null,
-        data: results2
-      };
-    }
-  }
-  return results;
-}
+//   const tdhHistoryBlock = await fetchLatestTDHHistoryBlockNumber();
+//   joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${TDH_HISTORY_TABLE}.consolidation_key and ${TDH_HISTORY_TABLE}.block=${tdhHistoryBlock} `;
 
-export async function fetchConsolidatedOwnerMetricsForKey(
-  consolidationkey: string
-) {
-  const filters = constructFilters(
-    '',
-    `${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key = :consolidation_key`
-  );
-  const params = {
-    consolidation_key: consolidationkey
-  };
+//   if (
+//     sort == 'balance' ||
+//     sort == 'memes_balance' ||
+//     sort == 'memes_balance_season1' ||
+//     sort == 'memes_balance_season2' ||
+//     sort == 'memes_balance_season3' ||
+//     sort == 'memes_balance_season4' ||
+//     sort == 'memes_balance_season5' ||
+//     sort == 'memes_balance_season6' ||
+//     sort == 'gradients_balance'
+//   ) {
+//     sort = `${CONSOLIDATED_OWNERS_METRICS_TABLE}.${sort}`;
+//   }
+//   if (
+//     sort == 'memes_cards_sets' ||
+//     sort == 'memes_cards_sets_szn1' ||
+//     sort == 'memes_cards_sets_szn2' ||
+//     sort == 'memes_cards_sets_szn3' ||
+//     sort == 'memes_cards_sets_szn4' ||
+//     sort == 'memes_cards_sets_szn5' ||
+//     sort == 'memes_cards_sets_szn6' ||
+//     sort == 'memes_cards_sets_minus1' ||
+//     sort == 'genesis' ||
+//     sort == 'unique_memes' ||
+//     sort == 'unique_memes_szn1' ||
+//     sort == 'unique_memes_szn2' ||
+//     sort == 'unique_memes_szn3' ||
+//     sort == 'unique_memes_szn4' ||
+//     sort == 'unique_memes_szn5' ||
+//     sort == 'unique_memes_szn6'
+//   ) {
+//     sort = `${CONSOLIDATED_OWNERS_TAGS_TABLE}.${sort}`;
+//   }
+//   if (sort === 'level') {
+//     sort = 'level_components';
+//   }
 
-  const ownerMetricsSelect = ` ${CONSOLIDATED_OWNERS_METRICS_TABLE}.*, 
-    dense_table.dense_rank_balance,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.balance) AS dense_rank_balance__ties,
-    dense_table.dense_rank_unique,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes+${CONSOLIDATED_OWNERS_TAGS_TABLE}.gradients_balance = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes+${CONSOLIDATED_OWNERS_TAGS_TABLE}2.gradients_balance) AS dense_rank_unique__ties,
-    dense_table.dense_rank_balance_memes, 
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance) AS dense_rank_balance_memes__ties,
-    dense_table.dense_rank_balance_memes_season1,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season1 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season1) AS dense_rank_balance_memes_season1__ties, 
-    dense_table.dense_rank_balance_memes_season2,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season2 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season2) AS dense_rank_balance_memes_season2__ties,
-    dense_table.dense_rank_balance_memes_season3,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season3 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season3) AS dense_rank_balance_memes_season3__ties, 
-    dense_table.dense_rank_balance_memes_season4,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season4 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season4) AS dense_rank_balance_memes_season4__ties,
-    dense_table.dense_rank_balance_memes_season5,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season5 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season5) AS dense_rank_balance_memes_season5__ties,
-    dense_table.dense_rank_balance_memes_season6,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season6 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season6) AS dense_rank_balance_memes_season6__ties, 
-    dense_table.dense_rank_balance_gradients,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.gradients_balance = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.gradients_balance) AS dense_rank_balance_gradients__ties,
-    dense_table.dense_rank_unique_memes,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes) AS dense_rank_unique_memes__ties,
-    dense_table.dense_rank_unique_memes_season1,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn1 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn1) AS dense_rank_unique_memes_season1__ties,
-    dense_table.dense_rank_unique_memes_season2,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn2 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn2) AS dense_rank_unique_memes_season2__ties,
-    dense_table.dense_rank_unique_memes_season3,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn3 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn3) AS dense_rank_unique_memes_season3__ties,
-    dense_table.dense_rank_unique_memes_season4,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn4 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn4) AS dense_rank_unique_memes_season4__ties,
-    dense_table.dense_rank_unique_memes_season5,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn5 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn5) AS dense_rank_unique_memes_season5__ties,
-    dense_table.dense_rank_unique_memes_season6,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn6 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn6) AS dense_rank_unique_memes_season6__ties `;
+//   if (wallets) {
+//     const innerSort =
+//       sort === 'level_components'
+//         ? '(ifnull(p.profile_tdh, 0) + ifnull(p.rep_score, 0))'
+//         : sort;
+//     joins += ` JOIN (
+//       SELECT ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key, RANK() OVER(ORDER BY ${innerSort} DESC) AS dense_rank_sort,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes+${CONSOLIDATED_OWNERS_TAGS_TABLE}.gradients_balance DESC) AS dense_rank_unique,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season4 DESC) AS dense_rank_balance_memes_season4,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season5 DESC) AS dense_rank_balance_memes_season5,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season6 DESC) AS dense_rank_balance_memes_season6,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes DESC) AS dense_rank_unique_memes,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn1 DESC) AS dense_rank_unique_memes_season1,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn2 DESC) AS dense_rank_unique_memes_season2,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn3 DESC) AS dense_rank_unique_memes_season3,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn4 DESC) AS dense_rank_unique_memes_season4,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn5 DESC) AS dense_rank_unique_memes_season5,
+//         RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn6 DESC) AS dense_rank_unique_memes_season6
+//       FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE}
+//         LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key
+//         LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key
+//         LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key ${hideWalletFilters})
+//       AS dense_table ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key = dense_table.consolidation_key `;
+//   }
 
-  const walletsTdhTableSelect = `
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn1, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn2, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn3, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn4, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn5,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn6, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_gradients, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boost, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boost_breakdown, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season1, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season2, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season3,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season4, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season5, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season6,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_gradients_tdh,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season1__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season2__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season3__raw,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season4__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season5__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season6__raw,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_tdh__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season1, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season2, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season3, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season4, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season5, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season6,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_tdh,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_ranks, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_ranks,
-    COALESCE(${TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change,
-    COALESCE(${TDH_HISTORY_TABLE}.net_tdh, 0) as day_change_unboosted`;
+//   const results = await fetchPaginated(
+//     CONSOLIDATED_OWNERS_METRICS_TABLE,
+//     params,
+//     `${sort} ${sortDir}, ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance ${sortDir}, boosted_tdh ${sortDir}`,
+//     pageSize,
+//     page,
+//     filters,
+//     fields,
+//     joins
+//   );
 
-  const fields = ` ${ownerMetricsSelect}, ${walletsTdhTableSelect} , ${CONSOLIDATED_OWNERS_TAGS_TABLE}.* `;
-  let joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key`;
-  joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key `;
+//   if (results.data.length == 0 && wallets && profilePage) {
+//     const resolvedWallets = await resolveEns(wallets);
+//     if (resolvedWallets.length > 0) {
+//       const sql = getProfilePageSql(resolvedWallets);
+//       const results2 = await sqlExecutor.execute(sql.sql, sql.params);
+//       results2[0].wallets = resolvedWallets;
+//       return {
+//         count: results2.length,
+//         page: 1,
+//         next: null,
+//         data: results2
+//       };
+//     }
+//   }
 
-  const tdhHistoryBlock = await fetchLatestTDHHistoryBlockNumber();
-  joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${TDH_HISTORY_TABLE}.consolidation_key and ${TDH_HISTORY_TABLE}.block=${tdhHistoryBlock} `;
+//   if (includePrimaryWallet) {
+//     await Promise.all(
+//       results.data.map(async (d: any) => {
+//         d.primary_wallet = await fetchPrimaryWallet(JSON.parse(d.wallets));
+//       })
+//     );
+//   }
+//   results.data.forEach((d: any) => {
+//     d.level = calculateLevel({
+//       tdh: d.profile_tdh ?? d.boosted_tdh ?? 0,
+//       rep: d.rep_score ?? 0
+//     });
+//   });
 
-  joins += ` JOIN (
-      SELECT ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes+${CONSOLIDATED_OWNERS_TAGS_TABLE}.gradients_balance DESC) AS dense_rank_unique,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season4 DESC) AS dense_rank_balance_memes_season4, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season5 DESC) AS dense_rank_balance_memes_season5, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season6 DESC) AS dense_rank_balance_memes_season6,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes DESC) AS dense_rank_unique_memes,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn1 DESC) AS dense_rank_unique_memes_season1,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn2 DESC) AS dense_rank_unique_memes_season2,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn3 DESC) AS dense_rank_unique_memes_season3,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn4 DESC) AS dense_rank_unique_memes_season4,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn5 DESC) AS dense_rank_unique_memes_season5,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn6 DESC) AS dense_rank_unique_memes_season6 
-      FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} 
-        LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key) 
-      AS dense_table ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key = dense_table.consolidation_key `;
-
-  const results = await fetchPaginated(
-    CONSOLIDATED_OWNERS_METRICS_TABLE,
-    params,
-    `boosted_tdh ASC`,
-    1,
-    1,
-    filters,
-    fields,
-    joins
-  );
-
-  if (results.data.length == 0) {
-    const resolvedWallets = consolidationkey.split('-');
-    const sql = getProfilePageSql(resolvedWallets);
-    const results2 = await sqlExecutor.execute(sql.sql, sql.params);
-    if (results2.length == 1) {
-      const r = results2[0];
-      r.consolidation_key = consolidationkey;
-      r.wallets = consolidationkey.split('-');
-      return r;
-    } else {
-      return null;
-    }
-  }
-
-  if (results.data.length == 1) {
-    return results.data[0];
-  } else {
-    return null;
-  }
-}
-
-export async function fetchConsolidatedOwnerMetrics(
-  pageSize: number,
-  page: number,
-  wallets: string,
-  sort: string,
-  sortDir: string,
-  metrics_filter: string,
-  hideMuseum: boolean,
-  hideTeam: boolean,
-  profilePage: boolean,
-  includePrimaryWallet: boolean
-) {
-  let filters = '';
-  let hideWalletFilters = '';
-  const params: any = {};
-  if (hideMuseum) {
-    filters = constructFilters(
-      filters,
-      `LOWER(${CONSOLIDATED_OWNERS_METRICS_TABLE}.wallets) NOT LIKE :museum`
-    );
-    params.museum = `%${SIX529_MUSEUM.toLowerCase()}%`;
-  }
-  if (hideTeam) {
-    const team: string[] = await getTeamWallets();
-    team.forEach((t, index) => {
-      const paramName = `team${index}`;
-      filters = constructFilters(
-        filters,
-        `LOWER(${CONSOLIDATED_OWNERS_METRICS_TABLE}.wallets) NOT LIKE :${paramName}`
-      );
-      params[paramName] = `%${t.toLowerCase()}%`;
-    });
-  }
-  hideWalletFilters = filters;
-  if (wallets) {
-    const resolvedWallets = await resolveEns(wallets);
-    let walletFilters = '';
-    resolvedWallets.forEach((w, index) => {
-      const paramName = `wallet${index}`;
-      walletFilters = constructFiltersOR(
-        walletFilters,
-        `LOWER(${CONSOLIDATED_OWNERS_METRICS_TABLE}.wallets) LIKE :${paramName}`
-      );
-      params[paramName] = `%${w.toLowerCase()}%`;
-    });
-    filters = constructFilters(filters, `(${walletFilters})`);
-  }
-  if (metrics_filter) {
-    switch (metrics_filter) {
-      case 'memes':
-        filters = constructFilters(
-          filters,
-          `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_balance > 0`
-        );
-        break;
-      case 'memes_set':
-        filters = constructFilters(
-          filters,
-          `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets > 0`
-        );
-        break;
-      case 'memes_genesis':
-        filters = constructFilters(
-          filters,
-          `${CONSOLIDATED_OWNERS_TAGS_TABLE}.genesis > 0`
-        );
-        break;
-      case 'gradients':
-        filters = constructFilters(
-          filters,
-          `${CONSOLIDATED_OWNERS_TAGS_TABLE}.gradients_balance > 0`
-        );
-        break;
-      case 'memes_set_minus1':
-        filters = constructFilters(
-          filters,
-          `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_minus1 > 0`
-        );
-        break;
-      case 'memes_set_szn1':
-        filters = constructFilters(
-          filters,
-          `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_szn1 > 0`
-        );
-        break;
-      case 'memes_set_szn2':
-        filters = constructFilters(
-          filters,
-          `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_szn2 > 0`
-        );
-        break;
-      case 'memes_set_szn3':
-        filters = constructFilters(
-          filters,
-          `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_szn3 > 0`
-        );
-        break;
-      case 'memes_set_szn4':
-        filters = constructFilters(
-          filters,
-          `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_szn4 > 0`
-        );
-        break;
-      case 'memes_set_szn5':
-        filters = constructFilters(
-          filters,
-          `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_szn5 > 0`
-        );
-        break;
-      case 'memes_set_szn6':
-        filters = constructFilters(
-          filters,
-          `${CONSOLIDATED_OWNERS_TAGS_TABLE}.memes_cards_sets_szn6 > 0`
-        );
-        break;
-    }
-  }
-
-  let ownerMetricsSelect: string;
-
-  if (!wallets) {
-    ownerMetricsSelect = ` ${CONSOLIDATED_OWNERS_METRICS_TABLE}.*, 
-    RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance,
-    RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, 
-    RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
-    RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2,
-    RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3, 
-    RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season4 DESC) AS dense_rank_balance_memes_season4, 
-    RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season5 DESC) AS dense_rank_balance_memes_season5,
-    RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season6 DESC) AS dense_rank_balance_memes_season6, 
-    RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients`;
-  } else {
-    ownerMetricsSelect = ` ${CONSOLIDATED_OWNERS_METRICS_TABLE}.*, 
-    dense_table.dense_rank_sort,
-    dense_table.dense_rank_balance,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.balance) AS dense_rank_balance__ties,
-    dense_table.dense_rank_unique,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes+${CONSOLIDATED_OWNERS_TAGS_TABLE}.gradients_balance = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes+${CONSOLIDATED_OWNERS_TAGS_TABLE}2.gradients_balance) AS dense_rank_unique__ties,
-    dense_table.dense_rank_balance_memes, 
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance) AS dense_rank_balance_memes__ties,
-    dense_table.dense_rank_balance_memes_season1,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season1 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season1) AS dense_rank_balance_memes_season1__ties, 
-    dense_table.dense_rank_balance_memes_season2,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season2 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season2) AS dense_rank_balance_memes_season2__ties,
-    dense_table.dense_rank_balance_memes_season3,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season3 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season3) AS dense_rank_balance_memes_season3__ties, 
-    dense_table.dense_rank_balance_memes_season4,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season4 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season4) AS dense_rank_balance_memes_season4__ties, 
-    dense_table.dense_rank_balance_memes_season5,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season5 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season5) AS dense_rank_balance_memes_season5__ties, 
-    dense_table.dense_rank_balance_memes_season6,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season6 = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.memes_balance_season6) AS dense_rank_balance_memes_season6__ties,
-    dense_table.dense_rank_balance_gradients,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} ${CONSOLIDATED_OWNERS_METRICS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_METRICS_TABLE}.gradients_balance = ${CONSOLIDATED_OWNERS_METRICS_TABLE}2.gradients_balance) AS dense_rank_balance_gradients__ties,
-    dense_table.dense_rank_unique_memes,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes) AS dense_rank_unique_memes__ties,
-    dense_table.dense_rank_unique_memes_season1,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn1 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn1) AS dense_rank_unique_memes_season1__ties,
-    dense_table.dense_rank_unique_memes_season2,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn2 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn2) AS dense_rank_unique_memes_season2__ties,
-    dense_table.dense_rank_unique_memes_season3,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn3 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn3) AS dense_rank_unique_memes_season3__ties,
-    dense_table.dense_rank_unique_memes_season4,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn4 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn4) AS dense_rank_unique_memes_season4__ties,
-    dense_table.dense_rank_unique_memes_season5,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn5 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn5) AS dense_rank_unique_memes_season5__ties,
-    dense_table.dense_rank_unique_memes_season6,
-    (SELECT COUNT(*) FROM ${CONSOLIDATED_OWNERS_TAGS_TABLE} ${CONSOLIDATED_OWNERS_TAGS_TABLE}2 WHERE ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn6 = ${CONSOLIDATED_OWNERS_TAGS_TABLE}2.unique_memes_szn6) AS dense_rank_unique_memes_season6__ties `;
-  }
-
-  const walletsTdhTableSelect = `
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn1, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn2, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn3, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn4, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn5,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_memes_szn6, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh_rank_gradients, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boost, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boost_breakdown, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season1, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season2, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season3,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season4, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season5, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh_season6,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_gradients_tdh,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season1__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season2__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season3__raw,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season4__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season5__raw,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season6__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_tdh__raw, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season1, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season2, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season3, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season4, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season5,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_tdh_season6, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_tdh,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.memes_ranks, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.gradients_ranks,
-    COALESCE(${TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change,
-    COALESCE(${TDH_HISTORY_TABLE}.net_tdh, 0) as day_change_unboosted, 
-    p.handle as handle, 
-    p.rep_score as rep_score, 
-    p.cic_score as cic_score, 
-    p.profile_tdh as profile_tdh,
-    p.pfp_url as pfp,
-    ifnull(p.profile_tdh, ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh) + ifnull(p.rep_score, 0) as level_components`;
-
-  const fields = ` ${ownerMetricsSelect}, ${walletsTdhTableSelect} , ${CONSOLIDATED_OWNERS_TAGS_TABLE}.* `;
-  let joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key`;
-  joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key `;
-  joins += ` LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
-
-  const tdhHistoryBlock = await fetchLatestTDHHistoryBlockNumber();
-  joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${TDH_HISTORY_TABLE}.consolidation_key and ${TDH_HISTORY_TABLE}.block=${tdhHistoryBlock} `;
-
-  if (
-    sort == 'balance' ||
-    sort == 'memes_balance' ||
-    sort == 'memes_balance_season1' ||
-    sort == 'memes_balance_season2' ||
-    sort == 'memes_balance_season3' ||
-    sort == 'memes_balance_season4' ||
-    sort == 'memes_balance_season5' ||
-    sort == 'memes_balance_season6' ||
-    sort == 'gradients_balance'
-  ) {
-    sort = `${CONSOLIDATED_OWNERS_METRICS_TABLE}.${sort}`;
-  }
-  if (
-    sort == 'memes_cards_sets' ||
-    sort == 'memes_cards_sets_szn1' ||
-    sort == 'memes_cards_sets_szn2' ||
-    sort == 'memes_cards_sets_szn3' ||
-    sort == 'memes_cards_sets_szn4' ||
-    sort == 'memes_cards_sets_szn5' ||
-    sort == 'memes_cards_sets_szn6' ||
-    sort == 'memes_cards_sets_minus1' ||
-    sort == 'genesis' ||
-    sort == 'unique_memes' ||
-    sort == 'unique_memes_szn1' ||
-    sort == 'unique_memes_szn2' ||
-    sort == 'unique_memes_szn3' ||
-    sort == 'unique_memes_szn4' ||
-    sort == 'unique_memes_szn5' ||
-    sort == 'unique_memes_szn6'
-  ) {
-    sort = `${CONSOLIDATED_OWNERS_TAGS_TABLE}.${sort}`;
-  }
-  if (sort === 'level') {
-    sort = 'level_components';
-  }
-
-  if (wallets) {
-    const innerSort =
-      sort === 'level_components'
-        ? '(ifnull(p.profile_tdh, 0) + ifnull(p.rep_score, 0))'
-        : sort;
-    joins += ` JOIN (
-      SELECT ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key, RANK() OVER(ORDER BY ${innerSort} DESC) AS dense_rank_sort, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes+${CONSOLIDATED_OWNERS_TAGS_TABLE}.gradients_balance DESC) AS dense_rank_unique,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance DESC) AS dense_rank_balance, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance DESC) AS dense_rank_balance_memes, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season1 DESC) AS dense_rank_balance_memes_season1, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season2 DESC) AS dense_rank_balance_memes_season2, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season3 DESC) AS dense_rank_balance_memes_season3, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season4 DESC) AS dense_rank_balance_memes_season4, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season5 DESC) AS dense_rank_balance_memes_season5, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.memes_balance_season6 DESC) AS dense_rank_balance_memes_season6,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_METRICS_TABLE}.gradients_balance DESC) AS dense_rank_balance_gradients, 
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes DESC) AS dense_rank_unique_memes,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn1 DESC) AS dense_rank_unique_memes_season1,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn2 DESC) AS dense_rank_unique_memes_season2,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn3 DESC) AS dense_rank_unique_memes_season3,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn4 DESC) AS dense_rank_unique_memes_season4,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn5 DESC) AS dense_rank_unique_memes_season5,
-        RANK() OVER(ORDER BY ${CONSOLIDATED_OWNERS_TAGS_TABLE}.unique_memes_szn6 DESC) AS dense_rank_unique_memes_season6 
-      FROM ${CONSOLIDATED_OWNERS_METRICS_TABLE} 
-        LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key 
-        LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key
-        LEFT JOIN ${CONSOLIDATED_OWNERS_TAGS_TABLE} ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key=${CONSOLIDATED_OWNERS_TAGS_TABLE}.consolidation_key ${hideWalletFilters})
-      AS dense_table ON ${CONSOLIDATED_OWNERS_METRICS_TABLE}.consolidation_key = dense_table.consolidation_key `;
-  }
-
-  const results = await fetchPaginated(
-    CONSOLIDATED_OWNERS_METRICS_TABLE,
-    params,
-    `${sort} ${sortDir}, ${CONSOLIDATED_OWNERS_METRICS_TABLE}.balance ${sortDir}, boosted_tdh ${sortDir}`,
-    pageSize,
-    page,
-    filters,
-    fields,
-    joins
-  );
-
-  if (results.data.length == 0 && wallets && profilePage) {
-    const resolvedWallets = await resolveEns(wallets);
-    if (resolvedWallets.length > 0) {
-      const sql = getProfilePageSql(resolvedWallets);
-      const results2 = await sqlExecutor.execute(sql.sql, sql.params);
-      results2[0].wallets = resolvedWallets;
-      return {
-        count: results2.length,
-        page: 1,
-        next: null,
-        data: results2
-      };
-    }
-  }
-
-  if (includePrimaryWallet) {
-    await Promise.all(
-      results.data.map(async (d: any) => {
-        d.primary_wallet = await fetchPrimaryWallet(JSON.parse(d.wallets));
-      })
-    );
-  }
-  results.data.forEach((d: any) => {
-    d.level = calculateLevel({
-      tdh: d.profile_tdh ?? d.boosted_tdh ?? 0,
-      rep: d.rep_score ?? 0
-    });
-  });
-
-  return results;
-}
+//   return results;
+// }
 
 export function returnEmpty() {
   return {

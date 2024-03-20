@@ -44,14 +44,12 @@ export const findNftOwners = async (reset?: boolean) => {
   logger.info(
     `[lastOwnersBlock ${lastOwnersBlock}] : [blockReference ${blockReference}] : [RESET ${reset}] : [FETCHING OWNERS...]`
   );
-  const owners: OwnedNft[] = await getOwnersForContracts(allContracts);
-  logger.info(`[OWNERS ${owners.length.toLocaleString()}]`);
+  const allOwners: OwnedNft[] = await getOwnersForContracts(allContracts);
+  logger.info(`[OWNERS ${allOwners.length.toLocaleString()}]`);
 
   const addresses = new Set<string>();
-  let changedOwners: OwnedNft[];
   if (reset) {
-    changedOwners = owners;
-    owners.forEach((o) => {
+    allOwners.forEach((o) => {
       addresses.add(o.wallet.toLowerCase());
     });
   } else {
@@ -60,40 +58,35 @@ export const findNftOwners = async (reset?: boolean) => {
       to_address: string;
     }[] = await fetchTransactionAddressesFromBlock(
       allContracts,
-      lastOwnersBlock
+      lastOwnersBlock,
+      blockReference
     );
     transactionAddresses.forEach((wallet) => {
       addresses.add(wallet.from_address.toLowerCase());
       addresses.add(wallet.to_address.toLowerCase());
     });
-    changedOwners = owners.filter((o) => addresses.has(o.wallet.toLowerCase()));
   }
 
   logger.info({
-    owners: owners.length.toLocaleString(),
-    addresses: addresses.size.toLocaleString(),
-    changedOwners: changedOwners.length.toLocaleString()
+    owners: allOwners.length.toLocaleString(),
+    addresses: addresses.size.toLocaleString()
   });
 
-  if (changedOwners.length > 0) {
+  if (addresses.size > 0) {
     logger.info(`[CALCULATING DELTA...]`);
     const ownersDelta = await getOwnersDelta(
-      allContracts,
       blockReference,
       addresses,
-      changedOwners,
+      allOwners,
       reset
     );
-    const upsertDelta = ownersDelta.filter((o) => o.balance > 0);
-    const deleteDelta = ownersDelta.filter((o) => 0 >= o.balance);
+
     logger.info({
-      owners: owners.length.toLocaleString(),
-      ownersDelta: ownersDelta.length.toLocaleString(),
-      upsertDelta: upsertDelta.length.toLocaleString(),
-      deleteDelta: deleteDelta.length.toLocaleString()
+      owners: allOwners.length.toLocaleString(),
+      ownersDelta: ownersDelta.length.toLocaleString()
     });
 
-    await persistNftOwners(upsertDelta, deleteDelta, reset);
+    await persistNftOwners(addresses, ownersDelta, reset);
     await consolidateNftOwners(addresses, reset);
   } else {
     logger.info(`[NO CHANGES]`);
@@ -108,14 +101,13 @@ function ownersMatch(o1: NFTOwner, o2: OwnedNft) {
 }
 
 export async function getOwnersDelta(
-  contracts: string[],
   blockReference: number,
   addresses: Set<string>,
-  newOwners: OwnedNft[],
+  allOwners: OwnedNft[],
   reset: boolean
 ) {
   if (reset) {
-    return newOwners.map((o) => {
+    return allOwners.map((o) => {
       return {
         wallet: o.wallet.toLowerCase(),
         contract: o.contract.toLowerCase(),
@@ -126,21 +118,13 @@ export async function getOwnersDelta(
     });
   }
 
-  const startingOwners = await fetchAllNftOwners(
-    contracts,
-    Array.from(addresses)
-  );
-
-  logger.info(
-    `[STARTING OWNERS ${startingOwners.length.toLocaleString()}] : [NEW OWNERS ${newOwners.length.toLocaleString()}]`
-  );
-
   const ownersDelta: NFTOwner[] = [];
 
-  newOwners.forEach((o) => {
-    const existing = startingOwners.find((o1) => ownersMatch(o1, o));
-
-    if (!existing || o.balance != existing.balance) {
+  addresses.forEach((address) => {
+    const addressOwned = allOwners.filter((o) =>
+      areEqualAddresses(o.wallet, address)
+    );
+    addressOwned.forEach((o) => {
       ownersDelta.push({
         wallet: o.wallet.toLowerCase(),
         contract: o.contract.toLowerCase(),
@@ -148,15 +132,7 @@ export async function getOwnersDelta(
         balance: o.balance,
         block_reference: blockReference
       });
-    }
-  });
-
-  startingOwners.forEach((o) => {
-    const existing = newOwners.find((o1) => ownersMatch(o, o1));
-    if (!existing) {
-      o.balance = 0;
-      ownersDelta.push(o);
-    }
+    });
   });
 
   return ownersDelta;

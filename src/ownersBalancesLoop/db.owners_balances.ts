@@ -8,7 +8,11 @@ import {
   OwnerBalancesMemes
 } from '../entities/IOwnerBalances';
 import { Logger } from '../logging';
-import { deleteConsolidations, resetRepository } from '../orm_helpers';
+import {
+  deleteConsolidations,
+  insertWithoutUpdate,
+  resetRepository
+} from '../orm_helpers';
 
 const logger = Logger.get('DB_OWNER_BALANCES');
 
@@ -142,9 +146,12 @@ export async function persistConsolidatedOwnerBalances(
       ConsolidatedOwnerBalancesMemes
     );
     await balancesRepo.clear();
-    await balancesRepo.insert(consolidatedOwnerBalances);
+    await insertWithoutUpdate(balancesRepo, consolidatedOwnerBalances);
     await balancesMemesRepo.clear();
-    await balancesMemesRepo.insert(consolidatedOwnerBalancesMemes);
+    await insertWithoutUpdate(
+      balancesMemesRepo,
+      consolidatedOwnerBalancesMemes
+    );
     logger.info(
       `[INSERTED ${consolidatedOwnerBalances.length} CONSOLIDATED OWNER BALANCES]`
     );
@@ -163,8 +170,11 @@ export async function persistConsolidatedOwnerBalances(
       logger.info(
         `[DELETED ${deleted} CONSOLIDATED NFT BALANCES] : [DELETED ${deletedMemes} CONSOLIDATED NFT BALANCES MEMES]`
       );
-      await balancesRepo.insert(consolidatedOwnerBalances);
-      await balancesMemesRepo.insert(consolidatedOwnerBalancesMemes);
+      await insertWithoutUpdate(balancesRepo, consolidatedOwnerBalances);
+      await insertWithoutUpdate(
+        balancesMemesRepo,
+        consolidatedOwnerBalancesMemes
+      );
 
       logger.info({
         message: '[CONSOLIDATED OWNER BALANCES PERSISTED]'

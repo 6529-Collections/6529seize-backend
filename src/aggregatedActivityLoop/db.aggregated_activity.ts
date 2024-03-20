@@ -12,6 +12,7 @@ import {
 import { Logger } from '../logging';
 import {
   deleteConsolidations,
+  insertWithoutUpdate,
   resetRepository,
   upsertRepository
 } from '../orm_helpers';
@@ -142,8 +143,8 @@ export async function persistConsolidatedActivity(
       logger.info(
         `[DELETED ${deleted} CONSOLIDATED AGGREGATED ACTIVITY] : [DELETED CONSOLIDATED ${deletedMemes} AGGREGATED ACTIVITY MEMES]`
       );
-      await activityRepo.insert(activity);
-      await memesActivityRepo.insert(memesActivity);
+      await insertWithoutUpdate(activityRepo, activity);
+      await insertWithoutUpdate(memesActivityRepo, memesActivity);
     });
     logger.info('[CONSOLIDATED AGGREGATED ACTIVITY PERSISTED]');
   }

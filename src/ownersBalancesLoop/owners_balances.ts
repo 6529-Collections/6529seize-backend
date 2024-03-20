@@ -1,7 +1,9 @@
 import {
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
-  MEMES_CONTRACT
+  MEMES_CONTRACT,
+  MEME_8_EDITION_BURN_ADJUSTMENT,
+  NULL_ADDRESS
 } from '../constants';
 import { areEqualAddresses } from '../helpers';
 import {
@@ -36,6 +38,28 @@ import {
 
 const logger = Logger.get('OWNER_BALANCES');
 
+interface BalancesFields {
+  total_balance: number;
+  gradients_balance: number;
+  nextgen_balance: number;
+  memelab_balance: number;
+  unique_memelab: number;
+  memes_balance: number;
+  unique_memes: number;
+  genesis: number;
+  nakamoto: number;
+  memes_cards_sets: number;
+  memes_cards_sets_minus1: number;
+  memes_cards_sets_minus2: number;
+}
+
+interface MemesBalancesFields {
+  season: number;
+  balance: number;
+  unique: number;
+  sets: number;
+}
+
 export const findOwnerBalances = async (reset?: boolean) => {
   const lastBalancesBlock = await getMaxOwnerBalancesBlockReference();
 
@@ -44,9 +68,7 @@ export const findOwnerBalances = async (reset?: boolean) => {
   const blockReference = await getMaxNftOwnersBlockReference();
   const seasons = await fetchAllSeasons();
 
-  const nextgenNetwork = getNextgenNetwork();
-  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[nextgenNetwork];
-
+  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[getNextgenNetwork()];
   const allContracts = [
     MEMES_CONTRACT,
     MEMELAB_CONTRACT,
@@ -91,15 +113,19 @@ export const findOwnerBalances = async (reset?: boolean) => {
     const ownedNfts = owners.filter((o) =>
       areEqualAddresses(o.wallet, address)
     );
-    const ownerBalance = buildOwnerBalance(
-      NEXTGEN_CONTRACT,
-      seasons,
-      blockReference,
-      address,
-      ownedNfts
-    );
+    const ownerBalanceFields = buildOwnerBalance(seasons, ownedNfts, address);
+    const ownerBalance: OwnerBalances = {
+      wallet: address,
+      block_reference: blockReference,
+      ...ownerBalanceFields
+    };
 
-    const ownerBalanceMemes = buildSeasonBalances(seasons, address, ownedNfts);
+    const ownerBalancesMemesFields = buildSeasonBalances(seasons, ownedNfts);
+    const ownerBalanceMemes = ownerBalancesMemesFields.map((o) => ({
+      ...o,
+      wallet: address,
+      block_reference: blockReference
+    }));
 
     ownersBalancesMap.set(address, ownerBalance);
     ownersBalancesMemesMap.set(address, ownerBalanceMemes);
@@ -115,20 +141,20 @@ export const findOwnerBalances = async (reset?: boolean) => {
 };
 
 function buildOwnerBalance(
-  NEXTGEN_CONTRACT: string,
   seasons: MemesSeason[],
-  blockReference: number,
-  wallet: string,
-  ownedNfts: NFTOwner[]
-): OwnerBalances {
+  ownedNfts: NFTOwner[],
+  pk: string
+): BalancesFields {
+  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[getNextgenNetwork()];
+
   const memes = filterContract(ownedNfts, MEMES_CONTRACT);
   const gradients = filterContract(ownedNfts, GRADIENT_CONTRACT);
   const nextgen = filterContract(ownedNfts, NEXTGEN_CONTRACT);
   const memelab = filterContract(ownedNfts, MEMELAB_CONTRACT);
 
   const memeCard1Balance = getTokenIdBalance(memes, 1);
-  const memeCard2Balance = getTokenIdBalance(memes, 1);
-  const memeCard3Balance = getTokenIdBalance(memes, 1);
+  const memeCard2Balance = getTokenIdBalance(memes, 2);
+  const memeCard3Balance = getTokenIdBalance(memes, 3);
 
   const genesis = Math.min(
     memeCard1Balance,
@@ -166,13 +192,15 @@ function buildOwnerBalance(
       memesCardSetsMinus1;
   }
 
-  const memesBalance = memes.reduce((acc, n) => acc + n.balance, 0);
+  let memesBalance = memes.reduce((acc, n) => acc + n.balance, 0);
+  if (areEqualAddresses(pk, NULL_ADDRESS)) {
+    memesBalance += MEME_8_EDITION_BURN_ADJUSTMENT;
+  }
   const memelabBalance = memelab.reduce((acc, n) => acc + n.balance, 0);
   const totalBalance =
     memesBalance + gradients.length + nextgen.length + memelabBalance;
 
-  const ownerBalance: OwnerBalances = {
-    wallet: wallet,
+  const ownerBalance: BalancesFields = {
     total_balance: totalBalance,
     gradients_balance: gradients.length,
     nextgen_balance: nextgen.length,
@@ -184,17 +212,15 @@ function buildOwnerBalance(
     nakamoto: naka,
     memes_cards_sets: memesCardSets,
     memes_cards_sets_minus1: memesCardSetsMinus1,
-    memes_cards_sets_minus2: memesCardSetsMinus2,
-    block_reference: blockReference
+    memes_cards_sets_minus2: memesCardSetsMinus2
   };
   return ownerBalance;
 }
 
 function buildSeasonBalances(
   seasons: MemesSeason[],
-  wallet: string,
   ownedNfts: NFTOwner[]
-) {
+): MemesBalancesFields[] {
   const memes = filterContract(ownedNfts, MEMES_CONTRACT);
 
   const seasonMemes = new Map<number, NFTOwner[]>();
@@ -205,18 +231,18 @@ function buildSeasonBalances(
     seasonMemes.set(s.id, seasonOwned);
   });
 
-  const seasonBalances: OwnerBalancesMemes[] = [];
+  const seasonBalances: MemesBalancesFields[] = [];
   seasonMemes.forEach((owners, seasonId) => {
     let seasonBalance = 0;
     owners.forEach((o) => (seasonBalance += o.balance));
 
+    const seasonCount = seasons.find((s) => s.id === seasonId)?.count ?? 0;
     const seasonSets =
-      owners && owners.length > 0
+      owners.length === seasonCount
         ? Math.min(...owners.map((o) => o.balance))
         : 0;
 
-    const oBalanceMemes: OwnerBalancesMemes = {
-      wallet: wallet.toLowerCase(),
+    const oBalanceMemes: MemesBalancesFields = {
       season: seasonId,
       balance: seasonBalance,
       unique: owners.length,
@@ -228,96 +254,52 @@ function buildSeasonBalances(
 }
 
 async function getConsolidatedBalances(
+  seasons: MemesSeason[],
+  contracts: string[],
   consolidationKey: string,
   addresses: string[]
-): Promise<ConsolidatedOwnerBalances> {
-  const consolidationActivity = await fetchAllOwnerBalances(addresses);
-
-  const consolidatedTotals = consolidationActivity.reduce(
-    (acc, cp) => {
-      acc.total_balance += cp.total_balance;
-      acc.gradients_balance += cp.gradients_balance;
-      acc.nextgen_balance += cp.nextgen_balance;
-      acc.memelab_balance += cp.memelab_balance;
-      acc.unique_memelab += cp.unique_memelab;
-      acc.memes_balance += cp.memes_balance;
-      acc.unique_memes += cp.unique_memes;
-      acc.genesis += cp.genesis;
-      acc.nakamoto += cp.nakamoto;
-      acc.memes_cards_sets += cp.memes_cards_sets;
-      acc.memes_cards_sets_minus1 += cp.memes_cards_sets_minus1;
-      acc.memes_cards_sets_minus2 += cp.memes_cards_sets_minus2;
-
-      return acc;
-    },
-    {
-      total_balance: 0,
-      gradients_balance: 0,
-      nextgen_balance: 0,
-      memelab_balance: 0,
-      unique_memelab: 0,
-      memes_balance: 0,
-      unique_memes: 0,
-      genesis: 0,
-      nakamoto: 0,
-      memes_cards_sets: 0,
-      memes_cards_sets_minus1: 0,
-      memes_cards_sets_minus2: 0
+): Promise<{
+  balance: ConsolidatedOwnerBalances;
+  memes: ConsolidatedOwnerBalancesMemes[];
+}> {
+  const owners = await fetchAllNftOwners(contracts, Array.from(addresses));
+  const consolidatedOwners = new Map<string, NFTOwner>();
+  owners.forEach((o) => {
+    const key = `${o.contract}_${o.token_id}`;
+    const consolidated = consolidatedOwners.get(key);
+    if (consolidated) {
+      consolidated.balance += o.balance;
+      consolidatedOwners.set(key, consolidated);
+    } else {
+      consolidatedOwners.set(key, o);
     }
+  });
+
+  const consolidatedFields = buildOwnerBalance(
+    seasons,
+    Array.from(consolidatedOwners.values()),
+    consolidationKey
   );
 
   const cBalance: ConsolidatedOwnerBalances = {
     consolidation_key: consolidationKey,
-    ...consolidatedTotals
+    ...consolidatedFields
   };
 
-  return cBalance;
-}
+  const consolidatedMemesFields = buildSeasonBalances(
+    seasons,
+    Array.from(consolidatedOwners.values())
+  );
 
-async function getConsolidatedMemesBalances(
-  seasons: MemesSeason[],
-  consolidationKey: string,
-  addresses: string[]
-): Promise<ConsolidatedOwnerBalancesMemes[]> {
-  const consolidationActivity = await fetchAllOwnerBalancesMemes(addresses);
-  if (consolidationActivity.length === 0) {
-    return [];
-  }
+  const cMemesBalances = consolidatedMemesFields.map((o) => ({
+    ...o,
+    consolidation_key: consolidationKey
+  }));
 
-  const consolidatedMemesBalances: ConsolidatedOwnerBalancesMemes[] = [];
-  seasons.forEach((season) => {
-    const seasonBalances = consolidationActivity.filter(
-      (ca) => ca.season === season.id
-    );
-
-    const consolidatedTotals = seasonBalances.reduce(
-      (acc, cp) => {
-        acc.balance += cp.balance;
-        acc.unique += cp.unique;
-        acc.sets += cp.sets;
-
-        return acc;
-      },
-      {
-        balance: 0,
-        unique: 0,
-        sets: 0
-      }
-    );
-
-    if (consolidatedTotals.balance === 0) {
-      return;
-    }
-
-    const cBalance: ConsolidatedOwnerBalancesMemes = {
-      consolidation_key: consolidationKey,
-      season: season.id,
-      ...consolidatedTotals
-    };
-    consolidatedMemesBalances.push(cBalance);
-  });
-
-  return consolidatedMemesBalances;
+  return {
+    balance: cBalance,
+    memes: cMemesBalances
+  };
 }
 
 export async function consolidateOwnerBalances(
@@ -334,6 +316,14 @@ export async function consolidateOwnerBalances(
   );
 
   const seasons = await fetchAllSeasons();
+
+  const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[getNextgenNetwork()];
+  const allContracts = [
+    MEMES_CONTRACT,
+    MEMELAB_CONTRACT,
+    GRADIENT_CONTRACT,
+    NEXTGEN_CONTRACT
+  ];
 
   const consolidatedOwnersBalancesMap = new Map<
     string,
@@ -361,18 +351,20 @@ export async function consolidateOwnerBalances(
         consolidationAddresses = consolidation.consolidation_key.split('-');
       }
 
-      const oBalance = await getConsolidatedBalances(
-        consolidationKey,
-        consolidationAddresses
-      );
-      consolidatedOwnersBalancesMap.set(consolidationKey, oBalance);
-
-      const oMemesBalances = await getConsolidatedMemesBalances(
+      const consolidatedBalances = await getConsolidatedBalances(
         seasons,
+        allContracts,
         consolidationKey,
         consolidationAddresses
       );
-      consolidatedOwnersBalancesMemesMap.set(consolidationKey, oMemesBalances);
+      consolidatedOwnersBalancesMap.set(
+        consolidationKey,
+        consolidatedBalances.balance
+      );
+      consolidatedOwnersBalancesMemesMap.set(
+        consolidationKey,
+        consolidatedBalances.memes
+      );
       consolidationAddresses.forEach((address) => {
         deleteDelta.add(address);
       });

@@ -174,15 +174,15 @@ export abstract class AggregatedActivityBreakdown extends AggregatedActivityBase
 
   @Column({ type: 'int', nullable: false })
   transfers_out_nextgen!: number;
-
-  @Column({ type: 'int' })
-  block_reference!: number;
 }
 
 @Entity(AGGREGATED_ACTIVITY_TABLE)
 export class AggregatedActivity extends AggregatedActivityBreakdown {
   @PrimaryColumn({ type: 'varchar', length: 50 })
   wallet!: string;
+
+  @Column({ type: 'int' })
+  block_reference!: number;
 }
 
 @Entity(CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE)

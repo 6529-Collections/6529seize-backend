@@ -22,14 +22,14 @@ import {
 } from './tdh';
 import {
   COMMUNITY_MEMBERS_TABLE,
-  CONSOLIDATED_WALLETS_TDH_TABLE,
-  MEMES_CONTRACT
+  CONSOLIDATED_WALLETS_TDH_TABLE
 } from '../constants';
 import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
 import { Logger } from '../logging';
 import { NextGenToken } from '../entities/INextGen';
 import { fetchNextgenTokens } from '../nextgen/nextgen.db';
 import { calculateMemesTdh } from './tdh_memes';
+import { findNftTDH } from './tdh_nft';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
 
@@ -287,7 +287,6 @@ export const consolidateTDH = async (
   startingWallets?: string[]
 ) => {
   const tdh: TDHENS[] = await fetchAllTDH(startingWallets);
-  const nfts = await fetchAllNFTs();
   const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
 
   const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
@@ -317,7 +316,7 @@ export const consolidateTDH = async (
     consolidatedBoostedTdh.push(...missingConsolidatedTdh);
   }
 
-  let rankedTdh;
+  let rankedTdh: ConsolidatedTDH[];
   if (startingWallets) {
     const allCurrentTdh = await fetchAllConsolidatedTdh();
     const allTdh = allCurrentTdh
@@ -357,6 +356,7 @@ export const consolidateTDH = async (
   )) as ConsolidatedTDHMemes[];
 
   await persistConsolidatedTDH(rankedTdh, memesTdh, startingWallets);
+  await findNftTDH(rankedTdh, startingWallets);
   logger.info(`[FINAL ENTRIES ${rankedTdh.length}]`);
 };
 

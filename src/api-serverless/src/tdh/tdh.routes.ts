@@ -1,0 +1,123 @@
+import { Request, Response } from 'express';
+import { Logger } from '../../../logging';
+import { asyncRouter } from '../async.router';
+import {
+  MetricsCollector,
+  MetricsContent,
+  fetchConsolidatedMetrics,
+  fetchNftTdh
+} from './tdh.db';
+import { DEFAULT_PAGE_SIZE } from 'src/page-request';
+import { resolveSortDirection, returnPaginatedResult } from 'src/api-helpers';
+import { resolveEnum } from '../../../helpers';
+
+const router = asyncRouter();
+
+const logger = Logger.get('TDH_API');
+
+export default router;
+
+export const NFT_TDH_SORT = [
+  'balance',
+  'boosted_tdh',
+  'tdh__raw',
+  'total_balance',
+  'total_boosted_tdh',
+  'total_tdh__raw'
+];
+
+export const METRICS_SORT = [
+  'level',
+  'balance',
+  'unique_memes',
+  'memes_cards_sets',
+  'boosted_tdh',
+  'day_change'
+];
+
+router.get(
+  `/nft/:contract/:nft_id`,
+  function (
+    req: Request<
+      {
+        contract: string;
+        nft_id: number;
+      },
+      any,
+      any,
+      {
+        sort?: string;
+        sort_direction: any;
+        page?: number;
+        page_size?: number;
+        search?: string;
+      }
+    >,
+    res: any
+  ) {
+    const contract = req.params.contract;
+    const nftId = req.params.nft_id;
+    const page = req.query.page || 1;
+    const pageSize = req.query.page_size || DEFAULT_PAGE_SIZE;
+    const sort =
+      req.query.sort && NFT_TDH_SORT.includes(req.query.sort.toLowerCase())
+        ? req.query.sort
+        : NFT_TDH_SORT[0];
+    const sortDir = resolveSortDirection(req.query.sort_direction);
+    const search = req.query.search;
+
+    fetchNftTdh(contract, nftId, sort, sortDir, page, pageSize, search).then(
+      (result) => returnPaginatedResult(result, req, res)
+    );
+  }
+);
+
+router.get(
+  `/consolidated_metrics`,
+  function (
+    req: Request<
+      {},
+      any,
+      any,
+      {
+        sort?: string;
+        sort_direction: any;
+        page?: number;
+        page_size?: number;
+        search?: string;
+        content?: string;
+        collector?: string;
+        season?: number;
+      }
+    >,
+    res: any
+  ) {
+    const page = req.query.page || 1;
+    const pageSize = req.query.page_size || DEFAULT_PAGE_SIZE;
+    const sort =
+      req.query.sort && METRICS_SORT.includes(req.query.sort.toLowerCase())
+        ? req.query.sort
+        : METRICS_SORT[0];
+    const sortDir = resolveSortDirection(req.query.sort_direction);
+    const search = req.query.search;
+    const content = resolveEnum(MetricsContent, req.query.content);
+    const season = req.query.season;
+    const collector = resolveEnum(MetricsCollector, req.query.collector);
+
+    fetchConsolidatedMetrics(
+      sort,
+      sortDir,
+      page,
+      pageSize,
+      search,
+      content,
+      collector,
+      season
+    ).then((result) => {
+      logger.info(
+        `[CONSOLIDATED_TDH] : [FETCHED ${result.count} TDH] : [SORT ${sort}] : [SORT_DIRECTION ${sortDir}] : [PAGE ${page}] : [PAGE_SIZE ${pageSize}] `
+      );
+      return returnPaginatedResult(result, req, res);
+    });
+  }
+);

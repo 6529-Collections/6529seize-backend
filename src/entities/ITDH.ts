@@ -4,6 +4,7 @@ import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
   TDH_HISTORY_TABLE,
+  TDH_NFT_TABLE,
   WALLETS_TDH_MEMES_TABLE,
   WALLETS_TDH_TABLE
 } from '../constants';
@@ -72,7 +73,7 @@ export class BaseTDH extends BaseTDHFields {
   memes!: TokenTDH[];
 
   @Column({ type: 'json', nullable: true })
-  memes_ranks?: any;
+  memes_ranks!: TokenTDHRank[];
 
   @Column({ type: 'int', nullable: false })
   gradients_balance!: number;
@@ -87,10 +88,10 @@ export class BaseTDH extends BaseTDHFields {
   gradients_tdh__raw!: number;
 
   @Column({ type: 'json', nullable: true })
-  gradients?: any;
+  gradients!: TokenTDH[];
 
   @Column({ type: 'json', nullable: true })
-  gradients_ranks?: any;
+  gradients_ranks!: TokenTDHRank[];
 
   @Column({ type: 'int', nullable: false })
   nextgen_balance!: number;
@@ -105,10 +106,10 @@ export class BaseTDH extends BaseTDHFields {
   nextgen_tdh__raw!: number;
 
   @Column({ type: 'json', nullable: true })
-  nextgen?: any;
+  nextgen!: TokenTDH[];
 
   @Column({ type: 'json', nullable: true })
-  nextgen_ranks?: any;
+  nextgen_ranks!: TokenTDHRank[];
 
   @Column({ type: 'json', nullable: true })
   boost_breakdown!: any;
@@ -156,6 +157,36 @@ export class ConsolidatedTDHMemes extends BaseTDHFields {
 
   @PrimaryColumn({ type: 'int' })
   season!: number;
+}
+
+@Entity(TDH_NFT_TABLE)
+export class NftTDH {
+  @PrimaryColumn({ type: 'bigint' })
+  id!: number;
+
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  contract!: string;
+
+  @PrimaryColumn({ type: 'varchar', length: 200 })
+  consolidation_key!: string;
+
+  @Column({ type: 'int', nullable: false })
+  balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  tdh!: number;
+
+  @Column({ type: 'double', nullable: false })
+  boost!: number;
+
+  @Column({ type: 'int', nullable: false })
+  boosted_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  tdh__raw!: number;
+
+  @Column({ type: 'int', nullable: false })
+  tdh_rank!: number;
 }
 
 @Entity(TDH_GLOBAL_HISTORY_TABLE)

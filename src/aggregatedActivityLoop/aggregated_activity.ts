@@ -4,6 +4,7 @@ import {
   MEME_8_BURN_TRANSACTION,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
+  MEMES_DEPLOYER,
   NULL_ADDRESS,
   PUNK_6529
 } from '../constants';
@@ -54,10 +55,6 @@ async function getConsolidatedActivity(
   addresses: string[]
 ): Promise<ConsolidatedAggregatedActivity> {
   const consolidationActivity = await fetchAllActivity(addresses);
-  const blockReference = consolidationActivity.reduce(
-    (max, item) => (item.block_reference > max ? item.block_reference : max),
-    consolidationActivity[0].block_reference
-  );
   const consolidatedTotals = consolidationActivity.reduce(
     (acc, cp) => {
       // TOTAL
@@ -187,8 +184,7 @@ async function getConsolidatedActivity(
 
   const cActivity: ConsolidatedAggregatedActivity = {
     consolidation_key: consolidationKey,
-    ...consolidatedTotals,
-    block_reference: blockReference
+    ...consolidatedTotals
   };
 
   return cActivity;
@@ -343,7 +339,9 @@ export async function consolidateActivity(
 }
 
 export const findAggregatedActivity = async (reset?: boolean) => {
-  const lastActivityBlock = await getMaxAggregatedActivityBlockReference();
+  const lastActivityBlock = reset
+    ? 0
+    : await getMaxAggregatedActivityBlockReference();
   reset = reset || lastActivityBlock === 0;
   const blockReference = await fetchMaxTransactionsBlockNumber();
   const seasons = await fetchAllSeasons();
@@ -361,12 +359,16 @@ export const findAggregatedActivity = async (reset?: boolean) => {
     to_address: string;
   }[] = await fetchTransactionAddressesFromBlock(
     [MEMES_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT],
-    lastActivityBlock
+    lastActivityBlock,
+    blockReference
   );
   allTransactionAddresses.forEach((wallet) => {
     addresses.add(wallet.from_address.toLowerCase());
     addresses.add(wallet.to_address.toLowerCase());
   });
+
+  // const addresses = new Set<string>();
+  // addresses.add('0xfd22004806a6846ea67ad883356be810f0428793');
 
   logger.info(
     `[ADDRESSES ${addresses.size.toLocaleString()}] [lastActivityBlock ${lastActivityBlock}] [blockReference ${blockReference}] [RESET ${reset}]`
@@ -396,14 +398,14 @@ export const findAggregatedActivity = async (reset?: boolean) => {
   };
 };
 
-function getCount(arr: any[]) {
+function getCount(arr: any[]): number {
   return [...arr].reduce(
     (sum, transaction) => sum + transaction.token_count,
     0
   );
 }
 
-function getValue(arr: any[]) {
+function getValue(arr: any[]): number {
   return [...arr].reduce((sum, transaction) => sum + transaction.value, 0);
 }
 
@@ -420,7 +422,7 @@ function getActivityBreakdown(
   contract: string
 ): ActivityBreakdown {
   let mintAddresses = [MANIFOLD, NULL_ADDRESS];
-  if (areEqualAddresses(contract, MEMES_CONTRACT)) {
+  if (areEqualAddresses(contract, GRADIENT_CONTRACT)) {
     mintAddresses = [PUNK_6529];
   }
 
@@ -429,10 +431,14 @@ function getActivityBreakdown(
       (t) => areEqualAddresses(t.from_address, NULL_ADDRESS) && t.value === 0
     ),
     primary_purchases: transactionsIn.filter(
-      (t) => mintAddresses.includes(t.from_address) && t.value > 0
+      (t) =>
+        mintAddresses.some((ma) => areEqualAddresses(ma, t.from_address)) &&
+        t.value > 0
     ),
     secondary_purchases: transactionsIn.filter(
-      (t) => !mintAddresses.includes(t.from_address) && t.value > 0
+      (t) =>
+        !mintAddresses.some((ma) => areEqualAddresses(ma, t.from_address)) &&
+        t.value > 0
     ),
     sales: transactionsOut.filter(
       (t) =>
@@ -479,7 +485,10 @@ async function retrieveActivityDelta(
         });
       }
 
-      if (areEqualAddresses(address, NULL_ADDRESS)) {
+      if (
+        areEqualAddresses(address, NULL_ADDRESS) ||
+        areEqualAddresses(address, MEMES_DEPLOYER)
+      ) {
         logger.info(
           `[WALLET ${address}] [SKIPPING MEME CARD 8 BURN TRANSACTION ${MEME_8_BURN_TRANSACTION}]`
         );
@@ -536,7 +545,7 @@ async function retrieveActivityDelta(
       const memelabActivity = getActivityBreakdown(
         memesLabTransactionsIn,
         memesLabTransactionsOut,
-        nextgenContract
+        MEMELAB_CONTRACT
       );
       const gradientsActivity = getActivityBreakdown(
         gradientsTransactionsIn,
@@ -595,43 +604,53 @@ function retrieveAggregatedActivityForWallet(
     primary_purchases_value:
       getValue(memes.primary_purchases) +
       getValue(gradients.primary_purchases) +
-      getValue(nextgen.primary_purchases),
+      getValue(nextgen.primary_purchases) +
+      getValue(memeLab.primary_purchases),
     primary_purchases_count:
       getCount(memes.primary_purchases) +
       getCount(gradients.primary_purchases) +
-      getCount(nextgen.primary_purchases),
+      getCount(nextgen.primary_purchases) +
+      getCount(memeLab.primary_purchases),
     secondary_purchases_value:
       getValue(memes.secondary_purchases) +
       getValue(gradients.secondary_purchases) +
-      getValue(nextgen.secondary_purchases),
+      getValue(nextgen.secondary_purchases) +
+      getValue(memeLab.secondary_purchases),
     secondary_purchases_count:
       getCount(memes.secondary_purchases) +
       getCount(gradients.secondary_purchases) +
-      getCount(nextgen.secondary_purchases),
+      getCount(nextgen.secondary_purchases) +
+      getCount(memeLab.secondary_purchases),
     burns:
       getCount(memes.burns) +
       getCount(gradients.burns) +
-      getCount(nextgen.burns),
+      getCount(nextgen.burns) +
+      getCount(memeLab.burns),
     sales_value:
       getValue(memes.sales) +
       getValue(gradients.sales) +
-      getValue(nextgen.sales),
+      getValue(nextgen.sales) +
+      getValue(memeLab.sales),
     sales_count:
       getCount(memes.sales) +
       getCount(gradients.sales) +
-      getCount(nextgen.sales),
+      getCount(nextgen.sales) +
+      getCount(memeLab.sales),
     airdrops:
       getCount(memes.airdrops) +
       getCount(gradients.airdrops) +
-      getCount(nextgen.airdrops),
+      getCount(nextgen.airdrops) +
+      getCount(memeLab.airdrops),
     transfers_in:
       getCount(memes.transfersIn) +
       getCount(gradients.transfersIn) +
-      getCount(nextgen.transfersIn),
+      getCount(nextgen.transfersIn) +
+      getCount(memeLab.transfersIn),
     transfers_out:
       getCount(memes.transfersOut) +
       getCount(gradients.transfersOut) +
-      getCount(nextgen.transfersOut),
+      getCount(nextgen.transfersOut) +
+      getCount(memeLab.transfersOut),
     // MEMES
     primary_purchases_value_memes: getValue(memes.primary_purchases),
     primary_purchases_count_memes: getCount(memes.primary_purchases),

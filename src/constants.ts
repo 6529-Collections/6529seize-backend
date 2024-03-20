@@ -14,6 +14,7 @@ export const WALLETS_TDH_TABLE = 'tdh';
 export const CONSOLIDATED_WALLETS_TDH_TABLE = 'tdh_consolidation';
 export const WALLETS_TDH_MEMES_TABLE = 'tdh_memes';
 export const CONSOLIDATED_WALLETS_TDH_MEMES_TABLE = 'tdh_memes_consolidation';
+export const TDH_NFT_TABLE = 'tdh_nft';
 export const UPLOADS_TABLE = 'uploads';
 export const CONSOLIDATED_UPLOADS_TABLE = 'uploads_consolidation';
 export const ENS_TABLE = 'ens';

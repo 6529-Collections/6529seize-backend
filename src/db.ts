@@ -37,6 +37,7 @@ import {
   ConsolidatedTDH,
   ConsolidatedTDHMemes,
   GlobalTDHHistory,
+  NftTDH,
   TDH,
   TDHHistory,
   TDHMemes
@@ -438,13 +439,17 @@ export async function fetchMaxTransactionsBlockNumber(): Promise<number> {
 
 export async function fetchTransactionAddressesFromBlock(
   contracts: string[],
-  block: number
+  fromBlock: number,
+  toBlock?: number
 ) {
   return await sqlExecutor.execute(
-    `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE} WHERE block > :block and contract in (:contracts)`,
+    `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE} WHERE block >= :fromBlock and contract in (:contracts) ${
+      toBlock ? 'AND block <= :toBlock' : ''
+    }`,
     {
       contracts: contracts.map((it) => it.toLowerCase()),
-      block
+      fromBlock: fromBlock,
+      toBlock: toBlock
     }
   );
 }
@@ -709,7 +714,7 @@ export async function persistTDH(
   await AppDataSource.transaction(async (manager) => {
     const tdhRepo = manager.getRepository(TDH);
     const tdhMemesRepo = manager.getRepository(TDHMemes);
-    if (wallets && wallets.length > 0) {
+    if (wallets) {
       logger.info(`[TDH] [DELETING ${wallets.length} WALLETS]`);
       await Promise.all(
         wallets.map(async (wallet) => {
@@ -724,7 +729,7 @@ export async function persistTDH(
           await tdhMemesRepo
             .createQueryBuilder()
             .delete()
-            .where('LOWER(wallet) = :wallet AND block = :block ', {
+            .where('LOWER(wallet) = :wallet ', {
               wallet: wallet.toLowerCase()
             })
             .execute();
@@ -761,7 +766,7 @@ export async function persistConsolidatedTDH(
     const manager = queryRunner.manager;
     const tdhRepo = manager.getRepository(ConsolidatedTDH);
     const tdhMemesRepo = manager.getRepository(ConsolidatedTDHMemes);
-    if (wallets && wallets.length > 0) {
+    if (wallets) {
       logger.info(`[CONSOLIDATED TDH] [DELETING ${wallets.length} WALLETS]`);
       await Promise.all(
         wallets.map(async (wallet) => {
@@ -798,6 +803,38 @@ export async function persistConsolidatedTDH(
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+export async function persistNftTdh(nftTdh: NftTDH[], wallets?: string[]) {
+  logger.info(`[NFT TDH] PERSISTING [${nftTdh.length} RESULTS]`);
+  await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
+    const queryRunner = qrHolder.connection as QueryRunner;
+    const manager = queryRunner.manager;
+    const nftTdhRepo = manager.getRepository(NftTDH);
+    if (wallets) {
+      logger.info(`[NFT TDH] [DELETING ${wallets.length} WALLETS]`);
+      await Promise.all(
+        wallets.map(async (wallet) => {
+          const walletPattern = `%${wallet}%`;
+          await nftTdhRepo
+            .createQueryBuilder()
+            .delete()
+            .where('consolidation_key like :walletPattern', {
+              walletPattern
+            })
+            .execute();
+        })
+      );
+      await nftTdhRepo.save(nftTdh);
+    } else {
+      logger.info(`[NFT TDH] [DELETING ALL WALLETS]`);
+      await nftTdhRepo.clear();
+      logger.info(`[NFT TDH] [TDH AND TDH_MEMES CLEARED]`);
+      await insertWithoutUpdate(nftTdhRepo, nftTdh);
+    }
+  });
+
+  logger.info(`[NFT TDH] PERSISTED ALL NFT TDH [${nftTdh.length}]`);
 }
 
 export async function persistNextGenTokenTDH(nextgenTdh: NextGenTokenTDH[]) {

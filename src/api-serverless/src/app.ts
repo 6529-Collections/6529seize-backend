@@ -11,6 +11,9 @@ import royaltiesRoutes from './royalties/royalties.routes';
 import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
 import gasRoutes from './gas/gas.routes';
+import tdhRoutes from './tdh/tdh.routes';
+import aggregatedActivityRoutes from './aggregated-activity/aggregated-activity.routes';
+import ownersBalancesRoutes from './owners-balances/owners-balances.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
 import communityMembersCurationRoutes from './community-members/community-members-curation.routes';
 import * as passport from 'passport';
@@ -428,6 +431,12 @@ loadApi().then(() => {
     });
   });
 
+  apiRouter.get(`/new_memes_seasons`, function (req: any, res: any) {
+    db.fetchNewMemesSeasons().then((result) => {
+      returnJsonResult(result, req, res);
+    });
+  });
+
   apiRouter.get(`/memes_lite`, function (req: any, res: any) {
     const sortDir =
       req.query.sort_direction &&
@@ -592,307 +601,186 @@ loadApi().then(() => {
     });
   });
 
-  apiRouter.get(`/tdh/:contract/:nft_id`, function (req: any, res: any) {
-    const contract = req.params.contract;
-    const nftId = req.params.nft_id;
+  // apiRouter.get(`/owner_metrics`, function (req: any, res: any) {
+  //   let pageSize: number =
+  //     req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+  //       ? parseInt(req.query.page_size)
+  //       : DEFAULT_PAGE_SIZE;
+  //   let page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  //   const downloadPage = req.query.download_page == 'true';
+  //   const downloadAll = req.query.download_all == 'true';
+  //   if (downloadAll) {
+  //     pageSize = Number.MAX_SAFE_INTEGER;
+  //     page = 1;
+  //   }
 
-    const sort =
-      req.query.sort && NFT_TDH_SORT.includes(req.query.sort)
-        ? req.query.sort
-        : 'card_tdh';
+  //   const wallets = req.query.wallet;
+  //   const sort =
+  //     req.query.sort && TDH_SORT.includes(req.query.sort)
+  //       ? req.query.sort
+  //       : 'boosted_tdh';
 
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'desc';
+  //   const sortDir =
+  //     req.query.sort_direction &&
+  //     SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+  //       ? req.query.sort_direction
+  //       : 'desc';
 
-    const wallets = req.query.wallet;
+  //   const filter =
+  //     req.query.filter && TAGS_FILTERS.includes(req.query.filter)
+  //       ? req.query.filter
+  //       : null;
 
-    db.fetchNftTdh(
-      pageSize,
-      page,
-      contract,
-      nftId,
-      wallets,
-      sort,
-      sortDir
-    ).then((result) => {
-      result = parseTdhResultsFromDB(result);
-      returnPaginatedResult(result, req, res);
-    });
-  });
+  //   const hideMuseum = !!(
+  //     req.query.hide_museum && req.query.hide_museum == 'true'
+  //   );
 
-  apiRouter.get(
-    `/consolidated_tdh/:contract/:nft_id`,
-    function (req: any, res: any) {
-      const contract = req.params.contract;
-      const nftId = req.params.nft_id;
+  //   const hideTeam = !!(req.query.hide_team && req.query.hide_team == 'true');
 
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  //   const isProfilePage = !!(
+  //     req.query.profile_page && req.query.profile_page == 'true'
+  //   );
 
-      const sort =
-        req.query.sort && NFT_TDH_SORT.includes(req.query.sort)
-          ? req.query.sort
-          : 'card_tdh';
+  //   db.fetchOwnerMetrics(
+  //     pageSize,
+  //     page,
+  //     wallets,
+  //     sort,
+  //     sortDir,
+  //     filter,
+  //     hideMuseum,
+  //     hideTeam,
+  //     isProfilePage
+  //   ).then(async (result) => {
+  //     if (downloadAll || downloadPage) {
+  //       result.data.map((d: any) => {
+  //         delete d.created_at;
+  //         delete d.memes;
+  //         delete d.memes_ranks;
+  //         delete d.gradients;
+  //         delete d.gradients_ranks;
+  //         delete d.nextgen;
+  //         delete d.nextgen_ranks;
+  //         if (!d.handle) {
+  //           d.handle = '';
+  //         }
+  //       });
+  //     } else {
+  //       result = parseTdhResultsFromDB(result);
+  //     }
+  //     if (downloadAll || downloadPage) {
+  //       returnCSVResult('consolidated_owner_metrics', result.data, res);
+  //     } else {
+  //       return returnPaginatedResult(result, req, res);
+  //     }
+  //   });
+  // });
 
-      const sortDir =
-        req.query.sort_direction &&
-        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-          ? req.query.sort_direction
-          : 'desc';
+  // apiRouter.get(
+  //   `/consolidated_owner_metrics/:consolidation_key`,
+  //   function (req: any, res: any) {
+  //     const consolidationKey = req.params.consolidation_key;
+  //     db.fetchConsolidatedOwnerMetricsForKey(consolidationKey).then(
+  //       async (d) => {
+  //         if (d) {
+  //           d = parseTdhDataFromDB(d);
+  //           mcache.put(cacheKey(req), d, CACHE_TIME_MS);
+  //           returnJsonResult(d, req, res);
+  //         } else {
+  //           returnJsonResult({}, req, res);
+  //         }
+  //       }
+  //     );
+  //   }
+  // );
 
-      const wallets = req.query.wallet;
-      db.fetchConsolidatedNftTdh(
-        pageSize,
-        page,
-        contract,
-        nftId,
-        wallets,
-        sort,
-        sortDir
-      ).then((result) => {
-        result = parseTdhResultsFromDB(result);
-        returnPaginatedResult(result, req, res);
-      });
-    }
-  );
+  // apiRouter.get(`/consolidated_owner_metrics`, function (req: any, res: any) {
+  //   let pageSize: number =
+  //     req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+  //       ? parseInt(req.query.page_size)
+  //       : DEFAULT_PAGE_SIZE;
+  //   let page: number = req.query.page ? parseInt(req.query.page) : 1;
+  //   const includePrimaryWallet =
+  //     req.query.include_primary_wallet &&
+  //     req.query.include_primary_wallet == 'true';
 
-  apiRouter.get(`/tdh`, function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  //   const wallets = req.query.wallet;
+  //   const downloadPage = req.query.download_page == 'true';
+  //   const downloadAll = req.query.download_all == 'true';
+  //   if (downloadAll) {
+  //     pageSize = Number.MAX_SAFE_INTEGER;
+  //     page = 1;
+  //   }
+  //   const sort =
+  //     req.query.sort &&
+  //     (TDH_SORT.includes(req.query.sort) || req.query.sort == 'level')
+  //       ? req.query.sort
+  //       : 'boosted_tdh';
 
-    const wallets = req.query.wallet;
-    const sort =
-      req.query.sort && TDH_SORT.includes(req.query.sort)
-        ? req.query.sort
-        : 'boosted_tdh';
+  //   const sortDir =
+  //     req.query.sort_direction &&
+  //     SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
+  //       ? req.query.sort_direction
+  //       : 'desc';
 
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'desc';
+  //   const filter =
+  //     req.query.filter && TAGS_FILTERS.includes(req.query.filter)
+  //       ? req.query.filter
+  //       : null;
 
-    const filter =
-      req.query.filter && TAGS_FILTERS.includes(req.query.filter)
-        ? req.query.filter
-        : null;
+  //   const hideMuseum = !!(
+  //     req.query.hide_museum && req.query.hide_museum == 'true'
+  //   );
 
-    const hideMuseum = !!(
-      req.query.hide_museum && req.query.hide_museum == 'true'
-    );
+  //   const hideTeam = !!(req.query.hide_team && req.query.hide_team == 'true');
 
-    const hideTeam = !!(req.query.hide_team && req.query.hide_team == 'true');
+  //   const isProfilePage = !!(
+  //     req.query.profile_page && req.query.profile_page == 'true'
+  //   );
 
-    db.fetchTDH(
-      pageSize,
-      page,
-      wallets,
-      sort,
-      sortDir,
-      filter,
-      hideMuseum,
-      hideTeam
-    ).then((result) => {
-      result = parseTdhResultsFromDB(result);
-      returnPaginatedResult(result, req, res);
-    });
-  });
-
-  apiRouter.get(`/owner_metrics`, function (req: any, res: any) {
-    let pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    let page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    const downloadPage = req.query.download_page == 'true';
-    const downloadAll = req.query.download_all == 'true';
-    if (downloadAll) {
-      pageSize = Number.MAX_SAFE_INTEGER;
-      page = 1;
-    }
-
-    const wallets = req.query.wallet;
-    const sort =
-      req.query.sort && TDH_SORT.includes(req.query.sort)
-        ? req.query.sort
-        : 'boosted_tdh';
-
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'desc';
-
-    const filter =
-      req.query.filter && TAGS_FILTERS.includes(req.query.filter)
-        ? req.query.filter
-        : null;
-
-    const hideMuseum = !!(
-      req.query.hide_museum && req.query.hide_museum == 'true'
-    );
-
-    const hideTeam = !!(req.query.hide_team && req.query.hide_team == 'true');
-
-    const isProfilePage = !!(
-      req.query.profile_page && req.query.profile_page == 'true'
-    );
-
-    db.fetchOwnerMetrics(
-      pageSize,
-      page,
-      wallets,
-      sort,
-      sortDir,
-      filter,
-      hideMuseum,
-      hideTeam,
-      isProfilePage
-    ).then(async (result) => {
-      if (downloadAll || downloadPage) {
-        result.data.map((d: any) => {
-          delete d.created_at;
-          delete d.memes;
-          delete d.memes_ranks;
-          delete d.gradients;
-          delete d.gradients_ranks;
-          delete d.nextgen;
-          delete d.nextgen_ranks;
-          if (!d.handle) {
-            d.handle = '';
-          }
-        });
-      } else {
-        result = parseTdhResultsFromDB(result);
-      }
-      if (downloadAll || downloadPage) {
-        returnCSVResult('consolidated_owner_metrics', result.data, res);
-      } else {
-        return returnPaginatedResult(result, req, res);
-      }
-    });
-  });
-
-  apiRouter.get(
-    `/consolidated_owner_metrics/:consolidation_key`,
-    function (req: any, res: any) {
-      const consolidationKey = req.params.consolidation_key;
-      db.fetchConsolidatedOwnerMetricsForKey(consolidationKey).then(
-        async (d) => {
-          if (d) {
-            d = parseTdhDataFromDB(d);
-            mcache.put(cacheKey(req), d, CACHE_TIME_MS);
-            returnJsonResult(d, req, res);
-          } else {
-            returnJsonResult({}, req, res);
-          }
-        }
-      );
-    }
-  );
-
-  apiRouter.get(`/consolidated_owner_metrics`, function (req: any, res: any) {
-    let pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    let page: number = req.query.page ? parseInt(req.query.page) : 1;
-    const includePrimaryWallet =
-      req.query.include_primary_wallet &&
-      req.query.include_primary_wallet == 'true';
-
-    const wallets = req.query.wallet;
-    const downloadPage = req.query.download_page == 'true';
-    const downloadAll = req.query.download_all == 'true';
-    if (downloadAll) {
-      pageSize = Number.MAX_SAFE_INTEGER;
-      page = 1;
-    }
-    const sort =
-      req.query.sort &&
-      (TDH_SORT.includes(req.query.sort) || req.query.sort == 'level')
-        ? req.query.sort
-        : 'boosted_tdh';
-
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'desc';
-
-    const filter =
-      req.query.filter && TAGS_FILTERS.includes(req.query.filter)
-        ? req.query.filter
-        : null;
-
-    const hideMuseum = !!(
-      req.query.hide_museum && req.query.hide_museum == 'true'
-    );
-
-    const hideTeam = !!(req.query.hide_team && req.query.hide_team == 'true');
-
-    const isProfilePage = !!(
-      req.query.profile_page && req.query.profile_page == 'true'
-    );
-
-    db.fetchConsolidatedOwnerMetrics(
-      pageSize,
-      page,
-      wallets,
-      sort,
-      sortDir,
-      filter,
-      hideMuseum,
-      hideTeam,
-      isProfilePage,
-      includePrimaryWallet
-    ).then(async (result) => {
-      result.data.map((d: any) => {
-        if (d.wallets) {
-          if (!Array.isArray(d.wallets)) {
-            d.wallets = JSON.parse(d.wallets);
-          }
-        }
-      });
-      if (downloadAll || downloadPage) {
-        result.data.map((d: any) => {
-          delete d.created_at;
-          delete d.memes;
-          delete d.memes_ranks;
-          delete d.gradients;
-          delete d.gradients_ranks;
-          delete d.nextgen;
-          delete d.nextgen_ranks;
-          if (!d.handle) {
-            d.handle = '';
-          }
-        });
-      } else {
-        result = parseTdhResultsFromDB(result);
-      }
-      if (downloadAll || downloadPage) {
-        returnCSVResult('consolidated_owner_metrics', result.data, res);
-      } else {
-        return returnPaginatedResult(result, req, res);
-      }
-    });
-  });
+  //   db.fetchConsolidatedOwnerMetrics(
+  //     pageSize,
+  //     page,
+  //     wallets,
+  //     sort,
+  //     sortDir,
+  //     filter,
+  //     hideMuseum,
+  //     hideTeam,
+  //     isProfilePage,
+  //     includePrimaryWallet
+  //   ).then(async (result) => {
+  //     result.data.map((d: any) => {
+  //       if (d.wallets) {
+  //         if (!Array.isArray(d.wallets)) {
+  //           d.wallets = JSON.parse(d.wallets);
+  //         }
+  //       }
+  //     });
+  //     if (downloadAll || downloadPage) {
+  //       result.data.map((d: any) => {
+  //         delete d.created_at;
+  //         delete d.memes;
+  //         delete d.memes_ranks;
+  //         delete d.gradients;
+  //         delete d.gradients_ranks;
+  //         delete d.nextgen;
+  //         delete d.nextgen_ranks;
+  //         if (!d.handle) {
+  //           d.handle = '';
+  //         }
+  //       });
+  //     } else {
+  //       result = parseTdhResultsFromDB(result);
+  //     }
+  //     if (downloadAll || downloadPage) {
+  //       returnCSVResult('consolidated_owner_metrics', result.data, res);
+  //     } else {
+  //       return returnPaginatedResult(result, req, res);
+  //     }
+  //   });
+  // });
 
   apiRouter.get(`/team`, function (req: any, res: any) {
     const pageSize: number =
@@ -1222,6 +1110,9 @@ loadApi().then(() => {
   apiRouter.use(`/royalties`, royaltiesRoutes);
   apiRouter.use(`/profile-logs`, profileActivityLogsRoutes);
   apiRouter.use(`/rep/categories`, repCategorySearchRoutes);
+  apiRouter.use(`/tdh`, tdhRoutes);
+  apiRouter.use(`/aggregated-activity`, aggregatedActivityRoutes);
+  apiRouter.use(`/owners-balances`, ownersBalancesRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 

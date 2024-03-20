@@ -21,7 +21,13 @@ import { getLastTDH } from '../helpers';
 import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { sqlExecutor } from '../sql-executor';
 import { CONSOLIDATIONS_TABLE } from '../constants';
-import { ConsolidatedTDH, TDH } from '../entities/ITDH';
+import {
+  ConsolidatedTDH,
+  ConsolidatedTDHMemes,
+  NftTDH,
+  TDH,
+  TDHMemes
+} from '../entities/ITDH';
 import { Profile } from '../entities/IProfile';
 import * as sentryContext from '../sentry.context';
 import { NextGenTokenTDH } from '../entities/INextGen';
@@ -57,6 +63,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     TDH,
     ConsolidatedTDH,
     NextGenTokenTDH,
+    TDHMemes,
+    ConsolidatedTDHMemes,
     Profile,
     MemesSeason,
     NFTOwner,
@@ -68,7 +76,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     AggregatedActivity,
     ConsolidatedAggregatedActivity,
     AggregatedActivityMemes,
-    ConsolidatedAggregatedActivityMemes
+    ConsolidatedAggregatedActivityMemes,
+    NftTDH
   ]);
   const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
   const startBlock =
