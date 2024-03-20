@@ -14,6 +14,7 @@ import ratingsRoutes from './ratings/ratings.routes';
 import gasRoutes from './gas/gas.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
 import communityMembersCurationRoutes from './community-members/community-members-curation.routes';
+import dropsRoutes from './drops/drops.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -1236,6 +1237,7 @@ loadApi().then(() => {
   apiRouter.use(`/profile-logs`, profileActivityLogsRoutes);
   apiRouter.use(`/rep/categories`, repCategorySearchRoutes);
   apiRouter.use(`/ratings`, ratingsRoutes);
+  apiRouter.use(`/drops`, dropsRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 

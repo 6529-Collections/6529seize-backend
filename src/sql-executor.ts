@@ -43,4 +43,18 @@ export abstract class LazyDbAccessCompatibleService {
   ): Promise<T> {
     return this.db.executeNativeQueriesInTransaction(executable);
   }
+
+  public async getLastInsertId(
+    connection: ConnectionWrapper<any>
+  ): Promise<number> {
+    const id = await this.db
+      .execute(`select last_insert_id() as id`, undefined, {
+        wrappedConnection: connection
+      })
+      .then((it) => it[0].id ?? null);
+    if (!id) {
+      throw new Error('Failed to get last insert id');
+    }
+    return id;
+  }
 }
