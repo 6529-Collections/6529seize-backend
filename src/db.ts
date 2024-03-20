@@ -443,7 +443,7 @@ export async function fetchTransactionAddressesFromBlock(
   toBlock?: number
 ) {
   return await sqlExecutor.execute(
-    `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE} WHERE block >= :fromBlock and contract in (:contracts) ${
+    `SELECT from_address, to_address FROM ${TRANSACTIONS_TABLE} WHERE block > :fromBlock and contract in (:contracts) ${
       toBlock ? 'AND block <= :toBlock' : ''
     }`,
     {
