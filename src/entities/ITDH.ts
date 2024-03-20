@@ -1,14 +1,23 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import {
+  CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
   TDH_HISTORY_TABLE,
+  TDH_NFT_TABLE,
+  WALLETS_TDH_MEMES_TABLE,
   WALLETS_TDH_TABLE
 } from '../constants';
 
-export class BaseTDH {
-  @PrimaryColumn({ type: 'int' })
-  block!: number;
+export class BaseTDHFields {
+  @Column({ type: 'int', nullable: false })
+  balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  unique_memes!: number;
+
+  @Column({ type: 'int', nullable: false })
+  memes_cards_sets!: number;
 
   @Column({ type: 'int', nullable: false })
   tdh!: number;
@@ -24,27 +33,17 @@ export class BaseTDH {
 
   @Column({ type: 'int', nullable: false })
   tdh_rank!: number;
+}
+
+export class BaseTDH extends BaseTDHFields {
+  @PrimaryColumn({ type: 'int' })
+  block!: number;
+
+  @Column({ type: 'datetime' })
+  date!: Date;
 
   @Column({ type: 'int', nullable: false })
   tdh_rank_memes!: number;
-
-  @Column({ type: 'int', nullable: false })
-  tdh_rank_memes_szn1!: number;
-
-  @Column({ type: 'int', nullable: false })
-  tdh_rank_memes_szn2!: number;
-
-  @Column({ type: 'int', nullable: false })
-  tdh_rank_memes_szn3!: number;
-
-  @Column({ type: 'int', nullable: false })
-  tdh_rank_memes_szn4!: number;
-
-  @Column({ type: 'int', nullable: false })
-  tdh_rank_memes_szn5!: number;
-
-  @Column({ type: 'int', nullable: false })
-  tdh_rank_memes_szn6!: number;
 
   @Column({ type: 'int', nullable: false })
   tdh_rank_gradients!: number;
@@ -53,34 +52,10 @@ export class BaseTDH {
   tdh_rank_nextgen!: number;
 
   @Column({ type: 'int', nullable: false })
-  balance!: number;
+  genesis!: number;
 
   @Column({ type: 'int', nullable: false })
-  genesis!: boolean;
-
-  @Column({ type: 'int', nullable: false })
-  memes_cards_sets!: number;
-
-  @Column({ type: 'int', nullable: false })
-  unique_memes!: number;
-
-  @Column({ type: 'int', nullable: false, default: 0 })
-  unique_memes_season1!: number;
-
-  @Column({ type: 'int', nullable: false, default: 0 })
-  unique_memes_season2!: number;
-
-  @Column({ type: 'int', nullable: false, default: 0 })
-  unique_memes_season3!: number;
-
-  @Column({ type: 'int', nullable: false, default: 0 })
-  unique_memes_season4!: number;
-
-  @Column({ type: 'int', nullable: false, default: 0 })
-  unique_memes_season5!: number;
-
-  @Column({ type: 'int', nullable: false, default: 0 })
-  unique_memes_season6!: number;
+  nakamoto!: number;
 
   @Column({ type: 'int', nullable: false })
   boosted_memes_tdh!: number;
@@ -94,83 +69,11 @@ export class BaseTDH {
   @Column({ type: 'int', nullable: false })
   memes_balance!: number;
 
-  @Column({ type: 'double', nullable: false })
-  boosted_memes_tdh_season1!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season1!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_balance_season1!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season1__raw!: number;
-
-  @Column({ type: 'double', nullable: false })
-  boosted_memes_tdh_season2!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season2!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_balance_season2!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season2__raw!: number;
-
-  @Column({ type: 'double', nullable: false })
-  boosted_memes_tdh_season3!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season3!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_balance_season3!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season3__raw!: number;
-
-  @Column({ type: 'double', nullable: false })
-  boosted_memes_tdh_season4!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season4!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_balance_season4!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season4__raw!: number;
-
-  @Column({ type: 'double', nullable: false })
-  boosted_memes_tdh_season5!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season5!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_balance_season5!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season5__raw!: number;
-
-  @Column({ type: 'double', nullable: false })
-  boosted_memes_tdh_season6!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season6!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_balance_season6!: number;
-
-  @Column({ type: 'int', nullable: false })
-  memes_tdh_season6__raw!: number;
+  @Column({ type: 'json', nullable: true })
+  memes!: TokenTDH[];
 
   @Column({ type: 'json', nullable: true })
-  memes?: any;
-
-  @Column({ type: 'json', nullable: true })
-  memes_ranks?: any;
+  memes_ranks!: TokenTDHRank[];
 
   @Column({ type: 'int', nullable: false })
   gradients_balance!: number;
@@ -185,10 +88,10 @@ export class BaseTDH {
   gradients_tdh__raw!: number;
 
   @Column({ type: 'json', nullable: true })
-  gradients?: any;
+  gradients!: TokenTDH[];
 
   @Column({ type: 'json', nullable: true })
-  gradients_ranks?: any;
+  gradients_ranks!: TokenTDHRank[];
 
   @Column({ type: 'int', nullable: false })
   nextgen_balance!: number;
@@ -203,10 +106,10 @@ export class BaseTDH {
   nextgen_tdh__raw!: number;
 
   @Column({ type: 'json', nullable: true })
-  nextgen?: any;
+  nextgen!: TokenTDH[];
 
   @Column({ type: 'json', nullable: true })
-  nextgen_ranks?: any;
+  nextgen_ranks!: TokenTDHRank[];
 
   @Column({ type: 'json', nullable: true })
   boost_breakdown!: any;
@@ -217,9 +120,6 @@ export class BaseTDH {
   where: `"wallet" = lower("wallet")`
 })
 export class TDH extends BaseTDH {
-  @Column({ type: 'datetime' })
-  date!: Date;
-
   @PrimaryColumn({ type: 'varchar', length: 50 })
   wallet!: string;
 }
@@ -230,9 +130,6 @@ export interface TDHENS extends TDH {
 
 @Entity(CONSOLIDATED_WALLETS_TDH_TABLE)
 export class ConsolidatedTDH extends BaseTDH {
-  @Column({ type: 'datetime' })
-  date!: Date;
-
   @PrimaryColumn({ type: 'varchar', length: 500 })
   consolidation_display!: string;
 
@@ -242,6 +139,54 @@ export class ConsolidatedTDH extends BaseTDH {
 
   @Column({ type: 'json', nullable: false })
   wallets?: any;
+}
+
+@Entity(WALLETS_TDH_MEMES_TABLE)
+export class TDHMemes extends BaseTDHFields {
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  wallet!: string;
+
+  @PrimaryColumn({ type: 'int' })
+  season!: number;
+}
+
+@Entity(CONSOLIDATED_WALLETS_TDH_MEMES_TABLE)
+export class ConsolidatedTDHMemes extends BaseTDHFields {
+  @PrimaryColumn({ type: 'varchar', length: 500 })
+  consolidation_key!: string;
+
+  @PrimaryColumn({ type: 'int' })
+  season!: number;
+}
+
+@Entity(TDH_NFT_TABLE)
+export class NftTDH {
+  @PrimaryColumn({ type: 'bigint' })
+  id!: number;
+
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  contract!: string;
+
+  @PrimaryColumn({ type: 'varchar', length: 200 })
+  consolidation_key!: string;
+
+  @Column({ type: 'int', nullable: false })
+  balance!: number;
+
+  @Column({ type: 'int', nullable: false })
+  tdh!: number;
+
+  @Column({ type: 'double', nullable: false })
+  boost!: number;
+
+  @Column({ type: 'int', nullable: false })
+  boosted_tdh!: number;
+
+  @Column({ type: 'int', nullable: false })
+  tdh__raw!: number;
+
+  @Column({ type: 'int', nullable: false })
+  tdh_rank!: number;
 }
 
 @Entity(TDH_GLOBAL_HISTORY_TABLE)
@@ -395,8 +340,13 @@ export class TDHHistory {
 }
 
 export interface TokenTDH {
-  id: string;
+  id: number;
   balance: number;
   tdh: number;
   tdh__raw: number;
+}
+
+export interface TokenTDHRank {
+  id: number;
+  rank: number;
 }

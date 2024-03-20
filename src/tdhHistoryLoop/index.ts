@@ -164,8 +164,10 @@ async function tdhHistory(date: Date) {
         yesterdayTdh.forEach((y) => {
           const e = y.memes.find((em: TokenTDH) => em.id == m.id);
           if (e) {
-            e.boosted_tdh = e.tdh * y.boost;
-            existing.push(e);
+            existing.push({
+              ...e,
+              boosted_tdh: e.tdh * y.boost
+            });
           }
         });
       }
@@ -208,8 +210,10 @@ async function tdhHistory(date: Date) {
         yesterdayTdh.forEach((y) => {
           const e = y.gradients.find((em: TokenTDH) => em.id == m.id);
           if (e) {
-            e.boosted_tdh = e.tdh * y.boost;
-            existing.push(e);
+            existing.push({
+              ...e,
+              boosted_tdh: e.tdh * y.boost
+            });
           }
         });
       }

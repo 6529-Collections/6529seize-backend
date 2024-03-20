@@ -231,6 +231,12 @@ export class Time {
     return this.formatAsDuration();
   };
 
+  public toMinutesAndSecondsString(): string {
+    const minutes = Math.floor(this.toMinutes());
+    const seconds = Math.floor(this.minusMinutes(minutes).toSeconds());
+    return `${minutes}m ${seconds}s`;
+  }
+
   public formatAsDuration() {
     let left = this.ms;
     const daydf = Math.floor(Time.millis(left).toDays());

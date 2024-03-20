@@ -8,8 +8,8 @@ import {
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
+  NFT_OWNERS_TABLE,
   NFTS_TABLE,
-  OWNERS_MEME_LAB_TABLE,
   TDH_BLOCKS_TABLE,
   WALLETS_TDH_TABLE
 } from '../../../../constants';
@@ -155,7 +155,7 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
       return {};
     }
     const params: Record<string, string> = { wallet1: wallets[0] };
-    let sql = `select token_id, sum(balance) as balance from ${OWNERS_MEME_LAB_TABLE} where contract = '${MEMELAB_CONTRACT}' and (lower(wallet) like concat('%', lower(:wallet1), '%')`;
+    let sql = `select token_id, sum(balance) as balance from ${NFT_OWNERS_TABLE} where contract = '${MEMELAB_CONTRACT}' and (lower(wallet) like concat('%', lower(:wallet1), '%')`;
     for (let i = 1; i < wallets.length; i++) {
       const key = `wallet${i + 1}`;
       params[key] = wallets[i];

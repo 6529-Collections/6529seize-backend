@@ -10,6 +10,7 @@ import {
   ConsolidationEvent,
   Delegation,
   DelegationEvent,
+  EventType,
   NFTDelegationBlock
 } from '../entities/IDelegation';
 import { loadEnv, unload } from '../secrets';
@@ -17,17 +18,38 @@ import { Logger } from '../logging';
 import { discoverEnsConsolidations, discoverEnsDelegations } from '../ens';
 import { Time } from '../time';
 import { getLastTDH } from '../helpers';
-import { consolidateTDH } from '../tdh_consolidation';
-import { consolidateOwnerMetrics } from '../owner_metrics';
+import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { sqlExecutor } from '../sql-executor';
 import { CONSOLIDATIONS_TABLE } from '../constants';
-import { ConsolidatedTDH, TDH } from '../entities/ITDH';
-import { ConsolidatedOwnerMetric, OwnerMetric } from '../entities/IOwner';
+import {
+  ConsolidatedTDH,
+  ConsolidatedTDHMemes,
+  NftTDH,
+  TDH,
+  TDHMemes
+} from '../entities/ITDH';
 import { Profile } from '../entities/IProfile';
 import * as sentryContext from '../sentry.context';
 import { NextGenTokenTDH } from '../entities/INextGen';
+import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
+import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
+import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
 import { CommunityMember } from '../entities/ICommunityMember';
-import { findTDH } from '../tdh';
+import { findTDH } from '../tdhLoop/tdh';
+import { MemesSeason } from '../entities/ISeason';
+import { ConsolidatedNFTOwner, NFTOwner } from '../entities/INFTOwner';
+import {
+  ConsolidatedOwnerBalances,
+  ConsolidatedOwnerBalancesMemes,
+  OwnerBalances,
+  OwnerBalancesMemes
+} from '../entities/IOwnerBalances';
+import {
+  AggregatedActivity,
+  AggregatedActivityMemes,
+  ConsolidatedAggregatedActivity,
+  ConsolidatedAggregatedActivityMemes
+} from '../entities/IAggregatedActivity';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -41,9 +63,21 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     TDH,
     ConsolidatedTDH,
     NextGenTokenTDH,
-    ConsolidatedOwnerMetric,
-    OwnerMetric,
-    Profile
+    TDHMemes,
+    ConsolidatedTDHMemes,
+    Profile,
+    MemesSeason,
+    NFTOwner,
+    ConsolidatedNFTOwner,
+    OwnerBalances,
+    OwnerBalancesMemes,
+    ConsolidatedOwnerBalances,
+    ConsolidatedOwnerBalancesMemes,
+    AggregatedActivity,
+    ConsolidatedAggregatedActivity,
+    AggregatedActivityMemes,
+    ConsolidatedAggregatedActivityMemes,
+    NftTDH
   ]);
   const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
   const startBlock =
@@ -64,6 +98,12 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 
 async function handleDelegations(startBlock: number | undefined) {
   const delegationsResponse = await findNewDelegations(startBlock);
+  delegationsResponse.consolidations.push({
+    wallet1: '0x7f3774EAdae4beB01919deC7f32A72e417Ab5DE3',
+    wallet2: '0xFe49A85E98941F1A115aCD4bEB98521023a25802',
+    block: 1337,
+    type: EventType.REVOKE
+  });
   await persistConsolidations(startBlock, delegationsResponse.consolidations);
   await persistDelegations(
     startBlock,
@@ -146,7 +186,11 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
 
   const lastTDHCalc = getLastTDH();
   const walletsArray = Array.from(distinctWallets);
+
   await findTDH(lastTDHCalc, walletsArray);
   await consolidateTDH(lastTDHCalc, walletsArray);
-  await consolidateOwnerMetrics(walletsArray);
+
+  await consolidateNftOwners(distinctWallets);
+  await consolidateOwnerBalances(distinctWallets);
+  await consolidateActivity(distinctWallets);
 }
