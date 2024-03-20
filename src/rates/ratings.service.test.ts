@@ -14,6 +14,7 @@ import { Time } from '../time';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { RepService } from '../api-serverless/src/profiles/rep.service';
 import { EventScheduler } from '../events/event.scheduler';
+import { ArweaveFileUploader } from '../arweave';
 
 describe('RatingsService', () => {
   let ratingsService: RatingsService;
@@ -22,6 +23,7 @@ describe('RatingsService', () => {
   let repService: Mock<RepService>;
   let profileActivityLogsDb: Mock<ProfileActivityLogsDb>;
   let eventScheduler: Mock<EventScheduler>;
+  let arweaveFileUploader: Mock<ArweaveFileUploader>;
 
   beforeEach(() => {
     profilesDb = mockDbService();
@@ -29,12 +31,14 @@ describe('RatingsService', () => {
     profileActivityLogsDb = mockDbService();
     eventScheduler = mock(EventScheduler);
     repService = mock(RepService);
+    arweaveFileUploader = mock(ArweaveFileUploader);
     ratingsService = new RatingsService(
       ratingsDb,
       profilesDb,
       repService,
       profileActivityLogsDb,
-      eventScheduler
+      eventScheduler,
+      arweaveFileUploader
     );
   });
 
@@ -192,6 +196,11 @@ describe('RatingsService', () => {
 
   describe('revokeOverRates', () => {
     it('reduces all rates on matter when there TDH is overspent', async () => {
+      when(ratingsDb.getSnapshotOfAllCicRatings).mockResolvedValue([]);
+      when(ratingsDb.getSnapshotOfAllRepRatings).mockResolvedValue([]);
+      when(arweaveFileUploader.uploadFile).mockResolvedValue({
+        url: 'arweave_url'
+      });
       when(ratingsDb.getOverRateMatters).mockResolvedValue([
         {
           rater_profile_id: 'pid',
@@ -271,9 +280,15 @@ describe('RatingsService', () => {
         },
         mockConnection
       );
+      expect(ratingsDb.insertSnapshot).toHaveBeenCalledTimes(2);
     });
 
     it('reduces some rates on matter when there TDH is overspent', async () => {
+      when(ratingsDb.getSnapshotOfAllCicRatings).mockResolvedValue([]);
+      when(ratingsDb.getSnapshotOfAllRepRatings).mockResolvedValue([]);
+      when(arweaveFileUploader.uploadFile).mockResolvedValue({
+        url: 'arweave_url'
+      });
       when(ratingsDb.getOverRateMatters).mockResolvedValue([
         {
           rater_profile_id: 'pid',
@@ -353,6 +368,7 @@ describe('RatingsService', () => {
         },
         mockConnection
       );
+      expect(ratingsDb.insertSnapshot).toHaveBeenCalledTimes(2);
     });
   });
 });

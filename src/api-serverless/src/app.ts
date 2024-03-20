@@ -10,6 +10,7 @@ import analyticsRoutes from './analytics/analytics.routes';
 import royaltiesRoutes from './royalties/royalties.routes';
 import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
+import ratingsRoutes from './ratings/ratings.routes';
 import gasRoutes from './gas/gas.routes';
 import tdhRoutes from './tdh/tdh.routes';
 import aggregatedActivityRoutes from './aggregated-activity/aggregated-activity.routes';
@@ -1113,6 +1114,7 @@ loadApi().then(() => {
   apiRouter.use(`/tdh`, tdhRoutes);
   apiRouter.use(`/aggregated-activity`, aggregatedActivityRoutes);
   apiRouter.use(`/owners-balances`, ownersBalancesRoutes);
+  apiRouter.use(`/ratings`, ratingsRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 
