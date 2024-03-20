@@ -275,7 +275,7 @@ export async function fetchPaginated(
     resultsSql += ` OFFSET ${offset}`;
   }
   logger.debug(`Count sql: '${countSql}`);
-  logger.info(`Data sql: ${resultsSql}`);
+  logger.debug(`Data sql: ${resultsSql}`);
 
   const count = await sqlExecutor
     .execute(countSql, params)
