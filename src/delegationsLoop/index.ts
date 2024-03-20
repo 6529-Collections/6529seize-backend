@@ -182,15 +182,21 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
     distinctWallets.add(c.wallet2);
   });
 
-  logger.info(`[RECONSOLIDATING FOR ${distinctWallets.size} DISTINCT WALLETS]`);
+  if (distinctWallets.size > 0) {
+    logger.info(
+      `[RECONSOLIDATING FOR ${distinctWallets.size} DISTINCT WALLETS]`
+    );
 
-  const lastTDHCalc = getLastTDH();
-  const walletsArray = Array.from(distinctWallets);
+    const lastTDHCalc = getLastTDH();
+    const walletsArray = Array.from(distinctWallets);
 
-  await findTDH(lastTDHCalc, walletsArray);
-  await consolidateTDH(lastTDHCalc, walletsArray);
+    await findTDH(lastTDHCalc, walletsArray);
+    await consolidateTDH(lastTDHCalc, walletsArray);
 
-  await consolidateNftOwners(distinctWallets);
-  await consolidateOwnerBalances(distinctWallets);
-  await consolidateActivity(distinctWallets);
+    await consolidateNftOwners(distinctWallets);
+    await consolidateOwnerBalances(distinctWallets);
+    await consolidateActivity(distinctWallets);
+  } else {
+    logger.info(`[NO WALLETS TO RECONSOLIDATE]`);
+  }
 }
