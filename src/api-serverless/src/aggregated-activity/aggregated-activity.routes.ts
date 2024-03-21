@@ -12,7 +12,10 @@ import { MetricsContent, MetricsCollector } from 'src/tdh/tdh.db';
 import { resolveEnum } from '../../../helpers';
 import {
   fetchAggregatedActivity,
-  fetchAggregatedActivityForKey
+  fetchAggregatedActivityForConsolidationKey,
+  fetchAggregatedActivityForWallet,
+  fetchMemesAggregatedActivityForConsolidationKey,
+  fetchMemesAggregatedActivityForWallet
 } from './aggregated-activity.db';
 
 const router = asyncRouter();
@@ -81,7 +84,7 @@ router.get(
 );
 
 router.get(
-  '/:consolidation_key',
+  '/consolidation/:consolidation_key',
   function (
     req: Request<
       {
@@ -95,8 +98,90 @@ router.get(
   ) {
     const consolidationKey = req.params.consolidation_key;
 
-    fetchAggregatedActivityForKey(consolidationKey).then((result) => {
-      returnJsonResult(result, req, res);
+    fetchAggregatedActivityForConsolidationKey(consolidationKey).then(
+      (result) => {
+        if (result) {
+          return returnJsonResult(result, req, res);
+        } else {
+          return res.status(404).send({});
+        }
+      }
+    );
+  }
+);
+
+router.get(
+  '/consolidation/:consolidation_key/memes',
+  function (
+    req: Request<
+      {
+        consolidation_key: string;
+      },
+      any,
+      any,
+      {}
+    >,
+    res: any
+  ) {
+    const consolidationKey = req.params.consolidation_key;
+    fetchMemesAggregatedActivityForConsolidationKey(consolidationKey).then(
+      (result) => {
+        if (result) {
+          return returnJsonResult(result, req, res);
+        } else {
+          return res.status(404).send({});
+        }
+      }
+    );
+  }
+);
+
+router.get(
+  '/wallet/:wallet',
+  function (
+    req: Request<
+      {
+        wallet: string;
+      },
+      any,
+      any,
+      {}
+    >,
+    res: any
+  ) {
+    const wallet = req.params.wallet;
+
+    fetchAggregatedActivityForWallet(wallet).then((result) => {
+      if (result) {
+        return returnJsonResult(result, req, res);
+      } else {
+        return res.status(404).send({});
+      }
+    });
+  }
+);
+
+router.get(
+  '/wallet/:wallet/memes',
+  function (
+    req: Request<
+      {
+        wallet: string;
+      },
+      any,
+      any,
+      {}
+    >,
+    res: any
+  ) {
+    const wallet = req.params.wallet;
+
+    fetchMemesAggregatedActivityForWallet(wallet).then((result) => {
+      if (result) {
+        return returnJsonResult(result, req, res);
+      } else {
+        return res.status(404).send({});
+      }
     });
   }
 );

@@ -5,11 +5,21 @@ import {
   MetricsCollector,
   MetricsContent,
   fetchConsolidatedMetrics,
-  fetchNftTdh
+  fetchNftTdh,
+  fetchSingleTDH
 } from './tdh.db';
 import { DEFAULT_PAGE_SIZE } from 'src/page-request';
-import { resolveSortDirection, returnPaginatedResult } from 'src/api-helpers';
+import {
+  resolveSortDirection,
+  returnJsonResult,
+  returnPaginatedResult
+} from 'src/api-helpers';
 import { resolveEnum } from '../../../helpers';
+import { parseTdhDataFromDB } from '../../../sql_helpers';
+import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  WALLETS_TDH_TABLE
+} from '../../../constants';
 
 const router = asyncRouter();
 
@@ -118,6 +128,62 @@ router.get(
         `[CONSOLIDATED_TDH] : [FETCHED ${result.count} TDH] : [SORT ${sort}] : [SORT_DIRECTION ${sortDir}] : [PAGE ${page}] : [PAGE_SIZE ${pageSize}] `
       );
       return returnPaginatedResult(result, req, res);
+    });
+  }
+);
+
+router.get(
+  '/consolidation/:consolidation_key',
+  function (
+    req: Request<
+      {
+        consolidation_key: string;
+      },
+      any,
+      any,
+      {}
+    >,
+    res: any
+  ) {
+    const consolidationKey = req.params.consolidation_key;
+
+    fetchSingleTDH(
+      'consolidation_key',
+      consolidationKey,
+      CONSOLIDATED_WALLETS_TDH_TABLE
+    ).then((result) => {
+      if (result) {
+        const parsedResult = parseTdhDataFromDB(result);
+        return returnJsonResult(parsedResult, req, res);
+      } else {
+        return res.status(404).send({});
+      }
+    });
+  }
+);
+
+router.get(
+  '/wallet/:wallet',
+  function (
+    req: Request<
+      {
+        wallet: string;
+      },
+      any,
+      any,
+      {}
+    >,
+    res: any
+  ) {
+    const wallet = req.params.wallet;
+
+    fetchSingleTDH('wallet', wallet, WALLETS_TDH_TABLE).then((result) => {
+      if (result) {
+        const parsedResult = parseTdhDataFromDB(result);
+        return returnJsonResult(parsedResult, req, res);
+      } else {
+        return res.status(404).send({});
+      }
     });
   }
 );

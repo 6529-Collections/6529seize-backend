@@ -272,3 +272,18 @@ export const fetchConsolidatedMetrics = async (
   });
   return results;
 };
+
+export const fetchSingleTDH = async (
+  key: string,
+  value: string,
+  table: string
+) => {
+  const sql = `
+    SELECT * from ${table} where ${key} = :value
+    `;
+  const result = await sqlExecutor.execute(sql, { value });
+  if (result.length !== 1) {
+    return null;
+  }
+  return result[0];
+};

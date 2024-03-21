@@ -1,5 +1,7 @@
 import { constructFilters, constructFiltersOR } from '../api-helpers';
 import {
+  AGGREGATED_ACTIVITY_MEMES_TABLE,
+  AGGREGATED_ACTIVITY_TABLE,
   CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE,
   CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE,
   CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE,
@@ -229,13 +231,64 @@ export const fetchAggregatedActivity = async (
   return results;
 };
 
-export const fetchAggregatedActivityForKey = async (key: string) => {
+export const fetchAggregatedActivityForConsolidationKey = async (
+  key: string
+) => {
+  return fetchSingleAggregatedActivity(
+    'consolidation_key',
+    key,
+    CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE
+  );
+};
+
+export const fetchMemesAggregatedActivityForConsolidationKey = async (
+  key: string
+) => {
+  return fetchMemesAggregatedActivity(
+    'consolidation_key',
+    key,
+    CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE
+  );
+};
+
+export async function fetchAggregatedActivityForWallet(wallet: string) {
+  return fetchSingleAggregatedActivity(
+    'wallet',
+    wallet,
+    AGGREGATED_ACTIVITY_TABLE
+  );
+}
+
+export async function fetchMemesAggregatedActivityForWallet(wallet: string) {
+  return fetchMemesAggregatedActivity(
+    'wallet',
+    wallet,
+    AGGREGATED_ACTIVITY_MEMES_TABLE
+  );
+}
+
+async function fetchSingleAggregatedActivity(
+  key: string,
+  value: string,
+  table: string
+) {
   const sql = `
-    SELECT * from ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE} where consolidation_key = :key
+    SELECT * from ${table} where ${key} = :value
     `;
-  const result = await sqlExecutor.execute(sql, { key });
+  const result = await sqlExecutor.execute(sql, { value });
   if (result.length !== 1) {
     return null;
   }
   return result[0];
-};
+}
+
+async function fetchMemesAggregatedActivity(
+  key: string,
+  value: string,
+  table: string
+) {
+  const sql = `
+    SELECT * from ${table} where ${key} = :value
+    `;
+  return await sqlExecutor.execute(sql, { value });
+}

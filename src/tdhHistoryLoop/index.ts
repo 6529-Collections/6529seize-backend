@@ -73,7 +73,7 @@ async function fetchUploads(date: string): Promise<
   return json.data;
 }
 
-async function fetchAndParseCSV(url: string): Promise<ConsolidatedTDH[]> {
+async function fetchAndParseCSV(url: string): Promise<any[]> {
   try {
     const response = await axios.get(url);
     const csvData: any[] = [];
