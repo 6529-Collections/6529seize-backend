@@ -103,63 +103,29 @@ export const fetchNftTdh = async (
   return results;
 };
 
-export const fetchConsolidatedMetrics = async (
-  sort: string,
-  sortDir: string,
-  page: number,
-  pageSize: number,
-  searchStr: string | undefined,
-  content: MetricsContent | undefined,
-  collector: MetricsCollector | undefined,
-  season: number | undefined
-) => {
-  let filters = '';
-  const params: any = {};
-
-  if (searchStr) {
-    let walletFilters = '';
-    searchStr
-      .toLowerCase()
-      .split(',')
-      .forEach((s: string, index: number) => {
-        params[`search${index}`] = `%${s}%`;
-        walletFilters = constructFiltersOR(
-          walletFilters,
-          `${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key like :search${index}
+function getSearchFilters(search: string) {
+  let walletFilters = '';
+  const searchParams: any = {};
+  search
+    .toLowerCase()
+    .split(',')
+    .forEach((s: string, index: number) => {
+      searchParams[`search${index}`] = `%${s}%`;
+      walletFilters = constructFiltersOR(
+        walletFilters,
+        `${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key like :search${index}
           or ${PROFILE_FULL}.handle like :search${index}
           or ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display like :search${index}`
-        );
-      });
+      );
+    });
+  return { walletFilters, searchParams };
+}
 
-    filters = constructFilters(filters, `(${walletFilters})`);
-  }
-
-  let balanceColumn = 'total_balance';
-  let uniqueMemesColumn = 'unique_memes';
-  let memeCardSetsColumn = 'memes_cards_sets';
-  let balancesTable = CONSOLIDATED_OWNERS_BALANCES_TABLE;
-  switch (content) {
-    case MetricsContent.MEMES:
-      if (season) {
-        balancesTable = CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE;
-        balanceColumn = 'balance';
-        uniqueMemesColumn = 'unique';
-        memeCardSetsColumn = 'sets';
-      } else {
-        balanceColumn = 'memes_balance';
-      }
-      break;
-    case MetricsContent.GRADIENTS:
-      balanceColumn = 'gradients_balance';
-      break;
-    case MetricsContent.MEMELAB:
-      balanceColumn = 'memelab_balance';
-      break;
-    case MetricsContent.NEXTGEN:
-      balanceColumn = 'nextgen_balance';
-      break;
-  }
-
+function getCollectorFilters(
+  collector: MetricsCollector,
+  season: number | undefined,
+  filters: string
+) {
   switch (collector) {
     case MetricsCollector.MEMES:
       if (season) {
@@ -212,6 +178,62 @@ export const fetchConsolidatedMetrics = async (
       );
       break;
   }
+  return filters;
+}
+
+export const fetchConsolidatedMetrics = async (
+  sort: string,
+  sortDir: string,
+  page: number,
+  pageSize: number,
+  query: {
+    search: string | undefined;
+    content: MetricsContent | undefined;
+    collector: MetricsCollector | undefined;
+    season: number | undefined;
+  }
+) => {
+  let filters = '';
+  let params: any = {};
+
+  if (query.search) {
+    const { walletFilters, searchParams } = getSearchFilters(query.search);
+    filters = constructFilters(filters, `(${walletFilters})`);
+    params = {
+      ...params,
+      ...searchParams
+    };
+  }
+
+  let balanceColumn = 'total_balance';
+  let uniqueMemesColumn = 'unique_memes';
+  let memeCardSetsColumn = 'memes_cards_sets';
+  let balancesTable = CONSOLIDATED_OWNERS_BALANCES_TABLE;
+  switch (query.content) {
+    case MetricsContent.MEMES:
+      if (query.season) {
+        balancesTable = CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE;
+        balanceColumn = 'balance';
+        uniqueMemesColumn = 'unique';
+        memeCardSetsColumn = 'sets';
+      } else {
+        balanceColumn = 'memes_balance';
+      }
+      break;
+    case MetricsContent.GRADIENTS:
+      balanceColumn = 'gradients_balance';
+      break;
+    case MetricsContent.MEMELAB:
+      balanceColumn = 'memelab_balance';
+      break;
+    case MetricsContent.NEXTGEN:
+      balanceColumn = 'nextgen_balance';
+      break;
+  }
+
+  if (query.collector) {
+    filters = getCollectorFilters(query.collector, query.season, filters);
+  }
 
   const balancesTableField = `
     ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key as consolidation_key,
@@ -235,12 +257,12 @@ export const fetchConsolidatedMetrics = async (
   joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${TDH_HISTORY_TABLE}.consolidation_key and ${CONSOLIDATED_WALLETS_TDH_TABLE}.block=${TDH_HISTORY_TABLE}.block`;
 
   const isMemesSeason =
-    (content == MetricsContent.MEMES ||
-      collector == MetricsCollector.MEMES ||
-      collector == MetricsCollector.MEMES_SETS) &&
-    season;
+    (query.content == MetricsContent.MEMES ||
+      query.collector == MetricsCollector.MEMES ||
+      query.collector == MetricsCollector.MEMES_SETS) &&
+    query.season;
   if (isMemesSeason) {
-    joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} ON ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.consolidation_key and ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.season = ${season}`;
+    joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} ON ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.consolidation_key and ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.season = ${query.season}`;
   }
 
   const results = await fetchPaginated(
@@ -258,10 +280,10 @@ export const fetchConsolidatedMetrics = async (
   const uniqueMemesTotal =
     (
       await sqlExecutor.execute(
-        content == MetricsContent.MEMES && season
+        query.content == MetricsContent.MEMES && query.season
           ? `SELECT ${MEMES_SEASONS_TABLE}.count as total from ${MEMES_SEASONS_TABLE} where ${MEMES_SEASONS_TABLE}.id = :season`
           : `SELECT SUM(${MEMES_SEASONS_TABLE}.count) as total from ${MEMES_SEASONS_TABLE}`,
-        { season }
+        { season: query.season }
       )
     )?.[0].total ?? 0;
 

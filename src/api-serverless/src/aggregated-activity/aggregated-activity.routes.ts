@@ -80,16 +80,12 @@ router.get(
       page = 1;
     }
 
-    fetchAggregatedActivity(
-      sort,
-      sortDir,
-      page,
-      pageSize,
+    fetchAggregatedActivity(sort, sortDir, page, pageSize, {
       search,
       content,
       collector,
       season
-    ).then(async (result) => {
+    }).then(async (result) => {
       if (downloadAll || downloadPage) {
         return returnCSVResult('consolidated_metrics', result.data, res);
       } else {

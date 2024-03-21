@@ -124,16 +124,12 @@ router.get(
       page = 1;
     }
 
-    fetchConsolidatedMetrics(
-      sort,
-      sortDir,
-      page,
-      pageSize,
+    fetchConsolidatedMetrics(sort, sortDir, page, pageSize, {
       search,
       content,
       collector,
       season
-    ).then(async (result) => {
+    }).then(async (result) => {
       logger.info(
         `[CONSOLIDATED_TDH] : [FETCHED ${result.count} TDH] : [SORT ${sort}] : [SORT_DIRECTION ${sortDir}] : [PAGE ${page}] : [PAGE_SIZE ${pageSize}] `
       );

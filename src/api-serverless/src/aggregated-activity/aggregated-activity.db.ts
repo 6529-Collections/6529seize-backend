@@ -15,109 +15,29 @@ import { calculateLevel } from '../../../profiles/profile-level';
 import { MetricsCollector, MetricsContent } from '../tdh/tdh.db';
 import { sqlExecutor } from '../../../sql-executor';
 
-export const fetchAggregatedActivity = async (
-  sort: string,
-  sortDir: string,
-  page: number,
-  pageSize: number,
-  searchStr: string | undefined,
-  content: MetricsContent | undefined,
-  collector: MetricsCollector | undefined,
-  season: number | undefined
-) => {
-  let filters = constructFilters(
-    '',
-    `${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key != :manifold`
-  );
-  const params: any = {
-    manifold: MANIFOLD
-  };
-
-  if (searchStr) {
-    let walletFilters = '';
-    searchStr
-      .toLowerCase()
-      .split(',')
-      .forEach((s: string, index: number) => {
-        params[`search${index}`] = `%${s}%`;
-        walletFilters = constructFiltersOR(
-          walletFilters,
-          `${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key like :search${index}
+function getSearchFilters(search: string) {
+  let walletFilters = '';
+  const searchParams: any = {};
+  search
+    .toLowerCase()
+    .split(',')
+    .forEach((s: string, index: number) => {
+      searchParams[`search${index}`] = `%${s}%`;
+      walletFilters = constructFiltersOR(
+        walletFilters,
+        `${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key like :search${index}
           or ${PROFILE_FULL}.handle like :search${index}
           or ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display like :search${index}`
-        );
-      });
+      );
+    });
+  return { walletFilters, searchParams };
+}
 
-    filters = constructFilters(filters, `(${walletFilters})`);
-  }
-
-  let primaryPurchasesCount = 'primary_purchases_count';
-  let primaryPurchasesValue = 'primary_purchases_value';
-  let secondaryPurchasesCount = 'secondary_purchases_count';
-  let secondaryPurchasesValue = 'secondary_purchases_value';
-  let salesCount = 'sales_count';
-  let salesValue = 'sales_value';
-  let transfersIn = 'transfers_in';
-  let transfersOut = 'transfers_out';
-  let airdrops = 'airdrops';
-  let burns = 'burns';
-  let activityTable = CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE;
-
-  switch (content) {
-    case MetricsContent.MEMES:
-      if (season) {
-        activityTable = CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE;
-      } else {
-        primaryPurchasesCount += '_memes';
-        primaryPurchasesValue += '_memes';
-        secondaryPurchasesCount += '_memes';
-        secondaryPurchasesValue += '_memes';
-        salesCount += '_memes';
-        salesValue += '_memes';
-        transfersIn += '_memes';
-        transfersOut += '_memes';
-        airdrops += '_memes';
-        burns += '_memes';
-      }
-      break;
-    case MetricsContent.GRADIENTS:
-      primaryPurchasesCount += '_gradients';
-      primaryPurchasesValue += '_gradients';
-      secondaryPurchasesCount += '_gradients';
-      secondaryPurchasesValue += '_gradients';
-      salesCount += '_gradients';
-      salesValue += '_gradients';
-      transfersIn += '_gradients';
-      transfersOut += '_gradients';
-      airdrops += '_gradients';
-      burns += '_gradients';
-      break;
-    case MetricsContent.MEMELAB:
-      primaryPurchasesCount += '_memelab';
-      primaryPurchasesValue += '_memelab';
-      secondaryPurchasesCount += '_memelab';
-      secondaryPurchasesValue += '_memelab';
-      salesCount += '_memelab';
-      salesValue += '_memelab';
-      transfersIn += '_memelab';
-      transfersOut += '_memelab';
-      airdrops += '_memelab';
-      burns += '_memelab';
-      break;
-    case MetricsContent.NEXTGEN:
-      primaryPurchasesCount += '_nextgen';
-      primaryPurchasesValue += '_nextgen';
-      secondaryPurchasesCount += '_nextgen';
-      secondaryPurchasesValue += '_nextgen';
-      salesCount += '_nextgen';
-      salesValue += '_nextgen';
-      transfersIn += '_nextgen';
-      transfersOut += '_nextgen';
-      airdrops += '_nextgen';
-      burns += '_nextgen';
-      break;
-  }
-
+function getCollectorFilters(
+  collector: MetricsCollector,
+  season: number | undefined,
+  filters: string
+) {
   switch (collector) {
     case MetricsCollector.MEMES:
       if (season) {
@@ -170,6 +90,108 @@ export const fetchAggregatedActivity = async (
       );
       break;
   }
+  return filters;
+}
+
+export const fetchAggregatedActivity = async (
+  sort: string,
+  sortDir: string,
+  page: number,
+  pageSize: number,
+  query: {
+    search: string | undefined;
+    content: MetricsContent | undefined;
+    collector: MetricsCollector | undefined;
+    season: number | undefined;
+  }
+) => {
+  let filters = constructFilters(
+    '',
+    `${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key != :manifold`
+  );
+  let params: any = {
+    manifold: MANIFOLD
+  };
+
+  if (query.search) {
+    const { walletFilters, searchParams } = getSearchFilters(query.search);
+    filters = constructFilters(filters, `(${walletFilters})`);
+    params = {
+      ...params,
+      ...searchParams
+    };
+  }
+
+  let primaryPurchasesCount = 'primary_purchases_count';
+  let primaryPurchasesValue = 'primary_purchases_value';
+  let secondaryPurchasesCount = 'secondary_purchases_count';
+  let secondaryPurchasesValue = 'secondary_purchases_value';
+  let salesCount = 'sales_count';
+  let salesValue = 'sales_value';
+  let transfersIn = 'transfers_in';
+  let transfersOut = 'transfers_out';
+  let airdrops = 'airdrops';
+  let burns = 'burns';
+  let activityTable = CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE;
+
+  switch (query.content) {
+    case MetricsContent.MEMES:
+      if (query.season) {
+        activityTable = CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE;
+      } else {
+        primaryPurchasesCount += '_memes';
+        primaryPurchasesValue += '_memes';
+        secondaryPurchasesCount += '_memes';
+        secondaryPurchasesValue += '_memes';
+        salesCount += '_memes';
+        salesValue += '_memes';
+        transfersIn += '_memes';
+        transfersOut += '_memes';
+        airdrops += '_memes';
+        burns += '_memes';
+      }
+      break;
+    case MetricsContent.GRADIENTS:
+      primaryPurchasesCount += '_gradients';
+      primaryPurchasesValue += '_gradients';
+      secondaryPurchasesCount += '_gradients';
+      secondaryPurchasesValue += '_gradients';
+      salesCount += '_gradients';
+      salesValue += '_gradients';
+      transfersIn += '_gradients';
+      transfersOut += '_gradients';
+      airdrops += '_gradients';
+      burns += '_gradients';
+      break;
+    case MetricsContent.MEMELAB:
+      primaryPurchasesCount += '_memelab';
+      primaryPurchasesValue += '_memelab';
+      secondaryPurchasesCount += '_memelab';
+      secondaryPurchasesValue += '_memelab';
+      salesCount += '_memelab';
+      salesValue += '_memelab';
+      transfersIn += '_memelab';
+      transfersOut += '_memelab';
+      airdrops += '_memelab';
+      burns += '_memelab';
+      break;
+    case MetricsContent.NEXTGEN:
+      primaryPurchasesCount += '_nextgen';
+      primaryPurchasesValue += '_nextgen';
+      secondaryPurchasesCount += '_nextgen';
+      secondaryPurchasesValue += '_nextgen';
+      salesCount += '_nextgen';
+      salesValue += '_nextgen';
+      transfersIn += '_nextgen';
+      transfersOut += '_nextgen';
+      airdrops += '_nextgen';
+      burns += '_nextgen';
+      break;
+  }
+
+  if (query.collector) {
+    filters = getCollectorFilters(query.collector, query.season, filters);
+  }
 
   const activityFields = `
     ${activityTable}.consolidation_key as consolidation_key,
@@ -196,19 +218,19 @@ export const fetchAggregatedActivity = async (
 
   let joins = ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key`;
   joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
-  if (collector) {
+  if (query.collector) {
     joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_BALANCES_TABLE} ON ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key`;
-    if (season) {
-      joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} ON ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.consolidation_key and ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.season = ${season}`;
+    if (query.season) {
+      joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} ON ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.consolidation_key and ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.season = ${query.season}`;
     }
   }
   if (
-    (content == MetricsContent.MEMES ||
-      collector == MetricsCollector.MEMES ||
-      collector == MetricsCollector.MEMES_SETS) &&
-    season
+    (query.content == MetricsContent.MEMES ||
+      query.collector == MetricsCollector.MEMES ||
+      query.collector == MetricsCollector.MEMES_SETS) &&
+    query.season
   ) {
-    joins += ` LEFT JOIN ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE} ON ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key = ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE}.consolidation_key and ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE}.season = ${season}`;
+    joins += ` LEFT JOIN ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE} ON ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key = ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE}.consolidation_key and ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE}.season = ${query.season}`;
   }
 
   const results = await fetchPaginated(
