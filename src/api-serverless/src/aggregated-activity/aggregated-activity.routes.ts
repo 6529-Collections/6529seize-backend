@@ -5,6 +5,7 @@ import { asyncRouter } from '../async.router';
 import { DEFAULT_PAGE_SIZE } from '../page-request';
 import {
   resolveSortDirection,
+  returnCSVResult,
   returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
@@ -53,12 +54,14 @@ router.get(
         content?: string;
         collector?: string;
         season?: number;
+        download_page?: boolean;
+        download_all?: boolean;
       }
     >,
     res: any
   ) {
-    const page = req.query.page ?? 1;
-    const pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
+    let page = req.query.page ?? 1;
+    let pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
     const sort =
       req.query.sort &&
       AGGREGATED_ACTIVITY_SORT.includes(req.query.sort.toLowerCase())
@@ -70,6 +73,13 @@ router.get(
     const season = req.query.season;
     const collector = resolveEnum(MetricsCollector, req.query.collector);
 
+    const downloadPage = req.query.download_page;
+    const downloadAll = req.query.download_all;
+    if (downloadAll) {
+      pageSize = Number.MAX_SAFE_INTEGER;
+      page = 1;
+    }
+
     fetchAggregatedActivity(
       sort,
       sortDir,
@@ -79,7 +89,13 @@ router.get(
       content,
       collector,
       season
-    ).then((result) => returnPaginatedResult(result, req, res));
+    ).then(async (result) => {
+      if (downloadAll || downloadPage) {
+        return returnCSVResult('consolidated_metrics', result.data, res);
+      } else {
+        return returnPaginatedResult(result, req, res);
+      }
+    });
   }
 );
 

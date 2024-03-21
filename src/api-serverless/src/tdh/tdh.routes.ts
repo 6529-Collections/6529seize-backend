@@ -11,6 +11,7 @@ import {
 import { DEFAULT_PAGE_SIZE } from '../page-request';
 import {
   resolveSortDirection,
+  returnCSVResult,
   returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
@@ -98,12 +99,14 @@ router.get(
         content?: string;
         collector?: string;
         season?: number;
+        download_page?: boolean;
+        download_all?: boolean;
       }
     >,
     res: any
   ) {
-    const page = req.query.page ?? 1;
-    const pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
+    let page = req.query.page ?? 1;
+    let pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
     const sort =
       req.query.sort && METRICS_SORT.includes(req.query.sort.toLowerCase())
         ? req.query.sort
@@ -114,6 +117,13 @@ router.get(
     const season = req.query.season;
     const collector = resolveEnum(MetricsCollector, req.query.collector);
 
+    const downloadPage = req.query.download_page;
+    const downloadAll = req.query.download_all;
+    if (downloadAll) {
+      pageSize = Number.MAX_SAFE_INTEGER;
+      page = 1;
+    }
+
     fetchConsolidatedMetrics(
       sort,
       sortDir,
@@ -123,11 +133,15 @@ router.get(
       content,
       collector,
       season
-    ).then((result) => {
+    ).then(async (result) => {
       logger.info(
         `[CONSOLIDATED_TDH] : [FETCHED ${result.count} TDH] : [SORT ${sort}] : [SORT_DIRECTION ${sortDir}] : [PAGE ${page}] : [PAGE_SIZE ${pageSize}] `
       );
-      return returnPaginatedResult(result, req, res);
+      if (downloadAll || downloadPage) {
+        return returnCSVResult('consolidated_metrics', result.data, res);
+      } else {
+        return returnPaginatedResult(result, req, res);
+      }
     });
   }
 );

@@ -189,6 +189,7 @@ export const fetchAggregatedActivity = async (
     ${PROFILE_FULL}.pfp_url,
     ${PROFILE_FULL}.rep_score,
     ${PROFILE_FULL}.cic_score,
+    ${PROFILE_FULL}.primary_wallet,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as boosted_tdh,
     (${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh + ${PROFILE_FULL}.rep_score) as level`;

@@ -38,12 +38,10 @@ import * as process from 'process';
 import * as mcache from 'memory-cache';
 import {
   cacheKey,
-  returnCSVResult,
   returnJsonResult,
   returnPaginatedResult
 } from './api-helpers';
 import {
-  CACHE_TIME_MS,
   corsOptions,
   DEFAULT_PAGE_SIZE,
   DISTRIBUTION_PAGE_SIZE,
@@ -54,12 +52,9 @@ import {
 import {
   DISTRIBUTION_SORT,
   MEME_LAB_OWNERS_SORT,
-  NFT_TDH_SORT,
-  TAGS_FILTERS,
-  TDH_SORT,
   TRANSACTION_FILTERS
 } from './api-filters';
-import { parseTdhDataFromDB, parseTdhResultsFromDB } from '../../sql_helpers';
+import { parseTdhResultsFromDB } from '../../sql_helpers';
 import { loadLocalConfig, loadSecrets } from '../../env';
 
 const requestLogger = Logger.get('API_REQUEST');
@@ -601,187 +596,6 @@ loadApi().then(() => {
       }
     });
   });
-
-  // apiRouter.get(`/owner_metrics`, function (req: any, res: any) {
-  //   let pageSize: number =
-  //     req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-  //       ? parseInt(req.query.page_size)
-  //       : DEFAULT_PAGE_SIZE;
-  //   let page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-  //   const downloadPage = req.query.download_page == 'true';
-  //   const downloadAll = req.query.download_all == 'true';
-  //   if (downloadAll) {
-  //     pageSize = Number.MAX_SAFE_INTEGER;
-  //     page = 1;
-  //   }
-
-  //   const wallets = req.query.wallet;
-  //   const sort =
-  //     req.query.sort && TDH_SORT.includes(req.query.sort)
-  //       ? req.query.sort
-  //       : 'boosted_tdh';
-
-  //   const sortDir =
-  //     req.query.sort_direction &&
-  //     SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-  //       ? req.query.sort_direction
-  //       : 'desc';
-
-  //   const filter =
-  //     req.query.filter && TAGS_FILTERS.includes(req.query.filter)
-  //       ? req.query.filter
-  //       : null;
-
-  //   const hideMuseum = !!(
-  //     req.query.hide_museum && req.query.hide_museum == 'true'
-  //   );
-
-  //   const hideTeam = !!(req.query.hide_team && req.query.hide_team == 'true');
-
-  //   const isProfilePage = !!(
-  //     req.query.profile_page && req.query.profile_page == 'true'
-  //   );
-
-  //   db.fetchOwnerMetrics(
-  //     pageSize,
-  //     page,
-  //     wallets,
-  //     sort,
-  //     sortDir,
-  //     filter,
-  //     hideMuseum,
-  //     hideTeam,
-  //     isProfilePage
-  //   ).then(async (result) => {
-  //     if (downloadAll || downloadPage) {
-  //       result.data.map((d: any) => {
-  //         delete d.created_at;
-  //         delete d.memes;
-  //         delete d.memes_ranks;
-  //         delete d.gradients;
-  //         delete d.gradients_ranks;
-  //         delete d.nextgen;
-  //         delete d.nextgen_ranks;
-  //         if (!d.handle) {
-  //           d.handle = '';
-  //         }
-  //       });
-  //     } else {
-  //       result = parseTdhResultsFromDB(result);
-  //     }
-  //     if (downloadAll || downloadPage) {
-  //       returnCSVResult('consolidated_owner_metrics', result.data, res);
-  //     } else {
-  //       return returnPaginatedResult(result, req, res);
-  //     }
-  //   });
-  // });
-
-  // apiRouter.get(
-  //   `/consolidated_owner_metrics/:consolidation_key`,
-  //   function (req: any, res: any) {
-  //     const consolidationKey = req.params.consolidation_key;
-  //     db.fetchConsolidatedOwnerMetricsForKey(consolidationKey).then(
-  //       async (d) => {
-  //         if (d) {
-  //           d = parseTdhDataFromDB(d);
-  //           mcache.put(cacheKey(req), d, CACHE_TIME_MS);
-  //           returnJsonResult(d, req, res);
-  //         } else {
-  //           returnJsonResult({}, req, res);
-  //         }
-  //       }
-  //     );
-  //   }
-  // );
-
-  // apiRouter.get(`/consolidated_owner_metrics`, function (req: any, res: any) {
-  //   let pageSize: number =
-  //     req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-  //       ? parseInt(req.query.page_size)
-  //       : DEFAULT_PAGE_SIZE;
-  //   let page: number = req.query.page ? parseInt(req.query.page) : 1;
-  //   const includePrimaryWallet =
-  //     req.query.include_primary_wallet &&
-  //     req.query.include_primary_wallet == 'true';
-
-  //   const wallets = req.query.wallet;
-  //   const downloadPage = req.query.download_page == 'true';
-  //   const downloadAll = req.query.download_all == 'true';
-  //   if (downloadAll) {
-  //     pageSize = Number.MAX_SAFE_INTEGER;
-  //     page = 1;
-  //   }
-  //   const sort =
-  //     req.query.sort &&
-  //     (TDH_SORT.includes(req.query.sort) || req.query.sort == 'level')
-  //       ? req.query.sort
-  //       : 'boosted_tdh';
-
-  //   const sortDir =
-  //     req.query.sort_direction &&
-  //     SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-  //       ? req.query.sort_direction
-  //       : 'desc';
-
-  //   const filter =
-  //     req.query.filter && TAGS_FILTERS.includes(req.query.filter)
-  //       ? req.query.filter
-  //       : null;
-
-  //   const hideMuseum = !!(
-  //     req.query.hide_museum && req.query.hide_museum == 'true'
-  //   );
-
-  //   const hideTeam = !!(req.query.hide_team && req.query.hide_team == 'true');
-
-  //   const isProfilePage = !!(
-  //     req.query.profile_page && req.query.profile_page == 'true'
-  //   );
-
-  //   db.fetchConsolidatedOwnerMetrics(
-  //     pageSize,
-  //     page,
-  //     wallets,
-  //     sort,
-  //     sortDir,
-  //     filter,
-  //     hideMuseum,
-  //     hideTeam,
-  //     isProfilePage,
-  //     includePrimaryWallet
-  //   ).then(async (result) => {
-  //     result.data.map((d: any) => {
-  //       if (d.wallets) {
-  //         if (!Array.isArray(d.wallets)) {
-  //           d.wallets = JSON.parse(d.wallets);
-  //         }
-  //       }
-  //     });
-  //     if (downloadAll || downloadPage) {
-  //       result.data.map((d: any) => {
-  //         delete d.created_at;
-  //         delete d.memes;
-  //         delete d.memes_ranks;
-  //         delete d.gradients;
-  //         delete d.gradients_ranks;
-  //         delete d.nextgen;
-  //         delete d.nextgen_ranks;
-  //         if (!d.handle) {
-  //           d.handle = '';
-  //         }
-  //       });
-  //     } else {
-  //       result = parseTdhResultsFromDB(result);
-  //     }
-  //     if (downloadAll || downloadPage) {
-  //       returnCSVResult('consolidated_owner_metrics', result.data, res);
-  //     } else {
-  //       return returnPaginatedResult(result, req, res);
-  //     }
-  //   });
-  // });
 
   apiRouter.get(`/team`, function (req: any, res: any) {
     const pageSize: number =
