@@ -28,7 +28,7 @@ const fetch = (url: RequestInfo, init?: RequestInit) =>
 export const handler = sentryContext.wrapLambdaHandler(
   async (event?: any, context?: any) => {
     await loadEnv([TDHHistory, GlobalTDHHistory]);
-    const iterations = parseInt(process.env.TDH_HISTORY_ITERATIONS || '1');
+    const iterations = parseInt(process.env.TDH_HISTORY_ITERATIONS ?? '1');
     logger.info(`[RUNNING] [ITERATIONS ${iterations}]`);
     await tdhHistoryLoop(iterations);
     await unload();
@@ -93,6 +93,23 @@ async function fetchAndParseCSV(url: string): Promise<any[]> {
   });
 }
 
+function matchesConsolidationKey(d: any, yd: any) {
+  return (
+    areEqualAddresses(d.consolidation_key, yd.consolidation_key) ||
+    areEqualAddresses(
+      d.consolidation_key,
+      buildConsolidationKey(JSON.parse(yd.wallets))
+    )
+  );
+}
+
+function hasMatchingWallet(d: any, yd: any) {
+  const ydWallets = JSON.parse(yd.wallets);
+  return d.wallets.some((dw: string) =>
+    ydWallets.some((yw: string) => areEqualAddresses(dw, yw))
+  );
+}
+
 async function tdhHistory(date: Date) {
   const dateString = formatDateAsString(date);
   const uploads = await fetchUploads(dateString);
@@ -121,15 +138,7 @@ async function tdhHistory(date: Date) {
     d.consolidation_key = buildConsolidationKey(d.wallets);
 
     const yesterdayTdh = yesterdayData.filter(
-      (yd) =>
-        areEqualAddresses(d.consolidation_key, yd.consolidation_key) ||
-        areEqualAddresses(
-          d.consolidation_key,
-          buildConsolidationKey(JSON.parse(yd.wallets))
-        ) ||
-        d.wallets.some((dw: string) =>
-          JSON.parse(yd.wallets).some((yw: string) => areEqualAddresses(dw, yw))
-        )
+      (yd) => matchesConsolidationKey(d, yd) || hasMatchingWallet(d, yd)
     );
 
     if (yesterdayTdh.length > 0) {
