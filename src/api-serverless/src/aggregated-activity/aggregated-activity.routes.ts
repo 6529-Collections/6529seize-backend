@@ -2,17 +2,21 @@ import { Request } from 'express';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 
-import { DEFAULT_PAGE_SIZE } from 'src/page-request';
+import { DEFAULT_PAGE_SIZE } from '../page-request';
 import {
   resolveSortDirection,
+  returnCSVResult,
   returnJsonResult,
   returnPaginatedResult
-} from 'src/api-helpers';
-import { MetricsContent, MetricsCollector } from 'src/tdh/tdh.db';
+} from '../api-helpers';
+import { MetricsContent, MetricsCollector } from '../tdh/tdh.db';
 import { resolveEnum } from '../../../helpers';
 import {
   fetchAggregatedActivity,
-  fetchAggregatedActivityForKey
+  fetchAggregatedActivityForConsolidationKey,
+  fetchAggregatedActivityForWallet,
+  fetchMemesAggregatedActivityForConsolidationKey,
+  fetchMemesAggregatedActivityForWallet
 } from './aggregated-activity.db';
 
 const router = asyncRouter();
@@ -50,12 +54,14 @@ router.get(
         content?: string;
         collector?: string;
         season?: number;
+        download_page?: boolean;
+        download_all?: boolean;
       }
     >,
     res: any
   ) {
-    const page = req.query.page || 1;
-    const pageSize = req.query.page_size || DEFAULT_PAGE_SIZE;
+    let page = req.query.page ?? 1;
+    let pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
     const sort =
       req.query.sort &&
       AGGREGATED_ACTIVITY_SORT.includes(req.query.sort.toLowerCase())
@@ -67,21 +73,30 @@ router.get(
     const season = req.query.season;
     const collector = resolveEnum(MetricsCollector, req.query.collector);
 
-    fetchAggregatedActivity(
-      sort,
-      sortDir,
-      page,
-      pageSize,
+    const downloadPage = req.query.download_page;
+    const downloadAll = req.query.download_all;
+    if (downloadAll) {
+      pageSize = Number.MAX_SAFE_INTEGER;
+      page = 1;
+    }
+
+    fetchAggregatedActivity(sort, sortDir, page, pageSize, {
       search,
       content,
       collector,
       season
-    ).then((result) => returnPaginatedResult(result, req, res));
+    }).then(async (result) => {
+      if (downloadAll || downloadPage) {
+        return returnCSVResult('consolidated_metrics', result.data, res);
+      } else {
+        return returnPaginatedResult(result, req, res);
+      }
+    });
   }
 );
 
 router.get(
-  '/:consolidation_key',
+  '/consolidation/:consolidation_key',
   function (
     req: Request<
       {
@@ -95,8 +110,90 @@ router.get(
   ) {
     const consolidationKey = req.params.consolidation_key;
 
-    fetchAggregatedActivityForKey(consolidationKey).then((result) => {
-      returnJsonResult(result, req, res);
+    fetchAggregatedActivityForConsolidationKey(consolidationKey).then(
+      (result) => {
+        if (result) {
+          return returnJsonResult(result, req, res);
+        } else {
+          return res.status(404).send({});
+        }
+      }
+    );
+  }
+);
+
+router.get(
+  '/consolidation/:consolidation_key/memes',
+  function (
+    req: Request<
+      {
+        consolidation_key: string;
+      },
+      any,
+      any,
+      {}
+    >,
+    res: any
+  ) {
+    const consolidationKey = req.params.consolidation_key;
+    fetchMemesAggregatedActivityForConsolidationKey(consolidationKey).then(
+      (result) => {
+        if (result) {
+          return returnJsonResult(result, req, res);
+        } else {
+          return res.status(404).send({});
+        }
+      }
+    );
+  }
+);
+
+router.get(
+  '/wallet/:wallet',
+  function (
+    req: Request<
+      {
+        wallet: string;
+      },
+      any,
+      any,
+      {}
+    >,
+    res: any
+  ) {
+    const wallet = req.params.wallet;
+
+    fetchAggregatedActivityForWallet(wallet).then((result) => {
+      if (result) {
+        return returnJsonResult(result, req, res);
+      } else {
+        return res.status(404).send({});
+      }
+    });
+  }
+);
+
+router.get(
+  '/wallet/:wallet/memes',
+  function (
+    req: Request<
+      {
+        wallet: string;
+      },
+      any,
+      any,
+      {}
+    >,
+    res: any
+  ) {
+    const wallet = req.params.wallet;
+
+    fetchMemesAggregatedActivityForWallet(wallet).then((result) => {
+      if (result) {
+        return returnJsonResult(result, req, res);
+      } else {
+        return res.status(404).send({});
+      }
     });
   }
 );

@@ -757,22 +757,7 @@ export async function calculateRanks(
   ADJUSTED_NFTS: any[],
   NEXTGEN_NFTS: NextGenToken[]
 ) {
-  const sortedGradientsTdh = allGradientsTDH
-    .sort((a, b) => {
-      if (a.tdh > b.tdh) {
-        return -1;
-      } else if (a.tdh < b.tdh) {
-        return 1;
-      } else {
-        return a.id > b.id ? 1 : -1;
-      }
-    })
-    .map((a, index) => {
-      a.rank = index + 1;
-      return a;
-    });
-
-  const sortedNextgenTdh = allNextgenTDH.sort((a, b) => {
+  allGradientsTDH.sort((a, b) => {
     if (a.tdh > b.tdh) {
       return -1;
     } else if (a.tdh < b.tdh) {
@@ -782,7 +767,22 @@ export async function calculateRanks(
     }
   });
 
-  const rankedNextgenTdh = sortedNextgenTdh.map((a, index) => {
+  const rankedGradientsTdh = allGradientsTDH.map((a, index) => {
+    a.rank = index + 1;
+    return a;
+  });
+
+  allNextgenTDH.sort((a, b) => {
+    if (a.tdh > b.tdh) {
+      return -1;
+    } else if (a.tdh < b.tdh) {
+      return 1;
+    } else {
+      return a.id > b.id ? 1 : -1;
+    }
+  });
+
+  const rankedNextgenTdh = allNextgenTDH.map((a, index) => {
     a.rank = index + 1;
     return a;
   });
@@ -828,7 +828,7 @@ export async function calculateRanks(
           if (gradient) {
             w.gradients_ranks.push({
               id: nft.id,
-              rank: sortedGradientsTdh.find((s) => s.id == nft.id)?.rank
+              rank: rankedGradientsTdh.find((s) => s.id == nft.id)?.rank
             });
           }
           return w;
@@ -876,82 +876,78 @@ export async function calculateRanks(
       });
   });
 
-  boostedTDH
-    .sort((a: TDH, b: TDH) => {
-      if (a.boosted_tdh > b.boosted_tdh) return -1;
-      else if (a.boosted_tdh < b.boosted_tdh) return 1;
-      else if (a.tdh > b.tdh) return -1;
-      else if (a.tdh < b.tdh) return 1;
-      else if (a.gradients_tdh > b.gradients_tdh) return -1;
-      else if (a.gradients_tdh < b.gradients_tdh) return 1;
-      else if (a.nextgen_tdh > b.nextgen_tdh) return -1;
-      else if (a.nextgen_tdh < b.nextgen_tdh) return 1;
-      else return -1;
-    })
-    .map((w, index) => {
-      w.tdh_rank = index + 1;
-      return w;
-    });
+  boostedTDH.sort((a: TDH, b: TDH) => {
+    if (a.boosted_tdh > b.boosted_tdh) return -1;
+    else if (a.boosted_tdh < b.boosted_tdh) return 1;
+    else if (a.tdh > b.tdh) return -1;
+    else if (a.tdh < b.tdh) return 1;
+    else if (a.gradients_tdh > b.gradients_tdh) return -1;
+    else if (a.gradients_tdh < b.gradients_tdh) return 1;
+    else if (a.nextgen_tdh > b.nextgen_tdh) return -1;
+    else if (a.nextgen_tdh < b.nextgen_tdh) return 1;
+    else return -1;
+  });
+  boostedTDH = boostedTDH.map((w, index) => {
+    w.tdh_rank = index + 1;
+    return w;
+  });
 
-  boostedTDH
-    .sort((a: TDH, b: TDH) => {
-      if (a.boosted_memes_tdh > b.boosted_memes_tdh) return -1;
-      else if (a.boosted_memes_tdh < b.boosted_memes_tdh) return 1;
-      else if (a.memes_tdh > b.memes_tdh) return -1;
-      else if (a.memes_tdh < b.memes_tdh) return 1;
-      else if (a.memes_balance > b.memes_balance) return -1;
-      else if (a.memes_balance < b.memes_balance) return 1;
-      else if (a.balance > b.balance) return -1;
-      else return -1;
-    })
-    .map((w, index) => {
-      if (w.boosted_memes_tdh > 0) {
-        w.tdh_rank_memes = index + 1;
-      } else {
-        w.tdh_rank_memes = -1;
-      }
-      return w;
-    });
+  boostedTDH.sort((a: TDH, b: TDH) => {
+    if (a.boosted_memes_tdh > b.boosted_memes_tdh) return -1;
+    else if (a.boosted_memes_tdh < b.boosted_memes_tdh) return 1;
+    else if (a.memes_tdh > b.memes_tdh) return -1;
+    else if (a.memes_tdh < b.memes_tdh) return 1;
+    else if (a.memes_balance > b.memes_balance) return -1;
+    else if (a.memes_balance < b.memes_balance) return 1;
+    else if (a.balance > b.balance) return -1;
+    else return -1;
+  });
+  boostedTDH = boostedTDH.map((w, index) => {
+    if (w.boosted_memes_tdh > 0) {
+      w.tdh_rank_memes = index + 1;
+    } else {
+      w.tdh_rank_memes = -1;
+    }
+    return w;
+  });
 
-  boostedTDH
-    .sort((a: TDH, b: TDH) => {
-      if (a.boosted_gradients_tdh > b.boosted_gradients_tdh) return -1;
-      else if (a.boosted_gradients_tdh < b.boosted_gradients_tdh) return 1;
-      else if (a.gradients_tdh > b.gradients_tdh) return -1;
-      else if (a.gradients_tdh < b.gradients_tdh) return 1;
-      else if (a.gradients_balance > b.gradients_balance) return -1;
-      else if (a.gradients_balance < b.gradients_balance) return 1;
-      else if (a.balance > b.balance) return -1;
-      else return -1;
-    })
-    .map((w, index) => {
-      if (w.boosted_gradients_tdh > 0) {
-        w.tdh_rank_gradients = index + 1;
-      } else {
-        w.tdh_rank_gradients = -1;
-      }
-      return w;
-    });
+  boostedTDH.sort((a: TDH, b: TDH) => {
+    if (a.boosted_gradients_tdh > b.boosted_gradients_tdh) return -1;
+    else if (a.boosted_gradients_tdh < b.boosted_gradients_tdh) return 1;
+    else if (a.gradients_tdh > b.gradients_tdh) return -1;
+    else if (a.gradients_tdh < b.gradients_tdh) return 1;
+    else if (a.gradients_balance > b.gradients_balance) return -1;
+    else if (a.gradients_balance < b.gradients_balance) return 1;
+    else if (a.balance > b.balance) return -1;
+    else return -1;
+  });
+  boostedTDH = boostedTDH.map((w, index) => {
+    if (w.boosted_gradients_tdh > 0) {
+      w.tdh_rank_gradients = index + 1;
+    } else {
+      w.tdh_rank_gradients = -1;
+    }
+    return w;
+  });
 
-  boostedTDH
-    .sort((a: TDH, b: TDH) => {
-      if (a.boosted_nextgen_tdh > b.boosted_nextgen_tdh) return -1;
-      else if (a.boosted_nextgen_tdh < b.boosted_nextgen_tdh) return 1;
-      else if (a.nextgen_tdh > b.nextgen_tdh) return -1;
-      else if (a.nextgen_tdh < b.nextgen_tdh) return 1;
-      else if (a.nextgen_balance > b.nextgen_balance) return -1;
-      else if (a.nextgen_balance < b.nextgen_balance) return 1;
-      else if (a.balance > b.balance) return -1;
-      else return -1;
-    })
-    .map((w, index) => {
-      if (w.boosted_nextgen_tdh > 0) {
-        w.tdh_rank_nextgen = index + 1;
-      } else {
-        w.tdh_rank_nextgen = -1;
-      }
-      return w;
-    });
+  boostedTDH.sort((a: TDH, b: TDH) => {
+    if (a.boosted_nextgen_tdh > b.boosted_nextgen_tdh) return -1;
+    else if (a.boosted_nextgen_tdh < b.boosted_nextgen_tdh) return 1;
+    else if (a.nextgen_tdh > b.nextgen_tdh) return -1;
+    else if (a.nextgen_tdh < b.nextgen_tdh) return 1;
+    else if (a.nextgen_balance > b.nextgen_balance) return -1;
+    else if (a.nextgen_balance < b.nextgen_balance) return 1;
+    else if (a.balance > b.balance) return -1;
+    else return -1;
+  });
+  boostedTDH = boostedTDH.map((w, index) => {
+    if (w.boosted_nextgen_tdh > 0) {
+      w.tdh_rank_nextgen = index + 1;
+    } else {
+      w.tdh_rank_nextgen = -1;
+    }
+    return w;
+  });
 
   return boostedTDH;
 }

@@ -3,7 +3,6 @@ import { getLastTDH } from '../helpers';
 import { findNftTDH } from './nft_tdh';
 import { findTDH } from './tdh';
 import { consolidateTDH } from './tdh_consolidation';
-// import { uploadConsolidatedTDH, uploadTDH } from '../tdh_upload';
 import { loadEnv, unload } from '../secrets';
 import { ConsolidatedTDHUpload } from '../entities/IUpload';
 import {
@@ -25,6 +24,11 @@ import { NextGenTokenTDH } from '../entities/INextGen';
 import { MemesSeason } from '../entities/ISeason';
 import { NFTOwner } from '../entities/INFTOwner';
 import { CommunityMember } from '../entities/ICommunityMember';
+import { uploadTDH } from './tdh_upload';
+import {
+  ConsolidatedOwnerBalances,
+  OwnerBalances
+} from '../entities/IOwnerBalances';
 
 const logger = Logger.get('TDH_LOOP');
 
@@ -43,7 +47,9 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     CommunityMember,
     MemesSeason,
     NFTOwner,
-    NftTDH
+    NftTDH,
+    OwnerBalances,
+    ConsolidatedOwnerBalances
   ]);
   const force = process.env.TDH_RESET == 'true';
   logger.info(`[RUNNING force=${force}]`);
@@ -55,8 +61,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 export async function tdhLoop(force?: boolean) {
   await tdh(force);
   await findNftTDH();
-  // await uploadTDH(force);
-  // await uploadConsolidatedTDH(force);
+  await uploadTDH(false, force);
+  await uploadTDH(true, force);
   await notifier.notifyTdhCalculationsDone();
 }
 

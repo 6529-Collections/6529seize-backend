@@ -110,9 +110,16 @@ export const findNftTDH = async () => {
     });
   });
 
-  nftTDH
-    .sort((a, b) => (a.tdh > b.tdh ? -1 : a.tdh > 0 ? 1 : -1))
-    .forEach((n, index) => (n.tdh_rank = index + 1));
+  nftTDH.sort((a, b) => {
+    if (a.tdh > b.tdh) {
+      return -1;
+    }
+    if (a.tdh > 0) {
+      return 1;
+    }
+    return -1;
+  });
+  nftTDH.forEach((n, index) => (n.tdh_rank = index + 1));
 
   await persistNFTs(nftTDH);
   await persistNextGenTokenTDH(nextgenTdh);

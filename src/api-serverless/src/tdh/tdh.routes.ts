@@ -1,15 +1,26 @@
-import { Request, Response } from 'express';
+import { Request } from 'express';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 import {
   MetricsCollector,
   MetricsContent,
   fetchConsolidatedMetrics,
-  fetchNftTdh
+  fetchNftTdh,
+  fetchSingleTDH
 } from './tdh.db';
-import { DEFAULT_PAGE_SIZE } from 'src/page-request';
-import { resolveSortDirection, returnPaginatedResult } from 'src/api-helpers';
+import { DEFAULT_PAGE_SIZE } from '../page-request';
+import {
+  resolveSortDirection,
+  returnCSVResult,
+  returnJsonResult,
+  returnPaginatedResult
+} from '../api-helpers';
 import { resolveEnum } from '../../../helpers';
+import { parseTdhDataFromDB } from '../../../sql_helpers';
+import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  WALLETS_TDH_TABLE
+} from '../../../constants';
 
 const router = asyncRouter();
 
@@ -57,8 +68,8 @@ router.get(
   ) {
     const contract = req.params.contract;
     const nftId = req.params.nft_id;
-    const page = req.query.page || 1;
-    const pageSize = req.query.page_size || DEFAULT_PAGE_SIZE;
+    const page = req.query.page ?? 1;
+    const pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
     const sort =
       req.query.sort && NFT_TDH_SORT.includes(req.query.sort.toLowerCase())
         ? req.query.sort
@@ -88,12 +99,14 @@ router.get(
         content?: string;
         collector?: string;
         season?: number;
+        download_page?: boolean;
+        download_all?: boolean;
       }
     >,
     res: any
   ) {
-    const page = req.query.page || 1;
-    const pageSize = req.query.page_size || DEFAULT_PAGE_SIZE;
+    let page = req.query.page ?? 1;
+    let pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
     const sort =
       req.query.sort && METRICS_SORT.includes(req.query.sort.toLowerCase())
         ? req.query.sort
@@ -104,20 +117,83 @@ router.get(
     const season = req.query.season;
     const collector = resolveEnum(MetricsCollector, req.query.collector);
 
-    fetchConsolidatedMetrics(
-      sort,
-      sortDir,
-      page,
-      pageSize,
+    const downloadPage = req.query.download_page;
+    const downloadAll = req.query.download_all;
+    if (downloadAll) {
+      pageSize = Number.MAX_SAFE_INTEGER;
+      page = 1;
+    }
+
+    fetchConsolidatedMetrics(sort, sortDir, page, pageSize, {
       search,
       content,
       collector,
       season
-    ).then((result) => {
+    }).then(async (result) => {
       logger.info(
         `[CONSOLIDATED_TDH] : [FETCHED ${result.count} TDH] : [SORT ${sort}] : [SORT_DIRECTION ${sortDir}] : [PAGE ${page}] : [PAGE_SIZE ${pageSize}] `
       );
-      return returnPaginatedResult(result, req, res);
+      if (downloadAll || downloadPage) {
+        return returnCSVResult('consolidated_metrics', result.data, res);
+      } else {
+        return returnPaginatedResult(result, req, res);
+      }
+    });
+  }
+);
+
+router.get(
+  '/consolidation/:consolidation_key',
+  function (
+    req: Request<
+      {
+        consolidation_key: string;
+      },
+      any,
+      any,
+      {}
+    >,
+    res: any
+  ) {
+    const consolidationKey = req.params.consolidation_key;
+
+    fetchSingleTDH(
+      'consolidation_key',
+      consolidationKey,
+      CONSOLIDATED_WALLETS_TDH_TABLE
+    ).then((result) => {
+      if (result) {
+        const parsedResult = parseTdhDataFromDB(result);
+        return returnJsonResult(parsedResult, req, res);
+      } else {
+        return res.status(404).send({});
+      }
+    });
+  }
+);
+
+router.get(
+  '/wallet/:wallet',
+  function (
+    req: Request<
+      {
+        wallet: string;
+      },
+      any,
+      any,
+      {}
+    >,
+    res: any
+  ) {
+    const wallet = req.params.wallet;
+
+    fetchSingleTDH('wallet', wallet, WALLETS_TDH_TABLE).then((result) => {
+      if (result) {
+        const parsedResult = parseTdhDataFromDB(result);
+        return returnJsonResult(parsedResult, req, res);
+      } else {
+        return res.status(404).send({});
+      }
     });
   }
 );

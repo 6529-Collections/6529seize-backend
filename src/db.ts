@@ -373,10 +373,7 @@ export async function fetchAllTDH(wallets?: string[]) {
     sql += `AND ${WALLETS_TDH_TABLE}.wallet IN (:wallets)`;
   }
   const results = await sqlExecutor.execute(sql, { block: tdhBlock, wallets });
-  results.map((r: any) => (r.memes = JSON.parse(r.memes)));
-  results.map((r: any) => (r.gradients = JSON.parse(r.gradients)));
-  results.map((r: any) => (r.nextgen = JSON.parse(r.nextgen)));
-  return results;
+  return results.map(parseTdhDataFromDB);
 }
 
 export async function fetchConsolidationDisplay(

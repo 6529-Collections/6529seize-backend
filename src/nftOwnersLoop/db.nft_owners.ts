@@ -6,8 +6,7 @@ import { EntityTarget } from 'typeorm';
 import {
   deleteConsolidations,
   insertWithoutUpdate,
-  resetRepository,
-  upsertRepository
+  resetRepository
 } from '../orm_helpers';
 
 const logger = Logger.get('DB_NFT_OWNERS');

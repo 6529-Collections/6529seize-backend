@@ -28,7 +28,7 @@ const fetch = (url: RequestInfo, init?: RequestInit) =>
 export const handler = sentryContext.wrapLambdaHandler(
   async (event?: any, context?: any) => {
     await loadEnv([TDHHistory, GlobalTDHHistory]);
-    const iterations = parseInt(process.env.TDH_HISTORY_ITERATIONS || '1');
+    const iterations = parseInt(process.env.TDH_HISTORY_ITERATIONS ?? '1');
     logger.info(`[RUNNING] [ITERATIONS ${iterations}]`);
     await tdhHistoryLoop(iterations);
     await unload();
@@ -73,28 +73,41 @@ async function fetchUploads(date: string): Promise<
   return json.data;
 }
 
-async function fetchAndParseCSV(url: string): Promise<ConsolidatedTDH[]> {
-  try {
-    const response = await axios.get(url);
-    const csvData: any[] = [];
+async function fetchAndParseCSV(url: string): Promise<any[]> {
+  const response = await axios.get(url);
+  const csvData: any[] = [];
 
-    return new Promise((resolve, reject) => {
-      const readableStream = Readable.from(response.data);
-      readableStream
-        .pipe(csvParser())
-        .on('data', (row: any) => {
-          csvData.push(row);
-        })
-        .on('end', () => {
-          resolve(csvData);
-        })
-        .on('error', (error: any) => {
-          reject(error);
-        });
-    });
-  } catch (error) {
-    throw error;
-  }
+  return new Promise((resolve, reject) => {
+    const readableStream = Readable.from(response.data);
+    readableStream
+      .pipe(csvParser())
+      .on('data', (row: any) => {
+        csvData.push(row);
+      })
+      .on('end', () => {
+        resolve(csvData);
+      })
+      .on('error', (error: any) => {
+        reject(error);
+      });
+  });
+}
+
+function matchesConsolidationKey(d: any, yd: any) {
+  return (
+    areEqualAddresses(d.consolidation_key, yd.consolidation_key) ||
+    areEqualAddresses(
+      d.consolidation_key,
+      buildConsolidationKey(JSON.parse(yd.wallets))
+    )
+  );
+}
+
+function hasMatchingWallet(d: any, yd: any) {
+  const ydWallets = JSON.parse(yd.wallets);
+  return d.wallets.some((dw: string) =>
+    ydWallets.some((yw: string) => areEqualAddresses(dw, yw))
+  );
 }
 
 async function tdhHistory(date: Date) {
@@ -120,28 +133,12 @@ async function tdhHistory(date: Date) {
   todayData.forEach((d) => {
     d.memes = JSON.parse(d.memes);
     d.gradients = JSON.parse(d.gradients);
+    d.nextgen = JSON.parse(d.nextgen);
     d.wallets = JSON.parse(d.wallets);
     d.consolidation_key = buildConsolidationKey(d.wallets);
 
-    let tdhCreated = 0;
-    let tdhDestroyed = 0;
-    let boostedTdhCreated = 0;
-    let boostedTdhDestroyed = 0;
-    let rawTdhCreated = 0;
-    let rawTdhDestroyed = 0;
-    let balanceCreated = 0;
-    let balanceDestroyed = 0;
-
     const yesterdayTdh = yesterdayData.filter(
-      (yd) =>
-        areEqualAddresses(d.consolidation_key, yd.consolidation_key) ||
-        areEqualAddresses(
-          d.consolidation_key,
-          buildConsolidationKey(JSON.parse(yd.wallets))
-        ) ||
-        d.wallets.some((dw: string) =>
-          JSON.parse(yd.wallets).some((yw: string) => areEqualAddresses(dw, yw))
-        )
+      (yd) => matchesConsolidationKey(d, yd) || hasMatchingWallet(d, yd)
     );
 
     if (yesterdayTdh.length > 0) {
@@ -158,97 +155,42 @@ async function tdhHistory(date: Date) {
       });
     }
 
-    d.memes.map((m: TokenTDH) => {
-      const existing: any[] = [];
-      if (yesterdayTdh) {
-        yesterdayTdh.forEach((y) => {
-          const e = y.memes.find((em: TokenTDH) => em.id == m.id);
-          if (e) {
-            existing.push({
-              ...e,
-              boosted_tdh: e.tdh * y.boost
-            });
-          }
-        });
-      }
+    const memesResult = processTokenTDHArray(d.memes, yesterdayTdh);
+    const gradientsResult = processTokenTDHArray(d.gradients, yesterdayTdh);
+    const nextgenResult = processTokenTDHArray(d.nextgen, yesterdayTdh);
 
-      const previousTdh = {
-        id: m.id,
-        boosted_tdh: 0,
-        tdh: 0,
-        tdh__raw: 0,
-        balance: 0
-      };
-
-      if (existing) {
-        existing.forEach((e) => {
-          previousTdh.boosted_tdh += e.boosted_tdh;
-          previousTdh.tdh += e.tdh;
-          previousTdh.tdh__raw += e.tdh__raw;
-          previousTdh.balance += e.balance;
-        });
-      }
-
-      const change = m.tdh - previousTdh.tdh;
-
-      if (change > 0) {
-        tdhCreated += m.tdh - previousTdh.tdh;
-        rawTdhCreated += m.tdh__raw - previousTdh.tdh__raw;
-        boostedTdhCreated += m.tdh * d.boost - previousTdh.boosted_tdh;
-        balanceCreated += m.balance - previousTdh.balance;
-      } else {
-        tdhDestroyed += previousTdh.tdh - m.tdh;
-        rawTdhDestroyed += previousTdh.tdh__raw - m.tdh__raw;
-        boostedTdhDestroyed += previousTdh.boosted_tdh - m.tdh * d.boost;
-        balanceDestroyed += previousTdh.balance - m.balance;
-      }
-    });
-
-    d.gradients.map((m: TokenTDH) => {
-      const existing: any[] = [];
-      if (yesterdayTdh) {
-        yesterdayTdh.forEach((y) => {
-          const e = y.gradients.find((em: TokenTDH) => em.id == m.id);
-          if (e) {
-            existing.push({
-              ...e,
-              boosted_tdh: e.tdh * y.boost
-            });
-          }
-        });
-      }
-
-      const previousTdh = {
-        id: m.id,
-        boosted_tdh: 0,
-        tdh: 0,
-        tdh__raw: 0,
-        balance: 0
-      };
-
-      if (existing) {
-        existing.forEach((e) => {
-          previousTdh.boosted_tdh += e.boosted_tdh;
-          previousTdh.tdh += e.tdh;
-          previousTdh.tdh__raw += e.tdh__raw;
-          previousTdh.balance += e.balance;
-        });
-      }
-
-      const change = m.tdh - previousTdh.tdh;
-
-      if (change > 0) {
-        tdhCreated += m.tdh - previousTdh.tdh;
-        rawTdhCreated += m.tdh__raw - previousTdh.tdh__raw;
-        boostedTdhCreated += m.tdh * d.boost - previousTdh.boosted_tdh;
-        balanceCreated += m.balance - previousTdh.balance;
-      } else {
-        tdhDestroyed += previousTdh.tdh - m.tdh;
-        rawTdhDestroyed += previousTdh.tdh__raw - m.tdh__raw;
-        boostedTdhDestroyed += previousTdh.boosted_tdh - m.tdh * d.boost;
-        balanceDestroyed += previousTdh.balance - m.balance;
-      }
-    });
+    const tdhCreated =
+      memesResult.tdhCreated +
+      gradientsResult.tdhCreated +
+      nextgenResult.tdhCreated;
+    const tdhDestroyed =
+      memesResult.tdhDestroyed +
+      gradientsResult.tdhDestroyed +
+      nextgenResult.tdhDestroyed;
+    const rawTdhCreated =
+      memesResult.rawTdhCreated +
+      gradientsResult.rawTdhCreated +
+      nextgenResult.rawTdhCreated;
+    const rawTdhDestroyed =
+      memesResult.rawTdhDestroyed +
+      gradientsResult.rawTdhDestroyed +
+      nextgenResult.rawTdhDestroyed;
+    const boostedTdhCreated =
+      memesResult.boostedTdhCreated +
+      gradientsResult.boostedTdhCreated +
+      nextgenResult.boostedTdhCreated;
+    const boostedTdhDestroyed =
+      memesResult.boostedTdhDestroyed +
+      gradientsResult.boostedTdhDestroyed +
+      nextgenResult.boostedTdhDestroyed;
+    const balanceCreated =
+      memesResult.balanceCreated +
+      gradientsResult.balanceCreated +
+      nextgenResult.balanceCreated;
+    const balanceDestroyed =
+      memesResult.balanceDestroyed +
+      gradientsResult.balanceDestroyed +
+      nextgenResult.balanceDestroyed;
 
     const tdhNet = tdhCreated - tdhDestroyed;
     const rawTdhNet = rawTdhCreated - rawTdhDestroyed;
@@ -290,10 +232,10 @@ async function tdhHistory(date: Date) {
         } TDH]`
       );
 
-      const ydtdhRaw = parseFloat(yd.tdh__raw as any);
-      const ydtdh = parseFloat(yd.tdh as any);
-      const ydboostedTdh = parseFloat(yd.boosted_tdh as any);
-      const ydbalance = parseFloat(yd.balance as any);
+      const ydtdhRaw = parseFloat(yd.tdh__raw);
+      const ydtdh = parseFloat(yd.tdh);
+      const ydboostedTdh = parseFloat(yd.boosted_tdh);
+      const ydbalance = parseFloat(yd.balance);
 
       const tdhH: TDHHistory = {
         date: date,
@@ -440,4 +382,94 @@ async function calculateGlobalTDHHistory(
   };
 
   await persistGlobalTDHHistory(globalHistory);
+}
+
+function processTokenTDHArray(tokens: TokenTDH[], yesterdayTdh: any) {
+  return tokens.reduce(
+    (acc, token) => {
+      const change = calculateChange(yesterdayTdh, token, token);
+      acc.tdhCreated += change.tdhCreated;
+      acc.tdhDestroyed += change.tdhDestroyed;
+      acc.boostedTdhCreated += change.boostedTdhCreated;
+      acc.boostedTdhDestroyed += change.boostedTdhDestroyed;
+      acc.rawTdhCreated += change.rawTdhCreated;
+      acc.rawTdhDestroyed += change.rawTdhDestroyed;
+      acc.balanceCreated += change.balanceCreated;
+      acc.balanceDestroyed += change.balanceDestroyed;
+      return acc;
+    },
+    {
+      tdhCreated: 0,
+      tdhDestroyed: 0,
+      boostedTdhCreated: 0,
+      boostedTdhDestroyed: 0,
+      rawTdhCreated: 0,
+      rawTdhDestroyed: 0,
+      balanceCreated: 0,
+      balanceDestroyed: 0
+    }
+  );
+}
+
+function calculateChange(yesterdayTdh: any[], m: TokenTDH, d: any) {
+  const existing: any[] = [];
+  if (yesterdayTdh) {
+    yesterdayTdh.forEach((y) => {
+      const e = y.memes.find((em: TokenTDH) => em.id == m.id);
+      if (e) {
+        existing.push({
+          ...e,
+          boosted_tdh: e.tdh * y.boost
+        });
+      }
+    });
+  }
+
+  const previousTdh = {
+    id: m.id,
+    boosted_tdh: 0,
+    tdh: 0,
+    tdh__raw: 0,
+    balance: 0
+  };
+
+  if (existing) {
+    existing.forEach((e) => {
+      previousTdh.boosted_tdh += e.boosted_tdh;
+      previousTdh.tdh += e.tdh;
+      previousTdh.tdh__raw += e.tdh__raw;
+      previousTdh.balance += e.balance;
+    });
+  }
+
+  const change = m.tdh - previousTdh.tdh;
+  let tdhCreated = 0;
+  let tdhDestroyed = 0;
+  let boostedTdhCreated = 0;
+  let boostedTdhDestroyed = 0;
+  let rawTdhCreated = 0;
+  let rawTdhDestroyed = 0;
+  let balanceCreated = 0;
+  let balanceDestroyed = 0;
+  if (change > 0) {
+    tdhCreated += m.tdh - previousTdh.tdh;
+    rawTdhCreated += m.tdh__raw - previousTdh.tdh__raw;
+    boostedTdhCreated += m.tdh * d.boost - previousTdh.boosted_tdh;
+    balanceCreated += m.balance - previousTdh.balance;
+  } else {
+    tdhDestroyed += previousTdh.tdh - m.tdh;
+    rawTdhDestroyed += previousTdh.tdh__raw - m.tdh__raw;
+    boostedTdhDestroyed += previousTdh.boosted_tdh - m.tdh * d.boost;
+    balanceDestroyed += previousTdh.balance - m.balance;
+  }
+  return {
+    tdhCreated,
+    tdhDestroyed,
+    boostedTdhCreated,
+    boostedTdhDestroyed,
+    rawTdhCreated,
+    rawTdhDestroyed,
+    balanceCreated,
+    balanceDestroyed
+  };
 }
