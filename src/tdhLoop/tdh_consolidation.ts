@@ -5,7 +5,6 @@ import {
 } from '../entities/ITDH';
 import {
   fetchAllConsolidatedTdh,
-  fetchAllNFTs,
   fetchAllTDH,
   fetchConsolidationDisplay,
   fetchLatestTDHBlockNumber,

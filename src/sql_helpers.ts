@@ -1,10 +1,4 @@
-import {
-  MEMES_CONTRACT,
-  GRADIENT_CONTRACT,
-  CONSOLIDATIONS_TABLE
-} from './constants';
-
-const mysql = require('mysql');
+import { CONSOLIDATIONS_TABLE } from './constants';
 
 export function getConsolidationsSql() {
   const sql = `SELECT * FROM ${CONSOLIDATIONS_TABLE} 
