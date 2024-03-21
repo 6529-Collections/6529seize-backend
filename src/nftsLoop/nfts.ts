@@ -154,7 +154,7 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
         transactions.reduce(
           (acc, t) => {
             if (
-              t.token_id === tokenId &&
+              t.token_id == tokenId &&
               areEqualAddresses(t.contract, MEMES_CONTRACT)
             ) {
               if (areEqualAddresses(NULL_ADDRESS, t.from_address))
@@ -288,7 +288,7 @@ async function processGradients(
 
     const createdTransactions = transactions.filter(
       (t) =>
-        t.token_id === tokenId &&
+        t.token_id == tokenId &&
         areEqualAddresses(t.contract, GRADIENT_CONTRACT) &&
         areEqualAddresses(NULL_ADDRESS, t.from_address)
     );
