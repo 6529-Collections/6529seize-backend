@@ -12,7 +12,7 @@ import {
 } from '../../../constants';
 import { fetchPaginated } from '../../../db-api';
 import { calculateLevel } from '../../../profiles/profile-level';
-import { MetricsCollector, MetricsContent } from 'src/tdh/tdh.db';
+import { MetricsCollector, MetricsContent } from '../tdh/tdh.db';
 import { sqlExecutor } from '../../../sql-executor';
 
 export const fetchAggregatedActivity = async (
@@ -20,10 +20,10 @@ export const fetchAggregatedActivity = async (
   sortDir: string,
   page: number,
   pageSize: number,
-  searchStr: string,
-  content: MetricsContent,
-  collector: MetricsCollector,
-  season: number
+  searchStr: string | undefined,
+  content: MetricsContent | undefined,
+  collector: MetricsCollector | undefined,
+  season: number | undefined
 ) => {
   let filters = constructFilters(
     '',

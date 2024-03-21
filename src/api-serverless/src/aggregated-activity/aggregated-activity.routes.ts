@@ -2,13 +2,13 @@ import { Request } from 'express';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 
-import { DEFAULT_PAGE_SIZE } from 'src/page-request';
+import { DEFAULT_PAGE_SIZE } from '../page-request';
 import {
   resolveSortDirection,
   returnJsonResult,
   returnPaginatedResult
-} from 'src/api-helpers';
-import { MetricsContent, MetricsCollector } from 'src/tdh/tdh.db';
+} from '../api-helpers';
+import { MetricsContent, MetricsCollector } from '../tdh/tdh.db';
 import { resolveEnum } from '../../../helpers';
 import {
   fetchAggregatedActivity,
@@ -57,8 +57,8 @@ router.get(
     >,
     res: any
   ) {
-    const page = req.query.page || 1;
-    const pageSize = req.query.page_size || DEFAULT_PAGE_SIZE;
+    const page = req.query.page ?? 1;
+    const pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
     const sort =
       req.query.sort &&
       AGGREGATED_ACTIVITY_SORT.includes(req.query.sort.toLowerCase())

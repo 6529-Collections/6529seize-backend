@@ -2,7 +2,7 @@ import { Request } from 'express';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 
-import { returnJsonResult } from 'src/api-helpers';
+import { returnJsonResult } from '../api-helpers';
 import {
   fetchMemesOwnerBalancesForConsolidationKey,
   fetchMemesOwnerBalancesForWallet,

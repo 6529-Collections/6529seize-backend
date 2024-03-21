@@ -42,7 +42,7 @@ export const fetchNftTdh = async (
   sortDir: string,
   page: number,
   pageSize: number,
-  searchStr: string
+  searchStr: string | undefined
 ) => {
   let filters = constructFilters('', `contract = :contract`);
   filters = constructFilters(filters, `id = :nftId`);
@@ -107,10 +107,10 @@ export const fetchConsolidatedMetrics = async (
   sortDir: string,
   page: number,
   pageSize: number,
-  searchStr: string,
-  content: MetricsContent,
-  collector: MetricsCollector,
-  season: number
+  searchStr: string | undefined,
+  content: MetricsContent | undefined,
+  collector: MetricsCollector | undefined,
+  season: number | undefined
 ) => {
   let filters = '';
   const params: any = {};

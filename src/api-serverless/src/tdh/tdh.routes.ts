@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { Request } from 'express';
 import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 import {
@@ -8,12 +8,12 @@ import {
   fetchNftTdh,
   fetchSingleTDH
 } from './tdh.db';
-import { DEFAULT_PAGE_SIZE } from 'src/page-request';
+import { DEFAULT_PAGE_SIZE } from '../page-request';
 import {
   resolveSortDirection,
   returnJsonResult,
   returnPaginatedResult
-} from 'src/api-helpers';
+} from '../api-helpers';
 import { resolveEnum } from '../../../helpers';
 import { parseTdhDataFromDB } from '../../../sql_helpers';
 import {
@@ -67,8 +67,8 @@ router.get(
   ) {
     const contract = req.params.contract;
     const nftId = req.params.nft_id;
-    const page = req.query.page || 1;
-    const pageSize = req.query.page_size || DEFAULT_PAGE_SIZE;
+    const page = req.query.page ?? 1;
+    const pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
     const sort =
       req.query.sort && NFT_TDH_SORT.includes(req.query.sort.toLowerCase())
         ? req.query.sort
@@ -102,8 +102,8 @@ router.get(
     >,
     res: any
   ) {
-    const page = req.query.page || 1;
-    const pageSize = req.query.page_size || DEFAULT_PAGE_SIZE;
+    const page = req.query.page ?? 1;
+    const pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
     const sort =
       req.query.sort && METRICS_SORT.includes(req.query.sort.toLowerCase())
         ? req.query.sort

@@ -74,27 +74,23 @@ async function fetchUploads(date: string): Promise<
 }
 
 async function fetchAndParseCSV(url: string): Promise<any[]> {
-  try {
-    const response = await axios.get(url);
-    const csvData: any[] = [];
+  const response = await axios.get(url);
+  const csvData: any[] = [];
 
-    return new Promise((resolve, reject) => {
-      const readableStream = Readable.from(response.data);
-      readableStream
-        .pipe(csvParser())
-        .on('data', (row: any) => {
-          csvData.push(row);
-        })
-        .on('end', () => {
-          resolve(csvData);
-        })
-        .on('error', (error: any) => {
-          reject(error);
-        });
-    });
-  } catch (error) {
-    throw error;
-  }
+  return new Promise((resolve, reject) => {
+    const readableStream = Readable.from(response.data);
+    readableStream
+      .pipe(csvParser())
+      .on('data', (row: any) => {
+        csvData.push(row);
+      })
+      .on('end', () => {
+        resolve(csvData);
+      })
+      .on('error', (error: any) => {
+        reject(error);
+      });
+  });
 }
 
 async function tdhHistory(date: Date) {

@@ -1,4 +1,4 @@
-import { constructFilters } from 'src/api-helpers';
+import { constructFilters } from '../api-helpers';
 import {
   CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE,
   CONSOLIDATED_OWNERS_BALANCES_TABLE,
