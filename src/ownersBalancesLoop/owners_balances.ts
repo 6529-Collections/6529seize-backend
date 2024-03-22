@@ -59,7 +59,7 @@ interface MemesBalancesFields {
   sets: number;
 }
 
-export const findOwnerBalances = async (reset?: boolean) => {
+export const updateOwnerBalances = async (reset?: boolean) => {
   const lastBalancesBlock = await getMaxOwnerBalancesBlockReference();
 
   reset = reset || lastBalancesBlock === 0;

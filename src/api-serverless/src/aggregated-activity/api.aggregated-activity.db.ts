@@ -12,7 +12,7 @@ import {
 } from '../../../constants';
 import { fetchPaginated } from '../../../db-api';
 import { calculateLevel } from '../../../profiles/profile-level';
-import { MetricsCollector, MetricsContent } from '../tdh/tdh.db';
+import { MetricsCollector, MetricsContent } from '../tdh/api.tdh.db';
 import { sqlExecutor } from '../../../sql-executor';
 
 function getSearchFilters(search: string) {
@@ -41,56 +41,51 @@ function getCollectorFilters(
   switch (collector) {
     case MetricsCollector.MEMES:
       if (season) {
-        filters = constructFilters(
+        return constructFilters(
           filters,
           `${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.balance > 0`
         );
       } else {
-        filters = constructFilters(
+        return constructFilters(
           filters,
           `${CONSOLIDATED_OWNERS_BALANCES_TABLE}.memes_balance > 0`
         );
       }
-      break;
     case MetricsCollector.MEMES_SETS:
       if (season) {
-        filters = constructFilters(
+        return constructFilters(
           filters,
           `${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.sets > 0`
         );
       } else {
-        filters = constructFilters(
+        return constructFilters(
           filters,
           `${CONSOLIDATED_OWNERS_BALANCES_TABLE}.memes_cards_sets > 0`
         );
       }
-      break;
     case MetricsCollector.GENESIS:
-      filters = constructFilters(
+      return constructFilters(
         filters,
         `${CONSOLIDATED_OWNERS_BALANCES_TABLE}.genesis > 0`
       );
-      break;
     case MetricsCollector.GRADIENTS:
-      filters = constructFilters(
+      return constructFilters(
         filters,
         `${CONSOLIDATED_OWNERS_BALANCES_TABLE}.gradients_balance > 0`
       );
-      break;
     case MetricsCollector.MEMELAB:
-      filters = constructFilters(
+      return constructFilters(
         filters,
         `${CONSOLIDATED_OWNERS_BALANCES_TABLE}.memelab_balance > 0`
       );
-      break;
     case MetricsCollector.NEXTGEN:
-      filters = constructFilters(
+      return constructFilters(
         filters,
         `${CONSOLIDATED_OWNERS_BALANCES_TABLE}.nextgen_balance > 0`
       );
-      break;
+    default:
+      return filters;
   }
-  return filters;
 }
 
 export const fetchAggregatedActivity = async (

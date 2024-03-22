@@ -9,7 +9,7 @@ import {
   returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
-import { MetricsContent, MetricsCollector } from '../tdh/tdh.db';
+import { MetricsContent, MetricsCollector } from '../tdh/api.tdh.db';
 import { resolveEnum } from '../../../helpers';
 import {
   fetchAggregatedActivity,
@@ -17,11 +17,10 @@ import {
   fetchAggregatedActivityForWallet,
   fetchMemesAggregatedActivityForConsolidationKey,
   fetchMemesAggregatedActivityForWallet
-} from './aggregated-activity.db';
+} from './api.aggregated-activity.db';
+import { NotFoundException } from '../../../exceptions';
 
 const router = asyncRouter();
-
-const logger = Logger.get('AGGREGATED_ACTIVITY_API');
 
 export default router;
 
@@ -42,7 +41,7 @@ router.get(
   '/',
   function (
     req: Request<
-      {},
+      any,
       any,
       any,
       {
@@ -114,9 +113,10 @@ router.get(
       (result) => {
         if (result) {
           return returnJsonResult(result, req, res);
-        } else {
-          return res.status(404).send({});
         }
+        throw new NotFoundException(
+          `Consolidated Aggregated activity for ${consolidationKey} not found`
+        );
       }
     );
   }
@@ -140,9 +140,10 @@ router.get(
       (result) => {
         if (result) {
           return returnJsonResult(result, req, res);
-        } else {
-          return res.status(404).send({});
         }
+        throw new NotFoundException(
+          `Consolidated Memes Aggregated activity for ${consolidationKey} not found`
+        );
       }
     );
   }
@@ -166,9 +167,10 @@ router.get(
     fetchAggregatedActivityForWallet(wallet).then((result) => {
       if (result) {
         return returnJsonResult(result, req, res);
-      } else {
-        return res.status(404).send({});
       }
+      throw new NotFoundException(
+        `Wallet Aggregated activity for ${wallet} not found`
+      );
     });
   }
 );
@@ -191,9 +193,10 @@ router.get(
     fetchMemesAggregatedActivityForWallet(wallet).then((result) => {
       if (result) {
         return returnJsonResult(result, req, res);
-      } else {
-        return res.status(404).send({});
       }
+      throw new NotFoundException(
+        `Wallet Memes Aggregated activity for ${wallet} not found`
+      );
     });
   }
 );

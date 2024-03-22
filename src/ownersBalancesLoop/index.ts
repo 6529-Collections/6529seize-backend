@@ -1,4 +1,4 @@
-import { findOwnerBalances } from './owners_balances';
+import { updateOwnerBalances } from './owners_balances';
 import { loadEnv, unload } from '../secrets';
 import { Logger } from '../logging';
 import {
@@ -26,7 +26,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     OwnerBalancesMemes,
     ConsolidatedOwnerBalancesMemes
   ]);
-  await findOwnerBalances(process.env.OWNER_BALANCES_RESET == 'true');
+  await updateOwnerBalances(process.env.OWNER_BALANCES_RESET == 'true');
   await unload();
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);

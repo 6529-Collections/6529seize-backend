@@ -1,5 +1,4 @@
 import { Request } from 'express';
-import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 import {
   MetricsCollector,
@@ -7,7 +6,7 @@ import {
   fetchConsolidatedMetrics,
   fetchNftTdh,
   fetchSingleTDH
-} from './tdh.db';
+} from './api.tdh.db';
 import { DEFAULT_PAGE_SIZE } from '../page-request';
 import {
   resolveSortDirection,
@@ -21,10 +20,9 @@ import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   WALLETS_TDH_TABLE
 } from '../../../constants';
+import { NotFoundException } from '../../../exceptions';
 
 const router = asyncRouter();
-
-const logger = Logger.get('TDH_API');
 
 export default router;
 
@@ -87,7 +85,7 @@ router.get(
   `/consolidated_metrics`,
   function (
     req: Request<
-      {},
+      any,
       any,
       any,
       {
@@ -130,9 +128,6 @@ router.get(
       collector,
       season
     }).then(async (result) => {
-      logger.info(
-        `[CONSOLIDATED_TDH] : [FETCHED ${result.count} TDH] : [SORT ${sort}] : [SORT_DIRECTION ${sortDir}] : [PAGE ${page}] : [PAGE_SIZE ${pageSize}] `
-      );
       if (downloadAll || downloadPage) {
         return returnCSVResult('consolidated_metrics', result.data, res);
       } else {
@@ -165,9 +160,10 @@ router.get(
       if (result) {
         const parsedResult = parseTdhDataFromDB(result);
         return returnJsonResult(parsedResult, req, res);
-      } else {
-        return res.status(404).send({});
       }
+      throw new NotFoundException(
+        `Consolidated TDH for ${consolidationKey} not found`
+      );
     });
   }
 );
@@ -191,9 +187,8 @@ router.get(
       if (result) {
         const parsedResult = parseTdhDataFromDB(result);
         return returnJsonResult(parsedResult, req, res);
-      } else {
-        return res.status(404).send({});
       }
+      throw new NotFoundException(`Wallet TDH for ${wallet} not found`);
     });
   }
 );

@@ -25,7 +25,7 @@ import {
 
 const logger = Logger.get('NFT_OWNERS');
 
-export const findNftOwners = async (reset?: boolean) => {
+export const updateNftOwners = async (reset?: boolean) => {
   const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[getNextgenNetwork()];
 
   const allContracts = [

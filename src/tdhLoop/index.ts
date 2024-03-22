@@ -1,7 +1,7 @@
 import { fetchLatestTDHBDate } from '../db';
 import { getLastTDH } from '../helpers';
 import { findNftTDH } from './nft_tdh';
-import { findTDH } from './tdh';
+import { updateTDH } from './tdh';
 import { consolidateTDH } from './tdh_consolidation';
 import { loadEnv, unload } from '../secrets';
 import { ConsolidatedTDHUpload } from '../entities/IUpload';
@@ -73,7 +73,7 @@ async function tdh(force?: boolean) {
   const lastTdhFromNow = lastTdhDB.diffFromNow();
 
   if (lastTdhFromNow.gt(Time.hours(24)) || force) {
-    await findTDH(lastTDHCalc);
+    await updateTDH(lastTDHCalc);
     await consolidateTDH(lastTDHCalc);
   } else {
     logger.info(

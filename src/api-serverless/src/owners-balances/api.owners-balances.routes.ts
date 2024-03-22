@@ -8,11 +8,10 @@ import {
   fetchMemesOwnerBalancesForWallet,
   fetchOwnerBalancesForConsolidationKey,
   fetchOwnerBalancesForWallet
-} from './owners-balances.db';
+} from './api.owners-balances.db';
+import { NotFoundException } from '../../../exceptions';
 
 const router = asyncRouter();
-
-const logger = Logger.get('OWNERS_BALANCES_API');
 
 export default router;
 
@@ -34,9 +33,10 @@ router.get(
     fetchOwnerBalancesForConsolidationKey(consolidationKey).then((result) => {
       if (result) {
         return returnJsonResult(result, req, res);
-      } else {
-        return res.status(404).send({});
       }
+      throw new NotFoundException(
+        `Consolidation Owner Balance for ${consolidationKey} not found`
+      );
     });
   }
 );
@@ -60,9 +60,10 @@ router.get(
       (result) => {
         if (result) {
           return returnJsonResult(result, req, res);
-        } else {
-          return res.status(404).send({});
         }
+        throw new NotFoundException(
+          `Consolidation Memes Owner Balance for ${consolidationKey} not found`
+        );
       }
     );
   }
@@ -85,9 +86,10 @@ router.get(
     fetchOwnerBalancesForWallet(wallet).then((result) => {
       if (result) {
         return returnJsonResult(result, req, res);
-      } else {
-        return res.status(404).send({});
       }
+      throw new NotFoundException(
+        `Wallet Owner Balance for ${wallet} not found`
+      );
     });
   }
 );
@@ -110,9 +112,10 @@ router.get(
     fetchMemesOwnerBalancesForWallet(consolidationKey).then((result) => {
       if (result) {
         return returnJsonResult(result, req, res);
-      } else {
-        return res.status(404).send({});
       }
+      throw new NotFoundException(
+        `Wallet Memes Owner Balance for ${consolidationKey} not found`
+      );
     });
   }
 );
