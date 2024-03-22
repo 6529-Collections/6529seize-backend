@@ -321,7 +321,7 @@ input
   }
 
   private async formatChatResponse(text: string, response: string) {
-    const indexOfJson = response.indexOf('{"value"');
+    const indexOfJson = response.indexOf('{"');
     let parsedResponse: GptResponseJson;
     if (indexOfJson === -1) {
       parsedResponse = {
