@@ -14,7 +14,7 @@ import {
 
 const logger = Logger.get('TDH_NFT');
 
-export const findNftTDH = async (
+export const updateNftTDH = async (
   tdh: ConsolidatedTDH[],
   startingWallets?: string[]
 ) => {

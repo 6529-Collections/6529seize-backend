@@ -40,6 +40,53 @@ const logger = Logger.get('TDH');
 
 let alchemy: Alchemy;
 
+const DEFAULT_BOOST_BREAKDOWN = {
+  memes_card_sets: {
+    available: 0.29,
+    acquired: 0
+  },
+  memes_szn1: {
+    available: 0.05,
+    acquired: 0
+  },
+  memes_szn2: {
+    available: 0.05,
+    acquired: 0
+  },
+  memes_szn3: {
+    available: 0.05,
+    acquired: 0
+  },
+  memes_szn4: {
+    available: 0.05,
+    acquired: 0
+  },
+  memes_szn5: {
+    available: 0.05,
+    acquired: 0
+  },
+  memes_genesis: {
+    available: 0.01,
+    acquired: 0
+  },
+  memes_nakamoto: {
+    available: 0.01,
+    acquired: 0
+  },
+  gradients: {
+    available: 0.06,
+    acquired: 0
+  },
+  ens: {
+    available: 0.01,
+    acquired: 0
+  },
+  profile: {
+    available: 0.03,
+    acquired: 0
+  }
+};
+
 export async function getWalletsTdhs(
   {
     wallets,
@@ -111,7 +158,7 @@ export const getAdjustedMemesAndSeasons = async (lastTDHCalc: Date) => {
   };
 };
 
-export const findTDH = async (
+export const updateTDH = async (
   lastTDHCalc: Date,
   startingWallets?: string[]
 ) => {
@@ -400,74 +447,25 @@ export const findTDH = async (
   };
 };
 
-function getDefaultBreakdown() {
-  return {
-    memes_card_sets: {
-      available: 0.29,
-      acquired: 0
-    },
-    memes_szn1: {
-      available: 0.05,
-      acquired: 0
-    },
-    memes_szn2: {
-      available: 0.05,
-      acquired: 0
-    },
-    memes_szn3: {
-      available: 0.05,
-      acquired: 0
-    },
-    memes_szn4: {
-      available: 0.05,
-      acquired: 0
-    },
-    memes_szn5: {
-      available: 0.05,
-      acquired: 0
-    },
-    memes_genesis: {
-      available: 0.01,
-      acquired: 0
-    },
-    memes_nakamoto: {
-      available: 0.01,
-      acquired: 0
-    },
-    gradients: {
-      available: 0.06,
-      acquired: 0
-    },
-    ens: {
-      available: 0.01,
-      acquired: 0
-    },
-    profile: {
-      available: 0.03,
-      acquired: 0
-    }
-  };
-}
-
-function getHasSeasonSet(
+function hasSeasonSet(
   seasonId: number,
   seasons: MemesSeason[],
   memes: TokenTDH[]
-) {
+): boolean {
   const season = seasons.find((s) => s.id == seasonId);
   if (!season) {
-    return [];
+    return false;
   }
   const seasonMemes = memes.filter(
     (m) => m.id >= season.start_index && m.id <= season.end_index
   );
 
-  return seasonMemes.length == season.count;
+  return seasonMemes.length === season.count;
 }
 
 function calculateMemesBoostsCardSets(cardSets: number) {
   let boost = 1;
-  const breakdown = getDefaultBreakdown();
+  const breakdown = DEFAULT_BOOST_BREAKDOWN;
 
   let cardSetBreakdown = 0.25;
   // additional full sets up to 2
@@ -490,13 +488,13 @@ function calculateMemesBoostsSeasons(
   memes: TokenTDH[]
 ) {
   let boost = 1;
-  const breakdown = getDefaultBreakdown();
+  const breakdown = DEFAULT_BOOST_BREAKDOWN;
 
-  const cardSetS1 = getHasSeasonSet(1, seasons, memes);
-  const cardSetS2 = getHasSeasonSet(2, seasons, memes);
-  const cardSetS3 = getHasSeasonSet(3, seasons, memes);
-  const cardSetS4 = getHasSeasonSet(4, seasons, memes);
-  const cardSetS5 = getHasSeasonSet(5, seasons, memes);
+  const cardSetS1 = hasSeasonSet(1, seasons, memes);
+  const cardSetS2 = hasSeasonSet(2, seasons, memes);
+  const cardSetS3 = hasSeasonSet(3, seasons, memes);
+  const cardSetS4 = hasSeasonSet(4, seasons, memes);
+  const cardSetS5 = hasSeasonSet(5, seasons, memes);
 
   if (cardSetS1) {
     boost += 0.05;
@@ -757,31 +755,13 @@ export async function calculateRanks(
   ADJUSTED_NFTS: any[],
   NEXTGEN_NFTS: NextGenToken[]
 ) {
-  allGradientsTDH.sort((a, b) => {
-    if (a.tdh > b.tdh) {
-      return -1;
-    } else if (a.tdh < b.tdh) {
-      return 1;
-    } else {
-      return a.id > b.id ? 1 : -1;
-    }
-  });
-
+  allGradientsTDH.sort((a, b) => b.tdh - a.tdh || a.id - b.id || -1);
   const rankedGradientsTdh = allGradientsTDH.map((a, index) => {
     a.rank = index + 1;
     return a;
   });
 
-  allNextgenTDH.sort((a, b) => {
-    if (a.tdh > b.tdh) {
-      return -1;
-    } else if (a.tdh < b.tdh) {
-      return 1;
-    } else {
-      return a.id > b.id ? 1 : -1;
-    }
-  });
-
+  allNextgenTDH.sort((a, b) => b.tdh - a.tdh || a.id - b.id || -1);
   const rankedNextgenTdh = allNextgenTDH.map((a, index) => {
     a.rank = index + 1;
     return a;

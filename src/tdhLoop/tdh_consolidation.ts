@@ -21,14 +21,15 @@ import {
 } from './tdh';
 import {
   COMMUNITY_MEMBERS_TABLE,
-  CONSOLIDATED_WALLETS_TDH_TABLE
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  WALLET_REGEX
 } from '../constants';
 import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
 import { Logger } from '../logging';
 import { NextGenToken } from '../entities/INextGen';
 import { fetchNextgenTokens } from '../nextgen/nextgen.db';
 import { calculateMemesTdh } from './tdh_memes';
-import { findNftTDH } from './tdh_nft';
+import { updateNftTDH } from './tdh_nft';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
 
@@ -43,7 +44,7 @@ export async function getWalletTdhAndConsolidatedWallets(
   consolidation_display: string | null;
   balance: number;
 }> {
-  if (!RegExp(/0x[a-fA-F0-9]{40}/).exec(wallet)) {
+  if (!WALLET_REGEX.exec(wallet)) {
     return {
       tdh: 0,
       consolidatedWallets: [],
@@ -355,7 +356,7 @@ export const consolidateTDH = async (
   )) as ConsolidatedTDHMemes[];
 
   await persistConsolidatedTDH(rankedTdh, memesTdh, startingWallets);
-  await findNftTDH(rankedTdh, startingWallets);
+  await updateNftTDH(rankedTdh, startingWallets);
   logger.info(`[FINAL ENTRIES ${rankedTdh.length}]`);
 };
 

@@ -350,11 +350,7 @@ export function resolveEnum<T extends {}>(
   enumObj: T,
   value?: string
 ): T[keyof T] | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  const normalizedValue = value.toLowerCase();
+  const normalizedValue = value?.toLowerCase();
 
   for (const enumKey of Object.keys(enumObj)) {
     // Use type assertion to assure TypeScript that toString can be called

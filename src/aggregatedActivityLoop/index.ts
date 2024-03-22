@@ -7,7 +7,7 @@ import {
   AggregatedActivityMemes,
   ConsolidatedAggregatedActivityMemes
 } from '../entities/IAggregatedActivity';
-import { findAggregatedActivity } from './aggregated_activity';
+import { updateAggregatedActivity } from './aggregated_activity';
 import { MemesSeason } from '../entities/ISeason';
 import { Time } from '../time';
 
@@ -24,7 +24,7 @@ export const handler = sentryContext.wrapLambdaHandler(
       AggregatedActivityMemes,
       ConsolidatedAggregatedActivityMemes
     ]);
-    await findAggregatedActivity(process.env.ACTIVITY_RESET === 'true');
+    await updateAggregatedActivity(process.env.ACTIVITY_RESET === 'true');
     await unload();
     const diff = start.diffFromNow().formatAsDuration();
     logger.info(`[COMPLETE IN ${diff}]`);

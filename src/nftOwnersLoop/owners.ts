@@ -14,13 +14,11 @@ export interface OwnedNft {
 export async function getOwnersForContracts(
   contracts: string[]
 ): Promise<OwnedNft[]> {
-  const alchemy = getAlchemyInstance();
-  const owned = await fetchAllPages(alchemy, contracts);
+  const owned = await getAllOwnersFromAlchemy(contracts);
   return owned;
 }
 
-async function fetchAllPages(
-  alchemy: Alchemy,
+async function getAllOwnersFromAlchemy(
   contracts: string[]
 ): Promise<OwnedNft[]> {
   const owned: OwnedNft[] = [];
@@ -29,7 +27,7 @@ async function fetchAllPages(
     let pageKey: string | undefined = undefined;
     let response: GetOwnersForContractWithTokenBalancesResponse;
     do {
-      response = await getResponse(alchemy, contract, pageKey);
+      response = await getOwnersFromAlchemyPage(contract, pageKey);
       response.owners.forEach((owner) => {
         owner.tokenBalances.forEach((balance) => {
           owned.push({
@@ -47,14 +45,13 @@ async function fetchAllPages(
   return owned;
 }
 
-async function getResponse(
-  alchemy: Alchemy,
+async function getOwnersFromAlchemyPage(
   contract: string,
   pageKey: string | undefined
 ) {
+  const alchemy = getAlchemyInstance();
   return await alchemy.nft.getOwnersForContract(contract, {
     withTokenBalances: true,
-    // block: '19420000',
     pageKey: pageKey
   });
 }

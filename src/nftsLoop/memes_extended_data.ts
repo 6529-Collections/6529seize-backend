@@ -197,8 +197,7 @@ export const findMemesExtendedData = async () => {
       }).length + 1;
   });
 
-  const memesSeasons: MemesSeason[] = [];
-  seasons.forEach((s) => {
+  const memesSeasons: MemesSeason[] = Array.from(seasons).map((s) => {
     const seasonMemes = memesMeta.filter((m) => m.season == s);
     const season: MemesSeason = {
       id: s,
@@ -209,7 +208,7 @@ export const findMemesExtendedData = async () => {
       name: `Season ${s}`,
       display: `SZN${s}`
     };
-    memesSeasons.push(season);
+    return season;
   });
 
   await persistMemesExtendedData(memesMeta);

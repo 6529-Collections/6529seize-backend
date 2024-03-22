@@ -35,7 +35,7 @@ import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances'
 import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
 import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
 import { CommunityMember } from '../entities/ICommunityMember';
-import { findTDH } from '../tdhLoop/tdh';
+import { updateTDH } from '../tdhLoop/tdh';
 import { MemesSeason } from '../entities/ISeason';
 import { ConsolidatedNFTOwner, NFTOwner } from '../entities/INFTOwner';
 import {
@@ -190,7 +190,7 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
     const lastTDHCalc = getLastTDH();
     const walletsArray = Array.from(distinctWallets);
 
-    await findTDH(lastTDHCalc, walletsArray);
+    await updateTDH(lastTDHCalc, walletsArray);
     await consolidateTDH(lastTDHCalc, walletsArray);
 
     await consolidateNftOwners(distinctWallets);

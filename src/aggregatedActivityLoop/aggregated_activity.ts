@@ -337,7 +337,7 @@ export async function consolidateActivity(
   };
 }
 
-export const findAggregatedActivity = async (reset?: boolean) => {
+export const updateAggregatedActivity = async (reset?: boolean) => {
   const lastActivityBlock = reset
     ? 0
     : await getMaxAggregatedActivityBlockReference();

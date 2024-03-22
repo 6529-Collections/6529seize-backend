@@ -1,4 +1,4 @@
-import { getLastTDH } from '../helpers';
+import { distinct, getLastTDH } from '../helpers';
 import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { loadEnv, unload } from '../secrets';
 import {
@@ -31,7 +31,7 @@ import {
 import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
 import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
 import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
-import { findTDH } from '../tdhLoop/tdh';
+import { updateTDH } from '../tdhLoop/tdh';
 import { MemesSeason } from '../entities/ISeason';
 
 const logger = Logger.get('TDH_CONSOLIDATIONS_LOOP');
@@ -76,9 +76,9 @@ async function consolidatedTdhLoop() {
   consolidationAddresses.forEach((address) => {
     distinctWallets.add(address.wallet);
   });
-  const walletsArray = Array.from(distinctWallets);
+  const walletsArray = distinct(consolidationAddresses.map((it) => it.wallet));
 
-  await findTDH(lastTDHCalc, walletsArray);
+  await updateTDH(lastTDHCalc, walletsArray);
   await consolidateTDH(lastTDHCalc, walletsArray);
 
   await consolidateNftOwners(distinctWallets);
