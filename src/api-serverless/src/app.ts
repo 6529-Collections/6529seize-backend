@@ -58,6 +58,7 @@ import {
 } from './api-filters';
 import { parseTdhDataFromDB, parseTdhResultsFromDB } from '../../sql_helpers';
 import { loadLocalConfig, loadSecrets } from '../../env';
+import subscriptionsRoutes from './subscriptions/subscriptions.routes';
 
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
@@ -1236,6 +1237,7 @@ loadApi().then(() => {
   apiRouter.use(`/profile-logs`, profileActivityLogsRoutes);
   apiRouter.use(`/rep/categories`, repCategorySearchRoutes);
   apiRouter.use(`/ratings`, ratingsRoutes);
+  apiRouter.use(`/subscriptions`, subscriptionsRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 

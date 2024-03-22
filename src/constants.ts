@@ -52,6 +52,9 @@ export const LISTENER_PROCESSED_EVENTS_TABLE = 'listener_processed_events';
 export const CIC_SCORE_AGGREGATIONS_TABLE = 'cic_score_aggregations';
 export const PROFILE_TOTAL_REP_SCORE_AGGREGATIONS_TABLE =
   'profile_total_rep_score_aggregations';
+export const SUBSCRIPTIONS_TOP_UP_TABLE = 'subscriptions_top_up';
+export const SUBSCRIPTIONS_BALANCES_TABLE = 'subscriptions_balances';
+
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
 export const GRADIENT_CONTRACT = '0x0c58ef43ff3032005e472cb5709f8908acb00205';
 export const MEMELAB_CONTRACT = '0x4db52a61dc491e15a2f78f5ac001c14ffe3568cb';
@@ -157,3 +160,6 @@ export const MEMES_ROYALTIES_RATE = 0.5;
 export const MEME_8_EDITION_BURN_ADJUSTMENT = -2588;
 export const MEME_8_BURN_TRANSACTION =
   '0xa6c27335d3c4f87064a938e987e36525885cc3d136ebb726f4c5d374c0d2d854';
+
+export const SUBSCRIPTIONS_ADDRESS =
+  '0x924817154d311bd2de599f3d659d053ab0133e06';
