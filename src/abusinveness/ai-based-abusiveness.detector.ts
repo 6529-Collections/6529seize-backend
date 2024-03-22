@@ -349,7 +349,9 @@ input
     const status = STATUS_MAPPINGS[decision];
     if (!status) {
       throw new Error(
-        `Check against GPT failed. Input: ${text}. GPT response: ${parsedResponse}`
+        `Check against GPT failed. Input: ${text}. GPT response: ${JSON.stringify(
+          parsedResponse
+        )}`
       );
     }
     return {
