@@ -155,9 +155,17 @@ async function tdhHistory(date: Date) {
       });
     }
 
-    const memesResult = processTokenTDHArray(d.memes, yesterdayTdh);
-    const gradientsResult = processTokenTDHArray(d.gradients, yesterdayTdh);
-    const nextgenResult = processTokenTDHArray(d.nextgen, yesterdayTdh);
+    const memesResult = processTokenTDHArray(d.boost, d.memes, yesterdayTdh);
+    const gradientsResult = processTokenTDHArray(
+      d.boost,
+      d.gradients,
+      yesterdayTdh
+    );
+    const nextgenResult = processTokenTDHArray(
+      d.boost,
+      d.nextgen,
+      yesterdayTdh
+    );
 
     const tdhCreated =
       memesResult.tdhCreated +
@@ -384,10 +392,14 @@ async function calculateGlobalTDHHistory(
   await persistGlobalTDHHistory(globalHistory);
 }
 
-function processTokenTDHArray(tokens: TokenTDH[], yesterdayTdh: any) {
+function processTokenTDHArray(
+  boost: number,
+  tokens: TokenTDH[],
+  yesterdayTdh: any
+) {
   return tokens.reduce(
     (acc, token) => {
-      const change = calculateChange(yesterdayTdh, token, token);
+      const change = calculateChange(yesterdayTdh, token, boost);
       acc.tdhCreated += change.tdhCreated;
       acc.tdhDestroyed += change.tdhDestroyed;
       acc.boostedTdhCreated += change.boostedTdhCreated;
@@ -411,7 +423,7 @@ function processTokenTDHArray(tokens: TokenTDH[], yesterdayTdh: any) {
   );
 }
 
-function calculateChange(yesterdayTdh: any[], m: TokenTDH, d: any) {
+function calculateChange(yesterdayTdh: any[], m: TokenTDH, boost: number) {
   const existing: any[] = [];
   if (yesterdayTdh) {
     yesterdayTdh.forEach((y) => {
@@ -454,12 +466,12 @@ function calculateChange(yesterdayTdh: any[], m: TokenTDH, d: any) {
   if (change > 0) {
     tdhCreated += m.tdh - previousTdh.tdh;
     rawTdhCreated += m.tdh__raw - previousTdh.tdh__raw;
-    boostedTdhCreated += m.tdh * d.boost - previousTdh.boosted_tdh;
+    boostedTdhCreated += m.tdh * boost - previousTdh.boosted_tdh;
     balanceCreated += m.balance - previousTdh.balance;
   } else {
     tdhDestroyed += previousTdh.tdh - m.tdh;
     rawTdhDestroyed += previousTdh.tdh__raw - m.tdh__raw;
-    boostedTdhDestroyed += previousTdh.boosted_tdh - m.tdh * d.boost;
+    boostedTdhDestroyed += previousTdh.boosted_tdh - m.tdh * boost;
     balanceDestroyed += previousTdh.balance - m.balance;
   }
   return {
