@@ -1,6 +1,6 @@
 import { AbusivenessCheckService } from './abusiveness-check.service';
 import { AbusivenessCheckDb } from './abusiveness-check.db';
-import { OpenAiAbusivenessDetectionService } from '../open-ai-abusiveness-detection.service';
+import { AiBasedAbusivenessDetector } from '../abusinveness/ai-based-abusiveness.detector';
 import { mock } from 'ts-jest-mocker';
 import { when } from 'jest-when';
 import { Time } from '../time';
@@ -17,15 +17,15 @@ const anAbusivenessCheckResult: AbusivenessDetectionResult = {
 describe(`AbusivenessCheckService`, () => {
   let abusivenessCheckService: AbusivenessCheckService;
   let abusivenessCheckDb: AbusivenessCheckDb;
-  let openAiAbusivenessDetectionService: OpenAiAbusivenessDetectionService;
+  let abusivenessDetector: AiBasedAbusivenessDetector;
   let discord: Discord;
 
   beforeEach(() => {
     abusivenessCheckDb = mock();
-    openAiAbusivenessDetectionService = mock();
+    abusivenessDetector = mock();
     discord = mock();
     abusivenessCheckService = new AbusivenessCheckService(
-      openAiAbusivenessDetectionService,
+      abusivenessDetector,
       abusivenessCheckDb,
       discord
     );
@@ -51,17 +51,17 @@ describe(`AbusivenessCheckService`, () => {
     await expect(
       abusivenessCheckService.checkRepPhrase(input)
     ).resolves.toEqual(anAbusivenessCheckResult);
-    expect(
-      openAiAbusivenessDetectionService.checkRepPhraseText
-    ).not.toHaveBeenCalledWith(input);
+    expect(abusivenessDetector.checkRepPhraseText).not.toHaveBeenCalledWith(
+      input
+    );
   });
 
-  it(`should turn to OpenAI, save the result and finally return it if database has no result`, async () => {
+  it(`should turn to AI, save the result and finally return it if database has no result`, async () => {
     const input = "Gr3at 'react' (or, something)! dev?";
     when(abusivenessCheckDb.findResult)
       .calledWith(input)
       .mockResolvedValue(null);
-    when(openAiAbusivenessDetectionService.checkRepPhraseText)
+    when(abusivenessDetector.checkRepPhraseText)
       .calledWith(input)
       .mockResolvedValue(anAbusivenessCheckResult);
     await expect(
@@ -96,10 +96,10 @@ describe(`AbusivenessCheckService`, () => {
     );
   });
 
-  it(`should allow if OpenAI check for REP fails with unknown error, but should send a notification to Discord`, async () => {
-    when(
-      openAiAbusivenessDetectionService.checkRepPhraseText
-    ).mockRejectedValue(`Some error`);
+  it(`should allow if AI check for REP fails with unknown error, but should send a notification to Discord`, async () => {
+    when(abusivenessDetector.checkRepPhraseText).mockRejectedValue(
+      `Some error`
+    );
     await expect(
       abusivenessCheckService.checkRepPhrase('Hello')
     ).resolves.toEqual({
@@ -110,7 +110,7 @@ describe(`AbusivenessCheckService`, () => {
     });
     expect(discord.sendMessage).toHaveBeenCalledWith(
       DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
-      `Rep phrase: Hello\n\nOpenAI check failed with error: Some error`
+      `Rep phrase: Hello\n\nAI abusiveness check failed with error: Some error`
     );
   });
 });
