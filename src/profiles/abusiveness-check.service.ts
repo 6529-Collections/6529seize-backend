@@ -15,7 +15,7 @@ export class AbusivenessCheckService {
   private logger = Logger.get(AbusivenessCheckService.name);
 
   constructor(
-    private readonly openAiAbusivenessDetectionService: AiBasedAbusivenessDetector,
+    private readonly aiBasedAbusivenessDetector: AiBasedAbusivenessDetector,
     private readonly abusivenessCheckDb: AbusivenessCheckDb,
     private readonly discord: Discord
   ) {}
@@ -35,16 +35,17 @@ export class AbusivenessCheckService {
       return existingResult;
     }
     try {
-      const result =
-        await this.openAiAbusivenessDetectionService.checkRepPhraseText(txt);
+      const result = await this.aiBasedAbusivenessDetector.checkRepPhraseText(
+        txt
+      );
       await this.abusivenessCheckDb.saveResult(result);
       return result;
     } catch (e) {
-      this.logger.error('OpenAI check threw an error');
+      this.logger.error('AI abusiveness check threw an error');
       this.logger.error(e);
       await this.discord.sendMessage(
         DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
-        `Rep phrase: ${txt}\n\nOpenAI check failed with error: ${e}`
+        `Rep phrase: ${txt}\n\nAI abusiveness check failed with error: ${e}`
       );
       return {
         text: txt,
@@ -64,7 +65,7 @@ export class AbusivenessCheckService {
     if (txt.length > 500) {
       throw new BadRequestException(`Text must be up to 500 characters`);
     }
-    return await this.openAiAbusivenessDetectionService.checkBioText({
+    return await this.aiBasedAbusivenessDetector.checkBioText({
       text: txt,
       handle: query.handle,
       profile_type: query.profile_type
@@ -79,7 +80,7 @@ export class AbusivenessCheckService {
     if (txt.length > 100) {
       throw new BadRequestException(`Text must be up to 100 characters`);
     }
-    return await this.openAiAbusivenessDetectionService.checkCurationName({
+    return await this.aiBasedAbusivenessDetector.checkCurationName({
       text: txt,
       handle: query.handle
     });

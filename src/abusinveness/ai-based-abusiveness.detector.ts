@@ -1,7 +1,7 @@
 import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
 import { discord, Discord, DiscordChannel } from '../discord';
 import { AiPrompter } from './ai-prompter';
-import { openAiPrompter } from './open-ai.prompter';
+import { bedrockAiPrompter } from './bedrock-ai.prompter';
 
 const STATUS_MAPPINGS: Record<string, 'ALLOWED' | 'DISALLOWED'> = {
   Allowed: 'ALLOWED',
@@ -116,10 +116,11 @@ We allow typical cryptotwitter terms. Aka "shitposting" is fine as a term, as is
 We allow discussion of artistic nudity as we support nude art photographers.
 
 
-Doxxing of Another Person: A user’s About should not contain any personal doxxing Information about other people.  Some illustrative but not comprehensive examples below:
+Doxxing of Another Person: A user’s About should not contain any personal doxxing Information about other people. Even if the dox is publicly known, doxxing is not allowed in our platform. Some illustrative but not comprehensive examples below:
 Disclosing proper names of other people who are not the author (e.g. “I gave 269 rep to John Hammersmith”)
 Indirect workarounds to the above (e.g. “John Hammersmith's father”)
 “Mike Smith works at Goldman Sachs”
+"Punk is Vitalik"
 
 
 For avoidance of doubt, users are allowed to dox themselves.   If someone’s profile is “NFTDegen” and their About text is “I work at Goldman Sachs and love NFTs”, it is OK
@@ -320,7 +321,26 @@ input
   }
 
   private async formatChatResponse(text: string, response: string) {
-    const parsedResponse: GptResponseJson = JSON.parse(response);
+    const indexOfJson = response.indexOf('{"value"');
+    let parsedResponse: GptResponseJson;
+    if (indexOfJson === -1) {
+      parsedResponse = {
+        value: 'Unknown',
+        reason: 'Invalid response ' + response
+      };
+    } else {
+      const s = response.slice(indexOfJson);
+      const endIndex = s.indexOf('}');
+      if (endIndex === -1) {
+        parsedResponse = {
+          value: 'Unknown',
+          reason: 'Invalid response ' + response
+        };
+      } else {
+        parsedResponse = JSON.parse(s.substring(0, endIndex + 1));
+      }
+    }
+
     if (!parsedResponse) {
       throw new Error(`AI gave an empty response to given text`);
     }
@@ -348,6 +368,6 @@ interface GptResponseJson {
 }
 
 export const aiBasedAbusivenessDetector = new AiBasedAbusivenessDetector(
-  openAiPrompter,
+  bedrockAiPrompter,
   discord
 );
