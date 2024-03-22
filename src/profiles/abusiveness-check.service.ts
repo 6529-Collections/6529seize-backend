@@ -1,7 +1,7 @@
 import {
-  openAiAbusivenessDetectionService,
-  OpenAiAbusivenessDetectionService
-} from '../open-ai-abusiveness-detection.service';
+  AiBasedAbusivenessDetector,
+  aiBasedAbusivenessDetector
+} from '../abusinveness/ai-based-abusiveness.detector';
 import { abusivenessCheckDb, AbusivenessCheckDb } from './abusiveness-check.db';
 import { BadRequestException } from '../exceptions';
 import {
@@ -15,7 +15,7 @@ export class AbusivenessCheckService {
   private logger = Logger.get(AbusivenessCheckService.name);
 
   constructor(
-    private readonly openAiAbusivenessDetectionService: OpenAiAbusivenessDetectionService,
+    private readonly openAiAbusivenessDetectionService: AiBasedAbusivenessDetector,
     private readonly abusivenessCheckDb: AbusivenessCheckDb,
     private readonly discord: Discord
   ) {}
@@ -87,7 +87,7 @@ export class AbusivenessCheckService {
 }
 
 export const abusivenessCheckService = new AbusivenessCheckService(
-  openAiAbusivenessDetectionService,
+  aiBasedAbusivenessDetector,
   abusivenessCheckDb,
   discord
 );

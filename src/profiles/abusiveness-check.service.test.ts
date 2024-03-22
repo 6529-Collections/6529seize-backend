@@ -1,6 +1,6 @@
 import { AbusivenessCheckService } from './abusiveness-check.service';
 import { AbusivenessCheckDb } from './abusiveness-check.db';
-import { OpenAiAbusivenessDetectionService } from '../open-ai-abusiveness-detection.service';
+import { AiBasedAbusivenessDetector } from '../abusinveness/ai-based-abusiveness.detector';
 import { mock } from 'ts-jest-mocker';
 import { when } from 'jest-when';
 import { Time } from '../time';
@@ -17,7 +17,7 @@ const anAbusivenessCheckResult: AbusivenessDetectionResult = {
 describe(`AbusivenessCheckService`, () => {
   let abusivenessCheckService: AbusivenessCheckService;
   let abusivenessCheckDb: AbusivenessCheckDb;
-  let openAiAbusivenessDetectionService: OpenAiAbusivenessDetectionService;
+  let openAiAbusivenessDetectionService: AiBasedAbusivenessDetector;
   let discord: Discord;
 
   beforeEach(() => {
