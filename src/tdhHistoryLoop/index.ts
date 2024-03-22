@@ -121,6 +121,14 @@ async function tdhHistory(date: Date) {
   const today = uploads[0];
   const yesterday = uploads[1];
 
+  logger.info({
+    message: 'CALCULATING TDH CHANGE',
+    from: `${today.date} (BLOCK ${today.block})`,
+    from_url: today.url,
+    to: `${yesterday.date} (BLOCK ${yesterday.block})`,
+    to_url: yesterday.url
+  });
+
   const todayData = await fetchAndParseCSV(today.url);
   const yesterdayData = await fetchAndParseCSV(yesterday.url);
 
@@ -152,16 +160,26 @@ async function tdhHistory(date: Date) {
         if (!Array.isArray(y.gradients)) {
           y.gradients = JSON.parse(y.gradients);
         }
+        if (!Array.isArray(y.nextgen)) {
+          y.nextgen = JSON.parse(y.nextgen);
+        }
       });
     }
 
-    const memesResult = processTokenTDHArray(d.boost, d.memes, yesterdayTdh);
+    const memesResult = processTokenTDHArray(
+      'memes',
+      d.boost,
+      d.memes,
+      yesterdayTdh
+    );
     const gradientsResult = processTokenTDHArray(
+      'gradients',
       d.boost,
       d.gradients,
       yesterdayTdh
     );
     const nextgenResult = processTokenTDHArray(
+      'nextgen',
       d.boost,
       d.nextgen,
       yesterdayTdh
@@ -393,13 +411,14 @@ async function calculateGlobalTDHHistory(
 }
 
 function processTokenTDHArray(
+  type: string,
   boost: number,
   tokens: TokenTDH[],
   yesterdayTdh: any
 ) {
   return tokens.reduce(
     (acc, token) => {
-      const change = calculateChange(yesterdayTdh, token, boost);
+      const change = calculateChange(type, yesterdayTdh, token, boost);
       acc.tdhCreated += change.tdhCreated;
       acc.tdhDestroyed += change.tdhDestroyed;
       acc.boostedTdhCreated += change.boostedTdhCreated;
@@ -423,11 +442,24 @@ function processTokenTDHArray(
   );
 }
 
-function calculateChange(yesterdayTdh: any[], m: TokenTDH, boost: number) {
+function calculateChange(
+  type: string,
+  yesterdayTdh: any[],
+  m: TokenTDH,
+  boost: number
+) {
   const existing: any[] = [];
   if (yesterdayTdh) {
     yesterdayTdh.forEach((y) => {
-      const e = y.memes.find((em: TokenTDH) => em.id == m.id);
+      let yTokens = [];
+      if (type === 'memes') {
+        yTokens = y.memes;
+      } else if (type === 'gradients') {
+        yTokens = y.gradients;
+      } else if (type === 'nextgen') {
+        yTokens = y.nextgen;
+      }
+      const e = yTokens.find((em: TokenTDH) => em.id == m.id);
       if (e) {
         existing.push({
           ...e,
