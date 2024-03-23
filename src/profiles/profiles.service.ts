@@ -8,8 +8,8 @@ import {
 } from './profile.types';
 import { calculateLevel } from './profile-level';
 import { Profile } from '../entities/IProfile';
-import * as tdh_consolidation from '../tdh_consolidation';
-import * as tdhs from '../tdh';
+import * as tdh_consolidation from '../tdhLoop/tdh_consolidation';
+import * as tdhs from '../tdhLoop/tdh';
 import { BadRequestException } from '../exceptions';
 import * as path from 'path';
 import { ConnectionWrapper } from '../sql-executor';

@@ -1,4 +1,4 @@
-service: ownerMetricsLoop
+service: nftOwnersLoop
 
 package:
   artifact: dist/index.zip
@@ -9,7 +9,7 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 1028
+  memorySize: 5140
   timeout: 900
 
 custom:
@@ -18,19 +18,18 @@ custom:
     prod: 1
 
 functions:
-  ownerMetricsLoop:
+  nftOwnersLoop:
     handler: index.handler
-    name: ownerMetricsLoop
+    name: nftOwnersLoop
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
-      - schedule: rate(3 minutes)
+      - schedule: rate(1 minute)
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
-      RESET: false
-      METRICS_RESET: true
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: 'ownerMetricsLoop_${opt:stage, self:provider.stage}'
+      SENTRY_ENVIRONMENT: 'nftOwnersLoop_${opt:stage, self:provider.stage}'
       NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
+      NFT_OWNERS_RESET: false

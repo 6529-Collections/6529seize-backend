@@ -26,4 +26,5 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: "tdhHistoryLoop_${opt:stage, self:provider.stage}"
+      SENTRY_ENVIRONMENT: 'tdhHistoryLoop_${opt:stage, self:provider.stage}'
+      TDH_HISTORY_ITERATIONS: 1
