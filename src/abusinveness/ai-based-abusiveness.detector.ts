@@ -31,8 +31,8 @@ The general model is that all rep classifications are allowed except the followi
 1. Discriminatory or hate speech on any typical grounds
 2. Personal insults
 3. Generally words that would make a normal user in the cryptotwitter community feel bad or uncomfortable. Given the nature of the community (cryptotwitter and nft twitter) we are more permissive than most social media sites on the following two factors:
-  a. Typical cryptotwitter terms. Aka "shitposting" is fine as a term, as is: cabal, n00b, newbie, nerd, and degen.
-  b. Nudity as we support nude art photographers
+  a. Allowed: Typical cryptotwitter terms. Aka "shitposting" is fine as a term, as is: cryptodickbutt, cabal, n00b, newbie, nerd, and degen.
+  b. Allowed: Nudity as we support nude art photographers
 4. Personal Doxxing Information:  This is information that could dox a person's identity such:
   a. Proper names (e.g. “John Hammersmith”)
   b. Indirect workarounds to the above (e.g. “John Hammersmith's father”)
@@ -69,6 +69,12 @@ input
 ${text}
     `.trim();
     const responseMessage = await this.aiPrompter.promptAndGetReply(prompt);
+    if (process.env.NODE_ENV !== 'local') {
+      await this.discord.sendMessage(
+        DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
+        `Rep check\n\nInput text:\n${text}\n\nGPT response:\n${responseMessage}`
+      );
+    }
     return await this.formatChatResponse(text, responseMessage);
   }
 
@@ -235,7 +241,7 @@ Hate Speech: We do not allow discriminatory or hate speech of any type
 Personal Insults: We do not allow personal insults
  
 Inappropriate Language: We do not allow language that would would make a normal user in the cryptotwitter community feel bad or uncomfortable. Given the nature of the community (cryptotwitter and NFT twitter) we are more permissive than most social media sites on the following two factors:
-We allow typical cryptotwitter terms. Aka "shitposting" is fine as a term, , as is: cabal, n00b, newbie, nerd, and degen, cryptodickbutt”. 
+We allow typical cryptotwitter terms. Aka "shitposting" is fine as a term, as is: cryptodickbutt, cabal, n00b, newbie, nerd, and degen, cryptodickbutt”. 
 We allow discussion of artistic nudity as we support nude art photographers.
 
 
