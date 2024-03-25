@@ -52,6 +52,12 @@ export const LISTENER_PROCESSED_EVENTS_TABLE = 'listener_processed_events';
 export const CIC_SCORE_AGGREGATIONS_TABLE = 'cic_score_aggregations';
 export const PROFILE_TOTAL_REP_SCORE_AGGREGATIONS_TABLE =
   'profile_total_rep_score_aggregations';
+
+export const DROPS_TABLE = 'drops';
+export const DROP_STORMS_TABLE = 'drop_storms';
+export const DROPS_MENTIONS_TABLE = 'drops_mentions';
+export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
+export const DROP_METADATA_TABLE = 'drops_metadatas';
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
 export const GRADIENT_CONTRACT = '0x0c58ef43ff3032005e472cb5709f8908acb00205';
 export const MEMELAB_CONTRACT = '0x4db52a61dc491e15a2f78f5ac001c14ffe3568cb';
