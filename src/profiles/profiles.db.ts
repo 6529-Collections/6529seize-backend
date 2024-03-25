@@ -560,6 +560,22 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       )
       .then((result) => result.at(0) ?? null);
   }
+
+  async getNewestVersionHandlesOfArchivedProfiles(
+    profileIds: string[]
+  ): Promise<{ external_id: string; handle: string }[]> {
+    if (profileIds.length === 0) {
+      return [];
+    }
+    return this.db.execute(
+      `with prof_ids_w_latest_versions as (select external_id, max(id) as id from ${PROFILES_ARCHIVE_TABLE} group by 1)
+            select p.external_id as external_id, p.handle as handle
+            from ${PROFILES_ARCHIVE_TABLE} p
+                     join prof_ids_w_latest_versions l on p.id = l.id
+            where l.external_id in (:profileIds)`,
+      { profileIds }
+    );
+  }
 }
 
 export const profilesDb = new ProfilesDb(dbSupplier);
