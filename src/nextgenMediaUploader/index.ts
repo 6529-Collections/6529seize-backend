@@ -10,14 +10,14 @@ import { Time } from '../time';
 import {
   getGenDetailsFromUri,
   getImageBlobFromGenerator,
-  listS3Objects,
   getNextBatch,
-  s3UploadNextgenImage,
-  invalidatePath
+  invalidatePath,
+  listS3Objects,
+  s3UploadNextgenImage
 } from '../nextgen/nextgen_generator';
 import { loadEnv } from '../secrets';
 import { CloudFrontClient } from '@aws-sdk/client-cloudfront';
-import { objectExists } from '../helpers/s3_helpers';
+import { s3ObjectExists } from '../helpers/s3_helpers';
 import { sendDiscordUpdate } from '../notifier-discord';
 
 const logger = Logger.get('NEW_NEXTGEN_UPLOADER');
@@ -74,9 +74,9 @@ async function uploadMissingNextgenMedia(item: number) {
   const imagePath = metadataPath.replace('/metadata/', '/png/');
   const htmlPath = metadataPath.replace('/metadata/', '/html/');
 
-  const metadataExists = await objectExists(s3, NEXTGEN_BUCKET, metadataPath);
-  const imageExists = await objectExists(s3, NEXTGEN_BUCKET, imagePath);
-  const htmlExists = await objectExists(s3, NEXTGEN_BUCKET, htmlPath);
+  const metadataExists = await s3ObjectExists(NEXTGEN_BUCKET, metadataPath);
+  const imageExists = await s3ObjectExists(NEXTGEN_BUCKET, imagePath);
+  const htmlExists = await s3ObjectExists(NEXTGEN_BUCKET, htmlPath);
 
   if (metadataExists && imageExists && htmlExists) {
     logger.info(

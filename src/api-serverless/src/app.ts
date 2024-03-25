@@ -17,6 +17,7 @@ import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activ
 import ownersBalancesRoutes from './owners-balances/api.owners-balances.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
 import communityMembersCurationRoutes from './community-members/community-members-curation.routes';
+import dropsRoutes from './drops/drops.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -929,6 +930,7 @@ loadApi().then(() => {
   apiRouter.use(`/aggregated-activity`, aggregatedActivityRoutes);
   apiRouter.use(`/owners-balances`, ownersBalancesRoutes);
   apiRouter.use(`/ratings`, ratingsRoutes);
+  apiRouter.use(`/drops`, dropsRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 
