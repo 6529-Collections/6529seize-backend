@@ -23,19 +23,28 @@ import {
 import { DropMetadataEntity } from '../../../entities/IDrop';
 import { WALLET_REGEX } from '../../../constants';
 import { dropsService } from '../../../drops/drops.service';
+import { parseNumberOrNull } from '../../../helpers';
 
 const router = asyncRouter();
 
 router.get(
   '/latest',
   async (
-    req: Request<any, any, any, { limit: number }, any>,
+    req: Request<
+      any,
+      any,
+      any,
+      { limit: number; curation_criteria_id?: string },
+      any
+    >,
     res: Response<ApiResponse<DropFull[]>>
   ) => {
-    const limit = req.query.limit ? +req.query.limit : 10;
-    const createdDrop = await dropsService.findLatestDrops(
-      limit < 0 ? 10 : limit
-    );
+    const limit = parseNumberOrNull(req.query.limit) ?? 10;
+    const curation_criteria_id = req.query.curation_criteria_id ?? null;
+    const createdDrop = await dropsService.findLatestDrops({
+      amount: limit < 0 ? 10 : limit,
+      curation_criteria_id
+    });
     res.send(createdDrop);
   }
 );
