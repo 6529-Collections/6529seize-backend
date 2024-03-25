@@ -22,8 +22,23 @@ import {
 } from '../../../drops/drops.types';
 import { DropMetadataEntity } from '../../../entities/IDrop';
 import { WALLET_REGEX } from '../../../constants';
+import { dropsService } from '../../../drops/drops.service';
 
 const router = asyncRouter();
+
+router.get(
+  '/latest',
+  async (
+    req: Request<any, any, any, { limit: number }, any>,
+    res: Response<ApiResponse<DropFull[]>>
+  ) => {
+    const limit = req.query.limit ? +req.query.limit : 10;
+    const createdDrop = await dropsService.findLatestDrops(
+      limit < 0 ? 10 : limit
+    );
+    res.send(createdDrop);
+  }
+);
 
 router.post(
   '/',

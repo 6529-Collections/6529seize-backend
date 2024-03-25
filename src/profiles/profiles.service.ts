@@ -935,6 +935,14 @@ export class ProfilesService {
   ): Promise<Profile | null> {
     return this.profilesDb.getNewestVersionOfArchivedProfile(profileId);
   }
+
+  async getNewestVersionOfArchivedProfileHandles(
+    profileIds: string[]
+  ): Promise<{ external_id: string; handle: string }[]> {
+    return this.profilesDb.getNewestVersionHandlesOfArchivedProfiles(
+      profileIds
+    );
+  }
 }
 
 export interface CommunityMemberMinimal {

@@ -6,12 +6,9 @@ import {
 import { BadRequestException } from '../exceptions';
 import { dropsDb, DropsDb } from './drops.db';
 import { giveReadReplicaTimeToCatchUp } from '../api-serverless/src/api-helpers';
-import { S3Client } from '@aws-sdk/client-s3';
-import { getS3 } from '../s3.client';
-import { randomUUID } from 'crypto';
-import { Upload } from '@aws-sdk/lib-storage';
 import { Logger } from '../logging';
 import { dropsService, DropsService } from './drops.service';
+import { dropFileService, DropFileService } from './drop-file.service';
 
 export class DropCreationService {
   private readonly logger = Logger.get('DropCreationService');
@@ -19,14 +16,17 @@ export class DropCreationService {
   constructor(
     private readonly dropsService: DropsService,
     private readonly dropsDb: DropsDb,
-    private readonly getS3: () => S3Client
+    private readonly dropFileService: DropFileService
   ) {}
 
   async createDrop(createDropRequest: CreateNewDropRequest): Promise<DropFull> {
-    const dropMedia = await this.uploadMediaIfExists(createDropRequest);
     await this.validateReferences(createDropRequest);
+    const dropMedia = await this.uploadMediaIfExists(createDropRequest);
     const dropFull = await this.persistDrop(createDropRequest, dropMedia);
     await giveReadReplicaTimeToCatchUp();
+    this.logger.info(
+      `Drop ${dropFull.id} created by user ${dropFull.author.id}`
+    );
     return dropFull;
   }
 
@@ -43,38 +43,10 @@ export class DropCreationService {
         media_mime_type: null
       };
     }
-    const fileExtension = this.getFileExtension(dropMedia.name);
-    const mediaPath = `drops/author_${
+    return this.dropFileService.uploadDropMedia(
+      dropMedia,
       createDropRequest.author.external_id
-    }/${randomUUID()}${fileExtension}`;
-    const bucket = process.env.S3_BUCKET;
-    if (!bucket) {
-      throw new Error('S3_BUCKET is not configured');
-    }
-    const parallelUploads3 = new Upload({
-      client: this.getS3(),
-      params: {
-        Bucket: bucket,
-        Key: mediaPath,
-        Body: dropMedia.stream,
-        ContentType: dropMedia.mimetype
-      },
-      queueSize: 4,
-      partSize: 1024 * 1024 * 5,
-      leavePartsOnError: false
-    });
-
-    parallelUploads3.on('httpUploadProgress', (progress) => {
-      this.logger.info(
-        `Uploaded ${progress.loaded}/${progress.total} bytes of part ${progress.part} of file ${bucket}/${mediaPath}`
-      );
-    });
-    await parallelUploads3.done();
-    this.logger.info(`${bucket}/${mediaPath} uploaded to S3`);
-    return {
-      media_url: `https://d3lqz0a4bldqgf.cloudfront.net/${mediaPath}`,
-      media_mime_type: dropMedia.mimetype
-    };
+    );
   }
 
   private async persistDrop(
@@ -150,18 +122,10 @@ export class DropCreationService {
       }
     }
   }
-
-  private getFileExtension(name: string): string {
-    const lastDotIndex = name.lastIndexOf('.');
-    if (lastDotIndex < 0) {
-      return '';
-    }
-    return name.substring(lastDotIndex);
-  }
 }
 
 export const dropCreationService = new DropCreationService(
   dropsService,
   dropsDb,
-  getS3
+  dropFileService
 );

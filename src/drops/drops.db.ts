@@ -224,9 +224,50 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return this.db
       .execute(
         `select count(*) as cnt from ${DROPS_TABLE} where storm_id = :stormId and author_id = :authorId`,
-        { stormId, authorId }
+        { stormId, authorId },
+        { wrappedConnection: connection }
       )
       .then((it) => it[0].cnt);
+  }
+
+  async findLatestDrops(amount: number): Promise<Drop[]> {
+    return this.db.execute(
+      `select * from ${DROPS_TABLE} order by created_at desc limit ${amount}`
+    );
+  }
+
+  async findMentionsByDropIds(dropIds: number[]): Promise<DropMentionEntity[]> {
+    if (dropIds.length === 0) {
+      return [];
+    }
+    return this.db.execute(
+      `select * from ${DROPS_MENTIONS_TABLE} where drop_id in (:dropIds)`,
+      { dropIds }
+    );
+  }
+
+  async findReferencedNftsByDropIds(
+    dropIds: number[]
+  ): Promise<DropReferencedNftEntity[]> {
+    if (dropIds.length === 0) {
+      return [];
+    }
+    return this.db.execute(
+      `select * from ${DROP_REFERENCED_NFTS_TABLE} where drop_id in (:dropIds)`,
+      { dropIds }
+    );
+  }
+
+  async findMetadataByDropIds(
+    dropIds: number[]
+  ): Promise<DropMetadataEntity[]> {
+    if (dropIds.length === 0) {
+      return [];
+    }
+    return this.db.execute(
+      `select * from ${DROP_METADATA_TABLE} where drop_id in (:dropIds)`,
+      { dropIds }
+    );
   }
 }
 
