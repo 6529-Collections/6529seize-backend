@@ -70,6 +70,7 @@ export class DropsService {
       created_at: dropEntity.created_at,
       storm_id: dropEntity.storm_id,
       storm_sequence: dropEntity.storm_sequence,
+      max_storm_sequence: dropEntity.max_storm_sequence,
       quoted_drop_id: dropEntity.quoted_drop_id,
       media_url: dropEntity.media_url,
       media_mime_type: dropEntity.media_mime_type,
@@ -91,7 +92,9 @@ export class DropsService {
   }
 
   public async findLatestDrops(amount: number): Promise<DropFull[]> {
-    const dropEntities = await this.dropsDb.findLatestDrops(amount);
+    const dropEntities = await this.dropsDb.findLatestDropsGroupedInStorms(
+      amount
+    );
     const dropIds = dropEntities.map((it) => it.id);
     const mentions = await this.dropsDb.findMentionsByDropIds(dropIds);
     const referencedNfts = await this.dropsDb.findReferencedNftsByDropIds(
@@ -156,6 +159,7 @@ export class DropsService {
       created_at: dropEntity.created_at,
       storm_id: dropEntity.storm_id,
       storm_sequence: dropEntity.storm_sequence,
+      max_storm_sequence: dropEntity.max_storm_sequence,
       quoted_drop_id: dropEntity.quoted_drop_id,
       media_url: dropEntity.media_url,
       media_mime_type: dropEntity.media_mime_type,

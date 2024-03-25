@@ -167,13 +167,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async findDropById(
     id: number,
     connection?: ConnectionWrapper<any>
-  ): Promise<Drop | null> {
+  ): Promise<(Drop & { max_storm_sequence: number }) | null> {
     const opts = connection ? { wrappedConnection: connection } : {};
     return this.db
       .execute(
         `
-        select * from ${DROPS_TABLE} d
-        where d.id = :id group by 1`,
+        with mss as (
+            select max(d2.storm_sequence) as max_storm_sequence from drops d
+            join drops d2 on d2.storm_id = d.storm_id
+            where d.id = :id
+        )
+        select * from drops d
+                 join mss on true
+        where d.id = :id`,
         { id },
         opts
       )
@@ -230,9 +236,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .then((it) => it[0].cnt);
   }
 
-  async findLatestDrops(amount: number): Promise<Drop[]> {
+  async findLatestDropsGroupedInStorms(
+    amount: number
+  ): Promise<(Drop & { max_storm_sequence: number })[]> {
     return this.db.execute(
-      `select * from ${DROPS_TABLE} order by created_at desc limit ${amount}`
+      `with storms as (select s.id as storm_id, max(d.storm_sequence) max_storm_sequence from ${DROP_STORMS_TABLE} s
+            join ${DROPS_TABLE} d on d.storm_id = s.id
+            group by s.id)
+         select d.*, s.max_storm_sequence from ${DROPS_TABLE} d
+         join storms s on s.storm_id = d.storm_id
+         where d.storm_sequence = 1
+         order by d.created_at desc limit ${amount}`
     );
   }
 
