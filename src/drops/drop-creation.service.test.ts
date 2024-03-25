@@ -45,7 +45,8 @@ const aDropFull = {
   media_url: null,
   media_mime_type: null,
   storm_id: 0,
-  storm_sequence: 0
+  storm_sequence: 1,
+  max_storm_sequence: 2
 };
 
 describe('DropCreationService', () => {

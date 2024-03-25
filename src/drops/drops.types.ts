@@ -41,6 +41,7 @@ export interface DropFull {
   readonly media_mime_type: string | null;
   readonly storm_id: number;
   readonly storm_sequence: number;
+  readonly max_storm_sequence: number;
 }
 
 export interface NewDropMedia {
