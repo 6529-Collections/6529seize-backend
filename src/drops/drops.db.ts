@@ -1,7 +1,8 @@
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService
+  LazyDbAccessCompatibleService,
+  SqlExecutor
 } from '../sql-executor';
 import {
   Drop,
@@ -16,8 +17,19 @@ import {
   DROPS_MENTIONS_TABLE,
   DROPS_TABLE
 } from '../constants';
+import {
+  communityMemberCriteriaService,
+  CommunityMemberCriteriaService
+} from '../api-serverless/src/community-members/community-member-criteria.service';
 
 export class DropsDb extends LazyDbAccessCompatibleService {
+  constructor(
+    supplyDb: () => SqlExecutor,
+    private readonly criteriaService: CommunityMemberCriteriaService
+  ) {
+    super(supplyDb);
+  }
+
   async getDropsByIds(ids: number[]): Promise<Drop[]> {
     if (!ids.length) {
       return [];
@@ -173,11 +185,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .execute(
         `
         with mss as (
-            select max(d2.storm_sequence) as max_storm_sequence from drops d
-            join drops d2 on d2.storm_id = d.storm_id
+            select max(d2.storm_sequence) as max_storm_sequence from ${DROPS_TABLE} d
+            join ${DROPS_TABLE} d2 on d2.storm_id = d.storm_id
             where d.id = :id
         )
-        select * from drops d
+        select * from ${DROPS_TABLE} d
                  join mss on true
         where d.id = :id`,
         { id },
@@ -236,18 +248,28 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .then((it) => it[0].cnt);
   }
 
-  async findLatestDropsGroupedInStorms(
-    amount: number
-  ): Promise<(Drop & { max_storm_sequence: number })[]> {
-    return this.db.execute(
-      `with storms as (select s.id as storm_id, max(d.storm_sequence) max_storm_sequence from ${DROP_STORMS_TABLE} s
+  async findLatestDropsGroupedInStorms({
+    amount,
+    curation_criteria_id
+  }: {
+    curation_criteria_id: string | null;
+    amount: number;
+  }): Promise<(Drop & { max_storm_sequence: number })[]> {
+    const sqlAndParams = await this.criteriaService.getSqlAndParamsByCriteriaId(
+      curation_criteria_id
+    );
+    if (!sqlAndParams) {
+      return [];
+    }
+    const sql = `${sqlAndParams.sql}, storms as (select s.id as storm_id, max(d.storm_sequence) max_storm_sequence from ${DROP_STORMS_TABLE} s
             join ${DROPS_TABLE} d on d.storm_id = s.id
             group by s.id)
          select d.*, s.max_storm_sequence from ${DROPS_TABLE} d
+         join ${CommunityMemberCriteriaService.GENERATED_VIEW} cm on cm.profile_id = d.author_id
          join storms s on s.storm_id = d.storm_id
          where d.storm_sequence = 1
-         order by d.created_at desc limit ${amount}`
-    );
+         order by d.created_at desc limit ${amount}`;
+    return this.db.execute(sql, sqlAndParams.params);
   }
 
   async findMentionsByDropIds(dropIds: number[]): Promise<DropMentionEntity[]> {
@@ -290,4 +312,4 @@ export interface NewDropEntity
   readonly storm_id: number | null;
 }
 
-export const dropsDb = new DropsDb(dbSupplier);
+export const dropsDb = new DropsDb(dbSupplier, communityMemberCriteriaService);
