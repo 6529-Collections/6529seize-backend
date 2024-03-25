@@ -91,10 +91,17 @@ export class DropsService {
     };
   }
 
-  public async findLatestDrops(amount: number): Promise<DropFull[]> {
-    const dropEntities = await this.dropsDb.findLatestDropsGroupedInStorms(
-      amount
-    );
+  public async findLatestDrops({
+    amount,
+    curation_criteria_id
+  }: {
+    curation_criteria_id: string | null;
+    amount: number;
+  }): Promise<DropFull[]> {
+    const dropEntities = await this.dropsDb.findLatestDropsGroupedInStorms({
+      amount,
+      curation_criteria_id
+    });
     const dropIds = dropEntities.map((it) => it.id);
     const mentions = await this.dropsDb.findMentionsByDropIds(dropIds);
     const referencedNfts = await this.dropsDb.findReferencedNftsByDropIds(
