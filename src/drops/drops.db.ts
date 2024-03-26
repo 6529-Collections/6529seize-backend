@@ -251,10 +251,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async findLatestDropsGroupedInStorms({
     amount,
     id_less_than,
-    curation_criteria_id
+    curation_criteria_id,
+    storm_id
   }: {
     curation_criteria_id: string | null;
     id_less_than: number | null;
+    storm_id: number | null;
     amount: number;
   }): Promise<(Drop & { max_storm_sequence: number })[]> {
     const sqlAndParams = await this.criteriaService.getSqlAndParamsByCriteriaId(
@@ -264,18 +266,30 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       return [];
     }
     const idLessThan = id_less_than ?? Number.MAX_SAFE_INTEGER;
-    const sql = `${sqlAndParams.sql}, storms as (select s.id as storm_id, max(d.storm_sequence) max_storm_sequence from ${DROP_STORMS_TABLE} s
+    const sql = `${
+      sqlAndParams.sql
+    }, storms as (select s.id as storm_id, max(d.storm_sequence) max_storm_sequence from ${DROP_STORMS_TABLE} s
             join ${DROPS_TABLE} d on d.storm_id = s.id
             group by s.id)
          select d.*, s.max_storm_sequence from ${DROPS_TABLE} d
-         join ${CommunityMemberCriteriaService.GENERATED_VIEW} cm on cm.profile_id = d.author_id
+         join ${
+           CommunityMemberCriteriaService.GENERATED_VIEW
+         } cm on cm.profile_id = d.author_id
          join storms s on s.storm_id = d.storm_id
-         where d.storm_sequence = 1 and id < :idLessThan
+         where true ${
+           storm_id === null ? '' : ' and d.storm_sequence = 1 '
+         } and id < :idLessThan ${
+      storm_id !== null ? `and d.storm_id = :stormId` : ''
+    }
          order by d.id desc limit ${amount}`;
-    return this.db.execute(sql, {
+    const params: Record<string, any> = {
       ...sqlAndParams.params,
       idLessThan
-    });
+    };
+    if (storm_id !== null) {
+      params.stormId = storm_id;
+    }
+    return this.db.execute(sql, params);
   }
 
   async findProfileDropsGroupedInStorms(param: {
@@ -294,37 +308,45 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return this.db.execute(sql, { profileId: param.profile_id, idLessThan });
   }
 
-  async findMentionsByDropIds(dropIds: number[]): Promise<DropMentionEntity[]> {
+  async findMentionsByDropIds(
+    dropIds: number[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropMentionEntity[]> {
     if (dropIds.length === 0) {
       return [];
     }
     return this.db.execute(
       `select * from ${DROPS_MENTIONS_TABLE} where drop_id in (:dropIds)`,
-      { dropIds }
+      { dropIds },
+      connection ? { wrappedConnection: connection } : undefined
     );
   }
 
   async findReferencedNftsByDropIds(
-    dropIds: number[]
+    dropIds: number[],
+    connection?: ConnectionWrapper<any>
   ): Promise<DropReferencedNftEntity[]> {
     if (dropIds.length === 0) {
       return [];
     }
     return this.db.execute(
       `select * from ${DROP_REFERENCED_NFTS_TABLE} where drop_id in (:dropIds)`,
-      { dropIds }
+      { dropIds },
+      connection ? { wrappedConnection: connection } : undefined
     );
   }
 
   async findMetadataByDropIds(
-    dropIds: number[]
+    dropIds: number[],
+    connection?: ConnectionWrapper<any>
   ): Promise<DropMetadataEntity[]> {
     if (dropIds.length === 0) {
       return [];
     }
     return this.db.execute(
       `select * from ${DROP_METADATA_TABLE} where drop_id in (:dropIds)`,
-      { dropIds }
+      { dropIds },
+      connection ? { wrappedConnection: connection } : undefined
     );
   }
 }
