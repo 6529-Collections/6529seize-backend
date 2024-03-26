@@ -9,14 +9,14 @@ export async function getRaterInfoFromRequest(
   const handleOrWallet = req.params.handleOrWallet.toLowerCase();
   const raterWallet = getWalletOrThrow(req);
   const targetProfile =
-    await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+    await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
       handleOrWallet
     );
   if (!targetProfile?.profile) {
     throw new NotFoundException(`No profile found for ${handleOrWallet}`);
   }
   const raterProfile =
-    await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+    await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
       raterWallet
     );
   if (!raterProfile?.profile) {
