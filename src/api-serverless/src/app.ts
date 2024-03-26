@@ -59,7 +59,7 @@ import {
 } from './api-filters';
 import { parseTdhDataFromDB, parseTdhResultsFromDB } from '../../sql_helpers';
 import { loadLocalConfig, loadSecrets } from '../../env';
-import subscriptionsRoutes from './subscriptions/subscriptions.routes';
+import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
 
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');

@@ -52,8 +52,11 @@ export const LISTENER_PROCESSED_EVENTS_TABLE = 'listener_processed_events';
 export const CIC_SCORE_AGGREGATIONS_TABLE = 'cic_score_aggregations';
 export const PROFILE_TOTAL_REP_SCORE_AGGREGATIONS_TABLE =
   'profile_total_rep_score_aggregations';
+
 export const SUBSCRIPTIONS_TOP_UP_TABLE = 'subscriptions_top_up';
 export const SUBSCRIPTIONS_BALANCES_TABLE = 'subscriptions_balances';
+export const SUBSCRIPTIONS_MODE_TABLE = 'subscriptions_mode';
+export const SUBSCRIPTIONS_NFTS_TABLE = 'subscriptions_nfts';
 
 export const DROPS_TABLE = 'drops';
 export const DROP_STORMS_TABLE = 'drop_storms';

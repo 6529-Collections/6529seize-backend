@@ -1,48 +1,23 @@
-import {
-  SUBSCRIPTIONS_TOP_UP_TABLE,
-  WALLETS_CONSOLIDATION_KEYS_VIEW
-} from '../constants';
 import { getDataSource } from '../db';
 import {
-  SubscriptionBalance,
-  SubscriptionTopUp
+  NFTSubscription,
+  SubscriptionMode
 } from '../entities/ISubscription.ts';
 
-export async function persistTopUps(topUps: SubscriptionTopUp[]) {
-  await getDataSource().transaction(async (manager) => {
-    const balancesRepo = manager.getRepository(SubscriptionBalance);
-    const topUpsRepo = manager.getRepository(SubscriptionTopUp);
-    for (const topUp of topUps) {
-      let consolidationKey = (
-        await manager.query(
-          `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE wallet = ${topUp.from_wallet}`
-        )
-      )?.[0]?.consolidation_key;
-
-      if (!consolidationKey) {
-        consolidationKey = topUp.from_wallet;
-      }
-
-      let balance = await balancesRepo.findOne({
-        where: { consolidation_key: consolidationKey }
-      });
-      if (!balance) {
-        balance = {
-          consolidation_key: consolidationKey,
-          balance: topUp.amount
-        };
-      } else {
-        balance.balance += topUp.amount;
-      }
-      await balancesRepo.save(balance);
-      await topUpsRepo.insert(topUp);
-    }
-  });
+export async function fetchAllAutoSubscriptions() {
+  return await getDataSource()
+    .getRepository(SubscriptionMode)
+    .find({ where: { automatic: true } });
 }
 
-export async function getMaxSubscriptionTopUpBlock(): Promise<number> {
-  const result = await getDataSource().query(
-    `SELECT MAX(block) as max_block FROM ${SUBSCRIPTIONS_TOP_UP_TABLE}`
-  );
-  return result?.[0].max_block ?? 0;
+export async function fetchAllNftSubscriptions(contract: string, id: number) {
+  return await getDataSource()
+    .getRepository(NFTSubscription)
+    .find({ where: { contract: contract, token_id: id } });
+}
+
+export async function persistSubscriptions(subscriptions: NFTSubscription[]) {
+  await getDataSource()
+    .getRepository(NFTSubscription)
+    .upsert(subscriptions, ['consolidation_key', 'contract', 'token_id']);
 }

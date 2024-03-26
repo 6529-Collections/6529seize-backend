@@ -3,8 +3,8 @@ import {
   AssetTransfersCategory,
   AssetTransfersWithMetadataResult
 } from 'alchemy-sdk';
-import { SUBSCRIPTIONS_ADDRESS } from '../constants';
-import { SubscriptionTopUp } from '../entities/ISubscription.ts';
+import { SUBSCRIPTIONS_ADDRESS } from '../constants.ts';
+import { SubscriptionTopUp } from '../entities/ISubscription.ts.ts';
 
 export async function getAllSubscriptionTopUps(
   alchemy: Alchemy,
@@ -12,7 +12,7 @@ export async function getAllSubscriptionTopUps(
   toBlock: number
 ): Promise<SubscriptionTopUp[]> {
   const subscriptions: AssetTransfersWithMetadataResult[] = [];
-  let pageKey = undefined;
+  let pageKey: string | undefined = undefined;
   do {
     const result = await getSubscriptions(alchemy, fromBlock, toBlock, pageKey);
     subscriptions.push(...result.transfers);
@@ -22,6 +22,7 @@ export async function getAllSubscriptionTopUps(
   const topUps = subscriptions.map((subscription) => {
     const topUp: SubscriptionTopUp = {
       block: parseInt(subscription.blockNum, 16),
+      transaction_date: new Date(subscription.metadata.blockTimestamp),
       hash: subscription.hash,
       from_wallet: subscription.from.toLowerCase(),
       amount: subscription.value ?? 0

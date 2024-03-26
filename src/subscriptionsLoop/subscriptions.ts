@@ -1,67 +1,53 @@
-import { Alchemy, Network } from 'alchemy-sdk';
-import { getAlchemyInstance } from '../alchemy';
-import { sepolia } from '@wagmi/chains';
+import { MEMES_CONTRACT, NFTS_TABLE } from '../constants';
+import { NFTSubscription } from '../entities/ISubscription.ts';
 import { Logger } from '../logging';
-import { WALLETS_CONSOLIDATION_KEYS_VIEW } from '../constants';
-import { getAllSubscriptionTopUps } from './alchemy.subscriptions';
-import { SubscriptionTopUp } from '../entities/ISubscription.ts';
 import { sqlExecutor } from '../sql-executor';
 import {
-  getMaxSubscriptionTopUpBlock,
-  persistTopUps
+  fetchAllAutoSubscriptions,
+  fetchAllNftSubscriptions,
+  persistSubscriptions
 } from './db.subscriptions';
 
 const logger = Logger.get('SUBSCRIPTIONS');
 
-export function getSubscriptionsnetwork(): Network {
-  const chain = process.env.SUBSCRIPTIONS_CHAIN_ID;
-  if (chain === sepolia.id.toString()) {
-    return Network.ETH_SEPOLIA;
-  }
-  return Network.ETH_MAINNET;
-}
+export async function updateSubscriptions(reset?: boolean) {
+  const currentAutoSubscriptions = await fetchAllAutoSubscriptions();
+  logger.info(`[FOUND ${currentAutoSubscriptions.length} AUTO SUBSCRIPTIONS]`);
 
-export async function findSubscriptions(reset?: boolean) {
-  const network = getSubscriptionsnetwork();
-  logger.info(`[NETWORK: ${network}]`);
-  const alchemy: Alchemy = getAlchemyInstance(network);
+  const maxMemeId =
+    (
+      await sqlExecutor.execute(
+        `SELECT MAX(id) as max_id FROM ${NFTS_TABLE} WHERE contract = :contract`,
+        { contract: MEMES_CONTRACT }
+      )
+    )[0]?.max_id ?? 0;
 
-  let fromBlock;
-  if (reset) {
-    fromBlock = 0;
-  } else {
-    fromBlock = await getMaxSubscriptionTopUpBlock();
-    if (fromBlock) {
-      fromBlock = fromBlock + 1;
-    }
-  }
+  logger.info(`[MAX CURRENT MEME ${maxMemeId}]`);
 
-  const toBlock = await alchemy.core.getBlockNumber();
-
-  const subscriptions = await getAllSubscriptionTopUps(
-    alchemy,
-    fromBlock,
-    toBlock
+  const newMeme = maxMemeId + 1;
+  const newMemeSubscriptions = await fetchAllNftSubscriptions(
+    MEMES_CONTRACT,
+    newMeme
   );
-
   logger.info(
-    `[FROM BLOCK ${fromBlock}] [FOUND ${subscriptions.length} NEW SUBSCRIPTIONS]`
+    `[NEW MEME ID ${newMeme}] : [SUBSCRIPTIONS ${newMemeSubscriptions.length}]`
   );
 
-  await processTopUps(subscriptions);
-}
-
-async function processTopUps(topUps: SubscriptionTopUp[]) {
-  for (const topUp of topUps) {
-    let consolidationKey = topUp.from_wallet;
-    const consolidation = await sqlExecutor.execute(
-      `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE wallet = :wallet`,
-      { wallet: topUp.from_wallet }
+  if (newMemeSubscriptions.length > 0) {
+    logger.info(`[SUBSCRIPTIONS FOR NEW MEME ALREADY EXIST]`);
+  } else {
+    logger.info(`[POPULATING AUTOMATIC SUBSCRIPTIONS FOR NEW MEME]`);
+    const newSubscriptions: NFTSubscription[] = currentAutoSubscriptions.map(
+      (s) => {
+        const sub: NFTSubscription = {
+          consolidation_key: s.consolidation_key,
+          contract: MEMES_CONTRACT,
+          token_id: newMeme
+        };
+        return sub;
+      }
     );
-    if (consolidation.length === 1) {
-      consolidationKey = consolidation[0].consolidation_key;
-    }
+    await persistSubscriptions(newSubscriptions);
+    logger.info(`[CREATED ${newSubscriptions.length} NEW SUBSCRIPTIONS]`);
   }
-
-  await persistTopUps(topUps);
 }

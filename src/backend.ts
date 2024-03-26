@@ -2,7 +2,9 @@ import { Logger } from './logging';
 import { Time } from './time';
 import * as customReplayLoop from './customReplayLoop';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
+
 import * as subscriptionsLoop from './subscriptionsLoop';
+import * as subscriptionsTopUpLoop from './subscriptionsTopUpLoop';
 
 const logger = Logger.get('BACKEND');
 
