@@ -42,12 +42,12 @@ async function getBaseSearchRequest(
   let profileId = undefined;
   if (profile) {
     profileId = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(profile)
+      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(profile)
       .then((result) => result?.profile?.external_id ?? '-');
   }
   const targetId = queryParams.target
     ? await profilesService
-        .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
           queryParams.target
         )
         .then((result) => result?.profile?.external_id ?? queryParams.target)
