@@ -288,7 +288,7 @@ export async function consolidateActivity(
     Array.from(addresses).map(async (address) => {
       const consolidation = (
         await fetchWalletConsolidationKeysViewForWallet([address])
-      )?.[0];
+      )[0];
 
       let consolidationKey: string;
       let consolidationAddresses: string[] = [];

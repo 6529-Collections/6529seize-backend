@@ -1,7 +1,4 @@
-import {
-  Alchemy,
-  GetOwnersForContractWithTokenBalancesResponse
-} from 'alchemy-sdk';
+import { GetOwnersForContractWithTokenBalancesResponse } from 'alchemy-sdk';
 import { getAlchemyInstance } from '../alchemy';
 
 export interface OwnedNft {

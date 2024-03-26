@@ -2,7 +2,7 @@ import { dropsDb, DropsDb } from './drops.db';
 import { profilesService, ProfilesService } from '../profiles/profiles.service';
 import { ConnectionWrapper } from '../sql-executor';
 import { DropFull } from './drops.types';
-import { BadRequestException } from '../exceptions';
+import { NotFoundException } from '../exceptions';
 import { ProfileMin } from '../profiles/profile-min';
 import { Drop } from '../entities/IDrop';
 
@@ -20,104 +20,52 @@ export class DropsService {
       .findDropById(dropId, connection)
       .then((drop) => {
         if (!drop) {
-          throw new BadRequestException('Drop not found');
+          throw new NotFoundException(`Drop ${dropId} not found`);
         }
         return drop;
       });
-    const mentions = await this.dropsDb.findMentionsByDropId(
-      dropId,
-      connection
+    return this.convertToDropFulls([dropEntity], connection).then(
+      (it) => it[0]!
     );
-    const referencedNfts = await this.dropsDb.findReferencedNftsByDropId(
-      dropId,
-      connection
-    );
-    const metadata = await this.dropsDb.findMetadataByDropId(
-      dropId,
-      connection
-    );
-    const realHandledByProfileIds =
-      await this.profilesService.getProfileHandlesByIds(
-        mentions.map((it) => it.mentioned_profile_id)
-      );
-    let author = await this.profilesService
-      .getProfileMinsByIds([dropEntity.author_id])
-      .then((it) => it[0] ?? null);
-    const author_archived = !author;
-    if (author_archived) {
-      const archivedProfile =
-        await this.profilesService.getNewestVersionOfArchivedProfile(
-          dropEntity.author_id
-        );
-      if (archivedProfile === null) {
-        throw new Error(`Author profile not found for drop ${dropId}`);
-      }
-      author = {
-        id: archivedProfile.external_id,
-        handle: archivedProfile.handle,
-        pfp: archivedProfile.pfp_url ?? null,
-        cic: 0,
-        rep: 0,
-        tdh: 0,
-        level: 0
-      };
-    }
-    return {
-      id: dropEntity.id,
-      author,
-      author_archived,
-      title: dropEntity.title,
-      content: dropEntity.content,
-      created_at: dropEntity.created_at,
-      storm_id: dropEntity.storm_id,
-      storm_sequence: dropEntity.storm_sequence,
-      max_storm_sequence: dropEntity.max_storm_sequence,
-      quoted_drop_id: dropEntity.quoted_drop_id,
-      media_url: dropEntity.media_url,
-      media_mime_type: dropEntity.media_mime_type,
-      referenced_nfts: referencedNfts.map((it) => ({
-        contract: it.contract,
-        token: it.token,
-        name: it.name
-      })),
-      mentioned_users: mentions.map((it) => ({
-        mentioned_profile_id: it.mentioned_profile_id,
-        handle_in_content: it.handle_in_content,
-        current_handle: realHandledByProfileIds[it.mentioned_profile_id] ?? null
-      })),
-      metadata: metadata.map((it) => ({
-        data_key: it.data_key,
-        data_value: it.data_value
-      }))
-    };
   }
 
   public async findLatestDrops({
     amount,
     curation_criteria_id,
-    id_less_than
+    id_less_than,
+    storm_id
   }: {
     curation_criteria_id: string | null;
     id_less_than: number | null;
+    storm_id: number | null;
     amount: number;
   }): Promise<DropFull[]> {
     const dropEntities = await this.dropsDb.findLatestDropsGroupedInStorms({
       amount,
       id_less_than,
-      curation_criteria_id
+      curation_criteria_id,
+      storm_id
     });
     return await this.convertToDropFulls(dropEntities);
   }
 
   private async convertToDropFulls(
-    dropEntities: (Drop & { max_storm_sequence: number })[]
+    dropEntities: (Drop & { max_storm_sequence: number })[],
+    connection?: ConnectionWrapper<any>
   ): Promise<DropFull[]> {
     const dropIds = dropEntities.map((it) => it.id);
-    const mentions = await this.dropsDb.findMentionsByDropIds(dropIds);
-    const referencedNfts = await this.dropsDb.findReferencedNftsByDropIds(
-      dropIds
+    const mentions = await this.dropsDb.findMentionsByDropIds(
+      dropIds,
+      connection
     );
-    const metadata = await this.dropsDb.findMetadataByDropIds(dropIds);
+    const referencedNfts = await this.dropsDb.findReferencedNftsByDropIds(
+      dropIds,
+      connection
+    );
+    const metadata = await this.dropsDb.findMetadataByDropIds(
+      dropIds,
+      connection
+    );
     const allProfileIds = [
       ...dropEntities.map((it) => it.author_id),
       ...mentions.map((it) => it.mentioned_profile_id)

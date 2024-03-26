@@ -11,10 +11,10 @@ import {
   GRADIENT_CONTRACT,
   LAB_EXTENDED_DATA_TABLE,
   MANIFOLD,
+  MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
-  MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMES_SEASONS_TABLE,
   NFT_OWNERS_TABLE,
   NFTS_HISTORY_TABLE,
@@ -692,7 +692,7 @@ export async function fetchOwners(
   nfts: string
 ) {
   let filters = '';
-  let params: any = {};
+  const params: any = {};
 
   if (wallets) {
     filters = constructFilters(
