@@ -539,6 +539,43 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         }))
       );
   }
+
+  async getProfileIdsAndHandlesByIds(
+    ids: string[]
+  ): Promise<{ id: string; handle: string }[]> {
+    if (!ids.length) {
+      return [];
+    }
+    return this.db.execute(
+      `select external_id as id, handle from ${PROFILES_TABLE} where external_id in (:ids)`,
+      { ids }
+    );
+  }
+
+  async getNewestVersionOfArchivedProfile(id: string): Promise<Profile | null> {
+    return this.db
+      .execute(
+        `select * from ${PROFILES_ARCHIVE_TABLE} where external_id = :id order by updated_at desc limit 1`,
+        { id }
+      )
+      .then((result) => result.at(0) ?? null);
+  }
+
+  async getNewestVersionHandlesOfArchivedProfiles(
+    profileIds: string[]
+  ): Promise<{ external_id: string; handle: string }[]> {
+    if (profileIds.length === 0) {
+      return [];
+    }
+    return this.db.execute(
+      `with prof_ids_w_latest_versions as (select external_id, max(id) as id from ${PROFILES_ARCHIVE_TABLE} group by 1)
+            select p.external_id as external_id, p.handle as handle
+            from ${PROFILES_ARCHIVE_TABLE} p
+                     join prof_ids_w_latest_versions l on p.id = l.id
+            where l.external_id in (:profileIds)`,
+      { profileIds }
+    );
+  }
 }
 
 export const profilesDb = new ProfilesDb(dbSupplier);
