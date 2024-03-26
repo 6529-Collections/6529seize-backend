@@ -1,5 +1,4 @@
 import { Request } from 'express';
-import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 
 import { DEFAULT_PAGE_SIZE } from '../page-request';

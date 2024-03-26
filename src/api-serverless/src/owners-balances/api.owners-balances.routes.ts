@@ -1,5 +1,4 @@
 import { Request } from 'express';
-import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 
 import { returnJsonResult } from '../api-helpers';

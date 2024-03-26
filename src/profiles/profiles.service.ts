@@ -832,6 +832,7 @@ export class ProfilesService {
       return members.map((member) => {
         const cic = foundProfilesCicsByProfileIds[member.external_id];
         return {
+          profile_id: member.external_id,
           handle: member.handle,
           normalised_handle: member.normalised_handle,
           primary_wallet: member.primary_wallet,
@@ -873,6 +874,7 @@ export class ProfilesService {
       display = walletResp?.ens ?? wallet;
     }
     return {
+      profile_id: profile?.external_id ?? null,
       handle: profile?.handle ?? null,
       normalised_handle: profile?.normalised_handle ?? null,
       primary_wallet: profile?.primary_wallet ?? null,
@@ -919,9 +921,32 @@ export class ProfilesService {
   async getProfileMinsByIds(ids: string[]): Promise<ProfileMin[]> {
     return this.profilesDb.getProfileMinsByIds(ids);
   }
+
+  async getProfileHandlesByIds(ids: string[]): Promise<Record<string, string>> {
+    const dbResult = await this.profilesDb.getProfileIdsAndHandlesByIds(ids);
+    return dbResult.reduce((acc, it) => {
+      acc[it.id] = it.handle;
+      return acc;
+    }, {} as Record<string, string>);
+  }
+
+  async getNewestVersionOfArchivedProfile(
+    profileId: string
+  ): Promise<Profile | null> {
+    return this.profilesDb.getNewestVersionOfArchivedProfile(profileId);
+  }
+
+  async getNewestVersionOfArchivedProfileHandles(
+    profileIds: string[]
+  ): Promise<{ external_id: string; handle: string }[]> {
+    return this.profilesDb.getNewestVersionHandlesOfArchivedProfiles(
+      profileIds
+    );
+  }
 }
 
 export interface CommunityMemberMinimal {
+  readonly profile_id: string | null;
   readonly handle: string | null;
   readonly normalised_handle: string | null;
   readonly primary_wallet: string | null;
