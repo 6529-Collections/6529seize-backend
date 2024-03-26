@@ -17,11 +17,11 @@ class BedrockAiPrompter implements AiPrompter {
       contentType: 'application/json',
       accept: 'application/json',
       body: JSON.stringify({
-        prompt: `<s>[INST] ${prompt} [/INST]`,
+        prompt: `<s>[INST] ${prompt} [/INST] `,
         max_tokens: 1000,
-        temperature: 0.5,
-        top_p: 0.9,
-        top_k: 50
+        temperature: 0.7,
+        top_p: 0.8,
+        top_k: 30
       })
     };
     const response = await this.getBedrock().send(
