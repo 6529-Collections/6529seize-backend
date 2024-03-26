@@ -94,13 +94,16 @@ export class DropsService {
 
   public async findLatestDrops({
     amount,
-    curation_criteria_id
+    curation_criteria_id,
+    id_less_than
   }: {
     curation_criteria_id: string | null;
+    id_less_than: number | null;
     amount: number;
   }): Promise<DropFull[]> {
     const dropEntities = await this.dropsDb.findLatestDropsGroupedInStorms({
       amount,
+      id_less_than,
       curation_criteria_id
     });
     return await this.convertToDropFulls(dropEntities);
@@ -195,6 +198,7 @@ export class DropsService {
   async findProfilesLatestDrops(param: {
     amount: number;
     profile_id: string;
+    id_less_than: number | null;
   }): Promise<DropFull[]> {
     const dropEntities = await this.dropsDb.findProfileDropsGroupedInStorms(
       param

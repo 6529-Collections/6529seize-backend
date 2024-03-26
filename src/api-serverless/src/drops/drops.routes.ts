@@ -34,7 +34,7 @@ router.get(
       any,
       any,
       any,
-      { limit: number; curation_criteria_id?: string },
+      { limit: number; curation_criteria_id?: string; id_less_than?: number },
       any
     >,
     res: Response<ApiResponse<DropFull[]>>
@@ -42,8 +42,9 @@ router.get(
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
     const curation_criteria_id = req.query.curation_criteria_id ?? null;
     const createdDrop = await dropsService.findLatestDrops({
-      amount: limit < 0 ? 10 : limit,
-      curation_criteria_id
+      amount: limit < 0 || limit > 200 ? 10 : limit,
+      curation_criteria_id,
+      id_less_than: parseNumberOrNull(req.query.id_less_than)
     });
     res.send(createdDrop);
   }
