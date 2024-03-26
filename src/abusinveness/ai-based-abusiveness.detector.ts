@@ -72,7 +72,12 @@ ${text}
     if (process.env.NODE_ENV !== 'local') {
       await this.discord.sendMessage(
         DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
-        `Rep check\n\nInput text:\n${text}\n\nGPT response:\n${responseMessage}`
+        `\n\nRep check:\n  Environment: \`${
+          process.env.NODE_ENV
+        }\`\n  Input text: \`${text}\`\n  GPT response:\n\`\`\`json\n${responseMessage.substring(
+          0,
+          1069
+        )}\n\`\`\``
       );
     }
     return await this.formatChatResponse(text, responseMessage);
@@ -199,7 +204,12 @@ input
     if (process.env.NODE_ENV !== 'local') {
       await this.discord.sendMessage(
         DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
-        `Username: ${handle}\n\nUser Type: ${profile_type}\n\nInput text:\n${text}\n\nGPT response:\n${responseMessage}`
+        `\n\nAbout check:\n  Environment: \`${
+          process.env.NODE_ENV
+        }\`\n  Input username: \`${handle}\`\n  Type: ${profile_type}\n  About text:\n\`\`\`${text}\`\`\`\n  GPT response:\n\`\`\`json\n${responseMessage.substring(
+          0,
+          1069
+        )}\n\`\`\``
       );
     }
     return await this.formatChatResponse(text, responseMessage);
@@ -320,7 +330,12 @@ input
     if (process.env.NODE_ENV !== 'local') {
       await this.discord.sendMessage(
         DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
-        `Curation criteria name check\n\nUsername: ${handle}\n\nInput text:\n${text}\n\nGPT response:\n${responseMessage}`
+        `Curation criteria name check:\n  Environment: \`${
+          process.env.NODE_ENV
+        }\`\n  Username: \`${handle}\`\n  Curation name: \`${text}\`\n  GPT response:\n\`\`\`json\n${responseMessage.substring(
+          0,
+          1069
+        )}\n\`\`\``
       );
     }
     return await this.formatChatResponse(text, responseMessage);
