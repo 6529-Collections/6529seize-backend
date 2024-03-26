@@ -572,7 +572,7 @@ export class RatingsService {
         ? 'rating'
         : 'last_modified';
     const profile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         handleOrWallet.toLocaleLowerCase()
       );
     const profile_id = profile?.profile?.external_id;

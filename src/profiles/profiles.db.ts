@@ -576,6 +576,19 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       { profileIds }
     );
   }
+
+  async getProfileById(
+    id: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<Profile | null> {
+    return this.db
+      .execute(
+        `select * from ${PROFILES_TABLE} where external_id = :id`,
+        { id },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((result) => result.at(0) ?? null);
+  }
 }
 
 export const profilesDb = new ProfilesDb(dbSupplier);

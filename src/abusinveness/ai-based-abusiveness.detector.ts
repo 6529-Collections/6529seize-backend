@@ -251,7 +251,7 @@ Hate Speech: We do not allow discriminatory or hate speech of any type
 Personal Insults: We do not allow personal insults
  
 Inappropriate Language: We do not allow language that would would make a normal user in the cryptotwitter community feel bad or uncomfortable. Given the nature of the community (cryptotwitter and NFT twitter) we are more permissive than most social media sites on the following two factors:
-We allow typical cryptotwitter terms. Aka "shitposting" is fine as a term, as is: cabal, n00b, newbie, nerd, and degen, cryptodickbutt”. 
+We allow typical cryptotwitter terms. Aka "shitposting" is fine as a term, as is: cryptodickbutt, cabal, n00b, newbie, nerd, and degen, cryptodickbutt”. 
 We allow discussion of artistic nudity as we support nude art photographers.
 
 

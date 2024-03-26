@@ -43,7 +43,7 @@ router.get(
   ) {
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         handleOrWallet
       );
     if (!profile) {
@@ -88,14 +88,14 @@ router.get(
     }
     const authenticatedHandle = maybeAuthenticatedWallet
       ? (
-          await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+          await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
             maybeAuthenticatedWallet
           )
         )?.profile?.handle
       : null;
     if (proposedHandle.toLowerCase() !== authenticatedHandle?.toLowerCase()) {
       const profile =
-        await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
           proposedHandle
         );
       if (profile) {
