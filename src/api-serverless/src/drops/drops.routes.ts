@@ -10,7 +10,11 @@ import {
 } from './drops.api.types';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { profilesService } from '../../../profiles/profiles.service';
-import { BadRequestException, ForbiddenException } from '../../../exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '../../../exceptions';
 import { initMulterSingleMiddleware } from '../multer-middleware';
 import { dropCreationService } from '../../../drops/drop-creation.service';
 import {
@@ -28,25 +32,47 @@ import { parseNumberOrNull } from '../../../helpers';
 const router = asyncRouter();
 
 router.get(
-  '/latest',
+  '/',
   async (
     req: Request<
       any,
       any,
       any,
-      { limit: number; curation_criteria_id?: string; id_less_than?: number },
+      {
+        limit: number;
+        curation_criteria_id?: string;
+        id_less_than?: number;
+        storm_id?: number;
+      },
       any
     >,
     res: Response<ApiResponse<DropFull[]>>
   ) => {
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
     const curation_criteria_id = req.query.curation_criteria_id ?? null;
+    const storm_id = parseNumberOrNull(req.query.storm_id);
     const createdDrop = await dropsService.findLatestDrops({
       amount: limit < 0 || limit > 200 ? 10 : limit,
       curation_criteria_id,
-      id_less_than: parseNumberOrNull(req.query.id_less_than)
+      id_less_than: parseNumberOrNull(req.query.id_less_than),
+      storm_id
     });
     res.send(createdDrop);
+  }
+);
+
+router.get(
+  '/:drop_id',
+  async (
+    req: Request<{ drop_id: number }, any, any, any, any>,
+    res: Response<ApiResponse<DropFull>>
+  ) => {
+    const dropId = parseNumberOrNull(req.params.drop_id);
+    if (!dropId) {
+      throw new NotFoundException(`Drop ${req.params.drop_id} not found`);
+    }
+    const drop = await dropsService.findDropByIdOrThrow(dropId);
+    res.send(drop);
   }
 );
 
