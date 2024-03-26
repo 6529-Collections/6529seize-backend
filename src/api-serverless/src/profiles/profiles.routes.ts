@@ -23,6 +23,7 @@ import { profilesService } from '../../../profiles/profiles.service';
 import profileCicRoutes from './profile-cic.routes';
 import profileRepRoutes from './profile-rep.routes';
 import profileCollectedRoutes from './collected/collected.routes';
+import profileDropsRoutes from './profile-drops.routes';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 
 const router = asyncRouter();
@@ -234,5 +235,6 @@ const ApiUploadProfilePictureRequestSchema: Joi.ObjectSchema<ApiUploadProfilePic
 router.use('/:handleOrWallet/cic', profileCicRoutes);
 router.use('/:handleOrWallet/rep', profileRepRoutes);
 router.use('/:handleOrWallet/collected', profileCollectedRoutes);
+router.use('/:handleOrWallet/drops', profileDropsRoutes);
 
 export default router;

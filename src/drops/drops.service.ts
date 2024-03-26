@@ -4,6 +4,7 @@ import { ConnectionWrapper } from '../sql-executor';
 import { DropFull } from './drops.types';
 import { BadRequestException } from '../exceptions';
 import { ProfileMin } from '../profiles/profile-min';
+import { Drop } from '../entities/IDrop';
 
 export class DropsService {
   constructor(
@@ -102,6 +103,12 @@ export class DropsService {
       amount,
       curation_criteria_id
     });
+    return await this.convertToDropFulls(dropEntities);
+  }
+
+  private async convertToDropFulls(
+    dropEntities: (Drop & { max_storm_sequence: number })[]
+  ): Promise<DropFull[]> {
     const dropIds = dropEntities.map((it) => it.id);
     const mentions = await this.dropsDb.findMentionsByDropIds(dropIds);
     const referencedNfts = await this.dropsDb.findReferencedNftsByDropIds(
@@ -183,6 +190,16 @@ export class DropsService {
         })),
       metadata: metadata.filter((it) => it.drop_id === dropEntity.id)
     }));
+  }
+
+  async findProfilesLatestDrops(param: {
+    amount: number;
+    profile_id: string;
+  }): Promise<DropFull[]> {
+    const dropEntities = await this.dropsDb.findProfileDropsGroupedInStorms(
+      param
+    );
+    return await this.convertToDropFulls(dropEntities);
   }
 }
 
