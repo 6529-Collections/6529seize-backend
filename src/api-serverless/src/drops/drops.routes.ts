@@ -69,7 +69,7 @@ router.post(
       );
     }
     const authorProfile = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         getWalletOrThrow(req)
       )
       ?.then((result) => result?.profile ?? null);

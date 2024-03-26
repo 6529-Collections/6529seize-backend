@@ -38,7 +38,7 @@ router.get(
     let curationCriteriaUserId: string | null = null;
     if (req.query.curation_criteria_user) {
       curationCriteriaUserId = await profilesService
-        .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
           req.query.curation_criteria_user
         )
         .then((result) => result?.profile?.external_id ?? null);
@@ -81,7 +81,7 @@ router.post(
       NewCommunityMembersCurationCriteriaSchema
     );
     const savingProfileId = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         getWalletOrThrow(req)
       )
       .then((pc) =>
@@ -117,7 +117,7 @@ router.post(
     res: Response<ApiResponse<ApiCommunityMembersCurationCriteria>>
   ) => {
     const savingProfileId = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         getWalletOrThrow(req)
       )
       .then((pc) => pc?.profile?.external_id ?? null);
