@@ -1,18 +1,18 @@
 import {
   DeleteObjectCommand,
   HeadObjectCommand,
-  PutObjectCommand,
-  S3Client
+  PutObjectCommand
 } from '@aws-sdk/client-s3';
 import { Logger } from '../logging';
+import { getS3 } from '../s3.client';
 
 const logger = Logger.get('S3_HELPERS');
 
-export async function objectExists(
-  s3: S3Client,
+export async function s3ObjectExists(
   myBucket: any,
   key: any
 ): Promise<boolean> {
+  const s3 = getS3();
   try {
     await s3.send(new HeadObjectCommand({ Bucket: myBucket, Key: key }));
     return true;
@@ -29,8 +29,8 @@ export async function objectExists(
   }
 }
 
-export async function createTempFile(s3: S3Client, myBucket: any, key: any) {
-  await s3.send(
+export async function s3CreateTempFile(myBucket: any, key: any) {
+  await getS3().send(
     new PutObjectCommand({
       Bucket: myBucket,
       Key: `${key}__temp`,
@@ -39,8 +39,8 @@ export async function createTempFile(s3: S3Client, myBucket: any, key: any) {
   );
 }
 
-export async function deleteTempFile(s3: S3Client, myBucket: any, key: any) {
-  await s3.send(
+export async function s3DeleteTempFile(myBucket: any, key: any) {
+  await getS3().send(
     new DeleteObjectCommand({
       Bucket: myBucket,
       Key: `${key}__temp`

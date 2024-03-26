@@ -1,9 +1,9 @@
 import { NFT } from './entities/INFT';
 import { areEqualAddresses } from './helpers';
 import {
-  objectExists,
-  createTempFile,
-  deleteTempFile
+  s3CreateTempFile,
+  s3DeleteTempFile,
+  s3ObjectExists
 } from './helpers/s3_helpers';
 import {
   GRADIENT_CONTRACT,
@@ -11,11 +11,12 @@ import {
   MEMES_CONTRACT,
   NFT_ORIGINAL_IMAGE_LINK
 } from './constants';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
 import sharp from 'sharp';
 import { Stream } from 'stream';
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { Logger } from './logging';
+import { getS3 } from './s3.client';
 
 const logger = Logger.get('S3');
 
@@ -32,11 +33,7 @@ const ICON_HEIGHT = 60;
 const THUMBNAIL_HEIGHT = 450;
 const SCALED_HEIGHT = 1000;
 
-let s3: S3Client;
-
 export const persistS3 = async (nfts: NFT[]) => {
-  s3 = new S3Client({ region: 'eu-west-1' });
-
   logger.info(`[PROCESSING ASSETS FOR ${nfts.length} NFTS]`);
 
   const myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
@@ -57,7 +54,7 @@ export const persistS3 = async (nfts: NFT[]) => {
 
       if (format) {
         const imageKey = `images/original/${n.contract}/${n.id}.${format}`;
-        const imageExists = await objectExists(s3, myBucket, imageKey);
+        const imageExists = await s3ObjectExists(myBucket, imageKey);
 
         if (!imageExists) {
           logger.info(`[MISSING IMAGE] [CONTRACT ${n.contract}] [ID ${n.id}]`);
@@ -71,7 +68,7 @@ export const persistS3 = async (nfts: NFT[]) => {
             `[IMAGE DOWNLOADED] [CONTRACT ${n.contract}] [ID ${n.id}]`
           );
 
-          const uploadedImage = await s3.send(
+          const uploadedImage = await getS3().send(
             new PutObjectCommand({
               Bucket: myBucket,
               Key: imageKey,
@@ -90,7 +87,7 @@ export const persistS3 = async (nfts: NFT[]) => {
           scaledFormat = 'GIF';
         }
         const scaledKey = `images/scaled_x1000/${n.contract}/${n.id}.${scaledFormat}`;
-        const scaledImageExists = await objectExists(s3, myBucket, scaledKey);
+        const scaledImageExists = await s3ObjectExists(myBucket, scaledKey);
 
         if (!scaledImageExists) {
           logger.info(`[MISSING SCALED] [CONTRACT ${n.contract}] [ID ${n.id}]`);
@@ -113,7 +110,7 @@ export const persistS3 = async (nfts: NFT[]) => {
             SCALED_HEIGHT
           );
 
-          const uploadedScaledImage = await s3.send(
+          const uploadedScaledImage = await getS3().send(
             new PutObjectCommand({
               Bucket: myBucket,
               Key: scaledKey,
@@ -131,11 +128,7 @@ export const persistS3 = async (nfts: NFT[]) => {
             thumbnailFormat = 'GIF';
           }
           const thumbnailKey = `images/scaled_x450/${n.contract}/${n.id}.${thumbnailFormat}`;
-          const thumbnailExists = await objectExists(
-            s3,
-            myBucket,
-            thumbnailKey
-          );
+          const thumbnailExists = await s3ObjectExists(myBucket, thumbnailKey);
 
           if (!thumbnailExists) {
             logger.info(
@@ -160,7 +153,7 @@ export const persistS3 = async (nfts: NFT[]) => {
               THUMBNAIL_HEIGHT
             );
 
-            const uploadedThumbnail = await s3.send(
+            const uploadedThumbnail = await getS3().send(
               new PutObjectCommand({
                 Bucket: myBucket,
                 Key: thumbnailKey,
@@ -180,12 +173,12 @@ export const persistS3 = async (nfts: NFT[]) => {
           }
 
           const iconKey = `images/scaled_x60/${n.contract}/${n.id}.${iconFormat}`;
-          const iconExists = await objectExists(s3, myBucket, iconKey);
+          const iconExists = await s3ObjectExists(myBucket, iconKey);
 
           if (!iconExists) {
             logger.info(`[MISSING ICON] [CONTRACT ${n.contract}] [ID ${n.id}]`);
 
-            await createTempFile(s3, myBucket, iconKey);
+            await s3CreateTempFile(myBucket, iconKey);
 
             logger.info(
               `[FETCHING IMAGE FOR ICON] [CONTRACT ${n.contract}] [ID ${n.id}]`
@@ -205,7 +198,7 @@ export const persistS3 = async (nfts: NFT[]) => {
               ICON_HEIGHT
             );
 
-            const uploadedIcon = await s3.send(
+            const uploadedIcon = await getS3().send(
               new PutObjectCommand({
                 Bucket: myBucket,
                 Key: iconKey,
@@ -214,7 +207,7 @@ export const persistS3 = async (nfts: NFT[]) => {
               })
             );
 
-            await deleteTempFile(s3, myBucket, iconKey);
+            await s3DeleteTempFile(myBucket, iconKey);
 
             logger.info(`[ICON PERSISTED AT ${uploadedIcon.ETag}`);
           }
@@ -229,7 +222,7 @@ export const persistS3 = async (nfts: NFT[]) => {
       ) {
         const videoFormat = animationDetails.format.toUpperCase();
         const videoKey = `videos/${n.contract}/${n.id}.${videoFormat}`;
-        const videoExists = await objectExists(s3, myBucket, videoKey);
+        const videoExists = await s3ObjectExists(myBucket, videoKey);
 
         if (!videoExists) {
           logger.info(
@@ -249,7 +242,7 @@ export const persistS3 = async (nfts: NFT[]) => {
             `[DOWNLOADED ${videoFormat}] [CONTRACT ${n.contract}] [ID ${n.id}]`
           );
 
-          const uploadedVideo = await s3.send(
+          const uploadedVideo = await getS3().send(
             new PutObjectCommand({
               Bucket: myBucket,
               Key: videoKey,
@@ -270,7 +263,7 @@ export const persistS3 = async (nfts: NFT[]) => {
 async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
   const scaledVideoKey = `videos/${n.contract}/scaledx750/${n.id}.${videoFormat}`;
 
-  const exists = await objectExists(s3, myBucket, scaledVideoKey);
+  const exists = await s3ObjectExists(myBucket, scaledVideoKey);
   if (!exists) {
     logger.info(
       `[MISSING SCALED ${videoFormat}] [CONTRACT ${n.contract}] [ID ${n.id}]`
@@ -278,7 +271,7 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
 
     logger.info(`[SCALING ${scaledVideoKey}]`);
 
-    await createTempFile(s3, myBucket, scaledVideoKey);
+    await s3CreateTempFile(myBucket, scaledVideoKey);
 
     logger.info(`[TEMP CREATED ${scaledVideoKey}]`);
 
@@ -296,7 +289,7 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
     logger.info(`[ACQUIRED SCALED STREAM ${scaledVideoKey}]`);
 
     resizedVideoStream.on('error', async function (err: any) {
-      await deleteTempFile(s3, myBucket, scaledVideoKey);
+      await s3DeleteTempFile(myBucket, scaledVideoKey);
       logger.error(
         `[resizedVideoStream] [SCALING FAILED ${scaledVideoKey}]`,
         err
@@ -306,7 +299,7 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
     const ffstream = new Stream.PassThrough();
     resizedVideoStream.pipe(ffstream, { end: true });
 
-    await new Promise((resolve, reject) => {
+    await new Promise(() => {
       const buffers: any = [];
       ffstream.on('data', function (buf) {
         logger.info(`[${scaledVideoKey}] [ADDING CHUNK LENGTH ${buf.length}]`);
@@ -315,7 +308,7 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
         }
       });
       ffstream.on('error', async function (err) {
-        await deleteTempFile(s3, myBucket, scaledVideoKey);
+        await s3DeleteTempFile(myBucket, scaledVideoKey);
         logger.error(`[SCALING FAILED ${scaledVideoKey}]`, err);
       });
       ffstream.on('end', async function () {
@@ -325,7 +318,7 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
           const outputBuffer = Buffer.concat(buffers);
 
           if (outputBuffer.length > 0) {
-            const uploadedScaleddVideo = await s3.send(
+            const uploadedScaleddVideo = await getS3().send(
               new PutObjectCommand({
                 Bucket: myBucket,
                 Key: scaledVideoKey,
@@ -339,7 +332,7 @@ async function handleVideoScaling(n: NFT, videoFormat: any, myBucket: any) {
             );
           }
         }
-        await deleteTempFile(s3, myBucket, scaledVideoKey);
+        await s3DeleteTempFile(myBucket, scaledVideoKey);
       });
     });
   }
