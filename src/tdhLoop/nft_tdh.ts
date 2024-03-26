@@ -1,16 +1,16 @@
-import { GRADIENT_CONTRACT, MEMES_CONTRACT } from './constants';
-import { NFT } from './entities/INFT';
-import { areEqualAddresses } from './helpers';
+import { GRADIENT_CONTRACT, MEMES_CONTRACT } from '../constants';
+import { NFT } from '../entities/INFT';
+import { areEqualAddresses } from '../helpers';
 import {
   fetchAllConsolidatedTdh,
   fetchAllNFTs,
   persistNFTs,
   persistNextGenTokenTDH
-} from './db';
-import { ConsolidatedTDH } from './entities/ITDH';
-import { Logger } from './logging';
-import { NextGenToken, NextGenTokenTDH } from './entities/INextGen';
-import { fetchNextgenTokens } from './nextgen/nextgen.db';
+} from '../db';
+import { ConsolidatedTDH } from '../entities/ITDH';
+import { Logger } from '../logging';
+import { NextGenToken, NextGenTokenTDH } from '../entities/INextGen';
+import { fetchNextgenTokens } from '../nextgen/nextgen.db';
 
 const logger = Logger.get('NFT_TDH');
 
@@ -110,9 +110,8 @@ export const findNftTDH = async () => {
     });
   });
 
-  nftTDH
-    .sort((a, b) => (a.tdh > b.tdh ? -1 : a.tdh > 0 ? 1 : -1))
-    .forEach((n, index) => (n.tdh_rank = index + 1));
+  nftTDH.sort((a, b) => b.tdh - a.tdh || a.tdh);
+  nftTDH.forEach((n, index) => (n.tdh_rank = index + 1));
 
   await persistNFTs(nftTDH);
   await persistNextGenTokenTDH(nextgenTdh);
