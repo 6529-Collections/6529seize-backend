@@ -19,9 +19,9 @@ class BedrockAiPrompter implements AiPrompter {
       body: JSON.stringify({
         prompt: `<s>[INST] ${prompt} [/INST]`,
         max_tokens: 1000,
-        temperature: 0.5,
-        top_p: 0.9,
-        top_k: 50
+        temperature: 0.9,
+        top_p: 0.8,
+        top_k: 30
       })
     };
     const response = await this.getBedrock().send(
