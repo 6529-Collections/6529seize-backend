@@ -12,7 +12,13 @@ const router = asyncRouter({ mergeParams: true });
 router.get(
   '/',
   async (
-    req: Request<{ handleOrWallet: string }, any, any, { limit: number }, any>,
+    req: Request<
+      { handleOrWallet: string },
+      any,
+      any,
+      { limit: number; id_less_than?: number },
+      any
+    >,
     res: Response<ApiResponse<DropFull[]>>
   ) => {
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
@@ -26,7 +32,8 @@ router.get(
       throw new NotFoundException('Profile not found');
     }
     const profileDrops = await dropsService.findProfilesLatestDrops({
-      amount: limit < 0 ? 10 : limit,
+      amount: limit < 0 || limit > 200 ? 10 : limit,
+      id_less_than: parseNumberOrNull(req.query.id_less_than),
       profile_id: profileId
     });
     res.send(profileDrops);
