@@ -272,6 +272,20 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return this.db.execute(sql, sqlAndParams.params);
   }
 
+  async findProfileDropsGroupedInStorms(param: {
+    amount: number;
+    profile_id: string;
+  }) {
+    const sql = `with storms as (select s.id as storm_id, max(d.storm_sequence) max_storm_sequence from ${DROP_STORMS_TABLE} s
+            join ${DROPS_TABLE} d on d.storm_id = s.id
+            group by s.id)
+         select d.*, s.max_storm_sequence from ${DROPS_TABLE} d
+         join storms s on s.storm_id = d.storm_id
+         where d.storm_sequence = 1 and d.author_id = :profileId
+         order by d.created_at desc limit ${param.amount}`;
+    return this.db.execute(sql, { profileId: param.profile_id });
+  }
+
   async findMentionsByDropIds(dropIds: number[]): Promise<DropMentionEntity[]> {
     if (dropIds.length === 0) {
       return [];
