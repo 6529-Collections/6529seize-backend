@@ -72,7 +72,7 @@ ${text}
     if (process.env.NODE_ENV !== 'local') {
       await this.discord.sendMessage(
         DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
-        `Rep check\n\nInput text:\n${text}\n\nGPT response:\n${responseMessage}`
+        `${process.env.NODE_ENV} Rep check:\n  Input text:\`${text}\`\n  GPT response:\n\`\`\`json\n${responseMessage}\n\`\`\``
       );
     }
     return await this.formatChatResponse(text, responseMessage);
