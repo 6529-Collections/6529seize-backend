@@ -15,9 +15,9 @@ async function start() {
   // await dbMigrationsLoop.handler(null, null as any, null as any);
   // await customReplayLoop.handler(null, null as any, null as any);
 
-  await nftOwnersLoop.handler(null, null as any, null as any);
-  // await ownersBalancesLoop.handler(null, null as any, null as any);
-  // await aggregatdActivityLoop.handler(null, null as any, null as any);
+  // await nftOwnersLoop.handler(null, null as any, null as any);
+  await ownersBalancesLoop.handler(null, null as any, null as any);
+  await aggregatdActivityLoop.handler(null, null as any, null as any);
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
