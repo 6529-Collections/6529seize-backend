@@ -250,9 +250,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async findLatestDropsGroupedInStorms({
     amount,
+    id_less_than,
     curation_criteria_id
   }: {
     curation_criteria_id: string | null;
+    id_less_than: number | null;
     amount: number;
   }): Promise<(Drop & { max_storm_sequence: number })[]> {
     const sqlAndParams = await this.criteriaService.getSqlAndParamsByCriteriaId(
@@ -261,29 +263,35 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     if (!sqlAndParams) {
       return [];
     }
+    const idLessThan = id_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `${sqlAndParams.sql}, storms as (select s.id as storm_id, max(d.storm_sequence) max_storm_sequence from ${DROP_STORMS_TABLE} s
             join ${DROPS_TABLE} d on d.storm_id = s.id
             group by s.id)
          select d.*, s.max_storm_sequence from ${DROPS_TABLE} d
          join ${CommunityMemberCriteriaService.GENERATED_VIEW} cm on cm.profile_id = d.author_id
          join storms s on s.storm_id = d.storm_id
-         where d.storm_sequence = 1
-         order by d.created_at desc limit ${amount}`;
-    return this.db.execute(sql, sqlAndParams.params);
+         where d.storm_sequence = 1 and id < :idLessThan
+         order by d.id desc limit ${amount}`;
+    return this.db.execute(sql, {
+      ...sqlAndParams.params,
+      idLessThan
+    });
   }
 
   async findProfileDropsGroupedInStorms(param: {
     amount: number;
+    id_less_than: number | null;
     profile_id: string;
   }) {
+    const idLessThan = param.id_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `with storms as (select s.id as storm_id, max(d.storm_sequence) max_storm_sequence from ${DROP_STORMS_TABLE} s
             join ${DROPS_TABLE} d on d.storm_id = s.id
             group by s.id)
          select d.*, s.max_storm_sequence from ${DROPS_TABLE} d
          join storms s on s.storm_id = d.storm_id
-         where d.storm_sequence = 1 and d.author_id = :profileId
-         order by d.created_at desc limit ${param.amount}`;
-    return this.db.execute(sql, { profileId: param.profile_id });
+         where d.storm_sequence = 1 and d.id < :idLessThan and d.author_id = :profileId
+         order by d.id desc limit ${param.amount}`;
+    return this.db.execute(sql, { profileId: param.profile_id, idLessThan });
   }
 
   async findMentionsByDropIds(dropIds: number[]): Promise<DropMentionEntity[]> {
