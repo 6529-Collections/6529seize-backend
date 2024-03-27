@@ -5,6 +5,8 @@ import { DropFull } from './drops.types';
 import { NotFoundException } from '../exceptions';
 import { ProfileMin } from '../profiles/profile-min';
 import { Drop } from '../entities/IDrop';
+import { giveReadReplicaTimeToCatchUp } from '../api-serverless/src/api-helpers';
+import { parseIntOrNull } from '../helpers';
 
 export class DropsService {
   constructor(
@@ -33,18 +35,18 @@ export class DropsService {
     amount,
     curation_criteria_id,
     id_less_than,
-    storm_id
+    root_drop_id
   }: {
     curation_criteria_id: string | null;
     id_less_than: number | null;
-    storm_id: number | null;
+    root_drop_id: number | null;
     amount: number;
   }): Promise<DropFull[]> {
     const dropEntities = await this.dropsDb.findLatestDropsGroupedInStorms({
       amount,
       id_less_than,
       curation_criteria_id,
-      storm_id
+      root_drop_id
     });
     return await this.convertToDropFulls(dropEntities);
   }
@@ -122,7 +124,7 @@ export class DropsService {
       title: dropEntity.title,
       content: dropEntity.content,
       created_at: dropEntity.created_at,
-      storm_id: dropEntity.storm_id,
+      root_drop_id: dropEntity.root_drop_id,
       storm_sequence: dropEntity.storm_sequence,
       max_storm_sequence: dropEntity.max_storm_sequence,
       quoted_drop_id: dropEntity.quoted_drop_id,
@@ -148,10 +150,27 @@ export class DropsService {
     profile_id: string;
     id_less_than: number | null;
   }): Promise<DropFull[]> {
-    const dropEntities = await this.dropsDb.findProfileDropsGroupedInStorms(
-      param
-    );
+    const dropEntities = await this.dropsDb.findProfileRootDrops(param);
     return await this.convertToDropFulls(dropEntities);
+  }
+
+  async updateRatingAndGetDrop(param: {
+    drop_id: string;
+    rater_profile_id: string;
+    rating: number;
+    category: string;
+  }) {
+    const dropId = parseIntOrNull(param.drop_id);
+    if (dropId === null) {
+      throw new NotFoundException(`Drop ${param.drop_id} not found`);
+    }
+    const drop = await this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        return this.findDropByIdOrThrow(dropId, connection);
+      }
+    );
+    await giveReadReplicaTimeToCatchUp();
+    return drop;
   }
 }
 

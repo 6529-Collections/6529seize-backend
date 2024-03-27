@@ -66,7 +66,6 @@ export const CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE =
   'owners_balances_memes_consolidation';
 
 export const DROPS_TABLE = 'drops';
-export const DROP_STORMS_TABLE = 'drop_storms';
 export const DROPS_MENTIONS_TABLE = 'drops_mentions';
 export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
 export const DROP_METADATA_TABLE = 'drops_metadatas';
