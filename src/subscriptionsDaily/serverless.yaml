@@ -27,4 +27,4 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'subscriptionsDaily_${opt:stage, self:provider.stage}'
-      SUBSCRIPTIONS_RESET: 'false'
+      SUBSCRIPTIONS_RESET: false
