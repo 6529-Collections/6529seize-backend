@@ -1,5 +1,5 @@
 import { profilesDb, ProfilesDb } from './profiles.db';
-import { WALLET_REGEX } from '../constants';
+import { UUID_REGEX, WALLET_REGEX } from '../constants';
 import { getAlchemyInstance } from '../alchemy';
 import { Alchemy } from 'alchemy-sdk';
 import {
@@ -8,8 +8,8 @@ import {
 } from './profile.types';
 import { calculateLevel } from './profile-level';
 import { Profile } from '../entities/IProfile';
-import * as tdh_consolidation from '../tdh_consolidation';
-import * as tdhs from '../tdh';
+import * as tdh_consolidation from '../tdhLoop/tdh_consolidation';
+import * as tdhs from '../tdhLoop/tdh';
 import { BadRequestException } from '../exceptions';
 import * as path from 'path';
 import { ConnectionWrapper } from '../sql-executor';
@@ -43,6 +43,60 @@ export class ProfilesService {
     private readonly repService: RepService,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
+
+  private async getProfileAndConsolidationsById(
+    id: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<ProfileAndConsolidations | null> {
+    const profile = await this.profilesDb.getProfileById(id, connection);
+    if (!profile) {
+      return null;
+    }
+    const primaryWallet = profile.primary_wallet;
+    const {
+      consolidatedWallets,
+      tdh,
+      blockNo,
+      consolidation_key,
+      consolidation_display,
+      balance
+    } = await this.getWalletTdhBlockNoAndConsolidatedWallets(
+      primaryWallet,
+      connection
+    );
+    const walletTdhs = await this.profilesDb.getWalletsTdhs(
+      {
+        wallets: consolidatedWallets,
+        blockNo
+      },
+      connection
+    );
+    const wallets = await this.profilesDb.getPrediscoveredEnsNames(
+      consolidatedWallets,
+      connection
+    );
+    const cic = await this.getCic(profile, connection);
+    const rep = await this.repService.getRepForProfile(
+      profile.external_id,
+      connection
+    );
+    return {
+      profile: profile ?? null,
+      consolidation: {
+        consolidation_key,
+        consolidation_display,
+        wallets: wallets.map((w) => ({
+          wallet: w,
+          tdh: walletTdhs[w.address]
+        })),
+        tdh
+      },
+      level: calculateLevel({ tdh, rep }),
+      rep,
+      cic,
+      balance
+    };
+  }
 
   public async getProfileByEnsName(
     query: string,
@@ -179,12 +233,14 @@ export class ProfilesService {
     return this.profilesDb.getProfilesByWallets(wallets, connection);
   }
 
-  public async getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+  public async getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
     handleOrEnsOrWalletAddress: string,
     connection?: ConnectionWrapper<any>
   ): Promise<ProfileAndConsolidations | null> {
     const query = handleOrEnsOrWalletAddress.toLowerCase();
-    if (query.endsWith('.eth')) {
+    if (UUID_REGEX.exec(query)) {
+      return this.getProfileAndConsolidationsById(query, connection);
+    } else if (query.endsWith('.eth')) {
       return await this.getProfileByEnsName(query, connection);
     } else if (WALLET_REGEX.exec(query)) {
       return await this.getProfileByWallet(query, connection);
@@ -365,7 +421,7 @@ export class ProfilesService {
           });
         }
         const updatedProfile =
-          await this.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+          await this.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
             handle,
             connection
           );
@@ -560,7 +616,7 @@ export class ProfilesService {
     return await this.profilesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const profile =
-          await this.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+          await this.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
             handleOrWallet,
             connection
           ).then((it) => {

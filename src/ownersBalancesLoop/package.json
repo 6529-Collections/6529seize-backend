@@ -1,5 +1,5 @@
 {
-  "name": "ownermetricsloop",
+  "name": "ownersbalancesloop",
   "version": "1.0.0",
   "description": "",
   "main": "index.ts",
@@ -15,5 +15,8 @@
   "devDependencies": {
     "@types/aws-lambda": "^8.10.110",
     "esbuild": "^0.17.5"
+  },
+  "dependencies": {
+    "alchemy-sdk": "^2.4.1"
   }
 }

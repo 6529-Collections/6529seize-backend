@@ -46,7 +46,7 @@ export class CollectedService {
     }
     const handleOrEnsOrWalletAddress = query.handle_or_wallet;
     const profileAndConsolidations =
-      await this.profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await this.profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         handleOrEnsOrWalletAddress
       );
     const consolidation = profileAndConsolidations?.consolidation;

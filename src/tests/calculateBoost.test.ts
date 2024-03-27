@@ -1,25 +1,62 @@
-import {
-  SZN1_INDEX,
-  SZN2_INDEX,
-  SZN3_INDEX,
-  SZN4_INDEX,
-  SZN5_INDEX
-} from '../constants';
+import { MemesSeason } from '../entities/ISeason';
+import { TokenTDH } from '../entities/ITDH';
 
-const calculateBoost = require('../tdh').calculateBoost;
+const calculateBoost = require('../tdhLoop/tdh').calculateBoost;
+
+const seasons: MemesSeason[] = [
+  {
+    id: 1,
+    start_index: 1,
+    end_index: 47,
+    count: 47,
+    name: 'SNZ1',
+    display: 'SNZ1'
+  },
+  {
+    id: 2,
+    start_index: 48,
+    end_index: 86,
+    count: 39,
+    name: 'SNZ2',
+    display: 'SNZ2'
+  },
+  {
+    id: 3,
+    start_index: 87,
+    end_index: 118,
+    count: 32,
+    name: 'SNZ3',
+    display: 'SNZ3'
+  },
+  {
+    id: 4,
+    start_index: 119,
+    end_index: 151,
+    count: 33,
+    name: 'SNZ4',
+    display: 'SNZ4'
+  },
+  {
+    id: 5,
+    start_index: 152,
+    end_index: 180,
+    count: 29,
+    name: 'SNZ5',
+    display: 'SNZ5'
+  }
+];
 
 test('calculateBoost should calculate the boost correctly', () => {
   //s1 set
   expect(
     calculateBoost(
+      seasons,
       0,
-      SZN1_INDEX.count,
-      0,
-      0,
-      0,
-      0,
-      false,
-      false,
+      {
+        genesis: 0,
+        nakamoto: 0
+      },
+      getSeasonSet(1),
       [],
       false,
       false
@@ -28,571 +65,424 @@ test('calculateBoost should calculate the boost correctly', () => {
   //s2 set
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      SZN2_INDEX.count,
-      0,
-      0,
-      0,
-      false,
-      false,
+      {
+        genesis: 0,
+        nakamoto: 0
+      },
+      getSeasonSet(2),
       [],
       false,
       false
     ).total
   ).toBe(1.05);
-  //s3 set
+  // //s3 set
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      0,
-      SZN3_INDEX.count,
-      0,
-      0,
-      false,
-      false,
+      {
+        genesis: 0,
+        nakamoto: 0
+      },
+      getSeasonSet(3),
       [],
       false,
       false
     ).total
   ).toBe(1.05);
-  //s4 set
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      0,
-      0,
-      SZN4_INDEX.count,
-      0,
-      false,
-      false,
+      {
+        genesis: 0,
+        nakamoto: 0
+      },
+      getSeasonSet(4),
       [],
       false,
       false
     ).total
   ).toBe(1.05);
-  //s5 set
+  // //s5 set
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      0,
-      0,
-      0,
-      SZN5_INDEX.count,
-      false,
-      false,
+      {
+        genesis: 0,
+        nakamoto: 0
+      },
+      getSeasonSet(5),
       [],
       false,
       false
     ).total
   ).toBe(1.05);
 
-  //s1 set + genesis
+  // //s1 set + genesis
   expect(
     calculateBoost(
+      seasons,
       0,
-      SZN1_INDEX.count,
-      0,
-      0,
-      0,
-      0,
-      true,
-      true,
+      {
+        genesis: 1,
+        nakamoto: 0
+      },
+      getSeasonSet(1),
       [],
       false,
       false
     ).total
   ).toBe(1.05);
-  //s2 set + genesis
+  // //s2 set + genesis
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      SZN2_INDEX.count,
-      0,
-      0,
-      0,
-      true,
-      false,
+      {
+        genesis: 1,
+        nakamoto: 0
+      },
+      getSeasonSet(2),
       [],
       false,
       false
     ).total
   ).toBe(1.06);
-  //s2 set + naka
+  // //s2 set + naka
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      SZN2_INDEX.count,
-      0,
-      0,
-      0,
-      false,
-      true,
+      {
+        genesis: 0,
+        nakamoto: 1
+      },
+      getSeasonSet(2),
       [],
       false,
       false
     ).total
   ).toBe(1.06);
-  //s2 set + genesis + naka
+  // //s2 set + genesis + naka
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      SZN2_INDEX.count,
-      0,
-      0,
-      0,
-      true,
-      true,
+      {
+        genesis: 1,
+        nakamoto: 1
+      },
+      getSeasonSet(2),
       [],
       false,
       false
     ).total
   ).toBe(1.07);
-  //s2 set + genesis + naka + 1gradient
+  // //s2 set + genesis + naka + 1gradient
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      SZN2_INDEX.count,
-      0,
-      0,
-      0,
-      true,
-      true,
+      {
+        genesis: 1,
+        nakamoto: 1
+      },
+      getSeasonSet(2),
       [{ id: 1 }],
       false,
       false
     ).total
   ).toBe(1.09);
-  //s2 set + genesis + naka + 2gradient
+  // //s2 set + genesis + naka + 2gradient
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      SZN2_INDEX.count,
-      0,
-      0,
-      0,
-      true,
-      true,
+      {
+        genesis: 1,
+        nakamoto: 1
+      },
+      getSeasonSet(2),
       [{ id: 1 }, { id: 2 }],
       false,
       false
     ).total
   ).toBe(1.11);
-  //s2 set + genesis + naka + 3gradient
+  // //s2 set + genesis + naka + 3gradient
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      SZN2_INDEX.count,
-      0,
-      0,
-      0,
-      true,
-      true,
+      {
+        genesis: 1,
+        nakamoto: 1
+      },
+      getSeasonSet(2),
       [{ id: 1 }, { id: 2 }, { id: 3 }],
       false,
       false
     ).total
   ).toBe(1.13);
 
-  //s2 set + genesis + naka + 4gradient
+  // //s2 set + genesis + naka + 4gradient
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      SZN2_INDEX.count,
-      0,
-      0,
-      0,
-      true,
-      true,
+      {
+        genesis: 1,
+        nakamoto: 1
+      },
+      getSeasonSet(2),
       [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
       false,
       false
     ).total
   ).toBe(1.13);
 
-  //s3 set + genesis
+  // //s3 set + genesis
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      0,
-      SZN3_INDEX.count,
-      0,
-      0,
-      true,
-      false,
+      {
+        genesis: 1,
+        nakamoto: 0
+      },
+      getSeasonSet(3),
       [],
       false,
       false
     ).total
   ).toBe(1.06);
-  //s3 set + naka
+  // //s3 set + naka
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      0,
-      SZN3_INDEX.count,
-      0,
-      0,
-      false,
-      true,
+      {
+        genesis: 0,
+        nakamoto: 1
+      },
+      getSeasonSet(3),
       [],
       false,
       false
     ).total
   ).toBe(1.06);
-  //s3 set + genesis + naka
+  // //s3 set + genesis + naka
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      0,
-      SZN3_INDEX.count,
-      0,
-      0,
-      true,
-      true,
+      {
+        genesis: 1,
+        nakamoto: 1
+      },
+      getSeasonSet(3),
       [],
       false,
       false
     ).total
   ).toBe(1.07);
-  //s3 set + genesis + ENS
+  // //s3 set + genesis + naka + ENS
   expect(
-    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, 0, true, true, [], true, false)
-      .total
+    calculateBoost(
+      seasons,
+      0,
+      {
+        genesis: 1,
+        nakamoto: 1
+      },
+      getSeasonSet(3),
+      [],
+      true,
+      false
+    ).total
   ).toBe(1.08);
   //s3 set + genesis + 4gradient
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      0,
-      SZN3_INDEX.count,
-      0,
-      0,
-      true,
-      true,
+      {
+        genesis: 1,
+        nakamoto: 0
+      },
+      getSeasonSet(3),
       [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
-      false,
+      true,
       false
     ).total
   ).toBe(1.13);
 
-  //s3 set + genesis
+  // // 1set
   expect(
     calculateBoost(
-      0,
-      0,
-      0,
-      SZN3_INDEX.count,
-      0,
-      0,
-      true,
-      false,
-      [],
-      false,
-      false
-    ).total
-  ).toBe(1.06);
-  //s3 set + naka
-  expect(
-    calculateBoost(
-      0,
-      0,
-      0,
-      SZN3_INDEX.count,
-      0,
-      0,
-      false,
-      true,
-      [],
-      false,
-      false
-    ).total
-  ).toBe(1.06);
-  //s3 set + genesis + naka
-  expect(
-    calculateBoost(
-      0,
-      0,
-      0,
-      SZN3_INDEX.count,
-      0,
-      0,
-      true,
-      true,
-      [],
-      false,
-      false
-    ).total
-  ).toBe(1.07);
-  //s3 set + genesis + ENS
-  expect(
-    calculateBoost(0, 0, 0, SZN3_INDEX.count, 0, 0, true, true, [], true, false)
-      .total
-  ).toBe(1.08);
-  //s3 set + genesis + 4gradient
-  expect(
-    calculateBoost(
-      0,
-      0,
-      0,
-      SZN3_INDEX.count,
-      0,
-      0,
-      true,
-      true,
-      [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
-      false,
-      false
-    ).total
-  ).toBe(1.13);
-
-  // 1set
-  expect(
-    calculateBoost(
+      seasons,
       1,
-      SZN1_INDEX.count,
-      SZN2_INDEX.count,
-      0,
-      0,
-      0,
-      false,
-      false,
+      {
+        genesis: 1,
+        nakamoto: 0
+      },
+      getSeasonSet(3),
       [],
       false,
       false
     ).total
   ).toBe(1.25);
-  // 2set
+  // // 2set
   expect(
     calculateBoost(
+      seasons,
       2,
-      SZN1_INDEX.count,
-      SZN2_INDEX.count,
-      0,
-      0,
-      0,
-      false,
-      false,
+      {
+        genesis: 1,
+        nakamoto: 0
+      },
+      getSeasonSet(3),
       [],
       false,
       false
     ).total
   ).toBe(1.27);
-  // 3set
+  // // 3set
   expect(
     calculateBoost(
+      seasons,
       3,
-      SZN1_INDEX.count,
-      SZN2_INDEX.count,
-      0,
-      0,
-      0,
-      false,
-      false,
+      {
+        genesis: 1,
+        nakamoto: 0
+      },
+      getSeasonSet(3),
       [],
       false,
       false
     ).total
   ).toBe(1.29);
-  // 4set
+  // // 4set
   expect(
     calculateBoost(
-      3,
-      SZN1_INDEX.count,
-      SZN2_INDEX.count,
-      0,
-      0,
-      0,
-      false,
-      false,
+      seasons,
+      4,
+      {
+        genesis: 1,
+        nakamoto: 0
+      },
+      getSeasonSet(3),
       [],
       false,
       false
     ).total
   ).toBe(1.29);
-  // 1set + ENS
+  // // 1set + ENS
+  calculateBoost(
+    seasons,
+    1,
+    {
+      genesis: 1,
+      nakamoto: 0
+    },
+    getSeasonSet(3),
+    [],
+    true,
+    false
+  ).total;
+  // // 1set + 4gradient + ENS
   expect(
     calculateBoost(
+      seasons,
       1,
-      SZN1_INDEX.count,
-      SZN2_INDEX.count,
-      0,
-      0,
-      0,
-      false,
-      false,
-      [],
-      true,
-      false
-    ).total
-  ).toBe(1.26);
-  // 1set + 4gradient + ENS
-  expect(
-    calculateBoost(
-      1,
-      SZN1_INDEX.count,
-      SZN2_INDEX.count,
-      0,
-      0,
-      0,
-      false,
-      false,
+      {
+        genesis: 1,
+        nakamoto: 0
+      },
+      getSeasonSet(3),
       [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
       true,
       false
     ).total
   ).toBe(1.32);
 
-  // 3set + 3gradient + ENS
+  // // 3set + 3gradient + ENS
   expect(
     calculateBoost(
+      seasons,
       3,
-      0,
-      0,
-      0,
-      0,
-      0,
-      false,
-      false,
+      {
+        genesis: 1,
+        nakamoto: 0
+      },
+      getSeasonSet(3),
       [{ id: 1 }, { id: 2 }, { id: 3 }],
       true,
       false
     ).total
   ).toBe(1.36);
 
-  // 3set + naka + genesis + ENS
+  // // 3set + naka + genesis + 3gradient + ENS
   expect(
     calculateBoost(
+      seasons,
       3,
-      0,
-      0,
-      0,
-      0,
-      0,
-      true,
-      true,
+      {
+        genesis: 1,
+        nakamoto: 1
+      },
+      getSeasonSet(3),
       [{ id: 1 }, { id: 2 }, { id: 3 }],
       true,
       false
     ).total
   ).toBe(1.36);
 
-  //s4 set
-  expect(
-    calculateBoost(0, 0, 0, 0, SZN4_INDEX.count, 0, false, false, [], false)
-      .total
-  ).toBe(1.05);
-
-  //s3 + s4 set
+  // //s3 + s4 set
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      0,
-      SZN3_INDEX.count,
-      SZN4_INDEX.count,
-      0,
-      false,
-      false,
+      {
+        genesis: 0,
+        nakamoto: 0
+      },
+      [...getSeasonSet(3), ...getSeasonSet(4)],
       [],
       false,
       false
     ).total
   ).toBe(1.1);
 
-  //s4 set + ens
+  // //s4 + s5 set
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      0,
-      0,
-      SZN4_INDEX.count,
-      0,
-      false,
-      false,
-      [],
-      true,
-      false
-    ).total
-  ).toBe(1.06);
-
-  //s5 set
-  expect(
-    calculateBoost(
-      0,
-      0,
-      0,
-      0,
-      0,
-      SZN5_INDEX.count,
-      false,
-      false,
-      [],
-      false,
-      false
-    ).total
-  ).toBe(1.05);
-
-  //s4 + s5 set
-  expect(
-    calculateBoost(
-      0,
-      0,
-      0,
-      0,
-      SZN4_INDEX.count,
-      SZN5_INDEX.count,
-      false,
-      false,
+      {
+        genesis: 0,
+        nakamoto: 0
+      },
+      [...getSeasonSet(4), ...getSeasonSet(5)],
       [],
       false,
       false
     ).total
   ).toBe(1.1);
 
-  //s5 set + ens
+  // //s5 set + profile
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      0,
-      0,
-      0,
-      SZN5_INDEX.count,
-      false,
-      false,
-      [],
-      true,
-      false
-    ).total
-  ).toBe(1.06);
-
-  //s5 set + profile
-  expect(
-    calculateBoost(
-      0,
-      0,
-      0,
-      0,
-      0,
-      SZN5_INDEX.count,
-      false,
-      false,
+      {
+        genesis: 0,
+        nakamoto: 0
+      },
+      getSeasonSet(5),
       [],
       false,
       true
@@ -602,17 +492,30 @@ test('calculateBoost should calculate the boost correctly', () => {
   //s5 set + ens + profile
   expect(
     calculateBoost(
+      seasons,
       0,
-      0,
-      0,
-      0,
-      0,
-      SZN5_INDEX.count,
-      false,
-      false,
+      {
+        genesis: 0,
+        nakamoto: 0
+      },
+      getSeasonSet(5),
       [],
       true,
       true
     ).total
   ).toBe(1.09);
 });
+
+function getSeasonSet(id: number): TokenTDH[] {
+  const s = seasons.find((s) => s.id === id);
+
+  if (!s) {
+    return [];
+  }
+
+  const tokens: TokenTDH[] = [];
+  for (let i = s.start_index; i <= s.end_index; i++) {
+    tokens.push({ id: i, balance: 1, tdh: 1, tdh__raw: 1 });
+  }
+  return tokens;
+}

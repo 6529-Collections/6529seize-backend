@@ -12,6 +12,9 @@ import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
 import ratingsRoutes from './ratings/ratings.routes';
 import gasRoutes from './gas/gas.routes';
+import tdhRoutes from './tdh/api.tdh.routes';
+import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
+import ownersBalancesRoutes from './owners-balances/api.owners-balances.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
 import communityMembersCurationRoutes from './community-members/community-members-curation.routes';
 import dropsRoutes from './drops/drops.routes';
@@ -36,12 +39,10 @@ import * as process from 'process';
 import * as mcache from 'memory-cache';
 import {
   cacheKey,
-  returnCSVResult,
   returnJsonResult,
   returnPaginatedResult
 } from './api-helpers';
 import {
-  CACHE_TIME_MS,
   corsOptions,
   DEFAULT_PAGE_SIZE,
   DISTRIBUTION_PAGE_SIZE,
@@ -52,12 +53,9 @@ import {
 import {
   DISTRIBUTION_SORT,
   MEME_LAB_OWNERS_SORT,
-  NFT_TDH_SORT,
-  TAGS_FILTERS,
-  TDH_SORT,
   TRANSACTION_FILTERS
 } from './api-filters';
-import { parseTdhDataFromDB, parseTdhResultsFromDB } from '../../sql_helpers';
+import { parseTdhResultsFromDB } from '../../sql_helpers';
 import { loadLocalConfig, loadSecrets } from '../../env';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
 
@@ -431,6 +429,12 @@ loadApi().then(() => {
     });
   });
 
+  apiRouter.get(`/new_memes_seasons`, function (req: any, res: any) {
+    db.fetchNewMemesSeasons().then((result) => {
+      returnJsonResult(result, req, res);
+    });
+  });
+
   apiRouter.get(`/memes_lite`, function (req: any, res: any) {
     const sortDir =
       req.query.sort_direction &&
@@ -516,20 +520,6 @@ loadApi().then(() => {
     });
   });
 
-  apiRouter.get(`/owners_tags`, function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    const wallets = req.query.wallet;
-
-    db.fetchOwnersTags(pageSize, page, wallets).then((result) => {
-      returnPaginatedResult(result, req, res);
-    });
-  });
-
   apiRouter.get(`/transactions`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
@@ -605,305 +595,6 @@ loadApi().then(() => {
         returnJsonResult(result[0], req, res);
       } else {
         returnJsonResult({}, req, res);
-      }
-    });
-  });
-
-  apiRouter.get(`/tdh/:contract/:nft_id`, function (req: any, res: any) {
-    const contract = req.params.contract;
-    const nftId = req.params.nft_id;
-
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    const sort =
-      req.query.sort && NFT_TDH_SORT.includes(req.query.sort)
-        ? req.query.sort
-        : 'card_tdh';
-
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'desc';
-
-    const wallets = req.query.wallet;
-
-    db.fetchNftTdh(
-      pageSize,
-      page,
-      contract,
-      nftId,
-      wallets,
-      sort,
-      sortDir
-    ).then((result) => {
-      result = parseTdhResultsFromDB(result);
-      returnPaginatedResult(result, req, res);
-    });
-  });
-
-  apiRouter.get(
-    `/consolidated_tdh/:contract/:nft_id`,
-    function (req: any, res: any) {
-      const contract = req.params.contract;
-      const nftId = req.params.nft_id;
-
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DEFAULT_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-      const sort =
-        req.query.sort && NFT_TDH_SORT.includes(req.query.sort)
-          ? req.query.sort
-          : 'card_tdh';
-
-      const sortDir =
-        req.query.sort_direction &&
-        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-          ? req.query.sort_direction
-          : 'desc';
-
-      const wallets = req.query.wallet;
-      db.fetchConsolidatedNftTdh(
-        pageSize,
-        page,
-        contract,
-        nftId,
-        wallets,
-        sort,
-        sortDir
-      ).then((result) => {
-        result = parseTdhResultsFromDB(result);
-        returnPaginatedResult(result, req, res);
-      });
-    }
-  );
-
-  apiRouter.get(`/tdh`, function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    const wallets = req.query.wallet;
-    const sort =
-      req.query.sort && TDH_SORT.includes(req.query.sort)
-        ? req.query.sort
-        : 'boosted_tdh';
-
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'desc';
-
-    const filter =
-      req.query.filter && TAGS_FILTERS.includes(req.query.filter)
-        ? req.query.filter
-        : null;
-
-    const hideMuseum =
-      req.query.hide_museum && req.query.hide_museum == 'true' ? true : false;
-
-    const hideTeam =
-      req.query.hide_team && req.query.hide_team == 'true' ? true : false;
-
-    db.fetchTDH(
-      pageSize,
-      page,
-      wallets,
-      sort,
-      sortDir,
-      filter,
-      hideMuseum,
-      hideTeam
-    ).then((result) => {
-      result = parseTdhResultsFromDB(result);
-      returnPaginatedResult(result, req, res);
-    });
-  });
-
-  apiRouter.get(`/owner_metrics`, function (req: any, res: any) {
-    let pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    let page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    const downloadPage = req.query.download_page == 'true';
-    const downloadAll = req.query.download_all == 'true';
-    if (downloadAll) {
-      pageSize = Number.MAX_SAFE_INTEGER;
-      page = 1;
-    }
-
-    const wallets = req.query.wallet;
-    const sort =
-      req.query.sort && TDH_SORT.includes(req.query.sort)
-        ? req.query.sort
-        : 'boosted_tdh';
-
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'desc';
-
-    const filter =
-      req.query.filter && TAGS_FILTERS.includes(req.query.filter)
-        ? req.query.filter
-        : null;
-
-    const hideMuseum =
-      req.query.hide_museum && req.query.hide_museum == 'true' ? true : false;
-
-    const hideTeam =
-      req.query.hide_team && req.query.hide_team == 'true' ? true : false;
-
-    const isProfilePage =
-      req.query.profile_page && req.query.profile_page == 'true' ? true : false;
-    db.fetchOwnerMetrics(
-      pageSize,
-      page,
-      wallets,
-      sort,
-      sortDir,
-      filter,
-      hideMuseum,
-      hideTeam,
-      isProfilePage
-    ).then(async (result) => {
-      if (downloadAll || downloadPage) {
-        result.data.map((d: any) => {
-          delete d.created_at;
-          delete d.memes;
-          delete d.memes_ranks;
-          delete d.gradients;
-          delete d.gradients_ranks;
-          delete d.nextgen;
-          delete d.nextgen_ranks;
-          if (!d.handle) {
-            d.handle = '';
-          }
-        });
-      } else {
-        result = parseTdhResultsFromDB(result);
-      }
-      if (downloadAll || downloadPage) {
-        returnCSVResult('consolidated_owner_metrics', result.data, res);
-      } else {
-        return returnPaginatedResult(result, req, res);
-      }
-    });
-  });
-
-  apiRouter.get(
-    `/consolidated_owner_metrics/:consolidation_key`,
-    function (req: any, res: any) {
-      const consolidationKey = req.params.consolidation_key;
-      db.fetchConsolidatedOwnerMetricsForKey(consolidationKey).then(
-        async (d) => {
-          if (d) {
-            d = parseTdhDataFromDB(d);
-            mcache.put(cacheKey(req), d, CACHE_TIME_MS);
-            returnJsonResult(d, req, res);
-          } else {
-            returnJsonResult({}, req, res);
-          }
-        }
-      );
-    }
-  );
-
-  apiRouter.get(`/consolidated_owner_metrics`, function (req: any, res: any) {
-    let pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    let page: number = req.query.page ? parseInt(req.query.page) : 1;
-    const includePrimaryWallet =
-      req.query.include_primary_wallet &&
-      req.query.include_primary_wallet == 'true';
-
-    const wallets = req.query.wallet;
-    const downloadPage = req.query.download_page == 'true';
-    const downloadAll = req.query.download_all == 'true';
-    if (downloadAll) {
-      pageSize = Number.MAX_SAFE_INTEGER;
-      page = 1;
-    }
-    const sort =
-      req.query.sort &&
-      (TDH_SORT.includes(req.query.sort) || req.query.sort == 'level')
-        ? req.query.sort
-        : 'boosted_tdh';
-
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'desc';
-
-    const filter =
-      req.query.filter && TAGS_FILTERS.includes(req.query.filter)
-        ? req.query.filter
-        : null;
-
-    const hideMuseum =
-      req.query.hide_museum && req.query.hide_museum == 'true' ? true : false;
-
-    const hideTeam =
-      req.query.hide_team && req.query.hide_team == 'true' ? true : false;
-
-    const isProfilePage =
-      req.query.profile_page && req.query.profile_page == 'true' ? true : false;
-
-    db.fetchConsolidatedOwnerMetrics(
-      pageSize,
-      page,
-      wallets,
-      sort,
-      sortDir,
-      filter,
-      hideMuseum,
-      hideTeam,
-      isProfilePage,
-      includePrimaryWallet
-    ).then(async (result) => {
-      result.data.map((d: any) => {
-        if (d.wallets) {
-          if (!Array.isArray(d.wallets)) {
-            d.wallets = JSON.parse(d.wallets);
-          }
-        }
-      });
-      if (downloadAll || downloadPage) {
-        result.data.map((d: any) => {
-          delete d.created_at;
-          delete d.memes;
-          delete d.memes_ranks;
-          delete d.gradients;
-          delete d.gradients_ranks;
-          delete d.nextgen;
-          delete d.nextgen_ranks;
-          if (!d.handle) {
-            d.handle = '';
-          }
-        });
-      } else {
-        result = parseTdhResultsFromDB(result);
-      }
-      if (downloadAll || downloadPage) {
-        returnCSVResult('consolidated_owner_metrics', result.data, res);
-      } else {
-        return returnPaginatedResult(result, req, res);
       }
     });
   });
@@ -1009,10 +700,9 @@ loadApi().then(() => {
 
   apiRouter.get(`/consolidations/:wallet`, function (req: any, res: any) {
     const wallet = req.params.wallet;
-    const showIncomplete =
+    const showIncomplete = !!(
       req.query.show_incomplete && req.query.show_incomplete == 'true'
-        ? true
-        : false;
+    );
     db.fetchConsolidationsForWallet(wallet, showIncomplete).then((result) => {
       returnPaginatedResult(result, req, res);
     });
@@ -1042,10 +732,9 @@ loadApi().then(() => {
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
     const block = req.query.block;
-    const showIncomplete =
+    const showIncomplete = !!(
       req.query.show_incomplete && req.query.show_incomplete == 'true'
-        ? true
-        : false;
+    );
     db.fetchConsolidationTransactions(
       pageSize,
       page,
@@ -1092,8 +781,9 @@ loadApi().then(() => {
         ? parseInt(req.query.page_size)
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    const showExpired =
-      req.query.show_expired && req.query.show_expired == 'true' ? true : false;
+    const showExpired = !!(
+      req.query.show_expired && req.query.show_expired == 'true'
+    );
     const block = req.query.block;
 
     db.fetchDelegationsByUseCase(
@@ -1237,6 +927,9 @@ loadApi().then(() => {
   apiRouter.use(`/royalties`, royaltiesRoutes);
   apiRouter.use(`/profile-logs`, profileActivityLogsRoutes);
   apiRouter.use(`/rep/categories`, repCategorySearchRoutes);
+  apiRouter.use(`/tdh`, tdhRoutes);
+  apiRouter.use(`/aggregated-activity`, aggregatedActivityRoutes);
+  apiRouter.use(`/owners-balances`, ownersBalancesRoutes);
   apiRouter.use(`/ratings`, ratingsRoutes);
   apiRouter.use(`/subscriptions`, subscriptionsRoutes);
   apiRouter.use(`/drops`, dropsRoutes);

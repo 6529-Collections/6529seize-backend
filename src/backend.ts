@@ -1,7 +1,7 @@
 import { Logger } from './logging';
 import { Time } from './time';
-import * as customReplayLoop from './customReplayLoop';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
+import * as customReplayLoop from './customReplayLoop';
 
 import * as subscriptionsLoop from './subscriptionsLoop';
 import * as subscriptionsTopUpLoop from './subscriptionsTopUpLoop';
@@ -16,6 +16,7 @@ async function start() {
   // await customReplayLoop.handler(null, null as any, null as any);
 
   await subscriptionsLoop.handler(null, null as any, null as any);
+  await subscriptionsTopUpLoop.handler(null, null as any, null as any);
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);

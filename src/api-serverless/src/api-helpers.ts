@@ -6,7 +6,8 @@ import {
   CONTENT_TYPE_HEADER,
   corsOptions,
   JSON_HEADER_VALUE,
-  PaginatedResponse
+  PaginatedResponse,
+  SORT_DIRECTIONS
 } from './api-constants';
 import { Time } from '../../time';
 import { parseNumberOrNull } from '../../helpers';
@@ -108,4 +109,10 @@ export function giveReadReplicaTimeToCatchUp() {
   const millisToGive =
     parseNumberOrNull(process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE) ?? 500;
   return Time.millis(millisToGive).sleep();
+}
+
+export function resolveSortDirection(direction: any) {
+  return direction && SORT_DIRECTIONS.includes(direction.toUpperCase())
+    ? direction
+    : 'asc';
 }

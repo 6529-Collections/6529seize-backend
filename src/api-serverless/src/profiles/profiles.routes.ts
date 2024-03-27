@@ -23,6 +23,7 @@ import { profilesService } from '../../../profiles/profiles.service';
 import profileCicRoutes from './profile-cic.routes';
 import profileRepRoutes from './profile-rep.routes';
 import profileCollectedRoutes from './collected/collected.routes';
+import profileDropsRoutes from './profile-drops.routes';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 
 const router = asyncRouter();
@@ -43,7 +44,7 @@ router.get(
   ) {
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         handleOrWallet
       );
     if (!profile) {
@@ -88,14 +89,14 @@ router.get(
     }
     const authenticatedHandle = maybeAuthenticatedWallet
       ? (
-          await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+          await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
             maybeAuthenticatedWallet
           )
         )?.profile?.handle
       : null;
     if (proposedHandle.toLowerCase() !== authenticatedHandle?.toLowerCase()) {
       const profile =
-        await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+        await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
           proposedHandle
         );
       if (profile) {
@@ -234,5 +235,6 @@ const ApiUploadProfilePictureRequestSchema: Joi.ObjectSchema<ApiUploadProfilePic
 router.use('/:handleOrWallet/cic', profileCicRoutes);
 router.use('/:handleOrWallet/rep', profileRepRoutes);
 router.use('/:handleOrWallet/collected', profileCollectedRoutes);
+router.use('/:handleOrWallet/drops', profileDropsRoutes);
 
 export default router;

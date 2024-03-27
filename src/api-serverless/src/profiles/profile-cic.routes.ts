@@ -49,12 +49,12 @@ router.get(
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const raterHandleOrWallet = req.params.raterHandleOrWallet.toLowerCase();
     const profileAndConsolidationsOfTarget =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         handleOrWallet
       );
     const targetProfile = profileAndConsolidationsOfTarget?.profile;
     const profileAndConsolidationsOfRater =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         raterHandleOrWallet
       );
     const raterProfile = profileAndConsolidationsOfRater?.profile;
@@ -121,7 +121,7 @@ router.post(
     });
     await giveReadReplicaTimeToCatchUp();
     const updatedProfileInfo =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         handleOrWallet
       );
     res.status(201).send(updatedProfileInfo!);
@@ -144,7 +144,7 @@ router.get(
   ) {
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         handleOrWallet
       );
     const profileId = profileAndConsolidations?.profile?.external_id;
@@ -174,7 +174,7 @@ router.get(
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const statementId = req.params.statementId;
     const profileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         handleOrWallet
       );
     const profileId = profileAndConsolidations?.profile?.external_id;
@@ -207,7 +207,7 @@ router.delete(
   ) {
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         handleOrWallet
       );
     if (!isAuthenticatedWalletProfileOwner(req, profileAndConsolidations)) {
@@ -246,7 +246,7 @@ router.post(
   ) {
     const handleOrWallet = req.params.handleOrWallet.toLowerCase();
     const profileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         handleOrWallet
       );
     if (!isAuthenticatedWalletProfileOwner(req, profileAndConsolidations)) {

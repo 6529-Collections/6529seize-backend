@@ -92,14 +92,14 @@ router.get(
     const raterHandleOrWallet = req.query.rater?.toLowerCase() ?? null;
 
     const targetProfileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         targetHandleOrWallet
       );
     const targetProfileId =
       targetProfileAndConsolidations?.profile?.external_id;
     const raterProfileAndConsolidations = !raterHandleOrWallet
       ? null
-      : await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      : await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
           raterHandleOrWallet
         );
     const raterProfileId = raterProfileAndConsolidations?.profile?.external_id;
@@ -137,7 +137,7 @@ router.get(
     }
 
     const targetProfileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrWalletAddress(
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         targetHandleOrWallet
       );
     const targetProfileId =

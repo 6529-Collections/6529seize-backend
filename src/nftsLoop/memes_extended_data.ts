@@ -3,34 +3,32 @@ import {
   MEME_8_EDITION_BURN_ADJUSTMENT,
   NULL_ADDRESS,
   SIX529_MUSEUM
-} from './constants';
-import { MemesExtendedData, NFT } from './entities/INFT';
-import { Owner } from './entities/IOwner';
-import { areEqualAddresses, isNullAddress } from './helpers';
+} from '../constants';
+import { MemesExtendedData, NFT } from '../entities/INFT';
+import { areEqualAddresses, isNullAddress } from '../helpers';
 import {
-  fetchAllOwners,
   fetchNftsForContract,
-  persistMemesExtendedData
-} from './db';
-import { Logger } from './logging';
+  persistMemesExtendedData,
+  persistMemesSeasons
+} from '../db';
+import { Logger } from '../logging';
+import { MemesSeason } from '../entities/ISeason';
+import { NFTOwner } from '../entities/INFTOwner';
+import { fetchAllNftOwners } from '../nftOwnersLoop/db.nft_owners';
 
 const logger = Logger.get('MEMES_EXTENDED_DATA');
 
 export const findMemesExtendedData = async () => {
-  let nfts: NFT[] = await fetchNftsForContract(MEMES_CONTRACT, 'id desc');
-  const owners: Owner[] = await fetchAllOwners();
+  const nfts: NFT[] = await fetchNftsForContract(MEMES_CONTRACT, 'id desc');
+  const owners: NFTOwner[] = await fetchAllNftOwners([MEMES_CONTRACT]);
 
-  nfts = [...nfts].filter((t) => areEqualAddresses(t.contract, MEMES_CONTRACT));
-
-  logger.info(`[NFTS ${nfts.length}]`);
+  logger.info(`[NFTS ${nfts.length}] : [OWNERS ${owners.length}]`);
 
   const memesMeta: MemesExtendedData[] = [];
+  const seasons: Set<number> = new Set();
 
   nfts.forEach((nft) => {
-    const allTokenWallets = [...owners].filter(
-      (o) =>
-        o.token_id == nft.id && areEqualAddresses(o.contract, MEMES_CONTRACT)
-    );
+    const allTokenWallets = [...owners].filter((o) => o.token_id == nft.id);
 
     const nonBurntTokenWallets = [...allTokenWallets].filter(
       (o) => !isNullAddress(o.wallet)
@@ -77,6 +75,9 @@ export const findMemesExtendedData = async () => {
     const meme_name = nft.metadata.attributes.find(
       (a: any) => a.trait_type === 'Meme Name'
     )?.value;
+
+    seasons.add(season);
+
     const meta: MemesExtendedData = {
       id: nft.id,
       created_at: new Date(),
@@ -196,7 +197,22 @@ export const findMemesExtendedData = async () => {
       }).length + 1;
   });
 
+  const memesSeasons: MemesSeason[] = Array.from(seasons).map((s) => {
+    const seasonMemes = memesMeta.filter((m) => m.season == s);
+    const season: MemesSeason = {
+      id: s,
+      created_at: new Date(),
+      start_index: Math.min(...seasonMemes.map((m) => m.id)),
+      end_index: Math.max(...seasonMemes.map((m) => m.id)),
+      count: seasonMemes.length,
+      name: `Season ${s}`,
+      display: `SZN${s}`
+    };
+    return season;
+  });
+
   await persistMemesExtendedData(memesMeta);
+  await persistMemesSeasons(memesSeasons);
 
   return memesMeta;
 };

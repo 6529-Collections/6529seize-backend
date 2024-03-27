@@ -447,5 +447,6 @@ export const RESERVED_HANDLES = [
   'tos',
   'username',
   'community-activity',
-  'open-data'
+  'open-data',
+  'stream'
 ];

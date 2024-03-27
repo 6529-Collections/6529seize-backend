@@ -1,5 +1,4 @@
-import { getAllOwners, getOwnersDelta } from './owners';
-import { Alchemy, fromHex, Nft, Utils } from 'alchemy-sdk';
+import { Alchemy, Nft, Utils } from 'alchemy-sdk';
 import {
   ALCHEMY_SETTINGS,
   MANIFOLD,
@@ -23,23 +22,22 @@ import {
 } from './helpers';
 import {
   fetchAllArtists,
-  fetchAllLabOwners,
   fetchAllMemeLabNFTs,
   fetchAllMemeLabTransactions,
   fetchMemesWithSeason,
   persistArtists,
   persistLabExtendedData,
   persistLabNFTRoyalties,
-  persistLabNFTS,
-  persistOwners
+  persistLabNFTS
 } from './db';
 import { Artist } from './entities/IArtist';
 import { findArtists } from './artists';
-import { Owner } from './entities/IOwner';
 
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { Logger } from './logging';
-import { getNFTResponse } from './nfts';
+import { getNFTResponse } from './nftsLoop/nfts';
+import { NFTOwner } from './entities/INFTOwner';
+import { fetchAllNftOwners } from './nftOwnersLoop/db.nft_owners';
 
 const logger = Logger.get('MEME_LAB');
 
@@ -63,7 +61,7 @@ async function getAllNFTs(nfts: Nft[] = [], key = ''): Promise<Nft[]> {
 async function processNFTs(
   startingNFTS: LabNFT[],
   startingTransactions: Transaction[],
-  owners: Owner[]
+  owners: NFTOwner[]
 ) {
   const allNFTS = await getAllNFTs();
 
@@ -268,7 +266,7 @@ async function processNFTs(
 export const findNFTs = async (
   startingNFTS: LabNFT[],
   startingTransactions: Transaction[],
-  owners: Owner[],
+  owners: NFTOwner[],
   reset?: boolean
 ) => {
   const allNFTs = await processNFTs(startingNFTS, startingTransactions, owners);
@@ -322,7 +320,7 @@ export async function memeLabNfts(reset?: boolean) {
 
   const nfts: LabNFT[] = await fetchAllMemeLabNFTs();
   const transactions: Transaction[] = await fetchAllMemeLabTransactions();
-  const owners: Owner[] = await fetchAllLabOwners();
+  const owners: NFTOwner[] = await fetchAllNftOwners([MEMELAB_CONTRACT]);
   const artists: Artist[] = await fetchAllArtists();
 
   const newNfts = await findNFTs(nfts, transactions, owners, reset);
@@ -332,47 +330,9 @@ export async function memeLabNfts(reset?: boolean) {
   await persistArtists(newArtists);
 }
 
-export async function memeLabOwners() {
-  alchemy = new Alchemy({
-    ...ALCHEMY_SETTINGS,
-    apiKey: process.env.ALCHEMY_API_KEY
-  });
-
-  const startingOwners: Owner[] = await fetchAllLabOwners();
-
-  logger.info(`[OWNERS] [DB ${startingOwners.length}]`);
-
-  const labOwners = await getAllOwners(alchemy, MEMELAB_CONTRACT);
-
-  const newOwners: Owner[] = [];
-
-  labOwners.forEach((ownerBalances) => {
-    ownerBalances.tokenBalances.map((balance) => {
-      const owner: Owner = {
-        created_at: new Date(),
-        wallet: ownerBalances.ownerAddress,
-        token_id: fromHex(balance.tokenId),
-        contract: MEMELAB_CONTRACT,
-        balance: parseInt(balance.balance)
-      };
-      newOwners.push(owner);
-    });
-  });
-
-  logger.info(`[OWNERS ${newOwners.length}]`);
-
-  const ownersDelta: Owner[] = getOwnersDelta(newOwners, startingOwners);
-
-  logger.info(`[OWNERS] [DELTA ${ownersDelta.length}]`);
-
-  await persistOwners(ownersDelta, true);
-
-  return ownersDelta;
-}
-
 export async function memeLabExtendedData() {
   const nfts: LabNFT[] = await fetchAllMemeLabNFTs();
-  const owners: Owner[] = await fetchAllLabOwners();
+  const owners: NFTOwner[] = await fetchAllNftOwners([MEMELAB_CONTRACT]);
 
   logger.info(`[MEMES EXTENDED DATA] [NFTS ${nfts.length}]`);
 
