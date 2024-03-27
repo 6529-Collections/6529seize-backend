@@ -465,7 +465,7 @@ function hasSeasonSet(
 
 function calculateMemesBoostsCardSets(cardSets: number) {
   let boost = 1;
-  const breakdown = DEFAULT_BOOST_BREAKDOWN;
+  const breakdown = structuredClone(DEFAULT_BOOST_BREAKDOWN);
 
   let cardSetBreakdown = 0.25;
   // additional full sets up to 2
