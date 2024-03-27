@@ -14,7 +14,6 @@ import {
   consolidateTransactions,
   fetchAllConsolidationAddresses,
   fetchAllNFTs,
-  fetchAllProfiles,
   fetchAllSeasons,
   fetchLatestTransactionsBlockNumber,
   fetchTDHForBlock,
