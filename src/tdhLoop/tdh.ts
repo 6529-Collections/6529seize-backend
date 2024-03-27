@@ -65,6 +65,10 @@ const DEFAULT_BOOST_BREAKDOWN = {
     available: 0.05,
     acquired: 0
   },
+  memes_szn6: {
+    available: 0.05,
+    acquired: 0
+  },
   memes_genesis: {
     available: 0.01,
     acquired: 0
@@ -75,14 +79,6 @@ const DEFAULT_BOOST_BREAKDOWN = {
   },
   gradients: {
     available: 0.06,
-    acquired: 0
-  },
-  ens: {
-    available: 0.01,
-    acquired: 0
-  },
-  profile: {
-    available: 0.03,
     acquired: 0
   }
 };
@@ -574,18 +570,6 @@ export function calculateBoost(
   if (gradientsBoost > 0) {
     breakdown.gradients.acquired = gradientsBoost;
     boost += gradientsBoost;
-  }
-
-  // ENS
-  if (hasENS) {
-    boost += 0.01;
-    breakdown.ens.acquired = 0.01;
-  }
-
-  // Profile
-  if (hasProfile) {
-    boost += 0.03;
-    breakdown.profile.acquired = 0.03;
   }
 
   const total = Math.round(boost * 100) / 100;
