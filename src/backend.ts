@@ -2,7 +2,6 @@ import { Logger } from './logging';
 import { Time } from './time';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
 import * as customReplayLoop from './customReplayLoop';
-import * as tdhLoop from './tdhLoop';
 
 const logger = Logger.get('BACKEND');
 
@@ -12,7 +11,6 @@ async function start() {
 
   await dbMigrationsLoop.handler(null, null as any, null as any);
   await customReplayLoop.handler(null, null as any, null as any);
-  await tdhLoop.handler(null, null as any, null as any);
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);

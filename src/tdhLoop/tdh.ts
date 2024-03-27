@@ -66,6 +66,10 @@ export function getDefaultBoost() {
       available: 0.05,
       acquired: 0
     },
+    memes_szn6: {
+      available: 0.05,
+      acquired: 0
+    },
     memes_genesis: {
       available: 0.01,
       acquired: 0
@@ -76,14 +80,6 @@ export function getDefaultBoost() {
     },
     gradients: {
       available: 0.06,
-      acquired: 0
-    },
-    ens: {
-      available: 0.01,
-      acquired: 0
-    },
-    profile: {
-      available: 0.03,
       acquired: 0
     }
   };
@@ -497,6 +493,7 @@ function calculateMemesBoostsSeasons(
   const cardSetS3 = hasSeasonSet(3, seasons, memes);
   const cardSetS4 = hasSeasonSet(4, seasons, memes);
   const cardSetS5 = hasSeasonSet(5, seasons, memes);
+  const cardSetS6 = hasSeasonSet(6, seasons, memes);
 
   if (cardSetS1) {
     boost += 0.05;
@@ -526,6 +523,10 @@ function calculateMemesBoostsSeasons(
   if (cardSetS5) {
     boost += 0.05;
     breakdown.memes_szn5.acquired = 0.05;
+  }
+  if (cardSetS6) {
+    boost += 0.05;
+    breakdown.memes_szn6.acquired = 0.05;
   }
 
   return {
@@ -560,9 +561,7 @@ export function calculateBoost(
     nakamoto: number;
   },
   memes: TokenTDH[],
-  gradients: any[],
-  hasENS: boolean,
-  hasProfile: boolean
+  gradients: any[]
 ) {
   let { boost, breakdown } = calculateMemesBoosts(
     cardSets,
@@ -713,9 +712,7 @@ export async function calculateBoosts(
           nakamoto: w.nakamoto
         },
         w.memes,
-        w.gradients,
-        hasENS,
-        hasProfile
+        w.gradients
       );
 
       const boost = boostBreakdown.total;
