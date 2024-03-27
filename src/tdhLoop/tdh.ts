@@ -465,7 +465,7 @@ function hasSeasonSet(
 
 function calculateMemesBoostsCardSets(cardSets: number) {
   let boost = 1;
-  const breakdown = DEFAULT_BOOST_BREAKDOWN;
+  const breakdown = structuredClone(DEFAULT_BOOST_BREAKDOWN);
 
   let cardSetBreakdown = 0.25;
   // additional full sets up to 2
@@ -488,7 +488,7 @@ function calculateMemesBoostsSeasons(
   memes: TokenTDH[]
 ) {
   let boost = 1;
-  const breakdown = DEFAULT_BOOST_BREAKDOWN;
+  const breakdown = structuredClone(DEFAULT_BOOST_BREAKDOWN);
 
   const cardSetS1 = hasSeasonSet(1, seasons, memes);
   const cardSetS2 = hasSeasonSet(2, seasons, memes);
