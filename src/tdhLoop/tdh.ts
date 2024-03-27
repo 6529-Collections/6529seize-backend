@@ -40,48 +40,54 @@ const logger = Logger.get('TDH');
 
 let alchemy: Alchemy;
 
-const DEFAULT_BOOST_BREAKDOWN = {
-  memes_card_sets: {
-    available: 0.29,
-    acquired: 0
-  },
-  memes_szn1: {
-    available: 0.05,
-    acquired: 0
-  },
-  memes_szn2: {
-    available: 0.05,
-    acquired: 0
-  },
-  memes_szn3: {
-    available: 0.05,
-    acquired: 0
-  },
-  memes_szn4: {
-    available: 0.05,
-    acquired: 0
-  },
-  memes_szn5: {
-    available: 0.05,
-    acquired: 0
-  },
-  memes_szn6: {
-    available: 0.05,
-    acquired: 0
-  },
-  memes_genesis: {
-    available: 0.01,
-    acquired: 0
-  },
-  memes_nakamoto: {
-    available: 0.01,
-    acquired: 0
-  },
-  gradients: {
-    available: 0.06,
-    acquired: 0
-  }
-};
+export function getDefaultBoost() {
+  return {
+    memes_card_sets: {
+      available: 0.29,
+      acquired: 0
+    },
+    memes_szn1: {
+      available: 0.05,
+      acquired: 0
+    },
+    memes_szn2: {
+      available: 0.05,
+      acquired: 0
+    },
+    memes_szn3: {
+      available: 0.05,
+      acquired: 0
+    },
+    memes_szn4: {
+      available: 0.05,
+      acquired: 0
+    },
+    memes_szn5: {
+      available: 0.05,
+      acquired: 0
+    },
+    memes_genesis: {
+      available: 0.01,
+      acquired: 0
+    },
+    memes_nakamoto: {
+      available: 0.01,
+      acquired: 0
+    },
+    gradients: {
+      available: 0.06,
+      acquired: 0
+    },
+    ens: {
+      available: 0.01,
+      acquired: 0
+    },
+    profile: {
+      available: 0.03,
+      acquired: 0
+    }
+  };
+}
 
 export async function getWalletsTdhs(
   {
@@ -461,7 +467,7 @@ function hasSeasonSet(
 
 function calculateMemesBoostsCardSets(cardSets: number) {
   let boost = 1;
-  const breakdown = structuredClone(DEFAULT_BOOST_BREAKDOWN);
+  const breakdown = getDefaultBoost();
 
   let cardSetBreakdown = 0.25;
   // additional full sets up to 2
@@ -484,7 +490,7 @@ function calculateMemesBoostsSeasons(
   memes: TokenTDH[]
 ) {
   let boost = 1;
-  const breakdown = structuredClone(DEFAULT_BOOST_BREAKDOWN);
+  const breakdown = getDefaultBoost();
 
   const cardSetS1 = hasSeasonSet(1, seasons, memes);
   const cardSetS2 = hasSeasonSet(2, seasons, memes);
