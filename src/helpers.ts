@@ -346,6 +346,15 @@ export function parseNumberOrNull(input: any): number | null {
   return parsed;
 }
 
+export function parseIntOrNull(input: any): number | null {
+  const num = parseNumberOrNull(input);
+  const int = parseInt(input);
+  if (num === int) {
+    return int;
+  }
+  return null;
+}
+
 export function resolveEnum<T extends {}>(
   enumObj: T,
   value?: string

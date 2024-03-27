@@ -13,8 +13,7 @@ import {
   Drop,
   DropMentionEntity,
   DropMetadataEntity,
-  DropReferencedNftEntity,
-  DropStormEntity
+  DropReferencedNftEntity
 } from '../entities/IDrop';
 
 const logger = Logger.get('OVER_RATES_REVOCATION_LOOP');
@@ -33,8 +32,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     Drop,
     DropMentionEntity,
     DropReferencedNftEntity,
-    DropMetadataEntity,
-    DropStormEntity
+    DropMetadataEntity
   ]);
   await ratingsService.reduceOverRates();
   await unload();

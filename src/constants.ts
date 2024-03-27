@@ -72,7 +72,6 @@ export const SUBSCRIPTIONS_NFTS_TABLE = 'subscriptions_nfts';
 export const SUBSCRIPTIONS_LOGS_TABLE = 'subscriptions_logs';
 
 export const DROPS_TABLE = 'drops';
-export const DROP_STORMS_TABLE = 'drop_storms';
 export const DROPS_MENTIONS_TABLE = 'drops_mentions';
 export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
 export const DROP_METADATA_TABLE = 'drops_metadatas';

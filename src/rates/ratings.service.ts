@@ -36,7 +36,6 @@ import { Request } from 'express';
 import { eventScheduler, EventScheduler } from '../events/event.scheduler';
 import converter from 'json-2-csv';
 import { arweaveFileUploader, ArweaveFileUploader } from '../arweave';
-import { assertUnreachable } from '../helpers';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
 
 export class RatingsService {
@@ -168,7 +167,7 @@ export class RatingsService {
     const start = Time.now();
     this.logger.info('Uploading ratings snapshots to Arweave');
     await Promise.all(
-      Object.values(RateMatter).map((matter) => {
+      getMattersWhereTargetIsProfile().map((matter) => {
         return this.uploadMatterRatingsToArweave(matter, connection);
       })
     );
@@ -204,7 +203,9 @@ export class RatingsService {
         resp = await this.ratingsDb.getSnapshotOfAllRepRatings(connection);
         break;
       default:
-        return assertUnreachable(matter);
+        throw new Error(
+          `Unhandled matter ${matter} in uploadMatterRatingsToArweave`
+        );
     }
     const respWithTimes = resp.map((it) => ({
       ...it,
