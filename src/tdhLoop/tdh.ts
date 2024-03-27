@@ -42,7 +42,7 @@ let alchemy: Alchemy;
 export function getDefaultBoost() {
   return {
     memes_card_sets: {
-      available: 0.29,
+      available: 0.34,
       acquired: 0
     },
     memes_szn1: {
@@ -464,7 +464,7 @@ function calculateMemesBoostsCardSets(cardSets: number) {
   let boost = 1;
   const breakdown = getDefaultBoost();
 
-  let cardSetBreakdown = 0.25;
+  let cardSetBreakdown = 0.3;
   // additional full sets up to 2
   cardSetBreakdown += Math.min((cardSets - 1) * 0.02, 0.04);
   boost += cardSetBreakdown;
@@ -688,8 +688,6 @@ export async function calculateBoosts(
   walletsTDH: any[]
 ) {
   const boostedTDH: any[] = [];
-
-  const profiles = await fetchAllProfiles();
 
   await Promise.all(
     walletsTDH.map(async (w) => {

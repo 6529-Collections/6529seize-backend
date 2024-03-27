@@ -305,7 +305,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       getSeasonSet(3),
       []
     ).total
-  ).toBe(1.25);
+  ).toBe(1.3);
 
   // 2set
   expect(
@@ -319,7 +319,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       getSeasonSet(3),
       []
     ).total
-  ).toBe(1.27);
+  ).toBe(1.32);
 
   // 3set
   expect(
@@ -333,7 +333,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       getSeasonSet(3),
       []
     ).total
-  ).toBe(1.29);
+  ).toBe(1.34);
 
   // 4set
   expect(
@@ -347,7 +347,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       getSeasonSet(3),
       []
     ).total
-  ).toBe(1.29);
+  ).toBe(1.34);
 
   // 1set + 4gradient
   expect(
@@ -359,11 +359,9 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(3),
-      [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
-      false,
-      false
+      [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]
     ).total
-  ).toBe(1.31);
+  ).toBe(1.36);
 
   // 3set + 3gradient
   expect(
@@ -377,7 +375,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       getSeasonSet(3),
       [{ id: 1 }, { id: 2 }, { id: 3 }]
     ).total
-  ).toBe(1.35);
+  ).toBe(1.4);
 
   // 3set + naka + genesis + 3gradient
   expect(
@@ -391,7 +389,7 @@ test('calculateBoost should calculate the boost correctly', () => {
       getSeasonSet(3),
       [{ id: 1 }, { id: 2 }, { id: 3 }]
     ).total
-  ).toBe(1.35);
+  ).toBe(1.4);
 
   // s3 + s4 set
   expect(
@@ -403,9 +401,7 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       [...getSeasonSet(3), ...getSeasonSet(4)],
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.1);
 
@@ -419,9 +415,7 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       [...getSeasonSet(4), ...getSeasonSet(5)],
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.1);
 });
