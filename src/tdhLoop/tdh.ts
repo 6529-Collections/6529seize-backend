@@ -16,7 +16,6 @@ import {
   fetchAllNFTs,
   fetchAllProfiles,
   fetchAllSeasons,
-  fetchHasEns,
   fetchLatestTransactionsBlockNumber,
   fetchTDHForBlock,
   fetchWalletTransactions,
@@ -694,16 +693,6 @@ export async function calculateBoosts(
 
   await Promise.all(
     walletsTDH.map(async (w) => {
-      const hasENS = await fetchHasEns(w.wallets ? w.wallets : [w.wallet]);
-
-      const hasProfile = profiles.some((p) =>
-        w.wallets
-          ? w.wallets.some((wallet: string) =>
-              areEqualAddresses(wallet, p.primary_wallet)
-            )
-          : areEqualAddresses(w.wallet, p.primary_wallet)
-      );
-
       const boostBreakdown = calculateBoost(
         seasons,
         w.memes_cards_sets,
