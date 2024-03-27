@@ -1,21 +1,24 @@
 import { Request, Response } from 'express';
-import { Logger } from '../../../logging';
 import { asyncRouter } from '../async.router';
 import { giveReadReplicaTimeToCatchUp, returnJsonResult } from '../api-helpers';
 import {
   fetchDetailsForConsolidationKey,
   fetchConsolidationWallets,
   fetchTopUpsForConsolidationKey,
-  updateSubscriptionMode
+  updateSubscriptionMode,
+  fetchUpcomingMemeSubscriptions,
+  updateSubscription,
+  fetchLogsForConsolidationKey
 } from './api.subscriptions.db';
 import {
   SubscriptionBalance,
+  SubscriptionLog,
   SubscriptionTopUp
-} from '../../../entities/ISubscription.ts';
-import { getWalletOrThrow, needsAuthenticatedUser } from 'src/auth/auth';
+} from '../../../entities/ISubscription';
+import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { areEqualAddresses } from '../../../helpers';
 import { ForbiddenException } from '../../../exceptions';
-import { getValidatedByJoiOrThrow } from 'src/validation';
+import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
 const router = asyncRouter();
 
@@ -63,8 +66,8 @@ router.get(
     res: Response<SubscriptionTopUp[] | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const pageSize = parseInt(req.query.page_size || '20');
-    const page = parseInt(req.query.page || '1');
+    const pageSize = parseInt(req.query.page_size ?? '20');
+    const page = parseInt(req.query.page ?? '1');
 
     fetchTopUpsForConsolidationKey(consolidationKey, pageSize, page).then(
       (result) => {
@@ -97,7 +100,11 @@ router.post(
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
 
-    if (!isAuthenticatedForConsolidationKey(req, consolidationKey)) {
+    const isAuthenticated = await isAuthenticatedForConsolidationKey(
+      req,
+      consolidationKey
+    );
+    if (!isAuthenticated) {
       throw new ForbiddenException(
         `User can only change subscription mode for their own consolidation`
       );
@@ -108,9 +115,12 @@ router.post(
         automatic: Joi.boolean().required()
       })
     );
-    await updateSubscriptionMode(consolidationKey, requestPayload.automatic);
+    const response = await updateSubscriptionMode(
+      consolidationKey,
+      requestPayload.automatic
+    );
     await giveReadReplicaTimeToCatchUp();
-    res.status(201).send({ automatic: requestPayload.automatic });
+    res.status(201).send(response);
   }
 );
 
@@ -126,3 +136,111 @@ async function isAuthenticatedForConsolidationKey(
     areEqualAddresses(wallet, authenticatedWallet)
   );
 }
+
+router.get(
+  `/consolidation-upcoming-memes/:consolidation_key`,
+  function (
+    req: Request<
+      {
+        consolidation_key: string;
+      },
+      any,
+      any,
+      {
+        page_size?: string;
+        page?: string;
+      }
+    >,
+    res: Response<SubscriptionTopUp[] | string>
+  ) {
+    const consolidationKey = req.params.consolidation_key.toLowerCase();
+
+    fetchUpcomingMemeSubscriptions(consolidationKey).then((result) => {
+      if (result) {
+        return returnJsonResult(result, req, res);
+      } else {
+        return res.status(404).send('Not found');
+      }
+    });
+  }
+);
+
+router.post(
+  `/:consolidation_key/subscription`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<
+      {
+        consolidation_key: string;
+      },
+      any,
+      {
+        contract: string;
+        token_id: number;
+        subscribed: boolean;
+      },
+      any,
+      any
+    >,
+    res: Response
+  ) {
+    const consolidationKey = req.params.consolidation_key.toLowerCase();
+    const isAuthenticated = await isAuthenticatedForConsolidationKey(
+      req,
+      consolidationKey
+    );
+    if (!isAuthenticated) {
+      throw new ForbiddenException(
+        `User can only change subscription mode for their own consolidation`
+      );
+    }
+    const requestPayload = getValidatedByJoiOrThrow(
+      req.body,
+      Joi.object({
+        contract: Joi.string().required(),
+        token_id: Joi.number().required(),
+        subscribed: Joi.boolean().required()
+      })
+    );
+    const response = await updateSubscription(
+      consolidationKey,
+      requestPayload.contract,
+      requestPayload.token_id,
+      requestPayload.subscribed
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.status(201).send(response);
+  }
+);
+
+router.get(
+  `/consolidation-logs/:consolidation_key`,
+  function (
+    req: Request<
+      {
+        consolidation_key: string;
+      },
+      any,
+      any,
+      {
+        page_size?: string;
+        page?: string;
+      }
+    >,
+    res: Response<SubscriptionLog[] | string>
+  ) {
+    const consolidationKey = req.params.consolidation_key.toLowerCase();
+    const pageSize = parseInt(req.query.page_size ?? '20');
+    const page = parseInt(req.query.page ?? '1');
+
+    fetchLogsForConsolidationKey(consolidationKey, pageSize, page).then(
+      (result) => {
+        if (result) {
+          return returnJsonResult(result, req, res, true);
+        } else {
+          return res.status(404).send('Not found');
+        }
+      }
+    );
+  }
+);

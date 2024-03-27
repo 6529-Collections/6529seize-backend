@@ -3,13 +3,15 @@ import {
   CreateDateColumn,
   Entity,
   PrimaryColumn,
+  PrimaryGeneratedColumn,
   UpdateDateColumn
 } from 'typeorm';
 import {
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
-  SUBSCRIPTIONS_TOP_UP_TABLE
+  SUBSCRIPTIONS_TOP_UP_TABLE,
+  SUBSCRIPTIONS_LOGS_TABLE
 } from '../constants';
 
 @Entity(SUBSCRIPTIONS_TOP_UP_TABLE)
@@ -82,4 +84,19 @@ export class NFTSubscription {
 
   @Column({ type: 'boolean', default: false })
   locked?: boolean;
+}
+
+@Entity(SUBSCRIPTIONS_LOGS_TABLE)
+export class SubscriptionLog {
+  @CreateDateColumn({ type: 'datetime' })
+  created_at?: Date;
+
+  @PrimaryGeneratedColumn()
+  id?: number;
+
+  @Column({ type: 'varchar', length: 200 })
+  consolidation_key!: string;
+
+  @Column({ type: 'text' })
+  log!: string;
 }

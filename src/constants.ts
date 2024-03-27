@@ -69,6 +69,7 @@ export const SUBSCRIPTIONS_TOP_UP_TABLE = 'subscriptions_top_up';
 export const SUBSCRIPTIONS_BALANCES_TABLE = 'subscriptions_balances';
 export const SUBSCRIPTIONS_MODE_TABLE = 'subscriptions_mode';
 export const SUBSCRIPTIONS_NFTS_TABLE = 'subscriptions_nfts';
+export const SUBSCRIPTIONS_LOGS_TABLE = 'subscriptions_logs';
 
 export const DROPS_TABLE = 'drops';
 export const DROP_STORMS_TABLE = 'drop_storms';

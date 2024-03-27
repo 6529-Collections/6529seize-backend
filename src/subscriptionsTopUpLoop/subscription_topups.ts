@@ -1,15 +1,12 @@
 import { Alchemy, Network } from 'alchemy-sdk';
 import { sepolia } from '@wagmi/chains';
-import { Logger } from '../logging.ts';
-import { WALLETS_CONSOLIDATION_KEYS_VIEW } from '../constants.ts';
-import { getAllSubscriptionTopUps } from './alchemy.subscriptions.ts';
-import { SubscriptionTopUp } from '../entities/ISubscription.ts.ts';
-import { sqlExecutor } from '../sql-executor.ts';
+import { Logger } from '../logging';
+import { getAllSubscriptionTopUps } from './alchemy.subscriptions';
 import {
   getMaxSubscriptionTopUpBlock,
   persistTopUps
-} from './db.subscriptions_topup.ts';
-import { getAlchemyInstance } from '../alchemy.ts';
+} from './db.subscriptions_topup';
+import { getAlchemyInstance } from '../alchemy';
 
 const logger = Logger.get('SUBSCRIPTIONS_TOP_UP');
 
@@ -48,20 +45,5 @@ export async function findTopUps(reset?: boolean) {
     `[FROM BLOCK ${fromBlock}] [FOUND ${subscriptions.length} NEW TOP UPS]`
   );
 
-  await processTopUps(subscriptions);
-}
-
-async function processTopUps(topUps: SubscriptionTopUp[]) {
-  for (const topUp of topUps) {
-    let consolidationKey = topUp.from_wallet;
-    const consolidation = await sqlExecutor.execute(
-      `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE wallet = :wallet`,
-      { wallet: topUp.from_wallet }
-    );
-    if (consolidation.length === 1) {
-      consolidationKey = consolidation[0].consolidation_key;
-    }
-  }
-
-  await persistTopUps(topUps);
+  await persistTopUps(subscriptions);
 }

@@ -3,8 +3,8 @@ import {
   AssetTransfersCategory,
   AssetTransfersWithMetadataResult
 } from 'alchemy-sdk';
-import { SUBSCRIPTIONS_ADDRESS } from '../constants.ts';
-import { SubscriptionTopUp } from '../entities/ISubscription.ts.ts';
+import { SUBSCRIPTIONS_ADDRESS } from '../constants';
+import { SubscriptionTopUp } from '../entities/ISubscription';
 
 export async function getAllSubscriptionTopUps(
   alchemy: Alchemy,

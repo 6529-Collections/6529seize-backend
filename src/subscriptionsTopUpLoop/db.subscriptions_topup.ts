@@ -1,17 +1,18 @@
 import {
   SUBSCRIPTIONS_TOP_UP_TABLE,
   WALLETS_CONSOLIDATION_KEYS_VIEW
-} from '../constants.ts';
-import { getDataSource } from '../db.ts';
+} from '../constants';
+import { getDataSource } from '../db';
 import {
   SubscriptionBalance,
   SubscriptionTopUp
-} from '../entities/ISubscription.ts.ts';
+} from '../entities/ISubscription';
 
 export async function persistTopUps(topUps: SubscriptionTopUp[]) {
   await getDataSource().transaction(async (manager) => {
     const balancesRepo = manager.getRepository(SubscriptionBalance);
     const topUpsRepo = manager.getRepository(SubscriptionTopUp);
+
     for (const topUp of topUps) {
       let consolidationKey = (
         await manager.query(

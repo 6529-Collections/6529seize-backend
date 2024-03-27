@@ -1,8 +1,9 @@
 import { getDataSource } from '../db';
 import {
   NFTSubscription,
+  SubscriptionLog,
   SubscriptionMode
-} from '../entities/ISubscription.ts';
+} from '../entities/ISubscription';
 
 export async function fetchAllAutoSubscriptions() {
   return await getDataSource()
@@ -20,4 +21,8 @@ export async function persistSubscriptions(subscriptions: NFTSubscription[]) {
   await getDataSource()
     .getRepository(NFTSubscription)
     .upsert(subscriptions, ['consolidation_key', 'contract', 'token_id']);
+}
+
+export async function persistSubscriptionLogs(logs: SubscriptionLog[]) {
+  await getDataSource().getRepository(SubscriptionLog).insert(logs);
 }
