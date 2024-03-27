@@ -1,12 +1,7 @@
 import { Logger } from './logging';
 import { Time } from './time';
-import { loadEnv } from './secrets';
-import {
-  Drop,
-  DropMentionEntity,
-  DropMetadataEntity,
-  DropReferencedNftEntity
-} from './entities/IDrop';
+import * as dbMigrationsLoop from './dbMigrationsLoop';
+import * as customReplayLoop from './customReplayLoop';
 
 const logger = Logger.get('BACKEND');
 
@@ -14,12 +9,8 @@ async function start() {
   const start = Time.now();
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  await loadEnv([
-    Drop,
-    DropMentionEntity,
-    DropReferencedNftEntity,
-    DropMetadataEntity
-  ]);
+  await dbMigrationsLoop.handler(null, null as any, null as any);
+  await customReplayLoop.handler(null, null as any, null as any);
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
