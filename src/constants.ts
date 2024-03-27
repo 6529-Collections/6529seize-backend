@@ -65,6 +65,12 @@ export const CONSOLIDATED_OWNERS_BALANCES_TABLE =
 export const CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE =
   'owners_balances_memes_consolidation';
 
+export const SUBSCRIPTIONS_TOP_UP_TABLE = 'subscriptions_top_up';
+export const SUBSCRIPTIONS_BALANCES_TABLE = 'subscriptions_balances';
+export const SUBSCRIPTIONS_MODE_TABLE = 'subscriptions_mode';
+export const SUBSCRIPTIONS_NFTS_TABLE = 'subscriptions_nfts';
+export const SUBSCRIPTIONS_LOGS_TABLE = 'subscriptions_logs';
+
 export const DROPS_TABLE = 'drops';
 export const DROP_STORMS_TABLE = 'drop_storms';
 export const DROPS_MENTIONS_TABLE = 'drops_mentions';
@@ -147,3 +153,6 @@ export const MEMES_ROYALTIES_RATE = 0.5;
 export const MEME_8_EDITION_BURN_ADJUSTMENT = -2588;
 export const MEME_8_BURN_TRANSACTION =
   '0xa6c27335d3c4f87064a938e987e36525885cc3d136ebb726f4c5d374c0d2d854';
+
+export const SUBSCRIPTIONS_ADDRESS =
+  '0x924817154d311bd2de599f3d659d053ab0133e06';
