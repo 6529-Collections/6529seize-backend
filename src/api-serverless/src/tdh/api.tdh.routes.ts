@@ -139,7 +139,7 @@ router.get(
 
 router.get(
   '/consolidation/:consolidation_key',
-  function (
+  async function (
     req: Request<
       {
         consolidation_key: string;
@@ -152,25 +152,24 @@ router.get(
   ) {
     const consolidationKey = req.params.consolidation_key;
 
-    fetchSingleTDH(
+    const result = await fetchSingleTDH(
       'consolidation_key',
       consolidationKey,
       CONSOLIDATED_WALLETS_TDH_TABLE
-    ).then((result) => {
-      if (result) {
-        const parsedResult = parseTdhDataFromDB(result);
-        return returnJsonResult(parsedResult, req, res);
-      }
-      throw new NotFoundException(
-        `Consolidated TDH for ${consolidationKey} not found`
-      );
-    });
+    );
+    if (result) {
+      const parsedResult = parseTdhDataFromDB(result);
+      return returnJsonResult(parsedResult, req, res);
+    }
+    throw new NotFoundException(
+      `Consolidated TDH for ${consolidationKey} not found`
+    );
   }
 );
 
 router.get(
   '/wallet/:wallet',
-  function (
+  async function (
     req: Request<
       {
         wallet: string;
@@ -183,12 +182,11 @@ router.get(
   ) {
     const wallet = req.params.wallet;
 
-    fetchSingleTDH('wallet', wallet, WALLETS_TDH_TABLE).then((result) => {
-      if (result) {
-        const parsedResult = parseTdhDataFromDB(result);
-        return returnJsonResult(parsedResult, req, res);
-      }
-      throw new NotFoundException(`Wallet TDH for ${wallet} not found`);
-    });
+    const result = await fetchSingleTDH('wallet', wallet, WALLETS_TDH_TABLE);
+    if (result) {
+      const parsedResult = parseTdhDataFromDB(result);
+      return returnJsonResult(parsedResult, req, res);
+    }
+    throw new NotFoundException(`Wallet TDH for ${wallet} not found`);
   }
 );
