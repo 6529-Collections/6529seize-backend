@@ -42,6 +42,7 @@ export interface DropFull {
   readonly root_drop_id: number | null;
   readonly storm_sequence: number;
   readonly max_storm_sequence: number;
+  readonly rep: number;
 }
 
 export interface NewDropMedia {

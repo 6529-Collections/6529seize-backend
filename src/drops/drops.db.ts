@@ -14,12 +14,17 @@ import {
   DROP_METADATA_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROPS_MENTIONS_TABLE,
-  DROPS_TABLE
+  DROPS_TABLE,
+  PROFILE_FULL,
+  TDH_SPENT_ON_DROP_REPS_TABLE
 } from '../constants';
 import {
   communityMemberCriteriaService,
   CommunityMemberCriteriaService
 } from '../api-serverless/src/community-members/community-member-criteria.service';
+import { Time } from '../time';
+import { TdhSpentOnDropRep } from '../entities/ITdhSpentOnDropRep';
+import { RateMatter } from '../entities/IRating';
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -275,6 +280,133 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { dropIds },
       connection ? { wrappedConnection: connection } : undefined
     );
+  }
+
+  async findRepLeftForDropsForProfile(
+    {
+      profileId,
+      reservationStartTime
+    }: {
+      profileId: string;
+      reservationStartTime: Time;
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<number> {
+    return this.db
+      .execute(
+        `
+          select p.profile_tdh - ifnull(x.tdh_spent, 0) as tdh_left
+          from ${PROFILE_FULL} p
+                   left join (select t.rater_id,
+                                     ifnull(sum(t.tdh_spent), 0) as tdh_spent
+                              from ${TDH_SPENT_ON_DROP_REPS_TABLE} t
+                              where t.rater_id = :raterId
+                                and t.timestamp >= :reservationStartTime
+                              group by t.rater_id) x on x.rater_id = p.external_id
+          where p.external_id = :raterId
+        `,
+        {
+          raterId: profileId,
+          reservationStartTime: reservationStartTime.toDate()
+        },
+        { wrappedConnection: connection }
+      )
+      .then((it) => it[0]?.tdh_left ?? 0);
+  }
+
+  async findOverspentRates(
+    {
+      reservationStartTime
+    }: {
+      reservationStartTime: Time;
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<
+    (TdhSpentOnDropRep & { profile_tdh: number; total_reserved_tdh: number })[]
+  > {
+    return this.db.execute(
+      `
+          with spent_tdhs as (select rater_id, sum(tdh_spent) spent_tdh
+                              from ${TDH_SPENT_ON_DROP_REPS_TABLE}
+                              where timestamp >= :reservationStartTime
+                              group by 1),
+               overspenders as (select rater_id, ifnull(p.profile_tdh, 0) as profile_tdh, s.spent_tdh as spent_tdh
+                                from spent_tdhs s
+                                         left join ${PROFILE_FULL} p on p.external_id = s.rater_id
+                                where ifnull(p.profile_tdh, 0) - s.spent_tdh < 0)
+          select t.*, o.profile_tdh, o.spent_tdh total_reserved_tdh
+          from ${TDH_SPENT_ON_DROP_REPS_TABLE} t
+                   join overspenders o on o.rater_id = t.rater_id
+          where t.timestamp >= :reservationStartTime;
+      `,
+      {
+        reservationStartTime: reservationStartTime.toDate()
+      },
+      { wrappedConnection: connection }
+    );
+  }
+
+  async updateTdhSpentOnDropRep(
+    param: { tdh_spent: number; reservationId: number },
+    connection: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update ${TDH_SPENT_ON_DROP_REPS_TABLE} set tdh_spent = :tdh_spent where id = :reservationId`,
+      param,
+      { wrappedConnection: connection }
+    );
+  }
+
+  async insertTdhSpentOnDropRep(
+    param: {
+      rater_id: string;
+      tdh_spent: number;
+      drop_id: number;
+    },
+    connection: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `insert into ${TDH_SPENT_ON_DROP_REPS_TABLE} (rater_id, drop_id, tdh_spent, timestamp) values (:rater_id, :drop_id, :tdh_spent, NOW())`,
+      param,
+      { wrappedConnection: connection }
+    );
+  }
+
+  async deleteTdhSpentOnDropRep(
+    id: number,
+    connection: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `delete from ${TDH_SPENT_ON_DROP_REPS_TABLE} where id = :id`,
+      { id },
+      { wrappedConnection: connection }
+    );
+  }
+
+  async findDropsTotalRating(
+    dropIds: number[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<number, number>> {
+    if (dropIds.length === 0) {
+      return {};
+    }
+    const dbResult: { drop_id: string; rating: number }[] =
+      await this.db.execute(
+        `
+    select matter_target_id as drop_id, sum(rating) as rating
+    from ratings
+    where matter = '${RateMatter.DROP_REP}' and matter_target_id in (:dropIds)
+    group by 1
+    `,
+        { dropIds: dropIds.map((it) => it.toString()) },
+        {
+          wrappedConnection: connection
+        }
+      );
+    return dbResult.reduce((acc, it) => {
+      acc[parseInt(it.drop_id)] = it.rating;
+      return acc;
+    }, {} as Record<number, number>);
   }
 }
 

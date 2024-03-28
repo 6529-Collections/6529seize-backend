@@ -15,6 +15,7 @@ import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { RepService } from '../api-serverless/src/profiles/rep.service';
 import { EventScheduler } from '../events/event.scheduler';
 import { ArweaveFileUploader } from '../arweave';
+import { DropsDb } from '../drops/drops.db';
 
 describe('RatingsService', () => {
   let ratingsService: RatingsService;
@@ -22,6 +23,7 @@ describe('RatingsService', () => {
   let profilesDb: Mock<ProfilesDb>;
   let repService: Mock<RepService>;
   let profileActivityLogsDb: Mock<ProfileActivityLogsDb>;
+  let dropsDb: Mock<DropsDb>;
   let eventScheduler: Mock<EventScheduler>;
   let arweaveFileUploader: Mock<ArweaveFileUploader>;
 
@@ -29,6 +31,7 @@ describe('RatingsService', () => {
     profilesDb = mockDbService();
     ratingsDb = mockDbService();
     profileActivityLogsDb = mockDbService();
+    dropsDb = mockDbService();
     eventScheduler = mock(EventScheduler);
     repService = mock(RepService);
     arweaveFileUploader = mock(ArweaveFileUploader);
@@ -38,7 +41,8 @@ describe('RatingsService', () => {
       repService,
       profileActivityLogsDb,
       eventScheduler,
-      arweaveFileUploader
+      arweaveFileUploader,
+      dropsDb
     );
   });
 
