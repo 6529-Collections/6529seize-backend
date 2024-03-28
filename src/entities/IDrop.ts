@@ -2,20 +2,12 @@ import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import {
   DROP_METADATA_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
-  DROP_STORMS_TABLE,
   DROPS_MENTIONS_TABLE,
   DROPS_TABLE
 } from '../constants';
 
-@Entity(DROP_STORMS_TABLE)
-export class DropStormEntity {
-  @PrimaryGeneratedColumn('increment', { type: 'bigint' })
-  readonly id!: number;
-  @Column({ type: 'varchar', length: 100 })
-  readonly author_profile_id!: string;
-}
-
 @Entity(DROPS_TABLE)
+@Index('storm_sequence', ['root_drop_id', 'storm_sequence'], { unique: true })
 export class Drop {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   readonly id!: number;
@@ -27,8 +19,9 @@ export class Drop {
   readonly title!: string | null;
   @Column({ type: 'text', nullable: true })
   readonly content!: string | null;
-  @Column({ type: 'bigint' })
-  readonly storm_id!: number;
+  @Column({ type: 'bigint', nullable: true })
+  @Index()
+  readonly root_drop_id!: number | null;
   @Column({ type: 'integer' })
   readonly storm_sequence!: number;
   @Column({ type: 'bigint', nullable: true })

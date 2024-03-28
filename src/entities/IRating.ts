@@ -19,7 +19,8 @@ export class Rating {
 
 export enum RateMatter {
   CIC = 'CIC',
-  REP = 'REP'
+  REP = 'REP',
+  DROP_REP = 'DROP_REP'
 }
 
 export function getMattersWhereTargetIsProfile(): RateMatter[] {
