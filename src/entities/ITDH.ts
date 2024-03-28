@@ -350,3 +350,23 @@ export interface TokenTDHRank {
   id: number;
   rank: number;
 }
+
+export interface BoostInfo {
+  available: number;
+  available_info: string[];
+  acquired: number;
+  acquired_info: string[];
+}
+
+export interface DefaultBoost {
+  memes_card_sets: BoostInfo;
+  memes_szn1: BoostInfo;
+  memes_szn2: BoostInfo;
+  memes_szn3: BoostInfo;
+  memes_szn4: BoostInfo;
+  memes_szn5: BoostInfo;
+  memes_szn6: BoostInfo;
+  memes_genesis: BoostInfo;
+  memes_nakamoto: BoostInfo;
+  gradients: BoostInfo;
+}
