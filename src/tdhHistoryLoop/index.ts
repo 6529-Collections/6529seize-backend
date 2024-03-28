@@ -1,11 +1,6 @@
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { persistGlobalTDHHistory, persistTDHHistory } from '../db';
-import {
-  ConsolidatedTDH,
-  GlobalTDHHistory,
-  TDHHistory,
-  TokenTDH
-} from '../entities/ITDH';
+import { GlobalTDHHistory, TDHHistory, TokenTDH } from '../entities/ITDH';
 import {
   areEqualAddresses,
   buildConsolidationKey,
