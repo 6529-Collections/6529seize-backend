@@ -57,6 +57,7 @@ import {
 } from './api-filters';
 import { parseTdhResultsFromDB } from '../../sql_helpers';
 import { loadLocalConfig, loadSecrets } from '../../env';
+import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
 
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
@@ -930,6 +931,7 @@ loadApi().then(() => {
   apiRouter.use(`/aggregated-activity`, aggregatedActivityRoutes);
   apiRouter.use(`/owners-balances`, ownersBalancesRoutes);
   apiRouter.use(`/ratings`, ratingsRoutes);
+  apiRouter.use(`/subscriptions`, subscriptionsRoutes);
   apiRouter.use(`/drops`, dropsRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
