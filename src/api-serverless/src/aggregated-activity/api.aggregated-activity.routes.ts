@@ -95,7 +95,7 @@ router.get(
 
 router.get(
   '/consolidation/:consolidation_key',
-  function (
+  async function (
     req: Request<
       {
         consolidation_key: string;
@@ -108,22 +108,21 @@ router.get(
   ) {
     const consolidationKey = req.params.consolidation_key;
 
-    fetchAggregatedActivityForConsolidationKey(consolidationKey).then(
-      (result) => {
-        if (result) {
-          return returnJsonResult(result, req, res);
-        }
-        throw new NotFoundException(
-          `Consolidated Aggregated activity for ${consolidationKey} not found`
-        );
-      }
+    const result = await fetchAggregatedActivityForConsolidationKey(
+      consolidationKey
+    );
+    if (result) {
+      return returnJsonResult(result, req, res);
+    }
+    throw new NotFoundException(
+      `Consolidated Aggregated activity for ${consolidationKey} not found`
     );
   }
 );
 
 router.get(
   '/consolidation/:consolidation_key/memes',
-  function (
+  async function (
     req: Request<
       {
         consolidation_key: string;
@@ -135,22 +134,21 @@ router.get(
     res: any
   ) {
     const consolidationKey = req.params.consolidation_key;
-    fetchMemesAggregatedActivityForConsolidationKey(consolidationKey).then(
-      (result) => {
-        if (result) {
-          return returnJsonResult(result, req, res);
-        }
-        throw new NotFoundException(
-          `Consolidated Memes Aggregated activity for ${consolidationKey} not found`
-        );
-      }
+    const result = await fetchMemesAggregatedActivityForConsolidationKey(
+      consolidationKey
+    );
+    if (result) {
+      return returnJsonResult(result, req, res);
+    }
+    throw new NotFoundException(
+      `Consolidated Memes Aggregated activity for ${consolidationKey} not found`
     );
   }
 );
 
 router.get(
   '/wallet/:wallet',
-  function (
+  async function (
     req: Request<
       {
         wallet: string;
@@ -163,20 +161,19 @@ router.get(
   ) {
     const wallet = req.params.wallet;
 
-    fetchAggregatedActivityForWallet(wallet).then((result) => {
-      if (result) {
-        return returnJsonResult(result, req, res);
-      }
-      throw new NotFoundException(
-        `Wallet Aggregated activity for ${wallet} not found`
-      );
-    });
+    const result = await fetchAggregatedActivityForWallet(wallet);
+    if (result) {
+      return returnJsonResult(result, req, res);
+    }
+    throw new NotFoundException(
+      `Wallet Aggregated activity for ${wallet} not found`
+    );
   }
 );
 
 router.get(
   '/wallet/:wallet/memes',
-  function (
+  async function (
     req: Request<
       {
         wallet: string;
@@ -189,13 +186,12 @@ router.get(
   ) {
     const wallet = req.params.wallet;
 
-    fetchMemesAggregatedActivityForWallet(wallet).then((result) => {
-      if (result) {
-        return returnJsonResult(result, req, res);
-      }
-      throw new NotFoundException(
-        `Wallet Memes Aggregated activity for ${wallet} not found`
-      );
-    });
+    const result = await fetchMemesAggregatedActivityForWallet(wallet);
+    if (result) {
+      return returnJsonResult(result, req, res);
+    }
+    throw new NotFoundException(
+      `Wallet Memes Aggregated activity for ${wallet} not found`
+    );
   }
 );
