@@ -280,10 +280,6 @@ async function tdhHistory(date: Date) {
         destroyed_balance: ydbalance,
         net_balance: ydbalance
       };
-      if (isNaN(ydbalance)) {
-        console.log("hi i'm a NaN ", yd);
-        process.exit(1);
-      }
       tdhHistory.push(tdhH);
     }
   });
