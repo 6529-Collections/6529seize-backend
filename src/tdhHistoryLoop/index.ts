@@ -17,6 +17,7 @@ import { Readable } from 'stream';
 import { Logger } from '../logging';
 import { Time } from '../time';
 import * as sentryContext from '../sentry.context';
+import { UploadFieldsConsolidation } from '../entities/IUpload';
 
 const csvParser = require('csv-parser');
 
@@ -104,8 +105,9 @@ function matchesConsolidationKey(d: any, yd: any) {
 }
 
 function hasMatchingWallet(d: any, yd: any) {
-  const ydWallets = JSON.parse(yd.wallets);
-  return d.wallets.some((dw: string) =>
+  const dWallets = d.consolidation_key.split('-');
+  const ydWallets = yd.consolidation_key.split('-');
+  return dWallets.some((dw: string) =>
     ydWallets.some((yw: string) => areEqualAddresses(dw, yw))
   );
 }
@@ -129,8 +131,12 @@ async function tdhHistory(date: Date) {
     to_url: yesterday.url
   });
 
-  const todayData = await fetchAndParseCSV(today.url);
-  const yesterdayData = await fetchAndParseCSV(yesterday.url);
+  const todayData: UploadFieldsConsolidation[] = await fetchAndParseCSV(
+    today.url
+  );
+  const yesterdayData: UploadFieldsConsolidation[] = await fetchAndParseCSV(
+    yesterday.url
+  );
 
   const tdhHistory: TDHHistory[] = [];
 
@@ -139,11 +145,9 @@ async function tdhHistory(date: Date) {
   const yesterdayEntries: string[] = [];
 
   todayData.forEach((d) => {
-    d.memes = JSON.parse(d.memes);
-    d.gradients = JSON.parse(d.gradients);
-    d.nextgen = JSON.parse(d.nextgen);
-    d.wallets = JSON.parse(d.wallets);
-    d.consolidation_key = buildConsolidationKey(d.wallets);
+    const dMemes = JSON.parse(d.memes);
+    const dGradients = JSON.parse(d.gradients);
+    const dNextgen = JSON.parse(d.nextgen);
 
     const yesterdayTdh = yesterdayData.filter(
       (yd) => matchesConsolidationKey(d, yd) || hasMatchingWallet(d, yd)
@@ -151,9 +155,7 @@ async function tdhHistory(date: Date) {
 
     if (yesterdayTdh.length > 0) {
       yesterdayTdh.forEach((y) => {
-        const wallets = JSON.parse(y.wallets);
-        const key = buildConsolidationKey(wallets);
-        yesterdayEntries.push(key);
+        yesterdayEntries.push(y.consolidation_key);
         if (!Array.isArray(y.memes)) {
           y.memes = JSON.parse(y.memes);
         }
@@ -169,19 +171,19 @@ async function tdhHistory(date: Date) {
     const memesResult = processTokenTDHArray(
       'memes',
       d.boost,
-      d.memes,
+      dMemes,
       yesterdayTdh
     );
     const gradientsResult = processTokenTDHArray(
       'gradients',
       d.boost,
-      d.gradients,
+      dGradients,
       yesterdayTdh
     );
     const nextgenResult = processTokenTDHArray(
       'nextgen',
       d.boost,
-      d.nextgen,
+      dNextgen,
       yesterdayTdh
     );
 
@@ -249,24 +251,22 @@ async function tdhHistory(date: Date) {
   });
 
   yesterdayData.forEach((yd) => {
-    const wallets = JSON.parse(yd.wallets);
-    const key = buildConsolidationKey(wallets);
-    if (!yesterdayEntries.includes(key)) {
+    if (!yesterdayEntries.includes(yd.consolidation_key)) {
       logger.info(
-        `[DATE ${date.toISOString().split('T')[0]}] [KEY LOST ${key} ${
-          yd.boosted_tdh
-        } TDH]`
+        `[DATE ${date.toISOString().split('T')[0]}] [KEY LOST ${
+          yd.consolidation_key
+        } ${yd.boosted_tdh} TDH]`
       );
 
-      const ydtdhRaw = parseFloat(yd.tdh__raw);
-      const ydtdh = parseFloat(yd.tdh);
-      const ydboostedTdh = parseFloat(yd.boosted_tdh);
-      const ydbalance = parseFloat(yd.balance);
+      const ydtdhRaw = yd.tdh__raw;
+      const ydtdh = yd.tdh;
+      const ydboostedTdh = yd.boosted_tdh;
+      const ydbalance = yd.total_balance;
 
       const tdhH: TDHHistory = {
         date: date,
         consolidation_display: yd.consolidation_display,
-        consolidation_key: key,
+        consolidation_key: yd.consolidation_key,
         wallets: yd.wallets,
         block: yd.block,
         boosted_tdh: 0,
@@ -285,6 +285,10 @@ async function tdhHistory(date: Date) {
         destroyed_balance: ydbalance,
         net_balance: ydbalance
       };
+      if (isNaN(ydbalance)) {
+        console.log("hi i'm a NaN ", yd);
+        process.exit(1);
+      }
       tdhHistory.push(tdhH);
     }
   });
@@ -294,6 +298,7 @@ async function tdhHistory(date: Date) {
       tdhHistory.length
     }] [PERSISTNG...]`
   );
+
   await persistTDHHistory(tdhHistory);
 
   return {
@@ -307,7 +312,7 @@ async function calculateGlobalTDHHistory(
   date: Date,
   block: number,
   tdhHistory: TDHHistory[],
-  tdhData: ConsolidatedTDH[]
+  tdhData: UploadFieldsConsolidation[]
 ) {
   logger.info(
     `[DATE ${
