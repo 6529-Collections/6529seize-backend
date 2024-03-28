@@ -487,16 +487,17 @@ function calculateMemesBoostsCardSets(cardSets: number) {
   const breakdown = getDefaultBoost();
 
   let cardSetBreakdown = 0.3;
+  const additionalCardSets = cardSets - 1;
   // additional full sets up to 2
-  cardSetBreakdown += Math.min((cardSets - 1) * 0.02, 0.04);
+  cardSetBreakdown += Math.min(additionalCardSets * 0.02, 0.04);
   boost += cardSetBreakdown;
   breakdown.memes_card_sets.acquired = cardSetBreakdown;
 
   const acquiredInfo = ['0.3 for Full Collection Set'];
-  if (cardSets > 2) {
-    acquiredInfo.push(`0.04 for two additional sets`);
-  } else if (cardSets == 2) {
-    acquiredInfo.push(`0.02 for one additional set`);
+  if (additionalCardSets === 1) {
+    acquiredInfo.push(`0.02 for 1 additional set`);
+  } else if (additionalCardSets > 1) {
+    acquiredInfo.push(`0.04 for ${additionalCardSets} additional sets`);
   }
   breakdown.memes_card_sets.acquired_info = acquiredInfo;
 
