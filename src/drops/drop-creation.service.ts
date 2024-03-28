@@ -58,12 +58,30 @@ export class DropCreationService {
   ) {
     return await this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        const rootDropId = createDropRequest.root_drop_id;
+        let storm_sequence = 1;
+        if (rootDropId !== null) {
+          const rootDrop = await this.dropsDb.lockDrop(rootDropId, connection);
+          if (!rootDrop) {
+            throw new BadRequestException('Invalid root drop');
+          }
+          const current_storm_sequence =
+            await this.dropsDb.findRootDropMaxStormSequenceOrZero(
+              {
+                root_drop_id: rootDropId,
+                author_id: createDropRequest.author.external_id
+              },
+              connection
+            );
+          storm_sequence = current_storm_sequence + 1;
+        }
         const dropId = await this.dropsDb.insertDrop(
           {
             author_id: createDropRequest.author.external_id,
             title: createDropRequest.title,
             content: createDropRequest.content,
-            storm_id: createDropRequest.storm_id,
+            root_drop_id: createDropRequest.root_drop_id,
+            storm_sequence: storm_sequence,
             quoted_drop_id: createDropRequest.quoted_drop_id,
             media_url: dropMedia.media_url,
             media_mime_type: dropMedia.media_mime_type
@@ -109,16 +127,6 @@ export class DropCreationService {
         .then((it) => it[0] ?? null);
       if (!quotedDrop) {
         throw new BadRequestException('Invalid quoted drop');
-      }
-    }
-    const stormId = createDropRequest.storm_id;
-    if (stormId !== null) {
-      const stormDropsCount = await this.dropsDb.countStormDrops(
-        stormId,
-        createDropRequest.author.external_id
-      );
-      if (stormDropsCount === 0) {
-        throw new BadRequestException('Invalid storm');
       }
     }
   }
