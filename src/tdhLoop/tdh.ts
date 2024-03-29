@@ -617,7 +617,9 @@ export function calculateBoost(
   if (gradientsBoost > 0) {
     breakdown.gradients.acquired = gradientsBoost;
     breakdown.gradients.acquired_info = [
-      `${gradientsBoost} for holding ${gradients.length} Gradients`
+      `${gradientsBoost} for holding ${gradients.length} Gradient${
+        gradients.length > 1 ? 's' : ''
+      }`
     ];
     boost += gradientsBoost;
   }
