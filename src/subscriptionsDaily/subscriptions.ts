@@ -50,7 +50,7 @@ export async function updateSubscriptions(reset?: boolean) {
     process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
     discordMessage,
     'Subscriptions',
-    'success'
+    'info'
   );
 }
 
