@@ -72,9 +72,9 @@ export class TransactionsDiscoveryDb extends LazyDbAccessCompatibleService {
           { wrappedConnection: connection }
         );
 
-        // if (isAirdrop(transaction)) {
-        await redeemSubscriptionAirdrop(transaction, connection);
-        // }
+        if (isAirdrop(transaction)) {
+          await redeemSubscriptionAirdrop(transaction, connection);
+        }
       }
     });
   }
