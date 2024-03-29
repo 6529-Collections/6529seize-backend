@@ -375,7 +375,7 @@ export function resolveEnum<T extends {}>(
 }
 
 export function isAirdrop(t: Transaction): boolean {
-  return areEqualAddresses(t.from_address, NULL_ADDRESS) && t.value > 0;
+  return areEqualAddresses(t.from_address, NULL_ADDRESS) && t.value === 0;
 }
 
 export function getTransactionLink(chain_id: number, hash: string) {
