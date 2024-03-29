@@ -43,6 +43,14 @@ const seasons: MemesSeason[] = [
     count: 29,
     name: 'SNZ5',
     display: 'SNZ5'
+  },
+  {
+    id: 6,
+    start_index: 181,
+    end_index: 212,
+    count: 32,
+    name: 'SNZ6',
+    display: 'SNZ6'
   }
 ];
 
@@ -57,11 +65,10 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(1),
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.05);
+
   //s2 set
   expect(
     calculateBoost(
@@ -72,12 +79,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(2),
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.05);
-  // //s3 set
+
+  // s3 set
   expect(
     calculateBoost(
       seasons,
@@ -87,11 +93,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(3),
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.05);
+
+  // s4 set
   expect(
     calculateBoost(
       seasons,
@@ -101,12 +107,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(4),
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.05);
-  // //s5 set
+
+  // s5 set
   expect(
     calculateBoost(
       seasons,
@@ -116,13 +121,25 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(5),
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.05);
 
-  // //s1 set + genesis
+  // s6 set
+  expect(
+    calculateBoost(
+      seasons,
+      0,
+      {
+        genesis: 0,
+        nakamoto: 0
+      },
+      getSeasonSet(6),
+      []
+    ).total
+  ).toBe(1.05);
+
+  // s1 set + genesis
   expect(
     calculateBoost(
       seasons,
@@ -132,12 +149,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(1),
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.05);
-  // //s2 set + genesis
+
+  // s2 set + genesis
   expect(
     calculateBoost(
       seasons,
@@ -147,12 +163,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(2),
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.06);
-  // //s2 set + naka
+
+  // s2 set + naka
   expect(
     calculateBoost(
       seasons,
@@ -162,12 +177,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 1
       },
       getSeasonSet(2),
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.06);
-  // //s2 set + genesis + naka
+
+  // s2 set + genesis + naka
   expect(
     calculateBoost(
       seasons,
@@ -177,12 +191,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 1
       },
       getSeasonSet(2),
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.07);
-  // //s2 set + genesis + naka + 1gradient
+
+  // s2 set + genesis + naka + 1gradient
   expect(
     calculateBoost(
       seasons,
@@ -192,12 +205,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 1
       },
       getSeasonSet(2),
-      [{ id: 1 }],
-      false,
-      false
+      [{ id: 1 }]
     ).total
   ).toBe(1.09);
-  // //s2 set + genesis + naka + 2gradient
+
+  // s2 set + genesis + naka + 2gradient
   expect(
     calculateBoost(
       seasons,
@@ -207,12 +219,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 1
       },
       getSeasonSet(2),
-      [{ id: 1 }, { id: 2 }],
-      false,
-      false
+      [{ id: 1 }, { id: 2 }]
     ).total
   ).toBe(1.11);
-  // //s2 set + genesis + naka + 3gradient
+
+  // s2 set + genesis + naka + 3gradient
   expect(
     calculateBoost(
       seasons,
@@ -222,13 +233,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 1
       },
       getSeasonSet(2),
-      [{ id: 1 }, { id: 2 }, { id: 3 }],
-      false,
-      false
+      [{ id: 1 }, { id: 2 }, { id: 3 }]
     ).total
   ).toBe(1.13);
 
-  // //s2 set + genesis + naka + 4gradient
+  // s2 set + genesis + naka + 4gradient
   expect(
     calculateBoost(
       seasons,
@@ -238,13 +247,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 1
       },
       getSeasonSet(2),
-      [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
-      false,
-      false
+      [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]
     ).total
   ).toBe(1.13);
 
-  // //s3 set + genesis
+  // s3 set + genesis
   expect(
     calculateBoost(
       seasons,
@@ -254,12 +261,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(3),
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.06);
-  // //s3 set + naka
+
+  // s3 set + naka
   expect(
     calculateBoost(
       seasons,
@@ -269,12 +275,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 1
       },
       getSeasonSet(3),
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.06);
-  // //s3 set + genesis + naka
+
+  // s3 set + genesis + naka
   expect(
     calculateBoost(
       seasons,
@@ -284,43 +289,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 1
       },
       getSeasonSet(3),
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.07);
-  // //s3 set + genesis + naka + ENS
-  expect(
-    calculateBoost(
-      seasons,
-      0,
-      {
-        genesis: 1,
-        nakamoto: 1
-      },
-      getSeasonSet(3),
-      [],
-      true,
-      false
-    ).total
-  ).toBe(1.08);
-  //s3 set + genesis + 4gradient
-  expect(
-    calculateBoost(
-      seasons,
-      0,
-      {
-        genesis: 1,
-        nakamoto: 0
-      },
-      getSeasonSet(3),
-      [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
-      true,
-      false
-    ).total
-  ).toBe(1.13);
 
-  // // 1set
+  // 1set
   expect(
     calculateBoost(
       seasons,
@@ -330,12 +303,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(3),
-      [],
-      false,
-      false
+      []
     ).total
-  ).toBe(1.25);
-  // // 2set
+  ).toBe(1.3);
+
+  // 2set
   expect(
     calculateBoost(
       seasons,
@@ -345,12 +317,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(3),
-      [],
-      false,
-      false
+      []
     ).total
-  ).toBe(1.27);
-  // // 3set
+  ).toBe(1.32);
+
+  // 3set
   expect(
     calculateBoost(
       seasons,
@@ -360,12 +331,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(3),
-      [],
-      false,
-      false
+      []
     ).total
-  ).toBe(1.29);
-  // // 4set
+  ).toBe(1.34);
+
+  // 4set
   expect(
     calculateBoost(
       seasons,
@@ -375,25 +345,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(3),
-      [],
-      false,
-      false
+      []
     ).total
-  ).toBe(1.29);
-  // // 1set + ENS
-  calculateBoost(
-    seasons,
-    1,
-    {
-      genesis: 1,
-      nakamoto: 0
-    },
-    getSeasonSet(3),
-    [],
-    true,
-    false
-  ).total;
-  // // 1set + 4gradient + ENS
+  ).toBe(1.34);
+
+  // 1set + 4gradient
   expect(
     calculateBoost(
       seasons,
@@ -403,13 +359,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(3),
-      [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
-      true,
-      false
+      [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]
     ).total
-  ).toBe(1.32);
+  ).toBe(1.36);
 
-  // // 3set + 3gradient + ENS
+  // 3set + 3gradient
   expect(
     calculateBoost(
       seasons,
@@ -419,13 +373,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       getSeasonSet(3),
-      [{ id: 1 }, { id: 2 }, { id: 3 }],
-      true,
-      false
+      [{ id: 1 }, { id: 2 }, { id: 3 }]
     ).total
-  ).toBe(1.36);
+  ).toBe(1.4);
 
-  // // 3set + naka + genesis + 3gradient + ENS
+  // 3set + naka + genesis + 3gradient
   expect(
     calculateBoost(
       seasons,
@@ -435,13 +387,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 1
       },
       getSeasonSet(3),
-      [{ id: 1 }, { id: 2 }, { id: 3 }],
-      true,
-      false
+      [{ id: 1 }, { id: 2 }, { id: 3 }]
     ).total
-  ).toBe(1.36);
+  ).toBe(1.4);
 
-  // //s3 + s4 set
+  // s3 + s4 set
   expect(
     calculateBoost(
       seasons,
@@ -451,13 +401,11 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       [...getSeasonSet(3), ...getSeasonSet(4)],
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.1);
 
-  // //s4 + s5 set
+  // s4 + s5 set
   expect(
     calculateBoost(
       seasons,
@@ -467,43 +415,9 @@ test('calculateBoost should calculate the boost correctly', () => {
         nakamoto: 0
       },
       [...getSeasonSet(4), ...getSeasonSet(5)],
-      [],
-      false,
-      false
+      []
     ).total
   ).toBe(1.1);
-
-  // //s5 set + profile
-  expect(
-    calculateBoost(
-      seasons,
-      0,
-      {
-        genesis: 0,
-        nakamoto: 0
-      },
-      getSeasonSet(5),
-      [],
-      false,
-      true
-    ).total
-  ).toBe(1.08);
-
-  //s5 set + ens + profile
-  expect(
-    calculateBoost(
-      seasons,
-      0,
-      {
-        genesis: 0,
-        nakamoto: 0
-      },
-      getSeasonSet(5),
-      [],
-      true,
-      true
-    ).total
-  ).toBe(1.09);
 });
 
 function getSeasonSet(id: number): TokenTDH[] {
