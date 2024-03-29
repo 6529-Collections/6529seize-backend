@@ -37,7 +37,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
       } else {
         let balanceAfter = balance.balance + topUp.amount;
         balanceAfter = Math.round(balanceAfter * 100000) / 100000;
-        balance.balance += balanceAfter;
+        balance.balance = balanceAfter;
       }
       await balancesRepo.save(balance);
       await topUpsRepo.insert(topUp);
