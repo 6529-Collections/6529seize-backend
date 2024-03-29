@@ -30,8 +30,7 @@ export async function getAllSubscriptionTopUps(
     return topUp;
   });
 
-  return [topUps[0]];
-  // return topUps;
+  return topUps;
 }
 
 async function getSubscriptions(
