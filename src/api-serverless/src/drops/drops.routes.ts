@@ -27,7 +27,9 @@ import {
 import { DropMetadataEntity } from '../../../entities/IDrop';
 import { WALLET_REGEX } from '../../../constants';
 import { dropsService } from '../../../drops/drops.service';
-import { parseNumberOrNull } from '../../../helpers';
+import { parseIntOrNull, parseNumberOrNull } from '../../../helpers';
+import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
+import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 
 const router = asyncRouter();
 
@@ -42,7 +44,7 @@ router.get(
         limit: number;
         curation_criteria_id?: string;
         id_less_than?: number;
-        storm_id?: number;
+        root_drop_id?: number;
       },
       any
     >,
@@ -50,12 +52,12 @@ router.get(
   ) => {
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
     const curation_criteria_id = req.query.curation_criteria_id ?? null;
-    const storm_id = parseNumberOrNull(req.query.storm_id);
+    const root_drop_id = parseIntOrNull(req.query.root_drop_id);
     const createdDrop = await dropsService.findLatestDrops({
       amount: limit < 0 || limit > 200 ? 10 : limit,
       curation_criteria_id,
       id_less_than: parseNumberOrNull(req.query.id_less_than),
-      storm_id
+      root_drop_id
     });
     res.send(createdDrop);
   }
@@ -109,7 +111,7 @@ router.post(
       author: authorProfile,
       title: newDrop.title,
       content: newDrop.content,
-      storm_id: newDrop.storm_id,
+      root_drop_id: newDrop.root_drop_id,
       quoted_drop_id: newDrop.quoted_drop_id,
       referenced_nfts: newDrop.referenced_nfts,
       mentioned_users: newDrop.mentioned_users,
@@ -120,6 +122,67 @@ router.post(
     res.send(createdDrop);
   }
 );
+
+router.post(
+  `/:drop_id/rep`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<
+      { drop_id: string },
+      any,
+      ApiAddRepRatingToDropRequest,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<DropFull>>
+  ) {
+    const { amount, category } = getValidatedByJoiOrThrow(
+      req.body,
+      ApiAddRepRatingToDropRequestSchema
+    );
+    const proposedCategory = category?.trim() ?? '';
+    const raterWallet = getWalletOrThrow(req);
+    const raterProfileId = await profilesService
+      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(raterWallet)
+      ?.then((result) => result?.profile?.external_id ?? null);
+    if (!raterProfileId) {
+      throw new ForbiddenException(
+        `No profile found for authenticated user ${raterWallet}`
+      );
+    }
+    const dropId = req.params.drop_id;
+    if (proposedCategory !== '') {
+      const abusivenessDetectionResult =
+        await abusivenessCheckService.checkRepPhrase(category);
+      if (abusivenessDetectionResult.status === 'DISALLOWED') {
+        throw new BadRequestException(
+          abusivenessDetectionResult.explanation ??
+            'Given category is not allowed'
+        );
+      }
+    }
+    const response = await dropsService.updateRatingAndGetDrop({
+      rater_profile_id: raterProfileId,
+      category: proposedCategory,
+      drop_id: dropId,
+      rating: amount
+    });
+    res.send(response);
+  }
+);
+
+interface ApiAddRepRatingToDropRequest {
+  readonly amount: number;
+  readonly category: string;
+}
+
+const ApiAddRepRatingToDropRequestSchema: Joi.ObjectSchema<ApiAddRepRatingToDropRequest> =
+  Joi.object({
+    amount: Joi.number().integer().required(),
+    category: Joi.string().max(100).regex(REP_CATEGORY_PATTERN).messages({
+      'string.pattern.base': `Invalid category. Category can't be longer than 100 characters. It can only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes.`
+    })
+  });
 
 const NftSchema: Joi.ObjectSchema<DropReferencedNft> = Joi.object({
   contract: Joi.string().regex(WALLET_REGEX).lowercase(),
@@ -141,7 +204,7 @@ const NewDropSchema: Joi.ObjectSchema<DropApiRequest> = Joi.object({
   title: Joi.string().optional().max(250).default(null),
   content: Joi.string().optional().max(25000).default(null),
   quoted_drop_id: Joi.number().integer().default(null),
-  storm_id: Joi.number().integer().default(null),
+  root_drop_id: Joi.number().integer().default(null),
   referenced_nfts: Joi.array().optional().items(NftSchema).default([]),
   mentioned_users: Joi.array()
     .optional()

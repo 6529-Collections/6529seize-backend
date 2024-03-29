@@ -10,6 +10,7 @@ import {
   mockConnection,
   mockDbService
 } from '../tests/test.helper';
+import { DropFull } from './drops.types';
 
 const aProfile: Profile = {
   handle: 'Joe',
@@ -30,7 +31,7 @@ const aProfileMin = {
   level: 0
 };
 
-const aDropFull = {
+const aDropFull: DropFull & { max_storm_sequence: number } = {
   // this doesn't matter as we test inserting
   id: 1,
   author: aProfileMin,
@@ -44,7 +45,7 @@ const aDropFull = {
   metadata: [],
   media_url: null,
   media_mime_type: null,
-  storm_id: 0,
+  root_drop_id: null,
   storm_sequence: 1,
   max_storm_sequence: 2
 };
@@ -69,12 +70,11 @@ describe('DropCreationService', () => {
 
   it('should create a drop without media', async () => {
     when(dropsDb.insertDrop).mockResolvedValue(1);
-    when(dropsDb.countStormDrops).mockResolvedValue(1);
     when(dropsDb.getDropsByIds).mockResolvedValue([
       {
         id: 5,
         author_id: 'pid',
-        storm_id: 2,
+        root_drop_id: null,
         storm_sequence: 1,
         quoted_drop_id: null,
         media_url: null,
@@ -88,7 +88,7 @@ describe('DropCreationService', () => {
       author: aProfile,
       title: 'title',
       content: 'content',
-      storm_id: null,
+      root_drop_id: null,
       quoted_drop_id: 5,
       referenced_nfts: [{ contract: '0x0', token: '1', name: 'name' }],
       mentioned_users: [
@@ -102,7 +102,8 @@ describe('DropCreationService', () => {
         author_id: aProfile.external_id,
         title: 'title',
         content: 'content',
-        storm_id: null,
+        root_drop_id: null,
+        storm_sequence: 1,
         quoted_drop_id: 5,
         media_url: null,
         media_mime_type: null
@@ -133,7 +134,7 @@ describe('DropCreationService', () => {
       author: aProfile,
       title: 'title',
       content: 'content',
-      storm_id: null,
+      root_drop_id: null,
       quoted_drop_id: null,
       referenced_nfts: [],
       mentioned_users: [],
@@ -150,7 +151,8 @@ describe('DropCreationService', () => {
         author_id: aProfile.external_id,
         title: 'title',
         content: 'content',
-        storm_id: null,
+        root_drop_id: null,
+        storm_sequence: 1,
         quoted_drop_id: null,
         media_url: 'media-url',
         media_mime_type: 'media-mime-type'
@@ -166,7 +168,7 @@ describe('DropCreationService', () => {
         author: aProfile,
         title: 'title',
         content: 'content',
-        storm_id: null,
+        root_drop_id: null,
         quoted_drop_id: 5,
         referenced_nfts: [{ contract: '0x0', token: '1', name: 'name' }],
         mentioned_users: [
@@ -178,14 +180,13 @@ describe('DropCreationService', () => {
     }, 'Invalid quoted drop');
   });
 
-  it('invalid storm id', async () => {
-    when(dropsDb.countStormDrops).mockResolvedValue(0);
+  it('invalid root drop id', async () => {
     await expectExceptionWithMessage(async () => {
       await dropCreationService.createDrop({
         author: aProfile,
         title: 'title',
         content: 'content',
-        storm_id: 2,
+        root_drop_id: 123,
         quoted_drop_id: null,
         referenced_nfts: [{ contract: '0x0', token: '1', name: 'name' }],
         mentioned_users: [
@@ -194,6 +195,6 @@ describe('DropCreationService', () => {
         metadata: [{ data_key: 'key', data_value: 'value' }],
         dropMedia: null
       });
-    }, 'Invalid storm');
+    }, 'Invalid root drop');
   });
 });
