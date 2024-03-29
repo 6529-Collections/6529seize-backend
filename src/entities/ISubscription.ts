@@ -11,7 +11,10 @@ import {
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE,
-  SUBSCRIPTIONS_LOGS_TABLE
+  SUBSCRIPTIONS_LOGS_TABLE,
+  SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+  SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE,
+  SUBSCRIPTIONS_REDEEMED_TABLE
 } from '../constants';
 
 @Entity(SUBSCRIPTIONS_TOP_UP_TABLE)
@@ -65,8 +68,7 @@ export class SubscriptionMode {
   automatic!: boolean;
 }
 
-@Entity(SUBSCRIPTIONS_NFTS_TABLE)
-export class NFTSubscription {
+class NFTSubscriptionFields {
   @CreateDateColumn({ type: 'datetime' })
   created_at?: Date;
 
@@ -81,9 +83,37 @@ export class NFTSubscription {
 
   @PrimaryColumn({ type: 'bigint' })
   token_id!: number;
+}
 
-  @Column({ type: 'boolean', default: false })
-  locked?: boolean;
+@Entity(SUBSCRIPTIONS_NFTS_TABLE)
+export class NFTSubscription extends NFTSubscriptionFields {}
+
+@Entity(SUBSCRIPTIONS_NFTS_FINAL_TABLE)
+export class NFTFinalSubscription extends NFTSubscriptionFields {
+  @Column({ type: 'text' })
+  airdrop_address!: string;
+}
+
+@Entity(SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE)
+export class NFTFinalSubscriptionUpload {
+  @CreateDateColumn({ type: 'datetime' })
+  created_at?: Date;
+
+  @PrimaryColumn({ type: 'varchar', length: 10 })
+  date?: string;
+
+  @PrimaryColumn({ type: 'varchar', length: 100 })
+  contract!: string;
+
+  @PrimaryColumn({ type: 'bigint' })
+  token_id!: number;
+
+  @Column({ type: 'varchar', length: 100 })
+  upload_url!: string;
+}
+export class NFTFinalSubscriptionWithDateAndProfile extends NFTFinalSubscription {
+  date!: string;
+  profile!: string;
 }
 
 @Entity(SUBSCRIPTIONS_LOGS_TABLE)
@@ -99,4 +129,34 @@ export class SubscriptionLog {
 
   @Column({ type: 'text' })
   log!: string;
+}
+
+@Entity(SUBSCRIPTIONS_REDEEMED_TABLE)
+export class RedeemedSubscription {
+  @CreateDateColumn({ type: 'datetime' })
+  created_at?: Date;
+
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  contract!: string;
+
+  @PrimaryColumn({ type: 'int' })
+  token_id!: number;
+
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  address!: string;
+
+  @PrimaryColumn({ type: 'varchar', length: 100 })
+  transaction!: string;
+
+  @Column({ type: 'datetime', nullable: true, default: null })
+  transaction_date!: Date;
+
+  @Column({ type: 'varchar', length: 200 })
+  consolidation_key!: string;
+
+  @Column({ type: 'double' })
+  value!: number;
+
+  @Column({ type: 'double' })
+  balance_after!: number;
 }

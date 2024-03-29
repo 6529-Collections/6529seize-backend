@@ -69,7 +69,11 @@ export const SUBSCRIPTIONS_TOP_UP_TABLE = 'subscriptions_top_up';
 export const SUBSCRIPTIONS_BALANCES_TABLE = 'subscriptions_balances';
 export const SUBSCRIPTIONS_MODE_TABLE = 'subscriptions_mode';
 export const SUBSCRIPTIONS_NFTS_TABLE = 'subscriptions_nfts';
+export const SUBSCRIPTIONS_NFTS_FINAL_TABLE = 'subscriptions_nfts_final';
+export const SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE =
+  'subscriptions_nfts_final_upload';
 export const SUBSCRIPTIONS_LOGS_TABLE = 'subscriptions_logs';
+export const SUBSCRIPTIONS_REDEEMED_TABLE = 'subscriptions_redeemed';
 
 export const DROPS_TABLE = 'drops';
 export const DROPS_MENTIONS_TABLE = 'drops_mentions';
@@ -138,6 +142,7 @@ export const DELEGATION_ALL_ADDRESS =
 
 export const USE_CASE_ALL = 1;
 export const USE_CASE_MINTING = 2;
+export const USE_CASE_AIRDROPS = 3;
 export const USE_CASE_SUB_DELEGATION = 998;
 export const USE_CASE_CONSOLIDATION = 999;
 export const CONSOLIDATIONS_LIMIT = 3;
@@ -155,3 +160,5 @@ export const MEME_8_BURN_TRANSACTION =
 
 export const SUBSCRIPTIONS_ADDRESS =
   '0x924817154d311bd2de599f3d659d053ab0133e06';
+
+export const MEMES_MINT_PRICE = 0.06529;

@@ -1,15 +1,18 @@
 import {
   MEMES_CONTRACT,
+  MEMES_MINT_PRICE,
   PROFILE_FULL,
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_LOGS_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
+  SUBSCRIPTIONS_REDEEMED_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE,
   WALLETS_CONSOLIDATION_KEYS_VIEW
 } from '../../../constants';
 import { sqlExecutor } from '../../../sql-executor';
 import {
+  RedeemedSubscription,
   SubscriptionBalance,
   SubscriptionMode,
   SubscriptionTopUp
@@ -17,6 +20,7 @@ import {
 import { constructFilters } from '../api-helpers';
 import { fetchPaginated } from '../../../db-api';
 import { getMaxMemeId } from '../../../nftsLoop/db.nfts';
+import { BadRequestException, NotFoundException } from '../../../exceptions';
 export interface SubscriptionDetails {
   consolidation_key: string;
   last_update: number;
@@ -112,14 +116,27 @@ export async function updateSubscriptionMode(
   consolidationKey: string,
   automatic: boolean
 ) {
+  if (automatic) {
+    const balance = await getForConsolidationKey(
+      consolidationKey,
+      SUBSCRIPTIONS_BALANCES_TABLE
+    );
+    if (!balance) {
+      throw new NotFoundException('Balnce not found');
+    } else if (balance.balance < MEMES_MINT_PRICE) {
+      throw new BadRequestException(
+        `Not enough balance to set Subscription to Automatic. Need at least ${MEMES_MINT_PRICE} ETH.`
+      );
+    }
+  }
   await sqlExecutor.executeNativeQueriesInTransaction(
     async (wrappedConnection) => {
       await sqlExecutor.execute(
         `
-      INSERT INTO ${SUBSCRIPTIONS_MODE_TABLE} (consolidation_key, automatic)
-      VALUES (:consolidation_key, :automatic)
-      ON DUPLICATE KEY UPDATE automatic = VALUES(automatic)
-    `,
+          INSERT INTO ${SUBSCRIPTIONS_MODE_TABLE} (consolidation_key, automatic)
+          VALUES (:consolidation_key, :automatic)
+          ON DUPLICATE KEY UPDATE automatic = VALUES(automatic)
+        `,
         {
           consolidation_key: consolidationKey,
           automatic: automatic
@@ -169,11 +186,11 @@ async function updateSubscriptionsAfterModeChange(
         promises.push(
           sqlExecutor.execute(
             `
-          DELETE FROM ${SUBSCRIPTIONS_NFTS_TABLE}
-          WHERE consolidation_key = :consolidationKey
-            AND contract = :contract
-            AND token_id = :tokenId
-        `,
+              DELETE FROM ${SUBSCRIPTIONS_NFTS_TABLE}
+              WHERE consolidation_key = :consolidationKey
+                AND contract = :contract
+                AND token_id = :tokenId
+            `,
             {
               consolidationKey,
               contract: subscription.contract,
@@ -185,9 +202,9 @@ async function updateSubscriptionsAfterModeChange(
         promises.push(
           sqlExecutor.execute(
             `
-          INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log)
-          VALUES (:consolidationKey, :log)
-        `,
+              INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log)
+              VALUES (:consolidationKey, :log)
+            `,
             {
               consolidationKey,
               log: `Unsubscribed from Meme #${subscription.token_id}`
@@ -277,6 +294,24 @@ export async function updateSubscription(
   tokenId: number,
   subscribed: boolean
 ) {
+  if (subscribed) {
+    const balance = await getForConsolidationKey(
+      consolidationKey,
+      SUBSCRIPTIONS_BALANCES_TABLE
+    );
+    if (!balance) {
+      throw new NotFoundException('Balnce not found');
+    } else if (balance.balance < MEMES_MINT_PRICE) {
+      throw new BadRequestException(
+        `Not enough balance to subscribe. Need at least ${MEMES_MINT_PRICE} ETH.`
+      );
+    }
+  }
+  const maxMemeId = await getMaxMemeId();
+  if (maxMemeId >= tokenId) {
+    throw new BadRequestException(`Meme #${tokenId} already dropped.`);
+  }
+
   await sqlExecutor.executeNativeQueriesInTransaction(
     async (wrappedConnection) => {
       let sql: string;
@@ -348,6 +383,30 @@ export async function fetchTopUpsForConsolidationKey(
     SUBSCRIPTIONS_TOP_UP_TABLE,
     params,
     'block desc',
+    pageSize,
+    page,
+    filters,
+    ''
+  );
+}
+
+export async function fetchRedeemedSubscriptionsForConsolidationKey(
+  consolidationKey: string,
+  pageSize: number,
+  page: number
+): Promise<{
+  count: number;
+  page: number;
+  next: boolean;
+  data: RedeemedSubscription[];
+}> {
+  const filters = constructFilters('', `consolidation_key = :consolidationKey`);
+  const params = { consolidationKey };
+
+  return fetchPaginated(
+    SUBSCRIPTIONS_REDEEMED_TABLE,
+    params,
+    'transaction_date desc',
     pageSize,
     page,
     filters,

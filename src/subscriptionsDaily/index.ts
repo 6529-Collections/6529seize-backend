@@ -3,16 +3,28 @@ import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { updateSubscriptions } from './subscriptions';
 import {
+  NFTFinalSubscription,
+  NFTFinalSubscriptionUpload,
   NFTSubscription,
+  SubscriptionBalance,
   SubscriptionLog,
   SubscriptionMode
 } from '../entities/ISubscription';
+import { Profile } from '../entities/IProfile';
 
 const logger = Logger.get('SUBSCRIPTIONS_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   logger.info(`[RUNNING]`);
-  await loadEnv([SubscriptionMode, NFTSubscription, SubscriptionLog]);
+  await loadEnv([
+    SubscriptionMode,
+    NFTSubscription,
+    NFTFinalSubscription,
+    NFTFinalSubscriptionUpload,
+    SubscriptionLog,
+    SubscriptionBalance,
+    Profile
+  ]);
   await updateSubscriptions(process.env.SUBSCRIPTIONS_RESET == 'true');
   await unload();
   logger.info(`[COMPLETE]`);

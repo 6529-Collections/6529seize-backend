@@ -6,11 +6,29 @@ const logger = Logger.get('NOTIFIER_DISCORD');
 export async function sendDiscordUpdate(
   webhookUrl: string,
   message: string,
-  category: string
+  category: string,
+  type?: 'success' | 'error'
 ): Promise<void> {
-  const postData = {
-    content: message
-  };
+  let postData: any;
+
+  if (type) {
+    const isSuccess = type === 'success';
+    const embed = {
+      color: isSuccess ? 65280 : 16711680,
+      description: message,
+      title: isSuccess ? `${category}` : `${category} - ERROR!`
+    };
+    postData = {
+      embeds: [embed]
+    };
+    if (!isSuccess) {
+      postData.content = '@everyone';
+    }
+  } else {
+    postData = {
+      content: message
+    };
+  }
 
   try {
     await fetch(webhookUrl, {

@@ -31,7 +31,7 @@ import {
   persistLabNFTS
 } from './db';
 import { Artist } from './entities/IArtist';
-import { findArtists } from './artists';
+import { processArtists } from './artists';
 
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { Logger } from './logging';
@@ -324,7 +324,7 @@ export async function memeLabNfts(reset?: boolean) {
   const artists: Artist[] = await fetchAllArtists();
 
   const newNfts = await findNFTs(nfts, transactions, owners, reset);
-  const newArtists = await findArtists(artists, newNfts);
+  const newArtists = await processArtists(artists, newNfts);
   await persistLabNFTS(newNfts);
   await persistLabNFTRoyalties();
   await persistArtists(newArtists);

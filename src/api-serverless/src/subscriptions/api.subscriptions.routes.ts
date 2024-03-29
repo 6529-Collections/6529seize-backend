@@ -8,7 +8,8 @@ import {
   updateSubscriptionMode,
   fetchUpcomingMemeSubscriptions,
   updateSubscription,
-  fetchLogsForConsolidationKey
+  fetchLogsForConsolidationKey,
+  fetchRedeemedSubscriptionsForConsolidationKey
 } from './api.subscriptions.db';
 import {
   SubscriptionBalance,
@@ -25,8 +26,8 @@ const router = asyncRouter();
 export default router;
 
 router.get(
-  `/consolidation-details/:consolidation_key`,
-  function (
+  `/consolidation/details/:consolidation_key`,
+  async function (
     req: Request<
       {
         consolidation_key: string;
@@ -39,19 +40,18 @@ router.get(
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
 
-    fetchDetailsForConsolidationKey(consolidationKey).then((result) => {
-      if (result) {
-        return returnJsonResult(result, req, res);
-      } else {
-        return res.status(404).send('Not found');
-      }
-    });
+    const result = await fetchDetailsForConsolidationKey(consolidationKey);
+    if (result) {
+      return returnJsonResult(result, req, res);
+    } else {
+      return res.status(404).send('Not found');
+    }
   }
 );
 
 router.get(
-  `/consolidation-top-up/:consolidation_key`,
-  function (
+  `/consolidation/top-up/:consolidation_key`,
+  async function (
     req: Request<
       {
         consolidation_key: string;
@@ -69,15 +69,16 @@ router.get(
     const pageSize = parseInt(req.query.page_size ?? '20');
     const page = parseInt(req.query.page ?? '1');
 
-    fetchTopUpsForConsolidationKey(consolidationKey, pageSize, page).then(
-      (result) => {
-        if (result) {
-          return returnJsonResult(result, req, res);
-        } else {
-          return res.status(404).send('Not found');
-        }
-      }
+    const result = await fetchTopUpsForConsolidationKey(
+      consolidationKey,
+      pageSize,
+      page
     );
+    if (result) {
+      return returnJsonResult(result, req, res);
+    } else {
+      return res.status(404).send('Not found');
+    }
   }
 );
 
@@ -138,8 +139,8 @@ async function isAuthenticatedForConsolidationKey(
 }
 
 router.get(
-  `/consolidation-upcoming-memes/:consolidation_key`,
-  function (
+  `/consolidation/upcoming-memes/:consolidation_key`,
+  async function (
     req: Request<
       {
         consolidation_key: string;
@@ -155,13 +156,12 @@ router.get(
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
 
-    fetchUpcomingMemeSubscriptions(consolidationKey).then((result) => {
-      if (result) {
-        return returnJsonResult(result, req, res);
-      } else {
-        return res.status(404).send('Not found');
-      }
-    });
+    const result = await fetchUpcomingMemeSubscriptions(consolidationKey);
+    if (result) {
+      return returnJsonResult(result, req, res);
+    } else {
+      return res.status(404).send('Not found');
+    }
   }
 );
 
@@ -214,8 +214,8 @@ router.post(
 );
 
 router.get(
-  `/consolidation-logs/:consolidation_key`,
-  function (
+  `/consolidation/logs/:consolidation_key`,
+  async function (
     req: Request<
       {
         consolidation_key: string;
@@ -233,14 +233,48 @@ router.get(
     const pageSize = parseInt(req.query.page_size ?? '20');
     const page = parseInt(req.query.page ?? '1');
 
-    fetchLogsForConsolidationKey(consolidationKey, pageSize, page).then(
-      (result) => {
-        if (result) {
-          return returnJsonResult(result, req, res, true);
-        } else {
-          return res.status(404).send('Not found');
-        }
-      }
+    const result = await fetchLogsForConsolidationKey(
+      consolidationKey,
+      pageSize,
+      page
     );
+    if (result) {
+      return returnJsonResult(result, req, res, true);
+    } else {
+      return res.status(404).send('Not found');
+    }
+  }
+);
+
+router.get(
+  `/consolidation/redeemed/:consolidation_key`,
+  async function (
+    req: Request<
+      {
+        consolidation_key: string;
+      },
+      any,
+      any,
+      {
+        page_size?: string;
+        page?: string;
+      }
+    >,
+    res: Response<SubscriptionLog[] | string>
+  ) {
+    const consolidationKey = req.params.consolidation_key.toLowerCase();
+    const pageSize = parseInt(req.query.page_size ?? '20');
+    const page = parseInt(req.query.page ?? '1');
+
+    const result = await fetchRedeemedSubscriptionsForConsolidationKey(
+      consolidationKey,
+      pageSize,
+      page
+    );
+    if (result) {
+      return returnJsonResult(result, req, res, true);
+    } else {
+      return res.status(404).send('Not found');
+    }
   }
 );
