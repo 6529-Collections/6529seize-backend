@@ -16,7 +16,7 @@ async function start() {
   // await dbMigrationsLoop.handler(null, null as any, null as any);
   // await customReplayLoop.handler(null, null as any, null as any);
 
-  await transactionsDiscovery.handler(null, null as any, null as any);
+  // await transactionsDiscovery.handler(null, null as any, null as any);
 
   // await subscriptionsDaily.handler(null, null as any, null as any);
   // await subscriptionsTopUpLoop.handler(null, null as any, null as any);

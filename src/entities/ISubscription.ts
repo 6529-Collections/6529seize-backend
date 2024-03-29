@@ -2,7 +2,6 @@ import {
   Column,
   CreateDateColumn,
   Entity,
-  Index,
   PrimaryColumn,
   PrimaryGeneratedColumn,
   UpdateDateColumn
@@ -90,7 +89,10 @@ class NFTSubscriptionFields {
 export class NFTSubscription extends NFTSubscriptionFields {}
 
 @Entity(SUBSCRIPTIONS_NFTS_FINAL_TABLE)
-export class NFTFinalSubscription extends NFTSubscriptionFields {}
+export class NFTFinalSubscription extends NFTSubscriptionFields {
+  @Column({ type: 'text' })
+  airdrop_address!: string;
+}
 
 @Entity(SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE)
 export class NFTFinalSubscriptionUpload {

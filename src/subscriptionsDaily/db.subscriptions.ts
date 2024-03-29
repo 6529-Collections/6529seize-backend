@@ -3,6 +3,7 @@ import {
   fetchWalletConsolidationKeysViewForWallet,
   getDataSource
 } from '../db';
+import { fetchDelegatorForAirdropAddress } from '../delegationsLoop/db.delegations';
 import {
   NFTFinalSubscription,
   NFTFinalSubscriptionUpload,
@@ -103,10 +104,15 @@ export async function redeemSubscriptionAirdrop(
     `[REDEEMING SUBSCRIPTION AIRDROP] : [Transaction ${transaction.transaction}]`
   );
 
+  const mappedAddress =
+    (await fetchDelegatorForAirdropAddress(transaction.to_address)) ??
+    transaction.to_address;
+
+  console.log('hi i am mapped address', mappedAddress);
+
   const consolidationKey =
-    (
-      await fetchWalletConsolidationKeysViewForWallet([transaction.to_address])
-    )[0].consolidation_key ?? transaction.to_address;
+    (await fetchWalletConsolidationKeysViewForWallet([mappedAddress]))[0]
+      .consolidation_key ?? mappedAddress;
 
   const subscription = await fetchNftFinalSubscriptionForConsolidationKey(
     transaction.contract,
@@ -132,7 +138,7 @@ export async function redeemSubscriptionAirdrop(
     );
     return;
   }
-  const balance = await fetchSubscriptionBalanceForConsolidationKey(
+  let balance = await fetchSubscriptionBalanceForConsolidationKey(
     consolidationKey,
     connection.connection.manager
   );
@@ -140,6 +146,10 @@ export async function redeemSubscriptionAirdrop(
     logger.error(
       `[No balance found for consolidation key ${consolidationKey}] :[Transaction ${transaction.transaction}]`
     );
+    balance = {
+      consolidation_key: consolidationKey,
+      balance: 0
+    };
   }
   if (MEMES_MINT_PRICE > balance.balance) {
     logger.error(
@@ -147,7 +157,7 @@ export async function redeemSubscriptionAirdrop(
     );
   }
 
-  let balanceAfter = balance.balance - MEMES_MINT_PRICE;
+  let balanceAfter = balance.balance ?? 0 - MEMES_MINT_PRICE;
   balanceAfter = Math.round(balanceAfter * 100000) / 100000;
   balance.balance = balanceAfter;
 

@@ -7,6 +7,8 @@ import {
   SubscriptionBalance,
   SubscriptionTopUp
 } from '../entities/ISubscription';
+import { getTransactionLink } from '../helpers';
+import { sendDiscordUpdate } from '../notifier-discord';
 
 export async function persistTopUps(topUps: SubscriptionTopUp[]) {
   await getDataSource().transaction(async (manager) => {
@@ -41,6 +43,21 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
       await topUpsRepo.insert(topUp);
     }
   });
+
+  for (const topUp of topUps) {
+    let discordMessage = `👛 Subscription Top Up of ${topUp.amount} ETH from ${topUp.from_wallet}.`;
+    const link = getTransactionLink(
+      parseInt(process.env.SUBSCRIPTIONS_CHAIN_ID ?? '1'),
+      topUp.hash
+    );
+    discordMessage += ` \n\n[View on Etherscan] \n${link}`;
+    await sendDiscordUpdate(
+      process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
+      discordMessage,
+      'Subscription Top Up',
+      'success'
+    );
+  }
 }
 
 export async function getMaxSubscriptionTopUpBlock(): Promise<number> {

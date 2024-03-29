@@ -10,7 +10,7 @@ import { getAlchemyInstance } from '../alchemy';
 
 const logger = Logger.get('SUBSCRIPTIONS_TOP_UP');
 
-export function getSubscriptionsnetwork(): Network {
+export function getSubscriptionsNetwork(): Network {
   const chain = process.env.SUBSCRIPTIONS_CHAIN_ID;
   if (chain === sepolia.id.toString()) {
     return Network.ETH_SEPOLIA;
@@ -18,8 +18,8 @@ export function getSubscriptionsnetwork(): Network {
   return Network.ETH_MAINNET;
 }
 
-export async function findTopUps(reset?: boolean) {
-  const network = getSubscriptionsnetwork();
+export async function discoverTopUps(reset?: boolean) {
+  const network = getSubscriptionsNetwork();
   logger.info(`[NETWORK: ${network}]`);
   const alchemy: Alchemy = getAlchemyInstance(network);
 
