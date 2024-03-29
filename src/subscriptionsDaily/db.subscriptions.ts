@@ -97,6 +97,8 @@ export async function redeemSubscriptionAirdrop(
   transaction: Transaction,
   connection: any
 ) {
+  return;
+
   // TODO: REMOVE THIS
   transaction.to_address = '0xfe49a85e98941f1a115acd4beb98521023a25802';
 

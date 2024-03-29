@@ -9,6 +9,11 @@ export async function sendDiscordUpdate(
   category: string,
   type?: 'success' | 'error'
 ): Promise<void> {
+  if (process.env.DISABLE_DISCORD_NOTIFICATIONS === 'true') {
+    logger.info(`[DISCORD ${category} UPDATE SKIPPED] : [MESSAGE ${message}]`);
+    return;
+  }
+
   let postData: any;
 
   if (type) {
