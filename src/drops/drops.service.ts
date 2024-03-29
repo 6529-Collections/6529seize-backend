@@ -7,6 +7,8 @@ import { ProfileMin } from '../profiles/profile-min';
 import { Drop } from '../entities/IDrop';
 import { giveReadReplicaTimeToCatchUp } from '../api-serverless/src/api-helpers';
 import { parseIntOrNull } from '../helpers';
+import { ratingsService } from '../rates/ratings.service';
+import { RateMatter } from '../entities/IRating';
 
 export class DropsService {
   constructor(
@@ -166,6 +168,21 @@ export class DropsService {
     }
     const drop = await this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        const dropEntity = await this.dropsDb.findDropById(dropId, connection);
+        if (!dropEntity) {
+          throw new NotFoundException(`Drop ${dropId} not found`);
+        }
+        await ratingsService.updateRatingUnsafe(
+          {
+            rater_profile_id: param.rater_profile_id,
+            matter_target_id: dropId.toString(),
+            rating: param.rating,
+            matter_category: param.category,
+            matter: RateMatter.DROP_REP
+          },
+          'USER_EDIT',
+          connection
+        );
         return this.findDropByIdOrThrow(dropId, connection);
       }
     );

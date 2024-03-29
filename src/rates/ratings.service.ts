@@ -75,12 +75,12 @@ export class RatingsService {
   public async updateRating(request: UpdateRatingRequest) {
     await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        await this.updateRatingInternal(request, 'USER_EDIT', connection);
+        await this.updateRatingUnsafe(request, 'USER_EDIT', connection);
       }
     );
   }
 
-  private async updateRatingInternal(
+  public async updateRatingUnsafe(
     request: UpdateRatingRequest,
     changeReason: string,
     connection: ConnectionWrapper<any>,
@@ -336,7 +336,7 @@ export class RatingsService {
     connectionHolder: ConnectionWrapper<any>
   ) {
     for (const rating of ratings) {
-      await this.updateRatingInternal(
+      await this.updateRatingUnsafe(
         {
           ...rating,
           rating: 0
@@ -460,7 +460,7 @@ export class RatingsService {
         connectionHolder
       );
 
-      await this.updateRatingInternal(
+      await this.updateRatingUnsafe(
         { ...rating, rating: rating.rating + targetRating.rating },
         `Profile ${sourceHandle} archived, ratings transferred to ${targetHandle}`,
         connectionHolder,
