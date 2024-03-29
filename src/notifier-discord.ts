@@ -7,10 +7,15 @@ export async function sendDiscordUpdate(
   webhookUrl: string,
   message: string,
   category: string,
-  type?: 'success' | 'error'
+  type?: 'success' | 'error' | 'info'
 ): Promise<void> {
   if (process.env.DISABLE_DISCORD_NOTIFICATIONS === 'true') {
     logger.info(`[DISCORD ${category} UPDATE SKIPPED] : [MESSAGE ${message}]`);
+    return;
+  }
+
+  if (!webhookUrl) {
+    logger.error(`[DISCORD ${category} UPDATE ERROR] : [NO WEBHOOK URL]`);
     return;
   }
 
@@ -18,15 +23,17 @@ export async function sendDiscordUpdate(
 
   if (type) {
     const isSuccess = type === 'success';
+    const isError = type === 'error';
+
     const embed = {
-      color: isSuccess ? 65280 : 16711680,
+      color: isSuccess ? 65280 : isError ? 16711680 : 255,
       description: message,
-      title: isSuccess ? `${category}` : `${category} - ERROR!`
+      title: isError ? `${category} - ERROR` : `${category}!`
     };
     postData = {
       embeds: [embed]
     };
-    if (!isSuccess) {
+    if (isError) {
       postData.content = '@everyone';
     }
   } else {

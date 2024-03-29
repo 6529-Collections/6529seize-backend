@@ -34,5 +34,4 @@ functions:
       SENTRY_ENVIRONMENT: 'subscriptionsTopUpLoop_${opt:stage, self:provider.stage}'
       SUBSCRIPTIONS_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
       SUBSCRIPTIONS_RESET: false
-      SUBSCRIPTIONS_DISCORD_WEBHOOK: ${env:SUBSCRIPTIONS_DISCORD_WEBHOOK}
       DISABLE_DISCORD_NOTIFICATIONS: false

@@ -52,7 +52,6 @@ on:
 env:
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
   SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-  SUBSCRIPTIONS_DISCORD_WEBHOOK: ${{ secrets.SUBSCRIPTIONS_DISCORD_WEBHOOK }}
 
 run-name: Deploy ${{ github.event.inputs.service }} to ${{ github.event.inputs.environment }}
 
