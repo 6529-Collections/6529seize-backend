@@ -1,6 +1,8 @@
 import { dbSupplier, LazyDbAccessCompatibleService } from '../sql-executor';
-import { TRANSACTIONS_TABLE } from '../constants';
+import { MEMES_CONTRACT, TRANSACTIONS_TABLE } from '../constants';
 import { Transaction } from '../entities/ITransaction';
+import { isAirdrop } from '../helpers';
+import { redeemSubscriptionAirdrop } from '../subscriptionsDaily/db.subscriptions';
 
 export class TransactionsDiscoveryDb extends LazyDbAccessCompatibleService {
   async getLatestTransactionsBlockForContract(
@@ -69,6 +71,10 @@ export class TransactionsDiscoveryDb extends LazyDbAccessCompatibleService {
           transaction,
           { wrappedConnection: connection }
         );
+
+        // if (isAirdrop(transaction)) {
+        await redeemSubscriptionAirdrop(transaction, connection);
+        // }
       }
     });
   }

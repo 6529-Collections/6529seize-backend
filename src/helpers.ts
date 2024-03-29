@@ -8,6 +8,7 @@ import {
 import * as short from 'short-uuid';
 import { goerli, sepolia } from '@wagmi/chains';
 import { Network } from 'alchemy-sdk';
+import { Transaction } from './entities/ITransaction';
 
 export function areEqualAddresses(w1: string, w2: string) {
   if (!w1 || !w2) {
@@ -371,4 +372,8 @@ export function resolveEnum<T extends {}>(
   }
 
   return undefined;
+}
+
+export function isAirdrop(t: Transaction): boolean {
+  return areEqualAddresses(t.from_address, NULL_ADDRESS) && t.value > 0;
 }
