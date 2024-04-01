@@ -114,7 +114,10 @@ export class DropCreationService {
           drop_id: dropId
         }));
         await this.dropsDb.insertDropMetadata(metadata, connection);
-        return this.dropsService.findDropByIdOrThrow(dropId, connection);
+        return this.dropsService.findDropByIdOrThrow(
+          { dropId, inputProfileId: createDropRequest.author.external_id },
+          connection
+        );
       }
     );
   }
