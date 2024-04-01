@@ -213,7 +213,10 @@ export async function fetchMemesOwnerBalancesForConsolidationKey(
   consolidationKey: string
 ) {
   const sql = `
-    SELECT * FROM ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} 
+    SELECT 
+      ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.*,
+      COALESCE(${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.boosted_tdh, 0) as boosted_tdh 
+    FROM ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} 
     LEFT JOIN 
       ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE} 
       ON ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.consolidation_key 
