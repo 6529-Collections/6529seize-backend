@@ -60,6 +60,7 @@
     "@aws-sdk/client-s3": "^3.481.0",
     "@aws-sdk/client-secrets-manager": "^3.454.0",
     "@aws-sdk/client-sns": "^3.481.0",
+    "@aws-sdk/s3-request-presigner": "^3.552.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@sentry/serverless": "^7.91.0",
     "@types/multer": "^1.4.9",

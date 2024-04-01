@@ -35,10 +35,12 @@ class DropRaterService {
       if (!dropEntity) {
         throw new NotFoundException(`Drop ${dropId} not found`);
       }
+      if (dropEntity.author_id === param.rater_profile_id) {
+        throw new BadRequestException(`You can't rate your own drop`);
+      }
       const tdhLeftForRep = await this.dropsDb.findRepLeftForDropsForProfile(
         {
-          profileId: param.rater_profile_id,
-          reservationStartTime: Time.todayUtcMidnight().minusDays(30)
+          profileId: param.rater_profile_id
         },
         connection
       );

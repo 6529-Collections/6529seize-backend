@@ -1,7 +1,6 @@
 import { DropCreationService } from './drop-creation.service';
 import { DropsService } from './drops.service';
 import { DropsDb } from './drops.db';
-import { DropFileService } from './drop-file.service';
 import { mock } from 'ts-jest-mocker';
 import { Profile } from '../entities/IProfile';
 import { when } from 'jest-when';
@@ -11,6 +10,7 @@ import {
   mockDbService
 } from '../tests/test.helper';
 import { DropFull } from './drops.types';
+import { ProfileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
 
 const aProfile: Profile = {
   handle: 'Joe',
@@ -48,24 +48,35 @@ const aDropFull: DropFull & { max_storm_sequence: number } = {
   root_drop_id: null,
   storm_sequence: 1,
   max_storm_sequence: 2,
-  rep: 0
+  rep: 0,
+  top_rep_givers: [],
+  total_number_of_rep_givers: 0,
+  top_rep_categories: [],
+  total_number_of_categories: 0,
+  input_profile_categories: [],
+  rep_given_by_input_profile: 0,
+  discussion_comments_count: 0,
+  rep_logs_count: 0,
+  input_profile_discussion_comments_count: null,
+  quote_count: 0,
+  quote_count_by_input_profile: null
 };
 
 describe('DropCreationService', () => {
   let dropCreationService: DropCreationService;
   let dropsService: DropsService;
   let dropsDb: DropsDb;
-  let dropFileService: DropFileService;
+  let profileActivityLogsDb: ProfileActivityLogsDb;
 
   beforeEach(() => {
     dropsService = mock();
     when(dropsService.findDropByIdOrThrow).mockResolvedValue(aDropFull);
     dropsDb = mockDbService();
-    dropFileService = mock();
+    profileActivityLogsDb = mock();
     dropCreationService = new DropCreationService(
       dropsService,
       dropsDb,
-      dropFileService
+      profileActivityLogsDb
     );
   });
 
@@ -121,43 +132,6 @@ describe('DropCreationService', () => {
     );
     expect(dropsDb.insertDropMetadata).toHaveBeenCalledWith(
       [{ drop_id: 1, data_key: 'key', data_value: 'value' }],
-      mockConnection
-    );
-  });
-
-  it('should create a drop with media', async () => {
-    when(dropsDb.insertDrop).mockResolvedValue(1);
-    when(dropFileService.uploadDropMedia).mockResolvedValue({
-      media_url: 'media-url',
-      media_mime_type: 'media-mime-type'
-    });
-    await dropCreationService.createDrop({
-      author: aProfile,
-      title: 'title',
-      content: 'content',
-      root_drop_id: null,
-      quoted_drop_id: null,
-      referenced_nfts: [],
-      mentioned_users: [],
-      metadata: [],
-      dropMedia: {
-        stream: Buffer.from(''),
-        name: 'name',
-        mimetype: 'mimetype',
-        size: 0
-      }
-    });
-    expect(dropsDb.insertDrop).toHaveBeenCalledWith(
-      {
-        author_id: aProfile.external_id,
-        title: 'title',
-        content: 'content',
-        root_drop_id: null,
-        storm_sequence: 1,
-        quoted_drop_id: null,
-        media_url: 'media-url',
-        media_mime_type: 'media-mime-type'
-      },
       mockConnection
     );
   });

@@ -5,6 +5,7 @@ import {
   DropMetadataEntity,
   DropReferencedNftEntity
 } from '../entities/IDrop';
+import { ProfileActivityLog } from '../entities/IProfileActivityLog';
 
 export interface CreateNewDropRequest {
   readonly author: Profile;
@@ -43,11 +44,36 @@ export interface DropFull {
   readonly storm_sequence: number;
   readonly max_storm_sequence: number;
   readonly rep: number;
+  readonly top_rep_givers: {
+    rep_given: number;
+    profile: ProfileMin;
+  }[];
+  readonly total_number_of_rep_givers: number;
+  readonly top_rep_categories: {
+    rep_given: number;
+    category: string;
+  }[];
+  readonly total_number_of_categories: number;
+  readonly input_profile_categories:
+    | {
+        category: string;
+        rep_given: number;
+        rep_given_by_input_profile: number;
+      }[]
+    | null;
+  readonly rep_given_by_input_profile: number | null;
+  readonly discussion_comments_count: number;
+  readonly rep_logs_count: number;
+  readonly input_profile_discussion_comments_count: number | null;
+  readonly quote_count: number;
+  readonly quote_count_by_input_profile: number | null;
+}
+
+export interface DropActivityLog extends ProfileActivityLog {
+  readonly author: ProfileMin | null;
 }
 
 export interface NewDropMedia {
-  readonly stream: Buffer;
-  readonly name: string;
+  readonly url: string;
   readonly mimetype: string;
-  readonly size: number;
 }

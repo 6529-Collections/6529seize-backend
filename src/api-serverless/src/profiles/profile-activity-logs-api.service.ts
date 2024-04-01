@@ -4,6 +4,7 @@ import {
   ProfileLogSearchParams
 } from '../../../profileActivityLogs/profile-activity-logs.db';
 import {
+  isTargetOfTypeDrop,
   ProfileActivityLog,
   ProfileActivityLogType
 } from '../../../entities/IProfileActivityLog';
@@ -73,7 +74,7 @@ export class ProfileActivityLogsApiService {
     ]);
     const profileIdsInLogs = foundLogs.reduce((acc, log) => {
       acc.push(log.profile_id);
-      if (log.target_id) {
+      if (log.target_id && !isTargetOfTypeDrop(log.type)) {
         acc.push(log.target_id);
       }
       return acc;
@@ -91,7 +92,8 @@ export class ProfileActivityLogsApiService {
           log.type === ProfileActivityLogType.RATING_EDIT &&
           getMattersWhereTargetIsProfile().includes(logContents.rating_matter)
             ? profilesHandlesByIds[log.target_id!]
-            : null
+            : null,
+        is_target_of_type_drop: isTargetOfTypeDrop(log.type)
       };
     });
     return {
@@ -108,6 +110,7 @@ export interface ApiProfileActivityLog
   readonly contents: object;
   readonly profile_handle: string;
   readonly target_profile_handle: string | null;
+  readonly is_target_of_type_drop: boolean;
 }
 
 export const profileActivityLogsApiService = new ProfileActivityLogsApiService(

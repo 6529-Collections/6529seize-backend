@@ -16,6 +16,8 @@ import {
   DROPS_MENTIONS_TABLE,
   DROPS_TABLE,
   PROFILE_FULL,
+  PROFILES_ACTIVITY_LOGS_TABLE,
+  RATINGS_TABLE,
   TDH_SPENT_ON_DROP_REPS_TABLE
 } from '../constants';
 import {
@@ -25,6 +27,12 @@ import {
 import { Time } from '../time';
 import { TdhSpentOnDropRep } from '../entities/ITdhSpentOnDropRep';
 import { RateMatter } from '../entities/IRating';
+import { DropActivityLogsQuery } from '../api-serverless/src/drops/drops.routes';
+import { uniqueShortId } from '../helpers';
+import {
+  ProfileActivityLog,
+  ProfileActivityLogType
+} from '../entities/IProfileActivityLog';
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -284,13 +292,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async findRepLeftForDropsForProfile(
     {
-      profileId,
-      reservationStartTime
+      profileId
     }: {
       profileId: string;
-      reservationStartTime: Time;
     },
-    connection: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>
   ): Promise<number> {
     return this.db
       .execute(
@@ -307,9 +313,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         `,
         {
           raterId: profileId,
-          reservationStartTime: reservationStartTime.toDate()
+          reservationStartTime: Time.todayUtcMidnight().minusDays(30).toDate()
         },
-        { wrappedConnection: connection }
+        connection ? { wrappedConnection: connection } : undefined
       )
       .then((it) => it[0]?.tdh_left ?? 0);
   }
@@ -383,30 +389,370 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async findDropsTotalRating(
+  async findDropsTotalRepStats(
     dropIds: number[],
     connection?: ConnectionWrapper<any>
+  ): Promise<
+    Record<
+      number,
+      { rating: number; distinct_raters: number; distinct_categories: number }
+    >
+  > {
+    return !dropIds.length
+      ? {}
+      : await this.db
+          .execute(
+            `
+      select matter_target_id                 as drop_id,
+             sum(rating)                      as rating,
+             count(distinct rater_profile_id) as distinct_raters,
+             count(distinct matter_category)  as distinct_categories
+      from ${RATINGS_TABLE}
+      where matter = '${RateMatter.DROP_REP}'
+        and matter_target_id in (:dropIds)
+        and rating <> 0
+      group by 1
+    `,
+            { dropIds },
+            {
+              wrappedConnection: connection
+            }
+          )
+          .then((dbResult: any[]) =>
+            dbResult.reduce((acc, it) => {
+              acc[parseInt(it.drop_id)] = {
+                rating: it.rating,
+                distinct_raters: it.distinct_raters,
+                distinct_categories: it.distinct_categories
+              };
+              return acc;
+            }, {} as Record<number, { rating: number; distinct_raters: number; distinct_categories: number }>)
+          );
+  }
+
+  async findDropsTopRepRaters(
+    dropIds: number[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<number, { rating: number; rater_profile_id: string }[]>> {
+    return !dropIds.length
+      ? {}
+      : await this.db
+          .execute(
+            `
+    select rater_profile_id, matter_target_id as drop_id, sum(rating) as rating
+    from ${RATINGS_TABLE}
+    where matter = '${RateMatter.DROP_REP}'
+      and rating <> 0
+      and matter_target_id in (:dropIds)
+    group by 1, 2
+    order by abs(sum(rating)) desc limit 5
+    `,
+            { dropIds },
+            {
+              wrappedConnection: connection
+            }
+          )
+          .then((dbResult: any[]) =>
+            dropIds.reduce((acc, it) => {
+              const f = dbResult.filter((r) => r.drop_id === it.toString());
+              if (f) {
+                acc[it] = f.map((s) => ({
+                  rating: s.rating,
+                  rater_profile_id: s.rater_profile_id
+                }));
+              }
+              return acc;
+            }, {} as Record<number, { rating: number; rater_profile_id: string }[]>)
+          );
+  }
+
+  async findDropsTopRepCategories(
+    dropIds: number[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<number, { rating: number; category: string }[]>> {
+    return !dropIds.length
+      ? {}
+      : await this.db
+          .execute(
+            `
+    select matter_category as category, matter_target_id as drop_id, sum(rating) as rating
+    from ${RATINGS_TABLE}
+    where matter = '${RateMatter.DROP_REP}'
+      and rating <> 0
+      and matter_target_id in (:dropIds)
+    group by 1, 2
+    order by abs(sum(rating)) desc
+    `,
+            { dropIds },
+            {
+              wrappedConnection: connection
+            }
+          )
+          .then((dbResult: any[]) =>
+            dropIds.reduce((acc, it) => {
+              const f = dbResult.filter((r) => r.drop_id === it.toString());
+              if (f) {
+                acc[it] = f.map((s) => ({
+                  rating: s.rating,
+                  category: s.category
+                }));
+              }
+              return acc;
+            }, {} as Record<number, { rating: number; category: string }[]>)
+          );
+  }
+
+  async findDropsTotalRepByProfile(
+    dropIds: number[],
+    raterId: string,
+    connection?: ConnectionWrapper<any>
   ): Promise<Record<number, number>> {
+    return !dropIds.length
+      ? {}
+      : await this.db
+          .execute(
+            `
+    select matter_target_id as drop_id, sum(rating) as rating
+    from ${RATINGS_TABLE}
+    where matter = '${RateMatter.DROP_REP}' and matter_target_id in (:dropIds) and rating <> 0 and rater_profile_id = :raterId
+    group by 1
+    `,
+            { dropIds, raterId },
+            {
+              wrappedConnection: connection
+            }
+          )
+          .then((dbResult: any[]) =>
+            dbResult.reduce((acc, it) => {
+              acc[parseInt(it.drop_id)] = it.rating;
+              return acc;
+            }, {} as Record<number, number>)
+          );
+  }
+
+  async findDropsCategoryRepsByProfile(
+    dropIds: number[],
+    raterId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<
+    Record<
+      number,
+      { category: string; profile_rating: number; total_rating: number }[]
+    >
+  > {
     if (dropIds.length === 0) {
       return {};
     }
-    const dbResult: { drop_id: string; rating: number }[] =
-      await this.db.execute(
-        `
-    select matter_target_id as drop_id, sum(rating) as rating
-    from ratings
-    where matter = '${RateMatter.DROP_REP}' and matter_target_id in (:dropIds)
-    group by 1
+    const dbResult: {
+      drop_id: string;
+      category: string;
+      profile_rating: number;
+      total_rating: number;
+    }[] = await this.db.execute(
+      `
+          with profile_drop_rates as (select matter_target_id    as drop_id,
+                                             matter_category     as category,
+                                             sum(rating)         as total_rating,
+                                             sum(case
+                                                     when rater_profile_id = :raterId then rating
+                                                     else 0 end) as profile_rating
+                                      from ${RATINGS_TABLE}
+                                      where matter = '${RateMatter.DROP_REP}'
+                                        and matter_target_id in (:dropIds)
+                                        and rating <> 0
+                                      group by 1, 2)
+          select *
+          from profile_drop_rates
+          where profile_rating <> 0
     `,
-        { dropIds: dropIds.map((it) => it.toString()) },
-        {
-          wrappedConnection: connection
-        }
-      );
+      { dropIds, raterId },
+      {
+        wrappedConnection: connection
+      }
+    );
     return dbResult.reduce((acc, it) => {
-      acc[parseInt(it.drop_id)] = it.rating;
+      if (!acc[parseInt(it.drop_id)]) {
+        acc[parseInt(it.drop_id)] = [];
+      }
+      acc[parseInt(it.drop_id)].push({
+        category: it.category,
+        profile_rating: it.profile_rating,
+        total_rating: it.total_rating
+      });
       return acc;
-    }, {} as Record<number, number>);
+    }, {} as Record<number, { category: string; profile_rating: number; total_rating: number }[]>);
+  }
+
+  async countDiscussionCommentsByDropId(
+    dropId: number,
+    logType?: ProfileActivityLogType
+  ): Promise<number> {
+    const logTypes = logType
+      ? [logType]
+      : [
+          ProfileActivityLogType.DROP_COMMENT,
+          ProfileActivityLogType.DROP_REP_EDIT,
+          ProfileActivityLogType.DROP_CREATED
+        ];
+    const dbResult: { cnt: number }[] = await this.db.execute(
+      `select count(*) as cnt from ${PROFILES_ACTIVITY_LOGS_TABLE} where target_id = :dropId and type in (:logTypes)`,
+      {
+        dropId,
+        logTypes
+      }
+    );
+    return dbResult.at(0)?.cnt ?? 0;
+  }
+
+  async findDropActivityLogByDropId(
+    query: DropActivityLogsQuery
+  ): Promise<ProfileActivityLog[]> {
+    const logTypes = query.log_type
+      ? [query.log_type]
+      : [
+          ProfileActivityLogType.DROP_COMMENT,
+          ProfileActivityLogType.DROP_REP_EDIT,
+          ProfileActivityLogType.DROP_CREATED
+        ];
+    const page = query.page;
+    const pageSize = query.page_size;
+    const offset = (page - 1) * pageSize;
+    return this.db
+      .execute(
+        `select * from ${PROFILES_ACTIVITY_LOGS_TABLE} where target_id = :dropId and type in (:logTypes) order by ${query.sort} ${query.sort_direction} limit ${pageSize} offset ${offset}`,
+        {
+          dropId: query.drop_id.toString(),
+          logTypes
+        }
+      )
+      .then((it) =>
+        it.map((log: any) => ({ ...log, contents: JSON.parse(log.contents) }))
+      );
+  }
+
+  async insertDiscussionComment(
+    commentRequest: { drop_id: number; content: string; author_id: string },
+    connection: ConnectionWrapper<any>
+  ): Promise<string> {
+    const id = uniqueShortId();
+    await this.db.execute(
+      `insert into ${PROFILES_ACTIVITY_LOGS_TABLE} (id, profile_id, target_id, contents, type, created_at) values (:id, :profile_id, :target_id, :contents, :type, :created_at)`,
+      {
+        id,
+        profile_id: commentRequest.author_id,
+        target_id: commentRequest.drop_id.toString(),
+        contents: JSON.stringify({ content: commentRequest.content }),
+        type: ProfileActivityLogType.DROP_COMMENT,
+        created_at: Time.now().toDate()
+      },
+      { wrappedConnection: connection }
+    );
+    return id;
+  }
+
+  async findDiscussionCommentById(
+    id: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<ProfileActivityLog | null> {
+    const result = await this.db
+      .execute(
+        `select * from ${PROFILES_ACTIVITY_LOGS_TABLE} where id = :id and type = :type`,
+        { id, type: ProfileActivityLogType.DROP_COMMENT },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((it) => it[0] ?? null);
+    if (result) {
+      result.contents = JSON.parse(result.contents);
+    }
+    return result;
+  }
+
+  async getDropLogsStats(
+    { dropIds, inputProfileId }: { dropIds: number[]; inputProfileId?: string },
+    connection?: ConnectionWrapper<any>
+  ): Promise<
+    Record<
+      number,
+      {
+        discussion_comments_count: number;
+        rep_logs_count: number;
+        input_profile_discussion_comments_count: number | null;
+      }
+    >
+  > {
+    const dbResults: {
+      target_id: string;
+      discussion_comments_count: number;
+      rep_logs_count: number;
+      input_profile_discussion_comments_count?: number;
+    }[] = await this.db.execute(
+      `
+    select 
+       target_id, 
+       sum(case when type = '${
+         ProfileActivityLogType.DROP_COMMENT
+       }' then 1 else 0 end) as discussion_comments_count,
+       ${
+         inputProfileId
+           ? `sum(case when type = '${ProfileActivityLogType.DROP_COMMENT}' and profile_id = :inputProfileId then 1 else 0 end) as input_profile_discussion_comments_count,`
+           : ``
+       }
+       sum(case when type = '${
+         ProfileActivityLogType.DROP_REP_EDIT
+       }' then 1 else 0 end) as rep_logs_count
+    from ${PROFILES_ACTIVITY_LOGS_TABLE}
+    where target_id in (:dropIds) group by 1
+       `,
+      { dropIds: dropIds.map((it) => it.toString()), inputProfileId },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+    return dbResults.reduce((acc, it) => {
+      acc[parseInt(it.target_id)] = {
+        discussion_comments_count: it.discussion_comments_count,
+        rep_logs_count: it.rep_logs_count,
+        input_profile_discussion_comments_count:
+          it.input_profile_discussion_comments_count ?? null
+      };
+      return acc;
+    }, {} as Record<number, { discussion_comments_count: number; rep_logs_count: number; input_profile_discussion_comments_count: number | null }>);
+  }
+
+  async getDropsQuoteCounts(
+    dropsIds: number[],
+    inputProfileId: string | undefined,
+    connection?: ConnectionWrapper<any>
+  ): Promise<
+    Record<number, { total: number; by_input_profile: number | null }>
+  > {
+    if (!dropsIds.length) {
+      return {};
+    }
+    return this.db
+      .execute(
+        `select quoted_drop_id as drop_id, count(*) as total ${
+          inputProfileId
+            ? `, sum(case when author_id = :inputProfileId then 1 else 0 end) as by_input_profile `
+            : ``
+        } from ${DROPS_TABLE} where quoted_drop_id in (:dropsIds) group by 1`,
+        { dropsIds, inputProfileId },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then(
+        (
+          it: {
+            drop_id: number;
+            total: number;
+            by_input_profile: number | null;
+          }[]
+        ) =>
+          dropsIds.reduce((acc, i) => {
+            acc[i] = it.find((r) => r.drop_id === i) ?? {
+              total: 0,
+              by_input_profile: inputProfileId ? 0 : null
+            };
+            return acc;
+          }, {} as Record<number, { total: number; by_input_profile: number | null }>)
+      );
   }
 }
 
