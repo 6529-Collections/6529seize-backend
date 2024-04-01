@@ -607,8 +607,8 @@ export async function fetchNFTsForWallet(
   page: number
 ) {
   const fields = ` ${NFTS_TABLE}.* `;
-  const joins = `INNER JOIN owners ON nfts.id = owners.token_id AND nfts.contract = owners.contract`;
-  const filters = `WHERE owners.wallet = :wallet`;
+  const joins = `INNER JOIN ${NFT_OWNERS_TABLE} ON nfts.id = ${NFT_OWNERS_TABLE}.token_id AND nfts.contract = ${NFT_OWNERS_TABLE}.contract`;
+  const filters = `WHERE ${NFT_OWNERS_TABLE}.wallet = :wallet`;
   const params = {
     wallet: address
   };
