@@ -6,27 +6,28 @@ import { profilesService } from '../../../profiles/profiles.service';
 import { dropsService } from '../../../drops/drops.service';
 import { asyncRouter } from '../async.router';
 import { NotFoundException } from '../../../exceptions';
-import {
-  getMaybeAuthenticatedProfileId,
-  maybeAuthenticatedUser
-} from '../auth/auth';
 
 const router = asyncRouter({ mergeParams: true });
 
 router.get(
   '/',
-  maybeAuthenticatedUser(),
   async (
     req: Request<
       { handleOrWallet: string },
       any,
       any,
-      { limit: number; id_less_than?: number },
+      { limit: number; id_less_than?: number; input_profile?: string },
       any
     >,
     res: Response<ApiResponse<DropFull[]>>
   ) => {
-    const inputProfileId = await getMaybeAuthenticatedProfileId(req);
+    const inputProfileId = req.query.input_profile
+      ? await profilesService
+          .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+            req.query.input_profile
+          )
+          ?.then((result) => result?.profile?.external_id)
+      : undefined;
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
     const handleOrWallet = req.params.handleOrWallet;
     const profileId = await profilesService

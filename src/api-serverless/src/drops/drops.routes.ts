@@ -1,10 +1,5 @@
 import { asyncRouter } from '../async.router';
-import {
-  getMaybeAuthenticatedProfileId,
-  getWalletOrThrow,
-  maybeAuthenticatedUser,
-  needsAuthenticatedUser
-} from '../auth/auth';
+import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
@@ -41,7 +36,6 @@ const router = asyncRouter();
 
 router.get(
   '/',
-  maybeAuthenticatedUser(),
   async (
     req: Request<
       any,
@@ -52,12 +46,19 @@ router.get(
         curation_criteria_id?: string;
         id_less_than?: number;
         root_drop_id?: number;
+        input_profile?: string;
       },
       any
     >,
     res: Response<ApiResponse<DropFull[]>>
   ) => {
-    const inputProfileId = await getMaybeAuthenticatedProfileId(req);
+    const inputProfileId = req.query.input_profile
+      ? await profilesService
+          .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+            req.query.input_profile
+          )
+          ?.then((result) => result?.profile?.external_id)
+      : undefined;
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
     const curation_criteria_id = req.query.curation_criteria_id ?? null;
     const root_drop_id = parseIntOrNull(req.query.root_drop_id);
@@ -74,12 +75,23 @@ router.get(
 
 router.get(
   '/:drop_id',
-  maybeAuthenticatedUser(),
   async (
-    req: Request<{ drop_id: number }, any, any, any, any>,
+    req: Request<
+      { drop_id: number },
+      any,
+      any,
+      { input_profile?: string },
+      any
+    >,
     res: Response<ApiResponse<DropFull>>
   ) => {
-    const inputProfileId = await getMaybeAuthenticatedProfileId(req);
+    const inputProfileId = req.query.input_profile
+      ? await profilesService
+          .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+            req.query.input_profile
+          )
+          ?.then((result) => result?.profile?.external_id)
+      : undefined;
     const dropId = parseNumberOrNull(req.params.drop_id);
     if (!dropId) {
       throw new NotFoundException(`Drop ${req.params.drop_id} not found`);
