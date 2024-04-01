@@ -30,6 +30,7 @@ import { dropsService } from '../../../drops/drops.service';
 import { parseIntOrNull, parseNumberOrNull } from '../../../helpers';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
+import { dropRaterService } from '../../../drops/drop-rater.service';
 
 const router = asyncRouter();
 
@@ -150,7 +151,10 @@ router.post(
         `No profile found for authenticated user ${raterWallet}`
       );
     }
-    const dropId = req.params.drop_id;
+    const dropId = parseIntOrNull(req.params.drop_id);
+    if (dropId === null) {
+      throw new NotFoundException(`Drop ${req.params.drop_id} not found`);
+    }
     if (proposedCategory !== '') {
       const abusivenessDetectionResult =
         await abusivenessCheckService.checkRepPhrase(category);
@@ -161,13 +165,14 @@ router.post(
         );
       }
     }
-    const response = await dropsService.updateRatingAndGetDrop({
+    await dropRaterService.updateRating({
       rater_profile_id: raterProfileId,
       category: proposedCategory,
       drop_id: dropId,
       rating: amount
     });
-    res.send(response);
+    const drop = await dropsService.findDropByIdOrThrow(dropId);
+    res.send(drop);
   }
 );
 

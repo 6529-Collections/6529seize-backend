@@ -20,6 +20,23 @@ export class Time {
     return Time.now().plusDays(1);
   }
 
+  static todayUtcMidnight(): Time {
+    const now = new Date();
+    const nowUtc = new Date(
+      Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        now.getUTCHours(),
+        now.getUTCMinutes(),
+        now.getUTCSeconds(),
+        now.getUTCMilliseconds()
+      )
+    );
+    nowUtc.setHours(0, 0, 0, 0);
+    return Time.millis(nowUtc.getTime());
+  }
+
   static millisOrNull(inp: number | undefined | null): Time | undefined {
     if (inp !== undefined && inp !== null) {
       return Time.millis(inp);
