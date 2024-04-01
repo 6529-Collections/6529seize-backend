@@ -15,6 +15,8 @@ import {
   DropMetadataEntity,
   DropReferencedNftEntity
 } from '../entities/IDrop';
+import { TdhSpentOnDropRep } from '../entities/ITdhSpentOnDropRep';
+import { dropRaterService } from '../drops/drop-rater.service';
 
 const logger = Logger.get('OVER_RATES_REVOCATION_LOOP');
 
@@ -32,9 +34,11 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     Drop,
     DropMentionEntity,
     DropReferencedNftEntity,
-    DropMetadataEntity
+    DropMetadataEntity,
+    TdhSpentOnDropRep
   ]);
   await ratingsService.reduceOverRates();
+  await dropRaterService.revokeOverRates();
   await unload();
   logger.info(`[COMPLETE]`);
 });
