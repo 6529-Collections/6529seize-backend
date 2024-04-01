@@ -37,8 +37,7 @@ class DropRaterService {
       }
       const tdhLeftForRep = await this.dropsDb.findRepLeftForDropsForProfile(
         {
-          profileId: param.rater_profile_id,
-          reservationStartTime: Time.todayUtcMidnight().minusDays(30)
+          profileId: param.rater_profile_id
         },
         connection
       );

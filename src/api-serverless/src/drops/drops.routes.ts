@@ -1,5 +1,10 @@
 import { asyncRouter } from '../async.router';
-import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
+import {
+  getMaybeAuthenticatedProfileId,
+  getWalletOrThrow,
+  maybeAuthenticatedUser,
+  needsAuthenticatedUser
+} from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
@@ -36,6 +41,7 @@ const router = asyncRouter();
 
 router.get(
   '/',
+  maybeAuthenticatedUser(),
   async (
     req: Request<
       any,
@@ -51,14 +57,16 @@ router.get(
     >,
     res: Response<ApiResponse<DropFull[]>>
   ) => {
+    const inputProfileId = await getMaybeAuthenticatedProfileId(req);
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
     const curation_criteria_id = req.query.curation_criteria_id ?? null;
     const root_drop_id = parseIntOrNull(req.query.root_drop_id);
     const createdDrop = await dropsService.findLatestDrops({
-      amount: limit < 0 || limit > 200 ? 10 : limit,
+      amount: limit < 0 || limit > 20 ? 10 : limit,
       curation_criteria_id,
       id_less_than: parseNumberOrNull(req.query.id_less_than),
-      root_drop_id
+      root_drop_id,
+      input_profile_id: inputProfileId
     });
     res.send(createdDrop);
   }
@@ -66,15 +74,20 @@ router.get(
 
 router.get(
   '/:drop_id',
+  maybeAuthenticatedUser(),
   async (
     req: Request<{ drop_id: number }, any, any, any, any>,
     res: Response<ApiResponse<DropFull>>
   ) => {
+    const inputProfileId = await getMaybeAuthenticatedProfileId(req);
     const dropId = parseNumberOrNull(req.params.drop_id);
     if (!dropId) {
       throw new NotFoundException(`Drop ${req.params.drop_id} not found`);
     }
-    const drop = await dropsService.findDropByIdOrThrow(dropId);
+    const drop = await dropsService.findDropByIdOrThrow({
+      dropId,
+      inputProfileId
+    });
     res.send(drop);
   }
 );
@@ -171,7 +184,10 @@ router.post(
       drop_id: dropId,
       rating: amount
     });
-    const drop = await dropsService.findDropByIdOrThrow(dropId);
+    const drop = await dropsService.findDropByIdOrThrow({
+      dropId,
+      inputProfileId: raterProfileId
+    });
     res.send(drop);
   }
 );

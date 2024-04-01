@@ -48,7 +48,13 @@ const aDropFull: DropFull & { max_storm_sequence: number } = {
   root_drop_id: null,
   storm_sequence: 1,
   max_storm_sequence: 2,
-  rep: 0
+  rep: 0,
+  top_rep_givers: [],
+  total_number_of_rep_givers: 0,
+  top_rep_categories: [],
+  total_number_of_categories: 0,
+  input_profile_categories: [],
+  rep_given_by_input_profile: 0
 };
 
 describe('DropCreationService', () => {
