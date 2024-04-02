@@ -17,7 +17,7 @@ export const handler = sentryContext.wrapLambdaHandler(async (event: any) => {
         m,
         null,
         2
-      )}\`\`\`\n@everyone`
+      )}\`\`\`\n<@&1162355330798325861>`
     );
   }
 });
