@@ -17,7 +17,8 @@ async function getDiscordInstance(): Promise<any> {
 }
 
 export enum DiscordChannel {
-  OPENAI_BIO_CHECK_RESPONSES = 'OPENAI_BIO_CHECK_RESPONSES'
+  OPENAI_BIO_CHECK_RESPONSES = 'OPENAI_BIO_CHECK_RESPONSES',
+  DEV_ALERTS = 'DEV_ALERTS'
 }
 
 const CHANNELS_TO_CHANNEL_IDS: Partial<Record<DiscordChannel, any>> = {};
