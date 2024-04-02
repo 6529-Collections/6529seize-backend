@@ -4,6 +4,7 @@ import {
   CONSOLIDATED_OWNERS_BALANCES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   MEMES_SEASONS_TABLE,
+  NFT_OWNERS_CONSOLIDATION_TABLE,
   PROFILE_FULL,
   TDH_HISTORY_TABLE,
   TDH_NFT_TABLE
@@ -44,8 +45,14 @@ export const fetchNftTdh = async (
   pageSize: number,
   searchStr: string | undefined
 ) => {
-  let filters = constructFilters('', `contract = :contract`);
-  filters = constructFilters(filters, `id = :nftId`);
+  let filters = constructFilters(
+    '',
+    `${NFT_OWNERS_CONSOLIDATION_TABLE}.contract = :contract`
+  );
+  filters = constructFilters(
+    filters,
+    `${NFT_OWNERS_CONSOLIDATION_TABLE}.token_id = :nftId`
+  );
   const params: any = {
     contract: contract.toLowerCase(),
     nftId
@@ -69,22 +76,29 @@ export const fetchNftTdh = async (
     filters = constructFilters(filters, `(${walletFilters})`);
   }
 
-  const fields = `${TDH_NFT_TABLE}.*, 
+  const fields = `
+    ${NFT_OWNERS_CONSOLIDATION_TABLE}.*,
+    ${TDH_NFT_TABLE}.tdh, 
+    ${TDH_NFT_TABLE}.boost, 
+    ${TDH_NFT_TABLE}.boosted_tdh, 
+    ${TDH_NFT_TABLE}.tdh__raw, 
+    ${TDH_NFT_TABLE}.tdh_rank, 
     ${PROFILE_FULL}.handle,
     ${PROFILE_FULL}.pfp_url,
     ${PROFILE_FULL}.rep_score,
     ${PROFILE_FULL}.cic_score,
     ${PROFILE_FULL}.primary_wallet,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display, 
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.balance as total_balance, 
+    ${NFT_OWNERS_CONSOLIDATION_TABLE}.balance as total_balance, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh as total_tdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh__raw as total_tdh__raw,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as total_boosted_tdh`;
-  let joins = ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${TDH_NFT_TABLE}.consolidation_key`;
-  joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${TDH_NFT_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
+  let joins = ` LEFT JOIN ${TDH_NFT_TABLE} on ${TDH_NFT_TABLE}.consolidation_key = ${NFT_OWNERS_CONSOLIDATION_TABLE}.consolidation_key AND ${TDH_NFT_TABLE}.contract = ${NFT_OWNERS_CONSOLIDATION_TABLE}.contract AND ${TDH_NFT_TABLE}.id = ${NFT_OWNERS_CONSOLIDATION_TABLE}.token_id`;
+  joins += ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${NFT_OWNERS_CONSOLIDATION_TABLE}.consolidation_key`;
+  joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${NFT_OWNERS_CONSOLIDATION_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
 
   const results = await fetchPaginated(
-    TDH_NFT_TABLE,
+    NFT_OWNERS_CONSOLIDATION_TABLE,
     params,
     `${sort} ${sortDir}, ${TDH_NFT_TABLE}.boosted_tdh ${sortDir}`,
     pageSize,

@@ -21,19 +21,11 @@ import {
   WALLETS_TDH_TABLE
 } from '../../../constants';
 import { NotFoundException } from '../../../exceptions';
+import { NFT_TDH_SORT } from '../api-filters';
 
 const router = asyncRouter();
 
 export default router;
-
-export const NFT_TDH_SORT = [
-  'balance',
-  'boosted_tdh',
-  'tdh__raw',
-  'total_balance',
-  'total_boosted_tdh',
-  'total_tdh__raw'
-];
 
 export const METRICS_SORT = [
   'level',

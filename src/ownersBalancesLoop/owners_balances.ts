@@ -14,7 +14,6 @@ import {
 } from './db.owners_balances';
 import {
   fetchAllSeasons,
-  fetchTransactionAddressesFromBlock,
   fetchWalletConsolidationKeysViewForWallet
 } from '../db';
 import { Logger } from '../logging';
@@ -32,10 +31,28 @@ import {
 import { NFTOwner } from '../entities/INFTOwner';
 import {
   fetchAllNftOwners,
+  fetchDistinctNftOwnerWallets,
   getMaxNftOwnersBlockReference
 } from '../nftOwnersLoop/db.nft_owners';
 
 const logger = Logger.get('OWNER_BALANCES');
+
+const validateNftOwners = (
+  owners: NFTOwner[],
+  seasons: MemesSeason[]
+): boolean => {
+  const isValidMemesSeasons = validateMemesSeasonsOwners(owners, seasons);
+  return isValidMemesSeasons;
+};
+
+const validateMemesSeasonsOwners = (
+  owners: NFTOwner[],
+  seasons: MemesSeason[]
+): boolean => {
+  const memes = filterContract(owners, MEMES_CONTRACT);
+  const maxSeasonIndex = Math.max(...[...seasons].map((s) => s.end_index));
+  return !memes.some((m) => m.token_id > maxSeasonIndex);
+};
 
 interface BalancesFields {
   total_balance: number;
@@ -64,7 +81,7 @@ export const updateOwnerBalances = async (reset?: boolean) => {
 
   reset = reset || lastBalancesBlock === 0;
 
-  const blockReference = await getMaxNftOwnersBlockReference();
+  let blockReference = await getMaxNftOwnersBlockReference();
   const seasons = await fetchAllSeasons();
 
   const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[getNextgenNetwork()];
@@ -83,16 +100,12 @@ export const updateOwnerBalances = async (reset?: boolean) => {
     addresses.clear();
     owners.forEach((o) => addresses.add(o.wallet.toLowerCase()));
   } else {
-    const allTransactionAddresses: {
-      from_address: string;
-      to_address: string;
-    }[] = await fetchTransactionAddressesFromBlock(
+    const allNftOwnerAddresses: string[] = await fetchDistinctNftOwnerWallets(
       allContracts,
       lastBalancesBlock
     );
-    allTransactionAddresses.forEach((wallet) => {
-      addresses.add(wallet.from_address.toLowerCase());
-      addresses.add(wallet.to_address.toLowerCase());
+    allNftOwnerAddresses.forEach((a) => {
+      addresses.add(a.toLowerCase());
     });
     if (!addresses.size) {
       logger.info(`[NO WALLETS TO PROCESS]`);
@@ -101,12 +114,22 @@ export const updateOwnerBalances = async (reset?: boolean) => {
     owners = await fetchAllNftOwners(allContracts, Array.from(addresses));
   }
 
-  const ownersBalancesMap = new Map<string, OwnerBalances>();
-  const ownersBalancesMemesMap = new Map<string, OwnerBalancesMemes[]>();
+  const isValidOwners = validateNftOwners(owners, seasons);
+  if (!isValidOwners) {
+    logger.error(
+      `[INVALID OWNERS DETECTED] : [BLOCK REFERENCE KEPT TO ${lastBalancesBlock}]`
+    );
+    blockReference = lastBalancesBlock;
+  } else {
+    logger.info(`[OWNERS VALIDATED ${owners.length.toLocaleString()}]`);
+  }
 
   logger.info(
     `[ADDRESSES ${addresses.size.toLocaleString()}] [lastBalancesBlock ${lastBalancesBlock}] [blockReference ${blockReference}] [RESET ${reset}]`
   );
+
+  const ownersBalancesMap = new Map<string, OwnerBalances>();
+  const ownersBalancesMemesMap = new Map<string, OwnerBalancesMemes[]>();
 
   addresses.forEach((address) => {
     const ownedNfts = owners.filter((o) =>
@@ -249,6 +272,7 @@ function buildSeasonBalances(
     };
     seasonBalances.push(oBalanceMemes);
   });
+
   return seasonBalances;
 }
 

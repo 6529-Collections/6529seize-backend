@@ -21,16 +21,33 @@ export async function getMaxNftOwnersBlockReference(): Promise<number> {
   return maxBlock.max_block ?? 0;
 }
 
-export async function fetchAllNftOwners(contracts?: string[], pk?: string[]) {
-  return (await fetchAllNftOwnersByClass(
-    NFTOwner,
-    contracts,
-    pk
-  )) as NFTOwner[];
+export async function fetchAllNftOwnersFromBlock() {}
+
+export async function fetchAllNftOwners(
+  contracts?: string[],
+  pk?: string[]
+): Promise<NFTOwner[]> {
+  const queryBuilder = getDataSource()
+    .getRepository(NFTOwner)
+    .createQueryBuilder('nftowner');
+
+  if (contracts) {
+    queryBuilder.where('nftowner.contract IN (:...contracts)', {
+      contracts
+    });
+  }
+  if (pk) {
+    queryBuilder.where(`nftowner.wallet IN (:...pk)`, {
+      pk
+    });
+  }
+
+  return await queryBuilder.getMany();
 }
 
 export async function fetchDistinctNftOwnerWallets(
-  contracts?: string[]
+  contracts?: string[],
+  fromBlock?: number
 ): Promise<string[]> {
   const queryBuilder = getDataSource()
     .getRepository(NFTOwner)
@@ -43,32 +60,13 @@ export async function fetchDistinctNftOwnerWallets(
     });
   }
 
+  if (fromBlock) {
+    queryBuilder.andWhere('nftowner.block_reference > :fromBlock', {
+      fromBlock
+    });
+  }
+
   return (await queryBuilder.getRawMany()).map((row) => row.wallet);
-}
-
-async function fetchAllNftOwnersByClass<T>(
-  entityClass: EntityTarget<NFTOwner | ConsolidatedNFTOwner>,
-  contracts?: string[],
-  pk?: string[]
-): Promise<(NFTOwner | ConsolidatedNFTOwner)[]> {
-  const pkColumn = entityClass === NFTOwner ? 'wallet' : 'consolidation_key';
-
-  const queryBuilder = getDataSource()
-    .getRepository(entityClass)
-    .createQueryBuilder('nftowner');
-
-  if (contracts) {
-    queryBuilder.where('nftowner.contract IN (:...contracts)', {
-      contracts
-    });
-  }
-  if (pk) {
-    queryBuilder.where(`nftowner.${pkColumn} IN (:...pk)`, {
-      pk
-    });
-  }
-
-  return await queryBuilder.getMany();
 }
 
 export async function persistNftOwners(

@@ -8,11 +8,11 @@ export const DISTRIBUTION_SORT = [
 ];
 
 export const NFT_TDH_SORT = [
-  'card_tdh',
-  'card_tdh__raw',
-  'card_balance',
-  'total_tdh',
+  'balance',
+  'boosted_tdh',
+  'tdh__raw',
   'total_balance',
+  'total_boosted_tdh',
   'total_tdh__raw'
 ];
 
