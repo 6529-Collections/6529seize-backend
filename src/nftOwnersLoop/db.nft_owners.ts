@@ -2,7 +2,6 @@ import { getDataSource } from '../db';
 import { Logger } from '../logging';
 import { ConsolidatedNFTOwner, NFTOwner } from '../entities/INFTOwner';
 import { NFT_OWNERS_TABLE } from '../constants';
-import { EntityTarget } from 'typeorm';
 import {
   deleteConsolidations,
   insertWithoutUpdate,
@@ -20,8 +19,6 @@ export async function getMaxNftOwnersBlockReference(): Promise<number> {
 
   return maxBlock.max_block ?? 0;
 }
-
-export async function fetchAllNftOwnersFromBlock() {}
 
 export async function fetchAllNftOwners(
   contracts?: string[],
