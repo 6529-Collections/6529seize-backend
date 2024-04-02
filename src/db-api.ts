@@ -601,30 +601,6 @@ export async function fetchGradients(
   );
 }
 
-export async function fetchNFTsForWallet(
-  address: string,
-  pageSize: number,
-  page: number
-) {
-  const fields = ` ${NFTS_TABLE}.* `;
-  const joins = `INNER JOIN ${NFT_OWNERS_TABLE} ON nfts.id = ${NFT_OWNERS_TABLE}.token_id AND nfts.contract = ${NFT_OWNERS_TABLE}.contract`;
-  const filters = `WHERE ${NFT_OWNERS_TABLE}.wallet = :wallet`;
-  const params = {
-    wallet: address
-  };
-
-  return fetchPaginated(
-    NFTS_TABLE,
-    params,
-    'nfts.contract asc, nfts.id asc',
-    pageSize,
-    page,
-    filters,
-    fields,
-    joins
-  );
-}
-
 export async function fetchMemesExtended(
   pageSize: number,
   page: number,

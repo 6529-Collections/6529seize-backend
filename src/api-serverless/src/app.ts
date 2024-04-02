@@ -461,22 +461,6 @@ loadApi().then(() => {
     });
   });
 
-  apiRouter.get(`/:address/nfts`, function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    const address = req.params.address;
-    db.fetchNFTsForWallet(address, pageSize, page).then((result) => {
-      result.data.map((d: any) => {
-        d.metadata = JSON.parse(d.metadata);
-      });
-      returnPaginatedResult(result, req, res);
-    });
-  });
-
   apiRouter.get(`/owners_memelab`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
