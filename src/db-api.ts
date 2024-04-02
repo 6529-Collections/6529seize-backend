@@ -606,6 +606,7 @@ export async function fetchMemesExtended(
   page: number,
   nfts: string,
   seasons: string,
+  sort: string,
   sortDir: string
 ) {
   let filters = '';
@@ -619,13 +620,26 @@ export async function fetchMemesExtended(
     filters = constructFilters(filters, `season in (:seasons)`);
     params.seasons = seasons.split(',');
   }
+  let joins = ` LEFT JOIN ${NFTS_TABLE} ON ${MEMES_EXTENDED_DATA_TABLE}.id = ${NFTS_TABLE}.id AND ${NFTS_TABLE}.contract = :memes_contract`;
+  params.memes_contract = MEMES_CONTRACT;
+
+  let sortResolved = sort;
+  if (sort === 'id') {
+    sortResolved = `${MEMES_EXTENDED_DATA_TABLE}.id`;
+  } else if (sort === 'age') {
+    sortResolved = `${MEMES_EXTENDED_DATA_TABLE}.id`;
+    sortDir = sortDir.toLowerCase() === 'asc' ? 'desc' : 'asc';
+  }
+
   return fetchPaginated(
     MEMES_EXTENDED_DATA_TABLE,
     params,
-    `id ${sortDir}`,
+    `${sortResolved} ${sortDir}`,
     pageSize,
     page,
-    filters
+    filters,
+    '',
+    joins
   );
 }
 

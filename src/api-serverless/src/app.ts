@@ -18,6 +18,7 @@ import ownersBalancesRoutes from './owners-balances/api.owners-balances.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
 import communityMembersCurationRoutes from './community-members/community-members-curation.routes';
 import dropsRoutes from './drops/drops.routes';
+import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -52,7 +53,7 @@ import {
 } from './api-constants';
 import {
   DISTRIBUTION_SORT,
-  MEME_LAB_OWNERS_SORT,
+  MEMES_EXTENDED_SORT,
   TRANSACTION_FILTERS
 } from './api-filters';
 import { parseTdhResultsFromDB } from '../../sql_helpers';
@@ -404,13 +405,19 @@ loadApi().then(() => {
 
     const nfts = req.query.id;
     const seasons = req.query.season;
+
+    const sort =
+      req.query.sort && MEMES_EXTENDED_SORT.includes(req.query.sort)
+        ? req.query.sort
+        : MEMES_EXTENDED_SORT[0];
+
     const sortDir =
       req.query.sort_direction &&
       SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
         ? req.query.sort_direction
         : 'desc';
 
-    db.fetchMemesExtended(pageSize, page, nfts, seasons, sortDir).then(
+    db.fetchMemesExtended(pageSize, page, nfts, seasons, sort, sortDir).then(
       (result) => {
         returnPaginatedResult(result, req, res);
       }
@@ -460,33 +467,6 @@ loadApi().then(() => {
     db.fetchLabExtended(pageSize, page, nfts, collections).then((result) => {
       returnPaginatedResult(result, req, res);
     });
-  });
-
-  apiRouter.get(`/owners_memelab`, function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    const sort =
-      req.query.sort && MEME_LAB_OWNERS_SORT.includes(req.query.sort)
-        ? req.query.sort
-        : 'balance';
-
-    const sortDir =
-      req.query.sort_direction &&
-      SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-        ? req.query.sort_direction
-        : 'desc';
-
-    const wallets = req.query.wallet;
-    const nfts = req.query.id;
-    db.fetchLabOwners(pageSize, page, wallets, nfts, sort, sortDir).then(
-      (result) => {
-        returnPaginatedResult(result, req, res);
-      }
-    );
   });
 
   apiRouter.get(`/owners`, function (req: any, res: any) {
@@ -917,6 +897,7 @@ loadApi().then(() => {
   apiRouter.use(`/ratings`, ratingsRoutes);
   apiRouter.use(`/subscriptions`, subscriptionsRoutes);
   apiRouter.use(`/drops`, dropsRoutes);
+  apiRouter.use(`/nft-owners`, nftOwnersRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 
