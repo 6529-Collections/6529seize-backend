@@ -1,5 +1,6 @@
 import * as passport from 'passport';
 import { Request } from 'express';
+import { profilesService } from '../../../profiles/profiles.service';
 
 export function getJwtSecret() {
   const jwtsecret = process.env.JWT_SECRET;
@@ -35,6 +36,21 @@ export function getAuthenticatedWalletOrNull(req: Request): string | null {
     return null;
   }
   return user.wallet.toLowerCase();
+}
+
+export async function getMaybeAuthenticatedProfileId(
+  req: Request<any, any, any, any, any>
+): Promise<string | undefined> {
+  const authenticatedWallet = getAuthenticatedWalletOrNull(req);
+  let inputProfileId: string | undefined = undefined;
+  if (authenticatedWallet) {
+    const profile =
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+        authenticatedWallet
+      );
+    inputProfileId = profile?.profile?.external_id;
+  }
+  return inputProfileId;
 }
 
 export function getWalletOrThrow(req: Request): string {

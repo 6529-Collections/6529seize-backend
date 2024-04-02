@@ -43,6 +43,24 @@ export interface DropFull {
   readonly storm_sequence: number;
   readonly max_storm_sequence: number;
   readonly rep: number;
+  readonly top_rep_givers: {
+    rep_given: number;
+    profile: ProfileMin;
+  }[];
+  readonly total_number_of_rep_givers: number;
+  readonly top_rep_categories: {
+    rep_given: number;
+    category: string;
+  }[];
+  readonly total_number_of_categories: number;
+  readonly input_profile_categories:
+    | {
+        category: string;
+        rep_given: number;
+        rep_given_by_input_profile: number;
+      }[]
+    | null;
+  readonly rep_given_by_input_profile: number | null;
 }
 
 export interface NewDropMedia {
