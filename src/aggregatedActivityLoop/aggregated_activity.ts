@@ -13,7 +13,7 @@ import { areEqualAddresses, isNullAddress } from '../helpers';
 import {
   fetchAllSeasons,
   fetchMaxTransactionsBlockNumber,
-  fetchTransactionAddressesFromBlock,
+  fetchTransactionsAfterBlock,
   fetchWalletConsolidationKeysViewForWallet,
   fetchWalletTransactions
 } from '../db';
@@ -342,7 +342,7 @@ export const updateAggregatedActivity = async (reset?: boolean) => {
     ? 0
     : await getMaxAggregatedActivityBlockReference();
   reset = reset || lastActivityBlock === 0;
-  const blockReference = await fetchMaxTransactionsBlockNumber();
+  let blockReference = await fetchMaxTransactionsBlockNumber();
   const seasons = await fetchAllSeasons();
 
   const nextgenNetwork = getNextgenNetwork();
@@ -353,21 +353,33 @@ export const updateAggregatedActivity = async (reset?: boolean) => {
   );
 
   const addresses = new Set<string>();
-  const allTransactionAddresses: {
-    from_address: string;
-    to_address: string;
-  }[] = await fetchTransactionAddressesFromBlock(
-    [MEMES_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT],
+  const transactions: Transaction[] = await fetchTransactionsAfterBlock(
+    [MEMES_CONTRACT, MEMELAB_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT],
     lastActivityBlock,
     blockReference
   );
-  allTransactionAddresses.forEach((wallet) => {
+
+  transactions.forEach((wallet) => {
     addresses.add(wallet.from_address.toLowerCase());
     addresses.add(wallet.to_address.toLowerCase());
   });
 
-  // const addresses = new Set<string>();
-  // addresses.add('0xfd22004806a6846ea67ad883356be810f0428793');
+  if (!addresses.size) {
+    logger.info(`[NO WALLETS TO PROCESS]`);
+    return;
+  }
+
+  const isValidTransactions = validateTransactions(transactions, seasons);
+  if (!isValidTransactions) {
+    logger.error(
+      `[INVALID TRANSACTIONS DETECTED] : [BLOCK REFERENCE KEPT TO ${lastActivityBlock}]`
+    );
+    blockReference = lastActivityBlock;
+  } else {
+    logger.info(
+      `[TRANSACTIONS VALIDATED ${transactions.length.toLocaleString()}]`
+    );
+  }
 
   logger.info(
     `[ADDRESSES ${addresses.size.toLocaleString()}] [lastActivityBlock ${lastActivityBlock}] [blockReference ${blockReference}] [RESET ${reset}]`
@@ -460,7 +472,7 @@ function getActivityBreakdown(
 }
 
 async function retrieveActivityDelta(
-  blockReference: number,
+  targetActivityBlock: number,
   seasons: MemesSeason[],
   addresses: string[],
   nextgenContract: string
@@ -559,7 +571,7 @@ async function retrieveActivityDelta(
 
       const aActivity = retrieveAggregatedActivityForWallet(
         address,
-        blockReference,
+        targetActivityBlock,
         memesActivity,
         memelabActivity,
         gradientsActivity,
@@ -569,7 +581,6 @@ async function retrieveActivityDelta(
 
       const memesSeasonActivity = retrieveMemesSeasonActivityForWallet(
         address,
-        blockReference,
         seasons,
         memesActivity
       );
@@ -704,7 +715,6 @@ function retrieveAggregatedActivityForWallet(
 
 function retrieveMemesSeasonActivityForWallet(
   wallet: string,
-  blockReference: number,
   seasons: MemesSeason[],
   activity: ActivityBreakdown
 ) {
@@ -767,4 +777,24 @@ function filterContract(transactions: Transaction[], contract: string) {
   return [...transactions].filter((a) =>
     areEqualAddresses(a.contract, contract)
   );
+}
+
+function validateTransactions(
+  transactions: Transaction[],
+  seasons: MemesSeason[]
+) {
+  const isValidMemesSeasons = validateMemesSeasonsTransactions(
+    transactions,
+    seasons
+  );
+  return isValidMemesSeasons;
+}
+
+function validateMemesSeasonsTransactions(
+  transactions: Transaction[],
+  seasons: MemesSeason[]
+) {
+  const memesTx = filterContract(transactions, MEMES_CONTRACT);
+  const maxSeasonIndex = Math.max(...[...seasons].map((s) => s.end_index));
+  return !memesTx.some((tx) => tx.token_id > maxSeasonIndex);
 }

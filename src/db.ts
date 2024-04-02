@@ -451,6 +451,23 @@ export async function fetchTransactionAddressesFromBlock(
   );
 }
 
+export async function fetchTransactionsAfterBlock(
+  contracts: string[],
+  fromBlock: number,
+  toBlock?: number
+): Promise<Transaction[]> {
+  return await sqlExecutor.execute(
+    `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE block > :fromBlock and contract in (:contracts) ${
+      toBlock ? 'AND block <= :toBlock' : ''
+    }`,
+    {
+      contracts: contracts.map((it) => it.toLowerCase()),
+      fromBlock: fromBlock,
+      toBlock: toBlock
+    }
+  );
+}
+
 export async function fetchAllConsolidationAddresses() {
   const sql = `SELECT wallet FROM (
       SELECT wallet1 AS wallet FROM consolidations WHERE confirmed = 1
