@@ -474,7 +474,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       and rating <> 0
       and matter_target_id in (:dropIds)
     group by 1, 2
-    order by abs(sum(rating)) desc limit 5
+    order by abs(sum(rating)) desc
     `,
             { dropIds },
             {
