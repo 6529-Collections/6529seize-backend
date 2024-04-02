@@ -1,4 +1,4 @@
-import { constructFilters } from 'src/api-helpers';
+import { constructFilters } from '../api-helpers';
 import { NFT_OWNERS_CONSOLIDATION_TABLE } from '../../../constants';
 import { fetchPaginated } from '../../../db-api';
 
