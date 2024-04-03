@@ -631,7 +631,7 @@ loadApi().then(() => {
   );
 
   apiRouter.get(`/distributions`, function (req: any, res: any) {
-    const wallets = req.query.wallet;
+    const search = req.query.search;
     const cards = req.query.card_id;
     const contracts = req.query.contract;
 
@@ -640,7 +640,7 @@ loadApi().then(() => {
         ? parseInt(req.query.page_size)
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    db.fetchDistributions(wallets, cards, contracts, pageSize, page).then(
+    db.fetchDistributions(search, cards, contracts, pageSize, page).then(
       (result) => {
         returnPaginatedResult(result, req, res);
       }
