@@ -617,11 +617,17 @@ export async function fetchMemesExtended(
   const params: any = {};
 
   if (nfts) {
-    filters = constructFilters(filters, `id in (:nfts)`);
+    filters = constructFilters(
+      filters,
+      `${MEMES_EXTENDED_DATA_TABLE}.id in (:nfts)`
+    );
     params.nfts = nfts.split(',');
   }
   if (seasons) {
-    filters = constructFilters(filters, `season in (:seasons)`);
+    filters = constructFilters(
+      filters,
+      `${MEMES_EXTENDED_DATA_TABLE}.season in (:seasons)`
+    );
     params.seasons = seasons.split(',');
   }
   let joins = ` LEFT JOIN ${NFTS_TABLE} ON ${MEMES_EXTENDED_DATA_TABLE}.id = ${NFTS_TABLE}.id AND ${NFTS_TABLE}.contract = :memes_contract`;
