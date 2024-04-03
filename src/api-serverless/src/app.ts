@@ -337,6 +337,7 @@ loadApi().then(() => {
   });
 
   apiRouter.get(`/nfts/gradients`, function (req: any, res: any) {
+    const id = req.query.id;
     const pageSize: number =
       req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -354,7 +355,7 @@ loadApi().then(() => {
         ? req.query.sort
         : 'id';
 
-    db.fetchGradients(pageSize, page, sort, sortDir).then((result) => {
+    db.fetchGradients(id, pageSize, page, sort, sortDir).then((result) => {
       result.data.map((d: any) => {
         d.metadata = JSON.parse(d.metadata);
       });
@@ -464,21 +465,6 @@ loadApi().then(() => {
     const collections = req.query.collection;
 
     db.fetchLabExtended(pageSize, page, nfts, collections).then((result) => {
-      returnPaginatedResult(result, req, res);
-    });
-  });
-
-  apiRouter.get(`/owners`, function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    const wallets = req.query.wallet;
-    const contracts = req.query.contract;
-    const nfts = req.query.id;
-    db.fetchOwners(pageSize, page, wallets, contracts, nfts).then((result) => {
       returnPaginatedResult(result, req, res);
     });
   });
