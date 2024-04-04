@@ -64,7 +64,7 @@ export const updateDistributionMints = async (reset?: boolean) => {
 
   await getDataSource().transaction(async (entityManager) => {
     for (const tr of transactions) {
-      await processTransaction(entityManager, tr);
+      await processTransaction(tr, entityManager);
     }
     await persistBlock(maxTransactionsBlock, entityManager);
   });
@@ -73,8 +73,8 @@ export const updateDistributionMints = async (reset?: boolean) => {
 };
 
 async function processTransaction(
-  entityManager: EntityManager,
-  transaction: Transaction
+  transaction: Transaction,
+  entityManager: EntityManager
 ) {
   const filters = `
     WHERE LOWER(${DISTRIBUTION_NORMALIZED_TABLE}.wallet) = LOWER("${transaction.to_address}")
