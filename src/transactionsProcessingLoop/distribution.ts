@@ -5,7 +5,7 @@ import {
   NULL_ADDRESS,
   TRANSACTIONS_TABLE
 } from '../constants';
-import { getDataSource } from '../db';
+import { fetchMaxTransactionByBlockNumber, getDataSource } from '../db';
 import { DistributionNormalized } from '../entities/IDistribution';
 import { Transaction } from '../entities/ITransaction';
 import { TransactionsProcessedDistributionBlock } from '../entities/ITransactionsProcessing';
@@ -24,7 +24,11 @@ export const updateDistributionMints = async (reset?: boolean) => {
         .getRawOne()
     )?.max_block ?? 0;
 
-  logger.info(`[LAST DISTRIBUTION BLOCK: ${lastProcessingBlock}]`);
+  const maxTransactionsBlock = await fetchMaxTransactionByBlockNumber();
+
+  logger.info(
+    `[LAST DISTRIBUTION BLOCK: ${lastProcessingBlock}] : [LAST BLOCK: ${maxTransactionsBlock.block}]`
+  );
 
   const transactions: Transaction[] = await getDataSource().manager.query(
     `SELECT * FROM ${TRANSACTIONS_TABLE} 
@@ -36,12 +40,9 @@ export const updateDistributionMints = async (reset?: boolean) => {
 
   if (transactions.length === 0) {
     logger.info(`[NO TRANSACTIONS TO PROCESS]`);
+    await persistBlock(maxTransactionsBlock);
     return;
   }
-
-  const maxTransactionsBlock: Transaction = transactions.reduce((prev, curr) =>
-    prev.block > curr.block ? prev : curr
-  );
 
   const distinctDistributions: { contract: string; card_id: number }[] =
     await getDataSource().manager.query(
@@ -66,13 +67,7 @@ export const updateDistributionMints = async (reset?: boolean) => {
       processTransaction(entityManager, transaction)
     );
     await Promise.all(promises);
-
-    await entityManager
-      .getRepository(TransactionsProcessedDistributionBlock)
-      .save({
-        block: maxTransactionsBlock.block,
-        timestamp: new Date(maxTransactionsBlock.transaction_date).getTime()
-      });
+    await persistBlock(maxTransactionsBlock, entityManager);
   });
 
   logger.info(`[ALL TRANSACTIONS PROCESSED]`);
@@ -112,4 +107,14 @@ async function processTransaction(
       `[DUPLICATE DISTRIBUTIONS FOUND FOR ${transaction.to_address} ${transaction.contract} ${transaction.token_id}]`
     );
   }
+}
+
+async function persistBlock(tx: Transaction, manager?: EntityManager) {
+  let dataSource = manager ?? getDataSource();
+  const repo = await dataSource
+    .getRepository(TransactionsProcessedDistributionBlock)
+    .save({
+      block: tx.block,
+      timestamp: new Date(tx.transaction_date).getTime()
+    });
 }
