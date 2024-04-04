@@ -12,22 +12,23 @@ import { TransactionsProcessedDistributionBlock } from '../entities/ITransaction
 import { areEqualAddresses } from '../helpers';
 import { Logger } from '../logging';
 
-const logger = Logger.get('TRANSACTIONS_PROCESSING_LOOP');
+const logger = Logger.get('TRANSACTIONS_PROCESSING_DISTRIBUTIONS');
 
 export const updateDistributionMints = async (reset?: boolean) => {
-  const lastProcessingBlock: number =
-    (
-      await getDataSource()
-        .getRepository(TransactionsProcessedDistributionBlock)
-        .createQueryBuilder('trxDistributionBlock')
-        .select('MAX(trxDistributionBlock.block)', 'max_block')
-        .getRawOne()
-    )?.max_block ?? 0;
+  const lastProcessingBlock: number = reset
+    ? 0
+    : (
+        await getDataSource()
+          .getRepository(TransactionsProcessedDistributionBlock)
+          .createQueryBuilder('trxDistributionBlock')
+          .select('MAX(trxDistributionBlock.block)', 'max_block')
+          .getRawOne()
+      )?.max_block ?? 0;
 
   const maxTransactionsBlock = await fetchMaxTransactionByBlockNumber();
 
   logger.info(
-    `[LAST DISTRIBUTION BLOCK: ${lastProcessingBlock}] : [LAST BLOCK: ${maxTransactionsBlock.block}]`
+    `[LAST DISTRIBUTION BLOCK ${lastProcessingBlock}] : [RESET ${reset}] : [LAST BLOCK: ${maxTransactionsBlock.block}]`
   );
 
   const transactions: Transaction[] = await getDataSource().manager.query(
