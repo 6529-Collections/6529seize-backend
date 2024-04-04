@@ -93,7 +93,7 @@ async function processTransaction(
 
   if (distribution.length === 0) {
     logger.info(
-      `[MINT WITH NO DISTRIBUTION FOUND FOR HASH ${transaction.transaction}]`
+      `[MINT WITH NO DISTRIBUTION FOUND FOR HASH ${transaction.transaction}] : [CONTRACT ${transaction.contract}] :[TOKEN ID ${transaction.token_id}]`
     );
   }
 

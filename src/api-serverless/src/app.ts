@@ -591,45 +591,6 @@ loadApi().then(() => {
     }
   );
 
-  apiRouter.get(
-    `/distribution/:contract/:nft_id`,
-    function (req: any, res: any) {
-      const contract = req.params.contract;
-      const nftId = req.params.nft_id;
-      const wallets = req.query.wallet;
-      const phases = req.query.phase;
-
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DISTRIBUTION_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-      const sort =
-        req.query.sort && DISTRIBUTION_SORT.includes(req.query.sort)
-          ? req.query.sort
-          : 'phase';
-
-      const sortDir =
-        req.query.sort_direction &&
-        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-          ? req.query.sort_direction
-          : 'desc';
-      db.fetchDistributionForNFT(
-        contract,
-        nftId,
-        wallets,
-        phases,
-        pageSize,
-        page,
-        sort,
-        sortDir
-      ).then((result) => {
-        returnPaginatedResult(result, req, res);
-      });
-    }
-  );
-
   apiRouter.get(`/distributions`, function (req: any, res: any) {
     const search = req.query.search;
     const cards = req.query.card_id;

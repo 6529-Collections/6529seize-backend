@@ -979,65 +979,6 @@ export async function fetchDistributionPhases(
   };
 }
 
-export async function fetchDistributionForNFT(
-  contract: string,
-  cardId: number,
-  wallets: string,
-  phases: string,
-  pageSize: number,
-  page: number,
-  sort: string,
-  sortDir: string
-) {
-  const params: any = {};
-  let filters = constructFilters(
-    '',
-    `${DISTRIBUTION_TABLE}.contract = :contract`
-  );
-  params.contract = contract;
-
-  filters = constructFilters(filters, `card_id = :card_id`);
-  params.card_id = cardId;
-
-  if (wallets) {
-    const resolvedWallets = await resolveEns(wallets);
-    if (resolvedWallets.length == 0) {
-      return returnEmpty();
-    }
-    filters += ` AND ${DISTRIBUTION_TABLE}.wallet in (:wallets)`;
-    params.wallets = resolvedWallets;
-  }
-  if (phases) {
-    filters = constructFilters(filters, `phase in (:phase)`);
-    params.phase = phases.split(',');
-  }
-
-  let joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
-
-  joins += ` LEFT JOIN ${TRANSACTIONS_TABLE} ON ${DISTRIBUTION_TABLE}.contract = ${TRANSACTIONS_TABLE}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${TRANSACTIONS_TABLE}.token_id AND (${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
-    MANIFOLD
-  )} OR ${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
-    NULL_ADDRESS
-  )}) AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_TABLE}.to_address and value > 0`;
-
-  let sortSortDir = sortDir;
-  if (sort == 'phase') {
-    sortSortDir = sortDir == 'asc' ? 'desc' : 'asc';
-  }
-  const phaseSortDir = sortDir == 'asc' ? 'desc' : 'asc';
-  return fetchPaginated(
-    DISTRIBUTION_TABLE,
-    params,
-    `${sort} ${sortSortDir}, phase ${phaseSortDir}, count ${sortDir}, wallet_balance ${sortDir}, wallet_tdh ${sortDir}`,
-    pageSize,
-    page,
-    filters,
-    `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display, SUM(${TRANSACTIONS_TABLE}.token_count) as card_mint_count`,
-    joins,
-    `${DISTRIBUTION_TABLE}.wallet, ${DISTRIBUTION_TABLE}.created_at, ${DISTRIBUTION_TABLE}.phase, ${ENS_TABLE}.display`
-  );
-}
-
 export async function fetchDistributions(
   search: string,
   cards: string,
