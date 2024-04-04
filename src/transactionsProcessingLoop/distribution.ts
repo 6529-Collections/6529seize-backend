@@ -111,7 +111,9 @@ async function processTransaction(
 async function persistBlock(tx: Transaction, manager?: EntityManager) {
   let dataSource = manager ?? getDataSource();
   await dataSource.getRepository(TransactionsProcessedDistributionBlock).save({
+    created_at: new Date(),
     block: tx.block,
     timestamp: new Date(tx.transaction_date).getTime()
   });
+  logger.info(`[BLOCK ${tx.block} PERSISTED]`);
 }
