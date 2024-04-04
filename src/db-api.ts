@@ -644,7 +644,7 @@ export async function fetchMemesExtended(
   return fetchPaginated(
     MEMES_EXTENDED_DATA_TABLE,
     params,
-    `${sortResolved} ${sortDir}`,
+    `${sortResolved} ${sortDir}, ${MEMES_EXTENDED_DATA_TABLE}.id ${sortDir}`,
     pageSize,
     page,
     filters,
