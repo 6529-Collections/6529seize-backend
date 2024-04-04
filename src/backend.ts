@@ -11,8 +11,8 @@ async function start() {
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
   // await dbMigrationsLoop.handler(null, null as any, null as any);
-  await customReplayLoop.handler(null, null as any, null as any);
-  // await trxProcessingLoop.handler(null, null as any, null as any);
+  // await customReplayLoop.handler(null, null as any, null as any);
+  await trxProcessingLoop.handler(null, null as any, null as any);
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
