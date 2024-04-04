@@ -1,14 +1,6 @@
 import { loadEnv, unload } from '../secrets';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
-import { getDataSource } from '../db';
-import {
-  DISTRIBUTION_NORMALIZED_TABLE,
-  DISTRIBUTION_TABLE,
-  MEMELAB_CONTRACT
-} from '../constants';
-import { areEqualAddresses } from '../helpers';
-import { DistributionNormalized } from '../entities/IDistribution';
 
 const logger = Logger.get('CUSTOM_REPLAY_LOOP');
 
