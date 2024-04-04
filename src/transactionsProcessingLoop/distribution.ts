@@ -12,22 +12,23 @@ import { TransactionsProcessedDistributionBlock } from '../entities/ITransaction
 import { areEqualAddresses } from '../helpers';
 import { Logger } from '../logging';
 
-const logger = Logger.get('TRANSACTIONS_PROCESSING_LOOP');
+const logger = Logger.get('TRANSACTIONS_PROCESSING_DISTRIBUTIONS');
 
 export const updateDistributionMints = async (reset?: boolean) => {
-  const lastProcessingBlock: number =
-    (
-      await getDataSource()
-        .getRepository(TransactionsProcessedDistributionBlock)
-        .createQueryBuilder('trxDistributionBlock')
-        .select('MAX(trxDistributionBlock.block)', 'max_block')
-        .getRawOne()
-    )?.max_block ?? 0;
+  const lastProcessingBlock: number = reset
+    ? 0
+    : (
+        await getDataSource()
+          .getRepository(TransactionsProcessedDistributionBlock)
+          .createQueryBuilder('trxDistributionBlock')
+          .select('MAX(trxDistributionBlock.block)', 'max_block')
+          .getRawOne()
+      )?.max_block ?? 0;
 
   const maxTransactionsBlock = await fetchMaxTransactionByBlockNumber();
 
   logger.info(
-    `[LAST DISTRIBUTION BLOCK: ${lastProcessingBlock}] : [LAST BLOCK: ${maxTransactionsBlock.block}]`
+    `[LAST DISTRIBUTION BLOCK ${lastProcessingBlock}] : [RESET ${reset}] : [LAST BLOCK: ${maxTransactionsBlock.block}]`
   );
 
   const transactions: Transaction[] = await getDataSource().manager.query(
@@ -63,10 +64,9 @@ export const updateDistributionMints = async (reset?: boolean) => {
   );
 
   await getDataSource().transaction(async (entityManager) => {
-    const promises = filteredTransactions.map((transaction) =>
-      processTransaction(entityManager, transaction)
-    );
-    await Promise.all(promises);
+    for (const tr of transactions) {
+      await processTransaction(tr, entityManager);
+    }
     await persistBlock(maxTransactionsBlock, entityManager);
   });
 
@@ -74,8 +74,8 @@ export const updateDistributionMints = async (reset?: boolean) => {
 };
 
 async function processTransaction(
-  entityManager: EntityManager,
-  transaction: Transaction
+  transaction: Transaction,
+  entityManager: EntityManager
 ) {
   const filters = `
     WHERE LOWER(${DISTRIBUTION_NORMALIZED_TABLE}.wallet) = LOWER("${transaction.to_address}")
@@ -94,7 +94,7 @@ async function processTransaction(
 
   if (distribution.length === 1) {
     const newMinted = distribution[0].minted + transaction.token_count;
-    const newTotal = distribution[0].total_count + transaction.token_count;
+    const newTotal = newMinted + distribution[0].airdrops;
     await entityManager.query(
       `UPDATE ${DISTRIBUTION_NORMALIZED_TABLE} 
       SET minted = ${newMinted} , total_count = ${newTotal}
@@ -112,7 +112,9 @@ async function processTransaction(
 async function persistBlock(tx: Transaction, manager?: EntityManager) {
   let dataSource = manager ?? getDataSource();
   await dataSource.getRepository(TransactionsProcessedDistributionBlock).save({
+    created_at: new Date(),
     block: tx.block,
     timestamp: new Date(tx.transaction_date).getTime()
   });
+  logger.info(`[BLOCK ${tx.block} PERSISTED]`);
 }
