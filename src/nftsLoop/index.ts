@@ -6,6 +6,8 @@ import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { MemesSeason } from '../entities/ISeason';
 import { NFTOwner } from '../entities/INFTOwner';
+import { getDataSource } from '../db';
+import { DISTRIBUTION_NORMALIZED_TABLE } from '../constants';
 
 const logger = Logger.get('NFTS_LOOP');
 
@@ -18,6 +20,47 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 async function nftsLoop() {
-  await nfts();
-  await findMemesExtendedData();
+  // await nfts();
+  // await findMemesExtendedData();
+  await updateDistributionInfo();
+}
+
+async function updateDistributionInfo() {
+  const missingInfoDistributions: { contract: string; card_id: number }[] =
+    await getDataSource().manager.query(
+      `SELECT DISTINCT contract, card_id 
+      FROM ${DISTRIBUTION_NORMALIZED_TABLE} 
+      WHERE card_name is null OR card_name = '' OR mint_date is null;`
+    );
+
+  if (missingInfoDistributions.length === 0) {
+    logger.info(`[NO MISSING DISTRIBUTION INFO]`);
+    return;
+  }
+
+  logger.info(
+    `[MISSING INFO DISTRIBUTIONS: ${missingInfoDistributions.length}]`
+  );
+
+  for (const distribution of missingInfoDistributions) {
+    const nft = await getDataSource()
+      .getRepository(NFT)
+      .findOne({
+        where: {
+          contract: distribution.contract,
+          id: distribution.card_id
+        }
+      });
+    if (nft) {
+      await getDataSource().manager.query(
+        `UPDATE ${DISTRIBUTION_NORMALIZED_TABLE} 
+          SET card_name = '${nft.name}', mint_date = '${nft.mint_date
+          .toISOString()
+          .slice(0, 19)
+          .replace('T', ' ')}'
+          WHERE contract = '${distribution.contract}' 
+          AND card_id = ${distribution.card_id};`
+      );
+    }
+  }
 }

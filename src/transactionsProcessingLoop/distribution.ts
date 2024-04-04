@@ -8,10 +8,7 @@ import {
 import { getDataSource } from '../db';
 import { DistributionNormalized } from '../entities/IDistribution';
 import { Transaction } from '../entities/ITransaction';
-import {
-  TransactionsProcessedDistributionBlock,
-  TransactionsProcessedDistributionTransaction
-} from '../entities/ITransactionsProcessing';
+import { TransactionsProcessedDistributionBlock } from '../entities/ITransactionsProcessing';
 import { areEqualAddresses } from '../helpers';
 import { Logger } from '../logging';
 

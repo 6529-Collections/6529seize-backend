@@ -88,10 +88,10 @@ async function replay() {
         dn = {
           contract: entry.contract,
           card_id: entry.card_id,
-          card_name: nft[0]?.name ?? '',
+          card_name: nft[0]?.name ?? null,
           mint_date:
             nft[0]?.mint_date.toISOString().slice(0, 19).replace('T', ' ') ??
-            '',
+            null,
           wallet: entry.wallet,
           wallet_display: ens[0]?.display ?? entry.wallet,
           allowlist: [],
