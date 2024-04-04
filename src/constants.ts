@@ -2,6 +2,8 @@ import { Network } from 'alchemy-sdk';
 
 export const TDH_BLOCKS_TABLE = 'tdh_blocks';
 export const TRANSACTIONS_TABLE = 'transactions';
+export const TRANSACTIONS_PROCESSED_DISTRIBUTION_BLOCKS_TABLE =
+  'transactions_processed_distribution_blocks';
 export const NFTS_TABLE = 'nfts';
 export const NFTS_MEME_LAB_TABLE = 'nfts_meme_lab';
 export const MEME_LAB_ROYALTIES_TABLE = 'meme_lab_royalties';
@@ -34,6 +36,7 @@ export const PROFILES_ARCHIVE_TABLE = 'profiles_archive';
 export const TEAM_TABLE = 'team';
 export const DISTRIBUTION_TABLE = 'distribution';
 export const DISTRIBUTION_PHOTO_TABLE = 'distribution_photo';
+export const DISTRIBUTION_NORMALIZED_TABLE = 'distribution_normalized';
 export const TDH_GLOBAL_HISTORY_TABLE = 'tdh_global_history';
 export const TDH_HISTORY_TABLE = 'tdh_history';
 export const NFTDELEGATION_BLOCKS_TABLE = 'nftdelegation_blocks';

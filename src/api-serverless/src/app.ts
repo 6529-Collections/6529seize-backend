@@ -51,11 +51,7 @@ import {
   SEIZE_SETTINGS,
   SORT_DIRECTIONS
 } from './api-constants';
-import {
-  DISTRIBUTION_SORT,
-  MEMES_EXTENDED_SORT,
-  TRANSACTION_FILTERS
-} from './api-filters';
+import { MEMES_EXTENDED_SORT, TRANSACTION_FILTERS } from './api-filters';
 import { parseTdhResultsFromDB } from '../../sql_helpers';
 import { loadLocalConfig, loadSecrets } from '../../env';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
@@ -592,47 +588,8 @@ loadApi().then(() => {
     }
   );
 
-  apiRouter.get(
-    `/distribution/:contract/:nft_id`,
-    function (req: any, res: any) {
-      const contract = req.params.contract;
-      const nftId = req.params.nft_id;
-      const wallets = req.query.wallet;
-      const phases = req.query.phase;
-
-      const pageSize: number =
-        req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
-          ? parseInt(req.query.page_size)
-          : DISTRIBUTION_PAGE_SIZE;
-      const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-      const sort =
-        req.query.sort && DISTRIBUTION_SORT.includes(req.query.sort)
-          ? req.query.sort
-          : 'phase';
-
-      const sortDir =
-        req.query.sort_direction &&
-        SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
-          ? req.query.sort_direction
-          : 'desc';
-      db.fetchDistributionForNFT(
-        contract,
-        nftId,
-        wallets,
-        phases,
-        pageSize,
-        page,
-        sort,
-        sortDir
-      ).then((result) => {
-        returnPaginatedResult(result, req, res);
-      });
-    }
-  );
-
   apiRouter.get(`/distributions`, function (req: any, res: any) {
-    const wallets = req.query.wallet;
+    const search = req.query.search;
     const cards = req.query.card_id;
     const contracts = req.query.contract;
 
@@ -641,7 +598,7 @@ loadApi().then(() => {
         ? parseInt(req.query.page_size)
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    db.fetchDistributions(wallets, cards, contracts, pageSize, page).then(
+    db.fetchDistributions(search, cards, contracts, pageSize, page).then(
       (result) => {
         returnPaginatedResult(result, req, res);
       }

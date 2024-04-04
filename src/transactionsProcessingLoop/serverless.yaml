@@ -1,0 +1,35 @@
+service: transactionsProcessingLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  memorySize: 5140
+  timeout: 900
+
+custom:
+  chainIDs:
+    staging: 1
+    prod: 1
+
+functions:
+  transactionsProcessingLoop:
+    handler: index.handler
+    name: transactionsProcessingLoop
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule: rate(1 minute)
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'transactionsProcessingLoop_${opt:stage, self:provider.stage}'
+      NEXTGEN_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
+      TRANSACTIONS_PROCESSING_RESET: false
