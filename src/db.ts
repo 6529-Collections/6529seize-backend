@@ -434,6 +434,12 @@ export async function fetchMaxTransactionsBlockNumber(): Promise<number> {
   return r.length > 0 ? r[0].max_block : 0;
 }
 
+export async function fetchMaxTransactionByBlockNumber(): Promise<Transaction> {
+  const sql = `SELECT * FROM ${TRANSACTIONS_TABLE} WHERE block = (SELECT MAX(block) FROM ${TRANSACTIONS_TABLE});`;
+  const r = await sqlExecutor.execute(sql);
+  return r.length > 0 ? r[0] : null;
+}
+
 export async function fetchTransactionAddressesFromBlock(
   contracts: string[],
   fromBlock: number,

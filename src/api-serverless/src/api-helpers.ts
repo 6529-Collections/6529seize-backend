@@ -116,3 +116,19 @@ export function resolveSortDirection(direction: any) {
     ? direction
     : 'asc';
 }
+
+export function getSearchFilters(columnNames: string[], search: string) {
+  let filters = '';
+  const params: any = {};
+  search
+    .toLowerCase()
+    .split(',')
+    .forEach((s: string, index: number) => {
+      params[`search${index}`] = `%${s}%`;
+      filters = constructFiltersOR(
+        filters,
+        columnNames.map((c) => `${c} like :search${index}`).join(' OR ')
+      );
+    });
+  return { filters, params };
+}

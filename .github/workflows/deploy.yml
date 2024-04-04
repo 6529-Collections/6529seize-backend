@@ -47,6 +47,7 @@ on:
           - tdhLoop
           - teamLoop
           - transactionsLoop
+          - transactionsProcessingLoop
 
 env:
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}

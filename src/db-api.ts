@@ -5,6 +5,7 @@ import {
   CONSOLIDATIONS_TABLE,
   DELEGATION_ALL_ADDRESS,
   DELEGATIONS_TABLE,
+  DISTRIBUTION_NORMALIZED_TABLE,
   DISTRIBUTION_PHOTO_TABLE,
   DISTRIBUTION_TABLE,
   ENS_TABLE,
@@ -47,7 +48,10 @@ import { DbPoolName, DbQueryOptions } from './db-query.options';
 import { Logger } from './logging';
 import { calculateLevel } from './profiles/profile-level';
 import { Nft } from 'alchemy-sdk';
-import { constructFilters } from './api-serverless/src/api-helpers';
+import {
+  constructFilters,
+  getSearchFilters
+} from './api-serverless/src/api-helpers';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -975,146 +979,62 @@ export async function fetchDistributionPhases(
   };
 }
 
-export async function fetchDistributionForNFT(
-  contract: string,
-  cardId: number,
-  wallets: string,
-  phases: string,
-  pageSize: number,
-  page: number,
-  sort: string,
-  sortDir: string
-) {
-  const params: any = {};
-  let filters = constructFilters(
-    '',
-    `${DISTRIBUTION_TABLE}.contract = :contract`
-  );
-  params.contract = contract;
-
-  filters = constructFilters(filters, `card_id = :card_id`);
-  params.card_id = cardId;
-
-  if (wallets) {
-    const resolvedWallets = await resolveEns(wallets);
-    if (resolvedWallets.length == 0) {
-      return returnEmpty();
-    }
-    filters += ` AND ${DISTRIBUTION_TABLE}.wallet in (:wallets)`;
-    params.wallets = resolvedWallets;
-  }
-  if (phases) {
-    filters = constructFilters(filters, `phase in (:phase)`);
-    params.phase = phases.split(',');
-  }
-
-  let joins = ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
-
-  joins += ` LEFT JOIN ${TRANSACTIONS_TABLE} ON ${DISTRIBUTION_TABLE}.contract = ${TRANSACTIONS_TABLE}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${TRANSACTIONS_TABLE}.token_id AND (${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
-    MANIFOLD
-  )} OR ${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
-    NULL_ADDRESS
-  )}) AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_TABLE}.to_address and value > 0`;
-
-  let sortSortDir = sortDir;
-  if (sort == 'phase') {
-    sortSortDir = sortDir == 'asc' ? 'desc' : 'asc';
-  }
-  const phaseSortDir = sortDir == 'asc' ? 'desc' : 'asc';
-  return fetchPaginated(
-    DISTRIBUTION_TABLE,
-    params,
-    `${sort} ${sortSortDir}, phase ${phaseSortDir}, count ${sortDir}, wallet_balance ${sortDir}, wallet_tdh ${sortDir}`,
-    pageSize,
-    page,
-    filters,
-    `${DISTRIBUTION_TABLE}.*, ${ENS_TABLE}.display, SUM(${TRANSACTIONS_TABLE}.token_count) as card_mint_count`,
-    joins,
-    `${DISTRIBUTION_TABLE}.wallet, ${DISTRIBUTION_TABLE}.created_at, ${DISTRIBUTION_TABLE}.phase, ${ENS_TABLE}.display`
-  );
-}
-
 export async function fetchDistributions(
-  wallets: string,
+  search: string,
   cards: string,
   contracts: string,
   pageSize: number,
   page: number
 ) {
-  if (!wallets && !cards && !contracts) {
+  if (!search && !cards && !contracts) {
     return returnEmpty();
   }
 
   let filters = '';
-  const params: any = {};
+  let params: any = {};
 
-  if (wallets) {
-    const resolvedWallets = await resolveEns(wallets);
-    if (resolvedWallets.length == 0) {
-      return returnEmpty();
-    }
-    filters = constructFilters(
-      filters,
-      `${DISTRIBUTION_TABLE}.wallet in (:wallets)`
+  if (search) {
+    const searchFilters = getSearchFilters(
+      [
+        `${DISTRIBUTION_NORMALIZED_TABLE}.wallet`,
+        `${DISTRIBUTION_NORMALIZED_TABLE}.wallet_display`
+      ],
+      search
     );
-    params.wallets = resolvedWallets;
+    filters = constructFilters(filters, `(${searchFilters.filters})`);
+    params = {
+      ...params,
+      ...searchFilters.params
+    };
   }
   if (cards) {
     filters = constructFilters(
       filters,
-      `${DISTRIBUTION_TABLE}.card_id in (:cards)`
+      `${DISTRIBUTION_NORMALIZED_TABLE}.card_id in (:cards)`
     );
     params.cards = cards.split(',');
   }
   if (contracts) {
     filters = constructFilters(
       filters,
-      `${DISTRIBUTION_TABLE}.contract in (:contracts)`
+      `${DISTRIBUTION_NORMALIZED_TABLE}.contract in (:contracts)`
     );
     params.contracts = contracts.split(',');
   }
 
-  let joins = `LEFT JOIN ${NFTS_TABLE} ON ${DISTRIBUTION_TABLE}.card_id=${NFTS_TABLE}.id AND ${DISTRIBUTION_TABLE}.contract=${NFTS_TABLE}.contract`;
-  joins += ` LEFT JOIN ${NFTS_MEME_LAB_TABLE} ON ${DISTRIBUTION_TABLE}.card_id=${NFTS_MEME_LAB_TABLE}.id AND ${DISTRIBUTION_TABLE}.contract=${NFTS_MEME_LAB_TABLE}.contract`;
-  joins += ` LEFT JOIN ${TRANSACTIONS_TABLE} ON ${DISTRIBUTION_TABLE}.contract = ${TRANSACTIONS_TABLE}.contract AND ${DISTRIBUTION_TABLE}.card_id = ${TRANSACTIONS_TABLE}.token_id AND (${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
-    MANIFOLD
-  )} OR ${TRANSACTIONS_TABLE}.from_address=${mysql.escape(
-    NULL_ADDRESS
-  )}) AND ${DISTRIBUTION_TABLE}.wallet=${TRANSACTIONS_TABLE}.to_address AND ${TRANSACTIONS_TABLE}.value > 0`;
-  joins += ` LEFT JOIN ${ENS_TABLE} ON ${DISTRIBUTION_TABLE}.wallet=${ENS_TABLE}.wallet `;
-
-  return fetchPaginated(
-    `(
-        SELECT wallet, contract, card_id,
-        SUM(CASE WHEN phase = 'Airdrop' THEN count ELSE 0 END) AS airdrop,
-        SUM(CASE WHEN phase = 'Allowlist' THEN count ELSE 0 END) AS allowlist,
-        SUM(CASE WHEN phase = 'Phase0' THEN count ELSE 0 END) AS phase_0,
-        SUM(CASE WHEN phase = 'Phase1' THEN count ELSE 0 END) AS phase_1,
-        SUM(CASE WHEN phase = 'Phase2' THEN count ELSE 0 END) AS phase_2,
-        SUM(CASE WHEN phase = 'Phase3' THEN count ELSE 0 END) AS phase_3
-        from distribution ${filters} GROUP BY wallet, contract, card_id
-    ) as ${DISTRIBUTION_TABLE}`,
+  const results = await fetchPaginated(
+    DISTRIBUTION_NORMALIZED_TABLE,
     params,
-    `card_mint_date desc, allowlist desc, airdrop desc, phase_0 desc, phase_1 desc, phase_2 desc, phase_3 desc`,
+    `mint_date desc, airdrops desc, total_count desc, total_spots desc, wallet desc, wallet_display desc`,
     pageSize,
     page,
-    filters,
-    `${DISTRIBUTION_TABLE}.wallet,
-    ${ENS_TABLE}.display,
-    ${DISTRIBUTION_TABLE}.contract,
-    ${DISTRIBUTION_TABLE}.card_id,
-    COALESCE(SUM(${TRANSACTIONS_TABLE}.token_count), 0) AS total_minted,
-    COALESCE(${NFTS_TABLE}.name, ${NFTS_MEME_LAB_TABLE}.name) as card_name,
-    COALESCE(${NFTS_TABLE}.mint_date, ${NFTS_MEME_LAB_TABLE}.mint_date, now()) AS card_mint_date,
-    ${DISTRIBUTION_TABLE}.airdrop,
-    ${DISTRIBUTION_TABLE}.allowlist,
-    ${DISTRIBUTION_TABLE}.phase_0,
-    ${DISTRIBUTION_TABLE}.phase_1,
-    ${DISTRIBUTION_TABLE}.phase_2,
-    ${DISTRIBUTION_TABLE}.phase_3`,
-    joins,
-    `${DISTRIBUTION_TABLE}.wallet, ${DISTRIBUTION_TABLE}.contract, ${DISTRIBUTION_TABLE}.card_id`
+    filters
   );
+  results.data.forEach((d: any) => {
+    d.phases = JSON.parse(d.phases);
+    d.allowlist = JSON.parse(d.allowlist);
+  });
+  return results;
 }
 
 export async function fetchConsolidationsForWallet(
