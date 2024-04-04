@@ -39,8 +39,15 @@ export const updateDistributionMints = async (reset?: boolean) => {
     return;
   }
 
-  const maxTransactionsBlock: Transaction = transactions.reduce((prev, curr) =>
-    prev.block > curr.block ? prev : curr
+  const maxTransactionsBlock: {
+    block: number;
+    transaction_date: Date;
+  } = transactions.reduce(
+    (prev, curr) => (prev.block > curr.block ? prev : curr),
+    {
+      block: 0,
+      transaction_date: new Date(0)
+    }
   );
 
   const distinctDistributions: { contract: string; card_id: number }[] =
