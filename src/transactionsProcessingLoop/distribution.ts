@@ -111,10 +111,8 @@ async function processTransaction(
 
 async function persistBlock(tx: Transaction, manager?: EntityManager) {
   let dataSource = manager ?? getDataSource();
-  const repo = await dataSource
-    .getRepository(TransactionsProcessedDistributionBlock)
-    .save({
-      block: tx.block,
-      timestamp: new Date(tx.transaction_date).getTime()
-    });
+  await dataSource.getRepository(TransactionsProcessedDistributionBlock).save({
+    block: tx.block,
+    timestamp: new Date(tx.transaction_date).getTime()
+  });
 }
