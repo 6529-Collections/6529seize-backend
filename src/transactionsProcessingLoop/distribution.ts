@@ -63,10 +63,9 @@ export const updateDistributionMints = async (reset?: boolean) => {
   );
 
   await getDataSource().transaction(async (entityManager) => {
-    const promises = filteredTransactions.map((transaction) =>
-      processTransaction(entityManager, transaction)
-    );
-    await Promise.all(promises);
+    for (const tr of transactions) {
+      await processTransaction(entityManager, tr);
+    }
     await persistBlock(maxTransactionsBlock, entityManager);
   });
 
@@ -94,7 +93,7 @@ async function processTransaction(
 
   if (distribution.length === 1) {
     const newMinted = distribution[0].minted + transaction.token_count;
-    const newTotal = distribution[0].total_count + transaction.token_count;
+    const newTotal = newMinted + distribution[0].airdrops;
     await entityManager.query(
       `UPDATE ${DISTRIBUTION_NORMALIZED_TABLE} 
       SET minted = ${newMinted} , total_count = ${newTotal}
