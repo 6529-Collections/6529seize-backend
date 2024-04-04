@@ -1,4 +1,4 @@
-import { Entity, Index, PrimaryColumn } from 'typeorm';
+import { Entity } from 'typeorm';
 import { TRANSACTIONS_PROCESSED_DISTRIBUTION_BLOCKS_TABLE } from '../constants';
 import { BlockEntity } from './IBlock';
 

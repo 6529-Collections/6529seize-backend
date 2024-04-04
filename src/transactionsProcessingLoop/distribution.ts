@@ -39,7 +39,7 @@ export const updateDistributionMints = async (reset?: boolean) => {
     return;
   }
 
-  const maxTransactionsBlock: Transaction = transactions?.reduce((prev, curr) =>
+  const maxTransactionsBlock: Transaction = transactions.reduce((prev, curr) =>
     prev.block > curr.block ? prev : curr
   );
 

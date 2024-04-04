@@ -20,8 +20,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 async function nftsLoop() {
-  // await nfts();
-  // await findMemesExtendedData();
+  await nfts();
+  await findMemesExtendedData();
   await updateDistributionInfo();
 }
 

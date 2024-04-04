@@ -51,11 +51,7 @@ import {
   SEIZE_SETTINGS,
   SORT_DIRECTIONS
 } from './api-constants';
-import {
-  DISTRIBUTION_SORT,
-  MEMES_EXTENDED_SORT,
-  TRANSACTION_FILTERS
-} from './api-filters';
+import { MEMES_EXTENDED_SORT, TRANSACTION_FILTERS } from './api-filters';
 import { parseTdhResultsFromDB } from '../../sql_helpers';
 import { loadLocalConfig, loadSecrets } from '../../env';
 
