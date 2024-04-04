@@ -21,7 +21,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 async function replay() {
-  // logger.info(`[CUSTOM REPLAY NOT IMPLEMENTED]`);
+  logger.info(`[CUSTOM REPLAY NOT IMPLEMENTED]`);
+  return;
 
   const distinctDistributions: { contract: string; card_id: number }[] =
     await getDataSource().manager.query(
