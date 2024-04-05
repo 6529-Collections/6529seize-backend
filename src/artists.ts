@@ -22,7 +22,7 @@ function splitArtists(artist: string) {
   return a;
 }
 
-export const findArtists = async (
+export const processArtists = async (
   startingArtists: Artist[],
   nfts: BaseNFT[]
 ) => {

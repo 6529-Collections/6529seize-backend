@@ -46,19 +46,28 @@ router.get(
         curation_criteria_id?: string;
         id_less_than?: number;
         root_drop_id?: number;
+        input_profile?: string;
       },
       any
     >,
     res: Response<ApiResponse<DropFull[]>>
   ) => {
+    const inputProfileId = req.query.input_profile
+      ? await profilesService
+          .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+            req.query.input_profile
+          )
+          ?.then((result) => result?.profile?.external_id)
+      : undefined;
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
     const curation_criteria_id = req.query.curation_criteria_id ?? null;
     const root_drop_id = parseIntOrNull(req.query.root_drop_id);
     const createdDrop = await dropsService.findLatestDrops({
-      amount: limit < 0 || limit > 200 ? 10 : limit,
+      amount: limit < 0 || limit > 20 ? 10 : limit,
       curation_criteria_id,
       id_less_than: parseNumberOrNull(req.query.id_less_than),
-      root_drop_id
+      root_drop_id,
+      input_profile_id: inputProfileId
     });
     res.send(createdDrop);
   }
@@ -67,14 +76,30 @@ router.get(
 router.get(
   '/:drop_id',
   async (
-    req: Request<{ drop_id: number }, any, any, any, any>,
+    req: Request<
+      { drop_id: number },
+      any,
+      any,
+      { input_profile?: string },
+      any
+    >,
     res: Response<ApiResponse<DropFull>>
   ) => {
+    const inputProfileId = req.query.input_profile
+      ? await profilesService
+          .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+            req.query.input_profile
+          )
+          ?.then((result) => result?.profile?.external_id)
+      : undefined;
     const dropId = parseNumberOrNull(req.params.drop_id);
     if (!dropId) {
       throw new NotFoundException(`Drop ${req.params.drop_id} not found`);
     }
-    const drop = await dropsService.findDropByIdOrThrow(dropId);
+    const drop = await dropsService.findDropByIdOrThrow({
+      dropId,
+      inputProfileId
+    });
     res.send(drop);
   }
 );
@@ -171,7 +196,10 @@ router.post(
       drop_id: dropId,
       rating: amount
     });
-    const drop = await dropsService.findDropByIdOrThrow(dropId);
+    const drop = await dropsService.findDropByIdOrThrow({
+      dropId,
+      inputProfileId: raterProfileId
+    });
     res.send(drop);
   }
 );

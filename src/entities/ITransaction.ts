@@ -53,6 +53,15 @@ export class BaseTransaction {
 
   @Column({ type: 'double' })
   gas!: number;
+
+  @Column({ type: 'double', default: 0 })
+  eth_price_usd!: number;
+
+  @Column({ type: 'double', default: 0 })
+  value_usd!: number;
+
+  @Column({ type: 'double', default: 0 })
+  gas_usd!: number;
 }
 
 @Entity('transactions')

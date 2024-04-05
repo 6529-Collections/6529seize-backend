@@ -5,6 +5,7 @@ import { DropFull } from './drops.types';
 import { NotFoundException } from '../exceptions';
 import { ProfileMin } from '../profiles/profile-min';
 import { Drop } from '../entities/IDrop';
+import { distinct } from '../helpers';
 
 export class DropsService {
   constructor(
@@ -13,7 +14,13 @@ export class DropsService {
   ) {}
 
   public async findDropByIdOrThrow(
-    dropId: number,
+    {
+      dropId,
+      inputProfileId
+    }: {
+      dropId: number;
+      inputProfileId?: string;
+    },
     connection?: ConnectionWrapper<any>
   ): Promise<DropFull> {
     const dropEntity = await this.dropsDb
@@ -24,21 +31,24 @@ export class DropsService {
         }
         return drop;
       });
-    return this.convertToDropFulls([dropEntity], connection).then(
-      (it) => it[0]!
-    );
+    return this.convertToDropFulls(
+      { dropEntities: [dropEntity], inputProfileId },
+      connection
+    ).then((it) => it[0]!);
   }
 
   public async findLatestDrops({
     amount,
     curation_criteria_id,
     id_less_than,
-    root_drop_id
+    root_drop_id,
+    input_profile_id
   }: {
     curation_criteria_id: string | null;
     id_less_than: number | null;
     root_drop_id: number | null;
     amount: number;
+    input_profile_id?: string;
   }): Promise<DropFull[]> {
     const dropEntities = await this.dropsDb.findLatestDropsGroupedInStorms({
       amount,
@@ -46,30 +56,47 @@ export class DropsService {
       curation_criteria_id,
       root_drop_id
     });
-    return await this.convertToDropFulls(dropEntities);
+    return await this.convertToDropFulls({
+      dropEntities: dropEntities,
+      inputProfileId: input_profile_id
+    });
   }
 
   private async convertToDropFulls(
-    dropEntities: (Drop & { max_storm_sequence: number })[],
+    {
+      dropEntities,
+      inputProfileId
+    }: {
+      dropEntities: (Drop & { max_storm_sequence: number })[];
+      inputProfileId?: string;
+    },
     connection?: ConnectionWrapper<any>
   ): Promise<DropFull[]> {
     const dropIds = dropEntities.map((it) => it.id);
-    const mentions = await this.dropsDb.findMentionsByDropIds(
-      dropIds,
+    const {
+      mentions,
+      referencedNfts,
+      metadata,
+      dropsTopRaters,
+      dropsTopCategories,
+      dropsInputProfileCategories,
+      dropsRatings,
+      dropsRatingsByInputProfile
+    } = await this.getAllDropsRelatedData(
+      {
+        dropIds,
+        inputProfileId
+      },
       connection
     );
-    const referencedNfts = await this.dropsDb.findReferencedNftsByDropIds(
-      dropIds,
-      connection
-    );
-    const metadata = await this.dropsDb.findMetadataByDropIds(
-      dropIds,
-      connection
-    );
-    const allProfileIds = [
+    const raterProfileIds = Object.values(dropsTopRaters)
+      .map((it) => it.map((r) => r.rater_profile_id))
+      .flat();
+    const allProfileIds = distinct([
       ...dropEntities.map((it) => it.author_id),
-      ...mentions.map((it) => it.mentioned_profile_id)
-    ];
+      ...mentions.map((it) => it.mentioned_profile_id),
+      ...raterProfileIds
+    ]);
     const profileMins = await this.profilesService.getProfileMinsByIds(
       allProfileIds
     );
@@ -80,10 +107,6 @@ export class DropsService {
       await this.profilesService.getNewestVersionOfArchivedProfileHandles(
         missingProfileIds
       );
-    const dropsRatings = await this.dropsDb.findDropsTotalRating(
-      dropIds,
-      connection
-    );
     const profilesByIds = allProfileIds.reduce((acc, profileId) => {
       const activeProfile = profileMins.find((it) => it.id === profileId);
       let profileMin = activeProfile;
@@ -144,17 +167,131 @@ export class DropsService {
             profilesByIds[it.mentioned_profile_id]?.profile.handle ?? null
         })),
       metadata: metadata.filter((it) => it.drop_id === dropEntity.id),
-      rep: dropsRatings[dropEntity.id] ?? 0
+      rep: dropsRatings[dropEntity.id]?.rating ?? 0,
+      total_number_of_rep_givers:
+        dropsRatings[dropEntity.id]?.distinct_raters ?? 0,
+      total_number_of_categories:
+        dropsRatings[dropEntity.id]?.distinct_categories ?? 0,
+      top_rep_givers: (dropsTopRaters[dropEntity.id] ?? [])
+        .map((rater) => ({
+          rep_given: rater.rating,
+          profile: profilesByIds[rater.rater_profile_id]!.profile
+        }))
+        .sort((a, b) => b.rep_given - a.rep_given),
+      top_rep_categories: (dropsTopCategories[dropEntity.id] ?? [])
+        .map((cat) => ({ rep_given: cat.rating, category: cat.category }))
+        .sort((a, b) => b.rep_given - a.rep_given),
+      rep_given_by_input_profile: inputProfileId
+        ? dropsRatingsByInputProfile[dropEntity.id] ?? 0
+        : null,
+      input_profile_categories: inputProfileId
+        ? (dropsInputProfileCategories[dropEntity.id] ?? []).map((cat) => ({
+            category: cat.category,
+            rep_given: cat.total_rating,
+            rep_given_by_input_profile: cat.profile_rating
+          }))
+        : null
     }));
+  }
+
+  private async getAllDropsRelatedData(
+    { dropIds, inputProfileId }: { dropIds: number[]; inputProfileId?: string },
+    connection?: ConnectionWrapper<any>
+  ) {
+    const [
+      mentions,
+      referencedNfts,
+      metadata,
+      dropsTopRaters,
+      dropsTopCategories,
+      dropsInputProfileCategories,
+      dropsRatings,
+      dropsRatingsByInputProfile
+    ] = await Promise.all([
+      this.dropsDb.findMentionsByDropIds(dropIds, connection),
+      this.dropsDb.findReferencedNftsByDropIds(dropIds, connection),
+      this.dropsDb.findMetadataByDropIds(dropIds, connection),
+      this.dropsDb.findDropsTopRepRaters(dropIds, connection),
+      this.dropsDb.findDropsTopRepCategories(dropIds, connection),
+      this.findInputProfilesCategoryRepsForDrops(
+        inputProfileId,
+        dropIds,
+        connection
+      ),
+      this.dropsDb.findDropsTotalRepStats(dropIds, connection),
+      this.findInputProfilesTotalRepsForDrops(
+        inputProfileId,
+        dropIds,
+        connection
+      )
+    ]);
+    return {
+      mentions,
+      referencedNfts,
+      metadata,
+      dropsTopRaters,
+      dropsTopCategories,
+      dropsInputProfileCategories,
+      dropsRatings,
+      dropsRatingsByInputProfile
+    };
+  }
+
+  private async findInputProfilesCategoryRepsForDrops(
+    inputProfileId: string | undefined,
+    dropIds: number[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<
+    Record<
+      number,
+      { category: string; profile_rating: number; total_rating: number }[]
+    >
+  > {
+    if (!inputProfileId) {
+      return {};
+    }
+    return this.dropsDb.findDropsCategoryRepsByProfile(
+      dropIds,
+      inputProfileId,
+      connection
+    );
+  }
+
+  private async findInputProfilesTotalRepsForDrops(
+    inputProfileId: string | undefined,
+    dropIds: number[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<number, number>> {
+    if (!inputProfileId) {
+      return {};
+    }
+    return this.dropsDb.findDropsTotalRepByProfile(
+      dropIds,
+      inputProfileId,
+      connection
+    );
   }
 
   async findProfilesLatestDrops(param: {
     amount: number;
     profile_id: string;
     id_less_than: number | null;
+    inputProfileId?: string;
   }): Promise<DropFull[]> {
     const dropEntities = await this.dropsDb.findProfileRootDrops(param);
-    return await this.convertToDropFulls(dropEntities);
+    return await this.convertToDropFulls({
+      dropEntities,
+      inputProfileId: param.inputProfileId
+    });
+  }
+
+  async findAvailableTdhForRepForProfile(
+    profileId: string
+  ): Promise<{ available_tdh_for_rep: number }> {
+    const tdhAvailable = await this.dropsDb.findRepLeftForDropsForProfile({
+      profileId
+    });
+    return { available_tdh_for_rep: tdhAvailable };
   }
 }
 
