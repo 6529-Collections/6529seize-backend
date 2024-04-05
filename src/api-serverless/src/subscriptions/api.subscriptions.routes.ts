@@ -21,6 +21,7 @@ import { areEqualAddresses } from '../../../helpers';
 import { ForbiddenException } from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
+import fetch from 'node-fetch';
 const router = asyncRouter();
 
 export default router;
@@ -276,5 +277,35 @@ router.get(
     } else {
       return res.status(404).send('Not found');
     }
+  }
+);
+
+router.get(
+  `/allowlists/:allowlist_id/:phase_id`,
+  async function (
+    req: Request<
+      {
+        allowlist_id: string;
+        phase_id: string;
+      },
+      any,
+      any,
+      any
+    >,
+    res: Response<SubscriptionLog[] | string>
+  ) {
+    const allowlistId = req.params.allowlist_id;
+    const phaseId = req.params.phase_id;
+    const url = `https://allowlist-api.seize.io/allowlists/${allowlistId}`;
+    const auth =
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjBhNzkzMWFjLTY3MGUtNGRkYS04N2Q4LTY2Nzg0NDc0NjVmMCIsInN1YiI6IjB4MDE4N2M5YTE4MjczNmJhMThiNDRlZTgxMzRlZTQzODM3NGNmODdkYyIsImlhdCI6MTcxMjMxMTE3MSwiZXhwIjoxNzQzNzYwNzcxfQ.XekCMqOxQz48sxlgE_WKJzOM4KnReazdVy5aP5g0qHc';
+    const response = await fetch(url, {
+      headers: {
+        accept: 'application/json',
+        Authorization: `Bearer ${auth}`
+      }
+    });
+    const json = await response.json();
+    return res.send(json);
   }
 );
