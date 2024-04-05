@@ -6,6 +6,7 @@ import {
   InvokeModelCommandInput
 } from '@aws-sdk/client-bedrock-runtime';
 
+const MODEL = 'claude';
 const buildOpts: (modelId: string, prompt: string) => any = (
   modelId: string,
   prompt: string
@@ -48,7 +49,7 @@ class BedrockAiPrompter implements AiPrompter {
   constructor(private readonly getBedrock: () => BedrockRuntimeClient) {}
 
   public async promptAndGetReply(prompt: string): Promise<string> {
-    const opts = buildOpts('claude', prompt);
+    const opts = buildOpts(MODEL, prompt);
     const input: InvokeModelCommandInput = opts;
     const response = await this.getBedrock().send(
       new InvokeModelCommand(input)
@@ -59,7 +60,8 @@ class BedrockAiPrompter implements AiPrompter {
 
     const parsedResponse = JSON.parse(jsonString);
     try {
-      return parsedResponse.outputs[0].text ?? '';
+      const output = MODEL === 'claude' ? parsedResponse.content.text : parsedResponse.outputs[0].text;
+      return output ?? '';
     } catch (e) {
       throw new Error(`Unexpexted response from Bedrock: ${jsonString}`);
     }
