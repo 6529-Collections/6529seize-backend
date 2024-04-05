@@ -24,6 +24,7 @@ on:
           - dbMigrationsLoop
           - delegationsLoop
           - discoverEnsLoop
+          - ethPriceLoop
           - marketStatsLoop
           - mediaResizerLoop
           - memeLabLoop
