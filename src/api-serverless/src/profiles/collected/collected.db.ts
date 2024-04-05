@@ -66,7 +66,7 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
        token_id,
        case when contract = '${MEMES_CONTRACT}' then '${CollectionType.MEMES}' else '${CollectionType.GRADIENTS}' end collection,
        sum(balance) as balance
-       from owners
+       from ${NFT_OWNERS_TABLE}
        where contract in ('${MEMES_CONTRACT}', '${GRADIENT_CONTRACT}') and (lower(wallet) = lower(:wallet1)`;
 
     const params: Record<string, string> = { wallet1: wallets[0] };

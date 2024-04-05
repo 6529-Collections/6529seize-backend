@@ -5,10 +5,6 @@ import { DropFull } from './drops.types';
 import { NotFoundException } from '../exceptions';
 import { ProfileMin } from '../profiles/profile-min';
 import { Drop } from '../entities/IDrop';
-import { giveReadReplicaTimeToCatchUp } from '../api-serverless/src/api-helpers';
-import { parseIntOrNull } from '../helpers';
-import { ratingsService } from '../rates/ratings.service';
-import { RateMatter } from '../entities/IRating';
 
 export class DropsService {
   constructor(
@@ -84,6 +80,10 @@ export class DropsService {
       await this.profilesService.getNewestVersionOfArchivedProfileHandles(
         missingProfileIds
       );
+    const dropsRatings = await this.dropsDb.findDropsTotalRating(
+      dropIds,
+      connection
+    );
     const profilesByIds = allProfileIds.reduce((acc, profileId) => {
       const activeProfile = profileMins.find((it) => it.id === profileId);
       let profileMin = activeProfile;
@@ -143,7 +143,8 @@ export class DropsService {
           current_handle:
             profilesByIds[it.mentioned_profile_id]?.profile.handle ?? null
         })),
-      metadata: metadata.filter((it) => it.drop_id === dropEntity.id)
+      metadata: metadata.filter((it) => it.drop_id === dropEntity.id),
+      rep: dropsRatings[dropEntity.id] ?? 0
     }));
   }
 
@@ -154,40 +155,6 @@ export class DropsService {
   }): Promise<DropFull[]> {
     const dropEntities = await this.dropsDb.findProfileRootDrops(param);
     return await this.convertToDropFulls(dropEntities);
-  }
-
-  async updateRatingAndGetDrop(param: {
-    drop_id: string;
-    rater_profile_id: string;
-    rating: number;
-    category: string;
-  }) {
-    const dropId = parseIntOrNull(param.drop_id);
-    if (dropId === null) {
-      throw new NotFoundException(`Drop ${param.drop_id} not found`);
-    }
-    const drop = await this.dropsDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const dropEntity = await this.dropsDb.findDropById(dropId, connection);
-        if (!dropEntity) {
-          throw new NotFoundException(`Drop ${dropId} not found`);
-        }
-        await ratingsService.updateRatingUnsafe(
-          {
-            rater_profile_id: param.rater_profile_id,
-            matter_target_id: dropId.toString(),
-            rating: param.rating,
-            matter_category: param.category,
-            matter: RateMatter.DROP_REP
-          },
-          'USER_EDIT',
-          connection
-        );
-        return this.findDropByIdOrThrow(dropId, connection);
-      }
-    );
-    await giveReadReplicaTimeToCatchUp();
-    return drop;
   }
 }
 

@@ -37,6 +37,7 @@ import { eventScheduler, EventScheduler } from '../events/event.scheduler';
 import converter from 'json-2-csv';
 import { arweaveFileUploader, ArweaveFileUploader } from '../arweave';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
+import { dropsDb, DropsDb } from '../drops/drops.db';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -47,7 +48,8 @@ export class RatingsService {
     private readonly repService: RepService,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly eventScheduler: EventScheduler,
-    private readonly arweaveFileUploader: ArweaveFileUploader
+    private readonly arweaveFileUploader: ArweaveFileUploader,
+    private readonly dropsDb: DropsDb
   ) {}
 
   public async getAggregatedRatingOnMatter(
@@ -55,6 +57,18 @@ export class RatingsService {
     connection?: ConnectionWrapper<any>
   ): Promise<AggregatedRating> {
     return this.ratingsDb.getAggregatedRatingOnMatter(request, connection);
+  }
+
+  public async getRatesSpentToTargetOnMatterForProfile(
+    param: {
+      matter: RateMatter;
+      profile_id: string;
+      matter_target_id: string;
+      matter_category: string;
+    },
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
+    return this.ratingsDb.getCurrentRatingOnMatterForProfile(param, connection);
   }
 
   public async getRatesLeftOnMatterForProfile({
@@ -264,21 +278,28 @@ export class RatingsService {
   ) {
     this.logger.info(`Reducing rates for profile ${raterProfileId}`);
     for (const overRatedMatter of profileMatters) {
-      const ratings = await this.ratingsDb.lockRatingsOnMatterForUpdate({
-        rater_profile_id: raterProfileId,
-        matter: overRatedMatter.matter
-      });
       const coefficient = overRatedMatter.rater_tdh / overRatedMatter.tally;
       await this.ratingsDb.executeNativeQueriesInTransaction(
         async (connection) => {
+          const ratings = await this.ratingsDb.lockRatingsOnMatterForUpdate(
+            {
+              rater_profile_id: raterProfileId,
+              matter: overRatedMatter.matter
+            },
+            connection
+          );
           let overTdh =
             Math.abs(overRatedMatter.tally) - overRatedMatter.rater_tdh;
           for (const rating of ratings) {
-            const newRating =
-              Math.floor(Math.abs(rating.rating * coefficient)) *
-              (rating.rating / Math.abs(rating.rating));
-            overTdh = overTdh - (Math.abs(rating.rating) - Math.abs(newRating));
-            await this.insertLostTdhRating(rating, newRating, connection);
+            if (rating.rating !== 0) {
+              const newRating =
+                Math.floor(Math.abs(rating.rating * coefficient)) *
+                (rating.rating / Math.abs(rating.rating));
+              overTdh =
+                overTdh - (Math.abs(rating.rating) - Math.abs(newRating));
+              await this.insertLostTdhRating(rating, newRating, connection);
+            }
+
             if (overTdh <= 0) {
               break;
             }
@@ -647,5 +668,6 @@ export const ratingsService: RatingsService = new RatingsService(
   repService,
   profileActivityLogsDb,
   eventScheduler,
-  arweaveFileUploader
+  arweaveFileUploader,
+  dropsDb
 );

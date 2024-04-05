@@ -101,21 +101,25 @@ from general_stats
     });
   }
 
-  async lockRatingsOnMatterForUpdate({
-    rater_profile_id,
-    matter
-  }: {
-    rater_profile_id: string;
-    matter: RateMatter;
-  }): Promise<Rating[]> {
+  async lockRatingsOnMatterForUpdate(
+    {
+      rater_profile_id,
+      matter
+    }: {
+      rater_profile_id: string;
+      matter: RateMatter;
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<Rating[]> {
     return this.db.execute(
       `
-          select * from ${RATINGS_TABLE} where rating <> 0 and rater_profile_id = :rater_profile_id and matter = :matter for update
+          select * from ${RATINGS_TABLE} where rater_profile_id = :rater_profile_id and matter = :matter for update
       `,
       {
         rater_profile_id,
         matter
-      }
+      },
+      { wrappedConnection: connection }
     );
   }
 
@@ -189,6 +193,7 @@ from general_stats
                                        r.matter,
                                        sum(r.rating) as tally
                                 from ${RATINGS_TABLE} r
+                                where r.matter in ('REP', 'CIC')
                                 group by 1, 2)
           select rt.rater_profile_id, rt.matter, rt.tally, p.profile_tdh as rater_tdh
           from rate_tallies rt
@@ -206,6 +211,24 @@ from general_stats
       .execute(
         `select sum(abs(rating)) as rating from ${RATINGS_TABLE} where rater_profile_id = :profile_id and matter = :matter`,
         param
+      )
+      .then((results) => results[0]?.rating ?? 0);
+  }
+
+  async getCurrentRatingOnMatterForProfile(
+    param: {
+      profile_id: string;
+      matter_target_id: string;
+      matter_category: string;
+      matter: RateMatter;
+    },
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
+    return this.db
+      .execute(
+        `select rating from ${RATINGS_TABLE} where rater_profile_id = :profile_id and matter = :matter and matter_target_id = :matter_target_id and matter_category = :matter_category`,
+        param,
+        connection ? { wrappedConnection: connection } : undefined
       )
       .then((results) => results[0]?.rating ?? 0);
   }

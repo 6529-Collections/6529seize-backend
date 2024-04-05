@@ -116,7 +116,7 @@ export const fetchOwnerBalancesForWallet = async (wallet: string) => {
     '',
     `${OWNERS_BALANCES_TABLE}.wallet = :wallet`
   );
-  filters = constructFilters(filters, `${WALLETS_TDH_TABLE}.block = :tdhBlock`);
+
   let fields = `
     ${OWNERS_BALANCES_TABLE}.*,
     ${WALLETS_TDH_TABLE}.boost,
@@ -125,11 +125,11 @@ export const fetchOwnerBalancesForWallet = async (wallet: string) => {
     ${WALLETS_TDH_TABLE}.boosted_gradients_tdh,
     ${WALLETS_TDH_TABLE}.boosted_nextgen_tdh`;
 
-  let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${OWNERS_BALANCES_TABLE}.wallet = ${WALLETS_TDH_TABLE}.wallet`;
+  let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${OWNERS_BALANCES_TABLE}.wallet = ${WALLETS_TDH_TABLE}.wallet AND tdh.block = :tdhBlock`;
 
   const r = await fetchPaginated(
     OWNERS_BALANCES_TABLE,
-    { wallet: wallet, tdhBlock: tdhBlock },
+    { wallet, tdhBlock },
     'wallet asc',
     1,
     1,
@@ -213,7 +213,10 @@ export async function fetchMemesOwnerBalancesForConsolidationKey(
   consolidationKey: string
 ) {
   const sql = `
-    SELECT * FROM ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} 
+    SELECT 
+      ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.*,
+      COALESCE(${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.boosted_tdh, 0) as boosted_tdh 
+    FROM ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} 
     LEFT JOIN 
       ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE} 
       ON ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.consolidation_key 
@@ -242,7 +245,15 @@ export async function fetchMemesOwnerBalancesForConsolidationKey(
 
 export async function fetchMemesOwnerBalancesForWallet(wallet: string) {
   const sql = `
-    SELECT * FROM ${OWNERS_BALANCES_MEMES_TABLE} 
+    SELECT 
+      ${OWNERS_BALANCES_MEMES_TABLE}.*,
+      ${WALLETS_TDH_MEMES_TABLE}.tdh,
+      ${WALLETS_TDH_MEMES_TABLE}.boost,
+      ${WALLETS_TDH_MEMES_TABLE}.boosted_tdh,
+      ${WALLETS_TDH_MEMES_TABLE}.tdh__raw,
+      ${WALLETS_TDH_MEMES_TABLE}.tdh_rank,
+      ${WALLETS_TDH_MEMES_TABLE}.boost
+    FROM ${OWNERS_BALANCES_MEMES_TABLE} 
     LEFT JOIN 
       ${WALLETS_TDH_MEMES_TABLE} 
       ON ${OWNERS_BALANCES_MEMES_TABLE}.wallet = ${WALLETS_TDH_MEMES_TABLE}.wallet 

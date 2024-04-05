@@ -2,6 +2,8 @@ import { Network } from 'alchemy-sdk';
 
 export const TDH_BLOCKS_TABLE = 'tdh_blocks';
 export const TRANSACTIONS_TABLE = 'transactions';
+export const TRANSACTIONS_PROCESSED_DISTRIBUTION_BLOCKS_TABLE =
+  'transactions_processed_distribution_blocks';
 export const NFTS_TABLE = 'nfts';
 export const NFTS_MEME_LAB_TABLE = 'nfts_meme_lab';
 export const MEME_LAB_ROYALTIES_TABLE = 'meme_lab_royalties';
@@ -34,6 +36,7 @@ export const PROFILES_ARCHIVE_TABLE = 'profiles_archive';
 export const TEAM_TABLE = 'team';
 export const DISTRIBUTION_TABLE = 'distribution';
 export const DISTRIBUTION_PHOTO_TABLE = 'distribution_photo';
+export const DISTRIBUTION_NORMALIZED_TABLE = 'distribution_normalized';
 export const TDH_GLOBAL_HISTORY_TABLE = 'tdh_global_history';
 export const TDH_HISTORY_TABLE = 'tdh_history';
 export const NFTDELEGATION_BLOCKS_TABLE = 'nftdelegation_blocks';
@@ -45,6 +48,7 @@ export const NFTS_HISTORY_CLAIMS_TABLE = 'nfts_history_claims';
 export const REMEMES_TABLE = 'rememes';
 export const REMEMES_UPLOADS = 'uploads_rememes';
 export const RATINGS_TABLE = 'ratings';
+export const TDH_SPENT_ON_DROP_REPS_TABLE = 'tdh_spent_on_drop_reps';
 export const ROYALTIES_UPLOADS_TABLE = 'royalties_upload';
 export const EVENTS_TABLE = 'events';
 export const LISTENER_PROCESSED_EVENTS_TABLE = 'listener_processed_events';

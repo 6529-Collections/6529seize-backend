@@ -93,13 +93,6 @@ export const updateNftOwners = async (reset?: boolean) => {
   }
 };
 
-function ownersMatch(o1: NFTOwner, o2: OwnedNft) {
-  if (o1.token_id != o2.token_id) return false;
-  if (!areEqualAddresses(o1.wallet, o2.wallet)) return false;
-  if (!areEqualAddresses(o1.contract, o2.contract)) return false;
-  return true;
-}
-
 export async function getOwnersDelta(
   blockReference: number,
   addresses: Set<string>,

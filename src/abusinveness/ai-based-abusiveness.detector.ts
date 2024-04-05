@@ -18,54 +18,58 @@ export class AiBasedAbusivenessDetector {
     text: string
   ): Promise<AbusivenessDetectionResult> {
     const prompt = `
-Background
+    Background
 
-We operate a social media site in the cryptocurrency space, more specifically in the nft space. This website allows us to give "rep" (aka reputation) points to community members for different activities or characteristics.
-some examples below, that show the rep points being assigned and the classification for each rep.
-+1,000 for "Solidity Programming" +500 for "nude photography" +4,200 for "Pizza Cooking" +6,969 for "Kindness"
-4,200 for "phishing" -100 for "Unreliable" +5,000 for "teaching" +7,540 for "History of Carthage" +4,000 for "cold showers" +4,444 for "bitcoin mining"
-Task
-
-You are going to help us create the allowlist of allowed rep classifications
-The general model is that all rep classifications are allowed except the following five categories
-1. Discriminatory or hate speech on any typical grounds
-2. Personal insults
-3. Generally words that would make a normal user in the cryptotwitter community feel bad or uncomfortable. Given the nature of the community (cryptotwitter and nft twitter) we are more permissive than most social media sites on the following two factors:
-  a. Allowed: Typical cryptotwitter terms. Aka "shitposting" is fine as a term, as is: cryptodickbutt, cabal, n00b, newbie, nerd, and degen.
-  b. Allowed: Nudity as we support nude art photographers
-4. Personal Doxxing Information:  This is information that could dox a person's identity such:
-  a. Proper names (e.g. “John Hammersmith”)
-  b. Indirect workarounds to the above (e.g. “John Hammersmith's father”)
-  c. You can assume that famous people's names such are politicians, celebrities and athletes are not a concern and can be allowed
-Organizational Doxxing Information:  This is information that could dox a person's through their organizational affiliations such as: “CEO of Acme Enterprises” or “VP of Finance, Salesforce.com” or “the person who the VP of Finance at Acme Inc replaced last year”
-Note further that people may submit classifications in different languages. Apply the same rules in that case, taking into account idiomatic use 
-
-Format
-
-The format of the task is as follows:
-We will submit a classification.
-You will return a JSON with the following fields: 
-value - "Allowed" or "Disallowed"
-reason - Only set if value is Disallowed. Contains the rationale of why it is disallowed, in the case you disallowed
-You must return NO other text or explanations as you will be integrated into an automated workflow and we will not be able to understand the text.
-I will share two examples of input and output.
-
-Example 1:
-
-Our Input: 
-Software Developer
-
-Your Output:
-{"value": "Allowed"}
-
-Example 2:
-
-Our Input:
-fuckface
-Your Output:
-{"value": "Disallowed", "reason": "Insulting term"}
-I will now put the classification request after the word "input" and make further requestions in that format.
-input
+    We operate a social media site in the cryptocurrency space, more specifically in the nft space. This website allows us to give "rep" (aka reputation) points to community members for different activities or characteristics.
+    some examples below, that show the rep points being assigned and the classification for each rep.
+    +1,000 for "Solidity Programming" +500 for "nude photography" +4,200 for "Pizza Cooking" +6,969 for "Kindness"
+    4,200 for "phishing" -100 for "Unreliable" +5,000 for "teaching" +7,540 for "History of Carthage" +4,000 for "cold showers" +4,444 for "bitcoin mining"
+    Task
+    
+    You are going to help us create the allowlist of allowed rep classifications
+    The general model is that all rep classifications are allowed except the following five categories
+    1. Discriminatory or hate speech on any typical grounds
+    2. Personal insults
+    3. Generally words that would make a normal user in the cryptotwitter community feel bad or uncomfortable. Given the nature of the community (cryptotwitter and nft twitter) we are more permissive than most social media sites on the following two factors:
+      a. Allowed: Typical cryptotwitter terms. Aka "shitposting" is fine as a term, as is: cryptodickbutt, cabal, n00b, newbie, nerd, and degen.
+      b. Allowed: Nudity as we support nude art photographers
+      c. Allowed: References to Karen, Major Karen. 
+      d. Allowed: Rep that starts with "WWOH" is a fictional story. 
+    4. Personal Doxxing Information:  This is information that could dox a person's identity such:
+      a. Proper names (e.g. “John Hammersmith”)
+      b. Indirect workarounds to the above (e.g. “John Hammersmith's father”)
+      c. You can assume that famous people's names such are politicians, celebrities and athletes are not a concern and can be allowed
+    Organizational Doxxing Information:  This is information that could dox a person's through their organizational affiliations such as: “CEO of Acme Enterprises” or “VP of Finance, Salesforce.com” or “the person who the VP of Finance at Acme Inc replaced last year”
+    Note further that people may submit classifications in different languages. Apply the same rules in that case, taking into account idiomatic use 
+    
+    Format
+    
+    The format of the task is as follows:
+    We will submit a classification, on at a time.
+    You will return a JSON with the following fields: 
+    value - "Allowed" or "Disallowed"
+    reason - Only set if value is Disallowed. Contains the rationale of why it is disallowed, in the case you disallowed
+    You must return NO other text or explanations as you will be integrated into an automated workflow and we will not be able to understand the text.
+    I will share two examples of input and output.
+    
+    Example 1:
+    
+    Our Input: 
+    Software Developer
+    
+    Your Output:
+    {"value": "Allowed"}
+    
+    Example 2:
+    
+    Our Input:
+    fuckface
+    Your Output:
+    {"value": "Disallowed", "reason": "Insulting term"}
+    
+    I will now put the classification request after the word "input" and you respond with a single classificiation.
+    
+    Input
 ${text}
     `.trim();
     const responseMessage = await this.aiPrompter.promptAndGetReply(prompt);
