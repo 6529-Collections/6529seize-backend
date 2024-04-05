@@ -20,7 +20,6 @@ export function getSubscriptionsNetwork(): Network {
 
 export async function discoverTopUps(reset?: boolean) {
   const network = getSubscriptionsNetwork();
-  logger.info(`[NETWORK: ${network}]`);
   const alchemy: Alchemy = getAlchemyInstance(network);
 
   let fromBlock: number;
@@ -34,6 +33,10 @@ export async function discoverTopUps(reset?: boolean) {
   }
 
   const toBlock = await alchemy.core.getBlockNumber();
+
+  logger.info(
+    `[NETWORK: ${network}] : [FROM BLOCK ${fromBlock}] : [TO BLOCK ${toBlock}]`
+  );
 
   const subscriptions = await getAllSubscriptionTopUps(
     alchemy,

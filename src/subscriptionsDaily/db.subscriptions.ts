@@ -23,7 +23,7 @@ const logger = Logger.get('DB_SUBSCRIPTIONS');
 export async function fetchAllAutoSubscriptions() {
   return await getDataSource()
     .getRepository(SubscriptionMode)
-    .find({ where: { automatic: true } });
+    .find({ where: { automatic: true }, order: { created_at: 'ASC' } });
 }
 
 export async function fetchAllNftSubscriptions(contract: string, id: number) {

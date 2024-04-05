@@ -5,6 +5,7 @@ import {
   USE_CASE_AIRDROPS,
   USE_CASE_ALL
 } from '../constants';
+import { Delegation } from '../entities/IDelegation';
 import { sqlExecutor } from '../sql-executor';
 
 export async function fetchDelegatorForAirdropAddress(
@@ -49,4 +50,42 @@ export async function fetchDelegation(
     }
   );
   return result[0]?.my_address.toLowerCase() ?? null;
+}
+
+export async function fetchProcessedDelegations(
+  collection: string,
+  useCase: number
+): Promise<Delegation[]> {
+  const results = await sqlExecutor.execute(
+    `
+    SELECT * FROM (
+      SELECT
+        *,
+        ROW_NUMBER() OVER (
+          PARTITION BY from_address 
+          ORDER BY 
+            CASE 
+              WHEN collection = :collection AND use_case = :useCase THEN 1
+              WHEN collection = :collection AND use_case = :allUseCase THEN 2
+              WHEN collection = :anyCollection AND use_case = :useCase THEN 3
+              WHEN collection = :anyCollection AND use_case = :allUseCase THEN 4
+              ELSE 5
+            END,
+            created_at DESC
+        ) AS rn
+      FROM delegations
+      WHERE 
+        (collection = :collection OR collection = :anyCollection)
+        AND (use_case = :useCase OR use_case = :allUseCase)
+    ) AS ranked
+    WHERE ranked.rn = 1;
+    `,
+    {
+      collection,
+      useCase,
+      allUseCase: USE_CASE_ALL,
+      anyCollection: DELEGATION_ALL_ADDRESS
+    }
+  );
+  return results;
 }

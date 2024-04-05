@@ -155,11 +155,15 @@ async function createFinalSubscriptions(newMeme: number, dateStr: string) {
 
     if (balance) {
       if (balance.balance >= MEMES_MINT_PRICE) {
+        const createdAt = sub.created_at?.getTime() ?? Time.now().toMillis();
+        const subscribedAt = Time.millis(createdAt).toIsoString();
         const finalSub: NFTFinalSubscription = {
+          subscribed_at: subscribedAt,
           consolidation_key: sub.consolidation_key,
           contract: sub.contract,
           token_id: sub.token_id,
-          airdrop_address: airdropAddress ?? consolidationWallets[0]
+          airdrop_address: airdropAddress ?? consolidationWallets[0],
+          balance: balance.balance
         };
         finalSubscriptions.push(finalSub);
         newSubscriptionLogs.push({
@@ -186,6 +190,14 @@ async function createFinalSubscriptions(newMeme: number, dateStr: string) {
 
   await Promise.all(subscriptionPromises);
 
+  finalSubscriptions.sort((a, d) => {
+    // order subscriptions by created_at asc and then by balance
+    if (a.subscribed_at === d.subscribed_at) {
+      return d.balance - a.balance;
+    }
+    return a.subscribed_at < d.subscribed_at ? -1 : 1;
+  });
+
   return { finalSubscriptions, newSubscriptionLogs };
 }
 
@@ -200,6 +212,8 @@ async function uploadFinalSubscriptions(
   const profiles = await fetchAllProfiles();
   const finalUpload: NFTFinalSubscriptionWithDateAndProfile[] =
     finalSubscriptions.map((sub) => {
+      const createdAt = sub.created_at?.getTime() ?? Time.now().toMillis();
+      const subscribedAt = Time.millis(createdAt).toIsoString();
       const profile = profiles.find((p) =>
         sub.consolidation_key
           .split('-')
@@ -207,11 +221,13 @@ async function uploadFinalSubscriptions(
       );
       return {
         date: Time.now().toIsoDateString(),
+        subscribed_at: subscribedAt,
         contract: contract,
         token_id: newMeme,
         profile: profile?.handle ?? '-',
         consolidation_key: sub.consolidation_key,
-        airdrop_address: sub.airdrop_address
+        airdrop_address: sub.airdrop_address,
+        balance: sub.balance
       };
     });
   const csv = await converter.json2csvAsync(finalUpload);

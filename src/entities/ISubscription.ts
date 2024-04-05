@@ -92,6 +92,12 @@ export class NFTSubscription extends NFTSubscriptionFields {}
 export class NFTFinalSubscription extends NFTSubscriptionFields {
   @Column({ type: 'text' })
   airdrop_address!: string;
+
+  @Column({ type: 'double' })
+  balance!: number;
+
+  @Column({ type: 'text', default: null })
+  subscribed_at!: string;
 }
 
 @Entity(SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE)

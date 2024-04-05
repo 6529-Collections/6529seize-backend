@@ -6,6 +6,7 @@ import {
   NFTFinalSubscription,
   NFTFinalSubscriptionUpload,
   NFTSubscription,
+  RedeemedSubscription,
   SubscriptionBalance,
   SubscriptionLog,
   SubscriptionMode
@@ -23,6 +24,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     NFTFinalSubscriptionUpload,
     SubscriptionLog,
     SubscriptionBalance,
+    RedeemedSubscription,
     Profile
   ]);
   await updateSubscriptions(process.env.SUBSCRIPTIONS_RESET == 'true');
