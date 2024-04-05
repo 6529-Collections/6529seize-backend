@@ -6,6 +6,11 @@ import {
   InvokeModelCommandInput
 } from '@aws-sdk/client-bedrock-runtime';
 
+const LLM = {
+  'claudeId': 'anthropic.claude-3-sonnet-20240229-v1:0',
+  'mixtralId': 'mistral.mixtral-8x7b-instruct-v0:1',
+}
+
 declare let TextDecoder: any;
 
 class BedrockAiPrompter implements AiPrompter {
@@ -13,11 +18,11 @@ class BedrockAiPrompter implements AiPrompter {
 
   public async promptAndGetReply(prompt: string): Promise<string> {
     const input: InvokeModelCommandInput = {
-      modelId: 'mistral.mixtral-8x7b-instruct-v0:1',
+      modelId: LLM.claudeId,
       contentType: 'application/json',
       accept: 'application/json',
       body: JSON.stringify({
-        prompt: `<s>[INST] ${prompt} [/INST]`,
+        prompt: `{"messages":[{"role":"user","content":[{"type": "text", "text": "${prompt}"}]}]}`,
         max_tokens: 1000,
         temperature: 0.7,
         top_p: 0.8,
