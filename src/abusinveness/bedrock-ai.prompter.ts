@@ -60,7 +60,7 @@ class BedrockAiPrompter implements AiPrompter {
 
     const parsedResponse = JSON.parse(jsonString);
     try {
-      const output = MODEL === 'claude' ? JSON.parse(parsedResponse.content[0].text) : parsedResponse.outputs[0].text;
+      const output = MODEL === 'claude' ? parsedResponse.content[0].text : parsedResponse.outputs[0].text;
       return output ?? '';
     } catch (e) {
       throw new Error(`Unexpexted response from Bedrock: ${jsonString}`);
