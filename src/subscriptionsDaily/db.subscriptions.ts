@@ -87,7 +87,7 @@ export async function persistNFTFinalSubscriptions(
       token_id: token_id
     });
     await insertWithoutUpdate(finalRepo, subscriptions);
-    await uploadRepo.upsert(upload, ['date', 'contract', 'token_id']);
+    await uploadRepo.upsert(upload, ['contract', 'token_id']);
 
     await manager.getRepository(SubscriptionLog).insert(logs);
   });

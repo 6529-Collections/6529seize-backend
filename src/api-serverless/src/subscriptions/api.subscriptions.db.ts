@@ -6,6 +6,7 @@ import {
   SUBSCRIPTIONS_LOGS_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+  SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE,
@@ -411,8 +412,29 @@ export async function fetchRedeemedSubscriptionsForConsolidationKey(
     'transaction_date desc',
     pageSize,
     page,
-    filters,
-    ''
+    filters
+  );
+}
+
+export async function fetchSubscriptionUploads(
+  contract: string,
+  pageSize: number,
+  page: number
+) {
+  let filters = '';
+  let params: any = {};
+  if (contract) {
+    filters = constructFilters(filters, `contract = :contract`);
+    params = { contract };
+  }
+
+  return fetchPaginated(
+    SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE,
+    params,
+    'token_id desc',
+    pageSize,
+    page,
+    filters
   );
 }
 

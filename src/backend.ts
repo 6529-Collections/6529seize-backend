@@ -18,10 +18,10 @@ async function start() {
   // await customReplayLoop.handler(null, null as any, null as any);
 
   // await transactionsDiscovery.handler(null, null as any, null as any);
-  await transactionsProcessingLoop.handler(null, null as any, null as any);
+  // await transactionsProcessingLoop.handler(null, null as any, null as any);
 
-  // await subscriptionsDaily.handler(null, null as any, null as any);
-  // await subscriptionsTopUpLoop.handler(null, null as any, null as any);
+  await subscriptionsDaily.handler(null, null as any, null as any);
+  await subscriptionsTopUpLoop.handler(null, null as any, null as any);
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);

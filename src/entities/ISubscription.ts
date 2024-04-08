@@ -108,14 +108,14 @@ export class NFTFinalSubscriptionUpload {
   @CreateDateColumn({ type: 'datetime' })
   created_at?: Date;
 
-  @PrimaryColumn({ type: 'varchar', length: 10 })
-  date?: string;
-
   @PrimaryColumn({ type: 'varchar', length: 100 })
   contract!: string;
 
   @PrimaryColumn({ type: 'bigint' })
   token_id!: number;
+
+  @Column({ type: 'varchar', length: 10 })
+  date?: string;
 
   @Column({ type: 'varchar', length: 100 })
   upload_url!: string;

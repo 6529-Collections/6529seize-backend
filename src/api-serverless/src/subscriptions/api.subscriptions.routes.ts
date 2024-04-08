@@ -13,7 +13,8 @@ import {
   fetchUpcomingMemeSubscriptions,
   updateSubscription,
   fetchLogsForConsolidationKey,
-  fetchRedeemedSubscriptionsForConsolidationKey
+  fetchRedeemedSubscriptionsForConsolidationKey,
+  fetchSubscriptionUploads
 } from './api.subscriptions.db';
 import {
   SubscriptionBalance,
@@ -287,6 +288,30 @@ router.get(
     } else {
       return res.status(404).send('Not found');
     }
+  }
+);
+
+router.get(
+  `/uploads`,
+  async function (
+    req: Request<
+      any,
+      any,
+      any,
+      {
+        contract?: string;
+        page_size?: string;
+        page?: string;
+      }
+    >,
+    res: Response<SubscriptionLog[] | string>
+  ) {
+    const contract = req.query.contract;
+    const pageSize = parseInt(req.query.page_size ?? '20');
+    const page = parseInt(req.query.page ?? '1');
+
+    const result = await fetchSubscriptionUploads(contract, pageSize, page);
+    return returnJsonResult(result, req, res, true);
   }
 );
 

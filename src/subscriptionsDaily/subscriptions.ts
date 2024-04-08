@@ -163,7 +163,8 @@ async function createFinalSubscriptions(newMeme: number, dateStr: string) {
           contract: sub.contract,
           token_id: sub.token_id,
           airdrop_address: airdropAddress ?? consolidationWallets[0],
-          balance: balance.balance
+          balance: balance.balance,
+          redeemed: false
         };
         finalSubscriptions.push(finalSub);
         newSubscriptionLogs.push({
@@ -227,7 +228,8 @@ async function uploadFinalSubscriptions(
         profile: profile?.handle ?? '-',
         consolidation_key: sub.consolidation_key,
         airdrop_address: sub.airdrop_address,
-        balance: sub.balance
+        balance: sub.balance,
+        redeemed: false
       };
     });
   const csv = await converter.json2csvAsync(finalUpload);
