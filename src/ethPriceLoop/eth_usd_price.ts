@@ -24,20 +24,20 @@ interface CurrentResponse {
 
 const logger = Logger.get('ETH_PRICE');
 
-export async function getNewEthUsdPrice(reset: boolean) {
+export async function syncEthUsdPrice(reset: boolean) {
   const existingData = await getEthPriceCount();
   const isReset = reset || existingData === 0;
 
   if (isReset) {
     logger.info('[RESET] : [FETCHING HISTORIC DATA]');
-    await fetchHistoricData();
+    await syncHistoricEthUsdPriceData();
   } else {
     logger.info('[FETCHING NEW DATA]');
-    await fetchCurrentData();
+    await syncLatestEthUsdPriceData();
   }
 }
 
-async function fetchHistoricData() {
+async function syncHistoricEthUsdPriceData() {
   const historicResponse = await axios.get<HistoricResponse>(
     MOBULA_HISTORIC_URL
   );
@@ -58,7 +58,7 @@ async function fetchHistoricData() {
   logger.info(`[HISTORIC DATA PERSISTED] : [${ethPrices.length}]`);
 }
 
-async function fetchCurrentData() {
+async function syncLatestEthUsdPriceData() {
   const currentResponse = await axios.get<CurrentResponse>(MOBULA_CURRENT_URL);
   const currentData = currentResponse.data;
   logger.info(`[CURRENT DATA RESPONSE]`);

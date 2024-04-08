@@ -1,4 +1,4 @@
-import { getNewEthUsdPrice } from './eth_usd_price';
+import { syncEthUsdPrice } from './eth_usd_price';
 import { loadEnv, unload } from '../secrets';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
@@ -12,7 +12,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   logger.info('[RUNNING]');
   await loadEnv([EthPrice]);
   const reset = process.env.ETH_PRICE_RESET == 'true';
-  await getNewEthUsdPrice(reset);
+  await syncEthUsdPrice(reset);
   await unload();
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);

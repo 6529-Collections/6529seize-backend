@@ -24,5 +24,5 @@ export async function getClosestEthUsdPrice(date: Date): Promise<number> {
     [timestampMs]
   );
 
-  return price[0].usd_price ?? 0;
+  return price[0]?.usd_price ?? 0;
 }
