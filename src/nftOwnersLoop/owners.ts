@@ -18,7 +18,7 @@ export async function getOwnersForContracts(
 async function getAllOwnersFromAlchemy(
   contracts: string[]
 ): Promise<OwnedNft[]> {
-  const owned: OwnedNft[] = [];
+  const owned = new Map<string, OwnedNft>();
 
   for (const contract of contracts) {
     let pageKey: string | undefined = undefined;
@@ -27,19 +27,25 @@ async function getAllOwnersFromAlchemy(
       response = await getOwnersFromAlchemyPage(contract, pageKey);
       response.owners.forEach((owner) => {
         owner.tokenBalances.forEach((balance) => {
-          owned.push({
-            wallet: owner.ownerAddress,
-            contract: contract,
-            token_id: parseInt(balance.tokenId),
-            balance: parseInt(balance.balance)
-          });
+          const key = `${owner.ownerAddress}-${contract}-${balance.tokenId}`;
+          const myOwned = owned.get(key);
+          if (myOwned) {
+            myOwned.balance += parseInt(balance.balance);
+          } else {
+            owned.set(key, {
+              wallet: owner.ownerAddress,
+              contract: contract,
+              token_id: parseInt(balance.tokenId),
+              balance: parseInt(balance.balance)
+            });
+          }
         });
       });
       pageKey = response.pageKey;
     } while (pageKey);
   }
 
-  return owned;
+  return Array.from(owned.values());
 }
 
 async function getOwnersFromAlchemyPage(
