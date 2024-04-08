@@ -19,6 +19,7 @@ import { initMulterSingleMiddleware } from '../multer-middleware';
 import { dropCreationService } from '../../../drops/drop-creation.service';
 import {
   CreateNewDropRequest,
+  DropDiscussionComment,
   DropFull,
   DropMentionedUser,
   DropReferencedNft,
@@ -31,6 +32,13 @@ import { parseIntOrNull, parseNumberOrNull } from '../../../helpers';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { dropRaterService } from '../../../drops/drop-rater.service';
+import {
+  DEFAULT_MAX_SIZE,
+  DEFAULT_PAGE_SIZE,
+  FullPageRequest,
+  Page,
+  PageSortDirection
+} from '../page-request';
 
 const router = asyncRouter();
 
@@ -204,6 +212,84 @@ router.post(
   }
 );
 
+router.get(
+  `/:drop_id/comments`,
+  async (
+    req: Request<
+      { drop_id: number },
+      any,
+      any,
+      Omit<DropDiscussionCommentsQuery, 'drop_id'>,
+      any
+    >,
+    res: Response<Page<DropDiscussionComment>>
+  ) => {
+    const unvalidatedQuery: DropDiscussionCommentsQuery = {
+      drop_id: req.params.drop_id,
+      ...req.query
+    };
+    const validatedQuery: DropDiscussionCommentsQuery =
+      getValidatedByJoiOrThrow(
+        unvalidatedQuery,
+        DropDiscussionCommentsQuerySchema
+      );
+    await dropsService.findDropByIdOrThrow({ dropId: validatedQuery.drop_id });
+    const discussionCommentsPage = await dropsService.findDiscussionComments(
+      validatedQuery
+    );
+    res.send(discussionCommentsPage);
+  }
+);
+
+router.post(
+  `/:drop_id/comments`,
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: number }, any, { content: string }, any, any>,
+    res: Response<DropDiscussionComment>
+  ) => {
+    const authenticatedWallet = getWalletOrThrow(req);
+    const authorProfileId = await profilesService
+      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+        authenticatedWallet
+      )
+      ?.then((result) => result?.profile?.external_id ?? null);
+    if (!authorProfileId) {
+      throw new ForbiddenException(
+        `Create a profile before commenting on a drop`
+      );
+    }
+    const commentRequest: {
+      drop_id: number;
+      content: string;
+      author_id: string;
+    } = getValidatedByJoiOrThrow(
+      {
+        drop_id: req.params.drop_id,
+        content: req.body.content,
+        author_id: authorProfileId
+      },
+      Joi.object<{ drop_id: number; content: string; author_id: string }>({
+        drop_id: Joi.number().integer().required(),
+        content: Joi.string().min(1).max(500).required(),
+        author_id: Joi.string().required()
+      })
+    );
+    await dropsService.findDropByIdOrThrow({ dropId: commentRequest.drop_id });
+    const addedComment = await dropsService.commentDrop(commentRequest);
+    res.send(addedComment);
+  }
+);
+
+export interface DropDiscussionCommentsQuery
+  extends FullPageRequest<DropDiscussionCommentsQuerySortOption> {
+  readonly drop_id: number;
+}
+
+export enum DropDiscussionCommentsQuerySortOption {
+  ID = 'id'
+}
+
 interface ApiAddRepRatingToDropRequest {
   readonly amount: number;
   readonly category: string;
@@ -245,6 +331,29 @@ const NewDropSchema: Joi.ObjectSchema<DropApiRequest> = Joi.object({
     .default([]),
   metadata: Joi.array().optional().items(MetadataSchema).default([])
 });
+
+const DropDiscussionCommentsQuerySchema: Joi.ObjectSchema<DropDiscussionCommentsQuery> =
+  Joi.object({
+    sort_direction: Joi.string()
+      .optional()
+      .default(PageSortDirection.DESC)
+      .valid(...Object.values(PageSortDirection))
+      .allow(null),
+    sort: Joi.string()
+      .optional()
+      .default(DropDiscussionCommentsQuerySortOption.ID)
+      .valid(...Object.values(DropDiscussionCommentsQuerySortOption))
+      .allow(null),
+    page: Joi.number().integer().min(1).optional().allow(null).default(1),
+    page_size: Joi.number()
+      .integer()
+      .min(1)
+      .max(DEFAULT_MAX_SIZE)
+      .optional()
+      .allow(null)
+      .default(DEFAULT_PAGE_SIZE),
+    drop_id: Joi.number().integer().required()
+  });
 
 function convertToMediaOrNull(
   postMedia?: Express.Multer.File

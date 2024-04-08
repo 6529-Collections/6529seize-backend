@@ -1,6 +1,7 @@
 import { Profile } from '../entities/IProfile';
 import { ProfileMin } from '../profiles/profile-min';
 import {
+  DropDiscussionCommentEntity,
   DropMentionEntity,
   DropMetadataEntity,
   DropReferencedNftEntity
@@ -61,6 +62,13 @@ export interface DropFull {
       }[]
     | null;
   readonly rep_given_by_input_profile: number | null;
+  readonly discussion_comments_count: number;
+}
+
+export interface DropDiscussionComment
+  extends Omit<DropDiscussionCommentEntity, 'author_id' | 'drop_id'> {
+  readonly author: ProfileMin;
+  readonly author_archived: boolean;
 }
 
 export interface NewDropMedia {

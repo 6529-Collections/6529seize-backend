@@ -11,6 +11,7 @@ import { CommunityMembersCurationCriteriaEntity } from '../entities/ICommunityMe
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
 import {
   Drop,
+  DropDiscussionCommentEntity,
   DropMentionEntity,
   DropMetadataEntity,
   DropReferencedNftEntity
@@ -35,7 +36,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     DropMentionEntity,
     DropReferencedNftEntity,
     DropMetadataEntity,
-    TdhSpentOnDropRep
+    TdhSpentOnDropRep,
+    DropDiscussionCommentEntity
   ]);
   await ratingsService.reduceOverRates();
   await dropRaterService.revokeOverRates();

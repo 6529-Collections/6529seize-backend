@@ -6,11 +6,13 @@ import {
 } from '../sql-executor';
 import {
   Drop,
+  DropDiscussionCommentEntity,
   DropMentionEntity,
   DropMetadataEntity,
   DropReferencedNftEntity
 } from '../entities/IDrop';
 import {
+  DROP_DISCUSSION_COMMENT_TABLE,
   DROP_METADATA_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROPS_MENTIONS_TABLE,
@@ -26,6 +28,7 @@ import {
 import { Time } from '../time';
 import { TdhSpentOnDropRep } from '../entities/ITdhSpentOnDropRep';
 import { RateMatter } from '../entities/IRating';
+import { DropDiscussionCommentsQuery } from '../api-serverless/src/drops/drops.routes';
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -574,6 +577,58 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       });
       return acc;
     }, {} as Record<number, { category: string; profile_rating: number; total_rating: number }[]>);
+  }
+
+  async countDiscussionCommentsByDropIds(
+    dropIds: number[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<number, number>> {
+    const dbResult: { drop_id: number; cnt: number }[] = await this.db.execute(
+      `select drop_id, count(*) as cnt from ${DROP_DISCUSSION_COMMENT_TABLE} where drop_id in (:dropIds) group by 1`,
+      { dropIds },
+      { wrappedConnection: connection }
+    );
+    return dbResult.reduce((acc, it) => {
+      acc[it.drop_id] = it.cnt;
+      return acc;
+    }, {} as Record<number, number>);
+  }
+
+  async findDiscussionCommentsByDropId(
+    query: DropDiscussionCommentsQuery
+  ): Promise<DropDiscussionCommentEntity[]> {
+    const page = query.page;
+    const pageSize = query.page_size;
+    const offset = (page - 1) * pageSize;
+    return this.db.execute(
+      `select * from ${DROP_DISCUSSION_COMMENT_TABLE} where drop_id = :dropId order by ${query.sort} ${query.sort_direction} limit ${pageSize} offset ${offset}`,
+      { dropId: query.drop_id }
+    );
+  }
+
+  async insertDiscussionComment(
+    commentRequest: { drop_id: number; content: string; author_id: string },
+    connection: ConnectionWrapper<any>
+  ): Promise<number> {
+    await this.db.execute(
+      `insert into ${DROP_DISCUSSION_COMMENT_TABLE} (drop_id, author_id, created_at, content) values (:drop_id, :author_id, ROUND(UNIX_TIMESTAMP(CURTIME(4)) * 1000), :content)`,
+      commentRequest,
+      { wrappedConnection: connection }
+    );
+    return this.getLastInsertId(connection);
+  }
+
+  async findDiscussionCommentById(
+    id: number,
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropDiscussionCommentEntity | null> {
+    return this.db
+      .execute(
+        `select * from ${DROP_DISCUSSION_COMMENT_TABLE} where id = :id`,
+        { id },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((it) => it[0] ?? null);
   }
 }
 

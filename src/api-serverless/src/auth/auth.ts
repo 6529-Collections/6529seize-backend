@@ -53,7 +53,9 @@ export async function getMaybeAuthenticatedProfileId(
   return inputProfileId;
 }
 
-export function getWalletOrThrow(req: Request): string {
+export function getWalletOrThrow(
+  req: Request<any, any, any, any, any>
+): string {
   const wallet = getAuthenticatedWalletOrNull(req);
   if (!wallet) {
     throw new Error('Wallet not found');
