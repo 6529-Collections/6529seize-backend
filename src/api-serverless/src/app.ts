@@ -327,6 +327,11 @@ loadApi().then(() => {
     db.fetchNFTs(pageSize, page, contracts, nfts, sortDir).then((result) => {
       result.data.map((d: any) => {
         d.metadata = JSON.parse(d.metadata);
+        if (typeof d.metadata.animation_details === 'string') {
+          d.metadata.animation_details = JSON.parse(
+            d.metadata.animation_details
+          );
+        }
       });
       returnPaginatedResult(result, req, res);
     });
