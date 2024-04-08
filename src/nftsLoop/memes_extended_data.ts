@@ -78,6 +78,10 @@ export const findMemesExtendedData = async () => {
 
     seasons.add(season);
 
+    const percentUnique = allTokenWallets.length / edition_size;
+    const percentUniqueNotBurnt = nonBurntTokenWallets / edition_size_not_burnt;
+    const percentUniqueCleaned = cleanedTokenWallets / edition_size_cleaned;
+
     const meta: MemesExtendedData = {
       id: nft.id,
       created_at: new Date(),
@@ -92,9 +96,13 @@ export const findMemesExtendedData = async () => {
       burnt: burnt,
       museum_holdings_rank: -1,
       hodlers: allTokenWallets.length,
-      percent_unique: allTokenWallets.length / edition_size,
-      percent_unique_not_burnt: nonBurntTokenWallets / edition_size_not_burnt,
-      percent_unique_cleaned: cleanedTokenWallets / edition_size_cleaned,
+      percent_unique: !isNaN(percentUnique) ? percentUnique : 0,
+      percent_unique_not_burnt: !isNaN(percentUniqueNotBurnt)
+        ? percentUniqueNotBurnt
+        : 0,
+      percent_unique_cleaned: !isNaN(percentUniqueCleaned)
+        ? percentUniqueCleaned
+        : 0,
       edition_size_rank: -1,
       edition_size_not_burnt_rank: -1,
       edition_size_cleaned_rank: -1,
