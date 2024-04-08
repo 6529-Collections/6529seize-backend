@@ -187,7 +187,9 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
       );
       const { animation, compressedAnimation } = getAnimationPaths(
         tokenId,
-        fullMetadata.animation_details
+        typeof fullMetadata.animation_details === 'string'
+          ? JSON.parse(fullMetadata.animation_details)
+          : fullMetadata.animation_details
       );
 
       const startingNft = startingNFTS.find(
