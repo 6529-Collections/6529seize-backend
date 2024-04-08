@@ -19,7 +19,7 @@ import { initMulterSingleMiddleware } from '../multer-middleware';
 import { dropCreationService } from '../../../drops/drop-creation.service';
 import {
   CreateNewDropRequest,
-  DropDiscussionComment,
+  DropActivityLog,
   DropFull,
   DropMentionedUser,
   DropReferencedNft,
@@ -213,26 +213,25 @@ router.post(
 );
 
 router.get(
-  `/:drop_id/comments`,
+  `/:drop_id/log`,
   async (
     req: Request<
       { drop_id: number },
       any,
       any,
-      Omit<DropDiscussionCommentsQuery, 'drop_id'>,
+      Omit<DropActivityLogsQuery, 'drop_id'>,
       any
     >,
-    res: Response<Page<DropDiscussionComment>>
+    res: Response<Page<DropActivityLog>>
   ) => {
-    const unvalidatedQuery: DropDiscussionCommentsQuery = {
+    const unvalidatedQuery: DropActivityLogsQuery = {
       drop_id: req.params.drop_id,
       ...req.query
     };
-    const validatedQuery: DropDiscussionCommentsQuery =
-      getValidatedByJoiOrThrow(
-        unvalidatedQuery,
-        DropDiscussionCommentsQuerySchema
-      );
+    const validatedQuery: DropActivityLogsQuery = getValidatedByJoiOrThrow(
+      unvalidatedQuery,
+      DropDiscussionCommentsQuerySchema
+    );
     await dropsService.findDropByIdOrThrow({ dropId: validatedQuery.drop_id });
     const discussionCommentsPage = await dropsService.findDiscussionComments(
       validatedQuery
@@ -242,11 +241,11 @@ router.get(
 );
 
 router.post(
-  `/:drop_id/comments`,
+  `/:drop_id/log`,
   needsAuthenticatedUser(),
   async (
     req: Request<{ drop_id: number }, any, { content: string }, any, any>,
-    res: Response<DropDiscussionComment>
+    res: Response<DropActivityLog>
   ) => {
     const authenticatedWallet = getWalletOrThrow(req);
     const authorProfileId = await profilesService
@@ -281,13 +280,13 @@ router.post(
   }
 );
 
-export interface DropDiscussionCommentsQuery
-  extends FullPageRequest<DropDiscussionCommentsQuerySortOption> {
+export interface DropActivityLogsQuery
+  extends FullPageRequest<DropActivityLogsQuerySortOption> {
   readonly drop_id: number;
 }
 
-export enum DropDiscussionCommentsQuerySortOption {
-  ID = 'id'
+export enum DropActivityLogsQuerySortOption {
+  CREATED_AT = 'created_at'
 }
 
 interface ApiAddRepRatingToDropRequest {
@@ -332,7 +331,7 @@ const NewDropSchema: Joi.ObjectSchema<DropApiRequest> = Joi.object({
   metadata: Joi.array().optional().items(MetadataSchema).default([])
 });
 
-const DropDiscussionCommentsQuerySchema: Joi.ObjectSchema<DropDiscussionCommentsQuery> =
+const DropDiscussionCommentsQuerySchema: Joi.ObjectSchema<DropActivityLogsQuery> =
   Joi.object({
     sort_direction: Joi.string()
       .optional()
@@ -341,8 +340,8 @@ const DropDiscussionCommentsQuerySchema: Joi.ObjectSchema<DropDiscussionComments
       .allow(null),
     sort: Joi.string()
       .optional()
-      .default(DropDiscussionCommentsQuerySortOption.ID)
-      .valid(...Object.values(DropDiscussionCommentsQuerySortOption))
+      .default(DropActivityLogsQuerySortOption.CREATED_AT)
+      .valid(...Object.values(DropActivityLogsQuerySortOption))
       .allow(null),
     page: Joi.number().integer().min(1).optional().allow(null).default(1),
     page_size: Joi.number()

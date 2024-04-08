@@ -1,6 +1,5 @@
 import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import {
-  DROP_DISCUSSION_COMMENT_TABLE,
   DROP_METADATA_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROPS_MENTIONS_TABLE,
@@ -75,19 +74,4 @@ export class DropMetadataEntity {
   readonly data_key!: string;
   @Column({ type: 'varchar', length: 500 })
   readonly data_value!: string;
-}
-
-@Entity(DROP_DISCUSSION_COMMENT_TABLE)
-export class DropDiscussionCommentEntity {
-  @PrimaryGeneratedColumn('increment', { type: 'bigint' })
-  readonly id!: number;
-  @Column({ type: 'bigint' })
-  @Index()
-  readonly drop_id!: number;
-  @Column({ type: 'varchar', length: 100 })
-  readonly author_id!: string;
-  @Column({ type: 'bigint' })
-  readonly created_at!: number;
-  @Column({ type: 'text' })
-  readonly content!: string;
 }

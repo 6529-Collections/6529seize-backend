@@ -1,12 +1,12 @@
 import { dropsDb, DropsDb } from './drops.db';
 import { profilesService, ProfilesService } from '../profiles/profiles.service';
 import { ConnectionWrapper } from '../sql-executor';
-import { DropDiscussionComment, DropFull } from './drops.types';
+import { DropActivityLog, DropFull } from './drops.types';
 import { NotFoundException } from '../exceptions';
 import { ProfileMin } from '../profiles/profile-min';
 import { Drop } from '../entities/IDrop';
 import { distinct } from '../helpers';
-import { DropDiscussionCommentsQuery } from '../api-serverless/src/drops/drops.routes';
+import { DropActivityLogsQuery } from '../api-serverless/src/drops/drops.routes';
 import { Page } from '../api-serverless/src/page-request';
 
 export class DropsService {
@@ -83,8 +83,7 @@ export class DropsService {
       dropsTopCategories,
       dropsInputProfileCategories,
       dropsRatings,
-      dropsRatingsByInputProfile,
-      discussionCommentsCount
+      dropsRatingsByInputProfile
     } = await this.getAllDropsRelatedData(
       {
         dropIds,
@@ -193,8 +192,7 @@ export class DropsService {
             rep_given: cat.total_rating,
             rep_given_by_input_profile: cat.profile_rating
           }))
-        : null,
-      discussion_comments_count: discussionCommentsCount[dropEntity.id] ?? 0
+        : null
     }));
   }
 
@@ -210,8 +208,7 @@ export class DropsService {
       dropsTopCategories,
       dropsInputProfileCategories,
       dropsRatings,
-      dropsRatingsByInputProfile,
-      discussionCommentsCount
+      dropsRatingsByInputProfile
     ] = await Promise.all([
       this.dropsDb.findMentionsByDropIds(dropIds, connection),
       this.dropsDb.findReferencedNftsByDropIds(dropIds, connection),
@@ -228,8 +225,7 @@ export class DropsService {
         inputProfileId,
         dropIds,
         connection
-      ),
-      this.dropsDb.countDiscussionCommentsByDropIds(dropIds, connection)
+      )
     ]);
     return {
       mentions,
@@ -239,8 +235,7 @@ export class DropsService {
       dropsTopCategories,
       dropsInputProfileCategories,
       dropsRatings,
-      dropsRatingsByInputProfile,
-      discussionCommentsCount
+      dropsRatingsByInputProfile
     };
   }
 
@@ -302,76 +297,34 @@ export class DropsService {
   }
 
   async findDiscussionComments(
-    query: DropDiscussionCommentsQuery
-  ): Promise<Page<DropDiscussionComment>> {
+    query: DropActivityLogsQuery
+  ): Promise<Page<DropActivityLog>> {
     const [comments, count] = await Promise.all([
-      this.dropsDb.findDiscussionCommentsByDropId(query),
+      this.dropsDb.findDropActivityLogByDropId(query),
       this.dropsDb
         .countDiscussionCommentsByDropIds([query.drop_id])
         .then((it) => it[query.drop_id] ?? 0)
     ]);
-    const commentAuthorIds = comments.map((it) => it.author_id);
-    const profileMins = await this.getProfileMins(commentAuthorIds);
+    const commentAuthorIds = comments.map((it) => it.profile_id);
+    const profileMins = await this.profilesService.getProfileMinsByIds(
+      commentAuthorIds
+    );
     return {
       count,
       page: query.page,
       next: comments.length === query.page_size,
       data: comments.map((comment) => ({
-        id: comment.id,
-        author: profileMins[comment.author_id].profile!,
-        author_archived: profileMins[comment.author_id]!.archived,
-        created_at: comment.created_at,
-        content: comment.content
+        ...comment,
+        author: profileMins.find((it) => it.id === comment.profile_id) ?? null
       }))
     };
-  }
-
-  private async getProfileMins(
-    profileIds: string[]
-  ): Promise<Record<string, { profile: ProfileMin; archived: boolean }>> {
-    const profileMins = await this.profilesService.getProfileMinsByIds(
-      profileIds
-    );
-    const missingProfileIds = profileIds.filter(
-      (it) => !profileMins.some((profile) => profile.id === it)
-    );
-    const profileArchiveLatests =
-      await this.profilesService.getNewestVersionOfArchivedProfileHandles(
-        missingProfileIds
-      );
-    return profileIds.reduce((acc, profileId) => {
-      const activeProfile = profileMins.find((it) => it.id === profileId);
-      if (activeProfile) {
-        acc[profileId] = { profile: activeProfile, archived: false };
-      } else {
-        const archivedProfile = profileArchiveLatests.find(
-          (it) => it.external_id === profileId
-        ) ?? {
-          external_id: profileId,
-          handle: 'An unknown profile'
-        };
-        acc[profileId] = {
-          profile: {
-            id: archivedProfile.external_id,
-            handle: archivedProfile.handle,
-            pfp: null,
-            cic: 0,
-            rep: 0,
-            tdh: 0,
-            level: 0
-          },
-          archived: true
-        };
-      }
-      return acc;
-    }, {} as Record<string, { profile: ProfileMin; archived: boolean }>);
   }
 
   async commentDrop(commentRequest: {
     drop_id: number;
     content: string;
     author_id: string;
-  }): Promise<DropDiscussionComment> {
+  }): Promise<DropActivityLog> {
     return await this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const commentId = await this.dropsDb.insertDiscussionComment(
@@ -387,15 +340,12 @@ export class DropsService {
             `Something went wrong. Couldnt't find the comment that was just inserted`
           );
         }
-        const author = await this.getProfileMins([comment.author_id]).then(
-          (res) => Object.values(res)[0]!
-        );
+        const authorProfile = await this.profilesService
+          .getProfileMinsByIds([comment.profile_id])
+          .then((it) => it[0] ?? null);
         return {
-          id: comment.id,
-          author: author.profile,
-          author_archived: author.archived,
-          created_at: comment.created_at,
-          content: comment.content
+          ...comment,
+          author: authorProfile
         };
       }
     );

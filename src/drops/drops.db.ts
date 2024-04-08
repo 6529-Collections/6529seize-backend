@@ -6,18 +6,17 @@ import {
 } from '../sql-executor';
 import {
   Drop,
-  DropDiscussionCommentEntity,
   DropMentionEntity,
   DropMetadataEntity,
   DropReferencedNftEntity
 } from '../entities/IDrop';
 import {
-  DROP_DISCUSSION_COMMENT_TABLE,
   DROP_METADATA_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROPS_MENTIONS_TABLE,
   DROPS_TABLE,
   PROFILE_FULL,
+  PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
   TDH_SPENT_ON_DROP_REPS_TABLE
 } from '../constants';
@@ -28,7 +27,12 @@ import {
 import { Time } from '../time';
 import { TdhSpentOnDropRep } from '../entities/ITdhSpentOnDropRep';
 import { RateMatter } from '../entities/IRating';
-import { DropDiscussionCommentsQuery } from '../api-serverless/src/drops/drops.routes';
+import { DropActivityLogsQuery } from '../api-serverless/src/drops/drops.routes';
+import { uniqueShortId } from '../helpers';
+import {
+  ProfileActivityLog,
+  ProfileActivityLogType
+} from '../entities/IProfileActivityLog';
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -583,52 +587,84 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     dropIds: number[],
     connection?: ConnectionWrapper<any>
   ): Promise<Record<number, number>> {
-    const dbResult: { drop_id: number; cnt: number }[] = await this.db.execute(
-      `select drop_id, count(*) as cnt from ${DROP_DISCUSSION_COMMENT_TABLE} where drop_id in (:dropIds) group by 1`,
-      { dropIds },
-      { wrappedConnection: connection }
-    );
+    if (dropIds.length === 0) {
+      return {};
+    }
+    const dbResult: { target_id: string; cnt: number }[] =
+      await this.db.execute(
+        `select target_id, count(*) as cnt from ${PROFILES_ACTIVITY_LOGS_TABLE} where target_id in (:dropIds) and type in (:logTypes) group by 1`,
+        {
+          dropIds,
+          logTypes: [
+            ProfileActivityLogType.DROP_COMMENT,
+            ProfileActivityLogType.DROP_REP_EDIT
+          ]
+        },
+        { wrappedConnection: connection }
+      );
     return dbResult.reduce((acc, it) => {
-      acc[it.drop_id] = it.cnt;
+      acc[parseInt(it.target_id)] = it.cnt;
       return acc;
     }, {} as Record<number, number>);
   }
 
-  async findDiscussionCommentsByDropId(
-    query: DropDiscussionCommentsQuery
-  ): Promise<DropDiscussionCommentEntity[]> {
+  async findDropActivityLogByDropId(
+    query: DropActivityLogsQuery
+  ): Promise<ProfileActivityLog[]> {
     const page = query.page;
     const pageSize = query.page_size;
     const offset = (page - 1) * pageSize;
-    return this.db.execute(
-      `select * from ${DROP_DISCUSSION_COMMENT_TABLE} where drop_id = :dropId order by ${query.sort} ${query.sort_direction} limit ${pageSize} offset ${offset}`,
-      { dropId: query.drop_id }
-    );
+    return this.db
+      .execute(
+        `select * from ${PROFILES_ACTIVITY_LOGS_TABLE} where target_id = :dropId and type in (:logTypes) order by ${query.sort} ${query.sort_direction} limit ${pageSize} offset ${offset}`,
+        {
+          dropId: query.drop_id.toString(),
+          logTypes: [
+            ProfileActivityLogType.DROP_COMMENT,
+            ProfileActivityLogType.DROP_REP_EDIT
+          ]
+        }
+      )
+      .then((it) =>
+        it.map((log: any) => ({ ...log, contents: JSON.parse(log.contents) }))
+      );
   }
 
   async insertDiscussionComment(
     commentRequest: { drop_id: number; content: string; author_id: string },
     connection: ConnectionWrapper<any>
-  ): Promise<number> {
+  ): Promise<string> {
+    const id = uniqueShortId();
     await this.db.execute(
-      `insert into ${DROP_DISCUSSION_COMMENT_TABLE} (drop_id, author_id, created_at, content) values (:drop_id, :author_id, ROUND(UNIX_TIMESTAMP(CURTIME(4)) * 1000), :content)`,
-      commentRequest,
+      `insert into ${PROFILES_ACTIVITY_LOGS_TABLE} (id, profile_id, target_id, contents, type, created_at) values (:id, :profile_id, :target_id, :contents, :type, :created_at)`,
+      {
+        id: id,
+        profile_id: commentRequest.author_id,
+        target_id: commentRequest.drop_id.toString(),
+        contents: { content: commentRequest.content },
+        type: ProfileActivityLogType.DROP_COMMENT,
+        created_at: Time.now().toDate()
+      },
       { wrappedConnection: connection }
     );
-    return this.getLastInsertId(connection);
+    return id;
   }
 
   async findDiscussionCommentById(
-    id: number,
+    id: string,
     connection?: ConnectionWrapper<any>
-  ): Promise<DropDiscussionCommentEntity | null> {
-    return this.db
+  ): Promise<ProfileActivityLog | null> {
+    const result = await this.db
       .execute(
-        `select * from ${DROP_DISCUSSION_COMMENT_TABLE} where id = :id`,
-        { id },
+        `select * from ${PROFILES_ACTIVITY_LOGS_TABLE} where id = :id and type = :type`,
+        { id, type: ProfileActivityLogType.DROP_COMMENT },
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((it) => it[0] ?? null);
+    if (result) {
+      result.contents = JSON.parse(result.contents);
+    }
+    return result;
   }
 }
 
