@@ -70,7 +70,7 @@ async function redeemSubscriptionAirdrop(
   entityManager: EntityManager
 ) {
   // TODO: REMOVE THIS
-  transaction.to_address = '0xfe49a85e98941f1a115acd4beb98521023a25802';
+  // transaction.to_address = '0xfe49a85e98941f1a115acd4beb98521023a25802';
 
   logger.info(
     `[REDEEMING SUBSCRIPTION AIRDROP] : [Transaction ${transaction.transaction}]`

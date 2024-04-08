@@ -97,8 +97,8 @@ export async function splitAllowlistResults(
   results: ALResultsResponse[]
 ): Promise<ResultsResponse[]> {
   // TODO: REMOVE THIS
-  results[0].wallet = '0xfe49a85e98941f1a115acd4beb98521023a25802';
-  results[0].amount = 4;
+  // results[0].wallet = '0xfe49a85e98941f1a115acd4beb98521023a25802';
+  // results[0].amount = 4;
   // TODO: REMOVE THIS
 
   const subscriptions = await fetchAllNftFinalSubscriptionsForContractAndToken(
