@@ -29,6 +29,7 @@ import {
   NEXTGEN_CORE_CONTRACT,
   NEXTGEN_ROYALTIES_ADDRESS
 } from './nextgen/nextgen_constants';
+import { getClosestEthUsdPrice } from './ethPriceLoop/db.eth_price';
 
 const logger = Logger.get('TRANSACTION_VALUES');
 
@@ -250,6 +251,11 @@ async function resolveValue(t: Transaction) {
   t.gas_price = parseFloat(t.gas_price.toFixed(8));
   t.gas_price_gwei = parseFloat(t.gas_price_gwei.toFixed(8));
   t.gas_gwei = parseFloat(t.gas_gwei.toFixed(8));
+
+  const ethPrice = await getClosestEthUsdPrice(t.transaction_date);
+  t.eth_price_usd = ethPrice;
+  t.value_usd = t.value * ethPrice;
+  t.gas_usd = t.gas * ethPrice;
 
   return t;
 }
