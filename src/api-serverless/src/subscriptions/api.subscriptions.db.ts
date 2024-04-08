@@ -5,6 +5,7 @@ import {
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_LOGS_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
+  SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE,
   SUBSCRIPTIONS_TOP_UP_TABLE,
@@ -12,6 +13,7 @@ import {
 } from '../../../constants';
 import { sqlExecutor } from '../../../sql-executor';
 import {
+  NFTFinalSubscription,
   RedeemedSubscription,
   SubscriptionBalance,
   SubscriptionMode,
@@ -411,5 +413,19 @@ export async function fetchRedeemedSubscriptionsForConsolidationKey(
     page,
     filters,
     ''
+  );
+}
+
+export async function fetchAllNftFinalSubscriptionsForContractAndToken(
+  contract: string,
+  token_id: number
+): Promise<NFTFinalSubscription[]> {
+  return sqlExecutor.execute(
+    `SELECT * FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
+    WHERE 
+      contract = :contract 
+      AND token_id = :token_id
+    ORDER BY subscribed_at ASC`,
+    { contract, token_id }
   );
 }

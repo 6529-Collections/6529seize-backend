@@ -1,6 +1,10 @@
 import { Request, Response } from 'express';
 import { asyncRouter } from '../async.router';
-import { giveReadReplicaTimeToCatchUp, returnJsonResult } from '../api-helpers';
+import {
+  giveReadReplicaTimeToCatchUp,
+  returnCSVResult,
+  returnJsonResult
+} from '../api-helpers';
 import {
   fetchDetailsForConsolidationKey,
   fetchConsolidationWallets,
@@ -21,7 +25,13 @@ import { areEqualAddresses } from '../../../helpers';
 import { ForbiddenException } from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
-import fetch from 'node-fetch';
+import {
+  AllowlistResponse,
+  fetchPhaseName,
+  fetchPhaseResults,
+  splitAllowlistResults,
+  validateDistribution
+} from './api.subscriptions.allowlist';
 const router = asyncRouter();
 
 export default router;
@@ -281,31 +291,49 @@ router.get(
 );
 
 router.get(
-  `/allowlists/:allowlist_id/:phase_id`,
+  `/allowlists/:contract/:token_id/:allowlist_id/:phase_id/:subscriptions_phase`,
   async function (
     req: Request<
       {
+        contract: string;
+        token_id: number;
         allowlist_id: string;
         phase_id: string;
+        subscriptions_phase: 'airdrops' | 'allowlists';
       },
       any,
       any,
       any
     >,
-    res: Response<SubscriptionLog[] | string>
+    res: Response<AllowlistResponse>
   ) {
+    const contract = req.params.contract;
+    const tokenId = req.params.token_id;
     const allowlistId = req.params.allowlist_id;
     const phaseId = req.params.phase_id;
-    const url = `https://allowlist-api.seize.io/allowlists/${allowlistId}`;
-    const auth =
-      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjBhNzkzMWFjLTY3MGUtNGRkYS04N2Q4LTY2Nzg0NDc0NjVmMCIsInN1YiI6IjB4MDE4N2M5YTE4MjczNmJhMThiNDRlZTgxMzRlZTQzODM3NGNmODdkYyIsImlhdCI6MTcxMjMxMTE3MSwiZXhwIjoxNzQzNzYwNzcxfQ.XekCMqOxQz48sxlgE_WKJzOM4KnReazdVy5aP5g0qHc';
-    const response = await fetch(url, {
-      headers: {
-        accept: 'application/json',
-        Authorization: `Bearer ${auth}`
-      }
-    });
-    const json = await response.json();
-    return res.send(json);
+    const subscriptionsPhase = req.params.subscriptions_phase;
+
+    const validate = await validateDistribution(allowlistId, phaseId);
+    if (!validate.valid) {
+      return res.status(400).send(validate);
+    }
+
+    let phaseName = await fetchPhaseName(allowlistId, phaseId);
+    if (phaseName) {
+      phaseName = phaseName.toLowerCase().replace(/\s/g, '_');
+    }
+
+    const phaseResults = await fetchPhaseResults(allowlistId, phaseId);
+    console.log('phaseResults', phaseResults.length);
+
+    const results = await splitAllowlistResults(
+      subscriptionsPhase,
+      contract,
+      tokenId,
+      phaseResults
+    );
+    console.log('results', results.length);
+    const fileName = `${phaseName}_${subscriptionsPhase}`.toLowerCase();
+    return returnCSVResult(fileName, results, res);
   }
 );

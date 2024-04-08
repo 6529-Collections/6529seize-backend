@@ -98,6 +98,9 @@ export class NFTFinalSubscription extends NFTSubscriptionFields {
 
   @Column({ type: 'text', default: null })
   subscribed_at!: string;
+
+  @Column({ type: 'boolean', default: false })
+  redeemed!: boolean;
 }
 
 @Entity(SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE)

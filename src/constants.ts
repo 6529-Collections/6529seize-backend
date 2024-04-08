@@ -4,6 +4,8 @@ export const TDH_BLOCKS_TABLE = 'tdh_blocks';
 export const TRANSACTIONS_TABLE = 'transactions';
 export const TRANSACTIONS_PROCESSED_DISTRIBUTION_BLOCKS_TABLE =
   'transactions_processed_distribution_blocks';
+export const TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE =
+  'transactions_processed_subscriptions_blocks';
 export const NFTS_TABLE = 'nfts';
 export const NFTS_MEME_LAB_TABLE = 'nfts_meme_lab';
 export const MEME_LAB_ROYALTIES_TABLE = 'meme_lab_royalties';

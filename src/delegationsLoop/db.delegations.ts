@@ -8,48 +8,38 @@ import {
 import { Delegation } from '../entities/IDelegation';
 import { sqlExecutor } from '../sql-executor';
 
-export async function fetchDelegatorForAirdropAddress(
-  airdropAddress: string
-): Promise<string | null> {
-  return await fetchDelegation(
-    [airdropAddress],
-    'to_address',
-    USE_CASE_AIRDROPS,
-    MEMES_CONTRACT
-  );
-}
-
 export async function fetchAirdropAddressForDelegators(
-  airdropAddresses: string[]
+  delegators: string[]
 ): Promise<string | null> {
-  return await fetchDelegation(
-    airdropAddresses,
+  const results = await fetchDelegations(
+    delegators,
     'from_address',
     USE_CASE_AIRDROPS,
     MEMES_CONTRACT
   );
+  return results?.[0] ?? null;
 }
 
-export async function fetchDelegation(
+export async function fetchDelegations(
   addresses: string[],
   type: 'from_address' | 'to_address',
   useCase: number,
   collection: string
-): Promise<string | null> {
-  const result = await sqlExecutor.execute(
+): Promise<string[] | null> {
+  const results = await sqlExecutor.execute(
     `SELECT ${type} as my_address FROM ${DELEGATIONS_TABLE} 
     WHERE LOWER(to_address) in (:airdropAddresses)
     AND use_case in (:useCases) 
     AND expiry >= UNIX_TIMESTAMP() 
     AND collection in (:collections) 
-    ORDER BY block DESC limit 1;`,
+    ORDER BY block DESC;`,
     {
       airdropAddresses: addresses.map((a) => a.toLowerCase()),
       useCases: [useCase, USE_CASE_ALL],
       collections: [collection, DELEGATION_ALL_ADDRESS]
     }
   );
-  return result[0]?.my_address.toLowerCase() ?? null;
+  return results?.map((r: any) => r.my_address) ?? null;
 }
 
 export async function fetchProcessedDelegations(
