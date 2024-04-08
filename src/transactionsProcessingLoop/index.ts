@@ -8,6 +8,11 @@ import {
   TransactionsProcessedSubscriptionsBlock
 } from '../entities/ITransactionsProcessing';
 import { redeemSubscriptions } from './subscriptions';
+import {
+  NFTFinalSubscription,
+  RedeemedSubscription,
+  SubscriptionBalance
+} from '../entities/ISubscription';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_LOOP');
 
@@ -15,6 +20,9 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   const start = Time.now();
   logger.info('[RUNNING]');
   await loadEnv([
+    RedeemedSubscription,
+    NFTFinalSubscription,
+    SubscriptionBalance,
     TransactionsProcessedDistributionBlock,
     TransactionsProcessedSubscriptionsBlock
   ]);

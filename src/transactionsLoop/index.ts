@@ -4,21 +4,11 @@ import { Transaction } from '../entities/ITransaction';
 import { Logger } from '../logging';
 import { transactionsDiscoveryService } from '../transactions/transactions-discovery.service';
 import { parseNumberOrNull } from '../helpers';
-import {
-  NFTFinalSubscription,
-  RedeemedSubscription,
-  SubscriptionBalance
-} from '../entities/ISubscription';
 
 const logger = Logger.get('TRANSACTIONS_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
-  await loadEnv([
-    Transaction,
-    RedeemedSubscription,
-    NFTFinalSubscription,
-    SubscriptionBalance
-  ]);
+  await loadEnv([Transaction]);
   logger.info('[RUNNING]');
   const contract = process.env.TRANSACTIONS_CONTRACT_ADDRESS as string;
   if (!contract) {
