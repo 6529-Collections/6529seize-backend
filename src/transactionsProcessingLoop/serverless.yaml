@@ -27,3 +27,4 @@ functions:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'transactionsProcessingLoop_${opt:stage, self:provider.stage}'
       TRANSACTIONS_PROCESSING_RESET: false
+      DISABLE_DISCORD_NOTIFICATIONS: false
