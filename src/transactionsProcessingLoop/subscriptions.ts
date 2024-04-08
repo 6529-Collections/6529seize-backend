@@ -22,6 +22,7 @@ import {
 import { sqlExecutor } from '../sql-executor';
 import { fetchSubscriptionBalanceForConsolidationKey } from '../subscriptionsDaily/db.subscriptions';
 import { sendDiscordUpdate } from '../notifier-discord';
+import { getTransactionLink } from '../helpers';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_SUBSCRIPTIONS');
 
@@ -79,10 +80,11 @@ async function redeemSubscriptionAirdrop(
   const finalSubscription: NFTFinalSubscription | undefined = (
     await entityManager.query(
       `SELECT * FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
-    WHERE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.contract = "${transaction.contract}"
-    AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.token_id = ${transaction.token_id}
-    AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.airdrop_address = "${transaction.to_address}"
-    AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.redeemed = false;`
+      WHERE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.contract = "${transaction.contract}"
+      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.token_id = ${transaction.token_id}
+      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.airdrop_address = "${transaction.to_address}"
+      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.redeemed = false
+      ORDER BY subscribed_at ASC;`
     )
   )[0];
 
@@ -94,7 +96,9 @@ async function redeemSubscriptionAirdrop(
   const isTeamMemeber = !!team;
 
   if (!finalSubscription) {
-    const message = `No subscription found for airdrop address: ${transaction.to_address} \nTransaction: ${transaction.transaction} \nAddress ${transaction.to_address}`;
+    const message = `No subscription found for airdrop address: ${
+      transaction.to_address
+    } \nTransaction: ${getTransactionLink(1, transaction.transaction)}`;
     logger.warn(message);
     if (!isTeamMemeber) {
       await sendDiscordUpdate(
@@ -112,20 +116,24 @@ async function redeemSubscriptionAirdrop(
     entityManager
   );
   if (!balance) {
-    const message = `No balance found for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transaction.transaction}`;
+    const message = `No balance found for consolidation key: ${
+      finalSubscription.consolidation_key
+    } \nTransaction: ${getTransactionLink(1, transaction.transaction)}`;
     logger.error(message);
-    balance = {
-      consolidation_key: finalSubscription.consolidation_key,
-      balance: 0
-    };
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
       message,
       'Subscriptions',
       'error'
     );
+    balance = {
+      consolidation_key: finalSubscription.consolidation_key,
+      balance: 0
+    };
   } else if (MEMES_MINT_PRICE > balance.balance) {
-    const message = `Insufficient balance for consolidation key: ${finalSubscription.consolidation_key} \nTransaction: ${transaction.transaction}`;
+    const message = `Insufficient balance for consolidation key: ${
+      finalSubscription.consolidation_key
+    } \nTransaction: ${getTransactionLink(1, transaction.transaction)}`;
     logger.error(message);
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,

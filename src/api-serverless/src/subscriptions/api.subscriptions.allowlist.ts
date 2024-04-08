@@ -41,6 +41,7 @@ export async function validateDistribution(
   return {
     allowlist_id: allowlistId,
     phase_id: phaseId,
+    // TODO: switch below
     // valid: !hasRanDelegationMapping,
     valid: hasRanDelegationMapping,
     message: hasRanDelegationMapping ? 'Delegation mapping has ran!' : undefined
