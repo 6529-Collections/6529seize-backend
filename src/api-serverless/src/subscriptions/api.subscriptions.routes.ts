@@ -3,7 +3,8 @@ import { asyncRouter } from '../async.router';
 import {
   giveReadReplicaTimeToCatchUp,
   returnCSVResult,
-  returnJsonResult
+  returnJsonResult,
+  returnZipCSVResult
 } from '../api-helpers';
 import {
   fetchDetailsForConsolidationKey,
@@ -33,6 +34,7 @@ import {
   splitAllowlistResults,
   validateDistribution
 } from './api.subscriptions.allowlist';
+import { getNft } from '../../../nftsLoop/db.nfts';
 const router = asyncRouter();
 
 export default router;
@@ -214,6 +216,10 @@ router.post(
         subscribed: Joi.boolean().required()
       })
     );
+    const nft = await getNft(requestPayload.contract, requestPayload.token_id);
+    if (nft) {
+      throw new BadRequestException('NFT already released');
+    }
     const response = await updateSubscription(
       consolidationKey,
       requestPayload.contract,
@@ -319,7 +325,7 @@ router.get(
 );
 
 router.get(
-  `/allowlists/:contract/:token_id/:allowlist_id/:phase_id/:subscriptions_phase`,
+  `/allowlists/:contract/:token_id/:allowlist_id/:phase_id`,
   async function (
     req: Request<
       {
@@ -327,7 +333,6 @@ router.get(
         token_id: number;
         allowlist_id: string;
         phase_id: string;
-        subscriptions_phase: 'airdrops' | 'allowlists';
       },
       any,
       any,
@@ -340,7 +345,6 @@ router.get(
     const tokenId = req.params.token_id;
     const allowlistId = req.params.allowlist_id;
     const phaseId = req.params.phase_id;
-    const subscriptionsPhase = req.params.subscriptions_phase;
 
     const validate = await validateDistribution(auth, allowlistId, phaseId);
     if (!validate.valid) {
@@ -356,13 +360,26 @@ router.get(
     console.log('phaseResults', phaseResults.length);
 
     const results = await splitAllowlistResults(
-      subscriptionsPhase,
       contract,
       tokenId,
       phaseResults
     );
-    console.log('results', results.length);
-    const fileName = `${phaseName}_${subscriptionsPhase}`.toLowerCase();
-    return returnCSVResult(fileName, results, res);
+    console.log('airdrops', results.airdrops.length);
+    console.log('allowlists', results.allowlists.length);
+    const fileName = `${phaseName}`.toLowerCase();
+    return returnZipCSVResult(
+      fileName,
+      [
+        {
+          name: `${phaseName}_airdrops`.toLowerCase(),
+          data: results.airdrops
+        },
+        {
+          name: `${phaseName}_allowlists`.toLowerCase(),
+          data: results.allowlists
+        }
+      ],
+      res
+    );
   }
 );

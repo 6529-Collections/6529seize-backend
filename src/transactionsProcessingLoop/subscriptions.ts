@@ -33,6 +33,13 @@ export const redeemSubscriptions = async (reset?: boolean) => {
   const lastProcessingBlock = await getLastProcessingBlock(blockRepo, reset);
   const maxBlockTransaction = await fetchMaxTransactionByBlockNumber();
 
+  if (!lastProcessingBlock) {
+    logger.info(
+      `[NO STARTING BLOCK] : [SETTING TO MAX TRANSACTION BLOCK ${maxBlockTransaction.block}]`
+    );
+    await persistBlock(blockRepo, maxBlockTransaction);
+    return;
+  }
   const transactions: Transaction[] = await sqlExecutor.execute(
     `SELECT * FROM ${TRANSACTIONS_TABLE} 
     WHERE block > :lastProcessingBlock 
@@ -70,9 +77,6 @@ async function redeemSubscriptionAirdrop(
   transaction: Transaction,
   entityManager: EntityManager
 ) {
-  // TODO: REMOVE THIS
-  // transaction.to_address = '0xfe49a85e98941f1a115acd4beb98521023a25802';
-
   logger.info(
     `[REDEEMING SUBSCRIPTION AIRDROP] : [Transaction ${transaction.transaction}]`
   );

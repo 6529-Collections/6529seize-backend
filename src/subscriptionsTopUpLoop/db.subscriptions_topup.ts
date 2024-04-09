@@ -45,11 +45,14 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
   });
 
   for (const topUp of topUps) {
+    const seizeDomain =
+      process.env.NODE_ENV === 'development' ? 'staging.seize' : 'seize';
     let discordMessage = `👛 Subscription Top Up of ${topUp.amount} ETH from ${topUp.from_wallet}.`;
     const link = getTransactionLink(
       parseInt(process.env.SUBSCRIPTIONS_CHAIN_ID ?? '1'),
       topUp.hash
     );
+    discordMessage += ` \n\n[View on Seize] \nhttps://${seizeDomain}.io/${topUp.from_wallet}/mints`;
     discordMessage += ` \n\n[View on Etherscan] \n${link}`;
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,

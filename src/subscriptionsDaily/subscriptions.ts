@@ -1,6 +1,21 @@
 import { arweaveFileUploader } from '../arweave';
-import { MEMES_CONTRACT, MEMES_MINT_PRICE } from '../constants';
-import { fetchAllProfiles } from '../db';
+import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  MEMES_CONTRACT,
+  MEMES_MINT_PRICE,
+  NFTS_TABLE,
+  SUBSCRIPTIONS_BALANCES_TABLE,
+  SUBSCRIPTIONS_LOGS_TABLE,
+  SUBSCRIPTIONS_MODE_TABLE,
+  SUBSCRIPTIONS_NFTS_TABLE,
+  SUBSCRIPTIONS_REDEEMED_TABLE,
+  SUBSCRIPTIONS_TOP_UP_TABLE
+} from '../constants';
+import {
+  fetchAllProfiles,
+  fetchWalletConsolidationKeysViewForWallet,
+  getDataSource
+} from '../db';
 import { fetchPrimaryWallet } from '../db-api';
 import { fetchAirdropAddressForDelegators } from '../delegationsLoop/db.delegations';
 import {
@@ -8,6 +23,7 @@ import {
   NFTFinalSubscriptionUpload,
   NFTFinalSubscriptionWithDateAndProfile,
   NFTSubscription,
+  SubscriptionBalance,
   SubscriptionLog,
   SubscriptionMode
 } from '../entities/ISubscription';
@@ -15,6 +31,7 @@ import { areEqualAddresses } from '../helpers';
 import { Logger } from '../logging';
 import { getMaxMemeId } from '../nftsLoop/db.nfts';
 import { sendDiscordUpdate } from '../notifier-discord';
+import { sqlExecutor } from '../sql-executor';
 import { Time } from '../time';
 import {
   fetchAllAutoSubscriptions,
@@ -169,7 +186,8 @@ async function createFinalSubscriptions(newMeme: number, dateStr: string) {
         finalSubscriptions.push(finalSub);
         newSubscriptionLogs.push({
           consolidation_key: sub.consolidation_key,
-          log: `Added to Final Subscription for Meme #${newMeme} on ${dateStr}`
+          log: `Added to Final Subscription for Meme #${newMeme} on ${dateStr}`,
+          additional_info: `Airdrop Address: ${finalSub.airdrop_address} - Balance: ${finalSub.balance} ETH`
         });
       } else {
         logger.info(
@@ -177,7 +195,8 @@ async function createFinalSubscriptions(newMeme: number, dateStr: string) {
         );
         newSubscriptionLogs.push({
           consolidation_key: sub.consolidation_key,
-          log: `Insufficient Balance for Meme #${newMeme} on ${dateStr}`
+          log: `Insufficient Balance for Meme #${newMeme} on ${dateStr} - Not Added to Final Subscription`,
+          additional_info: `Balance: ${balance.balance} ETH`
         });
       }
     } else {
@@ -244,4 +263,105 @@ async function uploadFinalSubscriptions(
     token_id: newMeme,
     upload_url: url
   };
+}
+
+export async function consolidateSubscriptions(addresses: Set<string>) {
+  const addressesFilter = Array.from(addresses)
+    .map(
+      (address) =>
+        `${SUBSCRIPTIONS_BALANCES_TABLE}.consolidation_key LIKE '%${address}%'`
+    )
+    .join(' OR ');
+
+  const affectedSubscriptions: SubscriptionBalance[] =
+    await sqlExecutor.execute(
+      `SELECT * FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
+    WHERE (${addressesFilter})`
+    );
+
+  logger.info(
+    `[CONSOLIDATING SUBSCRIPTIONS] : [FOUND ${affectedSubscriptions.length} AFFECTED SUBSCRIPTIONS]`
+  );
+
+  const replaceConsolidations = new Map<string, string>();
+
+  for (const sub of affectedSubscriptions) {
+    const walletParts = sub.consolidation_key.split('-');
+    for (const wallet of walletParts) {
+      let newConsolidationKey = wallet;
+      const consolidation = (
+        await fetchWalletConsolidationKeysViewForWallet([wallet])
+      )[0];
+      if (consolidation) {
+        newConsolidationKey = consolidation.consolidation_key;
+      }
+
+      const replaceConsolidation = replaceConsolidations.get(
+        sub.consolidation_key
+      );
+
+      if (replaceConsolidation) {
+        const replaceTdh =
+          (
+            await sqlExecutor.execute(
+              `SELECT boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
+          WHERE consolidation_key = '${replaceConsolidation}'`
+            )
+          )[0]?.boosted_tdh ?? 0;
+        const newTdh =
+          (
+            await sqlExecutor.execute(
+              `SELECT boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
+          WHERE consolidation_key = '${newConsolidationKey}'`
+            )
+          )[0]?.boosted_tdh ?? 0;
+        if (newTdh > replaceTdh) {
+          replaceConsolidations.set(sub.consolidation_key, newConsolidationKey);
+        } else {
+          replaceConsolidations.set(
+            sub.consolidation_key,
+            replaceConsolidation
+          );
+        }
+      } else {
+        replaceConsolidations.set(sub.consolidation_key, newConsolidationKey);
+      }
+    }
+  }
+
+  await getDataSource().transaction(async (manager) => {
+    for (const oldKey of Array.from(replaceConsolidations.keys())) {
+      const newKey = replaceConsolidations.get(oldKey);
+      await manager.query(
+        `UPDATE ${SUBSCRIPTIONS_NFTS_TABLE}
+        SET consolidation_key = '${newKey}'
+        WHERE consolidation_key = '${oldKey}'`
+      );
+      await manager.query(
+        `UPDATE ${SUBSCRIPTIONS_LOGS_TABLE}
+        SET consolidation_key = '${newKey}'
+        WHERE consolidation_key = '${oldKey}'`
+      );
+      await manager.query(
+        `UPDATE ${SUBSCRIPTIONS_REDEEMED_TABLE}
+        SET consolidation_key = '${newKey}'
+        WHERE consolidation_key = '${oldKey}'`
+      );
+      await manager.query(
+        `UPDATE ${SUBSCRIPTIONS_BALANCES_TABLE}
+        SET consolidation_key = '${newKey}'
+        WHERE consolidation_key = '${oldKey}'`
+      );
+      await manager.query(
+        `UPDATE ${SUBSCRIPTIONS_MODE_TABLE}
+        SET consolidation_key = '${newKey}'
+        WHERE consolidation_key = '${oldKey}'`
+      );
+      await manager.query(
+        `UPDATE ${SUBSCRIPTIONS_REDEEMED_TABLE}
+        SET consolidation_key = '${newKey}'
+        WHERE consolidation_key = '${oldKey}'`
+      );
+    }
+  });
 }

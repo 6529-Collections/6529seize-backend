@@ -124,9 +124,7 @@ export async function updateSubscriptionMode(
       consolidationKey,
       SUBSCRIPTIONS_BALANCES_TABLE
     );
-    if (!balance) {
-      throw new NotFoundException('Balnce not found');
-    } else if (balance.balance < MEMES_MINT_PRICE) {
+    if (!balance || balance.balance < MEMES_MINT_PRICE) {
       throw new BadRequestException(
         `Not enough balance to set Subscription to Automatic. Need at least ${MEMES_MINT_PRICE} ETH.`
       );
@@ -302,9 +300,7 @@ export async function updateSubscription(
       consolidationKey,
       SUBSCRIPTIONS_BALANCES_TABLE
     );
-    if (!balance) {
-      throw new NotFoundException('Balnce not found');
-    } else if (balance.balance < MEMES_MINT_PRICE) {
+    if (!balance || balance.balance < MEMES_MINT_PRICE) {
       throw new BadRequestException(
         `Not enough balance to subscribe. Need at least ${MEMES_MINT_PRICE} ETH.`
       );

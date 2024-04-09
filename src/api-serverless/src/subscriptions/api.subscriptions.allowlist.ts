@@ -6,6 +6,7 @@ import { MEMES_CONTRACT, USE_CASE_MINTING } from '../../../constants';
 import { fetchProcessedDelegations } from '../../../delegationsLoop/db.delegations';
 import {
   ApiCompliantException,
+  BadRequestException,
   CustomApiCompliantException
 } from '../../../exceptions';
 
@@ -46,10 +47,10 @@ export async function validateDistribution(
   return {
     allowlist_id: allowlistId,
     phase_id: phaseId,
-    // TODO: switch below
-    // valid: !hasRanDelegationMapping,
-    valid: hasRanDelegationMapping,
-    message: hasRanDelegationMapping ? 'Delegation mapping has ran!' : undefined
+    valid: !hasRanDelegationMapping,
+    message: hasRanDelegationMapping
+      ? 'This plan has used Delegation mapping. Cannot process!'
+      : undefined
   };
 }
 
@@ -110,15 +111,20 @@ export async function fetchPhaseName(
 }
 
 export async function splitAllowlistResults(
-  phase: 'airdrops' | 'allowlists',
   contract: string,
   tokenId: number,
   results: ALResultsResponse[]
-): Promise<ResultsResponse[]> {
-  // TODO: REMOVE THIS
-  // results[0].wallet = '0xfe49a85e98941f1a115acd4beb98521023a25802';
-  // results[0].amount = 4;
-  // TODO: REMOVE THIS
+): Promise<{
+  airdrops: ResultsResponse[];
+  allowlists: ResultsResponse[];
+}> {
+  const listHasDuplicates = results.some(
+    (r1) =>
+      results.filter((r2) => areEqualAddresses(r1.wallet, r2.wallet)).length > 1
+  );
+  if (listHasDuplicates) {
+    throw new BadRequestException('List has duplicates. Cannot process!');
+  }
 
   const subscriptions = await fetchAllNftFinalSubscriptionsForContractAndToken(
     contract,
@@ -161,7 +167,7 @@ export async function splitAllowlistResults(
           amount: result.amount - 1
         });
       }
-    } else if (phase === 'allowlists') {
+    } else {
       allowlists.push({
         wallet: mapToMintingAddress(result.wallet),
         amount: result.amount
@@ -169,5 +175,5 @@ export async function splitAllowlistResults(
     }
   }
 
-  return phase === 'airdrops' ? airdrops : allowlists;
+  return { airdrops, allowlists };
 }

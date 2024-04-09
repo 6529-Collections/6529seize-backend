@@ -138,6 +138,9 @@ export class SubscriptionLog {
 
   @Column({ type: 'text' })
   log!: string;
+
+  @Column({ type: 'text', nullable: true })
+  additional_info?: string;
 }
 
 @Entity(SUBSCRIPTIONS_REDEEMED_TABLE)

@@ -50,6 +50,7 @@ import {
   ConsolidatedAggregatedActivity,
   ConsolidatedAggregatedActivityMemes
 } from '../entities/IAggregatedActivity';
+import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -98,12 +99,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 
 async function handleDelegations(startBlock: number | undefined) {
   const delegationsResponse = await findNewDelegations(startBlock);
-  delegationsResponse.consolidations.push({
-    wallet1: '0x7f3774EAdae4beB01919deC7f32A72e417Ab5DE3',
-    wallet2: '0xFe49A85E98941F1A115aCD4bEB98521023a25802',
-    block: 1337,
-    type: EventType.REVOKE
-  });
+
   await persistConsolidations(startBlock, delegationsResponse.consolidations);
   await persistDelegations(
     startBlock,
@@ -196,6 +192,7 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
     await consolidateNftOwners(distinctWallets);
     await consolidateOwnerBalances(distinctWallets);
     await consolidateActivity(distinctWallets);
+    await consolidateSubscriptions(distinctWallets);
   } else {
     logger.info(`[NO WALLETS TO RECONSOLIDATE]`);
   }
