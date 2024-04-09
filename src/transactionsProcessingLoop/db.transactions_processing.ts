@@ -1,8 +1,5 @@
 import { ObjectLiteral, Repository } from 'typeorm';
-import { fetchMaxTransactionByBlockNumber, getDataSource } from '../db';
-import { TRANSACTIONS_TABLE, NULL_ADDRESS, MANIFOLD } from '../constants';
 import { Transaction } from '../entities/ITransaction';
-import { sqlExecutor } from '../sql-executor';
 
 export async function getLastProcessingBlock<T extends ObjectLiteral>(
   repo: Repository<T>,

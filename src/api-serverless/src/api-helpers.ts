@@ -63,9 +63,9 @@ export async function returnZipCSVResult(
   response: Response
 ) {
   const zip = new JSZip();
-  for (let i = 0; i < results.length; i++) {
-    const csv = await converter.json2csvAsync(results[i].data);
-    zip.file(`${results[i].name}.csv`, csv);
+  for (const r of results) {
+    const csv = await converter.json2csvAsync(r.data);
+    zip.file(`${r.name}.csv`, csv);
   }
 
   zip.generateAsync({ type: 'nodebuffer' }).then(function (content: any) {

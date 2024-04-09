@@ -44,7 +44,7 @@ export async function sendDiscordUpdate(
     const embed = {
       color: color,
       description: message,
-      title: category
+      title: title
     };
     postData = {
       embeds: [embed]

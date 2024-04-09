@@ -5,7 +5,6 @@ import { areEqualAddresses } from '../../../helpers';
 import { MEMES_CONTRACT, USE_CASE_MINTING } from '../../../constants';
 import { fetchProcessedDelegations } from '../../../delegationsLoop/db.delegations';
 import {
-  ApiCompliantException,
   BadRequestException,
   CustomApiCompliantException
 } from '../../../exceptions';

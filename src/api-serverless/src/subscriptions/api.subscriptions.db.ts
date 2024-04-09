@@ -23,7 +23,7 @@ import {
 import { constructFilters } from '../api-helpers';
 import { fetchPaginated } from '../../../db-api';
 import { getMaxMemeId } from '../../../nftsLoop/db.nfts';
-import { BadRequestException, NotFoundException } from '../../../exceptions';
+import { BadRequestException } from '../../../exceptions';
 export interface SubscriptionDetails {
   consolidation_key: string;
   last_update: number;

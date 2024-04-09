@@ -10,7 +10,6 @@ import {
   ConsolidationEvent,
   Delegation,
   DelegationEvent,
-  EventType,
   NFTDelegationBlock
 } from '../entities/IDelegation';
 import { loadEnv, unload } from '../secrets';

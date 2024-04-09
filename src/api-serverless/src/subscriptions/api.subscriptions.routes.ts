@@ -2,7 +2,6 @@ import { Request, Response } from 'express';
 import { asyncRouter } from '../async.router';
 import {
   giveReadReplicaTimeToCatchUp,
-  returnCSVResult,
   returnJsonResult,
   returnZipCSVResult
 } from '../api-helpers';

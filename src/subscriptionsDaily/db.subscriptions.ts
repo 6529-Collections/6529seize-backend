@@ -1,24 +1,13 @@
-import { EntityManager } from 'typeorm';
-import { MEMES_MINT_PRICE, TEAM_TABLE } from '../constants';
-import {
-  fetchWalletConsolidationKeysViewForWallet,
-  getDataSource
-} from '../db';
+import { getDataSource } from '../db';
 import {
   NFTFinalSubscription,
   NFTFinalSubscriptionUpload,
   NFTSubscription,
-  RedeemedSubscription,
   SubscriptionBalance,
   SubscriptionLog,
   SubscriptionMode
 } from '../entities/ISubscription';
-import { Transaction } from '../entities/ITransaction';
-import { Logger } from '../logging';
 import { insertWithoutUpdate } from '../orm_helpers';
-import { sqlExecutor } from '../sql-executor';
-
-const logger = Logger.get('DB_SUBSCRIPTIONS');
 
 export async function fetchAllAutoSubscriptions() {
   return await getDataSource()
