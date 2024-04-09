@@ -12,11 +12,6 @@ provider:
   memorySize: 1028
   timeout: 900
 
-custom:
-  chainIDs:
-    staging: 11155111
-    prod: 1
-
 functions:
   subscriptionsDaily:
     handler: index.handler
@@ -32,6 +27,5 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'subscriptionsDaily_${opt:stage, self:provider.stage}'
-      SUBSCRIPTIONS_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
       SUBSCRIPTIONS_RESET: false
       DISABLE_DISCORD_NOTIFICATIONS: false
