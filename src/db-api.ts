@@ -850,7 +850,7 @@ async function fetchPaginatedTransactions(
   return fetchPaginated(
     TRANSACTIONS_TABLE,
     filters.params,
-    'transaction_date desc',
+    'transaction_date desc, token_id desc',
     pageSize,
     page,
     filters.filters,

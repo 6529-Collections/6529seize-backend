@@ -20,7 +20,7 @@ async function replay() {
   // logger.info(`[CUSTOM REPLAY NOT IMPLEMENTED]`);
 
   const allEthPrices: EthPrice[] = await getDataSource().manager.query(
-    `SELECT * from ${ETH_PRICE_TABLE}`
+    `SELECT * from ${ETH_PRICE_TABLE} ORDER BY timestamp_ms DESC`
   );
 
   let hasMore = true;
