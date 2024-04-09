@@ -4,6 +4,10 @@ import { fetchWalletConsolidationKeysView } from '../../../db';
 import { areEqualAddresses } from '../../../helpers';
 import { MEMES_CONTRACT, USE_CASE_MINTING } from '../../../constants';
 import { fetchProcessedDelegations } from '../../../delegationsLoop/db.delegations';
+import {
+  ApiCompliantException,
+  CustomApiCompliantException
+} from '../../../exceptions';
 
 export interface AllowlistResponse {
   allowlist_id: string;
@@ -31,10 +35,11 @@ interface ResultsResponse {
 }
 
 export async function validateDistribution(
+  auth: string,
   allowlistId: string,
   phaseId: string
 ): Promise<AllowlistResponse> {
-  const operations = await getDistributionOperations(allowlistId);
+  const operations = await getDistributionOperations(auth, allowlistId);
   const hasRanDelegationMapping = operations.some(
     (o) => o.code === 'MAP_RESULTS_TO_DELEGATED_WALLETS'
   );
@@ -49,19 +54,25 @@ export async function validateDistribution(
 }
 
 export async function getDistributionOperations(
+  auth: string,
   allowlistId: string
 ): Promise<ALOperationsResponse[]> {
   const url = `https://allowlist-api.seize.io/allowlists/${allowlistId}/operations`;
   const response = await fetch(url, {
     headers: {
       accept: 'application/json',
-      Authorization: `Bearer ${process.env.DB_ALLOWLIST_API_AUTH}`
+      Authorization: auth
     }
   });
-  return await response.json();
+  const json = await response.json();
+  if (response.status !== 200) {
+    throw new CustomApiCompliantException(response.status, json.message);
+  }
+  return json;
 }
 
 export async function fetchPhaseResults(
+  auth: string,
   allowlistId: string,
   phaseId: string
 ): Promise<ALResultsResponse[]> {
@@ -69,14 +80,18 @@ export async function fetchPhaseResults(
   const response = await fetch(url, {
     headers: {
       accept: 'application/json',
-      Authorization: `Bearer ${process.env.DB_ALLOWLIST_API_AUTH}`
+      Authorization: auth
     }
   });
-  const results = await response.json();
-  return results;
+  const json = await response.json();
+  if (response.status !== 200) {
+    throw new CustomApiCompliantException(response.status, json.message);
+  }
+  return json;
 }
 
 export async function fetchPhaseName(
+  auth: string,
   allowlistId: string,
   phaseId: string
 ): Promise<string> {
@@ -84,11 +99,14 @@ export async function fetchPhaseName(
   const response = await fetch(url, {
     headers: {
       accept: 'application/json',
-      Authorization: `Bearer ${process.env.DB_ALLOWLIST_API_AUTH}`
+      Authorization: auth
     }
   });
-  const phase = await response.json();
-  return phase.name;
+  const json = await response.json();
+  if (response.status !== 200) {
+    throw new CustomApiCompliantException(response.status, json.message);
+  }
+  return json.name;
 }
 
 export async function splitAllowlistResults(

@@ -23,7 +23,7 @@ import {
 } from '../../../entities/ISubscription';
 import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { areEqualAddresses } from '../../../helpers';
-import { ForbiddenException } from '../../../exceptions';
+import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
 import {
@@ -307,6 +307,9 @@ router.get(
     res: Response<SubscriptionLog[] | string>
   ) {
     const contract = req.query.contract;
+    if (!contract) {
+      throw new BadRequestException('Contract is required');
+    }
     const pageSize = parseInt(req.query.page_size ?? '20');
     const page = parseInt(req.query.page ?? '1');
 
@@ -332,23 +335,24 @@ router.get(
     >,
     res: Response<AllowlistResponse>
   ) {
+    const auth = req.headers.authorization ?? '';
     const contract = req.params.contract;
     const tokenId = req.params.token_id;
     const allowlistId = req.params.allowlist_id;
     const phaseId = req.params.phase_id;
     const subscriptionsPhase = req.params.subscriptions_phase;
 
-    const validate = await validateDistribution(allowlistId, phaseId);
+    const validate = await validateDistribution(auth, allowlistId, phaseId);
     if (!validate.valid) {
       return res.status(400).send(validate);
     }
 
-    let phaseName = await fetchPhaseName(allowlistId, phaseId);
+    let phaseName = await fetchPhaseName(auth, allowlistId, phaseId);
     if (phaseName) {
       phaseName = phaseName.toLowerCase().replace(/\s/g, '_');
     }
 
-    const phaseResults = await fetchPhaseResults(allowlistId, phaseId);
+    const phaseResults = await fetchPhaseResults(auth, allowlistId, phaseId);
     console.log('phaseResults', phaseResults.length);
 
     const results = await splitAllowlistResults(
