@@ -3,6 +3,8 @@ import { Logger } from './logging';
 
 const logger = Logger.get('NOTIFIER_DISCORD');
 
+const DISCORD_DEVS_ROLE = '<@&1162355330798325861>';
+
 export async function sendDiscordUpdate(
   webhookUrl: string,
   message: string,
@@ -24,7 +26,7 @@ export async function sendDiscordUpdate(
   if (type) {
     let color = 255;
     let title = category;
-    let shouldMention = false;
+    let shouldMentionDevs = false;
     switch (type) {
       case 'success':
         color = 65280;
@@ -32,12 +34,12 @@ export async function sendDiscordUpdate(
       case 'error':
         color = 16711680;
         title += ' - ERROR';
-        shouldMention = true;
+        shouldMentionDevs = true;
         break;
       case 'warn':
         color = 16753920;
         title += ' - WARNING';
-        shouldMention = true;
+        shouldMentionDevs = true;
         break;
     }
 
@@ -49,8 +51,8 @@ export async function sendDiscordUpdate(
     postData = {
       embeds: [embed]
     };
-    if (shouldMention) {
-      postData.content = '<@&1162355330798325861>';
+    if (shouldMentionDevs) {
+      postData.content = DISCORD_DEVS_ROLE;
     }
   } else {
     postData = {

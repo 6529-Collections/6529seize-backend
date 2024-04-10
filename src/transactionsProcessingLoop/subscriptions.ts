@@ -40,7 +40,7 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     await persistBlock(blockRepo, maxBlockTransaction);
     return;
   }
-  const transactions: Transaction[] = await sqlExecutor.execute(
+  const airdrops: Transaction[] = await sqlExecutor.execute(
     `SELECT * FROM ${TRANSACTIONS_TABLE} 
     WHERE block > :lastProcessingBlock 
     AND from_address = :nullAddress
@@ -52,18 +52,18 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     }
   );
 
-  if (transactions.length === 0) {
-    logger.info(`[NO TRANSACTIONS TO PROCESS]`);
+  if (airdrops.length === 0) {
+    logger.info(`[NO AIRDROPS TO PROCESS]`);
     await persistBlock(blockRepo, maxBlockTransaction);
     logger.info(`[BLOCK ${maxBlockTransaction.block} PERSISTED]`);
     return;
   }
 
-  logger.info(`[${transactions.length} TRANSACTIONS TO PROCESS]`);
+  logger.info(`[${airdrops.length} AIRDROPS TO PROCESS]`);
 
   await getDataSource().transaction(async (entityManager) => {
-    for (const tr of transactions) {
-      await redeemSubscriptionAirdrop(tr, entityManager);
+    for (const drop of airdrops) {
+      await redeemSubscriptionAirdrop(drop, entityManager);
     }
     blockRepo = entityManager.getRepository(
       TransactionsProcessedSubscriptionsBlock
