@@ -336,6 +336,7 @@ const NewDropSchema: Joi.ObjectSchema<DropApiRequest> = Joi.object({
   })
     .optional()
     .default(null)
+    .allow(null)
 });
 
 const DropDiscussionCommentsQuerySchema: Joi.ObjectSchema<DropActivityLogsQuery> =
