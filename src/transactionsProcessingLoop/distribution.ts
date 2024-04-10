@@ -11,37 +11,38 @@ import { Transaction } from '../entities/ITransaction';
 import { TransactionsProcessedDistributionBlock } from '../entities/ITransactionsProcessing';
 import { areEqualAddresses } from '../helpers';
 import { Logger } from '../logging';
+import {
+  getLastProcessingBlock,
+  persistBlock
+} from './db.transactions_processing';
+import { sqlExecutor } from '../sql-executor';
 
 const logger = Logger.get('TRANSACTIONS_PROCESSING_DISTRIBUTIONS');
 
 export const updateDistributionMints = async (reset?: boolean) => {
-  const lastProcessingBlock: number = reset
-    ? 0
-    : (
-        await getDataSource()
-          .getRepository(TransactionsProcessedDistributionBlock)
-          .createQueryBuilder('trxDistributionBlock')
-          .select('MAX(trxDistributionBlock.block)', 'max_block')
-          .getRawOne()
-      )?.max_block ?? 0;
-
-  const maxTransactionsBlock = await fetchMaxTransactionByBlockNumber();
-
-  logger.info(
-    `[LAST DISTRIBUTION BLOCK ${lastProcessingBlock}] : [RESET ${reset}] : [LAST BLOCK: ${maxTransactionsBlock.block}]`
+  let blockRepo = getDataSource().getRepository(
+    TransactionsProcessedDistributionBlock
   );
+  const lastProcessingBlock = await getLastProcessingBlock(blockRepo, reset);
+  const maxBlockTransaction = await fetchMaxTransactionByBlockNumber();
 
-  const transactions: Transaction[] = await getDataSource().manager.query(
+  const transactions: Transaction[] = await sqlExecutor.execute(
     `SELECT * FROM ${TRANSACTIONS_TABLE} 
-    WHERE block > ${lastProcessingBlock} 
-    AND from_address IN ("${NULL_ADDRESS}","${MANIFOLD}")
+    WHERE block > :lastProcessingBlock 
+    AND from_address IN (:manifold, :nullAddress)
     AND value > 0
-    ORDER BY block asc;`
+    ORDER BY block asc;`,
+    {
+      lastProcessingBlock,
+      manifold: MANIFOLD,
+      nullAddress: NULL_ADDRESS
+    }
   );
 
   if (transactions.length === 0) {
     logger.info(`[NO TRANSACTIONS TO PROCESS]`);
-    await persistBlock(maxTransactionsBlock);
+    await persistBlock(blockRepo, maxBlockTransaction);
+    logger.info(`[BLOCK ${maxBlockTransaction.block} PERSISTED]`);
     return;
   }
 
@@ -67,10 +68,12 @@ export const updateDistributionMints = async (reset?: boolean) => {
     for (const tr of transactions) {
       await processTransaction(tr, entityManager);
     }
-    await persistBlock(maxTransactionsBlock, entityManager);
+    blockRepo = entityManager.getRepository(
+      TransactionsProcessedDistributionBlock
+    );
+    await persistBlock(blockRepo, maxBlockTransaction);
+    logger.info(`[BLOCK ${maxBlockTransaction.block} PERSISTED]`);
   });
-
-  logger.info(`[ALL TRANSACTIONS PROCESSED]`);
 };
 
 async function processTransaction(
@@ -107,14 +110,4 @@ async function processTransaction(
       `[DUPLICATE DISTRIBUTIONS FOUND FOR ${transaction.to_address} ${transaction.contract} ${transaction.token_id}]`
     );
   }
-}
-
-async function persistBlock(tx: Transaction, manager?: EntityManager) {
-  let dataSource = manager ?? getDataSource();
-  await dataSource.getRepository(TransactionsProcessedDistributionBlock).save({
-    created_at: new Date(),
-    block: tx.block,
-    timestamp: new Date(tx.transaction_date).getTime()
-  });
-  logger.info(`[BLOCK ${tx.block} PERSISTED]`);
 }

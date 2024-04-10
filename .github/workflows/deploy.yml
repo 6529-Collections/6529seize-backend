@@ -43,6 +43,8 @@ on:
           - rememesLoop
           - royaltiesLoop
           - s3Loop
+          - subscriptionsDaily
+          - subscriptionsTopUpLoop
           - tdhConsolidationsLoop
           - tdhHistoryLoop
           - tdhLoop

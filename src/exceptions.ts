@@ -45,3 +45,15 @@ export class UnauthorisedException extends ApiCompliantException {
     return 401;
   }
 }
+
+export class CustomApiCompliantException extends ApiCompliantException {
+  private status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+
+  getStatusCode(): number {
+    return this.status;
+  }
+}

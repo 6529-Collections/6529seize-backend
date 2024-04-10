@@ -4,6 +4,8 @@ export const TDH_BLOCKS_TABLE = 'tdh_blocks';
 export const TRANSACTIONS_TABLE = 'transactions';
 export const TRANSACTIONS_PROCESSED_DISTRIBUTION_BLOCKS_TABLE =
   'transactions_processed_distribution_blocks';
+export const TRANSACTIONS_PROCESSED_SUBSCRIPTIONS_BLOCKS_TABLE =
+  'transactions_processed_subscriptions_blocks';
 export const NFTS_TABLE = 'nfts';
 export const NFTS_MEME_LAB_TABLE = 'nfts_meme_lab';
 export const MEME_LAB_ROYALTIES_TABLE = 'meme_lab_royalties';
@@ -68,6 +70,16 @@ export const CONSOLIDATED_OWNERS_BALANCES_TABLE =
   'owners_balances_consolidation';
 export const CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE =
   'owners_balances_memes_consolidation';
+
+export const SUBSCRIPTIONS_TOP_UP_TABLE = 'subscriptions_top_up';
+export const SUBSCRIPTIONS_BALANCES_TABLE = 'subscriptions_balances';
+export const SUBSCRIPTIONS_MODE_TABLE = 'subscriptions_mode';
+export const SUBSCRIPTIONS_NFTS_TABLE = 'subscriptions_nfts';
+export const SUBSCRIPTIONS_NFTS_FINAL_TABLE = 'subscriptions_nfts_final';
+export const SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE =
+  'subscriptions_nfts_final_upload';
+export const SUBSCRIPTIONS_LOGS_TABLE = 'subscriptions_logs';
+export const SUBSCRIPTIONS_REDEEMED_TABLE = 'subscriptions_redeemed';
 
 export const DROPS_TABLE = 'drops';
 export const DROPS_MENTIONS_TABLE = 'drops_mentions';
@@ -139,6 +151,7 @@ export const DELEGATION_ALL_ADDRESS =
 
 export const USE_CASE_ALL = 1;
 export const USE_CASE_MINTING = 2;
+export const USE_CASE_AIRDROPS = 3;
 export const USE_CASE_SUB_DELEGATION = 998;
 export const USE_CASE_CONSOLIDATION = 999;
 export const CONSOLIDATIONS_LIMIT = 3;
@@ -153,3 +166,8 @@ export const MEMES_ROYALTIES_RATE = 0.5;
 export const MEME_8_EDITION_BURN_ADJUSTMENT = -2588;
 export const MEME_8_BURN_TRANSACTION =
   '0xa6c27335d3c4f87064a938e987e36525885cc3d136ebb726f4c5d374c0d2d854';
+
+export const SUBSCRIPTIONS_ADDRESS =
+  '0xCaAc2b43b1b40eDBFAdDB5aebde9A90a27E1A3be';
+
+export const MEMES_MINT_PRICE = 0.06529;

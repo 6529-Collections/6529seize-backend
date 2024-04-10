@@ -5,7 +5,7 @@
   "main": "serverless.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "NODE_ENV=local serverless offline",
+    "dev": "NODE_ENV=local nodemon",
     "prebuild": "rm -rf dist",
     "build": "esbuild src/handler.ts --bundle --sourcemap --platform=node --target=es2020 --outfile=dist/index.js",
     "postbuild": "cd dist && zip -r index.zip *"
@@ -21,6 +21,7 @@
     "dotenv": "^16.3.2",
     "express": "^4.18.3",
     "jsonwebtoken": "^9.0.2",
+    "jszip": "^3.10.1",
     "mcache": "^0.4.0",
     "multer": "^1.4.5-lts.1",
     "passport": "^0.7.0",
