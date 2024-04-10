@@ -45,6 +45,7 @@ export const redeemSubscriptions = async (reset?: boolean) => {
     WHERE block > :lastProcessingBlock 
     AND from_address = :nullAddress
     AND value = 0
+    AND token_count > 0
     ORDER BY block asc;`,
     {
       lastProcessingBlock,
@@ -97,14 +98,14 @@ async function redeemSubscriptionAirdrop(
       `SELECT * FROM ${TEAM_TABLE} WHERE LOWER(wallet) = '${transaction.to_address}'`
     )
   )[0];
-  const isTeamMemeber = !!team;
 
   if (!finalSubscription) {
-    const message = `No subscription found for airdrop address: ${
-      transaction.to_address
-    } \nTransaction: ${getTransactionLink(1, transaction.transaction)}`;
-    logger.warn(message);
+    const isTeamMemeber = !!team;
     if (!isTeamMemeber) {
+      const message = `No subscription found for airdrop address: ${
+        transaction.to_address
+      } \nTransaction: ${getTransactionLink(1, transaction.transaction)}`;
+      logger.warn(message);
       await sendDiscordUpdate(
         process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
         message,

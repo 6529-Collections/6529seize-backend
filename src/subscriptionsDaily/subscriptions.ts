@@ -303,14 +303,14 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
           (
             await sqlExecutor.execute(
               `SELECT boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
-          WHERE consolidation_key = '${replaceConsolidation}'`
+              WHERE consolidation_key = '${replaceConsolidation}'`
             )
           )[0]?.boosted_tdh ?? 0;
         const newTdh =
           (
             await sqlExecutor.execute(
               `SELECT boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
-          WHERE consolidation_key = '${newConsolidationKey}'`
+              WHERE consolidation_key = '${newConsolidationKey}'`
             )
           )[0]?.boosted_tdh ?? 0;
         if (newTdh > replaceTdh) {
@@ -352,11 +352,6 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
       );
       await manager.query(
         `UPDATE ${SUBSCRIPTIONS_MODE_TABLE}
-        SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'`
-      );
-      await manager.query(
-        `UPDATE ${SUBSCRIPTIONS_REDEEMED_TABLE}
         SET consolidation_key = '${newKey}'
         WHERE consolidation_key = '${oldKey}'`
       );
