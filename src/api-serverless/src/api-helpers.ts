@@ -70,6 +70,10 @@ export async function returnZipCSVResult(
 
   zip.generateAsync({ type: 'nodebuffer' }).then(function (content: any) {
     response.header('Content-Type', 'application/zip');
+    response.header(
+      'Content-Disposition',
+      `attachment; filename="${fileName}.zip"`
+    );
     response.attachment(`${fileName}.zip`);
     response.send(content);
   });
