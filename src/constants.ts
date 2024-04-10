@@ -85,6 +85,7 @@ export const DROPS_TABLE = 'drops';
 export const DROPS_MENTIONS_TABLE = 'drops_mentions';
 export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
 export const DROP_METADATA_TABLE = 'drops_metadatas';
+export const DROP_DISCUSSION_COMMENT_TABLE = 'drops_discussion_comments';
 
 export const ETH_PRICE_TABLE = 'eth_price';
 

@@ -3,11 +3,7 @@ import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
-import {
-  DropApiRawRequest,
-  DropApiRequest,
-  fromRawApiRequestToApiRequest
-} from './drops.api.types';
+import { DropApiRequest } from './drops.api.types';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { profilesService } from '../../../profiles/profiles.service';
 import {
@@ -15,14 +11,13 @@ import {
   ForbiddenException,
   NotFoundException
 } from '../../../exceptions';
-import { initMulterSingleMiddleware } from '../multer-middleware';
 import { dropCreationService } from '../../../drops/drop-creation.service';
 import {
   CreateNewDropRequest,
+  DropActivityLog,
   DropFull,
   DropMentionedUser,
-  DropReferencedNft,
-  NewDropMedia
+  DropReferencedNft
 } from '../../../drops/drops.types';
 import { DropMetadataEntity } from '../../../entities/IDrop';
 import { WALLET_REGEX } from '../../../constants';
@@ -31,6 +26,14 @@ import { parseIntOrNull, parseNumberOrNull } from '../../../helpers';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { dropRaterService } from '../../../drops/drop-rater.service';
+import {
+  DEFAULT_MAX_SIZE,
+  DEFAULT_PAGE_SIZE,
+  FullPageRequest,
+  Page,
+  PageSortDirection
+} from '../page-request';
+import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 
 const router = asyncRouter();
 
@@ -46,19 +49,28 @@ router.get(
         curation_criteria_id?: string;
         id_less_than?: number;
         root_drop_id?: number;
+        input_profile?: string;
       },
       any
     >,
     res: Response<ApiResponse<DropFull[]>>
   ) => {
+    const inputProfileId = req.query.input_profile
+      ? await profilesService
+          .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+            req.query.input_profile
+          )
+          ?.then((result) => result?.profile?.external_id)
+      : undefined;
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
     const curation_criteria_id = req.query.curation_criteria_id ?? null;
     const root_drop_id = parseIntOrNull(req.query.root_drop_id);
     const createdDrop = await dropsService.findLatestDrops({
-      amount: limit < 0 || limit > 200 ? 10 : limit,
+      amount: limit < 0 || limit > 20 ? 10 : limit,
       curation_criteria_id,
       id_less_than: parseNumberOrNull(req.query.id_less_than),
-      root_drop_id
+      root_drop_id,
+      input_profile_id: inputProfileId
     });
     res.send(createdDrop);
   }
@@ -67,14 +79,30 @@ router.get(
 router.get(
   '/:drop_id',
   async (
-    req: Request<{ drop_id: number }, any, any, any, any>,
+    req: Request<
+      { drop_id: number },
+      any,
+      any,
+      { input_profile?: string },
+      any
+    >,
     res: Response<ApiResponse<DropFull>>
   ) => {
+    const inputProfileId = req.query.input_profile
+      ? await profilesService
+          .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+            req.query.input_profile
+          )
+          ?.then((result) => result?.profile?.external_id)
+      : undefined;
     const dropId = parseNumberOrNull(req.params.drop_id);
     if (!dropId) {
       throw new NotFoundException(`Drop ${req.params.drop_id} not found`);
     }
-    const drop = await dropsService.findDropByIdOrThrow(dropId);
+    const drop = await dropsService.findDropByIdOrThrow({
+      dropId,
+      inputProfileId
+    });
     res.send(drop);
   }
 );
@@ -82,18 +110,16 @@ router.get(
 router.post(
   '/',
   needsAuthenticatedUser(),
-  initMulterSingleMiddleware('drop_media'),
   async (
-    req: Request<any, any, DropApiRawRequest, any, any>,
+    req: Request<any, any, DropApiRequest, any, any>,
     res: Response<ApiResponse<DropFull>>
   ) => {
-    const postMedia = convertToMediaOrNull(req.file);
-    const apiRequest = fromRawApiRequestToApiRequest(req.body);
+    const apiRequest = req.body;
     const newDrop: DropApiRequest = getValidatedByJoiOrThrow(
       apiRequest,
       NewDropSchema
     );
-    if (!newDrop.content && !postMedia) {
+    if (!newDrop.content && !newDrop.drop_media) {
       throw new BadRequestException(
         'You need to provide either content or media'
       );
@@ -117,7 +143,7 @@ router.post(
       referenced_nfts: newDrop.referenced_nfts,
       mentioned_users: newDrop.mentioned_users,
       metadata: newDrop.metadata,
-      dropMedia: postMedia
+      dropMedia: newDrop.drop_media
     };
     const createdDrop = await dropCreationService.createDrop(createDropRequest);
     res.send(createdDrop);
@@ -171,10 +197,91 @@ router.post(
       drop_id: dropId,
       rating: amount
     });
-    const drop = await dropsService.findDropByIdOrThrow(dropId);
+    const drop = await dropsService.findDropByIdOrThrow({
+      dropId,
+      inputProfileId: raterProfileId
+    });
     res.send(drop);
   }
 );
+
+router.get(
+  `/:drop_id/log`,
+  async (
+    req: Request<
+      { drop_id: number },
+      any,
+      any,
+      Omit<DropActivityLogsQuery, 'drop_id'>,
+      any
+    >,
+    res: Response<Page<DropActivityLog>>
+  ) => {
+    const unvalidatedQuery: DropActivityLogsQuery = {
+      drop_id: req.params.drop_id,
+      ...req.query
+    };
+    const validatedQuery: DropActivityLogsQuery = getValidatedByJoiOrThrow(
+      unvalidatedQuery,
+      DropDiscussionCommentsQuerySchema
+    );
+    await dropsService.findDropByIdOrThrow({ dropId: validatedQuery.drop_id });
+    const discussionCommentsPage = await dropsService.findDiscussionComments(
+      validatedQuery
+    );
+    res.send(discussionCommentsPage);
+  }
+);
+
+router.post(
+  `/:drop_id/log`,
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: number }, any, { content: string }, any, any>,
+    res: Response<DropActivityLog>
+  ) => {
+    const authenticatedWallet = getWalletOrThrow(req);
+    const authorProfileId = await profilesService
+      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+        authenticatedWallet
+      )
+      ?.then((result) => result?.profile?.external_id ?? null);
+    if (!authorProfileId) {
+      throw new ForbiddenException(
+        `Create a profile before commenting on a drop`
+      );
+    }
+    const commentRequest: {
+      drop_id: number;
+      content: string;
+      author_id: string;
+    } = getValidatedByJoiOrThrow(
+      {
+        drop_id: req.params.drop_id,
+        content: req.body.content,
+        author_id: authorProfileId
+      },
+      Joi.object<{ drop_id: number; content: string; author_id: string }>({
+        drop_id: Joi.number().integer().required(),
+        content: Joi.string().min(1).max(500).required(),
+        author_id: Joi.string().required()
+      })
+    );
+    await dropsService.findDropByIdOrThrow({ dropId: commentRequest.drop_id });
+    const addedComment = await dropsService.commentDrop(commentRequest);
+    res.send(addedComment);
+  }
+);
+
+export interface DropActivityLogsQuery
+  extends FullPageRequest<DropActivityLogsQuerySortOption> {
+  readonly drop_id: number;
+  readonly log_type?: ProfileActivityLogType;
+}
+
+export enum DropActivityLogsQuerySortOption {
+  CREATED_AT = 'created_at'
+}
 
 interface ApiAddRepRatingToDropRequest {
   readonly amount: number;
@@ -206,30 +313,62 @@ const MetadataSchema: Joi.ObjectSchema<DropMetadataEntity> = Joi.object({
 });
 
 const NewDropSchema: Joi.ObjectSchema<DropApiRequest> = Joi.object({
-  title: Joi.string().optional().max(250).default(null),
-  content: Joi.string().optional().max(25000).default(null),
-  quoted_drop_id: Joi.number().integer().default(null),
-  root_drop_id: Joi.number().integer().default(null),
-  referenced_nfts: Joi.array().optional().items(NftSchema).default([]),
+  title: Joi.string().optional().max(250).default(null).allow(null),
+  content: Joi.string().optional().max(25000).default(null).allow(null),
+  quoted_drop_id: Joi.number().integer().default(null).allow(null),
+  root_drop_id: Joi.number().integer().default(null).allow(null),
+  referenced_nfts: Joi.array()
+    .optional()
+    .items(NftSchema)
+    .default([])
+    .allow(null),
   mentioned_users: Joi.array()
     .optional()
     .items(MentionedUserSchema)
-    .default([]),
-  metadata: Joi.array().optional().items(MetadataSchema).default([])
+    .default([])
+    .allow(null),
+  metadata: Joi.array().optional().items(MetadataSchema).default([]),
+  drop_media: Joi.object({
+    mimetype: Joi.string().required(),
+    url: Joi.string()
+      .required()
+      .regex(/^https:\/\/d3lqz0a4bldqgf.cloudfront.net\//)
+  })
+    .optional()
+    .default(null)
 });
 
-function convertToMediaOrNull(
-  postMedia?: Express.Multer.File
-): NewDropMedia | null {
-  if (!postMedia) {
-    return null;
-  }
-  return {
-    stream: postMedia.buffer,
-    name: postMedia.originalname,
-    mimetype: postMedia.mimetype,
-    size: postMedia.size
-  };
-}
+const DropDiscussionCommentsQuerySchema: Joi.ObjectSchema<DropActivityLogsQuery> =
+  Joi.object({
+    sort_direction: Joi.string()
+      .optional()
+      .default(PageSortDirection.DESC)
+      .valid(...Object.values(PageSortDirection))
+      .allow(null),
+    sort: Joi.string()
+      .optional()
+      .default(DropActivityLogsQuerySortOption.CREATED_AT)
+      .valid(...Object.values(DropActivityLogsQuerySortOption))
+      .allow(null),
+    page: Joi.number().integer().min(1).optional().allow(null).default(1),
+    page_size: Joi.number()
+      .integer()
+      .min(1)
+      .max(DEFAULT_MAX_SIZE)
+      .optional()
+      .allow(null)
+      .default(DEFAULT_PAGE_SIZE),
+    drop_id: Joi.number().integer().required(),
+    log_type: Joi.string()
+      .optional()
+      .default(null)
+      .valid(
+        ...[
+          ProfileActivityLogType.DROP_COMMENT,
+          ProfileActivityLogType.DROP_REP_EDIT,
+          ProfileActivityLogType.DROP_CREATED
+        ]
+      )
+  });
 
 export default router;
