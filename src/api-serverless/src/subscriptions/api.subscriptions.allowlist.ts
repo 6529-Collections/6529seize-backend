@@ -57,7 +57,7 @@ export async function getDistributionOperations(
   auth: string,
   allowlistId: string
 ): Promise<ALOperationsResponse[]> {
-  const url = `https://allowlist-api.seize.io/allowlists/${allowlistId}/operations`;
+  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${allowlistId}/operations`;
   const response = await fetch(url, {
     headers: {
       accept: 'application/json',
@@ -76,7 +76,7 @@ export async function fetchPhaseResults(
   allowlistId: string,
   phaseId: string
 ): Promise<ALResultsResponse[]> {
-  const url = `https://allowlist-api.seize.io/allowlists/${allowlistId}/results/phases/${phaseId}`;
+  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${allowlistId}/results/phases/${phaseId}`;
   const response = await fetch(url, {
     headers: {
       accept: 'application/json',
@@ -95,7 +95,7 @@ export async function fetchPhaseName(
   allowlistId: string,
   phaseId: string
 ): Promise<string> {
-  const url = `https://allowlist-api.seize.io/allowlists/${allowlistId}/phases/${phaseId}`;
+  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${allowlistId}/phases/${phaseId}`;
   const response = await fetch(url, {
     headers: {
       accept: 'application/json',
