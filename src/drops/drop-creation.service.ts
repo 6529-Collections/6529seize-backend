@@ -8,7 +8,11 @@ import { dropsDb, DropsDb } from './drops.db';
 import { giveReadReplicaTimeToCatchUp } from '../api-serverless/src/api-helpers';
 import { Logger } from '../logging';
 import { dropsService, DropsService } from './drops.service';
-import { dropFileService, DropFileService } from './drop-file.service';
+import {
+  profileActivityLogsDb,
+  ProfileActivityLogsDb
+} from '../profileActivityLogs/profile-activity-logs.db';
+import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 
 export class DropCreationService {
   private readonly logger = Logger.get('DropCreationService');
@@ -16,37 +20,21 @@ export class DropCreationService {
   constructor(
     private readonly dropsService: DropsService,
     private readonly dropsDb: DropsDb,
-    private readonly dropFileService: DropFileService
+    private readonly profileActivityLogsDb: ProfileActivityLogsDb
   ) {}
 
   async createDrop(createDropRequest: CreateNewDropRequest): Promise<DropFull> {
     await this.validateReferences(createDropRequest);
-    const dropMedia = await this.uploadMediaIfExists(createDropRequest);
+    const dropMedia = {
+      media_url: createDropRequest.dropMedia?.url ?? null,
+      media_mime_type: createDropRequest.dropMedia?.mimetype ?? null
+    };
     const dropFull = await this.persistDrop(createDropRequest, dropMedia);
     await giveReadReplicaTimeToCatchUp();
     this.logger.info(
       `Drop ${dropFull.id} created by user ${dropFull.author.id}`
     );
     return dropFull;
-  }
-
-  private async uploadMediaIfExists(
-    createDropRequest: CreateNewDropRequest
-  ): Promise<{
-    media_url: string | null;
-    media_mime_type: string | null;
-  }> {
-    const dropMedia = createDropRequest.dropMedia;
-    if (dropMedia === null) {
-      return {
-        media_url: null,
-        media_mime_type: null
-      };
-    }
-    return this.dropFileService.uploadDropMedia(
-      dropMedia,
-      createDropRequest.author.external_id
-    );
   }
 
   private async persistDrop(
@@ -88,6 +76,21 @@ export class DropCreationService {
           },
           connection
         );
+        await this.profileActivityLogsDb.insert(
+          {
+            profile_id: createDropRequest.author.external_id,
+            target_id: dropId.toString(),
+            contents: JSON.stringify({
+              drop_id: dropId,
+              title: createDropRequest.title,
+              content: createDropRequest.content,
+              media_url: dropMedia.media_url,
+              media_mime_type: dropMedia.media_mime_type
+            }),
+            type: ProfileActivityLogType.DROP_CREATED
+          },
+          connection
+        );
         const mentionEntities = createDropRequest.mentioned_users.map((it) => ({
           drop_id: dropId,
           mentioned_profile_id: it.mentioned_profile_id,
@@ -114,7 +117,10 @@ export class DropCreationService {
           drop_id: dropId
         }));
         await this.dropsDb.insertDropMetadata(metadata, connection);
-        return this.dropsService.findDropByIdOrThrow(dropId, connection);
+        return this.dropsService.findDropByIdOrThrow(
+          { dropId, inputProfileId: createDropRequest.author.external_id },
+          connection
+        );
       }
     );
   }
@@ -135,5 +141,5 @@ export class DropCreationService {
 export const dropCreationService = new DropCreationService(
   dropsService,
   dropsDb,
-  dropFileService
+  profileActivityLogsDb
 );
