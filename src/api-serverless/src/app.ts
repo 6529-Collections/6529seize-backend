@@ -805,13 +805,11 @@ loadApi().then(() => {
     app.use(sentryFlusherMiddleware());
   }
 
-  const server = app.listen(3000, function () {
+  app.listen(3000, function () {
     logger.info(
       `[CONFIG ${process.env.NODE_ENV}] [SERVER RUNNING ON PORT 3000]`
     );
   });
-
-  server.setTimeout(60000);
 });
 
 export { app };

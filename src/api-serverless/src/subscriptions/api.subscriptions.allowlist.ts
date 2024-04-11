@@ -117,10 +117,8 @@ export async function splitAllowlistResults(
   airdrops: ResultsResponse[];
   allowlists: ResultsResponse[];
 }> {
-  const listHasDuplicates = results.some(
-    (r1) =>
-      results.filter((r2) => areEqualAddresses(r1.wallet, r2.wallet)).length > 1
-  );
+  const wallets = results.map((r) => r.wallet.toLowerCase());
+  const listHasDuplicates = new Set(wallets).size !== wallets.length;
   if (listHasDuplicates) {
     throw new BadRequestException('List has duplicates. Cannot process!');
   }
@@ -134,27 +132,30 @@ export async function splitAllowlistResults(
   const allowlists: ResultsResponse[] = [];
 
   const consolidationKeys = await fetchWalletConsolidationKeysView();
+  const consolidationKeyMap = new Map(
+    consolidationKeys.map((key) => [key.wallet, key.consolidation_key])
+  );
+
   const walletMintingDelegations = await fetchProcessedDelegations(
     MEMES_CONTRACT,
     USE_CASE_MINTING
   );
+  const delegationMap = new Map(
+    walletMintingDelegations.map((d) => [d.from_address, d.to_address])
+  );
 
-  const mapToMintingAddress = (wallet: string) => {
-    return (
-      walletMintingDelegations.find((d) =>
-        areEqualAddresses(d.from_address, wallet)
-      )?.to_address ?? wallet
-    );
-  };
+  const mapToMintingAddress = (wallet: string) =>
+    delegationMap.get(wallet) ?? wallet;
 
   for (const result of results) {
+    const walletAddress = result.wallet.toLowerCase();
     const consolidationKey =
-      consolidationKeys.find((key) =>
-        areEqualAddresses(key.wallet, result.wallet)
-      )?.consolidation_key ?? result.wallet;
+      consolidationKeyMap.get(walletAddress) ?? walletAddress;
+
     const subscription = subscriptions.find((s) =>
       areEqualAddresses(s.consolidation_key, consolidationKey)
     );
+
     if (subscription) {
       airdrops.push({
         wallet: subscription.airdrop_address,
