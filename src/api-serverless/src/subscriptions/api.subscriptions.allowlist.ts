@@ -1,6 +1,5 @@
 import fetch from 'node-fetch';
 import { fetchAllNftFinalSubscriptionsForContractAndToken } from './api.subscriptions.db';
-import { fetchWalletConsolidationKeysView } from '../../../db';
 import { areEqualAddresses } from '../../../helpers';
 import { MEMES_CONTRACT, USE_CASE_MINTING } from '../../../constants';
 import { fetchProcessedDelegations } from '../../../delegationsLoop/db.delegations';
