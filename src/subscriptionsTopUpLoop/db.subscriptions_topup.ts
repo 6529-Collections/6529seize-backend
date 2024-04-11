@@ -18,7 +18,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
     for (const topUp of topUps) {
       let consolidationKey = (
         await manager.query(
-          `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE wallet = ${topUp.from_wallet}`
+          `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE wallet = '${topUp.from_wallet}'`
         )
       )[0]?.consolidation_key;
 

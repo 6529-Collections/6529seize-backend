@@ -1,10 +1,6 @@
 import { Request, Response } from 'express';
 import { asyncRouter } from '../async.router';
-import {
-  giveReadReplicaTimeToCatchUp,
-  returnJsonResult,
-  returnZipCSVResult
-} from '../api-helpers';
+import { giveReadReplicaTimeToCatchUp, returnJsonResult } from '../api-helpers';
 import {
   fetchDetailsForConsolidationKey,
   fetchConsolidationWallets,
@@ -27,8 +23,6 @@ import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
 import {
-  AllowlistResponse,
-  fetchPhaseName,
   fetchPhaseResults,
   splitAllowlistResults,
   validateDistribution
@@ -358,21 +352,12 @@ router.get(
       return res.status(400).send(validate);
     }
 
-    let phaseName = await fetchPhaseName(auth, allowlistId, phaseId);
-    if (phaseName) {
-      phaseName = phaseName.toLowerCase().replace(/\s/g, '_');
-    }
-
     const phaseResults = await fetchPhaseResults(auth, allowlistId, phaseId);
-    console.log('phaseResults', phaseResults.length);
-
     const results = await splitAllowlistResults(
       contract,
       tokenId,
       phaseResults
     );
-    console.log('airdrops', results.airdrops.length);
-    console.log('allowlists', results.allowlists.length);
     return returnJsonResult(results, req, res);
   }
 );
