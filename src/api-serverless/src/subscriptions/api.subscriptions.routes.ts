@@ -329,7 +329,7 @@ router.get(
     req: Request<
       {
         contract: string;
-        token_id: number;
+        token_id: string;
         allowlist_id: string;
         phase_id: string;
       },
@@ -337,13 +337,21 @@ router.get(
       any,
       any
     >,
-    res: Response<AllowlistResponse>
+    res: Response<any>
   ) {
     const auth = req.headers.authorization ?? '';
     const contract = req.params.contract;
-    const tokenId = req.params.token_id;
+    const tokenIdStr = req.params.token_id;
     const allowlistId = req.params.allowlist_id;
     const phaseId = req.params.phase_id;
+
+    const tokenId = parseInt(tokenIdStr);
+    if (isNaN(tokenId)) {
+      return res.status(400).send({
+        valid: false,
+        statusText: 'Invalid token ID'
+      });
+    }
 
     const validate = await validateDistribution(auth, allowlistId, phaseId);
     if (!validate.valid) {
@@ -365,20 +373,6 @@ router.get(
     );
     console.log('airdrops', results.airdrops.length);
     console.log('allowlists', results.allowlists.length);
-    const fileName = `${phaseName}`.toLowerCase();
-    return returnZipCSVResult(
-      fileName,
-      [
-        {
-          name: `${phaseName}_airdrops`.toLowerCase(),
-          data: results.airdrops
-        },
-        {
-          name: `${phaseName}_allowlists`.toLowerCase(),
-          data: results.allowlists
-        }
-      ],
-      res
-    );
+    return returnJsonResult(results, req, res);
   }
 );

@@ -13,7 +13,7 @@ export interface AllowlistResponse {
   allowlist_id: string;
   phase_id: string;
   valid: boolean;
-  message?: string;
+  statusText?: string;
 }
 
 interface ALOperationsResponse {
@@ -47,7 +47,7 @@ export async function validateDistribution(
     allowlist_id: allowlistId,
     phase_id: phaseId,
     valid: !hasRanDelegationMapping,
-    message: hasRanDelegationMapping
+    statusText: hasRanDelegationMapping
       ? 'This plan has used Delegation mapping. Cannot process!'
       : undefined
   };
