@@ -131,11 +131,6 @@ export async function splitAllowlistResults(
   const airdrops: ResultsResponse[] = [];
   const allowlists: ResultsResponse[] = [];
 
-  const consolidationKeys = await fetchWalletConsolidationKeysView();
-  const consolidationKeyMap = new Map(
-    consolidationKeys.map((key) => [key.wallet, key.consolidation_key])
-  );
-
   const walletMintingDelegations = await fetchProcessedDelegations(
     MEMES_CONTRACT,
     USE_CASE_MINTING
@@ -149,11 +144,11 @@ export async function splitAllowlistResults(
 
   for (const result of results) {
     const walletAddress = result.wallet.toLowerCase();
-    const consolidationKey =
-      consolidationKeyMap.get(walletAddress) ?? walletAddress;
 
     const subscription = subscriptions.find((s) =>
-      areEqualAddresses(s.consolidation_key, consolidationKey)
+      s.consolidation_key
+        .split('-')
+        .some((k) => areEqualAddresses(k, walletAddress))
     );
 
     if (subscription) {
