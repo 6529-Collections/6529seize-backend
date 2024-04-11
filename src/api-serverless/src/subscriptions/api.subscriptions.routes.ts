@@ -1,10 +1,6 @@
 import { Request, Response } from 'express';
 import { asyncRouter } from '../async.router';
-import {
-  giveReadReplicaTimeToCatchUp,
-  returnJsonResult,
-  returnZipCSVResult
-} from '../api-helpers';
+import { giveReadReplicaTimeToCatchUp, returnJsonResult } from '../api-helpers';
 import {
   fetchDetailsForConsolidationKey,
   fetchConsolidationWallets,
@@ -27,7 +23,6 @@ import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
 import {
-  AllowlistResponse,
   fetchPhaseName,
   fetchPhaseResults,
   splitAllowlistResults,
