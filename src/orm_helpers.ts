@@ -32,6 +32,24 @@ export async function upsertRepository<T extends ObjectLiteral>(
   await repo.upsert(upsertData, pk);
 }
 
+export async function deleteWallet<T extends ObjectLiteral>(
+  repo: Repository<T>,
+  deleteDelta: Set<string>
+): Promise<number> {
+  if (deleteDelta.size === 0) {
+    return 0;
+  }
+  const whereClause = Array.from(deleteDelta)
+    .map((wallet) => `wallet = '${wallet}'`)
+    .join(' OR ');
+  const deleted = await repo
+    .createQueryBuilder()
+    .delete()
+    .where(whereClause)
+    .execute();
+  return deleted.affected ?? 0;
+}
+
 export async function deleteConsolidations<T extends ObjectLiteral>(
   repo: Repository<T>,
   deleteDelta: Set<string>
