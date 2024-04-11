@@ -68,15 +68,21 @@ export async function returnZipCSVResult(
     zip.file(`${r.name}.csv`, csv);
   }
 
-  zip.generateAsync({ type: 'nodebuffer' }).then(function (content: any) {
-    response.header('Content-Type', 'application/zip');
-    response.header(
-      'Content-Disposition',
-      `attachment; filename="${fileName}.zip"`
-    );
-    response.attachment(`${fileName}.zip`);
-    response.send(content);
-  });
+  response.header(CONTENT_TYPE_HEADER, 'application/zip');
+  response.header(
+    'Content-Disposition',
+    `attachment; filename="${fileName}.zip"`
+  );
+
+  zip
+    .generateNodeStream({ type: 'nodebuffer', streamFiles: true })
+    .pipe(response)
+    .on('error', (err) => {
+      response.status(500).send(`Error generating zip file: ${err.message}`);
+    })
+    .on('finish', () => {
+      response.end();
+    });
 }
 
 export function returnJsonResult(
