@@ -10,6 +10,7 @@ import {
 import { Logger } from '../logging';
 import {
   deleteConsolidations,
+  deleteWallet,
   insertWithoutUpdate,
   resetRepository
 } from '../orm_helpers';
@@ -103,6 +104,7 @@ async function upsertBalances(
 export async function persistOwnerBalances(
   ownerBalances: OwnerBalances[],
   ownerBalancesMemes: OwnerBalancesMemes[],
+  deleteDelta: Set<string>,
   reset: boolean
 ) {
   if (reset) {
@@ -115,6 +117,12 @@ export async function persistOwnerBalances(
     await getDataSource().transaction(async (manager) => {
       const balancesRepo = manager.getRepository(OwnerBalances);
       const balancesMemesRepo = manager.getRepository(OwnerBalancesMemes);
+
+      const deleted = await deleteWallet(balancesRepo, deleteDelta);
+      const deletedMemes = await deleteWallet(balancesMemesRepo, deleteDelta);
+      logger.info(
+        `[DELETED ${deleted} OWNER BALANCES] : [DELETED ${deletedMemes} OWNER BALANCES MEMES]`
+      );
 
       await upsertBalances(
         balancesRepo,
