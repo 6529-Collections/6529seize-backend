@@ -12,7 +12,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   const start = Time.now();
   logger.info('[RUNNING]');
   await loadEnv([MemesSeason, NFTOwner, ConsolidatedNFTOwner]);
-  await updateNftOwners(process.env.NFT_OWNERS_RESET === 'true');
+  await updateNftOwners(true);
   await unload();
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);

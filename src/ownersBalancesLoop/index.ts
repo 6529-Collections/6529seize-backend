@@ -26,7 +26,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     OwnerBalancesMemes,
     ConsolidatedOwnerBalancesMemes
   ]);
-  await updateOwnerBalances(process.env.OWNER_BALANCES_RESET == 'true');
+  await updateOwnerBalances(true);
   await unload();
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
