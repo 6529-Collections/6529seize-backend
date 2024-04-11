@@ -68,6 +68,12 @@ export async function returnZipCSVResult(
     zip.file(`${r.name}.csv`, csv);
   }
 
+  response.header(CONTENT_TYPE_HEADER, 'application/zip');
+  response.header(
+    'Content-Disposition',
+    `attachment; filename="${fileName}.zip"`
+  );
+
   zip
     .generateNodeStream({ type: 'nodebuffer', streamFiles: true })
     .pipe(response)
