@@ -68,16 +68,12 @@ export async function returnZipCSVResult(
     zip.file(`${r.name}.csv`, csv);
   }
 
-  zip.generateAsync({ type: 'nodebuffer' }).then(function (content: any) {
-    response.header(CONTENT_TYPE_HEADER, 'application/zip');
-    response.header(
-      'Content-Disposition',
-      `attachment; filename="${fileName}.zip"`
-    );
-    response.header('Content-Length', content.length);
-    response.attachment(`${fileName}.zip`);
-    response.send(content);
-  });
+  zip
+    .generateNodeStream({ type: 'nodebuffer', streamFiles: true })
+    .pipe(response)
+    .on('finish', () => {
+      response.end();
+    });
 }
 
 export function returnJsonResult(
