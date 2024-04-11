@@ -13,7 +13,6 @@ import { Time } from '../../time';
 import { parseNumberOrNull } from '../../helpers';
 
 const converter = require('json-2-csv');
-const JSZip = require('jszip');
 
 export function cacheKey(req: Request) {
   return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
