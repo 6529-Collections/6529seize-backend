@@ -32,7 +32,6 @@ import {
 import { NFTOwner } from '../entities/INFTOwner';
 import {
   fetchAllNftOwners,
-  fetchDistinctNftOwnerWallets,
   getMaxNftOwnersBlockReference
 } from '../nftOwnersLoop/db.nft_owners';
 
