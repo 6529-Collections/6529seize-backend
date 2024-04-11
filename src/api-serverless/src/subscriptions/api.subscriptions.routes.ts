@@ -333,6 +333,8 @@ router.get(
     >,
     res: Response<any>
   ) {
+    req.setTimeout(300000);
+
     const auth = req.headers.authorization ?? '';
     const contract = req.params.contract;
     const tokenIdStr = req.params.token_id;
