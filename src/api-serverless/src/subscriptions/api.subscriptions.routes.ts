@@ -163,7 +163,7 @@ router.get(
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
 
-    const result = await fetchUpcomingMemeSubscriptions(consolidationKey);
+    const result = await fetchUpcomingMemeSubscriptions(consolidationKey, true);
     if (result) {
       return returnJsonResult(result, req, res);
     } else {

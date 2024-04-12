@@ -251,9 +251,10 @@ async function updateSubscriptionsAfterModeChange(
 }
 
 export async function fetchUpcomingMemeSubscriptions(
-  consolidationKey: string
+  consolidationKey: string,
+  completed?: boolean
 ): Promise<NFTSubscription[]> {
-  const maxMemeId = await getMaxMemeId();
+  const maxMemeId = await getMaxMemeId(completed);
 
   const subscriptions: NFTSubscription[] = [];
   for (let i = 1; i <= 3; i++) {
