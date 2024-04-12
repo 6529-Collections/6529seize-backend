@@ -13,7 +13,6 @@ import { Time } from '../../time';
 import { parseNumberOrNull } from '../../helpers';
 
 const converter = require('json-2-csv');
-const JSZip = require('jszip');
 
 export function cacheKey(req: Request) {
   return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
@@ -52,34 +51,6 @@ export async function returnCSVResult(
   response.header(CONTENT_TYPE_HEADER, 'text/csv');
   response.attachment(`${fileName}.csv`);
   return response.send(csv);
-}
-
-export async function returnZipCSVResult(
-  fileName: string,
-  results: {
-    name: string;
-    data: any;
-  }[],
-  response: Response
-) {
-  const zip = new JSZip();
-  for (const r of results) {
-    const csv = await converter.json2csvAsync(r.data);
-    zip.file(`${r.name}.csv`, csv);
-  }
-
-  response.header(CONTENT_TYPE_HEADER, 'application/zip');
-  response.header(
-    'Content-Disposition',
-    `attachment; filename="${fileName}.zip"`
-  );
-
-  zip
-    .generateNodeStream({ type: 'nodebuffer', streamFiles: true })
-    .pipe(response)
-    .on('finish', () => {
-      response.end();
-    });
 }
 
 export function returnJsonResult(

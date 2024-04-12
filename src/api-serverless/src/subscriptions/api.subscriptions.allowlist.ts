@@ -1,6 +1,5 @@
 import fetch from 'node-fetch';
 import { fetchAllNftFinalSubscriptionsForContractAndToken } from './api.subscriptions.db';
-import { fetchWalletConsolidationKeysView } from '../../../db';
 import { areEqualAddresses } from '../../../helpers';
 import { MEMES_CONTRACT, USE_CASE_MINTING } from '../../../constants';
 import { fetchProcessedDelegations } from '../../../delegationsLoop/db.delegations';
@@ -88,25 +87,6 @@ export async function fetchPhaseResults(
     throw new CustomApiCompliantException(response.status, json.message);
   }
   return json;
-}
-
-export async function fetchPhaseName(
-  auth: string,
-  allowlistId: string,
-  phaseId: string
-): Promise<string> {
-  const url = `${process.env.ALLOWLIST_API_ENDPOINT}/allowlists/${allowlistId}/phases/${phaseId}`;
-  const response = await fetch(url, {
-    headers: {
-      accept: 'application/json',
-      Authorization: auth
-    }
-  });
-  const json = await response.json();
-  if (response.status !== 200) {
-    throw new CustomApiCompliantException(response.status, json.message);
-  }
-  return json.name;
 }
 
 export async function splitAllowlistResults(
