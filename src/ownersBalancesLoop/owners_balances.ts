@@ -14,6 +14,7 @@ import {
 } from './db.owners_balances';
 import {
   fetchAllSeasons,
+  fetchTransactionAddressesFromBlock,
   fetchWalletConsolidationKeysViewForWallet
 } from '../db';
 import { Logger } from '../logging';
@@ -31,7 +32,6 @@ import {
 import { NFTOwner } from '../entities/INFTOwner';
 import {
   fetchAllNftOwners,
-  fetchDistinctNftOwnerWallets,
   getMaxNftOwnersBlockReference
 } from '../nftOwnersLoop/db.nft_owners';
 
@@ -100,12 +100,15 @@ export const updateOwnerBalances = async (reset?: boolean) => {
     addresses.clear();
     owners.forEach((o) => addresses.add(o.wallet.toLowerCase()));
   } else {
-    const allNftOwnerAddresses: string[] = await fetchDistinctNftOwnerWallets(
-      allContracts,
-      lastBalancesBlock
-    );
-    allNftOwnerAddresses.forEach((a) => {
-      addresses.add(a.toLowerCase());
+    const transactionAddresses: { from_address: string; to_address: string }[] =
+      await fetchTransactionAddressesFromBlock(
+        allContracts,
+        lastBalancesBlock,
+        blockReference
+      );
+    transactionAddresses.forEach((wallet) => {
+      addresses.add(wallet.from_address.toLowerCase());
+      addresses.add(wallet.to_address.toLowerCase());
     });
     if (!addresses.size) {
       logger.info(`[NO WALLETS TO PROCESS]`);
@@ -130,11 +133,16 @@ export const updateOwnerBalances = async (reset?: boolean) => {
 
   const ownersBalancesMap = new Map<string, OwnerBalances>();
   const ownersBalancesMemesMap = new Map<string, OwnerBalancesMemes[]>();
+  const deleteDelta = new Set<string>();
 
   addresses.forEach((address) => {
     const ownedNfts = owners.filter((o) =>
       areEqualAddresses(o.wallet, address)
     );
+    if (!ownedNfts.length) {
+      deleteDelta.add(address);
+      return;
+    }
     const ownerBalanceFields = buildOwnerBalance(seasons, ownedNfts, address);
     const ownerBalance: OwnerBalances = {
       wallet: address,
@@ -157,7 +165,12 @@ export const updateOwnerBalances = async (reset?: boolean) => {
   const ownersBalancesMemes = Array.from(
     ownersBalancesMemesMap.values()
   ).flat();
-  await persistOwnerBalances(ownersBalances, ownersBalancesMemes, reset);
+  await persistOwnerBalances(
+    ownersBalances,
+    ownersBalancesMemes,
+    deleteDelta,
+    reset
+  );
 
   await consolidateOwnerBalances(addresses, reset);
 };
