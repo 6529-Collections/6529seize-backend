@@ -10,9 +10,11 @@ import {
   updateSubscription,
   fetchLogsForConsolidationKey,
   fetchRedeemedSubscriptionsForConsolidationKey,
-  fetchSubscriptionUploads
+  fetchSubscriptionUploads,
+  fetchFinalSubscription
 } from './api.subscriptions.db';
 import {
+  NFTFinalSubscription,
   SubscriptionBalance,
   SubscriptionLog,
   SubscriptionTopUp
@@ -23,6 +25,7 @@ import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
 import {
+  fetchPhaseName,
   fetchPhaseResults,
   splitAllowlistResults,
   validateDistribution
@@ -291,6 +294,38 @@ router.get(
 );
 
 router.get(
+  `/consolidation/final/:consolidation_key/:contract/:token_id`,
+  async function (
+    req: Request<
+      {
+        consolidation_key: string;
+        contract: string;
+        token_id: string;
+      },
+      any,
+      any,
+      any
+    >,
+    res: Response<NFTFinalSubscription | string>
+  ) {
+    const consolidationKey = req.params.consolidation_key.toLowerCase();
+    const contract = req.params.contract;
+    const tokenId = parseInt(req.params.token_id);
+
+    const result = await fetchFinalSubscription(
+      consolidationKey,
+      contract,
+      tokenId
+    );
+    if (result) {
+      return returnJsonResult(result, req, res, true);
+    } else {
+      return res.status(404).send('Not found');
+    }
+  }
+);
+
+router.get(
   `/uploads`,
   async function (
     req: Request<
@@ -353,9 +388,11 @@ router.get(
     }
 
     const phaseResults = await fetchPhaseResults(auth, allowlistId, phaseId);
+    const phaseName = await fetchPhaseName(auth, allowlistId, phaseId);
     const results = await splitAllowlistResults(
       contract,
       tokenId,
+      phaseName,
       phaseResults
     );
     return returnJsonResult(results, req, res);

@@ -4,6 +4,7 @@ import {
   Entity,
   PrimaryColumn,
   PrimaryGeneratedColumn,
+  Unique,
   UpdateDateColumn
 } from 'typeorm';
 import {
@@ -75,20 +76,25 @@ class NFTSubscriptionFields {
   @UpdateDateColumn({ type: 'datetime' })
   updated_at?: Date;
 
-  @PrimaryColumn({ type: 'varchar', length: 200 })
+  @PrimaryGeneratedColumn()
+  id?: number;
+
+  @Column({ type: 'varchar', length: 200 })
   consolidation_key!: string;
 
-  @PrimaryColumn({ type: 'varchar', length: 100 })
+  @Column({ type: 'varchar', length: 100 })
   contract!: string;
 
-  @PrimaryColumn({ type: 'bigint' })
+  @Column({ type: 'bigint' })
   token_id!: number;
 }
 
 @Entity(SUBSCRIPTIONS_NFTS_TABLE)
+@Unique(['consolidation_key', 'contract', 'token_id'])
 export class NFTSubscription extends NFTSubscriptionFields {}
 
 @Entity(SUBSCRIPTIONS_NFTS_FINAL_TABLE)
+@Unique(['consolidation_key', 'contract', 'token_id'])
 export class NFTFinalSubscription extends NFTSubscriptionFields {
   @Column({ type: 'text' })
   airdrop_address!: string;
@@ -98,6 +104,15 @@ export class NFTFinalSubscription extends NFTSubscriptionFields {
 
   @Column({ type: 'text', default: null })
   subscribed_at!: string;
+
+  @Column({ type: 'text', default: null })
+  phase!: string | null;
+
+  @Column({ type: 'int', default: -1 })
+  phase_subscriptions!: number;
+
+  @Column({ type: 'int', default: -1 })
+  phase_position!: number;
 
   @Column({ type: 'boolean', default: false })
   redeemed!: boolean;
@@ -120,9 +135,16 @@ export class NFTFinalSubscriptionUpload {
   @Column({ type: 'varchar', length: 100 })
   upload_url!: string;
 }
-export class NFTFinalSubscriptionWithDateAndProfile extends NFTFinalSubscription {
-  date!: string;
-  profile!: string;
+
+export interface NFTFinalSubscriptionUploadFields {
+  date: string;
+  subscribed_at: string;
+  contract: string;
+  token_id: number;
+  profile: string;
+  consolidation_key: string;
+  airdrop_address: string;
+  balance: number;
 }
 
 @Entity(SUBSCRIPTIONS_LOGS_TABLE)

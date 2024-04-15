@@ -19,7 +19,7 @@ import { fetchAirdropAddressForDelegators } from '../delegationsLoop/db.delegati
 import {
   NFTFinalSubscription,
   NFTFinalSubscriptionUpload,
-  NFTFinalSubscriptionWithDateAndProfile,
+  NFTFinalSubscriptionUploadFields,
   NFTSubscription,
   SubscriptionBalance,
   SubscriptionLog,
@@ -179,6 +179,9 @@ async function createFinalSubscriptions(newMeme: number, dateStr: string) {
           token_id: sub.token_id,
           airdrop_address: airdropAddress ?? consolidationWallets[0],
           balance: balance.balance,
+          phase: null,
+          phase_subscriptions: -1,
+          phase_position: -1,
           redeemed: false
         };
         finalSubscriptions.push(finalSub);
@@ -228,7 +231,7 @@ async function uploadFinalSubscriptions(
     `[UPLOADING FINAL SUBSCRIPTION FOR MEME #${newMeme}] : [FOUND ${finalSubscriptions.length} SUBSCRIPTIONS]`
   );
   const profiles = await fetchAllProfiles();
-  const finalUpload: NFTFinalSubscriptionWithDateAndProfile[] =
+  const finalUpload: NFTFinalSubscriptionUploadFields[] =
     finalSubscriptions.map((sub) => {
       const createdAt = sub.created_at?.getTime() ?? Time.now().toMillis();
       const subscribedAt = Time.millis(createdAt).toIsoString();
@@ -245,8 +248,7 @@ async function uploadFinalSubscriptions(
         profile: profile?.handle ?? '-',
         consolidation_key: sub.consolidation_key,
         airdrop_address: sub.airdrop_address,
-        balance: sub.balance,
-        redeemed: false
+        balance: sub.balance
       };
     });
   const csv = await converter.json2csvAsync(finalUpload);

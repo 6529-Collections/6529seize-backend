@@ -435,6 +435,25 @@ export async function fetchSubscriptionUploads(
   );
 }
 
+export async function fetchFinalSubscription(
+  consolidationKey: string,
+  contract: string,
+  tokenId: number
+): Promise<NFTFinalSubscription | null> {
+  const results = await sqlExecutor.execute(
+    `SELECT * FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
+    WHERE 
+      consolidation_key = :consolidationKey 
+      AND contract = :contract 
+      AND token_id = :tokenId`,
+    { consolidationKey, contract, tokenId }
+  );
+  if (results.length === 1) {
+    return results[0];
+  }
+  return null;
+}
+
 export async function fetchAllNftFinalSubscriptionsForContractAndToken(
   contract: string,
   token_id: number
