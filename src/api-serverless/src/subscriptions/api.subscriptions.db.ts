@@ -439,7 +439,7 @@ export async function fetchFinalSubscription(
   consolidationKey: string,
   contract: string,
   tokenId: number
-): Promise<NFTFinalSubscription> {
+): Promise<NFTFinalSubscription | null> {
   const results = await sqlExecutor.execute(
     `SELECT * FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
     WHERE 
