@@ -52,7 +52,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
       parseInt(process.env.SUBSCRIPTIONS_CHAIN_ID ?? '1'),
       topUp.hash
     );
-    discordMessage += ` \n\n[View on Seize] \nhttps://${seizeDomain}.io/${topUp.from_wallet}/mints`;
+    discordMessage += ` \n\n[View on Seize] \nhttps://${seizeDomain}.io/${topUp.from_wallet}/subscriptions`;
     discordMessage += ` \n\n[View on Etherscan] \n${link}`;
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
