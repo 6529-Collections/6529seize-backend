@@ -245,9 +245,7 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
         total_volume: startingNft ? startingNft.total_volume : 0
       };
 
-      if (nft.supply > 0) {
-        newNFTS.push(nft);
-      }
+      newNFTS.push(nft);
     })
   );
 
