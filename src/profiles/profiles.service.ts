@@ -307,7 +307,8 @@ export class ProfilesService {
     banner_2,
     website,
     creator_or_updater_wallet,
-    classification
+    classification,
+    sub_classification
   }: CreateOrUpdateProfileCommand): Promise<ProfileAndConsolidations> {
     return await this.profilesDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -353,7 +354,8 @@ export class ProfilesService {
                 banner_2,
                 website,
                 creator_or_updater_wallet,
-                classification
+                classification,
+                sub_classification
               }
             },
             connection
@@ -368,7 +370,8 @@ export class ProfilesService {
             newBanner2: banner_2,
             authenticatedWallet: creator_or_updater_wallet,
             newClassification: classification,
-            connectionHolder: connection
+            connectionHolder: connection,
+            newSubClassification: sub_classification
           });
         } else {
           const latestProfile = creatorOrUpdaterProfiles
@@ -403,7 +406,8 @@ export class ProfilesService {
                 banner_2,
                 website,
                 creator_or_updater_wallet,
-                classification
+                classification,
+                sub_classification
               }
             },
             connection
@@ -415,6 +419,7 @@ export class ProfilesService {
             newPrimaryWallet: primary_wallet,
             newBanner1: banner_1,
             newBanner2: banner_2,
+            newSubClassification: sub_classification,
             authenticatedWallet: creator_or_updater_wallet,
             newClassification: classification,
             connectionHolder: connection
@@ -518,7 +523,8 @@ export class ProfilesService {
     newBanner1,
     newBanner2,
     authenticatedWallet,
-    connectionHolder
+    connectionHolder,
+    newSubClassification
   }: {
     profileId: string;
     profileBeforeChange: Profile | null;
@@ -528,6 +534,7 @@ export class ProfilesService {
     newBanner1?: string;
     newBanner2?: string;
     authenticatedWallet: string;
+    newSubClassification: string | null;
     connectionHolder: ConnectionWrapper<any>;
   }) {
     const logEvents: NewProfileActivityLog[] = [];
@@ -554,6 +561,14 @@ export class ProfilesService {
     this.addEventToArrayIfChanged(
       profileBeforeChange?.classification ?? null,
       newClassification ?? null,
+      logEvents,
+      profileId,
+      ProfileActivityLogType.CLASSIFICATION_EDIT,
+      authenticatedWallet
+    );
+    this.addEventToArrayIfChanged(
+      profileBeforeChange?.sub_classification ?? null,
+      newSubClassification ?? null,
       logEvents,
       profileId,
       ProfileActivityLogType.CLASSIFICATION_EDIT,

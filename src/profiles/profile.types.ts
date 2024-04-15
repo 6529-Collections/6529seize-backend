@@ -10,6 +10,7 @@ export interface CreateOrUpdateProfileCommand {
   website?: string;
   creator_or_updater_wallet: string;
   classification: ProfileClassification;
+  sub_classification: string | null;
 }
 
 export interface ProfileAndConsolidations {
