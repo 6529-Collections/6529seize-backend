@@ -20,6 +20,7 @@ import communityMembersCurationRoutes from './community-members/community-member
 import dropsRoutes from './drops/drops.routes';
 import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
 import dropsMediaRoutes from './drops/drops-media.routes';
+import profileSubClassificationsRoutes from './profiles/profiles-sub-classifications.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -55,6 +56,7 @@ import {
 import { MEMES_EXTENDED_SORT, TRANSACTION_FILTERS } from './api-filters';
 import { parseTdhResultsFromDB } from '../../sql_helpers';
 import { loadLocalConfig, loadSecrets } from '../../env';
+import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
 
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
@@ -664,59 +666,6 @@ loadApi().then(() => {
     });
   });
 
-  apiRouter.get(`/delegations/:wallet`, function (req: any, res: any) {
-    const wallet = req.params.wallet;
-
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    db.fetchDelegations(wallet, pageSize, page).then((result) => {
-      returnPaginatedResult(result, req, res);
-    });
-  });
-
-  apiRouter.get(`/delegations/minting/:wallet`, function (req: any, res: any) {
-    const wallet = req.params.wallet;
-
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    db.fetchMintingDelegations(wallet, pageSize, page).then((result) => {
-      returnPaginatedResult(result, req, res);
-    });
-  });
-
-  apiRouter.get(`/delegations`, function (req: any, res: any) {
-    const use_cases = req.query.use_case;
-    const collections = req.query.collection;
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    const showExpired = !!(
-      req.query.show_expired && req.query.show_expired == 'true'
-    );
-    const block = req.query.block;
-
-    db.fetchDelegationsByUseCase(
-      collections,
-      use_cases,
-      showExpired,
-      pageSize,
-      page,
-      block
-    ).then((result) => {
-      returnPaginatedResult(result, req, res);
-    });
-  });
-
   apiRouter.get(
     `/nft_history/:contract/:nft_id`,
     function (req: any, res: any) {
@@ -850,9 +799,11 @@ loadApi().then(() => {
   apiRouter.use(`/aggregated-activity`, aggregatedActivityRoutes);
   apiRouter.use(`/owners-balances`, ownersBalancesRoutes);
   apiRouter.use(`/ratings`, ratingsRoutes);
+  apiRouter.use(`/subscriptions`, subscriptionsRoutes);
   apiRouter.use(`/drops`, dropsRoutes);
   apiRouter.use(`/nft-owners`, nftOwnersRoutes);
   apiRouter.use(`/drop-media`, dropsMediaRoutes);
+  apiRouter.use(`/profile-subclassifications`, profileSubClassificationsRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 

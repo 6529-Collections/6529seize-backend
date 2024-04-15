@@ -6,7 +6,7 @@ let alchemy: Alchemy | null = null;
 export function getAlchemyInstance(
   network: Network = Network.ETH_MAINNET
 ): Alchemy {
-  if (!alchemy) {
+  if (!alchemy || alchemy.config.network != network) {
     alchemy = new Alchemy({
       ...ALCHEMY_SETTINGS,
       network,

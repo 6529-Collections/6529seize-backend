@@ -27,7 +27,7 @@ import {
   persistArtists,
   persistNFTs
 } from '../db';
-import { findArtists } from '../artists';
+import { processArtists } from '../artists';
 import { Artist } from '../entities/IArtist';
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { sqlExecutor } from '../sql-executor';
@@ -245,9 +245,7 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
         total_volume: startingNft ? startingNft.total_volume : 0
       };
 
-      if (nft.supply > 0) {
-        newNFTS.push(nft);
-      }
+      newNFTS.push(nft);
     })
   );
 
@@ -354,7 +352,7 @@ async function processGradients(
   return newNFTS;
 }
 
-export const findNFTs = async (
+export const discoverNFTs = async (
   startingNFTS: NFT[],
   transactions: Transaction[],
   reset?: boolean
@@ -433,8 +431,8 @@ export async function nfts(reset?: boolean) {
   const transactions: Transaction[] = await fetchAllTransactions();
   const artists: Artist[] = await fetchAllArtists();
 
-  const newNfts = await findNFTs(nfts, transactions, reset);
-  const newArtists = await findArtists(artists, newNfts);
+  const newNfts = await discoverNFTs(nfts, transactions, reset);
+  const newArtists = await processArtists(artists, newNfts);
   await persistNFTs(newNfts);
   await persistArtists(newArtists);
 }
