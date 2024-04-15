@@ -1,4 +1,4 @@
-service: transactionsProcessingLoop
+service: subscriptionsTopUpLoop
 
 package:
   artifact: dist/index.zip
@@ -9,13 +9,19 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 5140
+  memorySize: 1028
   timeout: 900
 
+custom:
+  chainIDs:
+    staging: 1
+    prod: 1
+
 functions:
-  transactionsProcessingLoop:
+  subscriptionsTopUpLoop:
     handler: index.handler
-    name: transactionsProcessingLoop
+    name: subscriptionsTopUpLoop
+    description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
@@ -25,6 +31,7 @@ functions:
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
-      SENTRY_ENVIRONMENT: 'transactionsProcessingLoop_${opt:stage, self:provider.stage}'
-      TRANSACTIONS_PROCESSING_RESET: false
+      SENTRY_ENVIRONMENT: 'subscriptionsTopUpLoop_${opt:stage, self:provider.stage}'
+      SUBSCRIPTIONS_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
+      SUBSCRIPTIONS_RESET: false
       DISABLE_DISCORD_NOTIFICATIONS: false
