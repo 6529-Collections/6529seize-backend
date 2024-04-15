@@ -28,4 +28,4 @@ functions:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'subscriptionsDaily_${opt:stage, self:provider.stage}'
       SUBSCRIPTIONS_RESET: false
-      DISABLE_DISCORD_NOTIFICATIONS: false
+      DISABLE_DISCORD_NOTIFICATIONS: ${{ github.event.inputs.environment == 'prod' && false || true }}

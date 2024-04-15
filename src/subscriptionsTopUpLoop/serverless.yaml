@@ -34,4 +34,4 @@ functions:
       SENTRY_ENVIRONMENT: 'subscriptionsTopUpLoop_${opt:stage, self:provider.stage}'
       SUBSCRIPTIONS_CHAIN_ID: ${self:custom.chainIDs.${opt:stage, self:provider.stage}, 1}
       SUBSCRIPTIONS_RESET: false
-      DISABLE_DISCORD_NOTIFICATIONS: false
+      DISABLE_DISCORD_NOTIFICATIONS: ${{ github.event.inputs.environment == 'prod' && false || true }}
