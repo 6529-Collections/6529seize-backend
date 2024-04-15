@@ -111,14 +111,6 @@ async function createForMemeId(
 async function buildFinalSubscription(newMeme: number): Promise<string> {
   const now = Time.now();
   const dateStr = now.toIsoDateString();
-  const newMemeSubscriptions = await fetchAllNftSubscriptions(
-    MEMES_CONTRACT,
-    newMeme
-  );
-
-  logger.info(
-    `[DATE ${dateStr}] : [BUILDING FINAL SUBSCRIPTION FOR MEME #${newMeme}] : [FOUND ${newMemeSubscriptions.length} SUBSCRIPTIONS]`
-  );
 
   const { finalSubscriptions, newSubscriptionLogs } =
     await createFinalSubscriptions(newMeme, dateStr);
