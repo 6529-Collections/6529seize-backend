@@ -53,6 +53,9 @@ class ProfileBase implements Omit<ProfileType, 'normalised_handle'> {
 
   @Column({ type: 'varchar', length: 255, nullable: true, default: null })
   classification?: ProfileClassification | null;
+
+  @Column({ type: 'varchar', length: 255, nullable: true, default: null })
+  sub_classification?: string | null;
 }
 
 @Entity(PROFILES_TABLE)
@@ -76,5 +79,6 @@ export enum ProfileClassification {
   ORGANIZATION = 'ORGANIZATION',
   AI = 'AI',
   BOT = 'BOT',
-  PARODY = 'PARODY'
+  PARODY = 'PARODY',
+  COLLECTION = 'COLLECTION'
 }

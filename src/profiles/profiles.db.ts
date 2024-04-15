@@ -209,7 +209,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         classification,
         updated_at,
         updated_by_wallet,
-        external_id)
+        external_id,
+        sub_classification)
        values (:handle,
                :normalisedHandle,
                :primaryWallet,
@@ -221,7 +222,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
                :classification,
                :updatedAt,
                :updatedByWallet,
-               :externalId)`,
+               :externalId,
+               :subClassification)`,
       {
         handle: param.handle,
         normalisedHandle: param.normalised_handle,
@@ -234,7 +236,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         banner2: param.banner_2 ?? null,
         website: param.website ?? null,
         classification: param.classification,
-        externalId: param.external_id!
+        externalId: param.external_id,
+        subClassification: param.sub_classification ?? null
       },
       { wrappedConnection: connection?.connection }
     );
@@ -301,7 +304,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         banner_2,
         website,
         classification,
-        external_id)
+        external_id,
+        sub_classification)
        values (:handle,
                :normalisedHandle,
                :primaryWallet,
@@ -311,7 +315,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
                :banner2,
                :website,
                :classification,
-               :externalId)`,
+               :externalId,
+               :subClassification)`,
       {
         handle: command.handle,
         normalisedHandle: command.handle.toLowerCase(),
@@ -321,7 +326,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         banner2: command.banner_2 ?? null,
         website: command.website ?? null,
         classification: command.classification,
-        externalId: profileId
+        externalId: profileId,
+        subClassification: command.sub_classification
       },
       { wrappedConnection: connection }
     );

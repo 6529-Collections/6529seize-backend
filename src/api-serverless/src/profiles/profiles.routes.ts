@@ -25,6 +25,7 @@ import profileRepRoutes from './profile-rep.routes';
 import profileCollectedRoutes from './collected/collected.routes';
 import profileDropsRoutes from './profile-drops.routes';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { getProfileClassificationsBySubclassification } from './profile.helper';
 
 const router = asyncRouter();
 
@@ -126,11 +127,20 @@ router.post(
       banner_1,
       banner_2,
       website,
-      classification
+      classification,
+      sub_classification
     } = getValidatedByJoiOrThrow(
       req.body,
       ApiCreateOrUpdateProfileRequestSchema
     );
+    let subClassification = sub_classification;
+    if (subClassification !== null) {
+      const classifications =
+        getProfileClassificationsBySubclassification(subClassification);
+      if (!classifications.includes(classification)) {
+        subClassification = null;
+      }
+    }
     const createProfileCommand: CreateOrUpdateProfileCommand = {
       handle,
       primary_wallet: primary_wallet.toLowerCase(),
@@ -138,7 +148,8 @@ router.post(
       banner_2,
       website,
       creator_or_updater_wallet: getWalletOrThrow(req),
-      classification
+      classification,
+      sub_classification: subClassification
     };
     const profile = await profilesService.createOrUpdateProfile(
       createProfileCommand
@@ -188,6 +199,7 @@ interface ApiCreateOrUpdateProfileRequest {
   readonly banner_2?: string;
   readonly website?: string;
   readonly classification: ProfileClassification;
+  readonly sub_classification: string | null;
 }
 
 const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateProfileRequest> =
@@ -219,7 +231,8 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
     }),
     classification: Joi.string()
       .valid(...Object.values(ProfileClassification))
-      .required()
+      .required(),
+    sub_classification: Joi.string().optional().allow(null).default(null)
   });
 
 interface ApiUploadProfilePictureRequest {
