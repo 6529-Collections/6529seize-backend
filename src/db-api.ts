@@ -667,7 +667,11 @@ export async function fetchNewMemesSeasons() {
   return await sqlExecutor.execute(sql);
 }
 
-export async function fetchMemesLite(sortDir: string, search: string) {
+export async function fetchMemesLite(
+  sortDir: string,
+  search: string,
+  pageSize: number
+) {
   let filters = constructFilters(
     '',
     `${NFTS_TABLE}.contract = :memes_contract`
@@ -685,7 +689,7 @@ export async function fetchMemesLite(sortDir: string, search: string) {
     NFTS_TABLE,
     params,
     `id ${sortDir}`,
-    0,
+    pageSize,
     1,
     filters,
     'id, name, contract, icon, thumbnail, scaled, image, animation, artist',
