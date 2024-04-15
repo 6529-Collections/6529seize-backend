@@ -450,9 +450,10 @@ loadApi().then(() => {
       SORT_DIRECTIONS.includes(req.query.sort_direction.toUpperCase())
         ? req.query.sort_direction
         : 'asc';
+    const search = req.query.search;
 
-    db.fetchMemesLite(sortDir).then((result) => {
-      returnPaginatedResult(result, req, res);
+    db.fetchMemesLite(sortDir, search).then((result) => {
+      return returnPaginatedResult(result, req, res);
     });
   });
 
