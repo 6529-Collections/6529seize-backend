@@ -50,6 +50,7 @@ import { calculateLevel } from './profiles/profile-level';
 import { Nft } from 'alchemy-sdk';
 import {
   constructFilters,
+  constructFiltersOR,
   getSearchFilters
 } from './api-serverless/src/api-helpers';
 
@@ -680,9 +681,13 @@ export async function fetchMemesLite(
     memes_contract: MEMES_CONTRACT
   };
   if (search) {
-    const searchFilters = getSearchFilters(['name', 'id', 'artist'], search);
+    const searchFilters = getSearchFilters(['name', 'artist'], search);
     filters = constructFilters(filters, `(${searchFilters.filters})`);
-    params = { ...params, ...searchFilters.params };
+    const id = parseInt(search);
+    if (!isNaN(id)) {
+      filters = constructFiltersOR(filters, `id = :id`);
+      params = { ...params, ...searchFilters.params, id };
+    }
   }
 
   return fetchPaginated(
