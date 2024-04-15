@@ -12,6 +12,11 @@ provider:
   memorySize: 5140
   timeout: 900
 
+custom:
+  disableDiscord:
+    staging: true
+    prod: false
+
 functions:
   transactionsProcessingLoop:
     handler: index.handler
@@ -27,4 +32,4 @@ functions:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'transactionsProcessingLoop_${opt:stage, self:provider.stage}'
       TRANSACTIONS_PROCESSING_RESET: false
-      DISABLE_DISCORD_NOTIFICATIONS: ${{ github.event.inputs.environment == 'prod' && false || true }}
+      DISABLE_DISCORD_NOTIFICATIONS: ${self:custom.disableDiscord.${opt:stage, self:provider.stage}, false}
