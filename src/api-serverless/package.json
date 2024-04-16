@@ -6,12 +6,14 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "NODE_ENV=local nodemon",
-    "prebuild": "rm -rf dist",
-    "build": "esbuild src/handler.ts --bundle --sourcemap --platform=node --target=es2020 --outfile=dist/index.js",
+    "prebuild": "rm -rf dist && rm -rf tmp_gen_outp && node ./node_modules/@openapitools/openapi-generator-cli/main generate -i openapi.yaml -g typescript -o tmp_gen_outp --additional-properties=modelPropertyNaming=snake_case && rm -rf src/generated && mkdir src/generated && mv tmp_gen_outp/models src/generated/models && rm -rf tmp_gen_outp && rm -rf openapitools.json && mkdir src/generated/http && echo 'export type HttpFile = any;' > src/generated/http/http.ts && rm src/generated/models/all.ts",
+    "build": "esbuild src/handler.ts --bundle --sourcemap --platform=node --target=es2020 --outfile=dist/index.js && cp openapi.yaml dist/ && mkdir dist/tmp && cp node_modules/swagger-ui-dist/* dist/tmp && rm dist/tmp/index.js && cp dist/tmp/* dist/ && rm -rf dist/tmp",
     "postbuild": "cd dist && zip -r index.zip *"
   },
   "dependencies": {
+    "@openapitools/openapi-generator-cli": "^2.13.4",
     "@types/express": "^4.17.21",
+    "@types/swagger-ui-express": "^4.1.6",
     "@wagmi/chains": "^1.8.0",
     "async-express-decorator": "^1.1.0",
     "aws-serverless-express": "^3.4.0",
@@ -28,7 +30,10 @@
     "passport-jwt": "^4.0.1",
     "path": "^0.12.7",
     "serverless-http": "^3.1.1",
-    "slugify": "^1.6.6"
+    "slugify": "^1.6.6",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.0",
+    "yamljs": "^0.3.0"
   },
   "devDependencies": {
     "@serverless/typescript": "^3.0.0",

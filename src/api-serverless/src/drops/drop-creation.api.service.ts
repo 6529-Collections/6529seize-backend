@@ -1,35 +1,31 @@
-import {
-  CreateNewDropRequest,
-  DropFull,
-  DropReferencedNft
-} from './drops.types';
-import { BadRequestException } from '../exceptions';
-import { dropsDb, DropsDb } from './drops.db';
-import { giveReadReplicaTimeToCatchUp } from '../api-serverless/src/api-helpers';
-import { Logger } from '../logging';
-import { dropsService, DropsService } from './drops.service';
+import { BadRequestException } from '../../../exceptions';
+import { dropsDb, DropsDb } from '../../../drops/drops.db';
+import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { Logger } from '../../../logging';
+import { DropsApiService, dropsService } from './drops.api.service';
 import {
   profileActivityLogsDb,
   ProfileActivityLogsDb
-} from '../profileActivityLogs/profile-activity-logs.db';
-import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
+} from '../../../profileActivityLogs/profile-activity-logs.db';
+import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
+import { CreateDropRequest } from '../generated/models/CreateDropRequest';
+import { Drop } from '../generated/models/Drop';
+import { DropReferencedNFT } from '../generated/models/DropReferencedNFT';
 
-export class DropCreationService {
-  private readonly logger = Logger.get('DropCreationService');
+export class DropCreationApiService {
+  private readonly logger = Logger.get(DropCreationApiService.name);
 
   constructor(
-    private readonly dropsService: DropsService,
+    private readonly dropsService: DropsApiService,
     private readonly dropsDb: DropsDb,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb
   ) {}
 
-  async createDrop(createDropRequest: CreateNewDropRequest): Promise<DropFull> {
+  async createDrop(
+    createDropRequest: CreateDropRequest & { author: { external_id: string } }
+  ): Promise<Drop> {
     await this.validateReferences(createDropRequest);
-    const dropMedia = {
-      media_url: createDropRequest.dropMedia?.url ?? null,
-      media_mime_type: createDropRequest.dropMedia?.mimetype ?? null
-    };
-    const dropFull = await this.persistDrop(createDropRequest, dropMedia);
+    const dropFull = await this.persistDrop(createDropRequest);
     await giveReadReplicaTimeToCatchUp();
     this.logger.info(
       `Drop ${dropFull.id} created by user ${dropFull.author.id}`
@@ -38,17 +34,13 @@ export class DropCreationService {
   }
 
   private async persistDrop(
-    createDropRequest: CreateNewDropRequest,
-    dropMedia: {
-      media_url: string | null;
-      media_mime_type: string | null;
-    }
+    createDropRequest: CreateDropRequest & { author: { external_id: string } }
   ) {
     return await this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const rootDropId = createDropRequest.root_drop_id;
         let storm_sequence = 1;
-        if (rootDropId !== null) {
+        if (rootDropId) {
           const rootDrop = await this.dropsDb.lockDrop(rootDropId, connection);
           if (!rootDrop) {
             throw new BadRequestException('Invalid root drop');
@@ -66,13 +58,11 @@ export class DropCreationService {
         const dropId = await this.dropsDb.insertDrop(
           {
             author_id: createDropRequest.author.external_id,
-            title: createDropRequest.title,
-            content: createDropRequest.content,
-            root_drop_id: createDropRequest.root_drop_id,
+            title: createDropRequest.title ?? null,
+            content: createDropRequest.content ?? null,
+            root_drop_id: createDropRequest.root_drop_id ?? null,
             storm_sequence: storm_sequence,
-            quoted_drop_id: createDropRequest.quoted_drop_id,
-            media_url: dropMedia.media_url,
-            media_mime_type: dropMedia.media_mime_type
+            quoted_drop_id: createDropRequest.quoted_drop_id ?? null
           },
           connection
         );
@@ -82,10 +72,9 @@ export class DropCreationService {
             target_id: dropId.toString(),
             contents: JSON.stringify({
               drop_id: dropId,
-              title: createDropRequest.title,
-              content: createDropRequest.content,
-              media_url: dropMedia.media_url,
-              media_mime_type: dropMedia.media_mime_type
+              title: createDropRequest.title ?? null,
+              content: createDropRequest.content ?? null,
+              media: createDropRequest.media
             }),
             type: ProfileActivityLogType.DROP_CREATED
           },
@@ -98,10 +87,12 @@ export class DropCreationService {
         }));
         await this.dropsDb.insertMentions(mentionEntities, connection);
         const referencedNfts = Object.values(
-          createDropRequest.referenced_nfts.reduce((acc, it) => {
+          createDropRequest.referenced_nfts.reduce<
+            Record<string, DropReferencedNFT>
+          >((acc, it) => {
             acc[JSON.stringify(it)] = it;
             return acc;
-          }, {} as Record<string, DropReferencedNft>)
+          }, {} as Record<string, DropReferencedNFT>)
         );
         await this.dropsDb.insertReferencedNfts(
           referencedNfts.map((it) => ({
@@ -117,17 +108,22 @@ export class DropCreationService {
           drop_id: dropId
         }));
         await this.dropsDb.insertDropMetadata(metadata, connection);
+        const media = createDropRequest.media.map((it) => ({
+          ...it,
+          drop_id: dropId
+        }));
+        await this.dropsDb.insertDropMedia(media, connection);
         return this.dropsService.findDropByIdOrThrow(
-          { dropId, inputProfileId: createDropRequest.author.external_id },
+          { dropId, contextProfileId: createDropRequest.author.external_id },
           connection
         );
       }
     );
   }
 
-  private async validateReferences(createDropRequest: CreateNewDropRequest) {
+  private async validateReferences(createDropRequest: CreateDropRequest) {
     const quotedDropId = createDropRequest.quoted_drop_id;
-    if (quotedDropId !== null) {
+    if (quotedDropId) {
       const quotedDrop = await this.dropsDb
         .getDropsByIds([quotedDropId])
         .then((it) => it[0] ?? null);
@@ -138,7 +134,7 @@ export class DropCreationService {
   }
 }
 
-export const dropCreationService = new DropCreationService(
+export const dropCreationService = new DropCreationApiService(
   dropsService,
   dropsDb,
   profileActivityLogsDb
