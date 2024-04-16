@@ -184,6 +184,7 @@ router.get(
   }
 );
 
+// used for chainlink
 router.get(
   '/:wallet',
   async function (
