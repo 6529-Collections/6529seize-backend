@@ -1,7 +1,7 @@
 {
   "name": "api-serverless",
   "version": "1.0.0",
-  "description": "Serverless aws-nodejs-typescript template",
+  "description": "Seize Serverless API",
   "main": "serverless.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -14,21 +14,12 @@
     "@types/express": "^4.17.21",
     "@wagmi/chains": "^1.8.0",
     "async-express-decorator": "^1.1.0",
-    "aws-serverless-express": "^3.4.0",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
-    "csv-parser": "^3.0.0",
     "dotenv": "^16.3.2",
     "express": "^4.18.3",
-    "jsonwebtoken": "^9.0.2",
-    "mcache": "^0.4.0",
-    "multer": "^1.4.5-lts.1",
-    "passport": "^0.7.0",
-    "passport-anonymous": "^1.0.1",
-    "passport-jwt": "^4.0.1",
     "path": "^0.12.7",
-    "serverless-http": "^3.1.1",
-    "slugify": "^1.6.6"
+    "serverless-http": "^3.1.1"
   },
   "devDependencies": {
     "@serverless/typescript": "^3.0.0",
@@ -37,9 +28,6 @@
     "@types/memory-cache": "^0.2.2",
     "@types/multer": "^1.4.9",
     "@types/node": "^14.14.25",
-    "@types/passport": "^1.0.13",
-    "@types/passport-anonymous": "^1.0.4",
-    "@types/passport-jwt": "^3.0.10",
     "esbuild": "^0.14.11",
     "eslint": "^8.0.1",
     "eslint-config-prettier": "^8.3.0",

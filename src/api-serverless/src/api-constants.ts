@@ -1,19 +1,8 @@
-import { Time } from '../../time';
-import { PageSortDirection } from './page-request';
-
-export const SEIZE_SETTINGS = {
-  rememes_submission_tdh_threshold: 6942
-};
-
 export const ACCESS_CONTROL_ALLOW_ORIGIN_HEADER =
   'Access-Control-Allow-Headers';
 export const CONTENT_TYPE_HEADER = 'Content-Type';
 export const JSON_HEADER_VALUE = 'application/json';
 export const DEFAULT_PAGE_SIZE = 50;
-export const NFTS_PAGE_SIZE = 101;
-export const DISTRIBUTION_PAGE_SIZE = 250;
-export const SORT_DIRECTIONS = [PageSortDirection.ASC, PageSortDirection.DESC];
-export const CACHE_TIME_MS = Time.minutes(1).toMillis();
 
 export const corsOptions = {
   origin: '*',
