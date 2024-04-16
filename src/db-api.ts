@@ -673,20 +673,20 @@ export async function fetchMemesLite(
   search: string,
   pageSize: number
 ) {
-  let filters = constructFilters(
-    '',
-    `${NFTS_TABLE}.contract = :memes_contract`
-  );
-  let params: any = {
-    memes_contract: MEMES_CONTRACT
-  };
+  let filters = '';
+  let params: any = {};
+
   if (search) {
-    const searchFilters = getSearchFilters(['name', 'artist'], search);
-    filters = constructFilters(filters, `(${searchFilters.filters})`);
-    const id = parseInt(search);
-    if (!isNaN(id)) {
-      filters = constructFiltersOR(filters, `id = :id`);
-      params = { ...params, ...searchFilters.params, id };
+    if (search.length >= 3) {
+      const searchFilters = getSearchFilters(['id', 'name', 'artist'], search);
+      filters = constructFilters(filters, `(${searchFilters.filters})`);
+      params = { ...params, ...searchFilters.params };
+    } else {
+      const id = parseInt(search);
+      if (!isNaN(id)) {
+        filters = constructFilters(filters, `id = :id`);
+        params = { ...params, id };
+      }
     }
   }
 
