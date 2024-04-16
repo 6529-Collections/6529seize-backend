@@ -110,7 +110,7 @@ export async function fetchConsolidationWallets(
     )
   )[0];
   if (!consolidation) {
-    throw new Error('Consolidation not found');
+    return [];
   }
   return [consolidation.wallet1, consolidation.wallet2, consolidation.wallet3];
 }
