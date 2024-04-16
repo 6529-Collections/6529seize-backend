@@ -14,7 +14,6 @@ import {
 } from '../entities/IDelegation';
 import { loadEnv, unload } from '../secrets';
 import { Logger } from '../logging';
-import { discoverEnsConsolidations, discoverEnsDelegations } from '../ens';
 import { Time } from '../time';
 import { getLastTDH } from '../helpers';
 import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
@@ -28,11 +27,6 @@ import {
   TDHMemes
 } from '../entities/ITDH';
 import { Profile } from '../entities/IProfile';
-import * as sentryContext from '../sentry.context';
-import { NextGenTokenTDH } from '../entities/INextGen';
-import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
-import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
-import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
 import { CommunityMember } from '../entities/ICommunityMember';
 import { updateTDH } from '../tdhLoop/tdh';
 import { MemesSeason } from '../entities/ISeason';
@@ -49,11 +43,10 @@ import {
   ConsolidatedAggregatedActivity,
   ConsolidatedAggregatedActivityMemes
 } from '../entities/IAggregatedActivity';
-import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
-export const handler = sentryContext.wrapLambdaHandler(async () => {
+export const handler = async () => {
   const start = Time.now();
   await loadEnv([
     Delegation,
@@ -62,7 +55,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     NFTDelegationBlock,
     TDH,
     ConsolidatedTDH,
-    NextGenTokenTDH,
     TDHMemes,
     ConsolidatedTDHMemes,
     Profile,
@@ -94,7 +86,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   await unload();
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
-});
+};
 
 async function handleDelegations(startBlock: number | undefined) {
   const delegationsResponse = await findNewDelegations(startBlock);
@@ -106,18 +98,11 @@ async function handleDelegations(startBlock: number | undefined) {
     delegationsResponse.revocation
   );
 
-  await handleENS();
-
   if (delegationsResponse.consolidations.length > 0) {
     await reconsolidateWallets(delegationsResponse.consolidations);
   }
 
   return delegationsResponse;
-}
-
-async function handleENS() {
-  await discoverEnsDelegations();
-  await discoverEnsConsolidations();
 }
 
 async function findNewDelegations(
@@ -187,11 +172,6 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
 
     await updateTDH(lastTDHCalc, walletsArray);
     await consolidateTDH(lastTDHCalc, walletsArray);
-
-    await consolidateNftOwners(distinctWallets);
-    await consolidateOwnerBalances(distinctWallets);
-    await consolidateActivity(distinctWallets);
-    await consolidateSubscriptions(distinctWallets);
   } else {
     logger.info(`[NO WALLETS TO RECONSOLIDATE]`);
   }

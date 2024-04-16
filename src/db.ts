@@ -67,13 +67,11 @@ import {
   isNullAddress
 } from './helpers';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
-import { NextGenTokenTDH } from './entities/INextGen';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { Profile } from './entities/IProfile';
 import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
-import { profilesService } from './profiles/profiles.service';
 import { synchroniseCommunityMembersTable } from './community-members';
 import { MemesSeason } from './entities/ISeason';
 import { insertWithoutUpdate } from './orm_helpers';
@@ -818,7 +816,6 @@ export async function persistConsolidatedTDH(
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
     }
 
-    await profilesService.mergeProfiles(qrHolder);
     await synchroniseCommunityMembersTable(qrHolder);
   });
 
@@ -855,42 +852,6 @@ export async function persistNftTdh(nftTdh: NftTDH[], wallets?: string[]) {
   });
 
   logger.info(`[NFT TDH] PERSISTED ALL NFT TDH [${nftTdh.length}]`);
-}
-
-export async function persistNextGenTokenTDH(nextgenTdh: NextGenTokenTDH[]) {
-  logger.info(`[NEXTGEN TOKEN TDH] : [${nextgenTdh.length}]`);
-  await AppDataSource.getRepository(NextGenTokenTDH).save(nextgenTdh);
-}
-
-export async function persistENS(ens: ENS[]) {
-  logger.info(`[ENS] PERSISTING ENS [${ens.length}]`);
-  const sql = `REPLACE INTO ${ENS_TABLE} SET
-            wallet = :wallet,
-                display = :display`;
-  await Promise.all(
-    ens.map(async (t) => {
-      if ((t.display && t.display.length < 150) || !t.display) {
-        try {
-          await sqlExecutor.execute(sql, {
-            wallet: t.wallet,
-            display: t.display
-          });
-        } catch (e) {
-          await sqlExecutor.execute(sql, {
-            wallet: t.wallet,
-            display: null
-          });
-        }
-      } else {
-        await sqlExecutor.execute(sql, {
-          wallet: t.wallet,
-          display: null
-        });
-      }
-    })
-  );
-
-  logger.info(`[ENS] PERSISTED ALL [${ens.length}]`);
 }
 
 export async function persistLabNFTS(labnfts: LabNFT[]) {
