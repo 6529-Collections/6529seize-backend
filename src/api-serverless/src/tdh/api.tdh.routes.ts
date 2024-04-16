@@ -199,7 +199,6 @@ router.get(
     res: any
   ) {
     const wallet = req.params.wallet;
-
     const result = await fetchSingleWalletTDH(wallet);
     return returnJsonResult(result, req, res);
   }
