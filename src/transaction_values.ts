@@ -13,6 +13,8 @@ import {
   MEMELAB_CONTRACT,
   MEMELAB_ROYALTIES_ADDRESS,
   MEMES_DEPLOYER,
+  NEXTGEN_CONTRACT,
+  NEXTGEN_ROYALTIES_ADDRESS,
   NULL_ADDRESS,
   OPENSEA_ADDRESS,
   ROYALTIES_ADDRESS,
@@ -24,12 +26,6 @@ import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
 import { findTransactionsByHash } from './db';
 import { Logger } from './logging';
-import {
-  getNextgenNetwork,
-  NEXTGEN_CORE_CONTRACT,
-  NEXTGEN_ROYALTIES_ADDRESS
-} from './nextgen/nextgen_constants';
-import { getClosestEthUsdPrice } from './ethPriceLoop/db.eth_price';
 
 const logger = Logger.get('TRANSACTION_VALUES');
 
@@ -119,9 +115,7 @@ async function resolveValue(t: Transaction) {
   let royaltiesAddress = ROYALTIES_ADDRESS;
   if (areEqualAddresses(t.contract, MEMELAB_CONTRACT)) {
     royaltiesAddress = MEMELAB_ROYALTIES_ADDRESS;
-  } else if (
-    areEqualAddresses(t.contract, NEXTGEN_CORE_CONTRACT[getNextgenNetwork()])
-  ) {
+  } else if (areEqualAddresses(t.contract, NEXTGEN_CONTRACT)) {
     royaltiesAddress = NEXTGEN_ROYALTIES_ADDRESS;
   }
 
@@ -251,11 +245,6 @@ async function resolveValue(t: Transaction) {
   t.gas_price = parseFloat(t.gas_price.toFixed(8));
   t.gas_price_gwei = parseFloat(t.gas_price_gwei.toFixed(8));
   t.gas_gwei = parseFloat(t.gas_gwei.toFixed(8));
-
-  const ethPrice = await getClosestEthUsdPrice(t.transaction_date);
-  t.eth_price_usd = ethPrice;
-  t.value_usd = t.value * ethPrice;
-  t.gas_usd = t.gas * ethPrice;
 
   return t;
 }
