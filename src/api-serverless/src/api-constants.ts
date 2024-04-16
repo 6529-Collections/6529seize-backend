@@ -34,3 +34,12 @@ export interface PaginatedResponse<T> {
   next: string | null | boolean;
   data: T[];
 }
+
+export interface NFTSearchResult {
+  id: number;
+  name: string;
+  contract: string;
+  icon_url: string;
+  thumbnail_url: string;
+  image_url: string;
+}

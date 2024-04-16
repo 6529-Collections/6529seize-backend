@@ -53,6 +53,12 @@ import {
   constructFiltersOR,
   getSearchFilters
 } from './api-serverless/src/api-helpers';
+import {
+  NEXTGEN_CORE,
+  getNextGenChainId
+} from './api-serverless/src/nextgen/abis';
+import { NEXTGEN_TOKENS_TABLE } from './nextgen/nextgen_constants';
+import { NFTSearchResult } from './api-serverless/src/api-constants';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -668,38 +674,95 @@ export async function fetchNewMemesSeasons() {
   return await sqlExecutor.execute(sql);
 }
 
-export async function fetchMemesLite(
-  sortDir: string,
-  search: string,
-  pageSize: number
-) {
-  let filters = constructFilters(
+export async function fetchMemesLite(sortDir: string) {
+  const filters = constructFilters(
     '',
     `${NFTS_TABLE}.contract = :memes_contract`
   );
-  let params: any = {
-    memes_contract: MEMES_CONTRACT
-  };
-  if (search) {
-    const searchFilters = getSearchFilters(['name', 'artist'], search);
-    filters = constructFilters(filters, `(${searchFilters.filters})`);
-    const id = parseInt(search);
-    if (!isNaN(id)) {
-      filters = constructFiltersOR(filters, `id = :id`);
-      params = { ...params, ...searchFilters.params, id };
-    }
-  }
+  const params = { memes_contract: MEMES_CONTRACT };
 
   return fetchPaginated(
     NFTS_TABLE,
     params,
     `id ${sortDir}`,
-    pageSize,
+    0,
     1,
     filters,
-    'id, name, contract, icon, thumbnail, scaled, image, animation, artist',
+    'id, name, contract, icon, thumbnail, scaled, image, animation',
     ''
   );
+}
+
+export async function searchNfts(
+  search: string,
+  pageSize: number
+): Promise<NFTSearchResult[]> {
+  let nameQuery = '';
+  let idQuery = '';
+
+  if (search) {
+    const id = parseInt(search);
+    if (!isNaN(id)) {
+      idQuery = search;
+    }
+
+    if (search.length >= 3) {
+      nameQuery = search;
+    }
+  }
+
+  let nextgenFilters = '';
+  let nftFilters = '';
+  let params: any = {};
+  if (idQuery) {
+    nextgenFilters = constructFiltersOR(nextgenFilters, `normalised_id = :id`);
+    nextgenFilters = constructFiltersOR(nextgenFilters, `id = :id`);
+    nftFilters = constructFiltersOR(nftFilters, `id = :id`);
+    params.id = idQuery;
+  }
+  if (nameQuery) {
+    nextgenFilters = constructFiltersOR(nextgenFilters, `name like :name`);
+    nftFilters = constructFiltersOR(nftFilters, `name like :name`);
+    params.name = `%${nameQuery}%`;
+  }
+
+  const nextgenFields = `
+    id,
+      name,
+      LOWER('${NEXTGEN_CORE[getNextGenChainId()]}') AS contract,
+      icon_url,
+      thumbnail_url,
+      image_url`;
+  const nftFields = `
+      id,
+      name,
+      LOWER(contract),
+      icon AS icon_url,  
+      thumbnail AS thumbnail_url,
+      image AS image_url`;
+
+  const sql = `
+    SELECT
+      ${nextgenFields}
+    FROM
+      ${NEXTGEN_TOKENS_TABLE}
+      ${nextgenFilters ? ` WHERE ${nextgenFilters}` : ''}
+    UNION
+    SELECT
+      ${nftFields}
+    FROM
+      ${NFTS_TABLE}
+      ${nftFilters ? ` WHERE ${nftFilters}` : ''}
+    UNION
+    SELECT
+      ${nftFields}
+    FROM
+      ${NFTS_MEME_LAB_TABLE}
+      ${nftFilters ? ` WHERE ${nftFilters}` : ''}
+    ORDER BY contract asc, id asc
+    LIMIT ${pageSize};
+  `;
+  return await sqlExecutor.execute(sql, params);
 }
 
 export async function resolveEns(walletsStr: string) {

@@ -453,15 +453,21 @@ loadApi().then(() => {
         ? req.query.sort_direction
         : 'asc';
 
+    db.fetchMemesLite(sortDir).then((result) => {
+      return returnPaginatedResult(result, req, res);
+    });
+  });
+
+  apiRouter.get(`/nfts_search`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
-        : -1;
+        : DEFAULT_PAGE_SIZE;
 
     const search = req.query.search;
 
-    db.fetchMemesLite(sortDir, search, pageSize).then((result) => {
-      return returnPaginatedResult(result, req, res);
+    db.searchNfts(search, pageSize).then((result) => {
+      return returnJsonResult(result, req, res);
     });
   });
 
