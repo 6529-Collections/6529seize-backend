@@ -5,7 +5,8 @@ import {
   MetricsContent,
   fetchConsolidatedMetrics,
   fetchNftTdh,
-  fetchSingleTDH
+  fetchSingleWalletTDH,
+  fetchTDH
 } from './api.tdh.db';
 import { DEFAULT_PAGE_SIZE } from '../page-request';
 import {
@@ -144,7 +145,7 @@ router.get(
   ) {
     const consolidationKey = req.params.consolidation_key;
 
-    const result = await fetchSingleTDH(
+    const result = await fetchTDH(
       'consolidation_key',
       consolidationKey,
       CONSOLIDATED_WALLETS_TDH_TABLE
@@ -174,11 +175,31 @@ router.get(
   ) {
     const wallet = req.params.wallet;
 
-    const result = await fetchSingleTDH('wallet', wallet, WALLETS_TDH_TABLE);
+    const result = await fetchTDH('wallet', wallet, WALLETS_TDH_TABLE);
     if (result) {
       const parsedResult = parseTdhDataFromDB(result);
       return returnJsonResult(parsedResult, req, res);
     }
     throw new NotFoundException(`Wallet TDH for ${wallet} not found`);
+  }
+);
+
+// used for chainlink
+router.get(
+  '/:wallet',
+  async function (
+    req: Request<
+      {
+        wallet: string;
+      },
+      any,
+      any,
+      {}
+    >,
+    res: any
+  ) {
+    const wallet = req.params.wallet;
+    const result = await fetchSingleWalletTDH(wallet);
+    return returnJsonResult(result, req, res);
   }
 );

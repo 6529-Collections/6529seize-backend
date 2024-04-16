@@ -311,11 +311,7 @@ export const fetchConsolidatedMetrics = async (
   return results;
 };
 
-export const fetchSingleTDH = async (
-  key: string,
-  value: string,
-  table: string
-) => {
+export const fetchTDH = async (key: string, value: string, table: string) => {
   const sql = `
     SELECT * from ${table} where ${key} = :value
     `;
@@ -324,4 +320,19 @@ export const fetchSingleTDH = async (
     return null;
   }
   return result[0];
+};
+
+export const fetchSingleWalletTDH = async (wallet: string) => {
+  const blockResult = await sqlExecutor.execute(
+    `SELECT MAX(block) as block from ${CONSOLIDATED_WALLETS_TDH_TABLE}`
+  );
+  const block = blockResult[0].block ?? 0;
+  const sql = `
+    SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} where LOWER(consolidation_key) like '%${wallet.toLowerCase()}%'
+  `;
+  const tdh = await sqlExecutor.execute(sql);
+  return {
+    tdh: tdh[0]?.boosted_tdh ?? 0,
+    block
+  };
 };
