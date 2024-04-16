@@ -8,6 +8,7 @@ import { MemesSeason } from '../entities/ISeason';
 import { NFTOwner } from '../entities/INFTOwner';
 import { getDataSource } from '../db';
 import { DISTRIBUTION_NORMALIZED_TABLE } from '../constants';
+import { sqlExecutor } from '../sql-executor';
 
 const logger = Logger.get('NFTS_LOOP');
 
@@ -52,14 +53,17 @@ async function updateDistributionInfo() {
         }
       });
     if (nft) {
-      await getDataSource().manager.query(
-        `UPDATE ${DISTRIBUTION_NORMALIZED_TABLE} 
-          SET card_name = '${nft.name}', mint_date = '${nft.mint_date
-          .toISOString()
-          .slice(0, 19)
-          .replace('T', ' ')}'
-          WHERE contract = '${distribution.contract}' 
-          AND card_id = ${distribution.card_id};`
+      await sqlExecutor.execute(
+        `UPDATE ${DISTRIBUTION_NORMALIZED_TABLE}
+          SET card_name = :cardName, mint_date = :mintDate
+          WHERE contract = :contract
+          AND card_id = :cardId;`,
+        {
+          contract: distribution.contract,
+          cardId: distribution.card_id,
+          cardName: nft.name,
+          mintDate: nft.mint_date.toISOString().slice(0, 19).replace('T', ' ')
+        }
       );
     }
   }
