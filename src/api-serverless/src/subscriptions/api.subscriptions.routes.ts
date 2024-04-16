@@ -143,8 +143,10 @@ async function isAuthenticatedForConsolidationKey(
   const consolidationWallets = await fetchConsolidationWallets(
     consolidationKey
   );
-  return consolidationWallets.some((wallet) =>
-    areEqualAddresses(wallet, authenticatedWallet)
+  return (
+    consolidationWallets.some((wallet) =>
+      areEqualAddresses(wallet, authenticatedWallet)
+    ) || areEqualAddresses(consolidationKey, authenticatedWallet)
   );
 }
 
