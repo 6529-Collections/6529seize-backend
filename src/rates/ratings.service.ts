@@ -134,8 +134,8 @@ export class RatingsService {
         profile_id: request.rater_profile_id,
         target_id: request.matter_target_id,
         type:
-          request.matter === RateMatter.DROP_REP
-            ? ProfileActivityLogType.DROP_REP_EDIT
+          request.matter === RateMatter.DROP_RATING
+            ? ProfileActivityLogType.DROP_RATING_EDIT
             : ProfileActivityLogType.RATING_EDIT,
         contents: JSON.stringify({
           old_rating: currentRating.rating,

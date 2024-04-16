@@ -21,7 +21,6 @@ import { Profile } from '../entities/IProfile';
 import { CreateOrUpdateProfileCommand } from './profile.types';
 import { randomUUID } from 'crypto';
 import { distinct } from '../helpers';
-import { ProfileMin } from './profile-min';
 import { calculateLevel } from './profile-level';
 
 export class ProfilesDb extends LazyDbAccessCompatibleService {
@@ -529,7 +528,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async getProfileMinsByIds(ids: string[]): Promise<ProfileMin[]> {
+  async getProfileMinsByIds(ids: string[]): Promise<ProfileOverview[]> {
     if (!ids.length) {
       return [];
     }
@@ -539,9 +538,10 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         { ids }
       )
       .then((result) =>
-        result.map((it: Omit<ProfileMin, 'level'>) => ({
+        result.map((it: Omit<ProfileOverview, 'level'>) => ({
           ...it,
-          level: calculateLevel({ tdh: it.tdh, rep: it.rep })
+          level: calculateLevel({ tdh: it.tdh, rep: it.rep }),
+          archived: false
         }))
       );
   }
@@ -595,6 +595,17 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       )
       .then((result) => result.at(0) ?? null);
   }
+}
+
+export interface ProfileOverview {
+  id: string;
+  handle: string;
+  pfp: string | null;
+  cic: number;
+  rep: number;
+  tdh: number;
+  level: number;
+  archived: boolean;
 }
 
 export const profilesDb = new ProfilesDb(dbSupplier);

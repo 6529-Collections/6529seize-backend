@@ -1,5 +1,5 @@
-import { ProfileMin } from '../../../profiles/profile-min';
 import { CommunityMembersCurationCriteria } from './community-search-criteria.types';
+import { ProfileMin } from '../generated/models/ProfileMin';
 
 export interface ApiCommunityMembersCurationCriteria {
   readonly id: string;
