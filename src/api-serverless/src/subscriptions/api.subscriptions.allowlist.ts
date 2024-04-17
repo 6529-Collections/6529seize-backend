@@ -157,8 +157,7 @@ export async function splitAllowlistResults(
         SET 
           phase = :phaseName, 
           phase_subscriptions = :phaseSubscriptions,
-          phase_position = :rank,
-          airdrop_address = :airdropAddress
+          phase_position = :rank
         WHERE id = :id`;
     await sqlExecutor.execute(updateQuery, {
       phaseName,
