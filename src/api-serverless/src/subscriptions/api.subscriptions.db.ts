@@ -1,7 +1,6 @@
 import {
   MEMES_CONTRACT,
   MEMES_MINT_PRICE,
-  PROFILE_FULL,
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_LOGS_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
@@ -24,7 +23,7 @@ import { constructFilters } from '../api-helpers';
 import { fetchPaginated } from '../../../db-api';
 import { getMaxMemeId } from '../../../nftsLoop/db.nfts';
 import { BadRequestException } from '../../../exceptions';
-import { WalletConsolidationKey } from '../../../entities/IDelegation';
+
 export interface SubscriptionDetails {
   consolidation_key: string;
   last_update: number;
