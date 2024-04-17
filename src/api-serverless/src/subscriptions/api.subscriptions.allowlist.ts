@@ -4,6 +4,7 @@ import { areEqualAddresses } from '../../../helpers';
 import {
   MEMES_CONTRACT,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+  USE_CASE_AIRDROPS,
   USE_CASE_MINTING
 } from '../../../constants';
 import { fetchProcessedDelegations } from '../../../delegationsLoop/db.delegations';
@@ -143,16 +144,31 @@ export async function splitAllowlistResults(
   const airdrops: ResultsResponse[] = [];
   const allowlists: ResultsResponse[] = [];
 
+  const walletAirdropDelegations = await fetchProcessedDelegations(
+    MEMES_CONTRACT,
+    USE_CASE_AIRDROPS
+  );
+  const airdropsMap = new Map(
+    walletAirdropDelegations.map((d) => [
+      d.from_address.toLowerCase(),
+      d.to_address.toLowerCase()
+    ])
+  );
+  const mapToAirdropAddress = (wallet: string) =>
+    airdropsMap.get(wallet) ?? wallet;
+
   const walletMintingDelegations = await fetchProcessedDelegations(
     MEMES_CONTRACT,
     USE_CASE_MINTING
   );
-  const delegationMap = new Map(
-    walletMintingDelegations.map((d) => [d.from_address, d.to_address])
+  const mintingMap = new Map(
+    walletMintingDelegations.map((d) => [
+      d.from_address.toLowerCase(),
+      d.to_address.toLowerCase()
+    ])
   );
-
   const mapToMintingAddress = (wallet: string) =>
-    delegationMap.get(wallet) ?? wallet;
+    mintingMap.get(wallet) ?? wallet;
 
   for (const result of results) {
     const walletAddress = result.wallet.toLowerCase();
@@ -164,13 +180,14 @@ export async function splitAllowlistResults(
     );
 
     if (subscription) {
+      const airdropAddress = mapToAirdropAddress(walletAddress);
       airdrops.push({
-        wallet: subscription.airdrop_address,
+        wallet: airdropAddress,
         amount: 1
       });
       if (result.amount > 1) {
         allowlists.push({
-          wallet: mapToMintingAddress(result.wallet),
+          wallet: mapToMintingAddress(walletAddress),
           amount: result.amount - 1
         });
       }
@@ -180,7 +197,8 @@ export async function splitAllowlistResults(
         SET 
           phase = :phaseName, 
           phase_subscriptions = :phaseSubscriptions,
-          phase_position = :rank
+          phase_position = :rank,
+          airdrop_address = :airdropAddress
         WHERE id = :id`;
       await sqlExecutor.execute(updateQuery, {
         phaseName,
