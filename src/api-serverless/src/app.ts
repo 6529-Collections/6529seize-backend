@@ -70,7 +70,9 @@ function requestLogMiddleware() {
     response.on('close', () => {
       const { statusCode } = response;
       requestLogger.info(
-        `${method} ${url} - Response status: HTTP_${statusCode} - Running time: ${start.diffFromNow()}`
+        `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${start
+          .diffFromNow()
+          .toMillis()}]`
       );
       Logger.deregisterRequestId();
     });
