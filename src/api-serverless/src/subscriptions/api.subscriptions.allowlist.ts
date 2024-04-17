@@ -129,38 +129,47 @@ export async function splitAllowlistResults(
     throw new BadRequestException('List has duplicates. Cannot process!');
   }
 
-  const subscriptions = await fetchAllNftFinalSubscriptionsForContractAndToken(
-    contract,
-    tokenId
+  const [subscriptions, walletMintingDelegations] = await Promise.all([
+    fetchAllNftFinalSubscriptionsForContractAndToken(contract, tokenId),
+    fetchProcessedDelegations(MEMES_CONTRACT, USE_CASE_MINTING)
+  ]);
+
+  const walletSet = new Set(wallets);
+  const filteredSubscriptions = subscriptions.filter((s) =>
+    s.consolidation_key.split('-').some((k) => walletSet.has(k))
   );
 
   const subscriptionRanks = new Map<string, number>();
-  for (let i = 0; i < subscriptions.length; i++) {
-    subscriptionRanks.set(subscriptions[i].consolidation_key, i + 1);
+  for (let i = 0; i < filteredSubscriptions.length; i++) {
+    subscriptionRanks.set(filteredSubscriptions[i].consolidation_key, i + 1);
   }
 
-  const phaseSubscriptions = subscriptions.length;
+  const phaseSubscriptions = filteredSubscriptions.length;
 
   const airdrops: ResultsResponse[] = [];
+  for (const sub of filteredSubscriptions) {
+    airdrops.push({
+      wallet: sub.airdrop_address,
+      amount: 1
+    });
+    const rank = subscriptionRanks.get(sub.consolidation_key);
+    const updateQuery = `
+        UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
+        SET 
+          phase = :phaseName, 
+          phase_subscriptions = :phaseSubscriptions,
+          phase_position = :rank
+        WHERE id = :id`;
+    await sqlExecutor.execute(updateQuery, {
+      phaseName,
+      phaseSubscriptions,
+      rank,
+      id: sub.id
+    });
+  }
+
   const allowlists: ResultsResponse[] = [];
 
-  const walletAirdropDelegations = await fetchProcessedDelegations(
-    MEMES_CONTRACT,
-    USE_CASE_AIRDROPS
-  );
-  const airdropsMap = new Map(
-    walletAirdropDelegations.map((d) => [
-      d.from_address.toLowerCase(),
-      d.to_address.toLowerCase()
-    ])
-  );
-  const mapToAirdropAddress = (wallet: string) =>
-    airdropsMap.get(wallet) ?? wallet;
-
-  const walletMintingDelegations = await fetchProcessedDelegations(
-    MEMES_CONTRACT,
-    USE_CASE_MINTING
-  );
   const mintingMap = new Map(
     walletMintingDelegations.map((d) => [
       d.from_address.toLowerCase(),
@@ -173,40 +182,19 @@ export async function splitAllowlistResults(
   for (const result of results) {
     const walletAddress = result.wallet.toLowerCase();
 
-    const subscription = subscriptions.find((s) =>
+    const subscription = filteredSubscriptions.find((s) =>
       s.consolidation_key
         .split('-')
         .some((k) => areEqualAddresses(k, walletAddress))
     );
 
     if (subscription) {
-      const airdropAddress = mapToAirdropAddress(walletAddress);
-      airdrops.push({
-        wallet: airdropAddress,
-        amount: 1
-      });
       if (result.amount > 1) {
         allowlists.push({
           wallet: mapToMintingAddress(walletAddress),
           amount: result.amount - 1
         });
       }
-      const rank = subscriptionRanks.get(subscription.consolidation_key);
-      const updateQuery = `
-        UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
-        SET 
-          phase = :phaseName, 
-          phase_subscriptions = :phaseSubscriptions,
-          phase_position = :rank,
-          airdrop_address = :airdropAddress
-        WHERE id = :id`;
-      await sqlExecutor.execute(updateQuery, {
-        phaseName,
-        phaseSubscriptions,
-        rank,
-        airdropAddress,
-        id: subscription.id
-      });
     } else {
       allowlists.push({
         wallet: mapToMintingAddress(result.wallet),
@@ -215,5 +203,14 @@ export async function splitAllowlistResults(
     }
   }
 
-  return { airdrops, allowlists };
+  const mergedAllowlists = new Map<string, number>();
+  for (const a of allowlists) {
+    const currentAmount = mergedAllowlists.get(a.wallet) ?? 0;
+    mergedAllowlists.set(a.wallet, currentAmount + a.amount);
+  }
+  const mergedAllowlistsFlat = Array.from(mergedAllowlists).map(
+    ([wallet, amount]) => ({ wallet, amount })
+  );
+
+  return { airdrops, allowlists: mergedAllowlistsFlat };
 }
