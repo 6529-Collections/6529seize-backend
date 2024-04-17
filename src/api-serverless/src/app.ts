@@ -21,6 +21,7 @@ import dropsRoutes from './drops/drops.routes';
 import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
 import dropsMediaRoutes from './drops/drops-media.routes';
 import profileSubClassificationsRoutes from './profiles/profiles-sub-classifications.routes';
+import delegationsRoutes from './delegations/delegations.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -804,6 +805,7 @@ loadApi().then(() => {
   apiRouter.use(`/nft-owners`, nftOwnersRoutes);
   apiRouter.use(`/drop-media`, dropsMediaRoutes);
   apiRouter.use(`/profile-subclassifications`, profileSubClassificationsRoutes);
+  apiRouter.use(`/delegations`, delegationsRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 
