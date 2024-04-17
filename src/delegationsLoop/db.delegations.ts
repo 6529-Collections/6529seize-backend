@@ -40,7 +40,7 @@ export async function fetchProcessedDelegations(
             END,
             created_at DESC
         ) AS rn
-      FROM delegations
+      FROM ${DELEGATIONS_TABLE}
       WHERE 
         (collection = :collection OR collection = :anyCollection)
         AND (use_case = :useCase OR use_case = :allUseCase)
