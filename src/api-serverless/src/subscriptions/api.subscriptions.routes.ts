@@ -305,12 +305,9 @@ router.get(
       },
       any,
       any,
-      {
-        page_size?: string;
-        page?: string;
-      }
+      any
     >,
-    res: Response<{ airdrop_address: string } | string>
+    res: Response<{ airdrop_address: string }>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
     const consolidationWallets = consolidationKey.split('-');
