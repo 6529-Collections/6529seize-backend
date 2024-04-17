@@ -21,6 +21,7 @@ import dropsRoutes from './drops/drops.routes';
 import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
 import dropsMediaRoutes from './drops/drops-media.routes';
 import profileSubClassificationsRoutes from './profiles/profiles-sub-classifications.routes';
+import delegationsRoutes from './delegations/delegations.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -69,7 +70,9 @@ function requestLogMiddleware() {
     response.on('close', () => {
       const { statusCode } = response;
       requestLogger.info(
-        `${method} ${url} - Response status: HTTP_${statusCode} - Running time: ${start.diffFromNow()}`
+        `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${start
+          .diffFromNow()
+          .toMillis()}]`
       );
       Logger.deregisterRequestId();
     });
@@ -453,15 +456,21 @@ loadApi().then(() => {
         ? req.query.sort_direction
         : 'asc';
 
+    db.fetchMemesLite(sortDir).then((result) => {
+      return returnPaginatedResult(result, req, res);
+    });
+  });
+
+  apiRouter.get(`/nfts_search`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
-        : -1;
+        : DEFAULT_PAGE_SIZE;
 
     const search = req.query.search;
 
-    db.fetchMemesLite(sortDir, search, pageSize).then((result) => {
-      return returnPaginatedResult(result, req, res);
+    db.searchNfts(search, pageSize).then((result) => {
+      return returnJsonResult(result, req, res);
     });
   });
 
@@ -804,6 +813,7 @@ loadApi().then(() => {
   apiRouter.use(`/nft-owners`, nftOwnersRoutes);
   apiRouter.use(`/drop-media`, dropsMediaRoutes);
   apiRouter.use(`/profile-subclassifications`, profileSubClassificationsRoutes);
+  apiRouter.use(`/delegations`, delegationsRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 
