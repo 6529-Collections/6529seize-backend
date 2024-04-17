@@ -4,7 +4,6 @@ import { areEqualAddresses } from '../../../helpers';
 import {
   MEMES_CONTRACT,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
-  USE_CASE_AIRDROPS,
   USE_CASE_MINTING
 } from '../../../constants';
 import { fetchProcessedDelegations } from '../../../delegationsLoop/db.delegations';
@@ -204,14 +203,22 @@ export async function splitAllowlistResults(
     }
   }
 
-  const mergedAllowlists = new Map<string, number>();
-  for (const a of allowlists) {
-    const currentAmount = mergedAllowlists.get(a.wallet) ?? 0;
-    mergedAllowlists.set(a.wallet, currentAmount + a.amount);
-  }
-  const mergedAllowlistsFlat = Array.from(mergedAllowlists).map(
-    ([wallet, amount]) => ({ wallet, amount })
-  );
+  const mergedAirDrops = mergeDuplicateWalletss(airdrops);
+  const mergedAllowlists = mergeDuplicateWalletss(allowlists);
 
-  return { airdrops, allowlists: mergedAllowlistsFlat };
+  return { airdrops: mergedAirDrops, allowlists: mergedAllowlists };
 }
+
+const mergeDuplicateWalletss = (
+  results: ResultsResponse[]
+): ResultsResponse[] => {
+  const mergedResults = new Map<string, number>();
+  for (const r of results) {
+    const currentAmount = mergedResults.get(r.wallet) ?? 0;
+    mergedResults.set(r.wallet, currentAmount + r.amount);
+  }
+  return Array.from(mergedResults).map(([wallet, amount]) => ({
+    wallet,
+    amount
+  }));
+};
