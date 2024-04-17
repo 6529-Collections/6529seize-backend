@@ -4,7 +4,6 @@ import { areEqualAddresses } from '../../../helpers';
 import {
   MEMES_CONTRACT,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
-  USE_CASE_AIRDROPS,
   USE_CASE_MINTING
 } from '../../../constants';
 import { fetchProcessedDelegations } from '../../../delegationsLoop/db.delegations';
