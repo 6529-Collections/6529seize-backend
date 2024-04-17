@@ -15,10 +15,10 @@ We only want to restrict the following five categories, but there are exceptions
 
 Not allowed (with exceptions noted below):
 1. Discriminatory or hate speech on any typical grounds
-2. Personal insults are disallowed.
+2. Personal insults are disallowed, but there are exceptions:
   a. Allowed: Insults that are clearly in jest or part of a meme.
   b. Allowed: references to mfers, complainoors, karens, or Major Karen Pepe.
-3. Generally words that would make a normal user in the cryptotwitter community feel bad or uncomfortable. Given the nature of the community (cryptotwitter and nft twitter) we are more permissive than most social media sites on the following factors:
+3. Generally words that would make a normal user in the cryptotwitter community feel bad or uncomfortable. Given the nature of the community (cryptotwitter and nft twitter) we are more permissive than most social media sites on the following two factors:
   a. Allowed: Typical cryptotwitter terms. Aka "shitposting" is fine as a term, as is: maxi, cryptodickbutt, cabal, n00b, newbie, nerd, and degen.
   b. Allowed: Nudity as we support nude art photographers
   c. Allowed: WWOH is a fictional story, so references to people therein are not considered doxxing.
