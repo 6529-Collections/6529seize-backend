@@ -104,14 +104,13 @@ export async function fetchLogsForConsolidationKey(
 export async function fetchConsolidationWallets(
   consolidationKey: string
 ): Promise<string[]> {
-  const wallets: WalletConsolidationKey[] = await sqlExecutor.execute(
-    `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE consolidation_key = :consolidationKey`,
-    { consolidationKey: consolidationKey.toLowerCase() }
-  );
-  if (!wallets) {
-    return [];
-  }
-  return wallets.map((wallet) => wallet.wallet);
+  const wallets: string[] = (
+    await sqlExecutor.execute(
+      `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE consolidation_key = :consolidationKey`,
+      { consolidationKey }
+    )
+  ).map((wallet: any) => wallet.wallet);
+  return wallets;
 }
 
 export async function updateSubscriptionMode(
@@ -368,13 +367,7 @@ export async function fetchTopUpsForConsolidationKey(
   next: boolean;
   data: SubscriptionTopUp[];
 }> {
-  const wallets: string[] = (
-    await sqlExecutor.execute(
-      `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE consolidation_key = :consolidationKey`,
-      { consolidationKey }
-    )
-  ).map((wallet: any) => wallet.wallet);
-
+  const wallets = await fetchConsolidationWallets(consolidationKey);
   const filters = constructFilters('', `from_wallet IN (:wallets)`);
   const params = { wallets };
 
