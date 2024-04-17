@@ -204,6 +204,7 @@ export async function splitAllowlistResults(
         phaseName,
         phaseSubscriptions,
         rank,
+        airdropAddress,
         id: subscription.id
       });
     } else {
