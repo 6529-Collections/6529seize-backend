@@ -16,7 +16,7 @@ export async function fetchAirdropAddressForDelegators(
     USE_CASE_AIRDROPS,
     delegators
   );
-  return results?.[0].to_address ?? null;
+  return results[0]?.to_address.toLowerCase() ?? null;
 }
 
 export async function fetchProcessedDelegations(
