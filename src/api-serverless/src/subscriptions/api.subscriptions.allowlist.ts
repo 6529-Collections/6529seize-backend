@@ -202,13 +202,13 @@ export async function splitAllowlistResults(
     }
   }
 
-  const mergedAirDrops = mergeDuplicateWalletss(airdrops);
-  const mergedAllowlists = mergeDuplicateWalletss(allowlists);
+  const mergedAirDrops = mergeDuplicateWallets(airdrops);
+  const mergedAllowlists = mergeDuplicateWallets(allowlists);
 
   return { airdrops: mergedAirDrops, allowlists: mergedAllowlists };
 }
 
-const mergeDuplicateWalletss = (
+const mergeDuplicateWallets = (
   results: ResultsResponse[]
 ): ResultsResponse[] => {
   const mergedResults = new Map<string, number>();
