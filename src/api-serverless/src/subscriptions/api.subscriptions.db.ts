@@ -24,6 +24,7 @@ import { constructFilters } from '../api-helpers';
 import { fetchPaginated } from '../../../db-api';
 import { getMaxMemeId } from '../../../nftsLoop/db.nfts';
 import { BadRequestException } from '../../../exceptions';
+import { WalletConsolidationKey } from '../../../entities/IDelegation';
 export interface SubscriptionDetails {
   consolidation_key: string;
   last_update: number;
@@ -103,16 +104,13 @@ export async function fetchLogsForConsolidationKey(
 export async function fetchConsolidationWallets(
   consolidationKey: string
 ): Promise<string[]> {
-  const consolidation = (
+  const wallets: string[] = (
     await sqlExecutor.execute(
-      `SELECT * FROM ${PROFILE_FULL} WHERE consolidation_key = :consolidationKey`,
-      { consolidationKey: consolidationKey.toLowerCase() }
+      `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE consolidation_key = :consolidationKey`,
+      { consolidationKey }
     )
-  )[0];
-  if (!consolidation) {
-    return [];
-  }
-  return [consolidation.wallet1, consolidation.wallet2, consolidation.wallet3];
+  ).map((wallet: any) => wallet.wallet);
+  return wallets;
 }
 
 export async function updateSubscriptionMode(
@@ -369,13 +367,7 @@ export async function fetchTopUpsForConsolidationKey(
   next: boolean;
   data: SubscriptionTopUp[];
 }> {
-  const wallets: string[] = (
-    await sqlExecutor.execute(
-      `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE consolidation_key = :consolidationKey`,
-      { consolidationKey }
-    )
-  ).map((wallet: any) => wallet.wallet);
-
+  const wallets = await fetchConsolidationWallets(consolidationKey);
   const filters = constructFilters('', `from_wallet IN (:wallets)`);
   const params = { wallets };
 
