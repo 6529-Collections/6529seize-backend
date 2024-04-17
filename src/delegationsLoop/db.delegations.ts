@@ -13,7 +13,8 @@ export async function fetchAirdropAddressForDelegators(
 ): Promise<string | null> {
   const results = await fetchProcessedDelegations(
     MEMES_CONTRACT,
-    USE_CASE_AIRDROPS
+    USE_CASE_AIRDROPS,
+    delegators
   );
   return results?.[0].to_address ?? null;
 }
