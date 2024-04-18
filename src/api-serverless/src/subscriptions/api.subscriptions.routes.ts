@@ -31,7 +31,7 @@ import {
   validateDistribution
 } from './api.subscriptions.allowlist';
 import { getNft } from '../../../nftsLoop/db.nfts';
-import { fetchAirdropAddressForDelegators } from '../../../delegationsLoop/db.delegations';
+import { fetchAirdropAddressForConsolidationKey } from '../../../delegationsLoop/db.delegations';
 import { fetchEns } from '../../../db-api';
 
 const router = asyncRouter();
@@ -312,15 +312,21 @@ router.get(
     res: Response<{ address: string; ens: string }>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
-    const consolidationWallets = consolidationKey.split('-');
-    const result =
-      (await fetchAirdropAddressForDelegators(consolidationWallets)) ??
-      consolidationWallets[0];
-    const ens = await fetchEns(result);
+    const result = await fetchAirdropAddressForConsolidationKey(
+      consolidationKey
+    );
+    const ensTdhWallet = await fetchEns(result.tdh_wallet);
+    const ensAirdrop = await fetchEns(result.airdrop_address);
     return returnJsonResult(
       {
-        address: result,
-        ens: ens[0]?.display ?? ''
+        tdh_wallet: {
+          address: result.tdh_wallet,
+          ens: ensTdhWallet[0]?.display ?? ''
+        },
+        airdrop_address: {
+          address: result.airdrop_address,
+          ens: ensAirdrop[0]?.display ?? ''
+        }
       },
       req,
       res,

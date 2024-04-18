@@ -14,8 +14,7 @@ import {
   fetchWalletConsolidationKeysViewForWallet,
   getDataSource
 } from '../db';
-import { fetchPrimaryWallet } from '../db-api';
-import { fetchAirdropAddressForDelegators } from '../delegationsLoop/db.delegations';
+import { fetchAirdropAddressForConsolidationKey } from '../delegationsLoop/db.delegations';
 import {
   NFTFinalSubscription,
   NFTFinalSubscriptionUpload,
@@ -152,13 +151,9 @@ async function createFinalSubscriptions(newMeme: number, dateStr: string) {
     );
 
     const consolidationWallets = sub.consolidation_key.split('-');
-    let airdropAddress = await fetchAirdropAddressForDelegators(
-      consolidationWallets
+    let airdropAddress = await fetchAirdropAddressForConsolidationKey(
+      sub.consolidation_key
     );
-
-    if (!airdropAddress) {
-      airdropAddress = await fetchPrimaryWallet(consolidationWallets);
-    }
 
     if (balance) {
       if (balance.balance >= MEMES_MINT_PRICE) {
@@ -169,7 +164,7 @@ async function createFinalSubscriptions(newMeme: number, dateStr: string) {
           consolidation_key: sub.consolidation_key,
           contract: sub.contract,
           token_id: sub.token_id,
-          airdrop_address: airdropAddress ?? consolidationWallets[0],
+          airdrop_address: airdropAddress.airdrop_address,
           balance: balance.balance,
           phase: null,
           phase_subscriptions: -1,

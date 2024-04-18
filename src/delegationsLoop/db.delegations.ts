@@ -3,20 +3,65 @@ import {
   DELEGATION_ALL_ADDRESS,
   MEMES_CONTRACT,
   USE_CASE_AIRDROPS,
-  USE_CASE_ALL
+  USE_CASE_ALL,
+  WALLETS_TDH_TABLE
 } from '../constants';
+import { fetchLatestTDHBlockNumber } from '../db';
 import { Delegation } from '../entities/IDelegation';
 import { sqlExecutor } from '../sql-executor';
 
-export async function fetchAirdropAddressForDelegators(
-  delegators: string[]
-): Promise<string | null> {
-  const results = await fetchProcessedDelegations(
-    MEMES_CONTRACT,
-    USE_CASE_AIRDROPS,
-    delegators
-  );
-  return results[0]?.to_address.toLowerCase() ?? null;
+export async function fetchAirdropAddressForConsolidationKey(
+  consolidationKey: string
+): Promise<{
+  tdh_wallet: string;
+  airdrop_address: string;
+}> {
+  const wallets = consolidationKey.split('-');
+  let tdhWallet = '';
+
+  if (wallets.length < 2) {
+    tdhWallet = consolidationKey;
+  } else {
+    const maxTdhBlock = await fetchLatestTDHBlockNumber();
+    const result = await sqlExecutor.execute(
+      `
+    SELECT wallet FROM ${WALLETS_TDH_TABLE}
+    WHERE 
+      block = :maxTdhBlock  AND wallet in (:wallets)
+    ORDER BY boosted_tdh DESC
+    LIMIT 1; 
+    `,
+      {
+        maxTdhBlock,
+        wallets: wallets.map((w) => w.toLowerCase())
+      }
+    );
+    tdhWallet = result[0]?.wallet.toLowerCase() ?? tdhWallet;
+  }
+
+  let airdropAddress = '';
+  if (tdhWallet) {
+    const processedDelegations = await sqlExecutor.execute(
+      `SELECT * FROM 
+      ${DELEGATIONS_TABLE} 
+      WHERE 
+        from_address = :tdhWallet 
+        AND collection in (:collections) 
+        AND use_case = :useCase 
+      ORDER BY block DESC LIMIT 1;`,
+      {
+        tdhWallet,
+        collections: [MEMES_CONTRACT, DELEGATION_ALL_ADDRESS],
+        useCase: USE_CASE_AIRDROPS
+      }
+    );
+    airdropAddress =
+      processedDelegations[0]?.to_address.toLowerCase() ?? tdhWallet;
+  }
+  return {
+    tdh_wallet: tdhWallet,
+    airdrop_address: airdropAddress
+  };
 }
 
 export async function fetchProcessedDelegations(
@@ -39,7 +84,7 @@ export async function fetchProcessedDelegations(
               WHEN collection = :anyCollection AND use_case = :allUseCase THEN 4
               ELSE 5
             END,
-            created_at DESC
+            block DESC
         ) AS rn
       FROM ${DELEGATIONS_TABLE}
       WHERE 
