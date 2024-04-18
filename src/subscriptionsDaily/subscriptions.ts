@@ -150,7 +150,6 @@ async function createFinalSubscriptions(newMeme: number, dateStr: string) {
       areEqualAddresses(b.consolidation_key, sub.consolidation_key)
     );
 
-    const consolidationWallets = sub.consolidation_key.split('-');
     let airdropAddress = await fetchAirdropAddressForConsolidationKey(
       sub.consolidation_key
     );
