@@ -11,6 +11,7 @@ import {
   MEMES_CONTRACT,
   NEXTGEN_CONTRACT
 } from './constants';
+import { startScript } from './start_script';
 
 const logger = Logger.get('BACKEND');
 
@@ -33,12 +34,15 @@ async function start() {
   LOCKED = true;
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  await dbMigrations.handler();
-  await runDelegations();
-  await runTransactions();
+  // await dbMigrations.handler();
+  // await runDelegations();
+  // await runTransactions();
+  await runTDH();
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
+
+  // await startScript();
 
   LOCKED = false;
 }

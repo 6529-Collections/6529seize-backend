@@ -25,6 +25,7 @@ import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
 import { Logger } from '../logging';
 import { NFT } from '../entities/INFT';
 import { MemesSeason } from '../entities/ISeason';
+import { fetchNftOwners } from './nft_owners';
 
 const logger = Logger.get('TDH');
 
@@ -179,6 +180,7 @@ export const updateTDH = async (
   });
 
   const block = await fetchLatestTransactionsBlockNumber(lastTDHCalc);
+  const nftOwners = await fetchNftOwners(block);
 
   // const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
   // const nextgenNetwork = getNextgenNetwork();
