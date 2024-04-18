@@ -16,7 +16,7 @@ export async function fetchAirdropAddressForConsolidationKey(
   tdh_wallet: string;
   airdrop_address: string;
 }> {
-  const wallets = consolidationKey.split('-');
+  const wallets = consolidationKey.toLowerCase().split('-');
   let tdhWallet = '';
 
   if (wallets.length < 2) {
@@ -27,37 +27,36 @@ export async function fetchAirdropAddressForConsolidationKey(
       `
     SELECT wallet FROM ${WALLETS_TDH_TABLE}
     WHERE 
-      block = :maxTdhBlock  AND wallet in (:wallets)
+      block = :maxTdhBlock AND LOWER(wallet) in (:wallets)
     ORDER BY boosted_tdh DESC
     LIMIT 1; 
     `,
       {
         maxTdhBlock,
-        wallets: wallets.map((w) => w.toLowerCase())
+        wallets
       }
     );
     tdhWallet = result[0]?.wallet.toLowerCase() ?? tdhWallet;
   }
 
   let airdropAddress = '';
-  if (tdhWallet) {
-    const processedDelegations = await sqlExecutor.execute(
-      `SELECT * FROM 
+  const processedDelegations = await sqlExecutor.execute(
+    `SELECT * FROM 
       ${DELEGATIONS_TABLE} 
       WHERE 
-        from_address = :tdhWallet 
+        LOWER(from_address) in (:wallets) 
         AND collection in (:collections) 
         AND use_case = :useCase 
       ORDER BY block DESC LIMIT 1;`,
-      {
-        tdhWallet,
-        collections: [MEMES_CONTRACT, DELEGATION_ALL_ADDRESS],
-        useCase: USE_CASE_AIRDROPS
-      }
-    );
-    airdropAddress =
-      processedDelegations[0]?.to_address.toLowerCase() ?? tdhWallet;
-  }
+    {
+      wallets,
+      collections: [MEMES_CONTRACT, DELEGATION_ALL_ADDRESS],
+      useCase: USE_CASE_AIRDROPS
+    }
+  );
+  airdropAddress =
+    processedDelegations[0]?.to_address.toLowerCase() ?? tdhWallet;
+
   return {
     tdh_wallet: tdhWallet,
     airdrop_address: airdropAddress
