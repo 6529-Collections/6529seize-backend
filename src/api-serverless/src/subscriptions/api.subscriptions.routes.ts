@@ -31,6 +31,9 @@ import {
   validateDistribution
 } from './api.subscriptions.allowlist';
 import { getNft } from '../../../nftsLoop/db.nfts';
+import { fetchAirdropAddressForDelegators } from '../../../delegationsLoop/db.delegations';
+import { fetchEns } from '../../../db-api';
+
 const router = asyncRouter();
 
 export default router;
@@ -292,6 +295,37 @@ router.get(
     } else {
       return res.status(404).send('Not found');
     }
+  }
+);
+
+router.get(
+  `/consolidation/:consolidation_key/airdrop-address`,
+  async function (
+    req: Request<
+      {
+        consolidation_key: string;
+      },
+      any,
+      any,
+      any
+    >,
+    res: Response<{ address: string; ens: string }>
+  ) {
+    const consolidationKey = req.params.consolidation_key.toLowerCase();
+    const consolidationWallets = consolidationKey.split('-');
+    const result =
+      (await fetchAirdropAddressForDelegators(consolidationWallets)) ??
+      consolidationWallets[0];
+    const ens = await fetchEns(result);
+    return returnJsonResult(
+      {
+        address: result,
+        ens: ens[0]?.display ?? ''
+      },
+      req,
+      res,
+      true
+    );
   }
 );
 

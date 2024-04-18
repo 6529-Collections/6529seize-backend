@@ -15,18 +15,20 @@ We only want to restrict the following five categories, but there are exceptions
 
 Not allowed (with exceptions noted below):
 1. Discriminatory or hate speech on any typical grounds
-2. Personal insults
+2. Personal insults are disallowed, but there are exceptions:
   a. Allowed: Insults that are clearly in jest or part of a meme.
   b. Allowed: references to mfers, complainoors, karens, or Major Karen Pepe.
 3. Generally words that would make a normal user in the cryptotwitter community feel bad or uncomfortable. Given the nature of the community (cryptotwitter and nft twitter) we are more permissive than most social media sites on the following two factors:
-  a. Allowed: Typical cryptotwitter terms. Aka "shitposting" is fine as a term, as is: cryptodickbutt, cabal, n00b, newbie, nerd, and degen.
+  a. Allowed: Typical cryptotwitter terms. Aka "shitposting" is fine as a term, as is: maxi, cryptodickbutt, cabal, n00b, newbie, nerd, and degen.
   b. Allowed: Nudity as we support nude art photographers
   c. Allowed: WWOH is a fictional story, so references to people therein are not considered doxxing.
   d. Allowed: Seemingly-random words or phrases that are not clearly doxxing or hate speech. 
 4. Personal Doxxing Information: This is information that could reveal a person's identity such:
   a. Proper names (e.g. “John Hammersmith”)
   b. Indirect workarounds to the above (e.g. “John Hammersmith's father”)
-  c. You can assume that famous people's names such are politicians, celebrities and athletes are not a concern and can be allowed
+  c. Allowed: You can assume that famous people's names such are politicians, celebrities and athletes are not a concern and can be allowed.
+  d. Allowed: Identifying artists by using their proper name is allowed
+  e. Allowed: Personal names in the context of things like being their collector, a maxi, appreciating, supporting their art is allowed.
 5. Organizational Doxxing Information:  This is information that could dox a person's through their organizational affiliations such as: “CEO of Acme Enterprises” or “VP of Finance, Salesforce.com” or “the person who the VP of Finance at Acme Inc replaced last year”
 
 Note further that people may submit content in different languages. 
@@ -62,7 +64,7 @@ export class AiBasedAbusivenessDetector {
     const prompt = `
     ${preamble}
     Our website allows us to give "rep" (aka reputation) points to community members for different activities or characteristics.
-    some examples below, that show the rep points being assigned and the classification for each rep.
+    some valid examples below, that show the rep points being assigned and the classification for each rep:
     +1,000 for "Solidity Programming" 
     +500 for "nude photography" 
     +4,200 for "Pizza Cooking" +6,969 for "Kindness"
@@ -72,6 +74,8 @@ export class AiBasedAbusivenessDetector {
     +7,540 for "History of Carthage" 
     +4,000 for "cold showers" 
     +4,444 for "bitcoin mining"
+    +1,069 for "Rakesh Collector"
+    +420 for "Paul Reid Maxi"
     
     Task
     
@@ -95,7 +99,7 @@ export class AiBasedAbusivenessDetector {
     
     I will now put the classification request after the word "input" and you respond with a single classificiation.
     
-    Input
+    Input:
 ${text}
     `.trim();
     const responseMessage = await this.aiPrompter.promptAndGetReply(prompt);
