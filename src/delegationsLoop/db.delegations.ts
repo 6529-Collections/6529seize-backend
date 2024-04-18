@@ -40,22 +40,13 @@ export async function fetchAirdropAddressForConsolidationKey(
   }
 
   let airdropAddress = '';
-  const processedDelegations = await sqlExecutor.execute(
-    `SELECT * FROM 
-      ${DELEGATIONS_TABLE} 
-      WHERE 
-        LOWER(from_address) in (:wallets) 
-        AND collection in (:collections) 
-        AND use_case = :useCase 
-      ORDER BY block DESC LIMIT 1;`,
-    {
-      wallets,
-      collections: [MEMES_CONTRACT, DELEGATION_ALL_ADDRESS],
-      useCase: USE_CASE_AIRDROPS
-    }
+  const results = await fetchProcessedDelegations(
+    MEMES_CONTRACT,
+    USE_CASE_AIRDROPS,
+    wallets
   );
-  airdropAddress =
-    processedDelegations[0]?.to_address.toLowerCase() ?? tdhWallet;
+
+  airdropAddress = results[0]?.to_address.toLowerCase() ?? tdhWallet;
 
   return {
     tdh_wallet: tdhWallet,
@@ -92,7 +83,8 @@ export async function fetchProcessedDelegations(
     ) AS ranked
     WHERE ranked.rn = 1 ${
       wallets ? ` AND LOWER(ranked.from_address) in (:wallets)` : ''
-    };
+    }
+    ORDER BY ranked.block DESC;
     `,
     {
       collection,
