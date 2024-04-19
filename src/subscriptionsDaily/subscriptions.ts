@@ -87,7 +87,7 @@ async function createForMemeId(
       )
   );
 
-  if (autoSubscriptionsDelta.length == 0) {
+  if (autoSubscriptionsDelta.length === 0) {
     logger.info(`[NO SUBSCRIPTIONS TO ADD...SKIPPING]`);
   } else {
     logger.info(
