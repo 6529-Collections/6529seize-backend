@@ -3,20 +3,55 @@ import {
   DELEGATION_ALL_ADDRESS,
   MEMES_CONTRACT,
   USE_CASE_AIRDROPS,
-  USE_CASE_ALL
+  USE_CASE_ALL,
+  WALLETS_TDH_TABLE
 } from '../constants';
+import { fetchLatestTDHBlockNumber } from '../db';
 import { Delegation } from '../entities/IDelegation';
 import { sqlExecutor } from '../sql-executor';
 
-export async function fetchAirdropAddressForDelegators(
-  delegators: string[]
-): Promise<string | null> {
+export async function fetchAirdropAddressForConsolidationKey(
+  consolidationKey: string
+): Promise<{
+  tdh_wallet: string;
+  airdrop_address: string;
+}> {
+  const wallets = consolidationKey.toLowerCase().split('-');
+  let tdhWallet = '';
+
+  if (wallets.length < 2) {
+    tdhWallet = consolidationKey;
+  } else {
+    const maxTdhBlock = await fetchLatestTDHBlockNumber();
+    const result = await sqlExecutor.execute(
+      `
+    SELECT wallet FROM ${WALLETS_TDH_TABLE}
+    WHERE 
+      block = :maxTdhBlock AND LOWER(wallet) in (:wallets)
+    ORDER BY boosted_tdh DESC
+    LIMIT 1; 
+    `,
+      {
+        maxTdhBlock,
+        wallets
+      }
+    );
+    tdhWallet = result[0]?.wallet.toLowerCase() ?? tdhWallet;
+  }
+
+  let airdropAddress = '';
   const results = await fetchProcessedDelegations(
     MEMES_CONTRACT,
     USE_CASE_AIRDROPS,
-    delegators
+    wallets
   );
-  return results[0]?.to_address.toLowerCase() ?? null;
+
+  airdropAddress = results[0]?.to_address.toLowerCase() ?? tdhWallet;
+
+  return {
+    tdh_wallet: tdhWallet,
+    airdrop_address: airdropAddress
+  };
 }
 
 export async function fetchProcessedDelegations(
@@ -39,7 +74,7 @@ export async function fetchProcessedDelegations(
               WHEN collection = :anyCollection AND use_case = :allUseCase THEN 4
               ELSE 5
             END,
-            created_at DESC
+            block DESC
         ) AS rn
       FROM ${DELEGATIONS_TABLE}
       WHERE 
@@ -48,7 +83,8 @@ export async function fetchProcessedDelegations(
     ) AS ranked
     WHERE ranked.rn = 1 ${
       wallets ? ` AND LOWER(ranked.from_address) in (:wallets)` : ''
-    };
+    }
+    ORDER BY ranked.block DESC;
     `,
     {
       collection,

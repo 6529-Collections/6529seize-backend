@@ -14,8 +14,7 @@ import {
   fetchWalletConsolidationKeysViewForWallet,
   getDataSource
 } from '../db';
-import { fetchPrimaryWallet } from '../db-api';
-import { fetchAirdropAddressForDelegators } from '../delegationsLoop/db.delegations';
+import { fetchAirdropAddressForConsolidationKey } from '../delegationsLoop/db.delegations';
 import {
   NFTFinalSubscription,
   NFTFinalSubscriptionUpload,
@@ -81,15 +80,24 @@ async function createForMemeId(
     `[NEW MEME ID ${newMeme}] : [SUBSCRIPTIONS ${newMemeSubscriptions.length}]`
   );
 
-  if (newMemeSubscriptions.length > 0) {
-    logger.info(`[SUBSCRIPTIONS FOR NEW MEME ALREADY EXIST...SKIPPING]`);
+  const autoSubscriptionsDelta = currentAutoSubscriptions.filter(
+    (s) =>
+      !newMemeSubscriptions.some((n) =>
+        areEqualAddresses(n.consolidation_key, s.consolidation_key)
+      )
+  );
+
+  if (autoSubscriptionsDelta.length === 0) {
+    logger.info(`[NO AUTO SUBSCRIPTIONS TO ADD...SKIPPING]`);
   } else {
-    logger.info(`[POPULATING AUTOMATIC SUBSCRIPTIONS FOR NEW MEME]`);
+    logger.info(
+      `[POPULATING AUTO SUBSCRIPTIONS FOR NEW MEME ${autoSubscriptionsDelta.length}]`
+    );
 
     const newSubscriptions: NFTSubscription[] = [];
     const newSubscriptionLogs: SubscriptionLog[] = [];
 
-    currentAutoSubscriptions.forEach((s) => {
+    autoSubscriptionsDelta.forEach((s) => {
       const sub: NFTSubscription = {
         consolidation_key: s.consolidation_key,
         contract: MEMES_CONTRACT,
@@ -151,14 +159,9 @@ async function createFinalSubscriptions(newMeme: number, dateStr: string) {
       areEqualAddresses(b.consolidation_key, sub.consolidation_key)
     );
 
-    const consolidationWallets = sub.consolidation_key.split('-');
-    let airdropAddress = await fetchAirdropAddressForDelegators(
-      consolidationWallets
+    let airdropAddress = await fetchAirdropAddressForConsolidationKey(
+      sub.consolidation_key
     );
-
-    if (!airdropAddress) {
-      airdropAddress = await fetchPrimaryWallet(consolidationWallets);
-    }
 
     if (balance) {
       if (balance.balance >= MEMES_MINT_PRICE) {
@@ -169,7 +172,7 @@ async function createFinalSubscriptions(newMeme: number, dateStr: string) {
           consolidation_key: sub.consolidation_key,
           contract: sub.contract,
           token_id: sub.token_id,
-          airdrop_address: airdropAddress ?? consolidationWallets[0],
+          airdrop_address: airdropAddress.airdrop_address,
           balance: balance.balance,
           phase: null,
           phase_subscriptions: -1,
