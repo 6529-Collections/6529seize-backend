@@ -40,7 +40,10 @@ async function getSubscriptions(
   pageKey?: string
 ) {
   const subscriptions = await alchemy.core.getAssetTransfers({
-    category: [AssetTransfersCategory.EXTERNAL],
+    category: [
+      AssetTransfersCategory.EXTERNAL,
+      AssetTransfersCategory.INTERNAL
+    ],
     maxCount: 150,
     withMetadata: true,
     fromBlock: `0x${fromBlock.toString(16)}`,
