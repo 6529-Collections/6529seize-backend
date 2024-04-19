@@ -12,6 +12,7 @@ import {
   CustomApiCompliantException
 } from '../../../exceptions';
 import { sqlExecutor } from '../../../sql-executor';
+import { NFTFinalSubscription } from '../../../entities/ISubscription';
 
 export interface AllowlistResponse {
   allowlist_id: string;
@@ -133,10 +134,7 @@ export async function splitAllowlistResults(
     fetchProcessedDelegations(MEMES_CONTRACT, USE_CASE_MINTING)
   ]);
 
-  const walletSet = new Set(wallets);
-  const filteredSubscriptions = subscriptions.filter((s) =>
-    s.consolidation_key.split('-').some((k) => walletSet.has(k))
-  );
+  const filteredSubscriptions = filterSubscriptions(wallets, subscriptions);
 
   const subscriptionRanks = new Map<string, number>();
   for (let i = 0; i < filteredSubscriptions.length; i++) {
@@ -221,3 +219,14 @@ const mergeDuplicateWallets = (
     amount
   }));
 };
+
+function filterSubscriptions(
+  wallets: string[],
+  subscriptions: NFTFinalSubscription[]
+): NFTFinalSubscription[] {
+  const walletSet = new Set(wallets);
+  return subscriptions.filter((s) => {
+    const subWallets = s.consolidation_key.split('-');
+    return !s.phase && subWallets.some((sw) => walletSet.has(sw));
+  });
+}
