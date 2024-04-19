@@ -88,10 +88,10 @@ export async function createForMemeId(
   );
 
   if (autoSubscriptionsDelta.length === 0) {
-    logger.info(`[NO SUBSCRIPTIONS TO ADD...SKIPPING]`);
+    logger.info(`[NO AUTO SUBSCRIPTIONS TO ADD...SKIPPING]`);
   } else {
     logger.info(
-      `[POPULATING SUBSCRIPTIONS FOR NEW MEME ${autoSubscriptionsDelta.length}]`
+      `[POPULATING AUTO SUBSCRIPTIONS FOR NEW MEME ${autoSubscriptionsDelta.length}]`
     );
 
     const newSubscriptions: NFTSubscription[] = [];
