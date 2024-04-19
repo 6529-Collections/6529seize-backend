@@ -6,10 +6,7 @@ import {
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   USE_CASE_MINTING
 } from '../../../constants';
-import {
-  fetchProcessedDelegations,
-  getHighestTdhWallet
-} from '../../../delegationsLoop/db.delegations';
+import { fetchProcessedDelegations } from '../../../delegationsLoop/db.delegations';
 import {
   BadRequestException,
   CustomApiCompliantException
@@ -137,10 +134,7 @@ export async function splitAllowlistResults(
     fetchProcessedDelegations(MEMES_CONTRACT, USE_CASE_MINTING)
   ]);
 
-  const filteredSubscriptions = await filterSubscriptions(
-    wallets,
-    subscriptions
-  );
+  const filteredSubscriptions = filterSubscriptions(wallets, subscriptions);
 
   const subscriptionRanks = new Map<string, number>();
   for (let i = 0; i < filteredSubscriptions.length; i++) {
@@ -226,20 +220,13 @@ const mergeDuplicateWallets = (
   }));
 };
 
-async function filterSubscriptions(
+function filterSubscriptions(
   wallets: string[],
   subscriptions: NFTFinalSubscription[]
-): Promise<NFTFinalSubscription[]> {
+): NFTFinalSubscription[] {
   const walletSet = new Set(wallets);
-  const includeSubscriptionPromises = subscriptions.map(async (s) => {
+  return subscriptions.filter((s) => {
     const subWallets = s.consolidation_key.split('-');
-    if (!s.phase && subWallets.some((sw) => walletSet.has(sw))) {
-      const tdhWallet = await getHighestTdhWallet(subWallets);
-      return tdhWallet && walletSet.has(tdhWallet);
-    } else {
-      return false;
-    }
+    return !s.phase && subWallets.some((sw) => walletSet.has(sw));
   });
-  const results = await Promise.all(includeSubscriptionPromises);
-  return subscriptions.filter((_, index) => results[index]);
 }
