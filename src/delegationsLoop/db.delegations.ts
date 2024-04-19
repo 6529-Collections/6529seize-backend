@@ -67,7 +67,7 @@ export async function fetchProcessedDelegations(
         (collection = :collection OR collection = :anyCollection)
         AND (use_case = :useCase OR use_case = :allUseCase)
     ) AS ranked
-    WHERE ranked.rn = 1 ${
+    WHERE ranked.rn = 1 AND expiry >= :expiry ${
       wallets ? ` AND LOWER(ranked.from_address) in (:wallets)` : ''
     }
     ORDER BY ranked.block DESC;
@@ -77,6 +77,7 @@ export async function fetchProcessedDelegations(
       useCase,
       allUseCase: USE_CASE_ALL,
       anyCollection: DELEGATION_ALL_ADDRESS,
+      expiry: Date.now() / 1000,
       wallets: wallets?.map((w) => w.toLowerCase())
     }
   );
