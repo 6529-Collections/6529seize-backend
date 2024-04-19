@@ -176,6 +176,7 @@ export async function splitAllowlistResults(
   const mapToMintingAddress = (wallet: string) =>
     mintingMap.get(wallet) ?? wallet;
 
+  const usedSubscriptions = new Set<string>();
   for (const result of results) {
     const walletAddress = result.wallet.toLowerCase();
 
@@ -185,7 +186,11 @@ export async function splitAllowlistResults(
         .some((k) => areEqualAddresses(k, walletAddress))
     );
 
-    if (subscription) {
+    if (
+      subscription &&
+      !usedSubscriptions.has(subscription.consolidation_key)
+    ) {
+      usedSubscriptions.add(subscription.consolidation_key);
       if (result.amount > 1) {
         allowlists.push({
           wallet: mapToMintingAddress(walletAddress),
@@ -194,7 +199,7 @@ export async function splitAllowlistResults(
       }
     } else {
       allowlists.push({
-        wallet: mapToMintingAddress(result.wallet),
+        wallet: mapToMintingAddress(walletAddress),
         amount: result.amount
       });
     }

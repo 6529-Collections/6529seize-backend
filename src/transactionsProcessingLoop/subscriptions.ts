@@ -65,7 +65,9 @@ export const redeemSubscriptions = async (reset?: boolean) => {
 
   await getDataSource().transaction(async (entityManager) => {
     for (const drop of airdrops) {
-      await redeemSubscriptionAirdrop(drop, entityManager);
+      for (let i = 0; i < drop.token_count; i++) {
+        await redeemSubscriptionAirdrop(drop, entityManager);
+      }
     }
     blockRepo = entityManager.getRepository(
       TransactionsProcessedSubscriptionsBlock
