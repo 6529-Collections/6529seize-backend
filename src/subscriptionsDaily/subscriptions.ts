@@ -109,9 +109,12 @@ export async function createForMemeId(
         log: `Auto-Subscribed to Meme #${newMeme}`
       });
     });
-    await persistSubscriptions(newSubscriptions, newSubscriptionLogs);
+    // await persistSubscriptions(newSubscriptions, newSubscriptionLogs);
+    // logger.info(
+    //   `[NEW MEME ID ${newMeme}] : [CREATED ${newSubscriptions.length} AUTO SUBSCRIPTIONS]`
+    // );
     logger.info(
-      `[NEW MEME ID ${newMeme}] : [CREATED ${newSubscriptions.length} AUTO SUBSCRIPTIONS]`
+      `[NEW MEME ID ${newMeme}] : [NEW SUBS ${newSubscriptions.length}] : [NEW LOGS ${newSubscriptionLogs.length}`
     );
   }
 }
