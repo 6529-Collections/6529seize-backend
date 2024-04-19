@@ -22,21 +22,7 @@ export async function fetchAirdropAddressForConsolidationKey(
   if (wallets.length < 2) {
     tdhWallet = consolidationKey;
   } else {
-    const maxTdhBlock = await fetchLatestTDHBlockNumber();
-    const result = await sqlExecutor.execute(
-      `
-    SELECT wallet FROM ${WALLETS_TDH_TABLE}
-    WHERE 
-      block = :maxTdhBlock AND LOWER(wallet) in (:wallets)
-    ORDER BY boosted_tdh DESC
-    LIMIT 1; 
-    `,
-      {
-        maxTdhBlock,
-        wallets
-      }
-    );
-    tdhWallet = result[0]?.wallet.toLowerCase() ?? tdhWallet;
+    tdhWallet = await getHighestTdhWallet(wallets);
   }
 
   let airdropAddress = '';
@@ -95,4 +81,23 @@ export async function fetchProcessedDelegations(
     }
   );
   return results;
+}
+
+export async function getHighestTdhWallet(wallets: string[]): Promise<string> {
+  const maxTdhBlock = await fetchLatestTDHBlockNumber();
+  const result = await sqlExecutor.execute(
+    `
+    SELECT wallet FROM ${WALLETS_TDH_TABLE}
+    WHERE 
+      block = :maxTdhBlock AND LOWER(wallet) in (:wallets)
+    ORDER BY boosted_tdh DESC
+    LIMIT 1; 
+    `,
+    {
+      maxTdhBlock,
+      wallets
+    }
+  );
+  const tdhWallet: string = result[0]?.wallet.toLowerCase() ?? '';
+  return tdhWallet;
 }
