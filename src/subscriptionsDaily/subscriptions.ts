@@ -80,15 +80,24 @@ async function createForMemeId(
     `[NEW MEME ID ${newMeme}] : [SUBSCRIPTIONS ${newMemeSubscriptions.length}]`
   );
 
-  if (newMemeSubscriptions.length > 0) {
-    logger.info(`[SUBSCRIPTIONS FOR NEW MEME ALREADY EXIST...SKIPPING]`);
+  const autoSubscriptionsDelta = currentAutoSubscriptions.filter(
+    (s) =>
+      !newMemeSubscriptions.some((n) =>
+        areEqualAddresses(n.consolidation_key, s.consolidation_key)
+      )
+  );
+
+  if (autoSubscriptionsDelta.length == 0) {
+    logger.info(`[NO SUBSCRIPTIONS TO ADD...SKIPPING]`);
   } else {
-    logger.info(`[POPULATING AUTOMATIC SUBSCRIPTIONS FOR NEW MEME]`);
+    logger.info(
+      `[POPULATING SUBSCRIPTIONS FOR NEW MEME ${autoSubscriptionsDelta.length}]`
+    );
 
     const newSubscriptions: NFTSubscription[] = [];
     const newSubscriptionLogs: SubscriptionLog[] = [];
 
-    currentAutoSubscriptions.forEach((s) => {
+    autoSubscriptionsDelta.forEach((s) => {
       const sub: NFTSubscription = {
         consolidation_key: s.consolidation_key,
         contract: MEMES_CONTRACT,
