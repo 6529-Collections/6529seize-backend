@@ -30,6 +30,5 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 async function replay() {
   // logger.info(`[CUSTOM REPLAY NOT IMPLEMENTED]`);
   const currentAutoSubscriptions = await fetchAllAutoSubscriptions();
-
   await createForMemeId(223, currentAutoSubscriptions);
 }
