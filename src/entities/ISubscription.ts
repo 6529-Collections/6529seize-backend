@@ -185,7 +185,7 @@ export class RedeemedSubscription {
   @Column({ type: 'datetime', nullable: true, default: null })
   transaction_date!: Date;
 
-  @Column({ type: 'varchar', length: 200 })
+  @PrimaryColumn({ type: 'varchar', length: 200 })
   consolidation_key!: string;
 
   @Column({ type: 'double' })
