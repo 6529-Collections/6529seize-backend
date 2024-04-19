@@ -68,7 +68,7 @@ export async function updateSubscriptions(reset?: boolean) {
   );
 }
 
-async function createForMemeId(
+export async function createForMemeId(
   newMeme: number,
   currentAutoSubscriptions: SubscriptionMode[]
 ) {
