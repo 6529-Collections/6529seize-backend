@@ -9,7 +9,6 @@
     "api:dev": "NODE_ENV=development node src/api-serverless/dist/index.js",
     "backend:prod": "NODE_ENV=production node build/backend.js",
     "build": "rimraf ./build && jest && NODE_OPTIONS=--max-old-space-size=8192 tsc -p tsconfig.json",
-    "postbuild": "cp src/teamLoop/team.csv build/teamLoop && cp src/rememesLoop/rememes.csv build/rememesLoop",
     "migrate:new": "node node_modules/db-migrate/bin/db-migrate -e local create",
     "migrate-local:up": "node node_modules/db-migrate/bin/db-migrate -e local up",
     "migrate-local:down": "node node_modules/db-migrate/bin/db-migrate -e local down",

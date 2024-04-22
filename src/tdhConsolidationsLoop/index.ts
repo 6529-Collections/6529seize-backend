@@ -12,8 +12,6 @@ import { Logger } from '../logging';
 import { Time } from '../time';
 import { Profile } from '../entities/IProfile';
 import { fetchAllConsolidationAddresses } from '../db';
-import * as sentryContext from '../sentry.context';
-import { NextGenTokenTDH } from '../entities/INextGen';
 import { CommunityMember } from '../entities/ICommunityMember';
 import {
   AggregatedActivity,
@@ -28,20 +26,16 @@ import {
   ConsolidatedOwnerBalances,
   ConsolidatedOwnerBalancesMemes
 } from '../entities/IOwnerBalances';
-import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
-import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
-import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
 import { updateTDH } from '../tdhLoop/tdh';
 import { MemesSeason } from '../entities/ISeason';
 
 const logger = Logger.get('TDH_CONSOLIDATIONS_LOOP');
 
-export const handler = sentryContext.wrapLambdaHandler(async () => {
+export const handler = async () => {
   const start = Time.now();
   await loadEnv([
     TDH,
     ConsolidatedTDH,
-    NextGenTokenTDH,
     TDHMemes,
     ConsolidatedTDHMemes,
     CommunityMember,
@@ -65,7 +59,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   await unload();
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
-});
+};
 
 async function consolidatedTdhLoop() {
   const lastTDHCalc = getLastTDH();
@@ -80,8 +74,4 @@ async function consolidatedTdhLoop() {
 
   await updateTDH(lastTDHCalc, walletsArray);
   await consolidateTDH(lastTDHCalc, walletsArray);
-
-  await consolidateNftOwners(distinctWallets);
-  await consolidateOwnerBalances(distinctWallets);
-  await consolidateActivity(distinctWallets);
 }
