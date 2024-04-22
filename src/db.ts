@@ -27,12 +27,7 @@ import {
 import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
 
-import {
-  LabExtendedData,
-  LabNFT,
-  MemesExtendedData,
-  NFT
-} from './entities/INFT';
+import { NFT } from './entities/INFT';
 import {
   ConsolidatedTDH,
   ConsolidatedTDHMemes,
@@ -295,15 +290,15 @@ export async function fetchLatestTransactionsBlockNumber(
 }
 
 export async function fetchLatestTDHBDate(): Promise<Time> {
-  const sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
+  const sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} order by block desc limit 1;`;
   const r = await sqlExecutor.execute(sql);
   return r.length > 0 ? Time.fromString(r[0].timestamp) : Time.millis(0);
 }
 
 export async function fetchLatestTDHBlockNumber(): Promise<number> {
-  const sql = `SELECT block_number FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
+  const sql = `SELECT block FROM ${TDH_BLOCKS_TABLE} order by block desc limit 1;`;
   const r = await sqlExecutor.execute(sql);
-  return r.length > 0 ? r[0].block_number : 0;
+  return r.length > 0 ? r[0].block : 0;
 }
 
 export async function fetchAllTransactions() {
@@ -628,20 +623,7 @@ export async function persistArtists(artists: Artist[]) {
   }
 }
 
-export async function persistMemesExtendedData(data: MemesExtendedData[]) {
-  await AppDataSource.getRepository(MemesExtendedData).save(data);
-}
-
 export async function findVolumeNFTs(nft: NFT): Promise<{
-  total_volume_last_24_hours: number;
-  total_volume_last_7_days: number;
-  total_volume_last_1_month: number;
-  total_volume: number;
-}> {
-  return findVolume(TRANSACTIONS_TABLE, nft.id, nft.contract);
-}
-
-export async function findVolumeLab(nft: LabNFT): Promise<{
   total_volume_last_24_hours: number;
   total_volume_last_7_days: number;
   total_volume_last_1_month: number;
@@ -675,7 +657,11 @@ async function findVolume(
 }
 
 export async function persistNFTs(nfts: NFT[]) {
-  await AppDataSource.getRepository(NFT).save(nfts);
+  await AppDataSource.transaction(async (manager) => {
+    const nftRepo = manager.getRepository(NFT);
+    await nftRepo.clear();
+    await insertWithoutUpdate(nftRepo, nfts);
+  });
 }
 
 export async function persistTdhUpload(
@@ -765,7 +751,7 @@ export async function persistTDH(
     }
 
     await manager.query(
-      `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block_number=?, timestamp=?`,
+      `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block=?, timestamp=?`,
       [block, timestamp]
     );
   });
@@ -852,53 +838,6 @@ export async function persistNftTdh(nftTdh: NftTDH[], wallets?: string[]) {
   });
 
   logger.info(`[NFT TDH] PERSISTED ALL NFT TDH [${nftTdh.length}]`);
-}
-
-export async function persistLabNFTS(labnfts: LabNFT[]) {
-  const repo = AppDataSource.getRepository(LabNFT);
-  await Promise.all(
-    labnfts.map(async (lnft) => {
-      if (lnft.supply > 0) {
-        await repo.save(lnft);
-      } else {
-        await repo.remove(lnft);
-      }
-    })
-  );
-}
-
-export async function persistLabNFTRoyalties() {
-  const labNfts = await fetchAllMemeLabNFTs();
-
-  const labRoyalties: {
-    id: number;
-    primary_royalty_split: number;
-    secondary_royalty_split: number;
-  }[] = [];
-  labNfts.forEach((labNft: LabNFT) => {
-    labRoyalties.push({
-      id: labNft.id,
-      primary_royalty_split: 0,
-      secondary_royalty_split: 0
-    });
-  });
-
-  await AppDataSource.createQueryBuilder()
-    .insert()
-    .into(MEME_LAB_ROYALTIES_TABLE)
-    .values(
-      labRoyalties.map((labR) => ({
-        token_id: labR.id,
-        primary_royalty_split: labR.primary_royalty_split,
-        secondary_royalty_split: labR.secondary_royalty_split
-      }))
-    )
-    .orIgnore()
-    .execute();
-}
-
-export async function persistLabExtendedData(labMeta: LabExtendedData[]) {
-  await AppDataSource.getRepository(LabExtendedData).save(labMeta);
 }
 
 function constructFilters(f: string, newF: string) {

@@ -1,9 +1,9 @@
 import { Logger } from './logging';
 import { Time } from './time';
-import * as dbMigrations from './dbMigrationsLoop';
 import * as delegations from './delegationsLoop';
 import * as transactions from './transactionsLoop';
 import * as tdh from './tdhLoop';
+import * as nfts from './nftsLoop';
 
 import cron from 'node-cron';
 import {
@@ -11,7 +11,6 @@ import {
   MEMES_CONTRACT,
   NEXTGEN_CONTRACT
 } from './constants';
-import { startScript } from './start_script';
 
 const logger = Logger.get('BACKEND');
 
@@ -67,4 +66,8 @@ async function runTDH() {
   LOCKED = true;
   await tdh.handler();
   LOCKED = false;
+}
+
+async function runNfts() {
+  await nfts.handler();
 }

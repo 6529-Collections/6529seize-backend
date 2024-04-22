@@ -3,13 +3,14 @@ import {
   GRADIENT_CONTRACT,
   MEME_8_BURN_TRANSACTION,
   MEMES_CONTRACT,
+  NEXTGEN_CONTRACT,
   NULL_ADDRESS,
   WALLETS_TDH_TABLE
 } from '../constants';
 import { DefaultBoost, TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
 import { Transaction } from '../entities/ITransaction';
 import { areEqualAddresses, getDaysDiff } from '../helpers';
-import { Alchemy } from 'alchemy-sdk';
+import { Alchemy, NftContractOwner } from 'alchemy-sdk';
 import {
   consolidateTransactions,
   fetchAllConsolidationAddresses,
@@ -26,10 +27,13 @@ import { Logger } from '../logging';
 import { NFT } from '../entities/INFT';
 import { MemesSeason } from '../entities/ISeason';
 import { fetchNftOwners } from './nft_owners';
+import { getAllNfts } from './nfts';
 
 const logger = Logger.get('TDH');
 
 let alchemy: Alchemy;
+
+const TDH_CONTRACTS = [MEMES_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT];
 
 export function getDefaultBoost(): DefaultBoost {
   return {
@@ -179,34 +183,35 @@ export const updateTDH = async (
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const block = await fetchLatestTransactionsBlockNumber(lastTDHCalc);
-  const nftOwners = await fetchNftOwners(block);
+  const block = await alchemy.core.getBlockNumber();
 
-  // const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
-  // const nextgenNetwork = getNextgenNetwork();
-  // const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[nextgenNetwork];
+  const memeOwners = await fetchNftOwners(block, MEMES_CONTRACT);
+  const gradientOwners = await fetchNftOwners(block, GRADIENT_CONTRACT);
+  const nextgenOwners = await fetchNftOwners(block, NEXTGEN_CONTRACT);
 
-  // const tdhContracts = [MEMES_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT];
+  const { memes, gradients, nextgen } = await getAllNfts();
+  logger.info(
+    `[MEMES] : [TOKENS ${memes.length}] : [OWNERS ${memeOwners.length}]`
+  );
+  logger.info(
+    `[GRADIENTS] : [TOKENS ${gradients.length}] : [OWNERS ${gradientOwners.length}]`
+  );
+  logger.info(
+    `[NEXTGEN] : [TOKENS ${nextgen.length}] : [OWNERS ${nextgenOwners.length}]`
+  );
 
-  // const combinedAddresses = new Set<string>();
+  const combinedAddresses = new Set<string>();
 
-  // if (startingWallets) {
-  //   startingWallets.forEach((w) => combinedAddresses.add(w));
-  //   logger.info(`[STARTING UNIQUE WALLETS ${combinedAddresses.size}]`);
-  // } else {
-  //   const consolidationAddresses: { wallet: string }[] =
-  //     await fetchAllConsolidationAddresses();
-  //   consolidationAddresses.forEach((w) =>
-  //     combinedAddresses.add(w.wallet.toLowerCase())
-  //   );
-
-  //   const nftOwners = await fetchDistinctNftOwnerWallets(tdhContracts);
-  //   nftOwners.forEach((w) => combinedAddresses.add(w));
-
-  //   logger.info(
-  //     `[OWNER UNIQUE WALLETS ${nftOwners.length}] : [CONSOLIDATIONS UNIQUE WALLETS ${consolidationAddresses.length}] : [COMBINED UNIQUE WALLETS ${combinedAddresses.size}]`
-  //   );
-  // }
+  if (startingWallets) {
+    startingWallets.forEach((w) => combinedAddresses.add(w));
+    logger.info(`[STARTING UNIQUE WALLETS ${combinedAddresses.size}]`);
+  } else {
+    const consolidationAddresses: { wallet: string }[] =
+      await fetchAllConsolidationAddresses();
+    consolidationAddresses.forEach((w) =>
+      combinedAddresses.add(w.wallet.toLowerCase())
+    );
+  }
 
   // const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
   //   await getAdjustedMemesAndSeasons(lastTDHCalc);

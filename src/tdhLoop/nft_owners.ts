@@ -9,15 +9,8 @@ import {
 
 const logger = Logger.get('NFT_OWNERS');
 
-export async function fetchNftOwners(block: number) {
-  logger.info(`Fetching NFT owners for block ${block}`);
-
-  const contracts = [MEMES_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT];
-  let owners: NftContractOwner[] = [];
-  for (const contract of contracts) {
-    owners = owners.concat(await getOwners(block, contract));
-  }
-  logger.info(`Found ${owners.length} NFT owners`);
+export async function fetchNftOwners(block: number, contract: string) {
+  return await getOwners(block, contract);
 }
 
 async function getOwners(block: number, contract: string) {

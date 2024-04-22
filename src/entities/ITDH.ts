@@ -2,12 +2,17 @@ import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import {
   CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  TDH_BLOCKS_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
   TDH_HISTORY_TABLE,
   TDH_NFT_TABLE,
   WALLETS_TDH_MEMES_TABLE,
   WALLETS_TDH_TABLE
 } from '../constants';
+import { BlockEntity } from './IBlock';
+
+@Entity(TDH_BLOCKS_TABLE)
+export class TDHBlock extends BlockEntity {}
 
 export class BaseTDHFields {
   @Column({ type: 'int', nullable: false })

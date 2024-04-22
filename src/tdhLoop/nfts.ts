@@ -16,7 +16,8 @@ const fetch = (url: RequestInfo, init?: RequestInit) =>
   import('node-fetch').then(({ default: fetch }) => fetch(url, init));
 
 let alchemy: Alchemy;
-export async function nfts(): Promise<{
+
+export async function getAllNfts(): Promise<{
   memes: NFT[];
   gradients: NFT[];
   nextgen: NFT[];

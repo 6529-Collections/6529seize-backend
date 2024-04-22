@@ -1,24 +1,14 @@
 import { nfts } from './nfts';
 import { loadEnv, unload } from '../secrets';
-import { MemesExtendedData, NFT } from '../entities/INFT';
+import { NFT } from '../entities/INFT';
 import { Logger } from '../logging';
-import { MemesSeason } from '../entities/ISeason';
-import { NFTOwner } from '../entities/INFTOwner';
-import { getDataSource } from '../db';
-import { DISTRIBUTION_NORMALIZED_TABLE } from '../constants';
-import { sqlExecutor } from '../sql-executor';
 
 const logger = Logger.get('NFTS_LOOP');
 
 export const handler = async () => {
   logger.info(`[RUNNING]`);
-  await loadEnv([NFT, MemesExtendedData, MemesSeason, NFTOwner]);
-  await nftsLoop();
+  await loadEnv([NFT]);
+  await nfts();
   await unload();
   logger.info(`[COMPLETE]`);
 };
-
-async function nftsLoop() {
-  await nfts();
-  // await findMemesExtendedData();
-}
