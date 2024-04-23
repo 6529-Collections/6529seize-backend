@@ -37,14 +37,14 @@ export enum ProfileActivityLogType {
   PFP_EDIT = 'PFP_EDIT',
   PROFILE_ARCHIVED = 'PROFILE_ARCHIVED',
   DROP_COMMENT = 'DROP_COMMENT',
-  DROP_REP_EDIT = 'DROP_REP_EDIT',
+  DROP_RATING_EDIT = 'DROP_RATING_EDIT',
   DROP_CREATED = 'DROP_CREATED'
 }
 
 export function isTargetOfTypeDrop(type: ProfileActivityLogType): boolean {
   return [
     ProfileActivityLogType.DROP_CREATED,
-    ProfileActivityLogType.DROP_REP_EDIT,
+    ProfileActivityLogType.DROP_RATING_EDIT,
     ProfileActivityLogType.DROP_COMMENT
   ].includes(type);
 }

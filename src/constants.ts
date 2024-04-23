@@ -50,7 +50,8 @@ export const NFTS_HISTORY_CLAIMS_TABLE = 'nfts_history_claims';
 export const REMEMES_TABLE = 'rememes';
 export const REMEMES_UPLOADS = 'uploads_rememes';
 export const RATINGS_TABLE = 'ratings';
-export const TDH_SPENT_ON_DROP_REPS_TABLE = 'tdh_spent_on_drop_reps';
+export const DROPS_VOTES_CREDIT_SPENDINGS_TABLE =
+  'drops_votes_credit_spendings';
 export const ROYALTIES_UPLOADS_TABLE = 'royalties_upload';
 export const EVENTS_TABLE = 'events';
 export const LISTENER_PROCESSED_EVENTS_TABLE = 'listener_processed_events';
@@ -85,6 +86,7 @@ export const DROPS_TABLE = 'drops';
 export const DROPS_MENTIONS_TABLE = 'drops_mentions';
 export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
 export const DROP_METADATA_TABLE = 'drops_metadatas';
+export const DROP_MEDIA_TABLE = 'drop_medias';
 export const DROP_DISCUSSION_COMMENT_TABLE = 'drops_discussion_comments';
 
 export const ETH_PRICE_TABLE = 'eth_price';

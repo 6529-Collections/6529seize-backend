@@ -29,6 +29,33 @@ import { getProfileClassificationsBySubclassification } from './profile.helper';
 
 const router = asyncRouter();
 
+/**
+ * @swagger
+ * /api/profiles/{identity}:
+ *   get:
+ *     tags:
+ *       - profiles
+ *     description: Get profile by handle, wallet, ENS or id
+ *     parameters:
+ *       - in: path
+ *         name: identity
+ *         required: true
+ *         description: Handle, wallet, ENS or id
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/Profile'
+ *       404:
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ApiError'
+ *
+ */
 router.get(
   `/:handleOrWallet`,
   async function (

@@ -58,6 +58,9 @@ import { MEMES_EXTENDED_SORT, TRANSACTION_FILTERS } from './api-filters';
 import { parseTdhResultsFromDB } from '../../sql_helpers';
 import { loadLocalConfig, loadSecrets } from '../../env';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
+import * as SwaggerUI from 'swagger-ui-express';
+
+const YAML = require('yamljs');
 
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
@@ -156,7 +159,7 @@ loadApi().then(() => {
         directives: {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'"],
-          styleSrc: ["'self'"],
+          styleSrc: [`'self'`, `'unsafe-inline'`],
           fontSrc: ["'self'"],
           imgSrc: ["'self'"]
         }
@@ -818,6 +821,20 @@ loadApi().then(() => {
   app.use(rootRouter);
 
   app.use(customErrorMiddleware());
+
+  const swaggerDocument = YAML.load('openapi.yaml');
+  app.use(
+    '/docs',
+    SwaggerUI.serve,
+    SwaggerUI.setup(
+      swaggerDocument,
+      {
+        customSiteTitle: 'Seize API Docs',
+        customCss: '.topbar { display: none }'
+      },
+      { explorer: true }
+    )
+  );
 
   if (sentryContext.isConfigured()) {
     app.use(Sentry.Handlers.errorHandler());

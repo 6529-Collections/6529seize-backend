@@ -1,11 +1,11 @@
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
-import { DropFull } from '../../../drops/drops.types';
 import { parseNumberOrNull } from '../../../helpers';
 import { profilesService } from '../../../profiles/profiles.service';
-import { dropsService } from '../../../drops/drops.service';
+import { dropsService } from '../drops/drops.api.service';
 import { asyncRouter } from '../async.router';
 import { NotFoundException } from '../../../exceptions';
+import { Drop } from '../generated/models/Drop';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -16,15 +16,15 @@ router.get(
       { handleOrWallet: string },
       any,
       any,
-      { limit: number; id_less_than?: number; input_profile?: string },
+      { limit: number; serial_no_less_than?: number; context_profile?: string },
       any
     >,
-    res: Response<ApiResponse<DropFull[]>>
+    res: Response<ApiResponse<Drop[]>>
   ) => {
-    const inputProfileId = req.query.input_profile
+    const contextProfileId = req.query.context_profile
       ? await profilesService
           .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-            req.query.input_profile
+            req.query.context_profile
           )
           ?.then((result) => result?.profile?.external_id)
       : undefined;
@@ -40,19 +40,19 @@ router.get(
     }
     const profileDrops = await dropsService.findProfilesLatestDrops({
       amount: limit < 0 || limit > 200 ? 10 : limit,
-      id_less_than: parseNumberOrNull(req.query.id_less_than),
+      serial_no_less_than: parseNumberOrNull(req.query.serial_no_less_than),
       profile_id: profileId,
-      inputProfileId
+      contextProfileId: contextProfileId
     });
     res.send(profileDrops);
   }
 );
 
 router.get(
-  '/available-tdh-for-rep',
+  '/available-credit-for-rating',
   async (
     req: Request<{ handleOrWallet: string }, any, any, any, any>,
-    res: Response<ApiResponse<{ available_tdh_for_rep: number }>>
+    res: Response<ApiResponse<{ available_credit_for_rating: number }>>
   ) => {
     const handleOrWallet = req.params.handleOrWallet;
     const profileId = await profilesService
@@ -63,7 +63,9 @@ router.get(
     if (!profileId) {
       throw new NotFoundException('Profile not found');
     }
-    const rep = await dropsService.findAvailableTdhForRepForProfile(profileId);
+    const rep = await dropsService.findAvailableCreditForRatingForProfile(
+      profileId
+    );
     res.send(rep);
   }
 );
