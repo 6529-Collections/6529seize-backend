@@ -492,7 +492,7 @@ export async function fetchUpcomingMemeSubscriptionCounts(
     counts.push({
       contract: MEMES_CONTRACT,
       token_id: id,
-      count: tokenSubs.length + tokenAutoSubs.length
+      count: tokenSubs.filter((s) => s.subscribed).length + tokenAutoSubs.length
     });
   }
   return counts;
