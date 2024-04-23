@@ -1,3 +1,5 @@
+import { QueryRunner } from 'typeorm';
+import { updateSubscriptionMode } from '../api-serverless/src/subscriptions/api.subscriptions.db';
 import {
   SUBSCRIPTIONS_TOP_UP_TABLE,
   WALLETS_CONSOLIDATION_KEYS_VIEW
@@ -9,9 +11,12 @@ import {
 } from '../entities/ISubscription';
 import { getTransactionLink } from '../helpers';
 import { sendDiscordUpdate } from '../notifier-discord';
+import { sqlExecutor } from '../sql-executor';
 
 export async function persistTopUps(topUps: SubscriptionTopUp[]) {
-  await getDataSource().transaction(async (manager) => {
+  await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
+    const queryRunner = qrHolder.connection as QueryRunner;
+    const manager = queryRunner.manager;
     const balancesRepo = manager.getRepository(SubscriptionBalance);
     const topUpsRepo = manager.getRepository(SubscriptionTopUp);
 
@@ -29,6 +34,9 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
       let balance = await balancesRepo.findOne({
         where: { consolidation_key: consolidationKey }
       });
+
+      const setToAutoSubscribe = !balance;
+
       if (!balance) {
         balance = {
           consolidation_key: consolidationKey,
@@ -41,6 +49,10 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
       }
       await balancesRepo.save(balance);
       await topUpsRepo.insert(topUp);
+
+      if (setToAutoSubscribe) {
+        await updateSubscriptionMode(consolidationKey, true, qrHolder);
+      }
     }
   });
 

@@ -42,19 +42,21 @@ import converter from 'json-2-csv';
 const logger = Logger.get('SUBSCRIPTIONS');
 
 export async function updateSubscriptions(reset?: boolean) {
-  const currentAutoSubscriptions = await fetchAllAutoSubscriptions();
-  logger.info(`[FOUND ${currentAutoSubscriptions.length} AUTO SUBSCRIPTIONS]`);
+  const autoSubscriptions = await fetchAllAutoSubscriptions();
+  logger.info(`[FOUND ${autoSubscriptions.length} AUTO SUBSCRIPTIONS]`);
 
   const maxMemeId = await getMaxMemeId();
   const nextMemeId = maxMemeId + 1;
 
   logger.info(`[MAX CURRENT MEME ${maxMemeId}]`);
 
-  for (let i = 0; i <= 2; i++) {
-    await createForMemeId(nextMemeId + i, currentAutoSubscriptions);
-  }
+  await populateAutoSubscriptionsForMemeId(nextMemeId, autoSubscriptions);
 
-  const uploadLink = await buildFinalSubscription(nextMemeId);
+  const uploadLink = await buildFinalSubscription(
+    nextMemeId,
+    autoSubscriptions
+  );
+
   const seizeDomain =
     process.env.NODE_ENV === 'development' ? 'staging.seize' : 'seize';
   let discordMessage = `📋 Published provisional list of Subscriptions for The Memes Card #${nextMemeId}`;
@@ -68,9 +70,9 @@ export async function updateSubscriptions(reset?: boolean) {
   );
 }
 
-async function createForMemeId(
+async function populateAutoSubscriptionsForMemeId(
   newMeme: number,
-  currentAutoSubscriptions: SubscriptionMode[]
+  autoSubscriptions: SubscriptionMode[]
 ) {
   const newMemeSubscriptions = await fetchAllNftSubscriptions(
     MEMES_CONTRACT,
@@ -80,7 +82,7 @@ async function createForMemeId(
     `[NEW MEME ID ${newMeme}] : [SUBSCRIPTIONS ${newMemeSubscriptions.length}]`
   );
 
-  const autoSubscriptionsDelta = currentAutoSubscriptions.filter(
+  const autoSubscriptionsDelta = autoSubscriptions.filter(
     (s) =>
       !newMemeSubscriptions.some((n) =>
         areEqualAddresses(n.consolidation_key, s.consolidation_key)
@@ -91,7 +93,7 @@ async function createForMemeId(
     logger.info(`[NO AUTO SUBSCRIPTIONS TO ADD...SKIPPING]`);
   } else {
     logger.info(
-      `[POPULATING AUTO SUBSCRIPTIONS FOR NEW MEME ${autoSubscriptionsDelta.length}]`
+      `[FOUND ${autoSubscriptionsDelta.length} AUTO SUBSCRIPTIONS FOR NEW MEME]`
     );
 
     const newSubscriptions: NFTSubscription[] = [];
@@ -101,7 +103,8 @@ async function createForMemeId(
       const sub: NFTSubscription = {
         consolidation_key: s.consolidation_key,
         contract: MEMES_CONTRACT,
-        token_id: newMeme
+        token_id: newMeme,
+        subscribed: true
       };
       newSubscriptions.push(sub);
       newSubscriptionLogs.push({
@@ -116,12 +119,17 @@ async function createForMemeId(
   }
 }
 
-async function buildFinalSubscription(newMeme: number): Promise<string> {
+async function buildFinalSubscription(
+  newMeme: number,
+  autoSubscriptions: SubscriptionMode[]
+): Promise<string> {
+  logger.info(`[BUILDING FINAL SUBSCRIPTION FOR MEME #${newMeme}]`);
+
   const now = Time.now();
   const dateStr = now.toIsoDateString();
 
   const { finalSubscriptions, newSubscriptionLogs } =
-    await createFinalSubscriptions(newMeme, dateStr);
+    await createFinalSubscriptions(newMeme, dateStr, autoSubscriptions);
 
   const upload: NFTFinalSubscriptionUpload = await uploadFinalSubscriptions(
     MEMES_CONTRACT,
@@ -140,21 +148,29 @@ async function buildFinalSubscription(newMeme: number): Promise<string> {
   return upload.upload_url;
 }
 
-async function createFinalSubscriptions(newMeme: number, dateStr: string) {
+async function createFinalSubscriptions(
+  newMeme: number,
+  dateStr: string,
+  autoSubscriptions: SubscriptionMode[]
+) {
   const newMemeSubscriptions = await fetchAllNftSubscriptions(
     MEMES_CONTRACT,
     newMeme
   );
 
+  const filteredSubscriptions = newMemeSubscriptions.filter(
+    (sub) => sub.subscribed
+  );
+
   logger.info(
-    `[DATE ${dateStr}] : [BUILDING FINAL SUBSCRIPTION FOR MEME #${newMeme}] : [FOUND ${newMemeSubscriptions.length} SUBSCRIPTIONS]`
+    `[DATE ${dateStr}] : [BUILDING FINAL SUBSCRIPTION FOR MEME #${newMeme}] : [FOUND ${filteredSubscriptions.length} SUBSCRIPTIONS]`
   );
 
   const balances = await fetchAllNftSubscriptionBalances();
   const newSubscriptionLogs: SubscriptionLog[] = [];
   const finalSubscriptions: NFTFinalSubscription[] = [];
 
-  const subscriptionPromises = newMemeSubscriptions.map(async (sub) => {
+  const subscriptionPromises = filteredSubscriptions.map(async (sub) => {
     const balance = balances.find((b) =>
       areEqualAddresses(b.consolidation_key, sub.consolidation_key)
     );
@@ -165,7 +181,13 @@ async function createFinalSubscriptions(newMeme: number, dateStr: string) {
 
     if (balance) {
       if (balance.balance >= MEMES_MINT_PRICE) {
-        const createdAt = sub.created_at?.getTime() ?? Time.now().toMillis();
+        let createdAt = sub.updated_at?.getTime() ?? Time.now().toMillis();
+        const autoSub = autoSubscriptions.find((a) =>
+          areEqualAddresses(a.consolidation_key, sub.consolidation_key)
+        );
+        if (autoSub) {
+          createdAt = autoSub.updated_at?.getTime() ?? Time.now().toMillis();
+        }
         const subscribedAt = Time.millis(createdAt).toIsoString();
         const finalSub: NFTFinalSubscription = {
           subscribed_at: subscribedAt,
@@ -228,8 +250,6 @@ async function uploadFinalSubscriptions(
   const profiles = await fetchAllProfiles();
   const finalUpload: NFTFinalSubscriptionUploadFields[] =
     finalSubscriptions.map((sub) => {
-      const createdAt = sub.created_at?.getTime() ?? Time.now().toMillis();
-      const subscribedAt = Time.millis(createdAt).toIsoString();
       const profile = profiles.find((p) =>
         sub.consolidation_key
           .split('-')
@@ -237,7 +257,7 @@ async function uploadFinalSubscriptions(
       );
       return {
         date: Time.now().toIsoDateString(),
-        subscribed_at: subscribedAt,
+        subscribed_at: sub.subscribed_at,
         contract: contract,
         token_id: newMeme,
         profile: profile?.handle ?? '-',
