@@ -91,7 +91,10 @@ class NFTSubscriptionFields {
 
 @Entity(SUBSCRIPTIONS_NFTS_TABLE)
 @Unique(['consolidation_key', 'contract', 'token_id'])
-export class NFTSubscription extends NFTSubscriptionFields {}
+export class NFTSubscription extends NFTSubscriptionFields {
+  @Column({ type: 'boolean', default: true })
+  subscribed!: boolean;
+}
 
 @Entity(SUBSCRIPTIONS_NFTS_FINAL_TABLE)
 @Unique(['consolidation_key', 'contract', 'token_id'])
