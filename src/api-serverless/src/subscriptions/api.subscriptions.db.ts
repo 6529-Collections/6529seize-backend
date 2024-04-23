@@ -39,6 +39,12 @@ export interface NFTSubscription {
   subscribed: boolean;
 }
 
+export interface SubscriptionCounts {
+  contract: string;
+  token_id: number;
+  count: number;
+}
+
 async function getForConsolidationKey(
   consolidationKey: string,
   table: string,
@@ -453,4 +459,41 @@ export async function fetchAllNftFinalSubscriptionsForContractAndToken(
     ORDER BY subscribed_at ASC`,
     { contract, token_id }
   );
+}
+
+export async function fetchUpcomingMemeSubscriptionCounts(
+  cardCount: number
+): Promise<SubscriptionCounts[]> {
+  const autoSubs: SubscriptionMode[] = await sqlExecutor.execute(
+    `SELECT * FROM ${SUBSCRIPTIONS_MODE_TABLE} WHERE automatic = :automatic`,
+    { automatic: true }
+  );
+
+  const maxMemeId = await getMaxMemeId();
+
+  const subs: NFTSubscription[] = await sqlExecutor.execute(
+    `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE token_id > :startIndex AND token_id <= :endIndex`,
+    {
+      startIndex: maxMemeId,
+      endIndex: maxMemeId + cardCount
+    }
+  );
+
+  const counts: SubscriptionCounts[] = [];
+  for (let i = 1; i <= cardCount; i++) {
+    const id = maxMemeId + i;
+    const tokenSubs = [...subs].filter((s) => s.token_id === id);
+    const tokenAutoSubs = [...autoSubs].filter(
+      (s) =>
+        !tokenSubs.some((ts) =>
+          areEqualAddresses(ts.consolidation_key, s.consolidation_key)
+        )
+    );
+    counts.push({
+      contract: MEMES_CONTRACT,
+      token_id: id,
+      count: tokenSubs.length + tokenAutoSubs.length
+    });
+  }
+  return counts;
 }

@@ -11,7 +11,9 @@ import {
   fetchLogsForConsolidationKey,
   fetchRedeemedSubscriptionsForConsolidationKey,
   fetchSubscriptionUploads,
-  fetchFinalSubscription
+  fetchFinalSubscription,
+  fetchUpcomingMemeSubscriptionCounts,
+  SubscriptionCounts
 } from './api.subscriptions.db';
 import {
   NFTFinalSubscription,
@@ -175,6 +177,26 @@ router.get(
       consolidationKey,
       cardCount
     );
+    return returnJsonResult(result, req, res);
+  }
+);
+
+router.get(
+  `/upcoming-memes-counts`,
+  async function (
+    req: Request<
+      any,
+      any,
+      any,
+      {
+        card_count?: string;
+      }
+    >,
+    res: Response<SubscriptionCounts[]>
+  ) {
+    const cardCount = parseInt(req.query.card_count ?? '3');
+
+    const result = await fetchUpcomingMemeSubscriptionCounts(cardCount);
     return returnJsonResult(result, req, res);
   }
 );
