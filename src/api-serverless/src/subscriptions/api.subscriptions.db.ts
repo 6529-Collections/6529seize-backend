@@ -23,6 +23,7 @@ import { constructFilters } from '../api-helpers';
 import { fetchPaginated } from '../../../db-api';
 import { getMaxMemeId } from '../../../nftsLoop/db.nfts';
 import { BadRequestException } from '../../../exceptions';
+import { areEqualAddresses } from '../../../helpers';
 
 export interface SubscriptionDetails {
   consolidation_key: string;
@@ -38,10 +39,15 @@ export interface NFTSubscription {
   subscribed: boolean;
 }
 
-async function getForConsolidationKey(consolidationKey: string, table: string) {
+async function getForConsolidationKey(
+  consolidationKey: string,
+  table: string,
+  wrappedConnection?: any
+) {
   const result = await sqlExecutor.execute(
     `SELECT * FROM ${table} WHERE consolidation_key = :consolidationKey`,
-    { consolidationKey }
+    { consolidationKey },
+    { wrappedConnection }
   );
   if (result.length === 1) {
     return result[0];
@@ -114,50 +120,33 @@ export async function fetchConsolidationWallets(
 
 export async function updateSubscriptionMode(
   consolidationKey: string,
-  automatic: boolean
+  automatic: boolean,
+  connection?: any
 ) {
   if (automatic) {
     const balance = await getForConsolidationKey(
       consolidationKey,
-      SUBSCRIPTIONS_BALANCES_TABLE
+      SUBSCRIPTIONS_BALANCES_TABLE,
+      connection
     );
+
     if (!balance || balance.balance < MEMES_MINT_PRICE) {
       throw new BadRequestException(
         `Not enough balance to set Subscription to Automatic. Need at least ${MEMES_MINT_PRICE} ETH.`
       );
     }
   }
-  await sqlExecutor.executeNativeQueriesInTransaction(
-    async (wrappedConnection) => {
-      await sqlExecutor.execute(
-        `
-          INSERT INTO ${SUBSCRIPTIONS_MODE_TABLE} (consolidation_key, automatic)
-          VALUES (:consolidation_key, :automatic)
-          ON DUPLICATE KEY UPDATE automatic = VALUES(automatic)
-        `,
-        {
-          consolidation_key: consolidationKey,
-          automatic: automatic
-        },
-        { wrappedConnection }
-      );
-      const log = `Subscription Mode set to ${
-        automatic ? 'Automatic' : 'Manual'
-      }`;
-      await sqlExecutor.execute(
-        `
-          INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log)
-          VALUES (:consolidationKey, :log)
-        `,
-        { consolidationKey, log },
-        { wrappedConnection }
-      );
-      await updateSubscriptionsAfterModeChange(
-        consolidationKey,
-        automatic,
-        wrappedConnection
-      );
-    }
+
+  const connectionToUse =
+    connection ||
+    (await sqlExecutor.executeNativeQueriesInTransaction(
+      async (wrappedConnection) => wrappedConnection
+    ));
+
+  await updateSubscriptionModeInternal(
+    consolidationKey,
+    automatic,
+    connectionToUse
   );
 
   return {
@@ -166,121 +155,134 @@ export async function updateSubscriptionMode(
   };
 }
 
+async function updateSubscriptionModeInternal(
+  consolidationKey: string,
+  automatic: boolean,
+  wrappedConnection?: any
+) {
+  await sqlExecutor.execute(
+    `
+      INSERT INTO ${SUBSCRIPTIONS_MODE_TABLE} (consolidation_key, automatic)
+      VALUES (:consolidation_key, :automatic)
+      ON DUPLICATE KEY UPDATE automatic = VALUES(automatic)
+    `,
+    {
+      consolidation_key: consolidationKey,
+      automatic: automatic
+    },
+    { wrappedConnection }
+  );
+  const log = `Subscription Mode set to ${automatic ? 'Automatic' : 'Manual'}`;
+  await sqlExecutor.execute(
+    `
+      INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log)
+      VALUES (:consolidationKey, :log)
+    `,
+    { consolidationKey, log },
+    { wrappedConnection }
+  );
+  await updateSubscriptionsAfterModeChange(
+    consolidationKey,
+    automatic,
+    wrappedConnection
+  );
+}
+
 async function updateSubscriptionsAfterModeChange(
   consolidationKey: string,
   automatic: boolean,
   wrappedConnection: any
 ) {
-  const upcomingSubscriptions = await fetchUpcomingMemeSubscriptions(
-    consolidationKey
+  const promises: Promise<any>[] = [];
+  const maxMemeId = await getMaxMemeId();
+  const upcomingSubscriptions: NFTSubscription[] = await sqlExecutor.execute(
+    `SELECT * FROM ${SUBSCRIPTIONS_NFTS_TABLE} WHERE consolidation_key = :consolidationKey AND contract = :memesContract AND token_id > :maxMemeId AND subscribed = :subscribed`,
+    {
+      consolidationKey,
+      memesContract: MEMES_CONTRACT,
+      maxMemeId,
+      subscribed: !automatic
+    },
+    { wrappedConnection }
   );
 
-  const promises: Promise<any>[] = [];
+  const logLine = automatic ? 'Subscribed to' : 'Unsubscribed from';
 
-  if (!automatic) {
-    upcomingSubscriptions
-      .filter((e) => e.subscribed)
-      .forEach((subscription) => {
-        promises.push(
-          sqlExecutor.execute(
-            `
-              DELETE FROM ${SUBSCRIPTIONS_NFTS_TABLE}
-              WHERE consolidation_key = :consolidationKey
-                AND contract = :contract
-                AND token_id = :tokenId
-            `,
-            {
-              consolidationKey,
-              contract: subscription.contract,
-              tokenId: subscription.token_id
-            },
-            { wrappedConnection }
-          )
-        );
-        promises.push(
-          sqlExecutor.execute(
-            `
-              INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log)
-              VALUES (:consolidationKey, :log)
-            `,
-            {
-              consolidationKey,
-              log: `Unsubscribed from Meme #${subscription.token_id}`
-            },
-            { wrappedConnection }
-          )
-        );
-      });
-  } else {
-    upcomingSubscriptions
-      .filter((e) => !e.subscribed)
-      .forEach((subscription) => {
-        promises.push(
-          sqlExecutor.execute(
-            `
-              INSERT INTO ${SUBSCRIPTIONS_NFTS_TABLE} (consolidation_key, contract, token_id)
-              VALUES (:consolidationKey, :contract, :tokenId)
-            `,
-            {
-              consolidationKey,
-              contract: subscription.contract,
-              tokenId: subscription.token_id
-            },
-            { wrappedConnection }
-          )
-        );
-        promises.push(
-          sqlExecutor.execute(
-            `
-              INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log)
-              VALUES (:consolidationKey, :log)
-            `,
-            {
-              consolidationKey,
-              log: `Subscribed for Meme #${subscription.token_id}`
-            },
-            { wrappedConnection }
-          )
-        );
-      });
-  }
+  upcomingSubscriptions.forEach((subscription) => {
+    promises.push(
+      sqlExecutor.execute(
+        `
+        INSERT INTO ${SUBSCRIPTIONS_NFTS_TABLE} (consolidation_key, contract, token_id, subscribed)
+        VALUES (:consolidationKey, :contract, :tokenId, :subscribed)
+        ON DUPLICATE KEY UPDATE subscribed = VALUES(subscribed)
+        `,
+        {
+          consolidationKey,
+          contract: subscription.contract,
+          tokenId: subscription.token_id,
+          subscribed: automatic
+        },
+        { wrappedConnection }
+      )
+    );
+    promises.push(
+      sqlExecutor.execute(
+        `
+        INSERT INTO ${SUBSCRIPTIONS_LOGS_TABLE} (consolidation_key, log)
+        VALUES (:consolidationKey, :log)
+        `,
+        {
+          consolidationKey,
+          log: `${logLine} Meme #${subscription.token_id}`
+        },
+        { wrappedConnection }
+      )
+    );
+  });
   await Promise.all(promises);
 }
 
 export async function fetchUpcomingMemeSubscriptions(
   consolidationKey: string,
-  completed?: boolean
+  cardCount: number
 ): Promise<NFTSubscription[]> {
-  const maxMemeId = await getMaxMemeId(completed);
+  const maxMemeId = await getMaxMemeId(true);
 
-  const subscriptions: NFTSubscription[] = [];
-  for (let i = 1; i <= 3; i++) {
-    const id = maxMemeId + i;
-    const results = await sqlExecutor.execute(
-      `SELECT
+  const mode: SubscriptionMode = await getForConsolidationKey(
+    consolidationKey,
+    SUBSCRIPTIONS_MODE_TABLE
+  );
+
+  const results: NFTSubscription[] = await sqlExecutor.execute(
+    `SELECT
           *
         FROM
           ${SUBSCRIPTIONS_NFTS_TABLE}
         WHERE
           consolidation_key = :consolidationKey
           AND contract = :memesContract
-          AND token_id = :id
+          AND token_id > :maxMemeId
       `,
-      { consolidationKey, memesContract: MEMES_CONTRACT, id }
-    );
-    if (results.length === 1) {
+    { consolidationKey, memesContract: MEMES_CONTRACT, maxMemeId }
+  );
+
+  const subscriptions: NFTSubscription[] = [];
+  for (let i = 1; i <= cardCount; i++) {
+    const id = maxMemeId + i;
+    const sub = results.find((r) => r.token_id === id);
+    if (sub) {
       subscriptions.push({
-        consolidation_key: results[0].consolidation_key,
-        contract: results[0].contract,
-        token_id: results[0].token_id,
-        subscribed: true
+        consolidation_key: sub.consolidation_key,
+        contract: sub.contract,
+        token_id: sub.token_id,
+        subscribed: sub.subscribed
       });
     } else {
       subscriptions.push({
         consolidation_key: consolidationKey,
         contract: MEMES_CONTRACT,
         token_id: id,
-        subscribed: false
+        subscribed: mode.automatic
       });
     }
   }
@@ -311,25 +313,19 @@ export async function updateSubscription(
 
   await sqlExecutor.executeNativeQueriesInTransaction(
     async (wrappedConnection) => {
-      let sql: string;
       let log: string;
       if (subscribed) {
-        sql = `
-          INSERT INTO ${SUBSCRIPTIONS_NFTS_TABLE} (consolidation_key, contract, token_id)
-          VALUES (:consolidation_key, :contract, :token_id)
-        `;
         log = `Subscribed for Meme #${tokenId}`;
       } else {
-        sql = `
-          DELETE FROM ${SUBSCRIPTIONS_NFTS_TABLE}
-          WHERE consolidation_key = :consolidation_key
-            AND contract = :contract
-            AND token_id = :token_id
-        `;
         log = `Unsubscribed from Meme #${tokenId}`;
       }
+
       await sqlExecutor.execute(
-        sql,
+        `
+        INSERT INTO ${SUBSCRIPTIONS_NFTS_TABLE} (consolidation_key, contract, token_id, subscribed)
+        VALUES (:consolidation_key, :contract, :token_id, :subscribed)
+        ON DUPLICATE KEY UPDATE subscribed = VALUES(subscribed)
+        `,
         {
           consolidation_key: consolidationKey,
           contract,

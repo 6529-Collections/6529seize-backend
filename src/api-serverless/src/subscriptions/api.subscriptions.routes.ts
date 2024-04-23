@@ -163,20 +163,19 @@ router.get(
       any,
       any,
       {
-        page_size?: string;
-        page?: string;
+        card_count?: string;
       }
     >,
     res: Response<SubscriptionTopUp[] | string>
   ) {
     const consolidationKey = req.params.consolidation_key.toLowerCase();
+    const cardCount = parseInt(req.query.card_count ?? '3');
 
-    const result = await fetchUpcomingMemeSubscriptions(consolidationKey, true);
-    if (result) {
-      return returnJsonResult(result, req, res);
-    } else {
-      return res.status(404).send('Not found');
-    }
+    const result = await fetchUpcomingMemeSubscriptions(
+      consolidationKey,
+      cardCount
+    );
+    return returnJsonResult(result, req, res);
   }
 );
 
