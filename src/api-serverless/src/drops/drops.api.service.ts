@@ -346,7 +346,7 @@ export class DropsApiService {
       data: comments.map((comment) => ({
         ...comment,
         target_id: comment.target_id!,
-        type: comment.type! as unknown as DropActivityLogTypeEnum,
+        type: comment.type as unknown as DropActivityLogTypeEnum,
         author:
           (profileMins.find(
             (it) => it.id === comment.profile_id
@@ -381,7 +381,7 @@ export class DropsApiService {
         return {
           ...comment,
           target_id: comment.target_id!,
-          type: comment.type! as unknown as DropActivityLogTypeEnum,
+          type: comment.type as unknown as DropActivityLogTypeEnum,
           author: authorProfile as ProfileMin
         };
       }
