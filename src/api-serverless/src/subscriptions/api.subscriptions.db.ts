@@ -288,7 +288,7 @@ export async function fetchUpcomingMemeSubscriptions(
         consolidation_key: consolidationKey,
         contract: MEMES_CONTRACT,
         token_id: id,
-        subscribed: mode.automatic
+        subscribed: mode?.automatic ?? false
       });
     }
   }
