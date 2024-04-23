@@ -1,16 +1,16 @@
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
-import { TDH_SPENT_ON_DROP_REPS_TABLE } from '../constants';
+import { DROPS_VOTES_CREDIT_SPENDINGS_TABLE } from '../constants';
 
-@Entity(TDH_SPENT_ON_DROP_REPS_TABLE)
-export class TdhSpentOnDropRep {
+@Entity(DROPS_VOTES_CREDIT_SPENDINGS_TABLE)
+export class DropVoteCreditSpending {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   readonly id!: number;
   @Column({ type: 'varchar', length: 100 })
   readonly rater_id!: string;
+  @Column({ type: 'varchar', length: 100 })
+  readonly drop_id!: string;
   @Column({ type: 'bigint' })
-  readonly drop_id!: number;
-  @Column({ type: 'bigint' })
-  readonly tdh_spent!: number;
+  readonly credit_spent!: number;
   @Column({ type: 'datetime' })
   readonly timestamp!: Date;
 }

@@ -16,11 +16,11 @@ import { ConnectionWrapper } from '../../../sql-executor';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { ApiCommunityMembersCurationCriteria } from './api-community-members-curation-criteria';
-import { ProfileMin } from '../../../profiles/profile-min';
 import {
   abusivenessCheckService,
   AbusivenessCheckService
 } from '../../../profiles/abusiveness-check.service';
+import { ProfileMin } from '../generated/models/ProfileMin';
 
 export type NewCommunityMembersCurationCriteria = Omit<
   CommunityMembersCurationCriteriaEntity,
@@ -417,7 +417,7 @@ export class CommunityMemberCriteriaService {
       .getProfileMinsByIds(criteria.map((it) => it.created_by))
       .then((res) =>
         res.reduce((acc, it) => {
-          acc[it.id] = it;
+          acc[it.id] = it as ProfileMin;
           return acc;
         }, {} as Record<string, ProfileMin>)
       );

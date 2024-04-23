@@ -15,6 +15,7 @@ export interface ProfileType {
   banner_2?: string;
   website?: string;
   classification?: ProfileClassification | null;
+  sub_classification?: string | null;
 }
 
 class ProfileBase implements Omit<ProfileType, 'normalised_handle'> {

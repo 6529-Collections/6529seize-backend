@@ -1,4 +1,4 @@
-import { profilesDb, ProfilesDb } from './profiles.db';
+import { ProfileOverview, profilesDb, ProfilesDb } from './profiles.db';
 import { UUID_REGEX, WALLET_REGEX } from '../constants';
 import { getAlchemyInstance } from '../alchemy';
 import { Alchemy } from 'alchemy-sdk';
@@ -30,7 +30,6 @@ import {
 } from '../api-serverless/src/profiles/rep.service';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
-import { ProfileMin } from './profile-min';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -989,30 +988,26 @@ export class ProfilesService {
     throw new Error('Failed to upload image');
   }
 
-  async getProfileMinsByIds(ids: string[]): Promise<ProfileMin[]> {
-    return this.profilesDb.getProfileMinsByIds(ids);
-  }
-
-  async getProfileHandlesByIds(ids: string[]): Promise<Record<string, string>> {
-    const dbResult = await this.profilesDb.getProfileIdsAndHandlesByIds(ids);
-    return dbResult.reduce((acc, it) => {
-      acc[it.id] = it.handle;
-      return acc;
-    }, {} as Record<string, string>);
-  }
-
-  async getNewestVersionOfArchivedProfile(
-    profileId: string
-  ): Promise<Profile | null> {
-    return this.profilesDb.getNewestVersionOfArchivedProfile(profileId);
-  }
-
-  async getNewestVersionOfArchivedProfileHandles(
-    profileIds: string[]
-  ): Promise<{ external_id: string; handle: string }[]> {
-    return this.profilesDb.getNewestVersionHandlesOfArchivedProfiles(
-      profileIds
+  async getProfileMinsByIds(ids: string[]): Promise<ProfileOverview[]> {
+    const activeProfiles = await this.profilesDb.getProfileMinsByIds(ids);
+    const notFoundProfileIds = ids.filter(
+      (id) => !activeProfiles.find((p) => p.id === id)
     );
+    const archivedProfiles: ProfileOverview[] = await this.profilesDb
+      .getNewestVersionHandlesOfArchivedProfiles(notFoundProfileIds)
+      .then((it) =>
+        it.map<ProfileOverview>((p) => ({
+          id: p.external_id,
+          handle: p.handle,
+          cic: 0,
+          rep: 0,
+          tdh: 0,
+          level: 0,
+          pfp: null,
+          archived: true
+        }))
+      );
+    return [...activeProfiles, ...archivedProfiles];
   }
 }
 
