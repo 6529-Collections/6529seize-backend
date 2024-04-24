@@ -3,7 +3,6 @@ import { Time } from './time';
 import * as delegations from './delegationsLoop';
 import * as transactions from './transactionsLoop';
 import * as tdh from './tdhLoop';
-import * as nfts from './nftsLoop';
 
 import cron from 'node-cron';
 
@@ -37,7 +36,7 @@ async function start() {
   // await dbMigrations.handler();
   // await runDelegations();
   // await runTransactions();
-  await runTDH();
+  // await runTDH();
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
@@ -67,8 +66,4 @@ async function runTDH() {
   LOCKED = true;
   await tdh.handler();
   LOCKED = false;
-}
-
-async function runNfts() {
-  await nfts.handler();
 }

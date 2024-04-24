@@ -49,7 +49,7 @@ const getDelegationDetails = async (txHash: string) => {
         };
       }
     } catch (e) {
-      logger.info(`[ERROR PARSING TX ${txHash}]`);
+      // logger.info(`[ERROR PARSING TX ${txHash}]`);
       return null;
     }
   }

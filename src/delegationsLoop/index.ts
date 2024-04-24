@@ -19,30 +19,9 @@ import { getLastTDH } from '../helpers';
 import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { sqlExecutor } from '../sql-executor';
 import { CONSOLIDATIONS_TABLE } from '../constants';
-import {
-  ConsolidatedTDH,
-  ConsolidatedTDHMemes,
-  NftTDH,
-  TDH,
-  TDHMemes
-} from '../entities/ITDH';
-import { Profile } from '../entities/IProfile';
-import { CommunityMember } from '../entities/ICommunityMember';
+import { ConsolidatedTDH, TDH } from '../entities/ITDH';
 import { updateTDH } from '../tdhLoop/tdh';
-import { MemesSeason } from '../entities/ISeason';
-import { ConsolidatedNFTOwner, NFTOwner } from '../entities/INFTOwner';
-import {
-  ConsolidatedOwnerBalances,
-  ConsolidatedOwnerBalancesMemes,
-  OwnerBalances,
-  OwnerBalancesMemes
-} from '../entities/IOwnerBalances';
-import {
-  AggregatedActivity,
-  AggregatedActivityMemes,
-  ConsolidatedAggregatedActivity,
-  ConsolidatedAggregatedActivityMemes
-} from '../entities/IAggregatedActivity';
+import { NFT } from '../entities/INFT';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -51,25 +30,10 @@ export const handler = async () => {
   await loadEnv([
     Delegation,
     Consolidation,
-    CommunityMember,
     NFTDelegationBlock,
     TDH,
     ConsolidatedTDH,
-    TDHMemes,
-    ConsolidatedTDHMemes,
-    Profile,
-    MemesSeason,
-    NFTOwner,
-    ConsolidatedNFTOwner,
-    OwnerBalances,
-    OwnerBalancesMemes,
-    ConsolidatedOwnerBalances,
-    ConsolidatedOwnerBalancesMemes,
-    AggregatedActivity,
-    ConsolidatedAggregatedActivity,
-    AggregatedActivityMemes,
-    ConsolidatedAggregatedActivityMemes,
-    NftTDH
+    NFT
   ]);
   const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
   const startBlock =

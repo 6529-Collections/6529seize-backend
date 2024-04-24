@@ -8,7 +8,7 @@ export async function startScript() {
 
   const dbHost = await ask('Enter DB Host:', false, true);
   const dbAdminUser = await ask('Enter DB Admin User:', false, true);
-  const dbAdminPassword = await ask('Enter DB Admin Password:', true, true);
+  const dbAdminPassword = await ask('Enter DB Admin Password:', true, false);
   const dbNewDB = await ask('Enter New DB Name:', false, true);
   const dbNewUser = await ask('Enter New DB User:', false, true);
   const dbNewUserPassword = await ask(
@@ -33,3 +33,5 @@ async function ask(question: string, password: boolean, required: boolean) {
   });
   return answer.response.trim();
 }
+
+startScript();

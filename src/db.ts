@@ -12,7 +12,6 @@ import {
   CONSOLIDATIONS_TABLE,
   ENS_TABLE,
   GRADIENT_CONTRACT,
-  MEME_LAB_ROYALTIES_TABLE,
   MEMELAB_CONTRACT,
   MEMES_CONTRACT,
   MEMES_EXTENDED_DATA_TABLE,
@@ -25,7 +24,6 @@ import {
   WALLETS_TDH_TABLE
 } from './constants';
 import { Artist } from './entities/IArtist';
-import { ENS } from './entities/IENS';
 
 import { NFT } from './entities/INFT';
 import {
@@ -69,7 +67,8 @@ import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
 import { synchroniseCommunityMembersTable } from './community-members';
 import { MemesSeason } from './entities/ISeason';
-import { insertWithoutUpdate } from './orm_helpers';
+import { insertWithoutUpdate, resetRepository } from './orm_helpers';
+import { NFTOwner } from './entities/INFTOwner';
 
 const mysql = require('mysql');
 
@@ -659,8 +658,7 @@ async function findVolume(
 export async function persistNFTs(nfts: NFT[]) {
   await AppDataSource.transaction(async (manager) => {
     const nftRepo = manager.getRepository(NFT);
-    await nftRepo.clear();
-    await insertWithoutUpdate(nftRepo, nfts);
+    await resetRepository(nftRepo, nfts);
   });
 }
 
@@ -1166,4 +1164,10 @@ export async function fetchWalletConsolidationKeysViewForWallet(
 ): Promise<WalletConsolidationKey[]> {
   const sql = `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE wallet IN (:addresses)`;
   return await sqlExecutor.execute(sql, { addresses });
+}
+
+export async function persistOwners(owners: NFTOwner[]) {
+  const repo = AppDataSource.getRepository(NFTOwner);
+  await resetRepository(repo, owners);
+  logger.info(`[OWNERS] [PERSISTED ${owners.length} OWNERS]`);
 }

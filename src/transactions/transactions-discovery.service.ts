@@ -171,10 +171,7 @@ export class TransactionsDiscoveryService {
             gas_gwei: 0,
             gas_price: 0,
             gas_price_gwei: 0,
-            gas: 0,
-            eth_price_usd: 0,
-            value_usd: 0,
-            gas_usd: 0
+            gas: 0
           }
         ];
       }
@@ -200,10 +197,7 @@ export class TransactionsDiscoveryService {
               gas_gwei: 0,
               gas_price: 0,
               gas_price_gwei: 0,
-              gas: 0,
-              eth_price_usd: 0,
-              value_usd: 0,
-              gas_usd: 0
+              gas: 0
             };
           }
           return null;

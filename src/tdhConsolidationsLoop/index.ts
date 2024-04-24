@@ -19,7 +19,7 @@ import {
   AggregatedActivityMemes,
   ConsolidatedAggregatedActivityMemes
 } from '../entities/IAggregatedActivity';
-import { NFTOwner, ConsolidatedNFTOwner } from '../entities/INFTOwner';
+import { NFTOwner } from '../entities/INFTOwner';
 import {
   OwnerBalances,
   OwnerBalancesMemes,
@@ -41,7 +41,6 @@ export const handler = async () => {
     CommunityMember,
     Profile,
     NFTOwner,
-    ConsolidatedNFTOwner,
     OwnerBalances,
     OwnerBalancesMemes,
     ConsolidatedOwnerBalances,

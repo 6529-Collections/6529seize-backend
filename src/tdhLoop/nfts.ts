@@ -7,17 +7,11 @@ import {
 } from '../constants';
 import { NFT } from '../entities/INFT';
 import { persistNFTs } from '../db';
-import { RequestInfo, RequestInit } from 'node-fetch';
-import { Logger } from '../logging';
-
-const logger = Logger.get('NFTS');
-
-const fetch = (url: RequestInfo, init?: RequestInit) =>
-  import('node-fetch').then(({ default: fetch }) => fetch(url, init));
+import { NFTOwner } from '../entities/INFTOwner';
 
 let alchemy: Alchemy;
 
-export async function getAllNfts(): Promise<{
+export async function getAllNfts(memeOwners: NFTOwner[]): Promise<{
   memes: NFT[];
   gradients: NFT[];
   nextgen: NFT[];
@@ -27,16 +21,53 @@ export async function getAllNfts(): Promise<{
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const memes: NFT[] = await getAllNFTs(MEMES_CONTRACT);
-  const gradients: NFT[] = await getAllNFTs(GRADIENT_CONTRACT);
-  const nextgen: NFT[] = await getAllNFTs(NEXTGEN_CONTRACT);
+  const memes: Nft[] = await getAllNFTs(MEMES_CONTRACT);
+  const parsedMemes: NFT[] = memes.map((m) => {
+    const owners = memeOwners.filter((o) => o.token_id === parseInt(m.tokenId));
+    const editionSize = owners.reduce((acc, o) => acc + o.balance, 0);
+    return {
+      contract: m.contract.address,
+      id: parseInt(m.tokenId),
+      mint_date: m.mint?.timestamp,
+      edition_size: editionSize
+    };
+  });
 
-  const all = [...memes, ...gradients, ...nextgen];
-  await persistNFTs(all);
+  const gradients: Nft[] = await getAllNFTs(GRADIENT_CONTRACT);
+  const parsedGradients: NFT[] = gradients.map((g) => {
+    return {
+      contract: g.contract.address,
+      id: parseInt(g.tokenId),
+      mint_date: g.mint?.timestamp,
+      edition_size: gradients.length
+    };
+  });
+
+  const nextgen: Nft[] = await getAllNFTs(NEXTGEN_CONTRACT);
+  const nextgenCollections = new Map<number, number[]>();
+  nextgen.forEach((n) => {
+    const collectionId = Math.round(parseInt(n.tokenId) / 10000000000);
+    let collection = nextgenCollections.get(collectionId) || [];
+    collection.push(parseInt(n.tokenId));
+    nextgenCollections.set(collectionId, collection);
+  });
+  const parsedNextgen: NFT[] = nextgen.map((n) => {
+    const collectionId = Math.round(parseInt(n.tokenId) / 10000000000);
+    const collection = nextgenCollections.get(collectionId) || [];
+    return {
+      contract: n.contract.address,
+      id: parseInt(n.tokenId),
+      mint_date: n.mint?.timestamp,
+      edition_size: collection.length
+    };
+  });
+
+  await persistNFTs([...parsedMemes, ...parsedGradients, ...parsedNextgen]);
+
   return {
-    memes,
-    gradients,
-    nextgen
+    memes: parsedMemes,
+    gradients: parsedGradients,
+    nextgen: parsedNextgen
   };
 }
 
@@ -44,7 +75,7 @@ async function getAllNFTs(
   contract: string,
   nfts: Nft[] = [],
   key = ''
-): Promise<NFT[]> {
+): Promise<Nft[]> {
   const response = await getNFTResponse(alchemy, contract, key);
   const newKey = response.pageKey;
   nfts = nfts.concat(response.nfts);
@@ -53,13 +84,7 @@ async function getAllNFTs(
     return getAllNFTs(contract, nfts, newKey);
   }
 
-  return nfts.map((nft) => {
-    return {
-      contract: nft.contract.address,
-      id: parseInt(nft.tokenId),
-      mint_date: nft.mint?.timestamp ?? ''
-    };
-  });
+  return nfts;
 }
 
 async function getNFTResponse(alchemy: Alchemy, contract: string, key: any) {

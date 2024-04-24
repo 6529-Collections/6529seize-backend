@@ -19,6 +19,7 @@ import {
   fetchLatestTransactionsBlockNumber,
   fetchTDHForBlock,
   fetchWalletTransactions,
+  persistOwners,
   persistTDH,
   retrieveWalletConsolidations
 } from '../db';
@@ -151,8 +152,9 @@ export const getAdjustedMemesAndSeasons = async (lastTDHCalc: Date) => {
   const nfts: NFT[] = await fetchAllNFTs();
   const ADJUSTED_NFTS = [...nfts].filter(
     (nft) =>
+      nft.mint_date &&
       lastTDHCalc.getTime() - 28 * 60 * 60 * 1000 >
-      new Date(nft.mint_date).getTime()
+        new Date(nft.mint_date).getTime()
   );
 
   const MEMES_COUNT = [...ADJUSTED_NFTS].filter((nft) =>
@@ -189,7 +191,10 @@ export const updateTDH = async (
   const gradientOwners = await fetchNftOwners(block, GRADIENT_CONTRACT);
   const nextgenOwners = await fetchNftOwners(block, NEXTGEN_CONTRACT);
 
-  const { memes, gradients, nextgen } = await getAllNfts();
+  await persistOwners([...memeOwners, ...gradientOwners, ...nextgenOwners]);
+
+  const { memes, gradients, nextgen } = await getAllNfts(memeOwners);
+
   logger.info(
     `[MEMES] : [TOKENS ${memes.length}] : [OWNERS ${memeOwners.length}]`
   );

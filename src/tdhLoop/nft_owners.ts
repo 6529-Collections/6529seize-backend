@@ -1,19 +1,27 @@
 import { NftContractOwner } from 'alchemy-sdk';
 import { getAlchemyInstance } from '../alchemy';
-import { Logger } from '../logging';
-import {
-  GRADIENT_CONTRACT,
-  MEMES_CONTRACT,
-  NEXTGEN_CONTRACT
-} from '../constants';
+import { NFTOwner } from '../entities/INFTOwner';
 
-const logger = Logger.get('NFT_OWNERS');
+export async function fetchNftOwners(
+  block: number,
+  contract: string
+): Promise<NFTOwner[]> {
+  const contractOwners = await getOwners(block, contract);
 
-export async function fetchNftOwners(block: number, contract: string) {
-  return await getOwners(block, contract);
+  return contractOwners.flatMap((owner) =>
+    owner.tokenBalances.map((nft) => ({
+      address: owner.ownerAddress.toLowerCase(),
+      contract: contract.toLowerCase(),
+      token_id: parseInt(nft.tokenId),
+      balance: parseInt(nft.balance)
+    }))
+  );
 }
 
-async function getOwners(block: number, contract: string) {
+async function getOwners(
+  block: number,
+  contract: string
+): Promise<NftContractOwner[]> {
   let page: string | undefined = '';
   let owners: NftContractOwner[] = [];
   do {
