@@ -6,6 +6,7 @@ import * as tdh from './tdhLoop';
 import * as nfts from './nftsLoop';
 
 import cron from 'node-cron';
+
 import {
   GRADIENT_CONTRACT,
   MEMES_CONTRACT,
