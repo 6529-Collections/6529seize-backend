@@ -18,6 +18,8 @@ import { Rating } from './entities/IRating';
 import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
 import { CommunityMembersCurationCriteriaEntity } from './entities/ICommunityMembersCurationCriteriaEntity';
 import { RatingsSnapshot } from './entities/IRatingsSnapshots';
+import { ProfileProxyEntity } from './entities/IProfileProxy';
+import { ProfileProxyActionEntity } from './entities/IProfileProxyAction';
 
 const logger = Logger.get('BACKEND');
 
@@ -41,7 +43,9 @@ async function start() {
     DropMetadataEntity,
     DropMediaEntity,
     DropVoteCreditSpending,
-    DropCommentEntity
+    DropCommentEntity,
+    ProfileProxyEntity,
+    ProfileProxyActionEntity
   ]);
 
   const diff = start.diffFromNow().formatAsDuration();

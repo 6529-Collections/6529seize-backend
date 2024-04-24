@@ -1,7 +1,17 @@
+export * from '../models/AddActionToProxyRequest';
+export * from '../models/CommentDropRequest';
 export * from '../models/CreateDropMediaUrl201Response';
 export * from '../models/CreateDropMediaUrlRequest';
 export * from '../models/CreateDropPart';
 export * from '../models/CreateDropRequest';
+export * from '../models/CreateNewProfileProxy';
+export * from '../models/CreateNewProfileProxyActionType';
+export * from '../models/CreateNewProfileProxyAllocateCicAction';
+export * from '../models/CreateNewProfileProxyAllocateRepAction';
+export * from '../models/CreateNewProfileProxyCreateDropToWaveAction';
+export * from '../models/CreateNewProfileProxyCreateWaveAction';
+export * from '../models/CreateNewProfileProxyRateWaveDropAction';
+export * from '../models/CreateNewProfileProxyReadWaveAction';
 export * from '../models/Drop';
 export * from '../models/DropActivityLog';
 export * from '../models/DropComment';
@@ -20,10 +30,23 @@ export * from '../models/NewDropComment';
 export * from '../models/ProfileMin';
 export * from '../models/QuotedDrop';
 
+export * from '../models/ProfileProxy';
+export * from '../models/ProfileProxyAction';
+
+import { AddActionToProxyRequest       } from '../models/AddActionToProxyRequest';
+import { CommentDropRequest } from '../models/CommentDropRequest';
 import { CreateDropMediaUrl201Response } from '../models/CreateDropMediaUrl201Response';
 import { CreateDropMediaUrlRequest } from '../models/CreateDropMediaUrlRequest';
 import { CreateDropPart } from '../models/CreateDropPart';
 import { CreateDropRequest } from '../models/CreateDropRequest';
+import { CreateNewProfileProxy } from '../models/CreateNewProfileProxy';
+import { CreateNewProfileProxyActionType } from '../models/CreateNewProfileProxyActionType';
+import { CreateNewProfileProxyAllocateCicAction      } from '../models/CreateNewProfileProxyAllocateCicAction';
+import { CreateNewProfileProxyAllocateRepAction       } from '../models/CreateNewProfileProxyAllocateRepAction';
+import { CreateNewProfileProxyCreateDropToWaveAction    } from '../models/CreateNewProfileProxyCreateDropToWaveAction';
+import { CreateNewProfileProxyCreateWaveAction    } from '../models/CreateNewProfileProxyCreateWaveAction';
+import { CreateNewProfileProxyRateWaveDropAction    } from '../models/CreateNewProfileProxyRateWaveDropAction';
+import { CreateNewProfileProxyReadWaveAction    } from '../models/CreateNewProfileProxyReadWaveAction';
 import { Drop } from '../models/Drop';
 import { DropActivityLog     , DropActivityLogTypeEnum    } from '../models/DropActivityLog';
 import { DropComment } from '../models/DropComment';
@@ -41,6 +64,8 @@ import { DropReferencedNFT } from '../models/DropReferencedNFT';
 import { NewDropComment } from '../models/NewDropComment';
 import { ProfileMin } from '../models/ProfileMin';
 import { QuotedDrop } from '../models/QuotedDrop';
+import { ProfileProxy } from '../models/ProfileProxy';
+import { ProfileProxyAction            } from '../models/ProfileProxyAction';
 
 /* tslint:disable:no-unused-variable */
 let primitives = [
@@ -55,14 +80,24 @@ let primitives = [
                  ];
 
 let enumsMap: Set<string> = new Set<string>([
+    "CreateNewProfileProxyActionType",
     "DropActivityLogTypeEnum",
 ]);
 
 let typeMap: {[index: string]: any} = {
+    "AddActionToProxyRequest": AddActionToProxyRequest,
+    "CommentDropRequest": CommentDropRequest,
     "CreateDropMediaUrl201Response": CreateDropMediaUrl201Response,
     "CreateDropMediaUrlRequest": CreateDropMediaUrlRequest,
     "CreateDropPart": CreateDropPart,
     "CreateDropRequest": CreateDropRequest,
+    "CreateNewProfileProxy": CreateNewProfileProxy,
+    "CreateNewProfileProxyAllocateCicAction": CreateNewProfileProxyAllocateCicAction,
+    "CreateNewProfileProxyAllocateRepAction": CreateNewProfileProxyAllocateRepAction,
+    "CreateNewProfileProxyCreateDropToWaveAction": CreateNewProfileProxyCreateDropToWaveAction,
+    "CreateNewProfileProxyCreateWaveAction": CreateNewProfileProxyCreateWaveAction,
+    "CreateNewProfileProxyRateWaveDropAction": CreateNewProfileProxyRateWaveDropAction,
+    "CreateNewProfileProxyReadWaveAction": CreateNewProfileProxyReadWaveAction,
     "Drop": Drop,
     "DropActivityLog": DropActivityLog,
     "DropComment": DropComment,
@@ -80,6 +115,8 @@ let typeMap: {[index: string]: any} = {
     "NewDropComment": NewDropComment,
     "ProfileMin": ProfileMin,
     "QuotedDrop": QuotedDrop,
+    "ProfileProxy": ProfileProxy,
+    "ProfileProxyAction": ProfileProxyAction,
 }
 
 type MimeTypeDescriptor = {

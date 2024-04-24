@@ -1,0 +1,56 @@
+openapi: 3.0.3
+
+info:
+  title: Seize API
+  description: Following is the API interface description for most common operations in Seize API. Some modifying endpoints may need authentication token.
+  version: 1.0.0
+servers:
+  - url: /api
+
+paths:
+  /proxies:
+    post:
+      tags:
+        - Proxies
+      summary: Create a new proxy
+      description: Requires the user to be authenticated
+      operationId: createProxy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Proxy'
+      responses:
+        '201':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Proxy'
+        '400':
+          description: Invalid request
+
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Proxy:
+      type: object
+      required:
+        - receiver_type
+        - receiver_id
+      properties:
+        receiver_type:
+          type: string
+          enum:
+            - PROFILE
+            - WAVE
+        receiver_id:
+          type: string
+        
+security:
+  - bearerAuth: []
