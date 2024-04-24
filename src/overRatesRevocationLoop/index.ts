@@ -10,10 +10,12 @@ import * as sentryContext from '../sentry.context';
 import { CommunityMembersCurationCriteriaEntity } from '../entities/ICommunityMembersCurationCriteriaEntity';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
 import {
+  DropCommentEntity,
   DropEntity,
   DropMediaEntity,
   DropMentionEntity,
   DropMetadataEntity,
+  DropPartEntity,
   DropReferencedNftEntity
 } from '../entities/IDrop';
 import { DropVoteCreditSpending } from '../entities/IDropVoteCreditSpending';
@@ -33,11 +35,13 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     CommunityMembersCurationCriteriaEntity,
     RatingsSnapshot,
     DropEntity,
+    DropPartEntity,
     DropMentionEntity,
     DropReferencedNftEntity,
     DropMetadataEntity,
     DropMediaEntity,
-    DropVoteCreditSpending
+    DropVoteCreditSpending,
+    DropCommentEntity
   ]);
   await ratingsService.reduceOverRates();
   await dropOverRaterRevocationService.revokeOverRates();

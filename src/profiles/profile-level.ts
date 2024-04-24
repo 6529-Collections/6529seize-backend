@@ -417,7 +417,7 @@ export function getLevelComponentsBorderByLevel(level: number): number {
     return level;
   }
   if (level > 100) {
-    return Number.MAX_VALUE;
+    return Number.MAX_SAFE_INTEGER;
   }
   return LEVELS.find((l) => l.level === level)?.minTdh ?? 0;
 }

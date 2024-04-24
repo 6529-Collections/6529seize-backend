@@ -13,7 +13,11 @@ export class Time {
   }
 
   static fromString(string: string): Time {
-    return Time.millis(new Date(string).getTime());
+    return Time.fromDate(new Date(string));
+  }
+
+  static fromDate(date: Date): Time {
+    return Time.millis(date.getTime());
   }
 
   static tomorrow(): Time {
