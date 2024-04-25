@@ -11,6 +11,8 @@ import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { CreateDropRequest } from '../generated/models/CreateDropRequest';
 import { Drop } from '../generated/models/Drop';
 import { DropReferencedNFT } from '../generated/models/DropReferencedNFT';
+import { QuotedDrop } from '../generated/models/QuotedDrop';
+import { DropMediaEntity, DropPartEntity } from '../../../entities/IDrop';
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(DropCreationApiService.name);
@@ -38,31 +40,12 @@ export class DropCreationApiService {
   ) {
     return await this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        const rootDropId = createDropRequest.root_drop_id;
-        let storm_sequence = 1;
-        if (rootDropId) {
-          const rootDrop = await this.dropsDb.lockDrop(rootDropId, connection);
-          if (!rootDrop) {
-            throw new BadRequestException('Invalid root drop');
-          }
-          const current_storm_sequence =
-            await this.dropsDb.findRootDropMaxStormSequenceOrZero(
-              {
-                root_drop_id: rootDropId,
-                author_id: createDropRequest.author.external_id
-              },
-              connection
-            );
-          storm_sequence = current_storm_sequence + 1;
-        }
+        const createDropParts = createDropRequest.parts;
         const dropId = await this.dropsDb.insertDrop(
           {
             author_id: createDropRequest.author.external_id,
             title: createDropRequest.title ?? null,
-            content: createDropRequest.content ?? null,
-            root_drop_id: createDropRequest.root_drop_id ?? null,
-            storm_sequence: storm_sequence,
-            quoted_drop_id: createDropRequest.quoted_drop_id ?? null
+            parts_count: createDropParts.length
           },
           connection
         );
@@ -71,10 +54,7 @@ export class DropCreationApiService {
             profile_id: createDropRequest.author.external_id,
             target_id: dropId.toString(),
             contents: JSON.stringify({
-              drop_id: dropId,
-              title: createDropRequest.title ?? null,
-              content: createDropRequest.content ?? null,
-              media: createDropRequest.media
+              drop_id: dropId
             }),
             type: ProfileActivityLogType.DROP_CREATED
           },
@@ -108,13 +88,33 @@ export class DropCreationApiService {
           drop_id: dropId
         }));
         await this.dropsDb.insertDropMetadata(metadata, connection);
-        const media = createDropRequest.media.map((it) => ({
-          ...it,
-          drop_id: dropId
-        }));
+        const media = createDropParts
+          .map((part, index) =>
+            part.media.map<Omit<DropMediaEntity, 'id'>>((media) => ({
+              ...media,
+              drop_id: dropId,
+              drop_part_id: index + 1
+            }))
+          )
+          .flat();
         await this.dropsDb.insertDropMedia(media, connection);
+        await this.dropsDb.insertDropParts(
+          createDropParts.map<DropPartEntity>((part, index) => ({
+            drop_id: dropId,
+            drop_part_id: index + 1,
+            content: part.content ?? null,
+            quoted_drop_id: part.quoted_drop?.drop_id ?? null,
+            quoted_drop_part_id: part.quoted_drop?.drop_part_id ?? null
+          })),
+          connection
+        );
         return this.dropsService.findDropByIdOrThrow(
-          { dropId, contextProfileId: createDropRequest.author.external_id },
+          {
+            dropId,
+            contextProfileId: createDropRequest.author.external_id,
+            min_part_id: 1,
+            max_part_id: Number.MAX_SAFE_INTEGER
+          },
           connection
         );
       }
@@ -122,13 +122,27 @@ export class DropCreationApiService {
   }
 
   private async validateReferences(createDropRequest: CreateDropRequest) {
-    const quotedDropId = createDropRequest.quoted_drop_id;
-    if (quotedDropId) {
-      const quotedDrop = await this.dropsDb
-        .getDropsByIds([quotedDropId])
-        .then((it) => it[0] ?? null);
-      if (!quotedDrop) {
-        throw new BadRequestException('Invalid quoted drop');
+    const quotedDrops = createDropRequest.parts
+      .map<QuotedDrop | null | undefined>((it) => it.quoted_drop)
+      .filter((it) => it !== undefined && it !== null) as QuotedDrop[];
+
+    if (quotedDrops.length) {
+      const dropIds = quotedDrops.map((it) => it.drop_id);
+      const entities = await this.dropsDb.getDropsByIds(dropIds);
+      const invalidQuotedDrops = quotedDrops.filter((quotedDrop) =>
+        entities.find((it) => {
+          return (
+            it.id === quotedDrop.drop_id &&
+            quotedDrop.drop_part_id <= it.parts_count
+          );
+        })
+      );
+      if (invalidQuotedDrops.length) {
+        throw new BadRequestException(
+          `Invalid quoted drops: ${invalidQuotedDrops
+            .map((it) => `${it.drop_id}/${it.drop_part_id}`)
+            .join(', ')}`
+        );
       }
     }
   }

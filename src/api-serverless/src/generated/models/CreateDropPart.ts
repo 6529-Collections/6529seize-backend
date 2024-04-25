@@ -10,37 +10,39 @@
  * Do not edit the class manually.
  */
 
+import { DropMedia } from '../models/DropMedia';
+import { QuotedDrop } from '../models/QuotedDrop';
 import { HttpFile } from '../http/http';
 
-export class CreateDropMediaUrlRequest {
-    'file_name': string;
-    'content_type': string;
-    'file_size': number;
+export class CreateDropPart {
+    'content'?: string | null;
+    'quoted_drop'?: QuotedDrop | null;
+    'media': Array<DropMedia>;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "file_name",
-            "baseName": "file_name",
+            "name": "content",
+            "baseName": "content",
             "type": "string",
             "format": ""
         },
         {
-            "name": "content_type",
-            "baseName": "content_type",
-            "type": "string",
+            "name": "quoted_drop",
+            "baseName": "quoted_drop",
+            "type": "QuotedDrop",
             "format": ""
         },
         {
-            "name": "file_size",
-            "baseName": "file_size",
-            "type": "number",
-            "format": "int64"
+            "name": "media",
+            "baseName": "media",
+            "type": "Array<DropMedia>",
+            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return CreateDropMediaUrlRequest.attributeTypeMap;
+        return CreateDropPart.attributeTypeMap;
     }
 
     public constructor() {

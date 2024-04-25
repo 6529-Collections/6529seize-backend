@@ -5,17 +5,21 @@ import {
   SqlExecutor
 } from '../sql-executor';
 import {
+  DropCommentEntity,
   DropEntity,
   DropMediaEntity,
   DropMentionEntity,
   DropMetadataEntity,
+  DropPartEntity,
   DropReferencedNftEntity
 } from '../entities/IDrop';
 import {
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
+  DROPS_COMMENTS_TABLE,
   DROPS_MENTIONS_TABLE,
+  DROPS_PARTS_TABLE,
   DROPS_TABLE,
   DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
   PROFILE_FULL,
@@ -30,12 +34,13 @@ import { Time } from '../time';
 import { DropVoteCreditSpending } from '../entities/IDropVoteCreditSpending';
 import { RateMatter } from '../entities/IRating';
 import { DropActivityLogsQuery } from '../api-serverless/src/drops/drops.routes';
-import { uniqueShortId } from '../helpers';
 import {
   ProfileActivityLog,
   ProfileActivityLogType
 } from '../entities/IProfileActivityLog';
 import { randomUUID } from 'crypto';
+import { PageSortDirection } from '../api-serverless/src/page-request';
+import { uniqueShortId } from '../helpers';
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -54,19 +59,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     });
   }
 
-  public async lockDrop(
-    id: string,
-    connection: ConnectionWrapper<any>
-  ): Promise<number> {
-    return this.db
-      .execute(
-        `select id from ${DROPS_TABLE} where id = :id for update`,
-        { id },
-        { wrappedConnection: connection }
-      )
-      .then((it) => it[0]?.id ?? null);
-  }
-
   async insertDrop(
     newDropEntity: NewDropEntity,
     connection: ConnectionWrapper<any>
@@ -77,20 +69,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                             id,
                             author_id, 
                             created_at, 
-                            title, 
-                            content, 
-                            quoted_drop_id,
-                            root_drop_id,
-                            storm_sequence
+                            title,
+                            parts_count
     ) values (
               :id,
               :author_id,
               ROUND(UNIX_TIMESTAMP(CURTIME(4)) * 1000), 
-              :title, 
-              :content, 
-              :quoted_drop_id, 
-              :root_drop_id,
-              :storm_sequence
+              :title,
+              :parts_count
              )`,
 
       { ...newDropEntity, id },
@@ -167,13 +153,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async findDropById(
     id: string,
     connection?: ConnectionWrapper<any>
-  ): Promise<(DropEntity & { max_storm_sequence: number }) | null> {
+  ): Promise<DropEntity | null> {
     const opts = connection ? { wrappedConnection: connection } : {};
     return this.db
       .execute(
         `
-        with mss as (select max(d.storm_sequence) as storm_sequence  from ${DROPS_TABLE} d where d.id = :id)
-        select d.*, ifnull(mss.storm_sequence, 1) as max_storm_sequence from ${DROPS_TABLE} d left join mss on true where d.id = :id
+        select d.* from ${DROPS_TABLE} d where d.id = :id
         `,
         { id },
         opts
@@ -181,34 +166,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .then((it) => it[0] || null);
   }
 
-  async findRootDropMaxStormSequenceOrZero(
-    param: { root_drop_id: string; author_id: string },
-    connection?: ConnectionWrapper<any>
-  ): Promise<number> {
-    return this.db
-      .execute(
-        `select ifnull(max(storm_sequence), 0) storm_sequence from ${DROPS_TABLE} where (root_drop_id = :root_drop_id or id = :root_drop_id) and author_id = :author_id`,
-        param,
-        { wrappedConnection: connection }
-      )
-      .then((it) => {
-        const stormSequence = it[0]!.storm_sequence as number;
-        console.log(it);
-        return stormSequence;
-      });
-  }
-
-  async findLatestDropsGroupedInStorms({
+  async findLatestDrops({
     amount,
     serial_no_less_than,
-    curation_criteria_id,
-    root_drop_id
+    curation_criteria_id
   }: {
     curation_criteria_id: string | null;
     serial_no_less_than: number | null;
-    root_drop_id: string | null;
     amount: number;
-  }): Promise<(DropEntity & { max_storm_sequence: number })[]> {
+  }): Promise<DropEntity[]> {
     const sqlAndParams = await this.criteriaService.getSqlAndParamsByCriteriaId(
       curation_criteria_id
     );
@@ -216,40 +182,24 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       return [];
     }
     const serialNoLessThan = serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
-    const sql = `${
-      sqlAndParams.sql
-    }, mss as (select root_drop_id, max(d.storm_sequence) as max_storm_sequence  from ${DROPS_TABLE} d group by 1)
-     select d.*, ifnull(mss.max_storm_sequence, 1) as max_storm_sequence from ${DROPS_TABLE} d
-         join ${
-           CommunityMemberCriteriaService.GENERATED_VIEW
-         } cm on cm.profile_id = d.author_id
-         left join mss on mss.root_drop_id = d.id
-         where ${
-           root_drop_id === null
-             ? ' d.root_drop_id is null '
-             : ' (d.root_drop_id = :rootDropId or id = :rootDropId) '
-         } and serial_no < :serialNoLessThan order by d.serial_no desc limit ${amount}`;
+    const sql = `${sqlAndParams.sql} select d.* from ${DROPS_TABLE} d
+         join ${CommunityMemberCriteriaService.GENERATED_VIEW} cm on cm.profile_id = d.author_id
+         where serial_no < :serialNoLessThan order by d.serial_no desc limit ${amount}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       serialNoLessThan
     };
-    if (root_drop_id !== null) {
-      params.rootDropId = root_drop_id;
-    }
     return this.db.execute(sql, params);
   }
 
-  async findProfileRootDrops(param: {
+  async findProfileDrops(param: {
     amount: number;
     serial_no_less_than: number | null;
     profile_id: string;
-  }): Promise<(DropEntity & { max_storm_sequence: number })[]> {
+  }): Promise<DropEntity[]> {
     const serialNoLessThan =
       param.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
-    const sql = `
-         with mss as (select root_drop_id, max(d.storm_sequence) as max_storm_sequence  from ${DROPS_TABLE} d  group by 1)
-         select d.*, ifnull(mss.max_storm_sequence, 1) from ${DROPS_TABLE} d
-         left join mss on mss.root_drop_id = d.id
+    const sql = `select d.* from ${DROPS_TABLE} d
          where d.root_drop_id is null and d.serial_no < :serialNoLessThan and d.author_id = :profileId
          order by d.id desc limit ${param.amount}`;
     return this.db.execute(sql, {
@@ -596,28 +546,61 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }, {} as Record<string, { category: string; profile_rating: number; total_rating: number }[]>);
   }
 
-  async countDiscussionCommentsByDropId(
-    dropId: string,
-    logType?: ProfileActivityLogType
-  ): Promise<number> {
-    const logTypes = logType
-      ? [logType]
-      : [
-          ProfileActivityLogType.DROP_COMMENT,
-          ProfileActivityLogType.DROP_RATING_EDIT,
-          ProfileActivityLogType.DROP_CREATED
-        ];
-    const dbResult: { cnt: number }[] = await this.db.execute(
-      `select count(*) as cnt from ${PROFILES_ACTIVITY_LOGS_TABLE} where target_id = :dropId and type in (:logTypes)`,
-      {
-        dropId,
-        logTypes
-      }
-    );
-    return dbResult.at(0)?.cnt ?? 0;
+  async countDiscussionCommentsByDropIds(
+    {
+      dropIds,
+      context_profile_id
+    }: { dropIds: string[]; context_profile_id?: string },
+    connection?: ConnectionWrapper<any>
+  ): Promise<
+    Record<
+      string,
+      Record<number, { count: number; context_profile_count: number }>
+    >
+  > {
+    if (!dropIds.length) {
+      return {};
+    }
+    return this.db
+      .execute(
+        `select p.drop_id, p.drop_part_id, count(*) as cnt
+         ${
+           context_profile_id
+             ? `, sum(case when d.author_id = :context_profile_id then 1 else 0 end) as context_profile_count`
+             : ``
+         }
+         from ${DROPS_COMMENTS_TABLE} p join ${DROPS_TABLE} d on d.id = p.drop_id where p.drop_id = :dropIds group by 1, 2`,
+        {
+          dropIds,
+          context_profile_id
+        },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then(
+        (
+          dbResult: {
+            drop_id: string;
+            drop_part_id: number;
+            cnt: number;
+            context_profile_count: number;
+          }[]
+        ) =>
+          dropIds.reduce((byDropId, dropId) => {
+            byDropId[dropId] = dbResult
+              .filter((entity) => entity.drop_id === dropId)
+              .reduce((byDropPartId, entity) => {
+                byDropPartId[entity.drop_part_id] = {
+                  count: entity.cnt,
+                  context_profile_count: entity.context_profile_count ?? 0
+                };
+                return byDropPartId;
+              }, {} as Record<number, { count: number; context_profile_count: number }>);
+            return byDropId;
+          }, {} as Record<string, Record<number, { count: number; context_profile_count: number }>>)
+      );
   }
 
-  async findDropActivityLogByDropId(
+  async findLogsByDropId(
     query: DropActivityLogsQuery
   ): Promise<ProfileActivityLog[]> {
     const logTypes = query.log_type
@@ -638,46 +621,53 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           logTypes
         }
       )
-      .then((it) =>
-        it.map((log: any) => ({ ...log, contents: JSON.parse(log.contents) }))
-      );
+      .then((it) => {
+        return it.map((log: any) => ({
+          ...log,
+          contents: JSON.parse(log.contents),
+          created_at: new Date(log.created_at)
+        }));
+      });
   }
 
   async insertDiscussionComment(
-    commentRequest: { drop_id: string; content: string; author_id: string },
+    commentRequest: Omit<DropCommentEntity, 'id' | 'created_at'>,
     connection: ConnectionWrapper<any>
-  ): Promise<string> {
-    const id = uniqueShortId();
+  ): Promise<number> {
     await this.db.execute(
-      `insert into ${PROFILES_ACTIVITY_LOGS_TABLE} (id, profile_id, target_id, contents, type, created_at) values (:id, :profile_id, :target_id, :contents, :type, :created_at)`,
+      `insert into ${DROPS_COMMENTS_TABLE} (author_id, drop_id, drop_part_id, comment, created_at) values (:author_id, :drop_id, :drop_part_id, :comment, ROUND(UNIX_TIMESTAMP(CURTIME(4)) * 1000))`,
+      commentRequest,
+      { wrappedConnection: connection }
+    );
+    const commentId = await this.getLastInsertId(connection);
+    await this.db.execute(
+      `insert into ${PROFILES_ACTIVITY_LOGS_TABLE} (id, profile_id, target_id, type, contents, created_at) values (:id, :profile_id, :target_id, :type, :contents, current_timestamp)`,
       {
-        id,
+        id: uniqueShortId(),
         profile_id: commentRequest.author_id,
         target_id: commentRequest.drop_id,
-        contents: JSON.stringify({ content: commentRequest.content }),
         type: ProfileActivityLogType.DROP_COMMENT,
-        created_at: Time.now().toDate()
+        contents: JSON.stringify({
+          comment_id: commentId,
+          drop_part_id: commentRequest.drop_part_id
+        })
       },
       { wrappedConnection: connection }
     );
-    return id;
+    return commentId;
   }
 
   async findDiscussionCommentById(
-    id: string,
+    id: number,
     connection?: ConnectionWrapper<any>
-  ): Promise<ProfileActivityLog | null> {
-    const result = await this.db
+  ): Promise<DropCommentEntity | null> {
+    return this.db
       .execute(
-        `select * from ${PROFILES_ACTIVITY_LOGS_TABLE} where id = :id and type = :type`,
+        `select * from ${DROPS_COMMENTS_TABLE} where id = :id`,
         { id, type: ProfileActivityLogType.DROP_COMMENT },
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((it) => it[0] ?? null);
-    if (result) {
-      result.contents = JSON.parse(result.contents);
-    }
-    return result;
   }
 
   async getDropLogsStats(
@@ -737,38 +727,60 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async getDropsQuoteCounts(
     dropsIds: string[],
     contextProfileId: string | undefined,
+    min_part_id: number,
+    max_part_id: number,
     connection?: ConnectionWrapper<any>
   ): Promise<
-    Record<string, { total: number; by_context_profile: number | null }>
+    Record<
+      string,
+      Record<number, { total: number; by_context_profile: number | null }>
+    >
   > {
     if (!dropsIds.length) {
       return {};
     }
     return this.db
       .execute(
-        `select quoted_drop_id as drop_id, count(*) as total ${
-          contextProfileId
-            ? `, sum(case when author_id = :contextProfileId then 1 else 0 end) as by_context_profile `
-            : ``
-        } from ${DROPS_TABLE} where quoted_drop_id in (:dropsIds) group by 1`,
-        { dropsIds, contextProfileId },
+        `
+    select p.quoted_drop_id                                                 as drop_id,
+           p.drop_part_id as drop_part_id,
+           count(*)                                                       as total
+           ${
+             contextProfileId
+               ? `, sum(case when d.author_id = :contextProfileId then 1 else 0 end) as by_context_profile `
+               : ``
+           }
+    from ${DROPS_PARTS_TABLE} p
+    join ${DROPS_TABLE} d on d.id = p.quoted_drop_id
+    where p.quoted_drop_id in (:dropsIds)
+      and p.drop_part_id >= :min_part_id
+      and p.drop_part_id <= :max_part_id
+    group by 1, 2
+    `,
+        { dropsIds, contextProfileId, min_part_id, max_part_id },
         connection ? { wrappedConnection: connection } : undefined
       )
       .then(
         (
-          it: {
+          dbResult: {
+            drop_part_id: number;
             drop_id: string;
             total: number;
             by_context_profile: number | null;
           }[]
         ) =>
-          dropsIds.reduce((acc, i) => {
-            acc[i] = it.find((r) => r.drop_id === i) ?? {
-              total: 0,
-              by_context_profile: contextProfileId ? 0 : null
-            };
-            return acc;
-          }, {} as Record<string, { total: number; by_context_profile: number | null }>)
+          dropsIds.reduce((byDropId, dropId) => {
+            byDropId[dropId] = dbResult
+              .filter((entity) => entity.drop_id === dropId)
+              .reduce((byPartNo, entity) => {
+                byPartNo[entity.drop_part_id] = {
+                  total: entity.total,
+                  by_context_profile: entity.by_context_profile ?? null
+                };
+                return byPartNo;
+              }, {} as Record<number, { total: number; by_context_profile: number | null }>);
+            return byDropId;
+          }, {} as Record<string, Record<number, { total: number; by_context_profile: number | null }>>)
       );
   }
 
@@ -778,8 +790,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ) {
     for (const medium of media) {
       await this.db.execute(
-        `insert into ${DROP_MEDIA_TABLE} (drop_id, url, mime_type)
-         values (:drop_id, :url, :mime_type)`,
+        `insert into ${DROP_MEDIA_TABLE} (drop_id, drop_part_id, url, mime_type)
+         values (:drop_id, :drop_part_id, :url, :mime_type)`,
         medium,
         { wrappedConnection: connection }
       );
@@ -788,20 +800,107 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async getDropMedia(
     dropIds: string[],
+    min_part_id: number,
+    max_part_id: number,
     connection?: ConnectionWrapper<any>
   ): Promise<Record<string, DropMediaEntity[]>> {
     if (!dropIds.length) {
       return {};
     }
     const dbResult: DropMediaEntity[] = await this.db.execute(
-      `select * from ${DROP_MEDIA_TABLE} where drop_id in (:dropIds)`,
-      { dropIds },
+      `select * from ${DROP_MEDIA_TABLE} where drop_id in (:dropIds) and drop_part_id >= :min_part_id and drop_part_id <= :max_part_id`,
+      { dropIds, min_part_id, max_part_id },
       connection ? { wrappedConnection: connection } : undefined
     );
     return dropIds.reduce((acc, it) => {
       acc[it] = dbResult.filter((r) => r.drop_id === it);
       return acc;
     }, {} as Record<string, DropMediaEntity[]>);
+  }
+
+  async getDropsParts(
+    dropIds: string[],
+    min_part_id: number,
+    max_part_id: number,
+    connection: ConnectionWrapper<any> | undefined
+  ): Promise<Record<string, DropPartEntity[]>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    return this.db
+      .execute(
+        `select * from ${DROPS_PARTS_TABLE} where drop_id in (:dropIds) and drop_part_id >= :min_part_id and drop_part_id <= :max_part_id order by drop_part_id asc`,
+        {
+          dropIds,
+          min_part_id,
+          max_part_id
+        },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((it: DropPartEntity[]) =>
+        it.reduce((acc, part) => {
+          if (!acc[part.drop_id]) {
+            acc[part.drop_id] = [];
+          }
+          acc[part.drop_id].push(part);
+          return acc;
+        }, {} as Record<string, DropPartEntity[]>)
+      );
+  }
+
+  async insertDropParts(
+    parts: DropPartEntity[],
+    connection: ConnectionWrapper<any>
+  ) {
+    for (const part of parts) {
+      await this.db.execute(
+        `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content, quoted_drop_id, quoted_drop_part_id) values (:drop_id, :drop_part_id, :content, :quoted_drop_id, :quoted_drop_part_id)`,
+        part,
+        { wrappedConnection: connection }
+      );
+    }
+  }
+
+  async findDiscussionCommentsByDropId(param: {
+    sort_direction: PageSortDirection;
+    drop_id: string;
+    drop_part_id: number;
+    sort: string;
+    page: number;
+    page_size: number;
+  }): Promise<DropCommentEntity[]> {
+    const limit = param.page_size;
+    const offset = (param.page - 1) * limit;
+    const sort = param.sort;
+    const direction = param.sort_direction;
+    return this.db.execute(
+      `select * from ${DROPS_COMMENTS_TABLE} where drop_id = :drop_id and drop_part_id = :drop_part_id order by ${sort} ${direction} limit ${limit} offset ${offset}`,
+      param
+    );
+  }
+
+  async countLogsByDropIds(
+    drop_ids: string[],
+    log_type?: ProfileActivityLogType
+  ): Promise<Record<string, number>> {
+    const log_types = log_type
+      ? [log_type]
+      : [
+          ProfileActivityLogType.DROP_COMMENT,
+          ProfileActivityLogType.DROP_RATING_EDIT,
+          ProfileActivityLogType.DROP_CREATED
+        ];
+    return this.db
+      .execute(
+        `select target_id as drop_id, count(*) as cnt from ${PROFILES_ACTIVITY_LOGS_TABLE} where target_id in (:drop_ids) and type in (:log_types) group by 1`,
+        { drop_ids, log_types }
+      )
+      .then((dbResult: { drop_id: string; cnt: number }[]) =>
+        drop_ids.reduce((acc, count) => {
+          acc[count] = dbResult.find((it) => it.drop_id === count)?.cnt ?? 0;
+          return acc;
+        }, {} as Record<string, number>)
+      );
   }
 }
 
