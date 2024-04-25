@@ -394,7 +394,9 @@ from grouped_rates r
          join ${PROFILES_TABLE} p on p.external_id = r.profile_id
          left join ${COMMUNITY_MEMBERS_TABLE} c on p.primary_wallet = c.wallet1 or p.primary_wallet = c.wallet2 or p.primary_wallet = c.wallet3
          left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on c.consolidation_key = t.consolidation_key
-         left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id order by ${order_by} ${order}  limit ${limit} offset ${offset}`,
+         left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id order by ${order_by} ${order} ${
+          order_by !== `handle` ? `, p.handle asc` : ``
+        }  limit ${limit} offset ${offset}`,
         sqlParams
       ),
       this.db
