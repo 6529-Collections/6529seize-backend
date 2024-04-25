@@ -561,15 +561,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     if (!dropIds.length) {
       return {};
     }
+    const sql = `select p.drop_id, p.drop_part_id, count(*) as cnt
+     ${
+       context_profile_id
+         ? `, sum(case when d.author_id = :context_profile_id then 1 else 0 end) as context_profile_count`
+         : ``
+     }
+     from ${DROPS_COMMENTS_TABLE} p join ${DROPS_TABLE} d on d.id = p.drop_id where p.drop_id in (:dropIds) group by 1, 2`;
     return this.db
       .execute(
-        `select p.drop_id, p.drop_part_id, count(*) as cnt
-         ${
-           context_profile_id
-             ? `, sum(case when d.author_id = :context_profile_id then 1 else 0 end) as context_profile_count`
-             : ``
-         }
-         from ${DROPS_COMMENTS_TABLE} p join ${DROPS_TABLE} d on d.id = p.drop_id where p.drop_id = :dropIds group by 1, 2`,
+        sql,
         {
           dropIds,
           context_profile_id
