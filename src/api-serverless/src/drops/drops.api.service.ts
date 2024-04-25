@@ -162,33 +162,34 @@ export class DropsApiService {
       serial_no: dropEntity.serial_no,
       author: profilesByIds[dropEntity.author_id]!,
       title: dropEntity.title,
-      parts: dropsParts[dropEntity.id].map<DropPart>((it) => ({
-        content: it.content,
-        quoted_drop_id: it.quoted_drop_id,
-        quoted_drop_part_id: it.quoted_drop_part_id,
-        part_id: it.drop_part_id,
-        media:
-          (dropMedia[dropEntity.id] ?? [])
-            .filter((m) => m.drop_part_id === it.drop_part_id)
-            .map<DropMedia>((it) => ({
-              url: it.url,
-              mime_type: it.mime_type
-            })) ?? [],
-        discussion_comments_count:
-          dropsCommentsCounts[it.drop_id]?.[it.drop_part_id]?.count ?? 0,
-        quotes_count:
-          dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]?.total ?? 0,
-        context_profile_context: contextProfileId
-          ? {
-              discussion_comments_count:
-                dropsCommentsCounts[it.drop_id]?.[it.drop_part_id]
-                  ?.context_profile_count ?? 0,
-              quotes_count:
-                dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]
-                  ?.by_context_profile ?? 0
-            }
-          : null
-      })),
+      parts:
+        dropsParts[dropEntity.id]?.map<DropPart>((it) => ({
+          content: it.content,
+          quoted_drop_id: it.quoted_drop_id,
+          quoted_drop_part_id: it.quoted_drop_part_id,
+          part_id: it.drop_part_id,
+          media:
+            (dropMedia[dropEntity.id] ?? [])
+              .filter((m) => m.drop_part_id === it.drop_part_id)
+              .map<DropMedia>((it) => ({
+                url: it.url,
+                mime_type: it.mime_type
+              })) ?? [],
+          discussion_comments_count:
+            dropsCommentsCounts[it.drop_id]?.[it.drop_part_id]?.count ?? 0,
+          quotes_count:
+            dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]?.total ?? 0,
+          context_profile_context: contextProfileId
+            ? {
+                discussion_comments_count:
+                  dropsCommentsCounts[it.drop_id]?.[it.drop_part_id]
+                    ?.context_profile_count ?? 0,
+                quotes_count:
+                  dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]
+                    ?.by_context_profile ?? 0
+              }
+            : null
+        })) ?? [],
       parts_count: dropEntity.parts_count,
       created_at: dropEntity.created_at,
       referenced_nfts: referencedNfts
