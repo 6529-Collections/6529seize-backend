@@ -12,35 +12,28 @@
 
 import { HttpFile } from '../http/http';
 
-export class CreateDropMediaUrlRequest {
-    'file_name': string;
-    'content_type': string;
-    'file_size': number;
+export class DropPartContextProfileContext {
+    'discussion_comments_count': number;
+    'quotes_count': number;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "file_name",
-            "baseName": "file_name",
-            "type": "string",
-            "format": ""
+            "name": "discussion_comments_count",
+            "baseName": "discussion_comments_count",
+            "type": "number",
+            "format": "int64"
         },
         {
-            "name": "content_type",
-            "baseName": "content_type",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "file_size",
-            "baseName": "file_size",
+            "name": "quotes_count",
+            "baseName": "quotes_count",
             "type": "number",
             "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return CreateDropMediaUrlRequest.attributeTypeMap;
+        return DropPartContextProfileContext.attributeTypeMap;
     }
 
     public constructor() {

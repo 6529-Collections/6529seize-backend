@@ -83,11 +83,12 @@ export const SUBSCRIPTIONS_LOGS_TABLE = 'subscriptions_logs';
 export const SUBSCRIPTIONS_REDEEMED_TABLE = 'subscriptions_redeemed';
 
 export const DROPS_TABLE = 'drops';
+export const DROPS_PARTS_TABLE = 'drops_parts';
 export const DROPS_MENTIONS_TABLE = 'drops_mentions';
 export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
 export const DROP_METADATA_TABLE = 'drops_metadatas';
 export const DROP_MEDIA_TABLE = 'drop_medias';
-export const DROP_DISCUSSION_COMMENT_TABLE = 'drops_discussion_comments';
+export const DROPS_COMMENTS_TABLE = 'drops_comments';
 
 export const ETH_PRICE_TABLE = 'eth_price';
 

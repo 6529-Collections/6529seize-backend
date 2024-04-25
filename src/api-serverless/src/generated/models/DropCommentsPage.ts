@@ -10,37 +10,45 @@
  * Do not edit the class manually.
  */
 
+import { DropComment } from '../models/DropComment';
 import { HttpFile } from '../http/http';
 
-export class CreateDropMediaUrlRequest {
-    'file_name': string;
-    'content_type': string;
-    'file_size': number;
+export class DropCommentsPage {
+    'count': number;
+    'page': number;
+    'next': boolean;
+    'data': Array<DropComment>;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "file_name",
-            "baseName": "file_name",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "content_type",
-            "baseName": "content_type",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "file_size",
-            "baseName": "file_size",
+            "name": "count",
+            "baseName": "count",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "page",
+            "baseName": "page",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "next",
+            "baseName": "next",
+            "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "data",
+            "baseName": "data",
+            "type": "Array<DropComment>",
+            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return CreateDropMediaUrlRequest.attributeTypeMap;
+        return DropCommentsPage.attributeTypeMap;
     }
 
     public constructor() {
