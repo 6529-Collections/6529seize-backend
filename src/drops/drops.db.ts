@@ -200,7 +200,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const serialNoLessThan =
       param.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `select d.* from ${DROPS_TABLE} d
-         where d.root_drop_id is null and d.serial_no < :serialNoLessThan and d.author_id = :profileId
+         where  d.serial_no < :serialNoLessThan and d.author_id = :profileId
          order by d.id desc limit ${param.amount}`;
     return this.db.execute(sql, {
       profileId: param.profile_id,
