@@ -84,6 +84,8 @@ export const SUBSCRIPTIONS_REDEEMED_TABLE = 'subscriptions_redeemed';
 
 export const DROPS_TABLE = 'drops';
 export const DROPS_PARTS_TABLE = 'drops_parts';
+export const PROFILE_PROXIES_TABLE = 'profile_proxies';
+export const PROFILE_PROXY_ACTIONS_TABLE = 'profile_proxy_actions';
 export const DROPS_MENTIONS_TABLE = 'drops_mentions';
 export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
 export const DROP_METADATA_TABLE = 'drops_metadatas';

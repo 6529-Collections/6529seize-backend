@@ -24,6 +24,7 @@ import profileCicRoutes from './profile-cic.routes';
 import profileRepRoutes from './profile-rep.routes';
 import profileCollectedRoutes from './collected/collected.routes';
 import profileDropsRoutes from './profile-drops.routes';
+import profileProfileProxiesRoutes from './proxies/profile-proxies.routes';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { getProfileClassificationsBySubclassification } from './profile.helper';
 
@@ -276,5 +277,6 @@ router.use('/:handleOrWallet/cic', profileCicRoutes);
 router.use('/:handleOrWallet/rep', profileRepRoutes);
 router.use('/:handleOrWallet/collected', profileCollectedRoutes);
 router.use('/:handleOrWallet/drops', profileDropsRoutes);
+router.use('/:handleOrWallet/proxies', profileProfileProxiesRoutes);
 
 export default router;

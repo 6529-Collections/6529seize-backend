@@ -4,6 +4,7 @@ import { isNumber } from '../../helpers';
 
 import profilesRoutes from './profiles/profiles.routes';
 import authRoutes from './auth/auth.routes';
+import proxiesRoutes from './proxies/proxies.routes';
 import rememesRoutes from './rememes/rememes.routes';
 import nextgenRoutes from './nextgen/nextgen.routes';
 import analyticsRoutes from './analytics/analytics.routes';
@@ -811,6 +812,7 @@ loadApi().then(() => {
   apiRouter.use(`/aggregated-activity`, aggregatedActivityRoutes);
   apiRouter.use(`/owners-balances`, ownersBalancesRoutes);
   apiRouter.use(`/ratings`, ratingsRoutes);
+  apiRouter.use(`/proxies`, proxiesRoutes);
   apiRouter.use(`/subscriptions`, subscriptionsRoutes);
   apiRouter.use(`/drops`, dropsRoutes);
   apiRouter.use(`/nft-owners`, nftOwnersRoutes);
