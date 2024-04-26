@@ -85,7 +85,7 @@ async function getPrimaryAddressUpdates(profiles: ProfileAndConsolidations[]) {
       const currentPrimaryAddress = profile.profile.primary_wallet;
       if (!areEqualAddresses(primaryAddress, currentPrimaryAddress)) {
         logger.info(
-          `[PROFILE ${profile.profile.external_id}] :[HANDLE ${profile.profile.handle}] : [DETECTED PRIMARY ADDRESS CHANGE] : [${currentPrimaryAddress} -> ${primaryAddress}]`
+          `[PROFILE ${profile.profile.external_id}] : [HANDLE ${profile.profile.handle}] : [DETECTED PRIMARY ADDRESS CHANGE] : [${currentPrimaryAddress} -> ${primaryAddress}]`
         );
         const changedProfile = profile.profile;
         changedProfile.primary_wallet = primaryAddress;
