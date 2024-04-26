@@ -16,7 +16,7 @@ import { HttpFile } from '../http/http';
 export class CreateNewProfileProxyRateWaveDropAction {
     'action_type': CreateNewProfileProxyActionType;
     'start_time': number;
-    'end_time'?: number | null;
+    'end_time': number | null;
 
     static readonly discriminator: string | undefined = undefined;
 

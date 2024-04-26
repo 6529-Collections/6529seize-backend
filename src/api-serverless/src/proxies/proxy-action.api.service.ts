@@ -139,7 +139,7 @@ export class ProfileProxyActionApiService {
       created_at: Time.currentMillis(),
       action_type: ACTION_MAP[action_type],
       start_time,
-      end_time,
+      end_time: end_time ?? null,
       action_data: JSON.stringify(restOfAction),
       accepted_at: null,
       rejected_at: null,

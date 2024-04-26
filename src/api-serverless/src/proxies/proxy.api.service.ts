@@ -113,7 +113,7 @@ export class ProfileProxyApiService {
     const target = await this.getTargetOrThrow({
       target_id
     });
-    if (!target.profile.handle) {
+    if (!target.profile?.handle) {
       throw new BadRequestException(
         `Profile with id ${target_id} does not exist`
       );

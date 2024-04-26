@@ -602,41 +602,6 @@ components:
           description: 'Which drop in the storm is this drop'
           type: number
           format: int64
-        - id
-        - serial_no
-        - author
-        - created_at
-        - referenced_nfts
-        - mentioned_users
-        - metadata
-        - media
-        - storm_sequence
-        - max_storm_sequence
-        - rating
-        - top_raters
-        - raters_count
-        - top_rating_categories
-        - rating_categories_count
-        - discussion_comments_count
-        - rating_logs_count
-        - quotes_count
-      properties:
-        id:
-          type: string
-        serial_no:
-          description: Sequence number of the drop in Seize
-          type: number
-          format: int64
-        author:
-          $ref: '#/components/schemas/ProfileMin'
-        created_at:
-          description: Time when the drop was created in milliseconds since 1-1-1970 00:00:00.0 UTC
-          type: number
-          format: int64
-        title:
-          type: string
-          maxLength: 250
-          nullable: true
         content:
           type: string
           maxLength: 25000
@@ -648,60 +613,6 @@ components:
         discussion_comments_count:
           type: number
           format: int64
-        quoted_drop_id:
-          type: string
-          nullable: true
-        root_drop_id:
-          description: 'Exists if the drop is part of a storm and is not the first drop in the storm'
-          type: string
-          nullable: true
-        referenced_nfts:
-          type: array
-          items:
-            $ref: '#/components/schemas/DropReferencedNFT'
-        mentioned_users:
-          type: array
-          items:
-            $ref: '#/components/schemas/DropMentionedUser'
-        metadata:
-          type: array
-          items:
-            $ref: '#/components/schemas/DropMetadata'
-        media:
-          type: array
-          items:
-            $ref: '#/components/schemas/DropMedia'
-        storm_sequence:
-          description: 'Which drop in the storm is this drop'
-          type: number
-          format: int64
-        max_storm_sequence:
-          description: 'Number of drops in the storm'
-          type: number
-          format: int64
-        rating:
-          type: number
-          format: int64
-        top_raters:
-          type: array
-          items:
-            $ref: '#/components/schemas/DropRater'
-        raters_count:
-          type: number
-          format: int64
-        top_rating_categories:
-          type: array
-          items:
-            $ref: '#/components/schemas/DropRatingCategory'
-        rating_categories_count:
-          type: number
-          format: int64
-        discussion_comments_count:
-          type: number
-          format: int64
-        rating_logs_count:
-          type: number
-          format: int64
         quotes_count:
           type: number
           format: int64
@@ -709,7 +620,6 @@ components:
           anyOf:
             - type: 'null'
             - $ref: '#/components/schemas/DropPartContextProfileContext'
-            - $ref: '#/components/schemas/DropContextProfileContext'
     ProfileMin:
       type: object
       required:
@@ -834,20 +744,6 @@ components:
         - discussion_comments_count
         - quotes_count
       properties:
-      type: object
-      required:
-        - categories
-        - rating
-        - discussion_comments_count
-        - quotes_count
-      properties:
-        categories:
-          type: array
-          items:
-            $ref: '#/components/schemas/DropRatingCategory'
-        rating:
-          type: number
-          format: int64
         discussion_comments_count:
           type: number
           format: int64
@@ -1041,6 +937,7 @@ components:
       required:
         - action_type
         - start_time
+        - end_time
         - credit
       properties:
         action_type:
@@ -1069,8 +966,10 @@ components:
       type: object
       required:
         - action_type
-        - startTime
+        - start_time
+        - end_time
         - credit
+        - group_id
       properties:
         action_type:
           $ref: '#/components/schemas/CreateNewProfileProxyActionType'
@@ -1094,7 +993,8 @@ components:
       type: object
       required:
         - action_type
-        - start_ime
+        - start_time
+        - end_time
       properties:
         action_type:
           $ref: '#/components/schemas/CreateNewProfileProxyActionType'
@@ -1112,6 +1012,7 @@ components:
       required:
         - action_type
         - start_time
+        - end_time
       properties:
         action_type:
           $ref: '#/components/schemas/CreateNewProfileProxyActionType'
@@ -1129,6 +1030,7 @@ components:
       required:
         - action_type
         - start_time
+        - end_time
       properties:
         action_type:
           $ref: '#/components/schemas/CreateNewProfileProxyActionType'
@@ -1145,6 +1047,7 @@ components:
       required:
         - action_type
         - start_time
+        - end_time
       properties:
         action_type:
           $ref: '#/components/schemas/CreateNewProfileProxyActionType'
@@ -1174,6 +1077,10 @@ components:
         - action_type
         - action_data
         - start_time
+        - end_time
+        - accepted_at
+        - rejected_at
+        - revoked_at
         - created_at
         - is_active
       properties:

@@ -21,9 +21,9 @@ import { HttpFile } from '../http/http';
 export class AddActionToProxyRequest {
     'action_type': CreateNewProfileProxyActionType;
     'start_time': number;
-    'end_time'?: number | null;
+    'end_time': number | null;
     'credit': number;
-    'group_id'?: string | null;
+    'group_id': string | null;
     'category'?: string | null;
 
     static readonly discriminator: string | undefined = undefined;

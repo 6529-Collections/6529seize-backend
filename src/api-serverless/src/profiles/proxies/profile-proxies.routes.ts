@@ -38,7 +38,7 @@ router.get(
   ) => {
     // fix any
     const maybeAuthenticatedWallet = getAuthenticatedWalletOrNull(req as any);
-    const maybeAuthenticatedProfile: ProfileAndConsolidations | null =
+    const maybeAuthenticatedProfile =
       maybeAuthenticatedWallet
         ? await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
             maybeAuthenticatedWallet
@@ -49,15 +49,15 @@ router.get(
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         req.params.handleOrWallet
       );
-    if (!targetProfile) {
+    if (!targetProfile?.profile) {
       throw new BadRequestException(
         `Profile with id ${req.params.handleOrWallet} does not exist`
       );
     }
 
     const isRequesterTarget =
-      maybeAuthenticatedProfile?.profile.external_id ===
-      targetProfile.profile.external_id;
+      maybeAuthenticatedProfile?.profile?.external_id ===
+      targetProfile.profile?.external_id;
 
     console.log('isRequesterTarget', isRequesterTarget);
 

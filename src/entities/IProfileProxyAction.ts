@@ -22,16 +22,16 @@ export class ProfileProxyActionEntity {
   readonly start_time!: number;
 
   @Column({ type: 'bigint', nullable: true, default: null })
-  readonly end_time!: number;
+  readonly end_time!: number | null;
 
   @Column({ type: 'bigint', nullable: true, default: null })
-  readonly accepted_at!: number;
+  readonly accepted_at!: number | null;
 
   @Column({ type: 'bigint', nullable: true, default: null })
-  readonly rejected_at!: number;
+  readonly rejected_at!: number | null;
 
   @Column({ type: 'bigint', nullable: true, default: null })
-  readonly revoked_at!: number;
+  readonly revoked_at!: number | null;
 
   @Column({ type: 'boolean', default: false })
   readonly is_active!: boolean;

@@ -19,11 +19,11 @@ export class ProfileProxyAction {
     'action_type': CreateNewProfileProxyActionType;
     'action_data': any;
     'start_ime'?: number;
-    'end_time'?: number | null;
+    'end_time': number | null;
     'created_at': number;
-    'accepted_at'?: number | null;
-    'rejected_at'?: number | null;
-    'revoked_at'?: number | null;
+    'accepted_at': number | null;
+    'rejected_at': number | null;
+    'revoked_at': number | null;
     'is_active': boolean;
 
     static readonly discriminator: string | undefined = undefined;

@@ -1,5 +1,4 @@
 export * from '../models/AddActionToProxyRequest';
-export * from '../models/CommentDropRequest';
 export * from '../models/CreateDropMediaUrl201Response';
 export * from '../models/CreateDropMediaUrlRequest';
 export * from '../models/CreateDropPart';
@@ -28,13 +27,11 @@ export * from '../models/DropRatingRequest';
 export * from '../models/DropReferencedNFT';
 export * from '../models/NewDropComment';
 export * from '../models/ProfileMin';
-export * from '../models/QuotedDrop';
-
 export * from '../models/ProfileProxy';
 export * from '../models/ProfileProxyAction';
+export * from '../models/QuotedDrop';
 
 import { AddActionToProxyRequest       } from '../models/AddActionToProxyRequest';
-import { CommentDropRequest } from '../models/CommentDropRequest';
 import { CreateDropMediaUrl201Response } from '../models/CreateDropMediaUrl201Response';
 import { CreateDropMediaUrlRequest } from '../models/CreateDropMediaUrlRequest';
 import { CreateDropPart } from '../models/CreateDropPart';
@@ -63,9 +60,9 @@ import { DropRatingRequest } from '../models/DropRatingRequest';
 import { DropReferencedNFT } from '../models/DropReferencedNFT';
 import { NewDropComment } from '../models/NewDropComment';
 import { ProfileMin } from '../models/ProfileMin';
-import { QuotedDrop } from '../models/QuotedDrop';
 import { ProfileProxy } from '../models/ProfileProxy';
 import { ProfileProxyAction            } from '../models/ProfileProxyAction';
+import { QuotedDrop } from '../models/QuotedDrop';
 
 /* tslint:disable:no-unused-variable */
 let primitives = [
@@ -86,7 +83,6 @@ let enumsMap: Set<string> = new Set<string>([
 
 let typeMap: {[index: string]: any} = {
     "AddActionToProxyRequest": AddActionToProxyRequest,
-    "CommentDropRequest": CommentDropRequest,
     "CreateDropMediaUrl201Response": CreateDropMediaUrl201Response,
     "CreateDropMediaUrlRequest": CreateDropMediaUrlRequest,
     "CreateDropPart": CreateDropPart,
@@ -114,9 +110,9 @@ let typeMap: {[index: string]: any} = {
     "DropReferencedNFT": DropReferencedNFT,
     "NewDropComment": NewDropComment,
     "ProfileMin": ProfileMin,
-    "QuotedDrop": QuotedDrop,
     "ProfileProxy": ProfileProxy,
     "ProfileProxyAction": ProfileProxyAction,
+    "QuotedDrop": QuotedDrop,
 }
 
 type MimeTypeDescriptor = {

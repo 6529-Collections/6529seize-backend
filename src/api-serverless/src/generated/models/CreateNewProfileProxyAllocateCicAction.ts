@@ -15,10 +15,10 @@ import { HttpFile } from '../http/http';
 
 export class CreateNewProfileProxyAllocateCicAction {
     'action_type': CreateNewProfileProxyActionType;
-    'start_time'?: number;
-    'end_time'?: number | null;
+    'start_time': number;
+    'end_time': number | null;
     'credit': number;
-    'group_id'?: string | null;
+    'group_id': string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
