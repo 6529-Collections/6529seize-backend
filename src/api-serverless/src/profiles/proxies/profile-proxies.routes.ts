@@ -18,7 +18,6 @@ import {
   getAuthenticatedWalletOrNull,
   maybeAuthenticatedUser
 } from '../../auth/auth';
-import { ProfileAndConsolidations } from '../../../../profiles/profile.types';
 
 const router = asyncRouter({ mergeParams: true });
 
