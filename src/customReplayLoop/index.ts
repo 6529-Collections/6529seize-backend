@@ -62,7 +62,7 @@ async function getPrimaryAddressUpdates(profiles: ProfileAndConsolidations[]) {
 
   for (const profile of profiles) {
     if (profile?.profile && profile.consolidation.consolidation_key) {
-      const primaryAddress = await determinePrimaryAddress(
+      const primaryAddress = await profilesService.determinePrimaryAddress(
         profile.consolidation.wallets,
         profile.consolidation.consolidation_key
       );
@@ -80,28 +80,4 @@ async function getPrimaryAddressUpdates(profiles: ProfileAndConsolidations[]) {
   }
 
   return profilesToUpdate;
-}
-
-async function determinePrimaryAddress(
-  wallets: { wallet: Wallet }[],
-  consolidationKey: string
-): Promise<string> {
-  if (wallets.length === 1) {
-    return wallets[0].wallet.address;
-  }
-
-  const delegationPrimaryAddress =
-    await getDelegationPrimaryAddressForConsolidation(consolidationKey);
-  if (delegationPrimaryAddress) {
-    return delegationPrimaryAddress;
-  }
-
-  const highestTdhAddress = await getHighestTdhAddressForConsolidationKey(
-    consolidationKey
-  );
-  if (highestTdhAddress) {
-    return highestTdhAddress;
-  }
-
-  return wallets[0].wallet.address;
 }

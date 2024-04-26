@@ -1003,7 +1003,7 @@ export class ProfilesService {
     }
   }
 
-  private async determinePrimaryAddress(
+  public async determinePrimaryAddress(
     wallets: { wallet: Wallet }[],
     consolidationKey: string
   ): Promise<string> {
