@@ -35,6 +35,7 @@ import {
   getHighestTdhAddressForConsolidationKey,
   getDelegationPrimaryAddressForConsolidation
 } from '../delegationsLoop/db.delegations';
+import { Wallet } from '../entities/IWallet';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -987,28 +988,10 @@ export class ProfilesService {
     for (const address of Array.from(addresses)) {
       const profile = await this.getProfileByWallet(address);
       if (profile?.profile && profile.consolidation.consolidation_key) {
-        const consolidationKey = profile.consolidation.consolidation_key;
-
-        let primaryAddress = '';
-        if (profile.consolidation.wallets.length === 1) {
-          primaryAddress = profile.consolidation.wallets[0].wallet.address;
-        } else {
-          const delegationPrimaryAddress =
-            await getDelegationPrimaryAddressForConsolidation(consolidationKey);
-
-          if (delegationPrimaryAddress) {
-            primaryAddress = delegationPrimaryAddress;
-          } else {
-            const highestTdhAddress =
-              await getHighestTdhAddressForConsolidationKey(consolidationKey);
-            if (highestTdhAddress) {
-              primaryAddress = highestTdhAddress;
-            } else {
-              primaryAddress = profile.consolidation.wallets[0].wallet.address;
-            }
-          }
-        }
-
+        const primaryAddress = await this.determinePrimaryAddress(
+          profile.consolidation.wallets,
+          profile.consolidation.consolidation_key
+        );
         const currentPrimaryAddress = profile.profile.primary_wallet;
         if (!areEqualAddresses(primaryAddress, currentPrimaryAddress)) {
           await this.updateProfilePrimaryAddress(
@@ -1018,6 +1001,30 @@ export class ProfilesService {
         }
       }
     }
+  }
+
+  private async determinePrimaryAddress(
+    wallets: { wallet: Wallet }[],
+    consolidationKey: string
+  ): Promise<string> {
+    if (wallets.length === 1) {
+      return wallets[0].wallet.address;
+    }
+
+    const delegationPrimaryAddress =
+      await getDelegationPrimaryAddressForConsolidation(consolidationKey);
+    if (delegationPrimaryAddress) {
+      return delegationPrimaryAddress;
+    }
+
+    const highestTdhAddress = await getHighestTdhAddressForConsolidationKey(
+      consolidationKey
+    );
+    if (highestTdhAddress) {
+      return highestTdhAddress;
+    }
+
+    return wallets[0].wallet.address;
   }
 
   public async updateProfilePrimaryAddress(
