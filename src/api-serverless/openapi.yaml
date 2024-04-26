@@ -1121,8 +1121,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WaveRequiredMetadata'
-        credit_scope:
-          $ref: '#/components/schemas/WaveCreditScope'
         signature_required:
           description: If true then the votes must be signed by voters.
           type: boolean

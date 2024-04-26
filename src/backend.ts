@@ -20,6 +20,7 @@ import { CommunityMembersCurationCriteriaEntity } from './entities/ICommunityMem
 import { RatingsSnapshot } from './entities/IRatingsSnapshots';
 import { ProfileProxyEntity } from './entities/IProfileProxy';
 import { ProfileProxyActionEntity } from './entities/IProfileProxyAction';
+import { WaveEntity } from './entities/IWave';
 
 const logger = Logger.get('BACKEND');
 
@@ -45,7 +46,8 @@ async function start() {
     DropVoteCreditSpending,
     DropCommentEntity,
     ProfileProxyEntity,
-    ProfileProxyActionEntity
+    ProfileProxyActionEntity,
+    WaveEntity
   ]);
 
   const diff = start.diffFromNow().formatAsDuration();
