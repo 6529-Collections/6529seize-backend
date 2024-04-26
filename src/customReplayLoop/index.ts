@@ -26,6 +26,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 async function replay() {
   // logger.info(`[CUSTOM REPLAY NOT IMPLEMENTED]`);
   const profiles = await sqlExecutor.execute(`SELECT * FROM ${PROFILES_TABLE}`);
+  logger.info(`[PROFILES: ${profiles.length}]`);
 
   const profilesWithConsolidationKey: ProfileAndConsolidations[] = [];
   await Promise.all(
@@ -38,7 +39,7 @@ async function replay() {
       }
     })
   );
-  logger.info(`[PROFILES: ${profiles.length}]`);
+
   logger.info(
     `[PROFILES WITH CONSOLIDATIONS: ${profilesWithConsolidationKey.length}]`
   );
