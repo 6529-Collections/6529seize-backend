@@ -488,6 +488,10 @@ components:
           type: string
           maxLength: 25000
           nullable: true
+        media:
+          type: array
+          items:
+              $ref: '#/components/schemas/DropMedia'
         quoted_drop:
           anyOf:
             - $ref: '#/components/schemas/QuotedDrop'
