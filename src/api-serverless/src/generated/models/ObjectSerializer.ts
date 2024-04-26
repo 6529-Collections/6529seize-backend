@@ -86,7 +86,7 @@ import { WaveConfig      } from '../models/WaveConfig';
 import { WaveCreditScope } from '../models/WaveCreditScope';
 import { WaveCreditType } from '../models/WaveCreditType';
 import { WaveOutcome } from '../models/WaveOutcome';
-import { WaveParticipationConfig       } from '../models/WaveParticipationConfig';
+import { WaveParticipationConfig } from '../models/WaveParticipationConfig';
 import { WaveRequiredMetadata } from '../models/WaveRequiredMetadata';
 import { WaveScope   } from '../models/WaveScope';
 import { WaveScopeType } from '../models/WaveScopeType';

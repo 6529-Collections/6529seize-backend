@@ -11,7 +11,6 @@
  */
 
 import { IntRange } from '../models/IntRange';
-import { WaveCreditScope } from '../models/WaveCreditScope';
 import { WaveRequiredMetadata } from '../models/WaveRequiredMetadata';
 import { WaveScope } from '../models/WaveScope';
 import { HttpFile } from '../http/http';
@@ -26,7 +25,6 @@ export class WaveParticipationConfig {
     * The metadata that must be provided by the participant.  Empty array if nothing is required. 
     */
     'required_metadata': Array<WaveRequiredMetadata>;
-    'credit_scope'?: WaveCreditScope;
     /**
     * If true then the votes must be signed by voters.
     */
@@ -55,12 +53,6 @@ export class WaveParticipationConfig {
             "format": ""
         },
         {
-            "name": "credit_scope",
-            "baseName": "credit_scope",
-            "type": "WaveCreditScope",
-            "format": ""
-        },
-        {
             "name": "signature_required",
             "baseName": "signature_required",
             "type": "boolean",
@@ -80,6 +72,4 @@ export class WaveParticipationConfig {
     public constructor() {
     }
 }
-
-
 

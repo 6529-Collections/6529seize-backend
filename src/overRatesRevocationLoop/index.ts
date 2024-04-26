@@ -22,6 +22,7 @@ import { DropVoteCreditSpending } from '../entities/IDropVoteCreditSpending';
 import { dropOverRaterRevocationService } from '../drops/drop-over-rater-revocation.service';
 import { ProfileProxyEntity } from '../entities/IProfileProxy';
 import { ProfileProxyActionEntity } from '../entities/IProfileProxyAction';
+import { WaveEntity } from '../entities/IWave';
 
 const logger = Logger.get('OVER_RATES_REVOCATION_LOOP');
 
@@ -45,7 +46,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     DropVoteCreditSpending,
     DropCommentEntity,
     ProfileProxyEntity,
-    ProfileProxyActionEntity
+    ProfileProxyActionEntity,
+    WaveEntity
   ]);
   await ratingsService.reduceOverRates();
   await dropOverRaterRevocationService.revokeOverRates();
