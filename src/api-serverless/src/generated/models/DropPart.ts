@@ -10,6 +10,7 @@
  * Do not edit the class manually.
  */
 
+import { DropMedia } from '../models/DropMedia';
 import { DropPartContextProfileContext } from '../models/DropPartContextProfileContext';
 import { QuotedDrop } from '../models/QuotedDrop';
 import { HttpFile } from '../http/http';
@@ -20,6 +21,7 @@ export class DropPart {
     */
     'part_id': number;
     'content'?: string | null;
+    'media': Array<DropMedia>;
     'quoted_drop'?: QuotedDrop | null;
     'discussion_comments_count': number;
     'quotes_count': number;
@@ -38,6 +40,12 @@ export class DropPart {
             "name": "content",
             "baseName": "content",
             "type": "string",
+            "format": ""
+        },
+        {
+            "name": "media",
+            "baseName": "media",
+            "type": "Array<DropMedia>",
             "format": ""
         },
         {
