@@ -37,12 +37,11 @@ router.get(
   ) => {
     // fix any
     const maybeAuthenticatedWallet = getAuthenticatedWalletOrNull(req as any);
-    const maybeAuthenticatedProfile =
-      maybeAuthenticatedWallet
-        ? await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-            maybeAuthenticatedWallet
-          )
-        : null;
+    const maybeAuthenticatedProfile = maybeAuthenticatedWallet
+      ? await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+          maybeAuthenticatedWallet
+        )
+      : null;
 
     const targetProfile =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
@@ -57,8 +56,6 @@ router.get(
     const isRequesterTarget =
       maybeAuthenticatedProfile?.profile?.external_id ===
       targetProfile.profile?.external_id;
-
-    console.log('isRequesterTarget', isRequesterTarget);
 
     const unvalidatedQuery = req.query;
     const query = getValidatedByJoiOrThrow(
@@ -76,8 +73,8 @@ router.get(
   }
 );
 
-export interface ProfileReceivedProfileProxiesQuery
-  extends FullPageRequest<ProfileReceivedProfileProxiesQuerySortOptions> {}
+export type ProfileReceivedProfileProxiesQuery =
+  FullPageRequest<ProfileReceivedProfileProxiesQuerySortOptions>;
 
 export enum ProfileReceivedProfileProxiesQuerySortOptions {
   CREATED_AT = 'created_at'

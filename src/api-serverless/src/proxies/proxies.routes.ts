@@ -8,7 +8,7 @@ import { getValidatedByJoiOrThrow } from '../validation';
 import { profilesService } from '../../../profiles/profiles.service';
 import { profileProxyApiService } from './proxy.api.service';
 import { ProfileProxyEntity } from '../../../entities/IProfileProxy';
-import { BadRequestException } from '../../../exceptions';
+import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { ProxyApiRequestAction } from './proxies.api.types';
 import { CreateNewProfileProxyAllocateRepAction } from '../generated/models/CreateNewProfileProxyAllocateRepAction';
 import { CreateNewProfileProxyAllocateCicAction } from '../generated/models/CreateNewProfileProxyAllocateCicAction';
@@ -18,7 +18,6 @@ import { CreateNewProfileProxyActionType } from '../generated/models/CreateNewPr
 import { CreateNewProfileProxyRateWaveDropAction } from '../generated/models/CreateNewProfileProxyRateWaveDropAction';
 import { assertUnreachable } from '../../../helpers';
 import { ProfileProxyActionEntity } from '../../../entities/IProfileProxyAction';
-import { profileProxyActionApiService } from './proxy-action.api.service';
 
 const router = asyncRouter();
 
@@ -37,7 +36,7 @@ router.post(
       )
       ?.then((result) => result?.profile ?? null);
     if (!grantorProfile) {
-      throw new BadRequestException(
+      throw new ForbiddenException(
         'You need to create a profile before you can create a proxy'
       );
     }
@@ -97,14 +96,14 @@ router.post(
       });
 
     // test this
-    if (profileProxy.created_by_id !== requesterProfile.external_id) {
+    if (profileProxy.created_by !== requesterProfile.external_id) {
       throw new BadRequestException('You are not the creator of this proxy');
     }
 
     if (!req.body.action_type) {
       throw new BadRequestException('Action type is required');
     }
-    const type = req.body.action_type 
+    const type = req.body.action_type;
     switch (type) {
       case CreateNewProfileProxyActionType.AllocateRep:
         getValidatedByJoiOrThrow(
@@ -144,7 +143,7 @@ router.post(
         throw new BadRequestException('Invalid action type');
     }
 
-    const action = await profileProxyActionApiService.createProfileProxyAction({
+    const action = await profileProxyApiService.createProfileProxyAction({
       proxy_id,
       action: req.body
     });
@@ -164,9 +163,9 @@ const NewProfileProxyAllocateRepActionSchema =
       .required(),
     start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null),
-    credit: Joi.number().required(),
+    credit_amount: Joi.number().required(),
     group_id: Joi.string().optional().allow(null),
-    category: Joi.string().optional().allow(null)
+    credit_category: Joi.string().optional().allow(null)
   });
 
 const NewProfileProxyAllocateCicActionSchema =
@@ -176,7 +175,7 @@ const NewProfileProxyAllocateCicActionSchema =
       .required(),
     start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null),
-    credit: Joi.number().required(),
+    credit_amount: Joi.number().required(),
     group_id: Joi.string().optional().allow(null)
   });
 

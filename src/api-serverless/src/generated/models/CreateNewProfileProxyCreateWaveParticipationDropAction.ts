@@ -10,12 +10,13 @@
  * Do not edit the class manually.
  */
 
+import { CreateNewProfileProxyActionType } from '../models/CreateNewProfileProxyActionType';
 import { HttpFile } from '../http/http';
 
-export class DropMentionedUser {
-  'mentioned_profile_id': string;
-  'handle_in_content': string;
-  'current_handle'?: string | null;
+export class CreateNewProfileProxyCreateWaveParticipationDropAction {
+  'action_type': CreateNewProfileProxyActionType;
+  'start_time': number;
+  'end_time': number | null;
 
   static readonly discriminator: string | undefined = undefined;
 
@@ -26,27 +27,27 @@ export class DropMentionedUser {
     format: string;
   }> = [
     {
-      name: 'mentioned_profile_id',
-      baseName: 'mentioned_profile_id',
-      type: 'string',
-      format: 'uuid'
-    },
-    {
-      name: 'handle_in_content',
-      baseName: 'handle_in_content',
-      type: 'string',
+      name: 'action_type',
+      baseName: 'action_type',
+      type: 'CreateNewProfileProxyActionType',
       format: ''
     },
     {
-      name: 'current_handle',
-      baseName: 'current_handle',
-      type: 'string',
-      format: ''
+      name: 'start_time',
+      baseName: 'start_time',
+      type: 'number',
+      format: 'int64'
+    },
+    {
+      name: 'end_time',
+      baseName: 'end_time',
+      type: 'number',
+      format: 'int64'
     }
   ];
 
   static getAttributeTypeMap() {
-    return DropMentionedUser.attributeTypeMap;
+    return CreateNewProfileProxyCreateWaveParticipationDropAction.attributeTypeMap;
   }
 
   public constructor() {}

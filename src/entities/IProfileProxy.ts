@@ -13,5 +13,5 @@ export class ProfileProxyEntity {
   readonly created_at!: number;
 
   @Column({ type: 'varchar', length: 100 })
-  readonly created_by_id!: string;
+  readonly created_by!: string;
 }

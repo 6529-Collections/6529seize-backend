@@ -479,7 +479,7 @@ paths:
                 - $ref: '#/components/schemas/CreateNewProfileProxyAllocateCicAction'
                 - $ref: '#/components/schemas/CreateNewProfileProxyCreateWaveAction'
                 - $ref: '#/components/schemas/CreateNewProfileProxyReadWaveAction'
-                - $ref: '#/components/schemas/CreateNewProfileProxyCreateDropToWaveAction'
+                - $ref: '#/components/schemas/CreateNewProfileProxyCreateWaveParticipationDropAction'
       responses:
         '201':
           description: successful operation
@@ -921,7 +921,7 @@ components:
         - id
         - target_id
         - created_at
-        - created_by_id
+        - created_by
       properties:
         id:
           type: string
@@ -929,7 +929,7 @@ components:
           type: string
         created_at:
           type: number
-        created_by_id:
+        created_by:
           type: string
 
     CreateNewProfileProxyAllocateRepAction:
@@ -938,7 +938,8 @@ components:
         - action_type
         - start_time
         - end_time
-        - credit
+        - credit_amount
+        - credit_category
       properties:
         action_type:
           $ref: '#/components/schemas/CreateNewProfileProxyActionType'
@@ -950,14 +951,14 @@ components:
             - type: 'null'
             - type: number
               format: int64
-        credit:
+        credit_amount:
           type: number
           format: int64
         group_id:
           anyOf:
             - type: 'null'
             - type: string
-        category:
+        credit_category:
           anyOf:
             - type: 'null'
             - type: string
@@ -968,7 +969,7 @@ components:
         - action_type
         - start_time
         - end_time
-        - credit
+        - credit_amount
         - group_id
       properties:
         action_type:
@@ -981,7 +982,7 @@ components:
             - type: 'null'
             - type: number
               format: int64
-        credit:
+        credit_amount:
           type: number
           format: int64
         group_id:
@@ -1025,7 +1026,7 @@ components:
             - type: number
               format: int64
 
-    CreateNewProfileProxyCreateDropToWaveAction:
+    CreateNewProfileProxyCreateWaveParticipationDropAction:
       type: object
       required:
         - action_type

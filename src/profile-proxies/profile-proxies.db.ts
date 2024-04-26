@@ -1,10 +1,19 @@
-import { PROFILE_PROXIES_TABLE } from '../constants';
+import { randomUUID } from 'crypto';
+import {
+  PROFILE_PROXIES_TABLE,
+  PROFILE_PROXY_ACTIONS_TABLE
+} from '../constants';
 import { ProfileProxyEntity } from '../entities/IProfileProxy';
+import {
+  ProfileProxyActionEntity,
+  ProfileProxyActionType
+} from '../entities/IProfileProxyAction';
 import {
   ConnectionWrapper,
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../sql-executor';
+import { Time } from '../time';
 
 export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
   async insertProfileProxy({
@@ -15,13 +24,8 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     readonly connection: ConnectionWrapper<any>;
   }): Promise<void> {
     await this.db.execute(
-      `insert into ${PROFILE_PROXIES_TABLE} (id, target_id, created_at, created_by_id) values (:id, :target_id, :created_at, :created_by_id)`,
-      {
-        id: profileProxy.id,
-        target_id: profileProxy.target_id,
-        created_at: profileProxy.created_at,
-        created_by_id: profileProxy.created_by_id
-      },
+      `insert into ${PROFILE_PROXIES_TABLE} (id, target_id, created_at, created_by) values (:id, :target_id, :created_at, :created_by)`,
+      profileProxy,
       { wrappedConnection: connection }
     );
   }
@@ -55,8 +59,8 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     const opts = connection ? { wrappedConnection: connection } : {};
     return this.db
       .execute(
-        `select * from ${PROFILE_PROXIES_TABLE} where target_id = :target_id and created_by_id = :created_by_id`,
-        { target_id, created_by_id: created_by_profile_id },
+        `select * from ${PROFILE_PROXIES_TABLE} where target_id = :target_id and created_by = :created_by`,
+        { target_id, created_by: created_by_profile_id },
         opts
       )
       .then((result) => result[0] ?? null);
@@ -104,6 +108,74 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     );
     return dbResult.at(0)?.cnt ?? 0;
   }
+
+  async insertProfileProxyAction({
+    profileProxyAction,
+    connection
+  }: {
+    readonly profileProxyAction: NewProfileProxyAction;
+    readonly connection: ConnectionWrapper<any>;
+  }): Promise<{ actionId: string }> {
+    const actionId = randomUUID();
+    await this.db.execute(
+      `insert into ${PROFILE_PROXY_ACTIONS_TABLE} (id, proxy_id, action_type, action_data, start_time, end_time, created_at) values (:id, :proxy_id, :action_type, :action_data, :start_time, :end_time, :created_at)`,
+      {
+        id: actionId,
+        proxy_id: profileProxyAction.proxy_id,
+        action_type: profileProxyAction.action_type,
+        action_data: profileProxyAction.action_data,
+        start_time: profileProxyAction.start_time,
+        end_time: profileProxyAction.end_time,
+        created_at: Time.currentMillis()
+      },
+      { wrappedConnection: connection }
+    );
+    return { actionId };
+  }
+
+  async findProfileProxyActionById({
+    id,
+    connection
+  }: {
+    readonly id: string;
+    readonly connection?: ConnectionWrapper<any>;
+  }): Promise<ProfileProxyActionEntity | null> {
+    const opts = connection ? { wrappedConnection: connection } : {};
+    return this.db
+      .execute(
+        `select * from ${PROFILE_PROXY_ACTIONS_TABLE} where id = :id`,
+        { id },
+        opts
+      )
+      .then((result) => result[0] ?? null);
+  }
+
+  async findProfileProxyActionsByProxyIdAndActionType({
+    proxy_id,
+    action_type,
+    connection
+  }: {
+    readonly proxy_id: string;
+    readonly action_type: ProfileProxyActionType;
+    readonly connection?: ConnectionWrapper<any>;
+  }): Promise<ProfileProxyActionEntity[]> {
+    const opts = connection ? { wrappedConnection: connection } : {};
+    return this.db.execute(
+      `select * from ${PROFILE_PROXY_ACTIONS_TABLE} where proxy_id = :proxy_id and action_type = :action_type`,
+      { proxy_id, action_type },
+      opts
+    );
+  }
 }
 
 export const profileProxiesDb = new ProfileProxiesDb(dbSupplier);
+
+export type NewProfileProxyAction = Omit<
+  ProfileProxyActionEntity,
+  | 'id'
+  | 'created_at'
+  | 'accepted_at'
+  | 'rejected_at'
+  | 'revoked_at'
+  | 'is_active'
+>;
