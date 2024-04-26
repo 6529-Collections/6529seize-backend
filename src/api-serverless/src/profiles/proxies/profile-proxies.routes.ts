@@ -14,16 +14,11 @@ import { getValidatedByJoiOrThrow } from '../../validation';
 import { profileProxyApiService } from '../../proxies/proxy.api.service';
 import { profilesService } from '../../../../profiles/profiles.service';
 import { BadRequestException } from '../../../../exceptions';
-import {
-  getAuthenticatedWalletOrNull,
-  maybeAuthenticatedUser
-} from '../../auth/auth';
 
 const router = asyncRouter({ mergeParams: true });
 
 router.get(
   '/received',
-  maybeAuthenticatedUser(),
   async (
     req: Request<
       { handleOrWallet: string },
@@ -35,14 +30,6 @@ router.get(
 
     res: Response<ApiResponse<Page<ProfileProxyEntity>>>
   ) => {
-    // fix any
-    const maybeAuthenticatedWallet = getAuthenticatedWalletOrNull(req as any);
-    const maybeAuthenticatedProfile = maybeAuthenticatedWallet
-      ? await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-          maybeAuthenticatedWallet
-        )
-      : null;
-
     const targetProfile =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         req.params.handleOrWallet
@@ -52,10 +39,6 @@ router.get(
         `Profile with id ${req.params.handleOrWallet} does not exist`
       );
     }
-
-    const isRequesterTarget =
-      maybeAuthenticatedProfile?.profile?.external_id ===
-      targetProfile.profile?.external_id;
 
     const unvalidatedQuery = req.query;
     const query = getValidatedByJoiOrThrow(
