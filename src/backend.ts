@@ -11,13 +11,15 @@ import {
   DropReferencedNftEntity
 } from './entities/IDrop';
 import { DropVoteCreditSpending } from './entities/IDropVoteCreditSpending';
-import { Profile, ProfileArchived } from './entities/IProfile';
-import { CicStatement } from './entities/ICICStatement';
-import { ProfileActivityLog } from './entities/IProfileActivityLog';
-import { Rating } from './entities/IRating';
-import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
-import { CommunityMembersCurationCriteriaEntity } from './entities/ICommunityMembersCurationCriteriaEntity';
-import { RatingsSnapshot } from './entities/IRatingsSnapshots';
+import * as nfts from './nftsLoop';
+import * as tdh from './tdhLoop';
+import * as nftOwners from './nftOwnersLoop';
+import * as ownersBalances from './ownersBalancesLoop';
+import * as aggregatedActivity from './aggregatedActivityLoop';
+import * as transactions from './transactionsLoop';
+import * as delegations from './delegationsLoop';
+import * as overRatesRevocationLoop from './overRatesRevocationLoop';
+import * as customReplay from './customReplayLoop';
 
 const logger = Logger.get('BACKEND');
 
@@ -25,24 +27,18 @@ async function start() {
   const start = Time.now();
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  await loadEnv([
-    Profile,
-    ProfileArchived,
-    CicStatement,
-    ProfileActivityLog,
-    Rating,
-    AbusivenessDetectionResult,
-    CommunityMembersCurationCriteriaEntity,
-    RatingsSnapshot,
-    DropEntity,
-    DropPartEntity,
-    DropMentionEntity,
-    DropReferencedNftEntity,
-    DropMetadataEntity,
-    DropMediaEntity,
-    DropVoteCreditSpending,
-    DropCommentEntity
-  ]);
+  // await transactions.handler(null, null as any, null as any);
+
+  // await nfts.handler(null, null as any, null as any);
+  // await nftOwners.handler(null, null as any, null as any);
+  // await nfts.handler(null, null as any, null as any);
+  // await ownersBalances.handler(null, null as any, null as any);
+  // await aggregatedActivity.handler(null, null as any, null as any);
+
+  // await tdh.handler(null, null as any, null as any);
+  // await delegations.handler(null, null as any, null as any);
+
+  await customReplay.handler(null, null as any, null as any);
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
