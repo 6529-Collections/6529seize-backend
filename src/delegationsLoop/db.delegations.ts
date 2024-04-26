@@ -107,7 +107,7 @@ export async function getHighestTdhWallet(wallets: string[]): Promise<string> {
       wallets
     }
   );
-  const tdhWallet: string = result[0]?.wallet.toLowerCase() ?? '';
+  const tdhWallet: string = result[0]?.wallet.toLowerCase() ?? null;
   return tdhWallet;
 }
 

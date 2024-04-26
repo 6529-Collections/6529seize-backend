@@ -30,7 +30,7 @@ import {
 } from '../api-serverless/src/profiles/rep.service';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
-import { areEqualAddresses } from '../helpers';
+import { areEqualAddresses, replaceEmojisWithHex } from '../helpers';
 import {
   getHighestTdhAddressForConsolidationKey,
   getDelegationPrimaryAddressForConsolidation
@@ -932,7 +932,10 @@ export class ProfilesService {
     connection?: ConnectionWrapper<any>
   ) {
     const ensName = await this.supplyAlchemy().core.lookupAddress(wallet);
-    await this.profilesDb.updateWalletsEnsName({ wallet, ensName }, connection);
+    await this.profilesDb.updateWalletsEnsName(
+      { wallet, ensName: ensName ? replaceEmojisWithHex(ensName) : null },
+      connection
+    );
   }
 
   private async uploadPfpToS3(file: any, fileExtension: string) {
@@ -981,36 +984,51 @@ export class ProfilesService {
   }
 
   public async updatePrimaryAddresses(addresses: Set<string>) {
-    const processed = new Set<string>();
     for (const address of Array.from(addresses)) {
-      if (processed.has(address)) {
-        continue;
-      }
       const profile = await this.getProfileByWallet(address);
       if (profile?.profile && profile.consolidation.consolidation_key) {
         const consolidationKey = profile.consolidation.consolidation_key;
 
-        const delegationPrimaryAddress =
-          await getDelegationPrimaryAddressForConsolidation(consolidationKey);
+        let primaryAddress = '';
+        if (profile.consolidation.wallets.length === 1) {
+          primaryAddress = profile.consolidation.wallets[0].wallet.address;
+        } else {
+          const delegationPrimaryAddress =
+            await getDelegationPrimaryAddressForConsolidation(consolidationKey);
 
-        let primaryAddress = delegationPrimaryAddress;
-        if (!primaryAddress) {
-          const highestTdhAddress =
-            await getHighestTdhAddressForConsolidationKey(consolidationKey);
-          primaryAddress = highestTdhAddress;
+          if (delegationPrimaryAddress) {
+            primaryAddress = delegationPrimaryAddress;
+          } else {
+            const highestTdhAddress =
+              await getHighestTdhAddressForConsolidationKey(consolidationKey);
+            if (highestTdhAddress) {
+              primaryAddress = highestTdhAddress;
+            } else {
+              primaryAddress = profile.consolidation.wallets[0].wallet.address;
+            }
+          }
         }
 
         const currentPrimaryAddress = profile.profile.primary_wallet;
         if (!areEqualAddresses(primaryAddress, currentPrimaryAddress)) {
-          await this.profilesDb.updatePrimaryAddress({
-            profileId: profile.profile.external_id,
+          await this.updateProfilePrimaryAddress(
+            profile.profile.external_id,
             primaryAddress
-          });
-          await this.refreshPrimaryWalletEns(primaryAddress);
+          );
         }
-        processed.add(consolidationKey);
       }
     }
+  }
+
+  public async updateProfilePrimaryAddress(
+    profileId: string,
+    primaryAddress: string
+  ) {
+    await this.profilesDb.updatePrimaryAddress({
+      profileId,
+      primaryAddress
+    });
+    await this.refreshPrimaryWalletEns(primaryAddress);
   }
 }
 
