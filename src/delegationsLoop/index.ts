@@ -10,7 +10,6 @@ import {
   ConsolidationEvent,
   Delegation,
   DelegationEvent,
-  EventType,
   NFTDelegationBlock
 } from '../entities/IDelegation';
 import { loadEnv, unload } from '../secrets';
@@ -20,11 +19,7 @@ import { Time } from '../time';
 import { getLastTDH } from '../helpers';
 import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { sqlExecutor } from '../sql-executor';
-import {
-  CONSOLIDATIONS_TABLE,
-  MEMES_CONTRACT,
-  USE_CASE_PRIMARY_ADDRESS
-} from '../constants';
+import { CONSOLIDATIONS_TABLE, USE_CASE_PRIMARY_ADDRESS } from '../constants';
 import {
   ConsolidatedTDH,
   ConsolidatedTDHMemes,

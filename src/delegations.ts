@@ -1,6 +1,5 @@
 import { Alchemy, Network } from 'alchemy-sdk';
 import {
-  ALCHEMY_SETTINGS,
   DELEGATION_ALL_ADDRESS,
   DELEGATION_CONTRACT,
   MEMES_CONTRACT,
