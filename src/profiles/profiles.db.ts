@@ -256,7 +256,6 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       `update ${PROFILES_TABLE}
        set handle            = :handle,
            normalised_handle = :normalisedHandle,
-           primary_wallet    = :primaryWallet,
            updated_at        = current_time,
            updated_by_wallet = :updatedByWallet,
            banner_1          = :banner1,
@@ -268,7 +267,6 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         oldHandle,
         handle: command.handle,
         normalisedHandle: command.handle.toLowerCase(),
-        primaryWallet: command.primary_wallet.toLowerCase(),
         updatedByWallet: command.creator_or_updater_wallet.toLowerCase(),
         banner1: command.banner_1 ?? null,
         banner2: command.banner_2 ?? null,
@@ -296,7 +294,6 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       `insert into ${PROFILES_TABLE}
        (handle,
         normalised_handle,
-        primary_wallet,
         created_at,
         created_by_wallet,
         banner_1,
@@ -319,7 +316,6 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       {
         handle: command.handle,
         normalisedHandle: command.handle.toLowerCase(),
-        primaryWallet: command.primary_wallet.toLowerCase(),
         createdByWallet: command.creator_or_updater_wallet.toLowerCase(),
         banner1: command.banner_1 ?? null,
         banner2: command.banner_2 ?? null,
@@ -519,12 +515,22 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
 
   async updateWalletsEnsName(
     param: { wallet: string; ensName: string | null },
-    connection: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>
   ) {
     await this.db.execute(
       `insert into ${ENS_TABLE} (display, wallet, created_at) values (:ensName, :wallet, current_time) on duplicate key update display = :ensName`,
       param,
       { wrappedConnection: connection }
+    );
+  }
+
+  async updatePrimaryAddress(param: {
+    profileId: string;
+    primaryAddress: string;
+  }) {
+    await this.db.execute(
+      `update ${PROFILES_TABLE} set primary_wallet = :primaryAddress where external_id = :profileId`,
+      param
     );
   }
 

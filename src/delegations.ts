@@ -1,10 +1,11 @@
-import { Alchemy } from 'alchemy-sdk';
+import { Alchemy, Network } from 'alchemy-sdk';
 import {
   ALCHEMY_SETTINGS,
   DELEGATION_ALL_ADDRESS,
   DELEGATION_CONTRACT,
   MEMES_CONTRACT,
   USE_CASE_CONSOLIDATION,
+  USE_CASE_PRIMARY_ADDRESS,
   USE_CASE_SUB_DELEGATION
 } from './constants';
 import { DELEGATIONS_IFACE } from './abis/delegations';
@@ -16,6 +17,8 @@ import {
   DelegationEvent
 } from './entities/IDelegation';
 import { Logger } from './logging';
+import { getAlchemyInstance } from './alchemy';
+import { sepolia } from '@wagmi/chains';
 
 let alchemy: Alchemy;
 
@@ -56,14 +59,19 @@ const getDelegationDetails = async (txHash: string) => {
   return null;
 };
 
+const getNetwork = () => {
+  if (DELEGATION_CONTRACT.chain_id == sepolia.id) {
+    return Network.ETH_SEPOLIA;
+  }
+  return Network.ETH_MAINNET;
+};
+
 export const findDelegationTransactions = async (
   startingBlock: number,
   latestBlock?: number
 ) => {
-  alchemy = new Alchemy({
-    ...ALCHEMY_SETTINGS,
-    apiKey: process.env.ALCHEMY_API_KEY
-  });
+  const network = getNetwork();
+  alchemy = getAlchemyInstance(network);
 
   if (!latestBlock) {
     latestBlock = await alchemy.core.getBlockNumber();
@@ -92,7 +100,10 @@ export const findDelegationTransactions = async (
       const to = delResult.args.delegationAddress;
       const useCase = delResult.args.useCase.toNumber();
 
-      if (!areEqualAddresses(from, to)) {
+      if (
+        !areEqualAddresses(from, to) ||
+        useCase === USE_CASE_PRIMARY_ADDRESS
+      ) {
         if (
           [
             'RegisterDelegation',

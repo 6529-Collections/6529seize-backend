@@ -4,7 +4,6 @@ import { AggregatedCicRating } from '../rates/rates.types';
 
 export interface CreateOrUpdateProfileCommand {
   handle: string;
-  primary_wallet: string;
   banner_1?: string;
   banner_2?: string;
   website?: string;

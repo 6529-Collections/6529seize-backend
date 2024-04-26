@@ -24,6 +24,7 @@ import profileCicRoutes from './profile-cic.routes';
 import profileRepRoutes from './profile-rep.routes';
 import profileCollectedRoutes from './collected/collected.routes';
 import profileDropsRoutes from './profile-drops.routes';
+import profilePrimaryAddressRoutes from './profile-primary-address.routes';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { getProfileClassificationsBySubclassification } from './profile.helper';
 
@@ -150,7 +151,6 @@ router.post(
   ) {
     const {
       handle,
-      primary_wallet,
       banner_1,
       banner_2,
       website,
@@ -170,7 +170,6 @@ router.post(
     }
     const createProfileCommand: CreateOrUpdateProfileCommand = {
       handle,
-      primary_wallet: primary_wallet.toLowerCase(),
       banner_1,
       banner_2,
       website,
@@ -221,7 +220,6 @@ router.post(
 
 interface ApiCreateOrUpdateProfileRequest {
   readonly handle: string;
-  readonly primary_wallet: string;
   readonly banner_1?: string;
   readonly banner_2?: string;
   readonly website?: string;
@@ -250,7 +248,6 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
       .messages({
         'string.pattern.base': `Invalid username. Use 3-15 letters, numbers, or underscores.`
       }),
-    primary_wallet: Joi.string().regex(WALLET_REGEX).required(),
     banner_1: Joi.string().optional(),
     banner_2: Joi.string().optional(),
     website: Joi.string().uri().optional().messages({
@@ -276,5 +273,6 @@ router.use('/:handleOrWallet/cic', profileCicRoutes);
 router.use('/:handleOrWallet/rep', profileRepRoutes);
 router.use('/:handleOrWallet/collected', profileCollectedRoutes);
 router.use('/:handleOrWallet/drops', profileDropsRoutes);
+router.use('/:handleOrWallet/primary-address', profilePrimaryAddressRoutes);
 
 export default router;

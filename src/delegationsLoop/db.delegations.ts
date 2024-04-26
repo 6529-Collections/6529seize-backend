@@ -4,6 +4,7 @@ import {
   MEMES_CONTRACT,
   USE_CASE_AIRDROPS,
   USE_CASE_ALL,
+  USE_CASE_PRIMARY_ADDRESS,
   WALLETS_TDH_TABLE
 } from '../constants';
 import { fetchLatestTDHBlockNumber } from '../db';
@@ -84,6 +85,13 @@ export async function fetchProcessedDelegations(
   return results;
 }
 
+export async function getHighestTdhAddressForConsolidationKey(
+  consolidationKey: string
+): Promise<string> {
+  const wallets = consolidationKey.toLowerCase().split('-');
+  return getHighestTdhWallet(wallets);
+}
+
 export async function getHighestTdhWallet(wallets: string[]): Promise<string> {
   const maxTdhBlock = await fetchLatestTDHBlockNumber();
   const result = await sqlExecutor.execute(
@@ -101,4 +109,30 @@ export async function getHighestTdhWallet(wallets: string[]): Promise<string> {
   );
   const tdhWallet: string = result[0]?.wallet.toLowerCase() ?? '';
   return tdhWallet;
+}
+
+export async function getDelegationPrimaryAddressForConsolidation(
+  consolidationKey: string
+): Promise<string | null> {
+  const wallets = consolidationKey.toLowerCase().split('-');
+  const result = await sqlExecutor.execute(
+    `
+    SELECT * FROM ${DELEGATIONS_TABLE}
+    WHERE 
+      LOWER(from_address) in (:wallets)
+      AND LOWER(to_address) in (:wallets)
+      AND use_case = :useCase
+      AND expiry >= :expiry
+      AND collection in (:collections)
+    ORDER BY block DESC
+    LIMIT 1;
+    `,
+    {
+      wallets,
+      useCase: USE_CASE_PRIMARY_ADDRESS,
+      expiry: Date.now() / 1000,
+      collections: [MEMES_CONTRACT, DELEGATION_ALL_ADDRESS]
+    }
+  );
+  return result[0]?.to_address.toLowerCase() ?? null;
 }

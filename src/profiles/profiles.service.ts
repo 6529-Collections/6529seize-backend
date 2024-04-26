@@ -30,6 +30,11 @@ import {
 } from '../api-serverless/src/profiles/rep.service';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
+import { areEqualAddresses } from '../helpers';
+import {
+  getHighestTdhAddressForConsolidationKey,
+  getDelegationPrimaryAddressForConsolidation
+} from '../delegationsLoop/db.delegations';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -301,7 +306,6 @@ export class ProfilesService {
 
   public async createOrUpdateProfile({
     handle,
-    primary_wallet,
     banner_1,
     banner_2,
     website,
@@ -317,14 +321,6 @@ export class ProfilesService {
           creator_or_updater_wallet,
           connection
         );
-        const isPrimaryWalletValid = creatorOrUpdaterWalletConsolidatedWallets
-          .map((it) => it.toLowerCase())
-          .includes(primary_wallet.toLowerCase());
-        if (!isPrimaryWalletValid) {
-          throw new BadRequestException(
-            `Primary wallet ${primary_wallet} is not in the same consolidation group as authenticated wallet ${creator_or_updater_wallet}`
-          );
-        }
 
         const creatorOrUpdaterProfiles = await this.getProfilesByWallets(
           creatorOrUpdaterWalletConsolidatedWallets,
@@ -348,7 +344,6 @@ export class ProfilesService {
             {
               command: {
                 handle,
-                primary_wallet,
                 banner_1,
                 banner_2,
                 website,
@@ -359,12 +354,10 @@ export class ProfilesService {
             },
             connection
           );
-          await this.refreshPrimaryWalletEns(primary_wallet, connection);
           await this.createProfileEditLogs({
             profileId: profileId,
             profileBeforeChange: null,
             newHandle: handle,
-            newPrimaryWallet: primary_wallet,
             newBanner1: banner_1,
             newBanner2: banner_2,
             authenticatedWallet: creator_or_updater_wallet,
@@ -381,26 +374,14 @@ export class ProfilesService {
               .sort((a, d) => d.created_at.getTime() - a.created_at.getTime())
               .findIndex((p) => p.normalised_handle === handle.toLowerCase()) >
             0;
-          const isPrimaryWalletTaken =
-            creatorOrUpdaterProfiles
-              .sort((a, d) => d.created_at.getTime() - a.created_at.getTime())
-              .findIndex(
-                (p) =>
-                  p.primary_wallet.toLowerCase() ===
-                  primary_wallet.toLowerCase()
-              ) > 0;
-          if (isNameTaken || isPrimaryWalletTaken) {
-            throw new BadRequestException(
-              `Handle ${handle} or primary wallet ${primary_wallet} is already taken`
-            );
+          if (isNameTaken) {
+            throw new BadRequestException(`Handle ${handle}  is already taken`);
           }
-          await this.refreshPrimaryWalletEns(primary_wallet, connection);
           await this.profilesDb.updateProfileRecord(
             {
               oldHandle: latestProfile.normalised_handle,
               command: {
                 handle,
-                primary_wallet,
                 banner_1,
                 banner_2,
                 website,
@@ -415,7 +396,6 @@ export class ProfilesService {
             profileId: latestProfile.external_id,
             profileBeforeChange: latestProfile,
             newHandle: handle,
-            newPrimaryWallet: primary_wallet,
             newBanner1: banner_1,
             newBanner2: banner_2,
             newSubClassification: sub_classification,
@@ -517,7 +497,6 @@ export class ProfilesService {
     profileId,
     profileBeforeChange,
     newHandle,
-    newPrimaryWallet,
     newClassification,
     newBanner1,
     newBanner2,
@@ -528,7 +507,6 @@ export class ProfilesService {
     profileId: string;
     profileBeforeChange: Profile | null;
     newHandle: string;
-    newPrimaryWallet: string;
     newClassification: string;
     newBanner1?: string;
     newBanner2?: string;
@@ -549,14 +527,6 @@ export class ProfilesService {
         })
       });
     }
-    this.addEventToArrayIfChanged(
-      profileBeforeChange?.primary_wallet ?? null,
-      newPrimaryWallet ?? null,
-      logEvents,
-      profileId,
-      ProfileActivityLogType.PRIMARY_WALLET_EDIT,
-      authenticatedWallet
-    );
     this.addEventToArrayIfChanged(
       profileBeforeChange?.classification ?? null,
       newClassification ?? null,
@@ -959,7 +929,7 @@ export class ProfilesService {
 
   private async refreshPrimaryWalletEns(
     wallet: string,
-    connection: ConnectionWrapper<any>
+    connection?: ConnectionWrapper<any>
   ) {
     const ensName = await this.supplyAlchemy().core.lookupAddress(wallet);
     await this.profilesDb.updateWalletsEnsName({ wallet, ensName }, connection);
@@ -1008,6 +978,39 @@ export class ProfilesService {
         }))
       );
     return [...activeProfiles, ...archivedProfiles];
+  }
+
+  public async updatePrimaryAddresses(addresses: Set<string>) {
+    const processed = new Set<string>();
+    for (const address of Array.from(addresses)) {
+      if (processed.has(address)) {
+        continue;
+      }
+      const profile = await this.getProfileByWallet(address);
+      if (profile?.profile && profile.consolidation.consolidation_key) {
+        const consolidationKey = profile.consolidation.consolidation_key;
+
+        const delegationPrimaryAddress =
+          await getDelegationPrimaryAddressForConsolidation(consolidationKey);
+
+        let primaryAddress = delegationPrimaryAddress;
+        if (!primaryAddress) {
+          const highestTdhAddress =
+            await getHighestTdhAddressForConsolidationKey(consolidationKey);
+          primaryAddress = highestTdhAddress;
+        }
+
+        const currentPrimaryAddress = profile.profile.primary_wallet;
+        if (!areEqualAddresses(primaryAddress, currentPrimaryAddress)) {
+          await this.profilesDb.updatePrimaryAddress({
+            profileId: profile.profile.external_id,
+            primaryAddress
+          });
+          await this.refreshPrimaryWalletEns(primaryAddress);
+        }
+        processed.add(consolidationKey);
+      }
+    }
   }
 }
 
