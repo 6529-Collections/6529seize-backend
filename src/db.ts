@@ -1000,95 +1000,93 @@ export async function persistConsolidations(
   startBlock: number | undefined,
   consolidations: ConsolidationEvent[]
 ) {
-  if (consolidations.length > 0) {
-    logger.info(
-      `[CONSOLIDATIONS] [START_BLOCK ${startBlock}] [PERSISTING ${consolidations.length} RESULTS]`
-    );
+  logger.info(
+    `[CONSOLIDATIONS] [START_BLOCK ${startBlock}] [PERSISTING ${consolidations.length} RESULTS]`
+  );
 
-    const repo = AppDataSource.getRepository(Consolidation);
+  const repo = AppDataSource.getRepository(Consolidation);
 
-    if (startBlock) {
-      //delete all with block >= startBlock
-      await repo.delete({
-        block: MoreThanOrEqual(startBlock)
-      });
-    }
+  if (startBlock) {
+    //delete all with block >= startBlock
+    await repo.delete({
+      block: MoreThanOrEqual(startBlock)
+    });
+  }
 
-    for (const consolidation of consolidations) {
-      if (consolidation.type == EventType.REGISTER) {
-        const r = await repo.findOne({
-          where: {
-            wallet1: consolidation.wallet1,
-            wallet2: consolidation.wallet2
-          }
-        });
-        if (r) {
-          // do nothing
-        } else {
-          const r2 = await repo.findOne({
-            where: {
-              wallet1: consolidation.wallet2,
-              wallet2: consolidation.wallet1
-            }
-          });
-          if (r2) {
-            await repo.remove(r2);
-            const updatedConsolidation = new Consolidation();
-            updatedConsolidation.block = consolidation.block;
-            updatedConsolidation.wallet1 = consolidation.wallet2;
-            updatedConsolidation.wallet2 = consolidation.wallet1;
-            updatedConsolidation.confirmed = true;
-            await repo.save(updatedConsolidation);
-          } else {
-            const newConsolidation = new Consolidation();
-            newConsolidation.block = consolidation.block;
-            newConsolidation.wallet1 = consolidation.wallet1;
-            newConsolidation.wallet2 = consolidation.wallet2;
-            await repo.save(newConsolidation);
-          }
+  for (const consolidation of consolidations) {
+    if (consolidation.type == EventType.REGISTER) {
+      const r = await repo.findOne({
+        where: {
+          wallet1: consolidation.wallet1,
+          wallet2: consolidation.wallet2
         }
-      } else if (consolidation.type == EventType.REVOKE) {
-        const r = await repo.findOne({
+      });
+      if (r) {
+        // do nothing
+      } else {
+        const r2 = await repo.findOne({
           where: {
-            wallet1: consolidation.wallet1,
-            wallet2: consolidation.wallet2
+            wallet1: consolidation.wallet2,
+            wallet2: consolidation.wallet1
           }
         });
-        if (r) {
-          if (r.confirmed) {
-            await repo.remove(r);
-            const newConsolidation = new Consolidation();
-            newConsolidation.block = consolidation.block;
-            newConsolidation.wallet1 = consolidation.wallet2;
-            newConsolidation.wallet2 = consolidation.wallet1;
-            await repo.save(newConsolidation);
-          } else {
-            await repo.remove(r);
-          }
+        if (r2) {
+          await repo.remove(r2);
+          const updatedConsolidation = new Consolidation();
+          updatedConsolidation.block = consolidation.block;
+          updatedConsolidation.wallet1 = consolidation.wallet2;
+          updatedConsolidation.wallet2 = consolidation.wallet1;
+          updatedConsolidation.confirmed = true;
+          await repo.save(updatedConsolidation);
         } else {
-          const r2 = await repo.findOne({
-            where: {
-              wallet1: consolidation.wallet2,
-              wallet2: consolidation.wallet1
-            }
-          });
-          if (r2) {
-            await repo.remove(r2);
-            const updatedConsolidation = new Consolidation();
-            updatedConsolidation.block = consolidation.block;
-            updatedConsolidation.wallet1 = consolidation.wallet2;
-            updatedConsolidation.wallet2 = consolidation.wallet1;
-            updatedConsolidation.confirmed = false;
-            await repo.save(updatedConsolidation);
+          const newConsolidation = new Consolidation();
+          newConsolidation.block = consolidation.block;
+          newConsolidation.wallet1 = consolidation.wallet1;
+          newConsolidation.wallet2 = consolidation.wallet2;
+          await repo.save(newConsolidation);
+        }
+      }
+    } else if (consolidation.type == EventType.REVOKE) {
+      const r = await repo.findOne({
+        where: {
+          wallet1: consolidation.wallet1,
+          wallet2: consolidation.wallet2
+        }
+      });
+      if (r) {
+        if (r.confirmed) {
+          await repo.remove(r);
+          const newConsolidation = new Consolidation();
+          newConsolidation.block = consolidation.block;
+          newConsolidation.wallet1 = consolidation.wallet2;
+          newConsolidation.wallet2 = consolidation.wallet1;
+          await repo.save(newConsolidation);
+        } else {
+          await repo.remove(r);
+        }
+      } else {
+        const r2 = await repo.findOne({
+          where: {
+            wallet1: consolidation.wallet2,
+            wallet2: consolidation.wallet1
           }
+        });
+        if (r2) {
+          await repo.remove(r2);
+          const updatedConsolidation = new Consolidation();
+          updatedConsolidation.block = consolidation.block;
+          updatedConsolidation.wallet1 = consolidation.wallet2;
+          updatedConsolidation.wallet2 = consolidation.wallet1;
+          updatedConsolidation.confirmed = false;
+          await repo.save(updatedConsolidation);
         }
       }
     }
-
-    logger.info(
-      `[CONSOLIDATIONS] [ALL ${consolidations.length} RESULTS PERSISTED]`
-    );
   }
+
+  logger.info(
+    `[CONSOLIDATIONS] [ALL ${consolidations.length} RESULTS PERSISTED]`
+  );
 }
 
 export async function persistDelegations(

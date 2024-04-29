@@ -11,6 +11,7 @@ import {
   GlobalTDHHistory,
   NftTDH,
   TDH,
+  TDHBlock,
   TDHHistory,
   TDHMemes
 } from '../entities/ITDH';
@@ -49,7 +50,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     NFTOwner,
     NftTDH,
     OwnerBalances,
-    ConsolidatedOwnerBalances
+    ConsolidatedOwnerBalances,
+    TDHBlock
   ]);
   const force = process.env.TDH_RESET == 'true';
   logger.info(`[RUNNING force=${force}]`);
