@@ -10,15 +10,7 @@ import {
 } from '../entities/ITDH';
 import { Logger } from '../logging';
 import { Time } from '../time';
-import { Profile } from '../entities/IProfile';
 import { fetchAllConsolidationAddresses } from '../db';
-import { CommunityMember } from '../entities/ICommunityMember';
-import {
-  AggregatedActivity,
-  ConsolidatedAggregatedActivity,
-  AggregatedActivityMemes,
-  ConsolidatedAggregatedActivityMemes
-} from '../entities/IAggregatedActivity';
 import { NFTOwner } from '../entities/INFTOwner';
 import {
   OwnerBalances,
@@ -38,17 +30,11 @@ export const handler = async () => {
     ConsolidatedTDH,
     TDHMemes,
     ConsolidatedTDHMemes,
-    CommunityMember,
-    Profile,
     NFTOwner,
     OwnerBalances,
     OwnerBalancesMemes,
     ConsolidatedOwnerBalances,
     ConsolidatedOwnerBalancesMemes,
-    AggregatedActivity,
-    ConsolidatedAggregatedActivity,
-    AggregatedActivityMemes,
-    ConsolidatedAggregatedActivityMemes,
     NftTDH,
     MemesSeason
   ]);
@@ -65,10 +51,6 @@ async function consolidatedTdhLoop() {
   const consolidationAddresses: { wallet: string }[] =
     await fetchAllConsolidationAddresses();
 
-  const distinctWallets = new Set<string>();
-  consolidationAddresses.forEach((address) => {
-    distinctWallets.add(address.wallet);
-  });
   const walletsArray = distinct(consolidationAddresses.map((it) => it.wallet));
 
   await updateTDH(lastTDHCalc, walletsArray);

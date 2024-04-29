@@ -46,13 +46,6 @@ import {
   NFTDelegationBlock,
   WalletConsolidationKey
 } from './entities/IDelegation';
-import { RoyaltiesUpload } from './entities/IRoyalties';
-import {
-  NFTHistory,
-  NFTHistoryBlock,
-  NFTHistoryClaim
-} from './entities/INFTHistory';
-import { Rememe, RememeUpload } from './entities/IRememe';
 import {
   areEqualAddresses,
   extractConsolidationWallets,
@@ -61,7 +54,6 @@ import {
 } from './helpers';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
-import { Profile } from './entities/IProfile';
 import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
@@ -226,14 +218,6 @@ export async function fetchLatestLabTransactionsBlockNumber(beforeDate?: Date) {
   sql += ` ORDER BY block DESC LIMIT 1;`;
   const r = await sqlExecutor.execute(sql, params);
   return r.length > 0 ? r[0].block : 0;
-}
-
-export async function fetchLatestNftHistoryBlockNumber() {
-  const block = await AppDataSource.getRepository(NFTHistoryBlock)
-    .createQueryBuilder()
-    .select('MAX(block)', 'maxBlock')
-    .getRawOne();
-  return block.maxBlock;
 }
 
 export async function retrieveWalletConsolidations(wallet: string) {
@@ -860,20 +844,6 @@ export async function fetchTDHForBlock(block: number) {
   return parsed;
 }
 
-export async function persistRoyaltiesUpload(date: Date, url: string) {
-  const upload = new RoyaltiesUpload();
-  upload.date = date;
-  upload.url = url;
-  const repository = AppDataSource.getRepository(RoyaltiesUpload);
-  const query = repository
-    .createQueryBuilder()
-    .insert()
-    .into(RoyaltiesUpload)
-    .values(upload)
-    .orUpdate(['url']);
-  await query.execute();
-}
-
 export async function fetchRoyalties(startDate: Date, endDate: Date) {
   const sql = `
   SELECT t.contract, t.token_id, SUM(t.royalties) AS total_royalties,
@@ -1045,50 +1015,6 @@ export async function persistDelegations(
   );
 }
 
-export async function persistNftHistory(nftHistory: NFTHistory[]) {
-  await AppDataSource.getRepository(NFTHistory).save(nftHistory);
-}
-
-export async function persistNftClaims(claims: NFTHistoryClaim[]) {
-  await AppDataSource.getRepository(NFTHistoryClaim).save(claims);
-}
-
-export async function findClaim(claimIndex: number, nftId?: number) {
-  let condition;
-  if (nftId != undefined) {
-    condition = { claimIndex: claimIndex, nft_id: nftId };
-  } else {
-    condition = { claimIndex: claimIndex };
-  }
-  const claims = await AppDataSource.getRepository(NFTHistoryClaim).find({
-    where: condition,
-    order: { created_at: 'desc' }
-  });
-  return claims;
-}
-
-export async function persistNftHistoryBlock(block: number) {
-  await AppDataSource.getRepository(NFTHistoryBlock).save({
-    block
-  });
-}
-
-export async function fetchLatestNftUri(
-  tokenId: number,
-  contract: string,
-  block: number
-) {
-  const latestHistory = await AppDataSource.getRepository(NFTHistory).findOne({
-    where: {
-      nft_id: tokenId,
-      contract: contract,
-      block: LessThan(block)
-    },
-    order: { transaction_date: 'DESC' }
-  });
-  return latestHistory ? latestHistory.uri : null;
-}
-
 export async function fetchHasEns(wallets: string[]) {
   const sql = `SELECT COUNT(*) as ens_count FROM ${ENS_TABLE} WHERE wallet IN (:wallets) AND display IS NOT NULL`;
 
@@ -1096,37 +1022,6 @@ export async function fetchHasEns(wallets: string[]) {
     wallets: wallets
   });
   return parseInt(results[0].ens_count) === wallets.length;
-}
-
-export async function fetchAllProfiles(): Promise<Profile[]> {
-  const profiles = await AppDataSource.getRepository(Profile).find();
-  return profiles;
-}
-
-export async function deleteRememes(rememes: Rememe[]) {
-  await AppDataSource.getRepository(Rememe).remove(rememes);
-}
-
-export async function persistRememes(rememes: Rememe[]) {
-  await AppDataSource.getRepository(Rememe).save(rememes);
-}
-
-export async function persistRememesUpload(url: string) {
-  await AppDataSource.getRepository(RememeUpload).save({
-    url
-  });
-}
-
-export async function fetchRememes() {
-  return await AppDataSource.getRepository(Rememe).find();
-}
-
-export async function fetchMissingS3Rememes() {
-  return await AppDataSource.getRepository(Rememe).find({
-    where: {
-      s3_image_original: IsNull()
-    }
-  });
 }
 
 export async function persistTDHHistory(tdhHistory: TDHHistory[]) {
