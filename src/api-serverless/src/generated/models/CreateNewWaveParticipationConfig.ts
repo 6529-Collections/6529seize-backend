@@ -12,22 +12,19 @@
 
 import { CreateNewWaveScope } from '../models/CreateNewWaveScope';
 import { IntRange } from '../models/IntRange';
-import { WaveCreditScope } from '../models/WaveCreditScope';
-import { WaveCreditType } from '../models/WaveCreditType';
+import { WaveRequiredMetadata } from '../models/WaveRequiredMetadata';
 import { HttpFile } from '../http/http';
 
-export class CreateNewWaveVotingConfig {
+export class CreateNewWaveParticipationConfig {
     'scope': CreateNewWaveScope;
-    'credit_type': WaveCreditType;
-    'credit_scope': WaveCreditScope;
     /**
-    * Only relevant when credit_type=REP. The REP category which is usable as credit. If not set then all categories will be usable as voting credits.
+    * The number of applications allowed per participant. Infinite if omitted.
     */
-    'credit_category': string | null;
+    'no_of_applications_allowed_per_participant'?: number;
     /**
-    * Only relevant when credit_type=REP
+    * The metadata that must be provided by the participant.  Empty array if nothing is required. 
     */
-    'creditor_id': string | null;
+    'required_metadata': Array<WaveRequiredMetadata>;
     /**
     * If true then the votes must be signed by voters.
     */
@@ -44,27 +41,15 @@ export class CreateNewWaveVotingConfig {
             "format": ""
         },
         {
-            "name": "credit_type",
-            "baseName": "credit_type",
-            "type": "WaveCreditType",
-            "format": ""
+            "name": "no_of_applications_allowed_per_participant",
+            "baseName": "no_of_applications_allowed_per_participant",
+            "type": "number",
+            "format": "int64"
         },
         {
-            "name": "credit_scope",
-            "baseName": "credit_scope",
-            "type": "WaveCreditScope",
-            "format": ""
-        },
-        {
-            "name": "credit_category",
-            "baseName": "credit_category",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "creditor_id",
-            "baseName": "creditor_id",
-            "type": "string",
+            "name": "required_metadata",
+            "baseName": "required_metadata",
+            "type": "Array<WaveRequiredMetadata>",
             "format": ""
         },
         {
@@ -81,12 +66,10 @@ export class CreateNewWaveVotingConfig {
         }    ];
 
     static getAttributeTypeMap() {
-        return CreateNewWaveVotingConfig.attributeTypeMap;
+        return CreateNewWaveParticipationConfig.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
-
-
 
