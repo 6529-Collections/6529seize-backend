@@ -158,6 +158,7 @@ export const DELEGATION_ALL_ADDRESS =
 export const USE_CASE_ALL = 1;
 export const USE_CASE_MINTING = 2;
 export const USE_CASE_AIRDROPS = 3;
+export const USE_CASE_PRIMARY_ADDRESS = 997;
 export const USE_CASE_SUB_DELEGATION = 998;
 export const USE_CASE_CONSOLIDATION = 999;
 export const CONSOLIDATIONS_LIMIT = 3;

@@ -19,7 +19,7 @@ import { Time } from '../time';
 import { getLastTDH } from '../helpers';
 import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { sqlExecutor } from '../sql-executor';
-import { CONSOLIDATIONS_TABLE } from '../constants';
+import { CONSOLIDATIONS_TABLE, USE_CASE_PRIMARY_ADDRESS } from '../constants';
 import {
   ConsolidatedTDH,
   ConsolidatedTDHMemes,
@@ -50,6 +50,7 @@ import {
   ConsolidatedAggregatedActivityMemes
 } from '../entities/IAggregatedActivity';
 import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
+import { profilesService } from '../profiles/profiles.service';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -98,7 +99,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 
 async function handleDelegations(startBlock: number | undefined) {
   const delegationsResponse = await findNewDelegations(startBlock);
-
   await persistConsolidations(startBlock, delegationsResponse.consolidations);
   await persistDelegations(
     startBlock,
@@ -111,6 +111,12 @@ async function handleDelegations(startBlock: number | undefined) {
   if (delegationsResponse.consolidations.length > 0) {
     await reconsolidateWallets(delegationsResponse.consolidations);
   }
+
+  const primaryAddressEvents = [
+    ...delegationsResponse.registrations,
+    ...delegationsResponse.revocation
+  ].filter((e) => e.use_case === USE_CASE_PRIMARY_ADDRESS);
+  await updatePrimaryAddresses(primaryAddressEvents);
 
   return delegationsResponse;
 }
@@ -195,4 +201,14 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
   } else {
     logger.info(`[NO WALLETS TO RECONSOLIDATE]`);
   }
+}
+
+async function updatePrimaryAddresses(events: DelegationEvent[]) {
+  const wallets = new Set<string>();
+  events.forEach((c) => {
+    wallets.add(c.wallet1.toLowerCase());
+  });
+
+  await profilesService.updatePrimaryAddresses(wallets);
+  logger.info(`[UPDATED PRIMARY ADDRESSES FOR ${wallets.size} WALLETS]`);
 }
