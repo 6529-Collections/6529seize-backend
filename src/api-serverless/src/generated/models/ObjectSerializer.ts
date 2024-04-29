@@ -11,6 +11,8 @@ export * from '../models/CreateNewProfileProxyCreateWaveAction';
 export * from '../models/CreateNewProfileProxyCreateWaveParticipationDropAction';
 export * from '../models/CreateNewProfileProxyRateWaveDropAction';
 export * from '../models/CreateNewProfileProxyReadWaveAction';
+export * from '../models/CreateNewWave';
+export * from '../models/CreateNewWaveVotingConfig';
 export * from '../models/Curation';
 export * from '../models/Drop';
 export * from '../models/DropActivityLog';
@@ -59,6 +61,8 @@ import { CreateNewProfileProxyCreateWaveAction    } from '../models/CreateNewPro
 import { CreateNewProfileProxyCreateWaveParticipationDropAction    } from '../models/CreateNewProfileProxyCreateWaveParticipationDropAction';
 import { CreateNewProfileProxyRateWaveDropAction    } from '../models/CreateNewProfileProxyRateWaveDropAction';
 import { CreateNewProfileProxyReadWaveAction    } from '../models/CreateNewProfileProxyReadWaveAction';
+import { CreateNewWave } from '../models/CreateNewWave';
+import { CreateNewWaveVotingConfig        } from '../models/CreateNewWaveVotingConfig';
 import { Curation } from '../models/Curation';
 import { Drop } from '../models/Drop';
 import { DropActivityLog     , DropActivityLogTypeEnum    } from '../models/DropActivityLog';
@@ -128,6 +132,8 @@ let typeMap: {[index: string]: any} = {
     "CreateNewProfileProxyCreateWaveParticipationDropAction": CreateNewProfileProxyCreateWaveParticipationDropAction,
     "CreateNewProfileProxyRateWaveDropAction": CreateNewProfileProxyRateWaveDropAction,
     "CreateNewProfileProxyReadWaveAction": CreateNewProfileProxyReadWaveAction,
+    "CreateNewWave": CreateNewWave,
+    "CreateNewWaveVotingConfig": CreateNewWaveVotingConfig,
     "Curation": Curation,
     "Drop": Drop,
     "DropActivityLog": DropActivityLog,
