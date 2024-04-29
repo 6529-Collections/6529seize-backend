@@ -1025,6 +1025,19 @@ components:
         - ALL
         - CURATED
 
+    CreateNewWaveScope:
+      type: object
+      required:
+        - type
+        - curation_id
+      properties:
+        type:
+          $ref: '#/components/schemas/WaveScopeType'
+        curation_id:
+          description: 'Only relevant when type=CURATED.'
+          type: string
+          nullable: true
+
     WaveScope:
       title: Scope
       description: A scope of audience
@@ -1093,7 +1106,7 @@ components:
         - creditor_id
       properties:
         scope:
-          $ref: '#/components/schemas/WaveScope'
+          $ref: '#/components/schemas/CreateNewWaveScope'
         credit_type:
           $ref: '#/components/schemas/WaveCreditType'
         credit_scope:
@@ -1155,6 +1168,14 @@ components:
         scope:
           $ref: '#/components/schemas/WaveScope'
 
+    CreateNewWaveVisibilityConfig:
+      type: object
+      required:
+        - scope
+      properties:
+        scope:
+          $ref: '#/components/schemas/CreateNewWaveScope'
+
     WaveParticipationConfig:
       type: object
       required:
@@ -1164,6 +1185,33 @@ components:
       properties:
         scope:
           $ref: '#/components/schemas/WaveScope'
+        no_of_applications_allowed_per_participant:
+          description: 'The number of applications allowed per participant. Infinite if omitted.'
+          type: integer
+          format: int64
+          minimum: 1
+        required_metadata:
+          description: |
+            The metadata that must be provided by the participant. 
+            Empty array if nothing is required.
+          type: array
+          items:
+            $ref: '#/components/schemas/WaveRequiredMetadata'
+        signature_required:
+          description: If true then the votes must be signed by voters.
+          type: boolean
+        period:
+          $ref: '#/components/schemas/IntRange'
+
+    CreateNewWaveParticipationConfig:
+      type: object
+      required:
+        - scope
+        - required_metadata
+        - signature_required
+      properties:
+        scope:
+          $ref: '#/components/schemas/CreateNewWaveScope'
         no_of_applications_allowed_per_participant:
           description: 'The number of applications allowed per participant. Infinite if omitted.'
           type: integer
@@ -1236,7 +1284,7 @@ components:
         - visibility
         - participation
         - wave
-        - outcome
+        - outcomes
       properties:
         id:
           description: The ID of the wave
@@ -1273,7 +1321,7 @@ components:
         - visibility
         - participation
         - wave
-        - outcome
+        - outcomes
       properties:
         name:
           description: The name of the wave
@@ -1284,9 +1332,9 @@ components:
         voting:
           $ref: '#/components/schemas/CreateNewWaveVotingConfig'
         visibility:
-          $ref: '#/components/schemas/WaveVisibilityConfig'
+          $ref: '#/components/schemas/CreateNewWaveVisibilityConfig'
         participation:
-          $ref: '#/components/schemas/WaveParticipationConfig'
+          $ref: '#/components/schemas/CreateNewWaveParticipationConfig'
         wave:
           $ref: '#/components/schemas/WaveConfig'
         outcomes:

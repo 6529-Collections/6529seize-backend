@@ -38,7 +38,7 @@ export class Wave {
     'visibility': WaveVisibilityConfig;
     'participation': WaveParticipationConfig;
     'wave': WaveConfig;
-    'outcomes'?: Array<WaveOutcome>;
+    'outcomes': Array<WaveOutcome>;
 
     static readonly discriminator: string | undefined = undefined;
 

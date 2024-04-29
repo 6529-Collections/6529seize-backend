@@ -10,11 +10,11 @@
  * Do not edit the class manually.
  */
 
+import { CreateNewWaveParticipationConfig } from '../models/CreateNewWaveParticipationConfig';
+import { CreateNewWaveVisibilityConfig } from '../models/CreateNewWaveVisibilityConfig';
 import { CreateNewWaveVotingConfig } from '../models/CreateNewWaveVotingConfig';
 import { WaveConfig } from '../models/WaveConfig';
 import { WaveOutcome } from '../models/WaveOutcome';
-import { WaveParticipationConfig } from '../models/WaveParticipationConfig';
-import { WaveVisibilityConfig } from '../models/WaveVisibilityConfig';
 import { HttpFile } from '../http/http';
 
 export class CreateNewWave {
@@ -27,10 +27,10 @@ export class CreateNewWave {
     */
     'description': string;
     'voting': CreateNewWaveVotingConfig;
-    'visibility': WaveVisibilityConfig;
-    'participation': WaveParticipationConfig;
+    'visibility': CreateNewWaveVisibilityConfig;
+    'participation': CreateNewWaveParticipationConfig;
     'wave': WaveConfig;
-    'outcomes'?: Array<WaveOutcome>;
+    'outcomes': Array<WaveOutcome>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -56,13 +56,13 @@ export class CreateNewWave {
         {
             "name": "visibility",
             "baseName": "visibility",
-            "type": "WaveVisibilityConfig",
+            "type": "CreateNewWaveVisibilityConfig",
             "format": ""
         },
         {
             "name": "participation",
             "baseName": "participation",
-            "type": "WaveParticipationConfig",
+            "type": "CreateNewWaveParticipationConfig",
             "format": ""
         },
         {
