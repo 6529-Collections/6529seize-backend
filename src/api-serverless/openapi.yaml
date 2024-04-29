@@ -1209,6 +1209,7 @@ components:
         - scope
         - required_metadata
         - signature_required
+        - no_of_applications_allowed_per_participant
       properties:
         scope:
           $ref: '#/components/schemas/CreateNewWaveScope'
@@ -1216,6 +1217,7 @@ components:
           description: 'The number of applications allowed per participant. Infinite if omitted.'
           type: integer
           format: int64
+          nullable: true
           minimum: 1
         required_metadata:
           description: |
@@ -1257,12 +1259,15 @@ components:
           format: int64
           minimum: 1
         period:
-          $ref: '#/components/schemas/IntRange'
+          anyOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/IntRange'
 
     WaveOutcome:
       type: object
       required:
         - type
+        - properties
       properties:
         type:
           type: string
@@ -1326,6 +1331,7 @@ components:
         name:
           description: The name of the wave
           type: string
+          maxLength: 250
         description:
           description: The description of the wave
           type: string
