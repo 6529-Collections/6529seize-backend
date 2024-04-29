@@ -10,22 +10,14 @@
  * Do not edit the class manually.
  */
 
+import { CreateNewWaveParticipationConfig } from '../models/CreateNewWaveParticipationConfig';
+import { CreateNewWaveVisibilityConfig } from '../models/CreateNewWaveVisibilityConfig';
+import { CreateNewWaveVotingConfig } from '../models/CreateNewWaveVotingConfig';
 import { WaveConfig } from '../models/WaveConfig';
 import { WaveOutcome } from '../models/WaveOutcome';
-import { WaveParticipationConfig } from '../models/WaveParticipationConfig';
-import { WaveVisibilityConfig } from '../models/WaveVisibilityConfig';
-import { WaveVotingConfig } from '../models/WaveVotingConfig';
 import { HttpFile } from '../http/http';
 
-export class Wave {
-    /**
-    * The ID of the wave
-    */
-    'id': string;
-    /**
-    * Sequence number of the wave in Seize
-    */
-    'serial_no': number;
+export class CreateNewWave {
     /**
     * The name of the wave
     */
@@ -34,27 +26,15 @@ export class Wave {
     * The description of the wave
     */
     'description': string;
-    'voting': WaveVotingConfig;
-    'visibility': WaveVisibilityConfig;
-    'participation': WaveParticipationConfig;
+    'voting': CreateNewWaveVotingConfig;
+    'visibility': CreateNewWaveVisibilityConfig;
+    'participation': CreateNewWaveParticipationConfig;
     'wave': WaveConfig;
     'outcomes': Array<WaveOutcome>;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
-        {
-            "name": "id",
-            "baseName": "id",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "serial_no",
-            "baseName": "serial_no",
-            "type": "number",
-            "format": "int64"
-        },
         {
             "name": "name",
             "baseName": "name",
@@ -70,19 +50,19 @@ export class Wave {
         {
             "name": "voting",
             "baseName": "voting",
-            "type": "WaveVotingConfig",
+            "type": "CreateNewWaveVotingConfig",
             "format": ""
         },
         {
             "name": "visibility",
             "baseName": "visibility",
-            "type": "WaveVisibilityConfig",
+            "type": "CreateNewWaveVisibilityConfig",
             "format": ""
         },
         {
             "name": "participation",
             "baseName": "participation",
-            "type": "WaveParticipationConfig",
+            "type": "CreateNewWaveParticipationConfig",
             "format": ""
         },
         {
@@ -99,7 +79,7 @@ export class Wave {
         }    ];
 
     static getAttributeTypeMap() {
-        return Wave.attributeTypeMap;
+        return CreateNewWave.attributeTypeMap;
     }
 
     public constructor() {

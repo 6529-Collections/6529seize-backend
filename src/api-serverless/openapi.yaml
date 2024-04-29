@@ -530,6 +530,29 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Wave'
+    post:
+      tags:
+        - Waves
+      summary: Create new wave
+      description: Requires the user to be authenticated
+      operationId: createWave
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNewWave'
+      responses:
+        '201':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wave'
+        '404':
+          description: Wave not found
+        '400':
+          description: Invalid request
 
 components:
   securitySchemes:
@@ -1002,6 +1025,19 @@ components:
         - ALL
         - CURATED
 
+    CreateNewWaveScope:
+      type: object
+      required:
+        - type
+        - curation_id
+      properties:
+        type:
+          $ref: '#/components/schemas/WaveScopeType'
+        curation_id:
+          description: 'Only relevant when type=CURATED.'
+          type: string
+          nullable: true
+
     WaveScope:
       title: Scope
       description: A scope of audience
@@ -1059,6 +1095,38 @@ components:
           description: Metadata key
           type: string
 
+    CreateNewWaveVotingConfig:
+      type: object
+      required:
+        - scope
+        - credit_type
+        - credit_scope
+        - credit_category
+        - signature_required
+        - creditor_id
+      properties:
+        scope:
+          $ref: '#/components/schemas/CreateNewWaveScope'
+        credit_type:
+          $ref: '#/components/schemas/WaveCreditType'
+        credit_scope:
+          $ref: '#/components/schemas/WaveCreditScope'
+        credit_category:
+          description: "Only relevant when credit_type=REP. 
+            The REP category which is usable as credit. 
+            If not set then all categories will be usable as voting credits."
+          type: string
+          nullable: true
+        creditor_id:
+          description: 'Only relevant when credit_type=REP'
+          type: string
+          nullable: true
+        signature_required:
+          description: If true then the votes must be signed by voters.
+          type: boolean
+        period:
+          $ref: '#/components/schemas/IntRange'
+
     WaveVotingConfig:
       type: object
       required:
@@ -1100,6 +1168,14 @@ components:
         scope:
           $ref: '#/components/schemas/WaveScope'
 
+    CreateNewWaveVisibilityConfig:
+      type: object
+      required:
+        - scope
+      properties:
+        scope:
+          $ref: '#/components/schemas/CreateNewWaveScope'
+
     WaveParticipationConfig:
       type: object
       required:
@@ -1109,6 +1185,33 @@ components:
       properties:
         scope:
           $ref: '#/components/schemas/WaveScope'
+        no_of_applications_allowed_per_participant:
+          description: 'The number of applications allowed per participant. Infinite if omitted.'
+          type: integer
+          format: int64
+          minimum: 1
+        required_metadata:
+          description: |
+            The metadata that must be provided by the participant. 
+            Empty array if nothing is required.
+          type: array
+          items:
+            $ref: '#/components/schemas/WaveRequiredMetadata'
+        signature_required:
+          description: If true then the votes must be signed by voters.
+          type: boolean
+        period:
+          $ref: '#/components/schemas/IntRange'
+
+    CreateNewWaveParticipationConfig:
+      type: object
+      required:
+        - scope
+        - required_metadata
+        - signature_required
+      properties:
+        scope:
+          $ref: '#/components/schemas/CreateNewWaveScope'
         no_of_applications_allowed_per_participant:
           description: 'The number of applications allowed per participant. Infinite if omitted.'
           type: integer
@@ -1181,7 +1284,7 @@ components:
         - visibility
         - participation
         - wave
-        - outcome
+        - outcomes
       properties:
         id:
           description: The ID of the wave
@@ -1202,6 +1305,36 @@ components:
           $ref: '#/components/schemas/WaveVisibilityConfig'
         participation:
           $ref: '#/components/schemas/WaveParticipationConfig'
+        wave:
+          $ref: '#/components/schemas/WaveConfig'
+        outcomes:
+          type: array
+          items:
+            $ref: '#/components/schemas/WaveOutcome'
+
+    CreateNewWave:
+      type: object
+      required:
+        - name
+        - description
+        - voting
+        - visibility
+        - participation
+        - wave
+        - outcomes
+      properties:
+        name:
+          description: The name of the wave
+          type: string
+        description:
+          description: The description of the wave
+          type: string
+        voting:
+          $ref: '#/components/schemas/CreateNewWaveVotingConfig'
+        visibility:
+          $ref: '#/components/schemas/CreateNewWaveVisibilityConfig'
+        participation:
+          $ref: '#/components/schemas/CreateNewWaveParticipationConfig'
         wave:
           $ref: '#/components/schemas/WaveConfig'
         outcomes:
