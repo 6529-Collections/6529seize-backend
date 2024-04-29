@@ -17,7 +17,7 @@ export class WaveOutcome {
     * Type of the outcome. (Promise, EVM Mint, Crypto Prize etc.) 
     */
     'type': string;
-    'properties'?: { [key: string]: string; };
+    'properties': { [key: string]: string; };
 
     static readonly discriminator: string | undefined = undefined;
 
