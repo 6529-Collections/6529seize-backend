@@ -21,6 +21,7 @@ on:
           - aggregatedActivityLoop
           - cloudwatchAlarmsToDiscordLoop
           - customReplayLoop
+          - dbDumpsDaily
           - dbMigrationsLoop
           - delegationsLoop
           - discoverEnsLoop
