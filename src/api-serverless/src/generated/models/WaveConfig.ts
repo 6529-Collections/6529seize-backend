@@ -25,7 +25,7 @@ export class WaveConfig {
     * Vote of a voter is considered eligible after this amount of time after casting it. If not set then votes are eligible immediately after casting.
     */
     'time_lock_ms': number | null;
-    'period': IntRange;
+    'period': IntRange | null;
 
     static readonly discriminator: string | undefined = undefined;
 

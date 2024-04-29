@@ -12,6 +12,9 @@ export class WaveEntity {
   @Column({ type: 'varchar', length: 250, nullable: false })
   readonly name!: string;
 
+  @Column({ type: 'text', nullable: false })
+  readonly description!: string;
+
   @Column({ type: 'bigint', nullable: false })
   readonly created_at!: number;
 
