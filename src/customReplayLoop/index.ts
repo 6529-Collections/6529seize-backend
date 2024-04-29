@@ -49,12 +49,12 @@ async function replay() {
   );
   logger.info(`[PROFILES TO BE UPDATED: ${profilesToUpdate.length}]`);
 
-  // for (const profile of profilesToUpdate) {
-  //   await profilesService.updateProfilePrimaryAddress(
-  //     profile.external_id,
-  //     profile.primary_wallet
-  //   );
-  // }
+  for (const profile of profilesToUpdate) {
+    await profilesService.updateProfilePrimaryAddress(
+      profile.external_id,
+      profile.primary_wallet
+    );
+  }
 }
 
 async function getPrimaryAddressUpdates(profiles: ProfileAndConsolidations[]) {
