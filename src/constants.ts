@@ -83,11 +83,15 @@ export const SUBSCRIPTIONS_LOGS_TABLE = 'subscriptions_logs';
 export const SUBSCRIPTIONS_REDEEMED_TABLE = 'subscriptions_redeemed';
 
 export const DROPS_TABLE = 'drops';
+export const DROPS_PARTS_TABLE = 'drops_parts';
+export const PROFILE_PROXIES_TABLE = 'profile_proxies';
+export const PROFILE_PROXY_ACTIONS_TABLE = 'profile_proxy_actions';
+export const WAVES_TABLE = 'waves';
 export const DROPS_MENTIONS_TABLE = 'drops_mentions';
 export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
 export const DROP_METADATA_TABLE = 'drops_metadatas';
 export const DROP_MEDIA_TABLE = 'drop_medias';
-export const DROP_DISCUSSION_COMMENT_TABLE = 'drops_discussion_comments';
+export const DROPS_COMMENTS_TABLE = 'drops_comments';
 
 export const ETH_PRICE_TABLE = 'eth_price';
 
@@ -154,6 +158,7 @@ export const DELEGATION_ALL_ADDRESS =
 export const USE_CASE_ALL = 1;
 export const USE_CASE_MINTING = 2;
 export const USE_CASE_AIRDROPS = 3;
+export const USE_CASE_PRIMARY_ADDRESS = 997;
 export const USE_CASE_SUB_DELEGATION = 998;
 export const USE_CASE_CONSOLIDATION = 999;
 export const CONSOLIDATIONS_LIMIT = 3;

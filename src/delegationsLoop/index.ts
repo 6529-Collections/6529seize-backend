@@ -54,7 +54,6 @@ export const handler = async () => {
 
 async function handleDelegations(startBlock: number | undefined) {
   const delegationsResponse = await findNewDelegations(startBlock);
-
   await persistConsolidations(startBlock, delegationsResponse.consolidations);
   await persistDelegations(
     startBlock,

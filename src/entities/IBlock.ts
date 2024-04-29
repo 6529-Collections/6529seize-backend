@@ -1,5 +1,4 @@
 import { Column, CreateDateColumn, PrimaryColumn } from 'typeorm';
-import { TDH_BLOCKS_TABLE } from '../constants';
 
 export interface Block {
   block_number: number;
