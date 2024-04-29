@@ -28,7 +28,7 @@ async function tdh(force?: boolean) {
 
   if (lastTdhFromNow.gt(Time.hours(24)) || force) {
     await updateTDH(lastTDHCalc);
-    await consolidateTDH(lastTDHCalc);
+    await consolidateTDH();
   } else {
     logger.info(
       `[TODAY'S TDH ALREADY CALCULATED ${lastTdhFromNow} ago] [SKIPPING...]`

@@ -136,7 +136,7 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
     const walletsArray = Array.from(distinctWallets);
 
     await updateTDH(lastTDHCalc, walletsArray);
-    await consolidateTDH(lastTDHCalc, walletsArray);
+    await consolidateTDH(walletsArray);
   } else {
     logger.info(`[NO WALLETS TO RECONSOLIDATE]`);
   }

@@ -1,24 +1,23 @@
 import {
   ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
-  MEME_8_BURN_TRANSACTION,
   MEMES_CONTRACT,
+  MEME_8_BURN_TRANSACTION,
   NEXTGEN_CONTRACT,
   NULL_ADDRESS,
   WALLETS_TDH_TABLE
 } from '../constants';
-import { DefaultBoost, TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
+import { DefaultBoost, TDH, TokenTDH } from '../entities/ITDH';
 import { Transaction } from '../entities/ITransaction';
 import { areEqualAddresses, getDaysDiff } from '../helpers';
-import { Alchemy, NftContractOwner } from 'alchemy-sdk';
+import { Alchemy } from 'alchemy-sdk';
 import {
   consolidateTransactions,
   fetchAllConsolidationAddresses,
-  fetchAllNFTs,
-  fetchAllSeasons,
   fetchLatestTransactionsBlockNumber,
   fetchTDHForBlock,
   fetchWalletTransactions,
+  persistNFTs,
   persistOwners,
   persistTDH,
   retrieveWalletConsolidations
@@ -26,7 +25,6 @@ import {
 import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
 import { Logger } from '../logging';
 import { NFT } from '../entities/INFT';
-import { MemesSeason } from '../entities/ISeason';
 import { fetchNftOwners } from './nft_owners';
 import { getAllNfts } from './nfts';
 
@@ -35,6 +33,13 @@ const logger = Logger.get('TDH');
 let alchemy: Alchemy;
 
 const TDH_CONTRACTS = [MEMES_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT];
+
+export interface MemesSeason {
+  id: number;
+  start_index: number;
+  end_index: number;
+  count: number;
+}
 
 export function getDefaultBoost(): DefaultBoost {
   return {
@@ -148,32 +153,36 @@ export function createMemesData() {
   };
 }
 
-export const getAdjustedMemesAndSeasons = async (lastTDHCalc: Date) => {
-  const nfts: NFT[] = await fetchAllNFTs();
-  const ADJUSTED_NFTS = [...nfts].filter(
-    (nft) =>
-      nft.mint_date &&
-      lastTDHCalc.getTime() - 28 * 60 * 60 * 1000 >
-        new Date(nft.mint_date).getTime()
-  );
-
-  const MEMES_COUNT = [...ADJUSTED_NFTS].filter((nft) =>
-    areEqualAddresses(nft.contract, MEMES_CONTRACT)
-  ).length;
-
-  const seasons = await fetchAllSeasons();
-  const memeNfts = ADJUSTED_NFTS.filter((nft) =>
-    areEqualAddresses(nft.contract, MEMES_CONTRACT)
-  );
-  const ADJUSTED_SEASONS = seasons.filter(
-    (s) => memeNfts.length >= s.end_index
-  );
-
-  return {
-    ADJUSTED_NFTS,
-    MEMES_COUNT,
-    ADJUSTED_SEASONS
-  };
+export const buildSeasons = (memes: NFT[]) => {
+  const seasons: MemesSeason[] = [];
+  let start = 0;
+  let end = 0;
+  let count = 0;
+  let seasonId = 1;
+  for (const meme of memes) {
+    if (meme.season == seasonId) {
+      count++;
+      end = meme.id;
+    } else {
+      seasons.push({
+        id: seasonId,
+        start_index: start,
+        end_index: end,
+        count: count
+      });
+      seasonId++;
+      start = meme.id;
+      end = meme.id;
+      count = 1;
+    }
+  }
+  seasons.push({
+    id: seasonId,
+    start_index: start,
+    end_index: end,
+    count: count
+  });
+  return seasons;
 };
 
 export const updateTDH = async (
@@ -185,7 +194,7 @@ export const updateTDH = async (
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const block = await alchemy.core.getBlockNumber();
+  const block = await fetchLatestTransactionsBlockNumber(lastTDHCalc);
 
   const memeOwners = await fetchNftOwners(block, MEMES_CONTRACT);
   const gradientOwners = await fetchNftOwners(block, GRADIENT_CONTRACT);
@@ -195,8 +204,11 @@ export const updateTDH = async (
 
   const { memes, gradients, nextgen } = await getAllNfts(memeOwners);
 
+  const HODL_INDEX = memes.reduce((acc, m) => Math.max(acc, m.edition_size), 0);
+  const ADJUSTED_SEASONS = buildSeasons(memes);
+
   logger.info(
-    `[MEMES] : [TOKENS ${memes.length}] : [OWNERS ${memeOwners.length}]`
+    `[MEMES] : [TOKENS ${memes.length}] : [OWNERS ${memeOwners.length}] : [SEASONS ${ADJUSTED_SEASONS.length}] : [HODL_INDEX ${HODL_INDEX}]`
   );
   logger.info(
     `[GRADIENTS] : [TOKENS ${gradients.length}] : [OWNERS ${gradientOwners.length}]`
@@ -204,6 +216,8 @@ export const updateTDH = async (
   logger.info(
     `[NEXTGEN] : [TOKENS ${nextgen.length}] : [OWNERS ${nextgenOwners.length}]`
   );
+
+  const ADJUSTED_NFTS = [...memes, ...gradients, ...nextgen];
 
   const combinedAddresses = new Set<string>();
 
@@ -216,258 +230,220 @@ export const updateTDH = async (
     consolidationAddresses.forEach((w) =>
       combinedAddresses.add(w.wallet.toLowerCase())
     );
+
+    const nftOwners = [...memeOwners, ...gradientOwners, ...nextgenOwners];
+    nftOwners.forEach((w) => combinedAddresses.add(w.address.toLowerCase()));
   }
 
-  // const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
-  //   await getAdjustedMemesAndSeasons(lastTDHCalc);
+  logger.info(
+    `[BLOCK ${block}] [WALLETS ${combinedAddresses.size}] [CALCULATING TDH - START]`
+  );
 
-  // const timestamp = new Date(
-  //   (await alchemy.core.getBlock(block)).timestamp * 1000
-  // );
+  const timestamp = new Date(
+    (await alchemy.core.getBlock(block)).timestamp * 1000
+  );
 
-  // logger.info(
-  //   `[BLOCK ${block} - ${timestamp.toUTCString()}] [LAST TDH ${lastTDHCalc.toUTCString()}] [ADJUSTED_NFTS ${
-  //     ADJUSTED_NFTS.length
-  //   }] : [ADJUSTED_MEMES_SEASONS ${ADJUSTED_SEASONS.length}] : [NEXTGEN_NFTS ${
-  //     NEXTGEN_NFTS.length
-  //   }] : [NEXTGEN NETWORK ${nextgenNetwork}] : [CALCULATING TDH - START]`
-  // );
+  const walletsTDH: TDH[] = [];
+  const allGradientsTDH: any[] = [];
+  const allNextgenTDH: any[] = [];
 
-  // const walletsTDH: TDH[] = [];
-  // const allGradientsTDH: any[] = [];
-  // const allNextgenTDH: any[] = [];
-  // await Promise.all(
-  //   Array.from(combinedAddresses).map(async (owner) => {
-  //     const wallet = owner.toLowerCase();
-  //     const consolidations = await retrieveWalletConsolidations(wallet);
+  await Promise.all(
+    Array.from(combinedAddresses).map(async (owner) => {
+      const wallet = owner.toLowerCase();
+      const consolidations = await retrieveWalletConsolidations(wallet);
 
-  //     const walletMemes: any[] = [];
-  //     let unique_memes = 0;
-  //     const walletGradients: any[] = [];
-  //     const walletNextgen: any[] = [];
+      const walletMemes: any[] = [];
+      let unique_memes = 0;
+      const walletGradients: any[] = [];
+      const walletNextgen: any[] = [];
 
-  //     let totalTDH = 0;
-  //     let totalTDH__raw = 0;
-  //     let totalBalance = 0;
-  //     const memesData = createMemesData();
+      let totalTDH = 0;
+      let totalTDH__raw = 0;
+      let totalBalance = 0;
+      const memesData = createMemesData();
 
-  //     let gradientsBalance = 0;
-  //     let gradientsTDH = 0;
-  //     let gradientsTDH__raw = 0;
+      let gradientsBalance = 0;
+      let gradientsTDH = 0;
+      let gradientsTDH__raw = 0;
 
-  //     let nextgenBalance = 0;
-  //     let nextgenTDH = 0;
-  //     let nextgenTDH__raw = 0;
+      let nextgenBalance = 0;
+      let nextgenTDH = 0;
+      let nextgenTDH__raw = 0;
 
-  //     let consolidationTransactions: Transaction[] = [];
-  //     await Promise.all(
-  //       consolidations.map(async (c) => {
-  //         const transactions = await fetchWalletTransactions(
-  //           tdhContracts,
-  //           c,
-  //           block
-  //         );
-  //         consolidationTransactions =
-  //           consolidationTransactions.concat(transactions);
-  //       })
-  //     );
+      let consolidationTransactions: Transaction[] = [];
+      await Promise.all(
+        consolidations.map(async (c) => {
+          const transactions = await fetchWalletTransactions(
+            TDH_CONTRACTS,
+            c,
+            block
+          );
+          consolidationTransactions =
+            consolidationTransactions.concat(transactions);
+        })
+      );
 
-  //     consolidationTransactions = consolidateTransactions(
-  //       consolidationTransactions
-  //     ).sort((a, b) => {
-  //       return (
-  //         new Date(a.transaction_date).getTime() -
-  //         new Date(b.transaction_date).getTime()
-  //       );
-  //     });
+      consolidationTransactions = consolidateTransactions(
+        consolidationTransactions
+      ).sort((a, b) => {
+        return (
+          new Date(a.transaction_date).getTime() -
+          new Date(b.transaction_date).getTime()
+        );
+      });
 
-  //     if (areEqualAddresses(wallet, NULL_ADDRESS)) {
-  //       logger.info(
-  //         `[WALLET ${wallet}] [SKIPPING MEME CARD 8 BURN TRANSACTION ${MEME_8_BURN_TRANSACTION}]`
-  //       );
-  //       consolidationTransactions = consolidationTransactions.filter(
-  //         (t) => !areEqualAddresses(t.transaction, MEME_8_BURN_TRANSACTION)
-  //       );
-  //     }
+      if (areEqualAddresses(wallet, NULL_ADDRESS)) {
+        consolidationTransactions = consolidationTransactions.filter(
+          (t) => !areEqualAddresses(t.transaction, MEME_8_BURN_TRANSACTION)
+        );
+      }
 
-  //     ADJUSTED_NFTS.forEach((nft) => {
-  //       const tokenConsolidatedTransactions = [
-  //         ...consolidationTransactions
-  //       ].filter(
-  //         (t) =>
-  //           t.token_id == nft.id && areEqualAddresses(t.contract, nft.contract)
-  //       );
+      ADJUSTED_NFTS.forEach((nft) => {
+        const tokenConsolidatedTransactions = [
+          ...consolidationTransactions
+        ].filter(
+          (t) =>
+            t.token_id == nft.id && areEqualAddresses(t.contract, nft.contract)
+        );
 
-  //       const tokenTDH = getTokenTdh(
-  //         lastTDHCalc,
-  //         nft.id,
-  //         nft.hodl_rate,
-  //         wallet,
-  //         consolidations,
-  //         tokenConsolidatedTransactions
-  //       );
+        const hodlRate = HODL_INDEX / nft.edition_size;
 
-  //       if (tokenTDH) {
-  //         totalTDH += tokenTDH.tdh;
-  //         totalTDH__raw += tokenTDH.tdh__raw;
-  //         totalBalance += tokenTDH.balance;
+        const tokenTDH = getTokenTdh(
+          lastTDHCalc,
+          nft.id,
+          hodlRate,
+          wallet,
+          consolidations,
+          tokenConsolidatedTransactions
+        );
 
-  //         if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
-  //           memesData.memes_tdh += tokenTDH.tdh;
-  //           memesData.memes_tdh__raw += tokenTDH.tdh__raw;
-  //           unique_memes++;
-  //           memesData.memes_balance += tokenTDH.balance;
-  //           walletMemes.push(tokenTDH);
-  //         } else if (areEqualAddresses(nft.contract, GRADIENT_CONTRACT)) {
-  //           gradientsTDH += tokenTDH.tdh;
-  //           gradientsTDH__raw += tokenTDH.tdh__raw;
-  //           gradientsBalance += tokenTDH.balance;
-  //           walletGradients.push(tokenTDH);
-  //         }
-  //       }
-  //     });
+        if (tokenTDH) {
+          totalTDH += tokenTDH.tdh;
+          totalTDH__raw += tokenTDH.tdh__raw;
+          totalBalance += tokenTDH.balance;
 
-  //     NEXTGEN_NFTS.forEach((nft: NextGenToken) => {
-  //       if (areEqualAddresses(wallet, nft.owner)) {
-  //         const tokenConsolidatedTransactions = [
-  //           ...consolidationTransactions
-  //         ].filter(
-  //           (t) =>
-  //             t.token_id == nft.id &&
-  //             areEqualAddresses(t.contract, NEXTGEN_CONTRACT)
-  //         );
+          if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
+            memesData.memes_tdh += tokenTDH.tdh;
+            memesData.memes_tdh__raw += tokenTDH.tdh__raw;
+            unique_memes++;
+            memesData.memes_balance += tokenTDH.balance;
+            walletMemes.push(tokenTDH);
+          } else if (areEqualAddresses(nft.contract, GRADIENT_CONTRACT)) {
+            gradientsTDH += tokenTDH.tdh;
+            gradientsTDH__raw += tokenTDH.tdh__raw;
+            gradientsBalance += tokenTDH.balance;
+            walletGradients.push(tokenTDH);
+          } else if (areEqualAddresses(nft.contract, NEXTGEN_CONTRACT)) {
+            nextgenTDH += tokenTDH.tdh;
+            nextgenTDH__raw += tokenTDH.tdh__raw;
+            nextgenBalance += tokenTDH.balance;
+            walletNextgen.push(tokenTDH);
+          }
+        }
+      });
 
-  //         const tokenTDH = getTokenTdh(
-  //           lastTDHCalc,
-  //           nft.id,
-  //           nft.hodl_rate,
-  //           wallet,
-  //           consolidations,
-  //           tokenConsolidatedTransactions
-  //         );
+      let memesCardSets = 0;
+      if (walletMemes.length == memes.length) {
+        memesCardSets = Math.min(
+          ...[...walletMemes].map(function (o) {
+            return o.balance;
+          })
+        );
+      }
 
-  //         if (tokenTDH) {
-  //           totalTDH += tokenTDH.tdh;
-  //           totalTDH__raw += tokenTDH.tdh__raw;
-  //           totalBalance += tokenTDH.balance;
-  //           nextgenTDH += tokenTDH.tdh;
-  //           nextgenTDH__raw += tokenTDH.tdh__raw;
-  //           nextgenBalance += tokenTDH.balance;
-  //           walletNextgen.push(tokenTDH);
-  //         }
-  //       }
-  //     });
+      const genNaka = getGenesisAndNaka(walletMemes);
 
-  //     let memesCardSets = 0;
-  //     if (walletMemes.length == MEMES_COUNT) {
-  //       memesCardSets = Math.min(
-  //         ...[...walletMemes].map(function (o) {
-  //           return o.balance;
-  //         })
-  //       );
-  //     }
+      const tdh: TDH = {
+        date: new Date(),
+        wallet: wallet,
+        tdh_rank: 0, //assigned later
+        tdh_rank_memes: 0, //assigned later
+        tdh_rank_gradients: 0, //assigned later
+        tdh_rank_nextgen: 0, //assigned later
+        block: block,
+        tdh: totalTDH,
+        boost: 0,
+        boosted_tdh: 0,
+        tdh__raw: totalTDH__raw,
+        balance: totalBalance,
+        memes_cards_sets: memesCardSets,
+        genesis: genNaka.genesis,
+        nakamoto: genNaka.naka,
+        unique_memes: unique_memes,
+        memes_tdh: memesData.memes_tdh,
+        memes_tdh__raw: memesData.memes_tdh__raw,
+        memes_balance: memesData.memes_balance,
+        boosted_memes_tdh: memesData.boosted_memes_tdh,
+        memes_ranks: memesData.memes_ranks,
+        memes: walletMemes,
+        boosted_gradients_tdh: 0,
+        gradients_tdh: gradientsTDH,
+        gradients_tdh__raw: gradientsTDH__raw,
+        gradients_balance: gradientsBalance,
+        gradients: walletGradients,
+        gradients_ranks: [],
+        boosted_nextgen_tdh: 0,
+        nextgen_tdh: nextgenTDH,
+        nextgen_tdh__raw: nextgenTDH__raw,
+        nextgen_balance: nextgenBalance,
+        nextgen: walletNextgen,
+        nextgen_ranks: [],
+        boost_breakdown: {}
+      };
+      walletGradients.forEach((wg) => {
+        allGradientsTDH.push(wg);
+      });
+      walletNextgen.forEach((wn) => {
+        allNextgenTDH.push(wn);
+      });
+      walletsTDH.push(tdh);
+    })
+  );
 
-  //     const genNaka = getGenesisAndNaka(walletMemes);
+  logger.info(
+    `[BLOCK ${block}] [WALLETS ${walletsTDH.length}] [CALCULATING BOOSTS]`
+  );
 
-  //     if (totalTDH > 0 || totalBalance > 0 || consolidations.length > 1) {
-  //       const tdh: TDH = {
-  //         date: new Date(),
-  //         wallet: wallet,
-  //         tdh_rank: 0, //assigned later
-  //         tdh_rank_memes: 0, //assigned later
-  //         tdh_rank_gradients: 0, //assigned later
-  //         tdh_rank_nextgen: 0, //assigned later
-  //         block: block,
-  //         tdh: totalTDH,
-  //         boost: 0,
-  //         boosted_tdh: 0,
-  //         tdh__raw: totalTDH__raw,
-  //         balance: totalBalance,
-  //         memes_cards_sets: memesCardSets,
-  //         genesis: genNaka.genesis,
-  //         nakamoto: genNaka.naka,
-  //         unique_memes: unique_memes,
-  //         memes_tdh: memesData.memes_tdh,
-  //         memes_tdh__raw: memesData.memes_tdh__raw,
-  //         memes_balance: memesData.memes_balance,
-  //         boosted_memes_tdh: memesData.boosted_memes_tdh,
-  //         memes_ranks: memesData.memes_ranks,
-  //         memes: walletMemes,
-  //         boosted_gradients_tdh: 0,
-  //         gradients_tdh: gradientsTDH,
-  //         gradients_tdh__raw: gradientsTDH__raw,
-  //         gradients_balance: gradientsBalance,
-  //         gradients: walletGradients,
-  //         gradients_ranks: [],
-  //         boosted_nextgen_tdh: 0,
-  //         nextgen_tdh: nextgenTDH,
-  //         nextgen_tdh__raw: nextgenTDH__raw,
-  //         nextgen_balance: nextgenBalance,
-  //         nextgen: walletNextgen,
-  //         nextgen_ranks: [],
-  //         boost_breakdown: {}
-  //       };
-  //       walletGradients.forEach((wg) => {
-  //         allGradientsTDH.push(wg);
-  //       });
-  //       walletNextgen.forEach((wn) => {
-  //         allNextgenTDH.push(wn);
-  //       });
-  //       walletsTDH.push(tdh);
-  //     }
-  //   })
-  // );
+  const boostedTdh = await calculateBoosts(ADJUSTED_SEASONS, walletsTDH);
 
-  // logger.info(
-  //   `[BLOCK ${block}] [WALLETS ${walletsTDH.length}] [CALCULATING BOOSTS]`
-  // );
+  let rankedTdh: TDH[];
+  if (startingWallets) {
+    const allCurrentTdh = await fetchTDHForBlock(block);
+    const allTdh = allCurrentTdh
+      .filter(
+        (t: TDH) =>
+          !startingWallets.some((sw) => areEqualAddresses(sw, t.wallet))
+      )
+      .concat(boostedTdh);
+    const allRankedTdh = await calculateRanks(
+      allGradientsTDH,
+      allNextgenTDH,
+      allTdh,
+      ADJUSTED_NFTS
+    );
+    rankedTdh = allRankedTdh.filter((t: TDH) =>
+      startingWallets.some((sw) => areEqualAddresses(sw, t.wallet))
+    );
+  } else {
+    rankedTdh = await calculateRanks(
+      allGradientsTDH,
+      allNextgenTDH,
+      boostedTdh,
+      ADJUSTED_NFTS
+    );
+  }
 
-  // const boostedTdh = await calculateBoosts(ADJUSTED_SEASONS, walletsTDH);
+  logger.info(
+    `[BLOCK ${block}] [WALLETS ${rankedTdh.length}] [CALCULATING TDH - END]`
+  );
 
-  // let rankedTdh: TDH[];
-  // if (startingWallets) {
-  //   const allCurrentTdh = await fetchTDHForBlock(block);
-  //   const allTdh = allCurrentTdh
-  //     .filter(
-  //       (t: TDH) =>
-  //         !startingWallets.some((sw) => areEqualAddresses(sw, t.wallet))
-  //     )
-  //     .concat(boostedTdh);
-  //   const allRankedTdh = await calculateRanks(
-  //     allGradientsTDH,
-  //     allNextgenTDH,
-  //     allTdh,
-  //     ADJUSTED_NFTS,
-  //     NEXTGEN_NFTS
-  //   );
-  //   rankedTdh = allRankedTdh.filter((t: TDH) =>
-  //     startingWallets.some((sw) => areEqualAddresses(sw, t.wallet))
-  //   );
-  // } else {
-  //   rankedTdh = await calculateRanks(
-  //     allGradientsTDH,
-  //     allNextgenTDH,
-  //     boostedTdh,
-  //     ADJUSTED_NFTS,
-  //     NEXTGEN_NFTS
-  //   );
-  // }
+  await persistTDH(block, timestamp, rankedTdh, startingWallets);
 
-  // logger.info(
-  //   `[BLOCK ${block}] [WALLETS ${rankedTdh.length}] [CALCULATING TDH - END]`
-  // );
-
-  // const memesTdh = (await calculateMemesTdh(
-  //   ADJUSTED_SEASONS,
-  //   rankedTdh
-  // )) as TDHMemes[];
-  // await persistTDH(block, timestamp, rankedTdh, memesTdh, startingWallets);
-
-  // return {
-  //   block: block,
-  //   timestamp: timestamp,
-  //   tdh: rankedTdh
-  // };
+  return {
+    block: block,
+    timestamp: timestamp,
+    tdh: rankedTdh
+  };
 };
 
 function hasSeasonSet(
@@ -778,8 +754,7 @@ export async function calculateRanks(
   allGradientsTDH: any[],
   allNextgenTDH: any[],
   boostedTDH: any[],
-  ADJUSTED_NFTS: any[],
-  NEXTGEN_NFTS: any[]
+  ADJUSTED_NFTS: any[]
 ) {
   allGradientsTDH.sort((a, b) => b.tdh - a.tdh || a.id - b.id || -1);
   const rankedGradientsTdh = allGradientsTDH.map((a, index) => {
@@ -839,6 +814,16 @@ export async function calculateRanks(
           }
           return w;
         }
+        if (areEqualAddresses(nft.contract, NEXTGEN_CONTRACT)) {
+          const nextgen = w.nextgen.find((g: any) => g.id == nft.id);
+          if (nextgen) {
+            w.nextgen_ranks.push({
+              id: nft.id,
+              rank: rankedNextgenTdh.find((s) => s.id == nft.id)?.rank
+            });
+          }
+          return w;
+        }
       });
 
     if (areEqualAddresses(nft.contract, MEMES_CONTRACT)) {
@@ -865,21 +850,6 @@ export async function calculateRanks(
         }
       });
     }
-  });
-
-  NEXTGEN_NFTS.forEach((nft) => {
-    boostedTDH
-      .filter((w) => w.nextgen.some((n: any) => n.id == nft.id && n.tdh > 0))
-      .forEach((w) => {
-        const nextgen = w.nextgen.find((g: any) => g.id == nft.id);
-        if (nextgen) {
-          w.nextgen_ranks.push({
-            id: nft.id,
-            rank: rankedNextgenTdh.find((s) => s.id == nft.id)?.rank
-          });
-        }
-        return w;
-      });
   });
 
   boostedTDH.sort((a: TDH, b: TDH) => {

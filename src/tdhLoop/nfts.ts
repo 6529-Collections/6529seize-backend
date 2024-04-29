@@ -3,6 +3,7 @@ import {
   ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
   MEMES_CONTRACT,
+  MEME_8_EDITION_BURN_ADJUSTMENT,
   NEXTGEN_CONTRACT
 } from '../constants';
 import { NFT } from '../entities/INFT';
@@ -24,10 +25,14 @@ export async function getAllNfts(memeOwners: NFTOwner[]): Promise<{
   const memes: Nft[] = await getAllNFTs(MEMES_CONTRACT);
   const parsedMemes: NFT[] = memes.map((m) => {
     const owners = memeOwners.filter((o) => o.token_id === parseInt(m.tokenId));
-    const editionSize = owners.reduce((acc, o) => acc + o.balance, 0);
+    let editionSize = owners.reduce((acc, o) => acc + o.balance, 0);
+    const tokenId = parseInt(m.tokenId);
+    if (tokenId === 8) {
+      editionSize += MEME_8_EDITION_BURN_ADJUSTMENT;
+    }
     return {
       contract: m.contract.address,
-      id: parseInt(m.tokenId),
+      id: tokenId,
       mint_date: m.mint?.timestamp,
       edition_size: editionSize
     };

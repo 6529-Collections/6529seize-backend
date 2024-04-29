@@ -35,8 +35,8 @@ async function start() {
 
   // await dbMigrations.handler();
   // await runDelegations();
-  await runTransactions();
-  // await runTDH();
+  // await runTransactions();
+  await runTDH();
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);

@@ -1,11 +1,15 @@
 import { NftContractOwner } from 'alchemy-sdk';
 import { getAlchemyInstance } from '../alchemy';
 import { NFTOwner } from '../entities/INFTOwner';
+import { Logger } from '../logging';
+
+const logger = Logger.get('NFT_OWNERS');
 
 export async function fetchNftOwners(
   block: number,
   contract: string
 ): Promise<NFTOwner[]> {
+  logger.info(`[FETCHING NFT OWNERS] [block=${block}] [contract=${contract}]`);
   const contractOwners = await getOwners(block, contract);
 
   return contractOwners.flatMap((owner) =>

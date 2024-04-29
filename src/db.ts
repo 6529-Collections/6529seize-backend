@@ -1,11 +1,5 @@
 import 'reflect-metadata';
-import {
-  DataSource,
-  IsNull,
-  LessThan,
-  MoreThanOrEqual,
-  QueryRunner
-} from 'typeorm';
+import { DataSource, LessThan, MoreThanOrEqual, QueryRunner } from 'typeorm';
 import {
   ARTISTS_TABLE,
   CONSOLIDATED_UPLOADS_TABLE,
@@ -32,8 +26,7 @@ import {
   GlobalTDHHistory,
   NftTDH,
   TDH,
-  TDHHistory,
-  TDHMemes
+  TDHHistory
 } from './entities/ITDH';
 import { Team } from './entities/ITeam';
 import { BaseTransaction, Transaction } from './entities/ITransaction';
@@ -57,7 +50,6 @@ import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
-import { synchroniseCommunityMembersTable } from './community-members';
 import { MemesSeason } from './entities/ISeason';
 import { insertWithoutUpdate, resetRepository } from './orm_helpers';
 import { NFTOwner } from './entities/INFTOwner';
@@ -275,7 +267,7 @@ export async function fetchLatestTransactionsBlockNumber(
 export async function fetchLatestTDHBDate(): Promise<Time> {
   const sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} order by block desc limit 1;`;
   const r = await sqlExecutor.execute(sql);
-  return r.length > 0 ? Time.fromString(r[0].timestamp) : Time.millis(0);
+  return r.length > 0 ? Time.millis(r[0].timestamp) : Time.millis(0);
 }
 
 export async function fetchLatestTDHBlockNumber(): Promise<number> {
@@ -306,11 +298,7 @@ export async function fetchNftsForContract(contract: string, orderBy?: string) {
   if (orderBy) {
     sql += ` order by ${orderBy}`;
   }
-  const results = await sqlExecutor.execute(sql, params);
-  results.map((r: any) => {
-    r.metadata = JSON.parse(r.metadata);
-  });
-  return results;
+  return await sqlExecutor.execute(sql, params);
 }
 
 export async function fetchAllMemeLabNFTs(orderBy?: string) {
@@ -344,7 +332,7 @@ export async function fetchAllNFTs() {
 
 export async function fetchAllTDH(wallets?: string[]) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
-  let sql = `SELECT ${ENS_TABLE}.display as ens, ${WALLETS_TDH_TABLE}.* FROM ${WALLETS_TDH_TABLE} LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet WHERE block=:block `;
+  let sql = `SELECT * FROM ${WALLETS_TDH_TABLE} WHERE block=:block `;
   if (wallets && wallets.length > 0) {
     sql += `AND ${WALLETS_TDH_TABLE}.wallet IN (:wallets)`;
   }
@@ -639,13 +627,6 @@ async function findVolume(
   return results[0];
 }
 
-export async function persistNFTs(nfts: NFT[]) {
-  await AppDataSource.transaction(async (manager) => {
-    const nftRepo = manager.getRepository(NFT);
-    await resetRepository(nftRepo, nfts);
-  });
-}
-
 export async function persistTdhUpload(
   block: number,
   dateString: string,
@@ -686,20 +667,23 @@ async function persistTdhUploadByTable(
   logger.info(`[TDH UPLOAD IN ${table} PERSISTED]`);
 }
 
+export async function persistNFTs(nfts: NFT[]) {
+  await AppDataSource.transaction(async (manager) => {
+    const nftRepo = manager.getRepository(NFT);
+    await resetRepository(nftRepo, nfts);
+  });
+}
+
 export async function persistTDH(
   block: number,
   timestamp: Date,
   tdh: TDH[],
-  memesTdh: TDHMemes[],
   wallets?: string[]
 ) {
-  logger.info(
-    `[TDH] [PERSISTING WALLETS TDH ${tdh.length}] : [MEMES TDH ${memesTdh.length}]`
-  );
+  logger.info(`[TDH] [PERSISTING WALLETS TDH ${tdh.length}]`);
 
   await AppDataSource.transaction(async (manager) => {
     const tdhRepo = manager.getRepository(TDH);
-    const tdhMemesRepo = manager.getRepository(TDHMemes);
     if (wallets) {
       logger.info(`[TDH] [DELETING ${wallets.length} WALLETS]`);
       await Promise.all(
@@ -712,29 +696,19 @@ export async function persistTDH(
               block: block
             })
             .execute();
-          await tdhMemesRepo
-            .createQueryBuilder()
-            .delete()
-            .where('LOWER(wallet) = :wallet ', {
-              wallet: wallet.toLowerCase()
-            })
-            .execute();
         })
       );
       await tdhRepo.save(tdh);
-      await tdhMemesRepo.save(memesTdh);
     } else {
       logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
       await tdhRepo.delete({ block: block });
-      await tdhMemesRepo.clear();
-      logger.info(`[TDH AND TDH_MEMES CLEARED]`);
+      logger.info(`[TDH CLEARED]`);
       await insertWithoutUpdate(tdhRepo, tdh);
-      await insertWithoutUpdate(tdhMemesRepo, memesTdh);
     }
 
     await manager.query(
       `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block=?, timestamp=?`,
-      [block, timestamp]
+      [block, timestamp.getTime()]
     );
   });
 
@@ -743,7 +717,6 @@ export async function persistTDH(
 
 export async function persistConsolidatedTDH(
   tdh: ConsolidatedTDH[],
-  memesTdh: ConsolidatedTDHMemes[],
   wallets?: string[]
 ) {
   logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
@@ -751,7 +724,6 @@ export async function persistConsolidatedTDH(
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
     const tdhRepo = manager.getRepository(ConsolidatedTDH);
-    const tdhMemesRepo = manager.getRepository(ConsolidatedTDHMemes);
     if (wallets) {
       logger.info(`[CONSOLIDATED TDH] [DELETING ${wallets.length} WALLETS]`);
       await Promise.all(
@@ -764,27 +736,15 @@ export async function persistConsolidatedTDH(
               walletPattern
             })
             .execute();
-          await tdhMemesRepo
-            .createQueryBuilder()
-            .delete()
-            .where('consolidation_key like :walletPattern', {
-              walletPattern
-            })
-            .execute();
         })
       );
       await tdhRepo.save(tdh);
-      await tdhMemesRepo.save(memesTdh);
     } else {
       logger.info(`[CONSOLIDATED TDH] [DELETING ALL WALLETS]`);
       await tdhRepo.clear();
-      await tdhMemesRepo.clear();
-      logger.info(`[CONSOLIDATED TDH] [TDH AND TDH_MEMES CLEARED]`);
+      logger.info(`[CONSOLIDATED TDH] [TDH CLEARED]`);
       await insertWithoutUpdate(tdhRepo, tdh);
-      await insertWithoutUpdate(tdhMemesRepo, memesTdh);
     }
-
-    await synchroniseCommunityMembersTable(qrHolder);
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);

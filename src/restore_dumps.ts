@@ -1,9 +1,14 @@
-import { TRANSACTIONS_TABLE } from './constants';
+import {
+  CONSOLIDATIONS_TABLE,
+  DELEGATIONS_TABLE,
+  TRANSACTIONS_TABLE
+} from './constants';
+import { getDataSource } from './db';
 import { Consolidation, Delegation } from './entities/IDelegation';
 import { Transaction } from './entities/ITransaction';
 import { Logger } from './logging';
+import { insertWithoutUpdate } from './orm_helpers';
 import { loadEnv } from './secrets';
-import { sqlExecutor } from './sql-executor';
 
 const logger = Logger.get('RESTORE_DUMPS');
 
@@ -12,35 +17,162 @@ const BASE_PATH =
 
 export async function restoreDumps() {
   await loadEnv([Transaction, Delegation, Consolidation]);
-  await restoreDump(TRANSACTIONS_TABLE);
+  await restoreTransactions();
+  await restoreDelegations();
+  await restoreConsolidations();
+
+  logger.info(`[COMPLETE]`);
+  process.exit(0);
 }
 
-async function restoreDump(tableName: string) {
-  logger.info(`[TABLE ${tableName}] : [RESTORING...]`);
-
-  const response = await fetch(`${BASE_PATH}/${tableName}.csv`);
+async function getData(path: string) {
+  const response = await fetch(`${BASE_PATH}/${path}.csv`);
   if (!response.ok) {
     throw new Error(`HTTP error! status: ${response.status}`);
   }
   const csvText = await response.text();
   const rows = csvText.split('\n');
+  return rows;
+}
 
-  logger.info(`[TABLE ${tableName}] : [FOUND ${rows.length} ROWS]`);
+const getValue = (headers: any[], columns: any[], column: string) => {
+  const index = headers.indexOf(column);
+  if (index === -1) {
+    return null;
+  }
+  return columns[index];
+};
 
-  await sqlExecutor.executeNativeQueriesInTransaction(
-    async (wrappedConnection) => {
-      await sqlExecutor.execute(`DELETE FROM ${tableName}`, [], {
-        wrappedConnection
-      });
-      await Promise.all(
-        queries.map((query) =>
-          sqlExecutor.execute(query, undefined, { wrappedConnection })
-        )
-      );
-    }
+async function restoreTransactions() {
+  const tableName = TRANSACTIONS_TABLE;
+
+  logger.info(`[TABLE ${tableName}] : [RESTORING...]`);
+
+  const [headerRow, ...data] = await getData(tableName);
+
+  logger.info(
+    `[TABLE ${tableName}] : [FOUND ${data.length} ROWS] : [PARSING...]`
   );
 
+  const headers = headerRow.split(',');
+
+  const transactions: Transaction[] = data.map((row) => {
+    const columns = row.split(',');
+    return {
+      created_at: getValue(headers, columns, 'created_at'),
+      transaction: getValue(headers, columns, 'transaction'),
+      block: getValue(headers, columns, 'block'),
+      transaction_date: getValue(headers, columns, 'transaction_date'),
+      from_address: getValue(headers, columns, 'from_address'),
+      to_address: getValue(headers, columns, 'to_address'),
+      contract: getValue(headers, columns, 'contract'),
+      token_id: getValue(headers, columns, 'token_id'),
+      token_count: getValue(headers, columns, 'token_count'),
+      value: getValue(headers, columns, 'value'),
+      primary_proceeds: getValue(headers, columns, 'primary_proceeds'),
+      royalties: getValue(headers, columns, 'royalties'),
+      gas_gwei: getValue(headers, columns, 'gas_gwei'),
+      gas_price: getValue(headers, columns, 'gas_price'),
+      gas_price_gwei: getValue(headers, columns, 'gas_price_gwei'),
+      gas: getValue(headers, columns, 'gas')
+    };
+  });
+
+  logger.info(
+    `[TABLE ${tableName}] : [PARSED ${transactions.length} TRANSACTIONS] : [RESTORING LOCAL DB]`
+  );
+
+  await restoreEntity(tableName, Transaction, transactions);
+
   logger.info(`[TABLE ${tableName}] : [RESTORED]`);
+}
+
+async function restoreDelegations() {
+  const tableName = DELEGATIONS_TABLE;
+
+  logger.info(`[TABLE ${tableName}] : [RESTORING...]`);
+
+  const [headerRow, ...data] = await getData(tableName);
+
+  logger.info(
+    `[TABLE ${tableName}] : [FOUND ${data.length} ROWS] : [PARSING...]`
+  );
+
+  const headers = headerRow.split(',');
+
+  const delegations: Delegation[] = data.map((row) => {
+    const columns = row.split(',');
+    return {
+      created_at: getValue(headers, columns, 'created_at'),
+      block: getValue(headers, columns, 'block'),
+      from_address: getValue(headers, columns, 'from_address'),
+      to_address: getValue(headers, columns, 'to_address'),
+      collection: getValue(headers, columns, 'collection'),
+      use_case: getValue(headers, columns, 'use_case'),
+      expiry: getValue(headers, columns, 'expiry'),
+      all_tokens: getValue(headers, columns, 'all_tokens'),
+      token_id: getValue(headers, columns, 'token_id')
+    };
+  });
+
+  logger.info(
+    `[TABLE ${tableName}] : [PARSED ${delegations.length} DELEGATIONS] : [RESTORING LOCAL DB]`
+  );
+
+  await restoreEntity(tableName, Delegation, delegations);
+
+  logger.info(`[TABLE ${tableName}] : [RESTORED]`);
+}
+
+async function restoreConsolidations() {
+  const tableName = CONSOLIDATIONS_TABLE;
+
+  logger.info(`[TABLE ${tableName}] : [RESTORING...]`);
+
+  const [headerRow, ...data] = await getData(tableName);
+
+  logger.info(
+    `[TABLE ${tableName}] : [FOUND ${data.length} ROWS] : [PARSING...]`
+  );
+
+  const headers = headerRow.split(',');
+
+  const consolidations: Consolidation[] = data.map((row) => {
+    const columns = row.split(',');
+    return {
+      created_at: getValue(headers, columns, 'created_at'),
+      block: getValue(headers, columns, 'block'),
+      wallet1: getValue(headers, columns, 'wallet1'),
+      wallet2: getValue(headers, columns, 'wallet2'),
+      confirmed: getValue(headers, columns, 'confirmed')
+    };
+  });
+
+  logger.info(
+    `[TABLE ${tableName}] : [PARSED ${consolidations.length} CONSOLIDATIONS] : [RESTORING LOCAL DB]`
+  );
+
+  await restoreEntity(tableName, Consolidation, consolidations);
+
+  logger.info(`[TABLE ${tableName}] : [RESTORED]`);
+}
+
+async function restoreEntity(tableName: string, entity: any, data: any) {
+  await getDataSource().transaction(async (connection) => {
+    const repo = connection.getRepository(entity);
+    await connection.query(`TRUNCATE TABLE ${tableName}`);
+
+    // save in chunks of 10000
+    const chunkSize = 10000;
+    for (let i = 0; i < data.length; i += chunkSize) {
+      const chunk = data.slice(i, i + chunkSize);
+      await insertWithoutUpdate(repo, chunk);
+      const percentComplete = ((i + chunk.length) / data.length) * 100;
+      logger.info(
+        `[TABLE ${tableName}] : [${percentComplete.toFixed()}% COMPLETE]`
+      );
+    }
+  });
 }
 
 restoreDumps();

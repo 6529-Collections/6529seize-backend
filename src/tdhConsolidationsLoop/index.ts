@@ -1,43 +1,18 @@
 import { distinct, getLastTDH } from '../helpers';
 import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { loadEnv, unload } from '../secrets';
-import {
-  ConsolidatedTDH,
-  ConsolidatedTDHMemes,
-  NftTDH,
-  TDH,
-  TDHMemes
-} from '../entities/ITDH';
+import { ConsolidatedTDH, NftTDH, TDH } from '../entities/ITDH';
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { fetchAllConsolidationAddresses } from '../db';
 import { NFTOwner } from '../entities/INFTOwner';
-import {
-  OwnerBalances,
-  OwnerBalancesMemes,
-  ConsolidatedOwnerBalances,
-  ConsolidatedOwnerBalancesMemes
-} from '../entities/IOwnerBalances';
 import { updateTDH } from '../tdhLoop/tdh';
-import { MemesSeason } from '../entities/ISeason';
 
 const logger = Logger.get('TDH_CONSOLIDATIONS_LOOP');
 
 export const handler = async () => {
   const start = Time.now();
-  await loadEnv([
-    TDH,
-    ConsolidatedTDH,
-    TDHMemes,
-    ConsolidatedTDHMemes,
-    NFTOwner,
-    OwnerBalances,
-    OwnerBalancesMemes,
-    ConsolidatedOwnerBalances,
-    ConsolidatedOwnerBalancesMemes,
-    NftTDH,
-    MemesSeason
-  ]);
+  await loadEnv([TDH, ConsolidatedTDH, NFTOwner, NftTDH]);
   const force = process.env.TDH_RESET == 'true';
   logger.info(`[RUNNING force=${force}]`);
   await consolidatedTdhLoop();
@@ -54,5 +29,5 @@ async function consolidatedTdhLoop() {
   const walletsArray = distinct(consolidationAddresses.map((it) => it.wallet));
 
   await updateTDH(lastTDHCalc, walletsArray);
-  await consolidateTDH(lastTDHCalc, walletsArray);
+  await consolidateTDH(walletsArray);
 }

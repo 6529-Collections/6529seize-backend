@@ -135,11 +135,7 @@ export interface TDHENS extends TDH {
 
 @Entity(CONSOLIDATED_WALLETS_TDH_TABLE)
 export class ConsolidatedTDH extends BaseTDH {
-  @PrimaryColumn({ type: 'varchar', length: 500 })
-  consolidation_display!: string;
-
-  @Column({ type: 'varchar', length: 200 })
-  @Index()
+  @PrimaryColumn({ type: 'varchar', length: 200 })
   consolidation_key!: string;
 
   @Column({ type: 'json', nullable: false })
@@ -286,10 +282,7 @@ export class TDHHistory {
   @PrimaryColumn({ type: 'date' })
   date!: Date;
 
-  @PrimaryColumn({ type: 'varchar', length: 500 })
-  consolidation_display!: string;
-
-  @Column({ type: 'varchar', length: 200 })
+  @PrimaryColumn({ type: 'varchar', length: 200 })
   consolidation_key!: string;
 
   @PrimaryColumn({ type: 'int' })
