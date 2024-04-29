@@ -204,7 +204,7 @@ export class TDHBlock {
   @PrimaryColumn({ type: 'int' })
   block_number!: number;
 
-  @Column({ type: 'date', nullable: true, default: null })
+  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   timestamp!: Date;
 }
 
