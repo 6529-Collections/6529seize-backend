@@ -530,6 +530,29 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Wave'
+    post:
+      tags:
+        - Waves
+      summary: Create new wave
+      description: Requires the user to be authenticated
+      operationId: createWave
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNewWave'
+      responses:
+        '201':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wave'
+        '404':
+          description: Wave not found
+        '400':
+          description: Invalid request
 
 components:
   securitySchemes:
@@ -1059,6 +1082,38 @@ components:
           description: Metadata key
           type: string
 
+    CreateNewWaveVotingConfig:
+      type: object
+      required:
+        - scope
+        - credit_type
+        - credit_scope
+        - credit_category
+        - signature_required
+        - creditor_id
+      properties:
+        scope:
+          $ref: '#/components/schemas/WaveScope'
+        credit_type:
+          $ref: '#/components/schemas/WaveCreditType'
+        credit_scope:
+          $ref: '#/components/schemas/WaveCreditScope'
+        credit_category:
+          description: "Only relevant when credit_type=REP. 
+            The REP category which is usable as credit. 
+            If not set then all categories will be usable as voting credits."
+          type: string
+          nullable: true
+        creditor_id:
+          description: 'Only relevant when credit_type=REP'
+          type: string
+          nullable: true
+        signature_required:
+          description: If true then the votes must be signed by voters.
+          type: boolean
+        period:
+          $ref: '#/components/schemas/IntRange'
+
     WaveVotingConfig:
       type: object
       required:
@@ -1198,6 +1253,36 @@ components:
           type: string
         voting:
           $ref: '#/components/schemas/WaveVotingConfig'
+        visibility:
+          $ref: '#/components/schemas/WaveVisibilityConfig'
+        participation:
+          $ref: '#/components/schemas/WaveParticipationConfig'
+        wave:
+          $ref: '#/components/schemas/WaveConfig'
+        outcomes:
+          type: array
+          items:
+            $ref: '#/components/schemas/WaveOutcome'
+
+    CreateNewWave:
+      type: object
+      required:
+        - name
+        - description
+        - voting
+        - visibility
+        - participation
+        - wave
+        - outcome
+      properties:
+        name:
+          description: The name of the wave
+          type: string
+        description:
+          description: The description of the wave
+          type: string
+        voting:
+          $ref: '#/components/schemas/CreateNewWaveVotingConfig'
         visibility:
           $ref: '#/components/schemas/WaveVisibilityConfig'
         participation:
