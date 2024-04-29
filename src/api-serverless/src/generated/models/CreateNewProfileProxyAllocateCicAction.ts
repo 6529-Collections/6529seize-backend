@@ -10,48 +10,57 @@
  * Do not edit the class manually.
  */
 
-import { DropComment } from '../models/DropComment';
+import { CreateNewProfileProxyActionType } from '../models/CreateNewProfileProxyActionType';
 import { HttpFile } from '../http/http';
 
-export class DropCommentsPage {
-    'data': Array<DropComment>;
-    'count': number;
-    'page': number;
-    'next': boolean;
+export class CreateNewProfileProxyAllocateCicAction {
+    'action_type': CreateNewProfileProxyActionType;
+    'start_time': number;
+    'end_time': number | null;
+    'credit_amount': number;
+    'group_id': string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "data",
-            "baseName": "data",
-            "type": "Array<DropComment>",
+            "name": "action_type",
+            "baseName": "action_type",
+            "type": "CreateNewProfileProxyActionType",
             "format": ""
         },
         {
-            "name": "count",
-            "baseName": "count",
+            "name": "start_time",
+            "baseName": "start_time",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "page",
-            "baseName": "page",
+            "name": "end_time",
+            "baseName": "end_time",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "next",
-            "baseName": "next",
-            "type": "boolean",
+            "name": "credit_amount",
+            "baseName": "credit_amount",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "group_id",
+            "baseName": "group_id",
+            "type": "string",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return DropCommentsPage.attributeTypeMap;
+        return CreateNewProfileProxyAllocateCicAction.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
+
+
 

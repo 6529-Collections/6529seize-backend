@@ -10,45 +10,44 @@
  * Do not edit the class manually.
  */
 
-import { DropComment } from '../models/DropComment';
 import { HttpFile } from '../http/http';
 
-export class DropCommentsPage {
-    'data': Array<DropComment>;
-    'count': number;
-    'page': number;
-    'next': boolean;
+export class ProfileProxy {
+    'id': string;
+    'target_id': string;
+    'created_at': number;
+    'created_by': string;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "data",
-            "baseName": "data",
-            "type": "Array<DropComment>",
+            "name": "id",
+            "baseName": "id",
+            "type": "string",
             "format": ""
         },
         {
-            "name": "count",
-            "baseName": "count",
-            "type": "number",
-            "format": "int64"
+            "name": "target_id",
+            "baseName": "target_id",
+            "type": "string",
+            "format": ""
         },
         {
-            "name": "page",
-            "baseName": "page",
+            "name": "created_at",
+            "baseName": "created_at",
             "type": "number",
-            "format": "int64"
+            "format": ""
         },
         {
-            "name": "next",
-            "baseName": "next",
-            "type": "boolean",
+            "name": "created_by",
+            "baseName": "created_by",
+            "type": "string",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return DropCommentsPage.attributeTypeMap;
+        return ProfileProxy.attributeTypeMap;
     }
 
     public constructor() {

@@ -10,48 +10,43 @@
  * Do not edit the class manually.
  */
 
-import { DropComment } from '../models/DropComment';
+import { CreateNewProfileProxyActionType } from '../models/CreateNewProfileProxyActionType';
 import { HttpFile } from '../http/http';
 
-export class DropCommentsPage {
-    'data': Array<DropComment>;
-    'count': number;
-    'page': number;
-    'next': boolean;
+export class CreateNewProfileProxyReadWaveAction {
+    'action_type': CreateNewProfileProxyActionType;
+    'start_time': number;
+    'end_time': number | null;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "data",
-            "baseName": "data",
-            "type": "Array<DropComment>",
+            "name": "action_type",
+            "baseName": "action_type",
+            "type": "CreateNewProfileProxyActionType",
             "format": ""
         },
         {
-            "name": "count",
-            "baseName": "count",
+            "name": "start_time",
+            "baseName": "start_time",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "page",
-            "baseName": "page",
+            "name": "end_time",
+            "baseName": "end_time",
             "type": "number",
             "format": "int64"
-        },
-        {
-            "name": "next",
-            "baseName": "next",
-            "type": "boolean",
-            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return DropCommentsPage.attributeTypeMap;
+        return CreateNewProfileProxyReadWaveAction.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
+
+
 
