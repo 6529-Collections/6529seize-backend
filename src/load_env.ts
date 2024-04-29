@@ -1,9 +1,9 @@
 import { prompt } from 'enquirer';
 import { Logger } from './logging';
 
-const logger = Logger.get('START_SCRIPT');
+const logger = Logger.get('LOAD_ENV');
 
-export async function startScript() {
+export async function loadEnv() {
   await ask('Press Enter to start the script or Ctrl+C to exit', false, false);
 
   const dbHost = await ask('Enter DB Host:', false, true);
@@ -34,4 +34,4 @@ async function ask(question: string, password: boolean, required: boolean) {
   return answer.response.trim();
 }
 
-startScript();
+loadEnv();
