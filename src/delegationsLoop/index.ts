@@ -22,6 +22,7 @@ import { CONSOLIDATIONS_TABLE } from '../constants';
 import { ConsolidatedTDH, TDH } from '../entities/ITDH';
 import { updateTDH } from '../tdhLoop/tdh';
 import { NFT } from '../entities/INFT';
+import { NFTOwner } from '../entities/INFTOwner';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -33,7 +34,8 @@ export const handler = async () => {
     NFTDelegationBlock,
     TDH,
     ConsolidatedTDH,
-    NFT
+    NFT,
+    NFTOwner
   ]);
   const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
   const startBlock =
