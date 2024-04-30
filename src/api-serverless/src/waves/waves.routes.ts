@@ -7,7 +7,7 @@ import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import { Wave } from '../generated/models/Wave';
 import { CreateNewWave } from '../generated/models/CreateNewWave';
-import { BadRequestException, ForbiddenException } from '../../../exceptions';
+import { ForbiddenException } from '../../../exceptions';
 import * as Joi from 'joi';
 import { CreateNewWaveScope } from '../generated/models/CreateNewWaveScope';
 import { CreateNewWaveVisibilityConfig } from '../generated/models/CreateNewWaveVisibilityConfig';
@@ -24,6 +24,7 @@ import { parseIntOrNull } from '../../../helpers';
 import { WaveOutcome } from '../generated/models/WaveOutcome';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { waveApiService } from './wave.api.service';
+import { SearchWavesParams } from './waves.api.db';
 
 const router = asyncRouter();
 
@@ -50,10 +51,19 @@ router.post(
 router.get(
   '/',
   async (
-    req: Request<any, any, any, any, any>,
+    req: Request<any, any, any, SearchWavesParams, any>,
     res: Response<ApiResponse<Wave[]>>
   ) => {
-    throw new BadRequestException(`Not implemented yet`);
+    const params = getValidatedByJoiOrThrow(
+      req.query,
+      Joi.object<SearchWavesParams>({
+        limit: Joi.number().integer().min(1).max(50).default(20),
+        serial_no_less_than: Joi.number().integer().min(1).optional(),
+        curation_criteria_id: Joi.string().optional().min(1)
+      })
+    );
+    const waves = await waveApiService.searchWaves(params);
+    res.send(waves);
   }
 );
 
