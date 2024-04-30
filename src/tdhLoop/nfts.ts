@@ -9,6 +9,7 @@ import {
 import { NFT } from '../entities/INFT';
 import { persistNFTs } from '../db';
 import { NFTOwner } from '../entities/INFTOwner';
+import { isNullAddress } from '../helpers';
 
 let alchemy: Alchemy;
 
@@ -25,11 +26,11 @@ export async function getAllNfts(memeOwners: NFTOwner[]): Promise<{
   const memes: Nft[] = await getAllNFTs(MEMES_CONTRACT);
   const parsedMemes: NFT[] = memes.map((m) => {
     const tokenId = parseInt(m.tokenId);
-    const owners = memeOwners.filter((o) => o.token_id === parseInt(m.tokenId));
-    let editionSize = owners.reduce((acc, o) => acc + o.balance, 0);
-    if (tokenId === 8) {
-      editionSize += MEME_8_EDITION_BURN_ADJUSTMENT;
-    }
+    const owners = memeOwners.filter(
+      (o) => o.token_id === parseInt(m.tokenId) && !isNullAddress(o.address)
+    );
+    const editionSize = owners.reduce((acc, o) => acc + o.balance, 0);
+
     const season =
       m.raw.metadata.attributes.find(
         (m: any) => m.trait_type === 'Type - Season'
