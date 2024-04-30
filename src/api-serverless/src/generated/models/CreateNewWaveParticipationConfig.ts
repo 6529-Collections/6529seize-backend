@@ -20,7 +20,7 @@ export class CreateNewWaveParticipationConfig {
     /**
     * The number of applications allowed per participant. Infinite if omitted.
     */
-    'no_of_applications_allowed_per_participant'?: number;
+    'no_of_applications_allowed_per_participant': number | null;
     /**
     * The metadata that must be provided by the participant.  Empty array if nothing is required. 
     */
