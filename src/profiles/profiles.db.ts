@@ -294,6 +294,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       `insert into ${PROFILES_TABLE}
        (handle,
         normalised_handle,
+        primary_wallet,
         created_at,
         created_by_wallet,
         banner_1,
@@ -316,6 +317,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       {
         handle: command.handle,
         normalisedHandle: command.handle.toLowerCase(),
+        primaryWallet: command.creator_or_updater_wallet.toLowerCase(),
         createdByWallet: command.creator_or_updater_wallet.toLowerCase(),
         banner1: command.banner_1 ?? null,
         banner2: command.banner_2 ?? null,
