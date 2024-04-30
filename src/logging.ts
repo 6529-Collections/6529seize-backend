@@ -22,9 +22,7 @@ const messageFormat = (loggerName: string) =>
     if (info.message.constructor === Object) {
       info.message = JSON.stringify(info.message, null, 2);
     }
-    return `[${info.timestamp}] [${
-      mcache.get(reqIdCacheKey())?.toString() ?? ''
-    }] [${info.level}] [${loggerName}] : ${info.message}${
+    return `[${info.level}] [${loggerName}] : ${info.message}${
       info.stack ? '\n' + info.stack : ''
     }`;
   });

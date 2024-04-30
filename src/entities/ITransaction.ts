@@ -1,4 +1,5 @@
 import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
+import { TRANSACTIONS_TABLE } from '../constants';
 
 export class BaseTransaction {
   @Column({ type: 'datetime' })
@@ -55,7 +56,7 @@ export class BaseTransaction {
   gas!: number;
 }
 
-@Entity('transactions')
+@Entity(TRANSACTIONS_TABLE)
 export class Transaction extends BaseTransaction {}
 
 export interface TransactionValue {

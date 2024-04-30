@@ -22,7 +22,6 @@ import { Artist } from './entities/IArtist';
 import { NFT } from './entities/INFT';
 import {
   ConsolidatedTDH,
-  ConsolidatedTDHMemes,
   GlobalTDHHistory,
   NftTDH,
   TDH,

@@ -35,10 +35,7 @@ export class TransactionsDiscoveryDb extends LazyDbAccessCompatibleService {
                   gas_price, 
                   gas_price_gwei, 
                   gas, 
-                  primary_proceeds,
-                  eth_price_usd,
-                  value_usd,
-                  gas_usd
+                  primary_proceeds
                 ) values (
                   :created_at,
                   :transaction,
@@ -55,10 +52,7 @@ export class TransactionsDiscoveryDb extends LazyDbAccessCompatibleService {
                   :gas_price,
                   :gas_price_gwei,
                   :gas,
-                  :primary_proceeds,
-                  :eth_price_usd,
-                  :value_usd,
-                  :gas_usd
+                  :primary_proceeds
                 ) on duplicate key update
                     created_at = :created_at,
                     block = :block,
@@ -70,10 +64,7 @@ export class TransactionsDiscoveryDb extends LazyDbAccessCompatibleService {
                     gas_price = :gas_price,
                     gas_price_gwei = :gas_price_gwei,
                     gas = :gas,
-                    primary_proceeds = :primary_proceeds,
-                    eth_price_usd = :eth_price_usd,
-                    value_usd = :value_usd,
-                    gas_usd = :gas_usd
+                    primary_proceeds = :primary_proceeds
       `,
           transaction,
           { wrappedConnection: connection }

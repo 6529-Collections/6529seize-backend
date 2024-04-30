@@ -9,7 +9,7 @@ import { Logger } from '../../logging';
 import * as process from 'process';
 import { fetchSingleWalletTDH, returnJsonResult } from './api-helpers';
 import { corsOptions } from './api-constants';
-import { loadLocalConfig } from '../../env';
+import { prepEnvironment } from '../../env';
 
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
@@ -52,7 +52,7 @@ const app = express();
 const rootRouter = asyncRouter();
 
 async function loadApi() {
-  await loadLocalConfig();
+  await prepEnvironment();
   await db.connect();
 }
 
