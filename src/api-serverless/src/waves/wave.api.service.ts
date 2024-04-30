@@ -1,4 +1,4 @@
-import { wavesApiDb, WavesApiDb } from './waves.api.db';
+import { SearchWavesParams, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { CreateNewWave } from '../generated/models/CreateNewWave';
 import { Wave } from '../generated/models/Wave';
 import { distinct } from '../../../helpers';
@@ -81,6 +81,11 @@ export class WaveApiService {
         );
       }
     }
+  }
+
+  async searchWaves(params: SearchWavesParams): Promise<Wave[]> {
+    const entities = await this.wavesApiDb.searchWaves(params);
+    return await this.waveMappers.waveEntitiesToApiWaves(entities);
   }
 }
 
