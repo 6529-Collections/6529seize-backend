@@ -67,6 +67,18 @@ router.get(
   }
 );
 
+router.get(
+  '/:id',
+  async (
+    req: Request<{ id: string }, any, any, any, any>,
+    res: Response<ApiResponse<Wave>>
+  ) => {
+    const { id } = req.params;
+    const wave = await waveApiService.findWaveByIdOrThrow(id);
+    res.send(wave);
+  }
+);
+
 const IntRangeSchema = Joi.object<IntRange>({
   min: Joi.number().integer().required().allow(null),
   max: Joi.number().integer().required().allow(null)
