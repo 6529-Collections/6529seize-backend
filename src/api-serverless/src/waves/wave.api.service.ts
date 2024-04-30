@@ -11,7 +11,7 @@ import {
   CommunityMemberCriteriaService
 } from '../community-members/community-member-criteria.service';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
-import { BadRequestException } from '../../../exceptions';
+import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { wavesMappers, WavesMappers } from './waves.mappers';
 
 export class WaveApiService {
@@ -86,6 +86,14 @@ export class WaveApiService {
   async searchWaves(params: SearchWavesParams): Promise<Wave[]> {
     const entities = await this.wavesApiDb.searchWaves(params);
     return await this.waveMappers.waveEntitiesToApiWaves(entities);
+  }
+
+  async findWaveByIdOrThrow(id: string): Promise<Wave> {
+    const entity = await this.wavesApiDb.findWaveById(id);
+    if (!entity) {
+      throw new NotFoundException(`Wave ${id} not found`);
+    }
+    return await this.waveMappers.waveEntityToApiWave(entity);
   }
 }
 

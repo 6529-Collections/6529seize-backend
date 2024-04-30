@@ -549,10 +549,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Wave'
-        '404':
-          description: Wave not found
         '400':
           description: Invalid request
+
+  /waves/{id}:
+    get:
+      tags:
+        - Waves
+      summary: Get wave by ID
+      operationId: getWaveById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Wave'
+        '404':
+          description: Wave not found
 
 components:
   securitySchemes:
