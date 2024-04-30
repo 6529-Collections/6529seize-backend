@@ -1,14 +1,26 @@
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService
+  LazyDbAccessCompatibleService,
+  SqlExecutor
 } from '../../../sql-executor';
 import { WaveEntity } from '../../../entities/IWave';
 import { randomUUID } from 'crypto';
 import { Time } from '../../../time';
 import { WAVES_TABLE } from '../../../constants';
+import {
+  communityMemberCriteriaService,
+  CommunityMemberCriteriaService
+} from '../community-members/community-member-criteria.service';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
+  constructor(
+    supplyDb: () => SqlExecutor,
+    private readonly criteriaService: CommunityMemberCriteriaService
+  ) {
+    super(supplyDb);
+  }
+
   public async findWaveById(
     id: string,
     connection?: ConnectionWrapper<any>
@@ -106,8 +118,36 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     );
     return id;
   }
+
+  async searchWaves(searchParams: SearchWavesParams): Promise<WaveEntity[]> {
+    const sqlAndParams = await this.criteriaService.getSqlAndParamsByCriteriaId(
+      searchParams.curation_criteria_id ?? null
+    );
+    if (!sqlAndParams) {
+      return [];
+    }
+    const serialNoLessThan =
+      searchParams.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
+    const sql = `${sqlAndParams.sql} select w.* from ${WAVES_TABLE} w
+         join ${CommunityMemberCriteriaService.GENERATED_VIEW} cm on cm.profile_id = w.created_by
+         where w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${searchParams.limit}`;
+    const params: Record<string, any> = {
+      ...sqlAndParams.params,
+      serialNoLessThan
+    };
+    return this.db.execute(sql, params);
+  }
 }
 
 export type NewWaveEntity = Omit<WaveEntity, 'id' | 'serial_no' | 'created_at'>;
 
-export const wavesApiDb = new WavesApiDb(dbSupplier);
+export interface SearchWavesParams {
+  readonly limit: number;
+  readonly serial_no_less_than?: number;
+  readonly curation_criteria_id?: string;
+}
+
+export const wavesApiDb = new WavesApiDb(
+  dbSupplier,
+  communityMemberCriteriaService
+);
