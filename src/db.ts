@@ -62,19 +62,31 @@ let AppDataSource: DataSource;
 export async function connect(entities: any[] = []) {
   logger.info(`[DB HOST ${process.env.DB_HOST}]`);
 
-  AppDataSource = new DataSource({
-    type: 'mysql',
-    host: process.env.DB_HOST,
-    port: parseInt(process.env.DB_PORT!),
-    username: process.env.DB_USER,
-    password: process.env.DB_PASS,
-    database: process.env.DB_NAME,
-    entities: entities,
-    synchronize: true,
-    logging: false
-  });
+  if (
+    !process.env.DB_HOST ||
+    !process.env.DB_PORT ||
+    !process.env.DB_USER ||
+    !process.env.DB_PASS ||
+    !process.env.DB_NAME
+  ) {
+    logger.error('[MISSING CONFIGURATION FOR READ DB] [EXITING]');
+    process.exit(1);
+  }
 
-  await AppDataSource.initialize().catch((error) => logger.error(error));
+  const host = process.env.DB_HOST;
+  const port = parseInt(process.env.DB_PORT!);
+  const user = process.env.DB_USER;
+  const password = process.env.DB_PASS;
+  const database = process.env.DB_NAME;
+
+  AppDataSource = await createDataSource(
+    host,
+    port,
+    user,
+    password,
+    database,
+    entities
+  );
 
   setSqlExecutor({
     execute: (
@@ -91,6 +103,30 @@ export async function connect(entities: any[] = []) {
       !AppDataSource.isInitialized ? 'NOT ' : ''
     }INITIALIZED]`
   );
+}
+
+export async function createDataSource(
+  host: string,
+  port: number,
+  username: string,
+  password: string,
+  database?: string,
+  entities?: any[]
+) {
+  const source = new DataSource({
+    type: 'mysql',
+    host,
+    port,
+    username,
+    password,
+    database,
+    entities: entities,
+    synchronize: true,
+    logging: false
+  });
+
+  await source.initialize().catch((error) => logger.error(error));
+  return source;
 }
 
 export function getDataSource() {
