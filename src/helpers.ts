@@ -374,6 +374,17 @@ export function resolveEnum<T extends {}>(
   return undefined;
 }
 
+export function resolveEnumOrThrow<T extends object>(
+  enumObj: T,
+  value?: string
+): T[keyof T] {
+  const resolvedValue = resolveEnum(enumObj, value);
+  if (resolvedValue) {
+    return resolvedValue;
+  }
+  throw new Error(`Invalid enum value: ${value}`);
+}
+
 export function isAirdrop(t: Transaction): boolean {
   return areEqualAddresses(t.from_address, NULL_ADDRESS) && t.value === 0;
 }

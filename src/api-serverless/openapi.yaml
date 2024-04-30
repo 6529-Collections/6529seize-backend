@@ -583,15 +583,12 @@ components:
         required:
             - id
             - name
-            - description
             - author
             - created_at
         properties:
           id:
             type: string
           name:
-            type: string
-          description:
             type: string
           author:
             $ref: '#/components/schemas/ProfileMin'
@@ -746,6 +743,7 @@ components:
       required:
         - id
         - handle
+        - pfp
         - cic
         - rep
         - tdh
@@ -759,6 +757,7 @@ components:
           type: string
         pfp:
           type: string
+          nullable: true
         cic:
           type: number
           format: int64
@@ -1182,6 +1181,7 @@ components:
         - scope
         - required_metadata
         - signature_required
+        - no_of_applications_allowed_per_participant
       properties:
         scope:
           $ref: '#/components/schemas/WaveScope'
@@ -1190,6 +1190,7 @@ components:
           type: integer
           format: int64
           minimum: 1
+          nullable: true
         required_metadata:
           description: |
             The metadata that must be provided by the participant. 
@@ -1239,6 +1240,7 @@ components:
         - time_lock_ms
         - winning_thresholds
         - period
+        - max_winners
       properties:
         type:
           $ref: '#/components/schemas/WaveType'
@@ -1252,6 +1254,7 @@ components:
           type: integer
           format: int64
           minimum: 1
+          nullable: true
         time_lock_ms:
           nullable: true
           description: Vote of a voter is considered eligible after this amount of time after casting it. If not set then votes are eligible immediately after casting.
@@ -1283,6 +1286,7 @@ components:
       required:
         - id
         - serial_no
+        - author
         - name
         - description
         - voting
@@ -1298,6 +1302,8 @@ components:
           description: Sequence number of the wave in Seize
           type: number
           format: int64
+        author:
+          $ref: '#/components/schemas/ProfileMin'
         name:
           description: The name of the wave
           type: string

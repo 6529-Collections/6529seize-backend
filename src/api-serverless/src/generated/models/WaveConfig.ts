@@ -20,7 +20,7 @@ export class WaveConfig {
     /**
     * This amount of top rated drops will win. Must be set if and only if type is TOP_VOTED
     */
-    'max_winners'?: number;
+    'max_winners': number | null;
     /**
     * Vote of a voter is considered eligible after this amount of time after casting it. If not set then votes are eligible immediately after casting.
     */

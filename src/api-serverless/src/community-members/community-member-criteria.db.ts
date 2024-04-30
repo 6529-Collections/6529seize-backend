@@ -96,6 +96,20 @@ export class CommunityMemberCriteriaDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: connection }
     );
   }
+
+  async getCriteriasByIds(
+    ids: string[]
+  ): Promise<CommunityMembersCurationCriteriaEntity[]> {
+    if (!ids.length) {
+      return [];
+    }
+    return this.db.execute<CommunityMembersCurationCriteriaEntity>(
+      `
+    select * from ${COMMUNITY_MEMBERS_CURATION_CRITERIA_TABLE} where visible is true and id in (:ids)
+    `,
+      { ids }
+    );
+  }
 }
 
 export const communityMemberCriteriaDb = new CommunityMemberCriteriaDb(
