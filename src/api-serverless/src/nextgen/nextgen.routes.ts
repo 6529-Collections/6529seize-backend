@@ -5,33 +5,33 @@ import {
 } from './validation';
 import { sqlExecutor } from '../../../sql-executor';
 import {
-  NextGenAllowlist,
-  NextGenAllowlistBurn,
-  NextGenAllowlistCollection,
-  NextGenCollectionBurn,
   extractNextGenAllowlistBurnInsert,
   extractNextGenAllowlistInsert,
   extractNextGenCollectionBurnInsert,
-  extractNextGenCollectionInsert
+  extractNextGenCollectionInsert,
+  NextGenAllowlist,
+  NextGenAllowlistBurn,
+  NextGenAllowlistCollection,
+  NextGenCollectionBurn
 } from '../../../entities/INextGen';
 import * as db from './nextgen.db-api';
 import { asyncRouter } from '../async.router';
 import { initMulterSingleMiddleware } from '../multer-middleware';
 import { Logger } from '../../../logging';
 import {
-  CONTENT_TYPE_HEADER,
-  JSON_HEADER_VALUE,
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
+  CONTENT_TYPE_HEADER,
   corsOptions,
   DEFAULT_PAGE_SIZE,
-  DISTRIBUTION_PAGE_SIZE
+  DISTRIBUTION_PAGE_SIZE,
+  JSON_HEADER_VALUE
 } from '../api-constants';
-import { returnPaginatedResult, returnJsonResult } from '../api-helpers';
+import { returnJsonResult, returnPaginatedResult } from '../api-helpers';
 import { NextGenCollectionStatus } from '../api-filters';
 import {
+  NEXTGEN_ALLOWLIST_BURN_TABLE,
   NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
-  NEXTGEN_ALLOWLIST_TABLE,
-  NEXTGEN_ALLOWLIST_BURN_TABLE
+  NEXTGEN_ALLOWLIST_TABLE
 } from '../../../nextgen/nextgen_constants';
 import { PageSortDirection } from '../page-request';
 import { BadRequestException } from '../../../exceptions';
@@ -238,11 +238,11 @@ router.get(`/allowlist_phases`, async function (req: any, res: any, next: any) {
 router.get(
   `/allowlist_phases/:collection_id`,
   async function (req: any, res: any, next: any) {
-    let id: number = parseInt(req.params.collection_id);
+    const id: number = parseInt(req.params.collection_id);
     if (!isNaN(id)) {
       logger.info(`[FETCHING ALLOWLIST PHASES COLLECTION ID ${id}]`);
       db.fetchAllowlistPhasesForCollection(id).then((result) => {
-        return returnPaginatedResult(result, req, res);
+        return returnPaginatedResult(result as unknown as any, req, res);
       });
     } else {
       return res.status(404).send({});
@@ -424,7 +424,7 @@ router.get(
               count: r.count
             };
           });
-        const sortedValues = values
+        const sortedValues = [...values]
           .sort((a: any, b: any) => a.key.localeCompare(b.key))
           .sort((a: any, b: any) => a.count - b.count);
         const trait: TokenTraitWithCount = {

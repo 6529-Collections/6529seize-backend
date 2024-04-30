@@ -444,7 +444,7 @@ loadApi().then(() => {
         : 'asc';
 
     db.fetchMemesSeasons(sortDir).then((result) => {
-      returnPaginatedResult(result, req, res);
+      returnPaginatedResult(result as unknown as any, req, res);
     });
   });
 
