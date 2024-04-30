@@ -10,6 +10,7 @@
  * Do not edit the class manually.
  */
 
+import { ProfileMin } from '../models/ProfileMin';
 import { WaveConfig } from '../models/WaveConfig';
 import { WaveOutcome } from '../models/WaveOutcome';
 import { WaveParticipationConfig } from '../models/WaveParticipationConfig';
@@ -26,6 +27,7 @@ export class Wave {
     * Sequence number of the wave in Seize
     */
     'serial_no': number;
+    'author': ProfileMin;
     /**
     * The name of the wave
     */
@@ -54,6 +56,12 @@ export class Wave {
             "baseName": "serial_no",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "author",
+            "baseName": "author",
+            "type": "ProfileMin",
+            "format": ""
         },
         {
             "name": "name",

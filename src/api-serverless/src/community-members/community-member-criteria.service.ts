@@ -410,6 +410,12 @@ export class CommunityMemberCriteriaService {
     return await this.mapCriteriaForApi(criteria);
   }
 
+  async getCriteriasByIds(
+    ids: string[]
+  ): Promise<CommunityMembersCurationCriteriaEntity[]> {
+    return await this.communityMemberCriteriaDb.getCriteriasByIds(ids);
+  }
+
   private async mapCriteriaForApi(
     criteria: CommunityMembersCurationCriteriaEntity[]
   ): Promise<ApiCommunityMembersCurationCriteria[]> {

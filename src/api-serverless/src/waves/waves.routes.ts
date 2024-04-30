@@ -1,10 +1,13 @@
 import { asyncRouter } from '../async.router';
-import { needsAuthenticatedUser } from '../auth/auth';
+import {
+  getAuthenticatedProfileIdOrNull,
+  needsAuthenticatedUser
+} from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import { Wave } from '../generated/models/Wave';
 import { CreateNewWave } from '../generated/models/CreateNewWave';
-import { BadRequestException } from '../../../exceptions';
+import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import * as Joi from 'joi';
 import { CreateNewWaveScope } from '../generated/models/CreateNewWaveScope';
 import { CreateNewWaveVisibilityConfig } from '../generated/models/CreateNewWaveVisibilityConfig';
@@ -20,6 +23,7 @@ import { WaveType } from '../generated/models/WaveType';
 import { parseIntOrNull } from '../../../helpers';
 import { WaveOutcome } from '../generated/models/WaveOutcome';
 import { getValidatedByJoiOrThrow } from '../validation';
+import { waveApiService } from './wave.api.service';
 
 const router = asyncRouter();
 
@@ -30,8 +34,16 @@ router.post(
     req: Request<any, any, CreateNewWave, any, any>,
     res: Response<ApiResponse<Wave>>
   ) => {
-    getValidatedByJoiOrThrow(req.body, WaveSchema);
-    throw new BadRequestException(`Not implemented yet`);
+    const authenticatedProfileId = await getAuthenticatedProfileIdOrNull(req);
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    const request = getValidatedByJoiOrThrow(req.body, WaveSchema);
+    const wave = await waveApiService.createWave({
+      createWaveRequest: request,
+      authorId: authenticatedProfileId
+    });
+    res.send(wave);
   }
 );
 
@@ -48,13 +60,17 @@ router.get(
 const IntRangeSchema = Joi.object<IntRange>({
   min: Joi.number().integer().required().allow(null),
   max: Joi.number().integer().required().allow(null)
-}).custom((value, helpers) => {
-  const min = parseIntOrNull(value?.min);
-  const max = parseIntOrNull(value?.max);
-  if (min !== null && max !== null && min > max) {
-    return helpers.error('min must be less than max');
-  }
-});
+})
+  .custom((value, helpers) => {
+    const min = parseIntOrNull(value?.min);
+    const max = parseIntOrNull(value?.max);
+    if (min !== null && max !== null && min > max) {
+      return helpers.error('min.max.flip');
+    }
+  })
+  .messages({
+    'min.max.flip': `There's a range in request where max is less than min. This is not allowed.`
+  });
 
 const WaveScopeSchema = Joi.object<CreateNewWaveScope>({
   type: Joi.string()
@@ -79,8 +95,16 @@ const WaveVotingSchema = Joi.object<CreateNewWaveVotingConfig>({
   credit_scope: Joi.string()
     .allow(...Object.values(WaveCreditScope))
     .required(),
-  credit_category: Joi.string().required().allow(null).max(100),
-  creditor_id: Joi.string().allow(null),
+  credit_category: Joi.when('credit_type', {
+    is: Joi.string().valid(WaveCreditType.Rep),
+    then: Joi.string().required().allow(null).max(100),
+    otherwise: Joi.valid(null)
+  }),
+  creditor_id: Joi.when('credit_type', {
+    is: Joi.string().valid(WaveCreditType.Rep),
+    then: Joi.string().required().allow(null),
+    otherwise: Joi.valid(null)
+  }),
   signature_required: Joi.boolean().required(),
   period: IntRangeSchema.required().allow(null)
 });
@@ -111,12 +135,6 @@ const WaveConfigSchema = Joi.object<WaveConfig>({
     is: Joi.string().valid(WaveType.VoteTallyInRange),
     then: IntRangeSchema.required().or('min', 'max'),
     otherwise: Joi.valid(null)
-  }).custom((value, helpers) => {
-    const min = parseIntOrNull(value?.min);
-    const max = parseIntOrNull(value?.max);
-    if (min !== null && max !== null && min >= max) {
-      return helpers.error('min must be less than max');
-    }
   }),
   max_winners: Joi.when('type', {
     is: Joi.string().valid(WaveType.TopVoted),

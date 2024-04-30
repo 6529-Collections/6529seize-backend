@@ -16,7 +16,6 @@ import { HttpFile } from '../http/http';
 export class Curation {
     'id': string;
     'name': string;
-    'description': string;
     'author': ProfileMin;
     'created_at': number;
 
@@ -32,12 +31,6 @@ export class Curation {
         {
             "name": "name",
             "baseName": "name",
-            "type": "string",
-            "format": ""
-        },
-        {
-            "name": "description",
-            "baseName": "description",
             "type": "string",
             "format": ""
         },

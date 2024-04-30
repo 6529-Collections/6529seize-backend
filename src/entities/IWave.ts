@@ -7,7 +7,7 @@ export class WaveEntity {
   readonly id!: string;
 
   @PrimaryGeneratedColumn({ type: 'bigint' })
-  readonly serial_no!: string;
+  readonly serial_no!: number;
 
   @Column({ type: 'varchar', length: 250, nullable: false })
   readonly name!: string;
@@ -94,7 +94,7 @@ export class WaveEntity {
   readonly wave_period_end!: number | null;
 
   @Column({ type: 'json', nullable: false })
-  readonly outcomes!: string | null;
+  readonly outcomes!: string;
 }
 
 export enum WaveScopeType {
