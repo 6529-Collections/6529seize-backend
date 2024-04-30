@@ -24,7 +24,6 @@ import profileCicRoutes from './profile-cic.routes';
 import profileRepRoutes from './profile-rep.routes';
 import profileCollectedRoutes from './collected/collected.routes';
 import profileDropsRoutes from './profile-drops.routes';
-import profilePrimaryAddressRoutes from './profile-primary-address.routes';
 import profileProfileProxiesRoutes from './proxies/profile-proxies.routes';
 import profilePrimaryAddressRoutes from './profile-primary-address.routes';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
