@@ -165,8 +165,13 @@ export class DropsApiService {
       parts:
         dropsParts[dropEntity.id]?.map<DropPart>((it) => ({
           content: it.content,
-          quoted_drop_id: it.quoted_drop_id,
-          quoted_drop_part_id: it.quoted_drop_part_id,
+          quoted_drop:
+            it.quoted_drop_id && it.quoted_drop_part_id
+              ? {
+                  drop_id: it.quoted_drop_id,
+                  drop_part_id: it.quoted_drop_part_id
+                }
+              : null,
           part_id: it.drop_part_id,
           media:
             (dropMedia[dropEntity.id] ?? [])
