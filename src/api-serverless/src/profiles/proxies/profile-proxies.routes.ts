@@ -12,7 +12,7 @@ import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '../../validation';
 import { profileProxyApiService } from '../../proxies/proxy.api.service';
 import { profilesService } from '../../../../profiles/profiles.service';
-import { BadRequestException, NotFoundException } from '../../../../exceptions';
+import { NotFoundException } from '../../../../exceptions';
 import { ProfileProxy } from '../../generated/models/ProfileProxy';
 
 const router = asyncRouter({ mergeParams: true });
