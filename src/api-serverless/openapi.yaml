@@ -48,6 +48,46 @@ paths:
                   $ref: '#/components/schemas/ProfileProxy'
         '404':
           description: Profile not found
+  /profiles/{handleOrWallet}/proxies/granted:
+    get:
+      tags:
+        - Proxies
+      summary: Get proxies granted by a profile, if authenticated, it will return the not accepted proxies as well
+      operationId: getProxiesGranted
+      parameters:
+        - name: handleOrWallet
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: page
+          in: query
+          required: false
+          schema:
+            description: Default is 1
+            type: number
+            format: int64
+            minimum: 1
+        - name: page_size
+          in: query
+          required: false
+          schema:
+            description: Default is 50
+            type: number
+            format: int64
+            minimum: 1
+            maximum: 2000
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProfileProxy'
+        '404':
+          description: Profile not found
   /drops:
     get:
       tags:
@@ -1390,18 +1430,18 @@ components:
       type: object
       required:
         - id
-        - target_id
+        - granted_to
         - created_at
         - created_by
       properties:
         id:
           type: string
-        target_id:
-          type: string
+        granted_to:
+           $ref: '#/components/schemas/ProfileMin'
         created_at:
           type: number
         created_by:
-          type: string
+           $ref: '#/components/schemas/ProfileMin'
 
     CreateNewProfileProxyAllocateRepAction:
       type: object
@@ -1592,6 +1632,7 @@ components:
               format: int64
         is_active:
           type: boolean
+        
 
 
 

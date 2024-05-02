@@ -7,7 +7,6 @@ import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { profilesService } from '../../../profiles/profiles.service';
 import { profileProxyApiService } from './proxy.api.service';
-import { ProfileProxyEntity } from '../../../entities/IProfileProxy';
 import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { ProxyApiRequestAction } from './proxies.api.types';
 import { CreateNewProfileProxyAllocateRepAction } from '../generated/models/CreateNewProfileProxyAllocateRepAction';
@@ -18,6 +17,7 @@ import { CreateNewProfileProxyActionType } from '../generated/models/CreateNewPr
 import { CreateNewProfileProxyRateWaveDropAction } from '../generated/models/CreateNewProfileProxyRateWaveDropAction';
 import { assertUnreachable } from '../../../helpers';
 import { ProfileProxyActionEntity } from '../../../entities/IProfileProxyAction';
+import { ProfileProxy } from '../generated/models/ProfileProxy';
 
 const router = asyncRouter();
 
@@ -26,7 +26,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<any, any, CreateNewProfileProxy, any, any>,
-    res: Response<ApiResponse<ProfileProxyEntity>>
+    res: Response<ApiResponse<ProfileProxy>>
   ) => {
     const { body } = req;
     const newProxy = getValidatedByJoiOrThrow(body, NewProfileProxySchema);
@@ -61,7 +61,7 @@ router.get(
   '/:proxy_id',
   async (
     req: Request<{ proxy_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<ProfileProxyEntity>>
+    res: Response<ApiResponse<ProfileProxy>>
   ) => {
     const { proxy_id } = req.params;
     const profileProxy =
@@ -95,8 +95,7 @@ router.post(
         proxy_id
       });
 
-    // test this
-    if (profileProxy.created_by !== requesterProfile.external_id) {
+    if (profileProxy.created_by.id !== requesterProfile.external_id) {
       throw new BadRequestException('You are not the creator of this proxy');
     }
 
