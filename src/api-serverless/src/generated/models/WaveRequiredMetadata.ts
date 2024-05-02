@@ -10,45 +10,26 @@
  * Do not edit the class manually.
  */
 
-import { ProfileMin } from '../models/ProfileMin';
 import { HttpFile } from '../http/http';
 
-export class ProfileProxy {
-    'id': string;
-    'granted_to'?: ProfileMin;
-    'created_at': number;
-    'created_by': ProfileMin;
+export class WaveRequiredMetadata {
+    /**
+    * Metadata key
+    */
+    'name': string;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "id",
-            "baseName": "id",
+            "name": "name",
+            "baseName": "name",
             "type": "string",
-            "format": ""
-        },
-        {
-            "name": "granted_to",
-            "baseName": "granted_to",
-            "type": "ProfileMin",
-            "format": ""
-        },
-        {
-            "name": "created_at",
-            "baseName": "created_at",
-            "type": "number",
-            "format": ""
-        },
-        {
-            "name": "created_by",
-            "baseName": "created_by",
-            "type": "ProfileMin",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ProfileProxy.attributeTypeMap;
+        return WaveRequiredMetadata.attributeTypeMap;
     }
 
     public constructor() {

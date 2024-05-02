@@ -24,6 +24,8 @@ import {
 } from '../../../entities/IProfileProxyAction';
 import { assertUnreachable } from '../../../helpers';
 import { CreateNewProfileProxyActionType } from '../generated/models/CreateNewProfileProxyActionType';
+import { ProfileProxy } from '../generated/models/ProfileProxy';
+import { profileProxiesMapper, ProfileProxiesMapper } from './proxies.mapper';
 
 const ACTION_MAP: Record<
   CreateNewProfileProxyActionType,
@@ -47,7 +49,8 @@ export class ProfileProxyApiService {
 
   constructor(
     private readonly profilesService: ProfilesService,
-    private readonly profileProxiesDb: ProfileProxiesDb
+    private readonly profileProxiesDb: ProfileProxiesDb,
+    private readonly profileProxiesMapper: ProfileProxiesMapper
   ) {}
 
   private async getTargetOrThrow({
@@ -90,13 +93,13 @@ export class ProfileProxyApiService {
     }
   }
 
-  public async findProfileProxyByIdOrThrow({
+  private async findProfileProxyByIdOrThrow({
     id,
     connection
   }: {
     readonly id: string;
     readonly connection?: ConnectionWrapper<any>;
-  }): Promise<ProfileProxyEntity> {
+  }): Promise<ProfileProxy> {
     const profileProxy = await this.profileProxiesDb.findProfileProxyById({
       id,
       connection
@@ -104,14 +107,21 @@ export class ProfileProxyApiService {
     if (!profileProxy) {
       throw new NotFoundException(`Profile proxy with id ${id} does not exist`);
     }
-    return profileProxy;
+    const mappedProfileProxy =
+      await this.profileProxiesMapper.profileProxyEntitiesToApiProfileProxies({
+        profileProxyEntities: [profileProxy]
+      });
+    if (!mappedProfileProxy.length) {
+      throw new Error('Something went wrong getting profile proxy');
+    }
+    return mappedProfileProxy[0];
   }
 
   async persistProfileProxy({
     createProfileProxyRequest
   }: {
     readonly createProfileProxyRequest: ProfileProxyEntity;
-  }): Promise<ProfileProxyEntity> {
+  }): Promise<ProfileProxy> {
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         await this.profileProxiesDb.insertProfileProxy({
@@ -132,7 +142,7 @@ export class ProfileProxyApiService {
   }: {
     readonly params: CreateNewProfileProxy;
     readonly grantorProfile: Profile;
-  }): Promise<ProfileProxyEntity> {
+  }): Promise<ProfileProxy> {
     const target = await this.getTargetOrThrow({
       target_id
     });
@@ -153,23 +163,21 @@ export class ProfileProxyApiService {
       created_at: Time.currentMillis(),
       created_by: created_by_profile_id
     };
-    const profileProxy = await this.persistProfileProxy({
+    return await this.persistProfileProxy({
       createProfileProxyRequest
     });
-    return profileProxy;
   }
 
   async getProfileProxyByIdOrThrow({
     proxy_id
   }: {
     readonly proxy_id: string;
-  }): Promise<ProfileProxyEntity> {
+  }): Promise<ProfileProxy> {
     return await this.findProfileProxyByIdOrThrow({
       id: proxy_id
     });
   }
 
-  // how to make it infinite scroll
   async getProfileReceivedProfileProxies({
     target_id,
     page,
@@ -182,7 +190,7 @@ export class ProfileProxyApiService {
     readonly page_size: number;
     readonly sort: string;
     readonly sort_direction: string;
-  }): Promise<Page<ProfileProxyEntity>> {
+  }): Promise<Page<ProfileProxy>> {
     const [profileProxies, count] = await Promise.all([
       this.profileProxiesDb.findProfileReceivedProfileProxies({
         target_id,
@@ -199,7 +207,48 @@ export class ProfileProxyApiService {
       count,
       page: page,
       next: profileProxies.length === page_size,
-      data: profileProxies
+      data: await this.profileProxiesMapper.profileProxyEntitiesToApiProfileProxies(
+        {
+          profileProxyEntities: profileProxies
+        }
+      )
+    };
+  }
+
+  async getProfileGrantedProfileProxies({
+    created_by,
+    page,
+    page_size,
+    sort,
+    sort_direction
+  }: {
+    readonly created_by: string;
+    readonly page: number;
+    readonly page_size: number;
+    readonly sort: string;
+    readonly sort_direction: string;
+  }): Promise<Page<ProfileProxy>> {
+    const [profileProxies, count] = await Promise.all([
+      this.profileProxiesDb.findProfileGrantedProfileProxies({
+        created_by,
+        page,
+        page_size,
+        sort,
+        sort_direction
+      }),
+      this.profileProxiesDb.countProfileGrantedProfileProxies({
+        created_by
+      })
+    ]);
+    return {
+      count,
+      page: page,
+      next: profileProxies.length === page_size,
+      data: await this.profileProxiesMapper.profileProxyEntitiesToApiProfileProxies(
+        {
+          profileProxyEntities: profileProxies
+        }
+      )
     };
   }
 
@@ -320,5 +369,6 @@ export class ProfileProxyApiService {
 
 export const profileProxyApiService = new ProfileProxyApiService(
   profilesService,
-  profileProxiesDb
+  profileProxiesDb,
+  profileProxiesMapper
 );

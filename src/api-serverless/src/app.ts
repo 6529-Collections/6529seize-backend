@@ -23,6 +23,7 @@ import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
 import dropsMediaRoutes from './drops/drops-media.routes';
 import profileSubClassificationsRoutes from './profiles/profiles-sub-classifications.routes';
 import delegationsRoutes from './delegations/delegations.routes';
+import wavesRoutes from './waves/waves.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -443,7 +444,7 @@ loadApi().then(() => {
         : 'asc';
 
     db.fetchMemesSeasons(sortDir).then((result) => {
-      returnPaginatedResult(result, req, res);
+      returnPaginatedResult(result as unknown as any, req, res);
     });
   });
 
@@ -819,6 +820,7 @@ loadApi().then(() => {
   apiRouter.use(`/drop-media`, dropsMediaRoutes);
   apiRouter.use(`/profile-subclassifications`, profileSubClassificationsRoutes);
   apiRouter.use(`/delegations`, delegationsRoutes);
+  apiRouter.use(`/waves`, wavesRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   app.use(rootRouter);
 

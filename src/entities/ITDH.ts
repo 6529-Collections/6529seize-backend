@@ -1,7 +1,14 @@
-import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  PrimaryColumn
+} from 'typeorm';
 import {
   CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  TDH_BLOCKS_TABLE,
   TDH_GLOBAL_HISTORY_TABLE,
   TDH_HISTORY_TABLE,
   TDH_NFT_TABLE,
@@ -187,6 +194,18 @@ export class NftTDH {
 
   @Column({ type: 'int', nullable: false })
   tdh_rank!: number;
+}
+
+@Entity(TDH_BLOCKS_TABLE)
+export class TDHBlock {
+  @CreateDateColumn()
+  created_at?: Date;
+
+  @PrimaryColumn({ type: 'int' })
+  block_number!: number;
+
+  @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  timestamp!: Date;
 }
 
 @Entity(TDH_GLOBAL_HISTORY_TABLE)
