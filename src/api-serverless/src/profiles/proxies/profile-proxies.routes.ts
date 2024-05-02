@@ -8,12 +8,12 @@ import {
   PageSortDirection
 } from '../../page-request';
 import { ApiResponse } from '../../api-response';
-import { ProfileProxyEntity } from '../../../../entities/IProfileProxy';
 import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '../../validation';
 import { profileProxyApiService } from '../../proxies/proxy.api.service';
 import { profilesService } from '../../../../profiles/profiles.service';
-import { BadRequestException } from '../../../../exceptions';
+import { NotFoundException } from '../../../../exceptions';
+import { ProfileProxy } from '../../generated/models/ProfileProxy';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -24,18 +24,18 @@ router.get(
       { handleOrWallet: string },
       any,
       any,
-      ProfileReceivedProfileProxiesQuery,
+      ProfileProfileProxiesQuery,
       any
     >,
 
-    res: Response<ApiResponse<Page<ProfileProxyEntity>>>
+    res: Response<ApiResponse<Page<ProfileProxy>>>
   ) => {
     const targetProfile =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
         req.params.handleOrWallet
       );
     if (!targetProfile?.profile) {
-      throw new BadRequestException(
+      throw new NotFoundException(
         `Profile with id ${req.params.handleOrWallet} does not exist`
       );
     }
@@ -43,7 +43,7 @@ router.get(
     const unvalidatedQuery = req.query;
     const query = getValidatedByJoiOrThrow(
       unvalidatedQuery,
-      ProfileReceivedProfileProxiesQuerySchema
+      ProfileProfileProxiesQuerySchema
     );
 
     // make new interface what returns also actions and ProfileMin's, if target is not requester, return only active actions, return only (both cases) where there is at least 1 action after filter
@@ -56,15 +56,55 @@ router.get(
   }
 );
 
-export type ProfileReceivedProfileProxiesQuery =
-  FullPageRequest<ProfileReceivedProfileProxiesQuerySortOptions>;
+router.get(
+  '/granted',
+  async (
+    req: Request<
+      { handleOrWallet: string },
+      any,
+      any,
+      ProfileProfileProxiesQuery,
+      any
+    >,
 
-export enum ProfileReceivedProfileProxiesQuerySortOptions {
+    res: Response<ApiResponse<Page<ProfileProxy>>>
+  ) => {
+    const targetProfile =
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+        req.params.handleOrWallet
+      );
+    if (!targetProfile?.profile) {
+      throw new NotFoundException(
+        `Profile with id ${req.params.handleOrWallet} does not exist`
+      );
+    }
+
+    const unvalidatedQuery = req.query;
+    const query = getValidatedByJoiOrThrow(
+      unvalidatedQuery,
+      ProfileProfileProxiesQuerySchema
+    );
+
+    // make new interface what returns also actions and ProfileMin's, if target is not requester, return only active actions, return only (both cases) where there is at least 1 action after filter
+    const result = await profileProxyApiService.getProfileGrantedProfileProxies(
+      {
+        created_by: targetProfile.profile.external_id,
+        ...query
+      }
+    );
+    res.send(result);
+  }
+);
+
+export enum ProfileProfileProxiesQuerySortOptions {
   CREATED_AT = 'created_at'
 }
 
-const ProfileReceivedProfileProxiesQuerySchema =
-  Joi.object<ProfileReceivedProfileProxiesQuery>({
+export type ProfileProfileProxiesQuery =
+  FullPageRequest<ProfileProfileProxiesQuerySortOptions>;
+
+const ProfileProfileProxiesQuerySchema = Joi.object<ProfileProfileProxiesQuery>(
+  {
     sort_direction: Joi.string()
       .optional()
       .default(PageSortDirection.DESC)
@@ -72,8 +112,8 @@ const ProfileReceivedProfileProxiesQuerySchema =
       .allow(null),
     sort: Joi.string()
       .optional()
-      .default(ProfileReceivedProfileProxiesQuerySortOptions.CREATED_AT)
-      .valid(...Object.values(ProfileReceivedProfileProxiesQuerySortOptions))
+      .default(ProfileProfileProxiesQuerySortOptions.CREATED_AT)
+      .valid(...Object.values(ProfileProfileProxiesQuerySortOptions))
       .allow(null),
     page: Joi.number().integer().min(1).optional().allow(null).default(1),
     page_size: Joi.number()
@@ -83,6 +123,7 @@ const ProfileReceivedProfileProxiesQuerySchema =
       .optional()
       .allow(null)
       .default(DEFAULT_PAGE_SIZE)
-  });
+  }
+);
 
 export default router;

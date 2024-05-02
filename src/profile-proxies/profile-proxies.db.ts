@@ -109,6 +109,49 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     return dbResult.at(0)?.cnt ?? 0;
   }
 
+  async findProfileGrantedProfileProxies({
+    created_by,
+    page,
+    page_size,
+    sort,
+    sort_direction,
+    connection
+  }: {
+    readonly created_by: string;
+    readonly page: number;
+    readonly page_size: number;
+    readonly sort: string;
+    readonly sort_direction: string;
+    readonly connection?: ConnectionWrapper<any>;
+  }): Promise<ProfileProxyEntity[]> {
+    const opts = connection ? { wrappedConnection: connection } : {};
+    return this.db.execute(
+      `select * from ${PROFILE_PROXIES_TABLE} where created_by = :created_by order by ${sort} ${sort_direction} limit :limit offset :offset`,
+      {
+        created_by,
+        limit: page_size,
+        offset: (page - 1) * page_size
+      },
+      opts
+    );
+  }
+
+  async countProfileGrantedProfileProxies({
+    created_by,
+    connection
+  }: {
+    created_by: string;
+    connection?: ConnectionWrapper<any>;
+  }): Promise<number> {
+    const opts = connection ? { wrappedConnection: connection } : {};
+    const dbResult: { cnt: number }[] = await this.db.execute(
+      `select count(*) as cnt from ${PROFILE_PROXIES_TABLE} where created_by = :created_by`,
+      { created_by },
+      opts
+    );
+    return dbResult.at(0)?.cnt ?? 0;
+  }
+
   async insertProfileProxyAction({
     profileProxyAction,
     connection
