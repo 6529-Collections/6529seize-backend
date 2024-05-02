@@ -12,7 +12,7 @@ import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '../../validation';
 import { profileProxyApiService } from '../../proxies/proxy.api.service';
 import { profilesService } from '../../../../profiles/profiles.service';
-import { BadRequestException } from '../../../../exceptions';
+import { BadRequestException, NotFoundException } from '../../../../exceptions';
 import { ProfileProxy } from '../../generated/models/ProfileProxy';
 
 const router = asyncRouter({ mergeParams: true });
@@ -35,7 +35,7 @@ router.get(
         req.params.handleOrWallet
       );
     if (!targetProfile?.profile) {
-      throw new BadRequestException(
+      throw new NotFoundException(
         `Profile with id ${req.params.handleOrWallet} does not exist`
       );
     }
@@ -74,7 +74,7 @@ router.get(
         req.params.handleOrWallet
       );
     if (!targetProfile?.profile) {
-      throw new BadRequestException(
+      throw new NotFoundException(
         `Profile with id ${req.params.handleOrWallet} does not exist`
       );
     }
