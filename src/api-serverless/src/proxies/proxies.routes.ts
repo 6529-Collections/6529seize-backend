@@ -95,7 +95,6 @@ router.post(
         proxy_id
       });
 
-    // test this
     if (profileProxy.created_by.id !== requesterProfile.external_id) {
       throw new BadRequestException('You are not the creator of this proxy');
     }
