@@ -243,7 +243,7 @@ export class ProfileProxyApiService {
     return {
       count,
       page: page,
-      next: profileProxies.length === page_size,
+      next: count > page_size * page,
       data: await this.profileProxiesMapper.profileProxyEntitiesToApiProfileProxies(
         {
           profileProxyEntities: profileProxies

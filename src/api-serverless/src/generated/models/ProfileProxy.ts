@@ -15,7 +15,7 @@ import { HttpFile } from '../http/http';
 
 export class ProfileProxy {
     'id': string;
-    'granted_to'?: ProfileMin;
+    'granted_to': ProfileMin;
     'created_at': number;
     'created_by': ProfileMin;
 

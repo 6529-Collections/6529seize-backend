@@ -1426,7 +1426,7 @@ components:
       type: object
       required:
         - id
-        - target_id
+        - granted_to
         - created_at
         - created_by
       properties:
