@@ -33,6 +33,8 @@ export * from '../models/DropRatingRequest';
 export * from '../models/DropReferencedNFT';
 export * from '../models/IntRange';
 export * from '../models/NewDropComment';
+export * from '../models/Nft';
+export * from '../models/NftsPage';
 export * from '../models/PageBase';
 export * from '../models/ProfileMin';
 export * from '../models/ProfileProxy';
@@ -86,6 +88,8 @@ import { DropRatingRequest } from '../models/DropRatingRequest';
 import { DropReferencedNFT } from '../models/DropReferencedNFT';
 import { IntRange } from '../models/IntRange';
 import { NewDropComment } from '../models/NewDropComment';
+import { Nft      , NftTokenTypeEnum                            } from '../models/Nft';
+import { NftsPage } from '../models/NftsPage';
 import { PageBase } from '../models/PageBase';
 import { ProfileMin } from '../models/ProfileMin';
 import { ProfileProxy } from '../models/ProfileProxy';
@@ -119,6 +123,7 @@ let primitives = [
 let enumsMap: Set<string> = new Set<string>([
     "CreateNewProfileProxyActionType",
     "DropActivityLogTypeEnum",
+    "NftTokenTypeEnum",
     "WaveCreditScope",
     "WaveCreditType",
     "WaveScopeType",
@@ -160,6 +165,8 @@ let typeMap: {[index: string]: any} = {
     "DropReferencedNFT": DropReferencedNFT,
     "IntRange": IntRange,
     "NewDropComment": NewDropComment,
+    "Nft": Nft,
+    "NftsPage": NftsPage,
     "PageBase": PageBase,
     "ProfileMin": ProfileMin,
     "ProfileProxy": ProfileProxy,
