@@ -30,7 +30,9 @@ export function maybeAuthenticatedUser() {
   return passport.authenticate(['jwt', 'anonymous'], { session: false });
 }
 
-export function getAuthenticatedWalletOrNull(req: Request): string | null {
+export function getAuthenticatedWalletOrNull(
+  req: Request<any, any, any, any, any>
+): string | null {
   const user = req.user as any;
   if (!user) {
     return null;

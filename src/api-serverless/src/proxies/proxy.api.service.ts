@@ -16,7 +16,7 @@ import {
 } from '../../../profile-proxies/profile-proxies.db';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { ProfileAndConsolidations } from '../../../profiles/profile.types';
-import { Page } from '../page-request';
+
 import { ProxyApiRequestAction } from './proxies.api.types';
 import {
   ProfileProxyActionEntity,
@@ -109,7 +109,11 @@ export class ProfileProxyApiService {
     }
     const mappedProfileProxy =
       await this.profileProxiesMapper.profileProxyEntitiesToApiProfileProxies({
-        profileProxyEntities: [profileProxy]
+        profileProxyEntities: [profileProxy],
+        actions: await this.profileProxiesDb.findProfileProxyActionsByProxyId({
+          proxy_id: id,
+          connection
+        })
       });
     if (!mappedProfileProxy.length) {
       throw new Error('Something went wrong getting profile proxy');
@@ -180,76 +184,57 @@ export class ProfileProxyApiService {
 
   async getProfileReceivedProfileProxies({
     target_id,
-    page,
-    page_size,
-    sort,
-    sort_direction
+    get_only_active_actions
   }: {
     readonly target_id: string;
-    readonly page: number;
-    readonly page_size: number;
-    readonly sort: string;
-    readonly sort_direction: string;
-  }): Promise<Page<ProfileProxy>> {
-    const [profileProxies, count] = await Promise.all([
-      this.profileProxiesDb.findProfileReceivedProfileProxies({
+    readonly get_only_active_actions: boolean;
+  }): Promise<ProfileProxy[]> {
+    const actions =
+      await this.profileProxiesDb.findProfileProxyReceivedActionsByProfileId({
         target_id,
-        page,
-        page_size,
-        sort,
-        sort_direction
-      }),
-      this.profileProxiesDb.countProfileReceivedProfileProxies({
+        only_active: get_only_active_actions
+      });
+    if (!actions.length) {
+      return [];
+    }
+    const profileProxies =
+      await this.profileProxiesDb.findProfileReceivedProfileProxies({
         target_id
-      })
-    ]);
-    return {
-      count,
-      page: page,
-      next: profileProxies.length === page_size,
-      data: await this.profileProxiesMapper.profileProxyEntitiesToApiProfileProxies(
-        {
-          profileProxyEntities: profileProxies
-        }
-      )
-    };
+      });
+
+    return await this.profileProxiesMapper.profileProxyEntitiesToApiProfileProxies(
+      {
+        profileProxyEntities: profileProxies,
+        actions
+      }
+    );
   }
 
   async getProfileGrantedProfileProxies({
     created_by,
-    page,
-    page_size,
-    sort,
-    sort_direction
+    get_only_active_actions
   }: {
     readonly created_by: string;
-    readonly page: number;
-    readonly page_size: number;
-    readonly sort: string;
-    readonly sort_direction: string;
-  }): Promise<Page<ProfileProxy>> {
-    const [profileProxies, count] = await Promise.all([
-      this.profileProxiesDb.findProfileGrantedProfileProxies({
+    readonly get_only_active_actions: boolean;
+  }): Promise<ProfileProxy[]> {
+    const actions =
+      await this.profileProxiesDb.findProfileProxyGrantedActionsByProfileId({
         created_by,
-        page,
-        page_size,
-        sort,
-        sort_direction
-      }),
-      this.profileProxiesDb.countProfileGrantedProfileProxies({
+        only_active: get_only_active_actions
+      });
+    if (!actions.length) {
+      return [];
+    }
+    const profileProxies =
+      await this.profileProxiesDb.findProfileGrantedProfileProxies({
         created_by
-      })
-    ]);
-    return {
-      count,
-      page: page,
-      next: count > page_size * page,
-      data: await this.profileProxiesMapper.profileProxyEntitiesToApiProfileProxies(
-        {
-          profileProxyEntities: profileProxies
-        }
-      )
-    };
+      });
+    return await this.profileProxiesMapper.profileProxyEntitiesToApiProfileProxies(
+      {
+        profileProxyEntities: profileProxies,
+        actions
+      }
+    );
   }
 
   private async isActionExists({
