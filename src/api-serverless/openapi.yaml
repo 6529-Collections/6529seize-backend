@@ -8,6 +8,61 @@ servers:
   - url: /api
 
 paths:
+
+  /nfts:
+    get:
+      tags:
+        -  Nfts
+      summary: Get NFTs
+      operationId: getNfts
+      parameters:
+        - name: page_size
+          in: query
+          description: Default is 50
+          required: false
+          schema:
+            type: number
+            format: int64
+            minimum: 1
+            maximum: 101
+        - name: page
+          in: query
+          description: Default is 1
+          required: false
+          schema:
+              type: number
+              format: int64
+              minimum: 1
+        - name: sort_direction
+          in: query
+          description: Default is DESC
+          required: false
+          schema:
+            type: string
+            enum:
+              - ASC
+              - DESC
+        - name: id
+          in: query
+          description: Filter by NFT ID
+          required: false
+          schema:
+            type: string
+        - name: contract
+          in: query
+          description: Filter by NFT ID
+          required: false
+          schema:
+            type: string
+      responses:
+        200:
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NftsPage'
   /profiles/{handleOrWallet}/proxies/received:
     get:
       tags:
@@ -671,6 +726,23 @@ components:
           format: int64
         next:
           type: boolean
+
+    PageWithNextUriBase:
+      type: object
+      required:
+        - count
+        - page
+        - next
+      properties:
+        count:
+          type: number
+          format: int64
+        page:
+          type: number
+          format: int64
+        next:
+          type: string
+          nullable: true
 
     Drop:
       type: object
@@ -1628,9 +1700,143 @@ components:
               format: int64
         is_active:
           type: boolean
-        
 
+    Nft:
+      type: object
+      required:
+        - id
+        - contract
+        - mint_price
+        - supply
+        - name
+        - collection
+        - token_type
+        - hodl_rate
+        - description
+        - artist
+        - uri
+        - thumbnail
+        - image
+        - animation
+        - metadata
+        - tdh
+        - tdh__raw
+        - tdh_rank
+        - market_cap
+        - floor_price
+        - scaled
+        - compressed_animation
+        - icon
+        - total_volume_last_24_hours
+        - total_volume_last_7_days
+        - total_volume_last_1_month
+        - total_volume
+        - created_at
+        - mint_date
+        - boosted_tdh
+        - artist_seize_handle
+        - has_distribution
+      properties:
+        id:
+          type: integer
+          format: int64
+        contract:
+          type: string
+        mint_price:
+          type: number
+          format: float
+        supply:
+          type: integer
+          format: int64
+        name:
+          type: string
+        collection:
+          type: string
+        token_type:
+          type: string
+          enum:
+            - ERC1155
+            - EEC721
+        hodl_rate:
+          type: number
+          format: float
+        description:
+          type: string
+        artist:
+          type: string
+        uri:
+          type: string
+          nullable: true
+        thumbnail:
+          type: string
+        image:
+          type: string
+          nullable: true
+        animation:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+        tdh:
+          type: number
+          format: int64
+        tdh__raw:
+          type: number
+          format: int64
+        tdh_rank:
+          type: number
+          format: int64
+        market_cap:
+          type: number
+          format: float
+        floor_price:
+          type: number
+          format: float
+        scaled:
+          type: string
+        compressed_animation:
+          type: string
+          nullable: true
+        icon:
+          type: string
+        total_volume_last_24_hours:
+          type: number
+          format: float
+        total_volume_last_7_days:
+          type: number
+          format: float
+        total_volume_last_1_month:
+          type: number
+          format: float
+        total_volume:
+          type: number
+          format: float
+        created_at:
+          type: string
+          format: date-time
+        mint_date:
+          type: string
+          format: date-time
+        boosted_tdh:
+          type: number
+          format: int64
+        artist_seize_handle:
+          type: string
+          nullable: true
+        has_distribution:
+          type: boolean
 
+    NftsPage:
+      type: object
+      required:
+        - data
+      allOf:
+        - $ref: '#/components/schemas/PageWithNextUriBase'
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Nft'
 
 security:
   - bearerAuth: []
