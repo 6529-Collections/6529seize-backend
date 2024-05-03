@@ -75,23 +75,12 @@ paths:
           required: true
           schema:
             type: string
-        - name: page
+        - name: only_active
           in: query
+          description: If true, only active proxies will be returned
           required: false
           schema:
-            description: Default is 1
-            type: number
-            format: int64
-            minimum: 1
-        - name: page_size
-          in: query
-          required: false
-          schema:
-            description: Default is 50
-            type: number
-            format: int64
-            minimum: 1
-            maximum: 2000
+            type: boolean
       responses:
         '200':
           description: successful operation
@@ -115,23 +104,12 @@ paths:
           required: true
           schema:
             type: string
-        - name: page
+        - name: only_active
           in: query
+          description: If true, only active proxies will be returned
           required: false
           schema:
-            description: Default is 1
-            type: number
-            format: int64
-            minimum: 1
-        - name: page_size
-          in: query
-          required: false
-          schema:
-            description: Default is 50
-            type: number
-            format: int64
-            minimum: 1
-            maximum: 2000
+            type: boolean
       responses:
         '200':
           description: successful operation
@@ -1501,6 +1479,7 @@ components:
         - granted_to
         - created_at
         - created_by
+        - actions
       properties:
         id:
           type: string
@@ -1510,6 +1489,10 @@ components:
           type: number
         created_by:
            $ref: '#/components/schemas/ProfileMin'
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProfileProxyAction'
 
     CreateNewProfileProxyAllocateRepAction:
       type: object
