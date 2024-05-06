@@ -5,13 +5,13 @@ import {
 import { ALL_COMMUNITY_MEMBERS_VIEW, RATINGS_TABLE } from '../../../constants';
 import { profilesService } from '../../../profiles/profiles.service';
 import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
-import { CommunityMembersCurationCriteriaEntity } from '../../../entities/ICommunityMembersCurationCriteriaEntity';
+import { CommunityGroupEntity } from '../../../entities/ICommunityGroup';
 import {
   communityMemberCriteriaDb,
   CommunityMemberCriteriaDb
 } from './community-member-criteria.db';
 import slugify from 'slugify';
-import { uniqueShortId } from '../../../helpers';
+import { distinct, uniqueShortId } from '../../../helpers';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
@@ -21,9 +21,10 @@ import {
   AbusivenessCheckService
 } from '../../../profiles/abusiveness-check.service';
 import { ProfileMin } from '../generated/models/ProfileMin';
+import { RateMatter } from '../../../entities/IRating';
 
 export type NewCommunityMembersCurationCriteria = Omit<
-  CommunityMembersCurationCriteriaEntity,
+  CommunityGroupEntity,
   'id' | 'created_at' | 'created_by'
 >;
 
@@ -63,7 +64,8 @@ export class CommunityMemberCriteriaService {
               id,
               created_at: new Date(),
               created_by: createdBy.id,
-              visible: false
+              visible: false,
+              name: criteria.name
             },
             connection
           );
@@ -72,6 +74,129 @@ export class CommunityMemberCriteriaService {
       );
     await giveReadReplicaTimeToCatchUp();
     return savedEntity;
+  }
+
+  public async getCriteriaIdsUserIsEligibleFor(
+    wallet: string
+  ): Promise<string[]> {
+    const communityMember =
+      await this.communityMemberCriteriaDb.getCommunityMember(wallet);
+    const profileId = communityMember.profile_id;
+    const givenCicAndRep =
+      await this.communityMemberCriteriaDb.getGivenCicAndRep(profileId);
+    const initialSelection =
+      await this.communityMemberCriteriaDb.getCriteriasByConditions({
+        profileId,
+        receivedCic: communityMember.cic,
+        receivedRep: communityMember.rep,
+        tdh: communityMember.tdh,
+        level: communityMember.level,
+        givenCic: givenCicAndRep.cic,
+        givenRep: givenCicAndRep.rep
+      });
+    const ambiguousCandidates = initialSelection.filter(
+      (crit) => crit.cic_user ?? crit.rep_user ?? crit.rep_category
+    );
+    if (!ambiguousCandidates.length) {
+      return initialSelection.map((it) => it.id);
+    }
+    const cicUsers = ambiguousCandidates
+      .map((crit) => crit.cic_user)
+      .filter((it) => !!it && it !== profileId) as string[];
+    const repUsers = ambiguousCandidates
+      .map((crit) => crit.rep_user)
+      .filter((it) => !!it && it !== profileId) as string[];
+    const repCategories = ambiguousCandidates
+      .map((crit) => crit.rep_category)
+      .filter((it) => !!it) as string[];
+    const unambiguousInitial = initialSelection.filter(
+      (crit) => !crit.cic_user && !crit.rep_user && !crit.rep_category
+    );
+    if (ambiguousCandidates.length && !profileId) {
+      return unambiguousInitial.map((it) => it.id);
+    }
+    const ratings = await this.communityMemberCriteriaDb.getRatings(
+      profileId!,
+      distinct([...cicUsers, ...repUsers]),
+      repCategories
+    );
+    const ambiguousCleaned = ambiguousCandidates.filter((crit) => {
+      if (crit.cic_user) {
+        const userRating = ratings
+          .filter(
+            (rating) =>
+              rating.matter === RateMatter.CIC &&
+              (FilterDirection.RECEIVED
+                ? rating.rater_profile_id
+                : rating.matter_target_id) === crit.cic_user
+          )
+          .map((it) => it.rating)
+          .reduce((acc, it) => acc + it, 0);
+        if (
+          userRating < (crit.cic_min ?? 0) ||
+          userRating > (crit.cic_max ?? Number.MAX_SAFE_INTEGER)
+        ) {
+          return false;
+        }
+      }
+      if (crit.rep_user && !crit.rep_category) {
+        const userRating = ratings
+          .filter(
+            (rating) =>
+              rating.matter === RateMatter.REP &&
+              (FilterDirection.RECEIVED
+                ? rating.rater_profile_id
+                : rating.matter_target_id) === crit.rep_user
+          )
+          .map((it) => it.rating)
+          .reduce((acc, it) => acc + it, 0);
+        if (
+          userRating < (crit.rep_min ?? 0) ||
+          userRating > (crit.rep_max ?? Number.MAX_SAFE_INTEGER)
+        ) {
+          return false;
+        }
+      }
+      if (crit.rep_user && crit.rep_category) {
+        const userRating = ratings
+          .filter(
+            (rating) =>
+              rating.matter === RateMatter.REP &&
+              (FilterDirection.RECEIVED
+                ? rating.rater_profile_id
+                : rating.matter_target_id) === crit.rep_user &&
+              rating.matter_category === crit.rep_category
+          )
+          .map((it) => it.rating)
+          .reduce((acc, it) => acc + it, 0);
+        if (
+          userRating < (crit.rep_min ?? 0) ||
+          userRating > (crit.rep_max ?? Number.MAX_SAFE_INTEGER)
+        ) {
+          return false;
+        }
+      }
+      if (!crit.rep_user && crit.rep_category) {
+        const userRating = ratings
+          .filter(
+            (rating) =>
+              rating.matter === RateMatter.REP &&
+              (FilterDirection.RECEIVED
+                ? rating.rater_profile_id
+                : rating.matter_target_id) === profileId &&
+              rating.matter_category === crit.rep_category
+          )
+          .map((it) => it.rating)
+          .reduce((acc, it) => acc + it, 0);
+        if (
+          userRating < (crit.rep_min ?? 0) ||
+          userRating > (crit.rep_max ?? Number.MAX_SAFE_INTEGER)
+        ) {
+          return false;
+        }
+      }
+    });
+    return [...ambiguousCleaned, ...unambiguousInitial].map((it) => it.id);
   }
 
   async changeCriteriaVisibility({
@@ -410,14 +535,12 @@ export class CommunityMemberCriteriaService {
     return await this.mapCriteriaForApi(criteria);
   }
 
-  async getCriteriasByIds(
-    ids: string[]
-  ): Promise<CommunityMembersCurationCriteriaEntity[]> {
+  async getCriteriasByIds(ids: string[]): Promise<CommunityGroupEntity[]> {
     return await this.communityMemberCriteriaDb.getCriteriasByIds(ids);
   }
 
   private async mapCriteriaForApi(
-    criteria: CommunityMembersCurationCriteriaEntity[]
+    criteria: CommunityGroupEntity[]
   ): Promise<ApiCommunityMembersCurationCriteria[]> {
     const relatedProfiles = await profilesService
       .getProfileMinsByIds(criteria.map((it) => it.created_by))
@@ -428,7 +551,33 @@ export class CommunityMemberCriteriaService {
         }, {} as Record<string, ProfileMin>)
       );
     return criteria.map((it) => ({
-      ...it,
+      id: it.id,
+      name: it.name,
+      visible: it.visible,
+      created_at: it.created_at,
+      criteria: {
+        cic: {
+          min: it.cic_min,
+          max: it.cic_max,
+          direction: it.cic_direction,
+          user: it.cic_user
+        },
+        rep: {
+          min: it.rep_min,
+          max: it.rep_max,
+          direction: it.rep_direction,
+          user: it.rep_user,
+          category: it.rep_category
+        },
+        level: {
+          min: it.level_min,
+          max: it.level_max
+        },
+        tdh: {
+          min: it.tdh_min,
+          max: it.tdh_max
+        }
+      },
       created_by: relatedProfiles[it.created_by] ?? null
     }));
   }
