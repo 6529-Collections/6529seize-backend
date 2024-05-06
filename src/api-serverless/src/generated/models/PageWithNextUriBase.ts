@@ -10,11 +10,9 @@
  * Do not edit the class manually.
  */
 
-import { Nft } from '../models/Nft';
 import { HttpFile } from '../http/http';
 
-export class NftsPage {
-    'data': Array<Nft>;
+export class PageWithNextUriBase {
     'count': number;
     'page': number;
     'next': string | null;
@@ -22,12 +20,6 @@ export class NftsPage {
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
-        {
-            "name": "data",
-            "baseName": "data",
-            "type": "Array<Nft>",
-            "format": ""
-        },
         {
             "name": "count",
             "baseName": "count",
@@ -48,7 +40,7 @@ export class NftsPage {
         }    ];
 
     static getAttributeTypeMap() {
-        return NftsPage.attributeTypeMap;
+        return PageWithNextUriBase.attributeTypeMap;
     }
 
     public constructor() {

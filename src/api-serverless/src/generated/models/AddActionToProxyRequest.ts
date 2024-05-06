@@ -10,16 +10,16 @@
  * Do not edit the class manually.
  */
 
-import { CreateNewProfileProxyActionType } from '../models/CreateNewProfileProxyActionType';
 import { CreateNewProfileProxyAllocateCicAction } from '../models/CreateNewProfileProxyAllocateCicAction';
 import { CreateNewProfileProxyAllocateRepAction } from '../models/CreateNewProfileProxyAllocateRepAction';
 import { CreateNewProfileProxyCreateWaveAction } from '../models/CreateNewProfileProxyCreateWaveAction';
 import { CreateNewProfileProxyCreateWaveParticipationDropAction } from '../models/CreateNewProfileProxyCreateWaveParticipationDropAction';
 import { CreateNewProfileProxyReadWaveAction } from '../models/CreateNewProfileProxyReadWaveAction';
+import { ProfileProxyActionType } from '../models/ProfileProxyActionType';
 import { HttpFile } from '../http/http';
 
 export class AddActionToProxyRequest {
-    'action_type': CreateNewProfileProxyActionType;
+    'action_type': ProfileProxyActionType;
     'start_time': number;
     'end_time': number | null;
     'credit_amount': number;
@@ -32,7 +32,7 @@ export class AddActionToProxyRequest {
         {
             "name": "action_type",
             "baseName": "action_type",
-            "type": "CreateNewProfileProxyActionType",
+            "type": "ProfileProxyActionType",
             "format": ""
         },
         {
