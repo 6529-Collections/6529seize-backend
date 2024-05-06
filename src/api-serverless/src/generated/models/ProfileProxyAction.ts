@@ -10,15 +10,15 @@
  * Do not edit the class manually.
  */
 
-import { CreateNewProfileProxyActionType } from '../models/CreateNewProfileProxyActionType';
+import { ProfileProxyActionType } from '../models/ProfileProxyActionType';
 import { HttpFile } from '../http/http';
 
 export class ProfileProxyAction {
     'id': string;
     'proxy_id': string;
-    'action_type': CreateNewProfileProxyActionType;
+    'action_type': ProfileProxyActionType;
     'action_data': any;
-    'start_ime'?: number;
+    'start_time': number;
     'end_time': number | null;
     'created_at': number;
     'accepted_at': number | null;
@@ -44,7 +44,7 @@ export class ProfileProxyAction {
         {
             "name": "action_type",
             "baseName": "action_type",
-            "type": "CreateNewProfileProxyActionType",
+            "type": "ProfileProxyActionType",
             "format": ""
         },
         {
@@ -54,8 +54,8 @@ export class ProfileProxyAction {
             "format": ""
         },
         {
-            "name": "start_ime",
-            "baseName": "start_ime",
+            "name": "start_time",
+            "baseName": "start_time",
             "type": "number",
             "format": "int64"
         },

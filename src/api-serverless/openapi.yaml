@@ -63,11 +63,34 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/NftsPage'
+  /profiles/{handleOrWallet}/proxies:
+    get:
+      tags:
+        - Proxies
+      summary: Get profile proxies
+      operationId: getProfileProxies
+      parameters:
+        - name: handleOrWallet
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProfileProxy'
+        '404':
+          description: Profile not found
   /profiles/{handleOrWallet}/proxies/received:
     get:
       tags:
         - Proxies
-      summary: Get proxies received by a profile, if authenticated, it will return the not accepted proxies as well
+      summary: Get proxies received by a profile
       operationId: getProxiesReceived
       parameters:
         - name: handleOrWallet
@@ -75,12 +98,6 @@ paths:
           required: true
           schema:
             type: string
-        - name: only_active
-          in: query
-          description: If true, only active proxies will be returned
-          required: false
-          schema:
-            type: boolean
       responses:
         '200':
           description: successful operation
@@ -96,7 +113,7 @@ paths:
     get:
       tags:
         - Proxies
-      summary: Get proxies granted by a profile, if authenticated, it will return the not accepted proxies as well
+      summary: Get proxies granted by a profile
       operationId: getProxiesGranted
       parameters:
         - name: handleOrWallet
@@ -104,12 +121,6 @@ paths:
           required: true
           schema:
             type: string
-        - name: only_active
-          in: query
-          description: If true, only active proxies will be returned
-          required: false
-          schema:
-            type: boolean
       responses:
         '200':
           description: successful operation
@@ -1504,7 +1515,7 @@ components:
         - credit_category
       properties:
         action_type:
-          $ref: '#/components/schemas/CreateNewProfileProxyActionType'
+          $ref: '#/components/schemas/ProfileProxyActionType'
         start_time:
           type: number
           format: int64
@@ -1535,7 +1546,7 @@ components:
         - group_id
       properties:
         action_type:
-          $ref: '#/components/schemas/CreateNewProfileProxyActionType'
+          $ref: '#/components/schemas/ProfileProxyActionType'
         start_time:
           type: number
           format: int64
@@ -1560,7 +1571,7 @@ components:
         - end_time
       properties:
         action_type:
-          $ref: '#/components/schemas/CreateNewProfileProxyActionType'
+          $ref: '#/components/schemas/ProfileProxyActionType'
         start_time:
           type: number
           format: int64
@@ -1578,7 +1589,7 @@ components:
         - end_time
       properties:
         action_type:
-          $ref: '#/components/schemas/CreateNewProfileProxyActionType'
+          $ref: '#/components/schemas/ProfileProxyActionType'
         start_time:
           type: number
           format: int64
@@ -1596,7 +1607,7 @@ components:
         - end_time
       properties:
         action_type:
-          $ref: '#/components/schemas/CreateNewProfileProxyActionType'
+          $ref: '#/components/schemas/ProfileProxyActionType'
         start_time:
           type: number
           format: int64
@@ -1613,7 +1624,7 @@ components:
         - end_time
       properties:
         action_type:
-          $ref: '#/components/schemas/CreateNewProfileProxyActionType'
+          $ref: '#/components/schemas/ProfileProxyActionType'
         start_time:
           type: number
           format: int64
@@ -1623,7 +1634,7 @@ components:
             - type: number
               format: int64
 
-    CreateNewProfileProxyActionType:
+    ProfileProxyActionType:
       type: string
       enum:
         - ALLOCATE_REP
@@ -1652,10 +1663,10 @@ components:
         proxy_id:
           type: string
         action_type:
-          $ref: '#/components/schemas/CreateNewProfileProxyActionType'
+          $ref: '#/components/schemas/ProfileProxyActionType'
         action_data:
           type: object
-        start_ime:
+        start_time:
           type: number
           format: int64
         end_time:

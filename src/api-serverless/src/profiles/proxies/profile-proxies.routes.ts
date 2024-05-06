@@ -9,15 +9,9 @@ import { ProfileProxy } from '../../generated/models/ProfileProxy';
 const router = asyncRouter({ mergeParams: true });
 
 router.get(
-  '/received',
+  '/',
   async (
-    req: Request<
-      { handleOrWallet: string },
-      any,
-      any,
-      { only_active?: string },
-      any
-    >,
+    req: Request<{ handleOrWallet: string }, any, any, any, any>,
     res: Response<ApiResponse<ProfileProxy[]>>
   ) => {
     const targetProfile =
@@ -30,12 +24,33 @@ router.get(
       );
     }
 
-    const get_only_active_actions = req.query.only_active === 'true';
+    const result =
+      await profileProxyApiService.getProfileReceivedAndGrantedProxies({
+        profile_id: targetProfile.profile.external_id
+      });
+    res.send(result);
+  }
+);
+
+router.get(
+  '/received',
+  async (
+    req: Request<{ handleOrWallet: string }, any, any, any, any>,
+    res: Response<ApiResponse<ProfileProxy[]>>
+  ) => {
+    const targetProfile =
+      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+        req.params.handleOrWallet
+      );
+    if (!targetProfile?.profile) {
+      throw new NotFoundException(
+        `Profile with id ${req.params.handleOrWallet} does not exist`
+      );
+    }
 
     const result =
       await profileProxyApiService.getProfileReceivedProfileProxies({
-        target_id: targetProfile.profile.external_id,
-        get_only_active_actions
+        target_id: targetProfile.profile.external_id
       });
     res.send(result);
   }
@@ -44,13 +59,7 @@ router.get(
 router.get(
   '/granted',
   async (
-    req: Request<
-      { handleOrWallet: string },
-      any,
-      any,
-      { only_active?: string },
-      any
-    >,
+    req: Request<{ handleOrWallet: string }, any, any, any, any>,
     res: Response<ApiResponse<ProfileProxy[]>>
   ) => {
     const targetProfile =
@@ -63,11 +72,9 @@ router.get(
       );
     }
 
-    const get_only_active_actions = req.query.only_active === 'true';
     const result = await profileProxyApiService.getProfileGrantedProfileProxies(
       {
-        created_by: targetProfile.profile.external_id,
-        get_only_active_actions
+        created_by: targetProfile.profile.external_id
       }
     );
     res.send(result);
