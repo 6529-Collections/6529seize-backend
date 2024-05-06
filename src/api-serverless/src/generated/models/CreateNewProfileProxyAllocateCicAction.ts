@@ -10,11 +10,11 @@
  * Do not edit the class manually.
  */
 
-import { CreateNewProfileProxyActionType } from '../models/CreateNewProfileProxyActionType';
+import { ProfileProxyActionType } from '../models/ProfileProxyActionType';
 import { HttpFile } from '../http/http';
 
 export class CreateNewProfileProxyAllocateCicAction {
-    'action_type': CreateNewProfileProxyActionType;
+    'action_type': ProfileProxyActionType;
     'start_time': number;
     'end_time': number | null;
     'credit_amount': number;
@@ -26,7 +26,7 @@ export class CreateNewProfileProxyAllocateCicAction {
         {
             "name": "action_type",
             "baseName": "action_type",
-            "type": "CreateNewProfileProxyActionType",
+            "type": "ProfileProxyActionType",
             "format": ""
         },
         {

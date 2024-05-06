@@ -20,28 +20,22 @@ import { ProfileAndConsolidations } from '../../../profiles/profile.types';
 import { ProxyApiRequestAction } from './proxies.api.types';
 import {
   ProfileProxyActionEntity,
-  ProfileProxyActionType
+  ApiProfileProxyActionType
 } from '../../../entities/IProfileProxyAction';
 import { assertUnreachable } from '../../../helpers';
-import { CreateNewProfileProxyActionType } from '../generated/models/CreateNewProfileProxyActionType';
+import { ProfileProxyActionType } from '../generated/models/ProfileProxyActionType';
 import { ProfileProxy } from '../generated/models/ProfileProxy';
 import { profileProxiesMapper, ProfileProxiesMapper } from './proxies.mapper';
 
-const ACTION_MAP: Record<
-  CreateNewProfileProxyActionType,
-  ProfileProxyActionType
-> = {
-  [CreateNewProfileProxyActionType.AllocateRep]:
-    ProfileProxyActionType.ALLOCATE_REP,
-  [CreateNewProfileProxyActionType.AllocateCic]:
-    ProfileProxyActionType.ALLOCATE_CIC,
-  [CreateNewProfileProxyActionType.CreateWave]:
-    ProfileProxyActionType.CREATE_WAVE,
-  [CreateNewProfileProxyActionType.ReadWave]: ProfileProxyActionType.READ_WAVE,
-  [CreateNewProfileProxyActionType.CreateDropToWave]:
-    ProfileProxyActionType.CREATE_DROP_TO_WAVE,
-  [CreateNewProfileProxyActionType.RateWaveDrop]:
-    ProfileProxyActionType.RATE_WAVE_DROP
+const ACTION_MAP: Record<ProfileProxyActionType, ApiProfileProxyActionType> = {
+  [ProfileProxyActionType.AllocateRep]: ApiProfileProxyActionType.ALLOCATE_REP,
+  [ProfileProxyActionType.AllocateCic]: ApiProfileProxyActionType.ALLOCATE_CIC,
+  [ProfileProxyActionType.CreateWave]: ApiProfileProxyActionType.CREATE_WAVE,
+  [ProfileProxyActionType.ReadWave]: ApiProfileProxyActionType.READ_WAVE,
+  [ProfileProxyActionType.CreateDropToWave]:
+    ApiProfileProxyActionType.CREATE_DROP_TO_WAVE,
+  [ProfileProxyActionType.RateWaveDrop]:
+    ApiProfileProxyActionType.RATE_WAVE_DROP
 };
 
 export class ProfileProxyApiService {
@@ -115,6 +109,7 @@ export class ProfileProxyApiService {
           connection
         })
       });
+
     if (!mappedProfileProxy.length) {
       throw new Error('Something went wrong getting profile proxy');
     }
@@ -183,20 +178,14 @@ export class ProfileProxyApiService {
   }
 
   async getProfileReceivedProfileProxies({
-    target_id,
-    get_only_active_actions
+    target_id
   }: {
     readonly target_id: string;
-    readonly get_only_active_actions: boolean;
   }): Promise<ProfileProxy[]> {
     const actions =
       await this.profileProxiesDb.findProfileProxyReceivedActionsByProfileId({
-        target_id,
-        only_active: get_only_active_actions
+        target_id
       });
-    if (!actions.length) {
-      return [];
-    }
     const profileProxies =
       await this.profileProxiesDb.findProfileReceivedProfileProxies({
         target_id
@@ -211,20 +200,14 @@ export class ProfileProxyApiService {
   }
 
   async getProfileGrantedProfileProxies({
-    created_by,
-    get_only_active_actions
+    created_by
   }: {
     readonly created_by: string;
-    readonly get_only_active_actions: boolean;
   }): Promise<ProfileProxy[]> {
     const actions =
       await this.profileProxiesDb.findProfileProxyGrantedActionsByProfileId({
-        created_by,
-        only_active: get_only_active_actions
+        created_by
       });
-    if (!actions.length) {
-      return [];
-    }
     const profileProxies =
       await this.profileProxiesDb.findProfileGrantedProfileProxies({
         created_by
@@ -234,6 +217,20 @@ export class ProfileProxyApiService {
         profileProxyEntities: profileProxies,
         actions
       }
+    );
+  }
+
+  async getProfileReceivedAndGrantedProxies({
+    profile_id
+  }: {
+    readonly profile_id: string;
+  }): Promise<ProfileProxy[]> {
+    const [receivedProxies, grantedProxies] = await Promise.all([
+      this.getProfileReceivedProfileProxies({ target_id: profile_id }),
+      this.getProfileGrantedProfileProxies({ created_by: profile_id })
+    ]);
+    return [...receivedProxies, ...grantedProxies].sort(
+      (a, d) => d.created_at - a.created_at
     );
   }
 
@@ -256,7 +253,7 @@ export class ProfileProxyApiService {
       return false;
     }
     switch (action_type) {
-      case ProfileProxyActionType.ALLOCATE_REP:
+      case ApiProfileProxyActionType.ALLOCATE_REP:
         return actions.some((a) => {
           const action_data = JSON.parse(a.action_data);
           if (
@@ -269,11 +266,11 @@ export class ProfileProxyApiService {
           }
           return true;
         });
-      case ProfileProxyActionType.ALLOCATE_CIC:
-      case ProfileProxyActionType.CREATE_WAVE:
-      case ProfileProxyActionType.READ_WAVE:
-      case ProfileProxyActionType.CREATE_DROP_TO_WAVE:
-      case ProfileProxyActionType.RATE_WAVE_DROP:
+      case ApiProfileProxyActionType.ALLOCATE_CIC:
+      case ApiProfileProxyActionType.CREATE_WAVE:
+      case ApiProfileProxyActionType.READ_WAVE:
+      case ApiProfileProxyActionType.CREATE_DROP_TO_WAVE:
+      case ApiProfileProxyActionType.RATE_WAVE_DROP:
         return true;
       default:
         assertUnreachable(action_type);
@@ -346,7 +343,6 @@ export class ProfileProxyApiService {
     });
     return {
       ...profileProxyAction,
-      action_data: JSON.parse(profileProxyAction.action_data),
       is_active: !!profileProxyAction.is_active
     };
   }
