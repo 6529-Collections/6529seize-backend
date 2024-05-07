@@ -1,10 +1,16 @@
 import {
   CONSOLIDATIONS_TABLE,
   DELEGATIONS_TABLE,
+  NFTDELEGATION_BLOCKS_TABLE,
   TRANSACTIONS_TABLE
 } from './constants';
 import { getDataSource } from './db';
-import { Consolidation, Delegation } from './entities/IDelegation';
+import { BlockEntity } from './entities/IBlock';
+import {
+  Consolidation,
+  Delegation,
+  NFTDelegationBlock
+} from './entities/IDelegation';
 import { Transaction } from './entities/ITransaction';
 import { Logger } from './logging';
 import { insertWithoutUpdate } from './orm_helpers';
@@ -16,10 +22,11 @@ const BASE_PATH =
   'https://6529bucket.s3.eu-west-1.amazonaws.com/db-dumps/development';
 
 export async function restoreDumps() {
-  await loadEnv([Transaction, Delegation, Consolidation]);
+  await loadEnv([Transaction, Delegation, Consolidation, NFTDelegationBlock]);
   await restoreTransactions();
   await restoreDelegations();
   await restoreConsolidations();
+  await restoreNFTDelegationBlocks();
 
   logger.info(`[COMPLETE]`);
   process.exit(0);
@@ -153,6 +160,37 @@ async function restoreConsolidations() {
   );
 
   await restoreEntity(tableName, Consolidation, consolidations);
+
+  logger.info(`[TABLE ${tableName}] : [RESTORED]`);
+}
+
+async function restoreNFTDelegationBlocks() {
+  const tableName = NFTDELEGATION_BLOCKS_TABLE;
+
+  logger.info(`[TABLE ${tableName}] : [RESTORING...]`);
+
+  const [headerRow, ...data] = await getData(tableName);
+
+  logger.info(
+    `[TABLE ${tableName}] : [FOUND ${data.length} ROWS] : [PARSING...]`
+  );
+
+  const headers = headerRow.split(',');
+
+  const blocks: BlockEntity[] = data.map((row) => {
+    const columns = row.split(',');
+    return {
+      created_at: getValue(headers, columns, 'created_at'),
+      block: getValue(headers, columns, 'block'),
+      timestamp: getValue(headers, columns, 'timestamp')
+    };
+  });
+
+  logger.info(
+    `[TABLE ${tableName}] : [PARSED ${blocks.length} BLOCKS] : [RESTORING LOCAL DB]`
+  );
+
+  await restoreEntity(tableName, NFTDelegationBlock, blocks);
 
   logger.info(`[TABLE ${tableName}] : [RESTORED]`);
 }

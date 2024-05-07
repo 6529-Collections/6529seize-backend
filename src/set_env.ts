@@ -8,7 +8,11 @@ import { NFT } from './entities/INFT';
 import { TDH, ConsolidatedTDH, TDHBlock } from './entities/ITDH';
 import { loadEnv } from './secrets';
 import fs from 'fs';
-import { Consolidation, Delegation } from './entities/IDelegation';
+import {
+  Consolidation,
+  Delegation,
+  NFTDelegationBlock
+} from './entities/IDelegation';
 
 const logger = Logger.get('LOAD_ENV');
 
@@ -95,7 +99,8 @@ export async function setEnv() {
     NFTOwner,
     TDHBlock,
     Delegation,
-    Consolidation
+    Consolidation,
+    NFTDelegationBlock
   ]);
 
   logger.info('Environment setup complete!');
