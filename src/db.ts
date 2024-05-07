@@ -74,7 +74,7 @@ export async function connect(entities: any[] = []) {
   }
 
   const host = process.env.DB_HOST;
-  const port = parseInt(process.env.DB_PORT!);
+  const port = parseInt(process.env.DB_PORT);
   const user = process.env.DB_USER;
   const password = process.env.DB_PASS;
   const database = process.env.DB_NAME;
@@ -101,7 +101,7 @@ export async function connect(entities: any[] = []) {
   logger.info(
     `[CONNECTION CREATED] [APP DATA SOURCE ${
       !AppDataSource.isInitialized ? 'NOT ' : ''
-    }INITIALIZED]`
+    }INITIALIZED] : [HOST ${host}:${port}] [DB ${database}]`
   );
 }
 

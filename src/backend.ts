@@ -41,9 +41,7 @@ async function start() {
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
 
-  // await startScript();
-
-  LOCKED = false;
+  // LOCKED = false;
 }
 
 start();
