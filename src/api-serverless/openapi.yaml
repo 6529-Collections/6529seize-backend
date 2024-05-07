@@ -576,6 +576,47 @@ paths:
         '400':
           description: Invalid request
 
+  /proxies/{proxyId}/actions/{actionId}/acceptance:
+    post:
+      tags:
+        - Proxies
+      summary: Accept action
+      operationId: acceptAction
+      parameters:
+        - name: proxyId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: actionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - action
+              properties:
+                action:
+                  type: string
+                  enum:
+                    - ACCEPT
+                    - REJECT
+                    - REVOKE
+                    - RESTORE
+      responses:
+        '201':
+          description: successful operation
+        '404':
+          description: Proxy or action not found
+        '400':
+          description: Invalid request
+
   /waves:
     get:
       tags:
