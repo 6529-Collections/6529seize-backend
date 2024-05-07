@@ -20,6 +20,11 @@ import {
 } from './community-member-criteria.service';
 import { ApiCommunityMembersCurationCriteria } from './api-community-members-curation-criteria';
 
+type NewApiCommunityMembersCurationCriteria = Omit<
+  ApiCommunityMembersCurationCriteria,
+  'id' | 'created_at' | 'created_by'
+>;
+
 const router = asyncRouter();
 
 router.get(
@@ -73,10 +78,10 @@ router.post(
   '/',
   needsAuthenticatedUser(),
   async (
-    req: Request<any, any, NewCommunityMembersCurationCriteria, any, any>,
+    req: Request<any, any, NewApiCommunityMembersCurationCriteria, any, any>,
     res: Response<ApiResponse<ApiCommunityMembersCurationCriteria>>
   ) => {
-    const criteria = getValidatedByJoiOrThrow(
+    const apiCriteria = getValidatedByJoiOrThrow(
       req.body,
       NewCommunityMembersCurationCriteriaSchema
     );
@@ -95,6 +100,23 @@ router.post(
     if (!savingProfileId) {
       throw new ForbiddenException(`Please create a profile first.`);
     }
+    const criteria: NewCommunityMembersCurationCriteria = {
+      name: apiCriteria.name,
+      cic_min: apiCriteria.criteria.cic.min,
+      cic_max: apiCriteria.criteria.cic.max,
+      cic_user: apiCriteria.criteria.cic.user,
+      cic_direction: apiCriteria.criteria.cic.direction,
+      rep_min: apiCriteria.criteria.rep.min,
+      rep_max: apiCriteria.criteria.rep.max,
+      rep_user: apiCriteria.criteria.rep.user,
+      rep_direction: apiCriteria.criteria.rep.direction,
+      rep_category: apiCriteria.criteria.rep.category,
+      tdh_min: apiCriteria.criteria.tdh.min,
+      tdh_max: apiCriteria.criteria.tdh.max,
+      level_min: apiCriteria.criteria.level.min,
+      level_max: apiCriteria.criteria.level.max,
+      visible: apiCriteria.visible
+    };
     const response = await communityMemberCriteriaService.saveCurationCriteria(
       criteria,
       savingProfileId
@@ -196,8 +218,8 @@ const CriteriaSchema: Joi.ObjectSchema<CommunityMembersCurationCriteria> =
     level: LevelSchema
   });
 
-const NewCommunityMembersCurationCriteriaSchema: Joi.ObjectSchema<NewCommunityMembersCurationCriteria> =
-  Joi.object({
+const NewCommunityMembersCurationCriteriaSchema =
+  Joi.object<NewApiCommunityMembersCurationCriteria>({
     name: Joi.string()
       .max(100)
       .regex(/^[a-zA-Z0-9?!,.'() ]{1,100}$/)
