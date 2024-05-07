@@ -600,6 +600,9 @@ export class ProfileProxyApiService {
         return await this.restoreProfileProxyAction(payload);
       default:
         assertUnreachable(acceptance_type);
+        return await this.findProfileProxyActionByIdOrThrow({
+          id: payload.action_id
+        });
     }
   }
 }
