@@ -160,6 +160,7 @@ export class DropsApiService {
     return dropEntities.map<Drop>((dropEntity) => ({
       id: dropEntity.id,
       serial_no: dropEntity.serial_no,
+      wave_id: dropEntity.wave_id,
       author: profilesByIds[dropEntity.author_id]!,
       title: dropEntity.title,
       parts:

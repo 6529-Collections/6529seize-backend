@@ -13,6 +13,7 @@ import { Drop } from '../generated/models/Drop';
 import { DropReferencedNFT } from '../generated/models/DropReferencedNFT';
 import { QuotedDrop } from '../generated/models/QuotedDrop';
 import { DropMediaEntity, DropPartEntity } from '../../../entities/IDrop';
+import { waveApiService, WaveApiService } from '../waves/wave.api.service';
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(DropCreationApiService.name);
@@ -20,7 +21,8 @@ export class DropCreationApiService {
   constructor(
     private readonly dropsService: DropsApiService,
     private readonly dropsDb: DropsDb,
-    private readonly profileActivityLogsDb: ProfileActivityLogsDb
+    private readonly profileActivityLogsDb: ProfileActivityLogsDb,
+    private readonly waveApiService: WaveApiService
   ) {}
 
   async createDrop(
@@ -45,7 +47,8 @@ export class DropCreationApiService {
           {
             author_id: createDropRequest.author.external_id,
             title: createDropRequest.title ?? null,
-            parts_count: createDropParts.length
+            parts_count: createDropParts.length,
+            wave_id: createDropRequest.wave_id
           },
           connection
         );
@@ -125,6 +128,7 @@ export class DropCreationApiService {
     const quotedDrops = createDropRequest.parts
       .map<QuotedDrop | null | undefined>((it) => it.quoted_drop)
       .filter((it) => it !== undefined && it !== null) as QuotedDrop[];
+    await this.waveApiService.findWaveByIdOrThrow(createDropRequest.wave_id);
 
     if (quotedDrops.length) {
       const dropIds = quotedDrops.map((it) => it.drop_id);
@@ -152,5 +156,6 @@ export class DropCreationApiService {
 export const dropCreationService = new DropCreationApiService(
   dropsService,
   dropsDb,
-  profileActivityLogsDb
+  profileActivityLogsDb,
+  waveApiService
 );

@@ -68,12 +68,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       `insert into ${DROPS_TABLE} (
                             id,
                             author_id, 
+                            wave_id,
                             created_at, 
                             title,
                             parts_count
     ) values (
               :id,
               :author_id,
+              :wave_id,
               ROUND(UNIX_TIMESTAMP(CURTIME(4)) * 1000), 
               :title,
               :parts_count
