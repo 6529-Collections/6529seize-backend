@@ -21,7 +21,7 @@ export class DropEntity {
   readonly serial_no!: number;
   @Column({ type: 'varchar', length: 100, unique: true })
   readonly id!: string;
-  @Column({ type: 'bigint' })
+  @Column({ type: 'varchar', length: 100, nullable: false })
   @Index()
   readonly wave_id!: string;
   @Column({ type: 'varchar', length: 100 })
