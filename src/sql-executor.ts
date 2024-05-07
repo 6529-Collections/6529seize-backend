@@ -5,11 +5,11 @@ export interface ConnectionWrapper<CONNECTION_TYPE> {
 }
 
 export interface SqlExecutor {
-  execute: (
+  execute<T = any>(
     sql: string,
     params?: Record<string, any>,
     options?: DbQueryOptions
-  ) => Promise<any>;
+  ): Promise<T[]>;
 
   executeNativeQueriesInTransaction<T>(
     executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>
