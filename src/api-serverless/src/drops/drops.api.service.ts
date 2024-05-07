@@ -25,11 +25,16 @@ import { ProfileMin } from '../generated/models/ProfileMin';
 import { DropPart } from '../generated/models/DropPart';
 import { DropComment } from '../generated/models/DropComment';
 import { Time } from '../../../time';
+import {
+  CommunityMemberCriteriaService,
+  communityMemberCriteriaService
+} from '../community-members/community-member-criteria.service';
 
 export class DropsApiService {
   constructor(
     private readonly dropsDb: DropsDb,
-    private readonly profilesService: ProfilesService
+    private readonly profilesService: ProfilesService,
+    private readonly communityMemberCriteriaService: CommunityMemberCriteriaService
   ) {}
 
   public async findDropByIdOrThrow(
@@ -68,6 +73,7 @@ export class DropsApiService {
   public async findLatestDrops({
     amount,
     curation_criteria_id,
+    wave_id,
     serial_no_less_than,
     min_part_id,
     max_part_id,
@@ -75,15 +81,29 @@ export class DropsApiService {
   }: {
     curation_criteria_id: string | null;
     serial_no_less_than: number | null;
+    wave_id: string | null;
     min_part_id: number;
     max_part_id: number;
     amount: number;
     context_profile_id?: string;
   }): Promise<Drop[]> {
+    const eligible_curations = context_profile_id
+      ? await this.communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
+          context_profile_id
+        )
+      : [];
+    if (
+      curation_criteria_id &&
+      !eligible_curations.includes(curation_criteria_id)
+    ) {
+      return [];
+    }
     const dropEntities = await this.dropsDb.findLatestDrops({
       amount,
       serial_no_less_than,
-      curation_criteria_id
+      curation_criteria_id,
+      eligible_curations,
+      wave_id
     });
     return await this.convertToDropFulls({
       dropEntities: dropEntities,
@@ -484,4 +504,8 @@ export class DropsApiService {
   }
 }
 
-export const dropsService = new DropsApiService(dropsDb, profilesService);
+export const dropsService = new DropsApiService(
+  dropsDb,
+  profilesService,
+  communityMemberCriteriaService
+);
