@@ -39,6 +39,12 @@ const ACTION_MAP: Record<ProfileProxyActionType, ApiProfileProxyActionType> = {
     ApiProfileProxyActionType.RATE_WAVE_DROP
 };
 
+interface CanDoAcceptancePayload {
+  readonly action_id: string;
+  readonly proxy_id: string;
+  readonly profile_id: string;
+}
+
 export class ProfileProxyApiService {
   private readonly logger = Logger.get(ProfileProxyApiService.name);
 
@@ -348,6 +354,32 @@ export class ProfileProxyApiService {
     };
   }
 
+  private async getProfileProxyAndAction({
+    action_id,
+    proxy_id
+  }: {
+    action_id: string;
+    proxy_id: string;
+  }): Promise<{
+    profileProxy: ProfileProxy;
+    profileProxyAction: ProfileProxyActionEntity;
+  }> {
+    const [profileProxy, profileProxyAction] = await Promise.all([
+      this.getProfileProxyByIdOrThrow({
+        proxy_id
+      }),
+      this.findProfileProxyActionByIdOrThrow({
+        id: action_id
+      })
+    ]);
+    if (profileProxyAction.proxy_id !== proxy_id) {
+      throw new BadRequestException(
+        `Action with id ${action_id} does not belong to proxy with id ${proxy_id}`
+      );
+    }
+    return { profileProxy, profileProxyAction };
+  }
+
   private async canAcceptActionOrThrow({
     action_id,
     proxy_id,
@@ -357,24 +389,15 @@ export class ProfileProxyApiService {
     readonly proxy_id: string;
     readonly profile_id: string;
   }): Promise<void> {
-    const [profileProxy, profileProxyAction] = await Promise.all([
-      this.getProfileProxyByIdOrThrow({
+    const { profileProxy, profileProxyAction } =
+      await this.getProfileProxyAndAction({
+        action_id,
         proxy_id
-      }),
-      this.findProfileProxyActionByIdOrThrow({
-        id: action_id
-      })
-    ]);
+      });
 
     if (profileProxy.granted_to.id !== profile_id) {
       throw new BadRequestException(
         'You are not the target of this proxy action'
-      );
-    }
-
-    if (profileProxyAction.proxy_id !== proxy_id) {
-      throw new BadRequestException(
-        `Action with id ${action_id} does not belong to proxy with id ${proxy_id}`
       );
     }
 
@@ -396,29 +419,16 @@ export class ProfileProxyApiService {
     action_id,
     proxy_id,
     profile_id
-  }: {
-    readonly action_id: string;
-    readonly proxy_id: string;
-    readonly profile_id: string;
-  }): Promise<void> {
-    const [profileProxy, profileProxyAction] = await Promise.all([
-      this.getProfileProxyByIdOrThrow({
+  }: CanDoAcceptancePayload): Promise<void> {
+    const { profileProxy, profileProxyAction } =
+      await this.getProfileProxyAndAction({
+        action_id,
         proxy_id
-      }),
-      this.findProfileProxyActionByIdOrThrow({
-        id: action_id
-      })
-    ]);
+      });
 
     if (profileProxy.granted_to.id !== profile_id) {
       throw new BadRequestException(
         'You are not the target of this proxy action'
-      );
-    }
-
-    if (profileProxyAction.proxy_id !== proxy_id) {
-      throw new BadRequestException(
-        `Action with id ${action_id} does not belong to proxy with id ${proxy_id}`
       );
     }
 
@@ -440,29 +450,16 @@ export class ProfileProxyApiService {
     action_id,
     proxy_id,
     profile_id
-  }: {
-    readonly action_id: string;
-    readonly proxy_id: string;
-    readonly profile_id: string;
-  }): Promise<void> {
-    const [profileProxy, profileProxyAction] = await Promise.all([
-      this.getProfileProxyByIdOrThrow({
+  }: CanDoAcceptancePayload): Promise<void> {
+    const { profileProxy, profileProxyAction } =
+      await this.getProfileProxyAndAction({
+        action_id,
         proxy_id
-      }),
-      this.findProfileProxyActionByIdOrThrow({
-        id: action_id
-      })
-    ]);
+      });
 
     if (profileProxy.created_by.id !== profile_id) {
       throw new BadRequestException(
         'You are not the creator of this proxy action'
-      );
-    }
-
-    if (profileProxyAction.proxy_id !== proxy_id) {
-      throw new BadRequestException(
-        `Action with id ${action_id} does not belong to proxy with id ${proxy_id}`
       );
     }
 
@@ -475,29 +472,16 @@ export class ProfileProxyApiService {
     action_id,
     proxy_id,
     profile_id
-  }: {
-    readonly action_id: string;
-    readonly proxy_id: string;
-    readonly profile_id: string;
-  }): Promise<void> {
-    const [profileProxy, profileProxyAction] = await Promise.all([
-      this.getProfileProxyByIdOrThrow({
+  }: CanDoAcceptancePayload): Promise<void> {
+    const { profileProxy, profileProxyAction } =
+      await this.getProfileProxyAndAction({
+        action_id,
         proxy_id
-      }),
-      this.findProfileProxyActionByIdOrThrow({
-        id: action_id
-      })
-    ]);
+      });
 
     if (profileProxy.created_by.id !== profile_id) {
       throw new BadRequestException(
         'You are not the creator of this proxy action'
-      );
-    }
-
-    if (profileProxyAction.proxy_id !== proxy_id) {
-      throw new BadRequestException(
-        `Action with id ${action_id} does not belong to proxy with id ${proxy_id}`
       );
     }
 
@@ -510,11 +494,7 @@ export class ProfileProxyApiService {
     proxy_id,
     action_id,
     profile_id
-  }: {
-    readonly proxy_id: string;
-    readonly action_id: string;
-    readonly profile_id: string;
-  }): Promise<ProfileProxyActionEntity> {
+  }: CanDoAcceptancePayload): Promise<ProfileProxyActionEntity> {
     await this.canAcceptActionOrThrow({ action_id, proxy_id, profile_id });
     const action = await this.findProfileProxyActionByIdOrThrow({
       id: action_id
@@ -539,11 +519,7 @@ export class ProfileProxyApiService {
     proxy_id,
     action_id,
     profile_id
-  }: {
-    readonly proxy_id: string;
-    readonly action_id: string;
-    readonly profile_id: string;
-  }): Promise<ProfileProxyActionEntity> {
+  }: CanDoAcceptancePayload): Promise<ProfileProxyActionEntity> {
     await this.canRejectActionOrThrow({ action_id, proxy_id, profile_id });
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -563,11 +539,7 @@ export class ProfileProxyApiService {
     proxy_id,
     action_id,
     profile_id
-  }: {
-    readonly proxy_id: string;
-    readonly action_id: string;
-    readonly profile_id: string;
-  }): Promise<ProfileProxyActionEntity> {
+  }: CanDoAcceptancePayload): Promise<ProfileProxyActionEntity> {
     await this.canRevokeOrThrow({ action_id, proxy_id, profile_id });
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -587,11 +559,7 @@ export class ProfileProxyApiService {
     proxy_id,
     action_id,
     profile_id
-  }: {
-    readonly proxy_id: string;
-    readonly action_id: string;
-    readonly profile_id: string;
-  }): Promise<ProfileProxyActionEntity> {
+  }: CanDoAcceptancePayload): Promise<ProfileProxyActionEntity> {
     await this.canRestoreOrThrow({ action_id, proxy_id, profile_id });
     const action = await this.findProfileProxyActionByIdOrThrow({
       id: action_id
