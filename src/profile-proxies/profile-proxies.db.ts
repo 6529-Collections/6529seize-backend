@@ -229,6 +229,76 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
       is_active: !!action.is_active
     }));
   }
+
+  async acceptProfileProxyAction({
+    action_id,
+    is_active,
+    connection
+  }: {
+    readonly action_id: string;
+    readonly is_active: boolean;
+    readonly connection?: ConnectionWrapper<any>;
+  }): Promise<void> {
+    await this.db.execute(
+      `update ${PROFILE_PROXY_ACTIONS_TABLE} set accepted_at = :accepted_at, rejected_at = :rejected_at, is_active = :is_active where id = :id`,
+      {
+        id: action_id,
+        accepted_at: Time.currentMillis(),
+        rejected_at: null,
+        is_active
+      },
+      { wrappedConnection: connection }
+    );
+  }
+
+  async rejectProfileProxyAction({
+    action_id,
+    connection
+  }: {
+    readonly action_id: string;
+    readonly connection?: ConnectionWrapper<any>;
+  }): Promise<void> {
+    await this.db.execute(
+      `update ${PROFILE_PROXY_ACTIONS_TABLE} set rejected_at = :rejected_at, accepted_at = :accepted_at, is_active = :is_active where id = :id`,
+      {
+        id: action_id,
+        rejected_at: Time.currentMillis(),
+        accepted_at: null,
+        is_active: false
+      },
+      { wrappedConnection: connection }
+    );
+  }
+
+  async revokeProfileProxyAction({
+    action_id,
+    connection
+  }: {
+    readonly action_id: string;
+    readonly connection?: ConnectionWrapper<any>;
+  }): Promise<void> {
+    await this.db.execute(
+      `update ${PROFILE_PROXY_ACTIONS_TABLE} set revoked_at = :revoked_at, is_active = :is_active where id = :id`,
+      { id: action_id, revoked_at: Time.currentMillis(), is_active: false },
+      { wrappedConnection: connection }
+    );
+  }
+
+  async restoreProfileProxyAction({
+    action_id,
+    is_active,
+    connection
+  }: {
+    readonly action_id: string;
+    readonly is_active: boolean;
+    readonly connection?: ConnectionWrapper<any>;
+  }): Promise<void> {
+    await this.db.execute(
+      `update ${PROFILE_PROXY_ACTIONS_TABLE} set revoked_at = :revoked_at, is_active = :is_active where id = :id`,
+      { id: action_id, revoked_at: null, is_active },
+      { wrappedConnection: connection }
+    );
+  }
 }
 
 export const profileProxiesDb = new ProfileProxiesDb(dbSupplier);
