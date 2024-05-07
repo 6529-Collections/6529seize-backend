@@ -1,3 +1,4 @@
+export * from '../models/AcceptActionRequest';
 export * from '../models/AddActionToProxyRequest';
 export * from '../models/CreateDropMediaUrl201Response';
 export * from '../models/CreateDropMediaUrlRequest';
@@ -54,6 +55,7 @@ export * from '../models/WaveType';
 export * from '../models/WaveVisibilityConfig';
 export * from '../models/WaveVotingConfig';
 
+import { AcceptActionRequest, AcceptActionRequestActionEnum   } from '../models/AcceptActionRequest';
 import { AddActionToProxyRequest       } from '../models/AddActionToProxyRequest';
 import { CreateDropMediaUrl201Response } from '../models/CreateDropMediaUrl201Response';
 import { CreateDropMediaUrlRequest } from '../models/CreateDropMediaUrlRequest';
@@ -123,6 +125,7 @@ let primitives = [
                  ];
 
 let enumsMap: Set<string> = new Set<string>([
+    "AcceptActionRequestActionEnum",
     "DropActivityLogTypeEnum",
     "NftTokenTypeEnum",
     "ProfileProxyActionType",
@@ -133,6 +136,7 @@ let enumsMap: Set<string> = new Set<string>([
 ]);
 
 let typeMap: {[index: string]: any} = {
+    "AcceptActionRequest": AcceptActionRequest,
     "AddActionToProxyRequest": AddActionToProxyRequest,
     "CreateDropMediaUrl201Response": CreateDropMediaUrl201Response,
     "CreateDropMediaUrlRequest": CreateDropMediaUrlRequest,

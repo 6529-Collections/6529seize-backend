@@ -18,6 +18,10 @@ import { CreateNewProfileProxyRateWaveDropAction } from '../generated/models/Cre
 import { assertUnreachable } from '../../../helpers';
 import { ProfileProxyActionEntity } from '../../../entities/IProfileProxyAction';
 import { ProfileProxy } from '../generated/models/ProfileProxy';
+import {
+  AcceptActionRequest,
+  AcceptActionRequestActionEnum
+} from '../generated/models/AcceptActionRequest';
 
 const router = asyncRouter();
 
@@ -151,6 +155,45 @@ router.post(
   }
 );
 
+router.post(
+  '/:proxy_id/actions/:action_id/acceptance',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<
+      { proxy_id: string; action_id: string },
+      any,
+      AcceptActionRequest,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ProfileProxyActionEntity>>
+  ) => {
+    const { proxy_id, action_id } = req.params;
+    const requesterProfile = await profilesService
+      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+        getWalletOrThrow(req)
+      )
+      ?.then((result) => result?.profile ?? null);
+    if (!requesterProfile) {
+      throw new BadRequestException(
+        'You need to create a profile before you can manage a proxy'
+      );
+    }
+    const validRequest = getValidatedByJoiOrThrow(
+      req.body,
+      AcceptActionRequestSchema
+    );
+    const action = await profileProxyApiService.changeProfileProxyActionStatus({
+      proxy_id,
+      action_id,
+      acceptance_type: validRequest.action,
+      profile_id: requesterProfile.external_id
+    });
+
+    res.send(action);
+  }
+);
+
 const NewProfileProxySchema = Joi.object<CreateNewProfileProxy>({
   target_id: Joi.string().required()
 });
@@ -211,5 +254,11 @@ const NewProfileProxyRateWaveDropActionSchema =
     start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null)
   });
+
+const AcceptActionRequestSchema = Joi.object<AcceptActionRequest>({
+  action: Joi.string()
+    .required()
+    .allow(...Object.values(AcceptActionRequestActionEnum))
+});
 
 export default router;
