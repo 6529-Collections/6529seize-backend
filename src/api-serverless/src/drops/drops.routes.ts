@@ -175,7 +175,8 @@ router.post(
       parts: newDrop.parts,
       referenced_nfts: newDrop.referenced_nfts,
       mentioned_users: newDrop.mentioned_users,
-      metadata: newDrop.metadata
+      metadata: newDrop.metadata,
+      wave_id: newDrop.wave_id
     };
     const createdDrop = await dropCreationService.createDrop(createDropRequest);
     res.send(createdDrop);
@@ -452,7 +453,8 @@ const NewDropSchema: Joi.ObjectSchema<CreateDropRequest> = Joi.object({
     .items(MentionedUserSchema)
     .default([])
     .allow(null),
-  metadata: Joi.array().optional().items(MetadataSchema).default([])
+  metadata: Joi.array().optional().items(MetadataSchema).default([]),
+  wave_id: Joi.string().required()
 });
 
 const DropDiscussionCommentsQuerySchema: Joi.ObjectSchema<DropActivityLogsQuery> =
