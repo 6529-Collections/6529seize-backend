@@ -10,43 +10,48 @@
  * Do not edit the class manually.
  */
 
-import { ProfileProxyActionType } from '../models/ProfileProxyActionType';
+import { Nft } from '../models/Nft';
 import { HttpFile } from '../http/http';
 
-export class CreateNewProfileProxyCreateWaveParticipationDropAction {
-    'action_type': ProfileProxyActionType;
-    'start_time': number;
-    'end_time': number | null;
+export class NftsPage {
+    'data': Array<Nft>;
+    'count': number;
+    'page': number;
+    'next': string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "action_type",
-            "baseName": "action_type",
-            "type": "ProfileProxyActionType",
+            "name": "data",
+            "baseName": "data",
+            "type": "Array<Nft>",
             "format": ""
         },
         {
-            "name": "start_time",
-            "baseName": "start_time",
+            "name": "count",
+            "baseName": "count",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "end_time",
-            "baseName": "end_time",
+            "name": "page",
+            "baseName": "page",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "next",
+            "baseName": "next",
+            "type": "string",
+            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return CreateNewProfileProxyCreateWaveParticipationDropAction.attributeTypeMap;
+        return NftsPage.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
-
-
 

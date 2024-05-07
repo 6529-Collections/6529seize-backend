@@ -129,13 +129,14 @@ export class DropCreationApiService {
     if (quotedDrops.length) {
       const dropIds = quotedDrops.map((it) => it.drop_id);
       const entities = await this.dropsDb.getDropsByIds(dropIds);
-      const invalidQuotedDrops = quotedDrops.filter((quotedDrop) =>
-        entities.find((it) => {
-          return (
-            it.id === quotedDrop.drop_id &&
-            quotedDrop.drop_part_id <= it.parts_count
-          );
-        })
+      const invalidQuotedDrops = quotedDrops.filter(
+        (quotedDrop) =>
+          !entities.find((it) => {
+            return (
+              it.id === quotedDrop.drop_id &&
+              quotedDrop.drop_part_id <= it.parts_count
+            );
+          })
       );
       if (invalidQuotedDrops.length) {
         throw new BadRequestException(

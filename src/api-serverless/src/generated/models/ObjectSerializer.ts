@@ -4,7 +4,6 @@ export * from '../models/CreateDropMediaUrlRequest';
 export * from '../models/CreateDropPart';
 export * from '../models/CreateDropRequest';
 export * from '../models/CreateNewProfileProxy';
-export * from '../models/CreateNewProfileProxyActionType';
 export * from '../models/CreateNewProfileProxyAllocateCicAction';
 export * from '../models/CreateNewProfileProxyAllocateRepAction';
 export * from '../models/CreateNewProfileProxyCreateWaveAction';
@@ -33,10 +32,14 @@ export * from '../models/DropRatingRequest';
 export * from '../models/DropReferencedNFT';
 export * from '../models/IntRange';
 export * from '../models/NewDropComment';
+export * from '../models/Nft';
+export * from '../models/NftsPage';
 export * from '../models/PageBase';
+export * from '../models/PageWithNextUriBase';
 export * from '../models/ProfileMin';
 export * from '../models/ProfileProxy';
 export * from '../models/ProfileProxyAction';
+export * from '../models/ProfileProxyActionType';
 export * from '../models/QuotedDrop';
 export * from '../models/Wave';
 export * from '../models/WaveConfig';
@@ -57,7 +60,6 @@ import { CreateDropMediaUrlRequest } from '../models/CreateDropMediaUrlRequest';
 import { CreateDropPart } from '../models/CreateDropPart';
 import { CreateDropRequest } from '../models/CreateDropRequest';
 import { CreateNewProfileProxy } from '../models/CreateNewProfileProxy';
-import { CreateNewProfileProxyActionType } from '../models/CreateNewProfileProxyActionType';
 import { CreateNewProfileProxyAllocateCicAction      } from '../models/CreateNewProfileProxyAllocateCicAction';
 import { CreateNewProfileProxyAllocateRepAction       } from '../models/CreateNewProfileProxyAllocateRepAction';
 import { CreateNewProfileProxyCreateWaveAction    } from '../models/CreateNewProfileProxyCreateWaveAction';
@@ -86,10 +88,14 @@ import { DropRatingRequest } from '../models/DropRatingRequest';
 import { DropReferencedNFT } from '../models/DropReferencedNFT';
 import { IntRange } from '../models/IntRange';
 import { NewDropComment } from '../models/NewDropComment';
+import { Nft      , NftTokenTypeEnum                            } from '../models/Nft';
+import { NftsPage } from '../models/NftsPage';
 import { PageBase } from '../models/PageBase';
+import { PageWithNextUriBase } from '../models/PageWithNextUriBase';
 import { ProfileMin } from '../models/ProfileMin';
 import { ProfileProxy } from '../models/ProfileProxy';
 import { ProfileProxyAction            } from '../models/ProfileProxyAction';
+import { ProfileProxyActionType } from '../models/ProfileProxyActionType';
 import { QuotedDrop } from '../models/QuotedDrop';
 import { Wave } from '../models/Wave';
 import { WaveConfig      } from '../models/WaveConfig';
@@ -117,8 +123,9 @@ let primitives = [
                  ];
 
 let enumsMap: Set<string> = new Set<string>([
-    "CreateNewProfileProxyActionType",
     "DropActivityLogTypeEnum",
+    "NftTokenTypeEnum",
+    "ProfileProxyActionType",
     "WaveCreditScope",
     "WaveCreditType",
     "WaveScopeType",
@@ -160,7 +167,10 @@ let typeMap: {[index: string]: any} = {
     "DropReferencedNFT": DropReferencedNFT,
     "IntRange": IntRange,
     "NewDropComment": NewDropComment,
+    "Nft": Nft,
+    "NftsPage": NftsPage,
     "PageBase": PageBase,
+    "PageWithNextUriBase": PageWithNextUriBase,
     "ProfileMin": ProfileMin,
     "ProfileProxy": ProfileProxy,
     "ProfileProxyAction": ProfileProxyAction,

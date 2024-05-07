@@ -16,11 +16,12 @@ import { CicStatement } from './entities/ICICStatement';
 import { ProfileActivityLog } from './entities/IProfileActivityLog';
 import { Rating } from './entities/IRating';
 import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
-import { CommunityMembersCurationCriteriaEntity } from './entities/ICommunityMembersCurationCriteriaEntity';
+import { CommunityGroupEntity } from './entities/ICommunityGroup';
 import { RatingsSnapshot } from './entities/IRatingsSnapshots';
 import { ProfileProxyEntity } from './entities/IProfileProxy';
 import { ProfileProxyActionEntity } from './entities/IProfileProxyAction';
 import { WaveEntity } from './entities/IWave';
+import * as dbMigrationsLoop from './dbMigrationsLoop';
 
 const logger = Logger.get('BACKEND');
 
@@ -35,7 +36,6 @@ async function start() {
     ProfileActivityLog,
     Rating,
     AbusivenessDetectionResult,
-    CommunityMembersCurationCriteriaEntity,
     RatingsSnapshot,
     DropEntity,
     DropPartEntity,
@@ -47,8 +47,10 @@ async function start() {
     DropCommentEntity,
     ProfileProxyEntity,
     ProfileProxyActionEntity,
-    WaveEntity
+    WaveEntity,
+    CommunityGroupEntity
   ]);
+  await dbMigrationsLoop.handler(null, null as any, null as any);
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);

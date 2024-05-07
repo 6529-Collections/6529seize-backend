@@ -10,43 +10,40 @@
  * Do not edit the class manually.
  */
 
-import { ProfileProxyActionType } from '../models/ProfileProxyActionType';
 import { HttpFile } from '../http/http';
 
-export class CreateNewProfileProxyCreateWaveParticipationDropAction {
-    'action_type': ProfileProxyActionType;
-    'start_time': number;
-    'end_time': number | null;
+export class PageWithNextUriBase {
+    'count': number;
+    'page': number;
+    'next': string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "action_type",
-            "baseName": "action_type",
-            "type": "ProfileProxyActionType",
+            "name": "count",
+            "baseName": "count",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "page",
+            "baseName": "page",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "next",
+            "baseName": "next",
+            "type": "string",
             "format": ""
-        },
-        {
-            "name": "start_time",
-            "baseName": "start_time",
-            "type": "number",
-            "format": "int64"
-        },
-        {
-            "name": "end_time",
-            "baseName": "end_time",
-            "type": "number",
-            "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return CreateNewProfileProxyCreateWaveParticipationDropAction.attributeTypeMap;
+        return PageWithNextUriBase.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
-
-
 

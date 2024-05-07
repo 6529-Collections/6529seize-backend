@@ -16,30 +16,26 @@ import {
 } from '../../../profile-proxies/profile-proxies.db';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { ProfileAndConsolidations } from '../../../profiles/profile.types';
-import { Page } from '../page-request';
+
 import { ProxyApiRequestAction } from './proxies.api.types';
 import {
   ProfileProxyActionEntity,
-  ProfileProxyActionType
+  ApiProfileProxyActionType
 } from '../../../entities/IProfileProxyAction';
 import { assertUnreachable } from '../../../helpers';
-import { CreateNewProfileProxyActionType } from '../generated/models/CreateNewProfileProxyActionType';
+import { ProfileProxyActionType } from '../generated/models/ProfileProxyActionType';
+import { ProfileProxy } from '../generated/models/ProfileProxy';
+import { profileProxiesMapper, ProfileProxiesMapper } from './proxies.mapper';
 
-const ACTION_MAP: Record<
-  CreateNewProfileProxyActionType,
-  ProfileProxyActionType
-> = {
-  [CreateNewProfileProxyActionType.AllocateRep]:
-    ProfileProxyActionType.ALLOCATE_REP,
-  [CreateNewProfileProxyActionType.AllocateCic]:
-    ProfileProxyActionType.ALLOCATE_CIC,
-  [CreateNewProfileProxyActionType.CreateWave]:
-    ProfileProxyActionType.CREATE_WAVE,
-  [CreateNewProfileProxyActionType.ReadWave]: ProfileProxyActionType.READ_WAVE,
-  [CreateNewProfileProxyActionType.CreateDropToWave]:
-    ProfileProxyActionType.CREATE_DROP_TO_WAVE,
-  [CreateNewProfileProxyActionType.RateWaveDrop]:
-    ProfileProxyActionType.RATE_WAVE_DROP
+const ACTION_MAP: Record<ProfileProxyActionType, ApiProfileProxyActionType> = {
+  [ProfileProxyActionType.AllocateRep]: ApiProfileProxyActionType.ALLOCATE_REP,
+  [ProfileProxyActionType.AllocateCic]: ApiProfileProxyActionType.ALLOCATE_CIC,
+  [ProfileProxyActionType.CreateWave]: ApiProfileProxyActionType.CREATE_WAVE,
+  [ProfileProxyActionType.ReadWave]: ApiProfileProxyActionType.READ_WAVE,
+  [ProfileProxyActionType.CreateDropToWave]:
+    ApiProfileProxyActionType.CREATE_DROP_TO_WAVE,
+  [ProfileProxyActionType.RateWaveDrop]:
+    ApiProfileProxyActionType.RATE_WAVE_DROP
 };
 
 export class ProfileProxyApiService {
@@ -47,7 +43,8 @@ export class ProfileProxyApiService {
 
   constructor(
     private readonly profilesService: ProfilesService,
-    private readonly profileProxiesDb: ProfileProxiesDb
+    private readonly profileProxiesDb: ProfileProxiesDb,
+    private readonly profileProxiesMapper: ProfileProxiesMapper
   ) {}
 
   private async getTargetOrThrow({
@@ -90,13 +87,13 @@ export class ProfileProxyApiService {
     }
   }
 
-  public async findProfileProxyByIdOrThrow({
+  private async findProfileProxyByIdOrThrow({
     id,
     connection
   }: {
     readonly id: string;
     readonly connection?: ConnectionWrapper<any>;
-  }): Promise<ProfileProxyEntity> {
+  }): Promise<ProfileProxy> {
     const profileProxy = await this.profileProxiesDb.findProfileProxyById({
       id,
       connection
@@ -104,14 +101,26 @@ export class ProfileProxyApiService {
     if (!profileProxy) {
       throw new NotFoundException(`Profile proxy with id ${id} does not exist`);
     }
-    return profileProxy;
+    const mappedProfileProxy =
+      await this.profileProxiesMapper.profileProxyEntitiesToApiProfileProxies({
+        profileProxyEntities: [profileProxy],
+        actions: await this.profileProxiesDb.findProfileProxyActionsByProxyId({
+          proxy_id: id,
+          connection
+        })
+      });
+
+    if (!mappedProfileProxy.length) {
+      throw new Error('Something went wrong getting profile proxy');
+    }
+    return mappedProfileProxy[0];
   }
 
   async persistProfileProxy({
     createProfileProxyRequest
   }: {
     readonly createProfileProxyRequest: ProfileProxyEntity;
-  }): Promise<ProfileProxyEntity> {
+  }): Promise<ProfileProxy> {
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         await this.profileProxiesDb.insertProfileProxy({
@@ -132,7 +141,7 @@ export class ProfileProxyApiService {
   }: {
     readonly params: CreateNewProfileProxy;
     readonly grantorProfile: Profile;
-  }): Promise<ProfileProxyEntity> {
+  }): Promise<ProfileProxy> {
     const target = await this.getTargetOrThrow({
       target_id
     });
@@ -153,54 +162,76 @@ export class ProfileProxyApiService {
       created_at: Time.currentMillis(),
       created_by: created_by_profile_id
     };
-    const profileProxy = await this.persistProfileProxy({
+    return await this.persistProfileProxy({
       createProfileProxyRequest
     });
-    return profileProxy;
   }
 
   async getProfileProxyByIdOrThrow({
     proxy_id
   }: {
     readonly proxy_id: string;
-  }): Promise<ProfileProxyEntity> {
+  }): Promise<ProfileProxy> {
     return await this.findProfileProxyByIdOrThrow({
       id: proxy_id
     });
   }
 
-  // how to make it infinite scroll
   async getProfileReceivedProfileProxies({
-    target_id,
-    page,
-    page_size,
-    sort,
-    sort_direction
+    target_id
   }: {
     readonly target_id: string;
-    readonly page: number;
-    readonly page_size: number;
-    readonly sort: string;
-    readonly sort_direction: string;
-  }): Promise<Page<ProfileProxyEntity>> {
-    const [profileProxies, count] = await Promise.all([
-      this.profileProxiesDb.findProfileReceivedProfileProxies({
-        target_id,
-        page,
-        page_size,
-        sort,
-        sort_direction
-      }),
-      this.profileProxiesDb.countProfileReceivedProfileProxies({
+  }): Promise<ProfileProxy[]> {
+    const actions =
+      await this.profileProxiesDb.findProfileProxyReceivedActionsByProfileId({
         target_id
-      })
+      });
+    const profileProxies =
+      await this.profileProxiesDb.findProfileReceivedProfileProxies({
+        target_id
+      });
+
+    return await this.profileProxiesMapper.profileProxyEntitiesToApiProfileProxies(
+      {
+        profileProxyEntities: profileProxies,
+        actions
+      }
+    );
+  }
+
+  async getProfileGrantedProfileProxies({
+    created_by
+  }: {
+    readonly created_by: string;
+  }): Promise<ProfileProxy[]> {
+    const actions =
+      await this.profileProxiesDb.findProfileProxyGrantedActionsByProfileId({
+        created_by
+      });
+    const profileProxies =
+      await this.profileProxiesDb.findProfileGrantedProfileProxies({
+        created_by
+      });
+    return await this.profileProxiesMapper.profileProxyEntitiesToApiProfileProxies(
+      {
+        profileProxyEntities: profileProxies,
+        actions
+      }
+    );
+  }
+
+  async getProfileReceivedAndGrantedProxies({
+    profile_id
+  }: {
+    readonly profile_id: string;
+  }): Promise<ProfileProxy[]> {
+    const [receivedProxies, grantedProxies] = await Promise.all([
+      this.getProfileReceivedProfileProxies({ target_id: profile_id }),
+      this.getProfileGrantedProfileProxies({ created_by: profile_id })
     ]);
-    return {
-      count,
-      page: page,
-      next: profileProxies.length === page_size,
-      data: profileProxies
-    };
+    return [...receivedProxies, ...grantedProxies].sort(
+      (a, d) => d.created_at - a.created_at
+    );
   }
 
   private async isActionExists({
@@ -222,7 +253,7 @@ export class ProfileProxyApiService {
       return false;
     }
     switch (action_type) {
-      case ProfileProxyActionType.ALLOCATE_REP:
+      case ApiProfileProxyActionType.ALLOCATE_REP:
         return actions.some((a) => {
           const action_data = JSON.parse(a.action_data);
           if (
@@ -235,11 +266,11 @@ export class ProfileProxyApiService {
           }
           return true;
         });
-      case ProfileProxyActionType.ALLOCATE_CIC:
-      case ProfileProxyActionType.CREATE_WAVE:
-      case ProfileProxyActionType.READ_WAVE:
-      case ProfileProxyActionType.CREATE_DROP_TO_WAVE:
-      case ProfileProxyActionType.RATE_WAVE_DROP:
+      case ApiProfileProxyActionType.ALLOCATE_CIC:
+      case ApiProfileProxyActionType.CREATE_WAVE:
+      case ApiProfileProxyActionType.READ_WAVE:
+      case ApiProfileProxyActionType.CREATE_DROP_TO_WAVE:
+      case ApiProfileProxyActionType.RATE_WAVE_DROP:
         return true;
       default:
         assertUnreachable(action_type);
@@ -312,7 +343,6 @@ export class ProfileProxyApiService {
     });
     return {
       ...profileProxyAction,
-      action_data: JSON.parse(profileProxyAction.action_data),
       is_active: !!profileProxyAction.is_active
     };
   }
@@ -320,5 +350,6 @@ export class ProfileProxyApiService {
 
 export const profileProxyApiService = new ProfileProxyApiService(
   profilesService,
-  profileProxiesDb
+  profileProxiesDb,
+  profileProxiesMapper
 );

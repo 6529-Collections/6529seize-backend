@@ -6,7 +6,7 @@ import {
 import { ProfileProxyEntity } from '../entities/IProfileProxy';
 import {
   ProfileProxyActionEntity,
-  ProfileProxyActionType
+  ApiProfileProxyActionType
 } from '../entities/IProfileProxyAction';
 import {
   ConnectionWrapper,
@@ -68,45 +68,36 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
 
   async findProfileReceivedProfileProxies({
     target_id,
-    page,
-    page_size,
-    sort,
-    sort_direction,
     connection
   }: {
     readonly target_id: string;
-    readonly page: number;
-    readonly page_size: number;
-    readonly sort: string;
-    readonly sort_direction: string;
     readonly connection?: ConnectionWrapper<any>;
   }): Promise<ProfileProxyEntity[]> {
     const opts = connection ? { wrappedConnection: connection } : {};
     return this.db.execute(
-      `select * from ${PROFILE_PROXIES_TABLE} where target_id = :target_id order by ${sort} ${sort_direction} limit :limit offset :offset`,
+      `select * from ${PROFILE_PROXIES_TABLE} where target_id = :target_id order by created_at ASC`,
       {
-        target_id,
-        limit: page_size,
-        offset: (page - 1) * page_size
+        target_id
       },
       opts
     );
   }
 
-  async countProfileReceivedProfileProxies({
-    target_id,
+  async findProfileGrantedProfileProxies({
+    created_by,
     connection
   }: {
-    target_id: string;
-    connection?: ConnectionWrapper<any>;
-  }): Promise<number> {
+    readonly created_by: string;
+    readonly connection?: ConnectionWrapper<any>;
+  }): Promise<ProfileProxyEntity[]> {
     const opts = connection ? { wrappedConnection: connection } : {};
-    const dbResult: { cnt: number }[] = await this.db.execute(
-      `select count(*) as cnt from ${PROFILE_PROXIES_TABLE} where target_id = :target_id`,
-      { target_id },
+    return this.db.execute(
+      `select * from ${PROFILE_PROXIES_TABLE} where created_by = :created_by order by created_at ASC`,
+      {
+        created_by
+      },
       opts
     );
-    return dbResult.at(0)?.cnt ?? 0;
   }
 
   async insertProfileProxyAction({
@@ -141,13 +132,20 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     readonly connection?: ConnectionWrapper<any>;
   }): Promise<ProfileProxyActionEntity | null> {
     const opts = connection ? { wrappedConnection: connection } : {};
-    return this.db
-      .execute(
-        `select * from ${PROFILE_PROXY_ACTIONS_TABLE} where id = :id`,
-        { id },
-        opts
-      )
-      .then((result) => result[0] ?? null);
+    const actions = await this.db.execute(
+      `select * from ${PROFILE_PROXY_ACTIONS_TABLE} where id = :id`,
+      { id },
+      opts
+    );
+    if (!actions.length) {
+      return null;
+    }
+    const action = actions[0];
+    return {
+      ...action,
+      action_data: JSON.parse(action.action_data),
+      is_active: !!action.is_active
+    };
   }
 
   async findProfileProxyActionsByProxyIdAndActionType({
@@ -156,15 +154,80 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     connection
   }: {
     readonly proxy_id: string;
-    readonly action_type: ProfileProxyActionType;
+    readonly action_type: ApiProfileProxyActionType;
     readonly connection?: ConnectionWrapper<any>;
   }): Promise<ProfileProxyActionEntity[]> {
     const opts = connection ? { wrappedConnection: connection } : {};
-    return this.db.execute(
+    const actions = await this.db.execute(
       `select * from ${PROFILE_PROXY_ACTIONS_TABLE} where proxy_id = :proxy_id and action_type = :action_type`,
       { proxy_id, action_type },
       opts
     );
+    return actions.map((action) => ({
+      ...action,
+      action_data: JSON.parse(action.action_data),
+      is_active: !!action.is_active
+    }));
+  }
+
+  async findProfileProxyReceivedActionsByProfileId({
+    target_id,
+    connection
+  }: {
+    readonly target_id: string;
+    readonly connection?: ConnectionWrapper<any>;
+  }): Promise<ProfileProxyActionEntity[]> {
+    const opts = connection ? { wrappedConnection: connection } : {};
+    const actions = await this.db.execute(
+      `select ${PROFILE_PROXY_ACTIONS_TABLE}.* from ${PROFILE_PROXY_ACTIONS_TABLE} join ${PROFILE_PROXIES_TABLE} on ${PROFILE_PROXY_ACTIONS_TABLE}.proxy_id = ${PROFILE_PROXIES_TABLE}.id where ${PROFILE_PROXIES_TABLE}.target_id = :target_id`,
+      { target_id },
+      opts
+    );
+    return actions.map((action) => ({
+      ...action,
+      action_data: JSON.parse(action.action_data),
+      is_active: !!action.is_active
+    }));
+  }
+
+  async findProfileProxyGrantedActionsByProfileId({
+    created_by,
+    connection
+  }: {
+    readonly created_by: string;
+    readonly connection?: ConnectionWrapper<any>;
+  }): Promise<ProfileProxyActionEntity[]> {
+    const opts = connection ? { wrappedConnection: connection } : {};
+    const actions = await this.db.execute(
+      `select ${PROFILE_PROXY_ACTIONS_TABLE}.* from ${PROFILE_PROXY_ACTIONS_TABLE} join ${PROFILE_PROXIES_TABLE} on ${PROFILE_PROXY_ACTIONS_TABLE}.proxy_id = ${PROFILE_PROXIES_TABLE}.id where ${PROFILE_PROXIES_TABLE}.created_by = :created_by`,
+      { created_by },
+      opts
+    );
+    return actions.map((action) => ({
+      ...action,
+      action_data: JSON.parse(action.action_data),
+      is_active: !!action.is_active
+    }));
+  }
+
+  async findProfileProxyActionsByProxyId({
+    proxy_id,
+    connection
+  }: {
+    readonly proxy_id: string;
+    readonly connection?: ConnectionWrapper<any>;
+  }): Promise<ProfileProxyActionEntity[]> {
+    const opts = connection ? { wrappedConnection: connection } : {};
+    const actions = await this.db.execute(
+      `select * from ${PROFILE_PROXY_ACTIONS_TABLE} where proxy_id = :proxy_id`,
+      { proxy_id },
+      opts
+    );
+    return actions.map((action) => ({
+      ...action,
+      action_data: JSON.parse(action.action_data),
+      is_active: !!action.is_active
+    }));
   }
 }
 

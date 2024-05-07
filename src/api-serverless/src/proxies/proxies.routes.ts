@@ -7,17 +7,17 @@ import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { profilesService } from '../../../profiles/profiles.service';
 import { profileProxyApiService } from './proxy.api.service';
-import { ProfileProxyEntity } from '../../../entities/IProfileProxy';
 import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { ProxyApiRequestAction } from './proxies.api.types';
 import { CreateNewProfileProxyAllocateRepAction } from '../generated/models/CreateNewProfileProxyAllocateRepAction';
 import { CreateNewProfileProxyAllocateCicAction } from '../generated/models/CreateNewProfileProxyAllocateCicAction';
 import { CreateNewProfileProxyCreateWaveAction } from '../generated/models/CreateNewProfileProxyCreateWaveAction';
 import { CreateNewProfileProxyReadWaveAction } from '../generated/models/CreateNewProfileProxyReadWaveAction';
-import { CreateNewProfileProxyActionType } from '../generated/models/CreateNewProfileProxyActionType';
+import { ProfileProxyActionType } from '../generated/models/ProfileProxyActionType';
 import { CreateNewProfileProxyRateWaveDropAction } from '../generated/models/CreateNewProfileProxyRateWaveDropAction';
 import { assertUnreachable } from '../../../helpers';
 import { ProfileProxyActionEntity } from '../../../entities/IProfileProxyAction';
+import { ProfileProxy } from '../generated/models/ProfileProxy';
 
 const router = asyncRouter();
 
@@ -26,7 +26,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<any, any, CreateNewProfileProxy, any, any>,
-    res: Response<ApiResponse<ProfileProxyEntity>>
+    res: Response<ApiResponse<ProfileProxy>>
   ) => {
     const { body } = req;
     const newProxy = getValidatedByJoiOrThrow(body, NewProfileProxySchema);
@@ -61,7 +61,7 @@ router.get(
   '/:proxy_id',
   async (
     req: Request<{ proxy_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<ProfileProxyEntity>>
+    res: Response<ApiResponse<ProfileProxy>>
   ) => {
     const { proxy_id } = req.params;
     const profileProxy =
@@ -95,8 +95,7 @@ router.post(
         proxy_id
       });
 
-    // test this
-    if (profileProxy.created_by !== requesterProfile.external_id) {
+    if (profileProxy.created_by.id !== requesterProfile.external_id) {
       throw new BadRequestException('You are not the creator of this proxy');
     }
 
@@ -105,34 +104,34 @@ router.post(
     }
     const type = req.body.action_type;
     switch (type) {
-      case CreateNewProfileProxyActionType.AllocateRep:
+      case ProfileProxyActionType.AllocateRep:
         getValidatedByJoiOrThrow(
           req.body,
           NewProfileProxyAllocateRepActionSchema
         );
         break;
-      case CreateNewProfileProxyActionType.AllocateCic:
+      case ProfileProxyActionType.AllocateCic:
         getValidatedByJoiOrThrow(
           req.body,
           NewProfileProxyAllocateCicActionSchema
         );
         break;
-      case CreateNewProfileProxyActionType.CreateWave:
+      case ProfileProxyActionType.CreateWave:
         getValidatedByJoiOrThrow(
           req.body,
           NewProfileProxyCreateWaveActionSchema
         );
         break;
-      case CreateNewProfileProxyActionType.ReadWave:
+      case ProfileProxyActionType.ReadWave:
         getValidatedByJoiOrThrow(req.body, NewProfileProxyReadWaveActionSchema);
         break;
-      case CreateNewProfileProxyActionType.CreateDropToWave:
+      case ProfileProxyActionType.CreateDropToWave:
         getValidatedByJoiOrThrow(
           req.body,
           NewProfileProxyCreateDropToWaveActionSchema
         );
         break;
-      case CreateNewProfileProxyActionType.RateWaveDrop:
+      case ProfileProxyActionType.RateWaveDrop:
         getValidatedByJoiOrThrow(
           req.body,
           NewProfileProxyRateWaveDropActionSchema
@@ -159,7 +158,7 @@ const NewProfileProxySchema = Joi.object<CreateNewProfileProxy>({
 const NewProfileProxyAllocateRepActionSchema =
   Joi.object<CreateNewProfileProxyAllocateRepAction>({
     action_type: Joi.string()
-      .valid(CreateNewProfileProxyActionType.AllocateRep)
+      .valid(ProfileProxyActionType.AllocateRep)
       .required(),
     start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null),
@@ -171,7 +170,7 @@ const NewProfileProxyAllocateRepActionSchema =
 const NewProfileProxyAllocateCicActionSchema =
   Joi.object<CreateNewProfileProxyAllocateCicAction>({
     action_type: Joi.string()
-      .valid(CreateNewProfileProxyActionType.AllocateCic)
+      .valid(ProfileProxyActionType.AllocateCic)
       .required(),
     start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null),
@@ -182,7 +181,7 @@ const NewProfileProxyAllocateCicActionSchema =
 const NewProfileProxyCreateWaveActionSchema =
   Joi.object<CreateNewProfileProxyCreateWaveAction>({
     action_type: Joi.string()
-      .valid(CreateNewProfileProxyActionType.CreateWave)
+      .valid(ProfileProxyActionType.CreateWave)
       .required(),
     start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null)
@@ -190,9 +189,7 @@ const NewProfileProxyCreateWaveActionSchema =
 
 const NewProfileProxyReadWaveActionSchema =
   Joi.object<CreateNewProfileProxyReadWaveAction>({
-    action_type: Joi.string()
-      .valid(CreateNewProfileProxyActionType.ReadWave)
-      .required(),
+    action_type: Joi.string().valid(ProfileProxyActionType.ReadWave).required(),
     start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null)
   });
@@ -200,7 +197,7 @@ const NewProfileProxyReadWaveActionSchema =
 const NewProfileProxyCreateDropToWaveActionSchema =
   Joi.object<CreateNewProfileProxyCreateWaveAction>({
     action_type: Joi.string()
-      .valid(CreateNewProfileProxyActionType.CreateDropToWave)
+      .valid(ProfileProxyActionType.CreateDropToWave)
       .required(),
     start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null)
@@ -209,7 +206,7 @@ const NewProfileProxyCreateDropToWaveActionSchema =
 const NewProfileProxyRateWaveDropActionSchema =
   Joi.object<CreateNewProfileProxyRateWaveDropAction>({
     action_type: Joi.string()
-      .valid(CreateNewProfileProxyActionType.RateWaveDrop)
+      .valid(ProfileProxyActionType.RateWaveDrop)
       .required(),
     start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null)
