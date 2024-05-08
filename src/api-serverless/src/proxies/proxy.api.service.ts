@@ -608,17 +608,24 @@ export class ProfileProxyApiService {
     }
   }
 
-  async updateProfileProxyActionCredit({
+  async updateProfileProxyAction({
     profile_id,
     proxy_id,
     action_id,
-    credit_amount
+    credit_amount,
+    end_time
   }: {
     readonly proxy_id: string;
     readonly action_id: string;
     readonly profile_id: string;
-    readonly credit_amount: number;
+    readonly credit_amount?: number | null;
+    readonly end_time?: number | null;
   }): Promise<ProfileProxyActionApiEntity> {
+    if (!credit_amount && !end_time) {
+      throw new BadRequestException(
+        'Credit amount or end time must be provided'
+      );
+    }
     const { profileProxy, profileProxyAction } =
       await this.getProfileProxyAndAction({
         action_id,
@@ -629,53 +636,26 @@ export class ProfileProxyApiService {
         'You are not the creator of this proxy action'
       );
     }
-    if (!ACTION_HAVE_CREDIT[profileProxyAction.action_type]) {
+    if (
+      !!credit_amount &&
+      !ACTION_HAVE_CREDIT[profileProxyAction.action_type]
+    ) {
       throw new BadRequestException('Action does not have credit');
     }
 
     const action_data: Record<string, any> = {
-      ...profileProxyAction.action_data,
-      credit_amount
+      ...profileProxyAction.action_data
     };
-    return await this.profileProxiesDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        await this.profileProxiesDb.updateProfileProxyActionData({
-          action_id,
-          action_data: JSON.stringify(action_data),
-          connection
-        });
-        return await this.findProfileProxyActionByIdOrThrow({
-          id: action_id,
-          connection
-        });
-      }
-    );
-  }
 
-  async updateProfileProxyActionEndTime({
-    profile_id,
-    proxy_id,
-    action_id,
-    end_time
-  }: {
-    readonly proxy_id: string;
-    readonly action_id: string;
-    readonly profile_id: string;
-    readonly end_time: number;
-  }): Promise<ProfileProxyActionApiEntity> {
-    const profileProxy = await this.getProfileProxyByIdOrThrow({
-      proxy_id
-    });
-    if (profileProxy.created_by.id !== profile_id) {
-      throw new BadRequestException(
-        'You are not the creator of this proxy action'
-      );
+    if (!!credit_amount) {
+      action_data.credit_amount = credit_amount;
     }
 
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        await this.profileProxiesDb.updateProfileProxyActionEndTime({
+        await this.profileProxiesDb.updateProfileProxyAction({
           action_id,
+          action_data: JSON.stringify(action_data),
           end_time,
           connection
         });

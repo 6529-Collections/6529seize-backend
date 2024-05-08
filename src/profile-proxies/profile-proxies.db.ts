@@ -301,34 +301,22 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async updateProfileProxyActionEndTime({
+  async updateProfileProxyAction({
     action_id,
+    action_data,
     end_time,
     connection
   }: {
     readonly action_id: string;
-    readonly end_time: number;
-    readonly connection?: ConnectionWrapper<any>;
-  }): Promise<void> {
-    await this.db.execute(
-      `update ${PROFILE_PROXY_ACTIONS_TABLE} set end_time = :end_time where id = :id`,
-      { id: action_id, end_time },
-      { wrappedConnection: connection }
-    );
-  }
-
-  async updateProfileProxyActionData({
-    action_id,
-    action_data,
-    connection
-  }: {
-    readonly action_id: string;
     readonly action_data: string;
+    readonly end_time?: number;
     readonly connection?: ConnectionWrapper<any>;
   }): Promise<void> {
     await this.db.execute(
-      `update ${PROFILE_PROXY_ACTIONS_TABLE} set action_data = :action_data where id = :id`,
-      { id: action_id, action_data },
+      `update ${PROFILE_PROXY_ACTIONS_TABLE} set action_data = :action_data ${
+        end_time ? ', end_time = :end_time' : ''
+      } where id = :id`,
+      { id: action_id, action_data, end_time },
       { wrappedConnection: connection }
     );
   }
