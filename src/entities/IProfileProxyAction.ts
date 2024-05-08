@@ -37,6 +37,12 @@ export class ProfileProxyActionEntity {
   readonly is_active!: boolean;
 }
 
+export interface ProfileProxyActionApiEntity
+  extends Omit<ProfileProxyActionEntity, 'action_data' | 'is_active'> {
+  readonly action_data: Record<string, any>;
+  readonly is_active: boolean;
+}
+
 export enum ApiProfileProxyActionType {
   ALLOCATE_REP = 'ALLOCATE_REP',
   ALLOCATE_CIC = 'ALLOCATE_CIC',
