@@ -16,12 +16,14 @@ import { CreateNewProfileProxyReadWaveAction } from '../generated/models/CreateN
 import { ProfileProxyActionType } from '../generated/models/ProfileProxyActionType';
 import { CreateNewProfileProxyRateWaveDropAction } from '../generated/models/CreateNewProfileProxyRateWaveDropAction';
 import { assertUnreachable } from '../../../helpers';
-import { ProfileProxyActionEntity } from '../../../entities/IProfileProxyAction';
 import { ProfileProxy } from '../generated/models/ProfileProxy';
 import {
   AcceptActionRequest,
   AcceptActionRequestActionEnum
 } from '../generated/models/AcceptActionRequest';
+import { UpdateCreditForActionRequest } from '../generated/models/UpdateCreditForActionRequest';
+import { ProfileProxyActionApiEntity } from '../../../entities/IProfileProxyAction';
+import { UpdateEndTimeForActionRequest } from '../generated/models/UpdateEndTimeForActionRequest';
 
 const router = asyncRouter();
 
@@ -81,7 +83,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<{ proxy_id: string }, any, ProxyApiRequestAction, any, any>,
-    res: Response<ApiResponse<ProfileProxyActionEntity>>
+    res: Response<ApiResponse<ProfileProxyActionApiEntity>>
   ) => {
     const { proxy_id } = req.params;
     const requesterProfile = await profilesService
@@ -166,7 +168,7 @@ router.post(
       any,
       any
     >,
-    res: Response<ApiResponse<ProfileProxyActionEntity>>
+    res: Response<ApiResponse<ProfileProxyActionApiEntity>>
   ) => {
     const { proxy_id, action_id } = req.params;
     const requesterProfile = await profilesService
@@ -194,6 +196,86 @@ router.post(
   }
 );
 
+router.post(
+  '/:proxy_id/actions/:action_id/credit',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<
+      { proxy_id: string; action_id: string },
+      any,
+      UpdateCreditForActionRequest,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ProfileProxyActionApiEntity>>
+  ) => {
+    const { proxy_id, action_id } = req.params;
+    const requesterProfile = await profilesService
+      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+        getWalletOrThrow(req)
+      )
+      ?.then((result) => result?.profile ?? null);
+    if (!requesterProfile) {
+      throw new BadRequestException(
+        'You need to create a profile before you can manage a proxy'
+      );
+    }
+    const validRequest = getValidatedByJoiOrThrow(
+      req.body,
+      UpdateCreditForActionRequestSchema
+    );
+    const action = await profileProxyApiService.updateProfileProxyActionCredit({
+      proxy_id,
+      action_id,
+      credit_amount: validRequest.credit_amount,
+      profile_id: requesterProfile.external_id
+    });
+
+    res.send(action);
+  }
+);
+
+router.post(
+  '/:proxy_id/actions/:action_id/end-time',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<
+      { proxy_id: string; action_id: string },
+      any,
+      UpdateEndTimeForActionRequest,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ProfileProxyActionApiEntity>>
+  ) => {
+    const { proxy_id, action_id } = req.params;
+    const requesterProfile = await profilesService
+      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+        getWalletOrThrow(req)
+      )
+      ?.then((result) => result?.profile ?? null);
+    if (!requesterProfile) {
+      throw new BadRequestException(
+        'You need to create a profile before you can manage a proxy'
+      );
+    }
+    const validRequest = getValidatedByJoiOrThrow(
+      req.body,
+      UpdateEndTimeForActionRequestSchema
+    );
+    const action = await profileProxyApiService.updateProfileProxyActionEndTime(
+      {
+        proxy_id,
+        action_id,
+        end_time: validRequest.end_time,
+        profile_id: requesterProfile.external_id
+      }
+    );
+
+    res.send(action);
+  }
+);
+
 const NewProfileProxySchema = Joi.object<CreateNewProfileProxy>({
   target_id: Joi.string().required()
 });
@@ -203,9 +285,8 @@ const NewProfileProxyAllocateRepActionSchema =
     action_type: Joi.string()
       .valid(ProfileProxyActionType.AllocateRep)
       .required(),
-    start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null),
-    credit_amount: Joi.number().required(),
+    credit_amount: Joi.number().min(1).required(),
     group_id: Joi.string().optional().allow(null),
     credit_category: Joi.string().optional().allow(null)
   });
@@ -215,9 +296,8 @@ const NewProfileProxyAllocateCicActionSchema =
     action_type: Joi.string()
       .valid(ProfileProxyActionType.AllocateCic)
       .required(),
-    start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null),
-    credit_amount: Joi.number().required(),
+    credit_amount: Joi.number().min(1).required(),
     group_id: Joi.string().optional().allow(null)
   });
 
@@ -226,14 +306,12 @@ const NewProfileProxyCreateWaveActionSchema =
     action_type: Joi.string()
       .valid(ProfileProxyActionType.CreateWave)
       .required(),
-    start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null)
   });
 
 const NewProfileProxyReadWaveActionSchema =
   Joi.object<CreateNewProfileProxyReadWaveAction>({
     action_type: Joi.string().valid(ProfileProxyActionType.ReadWave).required(),
-    start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null)
   });
 
@@ -242,7 +320,6 @@ const NewProfileProxyCreateDropToWaveActionSchema =
     action_type: Joi.string()
       .valid(ProfileProxyActionType.CreateDropToWave)
       .required(),
-    start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null)
   });
 
@@ -251,7 +328,6 @@ const NewProfileProxyRateWaveDropActionSchema =
     action_type: Joi.string()
       .valid(ProfileProxyActionType.RateWaveDrop)
       .required(),
-    start_time: Joi.number().required(),
     end_time: Joi.number().optional().allow(null)
   });
 
@@ -261,4 +337,13 @@ const AcceptActionRequestSchema = Joi.object<AcceptActionRequest>({
     .allow(...Object.values(AcceptActionRequestActionEnum))
 });
 
+const UpdateCreditForActionRequestSchema =
+  Joi.object<UpdateCreditForActionRequest>({
+    credit_amount: Joi.number().min(1).required()
+  });
+
+const UpdateEndTimeForActionRequestSchema =
+  Joi.object<UpdateEndTimeForActionRequest>({
+    end_time: Joi.number().required()
+  });
 export default router;

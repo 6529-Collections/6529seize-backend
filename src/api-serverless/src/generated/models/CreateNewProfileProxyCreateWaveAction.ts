@@ -15,7 +15,6 @@ import { HttpFile } from '../http/http';
 
 export class CreateNewProfileProxyCreateWaveAction {
     'action_type': ProfileProxyActionType;
-    'start_time': number;
     'end_time': number | null;
 
     static readonly discriminator: string | undefined = undefined;
@@ -26,12 +25,6 @@ export class CreateNewProfileProxyCreateWaveAction {
             "baseName": "action_type",
             "type": "ProfileProxyActionType",
             "format": ""
-        },
-        {
-            "name": "start_time",
-            "baseName": "start_time",
-            "type": "number",
-            "format": "int64"
         },
         {
             "name": "end_time",
