@@ -10,50 +10,26 @@
  * Do not edit the class manually.
  */
 
-import { ProfileProxyActionType } from '../models/ProfileProxyActionType';
 import { HttpFile } from '../http/http';
 
-export class CreateNewProfileProxyAllocateCicAction {
-    'action_type': ProfileProxyActionType;
-    'end_time': number | null;
+export class UpdateCreditForActionRequest {
     'credit_amount': number;
-    'group_id': string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "action_type",
-            "baseName": "action_type",
-            "type": "ProfileProxyActionType",
-            "format": ""
-        },
-        {
-            "name": "end_time",
-            "baseName": "end_time",
-            "type": "number",
-            "format": "int64"
-        },
-        {
             "name": "credit_amount",
             "baseName": "credit_amount",
             "type": "number",
             "format": "int64"
-        },
-        {
-            "name": "group_id",
-            "baseName": "group_id",
-            "type": "string",
-            "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return CreateNewProfileProxyAllocateCicAction.attributeTypeMap;
+        return UpdateCreditForActionRequest.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
-
-
 

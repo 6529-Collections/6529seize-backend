@@ -623,6 +623,82 @@ paths:
         '400':
           description: Invalid request
 
+  /proxies/{proxyId}/actions/{actionId}/credit:
+    post:
+      tags:
+        - Proxies
+      summary: Update credit for action
+      operationId: updateCreditForAction
+      parameters:
+        - name: proxyId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: actionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - credit_amount
+              properties:
+                credit_amount:
+                  type: number
+                  format: int64
+
+      responses:
+        '201':
+          description: successful operation
+        '404':
+          description: Proxy or action not found
+        '400':
+          description: Invalid request
+
+  /proxies/{proxyId}/actions/{actionId}/end-time:
+    post:
+      tags:
+        - Proxies
+      summary: Update end time for action
+      operationId: updateEndTimeForAction
+      parameters:
+        - name: proxyId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: actionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - end_time
+              properties:
+                end_time:
+                  type: number
+                  format: int64
+
+      responses:
+        '201':
+          description: successful operation
+        '404':
+          description: Proxy or action not found
+        '400':
+          description: Invalid request
+  
   /waves:
     get:
       tags:
@@ -1566,16 +1642,12 @@ components:
       type: object
       required:
         - action_type
-        - start_time
         - end_time
         - credit_amount
         - credit_category
       properties:
         action_type:
           $ref: '#/components/schemas/ProfileProxyActionType'
-        start_time:
-          type: number
-          format: int64
         end_time:
           anyOf:
             - type: 'null'
@@ -1597,16 +1669,12 @@ components:
       type: object
       required:
         - action_type
-        - start_time
         - end_time
         - credit_amount
         - group_id
       properties:
         action_type:
           $ref: '#/components/schemas/ProfileProxyActionType'
-        start_time:
-          type: number
-          format: int64
         end_time:
           anyOf:
             - type: 'null'
@@ -1624,14 +1692,10 @@ components:
       type: object
       required:
         - action_type
-        - start_time
         - end_time
       properties:
         action_type:
           $ref: '#/components/schemas/ProfileProxyActionType'
-        start_time:
-          type: number
-          format: int64
         end_time:
           anyOf:
             - type: 'null'
@@ -1642,14 +1706,10 @@ components:
       type: object
       required:
         - action_type
-        - start_time
         - end_time
       properties:
         action_type:
           $ref: '#/components/schemas/ProfileProxyActionType'
-        start_time:
-          type: number
-          format: int64
         end_time:
           anyOf:
             - type: 'null'
@@ -1660,14 +1720,10 @@ components:
       type: object
       required:
         - action_type
-        - start_time
         - end_time
       properties:
         action_type:
           $ref: '#/components/schemas/ProfileProxyActionType'
-        start_time:
-          type: number
-          format: int64
         end_time:
           anyOf:
             - type: 'null'
@@ -1677,14 +1733,10 @@ components:
       type: object
       required:
         - action_type
-        - start_time
         - end_time
       properties:
         action_type:
           $ref: '#/components/schemas/ProfileProxyActionType'
-        start_time:
-          type: number
-          format: int64
         end_time:
           anyOf:
             - type: 'null'

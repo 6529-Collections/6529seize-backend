@@ -15,7 +15,6 @@ import { HttpFile } from '../http/http';
 
 export class CreateNewProfileProxyAllocateRepAction {
     'action_type': ProfileProxyActionType;
-    'start_time': number;
     'end_time': number | null;
     'credit_amount': number;
     'group_id'?: string | null;
@@ -29,12 +28,6 @@ export class CreateNewProfileProxyAllocateRepAction {
             "baseName": "action_type",
             "type": "ProfileProxyActionType",
             "format": ""
-        },
-        {
-            "name": "start_time",
-            "baseName": "start_time",
-            "type": "number",
-            "format": "int64"
         },
         {
             "name": "end_time",
