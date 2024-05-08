@@ -618,8 +618,8 @@ export class ProfileProxyApiService {
     readonly proxy_id: string;
     readonly action_id: string;
     readonly profile_id: string;
-    readonly credit_amount?: number | null;
-    readonly end_time?: number | null;
+    readonly credit_amount?: number;
+    readonly end_time?: number;
   }): Promise<ProfileProxyActionApiEntity> {
     if (!credit_amount && !end_time) {
       throw new BadRequestException(
