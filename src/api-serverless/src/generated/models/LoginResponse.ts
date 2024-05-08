@@ -10,36 +10,26 @@
  * Do not edit the class manually.
  */
 
-import { ProfileProxyActionType } from '../models/ProfileProxyActionType';
 import { HttpFile } from '../http/http';
 
-export class CreateNewProfileProxyCreateWaveAction {
-    'action_type': ProfileProxyActionType;
-    'end_time': number | null;
+export class LoginResponse {
+    'token': string;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "action_type",
-            "baseName": "action_type",
-            "type": "ProfileProxyActionType",
+            "name": "token",
+            "baseName": "token",
+            "type": "string",
             "format": ""
-        },
-        {
-            "name": "end_time",
-            "baseName": "end_time",
-            "type": "number",
-            "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return CreateNewProfileProxyCreateWaveAction.attributeTypeMap;
+        return LoginResponse.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
-
-
 
