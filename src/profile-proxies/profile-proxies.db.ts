@@ -84,6 +84,22 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async findProfileProxiesByGrantorAndGrantee({
+    grantor,
+    grantee
+  }: {
+    readonly grantor: string;
+    readonly grantee: string;
+  }): Promise<ProfileProxyEntity[]> {
+    return this.db.execute(
+      `select * from ${PROFILE_PROXIES_TABLE} where created_by = :grantor target_id = :grantee order by created_at ASC`,
+      {
+        grantor,
+        grantee
+      }
+    );
+  }
+
   async findProfileGrantedProfileProxies({
     created_by,
     connection
@@ -203,6 +219,29 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
       `select ${PROFILE_PROXY_ACTIONS_TABLE}.* from ${PROFILE_PROXY_ACTIONS_TABLE} join ${PROFILE_PROXIES_TABLE} on ${PROFILE_PROXY_ACTIONS_TABLE}.proxy_id = ${PROFILE_PROXIES_TABLE}.id where ${PROFILE_PROXIES_TABLE}.created_by = :created_by`,
       { created_by },
       opts
+    );
+    return actions.map((action) => ({
+      ...action,
+      action_data: JSON.parse(action.action_data),
+      is_active: !!action.is_active
+    }));
+  }
+
+  async findProfileProxyGrantedActionsByGrantorAndGrantee({
+    grantor,
+    grantee
+  }: {
+    readonly grantor: string;
+    readonly grantee: string;
+  }): Promise<ProfileProxyActionApiEntity[]> {
+    const actions = await this.db.execute(
+      `
+      select ${PROFILE_PROXY_ACTIONS_TABLE}.* 
+      from ${PROFILE_PROXY_ACTIONS_TABLE} 
+      join ${PROFILE_PROXIES_TABLE} on ${PROFILE_PROXY_ACTIONS_TABLE}.proxy_id = ${PROFILE_PROXIES_TABLE}.id 
+      where ${PROFILE_PROXIES_TABLE}.created_by = :grantor and ${PROFILE_PROXIES_TABLE}.target_id = :grantee
+      `,
+      { grantor, grantee }
     );
     return actions.map((action) => ({
       ...action,

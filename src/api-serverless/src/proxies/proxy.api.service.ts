@@ -1,6 +1,5 @@
 import { Profile } from '../../../entities/IProfile';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
-import { Logger } from '../../../logging';
 import {
   profilesService,
   ProfilesService
@@ -55,8 +54,6 @@ interface CanDoAcceptancePayload {
 }
 
 export class ProfileProxyApiService {
-  private readonly logger = Logger.get(ProfileProxyApiService.name);
-
   constructor(
     private readonly profilesService: ProfilesService,
     private readonly profileProxiesDb: ProfileProxiesDb,
@@ -248,6 +245,33 @@ export class ProfileProxyApiService {
     return [...receivedProxies, ...grantedProxies].sort(
       (a, d) => d.created_at - a.created_at
     );
+  }
+
+  async getProxyByGrantedByAndGrantedTo({
+    granted_by_profile_id,
+    granted_to_profile_id
+  }: {
+    readonly granted_by_profile_id: string;
+    readonly granted_to_profile_id: string;
+  }): Promise<ProfileProxy | null> {
+    const actions =
+      await this.profileProxiesDb.findProfileProxyGrantedActionsByGrantorAndGrantee(
+        {
+          grantor: granted_by_profile_id,
+          grantee: granted_to_profile_id
+        }
+      );
+    const profileProxies =
+      await this.profileProxiesDb.findProfileProxiesByGrantorAndGrantee({
+        grantor: granted_by_profile_id,
+        grantee: granted_to_profile_id
+      });
+    return await this.profileProxiesMapper
+      .profileProxyEntitiesToApiProfileProxies({
+        profileProxyEntities: profileProxies,
+        actions
+      })
+      .then((it) => it[0] ?? null);
   }
 
   private async isActionExists({
