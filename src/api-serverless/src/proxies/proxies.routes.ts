@@ -21,9 +21,8 @@ import {
   AcceptActionRequest,
   AcceptActionRequestActionEnum
 } from '../generated/models/AcceptActionRequest';
-import { UpdateCreditForActionRequest } from '../generated/models/UpdateCreditForActionRequest';
 import { ProfileProxyActionApiEntity } from '../../../entities/IProfileProxyAction';
-import { UpdateEndTimeForActionRequest } from '../generated/models/UpdateEndTimeForActionRequest';
+import { UpdateActionRequest } from '../generated/models/UpdateActionRequest';
 
 const router = asyncRouter();
 
@@ -196,14 +195,14 @@ router.post(
   }
 );
 
-router.post(
-  '/:proxy_id/actions/:action_id/credit',
+router.put(
+  '/:proxy_id/actions/:action_id',
   needsAuthenticatedUser(),
   async (
     req: Request<
       { proxy_id: string; action_id: string },
       any,
-      UpdateCreditForActionRequest,
+      UpdateActionRequest,
       any,
       any
     >,
@@ -222,55 +221,15 @@ router.post(
     }
     const validRequest = getValidatedByJoiOrThrow(
       req.body,
-      UpdateCreditForActionRequestSchema
+      UpdateActionRequestSchema
     );
-    const action = await profileProxyApiService.updateProfileProxyActionCredit({
+    const action = await profileProxyApiService.updateProfileProxyAction({
       proxy_id,
       action_id,
       credit_amount: validRequest.credit_amount,
+      end_time: validRequest.end_time,
       profile_id: requesterProfile.external_id
     });
-
-    res.send(action);
-  }
-);
-
-router.post(
-  '/:proxy_id/actions/:action_id/end-time',
-  needsAuthenticatedUser(),
-  async (
-    req: Request<
-      { proxy_id: string; action_id: string },
-      any,
-      UpdateEndTimeForActionRequest,
-      any,
-      any
-    >,
-    res: Response<ApiResponse<ProfileProxyActionApiEntity>>
-  ) => {
-    const { proxy_id, action_id } = req.params;
-    const requesterProfile = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        getWalletOrThrow(req)
-      )
-      ?.then((result) => result?.profile ?? null);
-    if (!requesterProfile) {
-      throw new BadRequestException(
-        'You need to create a profile before you can manage a proxy'
-      );
-    }
-    const validRequest = getValidatedByJoiOrThrow(
-      req.body,
-      UpdateEndTimeForActionRequestSchema
-    );
-    const action = await profileProxyApiService.updateProfileProxyActionEndTime(
-      {
-        proxy_id,
-        action_id,
-        end_time: validRequest.end_time,
-        profile_id: requesterProfile.external_id
-      }
-    );
 
     res.send(action);
   }
@@ -337,13 +296,8 @@ const AcceptActionRequestSchema = Joi.object<AcceptActionRequest>({
     .allow(...Object.values(AcceptActionRequestActionEnum))
 });
 
-const UpdateCreditForActionRequestSchema =
-  Joi.object<UpdateCreditForActionRequest>({
-    credit_amount: Joi.number().min(1).required()
-  });
-
-const UpdateEndTimeForActionRequestSchema =
-  Joi.object<UpdateEndTimeForActionRequest>({
-    end_time: Joi.number().required()
-  });
+const UpdateActionRequestSchema = Joi.object<UpdateActionRequest>({
+  end_time: Joi.number().optional(),
+  credit_amount: Joi.number().optional()
+});
 export default router;

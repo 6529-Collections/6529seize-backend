@@ -7,17 +7,24 @@ import { ethers } from 'ethers';
 import { getJwtExpiry, getJwtSecret } from './auth';
 import { asyncRouter } from '../async.router';
 import { getValidatedByJoiOrThrow } from '../validation';
-import { UnauthorisedException } from '../../../exceptions';
+import {
+  BadRequestException,
+  UnauthorisedException
+} from '../../../exceptions';
+import { NonceResponse } from '../generated/models/NonceResponse';
+import { LoginRequest } from '../generated/models/LoginRequest';
+import { profilesService } from '../../../profiles/profiles.service';
+import { profileProxyApiService } from '../proxies/proxy.api.service';
 
 const router = asyncRouter();
 
 router.get(
   '/nonce',
   function (
-    req: Request<any, any, any, { signerAddress: string }, any>,
-    res: Response<ApiResponse<ApiNonceresponse>>
+    req: Request<any, any, any, { signer_address: string }, any>,
+    res: Response<ApiResponse<NonceResponse>>
   ) {
-    const signerAddress = req.query.signerAddress?.toLocaleLowerCase();
+    const signerAddress = req.query.signer_address?.toLocaleLowerCase();
     if (!signerAddress || !ethers.utils.isAddress(signerAddress)) {
       throw new UnauthorisedException(
         `Invalid signer address ${signerAddress}`
@@ -40,7 +47,7 @@ ${randomUUID()}`;
     const serverSignature = jwt.sign(nonce, getJwtSecret());
     res.status(200).send({
       nonce,
-      serverSignature
+      server_signature: serverSignature
     });
   }
 );
@@ -48,18 +55,43 @@ ${randomUUID()}`;
 router.post(
   `/login`,
   async function (
-    req: Request<ApiLoginRequest, any, any, any, any>,
+    req: Request<any, any, LoginRequest, any, any>,
     res: Response<ApiResponse<ApiLoginResponse>>
   ) {
     const loginRequest = getValidatedByJoiOrThrow(req.body, LoginRequestSchema);
-    const { serverSignature, clientSignature } = loginRequest;
+    const { server_signature, client_signature, role } = loginRequest;
     try {
-      const nonce = verifyServerSignature(serverSignature);
-      const signingAddress = verifyClientSignature(nonce, clientSignature);
+      const nonce = verifyServerSignature(server_signature);
+      const signingAddress = verifyClientSignature(nonce, client_signature);
+      const signingProfile = await profilesService
+        .getProfileByWallet(signingAddress)
+        .then((profile) => profile?.profile?.external_id ?? null);
+      let chosenRole = role;
+      if (signingProfile == null) {
+        if (role) {
+          throw new BadRequestException(
+            `You need to create a profile before you can choose a role`
+          );
+        }
+      } else if (!role) {
+        chosenRole = signingProfile;
+      } else {
+        const proxy =
+          await profileProxyApiService.getProxyByGrantedByAndGrantedTo({
+            granted_to_profile_id: signingProfile,
+            granted_by_profile_id: role
+          });
+        if (proxy === null) {
+          throw new BadRequestException(
+            `Profile with ID ${role} hasn't creared a proxy for you, so you can't authenticated as this role.`
+          );
+        }
+      }
       const token = jwt.sign(
         {
           id: randomUUID(),
-          sub: signingAddress.toLowerCase()
+          sub: signingAddress.toLowerCase(),
+          role: chosenRole
         },
         getJwtSecret(),
         {
@@ -93,20 +125,12 @@ function verifyClientSignature(nonce: string, clientSignature: string): string {
   return signingAddress;
 }
 
-interface ApiNonceresponse {
-  serverSignature: string;
-  nonce: string;
-}
-
-interface ApiLoginRequest {
-  readonly serverSignature: string;
-  readonly clientSignature: string;
-}
-
-const LoginRequestSchema = Joi.object<ApiLoginRequest>({
-  serverSignature: Joi.string().required(),
-  clientSignature: Joi.string().required()
-});
+const LoginRequestSchema: Joi.ObjectSchema<LoginRequest> =
+  Joi.object<LoginRequest>({
+    server_signature: Joi.string().required(),
+    client_signature: Joi.string().required(),
+    role: Joi.string().optional()
+  });
 
 interface ApiLoginResponse {
   readonly token: string;

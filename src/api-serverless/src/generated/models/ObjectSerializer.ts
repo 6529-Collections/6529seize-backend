@@ -32,9 +32,12 @@ export * from '../models/DropRatingCategory';
 export * from '../models/DropRatingRequest';
 export * from '../models/DropReferencedNFT';
 export * from '../models/IntRange';
+export * from '../models/LoginRequest';
+export * from '../models/LoginResponse';
 export * from '../models/NewDropComment';
 export * from '../models/Nft';
 export * from '../models/NftsPage';
+export * from '../models/NonceResponse';
 export * from '../models/PageBase';
 export * from '../models/PageWithNextUriBase';
 export * from '../models/ProfileMin';
@@ -42,8 +45,7 @@ export * from '../models/ProfileProxy';
 export * from '../models/ProfileProxyAction';
 export * from '../models/ProfileProxyActionType';
 export * from '../models/QuotedDrop';
-export * from '../models/UpdateCreditForActionRequest';
-export * from '../models/UpdateEndTimeForActionRequest';
+export * from '../models/UpdateActionRequest';
 export * from '../models/Wave';
 export * from '../models/WaveConfig';
 export * from '../models/WaveCreditScope';
@@ -91,9 +93,12 @@ import { DropRatingCategory } from '../models/DropRatingCategory';
 import { DropRatingRequest } from '../models/DropRatingRequest';
 import { DropReferencedNFT } from '../models/DropReferencedNFT';
 import { IntRange } from '../models/IntRange';
+import { LoginRequest } from '../models/LoginRequest';
+import { LoginResponse } from '../models/LoginResponse';
 import { NewDropComment } from '../models/NewDropComment';
 import { Nft      , NftTokenTypeEnum                            } from '../models/Nft';
 import { NftsPage } from '../models/NftsPage';
+import { NonceResponse } from '../models/NonceResponse';
 import { PageBase } from '../models/PageBase';
 import { PageWithNextUriBase } from '../models/PageWithNextUriBase';
 import { ProfileMin } from '../models/ProfileMin';
@@ -101,8 +106,7 @@ import { ProfileProxy } from '../models/ProfileProxy';
 import { ProfileProxyAction            } from '../models/ProfileProxyAction';
 import { ProfileProxyActionType } from '../models/ProfileProxyActionType';
 import { QuotedDrop } from '../models/QuotedDrop';
-import { UpdateCreditForActionRequest } from '../models/UpdateCreditForActionRequest';
-import { UpdateEndTimeForActionRequest } from '../models/UpdateEndTimeForActionRequest';
+import { UpdateActionRequest } from '../models/UpdateActionRequest';
 import { Wave } from '../models/Wave';
 import { WaveConfig      } from '../models/WaveConfig';
 import { WaveCreditScope } from '../models/WaveCreditScope';
@@ -174,17 +178,19 @@ let typeMap: {[index: string]: any} = {
     "DropRatingRequest": DropRatingRequest,
     "DropReferencedNFT": DropReferencedNFT,
     "IntRange": IntRange,
+    "LoginRequest": LoginRequest,
+    "LoginResponse": LoginResponse,
     "NewDropComment": NewDropComment,
     "Nft": Nft,
     "NftsPage": NftsPage,
+    "NonceResponse": NonceResponse,
     "PageBase": PageBase,
     "PageWithNextUriBase": PageWithNextUriBase,
     "ProfileMin": ProfileMin,
     "ProfileProxy": ProfileProxy,
     "ProfileProxyAction": ProfileProxyAction,
     "QuotedDrop": QuotedDrop,
-    "UpdateCreditForActionRequest": UpdateCreditForActionRequest,
-    "UpdateEndTimeForActionRequest": UpdateEndTimeForActionRequest,
+    "UpdateActionRequest": UpdateActionRequest,
     "Wave": Wave,
     "WaveConfig": WaveConfig,
     "WaveOutcome": WaveOutcome,
