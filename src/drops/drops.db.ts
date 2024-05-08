@@ -24,7 +24,8 @@ import {
   DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
   PROFILE_FULL,
   PROFILES_ACTIVITY_LOGS_TABLE,
-  RATINGS_TABLE
+  RATINGS_TABLE,
+  WAVES_TABLE
 } from '../constants';
 import {
   communityMemberCriteriaService,
@@ -41,6 +42,7 @@ import {
 import { randomUUID } from 'crypto';
 import { PageSortDirection } from '../api-serverless/src/page-request';
 import { uniqueShortId } from '../helpers';
+import { WaveScopeType } from '../entities/IWave';
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -68,12 +70,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       `insert into ${DROPS_TABLE} (
                             id,
                             author_id, 
+                            wave_id,
                             created_at, 
                             title,
                             parts_count
     ) values (
               :id,
               :author_id,
+              :wave_id,
               ROUND(UNIX_TIMESTAMP(CURTIME(4)) * 1000), 
               :title,
               :parts_count
@@ -169,11 +173,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async findLatestDrops({
     amount,
     serial_no_less_than,
-    curation_criteria_id
+    eligible_curations,
+    curation_criteria_id,
+    wave_id
   }: {
     curation_criteria_id: string | null;
+    eligible_curations: string[];
     serial_no_less_than: number | null;
     amount: number;
+    wave_id: string | null;
   }): Promise<DropEntity[]> {
     const sqlAndParams = await this.criteriaService.getSqlAndParamsByCriteriaId(
       curation_criteria_id
@@ -183,8 +191,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
     const serialNoLessThan = serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `${sqlAndParams.sql} select d.* from ${DROPS_TABLE} d
-         join ${CommunityMemberCriteriaService.GENERATED_VIEW} cm on cm.profile_id = d.author_id
-         where serial_no < :serialNoLessThan order by d.serial_no desc limit ${amount}`;
+         join ${
+           CommunityMemberCriteriaService.GENERATED_VIEW
+         } cm on cm.profile_id = d.author_id
+         join ${WAVES_TABLE} w on d.wave_id = w.id and (${
+      eligible_curations.length ? `w.id in (:eligible_curations) or` : ``
+    } w.visibility_scope_type = '${WaveScopeType.ALL}') ${
+      wave_id ? `and w.id = :wave_id` : ``
+    }
+         where d.serial_no < :serialNoLessThan order by d.serial_no desc limit ${amount}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       serialNoLessThan

@@ -154,6 +154,12 @@ paths:
           required: false
           schema:
             type: string
+        - name: wave_id
+          in: query
+          description: Drops in wave with given ID
+          required: false
+          schema:
+            type: string
         - name: serial_no_less_than
           in: query
           description: Used to find older drops
@@ -576,6 +582,47 @@ paths:
         '400':
           description: Invalid request
 
+  /proxies/{proxyId}/actions/{actionId}/acceptance:
+    post:
+      tags:
+        - Proxies
+      summary: Accept action
+      operationId: acceptAction
+      parameters:
+        - name: proxyId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: actionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - action
+              properties:
+                action:
+                  type: string
+                  enum:
+                    - ACCEPT
+                    - REJECT
+                    - REVOKE
+                    - RESTORE
+      responses:
+        '201':
+          description: successful operation
+        '404':
+          description: Proxy or action not found
+        '400':
+          description: Invalid request
+
   /waves:
     get:
       tags:
@@ -738,6 +785,7 @@ components:
       required:
           - id
           - serial_no
+          - wave_id
           - author
           - created_at
           - referenced_nfts
@@ -760,6 +808,8 @@ components:
             description: Sequence number of the drop in Seize
             type: number
             format: int64
+          wave_id:
+            type: string
           author:
             $ref: '#/components/schemas/ProfileMin'
           created_at:
@@ -1017,11 +1067,14 @@ components:
     CreateDropRequest:
       type: object
       required:
+        - wave_id
         - referenced_nfts
         - mentioned_users
         - metadata
         - parts
       properties:
+        wave_id:
+          type: string
         title:
           type: string
           maxLength: 250

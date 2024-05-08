@@ -26,6 +26,7 @@ import { assertUnreachable } from '../../../helpers';
 import { ProfileProxyActionType } from '../generated/models/ProfileProxyActionType';
 import { ProfileProxy } from '../generated/models/ProfileProxy';
 import { profileProxiesMapper, ProfileProxiesMapper } from './proxies.mapper';
+import { AcceptActionRequestActionEnum } from '../generated/models/AcceptActionRequest';
 
 const ACTION_MAP: Record<ProfileProxyActionType, ApiProfileProxyActionType> = {
   [ProfileProxyActionType.AllocateRep]: ApiProfileProxyActionType.ALLOCATE_REP,
@@ -37,6 +38,12 @@ const ACTION_MAP: Record<ProfileProxyActionType, ApiProfileProxyActionType> = {
   [ProfileProxyActionType.RateWaveDrop]:
     ApiProfileProxyActionType.RATE_WAVE_DROP
 };
+
+interface CanDoAcceptancePayload {
+  readonly action_id: string;
+  readonly proxy_id: string;
+  readonly profile_id: string;
+}
 
 export class ProfileProxyApiService {
   private readonly logger = Logger.get(ProfileProxyApiService.name);
@@ -345,6 +352,256 @@ export class ProfileProxyApiService {
       ...profileProxyAction,
       is_active: !!profileProxyAction.is_active
     };
+  }
+
+  private async getProfileProxyAndAction({
+    action_id,
+    proxy_id
+  }: {
+    action_id: string;
+    proxy_id: string;
+  }): Promise<{
+    profileProxy: ProfileProxy;
+    profileProxyAction: ProfileProxyActionEntity;
+  }> {
+    const [profileProxy, profileProxyAction] = await Promise.all([
+      this.getProfileProxyByIdOrThrow({
+        proxy_id
+      }),
+      this.findProfileProxyActionByIdOrThrow({
+        id: action_id
+      })
+    ]);
+    if (profileProxyAction.proxy_id !== proxy_id) {
+      throw new BadRequestException(
+        `Action with id ${action_id} does not belong to proxy with id ${proxy_id}`
+      );
+    }
+    return { profileProxy, profileProxyAction };
+  }
+
+  private async canAcceptActionOrThrow({
+    action_id,
+    proxy_id,
+    profile_id
+  }: {
+    readonly action_id: string;
+    readonly proxy_id: string;
+    readonly profile_id: string;
+  }): Promise<void> {
+    const { profileProxy, profileProxyAction } =
+      await this.getProfileProxyAndAction({
+        action_id,
+        proxy_id
+      });
+
+    if (profileProxy.granted_to.id !== profile_id) {
+      throw new BadRequestException(
+        'You are not the target of this proxy action'
+      );
+    }
+
+    if (profileProxyAction.revoked_at) {
+      throw new BadRequestException('Action has been revoked');
+    }
+
+    if (profileProxyAction.accepted_at) {
+      throw new BadRequestException('Action has already been accepted');
+    }
+
+    const now = Time.currentMillis();
+    if (profileProxyAction.end_time && profileProxyAction.end_time < now) {
+      throw new BadRequestException('Action has expired');
+    }
+  }
+
+  private async canRejectActionOrThrow({
+    action_id,
+    proxy_id,
+    profile_id
+  }: CanDoAcceptancePayload): Promise<void> {
+    const { profileProxy, profileProxyAction } =
+      await this.getProfileProxyAndAction({
+        action_id,
+        proxy_id
+      });
+
+    if (profileProxy.granted_to.id !== profile_id) {
+      throw new BadRequestException(
+        'You are not the target of this proxy action'
+      );
+    }
+
+    if (profileProxyAction.revoked_at) {
+      throw new BadRequestException('Action has been revoked');
+    }
+
+    if (profileProxyAction.rejected_at) {
+      throw new BadRequestException('Action has already been rejected');
+    }
+
+    const now = Time.currentMillis();
+    if (profileProxyAction.end_time && profileProxyAction.end_time < now) {
+      throw new BadRequestException('Action has expired');
+    }
+  }
+
+  private async canRevokeOrThrow({
+    action_id,
+    proxy_id,
+    profile_id
+  }: CanDoAcceptancePayload): Promise<void> {
+    const { profileProxy, profileProxyAction } =
+      await this.getProfileProxyAndAction({
+        action_id,
+        proxy_id
+      });
+
+    if (profileProxy.created_by.id !== profile_id) {
+      throw new BadRequestException(
+        'You are not the creator of this proxy action'
+      );
+    }
+
+    if (profileProxyAction.revoked_at) {
+      throw new BadRequestException('Action has been revoked');
+    }
+  }
+
+  private async canRestoreOrThrow({
+    action_id,
+    proxy_id,
+    profile_id
+  }: CanDoAcceptancePayload): Promise<void> {
+    const { profileProxy, profileProxyAction } =
+      await this.getProfileProxyAndAction({
+        action_id,
+        proxy_id
+      });
+
+    if (profileProxy.created_by.id !== profile_id) {
+      throw new BadRequestException(
+        'You are not the creator of this proxy action'
+      );
+    }
+
+    if (!profileProxyAction.revoked_at) {
+      throw new BadRequestException('Action has not been revoked');
+    }
+  }
+
+  private async acceptProfileProxyAction({
+    proxy_id,
+    action_id,
+    profile_id
+  }: CanDoAcceptancePayload): Promise<ProfileProxyActionEntity> {
+    await this.canAcceptActionOrThrow({ action_id, proxy_id, profile_id });
+    const action = await this.findProfileProxyActionByIdOrThrow({
+      id: action_id
+    });
+    const is_active = !action.revoked_at;
+    return await this.profileProxiesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        await this.profileProxiesDb.acceptProfileProxyAction({
+          action_id,
+          connection,
+          is_active
+        });
+        return await this.findProfileProxyActionByIdOrThrow({
+          id: action_id,
+          connection
+        });
+      }
+    );
+  }
+
+  private async rejectProfileProxyAction({
+    proxy_id,
+    action_id,
+    profile_id
+  }: CanDoAcceptancePayload): Promise<ProfileProxyActionEntity> {
+    await this.canRejectActionOrThrow({ action_id, proxy_id, profile_id });
+    return await this.profileProxiesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        await this.profileProxiesDb.rejectProfileProxyAction({
+          action_id,
+          connection
+        });
+        return await this.findProfileProxyActionByIdOrThrow({
+          id: action_id,
+          connection
+        });
+      }
+    );
+  }
+
+  private async revokeProfileProxyAction({
+    proxy_id,
+    action_id,
+    profile_id
+  }: CanDoAcceptancePayload): Promise<ProfileProxyActionEntity> {
+    await this.canRevokeOrThrow({ action_id, proxy_id, profile_id });
+    return await this.profileProxiesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        await this.profileProxiesDb.revokeProfileProxyAction({
+          action_id,
+          connection
+        });
+        return await this.findProfileProxyActionByIdOrThrow({
+          id: action_id,
+          connection
+        });
+      }
+    );
+  }
+
+  private async restoreProfileProxyAction({
+    proxy_id,
+    action_id,
+    profile_id
+  }: CanDoAcceptancePayload): Promise<ProfileProxyActionEntity> {
+    await this.canRestoreOrThrow({ action_id, proxy_id, profile_id });
+    const action = await this.findProfileProxyActionByIdOrThrow({
+      id: action_id
+    });
+    const is_active = !!action.accepted_at && !action.rejected_at;
+    return await this.profileProxiesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        await this.profileProxiesDb.restoreProfileProxyAction({
+          action_id,
+          connection,
+          is_active
+        });
+        return await this.findProfileProxyActionByIdOrThrow({
+          id: action_id,
+          connection
+        });
+      }
+    );
+  }
+
+  async changeProfileProxyActionStatus({
+    acceptance_type,
+    ...payload
+  }: {
+    readonly proxy_id: string;
+    readonly action_id: string;
+    readonly acceptance_type: AcceptActionRequestActionEnum;
+    readonly profile_id: string;
+  }): Promise<ProfileProxyActionEntity> {
+    switch (acceptance_type) {
+      case AcceptActionRequestActionEnum.Accept:
+        return await this.acceptProfileProxyAction(payload);
+      case AcceptActionRequestActionEnum.Reject:
+        return await this.rejectProfileProxyAction(payload);
+      case AcceptActionRequestActionEnum.Revoke:
+        return await this.revokeProfileProxyAction(payload);
+      case AcceptActionRequestActionEnum.Restore:
+        return await this.restoreProfileProxyAction(payload);
+      default:
+        assertUnreachable(acceptance_type);
+        throw new BadRequestException('Invalid acceptance type');
+    }
   }
 }
 
