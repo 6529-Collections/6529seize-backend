@@ -3,7 +3,6 @@ import {
   ALCHEMY_SETTINGS,
   GRADIENT_CONTRACT,
   MANIFOLD,
-  MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMES_CONTRACT,
   NFT_HTML_LINK,
   NFT_ORIGINAL_IMAGE_LINK,
@@ -33,8 +32,6 @@ import { Artist } from '../entities/IArtist';
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { sqlExecutor } from '../sql-executor';
 import { Logger } from '../logging';
-import { NFTOwner } from '../entities/INFTOwner';
-import { fetchAllNftOwners } from '../nftOwnersLoop/db.nft_owners';
 
 const logger = Logger.get('NFTS');
 
@@ -93,6 +90,18 @@ const calculateMintPrice = async (firstMintTransaction: Transaction | null) => {
   );
 };
 
+const calculateSupply = (
+  createdTransactions: Transaction[],
+  burntTransactions: Transaction[]
+) => {
+  let supply = createdTransactions.reduce(
+    (acc, mint) => acc + mint.token_count,
+    0
+  );
+  supply -= burntTransactions.reduce((acc, burn) => acc + burn.token_count, 0);
+  return supply;
+};
+
 const getAnimationPaths = (tokenId: number, animationDetails: any) => {
   let animation, compressedAnimation;
   if (animationDetails) {
@@ -130,8 +139,6 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
 
   const newNFTS: NFT[] = [];
 
-  const allOwners: NFTOwner[] = await fetchAllNftOwners([MEMES_CONTRACT]);
-
   await Promise.all(
     allMemesNFTS.map(async (mnft) => {
       const tokenId = parseInt(mnft.tokenId);
@@ -143,40 +150,36 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
       const format = fullMetadata.image_details.format;
       const tokenPathOriginal = `${MEMES_CONTRACT}/${tokenId}.${format}`;
 
-      const { createdTransactions, firstMintTransaction } = transactions.reduce(
-        (acc, t) => {
-          if (
-            t.token_id == tokenId &&
-            areEqualAddresses(t.contract, MEMES_CONTRACT)
-          ) {
-            if (areEqualAddresses(NULL_ADDRESS, t.from_address))
-              acc.createdTransactions.push(t);
-            if (isNullAddress(t.to_address)) acc.burntTransactions.push(t);
+      const { createdTransactions, burntTransactions, firstMintTransaction } =
+        transactions.reduce(
+          (acc, t) => {
             if (
-              !acc.firstMintTransaction &&
-              t.value > 0 &&
-              (areEqualAddresses(MANIFOLD, t.from_address) ||
-                areEqualAddresses(NULL_ADDRESS, t.from_address))
+              t.token_id == tokenId &&
+              areEqualAddresses(t.contract, MEMES_CONTRACT)
             ) {
-              acc.firstMintTransaction = t;
+              if (areEqualAddresses(NULL_ADDRESS, t.from_address))
+                acc.createdTransactions.push(t);
+              if (isNullAddress(t.to_address)) acc.burntTransactions.push(t);
+              if (
+                !acc.firstMintTransaction &&
+                t.value > 0 &&
+                (areEqualAddresses(MANIFOLD, t.from_address) ||
+                  areEqualAddresses(NULL_ADDRESS, t.from_address))
+              ) {
+                acc.firstMintTransaction = t;
+              }
             }
+            return acc;
+          },
+          {
+            createdTransactions: [] as Transaction[],
+            burntTransactions: [] as Transaction[],
+            firstMintTransaction: null as Transaction | null
           }
-          return acc;
-        },
-        {
-          createdTransactions: [] as Transaction[],
-          burntTransactions: [] as Transaction[],
-          firstMintTransaction: null as Transaction | null
-        }
-      );
-
-      const owners = allOwners.filter((o) => o.token_id == tokenId);
-      let supply = owners.reduce((acc, o) => acc + o.balance, 0);
-      if (tokenId === 8) {
-        supply += MEME_8_EDITION_BURN_ADJUSTMENT;
-      }
+        );
 
       const mintPrice = await calculateMintPrice(firstMintTransaction);
+      const supply = calculateSupply(createdTransactions, burntTransactions);
       const tokenPath = getTokenPath(
         MEMES_CONTRACT,
         tokenId,
