@@ -9,8 +9,8 @@ export class NFT {
   @PrimaryColumn({ type: 'varchar', length: 50 })
   contract!: string;
 
-  @Column({ type: 'text', nullable: true })
-  mint_date!: string | undefined;
+  @Column({ type: 'datetime', nullable: true })
+  mint_date!: Date | null;
 
   @Column({ type: 'int', default: -1 })
   season?: number;

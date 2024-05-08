@@ -11,6 +11,7 @@ import {
   MEMES_EXTENDED_DATA_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
+  NULL_ADDRESS,
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
@@ -1059,4 +1060,12 @@ export async function persistOwners(owners: NFTOwner[]) {
   const repo = AppDataSource.getRepository(NFTOwner);
   await resetRepository(repo, owners);
   logger.info(`[OWNERS] [PERSISTED ${owners.length} OWNERS]`);
+}
+
+export async function fetchMintDate(contract: string, tokenId: number) {
+  const firstTransaction = await sqlExecutor.execute(
+    `SELECT transaction_date FROM ${TRANSACTIONS_TABLE} WHERE contract=:contract AND token_id=:tokenId ORDER BY transaction_date ASC LIMIT 1`,
+    { contract, tokenId }
+  );
+  return firstTransaction[0]?.transaction_date;
 }

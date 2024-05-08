@@ -29,6 +29,7 @@ import { NFT } from '../entities/INFT';
 import { fetchNftOwners } from './nft_owners';
 import { getAllNfts } from './nfts';
 import { consolidateTDH } from './tdh_consolidation';
+import { Time } from '../time';
 
 const logger = Logger.get('TDH');
 
@@ -202,7 +203,19 @@ export const updateTDH = async (
   const gradientOwners = await fetchNftOwners(block, GRADIENT_CONTRACT);
   const nextgenOwners = await fetchNftOwners(block, NEXTGEN_CONTRACT);
 
-  const { memes, gradients, nextgen } = await getAllNfts(memeOwners);
+  const {
+    memes: initialMemes,
+    gradients,
+    nextgen
+  } = await getAllNfts(memeOwners);
+  const memes = initialMemes.filter(
+    (m) =>
+      m.mint_date &&
+      Time.fromString(m.mint_date.toString()).lte(
+        Time.fromDate(lastTDHCalc).minusDays(1)
+      )
+  );
+  console.log('hi i am memes', memes.length);
 
   await persistOwners([...memeOwners, ...gradientOwners, ...nextgenOwners]);
   await persistNFTs([...memes, ...gradients, ...nextgen]);
