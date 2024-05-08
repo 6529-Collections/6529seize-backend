@@ -1,7 +1,6 @@
 import { fetchLatestTDHBDate } from '../db';
 import { getLastTDH } from '../helpers';
 import { updateTDH } from './tdh';
-import { consolidateTDH } from './tdh_consolidation';
 import { loadEnv, unload } from '../secrets';
 import { ConsolidatedTDH, TDH, TDHBlock } from '../entities/ITDH';
 import { NFT } from '../entities/INFT';
@@ -28,7 +27,6 @@ async function tdh(force?: boolean) {
 
   if (lastTdhFromNow.gt(Time.hours(24)) || force) {
     await updateTDH(lastTDHCalc);
-    await consolidateTDH();
   } else {
     logger.info(
       `[TODAY'S TDH ALREADY CALCULATED ${lastTdhFromNow} ago] [SKIPPING...]`

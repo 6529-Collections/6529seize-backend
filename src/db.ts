@@ -711,7 +711,6 @@ export async function persistNFTs(nfts: NFT[]) {
 
 export async function persistTDH(
   block: number,
-  timestamp: Date,
   tdh: TDH[],
   wallets?: string[]
 ) {
@@ -740,14 +739,16 @@ export async function persistTDH(
       logger.info(`[TDH CLEARED]`);
       await insertWithoutUpdate(tdhRepo, tdh);
     }
-
-    await manager.query(
-      `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block=?, timestamp=?`,
-      [block, timestamp.getTime()]
-    );
   });
 
   logger.info(`[TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+export async function persistTDHBlock(block: number, timestamp: Date) {
+  await getDataSource().query(
+    `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block=?, timestamp=?`,
+    [block, timestamp.getTime()]
+  );
 }
 
 export async function persistConsolidatedTDH(

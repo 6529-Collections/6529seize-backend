@@ -1,5 +1,4 @@
 import { distinct, getLastTDH } from '../helpers';
-import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { loadEnv, unload } from '../secrets';
 import { ConsolidatedTDH, NftTDH, TDH } from '../entities/ITDH';
 import { Logger } from '../logging';
@@ -29,5 +28,4 @@ async function consolidatedTdhLoop() {
   const walletsArray = distinct(consolidationAddresses.map((it) => it.wallet));
 
   await updateTDH(lastTDHCalc, walletsArray);
-  await consolidateTDH(walletsArray);
 }

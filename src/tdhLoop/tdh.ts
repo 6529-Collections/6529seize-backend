@@ -20,6 +20,7 @@ import {
   persistNFTs,
   persistOwners,
   persistTDH,
+  persistTDHBlock,
   retrieveWalletConsolidations
 } from '../db';
 import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
@@ -27,6 +28,7 @@ import { Logger } from '../logging';
 import { NFT } from '../entities/INFT';
 import { fetchNftOwners } from './nft_owners';
 import { getAllNfts } from './nfts';
+import { consolidateTDH } from './tdh_consolidation';
 
 const logger = Logger.get('TDH');
 
@@ -438,7 +440,9 @@ export const updateTDH = async (
     `[BLOCK ${block}] [WALLETS ${rankedTdh.length}] [CALCULATING TDH - END]`
   );
 
-  await persistTDH(block, timestamp, rankedTdh, startingWallets);
+  await persistTDH(block, rankedTdh, startingWallets);
+  await consolidateTDH(startingWallets);
+  await persistTDHBlock(block, timestamp);
 
   return {
     block: block,

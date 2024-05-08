@@ -16,7 +16,6 @@ import { loadEnv, unload } from '../secrets';
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { getLastTDH } from '../helpers';
-import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { sqlExecutor } from '../sql-executor';
 import { CONSOLIDATIONS_TABLE } from '../constants';
 import { ConsolidatedTDH, TDH } from '../entities/ITDH';
@@ -136,7 +135,6 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
     const walletsArray = Array.from(distinctWallets);
 
     await updateTDH(lastTDHCalc, walletsArray);
-    await consolidateTDH(walletsArray);
   } else {
     logger.info(`[NO WALLETS TO RECONSOLIDATE]`);
   }
