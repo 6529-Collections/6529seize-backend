@@ -77,20 +77,23 @@ export class CommunityMemberCriteriaService {
   }
 
   public async getCriteriaIdsUserIsEligibleFor(
-    wallet: string
+    profileId: string
   ): Promise<string[]> {
-    const communityMember =
-      await this.communityMemberCriteriaDb.getCommunityMember(wallet);
-    const profileId = communityMember.profile_id;
+    const profile = await this.communityMemberCriteriaDb.getCommunityMember(
+      profileId
+    );
+    if (profile === null) {
+      return [];
+    }
     const givenCicAndRep =
       await this.communityMemberCriteriaDb.getGivenCicAndRep(profileId);
     const initialSelection =
       await this.communityMemberCriteriaDb.getCriteriasByConditions({
         profileId,
-        receivedCic: communityMember.cic,
-        receivedRep: communityMember.rep,
-        tdh: communityMember.tdh,
-        level: communityMember.level,
+        receivedCic: profile.cic,
+        receivedRep: profile.rep,
+        tdh: profile.tdh,
+        level: profile.level,
         givenCic: givenCicAndRep.cic,
         givenRep: givenCicAndRep.rep
       });
@@ -112,11 +115,8 @@ export class CommunityMemberCriteriaService {
     const unambiguousInitial = initialSelection.filter(
       (crit) => !crit.cic_user && !crit.rep_user && !crit.rep_category
     );
-    if (ambiguousCandidates.length && !profileId) {
-      return unambiguousInitial.map((it) => it.id);
-    }
     const ratings = await this.communityMemberCriteriaDb.getRatings(
-      profileId!,
+      profileId,
       distinct([...cicUsers, ...repUsers]),
       repCategories
     );

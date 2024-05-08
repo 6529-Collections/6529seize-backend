@@ -5,8 +5,8 @@ import {
 } from '../../../sql-executor';
 import { CommunityGroupEntity } from '../../../entities/ICommunityGroup';
 import {
-  ALL_COMMUNITY_MEMBERS_VIEW,
   COMMUNITY_GROUPS_TABLE,
+  PROFILE_FULL,
   RATINGS_TABLE
 } from '../../../constants';
 import { RateMatter } from '../../../entities/IRating';
@@ -131,8 +131,8 @@ export class CommunityMemberCriteriaDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async getCommunityMember(wallet: string): Promise<{
-    profile_id: string | null;
+  async getCommunityMember(profileId: string): Promise<{
+    profile_id: string;
     tdh: number;
     level: number;
     cic: number;
@@ -140,35 +140,23 @@ export class CommunityMemberCriteriaDb extends LazyDbAccessCompatibleService {
   }> {
     return this.db
       .execute<{
-        profile_id: string | null;
+        profile_id: string;
         tdh: number;
         level: number;
         cic: number;
         rep: number;
       }>(
         `
-      select profile_id, tdh, level, cic, rep from ${ALL_COMMUNITY_MEMBERS_VIEW} where wallet1 = :wallet or wallet2 = :wallet or wallet3 = :wallet
+      select external_id as profile_id, profile_tdh as tdh, profile_tdh + rep_score as level, cic_score as cic, rep_score as rep from ${PROFILE_FULL} where external_id = :profileId
     `,
-        { wallet }
+        { profileId }
       )
-      .then(
-        (res) =>
-          res[0] ?? {
-            profile_id: null,
-            tdh: 0,
-            level: 0,
-            cic: 0,
-            rep: 0
-          }
-      );
+      .then((res) => res[0] ?? null);
   }
 
   async getGivenCicAndRep(
-    profileId: string | null
+    profileId: string
   ): Promise<{ cic: number; rep: number }> {
-    if (!profileId) {
-      return { cic: 0, rep: 0 };
-    }
     return this.db
       .execute<{
         matter: string;

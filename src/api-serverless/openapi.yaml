@@ -154,6 +154,12 @@ paths:
           required: false
           schema:
             type: string
+        - name: wave_id
+          in: query
+          description: Drops in wave with given ID
+          required: false
+          schema:
+            type: string
         - name: serial_no_less_than
           in: query
           description: Used to find older drops
@@ -855,6 +861,7 @@ components:
       required:
           - id
           - serial_no
+          - wave_id
           - author
           - created_at
           - referenced_nfts
@@ -877,6 +884,8 @@ components:
             description: Sequence number of the drop in Seize
             type: number
             format: int64
+          wave_id:
+            type: string
           author:
             $ref: '#/components/schemas/ProfileMin'
           created_at:
@@ -1134,11 +1143,14 @@ components:
     CreateDropRequest:
       type: object
       required:
+        - wave_id
         - referenced_nfts
         - mentioned_users
         - metadata
         - parts
       properties:
+        wave_id:
+          type: string
         title:
           type: string
           maxLength: 250

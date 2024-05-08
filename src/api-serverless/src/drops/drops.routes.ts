@@ -50,6 +50,7 @@ router.get(
         serial_no_less_than?: number;
         min_part_id?: number;
         max_part_id?: number;
+        wave_id?: string;
         context_profile?: string;
       },
       any
@@ -64,6 +65,7 @@ router.get(
           ?.then((result) => result?.profile?.external_id)
       : undefined;
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
+    const wave_id = req.query.wave_id ?? null;
     const curation_criteria_id = req.query.curation_criteria_id ?? null;
     let min_part_id = parseIntOrNull(req.query.min_part_id);
     if (!min_part_id || min_part_id < 1) {
@@ -84,6 +86,7 @@ router.get(
       serial_no_less_than: parseNumberOrNull(req.query.serial_no_less_than),
       min_part_id,
       max_part_id,
+      wave_id,
       context_profile_id: contextProfileId
     });
     res.send(latestDrops);
@@ -175,7 +178,8 @@ router.post(
       parts: newDrop.parts,
       referenced_nfts: newDrop.referenced_nfts,
       mentioned_users: newDrop.mentioned_users,
-      metadata: newDrop.metadata
+      metadata: newDrop.metadata,
+      wave_id: newDrop.wave_id
     };
     const createdDrop = await dropCreationService.createDrop(createDropRequest);
     res.send(createdDrop);
@@ -452,7 +456,8 @@ const NewDropSchema: Joi.ObjectSchema<CreateDropRequest> = Joi.object({
     .items(MentionedUserSchema)
     .default([])
     .allow(null),
-  metadata: Joi.array().optional().items(MetadataSchema).default([])
+  metadata: Joi.array().optional().items(MetadataSchema).default([]),
+  wave_id: Joi.string().required()
 });
 
 const DropDiscussionCommentsQuerySchema: Joi.ObjectSchema<DropActivityLogsQuery> =
