@@ -19,7 +19,7 @@ import { loadEnv } from './secrets';
 const logger = Logger.get('RESTORE_DUMPS');
 
 const BASE_PATH =
-  'https://6529bucket.s3.eu-west-1.amazonaws.com/db-dumps/development';
+  'https://6529bucket.s3.eu-west-1.amazonaws.com/db-dumps/production';
 
 export async function restoreDumps() {
   await loadEnv([Transaction, Delegation, Consolidation, NFTDelegationBlock]);
@@ -53,7 +53,7 @@ const getValue = (headers: any[], columns: any[], column: string) => {
 async function restoreTransactions() {
   const tableName = TRANSACTIONS_TABLE;
 
-  logger.info(`[TABLE ${tableName}] : [RESTORING...]`);
+  logger.info(`[TABLE ${tableName}] : [DOWNLOADING...]`);
 
   const [headerRow, ...data] = await getData(tableName);
 

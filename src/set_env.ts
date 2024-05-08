@@ -122,7 +122,6 @@ async function performDbOperation(
   name: string,
   sql: string[]
 ) {
-  console.log('executing', sql);
   try {
     logger.info(`${name}...`);
     for (const query of sql) {
@@ -160,7 +159,7 @@ function writeEnv(
   try {
     fs.writeFileSync('.env.lite', content);
   } catch (error) {
-    console.error('Failed to write the environment file:', error);
+    logger.error('Failed to write the environment file:', error);
   }
 }
 
