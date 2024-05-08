@@ -647,7 +647,7 @@ export class ProfileProxyApiService {
       ...profileProxyAction.action_data
     };
 
-    if (!!credit_amount) {
+    if (credit_amount) {
       action_data.credit_amount = credit_amount;
     }
 
