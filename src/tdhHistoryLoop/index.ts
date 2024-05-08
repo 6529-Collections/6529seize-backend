@@ -84,7 +84,7 @@ async function fetchAndParseCSV(url: string): Promise<any[]> {
         resolve(csvData);
       })
       .on('error', (error: any) => {
-        reject(error);
+        reject(new Error(error));
       });
   });
 }
@@ -324,19 +324,19 @@ async function calculateGlobalTDHHistory(
   let totalDestroyedBalance = 0;
   let totalNetBalance = 0;
 
-  tdhHistory.forEach((h) => {
-    totalCreatedTdh += h.created_tdh;
-    totalDestroyedTdh += h.destroyed_tdh;
-    totalNetTdh += h.net_tdh;
-    totalCreatedBoostedTdh += h.created_boosted_tdh;
-    totalDestroyedBoostedTdh += h.destroyed_boosted_tdh;
-    totalNetBoostedTdh += h.net_boosted_tdh;
-    totalCreatedTdhRaw += h.created_tdh__raw;
-    totalDestroyedTdhRaw += h.destroyed_tdh__raw;
-    totalNetTdhRaw += h.net_tdh__raw;
-    totalCreatedBalance += h.created_balance;
-    totalDestroyedBalance += h.destroyed_balance;
-    totalNetBalance += h.net_balance;
+  tdhHistory.forEach((h: any) => {
+    totalCreatedTdh += parseFloat(h.created_tdh);
+    totalDestroyedTdh += parseFloat(h.destroyed_tdh);
+    totalNetTdh += parseFloat(h.net_tdh);
+    totalCreatedBoostedTdh += parseFloat(h.created_boosted_tdh);
+    totalDestroyedBoostedTdh += parseFloat(h.destroyed_boosted_tdh);
+    totalNetBoostedTdh += parseFloat(h.net_boosted_tdh);
+    totalCreatedTdhRaw += parseFloat(h.created_tdh__raw);
+    totalDestroyedTdhRaw += parseFloat(h.destroyed_tdh__raw);
+    totalNetTdhRaw += parseFloat(h.net_tdh__raw);
+    totalCreatedBalance += parseFloat(h.created_balance);
+    totalDestroyedBalance += parseFloat(h.destroyed_balance);
+    totalNetBalance += parseFloat(h.net_balance);
   });
 
   let totalBoostedTdh = 0;
