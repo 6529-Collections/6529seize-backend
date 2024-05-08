@@ -9,7 +9,6 @@ import {
 import { NFT } from '../entities/INFT';
 import { persistNFTs } from '../db';
 import { NFTOwner } from '../entities/INFTOwner';
-import { isNullAddress } from '../helpers';
 
 let alchemy: Alchemy;
 
@@ -23,13 +22,14 @@ export async function getAllNfts(memeOwners: NFTOwner[]): Promise<{
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const memes: Nft[] = await getAllNFTs(MEMES_CONTRACT);
+  const memes: Nft[] = await getAllNFTsForContract(MEMES_CONTRACT);
   const parsedMemes: NFT[] = memes.map((m) => {
     const tokenId = parseInt(m.tokenId);
-    const owners = memeOwners.filter(
-      (o) => o.token_id === parseInt(m.tokenId) && !isNullAddress(o.address)
-    );
-    const editionSize = owners.reduce((acc, o) => acc + o.balance, 0);
+    const owners = memeOwners.filter((o) => o.token_id === parseInt(m.tokenId));
+    let editionSize = owners.reduce((acc, o) => acc + o.balance, 0);
+    if (tokenId === 8) {
+      editionSize += MEME_8_EDITION_BURN_ADJUSTMENT;
+    }
 
     const season =
       m.raw.metadata.attributes.find(
@@ -44,7 +44,7 @@ export async function getAllNfts(memeOwners: NFTOwner[]): Promise<{
     };
   });
 
-  const gradients: Nft[] = await getAllNFTs(GRADIENT_CONTRACT);
+  const gradients: Nft[] = await getAllNFTsForContract(GRADIENT_CONTRACT);
   const parsedGradients: NFT[] = gradients.map((g) => {
     return {
       contract: g.contract.address,
@@ -54,7 +54,7 @@ export async function getAllNfts(memeOwners: NFTOwner[]): Promise<{
     };
   });
 
-  const nextgen: Nft[] = await getAllNFTs(NEXTGEN_CONTRACT);
+  const nextgen: Nft[] = await getAllNFTsForContract(NEXTGEN_CONTRACT);
   const nextgenCollections = new Map<number, number[]>();
   nextgen.forEach((n) => {
     const collectionId = Math.round(parseInt(n.tokenId) / 10000000000);
@@ -82,7 +82,7 @@ export async function getAllNfts(memeOwners: NFTOwner[]): Promise<{
   };
 }
 
-async function getAllNFTs(
+async function getAllNFTsForContract(
   contract: string,
   nfts: Nft[] = [],
   key = ''
@@ -92,7 +92,7 @@ async function getAllNFTs(
   nfts = nfts.concat(response.nfts);
 
   if (newKey) {
-    return getAllNFTs(contract, nfts, newKey);
+    return getAllNFTsForContract(contract, nfts, newKey);
   }
 
   return nfts;

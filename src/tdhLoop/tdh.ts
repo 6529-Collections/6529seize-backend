@@ -200,9 +200,10 @@ export const updateTDH = async (
   const gradientOwners = await fetchNftOwners(block, GRADIENT_CONTRACT);
   const nextgenOwners = await fetchNftOwners(block, NEXTGEN_CONTRACT);
 
-  await persistOwners([...memeOwners, ...gradientOwners, ...nextgenOwners]);
-
   const { memes, gradients, nextgen } = await getAllNfts(memeOwners);
+
+  await persistOwners([...memeOwners, ...gradientOwners, ...nextgenOwners]);
+  await persistNFTs([...memes, ...gradients, ...nextgen]);
 
   const HODL_INDEX = memes.reduce((acc, m) => Math.max(acc, m.edition_size), 0);
   const ADJUSTED_SEASONS = buildSeasons(memes);
