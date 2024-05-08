@@ -166,8 +166,9 @@ export const getAdjustedMemesAndSeasons = async (lastTDHCalc: Date) => {
   const memeNfts = ADJUSTED_NFTS.filter((nft) =>
     areEqualAddresses(nft.contract, MEMES_CONTRACT)
   );
+
   const ADJUSTED_SEASONS = seasons.filter(
-    (s) => memeNfts.length >= s.end_index
+    (s) => memeNfts.length >= s.start_index
   );
 
   return {

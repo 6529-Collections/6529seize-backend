@@ -3,8 +3,11 @@ import {
   CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE,
   CONSOLIDATED_OWNERS_BALANCES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  MEMES_CONTRACT,
   MEMES_SEASONS_TABLE,
+  MEME_8_EDITION_BURN_ADJUSTMENT,
   NFT_OWNERS_CONSOLIDATION_TABLE,
+  NULL_ADDRESS,
   PROFILE_FULL,
   TDH_HISTORY_TABLE,
   TDH_NFT_TABLE
@@ -45,6 +48,12 @@ export const fetchNftTdh = async (
   pageSize: number,
   searchStr: string | undefined
 ) => {
+  const params: any = {
+    contract: contract.toLowerCase(),
+    nftId,
+    nullAddress: NULL_ADDRESS,
+    memesContract: MEMES_CONTRACT
+  };
   let filters = constructFilters(
     '',
     `${NFT_OWNERS_CONSOLIDATION_TABLE}.contract = :contract`
@@ -53,10 +62,6 @@ export const fetchNftTdh = async (
     filters,
     `${NFT_OWNERS_CONSOLIDATION_TABLE}.token_id = :nftId`
   );
-  const params: any = {
-    contract: contract.toLowerCase(),
-    nftId
-  };
 
   if (searchStr) {
     let walletFilters = '';
@@ -77,7 +82,15 @@ export const fetchNftTdh = async (
   }
 
   const fields = `
-    ${NFT_OWNERS_CONSOLIDATION_TABLE}.*,
+    ${NFT_OWNERS_CONSOLIDATION_TABLE}.token_id,
+    ${NFT_OWNERS_CONSOLIDATION_TABLE}.contract,
+    CASE 
+      WHEN 
+        ${NFT_OWNERS_CONSOLIDATION_TABLE}.consolidation_key = :nullAddress 
+        AND ${NFT_OWNERS_CONSOLIDATION_TABLE}.contract = :memesContract
+      THEN ${NFT_OWNERS_CONSOLIDATION_TABLE}.balance + ${MEME_8_EDITION_BURN_ADJUSTMENT} 
+      ELSE ${NFT_OWNERS_CONSOLIDATION_TABLE}.balance END as balance,
+    ${NFT_OWNERS_CONSOLIDATION_TABLE}.consolidation_key,
     ${TDH_NFT_TABLE}.tdh, 
     ${TDH_NFT_TABLE}.boost, 
     ${TDH_NFT_TABLE}.boosted_tdh, 
