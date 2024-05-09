@@ -103,7 +103,7 @@ import { PageBase } from '../models/PageBase';
 import { PageWithNextUriBase } from '../models/PageWithNextUriBase';
 import { ProfileMin } from '../models/ProfileMin';
 import { ProfileProxy } from '../models/ProfileProxy';
-import { ProfileProxyAction            } from '../models/ProfileProxyAction';
+import { ProfileProxyAction             } from '../models/ProfileProxyAction';
 import { ProfileProxyActionType } from '../models/ProfileProxyActionType';
 import { QuotedDrop } from '../models/QuotedDrop';
 import { UpdateActionRequest } from '../models/UpdateActionRequest';

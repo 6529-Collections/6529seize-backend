@@ -1754,7 +1754,8 @@ components:
         - id
         - proxy_id
         - action_type
-        - action_data
+        - credit_amount
+        - credit_spent
         - start_time
         - end_time
         - accepted_at
@@ -1769,8 +1770,16 @@ components:
           type: string
         action_type:
           $ref: "#/components/schemas/ProfileProxyActionType"
-        action_data:
-          type: object
+        credit_amount:
+          anyOf:
+            - type: "null"
+            - type: number
+              format: int64
+        credit_spent:
+          anyOf:
+            - type: "null"
+            - type: number
+              format: int64
         start_time:
           type: number
           format: int64

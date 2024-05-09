@@ -17,10 +17,7 @@ import { ConnectionWrapper } from '../../../sql-executor';
 import { ProfileAndConsolidations } from '../../../profiles/profile.types';
 
 import { ProxyApiRequestAction } from './proxies.api.types';
-import {
-  ApiProfileProxyActionType,
-  ProfileProxyActionApiEntity
-} from '../../../entities/IProfileProxyAction';
+import { ApiProfileProxyActionType, ProfileProxyActionEntity } from '../../../entities/IProfileProxyAction';
 import { assertUnreachable } from '../../../helpers';
 import { ProfileProxyActionType } from '../generated/models/ProfileProxyActionType';
 import { ProfileProxy } from '../generated/models/ProfileProxy';
@@ -298,7 +295,7 @@ export class ProfileProxyApiService {
   }: {
     readonly id: string;
     readonly connection?: ConnectionWrapper<any>;
-  }): Promise<ProfileProxyActionApiEntity> {
+  }): Promise<ProfileProxyActionEntity> {
     const profileProxyAction =
       await this.profileProxiesDb.findProfileProxyActionById({
         id,
@@ -316,7 +313,7 @@ export class ProfileProxyApiService {
     profileProxyAction
   }: {
     readonly profileProxyAction: NewProfileProxyAction;
-  }): Promise<ProfileProxyActionApiEntity> {
+  }): Promise<ProfileProxyActionEntity> {
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const { actionId } =
@@ -338,18 +335,18 @@ export class ProfileProxyApiService {
   }: {
     readonly proxy_id: string;
     readonly action: ProxyApiRequestAction;
-  }): Promise<ProfileProxyActionApiEntity> {
+  }): Promise<ProfileProxyActionEntity> {
     const action_exists = await this.isActionExists({ proxy_id, action });
     if (action_exists) {
       throw new BadRequestException('Action already exists');
     }
-    const { end_time, action_type, ...restOfAction } = action;
     const newAction: NewProfileProxyAction = {
       proxy_id,
-      action_type: ACTION_MAP[action_type],
+      action_type: ACTION_MAP[action.action_type],
       start_time: Time.currentMillis(),
-      end_time: end_time ?? null,
-      action_data: JSON.stringify(restOfAction)
+      end_time: action.end_time ?? null,
+      credit_amount: 'credit_amount' in action ? action.credit_amount : null,
+      credit_spent: 'credit_amount' in action ? 0 : null
     };
     const profileProxyAction = await this.persistProfileProxyAction({
       profileProxyAction: newAction
@@ -368,7 +365,7 @@ export class ProfileProxyApiService {
     proxy_id: string;
   }): Promise<{
     profileProxy: ProfileProxy;
-    profileProxyAction: ProfileProxyActionApiEntity;
+    profileProxyAction: ProfileProxyActionEntity;
   }> {
     const [profileProxy, profileProxyAction] = await Promise.all([
       this.getProfileProxyByIdOrThrow({
@@ -500,7 +497,7 @@ export class ProfileProxyApiService {
     proxy_id,
     action_id,
     profile_id
-  }: CanDoAcceptancePayload): Promise<ProfileProxyActionApiEntity> {
+  }: CanDoAcceptancePayload): Promise<ProfileProxyActionEntity> {
     await this.canAcceptActionOrThrow({ action_id, proxy_id, profile_id });
     const action = await this.findProfileProxyActionByIdOrThrow({
       id: action_id
@@ -525,7 +522,7 @@ export class ProfileProxyApiService {
     proxy_id,
     action_id,
     profile_id
-  }: CanDoAcceptancePayload): Promise<ProfileProxyActionApiEntity> {
+  }: CanDoAcceptancePayload): Promise<ProfileProxyActionEntity> {
     await this.canRejectActionOrThrow({ action_id, proxy_id, profile_id });
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -545,7 +542,7 @@ export class ProfileProxyApiService {
     proxy_id,
     action_id,
     profile_id
-  }: CanDoAcceptancePayload): Promise<ProfileProxyActionApiEntity> {
+  }: CanDoAcceptancePayload): Promise<ProfileProxyActionEntity> {
     await this.canRevokeOrThrow({ action_id, proxy_id, profile_id });
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -565,7 +562,7 @@ export class ProfileProxyApiService {
     proxy_id,
     action_id,
     profile_id
-  }: CanDoAcceptancePayload): Promise<ProfileProxyActionApiEntity> {
+  }: CanDoAcceptancePayload): Promise<ProfileProxyActionEntity> {
     await this.canRestoreOrThrow({ action_id, proxy_id, profile_id });
     const action = await this.findProfileProxyActionByIdOrThrow({
       id: action_id
@@ -594,7 +591,7 @@ export class ProfileProxyApiService {
     readonly action_id: string;
     readonly acceptance_type: AcceptActionRequestActionEnum;
     readonly profile_id: string;
-  }): Promise<ProfileProxyActionApiEntity> {
+  }): Promise<ProfileProxyActionEntity> {
     switch (acceptance_type) {
       case AcceptActionRequestActionEnum.Accept:
         return await this.acceptProfileProxyAction(payload);
@@ -622,7 +619,7 @@ export class ProfileProxyApiService {
     readonly profile_id: string;
     readonly credit_amount?: number;
     readonly end_time?: number;
-  }): Promise<ProfileProxyActionApiEntity> {
+  }): Promise<ProfileProxyActionEntity> {
     if (!credit_amount && !end_time) {
       throw new BadRequestException(
         'Credit amount or end time must be provided'
@@ -645,19 +642,11 @@ export class ProfileProxyApiService {
       throw new BadRequestException('Action does not have credit');
     }
 
-    const action_data: Record<string, any> = {
-      ...profileProxyAction.action_data
-    };
-
-    if (credit_amount) {
-      action_data.credit_amount = credit_amount;
-    }
-
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         await this.profileProxiesDb.updateProfileProxyAction({
           action_id,
-          action_data: JSON.stringify(action_data),
+          credit_amount,
           end_time,
           connection
         });

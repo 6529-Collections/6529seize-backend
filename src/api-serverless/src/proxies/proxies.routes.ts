@@ -21,8 +21,8 @@ import {
   AcceptActionRequest,
   AcceptActionRequestActionEnum
 } from '../generated/models/AcceptActionRequest';
-import { ProfileProxyActionApiEntity } from '../../../entities/IProfileProxyAction';
 import { UpdateActionRequest } from '../generated/models/UpdateActionRequest';
+import { ProfileProxyActionEntity } from '../../../entities/IProfileProxyAction';
 
 const router = asyncRouter();
 
@@ -82,7 +82,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<{ proxy_id: string }, any, ProxyApiRequestAction, any, any>,
-    res: Response<ApiResponse<ProfileProxyActionApiEntity>>
+    res: Response<ApiResponse<ProfileProxyActionEntity>>
   ) => {
     const { proxy_id } = req.params;
     const requesterProfile = await profilesService
@@ -167,7 +167,7 @@ router.post(
       any,
       any
     >,
-    res: Response<ApiResponse<ProfileProxyActionApiEntity>>
+    res: Response<ApiResponse<ProfileProxyActionEntity>>
   ) => {
     const { proxy_id, action_id } = req.params;
     const requesterProfile = await profilesService
@@ -206,7 +206,7 @@ router.put(
       any,
       any
     >,
-    res: Response<ApiResponse<ProfileProxyActionApiEntity>>
+    res: Response<ApiResponse<ProfileProxyActionEntity>>
   ) => {
     const { proxy_id, action_id } = req.params;
     const requesterProfile = await profilesService
