@@ -289,29 +289,7 @@ export class ProfileProxyApiService {
           action_type
         }
       );
-    if (!actions.length) {
-      return false;
-    }
-    switch (action_type) {
-      case ApiProfileProxyActionType.ALLOCATE_REP:
-        return actions.some((a) => {
-          const action_data = a.action_data as unknown as Record<string, any>;
-          if ('credit_category' in action_data && 'credit_category' in action) {
-            return action_data.credit_category === action.credit_category;
-          }
-          return false;
-        });
-      case ApiProfileProxyActionType.ALLOCATE_CIC:
-      case ApiProfileProxyActionType.CREATE_WAVE:
-      case ApiProfileProxyActionType.READ_WAVE:
-      case ApiProfileProxyActionType.CREATE_DROP_TO_WAVE:
-      case ApiProfileProxyActionType.RATE_WAVE_DROP:
-        return true;
-      default:
-        assertUnreachable(action_type);
-    }
-
-    return true;
+    return !!actions.length;
   }
 
   public async findProfileProxyActionByIdOrThrow({

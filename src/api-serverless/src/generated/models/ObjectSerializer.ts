@@ -60,14 +60,14 @@ export * from '../models/WaveVisibilityConfig';
 export * from '../models/WaveVotingConfig';
 
 import { AcceptActionRequest, AcceptActionRequestActionEnum   } from '../models/AcceptActionRequest';
-import { AddActionToProxyRequest      } from '../models/AddActionToProxyRequest';
+import { AddActionToProxyRequest    } from '../models/AddActionToProxyRequest';
 import { CreateDropMediaUrl201Response } from '../models/CreateDropMediaUrl201Response';
 import { CreateDropMediaUrlRequest } from '../models/CreateDropMediaUrlRequest';
 import { CreateDropPart } from '../models/CreateDropPart';
 import { CreateDropRequest } from '../models/CreateDropRequest';
 import { CreateNewProfileProxy } from '../models/CreateNewProfileProxy';
-import { CreateNewProfileProxyAllocateCicAction     } from '../models/CreateNewProfileProxyAllocateCicAction';
-import { CreateNewProfileProxyAllocateRepAction      } from '../models/CreateNewProfileProxyAllocateRepAction';
+import { CreateNewProfileProxyAllocateCicAction    } from '../models/CreateNewProfileProxyAllocateCicAction';
+import { CreateNewProfileProxyAllocateRepAction    } from '../models/CreateNewProfileProxyAllocateRepAction';
 import { CreateNewProfileProxyCreateWaveAction   } from '../models/CreateNewProfileProxyCreateWaveAction';
 import { CreateNewProfileProxyCreateWaveParticipationDropAction   } from '../models/CreateNewProfileProxyCreateWaveParticipationDropAction';
 import { CreateNewProfileProxyRateWaveDropAction   } from '../models/CreateNewProfileProxyRateWaveDropAction';

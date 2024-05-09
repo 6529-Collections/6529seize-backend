@@ -1654,7 +1654,6 @@ components:
         - action_type
         - end_time
         - credit_amount
-        - credit_category
       properties:
         action_type:
           $ref: "#/components/schemas/ProfileProxyActionType"
@@ -1666,14 +1665,6 @@ components:
         credit_amount:
           type: number
           format: int64
-        group_id:
-          anyOf:
-            - type: "null"
-            - type: string
-        credit_category:
-          anyOf:
-            - type: "null"
-            - type: string
 
     CreateNewProfileProxyAllocateCicAction:
       type: object
@@ -1681,7 +1672,6 @@ components:
         - action_type
         - end_time
         - credit_amount
-        - group_id
       properties:
         action_type:
           $ref: "#/components/schemas/ProfileProxyActionType"
@@ -1693,10 +1683,6 @@ components:
         credit_amount:
           type: number
           format: int64
-        group_id:
-          anyOf:
-            - type: "null"
-            - type: string
 
     CreateNewProfileProxyCreateWaveAction:
       type: object

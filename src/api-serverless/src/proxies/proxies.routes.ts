@@ -245,9 +245,7 @@ const NewProfileProxyAllocateRepActionSchema =
       .valid(ProfileProxyActionType.AllocateRep)
       .required(),
     end_time: Joi.number().optional().allow(null),
-    credit_amount: Joi.number().min(1).required(),
-    group_id: Joi.string().optional().allow(null),
-    credit_category: Joi.string().optional().allow(null)
+    credit_amount: Joi.number().min(1).required()
   });
 
 const NewProfileProxyAllocateCicActionSchema =
@@ -256,8 +254,7 @@ const NewProfileProxyAllocateCicActionSchema =
       .valid(ProfileProxyActionType.AllocateCic)
       .required(),
     end_time: Joi.number().optional().allow(null),
-    credit_amount: Joi.number().min(1).required(),
-    group_id: Joi.string().optional().allow(null)
+    credit_amount: Joi.number().min(1).required()
   });
 
 const NewProfileProxyCreateWaveActionSchema =
