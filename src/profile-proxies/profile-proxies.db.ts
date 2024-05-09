@@ -91,7 +91,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     readonly grantee: string;
   }): Promise<ProfileProxyEntity[]> {
     return this.db.execute(
-      `select * from ${PROFILE_PROXIES_TABLE} where created_by = :grantor target_id = :grantee order by created_at ASC`,
+      `select * from ${PROFILE_PROXIES_TABLE} where created_by = :grantor and target_id = :grantee order by created_at ASC`,
       {
         grantor,
         grantee
@@ -361,6 +361,17 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     query += ` where id = :id`;
 
     await this.db.execute(query, params, { wrappedConnection: connection });
+  }
+
+  async updateCreditSpentForAction(
+    param: { credit_spent: number; id: string },
+    connection: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update ${PROFILE_PROXY_ACTIONS_TABLE} set credit_spent = :credit_spent where id = :id`,
+      param,
+      { wrappedConnection: connection.connection }
+    );
   }
 }
 
