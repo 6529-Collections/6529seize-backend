@@ -69,7 +69,7 @@ async function execNativeTransactionally<T>(
     return await new Promise((resolve, reject) => {
       connection.commit((err: any) => {
         if (err) {
-          reject(err);
+          reject(new Error(err));
         } else {
           resolve(result);
         }
@@ -122,7 +122,7 @@ async function execSQLWithParams<T>(
             params ? ` with params ${JSON.stringify(params)}` : ''
           }\n`
         );
-        reject(err);
+        reject(new Error(err));
       } else {
         resolve(Object.values(JSON.parse(JSON.stringify(result))));
       }

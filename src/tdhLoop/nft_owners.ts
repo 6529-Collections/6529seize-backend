@@ -1,15 +1,19 @@
 import { NftContractOwner } from 'alchemy-sdk';
-import { getAlchemyInstance } from '../alchemy';
 import { NFTOwner } from '../entities/INFTOwner';
 import { Logger } from '../logging';
 
 const logger = Logger.get('NFT_OWNERS');
 
+interface OwnersApiResponse {
+  ownerAddresses: NftContractOwner[];
+  pageKey?: string;
+}
+
 export async function fetchNftOwners(
   block: number,
   contract: string
 ): Promise<NFTOwner[]> {
-  logger.info(`[FETCHING NFT OWNERS] [block=${block}] [contract=${contract}]`);
+  logger.info(`[FETCHING NFT OWNERS] [BLOCK ${block}] [CONTRACT ${contract}]`);
   const contractOwners = await getOwners(block, contract);
 
   return contractOwners.flatMap((owner) =>
@@ -37,11 +41,19 @@ async function getOwners(
 }
 
 async function getOwnersForPage(block: number, contract: string, page: string) {
-  const alchemy = getAlchemyInstance();
-  const owners = await alchemy.nft.getOwnersForContract(contract, {
+  const baseUrl = `https://eth-mainnet.g.alchemy.com/nft/v2/${process.env.ALCHEMY_API_KEY}/getOwnersForContract`;
+  const urlParams = new URLSearchParams({
+    contractAddress: contract,
     block: block.toString(),
-    withTokenBalances: true,
-    pageKey: page
+    withTokenBalances: 'true',
+    ...(page ? { pageKey: page } : {})
   });
-  return owners;
+  const url = `${baseUrl}?${urlParams.toString()}`;
+  const response = await fetch(url);
+  const data = (await response.json()) as OwnersApiResponse;
+
+  return {
+    owners: data.ownerAddresses,
+    pageKey: data.pageKey
+  };
 }

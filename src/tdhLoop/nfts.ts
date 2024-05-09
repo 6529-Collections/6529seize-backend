@@ -7,7 +7,7 @@ import {
   NEXTGEN_CONTRACT
 } from '../constants';
 import { NFT } from '../entities/INFT';
-import { fetchMintDate, persistNFTs } from '../db';
+import { fetchMintDate } from '../db';
 import { NFTOwner } from '../entities/INFTOwner';
 
 let alchemy: Alchemy;
@@ -41,11 +41,12 @@ export async function getAllNfts(memeOwners: NFTOwner[]): Promise<{
         )?.value ?? -1;
 
       return {
-        contract: m.contract.address,
+        contract: m.contract.address.toLowerCase(),
         id: tokenId,
         mint_date: await getMintDate(m),
         edition_size: editionSize,
-        season
+        season,
+        tdh: 0
       };
     })
   );
@@ -54,10 +55,11 @@ export async function getAllNfts(memeOwners: NFTOwner[]): Promise<{
   const parsedGradients: NFT[] = await Promise.all(
     gradients.map(async (g) => {
       return {
-        contract: g.contract.address,
+        contract: g.contract.address.toLowerCase(),
         id: parseInt(g.tokenId),
         mint_date: await getMintDate(g),
-        edition_size: gradients.length
+        edition_size: gradients.length,
+        tdh: 0
       };
     })
   );
@@ -75,15 +77,14 @@ export async function getAllNfts(memeOwners: NFTOwner[]): Promise<{
       const collectionId = Math.round(parseInt(n.tokenId) / 10000000000);
       const collection = nextgenCollections.get(collectionId) || [];
       return {
-        contract: n.contract.address,
+        contract: n.contract.address.toLowerCase(),
         id: parseInt(n.tokenId),
         mint_date: await getMintDate(n),
-        edition_size: collection.length
+        edition_size: collection.length,
+        tdh: 0
       };
     })
   );
-
-  await persistNFTs([...parsedMemes, ...parsedGradients, ...parsedNextgen]);
 
   return {
     memes: parsedMemes,

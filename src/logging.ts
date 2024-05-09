@@ -22,7 +22,9 @@ const messageFormat = (loggerName: string) =>
     if (info.message.constructor === Object) {
       info.message = JSON.stringify(info.message, null, 2);
     }
-    return `[${info.level}] [${loggerName}] : ${info.message}${
+    return `[${
+      info.timestamp
+    }] : [${loggerName}] : [${info.level.toUpperCase()}] : ${info.message}${
       info.stack ? '\n' + info.stack : ''
     }`;
   });

@@ -27,6 +27,13 @@ const logger = Logger.get('DELEGATIONS_LOOP');
 
 export const handler = async () => {
   const start = Time.now();
+  const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
+  const startBlock =
+    startBlockEnv && Number.isInteger(Number(startBlockEnv))
+      ? parseInt(startBlockEnv, 10)
+      : undefined;
+  logger.info(`[RUNNING] [START_BLOCK ${startBlock}]`);
+
   await loadEnv([
     Delegation,
     Consolidation,
@@ -36,19 +43,14 @@ export const handler = async () => {
     NFT,
     NFTOwner
   ]);
-  const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
-  const startBlock =
-    startBlockEnv && Number.isInteger(Number(startBlockEnv))
-      ? parseInt(startBlockEnv, 10)
-      : undefined;
 
-  logger.info(`[RUNNING] [START_BLOCK ${startBlock}]`);
   const delegationsResponse = await handleDelegations(startBlock);
   await persistNftDelegationBlock(
     delegationsResponse.block,
     delegationsResponse.blockTimestamp
   );
   await unload();
+
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);
 };

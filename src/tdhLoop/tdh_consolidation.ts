@@ -3,7 +3,6 @@ import {
   fetchAllConsolidatedTdh,
   fetchAllTDH,
   fetchLatestTDHBlockNumber,
-  fetchNftsForContract,
   persistConsolidatedTDH,
   retrieveWalletConsolidations
 } from '../db';
@@ -15,12 +14,9 @@ import {
   createMemesData,
   getGenesisAndNaka
 } from './tdh';
-import {
-  GRADIENT_CONTRACT,
-  MEMES_CONTRACT,
-  NEXTGEN_CONTRACT
-} from '../constants';
+import { MEMES_CONTRACT } from '../constants';
 import { Logger } from '../logging';
+import { NFT } from '../entities/INFT';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
 
@@ -119,7 +115,7 @@ export async function consolidateTDHForWallets(
         memes_tdh: memesData.memes_tdh,
         memes_tdh__raw: memesData.memes_tdh__raw,
         memes_balance: memesData.memes_balance,
-        boosted_memes_tdh: memesData.boosted_memes_tdh,
+        boosted_memes_tdh: 0,
         memes_ranks: memesData.memes_ranks,
         memes: consolidationMemes,
         boosted_gradients_tdh: 0,
@@ -218,18 +214,20 @@ export const consolidateMissingWallets = async (
   return missingTdh;
 };
 
-export const consolidateTDH = async (startingWallets?: string[]) => {
+export const consolidateTDH = async (
+  nfts: NFT[],
+  startingWallets?: string[]
+) => {
   const tdh: TDHENS[] = await fetchAllTDH(startingWallets);
 
-  const memes = await fetchNftsForContract(MEMES_CONTRACT);
+  const memes = nfts.filter((n) =>
+    areEqualAddresses(n.contract, MEMES_CONTRACT)
+  );
   const seasons = buildSeasons(memes);
 
-  const gradients = await fetchNftsForContract(GRADIENT_CONTRACT);
-  const nextgen = await fetchNftsForContract(NEXTGEN_CONTRACT);
-
-  const nfts = [...memes, ...gradients, ...nextgen];
-
-  logger.info(`[WALLETS ${tdh.length}]`);
+  logger.info(
+    `[WALLETS ${tdh.length}] : [NFTs ${nfts.length}] : [MEMES ${memes.length}] : [CONSOLIDATING...]`
+  );
   const { consolidatedTdh, allGradientsTDH, allNextgenTDH } =
     await consolidateTDHForWallets(tdh, memes.length);
   const consolidatedBoostedTdh = await calculateBoosts(

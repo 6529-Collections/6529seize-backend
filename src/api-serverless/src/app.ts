@@ -7,7 +7,13 @@ import { ApiCompliantException } from '../../exceptions';
 
 import { Logger } from '../../logging';
 import * as process from 'process';
-import { fetchSingleWalletTDH, returnJsonResult } from './api-helpers';
+import {
+  fetchSingleWalletTDH,
+  fetchSingleWalletTDHBreakdown,
+  fetchTotalTDH,
+  fetchNfts,
+  returnJsonResult
+} from './api-helpers';
 import { corsOptions } from './api-constants';
 import { prepEnvironment } from '../../env';
 
@@ -104,6 +110,14 @@ loadApi().then(() => {
   const apiRouter = asyncRouter();
 
   apiRouter.get(
+    '/tdh/total',
+    async function (req: Request<{}, any, any, {}>, res: any) {
+      const result = await fetchTotalTDH();
+      return returnJsonResult(result, res);
+    }
+  );
+
+  apiRouter.get(
     '/tdh/:wallet',
     async function (
       req: Request<
@@ -118,6 +132,44 @@ loadApi().then(() => {
     ) {
       const wallet = req.params.wallet;
       const result = await fetchSingleWalletTDH(wallet);
+      return returnJsonResult(result, res);
+    }
+  );
+
+  apiRouter.get(
+    '/tdh/:wallet/breakdown',
+    async function (
+      req: Request<
+        {
+          wallet: string;
+        },
+        any,
+        any,
+        {}
+      >,
+      res: any
+    ) {
+      const wallet = req.params.wallet;
+      const result = await fetchSingleWalletTDHBreakdown(wallet);
+      return returnJsonResult(result, res);
+    }
+  );
+
+  apiRouter.get(
+    '/nfts/:contract?',
+    async function (
+      req: Request<
+        {
+          contract?: string;
+        },
+        any,
+        any,
+        {}
+      >,
+      res: any
+    ) {
+      const contract = req.params.contract;
+      const result = await fetchNfts(contract);
       return returnJsonResult(result, res);
     }
   );

@@ -12,9 +12,12 @@ export class NFT {
   @Column({ type: 'datetime', nullable: true })
   mint_date!: Date | null;
 
-  @Column({ type: 'int', default: -1 })
+  @Column({ type: 'int', default: 0 })
   season?: number;
 
-  @Column({ type: 'int', default: -1 })
+  @Column({ type: 'int', default: 0 })
   edition_size!: number;
+
+  @Column({ type: 'int', default: 0 })
+  tdh!: number;
 }

@@ -17,7 +17,6 @@ import {
   fetchLatestTransactionsBlockNumber,
   fetchTDHForBlock,
   fetchWalletTransactions,
-  persistNFTs,
   persistOwners,
   persistTDH,
   persistTDHBlock,
@@ -30,6 +29,7 @@ import { fetchNftOwners } from './nft_owners';
 import { getAllNfts } from './nfts';
 import { consolidateTDH } from './tdh_consolidation';
 import { Time } from '../time';
+import { processNftTdh } from './tdh_nfts';
 
 const logger = Logger.get('TDH');
 
@@ -217,7 +217,6 @@ export const updateTDH = async (
   );
 
   await persistOwners([...memeOwners, ...gradientOwners, ...nextgenOwners]);
-  await persistNFTs([...memes, ...gradients, ...nextgen]);
 
   const HODL_INDEX = memes.reduce((acc, m) => Math.max(acc, m.edition_size), 0);
   const ADJUSTED_SEASONS = buildSeasons(memes);
@@ -453,8 +452,9 @@ export const updateTDH = async (
   );
 
   await persistTDH(block, rankedTdh, startingWallets);
-  await consolidateTDH(startingWallets);
+  await consolidateTDH(ADJUSTED_NFTS, startingWallets);
   await persistTDHBlock(block, timestamp);
+  await processNftTdh(ADJUSTED_NFTS);
 
   return {
     block: block,

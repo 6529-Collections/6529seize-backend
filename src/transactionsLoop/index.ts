@@ -3,12 +3,15 @@ import { Transaction } from '../entities/ITransaction';
 import { Logger } from '../logging';
 import { transactionsDiscoveryService } from '../transactions/transactions-discovery.service';
 import { parseNumberOrNull } from '../helpers';
+import { Time } from '../time';
 
 const logger = Logger.get('TRANSACTIONS_LOOP');
 
 export const handler = async (contract: string) => {
+  const start = Time.now();
+  logger.info(`[RUNNING FOR CONTRACT ${contract}]`);
+
   await loadEnv([Transaction]);
-  logger.info('[RUNNING]');
 
   const startingBlock = parseNumberOrNull(
     process.env.TRANSACTIONS_LOOP_START_BLOCK
@@ -20,5 +23,7 @@ export const handler = async (contract: string) => {
     endBlock
   );
   await unload();
-  logger.info('[COMPLETE]');
+
+  const diff = start.diffFromNow().formatAsDuration();
+  logger.info(`[COMPLETE IN ${diff}]`);
 };

@@ -11,7 +11,6 @@ import {
   MEMES_EXTENDED_DATA_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
-  NULL_ADDRESS,
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
@@ -21,13 +20,7 @@ import {
 import { Artist } from './entities/IArtist';
 
 import { NFT } from './entities/INFT';
-import {
-  ConsolidatedTDH,
-  GlobalTDHHistory,
-  NftTDH,
-  TDH,
-  TDHHistory
-} from './entities/ITDH';
+import { ConsolidatedTDH, TDH } from './entities/ITDH';
 import { Team } from './entities/ITeam';
 import { BaseTransaction, Transaction } from './entities/ITransaction';
 import {
@@ -737,12 +730,12 @@ export async function persistTDH(
     } else {
       logger.info(`[TDH] [DELETING ALL WALLETS FOR BLOCK ${block}]`);
       await tdhRepo.delete({ block: block });
-      logger.info(`[TDH CLEARED]`);
+      logger.info(`[TDH] [CLEARED]`);
       await insertWithoutUpdate(tdhRepo, tdh);
     }
   });
 
-  logger.info(`[TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+  logger.info(`[TDH] [PERSISTED ALL WALLETS TDH [${tdh.length}]`);
 }
 
 export async function persistTDHBlock(block: number, timestamp: Date) {
@@ -756,7 +749,7 @@ export async function persistConsolidatedTDH(
   tdh: ConsolidatedTDH[],
   wallets?: string[]
 ) {
-  logger.info(`[CONSOLIDATED TDH] PERSISTING WALLETS TDH [${tdh.length}]`);
+  logger.info(`[CONSOLIDATED TDH] [PERSISTING WALLETS TDH ${tdh.length}]`);
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
@@ -779,44 +772,12 @@ export async function persistConsolidatedTDH(
     } else {
       logger.info(`[CONSOLIDATED TDH] [DELETING ALL WALLETS]`);
       await tdhRepo.clear();
-      logger.info(`[CONSOLIDATED TDH] [TDH CLEARED]`);
+      logger.info(`[CONSOLIDATED TDH] [CLEARED]`);
       await insertWithoutUpdate(tdhRepo, tdh);
     }
   });
 
-  logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
-}
-
-export async function persistNftTdh(nftTdh: NftTDH[], wallets?: string[]) {
-  logger.info(`[NFT TDH] PERSISTING [${nftTdh.length} RESULTS]`);
-  await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
-    const queryRunner = qrHolder.connection as QueryRunner;
-    const manager = queryRunner.manager;
-    const nftTdhRepo = manager.getRepository(NftTDH);
-    if (wallets) {
-      logger.info(`[NFT TDH] [DELETING ${wallets.length} WALLETS]`);
-      await Promise.all(
-        wallets.map(async (wallet) => {
-          const walletPattern = `%${wallet}%`;
-          await nftTdhRepo
-            .createQueryBuilder()
-            .delete()
-            .where('consolidation_key like :walletPattern', {
-              walletPattern
-            })
-            .execute();
-        })
-      );
-      await nftTdhRepo.save(nftTdh);
-    } else {
-      logger.info(`[NFT TDH] [DELETING ALL WALLETS]`);
-      await nftTdhRepo.clear();
-      logger.info(`[NFT TDH] [TDH AND TDH_MEMES CLEARED]`);
-      await insertWithoutUpdate(nftTdhRepo, nftTdh);
-    }
-  });
-
-  logger.info(`[NFT TDH] PERSISTED ALL NFT TDH [${nftTdh.length}]`);
+  logger.info(`[CONSOLIDATED TDH] [PERSISTED ALL WALLETS TDH ${tdh.length}]`);
 }
 
 function constructFilters(f: string, newF: string) {
@@ -1019,19 +980,6 @@ export async function fetchHasEns(wallets: string[]) {
     wallets: wallets
   });
   return parseInt(results[0].ens_count) === wallets.length;
-}
-
-export async function persistTDHHistory(tdhHistory: TDHHistory[]) {
-  await AppDataSource.getRepository(TDHHistory).upsert(tdhHistory, [
-    'date',
-    'consolidation_key',
-    'block'
-  ]);
-}
-
-export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
-  const globalHistoryRepo = AppDataSource.getRepository(GlobalTDHHistory);
-  await globalHistoryRepo.upsert(globalHistory, ['date', 'block']);
 }
 
 export async function persistMemesSeasons(seasons: MemesSeason[]) {
