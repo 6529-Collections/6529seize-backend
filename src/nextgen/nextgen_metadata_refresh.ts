@@ -1,5 +1,4 @@
 import { getDataSource } from '../db';
-import { areEqualAddresses } from '../helpers';
 import { Logger } from '../logging';
 import { getOwnersForContracts } from '../nftOwnersLoop/owners';
 import {
