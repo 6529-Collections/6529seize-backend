@@ -1,7 +1,7 @@
 import { ProfileProxyEntity } from '../../../entities/IProfileProxy';
 import {
   ApiProfileProxyActionType,
-  ProfileProxyActionApiEntity
+  ProfileProxyActionEntity
 } from '../../../entities/IProfileProxyAction';
 import { distinct } from '../../../helpers';
 import {
@@ -31,7 +31,7 @@ export class ProfileProxiesMapper {
     actions
   }: {
     readonly profileProxyEntities: ProfileProxyEntity[];
-    readonly actions: ProfileProxyActionApiEntity[];
+    readonly actions: ProfileProxyActionEntity[];
   }): Promise<ProfileProxy[]> {
     const profileIds = distinct(
       profileProxyEntities.flatMap((entity) => [
@@ -59,17 +59,8 @@ export class ProfileProxiesMapper {
       actions: actions
         .filter((action) => action.proxy_id === entity.id)
         .map((action) => ({
-          id: action.id,
-          proxy_id: action.proxy_id,
-          action_type: ACTION_MAP[action.action_type],
-          action_data: action.action_data,
-          created_at: action.created_at,
-          start_time: action.start_time,
-          end_time: action.end_time,
-          accepted_at: action.accepted_at,
-          rejected_at: action.rejected_at,
-          revoked_at: action.revoked_at,
-          is_active: action.is_active
+          ...action,
+          action_type: ACTION_MAP[action.action_type]
         }))
     }));
   }
