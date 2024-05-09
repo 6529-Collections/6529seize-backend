@@ -739,10 +739,6 @@ export async function persistTDH(
 }
 
 export async function persistTDHBlock(block: number, timestamp: Date) {
-  await getDataSource().query(
-    `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block=?, timestamp=?`,
-    [block, timestamp.getTime()]
-  );
   await getDataSource()
     .getRepository(TDHBlock)
     .upsert([{ block: block, timestamp: timestamp.getTime() }], ['block']);
