@@ -215,7 +215,6 @@ export const updateTDH = async (
         Time.fromDate(lastTDHCalc).minusDays(1)
       )
   );
-  console.log('hi i am memes', memes.length);
 
   await persistOwners([...memeOwners, ...gradientOwners, ...nextgenOwners]);
   await persistNFTs([...memes, ...gradients, ...nextgen]);

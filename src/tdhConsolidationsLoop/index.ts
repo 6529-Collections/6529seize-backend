@@ -12,8 +12,7 @@ const logger = Logger.get('TDH_CONSOLIDATIONS_LOOP');
 export const handler = async () => {
   const start = Time.now();
   await loadEnv([TDH, ConsolidatedTDH, NFTOwner, NftTDH]);
-  const force = process.env.TDH_RESET == 'true';
-  logger.info(`[RUNNING force=${force}]`);
+  logger.info(`[RUNNING]`);
   await consolidatedTdhLoop();
   await unload();
   const diff = start.diffFromNow().formatAsDuration();

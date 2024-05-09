@@ -67,7 +67,7 @@
     "@sentry/serverless": "^7.91.0",
     "@types/multer": "^1.4.9",
     "@wagmi/chains": "^1.8.0",
-    "alchemy-sdk": "^3.2.1",
+    "alchemy-sdk": "^3.3.1",
     "arweave": "^1.11.6",
     "axios": "^1.6.4",
     "bignumber.js": "^9.1.1",
