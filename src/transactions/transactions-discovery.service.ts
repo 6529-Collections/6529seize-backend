@@ -36,7 +36,6 @@ export class TransactionsDiscoveryService {
     startingBlock: number | null,
     endBlock: number | null
   ): Promise<void> {
-    const now = new Date();
     startingBlock =
       startingBlock ?? (await this.getBlockFromWhichToSearchFor(contract));
     this.logger.info(

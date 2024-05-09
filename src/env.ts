@@ -1,5 +1,4 @@
 import { Logger } from './logging';
-import { SecretsManager } from '@aws-sdk/client-secrets-manager';
 
 const SECRET = 'prod/lambdas';
 
