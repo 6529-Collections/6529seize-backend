@@ -334,6 +334,29 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  private getUpdateProfileProxyActionQuery({
+    action_id,
+    credit_amount,
+    end_time
+  }: {
+    readonly action_id: string;
+    readonly credit_amount?: number;
+    readonly end_time?: number;
+  }): { query: string; params: Record<string, string | number> } {
+    const params: Record<string, string | number> = { id: action_id };
+    let query = `update ${PROFILE_PROXY_ACTIONS_TABLE} set `;
+    if (credit_amount) {
+      query += `credit_amount = :credit_amount`;
+      params.credit_amount = credit_amount;
+    }
+    if (end_time) {
+      query += `${credit_amount ? ', ' : ''}end_time = :end_time`;
+      params.end_time = end_time;
+    }
+    query += ` where id = :id`;
+    return { query, params };
+  }
+
   async updateProfileProxyAction({
     action_id,
     credit_amount,
@@ -348,13 +371,12 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     if (!credit_amount && !end_time) {
       return;
     }
-    await this.db.execute(
-      `update ${PROFILE_PROXY_ACTIONS_TABLE} set ${
-        credit_amount ? 'credit_amount = :credit_amount' : ''
-      } ${end_time ? ', end_time = :end_time' : ''} where id = :id`,
-      { id: action_id, credit_amount, end_time },
-      { wrappedConnection: connection }
-    );
+    const { query, params } = this.getUpdateProfileProxyActionQuery({
+      action_id,
+      credit_amount,
+      end_time
+    });
+    await this.db.execute(query, params, { wrappedConnection: connection });
   }
 }
 
