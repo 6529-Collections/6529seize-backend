@@ -12,8 +12,11 @@ export class ProfileProxyActionEntity {
   @Column({ type: 'varchar', length: 100 })
   readonly action_type!: ApiProfileProxyActionType;
 
-  @Column({ type: 'json' })
-  readonly action_data!: string;
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly credit_amount!: number | null;
+
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly credit_spent!: number | null;
 
   @Column({ type: 'bigint' })
   readonly created_at!: number;
@@ -35,12 +38,6 @@ export class ProfileProxyActionEntity {
 
   @Column({ type: 'boolean', default: false })
   readonly is_active!: boolean;
-}
-
-export interface ProfileProxyActionApiEntity
-  extends Omit<ProfileProxyActionEntity, 'action_data' | 'is_active'> {
-  readonly action_data: Record<string, any>;
-  readonly is_active: boolean;
 }
 
 export enum ApiProfileProxyActionType {
