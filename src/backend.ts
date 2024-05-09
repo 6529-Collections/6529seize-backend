@@ -53,5 +53,5 @@ async function runTransactions() {
 async function runTDH() {
   LOCKED = true;
   await tdh.handler();
-  // LOCKED = false;
+  LOCKED = false;
 }
