@@ -20,7 +20,7 @@ import {
 import { Artist } from './entities/IArtist';
 
 import { NFT } from './entities/INFT';
-import { ConsolidatedTDH, TDH } from './entities/ITDH';
+import { ConsolidatedTDH, TDH, TDHBlock } from './entities/ITDH';
 import { Team } from './entities/ITeam';
 import { BaseTransaction, Transaction } from './entities/ITransaction';
 import {
@@ -743,6 +743,9 @@ export async function persistTDHBlock(block: number, timestamp: Date) {
     `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block=?, timestamp=?`,
     [block, timestamp.getTime()]
   );
+  await getDataSource()
+    .getRepository(TDHBlock)
+    .upsert([{ block: block, timestamp: timestamp.getTime() }], ['block']);
 }
 
 export async function persistConsolidatedTDH(
