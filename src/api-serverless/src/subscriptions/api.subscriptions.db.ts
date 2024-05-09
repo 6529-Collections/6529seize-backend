@@ -1,6 +1,7 @@
 import {
   MEMES_CONTRACT,
   MEMES_MINT_PRICE,
+  NFTS_TABLE,
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_LOGS_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
@@ -43,6 +44,12 @@ export interface SubscriptionCounts {
   contract: string;
   token_id: number;
   count: number;
+}
+
+export interface RedeemedSubscriptionCounts extends SubscriptionCounts {
+  name: string;
+  image_url: string;
+  mint_date: string;
 }
 
 async function getForConsolidationKey(
@@ -496,4 +503,22 @@ export async function fetchUpcomingMemeSubscriptionCounts(
     });
   }
   return counts;
+}
+
+export async function fetchPastMemeSubscriptionCounts(): Promise<
+  RedeemedSubscriptionCounts[]
+> {
+  return sqlExecutor.execute(
+    `SELECT 
+      ${SUBSCRIPTIONS_REDEEMED_TABLE}.contract, 
+      ${SUBSCRIPTIONS_REDEEMED_TABLE}.token_id, 
+      count(*) as count,
+      ${NFTS_TABLE}.name as name,
+      ${NFTS_TABLE}.thumbnail as image_url,
+      ${NFTS_TABLE}.mint_date as mint_date
+    FROM ${SUBSCRIPTIONS_REDEEMED_TABLE} 
+    LEFT JOIN ${NFTS_TABLE} ON ${SUBSCRIPTIONS_REDEEMED_TABLE}.contract = ${NFTS_TABLE}.contract AND ${SUBSCRIPTIONS_REDEEMED_TABLE}.token_id = ${NFTS_TABLE}.id
+    GROUP BY contract, token_id 
+    ORDER BY token_id DESC;`
+  );
 }

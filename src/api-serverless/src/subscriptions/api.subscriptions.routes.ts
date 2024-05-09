@@ -13,7 +13,8 @@ import {
   fetchSubscriptionUploads,
   fetchFinalSubscription,
   fetchUpcomingMemeSubscriptionCounts,
-  SubscriptionCounts
+  SubscriptionCounts,
+  fetchPastMemeSubscriptionCounts
 } from './api.subscriptions.db';
 import {
   NFTFinalSubscription,
@@ -197,6 +198,17 @@ router.get(
     const cardCount = parseInt(req.query.card_count ?? '3');
 
     const result = await fetchUpcomingMemeSubscriptionCounts(cardCount);
+    return returnJsonResult(result, req, res);
+  }
+);
+
+router.get(
+  `/redeemed-memes-counts`,
+  async function (
+    req: Request<any, any, any, any>,
+    res: Response<SubscriptionCounts[]>
+  ) {
+    const result = await fetchPastMemeSubscriptionCounts();
     return returnJsonResult(result, req, res);
   }
 );
