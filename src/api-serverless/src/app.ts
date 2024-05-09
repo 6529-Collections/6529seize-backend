@@ -140,8 +140,11 @@ loadApi().then(() => {
           jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
           secretOrKey: getJwtSecret()
         },
-        function ({ sub: wallet }: { sub: string }, cb: VerifiedCallback) {
-          return cb(null, { wallet: wallet });
+        function (
+          { sub: wallet, role }: { sub: string; role?: string },
+          cb: VerifiedCallback
+        ) {
+          return cb(null, { wallet: wallet, role });
         }
       )
     );

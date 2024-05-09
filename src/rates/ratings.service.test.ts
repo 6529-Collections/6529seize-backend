@@ -15,7 +15,15 @@ import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { RepService } from '../api-serverless/src/profiles/rep.service';
 import { EventScheduler } from '../events/event.scheduler';
 import { ArweaveFileUploader } from '../arweave';
-import { DropsDb } from '../drops/drops.db';
+import { ProfileProxiesDb } from '../profile-proxies/profile-proxies.db';
+import { AuthenticationContext } from '../auth-context';
+
+const authContext: AuthenticationContext = {
+  authenticatedProfileId: 'pid',
+  authenticatedWallet: 'wallet',
+  roleProfileId: null,
+  activeProxyActions: []
+};
 
 describe('RatingsService', () => {
   let ratingsService: RatingsService;
@@ -23,18 +31,18 @@ describe('RatingsService', () => {
   let profilesDb: Mock<ProfilesDb>;
   let repService: Mock<RepService>;
   let profileActivityLogsDb: Mock<ProfileActivityLogsDb>;
-  let dropsDb: Mock<DropsDb>;
   let eventScheduler: Mock<EventScheduler>;
   let arweaveFileUploader: Mock<ArweaveFileUploader>;
+  let profileProxiesDb: Mock<ProfileProxiesDb>;
 
   beforeEach(() => {
     profilesDb = mockDbService();
     ratingsDb = mockDbService();
     profileActivityLogsDb = mockDbService();
-    dropsDb = mockDbService();
     eventScheduler = mock(EventScheduler);
     repService = mock(RepService);
     arweaveFileUploader = mock(ArweaveFileUploader);
+    profileProxiesDb = mock(ProfileProxiesDb);
     ratingsService = new RatingsService(
       ratingsDb,
       profilesDb,
@@ -42,7 +50,7 @@ describe('RatingsService', () => {
       profileActivityLogsDb,
       eventScheduler,
       arweaveFileUploader,
-      dropsDb
+      profileProxiesDb
     );
   });
 
@@ -96,6 +104,7 @@ describe('RatingsService', () => {
       });
       await expectExceptionWithMessage(async () => {
         await ratingsService.updateRating({
+          authenticationContext: authContext,
           rater_profile_id: 'pid',
           matter: RateMatter.CIC,
           matter_target_id: 'mid',
@@ -108,6 +117,7 @@ describe('RatingsService', () => {
     it('not able to rate themselves', async () => {
       await expectExceptionWithMessage(async () => {
         await ratingsService.updateRating({
+          authenticationContext: authContext,
           rater_profile_id: 'pid',
           matter: RateMatter.CIC,
           matter_target_id: 'pid',
@@ -129,6 +139,7 @@ describe('RatingsService', () => {
         total_tdh_spent_on_matter: 8
       });
       const request = {
+        authenticationContext: authContext,
         rater_profile_id: 'pid',
         matter: RateMatter.CIC,
         matter_target_id: 'mid',
@@ -169,6 +180,7 @@ describe('RatingsService', () => {
         total_tdh_spent_on_matter: 8
       });
       const request = {
+        authenticationContext: authContext,
         rater_profile_id: 'pid',
         matter: RateMatter.CIC,
         matter_target_id: 'mid',

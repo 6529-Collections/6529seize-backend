@@ -17,7 +17,10 @@ import { ConnectionWrapper } from '../../../sql-executor';
 import { ProfileAndConsolidations } from '../../../profiles/profile.types';
 
 import { ProxyApiRequestAction } from './proxies.api.types';
-import { ApiProfileProxyActionType, ProfileProxyActionEntity } from '../../../entities/IProfileProxyAction';
+import {
+  ApiProfileProxyActionType,
+  ProfileProxyActionEntity
+} from '../../../entities/IProfileProxyAction';
 import { assertUnreachable } from '../../../helpers';
 import { ProfileProxyActionType } from '../generated/models/ProfileProxyActionType';
 import { ProfileProxy } from '../generated/models/ProfileProxy';

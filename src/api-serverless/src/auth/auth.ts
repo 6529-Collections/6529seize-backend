@@ -1,6 +1,15 @@
 import * as passport from 'passport';
 import { Request } from 'express';
 import { profilesService } from '../../../profiles/profiles.service';
+import { profileProxyApiService } from '../proxies/proxy.api.service';
+import {
+  AuthenticatedProxyAction,
+  AuthenticationContext
+} from '../../../auth-context';
+import { resolveEnum } from '../../../helpers';
+import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { Time } from '../../../time';
+import { ProfileProxyAction } from '../generated/models/ProfileProxyAction';
 
 export function getJwtSecret() {
   const jwtsecret = process.env.JWT_SECRET;
@@ -50,6 +59,56 @@ export async function getAuthenticatedProfileIdOrNull(
   return profilesService
     .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(authWallet)
     .then((profile) => profile?.profile?.external_id ?? null);
+}
+
+export async function getAuthenticationContext(
+  req: Request<any, any, any, any, any>
+): Promise<AuthenticationContext> {
+  const authenticatedWallet = getWalletOrThrow(req);
+  const roleProfileId = (req.user as any).role as string | null;
+  const authenticatedProfileId = await profilesService
+    .getProfileByWallet(authenticatedWallet)
+    .then((profile) => profile?.profile?.external_id ?? null);
+  const activeProxyActions =
+    authenticatedProfileId &&
+    roleProfileId &&
+    authenticatedProfileId !== roleProfileId
+      ? await profileProxyApiService
+          .getProxyByGrantedByAndGrantedTo({
+            granted_by_profile_id: roleProfileId,
+            granted_to_profile_id: authenticatedProfileId
+          })
+          ?.then((proxy) =>
+            (proxy?.actions ?? [])
+              .filter(isProxyActionActive)
+              .map<AuthenticatedProxyAction>((action) => ({
+                id: action.id,
+                type: resolveEnum(
+                  ApiProfileProxyActionType,
+                  action.action_type
+                )!,
+                credit_spent: action.credit_spent,
+                credit_amount: action.credit_amount
+              }))
+          )
+      : [];
+  return {
+    authenticatedWallet,
+    authenticatedProfileId,
+    roleProfileId,
+    activeProxyActions
+  };
+}
+
+function isProxyActionActive(action: ProfileProxyAction): boolean {
+  const now = Time.now();
+  return (
+    !action.end_time ||
+    (Time.millis(action.end_time).eq(now) &&
+      (!action.start_time || Time.millis(action.start_time).lt(now)) &&
+      (!action.rejected_at || Time.millis(action.rejected_at).gt(now)) &&
+      (!action.revoked_at || Time.millis(action.revoked_at).gt(now)))
+  );
 }
 
 export function getWalletOrThrow(

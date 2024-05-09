@@ -110,10 +110,11 @@ router.post(
       req.body,
       ApiAddCicRatingToProfileRequestSchema
     );
-    const { handleOrWallet, raterProfileId, targetProfileId } =
-      await getRaterInfoFromRequest(req);
+    const { authContext, targetProfileId } = await getRaterInfoFromRequest(req);
     await ratingsService.updateRating({
-      rater_profile_id: raterProfileId,
+      authenticationContext: authContext,
+      rater_profile_id:
+        authContext.roleProfileId ?? authContext.authenticatedProfileId!,
       matter: RateMatter.CIC,
       matter_category: 'CIC',
       matter_target_id: targetProfileId,
@@ -122,7 +123,7 @@ router.post(
     await giveReadReplicaTimeToCatchUp();
     const updatedProfileInfo =
       await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        handleOrWallet
+        targetProfileId
       );
     res.status(201).send(updatedProfileInfo!);
   }

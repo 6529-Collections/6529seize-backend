@@ -10,7 +10,11 @@ import {
   UpdateRatingRequest
 } from './ratings.db';
 import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
-import { BadRequestException, NotFoundException } from '../exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '../exceptions';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import {
   profileActivityLogsDb,
@@ -37,7 +41,12 @@ import { eventScheduler, EventScheduler } from '../events/event.scheduler';
 import converter from 'json-2-csv';
 import { arweaveFileUploader, ArweaveFileUploader } from '../arweave';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
-import { dropsDb, DropsDb } from '../drops/drops.db';
+import { AuthenticationContext } from '../auth-context';
+import { ApiProfileProxyActionType } from '../entities/IProfileProxyAction';
+import {
+  profileProxiesDb,
+  ProfileProxiesDb
+} from '../profile-proxies/profile-proxies.db';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -49,7 +58,7 @@ export class RatingsService {
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly eventScheduler: EventScheduler,
     private readonly arweaveFileUploader: ArweaveFileUploader,
-    private readonly dropsDb: DropsDb
+    private readonly profileProxiesDb: ProfileProxiesDb
   ) {}
 
   public async getAggregatedRatingOnMatter(
@@ -86,10 +95,43 @@ export class RatingsService {
     return tdh - ratesSpent;
   }
 
-  public async updateRating(request: UpdateRatingRequest) {
+  public async updateRating(request: UpdateRatingViaApiRequest) {
     await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        await this.updateRatingUnsafe(request, 'USER_EDIT', connection);
+        const authenticatedProfileId =
+          request.authenticationContext.authenticatedProfileId;
+        if (!authenticatedProfileId) {
+          throw new ForbiddenException(`Create a profile before you rate`);
+        }
+        const roleProfileId = request.authenticationContext.roleProfileId;
+        if (!roleProfileId || authenticatedProfileId === roleProfileId) {
+          await this.updateRatingUnsafe(request, 'USER_EDIT', null, connection);
+        } else {
+          const action = request.authenticationContext.activeProxyActions.find(
+            (action) =>
+              (request.matter === RateMatter.REP &&
+                action.type === ApiProfileProxyActionType.ALLOCATE_REP) ||
+              (request.matter === RateMatter.CIC &&
+                action.type === ApiProfileProxyActionType.ALLOCATE_CIC)
+          );
+          if (!action) {
+            throw new ForbiddenException(
+              `Profile ${authenticatedProfileId} is not allowed to give ${request.matter} ratings to profile ${request.rater_profile_id} on behalf of profile ${roleProfileId}`
+            );
+          }
+          const proxyContext: RatingProxyContext = {
+            authenticatedProfileId,
+            action_id: action.id,
+            credit_amount: action.credit_amount,
+            credit_spent: action.credit_spent
+          };
+          await this.updateRatingUnsafe(
+            request,
+            'USER_EDIT',
+            proxyContext,
+            connection
+          );
+        }
       }
     );
   }
@@ -97,6 +139,7 @@ export class RatingsService {
   public async updateRatingUnsafe(
     request: UpdateRatingRequest,
     changeReason: string,
+    proxyContext: RatingProxyContext | null,
     connection: ConnectionWrapper<any>,
     skipTdhCheck?: boolean
   ) {
@@ -118,6 +161,14 @@ export class RatingsService {
       const totalTdhSpentOnMatter = currentRating.total_tdh_spent_on_matter;
       const tdhSpentOnThisRequest =
         Math.abs(request.rating) - Math.abs(currentRating.rating);
+      if (proxyContext) {
+        await this.checkAndUpdateProxyRatingCredit(
+          currentRating,
+          request,
+          proxyContext,
+          connection
+        );
+      }
       const profileTdh = await this.profilesDb.getProfileTdh(profileId);
       if (totalTdhSpentOnMatter + tdhSpentOnThisRequest > profileTdh) {
         throw new BadRequestException(
@@ -142,11 +193,47 @@ export class RatingsService {
           new_rating: request.rating,
           rating_matter: request.matter,
           rating_category: request.matter_category,
-          change_reason: changeReason
+          change_reason: changeReason,
+          proxy_id: proxyContext?.authenticatedProfileId
+            ? proxyContext?.authenticatedProfileId
+            : undefined,
+          proxy_handle: proxyContext?.authenticatedProfileId
+            ? await this.profilesDb
+                .getProfileById(proxyContext.authenticatedProfileId)
+                .then((it) => it?.handle)
+            : undefined
         })
       },
       connection
     );
+  }
+
+  private async checkAndUpdateProxyRatingCredit(
+    currentRating: Rating & {
+      total_tdh_spent_on_matter: number;
+    },
+    request: UpdateRatingRequest,
+    proxyContext: RatingProxyContext,
+    connection: ConnectionWrapper<any>
+  ) {
+    const ratingChange = Math.abs(currentRating.rating - request.rating);
+    const creditAmount = proxyContext.credit_amount;
+    const creditSpent = proxyContext.credit_spent ?? 0;
+    if (creditAmount !== null) {
+      const creditLeft = creditAmount - creditSpent;
+      if (creditLeft < ratingChange) {
+        throw new BadRequestException(
+          `Not enough proxy credit left to rate. Needed ${ratingChange}, left ${creditLeft}`
+        );
+      }
+      await this.profileProxiesDb.updateCreditSpentForAction(
+        {
+          id: proxyContext.action_id,
+          credit_spent: creditSpent + ratingChange
+        },
+        connection
+      );
+    }
   }
 
   private async scheduleEvents(
@@ -366,6 +453,7 @@ export class RatingsService {
           rating: 0
         },
         `Profile ${sourceHandle} archived, ratings transferred to ${targetHandle}`,
+        null,
         connectionHolder,
         true
       );
@@ -487,6 +575,7 @@ export class RatingsService {
       await this.updateRatingUnsafe(
         { ...rating, rating: rating.rating + targetRating.rating },
         `Profile ${sourceHandle} archived, ratings transferred to ${targetHandle}`,
+        null,
         connectionHolder,
         true
       );
@@ -665,6 +754,17 @@ export type RatingsSnapshotsPageRequest = FullPageRequest<'snapshot_time'> & {
   matter: RateMatter | null;
 };
 
+export interface UpdateRatingViaApiRequest extends UpdateRatingRequest {
+  readonly authenticationContext: AuthenticationContext;
+}
+
+interface RatingProxyContext {
+  readonly authenticatedProfileId: string;
+  readonly action_id: string;
+  readonly credit_amount: number | null;
+  readonly credit_spent: number | null;
+}
+
 export const ratingsService: RatingsService = new RatingsService(
   ratingsDb,
   profilesDb,
@@ -672,5 +772,5 @@ export const ratingsService: RatingsService = new RatingsService(
   profileActivityLogsDb,
   eventScheduler,
   arweaveFileUploader,
-  dropsDb
+  profileProxiesDb
 );
