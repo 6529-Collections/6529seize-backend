@@ -171,9 +171,6 @@ router.post(
       ApiAddRepRatingToProfileRequestSchema
     );
     const proposedCategory = category?.trim() ?? '';
-    const { raterProfileId, targetProfileId } = await getRaterInfoFromRequest(
-      req
-    );
     if (proposedCategory !== '') {
       const abusivenessDetectionResult =
         await abusivenessCheckService.checkRepPhrase(category);
@@ -184,18 +181,19 @@ router.post(
         );
       }
     }
+    const { authContext, targetProfileId } = await getRaterInfoFromRequest(req);
+    const profileId =
+      authContext.roleProfileId ?? authContext.authenticatedProfileId!;
     await ratingsService.updateRating({
-      rater_profile_id: raterProfileId,
+      authenticationContext: authContext,
+      rater_profile_id: profileId,
       matter: RateMatter.REP,
       matter_category: proposedCategory,
       matter_target_id: targetProfileId,
       rating: amount
     });
     await giveReadReplicaTimeToCatchUp();
-    const response = await getReceivedRatingsStats(
-      raterProfileId,
-      targetProfileId
-    );
+    const response = await getReceivedRatingsStats(profileId, targetProfileId);
     res.send(response);
   }
 );

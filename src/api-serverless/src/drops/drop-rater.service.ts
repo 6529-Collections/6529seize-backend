@@ -75,6 +75,7 @@ class DropRaterService {
             matter: RateMatter.DROP_RATING
           },
           'USER_EDIT',
+          null,
           connection,
           true
         );
