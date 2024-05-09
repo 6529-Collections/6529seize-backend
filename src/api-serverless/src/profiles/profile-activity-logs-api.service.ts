@@ -77,6 +77,10 @@ export class ProfileActivityLogsApiService {
       if (log.target_id && !isTargetOfTypeDrop(log.type)) {
         acc.push(log.target_id);
       }
+      const proxyId = JSON.parse(log.contents).proxy_id;
+      if (proxyId) {
+        acc.push(proxyId);
+      }
       return acc;
     }, [] as string[]);
     const profilesHandlesByIds = await this.profilesDb.getProfileHandlesByIds(
@@ -84,10 +88,13 @@ export class ProfileActivityLogsApiService {
     );
     const convertedData = foundLogs.map((log) => {
       const logContents = JSON.parse(log.contents);
+      if (logContents.proxy_id && profilesHandlesByIds[logContents.proxy_id]) {
+        logContents.proxy_handle = profilesHandlesByIds[logContents.proxy_id];
+      }
       return {
         ...log,
         contents: logContents,
-        profile_handle: profilesHandlesByIds[log.profile_id]!,
+        profile_handle: profilesHandlesByIds[log.profile_id],
         target_profile_handle:
           log.type === ProfileActivityLogType.RATING_EDIT &&
           getMattersWhereTargetIsProfile().includes(logContents.rating_matter)
