@@ -10,6 +10,7 @@ import * as process from 'process';
 import {
   fetchSingleWalletTDH,
   fetchSingleWalletTDHBreakdown,
+  fetchSingleWalletTDHMemesSeasons,
   fetchTotalTDH,
   fetchNfts,
   returnJsonResult
@@ -151,6 +152,25 @@ loadApi().then(() => {
     ) {
       const wallet = req.params.wallet;
       const result = await fetchSingleWalletTDHBreakdown(wallet);
+      return returnJsonResult(result, res);
+    }
+  );
+
+  apiRouter.get(
+    '/tdh/:wallet/memes_seasons',
+    async function (
+      req: Request<
+        {
+          wallet: string;
+        },
+        any,
+        any,
+        {}
+      >,
+      res: any
+    ) {
+      const wallet = req.params.wallet;
+      const result = await fetchSingleWalletTDHMemesSeasons(wallet);
       return returnJsonResult(result, res);
     }
   );

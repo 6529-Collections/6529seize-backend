@@ -1,5 +1,9 @@
 import { Response } from 'express';
-import { CONSOLIDATED_WALLETS_TDH_TABLE, NFTS_TABLE } from '../../constants';
+import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  MEMES_CONTRACT,
+  NFTS_TABLE
+} from '../../constants';
 import { sqlExecutor } from '../../sql-executor';
 import {
   CONTENT_TYPE_HEADER,
@@ -19,7 +23,7 @@ export function returnJsonResult(result: any, response: Response) {
 }
 
 const formatNumber = (num: number) => {
-  return parseFloat(num.toFixed(4));
+  return parseFloat(num.toFixed(0));
 };
 
 const parseToken = (
@@ -35,11 +39,15 @@ const parseToken = (
   };
 };
 
-const fetchBlockAndWalletTdh = async (wallet: string) => {
+const getBlock = async () => {
   const blockResult = await sqlExecutor.execute(
     `SELECT MAX(block) as block from ${CONSOLIDATED_WALLETS_TDH_TABLE}`
   );
-  const block = blockResult[0].block ?? 0;
+  return blockResult[0].block ?? 0;
+};
+
+const fetchBlockAndWalletTdh = async (wallet: string) => {
+  const block = await getBlock();
   const sql = `
     SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} where LOWER(consolidation_key) like '%${wallet.toLowerCase()}%'
   `;
@@ -51,6 +59,13 @@ const fetchBlockAndWalletTdh = async (wallet: string) => {
   };
 };
 
+const fetchMemes = async (): Promise<NFT[]> => {
+  const sql = `
+    SELECT * from ${NFTS_TABLE} where LOWER(contract) = '${MEMES_CONTRACT.toLowerCase()}'
+  `;
+  return await sqlExecutor.execute(sql);
+};
+
 export const fetchSingleWalletTDH = async (wallet: string) => {
   const { block, tdh } = await fetchBlockAndWalletTdh(wallet);
   const boost = tdh[0]?.boost ?? 1;
@@ -60,7 +75,7 @@ export const fetchSingleWalletTDH = async (wallet: string) => {
     memes_tdh: formatNumber(tdh[0]?.boosted_memes_tdh ?? 0),
     gradients_tdh: formatNumber(tdh[0]?.boosted_gradients_tdh ?? 0),
     nextgen_tdh: formatNumber(tdh[0]?.boosted_nextgen_tdh ?? 0),
-    wallets: JSON.parse(tdh[0]?.wallets ?? []),
+    wallets: JSON.parse(tdh[0]?.wallets ?? JSON.stringify([wallet])),
     block
   };
 };
@@ -70,15 +85,15 @@ export const fetchSingleWalletTDHBreakdown = async (wallet: string) => {
   const boost = tdh[0]?.boost ?? 1;
   return {
     memes_balance: tdh[0]?.memes_balance ?? 0,
-    memes: JSON.parse(tdh[0]?.memes ?? []).map((t: any) =>
+    memes: JSON.parse(tdh[0]?.memes ?? JSON.stringify([])).map((t: any) =>
       parseToken(boost, t)
     ),
     gradients_balance: tdh[0]?.gradients_balance ?? 0,
-    gradients: JSON.parse(tdh[0]?.gradients ?? []).map((t: any) =>
-      parseToken(boost, t)
+    gradients: JSON.parse(tdh[0]?.gradients ?? JSON.stringify([])).map(
+      (t: any) => parseToken(boost, t)
     ),
     nextgen_balance: tdh[0]?.nextgen_balance ?? 0,
-    nextgen: JSON.parse(tdh[0]?.nextgen ?? []).map((t: any) =>
+    nextgen: JSON.parse(tdh[0]?.nextgen ?? JSON.stringify([])).map((t: any) =>
       parseToken(boost, t)
     ),
     block
@@ -104,16 +119,58 @@ export const fetchTotalTDH = async () => {
 };
 
 export const fetchNfts = async (contract?: string) => {
+  const block = await getBlock();
   let sql = `SELECT * FROM ${NFTS_TABLE}`;
   if (contract) {
     sql = `${sql} WHERE contract = '${contract.toLowerCase()}'`;
   }
   sql = `${sql} ORDER BY contract ASC, id ASC`;
-  const nfts = await sqlExecutor.execute(sql);
-  return nfts.map((n: NFT) => {
+  const nftResponse = await sqlExecutor.execute(sql);
+  const nfts = nftResponse.map((n: NFT) => {
     if (!n.season) {
       delete n.season;
     }
     return n;
   });
+
+  return {
+    nfts,
+    block
+  };
+};
+
+export const fetchSingleWalletTDHMemesSeasons = async (wallet: string) => {
+  const { block, tdh } = await fetchBlockAndWalletTdh(wallet);
+  const memeNfts = await fetchMemes();
+  const boost = tdh[0]?.boost ?? 1;
+  const memeSeasons = new Map<number, number[]>();
+  memeNfts.forEach((m) => {
+    const season = m.season;
+    if (season) {
+      const seasonArray = memeSeasons.get(season) || [];
+      seasonArray.push(m.id);
+      memeSeasons.set(season, seasonArray);
+    }
+  });
+
+  const seasons: { season: number; tdh: number }[] = [];
+  memeSeasons.forEach((ids, season) => {
+    const seasonTdh = ids.reduce((acc, id) => {
+      const walletMemes = JSON.parse(tdh[0]?.memes ?? JSON.stringify([]));
+      const meme = walletMemes.find((m: any) => m.id === id);
+      if (meme) {
+        return acc + meme.tdh;
+      }
+      return acc;
+    }, 0);
+    seasons.push({
+      season,
+      tdh: formatNumber(seasonTdh * boost)
+    });
+  });
+
+  return {
+    seasons,
+    block
+  };
 };
