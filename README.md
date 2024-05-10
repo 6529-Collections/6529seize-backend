@@ -75,11 +75,47 @@ Restore database from the latest snapshot using the following
 npm run restore
 ```
 
-## 6. Run Services
+## 6. Get PM2
 
-Run services using <a href="https://pm2.keymetrics.io/" target="_blank" rel="noopener noreferrer">PM2</a>
+Services run using <a href="https://pm2.keymetrics.io/" target="_blank" rel="noopener noreferrer">PM2</a>
 
-### 6.1 Run Backend
+### 6.1 Install
+
+```
+npm install pm2@latest -g
+```
+
+### 6.1 Configure to Auto-restart on System Reboot
+
+To ensure your application starts on system boot, you can use PM2’s startup script generator. Run the following command and follow the instructions provided:
+
+```
+pm2 startup
+```
+
+### 6.2 Set Up Log Rotation
+
+PM2 can also manage log rotation, which is critical for ensuring that logs do not consume all available disk space.
+
+### 6.2.1 Install the PM2 log rotation module
+
+```
+pm2 install pm2-logrotate
+```
+
+### 6.2.2 Configure log rotation settings (optional)
+
+```
+pm2 set pm2-logrotate:max_size 100M  # Rotate logs once they reach 100MB
+pm2 set pm2-logrotate:retain 10      # Keep 10 rotated logs
+pm2 set pm2-logrotate:compress true  # Compress (gzip) rotated logs
+pm2 set pm2-logrotate:dateFormat YYYY-MM-DD # Set the date format used in the log file names
+pm2 set pm2-logrotate:rotateModule true     # Rotate the log of pm2-logrotate itself
+```
+
+## 7. Run Services
+
+### 7.1 Run Backend
 
 ```
 pm2 start npm --name=6529backend -- run backend
@@ -88,10 +124,16 @@ pm2 start npm --name=6529backend -- run backend
 - **CRON:** When starting the service, there are several scheduled cron jobs running at specific intervals which will consume data from the chain, process and save the result to the database.
   e.g. discovering Transactions - there is a scheduled cron job to run every 2 minutes which detects new transactions on the chain and saves them in the database
 
-### 6.1 Run API
+### 7.2 Run API
 
 PORT: 3000
 
 ```
 pm2 start npm --name=6529api -- run api
+```
+
+Note: To ensure PM2 knows which processes to restart at boot, you need to save the after starting the services
+
+```
+pm2 save
 ```
