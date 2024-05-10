@@ -102,7 +102,7 @@ export const fetchNftTdh = async (
     ${PROFILE_FULL}.cic_score,
     ${PROFILE_FULL}.primary_wallet,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display, 
-    ${NFT_OWNERS_CONSOLIDATION_TABLE}.balance as total_balance, 
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.balance as total_balance, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh as total_tdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh__raw as total_tdh__raw,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as total_boosted_tdh`;
