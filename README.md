@@ -1,6 +1,4 @@
-# 6529SEIZE-BACKEND
-
-Contents
+# SEIZE-LITE
 
 1. [Infra](#1-infra)
 
