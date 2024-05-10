@@ -18,7 +18,11 @@ Contents
 
 ## 1. INFRA
 
-...
+**Prerequisites:**
+
+- you have an AWS EC2 instance configured (<a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/concepts.html" target="_blank" rel="noopener noreferrer">Read More</a>)
+
+- you have an AWS RDS instance configured (<a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Welcome.html" target="_blank" rel="noopener noreferrer">Read More</a>)
 
 ## 2. Clone Repository
 
