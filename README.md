@@ -46,7 +46,7 @@ npm run build
 
 To run the project you need a file to hold environment variable. The following script with run you through the process of creating this file.
 
-**Notes:**
+**Note:**
 
 - you will be asked to provide database credentials
 
