@@ -26,10 +26,9 @@ import { areEqualAddresses } from './helpers';
 import { ethers } from 'ethers';
 import { findTransactionsByHash } from './db';
 import { Logger } from './logging';
+import fetch from 'node-fetch';
 
 const logger = Logger.get('TRANSACTION_VALUES');
-
-const fetch = require('node-fetch');
 
 const TRANSFER_EVENT =
   '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';

@@ -664,19 +664,6 @@ export async function persistTdhUpload(
   return persistTdhUploadByTable(UPLOADS_TABLE, block, dateString, location);
 }
 
-export async function persistConsolidatedTdhUpload(
-  block: number,
-  dateString: string,
-  location: string
-) {
-  return persistTdhUploadByTable(
-    CONSOLIDATED_UPLOADS_TABLE,
-    block,
-    dateString,
-    location
-  );
-}
-
 async function persistTdhUploadByTable(
   table: string,
   block: number,

@@ -68,7 +68,7 @@ export async function getAllNfts(memeOwners: NFTOwner[]): Promise<{
   const nextgenCollections = new Map<number, number[]>();
   nextgen.forEach((n) => {
     const collectionId = Math.round(parseInt(n.tokenId) / 10000000000);
-    let collection = nextgenCollections.get(collectionId) || [];
+    const collection = nextgenCollections.get(collectionId) || [];
     collection.push(parseInt(n.tokenId));
     nextgenCollections.set(collectionId, collection);
   });
@@ -123,12 +123,5 @@ async function getNFTResponse(alchemy: Alchemy, contract: string, key: any) {
 }
 
 async function getMintDate(m: Nft) {
-  const mintInfo = m.mint;
-  let mintDate: Date;
-  if (!mintInfo?.timestamp) {
-    mintDate = await fetchMintDate(m.contract.address, parseInt(m.tokenId));
-  } else {
-    mintDate = new Date(mintInfo.timestamp);
-  }
-  return mintDate;
+  return await fetchMintDate(m.contract.address, parseInt(m.tokenId));
 }

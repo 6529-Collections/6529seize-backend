@@ -44,7 +44,7 @@ export async function setEnv() {
 
   // Create new DB
   await performDbOperation(dataSource, 'Creating new DB', [
-    `DROP DATABASE ${dbNewDB}`,
+    `DROP DATABASE IF EXISTS ${dbNewDB}`,
     `CREATE DATABASE ${dbNewDB}`
   ]);
 

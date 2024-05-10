@@ -1,6 +1,6 @@
 import { distinct, getLastTDH } from '../helpers';
 import { loadEnv, unload } from '../secrets';
-import { ConsolidatedTDH, NftTDH, TDH } from '../entities/ITDH';
+import { ConsolidatedTDH, TDH } from '../entities/ITDH';
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { fetchAllConsolidationAddresses } from '../db';
@@ -11,7 +11,7 @@ const logger = Logger.get('TDH_CONSOLIDATIONS_LOOP');
 
 export const handler = async () => {
   const start = Time.now();
-  await loadEnv([TDH, ConsolidatedTDH, NFTOwner, NftTDH]);
+  await loadEnv([TDH, ConsolidatedTDH, NFTOwner]);
   logger.info(`[RUNNING]`);
   await consolidatedTdhLoop();
   await unload();
