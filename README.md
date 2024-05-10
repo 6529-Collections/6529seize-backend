@@ -12,7 +12,9 @@ Contents
 
 5. [Restore](#5-restore)
 
-6. [Run Services](#6-run-services)
+6. [Get PM2](#6-get-pm2)
+
+7. [Run Services](#6-run-services)
 
 ## 1. INFRA
 
@@ -123,6 +125,8 @@ pm2 start npm --name=6529backend -- run backend
 
 - **CRON:** When starting the service, there are several scheduled cron jobs running at specific intervals which will consume data from the chain, process and save the result to the database.
   e.g. discovering Transactions - there is a scheduled cron job to run every 2 minutes which detects new transactions on the chain and saves them in the database
+
+- **Note:** On start, this service will always run the tdh calculation on start and the schedule it to run at 00:00 UTC
 
 ### 7.2 Run API
 
