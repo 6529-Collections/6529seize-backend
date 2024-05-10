@@ -25,6 +25,8 @@ import {
   RateProfileRequest
 } from './rating.helper';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { ChangeProfileCicRating } from '../generated/models/ChangeProfileCicRating';
+import { ChangeProfileCicRatingResponse } from '../generated/models/ChangeProfileCicRatingResponse';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -103,15 +105,15 @@ router.post(
   `/rating`,
   needsAuthenticatedUser(),
   async function (
-    req: RateProfileRequest<ApiAddCicRatingToProfileRequest>,
-    res: Response<ApiResponse<ProfileAndConsolidations>>
+    req: RateProfileRequest<ChangeProfileCicRating>,
+    res: Response<ApiResponse<ChangeProfileCicRatingResponse>>
   ) {
     const { amount } = getValidatedByJoiOrThrow(
       req.body,
-      ApiAddCicRatingToProfileRequestSchema
+      ChangeProfileCicRatingSchema
     );
     const { authContext, targetProfileId } = await getRaterInfoFromRequest(req);
-    await ratingsService.updateRating({
+    const { total, byUser } = await ratingsService.updateRating({
       authenticationContext: authContext,
       rater_profile_id:
         authContext.roleProfileId ?? authContext.authenticatedProfileId!,
@@ -121,11 +123,10 @@ router.post(
       rating: amount
     });
     await giveReadReplicaTimeToCatchUp();
-    const updatedProfileInfo =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        targetProfileId
-      );
-    res.status(201).send(updatedProfileInfo!);
+    res.status(201).send({
+      total_cic_rating: total,
+      cic_rating_by_user: byUser
+    });
   }
 );
 
@@ -276,11 +277,7 @@ router.post(
   }
 );
 
-interface ApiAddCicRatingToProfileRequest {
-  readonly amount: number;
-}
-
-const ApiAddCicRatingToProfileRequestSchema: Joi.ObjectSchema<ApiAddCicRatingToProfileRequest> =
+const ChangeProfileCicRatingSchema: Joi.ObjectSchema<ChangeProfileCicRating> =
   Joi.object({
     amount: Joi.number().integer().required()
   });

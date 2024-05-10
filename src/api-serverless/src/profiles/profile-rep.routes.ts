@@ -18,6 +18,8 @@ import { profilesService } from '../../../profiles/profiles.service';
 import { RatingStats } from '../../../rates/ratings.db';
 import { Page } from '../page-request';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { ChangeProfileRepRating } from '../generated/models/ChangeProfileRepRating';
+import { ChangeProfileRepRatingResponse } from '../generated/models/ChangeProfileRepRatingResponse';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -163,12 +165,12 @@ router.post(
   `/rating`,
   needsAuthenticatedUser(),
   async function (
-    req: RateProfileRequest<ApiAddRepRatingToProfileRequest>,
-    res: Response<ApiResponse<ApiProfileReceivedRepRatesState>>
+    req: RateProfileRequest<ChangeProfileRepRating>,
+    res: Response<ApiResponse<ChangeProfileRepRatingResponse>>
   ) {
     const { amount, category } = getValidatedByJoiOrThrow(
       req.body,
-      ApiAddRepRatingToProfileRequestSchema
+      ChangeProfileRepRatingSchema
     );
     const proposedCategory = category?.trim() ?? '';
     if (proposedCategory !== '') {
@@ -184,7 +186,7 @@ router.post(
     const { authContext, targetProfileId } = await getRaterInfoFromRequest(req);
     const profileId =
       authContext.roleProfileId ?? authContext.authenticatedProfileId!;
-    await ratingsService.updateRating({
+    const { total, byUser } = await ratingsService.updateRating({
       authenticationContext: authContext,
       rater_profile_id: profileId,
       matter: RateMatter.REP,
@@ -193,17 +195,14 @@ router.post(
       rating: amount
     });
     await giveReadReplicaTimeToCatchUp();
-    const response = await getReceivedRatingsStats(profileId, targetProfileId);
-    res.send(response);
+    res.send({
+      total_rep_rating_for_category: total,
+      rep_rating_for_category_by_user: byUser
+    });
   }
 );
 
-interface ApiAddRepRatingToProfileRequest {
-  readonly amount: number;
-  readonly category: string;
-}
-
-const ApiAddRepRatingToProfileRequestSchema: Joi.ObjectSchema<ApiAddRepRatingToProfileRequest> =
+const ChangeProfileRepRatingSchema: Joi.ObjectSchema<ChangeProfileRepRating> =
   Joi.object({
     amount: Joi.number().integer().required(),
     category: Joi.string().max(100).regex(REP_CATEGORY_PATTERN).messages({

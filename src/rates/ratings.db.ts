@@ -552,6 +552,45 @@ from grouped_rates r
     }
     return this.db.execute(sql, params).then((results) => results[0]?.cnt ?? 0);
   }
+
+  async getTotalAndUserRepRatingForCategoryToProfile(
+    param: {
+      category: string | null;
+      from_profile_id: string;
+      to_profile_id: string;
+      matter: RateMatter;
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<{ total: number; byUser: number }> {
+    const [total, byUser] = await Promise.all([
+      this.db
+        .execute<{ rating: number }>(
+          `
+      select sum(rating) as rating from ${RATINGS_TABLE} where matter = :matter ${
+            param.category ? `and matter_category = :category` : ``
+          } and matter_target_id = :to_profile_id
+    `,
+          param,
+          { wrappedConnection: connection.connection }
+        )
+        .then((results) => results[0]?.rating ?? 0),
+      this.db
+        .execute<{ rating: number }>(
+          `
+      select sum(rating) as rating from ${RATINGS_TABLE} where matter = :matter ${
+            param.category ? `and matter_category = :category` : ``
+          } and matter_target_id = :to_profile_id and rater_profile_id = :from_profile_id
+    `,
+          param,
+          { wrappedConnection: connection.connection }
+        )
+        .then((results) => results[0]?.rating ?? 0)
+    ]);
+    return {
+      total,
+      byUser
+    };
+  }
 }
 
 export type UpdateRatingRequest = Omit<Rating, 'last_modified'>;
