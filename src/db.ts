@@ -1,7 +1,6 @@
 import 'reflect-metadata';
 import { DataSource, LessThan, MoreThanOrEqual, QueryRunner } from 'typeorm';
 import {
-  CONSOLIDATIONS_TABLE,
   GRADIENT_CONTRACT,
   MEMES_CONTRACT,
   NFTS_TABLE,
@@ -19,21 +18,14 @@ import {
   Delegation,
   DelegationEvent,
   EventType,
-  NFTDelegationBlock,
-  WalletConsolidationKey
+  NFTDelegationBlock
 } from './entities/IDelegation';
-import {
-  areEqualAddresses,
-  extractConsolidationWallets,
-  formatAddress,
-  isNullAddress
-} from './helpers';
+import { extractConsolidationWallets, isNullAddress } from './helpers';
 import { getConsolidationsSql, parseTdhDataFromDB } from './sql_helpers';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
-import { MemesSeason } from './entities/ISeason';
 import { insertWithoutUpdate, resetRepository } from './orm_helpers';
 import { NFTOwner } from './entities/INFTOwner';
 
