@@ -105,7 +105,12 @@ export class RatingsService {
         }
         const roleProfileId = request.authenticationContext.roleProfileId;
         if (!roleProfileId || authenticatedProfileId === roleProfileId) {
-          await this.updateRatingUnsafe(request, 'USER_EDIT', null, connection);
+          await this.updateRatingUnsafe({
+            request,
+            changeReason: 'USER_EDIT',
+            proxyContext: null,
+            connection
+          });
         } else {
           const action = request.authenticationContext.activeProxyActions.find(
             (action) =>
@@ -125,24 +130,32 @@ export class RatingsService {
             credit_amount: action.credit_amount,
             credit_spent: action.credit_spent
           };
-          await this.updateRatingUnsafe(
+          await this.updateRatingUnsafe({
             request,
-            'USER_EDIT',
+            changeReason: 'USER_EDIT',
             proxyContext,
             connection
-          );
+          });
         }
       }
     );
   }
 
-  public async updateRatingUnsafe(
-    request: UpdateRatingRequest,
-    changeReason: string,
-    proxyContext: RatingProxyContext | null,
-    connection: ConnectionWrapper<any>,
-    skipTdhCheck?: boolean
-  ) {
+  public async updateRatingUnsafe({
+    request,
+    changeReason,
+    proxyContext,
+    connection,
+    skipTdhCheck,
+    skipLogCreation
+  }: {
+    request: UpdateRatingRequest;
+    changeReason: string;
+    proxyContext: RatingProxyContext | null;
+    connection: ConnectionWrapper<any>;
+    skipTdhCheck?: boolean;
+    skipLogCreation?: boolean;
+  }) {
     const profileId = request.rater_profile_id;
     if (
       getMattersWhereTargetIsProfile().includes(request.matter) &&
@@ -180,27 +193,29 @@ export class RatingsService {
     }
     await this.ratingsDb.updateRating(request, connection);
     await this.scheduleEvents(request, currentRating, connection);
-    await this.profileActivityLogsDb.insert(
-      {
-        profile_id: request.rater_profile_id,
-        target_id: request.matter_target_id,
-        type:
-          request.matter === RateMatter.DROP_RATING
-            ? ProfileActivityLogType.DROP_RATING_EDIT
-            : ProfileActivityLogType.RATING_EDIT,
-        contents: JSON.stringify({
-          old_rating: currentRating.rating,
-          new_rating: request.rating,
-          rating_matter: request.matter,
-          rating_category: request.matter_category,
-          change_reason: changeReason,
-          proxy_id: proxyContext?.authenticatedProfileId
-            ? proxyContext?.authenticatedProfileId
-            : undefined
-        })
-      },
-      connection
-    );
+    if (!skipLogCreation) {
+      await this.profileActivityLogsDb.insert(
+        {
+          profile_id: request.rater_profile_id,
+          target_id: request.matter_target_id,
+          type:
+            request.matter === RateMatter.DROP_RATING
+              ? ProfileActivityLogType.DROP_RATING_EDIT
+              : ProfileActivityLogType.RATING_EDIT,
+          contents: JSON.stringify({
+            old_rating: currentRating.rating,
+            new_rating: request.rating,
+            rating_matter: request.matter,
+            rating_category: request.matter_category,
+            change_reason: changeReason,
+            proxy_id: proxyContext?.authenticatedProfileId
+              ? proxyContext?.authenticatedProfileId
+              : undefined
+          })
+        },
+        connection
+      );
+    }
   }
 
   private async checkAndUpdateProxyRatingCredit(
@@ -442,16 +457,17 @@ export class RatingsService {
     connectionHolder: ConnectionWrapper<any>
   ) {
     for (const rating of ratings) {
-      await this.updateRatingUnsafe(
-        {
+      await this.updateRatingUnsafe({
+        request: {
           ...rating,
           rating: 0
         },
-        `Profile ${sourceHandle} archived, ratings transferred to ${targetHandle}`,
-        null,
-        connectionHolder,
-        true
-      );
+        changeReason: `Profile ${sourceHandle} archived, ratings transferred to ${targetHandle}`,
+        proxyContext: null,
+        connection: connectionHolder,
+        skipLogCreation: true,
+        skipTdhCheck: true
+      });
     }
   }
 
@@ -567,13 +583,14 @@ export class RatingsService {
         connectionHolder
       );
 
-      await this.updateRatingUnsafe(
-        { ...rating, rating: rating.rating + targetRating.rating },
-        `Profile ${sourceHandle} archived, ratings transferred to ${targetHandle}`,
-        null,
-        connectionHolder,
-        true
-      );
+      await this.updateRatingUnsafe({
+        request: { ...rating, rating: rating.rating + targetRating.rating },
+        changeReason: `Profile ${sourceHandle} archived, ratings transferred to ${targetHandle}`,
+        proxyContext: null,
+        connection: connectionHolder,
+        skipTdhCheck: true,
+        skipLogCreation: true
+      });
     }
   }
 
