@@ -1,0 +1,21 @@
+name: Build backend and API on pull request
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build backend and API
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Install dependencies
+        run: npm i && pushd src/api-serverless && npm i && popd
+      - name: Build backend
+        run: npm run build
+      - name: Build API
+        run: pushd src/api-serverless && npm run build && popd
