@@ -32,8 +32,8 @@ import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import { areEqualAddresses, replaceEmojisWithHex } from '../helpers';
 import {
-  getHighestTdhAddressForConsolidationKey,
-  getDelegationPrimaryAddressForConsolidation
+  getDelegationPrimaryAddressForConsolidation,
+  getHighestTdhAddressForConsolidationKey
 } from '../delegationsLoop/db.delegations';
 import { Wallet } from '../entities/IWallet';
 
@@ -472,6 +472,21 @@ export class ProfilesService {
         { id: profileToBeMerged.external_id },
         connectionHolder
       );
+      await this.profileActivityLogsDb.changeSourceProfileIdInLogs(
+        {
+          oldSourceId: profileToBeMerged.external_id,
+          newSourceId: target.external_id
+        },
+        connectionHolder
+      );
+
+      await this.profileActivityLogsDb.changeTargetProfileIdInLogs(
+        {
+          oldSourceId: profileToBeMerged.external_id,
+          newSourceId: target.external_id
+        },
+        connectionHolder
+      );
       await this.profileActivityLogsDb.insert(
         {
           profile_id: profileToBeMerged.external_id,
@@ -788,11 +803,12 @@ export class ProfilesService {
           ...statement,
           profile_id: target.external_id
         },
-        connection
+        connection,
+        true
       );
     }
     for (const sourceStatement of sourceStatements) {
-      await this.cicService.deleteStatement(sourceStatement, connection);
+      await this.cicService.deleteStatement(sourceStatement, connection, true);
     }
   }
 

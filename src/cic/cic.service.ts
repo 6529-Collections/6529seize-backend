@@ -270,23 +270,26 @@ export class CicService {
 
   public async insertStatement(
     statement: Omit<CicStatement, 'id' | 'crated_at' | 'updated_at'>,
-    connection: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    skipLogCreation?: boolean
   ) {
     const cicStatement = await this.cicDb.insertCicStatement(
       statement,
       connection
     );
-    await this.profileActivityLogsDb.insert(
-      {
-        profile_id: statement.profile_id,
-        target_id: null,
-        type: CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE[
-          cicStatement.statement_group
-        ],
-        contents: JSON.stringify({ action: 'ADD', statement: cicStatement })
-      },
-      connection
-    );
+    if (!skipLogCreation) {
+      await this.profileActivityLogsDb.insert(
+        {
+          profile_id: statement.profile_id,
+          target_id: null,
+          type: CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE[
+            cicStatement.statement_group
+          ],
+          contents: JSON.stringify({ action: 'ADD', statement: cicStatement })
+        },
+        connection
+      );
+    }
     return cicStatement;
   }
 
@@ -301,26 +304,29 @@ export class CicService {
 
   public async deleteStatement(
     cicStatement: CicStatement,
-    connection: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    skipLogCreation?: boolean
   ) {
     await this.cicDb.deleteCicStatement(
       { id: cicStatement.id, profile_id: cicStatement.profile_id },
       connection
     );
-    await this.profileActivityLogsDb.insert(
-      {
-        profile_id: cicStatement.profile_id,
-        target_id: null,
-        type: CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE[
-          cicStatement.statement_group
-        ],
-        contents: JSON.stringify({
-          action: 'DELETE',
-          statement: cicStatement
-        })
-      },
-      connection
-    );
+    if (!skipLogCreation) {
+      await this.profileActivityLogsDb.insert(
+        {
+          profile_id: cicStatement.profile_id,
+          target_id: null,
+          type: CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE[
+            cicStatement.statement_group
+          ],
+          contents: JSON.stringify({
+            action: 'DELETE',
+            statement: cicStatement
+          })
+        },
+        connection
+      );
+    }
   }
 }
 

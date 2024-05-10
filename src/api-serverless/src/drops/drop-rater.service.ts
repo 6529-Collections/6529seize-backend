@@ -66,19 +66,19 @@ class DropRaterService {
           },
           connection
         );
-        await this.ratingsService.updateRatingUnsafe(
-          {
+        await this.ratingsService.updateRatingUnsafe({
+          request: {
             rater_profile_id: param.rater_profile_id,
             matter_target_id: dropId.toString(),
             rating: newRating,
             matter_category: param.category,
             matter: RateMatter.DROP_RATING
           },
-          'USER_EDIT',
-          null,
-          connection,
-          true
-        );
+          changeReason: 'USER_EDIT',
+          proxyContext: null,
+          connection: connection,
+          skipTdhCheck: true
+        });
       }
     });
     await giveReadReplicaTimeToCatchUp();

@@ -5,6 +5,7 @@ import {
   SqlExecutor
 } from '../sql-executor';
 import {
+  isTargetOfTypeDrop,
   ProfileActivityLog,
   ProfileActivityLogType
 } from '../entities/IProfileActivityLog';
@@ -161,6 +162,43 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     return await this.db
       .execute(sql, sqlParams)
       .then((rows) => rows[0].cnt as number);
+  }
+
+  async changeSourceProfileIdInLogs(
+    param: {
+      newSourceId: string;
+      oldSourceId: string;
+    },
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `
+      update ${PROFILES_ACTIVITY_LOGS_TABLE} set profile_id = :newSourceId where profile_id = :oldSourceId
+      `,
+      param,
+      { wrappedConnection: connectionHolder.connection }
+    );
+  }
+
+  async changeTargetProfileIdInLogs(
+    param: {
+      newSourceId: string;
+      oldSourceId: string;
+    },
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `
+      update ${PROFILES_ACTIVITY_LOGS_TABLE} set target_id = :newSourceId where target_id = :oldSourceId and type in (:types)
+      `,
+      {
+        ...param,
+        types: Object.values(ProfileActivityLogType).filter(
+          (t) => !isTargetOfTypeDrop(t)
+        )
+      },
+      { wrappedConnection: connectionHolder.connection }
+    );
   }
 }
 
