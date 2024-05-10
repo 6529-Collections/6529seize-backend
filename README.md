@@ -119,6 +119,8 @@ pm2 set pm2-logrotate:rotateModule true     # Rotate the log of pm2-logrotate it
 
 ### 7.1 Run Backend
 
+PM2 process name: 6529backend
+
 ```
 pm2 start npm --name=6529backend -- run backend
 ```
@@ -130,6 +132,7 @@ pm2 start npm --name=6529backend -- run backend
 
 ### 7.2 Run API
 
+PM2 process name: 6529api
 PORT: 3000
 
 ```
