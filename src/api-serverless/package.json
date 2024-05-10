@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "@types/express": "^4.17.21",
-    "@types/swagger-ui-express": "^4.1.6",
     "@wagmi/chains": "^1.8.0",
     "async-express-decorator": "^1.1.0",
     "compression": "^1.7.4",
@@ -31,7 +30,6 @@
     "serverless": "^3.38.0",
     "serverless-esbuild": "^1.52.1",
     "serverless-offline": "^13.3.3",
-    "swagger-autogen": "^2.23.0",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.4.5"
