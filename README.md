@@ -93,5 +93,5 @@ pm2 start npm --name=6529backend -- run backend
 PORT: 3000
 
 ```
-pm2 start npm --name=6529api -- run api:env
+pm2 start npm --name=6529api -- run api
 ```
