@@ -53,7 +53,7 @@ Notes:
   - admin user and password (used to create database and new users for the services but not saved in .env file)
   - new database user/password
 
-- you will be asked to provide Alchemy API key (get one [here](https://docs.alchemy.com/docs/alchemy-quickstart-guide))
+- you will be asked to provide Alchemy API key (get one <a href="https://docs.alchemy.com/docs/alchemy-quickstart-guide" target="_blank" rel="noopener noreferrer">here</a>)
 
 - at the end of this process:
   - new database created
@@ -65,7 +65,7 @@ Notes:
 npm run set_env
 ```
 
-[Sample .env file](https://github.com/6529-Collections/6529seize-backend/blob/seize-lite/.env.sample)
+<a href="https://github.com/6529-Collections/6529seize-backend/blob/seize-lite/.env.sample" target="_blank" rel="noopener noreferrer">Sample .env file</a>
 
 ## 5. Restore
 
@@ -77,7 +77,7 @@ npm run restore
 
 ## 6. Run Services
 
-Run services using [PM2](https://pm2.keymetrics.io/)
+Run services using <a href="https://pm2.keymetrics.io/" target="_blank" rel="noopener noreferrer">PM2</a>
 
 ### 6.1 Run Backend
 
