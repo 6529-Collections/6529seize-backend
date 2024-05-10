@@ -1,5 +1,9 @@
 export * from '../models/AcceptActionRequest';
 export * from '../models/AddActionToProxyRequest';
+export * from '../models/ChangeProfileCicRating';
+export * from '../models/ChangeProfileCicRatingResponse';
+export * from '../models/ChangeProfileRepRating';
+export * from '../models/ChangeProfileRepRatingResponse';
 export * from '../models/CreateDropMediaUrl201Response';
 export * from '../models/CreateDropMediaUrlRequest';
 export * from '../models/CreateDropPart';
@@ -61,6 +65,10 @@ export * from '../models/WaveVotingConfig';
 
 import { AcceptActionRequest, AcceptActionRequestActionEnum   } from '../models/AcceptActionRequest';
 import { AddActionToProxyRequest    } from '../models/AddActionToProxyRequest';
+import { ChangeProfileCicRating } from '../models/ChangeProfileCicRating';
+import { ChangeProfileCicRatingResponse } from '../models/ChangeProfileCicRatingResponse';
+import { ChangeProfileRepRating } from '../models/ChangeProfileRepRating';
+import { ChangeProfileRepRatingResponse } from '../models/ChangeProfileRepRatingResponse';
 import { CreateDropMediaUrl201Response } from '../models/CreateDropMediaUrl201Response';
 import { CreateDropMediaUrlRequest } from '../models/CreateDropMediaUrlRequest';
 import { CreateDropPart } from '../models/CreateDropPart';
@@ -146,6 +154,10 @@ let enumsMap: Set<string> = new Set<string>([
 let typeMap: {[index: string]: any} = {
     "AcceptActionRequest": AcceptActionRequest,
     "AddActionToProxyRequest": AddActionToProxyRequest,
+    "ChangeProfileCicRating": ChangeProfileCicRating,
+    "ChangeProfileCicRatingResponse": ChangeProfileCicRatingResponse,
+    "ChangeProfileRepRating": ChangeProfileRepRating,
+    "ChangeProfileRepRatingResponse": ChangeProfileRepRatingResponse,
     "CreateDropMediaUrl201Response": CreateDropMediaUrl201Response,
     "CreateDropMediaUrlRequest": CreateDropMediaUrlRequest,
     "CreateDropPart": CreateDropPart,
