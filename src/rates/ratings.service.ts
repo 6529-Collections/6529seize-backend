@@ -196,11 +196,6 @@ export class RatingsService {
           change_reason: changeReason,
           proxy_id: proxyContext?.authenticatedProfileId
             ? proxyContext?.authenticatedProfileId
-            : undefined,
-          proxy_handle: proxyContext?.authenticatedProfileId
-            ? await this.profilesDb
-                .getProfileById(proxyContext.authenticatedProfileId)
-                .then((it) => it?.handle)
             : undefined
         })
       },
