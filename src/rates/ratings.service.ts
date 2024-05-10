@@ -95,8 +95,10 @@ export class RatingsService {
     return tdh - ratesSpent;
   }
 
-  public async updateRating(request: UpdateRatingViaApiRequest) {
-    await this.ratingsDb.executeNativeQueriesInTransaction(
+  public async updateRating(
+    request: UpdateRatingViaApiRequest
+  ): Promise<{ total: number; byUser: number }> {
+    return await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const authenticatedProfileId =
           request.authenticationContext.authenticatedProfileId;
@@ -137,6 +139,15 @@ export class RatingsService {
             connection
           });
         }
+        return await this.ratingsDb.getTotalAndUserRepRatingForCategoryToProfile(
+          {
+            matter: request.matter,
+            from_profile_id: request.rater_profile_id,
+            to_profile_id: request.matter_target_id,
+            category: request.matter_category
+          },
+          connection
+        );
       }
     );
   }
