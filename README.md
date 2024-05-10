@@ -46,7 +46,7 @@ npm run build
 
 To run the project you need a file to hold environment variable. The following script with run you through the process of creating this file.
 
-Notes:
+**Notes:**
 
 - you will be asked to provide database credentials
 
@@ -119,7 +119,7 @@ pm2 set pm2-logrotate:rotateModule true     # Rotate the log of pm2-logrotate it
 
 ### 7.1 Run Backend
 
-PM2 process name: 6529backend
+- PM2 process name: 6529backend
 
 ```
 pm2 start npm --name=6529backend -- run backend
@@ -132,14 +132,14 @@ pm2 start npm --name=6529backend -- run backend
 
 ### 7.2 Run API
 
-PM2 process name: 6529api
-PORT: 3000
+- PM2 process name: 6529api
+- PORT: 3000
 
 ```
 pm2 start npm --name=6529api -- run api
 ```
 
-Note: To ensure PM2 knows which processes to restart at boot, you need to save the after starting the services
+**Note:** To ensure PM2 knows which processes to restart at boot, you need to save the after starting the services
 
 ```
 pm2 save
