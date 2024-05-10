@@ -141,7 +141,7 @@ pm2 start npm --name=6529backend -- run backend
 pm2 start npm --name=6529api -- run api
 ```
 
-**Note:** To ensure PM2 knows which processes to restart at boot, you need to save the after starting the services
+**Note:** To ensure PM2 knows which processes to restart at boot, you need to save the list after starting the services
 
 ```
 pm2 save
