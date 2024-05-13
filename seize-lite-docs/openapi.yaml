@@ -4,8 +4,7 @@ info:
   description: API for retrieving Total Days Held (TDH) including breakdowns for various collections.
   version: 1.0.0
 servers:
-  - url: 'https://api.yourdomain.com'
-    description: Production server
+  - url: 'https://<domain>:<port>'
 
 paths:
   /api/tdh/total:
