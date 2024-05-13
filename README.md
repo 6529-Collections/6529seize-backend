@@ -52,21 +52,21 @@ sudo n 21
 
 Reset your session using `hash -r`
 
-## 3. Build
+## 4. Build
 
-### 3.1 Install
+### 4.1 Install
 
 ```
 npm i
 ```
 
-### 3.2 Build
+### 4.2 Build
 
 ```
 npm run build
 ```
 
-## 4. Set Environment
+## 5. Set Environment
 
 To run the project you need a file to hold environment variable. The following script with run you through the process of creating this file.
 
@@ -93,7 +93,7 @@ npm run set_env
 
 <a href="https://github.com/6529-Collections/6529seize-backend/blob/seize-lite/.env.sample" target="_blank" rel="noopener noreferrer">Sample .env file</a>
 
-## 5. Restore
+## 6. Restore
 
 Restore database from the latest snapshot using the following
 
@@ -101,17 +101,17 @@ Restore database from the latest snapshot using the following
 npm run restore
 ```
 
-## 6. Get PM2
+## 7. Get PM2
 
 Services run using <a href="https://pm2.keymetrics.io/" target="_blank" rel="noopener noreferrer">PM2</a>
 
-### 6.1 Install
+### 7.1 Install
 
 ```
 npm install pm2@latest -g
 ```
 
-### 6.1 Configure to Auto-restart on System Reboot
+### 7.1 Configure to Auto-restart on System Reboot
 
 To ensure your application starts on system boot, you can use PM2’s startup script generator. Run the following command and follow the instructions provided:
 
@@ -119,17 +119,17 @@ To ensure your application starts on system boot, you can use PM2’s startup sc
 pm2 startup
 ```
 
-### 6.2 Set Up Log Rotation
+### 7.2 Set Up Log Rotation
 
 PM2 can also manage log rotation, which is critical for ensuring that logs do not consume all available disk space.
 
-### 6.2.1 Install the PM2 log rotation module
+### 7.2.1 Install the PM2 log rotation module
 
 ```
 pm2 install pm2-logrotate
 ```
 
-### 6.2.2 Configure log rotation settings (optional)
+### 7.2.2 Configure log rotation settings (optional)
 
 ```
 pm2 set pm2-logrotate:max_size 100M  # Rotate logs once they reach 100MB
@@ -139,9 +139,9 @@ pm2 set pm2-logrotate:dateFormat YYYY-MM-DD # Set the date format used in the lo
 pm2 set pm2-logrotate:rotateModule true     # Rotate the log of pm2-logrotate itself
 ```
 
-## 7. Run Services
+## 8. Run Services
 
-### 7.1 Run Backend
+### 8.1 Run Backend
 
 - PM2 process name: 6529backend
 
@@ -154,7 +154,7 @@ pm2 start npm --name=6529backend -- run backend
 
 - **Note:** On start, this service will always run the tdh calculation on start and the schedule it to run at 00:00 UTC
 
-### 7.2 Run API
+### 8.2 Run API
 
 - PM2 process name: 6529api
 - PORT: 3000
@@ -169,9 +169,9 @@ pm2 start npm --name=6529api -- run api
 pm2 save
 ```
 
-### 7.3 Test API
+### 8.3 Test API
 
-### 7.3.1 Local
+### 8.3.1 Local
 
 To test your api locally, navigate in your browser to:
 
@@ -179,7 +179,7 @@ To test your api locally, navigate in your browser to:
 http://localhost:3000/api/tdh/<address>
 ```
 
-### 7.3.2 AWS
+### 8.3.2 AWS
 
 If you are using AWS EC2, navigate to
 
@@ -187,4 +187,4 @@ If you are using AWS EC2, navigate to
 http://[ip-address]:3000/api/tdh/<address>
 ```
 
-Note: Please make sure that you have added an inboud rule on the instance security group for port 3000
+Note: Please make sure that you have added an inbound rule on the instance security group for port 3000
