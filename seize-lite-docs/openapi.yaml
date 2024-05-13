@@ -4,7 +4,7 @@ info:
   description: API for retrieving Total Days Held (TDH) including breakdowns for various collections.
   version: 1.0.0
 servers:
-  - url: 'https://<domain>:<port>'
+  - url: 'https://api.seize.io'
 
 paths:
   /api/tdh/total:
