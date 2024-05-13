@@ -16,16 +16,21 @@ const logger = Logger.get('BACKEND');
 
 let LOCKED = true;
 
-//delegations every 2 minutes
+// delegations every 2 minutes
 cron.schedule('*/2 * * * *', async () => {
   if (LOCKED) return;
   await runDelegations();
 });
 
-//transactions every 2 minutes
+// transactions every 2 minutes
 cron.schedule('*/2 * * * *', async () => {
   if (LOCKED) return;
   await runTransactions();
+});
+
+// TDH calculations at 00:01
+cron.schedule('1 0 * * *', async () => {
+  await runTDH();
 });
 
 async function start() {
