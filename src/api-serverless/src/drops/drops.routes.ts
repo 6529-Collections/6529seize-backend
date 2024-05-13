@@ -1,5 +1,9 @@
 import { asyncRouter } from '../async.router';
-import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
+import {
+  getAuthenticationContext,
+  getWalletOrThrow,
+  needsAuthenticatedUser
+} from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
@@ -39,6 +43,7 @@ const router = asyncRouter();
 
 router.get(
   '/',
+  needsAuthenticatedUser(),
   async (
     req: Request<
       any,
@@ -51,19 +56,12 @@ router.get(
         min_part_id?: number;
         max_part_id?: number;
         wave_id?: string;
-        context_profile?: string;
       },
       any
     >,
     res: Response<ApiResponse<Drop[]>>
   ) => {
-    const contextProfileId = req.query.context_profile
-      ? await profilesService
-          .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-            req.query.context_profile
-          )
-          ?.then((result) => result?.profile?.external_id)
-      : undefined;
+    const authenticationContext = await getAuthenticationContext(req);
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
     const wave_id = req.query.wave_id ?? null;
     const curation_criteria_id = req.query.curation_criteria_id ?? null;
@@ -87,7 +85,7 @@ router.get(
       min_part_id,
       max_part_id,
       wave_id,
-      context_profile_id: contextProfileId
+      authenticationContext
     });
     res.send(latestDrops);
   }

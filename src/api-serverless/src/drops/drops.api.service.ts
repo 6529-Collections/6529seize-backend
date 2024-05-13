@@ -4,7 +4,7 @@ import {
   ProfilesService
 } from '../../../profiles/profiles.service';
 import { ConnectionWrapper } from '../../../sql-executor';
-import { NotFoundException } from '../../../exceptions';
+import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { DropEntity } from '../../../entities/IDrop';
 import { distinct } from '../../../helpers';
 import { DropActivityLogsQuery } from './drops.routes';
@@ -29,6 +29,8 @@ import {
   CommunityMemberCriteriaService,
   communityMemberCriteriaService
 } from '../community-members/community-member-criteria.service';
+import { AuthenticationContext } from '../../../auth-context';
+import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 
 export class DropsApiService {
   constructor(
@@ -77,7 +79,7 @@ export class DropsApiService {
     serial_no_less_than,
     min_part_id,
     max_part_id,
-    context_profile_id
+    authenticationContext
   }: {
     curation_criteria_id: string | null;
     serial_no_less_than: number | null;
@@ -85,13 +87,28 @@ export class DropsApiService {
     min_part_id: number;
     max_part_id: number;
     amount: number;
-    context_profile_id?: string;
+    authenticationContext: AuthenticationContext;
   }): Promise<Drop[]> {
-    const eligible_curations = context_profile_id
-      ? await this.communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
-          context_profile_id
-        )
-      : [];
+    const context_profile_id = authenticationContext.getActingAsId();
+    if (!context_profile_id) {
+      throw new ForbiddenException(
+        `Please create a profile before browsing drops`
+      );
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.READ_WAVE
+      ]
+    ) {
+      throw new ForbiddenException(
+        `Profile ${context_profile_id} hasn't given profile ${authenticationContext.authenticatedProfileId} right to read waves`
+      );
+    }
+    const eligible_curations =
+      await this.communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
+        context_profile_id
+      );
     if (
       curation_criteria_id &&
       !eligible_curations.includes(curation_criteria_id)
