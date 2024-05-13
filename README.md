@@ -188,3 +188,9 @@ http://[ip-address]:3000/api/tdh/<address>
 ```
 
 Note: Please make sure that you have added an inbound rule on the instance security group for port 3000
+
+Compare the response with
+
+```
+https://api.seize.io/api/tdh/<address>
+```
