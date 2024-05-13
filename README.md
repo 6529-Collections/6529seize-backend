@@ -6,13 +6,15 @@
 
 3. [Build](#3-build)
 
-4. [Set Environment](#4-set-environment)
+4. [Install NPM](#4-install-npm)
 
-5. [Restore](#5-restore)
+5. [Set Environment](#5-set-environment)
 
-6. [Get PM2](#6-get-pm2)
+6. [Restore](#6-restore)
 
-7. [Run Services](#6-run-services)
+7. [Get PM2](#7-get-pm2)
+
+8. [Run Services](#8-run-services)
 
 ## 1. INFRA
 
@@ -27,8 +29,28 @@
 Clone repository "6529seize-backend" at branch `seize-lite`
 
 ```
-git clone --branch seize-lite git@github.com:6529-Collections/6529seize-backend.git
+git clone --branch seize-lite https://github.com/6529-Collections/6529seize-backend.git
 ```
+
+## 3. Install NPM
+
+```
+sudo apt install npm
+```
+
+Note: We need npm version v21. Get it using `n`
+
+```
+sudo npm i n -g
+```
+
+Select v21 using
+
+```
+sudo n 21
+```
+
+Reset your session using `hash -r`
 
 ## 3. Build
 
@@ -146,3 +168,23 @@ pm2 start npm --name=6529api -- run api
 ```
 pm2 save
 ```
+
+### 7.3 Test API
+
+### 7.3.1 Local
+
+To test your api locally, navigate in your browser to:
+
+```
+http://localhost:3000/api/tdh/<address>
+```
+
+### 7.3.2 AWS
+
+If you are using AWS EC2, navigate to
+
+```
+http://[ip-address]:3000/api/tdh/<address>
+```
+
+Note: Please make sure that you have added an inboud rule on the instance security group for port 3000
