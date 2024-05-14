@@ -148,7 +148,7 @@ router.post(
     }
 
     const action = await profileProxyApiService.createProfileProxyAction({
-      proxy_id,
+      proxy: profileProxy,
       action: req.body
     });
 
