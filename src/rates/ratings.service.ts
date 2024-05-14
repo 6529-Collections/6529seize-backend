@@ -101,12 +101,11 @@ export class RatingsService {
     return await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const authenticatedProfileId =
-          request.authenticationContext.authenticatedProfileId;
+          request.authenticationContext.getActingAsId();
         if (!authenticatedProfileId) {
           throw new ForbiddenException(`Create a profile before you rate`);
         }
-        const roleProfileId = request.authenticationContext.roleProfileId;
-        if (!roleProfileId || authenticatedProfileId === roleProfileId) {
+        if (!request.authenticationContext.isAuthenticatedAsProxy()) {
           await this.updateRatingUnsafe({
             request,
             changeReason: 'USER_EDIT',
@@ -114,16 +113,17 @@ export class RatingsService {
             connection
           });
         } else {
-          const action = request.authenticationContext.activeProxyActions.find(
-            (action) =>
-              (request.matter === RateMatter.REP &&
-                action.type === ApiProfileProxyActionType.ALLOCATE_REP) ||
-              (request.matter === RateMatter.CIC &&
-                action.type === ApiProfileProxyActionType.ALLOCATE_CIC)
-          );
+          const action =
+            request.matter === RateMatter.REP
+              ? request.authenticationContext.activeProxyActions[
+                  ApiProfileProxyActionType.ALLOCATE_REP
+                ]
+              : request.authenticationContext.activeProxyActions[
+                  ApiProfileProxyActionType.ALLOCATE_CIC
+                ];
           if (!action) {
             throw new ForbiddenException(
-              `Profile ${authenticatedProfileId} is not allowed to give ${request.matter} ratings to profile ${request.rater_profile_id} on behalf of profile ${roleProfileId}`
+              `Proxy is not allowed to give ${request.matter} ratings`
             );
           }
           const proxyContext: RatingProxyContext = {

@@ -18,12 +18,12 @@ import { ArweaveFileUploader } from '../arweave';
 import { ProfileProxiesDb } from '../profile-proxies/profile-proxies.db';
 import { AuthenticationContext } from '../auth-context';
 
-const authContext: AuthenticationContext = {
+const authContext: AuthenticationContext = new AuthenticationContext({
   authenticatedProfileId: 'pid',
   authenticatedWallet: 'wallet',
   roleProfileId: null,
   activeProxyActions: []
-};
+});
 
 describe('RatingsService', () => {
   let ratingsService: RatingsService;

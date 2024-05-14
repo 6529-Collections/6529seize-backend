@@ -26,6 +26,11 @@ import { ProfileProxyActionType } from '../generated/models/ProfileProxyActionTy
 import { ProfileProxy } from '../generated/models/ProfileProxy';
 import { profileProxiesMapper, ProfileProxiesMapper } from './proxies.mapper';
 import { AcceptActionRequestActionEnum } from '../generated/models/AcceptActionRequest';
+import {
+  profileActivityLogsDb,
+  ProfileActivityLogsDb
+} from '../../../profileActivityLogs/profile-activity-logs.db';
+import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 
 const ACTION_MAP: Record<ProfileProxyActionType, ApiProfileProxyActionType> = {
   [ProfileProxyActionType.AllocateRep]: ApiProfileProxyActionType.ALLOCATE_REP,
@@ -57,7 +62,8 @@ export class ProfileProxyApiService {
   constructor(
     private readonly profilesService: ProfilesService,
     private readonly profileProxiesDb: ProfileProxiesDb,
-    private readonly profileProxiesMapper: ProfileProxiesMapper
+    private readonly profileProxiesMapper: ProfileProxiesMapper,
+    private readonly profileActivityLogsDb: ProfileActivityLogsDb
   ) {}
 
   private async getTargetOrThrow({
@@ -140,6 +146,17 @@ export class ProfileProxyApiService {
           profileProxy: createProfileProxyRequest,
           connection
         });
+        await this.profileActivityLogsDb.insert(
+          {
+            profile_id: createProfileProxyRequest.created_by,
+            contents: JSON.stringify({
+              proxy_id: createProfileProxyRequest.id
+            }),
+            target_id: createProfileProxyRequest.target_id,
+            type: ProfileActivityLogType.PROXY_CREATED
+          },
+          connection
+        );
         return await this.findProfileProxyByIdOrThrow({
           id: createProfileProxyRequest.id,
           connection
@@ -312,11 +329,14 @@ export class ProfileProxyApiService {
     return profileProxyAction;
   }
 
-  private async persistProfileProxyAction({
-    profileProxyAction
-  }: {
-    readonly profileProxyAction: NewProfileProxyAction;
-  }): Promise<ProfileProxyActionEntity> {
+  private async persistProfileProxyAction(
+    {
+      profileProxyAction
+    }: {
+      readonly profileProxyAction: NewProfileProxyAction;
+    },
+    proxy: ProfileProxy
+  ): Promise<ProfileProxyActionEntity> {
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const { actionId } =
@@ -324,6 +344,19 @@ export class ProfileProxyApiService {
             profileProxyAction,
             connection
           });
+        await this.profileActivityLogsDb.insert(
+          {
+            profile_id: proxy.created_by.id,
+            contents: JSON.stringify({
+              proxy_id: profileProxyAction.proxy_id,
+              action_id: actionId,
+              type: profileProxyAction.action_type
+            }),
+            target_id: proxy.granted_to.id,
+            type: ProfileActivityLogType.PROXY_ACTION_CREATED
+          },
+          connection
+        );
         return await this.findProfileProxyActionByIdOrThrow({
           id: actionId,
           connection
@@ -333,27 +366,33 @@ export class ProfileProxyApiService {
   }
 
   async createProfileProxyAction({
-    proxy_id,
+    proxy,
     action
   }: {
-    readonly proxy_id: string;
+    readonly proxy: ProfileProxy;
     readonly action: ProxyApiRequestAction;
   }): Promise<ProfileProxyActionEntity> {
-    const action_exists = await this.isActionExists({ proxy_id, action });
+    const action_exists = await this.isActionExists({
+      proxy_id: proxy.id,
+      action
+    });
     if (action_exists) {
       throw new BadRequestException('Action already exists');
     }
     const newAction: NewProfileProxyAction = {
-      proxy_id,
+      proxy_id: proxy.id,
       action_type: ACTION_MAP[action.action_type],
       start_time: Time.currentMillis(),
       end_time: action.end_time ?? null,
       credit_amount: 'credit_amount' in action ? action.credit_amount : null,
       credit_spent: 'credit_amount' in action ? 0 : null
     };
-    const profileProxyAction = await this.persistProfileProxyAction({
-      profileProxyAction: newAction
-    });
+    const profileProxyAction = await this.persistProfileProxyAction(
+      {
+        profileProxyAction: newAction
+      },
+      proxy
+    );
     return {
       ...profileProxyAction,
       is_active: !!profileProxyAction.is_active
@@ -505,6 +544,9 @@ export class ProfileProxyApiService {
     const action = await this.findProfileProxyActionByIdOrThrow({
       id: action_id
     });
+    const proxy = await this.findProfileProxyByIdOrThrow({
+      id: proxy_id
+    });
     const is_active = !action.revoked_at;
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -513,6 +555,20 @@ export class ProfileProxyApiService {
           connection,
           is_active
         });
+        await this.profileActivityLogsDb.insert(
+          {
+            profile_id: proxy.created_by.id,
+            contents: JSON.stringify({
+              proxy_id,
+              action_id,
+              type: action.action_type,
+              state_change_type: AcceptActionRequestActionEnum.Accept
+            }),
+            target_id: proxy.granted_to.id,
+            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED
+          },
+          connection
+        );
         return await this.findProfileProxyActionByIdOrThrow({
           id: action_id,
           connection
@@ -527,12 +583,32 @@ export class ProfileProxyApiService {
     profile_id
   }: CanDoAcceptancePayload): Promise<ProfileProxyActionEntity> {
     await this.canRejectActionOrThrow({ action_id, proxy_id, profile_id });
+    const action = await this.findProfileProxyActionByIdOrThrow({
+      id: action_id
+    });
+    const proxy = await this.findProfileProxyByIdOrThrow({
+      id: proxy_id
+    });
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         await this.profileProxiesDb.rejectProfileProxyAction({
           action_id,
           connection
         });
+        await this.profileActivityLogsDb.insert(
+          {
+            profile_id: proxy.created_by.id,
+            contents: JSON.stringify({
+              proxy_id,
+              action_id,
+              type: action.action_type,
+              state_change_type: AcceptActionRequestActionEnum.Reject
+            }),
+            target_id: proxy.granted_to.id,
+            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED
+          },
+          connection
+        );
         return await this.findProfileProxyActionByIdOrThrow({
           id: action_id,
           connection
@@ -547,12 +623,32 @@ export class ProfileProxyApiService {
     profile_id
   }: CanDoAcceptancePayload): Promise<ProfileProxyActionEntity> {
     await this.canRevokeOrThrow({ action_id, proxy_id, profile_id });
+    const action = await this.findProfileProxyActionByIdOrThrow({
+      id: action_id
+    });
+    const proxy = await this.findProfileProxyByIdOrThrow({
+      id: proxy_id
+    });
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         await this.profileProxiesDb.revokeProfileProxyAction({
           action_id,
           connection
         });
+        await this.profileActivityLogsDb.insert(
+          {
+            profile_id: proxy.created_by.id,
+            contents: JSON.stringify({
+              proxy_id,
+              action_id,
+              type: action.action_type,
+              state_change_type: AcceptActionRequestActionEnum.Revoke
+            }),
+            target_id: proxy.granted_to.id,
+            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED
+          },
+          connection
+        );
         return await this.findProfileProxyActionByIdOrThrow({
           id: action_id,
           connection
@@ -570,6 +666,9 @@ export class ProfileProxyApiService {
     const action = await this.findProfileProxyActionByIdOrThrow({
       id: action_id
     });
+    const proxy = await this.findProfileProxyByIdOrThrow({
+      id: proxy_id
+    });
     const is_active = !!action.accepted_at && !action.rejected_at;
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -578,6 +677,20 @@ export class ProfileProxyApiService {
           connection,
           is_active
         });
+        await this.profileActivityLogsDb.insert(
+          {
+            profile_id: proxy.created_by.id,
+            contents: JSON.stringify({
+              proxy_id,
+              action_id,
+              type: action.action_type,
+              state_change_type: AcceptActionRequestActionEnum.Restore
+            }),
+            target_id: proxy.granted_to.id,
+            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED
+          },
+          connection
+        );
         return await this.findProfileProxyActionByIdOrThrow({
           id: action_id,
           connection
@@ -653,6 +766,21 @@ export class ProfileProxyApiService {
           end_time,
           connection
         });
+        await this.profileActivityLogsDb.insert(
+          {
+            profile_id: profileProxy.created_by.id,
+            contents: JSON.stringify({
+              proxy_id,
+              action_id,
+              type: profileProxyAction.action_type,
+              credit_amount,
+              end_time
+            }),
+            target_id: profileProxy.granted_to.id,
+            type: ProfileActivityLogType.PROXY_ACTION_CHANGED
+          },
+          connection
+        );
         return await this.findProfileProxyActionByIdOrThrow({
           id: action_id,
           connection
@@ -665,5 +793,6 @@ export class ProfileProxyApiService {
 export const profileProxyApiService = new ProfileProxyApiService(
   profilesService,
   profileProxiesDb,
-  profileProxiesMapper
+  profileProxiesMapper,
+  profileActivityLogsDb
 );

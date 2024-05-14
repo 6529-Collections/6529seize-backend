@@ -92,12 +92,12 @@ export async function getAuthenticationContext(
               }))
           )
       : [];
-  return {
+  return new AuthenticationContext({
     authenticatedWallet,
     authenticatedProfileId,
     roleProfileId,
     activeProxyActions
-  };
+  });
 }
 
 function isProxyActionActive(action: ProfileProxyAction): boolean {
