@@ -230,13 +230,13 @@ https://api.seize.io/api/tdh/<address>
 
 ## 9 Updates
 
-## 9.1 Pull new changes
+### 9.1 Pull new changes
 
 ```
 git pull
 ```
 
-## 9.2 Re-Install
+### 9.2 Re-Install
 
 ```
 npm i
