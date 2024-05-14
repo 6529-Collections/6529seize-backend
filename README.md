@@ -118,7 +118,7 @@ npm run restore
 
 Two main components need to be loaded directly:
 
-## 6.2.1 NFTDelegation
+### 6.2.1 NFTDelegation
 
 Run the following to restore data from NFTDelegation contract
 
@@ -126,7 +126,7 @@ Run the following to restore data from NFTDelegation contract
 npm run direct_load_nftd
 ```
 
-## 6.2.2 Transactions
+### 6.2.2 Transactions
 
 Run the following to restore transaction data
 
@@ -242,13 +242,13 @@ git pull
 npm i
 ```
 
-## 9.2 Re-Build
+### 9.2 Re-Build
 
 ```
 npm run build
 ```
 
-## 9.2 Restart Backend and API
+### 9.2 Restart Backend and API
 
 ```
 pm2 restart 6529backend
