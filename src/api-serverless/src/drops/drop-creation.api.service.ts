@@ -1,4 +1,4 @@
-import { BadRequestException } from '../../../exceptions';
+import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { Logger } from '../../../logging';
@@ -14,6 +14,12 @@ import { DropReferencedNFT } from '../generated/models/DropReferencedNFT';
 import { QuotedDrop } from '../generated/models/QuotedDrop';
 import { DropMediaEntity, DropPartEntity } from '../../../entities/IDrop';
 import { waveApiService, WaveApiService } from '../waves/wave.api.service';
+import {
+  communityMemberCriteriaService,
+  CommunityMemberCriteriaService
+} from '../community-members/community-member-criteria.service';
+import { WaveScopeType } from '../generated/models/WaveScopeType';
+import { AuthenticationContext } from '../../../auth-context';
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(DropCreationApiService.name);
@@ -22,14 +28,19 @@ export class DropCreationApiService {
     private readonly dropsService: DropsApiService,
     private readonly dropsDb: DropsDb,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
-    private readonly waveApiService: WaveApiService
+    private readonly waveApiService: WaveApiService,
+    private readonly communityMemberCriteriaService: CommunityMemberCriteriaService
   ) {}
 
   async createDrop(
-    createDropRequest: CreateDropRequest & { author: { external_id: string } }
+    createDropRequest: CreateDropRequest,
+    authenticationContext: AuthenticationContext
   ): Promise<Drop> {
-    await this.validateReferences(createDropRequest);
-    const dropFull = await this.persistDrop(createDropRequest);
+    await this.validateReferences(createDropRequest, authenticationContext);
+    const dropFull = await this.persistDrop(
+      createDropRequest,
+      authenticationContext
+    );
     await giveReadReplicaTimeToCatchUp();
     this.logger.info(
       `Drop ${dropFull.id} created by user ${dropFull.author.id}`
@@ -38,14 +49,16 @@ export class DropCreationApiService {
   }
 
   private async persistDrop(
-    createDropRequest: CreateDropRequest & { author: { external_id: string } }
+    createDropRequest: CreateDropRequest,
+    authenticationContext: AuthenticationContext
   ) {
     return await this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const createDropParts = createDropRequest.parts;
+        const authorId = authenticationContext.getActingAsId()!;
         const dropId = await this.dropsDb.insertDrop(
           {
-            author_id: createDropRequest.author.external_id,
+            author_id: authorId,
             title: createDropRequest.title ?? null,
             parts_count: createDropParts.length,
             wave_id: createDropRequest.wave_id
@@ -54,10 +67,13 @@ export class DropCreationApiService {
         );
         await this.profileActivityLogsDb.insert(
           {
-            profile_id: createDropRequest.author.external_id,
+            profile_id: authorId,
             target_id: dropId.toString(),
             contents: JSON.stringify({
-              drop_id: dropId
+              drop_id: dropId,
+              proxy_id: authenticationContext.isAuthenticatedAsProxy()
+                ? authenticationContext.authenticatedProfileId
+                : undefined
             }),
             type: ProfileActivityLogType.DROP_CREATED
           },
@@ -114,7 +130,7 @@ export class DropCreationApiService {
         return this.dropsService.findDropByIdOrThrow(
           {
             dropId,
-            contextProfileId: createDropRequest.author.external_id,
+            authenticationContext,
             min_part_id: 1,
             max_part_id: Number.MAX_SAFE_INTEGER
           },
@@ -124,11 +140,26 @@ export class DropCreationApiService {
     );
   }
 
-  private async validateReferences(createDropRequest: CreateDropRequest) {
+  private async validateReferences(
+    createDropRequest: CreateDropRequest,
+    authenticationContext: AuthenticationContext
+  ) {
     const quotedDrops = createDropRequest.parts
       .map<QuotedDrop | null | undefined>((it) => it.quoted_drop)
       .filter((it) => it !== undefined && it !== null) as QuotedDrop[];
-    await this.waveApiService.findWaveByIdOrThrow(createDropRequest.wave_id);
+    const criteriaIdsUserIsEligible =
+      await this.communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
+        authenticationContext.getActingAsId()!
+      );
+    const wave = await this.waveApiService.findWaveByIdOrThrow(
+      createDropRequest.wave_id
+    );
+    if (
+      wave.participation.scope.type === WaveScopeType.Curated &&
+      !criteriaIdsUserIsEligible.includes(wave.participation.scope.curation!.id)
+    ) {
+      throw new ForbiddenException(`User is not eligible for this wave`);
+    }
 
     if (quotedDrops.length) {
       const dropIds = quotedDrops.map((it) => it.drop_id);
@@ -157,5 +188,6 @@ export const dropCreationService = new DropCreationApiService(
   dropsService,
   dropsDb,
   profileActivityLogsDb,
-  waveApiService
+  waveApiService,
+  communityMemberCriteriaService
 );

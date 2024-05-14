@@ -115,8 +115,7 @@ router.post(
     const { authContext, targetProfileId } = await getRaterInfoFromRequest(req);
     const { total, byUser } = await ratingsService.updateRating({
       authenticationContext: authContext,
-      rater_profile_id:
-        authContext.roleProfileId ?? authContext.authenticatedProfileId!,
+      rater_profile_id: authContext.getActingAsId()!,
       matter: RateMatter.CIC,
       matter_category: 'CIC',
       matter_target_id: targetProfileId,
