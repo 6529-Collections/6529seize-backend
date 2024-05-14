@@ -5,9 +5,13 @@
   "scripts": {
     "backend:local:set_env": "NODE_ENV=local nodemon src/set_env.ts",
     "backend:local:restore": "NODE_ENV=local nodemon src/restore_dumps.ts",
+    "backend:local:direct_load_nftd": "NODE_ENV=local nodemon src/direct_load_nftd.ts",
+    "backend:local:direct_load_trx": "NODE_ENV=local nodemon src/direct_load_trx.ts",
     "backend:local": "NODE_ENV=local nodemon src/backend.ts",
     "set_env": "NODE_ENV=production node build/set_env.js",
     "restore": "NODE_ENV=production node build/restore_dumps.js",
+    "direct_load_nftd": "NODE_ENV=production node build/direct_load_nftd.js",
+    "direct_load_trx": "NODE_ENV=production node build/direct_load_trx.js",
     "backend": "NODE_ENV=production node build/backend.js",
     "api": "NODE_ENV=production node build/index.js",
     "build": "rimraf ./build && jest && NODE_OPTIONS=--max-old-space-size=8192 tsc -p tsconfig.json && npm run build:api",

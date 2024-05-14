@@ -20,12 +20,12 @@ import {
   ROYALTIES_ADDRESS,
   TRANSACTIONS_TABLE,
   WETH_TOKEN_ADDRESS
-} from './constants';
-import { Transaction } from './entities/ITransaction';
-import { areEqualAddresses } from './helpers';
+} from '../constants';
+import { Transaction } from '../entities/ITransaction';
+import { areEqualAddresses } from '../helpers';
 import { ethers } from 'ethers';
-import { findTransactionsByHash } from './db';
-import { Logger } from './logging';
+import { findTransactionsByHash } from '../db';
+import { Logger } from '../logging';
 import fetch from 'node-fetch';
 
 const logger = Logger.get('TRANSACTION_VALUES');

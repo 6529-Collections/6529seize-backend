@@ -12,7 +12,7 @@ import {
 import { getAlchemyInstance } from '../alchemy';
 import { Logger } from '../logging';
 import { Transaction } from '../entities/ITransaction';
-import { findTransactionValues } from '../transaction_values';
+import { findTransactionValues } from './transaction_values';
 import { consolidateTransactions } from '../db';
 import { Time } from '../time';
 

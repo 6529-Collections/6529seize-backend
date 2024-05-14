@@ -18,20 +18,15 @@ import { Time } from '../time';
 import { getLastTDH } from '../helpers';
 import { sqlExecutor } from '../sql-executor';
 import { CONSOLIDATIONS_TABLE } from '../constants';
-import { ConsolidatedTDH, TDH } from '../entities/ITDH';
+import { ConsolidatedTDH, TDH, TDHBlock } from '../entities/ITDH';
 import { updateTDH } from '../tdhLoop/tdh';
 import { NFT } from '../entities/INFT';
 import { NFTOwner } from '../entities/INFTOwner';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
-export const handler = async () => {
+export const handler = async (startBlock?: number) => {
   const start = Time.now();
-  const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
-  const startBlock =
-    startBlockEnv && Number.isInteger(Number(startBlockEnv))
-      ? parseInt(startBlockEnv, 10)
-      : undefined;
   logger.info(`[RUNNING] [START_BLOCK ${startBlock}]`);
 
   await loadEnv([
@@ -40,6 +35,7 @@ export const handler = async () => {
     NFTDelegationBlock,
     TDH,
     ConsolidatedTDH,
+    TDHBlock,
     NFT,
     NFTOwner
   ]);

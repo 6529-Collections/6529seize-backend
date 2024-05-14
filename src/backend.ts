@@ -43,10 +43,8 @@ async function start() {
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
 }
 
-start();
-
-async function runDelegations() {
-  await delegations.handler();
+async function runDelegations(startBlock?: number) {
+  await delegations.handler(startBlock);
 }
 
 async function runTransactions() {
@@ -60,3 +58,5 @@ async function runTDH() {
   await tdh.handler();
   LOCKED = false;
 }
+
+start();

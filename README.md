@@ -10,11 +10,20 @@
 
 5. [Set Environment](#5-set-environment)
 
-6. [Restore](#6-restore)
+6. [Initialize DB](#6-initialize-db)
+
+- 6.1 [Restore Snapshot](#6-1-restore)
+- 6.2 [Direct Load](#6-2-direct-load)
 
 7. [Get PM2](#7-get-pm2)
 
 8. [Run Services](#8-run-services)
+
+- 8.1 [Run Backend](#8-1-run-backend)
+- 8.2 [Run API](#8-2-run-api)
+- 8.2 [Test](#8-3-test)
+
+9. [Updates](#9-updates)
 
 ## 1. INFRA
 
@@ -93,13 +102,19 @@ npm run set_env
 
 <a href="https://github.com/6529-Collections/6529seize-backend/blob/seize-lite/.env.sample" target="_blank" rel="noopener noreferrer">Sample .env file</a>
 
-## 6. Restore
+## 6. Initialize DB
+
+The database expects some initial data. Choose to load either from latest snapshot or directly
+
+## 6.1 Restore Snapshot
 
 Restore database from the latest snapshot using the following
 
 ```
 npm run restore
 ```
+
+## 6.2 Direct Load
 
 ## 7. Get PM2
 
@@ -169,7 +184,7 @@ pm2 start npm --name=6529api -- run api
 pm2 save
 ```
 
-### 8.3 Test API
+### 8.3 Test
 
 ### 8.3.1 Local
 
@@ -193,4 +208,31 @@ Compare the response with
 
 ```
 https://api.seize.io/api/tdh/<address>
+```
+
+## 9 Updates
+
+## 9.1 Pull new changes
+
+```
+git pull
+```
+
+## 9.2 Re-Install
+
+```
+npm i
+```
+
+## 9.2 Re-Build
+
+```
+npm run build
+```
+
+## 9.2 Restart Backend and API
+
+```
+pm2 restart 6529backend
+pm2 restart 6529api
 ```

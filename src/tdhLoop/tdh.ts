@@ -199,6 +199,11 @@ export const updateTDH = async (
 
   const block = await fetchLatestTransactionsBlockNumber(lastTDHCalc);
 
+  if (!block) {
+    logger.error('No transactions found, skipping TDH calculation');
+    return;
+  }
+
   const memeOwners = await fetchNftOwners(block, MEMES_CONTRACT);
   const gradientOwners = await fetchNftOwners(block, GRADIENT_CONTRACT);
   const nextgenOwners = await fetchNftOwners(block, NEXTGEN_CONTRACT);

@@ -8,12 +8,15 @@ import { ApiCompliantException } from '../../exceptions';
 import { Logger } from '../../logging';
 import * as process from 'process';
 import {
-  fetchSingleWalletTDH,
-  fetchSingleWalletTDHBreakdown,
-  fetchSingleWalletTDHMemesSeasons,
+  fetchSingleAddressTDH,
+  fetchSingleAddressTDHBreakdown,
+  fetchSingleAddressTDHMemesSeasons,
   fetchTotalTDH,
   fetchNfts,
-  returnJsonResult
+  returnJsonResult,
+  fetchTDHAbove,
+  fetchTDHPercentile,
+  fetchTDHCutoff
 } from './api-helpers';
 import { corsOptions } from './api-constants';
 import { prepEnvironment } from '../../env';
@@ -119,11 +122,11 @@ loadApi().then(() => {
   );
 
   apiRouter.get(
-    '/tdh/:wallet',
+    '/tdh/above/:value',
     async function (
       req: Request<
         {
-          wallet: string;
+          value: number;
         },
         any,
         any,
@@ -131,18 +134,21 @@ loadApi().then(() => {
       >,
       res: any
     ) {
-      const wallet = req.params.wallet;
-      const result = await fetchSingleWalletTDH(wallet);
+      const value = req.params.value;
+      if (isNaN(value)) {
+        return res.status(400).send({ error: 'Invalid value' });
+      }
+      const result = await fetchTDHAbove(Number(value));
       return returnJsonResult(result, res);
     }
   );
 
   apiRouter.get(
-    '/tdh/:wallet/breakdown',
+    '/tdh/percentile/:value',
     async function (
       req: Request<
         {
-          wallet: string;
+          value: number;
         },
         any,
         any,
@@ -150,18 +156,31 @@ loadApi().then(() => {
       >,
       res: any
     ) {
-      const wallet = req.params.wallet;
-      const result = await fetchSingleWalletTDHBreakdown(wallet);
+      const percentile = req.params.value;
+      if (
+        !percentile ||
+        isNaN(percentile) ||
+        percentile <= 0 ||
+        percentile > 100
+      ) {
+        return res
+          .status(400)
+          .send(
+            'Invalid percentile value. Please provide a number between 0 and 100.'
+          );
+      }
+
+      const result = await fetchTDHPercentile(Number(percentile));
       return returnJsonResult(result, res);
     }
   );
 
   apiRouter.get(
-    '/tdh/:wallet/memes_seasons',
+    '/tdh/cutoff/:value',
     async function (
       req: Request<
         {
-          wallet: string;
+          value: number;
         },
         any,
         any,
@@ -169,8 +188,71 @@ loadApi().then(() => {
       >,
       res: any
     ) {
-      const wallet = req.params.wallet;
-      const result = await fetchSingleWalletTDHMemesSeasons(wallet);
+      const cutoff = req.params.value;
+      if (!Number.isInteger(Number(cutoff)) || cutoff < 1) {
+        return res
+          .status(400)
+          .send('Invalid cutoff value. Please provide a non-negative integer.');
+      }
+
+      const result = await fetchTDHCutoff(Number(cutoff));
+      return returnJsonResult(result, res);
+    }
+  );
+
+  apiRouter.get(
+    '/tdh/:address',
+    async function (
+      req: Request<
+        {
+          address: string;
+        },
+        any,
+        any,
+        {}
+      >,
+      res: any
+    ) {
+      const address = req.params.address;
+      const result = await fetchSingleAddressTDH(address);
+      return returnJsonResult(result, res);
+    }
+  );
+
+  apiRouter.get(
+    '/tdh/:address/breakdown',
+    async function (
+      req: Request<
+        {
+          address: string;
+        },
+        any,
+        any,
+        {}
+      >,
+      res: any
+    ) {
+      const address = req.params.address;
+      const result = await fetchSingleAddressTDHBreakdown(address);
+      return returnJsonResult(result, res);
+    }
+  );
+
+  apiRouter.get(
+    '/tdh/:address/memes_seasons',
+    async function (
+      req: Request<
+        {
+          address: string;
+        },
+        any,
+        any,
+        {}
+      >,
+      res: any
+    ) {
+      const address = req.params.address;
+      const result = await fetchSingleAddressTDHMemesSeasons(address);
       return returnJsonResult(result, res);
     }
   );
