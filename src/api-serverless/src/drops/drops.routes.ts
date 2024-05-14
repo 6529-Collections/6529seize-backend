@@ -1,10 +1,9 @@
 import { asyncRouter } from '../async.router';
-import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
+import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '../validation';
-import { profilesService } from '../../../profiles/profiles.service';
 import {
   BadRequestException,
   ForbiddenException,
@@ -34,11 +33,14 @@ import { CreateDropPart } from '../generated/models/CreateDropPart';
 import { QuotedDrop } from '../generated/models/QuotedDrop';
 import { NewDropComment } from '../generated/models/NewDropComment';
 import { DropComment } from '../generated/models/DropComment';
+import { communityMemberCriteriaService } from '../community-members/community-member-criteria.service';
+import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 
 const router = asyncRouter();
 
 router.get(
   '/',
+  needsAuthenticatedUser(),
   async (
     req: Request<
       any,
@@ -51,19 +53,12 @@ router.get(
         min_part_id?: number;
         max_part_id?: number;
         wave_id?: string;
-        context_profile?: string;
       },
       any
     >,
     res: Response<ApiResponse<Drop[]>>
   ) => {
-    const contextProfileId = req.query.context_profile
-      ? await profilesService
-          .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-            req.query.context_profile
-          )
-          ?.then((result) => result?.profile?.external_id)
-      : undefined;
+    const authenticationContext = await getAuthenticationContext(req);
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
     const wave_id = req.query.wave_id ?? null;
     const curation_criteria_id = req.query.curation_criteria_id ?? null;
@@ -87,7 +82,7 @@ router.get(
       min_part_id,
       max_part_id,
       wave_id,
-      context_profile_id: contextProfileId
+      authenticationContext
     });
     res.send(latestDrops);
   }
@@ -95,23 +90,18 @@ router.get(
 
 router.get(
   '/:drop_id',
+  needsAuthenticatedUser(),
   async (
     req: Request<
       { drop_id: string },
       any,
       any,
-      { context_profile?: string; min_part_id?: number; max_part_id?: number },
+      { min_part_id?: number; max_part_id?: number },
       any
     >,
     res: Response<ApiResponse<Drop>>
   ) => {
-    const contextProfileId = req.query.context_profile
-      ? await profilesService
-          .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-            req.query.context_profile
-          )
-          ?.then((result) => result?.profile?.external_id)
-      : undefined;
+    const authenticationContext = await getAuthenticationContext(req);
     const dropId = req.params.drop_id;
     let min_part_id = parseIntOrNull(req.query.min_part_id);
     if (!min_part_id || min_part_id < 1) {
@@ -123,7 +113,7 @@ router.get(
     }
     const drop = await dropsService.findDropByIdOrThrow({
       dropId,
-      contextProfileId: contextProfileId,
+      authenticationContext,
       min_part_id,
       max_part_id
     });
@@ -138,14 +128,21 @@ router.post(
     req: Request<any, any, CreateDropRequest, any, any>,
     res: Response<ApiResponse<Drop>>
   ) => {
-    const authorProfile = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        getWalletOrThrow(req)
-      )
-      ?.then((result) => result?.profile ?? null);
-    if (!authorProfile) {
+    const authenticationContext = await getAuthenticationContext(req);
+    const authorProfileId = authenticationContext.getActingAsId();
+    if (!authorProfileId) {
       throw new ForbiddenException(
         'You need to create a profile before you can create a drop'
+      );
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+      ]
+    ) {
+      throw new ForbiddenException(
+        `Proxy doesn't have permission to create drops`
       );
     }
     const apiRequest = req.body;
@@ -173,7 +170,7 @@ router.post(
     const createDropRequest: CreateDropRequest & {
       author: { external_id: string };
     } = {
-      author: authorProfile,
+      author: { external_id: authorProfileId },
       title: newDrop.title,
       parts: newDrop.parts,
       referenced_nfts: newDrop.referenced_nfts,
@@ -181,7 +178,10 @@ router.post(
       metadata: newDrop.metadata,
       wave_id: newDrop.wave_id
     };
-    const createdDrop = await dropCreationService.createDrop(createDropRequest);
+    const createdDrop = await dropCreationService.createDrop(
+      createDropRequest,
+      authenticationContext
+    );
     res.send(createdDrop);
   }
 );
@@ -198,13 +198,10 @@ router.post(
       ApiAddRatingToDropRequestSchema
     );
     const proposedCategory = category?.trim() ?? '';
-    const raterWallet = getWalletOrThrow(req);
-    const raterProfileId = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(raterWallet)
-      ?.then((result) => result?.profile?.external_id ?? null);
-    if (!raterProfileId) {
+    const authenticationContext = await getAuthenticationContext(req);
+    if (!authenticationContext.getActingAsId()) {
       throw new ForbiddenException(
-        `No profile found for authenticated user ${raterWallet}`
+        `No profile found for authenticated user ${authenticationContext.authenticatedWallet}`
       );
     }
     const dropId = req.params.drop_id;
@@ -218,15 +215,31 @@ router.post(
         );
       }
     }
+    const raterProfileId = authenticationContext.getActingAsId()!;
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.RATE_WAVE_DROP
+      ]
+    ) {
+      throw new ForbiddenException(
+        `Proxy doesn't have permission to rate drops`
+      );
+    }
+    const criteriasUserIsEligible =
+      await communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
+        raterProfileId
+      );
     await dropRaterService.updateRating({
       rater_profile_id: raterProfileId,
+      criteriasUserIsEligible,
       category: proposedCategory,
       drop_id: dropId,
       rating: rating
     });
     const drop = await dropsService.findDropByIdOrThrow({
       dropId,
-      contextProfileId: raterProfileId,
+      authenticationContext,
       min_part_id: 1,
       max_part_id: 1
     });
@@ -236,6 +249,7 @@ router.post(
 
 router.get(
   `/:drop_id/log`,
+  needsAuthenticatedUser(),
   async (
     req: Request<
       { drop_id: string },
@@ -254,7 +268,9 @@ router.get(
       unvalidatedQuery,
       DropDiscussionCommentsQuerySchema
     );
+    const authenticationContext = await getAuthenticationContext(req);
     await dropsService.findDropByIdOrThrow({
+      authenticationContext,
       dropId: validatedQuery.drop_id,
       min_part_id: 1,
       max_part_id: 1
@@ -266,6 +282,7 @@ router.get(
 
 router.get(
   `/:drop_id/parts/:drop_part_id/comments`,
+  needsAuthenticatedUser(),
   async (
     req: Request<
       { drop_id: string; drop_part_id: string },
@@ -283,8 +300,10 @@ router.get(
         `Drop part ${drop_id}/${req.params.drop_part_id} not found`
       );
     }
+    const authenticationContext = await getAuthenticationContext(req);
     await dropsService
       .findDropByIdOrThrow({
+        authenticationContext,
         dropId: drop_id,
         min_part_id: drop_part_id,
         max_part_id: drop_part_id
@@ -330,19 +349,17 @@ router.post(
     >,
     res: Response<DropComment>
   ) => {
-    const authenticatedWallet = getWalletOrThrow(req);
-    const authorProfileId = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        authenticatedWallet
-      )
-      ?.then((result) => result?.profile?.external_id ?? null);
+    const authenticationContext = await getAuthenticationContext(req);
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(`Proxies can't comment on drops.`);
+    }
     const drop_part_id = parseIntOrNull(req.params.drop_part_id);
     if (drop_part_id === null) {
       throw new NotFoundException(
         `Drop part ${req.params.drop_id}/${req.params.drop_part_id} not found`
       );
     }
-    if (!authorProfileId) {
+    if (!authenticationContext.getActingAsId()) {
       throw new ForbiddenException(
         `Create a profile before commenting on a drop`
       );
@@ -352,7 +369,7 @@ router.post(
         drop_part_id,
         drop_id: req.params.drop_id,
         comment: req.body.comment,
-        author_id: authorProfileId
+        author_id: authenticationContext.getActingAsId()!
       },
       Joi.object<{
         drop_id: string;
@@ -368,6 +385,7 @@ router.post(
     );
     await dropsService
       .findDropByIdOrThrow({
+        authenticationContext,
         dropId: commentRequest.drop_id,
         min_part_id: drop_part_id,
         max_part_id: drop_part_id

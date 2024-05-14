@@ -6,28 +6,24 @@ import { dropsService } from '../drops/drops.api.service';
 import { asyncRouter } from '../async.router';
 import { NotFoundException } from '../../../exceptions';
 import { Drop } from '../generated/models/Drop';
+import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 
 const router = asyncRouter({ mergeParams: true });
 
 router.get(
   '/',
+  needsAuthenticatedUser(),
   async (
     req: Request<
       { handleOrWallet: string },
       any,
       any,
-      { limit: number; serial_no_less_than?: number; context_profile?: string },
+      { limit: number; serial_no_less_than?: number },
       any
     >,
     res: Response<ApiResponse<Drop[]>>
   ) => {
-    const contextProfileId = req.query.context_profile
-      ? await profilesService
-          .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-            req.query.context_profile
-          )
-          ?.then((result) => result?.profile?.external_id)
-      : undefined;
+    const authenticationContext = await getAuthenticationContext(req);
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
     const handleOrWallet = req.params.handleOrWallet;
     const profileId = await profilesService
@@ -42,7 +38,7 @@ router.get(
       amount: limit < 0 || limit > 200 ? 10 : limit,
       serial_no_less_than: parseNumberOrNull(req.query.serial_no_less_than),
       profile_id: profileId,
-      contextProfileId: contextProfileId
+      authenticationContext
     });
     res.send(profileDrops);
   }

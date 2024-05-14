@@ -156,15 +156,22 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async findDropById(
     id: string,
+    criteriasUserIsEligible: string[],
     connection?: ConnectionWrapper<any>
   ): Promise<DropEntity | null> {
     const opts = connection ? { wrappedConnection: connection } : {};
     return this.db
       .execute(
         `
-        select d.* from ${DROPS_TABLE} d where d.id = :id
+        select d.* from ${DROPS_TABLE} d
+         join waves w on d.wave_id = w.id and (${
+           criteriasUserIsEligible.length
+             ? `w.visibility_scope_curation_id in (:eligible_curations) or `
+             : ``
+         } w.visibility_scope_type = '${WaveScopeType.ALL}')
+         where d.id = :id
         `,
-        { id },
+        { id, criteriasUserIsEligible },
         opts
       )
       .then((it) => it[0] || null);
@@ -207,14 +214,22 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return this.db.execute(sql, params);
   }
 
-  async findProfileDrops(param: {
-    amount: number;
-    serial_no_less_than: number | null;
-    profile_id: string;
-  }): Promise<DropEntity[]> {
+  async findProfileDrops(
+    param: {
+      amount: number;
+      serial_no_less_than: number | null;
+      profile_id: string;
+    },
+    criteriasUserIsEligible: string[]
+  ): Promise<DropEntity[]> {
     const serialNoLessThan =
       param.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `select d.* from ${DROPS_TABLE} d
+         join waves w on w.id = d.wave_id and (${
+           criteriasUserIsEligible.length
+             ? `w.visibility_scope_curation_id in (:eligible_curations) or `
+             : ``
+         } w.visibility_scope_type = '${WaveScopeType.ALL}')
          where  d.serial_no < :serialNoLessThan and d.author_id = :profileId
          order by d.id desc limit ${param.amount}`;
     return this.db.execute(sql, {

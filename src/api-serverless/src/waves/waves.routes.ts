@@ -1,8 +1,5 @@
 import { asyncRouter } from '../async.router';
-import {
-  getAuthenticatedProfileIdOrNull,
-  needsAuthenticatedUser
-} from '../auth/auth';
+import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import { Wave } from '../generated/models/Wave';
@@ -25,6 +22,8 @@ import { WaveOutcome } from '../generated/models/WaveOutcome';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { waveApiService } from './wave.api.service';
 import { SearchWavesParams } from './waves.api.db';
+import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { communityMemberCriteriaService } from '../community-members/community-member-criteria.service';
 
 const router = asyncRouter();
 
@@ -35,9 +34,18 @@ router.post(
     req: Request<any, any, CreateNewWave, any, any>,
     res: Response<ApiResponse<Wave>>
   ) => {
-    const authenticatedProfileId = await getAuthenticatedProfileIdOrNull(req);
+    const authenticationContext = await getAuthenticationContext(req);
+    const authenticatedProfileId = authenticationContext.getActingAsId();
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.CREATE_WAVE
+      ]
+    ) {
+      throw new ForbiddenException(`Proxy is not allowed to create waves`);
     }
     const request = getValidatedByJoiOrThrow(req.body, WaveSchema);
     const wave = await waveApiService.createWave({
@@ -69,12 +77,40 @@ router.get(
 
 router.get(
   '/:id',
+  needsAuthenticatedUser(),
   async (
     req: Request<{ id: string }, any, any, any, any>,
     res: Response<ApiResponse<Wave>>
   ) => {
     const { id } = req.params;
+    const authenticationContext = await getAuthenticationContext(req);
+    const profileId = authenticationContext.getActingAsId();
+    if (!profileId) {
+      throw new ForbiddenException(`Create a profile before reading waves`);
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.READ_WAVE
+      ]
+    ) {
+      throw new ForbiddenException(`Proxy is not allowed to read waves`);
+    }
     const wave = await waveApiService.findWaveByIdOrThrow(id);
+    if (wave.visibility.scope.type === WaveScopeType.Curated) {
+      const criteriaIdsUserISEligibleFor =
+        await communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
+          profileId
+        );
+      if (
+        !criteriaIdsUserISEligibleFor.includes(
+          wave.visibility.scope.curation!.id
+        )
+      ) {
+        throw new ForbiddenException(`User is not eligible for this wave`);
+      }
+    }
+
     res.send(wave);
   }
 );

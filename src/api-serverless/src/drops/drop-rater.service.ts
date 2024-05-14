@@ -15,6 +15,7 @@ class DropRaterService {
   async updateRating(param: {
     drop_id: string;
     rater_profile_id: string;
+    criteriasUserIsEligible: string[];
     rating: number;
     category: string;
   }) {
@@ -27,7 +28,11 @@ class DropRaterService {
         connection
       );
       const dropId = param.drop_id;
-      const dropEntity = await this.dropsDb.findDropById(dropId, connection);
+      const dropEntity = await this.dropsDb.findDropById(
+        dropId,
+        param.criteriasUserIsEligible,
+        connection
+      );
       if (!dropEntity) {
         throw new NotFoundException(`Drop ${dropId} not found`);
       }
