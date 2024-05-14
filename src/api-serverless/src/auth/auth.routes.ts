@@ -76,14 +76,20 @@ router.post(
       } else if (!role) {
         chosenRole = signingProfile;
       } else {
+        const roleId = await profilesService
+          .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(role)
+          .then((profile) => profile?.profile?.external_id ?? null);
+        if (!roleId) {
+          throw new BadRequestException(`Role ${role} not found`);
+        }
         const proxy =
           await profileProxyApiService.getProxyByGrantedByAndGrantedTo({
             granted_to_profile_id: signingProfile,
-            granted_by_profile_id: role
+            granted_by_profile_id: roleId
           });
         if (proxy === null) {
           throw new BadRequestException(
-            `Profile with ID ${role} hasn't creared a proxy for you, so you can't authenticated as this role.`
+            `Profile ${role} hasn't creared a proxy for you, so you can't authenticated as this role.`
           );
         }
       }

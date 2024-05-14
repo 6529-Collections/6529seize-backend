@@ -1,4 +1,5 @@
 import {
+  DISTRIBUTION_TABLE,
   MEMES_MINT_PRICE,
   NULL_ADDRESS,
   RESEARCH_6529_ADDRESS,
@@ -96,16 +97,23 @@ async function redeemSubscriptionAirdrop(
     )
   )[0];
 
-  const team = (
-    await sqlExecutor.execute(
-      `SELECT * FROM ${TEAM_TABLE} WHERE LOWER(wallet) = '${transaction.to_address}'`
-    )
-  )[0];
-
   if (!finalSubscription) {
-    const isTeamMemeber = !!team;
+    const distributionAirdrop = (
+      await sqlExecutor.execute(
+        `SELECT * FROM ${DISTRIBUTION_TABLE} WHERE LOWER(wallet) = :toAddress AND phase = :phase AND contract = :contract AND card_id = :tokenId;`,
+        {
+          toAddress: transaction.to_address.toLowerCase(),
+          phase: 'Airdrop',
+          contract: transaction.contract,
+          tokenId: transaction.token_id
+        }
+      )
+    )[0];
+
+    const isAirdropList = !!distributionAirdrop;
+
     if (
-      !isTeamMemeber &&
+      !isAirdropList &&
       !areEqualAddresses(RESEARCH_6529_ADDRESS, transaction.to_address)
     ) {
       const message = `No subscription found for airdrop address: ${
