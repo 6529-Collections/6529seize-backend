@@ -116,6 +116,24 @@ npm run restore
 
 ## 6.2 Direct Load
 
+Two main components need to be loaded directly:
+
+## 6.2.1 NFTDelegation
+
+Run the following to restore data from NFTDelegation contract
+
+```
+npm run direct_load_nftd
+```
+
+## 6.2.2 Transactions
+
+Run the following to restore transaction data
+
+```
+npm run direct_load_trx
+```
+
 ## 7. Get PM2
 
 Services run using <a href="https://pm2.keymetrics.io/" target="_blank" rel="noopener noreferrer">PM2</a>
