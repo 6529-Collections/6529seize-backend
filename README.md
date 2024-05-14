@@ -1,6 +1,6 @@
 # SEIZE-LITE
 
-1. [Infra](#1-infra)
+1. [Infrastructure](#1-infrastructure)
 
 2. [Clone Repository](#2-clone-repository)
 
@@ -25,7 +25,7 @@
 
 9. [Updates](#9-updates)
 
-## 1. INFRA
+## 1. Infrastructure
 
 **Prerequisites:**
 
