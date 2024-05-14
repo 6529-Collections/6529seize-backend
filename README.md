@@ -12,16 +12,16 @@
 
 6. [Initialize DB](#6-initialize-db)
 
-- 6.1 [Restore Snapshot](#6-1-restore)
-- 6.2 [Direct Load](#6-2-direct-load)
+- 6.1 [Restore Snapshot](#61-restore)
+- 6.2 [Direct Load](#62-direct-load)
 
 7. [Get PM2](#7-get-pm2)
 
 8. [Run Services](#8-run-services)
 
-- 8.1 [Run Backend](#8-1-run-backend)
-- 8.2 [Run API](#8-2-run-api)
-- 8.2 [Test](#8-3-test)
+- 8.1 [Run Backend](#81-run-backend)
+- 8.2 [Run API](#82-run-api)
+- 8.2 [Test](#83-test)
 
 9. [Updates](#9-updates)
 
