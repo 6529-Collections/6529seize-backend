@@ -373,6 +373,23 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: connection.connection }
     );
   }
+
+  async deleteAllProxiesAndActionsForProfile(
+    profileId: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `delete from ${PROFILE_PROXY_ACTIONS_TABLE} where proxy_id in (select id from ${PROFILE_PROXIES_TABLE} where target_id = :profileId or created_by = :profileId)`,
+      { profileId },
+      { wrappedConnection: connectionHolder.connection }
+    );
+
+    await this.db.execute(
+      `delete from ${PROFILE_PROXIES_TABLE} where target_id = :profileId or created_by = :profileId`,
+      { profileId },
+      { wrappedConnection: connectionHolder.connection }
+    );
+  }
 }
 
 export const profileProxiesDb = new ProfileProxiesDb(dbSupplier);

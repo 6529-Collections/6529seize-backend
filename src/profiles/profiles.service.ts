@@ -36,6 +36,10 @@ import {
   getHighestTdhAddressForConsolidationKey
 } from '../delegationsLoop/db.delegations';
 import { Wallet } from '../entities/IWallet';
+import {
+  profileProxiesDb,
+  ProfileProxiesDb
+} from '../profile-proxies/profile-proxies.db';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -43,6 +47,7 @@ export class ProfilesService {
   constructor(
     private readonly profilesDb: ProfilesDb,
     private readonly ratingsService: RatingsService,
+    private readonly profileProxiesDb: ProfileProxiesDb,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly cicService: CicService,
     private readonly repService: RepService,
@@ -468,6 +473,7 @@ export class ProfilesService {
         connectionHolder
       );
       await this.mergeRatings(profileToBeMerged, target, connectionHolder);
+      await this.mergeProxies(profileToBeMerged, target, connectionHolder);
       await this.profilesDb.deleteProfile(
         { id: profileToBeMerged.external_id },
         connectionHolder
@@ -829,6 +835,17 @@ export class ProfilesService {
     );
   }
 
+  private async mergeProxies(
+    sourceProfile: Profile,
+    targetProfile: Profile,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.profileProxiesDb.deleteAllProxiesAndActionsForProfile(
+      sourceProfile.external_id,
+      connectionHolder
+    );
+  }
+
   async searchCommunityMemberMinimalsOfClosestMatches({
     param,
     onlyProfileOwners,
@@ -1071,6 +1088,7 @@ export interface CommunityMemberMinimal {
 export const profilesService = new ProfilesService(
   profilesDb,
   ratingsService,
+  profileProxiesDb,
   profileActivityLogsDb,
   cicService,
   repService,
