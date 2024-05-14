@@ -98,16 +98,7 @@ async function redeemSubscriptionAirdrop(
   )[0];
 
   if (!finalSubscription) {
-    const team = (
-      await sqlExecutor.execute(
-        `SELECT * FROM ${TEAM_TABLE} WHERE LOWER(wallet) = :toAddress;`,
-        {
-          toAddress: transaction.to_address.toLowerCase()
-        }
-      )
-    )[0];
-
-    const airdrop = (
+    const distributionAirdrop = (
       await sqlExecutor.execute(
         `SELECT * FROM ${DISTRIBUTION_TABLE} WHERE LOWER(wallet) = :toAddress AND phase = :phase AND contract = :contract AND card_id = :tokenId;`,
         {
@@ -119,11 +110,9 @@ async function redeemSubscriptionAirdrop(
       )
     )[0];
 
-    const isTeamMember = !!team;
-    const isAirdropList = !!airdrop;
+    const isAirdropList = !!distributionAirdrop;
 
     if (
-      !isTeamMember &&
       !isAirdropList &&
       !areEqualAddresses(RESEARCH_6529_ADDRESS, transaction.to_address)
     ) {
