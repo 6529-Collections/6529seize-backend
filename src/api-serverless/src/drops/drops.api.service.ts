@@ -42,23 +42,31 @@ export class DropsApiService {
   public async findDropByIdOrThrow(
     {
       dropId,
-      contextProfileId,
+      authenticationContext,
       min_part_id,
       max_part_id
     }: {
       dropId: string;
-      contextProfileId?: string;
+      authenticationContext: AuthenticationContext;
       min_part_id: number;
       max_part_id: number;
     },
     connection?: ConnectionWrapper<any>
   ): Promise<Drop> {
+    const contextProfileId = this.getDropsReadContextProfileId(
+      authenticationContext
+    );
+    const criteriasUserIsEligible =
+      await this.communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
+        contextProfileId
+      );
     const dropEntity = await this.dropsDb
-      .findDropById(dropId, connection)
-      .then((drop) => {
+      .findDropById(dropId, criteriasUserIsEligible, connection)
+      .then(async (drop) => {
         if (!drop) {
           throw new NotFoundException(`Drop ${dropId} not found`);
         }
+
         return drop;
       });
     return this.convertToDropFulls(
@@ -89,22 +97,9 @@ export class DropsApiService {
     amount: number;
     authenticationContext: AuthenticationContext;
   }): Promise<Drop[]> {
-    const context_profile_id = authenticationContext.getActingAsId();
-    if (!context_profile_id) {
-      throw new ForbiddenException(
-        `Please create a profile before browsing drops`
-      );
-    }
-    if (
-      authenticationContext.isAuthenticatedAsProxy() &&
-      !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.READ_WAVE
-      ]
-    ) {
-      throw new ForbiddenException(
-        `Profile ${context_profile_id} hasn't given profile ${authenticationContext.authenticatedProfileId} right to read waves`
-      );
-    }
+    const context_profile_id = this.getDropsReadContextProfileId(
+      authenticationContext
+    );
     const eligible_curations =
       await this.communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
         context_profile_id
@@ -128,6 +123,28 @@ export class DropsApiService {
       min_part_id,
       max_part_id
     });
+  }
+
+  private getDropsReadContextProfileId(
+    authenticationContext: AuthenticationContext
+  ): string {
+    const context_profile_id = authenticationContext.getActingAsId();
+    if (!context_profile_id) {
+      throw new ForbiddenException(
+        `Please create a profile before browsing drops`
+      );
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.READ_WAVE
+      ]
+    ) {
+      throw new ForbiddenException(
+        `Profile ${context_profile_id} hasn't given profile ${authenticationContext.authenticatedProfileId} right to read waves`
+      );
+    }
+    return context_profile_id;
   }
 
   private async convertToDropFulls(
@@ -405,12 +422,22 @@ export class DropsApiService {
     amount: number;
     profile_id: string;
     serial_no_less_than: number | null;
-    contextProfileId?: string;
+    authenticationContext: AuthenticationContext;
   }): Promise<Drop[]> {
-    const dropEntities = await this.dropsDb.findProfileDrops(param);
+    const contextProfileId = this.getDropsReadContextProfileId(
+      param.authenticationContext
+    );
+    const criteriasUserIsEligible =
+      await this.communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
+        contextProfileId
+      );
+    const dropEntities = await this.dropsDb.findProfileDrops(
+      param,
+      criteriasUserIsEligible
+    );
     return await this.convertToDropFulls({
       dropEntities,
-      contextProfileId: param.contextProfileId,
+      contextProfileId,
       min_part_id: 1,
       max_part_id: 1
     });

@@ -105,7 +105,6 @@ export class RatingsService {
         if (!authenticatedProfileId) {
           throw new ForbiddenException(`Create a profile before you rate`);
         }
-        const roleProfileId = request.authenticationContext.roleProfileId;
         if (!request.authenticationContext.isAuthenticatedAsProxy()) {
           await this.updateRatingUnsafe({
             request,
@@ -124,7 +123,7 @@ export class RatingsService {
                 ];
           if (!action) {
             throw new ForbiddenException(
-              `Profile ${authenticatedProfileId} is not allowed to give ${request.matter} ratings to profile ${request.rater_profile_id} on behalf of profile ${roleProfileId}`
+              `Proxy is not allowed to give ${request.matter} ratings`
             );
           }
           const proxyContext: RatingProxyContext = {
