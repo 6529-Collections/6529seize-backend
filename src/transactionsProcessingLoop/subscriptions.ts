@@ -4,7 +4,6 @@ import {
   NULL_ADDRESS,
   RESEARCH_6529_ADDRESS,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
-  TEAM_TABLE,
   TRANSACTIONS_TABLE
 } from '../constants';
 import { fetchMaxTransactionByBlockNumber, getDataSource } from '../db';
