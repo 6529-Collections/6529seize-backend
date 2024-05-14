@@ -171,7 +171,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          } w.visibility_scope_type = '${WaveScopeType.ALL}')
          where d.id = :id
         `,
-        { id, criteriasUserIsEligible },
+        { id, eligible_curations: criteriasUserIsEligible },
         opts
       )
       .then((it) => it[0] || null);
@@ -234,6 +234,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          order by d.id desc limit ${param.amount}`;
     return this.db.execute(sql, {
       profileId: param.profile_id,
+      eligible_curations: criteriasUserIsEligible,
       serialNoLessThan
     });
   }
