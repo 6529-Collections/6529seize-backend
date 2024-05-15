@@ -345,7 +345,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     readonly end_time?: number | null;
     readonly connection?: ConnectionWrapper<any>;
   }): Promise<void> {
-    if (!credit_amount && !end_time) {
+    if (!credit_amount && end_time === undefined) {
       return;
     }
     const params: Record<string, any> = { id: action_id };
