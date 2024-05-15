@@ -160,17 +160,19 @@ loadApi().then(() => {
       if (
         !percentile ||
         isNaN(percentile) ||
+        !Number.isInteger(Number(percentile)) ||
         percentile <= 0 ||
-        percentile > 100
+        percentile > 10000
       ) {
         return res
           .status(400)
           .send(
-            'Invalid percentile value. Please provide a number between 0 and 100.'
+            'Invalid percentile value. Please provide an integer between 0 and 10000.'
           );
       }
 
-      const result = await fetchTDHPercentile(Number(percentile));
+      const resolvedPercentile = Number(percentile) / 100;
+      const result = await fetchTDHPercentile(resolvedPercentile);
       return returnJsonResult(result, res);
     }
   );
