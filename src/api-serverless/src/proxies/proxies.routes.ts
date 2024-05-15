@@ -294,7 +294,7 @@ const AcceptActionRequestSchema = Joi.object<AcceptActionRequest>({
 });
 
 const UpdateActionRequestSchema = Joi.object<UpdateProxyActionRequest>({
-  end_time: Joi.number().optional(),
-  credit_amount: Joi.number().optional().allow(null)
+  end_time: Joi.number().optional().allow(null),
+  credit_amount: Joi.number().optional()
 });
 export default router;
