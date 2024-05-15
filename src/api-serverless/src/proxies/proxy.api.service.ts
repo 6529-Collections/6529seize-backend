@@ -557,14 +557,14 @@ export class ProfileProxyApiService {
         });
         await this.profileActivityLogsDb.insert(
           {
-            profile_id: proxy.created_by.id,
+            profile_id: proxy.granted_to.id,
             contents: JSON.stringify({
               proxy_id,
               action_id,
               type: action.action_type,
               state_change_type: AcceptActionRequestActionEnum.Accept
             }),
-            target_id: proxy.granted_to.id,
+            target_id: proxy.created_by.id,
             type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED
           },
           connection
@@ -597,14 +597,14 @@ export class ProfileProxyApiService {
         });
         await this.profileActivityLogsDb.insert(
           {
-            profile_id: proxy.created_by.id,
+            profile_id: proxy.granted_to.id,
             contents: JSON.stringify({
               proxy_id,
               action_id,
               type: action.action_type,
               state_change_type: AcceptActionRequestActionEnum.Reject
             }),
-            target_id: proxy.granted_to.id,
+            target_id: proxy.created_by.id,
             type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED
           },
           connection
