@@ -342,19 +342,19 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
   }: {
     readonly action_id: string;
     readonly credit_amount?: number;
-    readonly end_time?: number;
+    readonly end_time?: number | null;
     readonly connection?: ConnectionWrapper<any>;
   }): Promise<void> {
     if (!credit_amount && !end_time) {
       return;
     }
-    const params: Record<string, string | number> = { id: action_id };
+    const params: Record<string, any> = { id: action_id };
     let query = `update ${PROFILE_PROXY_ACTIONS_TABLE} set `;
     if (credit_amount) {
       query += `credit_amount = :credit_amount`;
       params.credit_amount = credit_amount;
     }
-    if (end_time) {
+    if (end_time !== undefined) {
       query += `${credit_amount ? ', ' : ''}end_time = :end_time`;
       params.end_time = end_time;
     }

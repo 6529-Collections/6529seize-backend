@@ -12,9 +12,9 @@
 
 import { HttpFile } from '../http/http';
 
-export class UpdateActionRequest {
+export class UpdateProxyActionRequest {
     'credit_amount'?: number;
-    'end_time'?: number;
+    'end_time'?: number | null;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -33,7 +33,7 @@ export class UpdateActionRequest {
         }    ];
 
     static getAttributeTypeMap() {
-        return UpdateActionRequest.attributeTypeMap;
+        return UpdateProxyActionRequest.attributeTypeMap;
     }
 
     public constructor() {
