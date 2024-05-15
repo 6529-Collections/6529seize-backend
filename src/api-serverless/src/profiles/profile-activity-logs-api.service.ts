@@ -10,10 +10,7 @@ import {
 } from '../../../entities/IProfileActivityLog';
 import { Page, PageRequest } from '../page-request';
 import { profilesDb, ProfilesDb } from '../../../profiles/profiles.db';
-import {
-  getMattersWhereTargetIsProfile,
-  RateMatter
-} from '../../../entities/IRating';
+import { RateMatter } from '../../../entities/IRating';
 
 export interface ProfileActivityLogsSearchRequest {
   profileId?: string;
@@ -95,11 +92,9 @@ export class ProfileActivityLogsApiService {
         ...log,
         contents: logContents,
         profile_handle: profilesHandlesByIds[log.profile_id],
-        target_profile_handle:
-          log.type === ProfileActivityLogType.RATING_EDIT &&
-          getMattersWhereTargetIsProfile().includes(logContents.rating_matter)
-            ? profilesHandlesByIds[log.target_id!]
-            : null,
+        target_profile_handle: !isTargetOfTypeDrop(log.type)
+          ? profilesHandlesByIds[log.target_id!]
+          : null,
         is_target_of_type_drop: isTargetOfTypeDrop(log.type)
       };
     });
