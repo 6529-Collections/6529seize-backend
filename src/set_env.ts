@@ -2,17 +2,8 @@ import { prompt } from 'enquirer';
 import { Logger } from './logging';
 import { createDataSource } from './db';
 import { DataSource } from 'typeorm';
-import { Transaction } from './entities/ITransaction';
-import { NFTOwner } from './entities/INFTOwner';
-import { NFT } from './entities/INFT';
-import { TDH, ConsolidatedTDH, TDHBlock } from './entities/ITDH';
 import { loadEnv } from './secrets';
 import fs from 'fs';
-import {
-  Consolidation,
-  Delegation,
-  NFTDelegationBlock
-} from './entities/IDelegation';
 
 const logger = Logger.get('LOAD_ENV');
 
@@ -91,17 +82,7 @@ export async function setEnv() {
     alchemyKey
   );
 
-  await loadEnv([
-    Transaction,
-    TDH,
-    ConsolidatedTDH,
-    NFT,
-    NFTOwner,
-    TDHBlock,
-    Delegation,
-    Consolidation,
-    NFTDelegationBlock
-  ]);
+  await loadEnv();
 
   logger.info('Environment setup complete!');
   process.exit(0);

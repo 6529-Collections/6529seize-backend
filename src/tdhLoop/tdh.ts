@@ -35,7 +35,11 @@ const logger = Logger.get('TDH');
 
 let alchemy: Alchemy;
 
-const TDH_CONTRACTS = [MEMES_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT];
+export const TDH_CONTRACTS = [
+  MEMES_CONTRACT,
+  GRADIENT_CONTRACT,
+  NEXTGEN_CONTRACT
+];
 
 export interface MemesSeason {
   id: number;

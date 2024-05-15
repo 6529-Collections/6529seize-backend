@@ -12,9 +12,11 @@ import {
   NFTDelegationBlock
 } from './entities/IDelegation';
 import { Transaction } from './entities/ITransaction';
+import { areEqualAddresses } from './helpers';
 import { Logger } from './logging';
 import { insertWithoutUpdate } from './orm_helpers';
 import { loadEnv } from './secrets';
+import { TDH_CONTRACTS } from './tdhLoop/tdh';
 
 const logger = Logger.get('RESTORE_DUMPS');
 
@@ -22,7 +24,7 @@ const BASE_PATH =
   'https://6529bucket.s3.eu-west-1.amazonaws.com/db-dumps/production';
 
 export async function restoreDumps() {
-  await loadEnv([Transaction, Delegation, Consolidation, NFTDelegationBlock]);
+  await loadEnv();
   await restoreTransactions();
   await restoreDelegations();
   await restoreConsolidations();
@@ -85,11 +87,15 @@ async function restoreTransactions() {
     };
   });
 
-  logger.info(
-    `[TABLE ${tableName}] : [PARSED ${transactions.length} TRANSACTIONS] : [RESTORING LOCAL DB]`
+  const filteredTransactions = transactions.filter((t) =>
+    TDH_CONTRACTS.some((c: string) => areEqualAddresses(t.contract, c))
   );
 
-  await restoreEntity(tableName, Transaction, transactions);
+  logger.info(
+    `[TABLE ${tableName}] : [PARSED ${transactions.length} (${filteredTransactions.length}) TRANSACTIONS] : [RESTORING LOCAL DB]`
+  );
+
+  await restoreEntity(tableName, Transaction, filteredTransactions);
 
   logger.info(`[TABLE ${tableName}] : [RESTORED]`);
 }

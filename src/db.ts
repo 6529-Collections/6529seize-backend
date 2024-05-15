@@ -35,7 +35,12 @@ const logger = Logger.get('DB');
 
 let AppDataSource: DataSource;
 
-export async function connect(entities: any[] = []) {
+export async function connect() {
+  if (AppDataSource?.isInitialized) {
+    logger.info('[DB CONNECTION ALREADY ESTABLISHED]');
+    return;
+  }
+
   logger.info(`[DB HOST ${process.env.DB_HOST}]`);
 
   if (
@@ -55,14 +60,17 @@ export async function connect(entities: any[] = []) {
   const password = process.env.DB_PASS;
   const database = process.env.DB_NAME;
 
-  AppDataSource = await createDataSource(
-    host,
-    port,
-    user,
-    password,
-    database,
-    entities
-  );
+  AppDataSource = await createDataSource(host, port, user, password, database, [
+    Transaction,
+    TDH,
+    ConsolidatedTDH,
+    NFT,
+    NFTOwner,
+    TDHBlock,
+    Delegation,
+    Consolidation,
+    NFTDelegationBlock
+  ]);
 
   setSqlExecutor({
     execute: (
@@ -77,7 +85,7 @@ export async function connect(entities: any[] = []) {
   logger.info(
     `[CONNECTION CREATED] [APP DATA SOURCE ${
       !AppDataSource.isInitialized ? 'NOT ' : ''
-    }INITIALIZED] : [HOST ${host}:${port}] [DB ${database}]`
+    }INITIALIZED] : [HOST ${host}:${port}] : [DB ${database}]`
   );
 }
 
@@ -401,23 +409,6 @@ export async function fetchWalletTransactions(
   const fullSql = `${sql} ${filters}`;
 
   return await sqlExecutor.execute(fullSql, params);
-}
-
-export async function persistTransactions(transactions: BaseTransaction[]) {
-  if (transactions.length > 0) {
-    const consolidatedTransactions = consolidateTransactions(transactions);
-    logger.info(
-      `[TRANSACTIONS] [PERSISTING ${consolidatedTransactions.length} TRANSACTIONS]`
-    );
-    await AppDataSource.getRepository(Transaction).upsert(
-      consolidatedTransactions,
-      ['transaction', 'contract', 'from_address', 'to_address', 'token_id']
-    );
-
-    logger.info(
-      `[TRANSACTIONS] [ALL ${consolidatedTransactions.length} TRANSACTIONS PERSISTED]`
-    );
-  }
 }
 
 export async function persistNFTs(nfts: NFT[]) {

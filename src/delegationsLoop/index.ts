@@ -8,20 +8,15 @@ import { findDelegationTransactions } from '../delegations';
 import {
   Consolidation,
   ConsolidationEvent,
-  Delegation,
-  DelegationEvent,
-  NFTDelegationBlock
+  DelegationEvent
 } from '../entities/IDelegation';
-import { loadEnv, unload } from '../secrets';
+import { loadEnv } from '../secrets';
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { getLastTDH } from '../helpers';
 import { sqlExecutor } from '../sql-executor';
 import { CONSOLIDATIONS_TABLE } from '../constants';
-import { ConsolidatedTDH, TDH, TDHBlock } from '../entities/ITDH';
 import { updateTDH } from '../tdhLoop/tdh';
-import { NFT } from '../entities/INFT';
-import { NFTOwner } from '../entities/INFTOwner';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -29,23 +24,13 @@ export const handler = async (startBlock?: number) => {
   const start = Time.now();
   logger.info(`[RUNNING] [START_BLOCK ${startBlock}]`);
 
-  await loadEnv([
-    Delegation,
-    Consolidation,
-    NFTDelegationBlock,
-    TDH,
-    ConsolidatedTDH,
-    TDHBlock,
-    NFT,
-    NFTOwner
-  ]);
+  await loadEnv();
 
   const delegationsResponse = await handleDelegations(startBlock);
   await persistNftDelegationBlock(
     delegationsResponse.block,
     delegationsResponse.blockTimestamp
   );
-  await unload();
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[COMPLETE IN ${diff}]`);

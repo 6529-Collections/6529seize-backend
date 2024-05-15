@@ -1,9 +1,9 @@
 import { connect, disconnect } from './db';
 import { prepEnvironment } from './env';
 
-export async function loadEnv(entities: any[] = []) {
+export async function loadEnv() {
   await prepEnvironment();
-  await connect(entities);
+  await connect();
 }
 
 export async function unload() {
