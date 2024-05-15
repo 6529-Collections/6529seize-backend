@@ -42,8 +42,7 @@ cron.schedule('*/2 * * * *', async () => {
 });
 
 // TDH calculations at 00:01
-// cron.schedule('1 0 * * *', async () => {
-cron.schedule('07 15 * * *', async () => {
+cron.schedule('1 0 * * *', async () => {
   if (RUNNING_TDH) {
     logger.info(`[SKIPPING TDH RUN] : [RUNNING_TDH: ${RUNNING_TDH}]`);
     return;
