@@ -104,10 +104,10 @@ function isProxyActionActive(action: ProfileProxyAction): boolean {
   const now = Time.now();
   return (
     !action.end_time ||
-    (Time.millis(action.end_time).eq(now) &&
-      (!action.start_time || Time.millis(action.start_time).lt(now)) &&
-      (!action.rejected_at || Time.millis(action.rejected_at).gt(now)) &&
-      (!action.revoked_at || Time.millis(action.revoked_at).gt(now)))
+    (Time.millis(action.end_time).gte(now) &&
+      (!action.start_time || Time.millis(action.start_time).lte(now)) &&
+      (!action.rejected_at || Time.millis(action.rejected_at).gte(now)) &&
+      (!action.revoked_at || Time.millis(action.revoked_at).gte(now)))
   );
 }
 
