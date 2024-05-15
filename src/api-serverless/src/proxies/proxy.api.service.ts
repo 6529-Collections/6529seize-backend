@@ -736,7 +736,7 @@ export class ProfileProxyApiService {
     readonly credit_amount?: number;
     readonly end_time?: number | null;
   }): Promise<ProfileProxyActionEntity> {
-    if (!credit_amount && !end_time) {
+    if (!credit_amount && end_time === undefined) {
       throw new BadRequestException(
         'Credit amount or end time must be provided'
       );
