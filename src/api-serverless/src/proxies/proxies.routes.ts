@@ -21,8 +21,8 @@ import {
   AcceptActionRequest,
   AcceptActionRequestActionEnum
 } from '../generated/models/AcceptActionRequest';
-import { UpdateActionRequest } from '../generated/models/UpdateActionRequest';
 import { ProfileProxyActionEntity } from '../../../entities/IProfileProxyAction';
+import { UpdateProxyActionRequest } from '../generated/models/UpdateProxyActionRequest';
 
 const router = asyncRouter();
 
@@ -202,7 +202,7 @@ router.put(
     req: Request<
       { proxy_id: string; action_id: string },
       any,
-      UpdateActionRequest,
+      UpdateProxyActionRequest,
       any,
       any
     >,
@@ -293,8 +293,8 @@ const AcceptActionRequestSchema = Joi.object<AcceptActionRequest>({
     .allow(...Object.values(AcceptActionRequestActionEnum))
 });
 
-const UpdateActionRequestSchema = Joi.object<UpdateActionRequest>({
+const UpdateActionRequestSchema = Joi.object<UpdateProxyActionRequest>({
   end_time: Joi.number().optional(),
-  credit_amount: Joi.number().optional()
+  credit_amount: Joi.number().optional().allow(null)
 });
 export default router;
