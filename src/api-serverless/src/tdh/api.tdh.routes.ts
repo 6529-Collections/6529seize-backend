@@ -5,7 +5,6 @@ import {
   MetricsContent,
   fetchConsolidatedMetrics,
   fetchNftTdh,
-  fetchSingleWalletTDH,
   fetchTDH
 } from './api.tdh.db';
 import { DEFAULT_PAGE_SIZE } from '../page-request';
@@ -181,25 +180,5 @@ router.get(
       return returnJsonResult(parsedResult, req, res);
     }
     throw new NotFoundException(`Wallet TDH for ${wallet} not found`);
-  }
-);
-
-// used for chainlink
-router.get(
-  '/:wallet',
-  async function (
-    req: Request<
-      {
-        wallet: string;
-      },
-      any,
-      any,
-      {}
-    >,
-    res: any
-  ) {
-    const wallet = req.params.wallet;
-    const result = await fetchSingleWalletTDH(wallet);
-    return returnJsonResult(result, req, res);
   }
 );
