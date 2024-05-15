@@ -4,7 +4,6 @@ import {
   NULL_ADDRESS,
   RESEARCH_6529_ADDRESS,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
-  TEAM_TABLE,
   TRANSACTIONS_TABLE
 } from '../constants';
 import { fetchMaxTransactionByBlockNumber, getDataSource } from '../db';
@@ -100,11 +99,15 @@ async function redeemSubscriptionAirdrop(
   if (!finalSubscription) {
     const distributionAirdrop = (
       await sqlExecutor.execute(
-        `SELECT * FROM ${DISTRIBUTION_TABLE} WHERE LOWER(wallet) = :toAddress AND phase = :phase AND contract = :contract AND card_id = :tokenId;`,
+        `SELECT * FROM ${DISTRIBUTION_TABLE} 
+          WHERE LOWER(wallet) = :toAddress 
+          AND LOWER(phase) = :phase 
+          AND LOWER(contract) = :contract 
+          AND card_id = :tokenId;`,
         {
           toAddress: transaction.to_address.toLowerCase(),
-          phase: 'Airdrop',
-          contract: transaction.contract,
+          phase: 'airdrop',
+          contract: transaction.contract.toLowerCase(),
           tokenId: transaction.token_id
         }
       )
