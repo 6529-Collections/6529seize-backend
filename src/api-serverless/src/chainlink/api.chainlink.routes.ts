@@ -8,7 +8,7 @@ import {
   fetchTDHCutoff,
   fetchSingleAddressTDHBreakdown,
   fetchSingleAddressTDHMemesSeasons,
-  fetchSingleWalletTDH
+  fetchSingleAddressTDH
 } from './api.chainlink.db';
 
 const router = asyncRouter();
@@ -105,11 +105,11 @@ router.get(
 );
 
 router.get(
-  '/tdh/:wallet',
+  '/tdh/:address',
   async function (
     req: Request<
       {
-        wallet: string;
+        address: string;
       },
       any,
       any,
@@ -117,8 +117,8 @@ router.get(
     >,
     res: any
   ) {
-    const wallet = req.params.wallet;
-    const result = await fetchSingleWalletTDH(wallet);
+    const address = req.params.address;
+    const result = await fetchSingleAddressTDH(address);
     return returnJsonResult(result, req, res);
   }
 );

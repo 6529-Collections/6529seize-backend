@@ -150,13 +150,13 @@ export async function fetchTDHCutoff(cutoff: number) {
   };
 }
 
-export const fetchSingleWalletTDH = async (wallet: string) => {
+export const fetchSingleAddressTDH = async (address: string) => {
   const blockResult = await sqlExecutor.execute(
     `SELECT MAX(block) as block from ${CONSOLIDATED_WALLETS_TDH_TABLE}`
   );
   const block = blockResult[0].block ?? 0;
   const sql = `
-    SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} where LOWER(consolidation_key) like '%${wallet.toLowerCase()}%'
+    SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} where LOWER(consolidation_key) like '%${address.toLowerCase()}%'
   `;
   const tdh = await sqlExecutor.execute(sql);
   return {
