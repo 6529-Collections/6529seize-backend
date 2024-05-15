@@ -7,19 +7,10 @@ import { ApiCompliantException } from '../../exceptions';
 
 import { Logger } from '../../logging';
 import * as process from 'process';
-import {
-  fetchSingleAddressTDH,
-  fetchSingleAddressTDHBreakdown,
-  fetchSingleAddressTDHMemesSeasons,
-  fetchTotalTDH,
-  fetchNfts,
-  returnJsonResult,
-  fetchTDHAbove,
-  fetchTDHPercentile,
-  fetchTDHCutoff
-} from './api-helpers';
+
 import { corsOptions } from './api-constants';
 import { prepEnvironment } from '../../env';
+import { returnJsonResult } from './api-helpers';
 
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
@@ -116,7 +107,7 @@ loadApi().then(() => {
   apiRouter.get(
     '/tdh/total',
     async function (req: Request<{}, any, any, {}>, res: any) {
-      const result = await fetchTotalTDH();
+      const result = await db.fetchTotalTDH();
       return returnJsonResult(result, res);
     }
   );
@@ -138,7 +129,7 @@ loadApi().then(() => {
       if (isNaN(value)) {
         return res.status(400).send({ error: 'Invalid value' });
       }
-      const result = await fetchTDHAbove(Number(value));
+      const result = await db.fetchTDHAbove(Number(value));
       return returnJsonResult(result, res);
     }
   );
@@ -172,7 +163,7 @@ loadApi().then(() => {
       }
 
       const resolvedPercentile = Number(percentile) / 100;
-      const result = await fetchTDHPercentile(resolvedPercentile);
+      const result = await db.fetchTDHPercentile(resolvedPercentile);
       return returnJsonResult(result, res);
     }
   );
@@ -197,7 +188,7 @@ loadApi().then(() => {
           .send('Invalid cutoff value. Please provide a non-negative integer.');
       }
 
-      const result = await fetchTDHCutoff(Number(cutoff));
+      const result = await db.fetchTDHCutoff(Number(cutoff));
       return returnJsonResult(result, res);
     }
   );
@@ -216,7 +207,7 @@ loadApi().then(() => {
       res: any
     ) {
       const address = req.params.address;
-      const result = await fetchSingleAddressTDH(address);
+      const result = await db.fetchSingleAddressTDH(address);
       return returnJsonResult(result, res);
     }
   );
@@ -235,7 +226,7 @@ loadApi().then(() => {
       res: any
     ) {
       const address = req.params.address;
-      const result = await fetchSingleAddressTDHBreakdown(address);
+      const result = await db.fetchSingleAddressTDHBreakdown(address);
       return returnJsonResult(result, res);
     }
   );
@@ -254,7 +245,7 @@ loadApi().then(() => {
       res: any
     ) {
       const address = req.params.address;
-      const result = await fetchSingleAddressTDHMemesSeasons(address);
+      const result = await db.fetchSingleAddressTDHMemesSeasons(address);
       return returnJsonResult(result, res);
     }
   );
@@ -273,7 +264,7 @@ loadApi().then(() => {
       res: any
     ) {
       const contract = req.params.contract;
-      const result = await fetchNfts(contract);
+      const result = await db.fetchNfts(contract);
       return returnJsonResult(result, res);
     }
   );
