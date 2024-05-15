@@ -151,16 +151,17 @@ export async function fetchTDHCutoff(cutoff: number) {
 }
 
 export const fetchSingleAddressTDH = async (address: string) => {
-  const blockResult = await sqlExecutor.execute(
-    `SELECT MAX(block) as block from ${CONSOLIDATED_WALLETS_TDH_TABLE}`
-  );
-  const block = blockResult[0].block ?? 0;
-  const sql = `
-    SELECT * from ${CONSOLIDATED_WALLETS_TDH_TABLE} where LOWER(consolidation_key) like '%${address.toLowerCase()}%'
-  `;
-  const tdh = await sqlExecutor.execute(sql);
+  const { block, tdh } = await fetchBlockAndAddressTdh(address);
+  const boost = tdh[0]?.boost ?? 1;
   return {
-    tdh: tdh[0]?.boosted_tdh ?? 0,
+    tdh: formatNumber(tdh[0]?.boosted_tdh ?? 0),
+    boost,
+    memes_tdh: formatNumber(tdh[0]?.boosted_memes_tdh ?? 0),
+    gradients_tdh: formatNumber(tdh[0]?.boosted_gradients_tdh ?? 0),
+    nextgen_tdh: formatNumber(tdh[0]?.boosted_nextgen_tdh ?? 0),
+    addresses: JSON.parse(
+      tdh[0]?.wallets ?? JSON.stringify([address.toLowerCase()])
+    ),
     block
   };
 };
