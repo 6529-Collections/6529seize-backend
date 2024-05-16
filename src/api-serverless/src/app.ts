@@ -2,7 +2,6 @@ import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { isNumber } from '../../helpers';
 
-import chainlinkRoutes from './chainlink/api.chainlink.routes';
 import profilesRoutes from './profiles/profiles.routes';
 import authRoutes from './auth/auth.routes';
 import proxiesRoutes from './proxies/proxies.routes';
@@ -803,7 +802,6 @@ loadApi().then(() => {
     );
   });
 
-  apiRouter.use('', chainlinkRoutes);
   apiRouter.use(`/profiles`, profilesRoutes);
   apiRouter.use(`/analytics`, analyticsRoutes);
   apiRouter.use(`/community-members`, communityMembersRoutes);
