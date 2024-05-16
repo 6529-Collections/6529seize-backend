@@ -34,6 +34,8 @@
 
 ## 2. Setup
 
+Choose between 2.1 Manual or 2.2 Scripted setup
+
 ### 2.1 Manual Setup
 
 #### 2.1.1 Clone Repository
@@ -179,6 +181,8 @@ npm run direct_load_trx
 
 ## 5. Run Services
 
+Choose between 5.1 Manual or 5.2 Scripted Start
+
 ### 5.1 Manual Start
 
 #### 5.1.1 Run Backend
@@ -242,6 +246,8 @@ https://api.seize.io/api/tdh/<address>
 ```
 
 ## 6 Updates
+
+Choose between 6.1 Manual or 6.2 Scripted Update
 
 ### 6.1 Manual Update
 
