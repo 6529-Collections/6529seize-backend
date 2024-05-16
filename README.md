@@ -34,7 +34,7 @@
 
 ## 2. Setup
 
-Choose between 2.1 Manual or 2.2 Scripted setup
+Choose between [2.1 Manual](#21-manual-setup) or 2.2 [2.1 Scripted](#21-manual-setup) Setup
 
 ### 2.1 Manual Setup
 
