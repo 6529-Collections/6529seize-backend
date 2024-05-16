@@ -14,9 +14,7 @@ import { DropMetadataEntity } from '../../../entities/IDrop';
 import { WALLET_REGEX } from '../../../constants';
 import { dropsService } from './drops.api.service';
 import { parseIntOrNull, parseNumberOrNull } from '../../../helpers';
-import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
-import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
-import { dropRaterService } from './drop-rater.service';
+import { dropVotingService } from './drop-voting.service';
 import {
   DEFAULT_MAX_SIZE,
   DEFAULT_PAGE_SIZE,
@@ -33,8 +31,8 @@ import { CreateDropPart } from '../generated/models/CreateDropPart';
 import { QuotedDrop } from '../generated/models/QuotedDrop';
 import { NewDropComment } from '../generated/models/NewDropComment';
 import { DropComment } from '../generated/models/DropComment';
-import { communityMemberCriteriaService } from '../community-members/community-member-criteria.service';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { DropVotingRequest } from '../generated/models/DropVotingRequest';
 
 const router = asyncRouter();
 
@@ -187,17 +185,16 @@ router.post(
 );
 
 router.post(
-  `/:drop_id/ratings`,
+  `/:drop_id/votes`,
   needsAuthenticatedUser(),
   async function (
-    req: Request<{ drop_id: string }, any, ApiAddRatingToDropRequest, any, any>,
+    req: Request<{ drop_id: string }, any, DropVotingRequest, any, any>,
     res: Response<ApiResponse<Drop>>
   ) {
-    const { rating, category } = getValidatedByJoiOrThrow(
+    const { vote } = getValidatedByJoiOrThrow(
       req.body,
-      ApiAddRatingToDropRequestSchema
+      DropVotingRequestSchema
     );
-    const proposedCategory = category?.trim() ?? '';
     const authenticationContext = await getAuthenticationContext(req);
     if (!authenticationContext.getActingAsId()) {
       throw new ForbiddenException(
@@ -205,37 +202,10 @@ router.post(
       );
     }
     const dropId = req.params.drop_id;
-    if (proposedCategory !== '') {
-      const abusivenessDetectionResult =
-        await abusivenessCheckService.checkRepPhrase(category);
-      if (abusivenessDetectionResult.status === 'DISALLOWED') {
-        throw new BadRequestException(
-          abusivenessDetectionResult.explanation ??
-            'Given category is not allowed'
-        );
-      }
-    }
-    const raterProfileId = authenticationContext.getActingAsId()!;
-    if (
-      authenticationContext.isAuthenticatedAsProxy() &&
-      !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.RATE_WAVE_DROP
-      ]
-    ) {
-      throw new ForbiddenException(
-        `Proxy doesn't have permission to rate drops`
-      );
-    }
-    const criteriasUserIsEligible =
-      await communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
-        raterProfileId
-      );
-    await dropRaterService.updateRating({
-      rater_profile_id: raterProfileId,
-      criteriasUserIsEligible,
-      category: proposedCategory,
+    await dropVotingService.updateVote({
+      authenticationContext,
       drop_id: dropId,
-      rating: rating
+      vote
     });
     const drop = await dropsService.findDropByIdOrThrow({
       dropId,
@@ -412,18 +382,11 @@ export enum DropActivityLogsQuerySortOption {
   CREATED_AT = 'created_at'
 }
 
-interface ApiAddRatingToDropRequest {
-  readonly rating: number;
-  readonly category: string;
-}
-
-const ApiAddRatingToDropRequestSchema: Joi.ObjectSchema<ApiAddRatingToDropRequest> =
-  Joi.object({
-    rating: Joi.number().integer().required(),
-    category: Joi.string().max(100).regex(REP_CATEGORY_PATTERN).messages({
-      'string.pattern.base': `Invalid category. Category can't be longer than 100 characters. It can only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes.`
-    })
-  });
+const DropVotingRequestSchema: Joi.ObjectSchema<DropVotingRequest> = Joi.object(
+  {
+    vote: Joi.number().integer().required()
+  }
+);
 
 const NftSchema: Joi.ObjectSchema<DropReferencedNFT> = Joi.object({
   contract: Joi.string().regex(WALLET_REGEX).lowercase(),

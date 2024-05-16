@@ -54,8 +54,8 @@ import {
   getSearchFilters
 } from './api-serverless/src/api-helpers';
 import {
-  NEXTGEN_CORE,
-  getNextGenChainId
+  getNextGenChainId,
+  NEXTGEN_CORE
 } from './api-serverless/src/nextgen/abis';
 import { NEXTGEN_TOKENS_TABLE } from './nextgen/nextgen_constants';
 import { NFTSearchResult } from './api-serverless/src/api-constants';
@@ -119,6 +119,15 @@ export async function connect() {
     ) => execSQLWithParams(sql, params, options),
     executeNativeQueriesInTransaction(executable) {
       return execNativeTransactionally(executable);
+    },
+
+    async findOneOrNull(
+      sql: string,
+      params?: Record<string, any>,
+      options?: DbQueryOptions
+    ) {
+      const r = await this.execute(sql, params, options);
+      return r[0] ?? null;
     }
   });
   logger.info(`[CONNECTION POOLS CREATED]`);
@@ -641,7 +650,7 @@ export async function fetchMemesExtended(
     );
     params.seasons = seasons.split(',');
   }
-  let joins = ` LEFT JOIN ${NFTS_TABLE} ON ${MEMES_EXTENDED_DATA_TABLE}.id = ${NFTS_TABLE}.id AND ${NFTS_TABLE}.contract = :memes_contract`;
+  const joins = ` LEFT JOIN ${NFTS_TABLE} ON ${MEMES_EXTENDED_DATA_TABLE}.id = ${NFTS_TABLE}.id AND ${NFTS_TABLE}.contract = :memes_contract`;
   params.memes_contract = MEMES_CONTRACT;
 
   let sortResolved = sort;
@@ -713,7 +722,7 @@ export async function searchNfts(
 
   let nextgenFilters = '';
   let nftFilters = '';
-  let params: any = {};
+  const params: any = {};
   if (idQuery) {
     nextgenFilters = constructFiltersOR(nextgenFilters, `normalised_id = :id`);
     nextgenFilters = constructFiltersOR(nextgenFilters, `id = :id`);

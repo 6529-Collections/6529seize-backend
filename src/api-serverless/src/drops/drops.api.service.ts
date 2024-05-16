@@ -15,8 +15,6 @@ import { DropMentionedUser } from '../generated/models/DropMentionedUser';
 import { DropReferencedNFT } from '../generated/models/DropReferencedNFT';
 import { DropMedia } from '../generated/models/DropMedia';
 import { DropMetadata } from '../generated/models/DropMetadata';
-import { DropRater } from '../generated/models/DropRater';
-import { DropRatingCategory } from '../generated/models/DropRatingCategory';
 import {
   DropActivityLog,
   DropActivityLogTypeEnum
@@ -31,10 +29,14 @@ import {
 } from '../community-members/community-member-criteria.service';
 import { AuthenticationContext } from '../../../auth-context';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { dropVotingDb, DropVotingDb } from './drop.voting.db';
+import { DropVoter } from '../generated/models/DropVoter';
+import { WaveCreditType, WaveScopeType } from '../../../entities/IWave';
 
 export class DropsApiService {
   constructor(
     private readonly dropsDb: DropsDb,
+    private readonly dropVotingDb: DropVotingDb,
     private readonly profilesService: ProfilesService,
     private readonly communityMemberCriteriaService: CommunityMemberCriteriaService
   ) {}
@@ -72,9 +74,10 @@ export class DropsApiService {
     return this.convertToDropFulls(
       {
         dropEntities: [dropEntity],
-        contextProfileId: contextProfileId,
+        contextProfileId,
         min_part_id,
-        max_part_id
+        max_part_id,
+        criteriasUserIsEligible
       },
       connection
     ).then((it) => it[0]);
@@ -121,7 +124,8 @@ export class DropsApiService {
       dropEntities: dropEntities,
       contextProfileId: context_profile_id,
       min_part_id,
-      max_part_id
+      max_part_id,
+      criteriasUserIsEligible: eligible_curations
     });
   }
 
@@ -152,12 +156,14 @@ export class DropsApiService {
       dropEntities,
       contextProfileId,
       min_part_id,
-      max_part_id
+      max_part_id,
+      criteriasUserIsEligible
     }: {
       dropEntities: DropEntity[];
-      contextProfileId?: string;
+      contextProfileId: string;
       min_part_id: number;
       max_part_id: number;
+      criteriasUserIsEligible: string[];
     },
     connection?: ConnectionWrapper<any>
   ): Promise<Drop[]> {
@@ -166,32 +172,32 @@ export class DropsApiService {
       mentions,
       referencedNfts,
       metadata,
-      dropsTopRaters,
-      dropsTopCategories,
-      dropsContextProfileCategories,
-      dropsRatings,
-      dropsRatingsByContextProfile,
+      dropsTopVoters,
+      dropsVotes,
+      dropsVotesByContextProfile,
       dropLogsStats,
       dropsQuoteCounts,
       dropMedia,
       dropsParts,
-      dropsCommentsCounts
+      dropsCommentsCounts,
+      ratesCredits
     } = await this.getAllDropsRelatedData(
       {
         dropIds,
-        contextProfileId: contextProfileId,
+        contextProfileId,
         min_part_id,
-        max_part_id
+        max_part_id,
+        criteriasUserIsEligible
       },
       connection
     );
-    const raterProfileIds = Object.values(dropsTopRaters)
-      .map((it) => it.map((r) => r.rater_profile_id))
+    const voterProfileIds = Object.values(dropsTopVoters)
+      .map((it) => it.map((r) => r.voter_id))
       .flat();
     const allProfileIds = distinct([
       ...dropEntities.map((it) => it.author_id),
       ...mentions.map((it) => it.mentioned_profile_id),
-      ...raterProfileIds
+      ...voterProfileIds
     ]);
     const profileMins = await this.profilesService.getProfileMinsByIds(
       allProfileIds
@@ -272,32 +278,19 @@ export class DropsApiService {
           data_key: it.data_key,
           data_value: it.data_value
         })),
-      rating: dropsRatings[dropEntity.id]?.rating ?? 0,
-      raters_count: dropsRatings[dropEntity.id]?.distinct_raters ?? 0,
-      rating_categories_count:
-        dropsRatings[dropEntity.id]?.distinct_categories ?? 0,
-      top_raters: (dropsTopRaters[dropEntity.id] ?? [])
-        .map<DropRater>((rater) => ({
-          rating: rater.rating,
-          profile: profilesByIds[rater.rater_profile_id]!
+      vote: dropsVotes[dropEntity.id]?.vote ?? 0,
+      voters_count: dropsVotes[dropEntity.id]?.cnt ?? 0,
+      top_voters: (dropsTopVoters[dropEntity.id] ?? [])
+        .map<DropVoter>((voter) => ({
+          vote: voter.vote,
+          profile: profilesByIds[voter.voter_id]!
         }))
-        .sort((a, b) => b.rating - a.rating),
-      top_rating_categories: (dropsTopCategories[dropEntity.id] ?? [])
-        .map<DropRatingCategory>((cat) => ({
-          rating: cat.rating,
-          category: cat.category
-        }))
-        .sort((a, b) => b.rating - a.rating),
-      rating_logs_count: dropLogsStats[dropEntity.id]?.rating_logs_count ?? 0,
+        .sort((a, b) => b.vote - a.vote),
+      voting_logs_count: dropLogsStats[dropEntity.id]?.rating_logs_count ?? 0,
       context_profile_context: contextProfileId
         ? {
-            categories: (dropsContextProfileCategories[dropEntity.id] ?? [])
-              .map<DropRatingCategory>((cat) => ({
-                category: cat.category,
-                rating: cat.profile_rating
-              }))
-              .sort((a, b) => b.rating - a.rating),
-            rating: dropsRatingsByContextProfile[dropEntity.id] ?? 0
+            vote: dropsVotesByContextProfile[dropEntity.id] ?? 0,
+            total_credit: ratesCredits[dropEntity.id] ?? 0
           }
         : null
     }));
@@ -308,42 +301,42 @@ export class DropsApiService {
       dropIds,
       contextProfileId,
       min_part_id,
-      max_part_id
+      max_part_id,
+      criteriasUserIsEligible
     }: {
       dropIds: string[];
-      contextProfileId?: string;
+      contextProfileId: string;
       min_part_id: number;
       max_part_id: number;
+      criteriasUserIsEligible: string[];
     },
     connection?: ConnectionWrapper<any>
   ) {
     const [
+      allProfileIncomningReps,
+      profileTdh,
+      dropsWaves,
       mentions,
       referencedNfts,
       metadata,
-      dropsTopRaters,
-      dropsTopCategories,
-      dropsContextProfileCategories,
-      dropsRatings,
-      dropsRatingsByContextProfile,
+      dropsTopVoters,
+      dropsVotes,
+      dropsVotesByContextProfile,
       dropLogsStats,
       dropsQuoteCounts,
       dropMedia,
       dropsParts,
       dropsCommentsCounts
     ] = await Promise.all([
+      this.profilesService.getAllProfileIncomingReps(contextProfileId),
+      this.profilesService.getProfileTdh(contextProfileId),
+      this.dropsDb.findDropsWaves(dropIds, connection),
       this.dropsDb.findMentionsByDropIds(dropIds, connection),
       this.dropsDb.findReferencedNftsByDropIds(dropIds, connection),
       this.dropsDb.findMetadataByDropIds(dropIds, connection),
-      this.dropsDb.findDropsTopRaters(dropIds, connection),
-      this.dropsDb.findDropsTopRatingCategories(dropIds, connection),
-      this.findContextProfilesCategoryRatingsForDrops(
-        contextProfileId,
-        dropIds,
-        connection
-      ),
-      this.dropsDb.findDropsTotalRatingsStats(dropIds, connection),
-      this.findContextProfilesTotalRatingsForDrops(
+      this.dropVotingDb.findTopVoters(dropIds, connection),
+      this.dropVotingDb.findDropsTotalRatingsStats(dropIds, connection),
+      this.dropVotingDb.findVotesForVoterAndDrops(
         contextProfileId,
         dropIds,
         connection
@@ -366,56 +359,54 @@ export class DropsApiService {
         connection
       )
     ]);
+    const ratesCredits = dropIds.reduce((acc, dropId) => {
+      const dropWave = dropsWaves[dropId];
+      if (
+        dropWave.visibility_scope_type === WaveScopeType.CURATED &&
+        !criteriasUserIsEligible.includes(
+          dropWave.visibility_scope_curation_id!
+        )
+      ) {
+        acc[dropId] = 0;
+        return acc;
+      }
+      if (dropWave.voting_credit_type === WaveCreditType.TDH) {
+        acc[dropId] = profileTdh;
+        return acc;
+      } else if (dropWave.voting_credit_type === WaveCreditType.REP) {
+        const creditCategory = dropWave.voting_credit_category;
+        const creditor = dropWave.voting_credit_creditor;
+        allProfileIncomningReps
+          .filter(
+            (it) =>
+              (!creditCategory || it.matter_category === creditCategory) &&
+              (!creditor || it.rater_profile_id === creditor)
+          )
+          .reduce((acc, rep) => {
+            return acc + rep.rating;
+          }, 0);
+      } else if (dropWave.voting_credit_type === WaveCreditType.UNIQUE) {
+        acc[dropId] = 1;
+      } else {
+        acc[dropId] = 0;
+      }
+      acc[dropId] = profileTdh;
+      return acc;
+    }, {} as Record<string, number>);
     return {
+      ratesCredits,
       mentions,
       referencedNfts,
       metadata,
-      dropsTopRaters,
-      dropsTopCategories,
-      dropsContextProfileCategories,
-      dropsRatings,
-      dropsRatingsByContextProfile,
+      dropsTopVoters,
+      dropsVotes,
+      dropsVotesByContextProfile,
       dropLogsStats,
       dropsQuoteCounts,
       dropMedia,
       dropsParts,
       dropsCommentsCounts
     };
-  }
-
-  private async findContextProfilesCategoryRatingsForDrops(
-    contextProfileId: string | undefined,
-    dropIds: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<
-    Record<
-      string,
-      { category: string; profile_rating: number; total_rating: number }[]
-    >
-  > {
-    if (!contextProfileId) {
-      return {};
-    }
-    return this.dropsDb.findDropsCategoryRatingsByProfile(
-      dropIds,
-      contextProfileId,
-      connection
-    );
-  }
-
-  private async findContextProfilesTotalRatingsForDrops(
-    contextProfileId: string | undefined,
-    dropIds: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, number>> {
-    if (!contextProfileId) {
-      return {};
-    }
-    return this.dropsDb.findDropsTotalRatingsByProfile(
-      dropIds,
-      contextProfileId,
-      connection
-    );
   }
 
   async findProfilesLatestDrops(param: {
@@ -439,17 +430,9 @@ export class DropsApiService {
       dropEntities,
       contextProfileId,
       min_part_id: 1,
-      max_part_id: 1
+      max_part_id: 1,
+      criteriasUserIsEligible
     });
-  }
-
-  async findAvailableCreditForRatingForProfile(
-    profileId: string
-  ): Promise<{ available_credit_for_rating: number }> {
-    const creditLeft = await this.dropsDb.findCreditLeftForDropsForProfile({
-      profileId
-    });
-    return { available_credit_for_rating: creditLeft };
   }
 
   async findLogs(query: DropActivityLogsQuery): Promise<Page<DropActivityLog>> {
@@ -550,6 +533,7 @@ export class DropsApiService {
 
 export const dropsService = new DropsApiService(
   dropsDb,
+  dropVotingDb,
   profilesService,
   communityMemberCriteriaService
 );

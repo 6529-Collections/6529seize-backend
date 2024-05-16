@@ -10,31 +10,30 @@
  * Do not edit the class manually.
  */
 
-import { ProfileMin } from '../models/ProfileMin';
 import { HttpFile } from '../http/http';
 
-export class DropRater {
-    'profile': ProfileMin;
-    'rating': number;
+export class DropVoting {
+    'drop_id': string;
+    'vote'?: number;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "profile",
-            "baseName": "profile",
-            "type": "ProfileMin",
+            "name": "drop_id",
+            "baseName": "drop_id",
+            "type": "string",
             "format": ""
         },
         {
-            "name": "rating",
-            "baseName": "rating",
+            "name": "vote",
+            "baseName": "vote",
             "type": "number",
             "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return DropRater.attributeTypeMap;
+        return DropVoting.attributeTypeMap;
     }
 
     public constructor() {

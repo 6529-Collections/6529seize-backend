@@ -14,9 +14,8 @@ import { DropContextProfileContext } from '../models/DropContextProfileContext';
 import { DropMentionedUser } from '../models/DropMentionedUser';
 import { DropMetadata } from '../models/DropMetadata';
 import { DropPart } from '../models/DropPart';
-import { DropRater } from '../models/DropRater';
-import { DropRatingCategory } from '../models/DropRatingCategory';
 import { DropReferencedNFT } from '../models/DropReferencedNFT';
+import { DropVoter } from '../models/DropVoter';
 import { ProfileMin } from '../models/ProfileMin';
 import { HttpFile } from '../http/http';
 
@@ -41,12 +40,10 @@ export class Drop {
     'referenced_nfts': Array<DropReferencedNFT>;
     'mentioned_users': Array<DropMentionedUser>;
     'metadata': Array<DropMetadata>;
-    'rating': number;
-    'top_raters': Array<DropRater>;
-    'raters_count': number;
-    'top_rating_categories': Array<DropRatingCategory>;
-    'rating_categories_count': number;
-    'rating_logs_count': number;
+    'vote': number;
+    'top_voters': Array<DropVoter>;
+    'voters_count': number;
+    'voting_logs_count': number;
     'context_profile_context': DropContextProfileContext | null;
 
     static readonly discriminator: string | undefined = undefined;
@@ -119,38 +116,26 @@ export class Drop {
             "format": ""
         },
         {
-            "name": "rating",
-            "baseName": "rating",
+            "name": "vote",
+            "baseName": "vote",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "top_raters",
-            "baseName": "top_raters",
-            "type": "Array<DropRater>",
+            "name": "top_voters",
+            "baseName": "top_voters",
+            "type": "Array<DropVoter>",
             "format": ""
         },
         {
-            "name": "raters_count",
-            "baseName": "raters_count",
+            "name": "voters_count",
+            "baseName": "voters_count",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "top_rating_categories",
-            "baseName": "top_rating_categories",
-            "type": "Array<DropRatingCategory>",
-            "format": ""
-        },
-        {
-            "name": "rating_categories_count",
-            "baseName": "rating_categories_count",
-            "type": "number",
-            "format": "int64"
-        },
-        {
-            "name": "rating_logs_count",
-            "baseName": "rating_logs_count",
+            "name": "voting_logs_count",
+            "baseName": "voting_logs_count",
             "type": "number",
             "format": "int64"
         },
