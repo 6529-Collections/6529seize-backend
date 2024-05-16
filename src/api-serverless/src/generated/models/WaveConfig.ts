@@ -18,7 +18,7 @@ export class WaveConfig {
     'type': WaveType;
     'winning_thresholds': IntRange | null;
     /**
-    * This amount of top rated drops will win. Must be set if and only if type is TOP_VOTED
+    * This amount of top voted drops will win. Must be set if and only if type is TOP_VOTED
     */
     'max_winners': number | null;
     /**

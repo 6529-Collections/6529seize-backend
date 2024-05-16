@@ -109,6 +109,15 @@ export async function connect(entities: any[] = []) {
     ) => execSQLWithParams(sql, params, options),
     executeNativeQueriesInTransaction(executable) {
       return execNativeTransactionally(executable);
+    },
+
+    async findOneOrNull(
+      sql: string,
+      params?: Record<string, any>,
+      options?: DbQueryOptions
+    ) {
+      const r = await this.execute(sql, params, options);
+      return r[0] ?? null;
     }
   });
   logger.info(

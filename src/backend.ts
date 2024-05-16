@@ -10,7 +10,7 @@ import {
   DropPartEntity,
   DropReferencedNftEntity
 } from './entities/IDrop';
-import { DropVoteCreditSpending } from './entities/IDropVoteCreditSpending';
+import { DropVoteChange } from './entities/IDropVoteChange';
 import { Profile, ProfileArchived } from './entities/IProfile';
 import { CicStatement } from './entities/ICICStatement';
 import { ProfileActivityLog } from './entities/IProfileActivityLog';
@@ -22,6 +22,7 @@ import { ProfileProxyEntity } from './entities/IProfileProxy';
 import { ProfileProxyActionEntity } from './entities/IProfileProxyAction';
 import { WaveEntity } from './entities/IWave';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
+import { DropVoteEntity } from './entities/IDropVote';
 
 const logger = Logger.get('BACKEND');
 
@@ -43,12 +44,13 @@ async function start() {
     DropReferencedNftEntity,
     DropMetadataEntity,
     DropMediaEntity,
-    DropVoteCreditSpending,
+    DropVoteChange,
     DropCommentEntity,
     ProfileProxyEntity,
     ProfileProxyActionEntity,
     WaveEntity,
-    CommunityGroupEntity
+    CommunityGroupEntity,
+    DropVoteEntity
   ]);
   await dbMigrationsLoop.handler(null, null as any, null as any);
 
