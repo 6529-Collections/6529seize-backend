@@ -1,10 +1,10 @@
 # SEIZE-LITE
 
-1. [Infrastructure](#1-infrastructure)
+[1. Infrastructure](#1-infrastructure)
 
-2. [Setup](#2-Setup)
+[2. Setup](#2-Setup)
 
-- 2.1 [Manual Setup](#21-manual-setup)
+- 2.1 [2.1 Manual Setup](#21-manual-setup)
 - 2.2 [Scripted Setup](#22-scripted-setup)
 
 3. [Set Environment](#3-set-environment)
@@ -34,7 +34,7 @@
 
 ## 2. Setup
 
-Choose between [2.1 Manual](#21-manual-setup) or 2.2 [2.1 Scripted](#21-manual-setup) Setup
+Choose between [2.1 Manual Setup](#21-manual-setup) or [2.2 Scripted Setup](#22-scripted-setup)
 
 ### 2.1 Manual Setup
 
@@ -181,7 +181,7 @@ npm run direct_load_trx
 
 ## 5. Run Services
 
-Choose between 5.1 Manual or 5.2 Scripted Start
+Choose between [5.1 Manual Start](#51-manual-start) or [5.2 Scripted Start](#52-scripted-start)
 
 ### 5.1 Manual Start
 
@@ -247,7 +247,7 @@ https://api.seize.io/api/tdh/<address>
 
 ## 6 Updates
 
-Choose between 6.1 Manual or 6.2 Scripted Update
+Choose between [6.1 Manual Update](#61-manual-update) or [6.2 Scripted Update](#62-scripted-update)
 
 ### 6.1 Manual Update
 
