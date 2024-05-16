@@ -1,10 +1,10 @@
 # SEIZE-LITE
 
-[1. Infrastructure](#1-infrastructure)
+1. [Infrastructure](#1-infrastructure)
 
-[2. Setup](#2-Setup)
+2. [Setup](#2-Setup)
 
-- 2.1 [2.1 Manual Setup](#21-manual-setup)
+- 2.1 [Manual Setup](#21-manual-setup)
 - 2.2 [Scripted Setup](#22-scripted-setup)
 
 3. [Set Environment](#3-set-environment)
