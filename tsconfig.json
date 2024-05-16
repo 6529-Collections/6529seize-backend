@@ -14,7 +14,6 @@
     "skipLibCheck": true
   },
   "emitDecoratorMetadata": true,
-  "experimentalDecorators": true,
   "strictPropertyInitialization": false,
   "exclude": [
     "jest.config.js",

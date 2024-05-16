@@ -1,40 +1,17 @@
-import {
-  Entity,
-  Column,
-  PrimaryColumn,
-  CreateDateColumn,
-  UpdateDateColumn
-} from 'typeorm';
-import { NFT_OWNERS_TABLE, NFT_OWNERS_CONSOLIDATION_TABLE } from '../constants';
+import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { NFT_OWNERS_TABLE } from '../constants';
 
-class NFTOwnerBase {
-  @CreateDateColumn()
-  created_at?: Date;
-
-  @UpdateDateColumn()
-  updated_at?: Date;
-
-  @PrimaryColumn({ type: 'bigint' })
-  token_id!: number;
+@Entity(NFT_OWNERS_TABLE)
+export class NFTOwner {
+  @PrimaryColumn({ type: 'varchar', length: 50 })
+  address!: string;
 
   @PrimaryColumn({ type: 'varchar', length: 50 })
   contract!: string;
 
+  @PrimaryColumn({ type: 'bigint' })
+  token_id!: number;
+
   @Column({ type: 'int' })
   balance!: number;
-}
-
-@Entity(NFT_OWNERS_TABLE)
-export class NFTOwner extends NFTOwnerBase {
-  @PrimaryColumn({ type: 'varchar', length: 50 })
-  wallet!: string;
-
-  @Column({ type: 'int' })
-  block_reference!: number;
-}
-
-@Entity(NFT_OWNERS_CONSOLIDATION_TABLE)
-export class ConsolidatedNFTOwner extends NFTOwnerBase {
-  @PrimaryColumn({ type: 'varchar', length: 200 })
-  consolidation_key!: string;
 }

@@ -1,129 +1,283 @@
-# 6529SEIZE-BACKEND
+# SEIZE-LITE
 
-This is a 2-part repository for
+1. [Infrastructure](#1-infrastructure)
 
-1. [6529 Backend](#user-content-1-backend)
+2. [Setup](#2-Setup)
 
-2. [6529 API](#user-content-2-api)
+- 2.1 [Manual Setup](#21-manual-setup)
+- 2.2 [Scripted Setup](#22-scripted-setup)
 
-## 1. Backend
+3. [Set Environment](#3-set-environment)
 
-### 1.1 Install
+4. [Initialize DB](#4-initialize-db)
+
+- 4.1 [Restore Snapshot](#41-restore)
+- 4.2 [Direct Load](#42-direct-load)
+
+5. [Run Services](#5-run-services)
+
+- 5.1 [Manual Start](#51-manual-start)
+- 5.2 [Scripted Start](#52-scripted-start)
+
+6. [Updates](#6-updates)
+
+- 6.1 [Manual Update](#61-manual-update)
+- 6.2 [Scripted Update](#52-scripted-update)
+
+## 1. Infrastructure
+
+**Prerequisites:**
+
+- you have an AWS EC2 instance configured (<a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/concepts.html" target="_blank" rel="noopener noreferrer">Read More</a>)
+
+- you have an AWS RDS instance configured (<a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Welcome.html" target="_blank" rel="noopener noreferrer">Read More</a>)
+
+## 2. Setup
+
+Choose between [2.1 Manual Setup](#21-manual-setup) or [2.2 Scripted Setup](#22-scripted-setup)
+
+### 2.1 Manual Setup
+
+#### 2.1.1 Clone Repository
+
+Clone repository "6529seize-backend" at branch `seize-lite`
+
+```
+git clone --branch seize-lite https://github.com/6529-Collections/6529seize-backend.git
+```
+
+#### 2.1.2 Install NPM
+
+```
+sudo apt install npm
+```
+
+Note: We need npm version v21. Get it using `n`
+
+```
+sudo npm i n -g
+```
+
+Select v21 using
+
+```
+sudo n 21
+```
+
+Reset your session using `hash -r`
+
+#### 2.1.2 Install Project Dependencies
 
 ```
 npm i
 ```
 
-### 1.2 Build
+#### 2.1.3 Build Project
 
 ```
 npm run build
 ```
 
-### 1.3 Environment
+#### 2.1.4 PM2
 
-To run the project you need a .env file.
+Services run using <a href="https://pm2.keymetrics.io/" target="_blank" rel="noopener noreferrer">PM2</a>
 
-The name of your .env file must include the environment you want to run like `.env.local` / `.env.development` / `.env.production`
-
-[Sample .env file](https://github.com/6529-Collections/6529seize-backend/tree/main/.env.sample)
-
-### 1.4 Run
-
-Before running anything, either manually run `npm run migrate:up` or make sure `dbMigrationsLoop` is ran.
-
-#### 1.4.1 using npm
+##### 2.1.4.1 Install PM2
 
 ```
-npm run backend:env
+npm install pm2@latest -g
 ```
 
-#### 1.4.2 using PM2
+##### 2.1.4.2 Configure to Auto-restart on System Reboot
+
+To ensure your application starts on system boot, you can use PM2’s startup script generator. Run the following command and follow the instructions provided:
 
 ```
-pm2 start npm --name=6529backend -- run backend:env
+pm2 startup
 ```
 
-\* Note: env can be one of: `local` / `dev` / `prod`
+##### 2.1.4.3 Set Up Log Rotation
 
-#### 1.4.3 using AWS Lambda
+PM2 can also manage log rotation, which is critical for ensuring that logs do not consume all available disk space.
 
-This repository is configured to be runnable through AWS Lambdas. Each 'loop' folder in the code represents a lambda function and can be built and deployed on AWS individually. \* Note: additional setup is required within AWS in order to configure environment variables and triggers for each lambda.
+```
+pm2 install pm2-logrotate
+```
 
-\* Note: env can be one of: `local` / `dev` / `prod`
+Configure log rotation settings (optional)
 
-### 1.5 Notes
+```
+pm2 set pm2-logrotate:max_size 100M  # Rotate logs once they reach 100MB
+pm2 set pm2-logrotate:retain 10      # Keep 10 rotated logs
+pm2 set pm2-logrotate:compress true  # Compress (gzip) rotated logs
+pm2 set pm2-logrotate:dateFormat YYYY-MM-DD # Set the date format used in the log file names
+pm2 set pm2-logrotate:rotateModule true     # Rotate the log of pm2-logrotate itself
+```
 
-- **Running database for development:** You can use docker and docker-compose for this. Run `docker-compose up -d` in project root and configure your `.env` exactly as DB part in `.env.sample`.
+### 2.2 Scripted Setup
 
-- **Database and ORM:** Backend service is using [TYPEORM](https://www.npmjs.com/package/typeorm). When starting a service, if the database is successful then the ORM will take care of synchronising the schema for the database and creating the necessary tables. \* Note: You will need to create the database and user and provide them in the .env file. Only thing TypeORM doesn't take care of, are views. Those are created with migrations. So you should either run `npm run migrate:up` or make sure `dbMigrationsLoop` is ran to be sure that all migrations are applied.
+```
+scripts/setup.sh
+```
+
+## 3. Set Environment
+
+To run the project you need a file to hold environment variable. The following script with run you through the process of creating this file.
+
+**Note:**
+
+- you will be asked to provide database credentials
+
+  - host
+  - port
+  - admin user and password (used to create database and new users for the services but not saved in .env file)
+  - new database user/password
+
+- you will be asked to provide Alchemy API key (get one <a href="https://docs.alchemy.com/docs/alchemy-quickstart-guide" target="_blank" rel="noopener noreferrer">here</a>)
+
+- at the end of this process:
+  - new database created
+  - new read and write users created
+  - database tables created (empty)
+  - a new file will be created `.env.lite`
+
+```
+npm run set_env
+```
+
+<a href="https://github.com/6529-Collections/6529seize-backend/blob/seize-lite/.env.sample" target="_blank" rel="noopener noreferrer">Sample .env file</a>
+
+## 4. Initialize DB
+
+The database expects some initial data. Choose to load either from latest snapshot or directly
+
+## 4.1 Restore Snapshot
+
+Restore database from the latest snapshot using the following
+
+```
+npm run restore
+```
+
+## 4.2 Direct Load
+
+Two main components need to be loaded directly:
+
+### 4.2.1 NFTDelegation
+
+Run the following to restore data from NFTDelegation contract
+
+```
+npm run direct_load_nftd
+```
+
+### 4.2.2 Transactions
+
+Run the following to restore transaction data
+
+```
+npm run direct_load_trx
+```
+
+## 5. Run Services
+
+Choose between [5.1 Manual Start](#51-manual-start) or [5.2 Scripted Start](#52-scripted-start)
+
+### 5.1 Manual Start
+
+#### 5.1.1 Run Backend
+
+- PM2 process name: 6529backend
+
+```
+pm2 start npm --name=6529backend -- run backend
+```
 
 - **CRON:** When starting the service, there are several scheduled cron jobs running at specific intervals which will consume data from the chain, process and save the result to the database.
-  e.g. discovering NFTs - there is a scheduled cron job to run every 3 minutes which detects new nfts minted on the chain or any changes to existing nfts.
+  e.g. discovering Transactions - there is a scheduled cron job to run every 2 minutes which detects new transactions on the chain and saves them in the database
 
-- **S3 and Video Compression:** [S3Loop](https://github.com/6529-Collections/6529seize-backend/tree/main/src/s3Loop). The s3Loop persist compressed versions of the nft images and videos on AWS S3. This loop is configured to only run in `prod` mode. Video compression requires ffmpeg installed on the running machine.
-  Download instructions at: https://ffmpeg.org/
+- **Note:** On start, this service will always run the tdh calculation on start and the schedule it to run at 00:00 UTC
 
-- Creating new migrations: Run `npm run migrate:new name-of-the-migration`. Three new files are created in `migrations folder`. A jacascript file and 2 SQL files. Find the "up" SQL file and write the SQL for new migration there. Then run `npm run migrate:up` to apply the new migration. You can write reverse migration if you wish in the "down" SQL file.
+#### 5.1.2 Run API
 
-## 2. API
-
-PORT: 3000
-
-PATH: [src/api-serverless](https://github.com/6529-Collections/6529seize-backend/tree/main/src/api-serverless)
-
-### 2.1 Install
+- PM2 process name: 6529api
+- PORT: 3000
 
 ```
-cd src/api-serverless
+pm2 start npm --name=6529api -- run api
+```
+
+**Note:** To ensure PM2 knows which processes to restart at boot, you need to save the list after starting the services
+
+```
+pm2 save
+```
+
+### 5.2 Scripted Start
+
+```
+scripts/start.sh
+```
+
+### 5.3 Test
+
+### 5.3.1 Local
+
+To test your api locally, navigate in your browser to:
+
+```
+http://localhost:3000/api/tdh/<address>
+```
+
+### 5.3.2 AWS
+
+If you are using AWS EC2, navigate to
+
+```
+http://[ip-address]:3000/api/tdh/<address>
+```
+
+Note: Please make sure that you have added an inbound rule on the instance security group for port 3000
+
+Compare the response with
+
+```
+https://api.seize.io/api/tdh/<address>
+```
+
+## 6 Updates
+
+Choose between [6.1 Manual Update](#61-manual-update) or [6.2 Scripted Update](#62-scripted-update)
+
+### 6.1 Manual Update
+
+#### 6.1.1 Pull new changes
+
+```
+git pull
+```
+
+#### 6.1.2 Re-Install
+
+```
 npm i
 ```
 
-### 2.2 Build
+#### 6.1.3 Re-Build
 
 ```
-cd src/api-serverless
 npm run build
 ```
 
-### 2.3 Environment
-
-To run the project you need a .env file.
-
-The name of your .env file must include the environment you want to run like `.env.local` / `.env.development` / `.env.production`
-
-[Sample .env file](https://github.com/6529-Collections/6529seize-backend/tree/main/src/api-serverless/.env.sample)
-
-### 2.4 Run
-
-In project root directory:
+#### 6.1.4 Restart Backend and API
 
 ```
-npm run api:env
+pm2 restart 6529backend
+pm2 restart 6529api
 ```
 
-\* Note: env can be one of: local / dev / prod
-
-### 2.5 RUN USING PM2
+### 6.2 Scripted Update
 
 ```
-pm2 start npm --name=6529api -- run api:env
+scripts/update.sh
 ```
-
-\* Note: env can be one of: `local` / `dev` / `prod`
-
-### 2.6 RUN USING AWS Lambda
-
-The API is also configured to run as an AWS lambda and can be built and deployed on AWS on its own. \* Note: additional setup is required within AWS in order to configure environment variables and API Gateway.
-
-## 3. Admin Panel (Optional)
-
-Currently Seize.io uses an Admin Panel to manage:
-
-- distribution lists and presentations
-- team members
-- royalties
-
-The admin panel repo is located [here](https://github.com/6529-Collections/6529seize-admin).
-
-\* Note: Please bear in mind that in the near future the admin panel will be deprecated and all functionality will be moved to the 6529SEIZE-BACKEND repo.

@@ -24,6 +24,5 @@
     "require": ["tsconfig-paths/register"]
   },
   "emitDecoratorMetadata": true,
-  "experimentalDecorators": true,
   "strictPropertyInitialization": false
 }

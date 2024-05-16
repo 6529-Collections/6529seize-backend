@@ -1,0 +1,356 @@
+openapi: 3.0.0
+info:
+  title: TDH API
+  description: >-
+    API for retrieving Total Days Held (TDH) including breakdowns for various
+    collections.
+  version: 1.0.0
+servers:
+  - url: 'https://api.seize.io'
+paths:
+  /api/tdh/total:
+    get:
+      summary: Retrieve TDH Totals
+      description: >-
+        Get Total Days Held (TDH) including detailed breakdowns for memes,
+        gradients, and nextgen collections.
+      responses:
+        '200':
+          description: >-
+            A JSON object containing the totals and breakdowns of TDH for all
+            collections.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tdh:
+                    type: integer
+                    description: TDH across all collections.
+                  memes_tdh:
+                    type: integer
+                    description: TDH specifically for the memes collection.
+                  gradients_tdh:
+                    type: integer
+                    description: TDH for the gradients collection.
+                  nextgen_tdh:
+                    type: integer
+                    description: TDH for the nextgen collection.
+                  block:
+                    type: integer
+                    description: The latest block number associated with the update.
+  '/api/tdh/above/{value}':
+    get:
+      summary: Retrieve TDH Above Value
+      description: >-
+        Get a list of addresses with Total Days Held (TDH) above a specified
+        value.
+      parameters:
+        - name: value
+          in: path
+          required: true
+          description: The minimum TDH value to filter addresses.
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: >-
+            A JSON object containing the count of entries and the list of
+            entries with their consolidation key, TDH, and associated addresses.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                    description: The number of entries that match the specified TDH value.
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        consolidation_key:
+                          type: string
+                          description: The consolidation key for the entry.
+                        tdh:
+                          type: integer
+                          description: The Total Days Held for the entry.
+                        addresses:
+                          type: array
+                          items:
+                            type: string
+                            description: List of addresses associated with the entry.
+                  block:
+                    type: integer
+                    description: The latest block number associated with the update.
+  '/api/tdh/percentile/{value}':
+    get:
+      summary: Retrieve TDH Percentile
+      description: Get the TDH value at a specified percentile.
+      parameters:
+        - name: value
+          in: path
+          required: true
+          description: The percentile to retrieve the TDH value for.
+          schema:
+            type: number
+            format: float
+      responses:
+        '200':
+          description: >-
+            A JSON object containing the percentile, the TDH value at that
+            percentile, and the count of entries in that percentile.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  percentile:
+                    type: number
+                    description: The specified percentile.
+                  tdh:
+                    type: number
+                    description: The TDH value at the specified percentile.
+                  count_in_percentile:
+                    type: number
+                    description: The count of entries in the specified percentile.
+                  block:
+                    type: integer
+                    description: The latest block number associated with the update.
+  '/api/tdh/cutoff/{value}':
+    get:
+      summary: Retrieve TDH Cutoff
+      description: Get the TDH value that represents the cutoff for the top X addresses.
+      parameters:
+        - name: value
+          in: path
+          required: true
+          description: The number of top addresses to consider for the cutoff.
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: >-
+            A JSON object containing the TDH value at the cutoff and the list of
+            entries with their consolidation key, TDH, and associated addresses.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tdh:
+                    type: integer
+                    description: The TDH value at the cutoff for the top X addresses.
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        consolidation_key:
+                          type: string
+                          description: The consolidation key for the entry.
+                        tdh:
+                          type: integer
+                          description: The Total Days Held for the entry.
+                        addresses:
+                          type: array
+                          items:
+                            type: string
+                            description: List of addresses associated with the entry.
+                  block:
+                    type: integer
+                    description: The latest block number associated with the update.
+  '/api/tdh/{address}':
+    get:
+      summary: Retrieve TDH Details by Address
+      description: >-
+        Get Total Days Held (TDH) including detailed breakdowns for memes,
+        gradients, and nextgen collections for a specific address.
+      parameters:
+        - name: address
+          in: path
+          required: true
+          description: Address to retrieve TDH data for.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A JSON object containing the TDH details for a specific address.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tdh:
+                    type: integer
+                    description: TDH for the given address across all collections.
+                  boost:
+                    type: number
+                    format: float
+                    description: Boost factor applied to the TDH calculations.
+                  memes_tdh:
+                    type: integer
+                    description: TDH specifically for the memes collection.
+                  gradients_tdh:
+                    type: integer
+                    description: TDH for the gradients collection.
+                  nextgen_tdh:
+                    type: integer
+                    description: TDH for the nextgen collection.
+                  addresses:
+                    type: array
+                    items:
+                      type: string
+                      description: Array of addresses associated with the TDH data.
+                  block:
+                    type: integer
+                    description: The latest block number associated with the update.
+  '/api/tdh/{address}/breakdown':
+    get:
+      summary: Retrieve TDH Breakdown by Address
+      description: >-
+        Get a detailed breakdown of Total Days Held (TDH) for memes, gradients,
+        and nextgen collections for a specific address, including individual
+        item data.
+      parameters:
+        - name: address
+          in: path
+          required: true
+          description: Address to retrieve the breakdown for.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: >-
+            A JSON object containing the breakdown of balances and individual
+            items for each collection.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  memes_balance:
+                    type: integer
+                    description: Total balance for the memes collection.
+                  memes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                          description: Item identifier.
+                        tdh:
+                          type: integer
+                          description: TDH for the item.
+                  gradients_balance:
+                    type: integer
+                    description: Total balance for the gradients collection.
+                  gradients:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                          description: Item identifier.
+                        tdh:
+                          type: integer
+                          description: TDH for the item.
+                  nextgen_balance:
+                    type: integer
+                    description: Total balance for the nextgen collection.
+                  nextgen:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                          description: Item identifier.
+                        tdh:
+                          type: integer
+                          description: TDH for the item.
+                  block:
+                    type: integer
+                    description: The latest block number associated with the update.
+  '/api/tdh/{address}/memes_seasons':
+    get:
+      summary: Retrieve Meme Seasons TDH by Address
+      description: >-
+        Get a list of Total Days Held (TDH) for each meme season associated with
+        a specific address.
+      parameters:
+        - name: address
+          in: path
+          required: true
+          description: Address to retrieve the meme seasons TDH for.
+          schema:
+            type: string
+            example: '0x123456789abcdef'
+      responses:
+        '200':
+          description: >-
+            A JSON object containing an array of seasons with TDH data and the
+            latest block number.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  seasons:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        season:
+                          type: integer
+                          description: The identifier for the meme season.
+                        tdh:
+                          type: integer
+                          description: TDH for the season.
+                  block:
+                    type: integer
+                    description: The latest block number associated with the update.
+  /api/nfts:
+    get:
+      summary: Retrieve NFTs
+      description: >-
+        Get a list of NFTs along with detailed attributes such as contract
+        address, mint date, edition size, and Total Days Held (TDH).
+      responses:
+        '200':
+          description: >-
+            A JSON object containing an array of NFTs and the latest block
+            number.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nfts:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                          description: The identifier for the NFT.
+                        contract:
+                          type: string
+                          format: byte
+                          description: The smart contract address associated with the NFT.
+                        mint_date:
+                          type: string
+                          format: date-time
+                          description: The date and time when the NFT was minted.
+                        edition_size:
+                          type: integer
+                          description: The size of the edition for this NFT.
+                        tdh:
+                          type: integer
+                          description: TDH for the NFT.
+                  block:
+                    type: integer
+                    description: The latest block number associated with the update.
