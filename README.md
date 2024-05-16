@@ -2,28 +2,27 @@
 
 1. [Infrastructure](#1-infrastructure)
 
-2. [Clone Repository](#2-clone-repository)
+2. [Setup](#2-Setup)
 
-3. [Build](#3-build)
+- 2.1 [Manual Setup](#21-manual-setup)
+- 2.2 [Scripted Setup](#22-scripted-setup)
 
-4. [Install NPM](#4-install-npm)
+3. [Set Environment](#3-set-environment)
 
-5. [Set Environment](#5-set-environment)
+4. [Initialize DB](#4-initialize-db)
 
-6. [Initialize DB](#6-initialize-db)
+- 4.1 [Restore Snapshot](#41-restore)
+- 4.2 [Direct Load](#42-direct-load)
 
-- 6.1 [Restore Snapshot](#61-restore)
-- 6.2 [Direct Load](#62-direct-load)
+5. [Run Services](#5-run-services)
 
-7. [Get PM2](#7-get-pm2)
+- 5.1 [Manual Start](#51-manual-start)
+- 5.2 [Scripted Start](#52-scripted-start)
 
-8. [Run Services](#8-run-services)
+6. [Updates](#6-updates)
 
-- 8.1 [Run Backend](#81-run-backend)
-- 8.2 [Run API](#82-run-api)
-- 8.2 [Test](#83-test)
-
-9. [Updates](#9-updates)
+- 6.1 [Manual Update](#61-manual-update)
+- 6.2 [Scripted Update](#52-scripted-update)
 
 ## 1. Infrastructure
 
@@ -33,7 +32,11 @@
 
 - you have an AWS RDS instance configured (<a href="https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Welcome.html" target="_blank" rel="noopener noreferrer">Read More</a>)
 
-## 2. Clone Repository
+## 2. Setup
+
+### 2.1 Manual Setup
+
+#### 2.1.1 Clone Repository
 
 Clone repository "6529seize-backend" at branch `seize-lite`
 
@@ -41,7 +44,7 @@ Clone repository "6529seize-backend" at branch `seize-lite`
 git clone --branch seize-lite https://github.com/6529-Collections/6529seize-backend.git
 ```
 
-## 3. Install NPM
+#### 2.1.2 Install NPM
 
 ```
 sudo apt install npm
@@ -61,21 +64,61 @@ sudo n 21
 
 Reset your session using `hash -r`
 
-## 4. Build
-
-### 4.1 Install
+#### 2.1.2 Install Project Dependencies
 
 ```
 npm i
 ```
 
-### 4.2 Build
+#### 2.1.3 Build Project
 
 ```
 npm run build
 ```
 
-## 5. Set Environment
+#### 2.1.4 PM2
+
+Services run using <a href="https://pm2.keymetrics.io/" target="_blank" rel="noopener noreferrer">PM2</a>
+
+##### 2.1.4.1 Install PM2
+
+```
+npm install pm2@latest -g
+```
+
+##### 2.1.4.2 Configure to Auto-restart on System Reboot
+
+To ensure your application starts on system boot, you can use PM2’s startup script generator. Run the following command and follow the instructions provided:
+
+```
+pm2 startup
+```
+
+##### 2.1.4.3 Set Up Log Rotation
+
+PM2 can also manage log rotation, which is critical for ensuring that logs do not consume all available disk space.
+
+```
+pm2 install pm2-logrotate
+```
+
+Configure log rotation settings (optional)
+
+```
+pm2 set pm2-logrotate:max_size 100M  # Rotate logs once they reach 100MB
+pm2 set pm2-logrotate:retain 10      # Keep 10 rotated logs
+pm2 set pm2-logrotate:compress true  # Compress (gzip) rotated logs
+pm2 set pm2-logrotate:dateFormat YYYY-MM-DD # Set the date format used in the log file names
+pm2 set pm2-logrotate:rotateModule true     # Rotate the log of pm2-logrotate itself
+```
+
+### 2.2 Scripted Setup
+
+```
+scripts/setup.sh
+```
+
+## 3. Set Environment
 
 To run the project you need a file to hold environment variable. The following script with run you through the process of creating this file.
 
@@ -102,11 +145,11 @@ npm run set_env
 
 <a href="https://github.com/6529-Collections/6529seize-backend/blob/seize-lite/.env.sample" target="_blank" rel="noopener noreferrer">Sample .env file</a>
 
-## 6. Initialize DB
+## 4. Initialize DB
 
 The database expects some initial data. Choose to load either from latest snapshot or directly
 
-## 6.1 Restore Snapshot
+## 4.1 Restore Snapshot
 
 Restore database from the latest snapshot using the following
 
@@ -114,11 +157,11 @@ Restore database from the latest snapshot using the following
 npm run restore
 ```
 
-## 6.2 Direct Load
+## 4.2 Direct Load
 
 Two main components need to be loaded directly:
 
-### 6.2.1 NFTDelegation
+### 4.2.1 NFTDelegation
 
 Run the following to restore data from NFTDelegation contract
 
@@ -126,7 +169,7 @@ Run the following to restore data from NFTDelegation contract
 npm run direct_load_nftd
 ```
 
-### 6.2.2 Transactions
+### 4.2.2 Transactions
 
 Run the following to restore transaction data
 
@@ -134,47 +177,11 @@ Run the following to restore transaction data
 npm run direct_load_trx
 ```
 
-## 7. Get PM2
+## 5. Run Services
 
-Services run using <a href="https://pm2.keymetrics.io/" target="_blank" rel="noopener noreferrer">PM2</a>
+### 5.1 Manual Start
 
-### 7.1 Install
-
-```
-npm install pm2@latest -g
-```
-
-### 7.1 Configure to Auto-restart on System Reboot
-
-To ensure your application starts on system boot, you can use PM2’s startup script generator. Run the following command and follow the instructions provided:
-
-```
-pm2 startup
-```
-
-### 7.2 Set Up Log Rotation
-
-PM2 can also manage log rotation, which is critical for ensuring that logs do not consume all available disk space.
-
-### 7.2.1 Install the PM2 log rotation module
-
-```
-pm2 install pm2-logrotate
-```
-
-### 7.2.2 Configure log rotation settings (optional)
-
-```
-pm2 set pm2-logrotate:max_size 100M  # Rotate logs once they reach 100MB
-pm2 set pm2-logrotate:retain 10      # Keep 10 rotated logs
-pm2 set pm2-logrotate:compress true  # Compress (gzip) rotated logs
-pm2 set pm2-logrotate:dateFormat YYYY-MM-DD # Set the date format used in the log file names
-pm2 set pm2-logrotate:rotateModule true     # Rotate the log of pm2-logrotate itself
-```
-
-## 8. Run Services
-
-### 8.1 Run Backend
+#### 5.1.1 Run Backend
 
 - PM2 process name: 6529backend
 
@@ -187,7 +194,7 @@ pm2 start npm --name=6529backend -- run backend
 
 - **Note:** On start, this service will always run the tdh calculation on start and the schedule it to run at 00:00 UTC
 
-### 8.2 Run API
+#### 5.1.2 Run API
 
 - PM2 process name: 6529api
 - PORT: 3000
@@ -202,9 +209,15 @@ pm2 start npm --name=6529api -- run api
 pm2 save
 ```
 
-### 8.3 Test
+### 5.2 Scripted Start
 
-### 8.3.1 Local
+```
+scripts/start.sh
+```
+
+### 5.3 Test
+
+### 5.3.1 Local
 
 To test your api locally, navigate in your browser to:
 
@@ -212,7 +225,7 @@ To test your api locally, navigate in your browser to:
 http://localhost:3000/api/tdh/<address>
 ```
 
-### 8.3.2 AWS
+### 5.3.2 AWS
 
 If you are using AWS EC2, navigate to
 
@@ -228,29 +241,37 @@ Compare the response with
 https://api.seize.io/api/tdh/<address>
 ```
 
-## 9 Updates
+## 6 Updates
 
-### 9.1 Pull new changes
+### 6.1 Manual Update
+
+#### 6.1.1 Pull new changes
 
 ```
 git pull
 ```
 
-### 9.2 Re-Install
+#### 6.1.2 Re-Install
 
 ```
 npm i
 ```
 
-### 9.2 Re-Build
+#### 6.1.3 Re-Build
 
 ```
 npm run build
 ```
 
-### 9.2 Restart Backend and API
+#### 6.1.4 Restart Backend and API
 
 ```
 pm2 restart 6529backend
 pm2 restart 6529api
+```
+
+### 6.2 Scripted Update
+
+```
+scripts/update.sh
 ```
