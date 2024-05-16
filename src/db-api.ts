@@ -191,8 +191,8 @@ export const fetchSingleAddressTDH = async (address: string) => {
     memes_tdh: formatNumber(tdh[0]?.boosted_memes_tdh ?? 0),
     gradients_tdh: formatNumber(tdh[0]?.boosted_gradients_tdh ?? 0),
     nextgen_tdh: formatNumber(tdh[0]?.boosted_nextgen_tdh ?? 0),
-    addresses: JSON.parse(
-      tdh[0]?.wallets ?? JSON.stringify([address.toLowerCase()])
+    addresses: JSON.parse(tdh[0]?.wallets ?? JSON.stringify([address])).map(
+      (w: string) => w.toLowerCase()
     ),
     block
   };
@@ -311,7 +311,7 @@ export async function fetchTDHAbove(value: number) {
     return {
       consolidation_key: t.consolidation_key,
       tdh: t.boosted_tdh,
-      addresses: JSON.parse(t.wallets),
+      addresses: JSON.parse(t.wallets.map((w: string) => w.toLowerCase())),
       block
     };
   });
@@ -371,7 +371,7 @@ export async function fetchTDHCutoff(cutoff: number) {
     return {
       consolidation_key: t.consolidation_key,
       tdh: t.boosted_tdh,
-      addresses: JSON.parse(t.wallets)
+      addresses: JSON.parse(t.wallets.map((w: string) => w.toLowerCase()))
     };
   });
   return {
