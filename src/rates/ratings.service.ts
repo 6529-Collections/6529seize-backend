@@ -206,23 +206,62 @@ export class RatingsService {
     await this.ratingsDb.updateRating(request, connection);
     await this.scheduleEvents(request, currentRating, connection);
     if (!skipLogCreation) {
+      await this.insertLogs(
+        request,
+        currentRating,
+        changeReason,
+        proxyContext,
+        connection
+      );
+    }
+  }
+
+  private async insertLogs(
+    request: UpdateRatingRequest,
+    currentRating: Rating & {
+      total_tdh_spent_on_matter: number;
+    },
+    changeReason: string,
+    proxyContext: RatingProxyContext | null,
+    connection: ConnectionWrapper<any>
+  ) {
+    await this.profileActivityLogsDb.insert(
+      {
+        profile_id: request.rater_profile_id,
+        target_id: request.matter_target_id,
+        type:
+          request.matter === RateMatter.DROP_RATING
+            ? ProfileActivityLogType.DROP_RATING_EDIT
+            : ProfileActivityLogType.RATING_EDIT,
+        contents: JSON.stringify({
+          old_rating: currentRating.rating,
+          new_rating: request.rating,
+          rating_matter: request.matter,
+          rating_category: request.matter_category,
+          change_reason: changeReason,
+          proxy_id: proxyContext?.authenticatedProfileId
+            ? proxyContext?.authenticatedProfileId
+            : undefined
+        })
+      },
+      connection
+    );
+    if (proxyContext) {
       await this.profileActivityLogsDb.insert(
         {
-          profile_id: request.rater_profile_id,
+          profile_id: proxyContext.authenticatedProfileId,
           target_id: request.matter_target_id,
           type:
             request.matter === RateMatter.DROP_RATING
-              ? ProfileActivityLogType.DROP_RATING_EDIT
-              : ProfileActivityLogType.RATING_EDIT,
+              ? ProfileActivityLogType.PROXY_RATING_EDIT
+              : ProfileActivityLogType.PROXY_DROP_RATING_EDIT,
           contents: JSON.stringify({
             old_rating: currentRating.rating,
             new_rating: request.rating,
             rating_matter: request.matter,
             rating_category: request.matter_category,
             change_reason: changeReason,
-            proxy_id: proxyContext?.authenticatedProfileId
-              ? proxyContext?.authenticatedProfileId
-              : undefined
+            rater_profile_id: request.rater_profile_id
           })
         },
         connection

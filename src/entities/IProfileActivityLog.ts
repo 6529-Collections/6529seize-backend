@@ -24,6 +24,8 @@ export class ProfileActivityLog {
 
 export enum ProfileActivityLogType {
   RATING_EDIT = 'RATING_EDIT',
+  PROXY_RATING_EDIT = 'PROXY_RATING_EDIT',
+  PROXY_DROP_RATING_EDIT = 'PROXY_DROP_RATING_EDIT',
   HANDLE_EDIT = 'HANDLE_EDIT',
   CLASSIFICATION_EDIT = 'CLASSIFICATION_EDIT',
   SOCIALS_EDIT = 'SOCIALS_EDIT',
@@ -48,6 +50,7 @@ export function isTargetOfTypeDrop(type: ProfileActivityLogType): boolean {
   return [
     ProfileActivityLogType.DROP_CREATED,
     ProfileActivityLogType.DROP_RATING_EDIT,
-    ProfileActivityLogType.DROP_COMMENT
+    ProfileActivityLogType.DROP_COMMENT,
+    ProfileActivityLogType.PROXY_DROP_RATING_EDIT
   ].includes(type);
 }
