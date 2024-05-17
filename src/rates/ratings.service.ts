@@ -253,8 +253,8 @@ export class RatingsService {
           target_id: request.matter_target_id,
           type:
             request.matter === RateMatter.DROP_RATING
-              ? ProfileActivityLogType.PROXY_RATING_EDIT
-              : ProfileActivityLogType.PROXY_DROP_RATING_EDIT,
+              ? ProfileActivityLogType.PROXY_DROP_RATING_EDIT
+              : ProfileActivityLogType.PROXY_RATING_EDIT,
           contents: JSON.stringify({
             old_rating: currentRating.rating,
             new_rating: request.rating,
