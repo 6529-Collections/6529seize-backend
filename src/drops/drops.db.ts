@@ -209,7 +209,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          where d.serial_no < :serialNoLessThan order by d.serial_no desc limit ${amount}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
-      serialNoLessThan
+      serialNoLessThan,
+      eligible_curations
     };
     return this.db.execute(sql, params);
   }
