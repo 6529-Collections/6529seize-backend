@@ -127,7 +127,8 @@ export class RatingsService {
             );
           }
           const proxyContext: RatingProxyContext = {
-            authenticatedProfileId,
+            authenticatedProfileId:
+              request.authenticationContext.authenticatedProfileId!,
             action_id: action.id,
             credit_amount: action.credit_amount,
             credit_spent: action.credit_spent
