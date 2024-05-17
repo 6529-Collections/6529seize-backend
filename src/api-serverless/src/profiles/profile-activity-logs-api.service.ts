@@ -78,6 +78,10 @@ export class ProfileActivityLogsApiService {
       if (proxyId) {
         acc.push(proxyId);
       }
+      const raterProfileId = JSON.parse(log.contents).rater_profile_id;
+      if (raterProfileId) {
+        acc.push(raterProfileId);
+      }
       return acc;
     }, [] as string[]);
     const profilesHandlesByIds = await this.profilesDb.getProfileHandlesByIds(
@@ -87,6 +91,13 @@ export class ProfileActivityLogsApiService {
       const logContents = JSON.parse(log.contents);
       if (logContents.proxy_id && profilesHandlesByIds[logContents.proxy_id]) {
         logContents.proxy_handle = profilesHandlesByIds[logContents.proxy_id];
+      }
+      if (
+        logContents.rater_profile_id &&
+        profilesHandlesByIds[logContents.rater_profile_id]
+      ) {
+        logContents.rater_profile_handle =
+          profilesHandlesByIds[logContents.rater_profile_id];
       }
       return {
         ...log,
