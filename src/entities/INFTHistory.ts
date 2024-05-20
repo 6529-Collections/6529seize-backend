@@ -16,7 +16,7 @@ export class NFTHistoryBlock {
 
 @Entity(NFTS_HISTORY_CLAIMS_TABLE)
 export class NFTHistoryClaim {
-  @PrimaryColumn({ type: 'int' })
+  @PrimaryColumn({ type: 'bigint' })
   claimIndex!: number;
 
   @PrimaryColumn({ type: 'varchar', length: 50 })
