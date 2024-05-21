@@ -8,7 +8,7 @@ import {
   ProfileActivityLog,
   ProfileActivityLogType
 } from '../../../entities/IProfileActivityLog';
-import { Page, PageRequest } from '../page-request';
+import { CountlessPage, PageRequest } from '../page-request';
 import { profilesDb, ProfilesDb } from '../../../profiles/profiles.db';
 import { RateMatter } from '../../../entities/IRating';
 
@@ -40,7 +40,9 @@ export class ProfileActivityLogsApiService {
     logType,
     category,
     curation_criteria_id
-  }: ProfileActivityLogsSearchRequest): Promise<Page<ApiProfileActivityLog>> {
+  }: ProfileActivityLogsSearchRequest): Promise<
+    CountlessPage<ApiProfileActivityLog>
+  > {
     const params: ProfileLogSearchParams = {
       order,
       pageRequest,
@@ -65,16 +67,13 @@ export class ProfileActivityLogsApiService {
         params.rating_matter = ratingMatter as RateMatter;
       }
     }
-    const [foundLogs, logCount] = await Promise.all([
-      this.profileActivityLogsDb.searchLogs(params),
-      this.profileActivityLogsDb.countLogs(params)
-    ]);
+    const foundLogs = await this.profileActivityLogsDb.searchLogs(params);
     const profileIdsInLogs = foundLogs.reduce((acc, log) => {
       acc.push(log.profile_id);
       if (log.target_id && !isTargetOfTypeDrop(log.type)) {
         acc.push(log.target_id);
       }
-      const proxyId = JSON.parse(log.contents).proxy_id;
+      const proxyId = log.proxy_id;
       if (proxyId) {
         acc.push(proxyId);
       }
@@ -89,16 +88,6 @@ export class ProfileActivityLogsApiService {
     );
     const convertedData = foundLogs.map((log) => {
       const logContents = JSON.parse(log.contents);
-      if (logContents.proxy_id && profilesHandlesByIds[logContents.proxy_id]) {
-        logContents.proxy_handle = profilesHandlesByIds[logContents.proxy_id];
-      }
-      if (
-        logContents.rater_profile_id &&
-        profilesHandlesByIds[logContents.rater_profile_id]
-      ) {
-        logContents.rater_profile_handle =
-          profilesHandlesByIds[logContents.rater_profile_id];
-      }
       return {
         ...log,
         contents: logContents,
@@ -106,14 +95,16 @@ export class ProfileActivityLogsApiService {
         target_profile_handle: !isTargetOfTypeDrop(log.type)
           ? profilesHandlesByIds[log.target_id!]
           : null,
-        is_target_of_type_drop: isTargetOfTypeDrop(log.type)
+        is_target_of_type_drop: isTargetOfTypeDrop(log.type),
+        proxy_handle: log.proxy_id
+          ? profilesHandlesByIds[log.proxy_id] ?? null
+          : null
       };
     });
     return {
       page: pageRequest.page,
-      next: logCount > pageRequest.page * pageRequest.page_size,
-      data: convertedData,
-      count: logCount
+      next: pageRequest.page_size < convertedData.length,
+      data: convertedData.slice(0, convertedData.length - 1)
     };
   }
 }
@@ -122,6 +113,7 @@ export interface ApiProfileActivityLog
   extends Omit<ProfileActivityLog, 'contents'> {
   readonly contents: object;
   readonly profile_handle: string;
+  readonly proxy_handle: string | null;
   readonly target_profile_handle: string | null;
   readonly is_target_of_type_drop: boolean;
 }
