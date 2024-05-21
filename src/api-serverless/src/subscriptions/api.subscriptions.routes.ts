@@ -30,6 +30,7 @@ import * as Joi from 'joi';
 import {
   fetchPhaseName,
   fetchPhaseResults,
+  resetAllowlist,
   splitAllowlistResults,
   validateDistribution
 } from './api.subscriptions.allowlist';
@@ -471,5 +472,50 @@ router.get(
       phaseResults
     );
     return returnJsonResult(results, req, res);
+  }
+);
+
+router.post(
+  `/allowlists/:contract/:token_id/:allowlist_id/reset`,
+  async function (
+    req: Request<
+      {
+        contract: string;
+        token_id: string;
+        allowlist_id: string;
+      },
+      any,
+      any,
+      any
+    >,
+    res: Response<any>
+  ) {
+    const auth = req.headers.authorization ?? '';
+    const contract = req.params.contract;
+    const tokenIdStr = req.params.token_id;
+    const allowlistId = req.params.allowlist_id;
+
+    const tokenId = parseInt(tokenIdStr);
+    if (isNaN(tokenId)) {
+      return res.status(400).send({
+        valid: false,
+        statusText: 'Invalid token ID'
+      });
+    }
+
+    const validate = await validateDistribution(auth, allowlistId);
+    if (!validate.valid) {
+      return res.status(400).send(validate);
+    }
+
+    await resetAllowlist(contract, tokenId);
+    return returnJsonResult(
+      {
+        success: true,
+        statusText: 'Reset successful'
+      },
+      req,
+      res
+    );
   }
 );

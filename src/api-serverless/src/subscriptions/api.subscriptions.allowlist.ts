@@ -42,7 +42,7 @@ interface ResultsResponse {
 export async function validateDistribution(
   auth: string,
   allowlistId: string,
-  phaseId: string
+  phaseId?: string
 ): Promise<AllowlistResponse> {
   const operations = await fetchDistributionOperations(auth, allowlistId);
   const hasRanDelegationMapping = operations.some(
@@ -233,5 +233,20 @@ function filterSubscriptions(
   return subscriptions.filter((s) => {
     const subWallets = s.consolidation_key.split('-');
     return !s.phase && subWallets.some((sw) => walletSet.has(sw));
+  });
+}
+
+export async function resetAllowlist(contract: string, tokenId: number) {
+  const updateQuery = `
+    UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
+    SET 
+      phase = NULL, 
+      phase_subscriptions = -1,
+      phase_position = -1
+    WHERE contract = :contract AND token_id = :tokenId`;
+
+  await sqlExecutor.execute(updateQuery, {
+    contract,
+    tokenId
   });
 }
