@@ -162,7 +162,8 @@ describe('RatingsService', () => {
             rating_matter: 'CIC',
             rating_category: 'CIC',
             change_reason: 'USER_EDIT'
-          })
+          }),
+          proxy_id: null
         },
         mockConnection
       );
@@ -244,7 +245,7 @@ describe('RatingsService', () => {
         }
       ]);
       await ratingsService.reduceOverRates();
-      expect(ratingsDb.updateRating).toBeCalledWith(
+      expect(ratingsDb.updateRating).toHaveBeenCalledWith(
         {
           rater_profile_id: 'pid',
           matter: RateMatter.CIC,
@@ -255,7 +256,7 @@ describe('RatingsService', () => {
         },
         mockConnection
       );
-      expect(ratingsDb.updateRating).toBeCalledWith(
+      expect(ratingsDb.updateRating).toHaveBeenCalledWith(
         {
           rater_profile_id: 'pid',
           matter: RateMatter.CIC,
@@ -266,7 +267,7 @@ describe('RatingsService', () => {
         },
         mockConnection
       );
-      expect(profileActivityLogsDb.insert).toBeCalledWith(
+      expect(profileActivityLogsDb.insert).toHaveBeenCalledWith(
         {
           profile_id: 'pid',
           target_id: 'mid2',
@@ -277,11 +278,12 @@ describe('RatingsService', () => {
             rating_matter: 'CIC',
             rating_category: 'CIC',
             change_reason: 'LOST_TDH'
-          })
+          }),
+          proxy_id: null
         },
         mockConnection
       );
-      expect(profileActivityLogsDb.insert).toBeCalledWith(
+      expect(profileActivityLogsDb.insert).toHaveBeenCalledWith(
         {
           profile_id: 'pid',
           target_id: 'mid2',
@@ -292,7 +294,8 @@ describe('RatingsService', () => {
             rating_matter: 'CIC',
             rating_category: 'CIC2',
             change_reason: 'LOST_TDH'
-          })
+          }),
+          proxy_id: null
         },
         mockConnection
       );
@@ -365,7 +368,8 @@ describe('RatingsService', () => {
             rating_matter: 'CIC',
             rating_category: 'CIC',
             change_reason: 'LOST_TDH'
-          })
+          }),
+          proxy_id: null
         },
         mockConnection
       );

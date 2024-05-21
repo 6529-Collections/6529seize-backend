@@ -153,7 +153,8 @@ export class ProfileProxyApiService {
               proxy_id: createProfileProxyRequest.id
             }),
             target_id: createProfileProxyRequest.target_id,
-            type: ProfileActivityLogType.PROXY_CREATED
+            type: ProfileActivityLogType.PROXY_CREATED,
+            proxy_id: null
           },
           connection
         );
@@ -353,7 +354,8 @@ export class ProfileProxyApiService {
               type: profileProxyAction.action_type
             }),
             target_id: proxy.granted_to.id,
-            type: ProfileActivityLogType.PROXY_ACTION_CREATED
+            type: ProfileActivityLogType.PROXY_ACTION_CREATED,
+            proxy_id: null
           },
           connection
         );
@@ -565,7 +567,8 @@ export class ProfileProxyApiService {
               state_change_type: AcceptActionRequestActionEnum.Accept
             }),
             target_id: proxy.created_by.id,
-            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED
+            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
+            proxy_id: null
           },
           connection
         );
@@ -605,7 +608,8 @@ export class ProfileProxyApiService {
               state_change_type: AcceptActionRequestActionEnum.Reject
             }),
             target_id: proxy.created_by.id,
-            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED
+            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
+            proxy_id: null
           },
           connection
         );
@@ -645,7 +649,8 @@ export class ProfileProxyApiService {
               state_change_type: AcceptActionRequestActionEnum.Revoke
             }),
             target_id: proxy.granted_to.id,
-            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED
+            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
+            proxy_id: null
           },
           connection
         );
@@ -687,7 +692,8 @@ export class ProfileProxyApiService {
               state_change_type: AcceptActionRequestActionEnum.Restore
             }),
             target_id: proxy.granted_to.id,
-            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED
+            type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
+            proxy_id: null
           },
           connection
         );
@@ -777,7 +783,8 @@ export class ProfileProxyApiService {
               end_time
             }),
             target_id: profileProxy.granted_to.id,
-            type: ProfileActivityLogType.PROXY_ACTION_CHANGED
+            type: ProfileActivityLogType.PROXY_ACTION_CHANGED,
+            proxy_id: null
           },
           connection
         );

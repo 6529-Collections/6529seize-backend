@@ -216,32 +216,12 @@ export class RatingsService {
           new_rating: request.rating,
           rating_matter: request.matter,
           rating_category: request.matter_category,
-          change_reason: changeReason,
-          proxy_id: proxyContext?.authenticatedProfileId
-            ? proxyContext?.authenticatedProfileId
-            : undefined
-        })
+          change_reason: changeReason
+        }),
+        proxy_id: proxyContext?.authenticatedProfileId ?? null
       },
       connection
     );
-    if (proxyContext) {
-      await this.profileActivityLogsDb.insert(
-        {
-          profile_id: proxyContext.authenticatedProfileId,
-          target_id: request.matter_target_id,
-          type: ProfileActivityLogType.PROXY_RATING_EDIT,
-          contents: JSON.stringify({
-            old_rating: currentRating.rating,
-            new_rating: request.rating,
-            rating_matter: request.matter,
-            rating_category: request.matter_category,
-            change_reason: changeReason,
-            rater_profile_id: request.rater_profile_id
-          })
-        },
-        connection
-      );
-    }
   }
 
   private async checkAndUpdateProxyRatingCredit(
@@ -459,7 +439,8 @@ export class RatingsService {
           rating_matter: oldRating.matter,
           rating_category: oldRating.matter_category,
           change_reason: 'LOST_TDH'
-        })
+        }),
+        proxy_id: null
       },
       connection
     );

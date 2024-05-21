@@ -12,6 +12,9 @@ export class ProfileActivityLog {
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly target_id!: string | null;
 
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly proxy_id!: string | null;
+
   @Column({ type: 'json' })
   readonly contents!: string;
 
@@ -24,8 +27,6 @@ export class ProfileActivityLog {
 
 export enum ProfileActivityLogType {
   RATING_EDIT = 'RATING_EDIT',
-  PROXY_RATING_EDIT = 'PROXY_RATING_EDIT',
-  PROXY_DROP_RATING_EDIT = 'PROXY_DROP_RATING_EDIT',
   HANDLE_EDIT = 'HANDLE_EDIT',
   CLASSIFICATION_EDIT = 'CLASSIFICATION_EDIT',
   SOCIALS_EDIT = 'SOCIALS_EDIT',
@@ -51,7 +52,6 @@ export function isTargetOfTypeDrop(type: ProfileActivityLogType): boolean {
   return [
     ProfileActivityLogType.DROP_CREATED,
     ProfileActivityLogType.DROP_RATING_EDIT,
-    ProfileActivityLogType.DROP_COMMENT,
-    ProfileActivityLogType.PROXY_DROP_RATING_EDIT
+    ProfileActivityLogType.DROP_COMMENT
   ].includes(type);
 }

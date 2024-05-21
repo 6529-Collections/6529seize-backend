@@ -75,7 +75,10 @@ export class DropCreationApiService {
                 ? authenticationContext.authenticatedProfileId
                 : undefined
             }),
-            type: ProfileActivityLogType.DROP_CREATED
+            type: ProfileActivityLogType.DROP_CREATED,
+            proxy_id: authenticationContext.isAuthenticatedAsProxy()
+              ? authenticationContext.authenticatedProfileId!
+              : null
           },
           connection
         );

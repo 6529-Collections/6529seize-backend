@@ -501,7 +501,8 @@ export class ProfilesService {
           contents: JSON.stringify({
             handle: profileToBeMerged.handle,
             reason: 'CONFLICTING_CONSOLIDATION'
-          })
+          }),
+          proxy_id: null
         },
         connectionHolder
       );
@@ -546,7 +547,8 @@ export class ProfilesService {
           authenticated_wallet: authenticatedWallet,
           old_value: profileBeforeChange?.handle ?? null,
           new_value: newHandle
-        })
+        }),
+        proxy_id: null
       });
     }
     this.addEventToArrayIfChanged(
@@ -601,7 +603,8 @@ export class ProfilesService {
           authenticated_wallet: authenticatedWallet,
           old_value: oldValue,
           new_value: newValue
-        })
+        }),
+        proxy_id: null
       });
     }
   }
@@ -660,7 +663,8 @@ export class ProfilesService {
                 authenticated_wallet: authenticatedWallet,
                 old_value: profile.pfp_url ?? null,
                 new_value: thumbnailUri
-              })
+              }),
+              proxy_id: null
             },
             connection
           );
