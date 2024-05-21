@@ -74,7 +74,7 @@ export class DropsApiService {
     return this.convertToDropFulls(
       {
         dropEntities: [dropEntity],
-        contextProfileId: contextProfileId,
+        contextProfileId,
         min_part_id,
         max_part_id,
         criteriasUserIsEligible
@@ -160,7 +160,7 @@ export class DropsApiService {
       criteriasUserIsEligible
     }: {
       dropEntities: DropEntity[];
-      contextProfileId?: string;
+      contextProfileId: string;
       min_part_id: number;
       max_part_id: number;
       criteriasUserIsEligible: string[];
@@ -184,7 +184,7 @@ export class DropsApiService {
     } = await this.getAllDropsRelatedData(
       {
         dropIds,
-        contextProfileId: contextProfileId,
+        contextProfileId,
         min_part_id,
         max_part_id,
         criteriasUserIsEligible
@@ -363,7 +363,9 @@ export class DropsApiService {
       const dropWave = dropsWaves[dropId];
       if (
         dropWave.visibility_scope_type === WaveScopeType.CURATED &&
-        !criteriasUserIsEligible.includes(dropWave.visibility_scope_curation_id)
+        !criteriasUserIsEligible.includes(
+          dropWave.visibility_scope_curation_id!
+        )
       ) {
         acc[dropId] = 0;
         return acc;
