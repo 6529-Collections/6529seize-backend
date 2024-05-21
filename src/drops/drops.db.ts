@@ -21,19 +21,13 @@ import {
   DROPS_MENTIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
-  DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-  PROFILE_FULL,
   PROFILES_ACTIVITY_LOGS_TABLE,
-  RATINGS_TABLE,
   WAVES_TABLE
 } from '../constants';
 import {
   communityMemberCriteriaService,
   CommunityMemberCriteriaService
 } from '../api-serverless/src/community-members/community-member-criteria.service';
-import { Time } from '../time';
-import { DropVoteCreditSpending } from '../entities/IDropVoteCreditSpending';
-import { RateMatter } from '../entities/IRating';
 import { DropActivityLogsQuery } from '../api-serverless/src/drops/drops.routes';
 import {
   ProfileActivityLog,
@@ -42,7 +36,7 @@ import {
 import { randomUUID } from 'crypto';
 import { PageSortDirection } from '../api-serverless/src/page-request';
 import { uniqueShortId } from '../helpers';
-import { WaveScopeType } from '../entities/IWave';
+import { WaveEntity, WaveScopeType } from '../entities/IWave';
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -254,6 +248,28 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async findDropsWaves(
+    dropIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<string, WaveEntity>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    return this.db
+      .execute<WaveEntity & { drop_id: string }>(
+        `select d.id as drop_id, w.* from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)`,
+        { dropIds },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((it) =>
+        it.reduce((acc, wave) => {
+          const { drop_id, ...waveEntity } = wave;
+          acc[drop_id] = waveEntity;
+          return acc;
+        }, {} as Record<string, WaveEntity>)
+      );
+  }
+
   async findReferencedNftsByDropIds(
     dropIds: string[],
     connection?: ConnectionWrapper<any>
@@ -280,302 +296,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { dropIds },
       connection ? { wrappedConnection: connection } : undefined
     );
-  }
-
-  async findCreditLeftForDropsForProfile(
-    {
-      profileId
-    }: {
-      profileId: string;
-    },
-    connection?: ConnectionWrapper<any>
-  ): Promise<number> {
-    return this.db
-      .execute(
-        `
-          select p.profile_tdh - ifnull(x.credit_spent, 0) as credit_left
-          from ${PROFILE_FULL} p
-                   left join (select t.rater_id,
-                                     ifnull(sum(t.credit_spent), 0) as credit_spent
-                              from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} t
-                              where t.rater_id = :raterId
-                                and t.timestamp >= :reservationStartTime
-                              group by t.rater_id) x on x.rater_id = p.external_id
-          where p.external_id = :raterId
-        `,
-        {
-          raterId: profileId,
-          reservationStartTime: Time.todayUtcMidnight().minusDays(30).toDate()
-        },
-        connection ? { wrappedConnection: connection } : undefined
-      )
-      .then((it) => it[0]?.credit_left ?? 0);
-  }
-
-  async findOverspentRateCredits(
-    {
-      reservationStartTime
-    }: {
-      reservationStartTime: Time;
-    },
-    connection: ConnectionWrapper<any>
-  ): Promise<
-    (DropVoteCreditSpending & {
-      whole_credit: number;
-      total_credit_spent: number;
-    })[]
-  > {
-    return this.db.execute(
-      `
-          with spent_credits as (select rater_id, sum(credit_spent) spent_credit
-                              from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE}
-                              where timestamp >= :reservationStartTime
-                              group by 1),
-               overspenders as (select rater_id, ifnull(p.profile_tdh, 0) as profile_credit, s.spent_credit as spent_credit
-                                from spent_credits s
-                                         left join ${PROFILE_FULL} p on p.external_id = s.rater_id
-                                where ifnull(p.profile_tdh, 0) - s.spent_credit < 0)
-          select t.*, o.profile_credit as whole_credit, o.spent_credit as total_credit_spent
-          from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} t
-                   join overspenders o on o.rater_id = t.rater_id
-          where t.timestamp >= :reservationStartTime;
-      `,
-      {
-        reservationStartTime: reservationStartTime.toDate()
-      },
-      { wrappedConnection: connection }
-    );
-  }
-
-  async updateCreditSpentOnDropRates(
-    param: { credit_spent: number; reservationId: number },
-    connection: ConnectionWrapper<any>
-  ) {
-    await this.db.execute(
-      `update ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE}set credit_spent = :credit_spent where id = :reservationId`,
-      param,
-      { wrappedConnection: connection }
-    );
-  }
-
-  async insertCreditSpentOnDropRates(
-    param: {
-      rater_id: string;
-      credit_spent: number;
-      drop_id: string;
-    },
-    connection: ConnectionWrapper<any>
-  ) {
-    await this.db.execute(
-      `insert into ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} (rater_id, drop_id, credit_spent, timestamp)values (:rater_id, :drop_id, :credit_spent, NOW())`,
-      param,
-      { wrappedConnection: connection }
-    );
-  }
-
-  async deleteCreditSpentOnDropRates(
-    id: number,
-    connection: ConnectionWrapper<any>
-  ) {
-    await this.db.execute(
-      `delete from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} where id = :id`,
-      { id },
-      { wrappedConnection: connection }
-    );
-  }
-
-  async findDropsTotalRatingsStats(
-    dropIds: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<
-    Record<
-      string,
-      { rating: number; distinct_raters: number; distinct_categories: number }
-    >
-  > {
-    return !dropIds.length
-      ? {}
-      : await this.db
-          .execute(
-            `
-      select matter_target_id                 as drop_id,
-             sum(rating)                      as rating,
-             count(distinct rater_profile_id) as distinct_raters,
-             count(distinct matter_category)  as distinct_categories
-      from ${RATINGS_TABLE}
-      where matter = '${RateMatter.DROP_RATING}'
-        and matter_target_id in (:dropIds)
-        and rating <> 0
-      group by 1
-    `,
-            { dropIds },
-            {
-              wrappedConnection: connection
-            }
-          )
-          .then((dbResult: any[]) =>
-            dbResult.reduce((acc, it) => {
-              acc[it.drop_id] = {
-                rating: it.rating,
-                distinct_raters: it.distinct_raters,
-                distinct_categories: it.distinct_categories
-              };
-              return acc;
-            }, {} as Record<string, { rating: number; distinct_raters: number; distinct_categories: number }>)
-          );
-  }
-
-  async findDropsTopRaters(
-    dropIds: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, { rating: number; rater_profile_id: string }[]>> {
-    return !dropIds.length
-      ? {}
-      : await this.db
-          .execute(
-            `
-    select rater_profile_id, matter_target_id as drop_id, sum(rating) as rating
-    from ${RATINGS_TABLE}
-    where matter = '${RateMatter.DROP_RATING}'
-      and rating <> 0
-      and matter_target_id in (:dropIds)
-    group by 1, 2
-    order by abs(sum(rating)) desc limit 5
-    `,
-            { dropIds },
-            {
-              wrappedConnection: connection
-            }
-          )
-          .then((dbResult: any[]) =>
-            dropIds.reduce((acc, it) => {
-              const f = dbResult.filter((r) => r.drop_id === it);
-              if (f) {
-                acc[it] = f.map((s) => ({
-                  rating: s.rating,
-                  rater_profile_id: s.rater_profile_id
-                }));
-              }
-              return acc;
-            }, {} as Record<string, { rating: number; rater_profile_id: string }[]>)
-          );
-  }
-
-  async findDropsTopRatingCategories(
-    dropIds: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, { rating: number; category: string }[]>> {
-    return !dropIds.length
-      ? {}
-      : await this.db
-          .execute(
-            `
-    select matter_category as category, matter_target_id as drop_id, sum(rating) as rating
-    from ${RATINGS_TABLE}
-    where matter = '${RateMatter.DROP_RATING}'
-      and rating <> 0
-      and matter_target_id in (:dropIds)
-    group by 1, 2
-    order by abs(sum(rating)) desc
-    `,
-            { dropIds },
-            {
-              wrappedConnection: connection
-            }
-          )
-          .then((dbResult: any[]) =>
-            dropIds.reduce((acc, it) => {
-              const f = dbResult.filter((r) => r.drop_id === it);
-              if (f) {
-                acc[it] = f.map((s) => ({
-                  rating: s.rating,
-                  category: s.category
-                }));
-              }
-              return acc;
-            }, {} as Record<string, { rating: number; category: string }[]>)
-          );
-  }
-
-  async findDropsTotalRatingsByProfile(
-    dropIds: string[],
-    raterId: string,
-    connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, number>> {
-    return !dropIds.length
-      ? {}
-      : await this.db
-          .execute(
-            `
-    select matter_target_id as drop_id, sum(rating) as rating
-    from ${RATINGS_TABLE}
-    where matter = '${RateMatter.DROP_RATING}' and matter_target_id in (:dropIds) and rating <> 0 and rater_profile_id = :raterId
-    group by 1
-    `,
-            { dropIds, raterId },
-            {
-              wrappedConnection: connection
-            }
-          )
-          .then((dbResult: any[]) =>
-            dbResult.reduce((acc, it) => {
-              acc[it.drop_id] = it.rating;
-              return acc;
-            }, {} as Record<string, number>)
-          );
-  }
-
-  async findDropsCategoryRatingsByProfile(
-    dropIds: string[],
-    raterId: string,
-    connection?: ConnectionWrapper<any>
-  ): Promise<
-    Record<
-      string,
-      { category: string; profile_rating: number; total_rating: number }[]
-    >
-  > {
-    if (dropIds.length === 0) {
-      return {};
-    }
-    const dbResult: {
-      drop_id: string;
-      category: string;
-      profile_rating: number;
-      total_rating: number;
-    }[] = await this.db.execute(
-      `
-          with profile_drop_rates as (select matter_target_id    as drop_id,
-                                             matter_category     as category,
-                                             sum(rating)         as total_rating,
-                                             sum(case
-                                                     when rater_profile_id = :raterId then rating
-                                                     else 0 end) as profile_rating
-                                      from ${RATINGS_TABLE}
-                                      where matter = '${RateMatter.DROP_RATING}'
-                                        and matter_target_id in (:dropIds)
-                                        and rating <> 0
-                                      group by 1, 2)
-          select *
-          from profile_drop_rates
-          where profile_rating <> 0
-    `,
-      { dropIds, raterId },
-      {
-        wrappedConnection: connection
-      }
-    );
-    return dbResult.reduce((acc, it) => {
-      if (!acc[it.drop_id]) {
-        acc[it.drop_id] = [];
-      }
-      acc[it.drop_id].push({
-        category: it.category,
-        profile_rating: it.profile_rating,
-        total_rating: it.total_rating
-      });
-      return acc;
-    }, {} as Record<string, { category: string; profile_rating: number; total_rating: number }[]>);
   }
 
   async countDiscussionCommentsByDropIds(

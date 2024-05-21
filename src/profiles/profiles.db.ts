@@ -22,6 +22,7 @@ import { CreateOrUpdateProfileCommand } from './profile.types';
 import { randomUUID } from 'crypto';
 import { distinct } from '../helpers';
 import { calculateLevel } from './profile-level';
+import { Rating } from '../entities/IRating';
 
 export class ProfilesDb extends LazyDbAccessCompatibleService {
   public async getConsolidationInfoForWallet(
@@ -602,6 +603,30 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((result) => result.at(0) ?? null);
+  }
+
+  async getProfileRep(param: {
+    repCategory: string | null;
+    profileId: string;
+    repCreditor: string | null;
+  }): Promise<number> {
+    return this.db
+      .findOneOrNull<{ rep: number }>(
+        `
+  select sum(rating) as rep from ${RATINGS_TABLE} where matter_target_id = :profileId and matter = 'REP' ${
+          param.repCategory ? `and matter_category = :repCategory` : ``
+        } ${param.repCreditor ? `and rater_profile_id = :repCreditor` : ``}
+    `,
+        param
+      )
+      .then((it) => it?.rep ?? 0);
+  }
+
+  async getAllProfilesIncomingReps(profileId: string): Promise<Rating[]> {
+    return this.db.execute<Rating>(
+      `select * from ${RATINGS_TABLE} where matter_target_id = :profileId`,
+      { profileId }
+    );
   }
 }
 

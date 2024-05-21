@@ -365,7 +365,7 @@ paths:
         "404":
           description: Drop not found
 
-  /drops/{dropId}/ratings:
+  /drops/{dropId}/votes:
     post:
       tags:
         - Drops
@@ -383,14 +383,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/DropRatingRequest"
+              $ref: "#/components/schemas/DropVotingRequest"
       responses:
         "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Drop"
+                $ref: "#/components/schemas/DropVoting"
         "404":
           description: Drop not found
         "400":
@@ -925,12 +925,10 @@ components:
         - metadata
         - parts
         - parts_count
-        - rating
-        - top_raters
-        - raters_count
-        - top_rating_categories
-        - rating_categories_count
-        - rating_logs_count
+        - vote
+        - top_voters
+        - voters_count
+        - voting_logs_count
         - title
         - context_profile_context
       properties:
@@ -972,24 +970,17 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DropMetadata"
-        rating:
+        vote:
           type: number
           format: int64
-        top_raters:
+        top_voters:
           type: array
           items:
-            $ref: "#/components/schemas/DropRater"
-        raters_count:
+            $ref: "#/components/schemas/DropVoter"
+        voters_count:
           type: number
           format: int64
-        top_rating_categories:
-          type: array
-          items:
-            $ref: "#/components/schemas/DropRatingCategory"
-        rating_categories_count:
-          type: number
-          format: int64
-        rating_logs_count:
+        voting_logs_count:
           type: number
           format: int64
         context_profile_context:
@@ -1127,15 +1118,15 @@ components:
           type: string
           maxLength: 500
 
-    DropRater:
+    DropVoter:
       type: object
       required:
         - profile
-        - rating
+        - vote
       properties:
         profile:
           $ref: "#/components/schemas/ProfileMin"
-        rating:
+        vote:
           type: number
           format: int64
 
@@ -1150,29 +1141,16 @@ components:
             format: int64
             nullable: true
 
-    DropRatingCategory:
-      type: object
-      required:
-        - category
-        - rating
-      properties:
-        category:
-          type: string
-        rating:
-          type: number
-          format: int64
-
     DropContextProfileContext:
       type: object
       required:
-        - categories
-        - rating
+        - vote
+        - total_credit
       properties:
-        categories:
-          type: array
-          items:
-            $ref: "#/components/schemas/DropRatingCategory"
-        rating:
+        vote:
+          type: number
+          format: int64
+        total_credit:
           type: number
           format: int64
 
@@ -1253,18 +1231,26 @@ components:
           type: string
           maxLength: 100
 
-    DropRatingRequest:
+    DropVotingRequest:
       type: object
       required:
-        - rating
-        - category
+        - vote
       properties:
-        rating:
+        vote:
           type: number
           format: int64
-        category:
+
+    DropVoting:
+      type: object
+      required:
+        - drop_id
+        - rating
+      properties:
+        drop_id:
           type: string
-          maxLength: 100
+        vote:
+          type: number
+          format: int64
 
     DropActivityLog:
       type: object
@@ -1566,12 +1552,12 @@ components:
         type:
           $ref: "#/components/schemas/WaveType"
         winning_thresholds:
-          description: Drops which rate tally ends up in this range will win. Must be set if and only if type is VOTE_TALLY_IN_RANGE
+          description: Drops which vote ends up in this range will win. Must be set if and only if type is VOTE_TALLY_IN_RANGE
           anyOf:
             - type: "null"
             - $ref: "#/components/schemas/IntRange"
         max_winners:
-          description: This amount of top rated drops will win. Must be set if and only if type is TOP_VOTED
+          description: This amount of top voted drops will win. Must be set if and only if type is TOP_VOTED
           type: integer
           format: int64
           minimum: 1

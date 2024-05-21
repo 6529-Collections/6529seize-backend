@@ -31,10 +31,10 @@ export * from '../models/DropMentionedUser';
 export * from '../models/DropMetadata';
 export * from '../models/DropPart';
 export * from '../models/DropPartContextProfileContext';
-export * from '../models/DropRater';
-export * from '../models/DropRatingCategory';
-export * from '../models/DropRatingRequest';
 export * from '../models/DropReferencedNFT';
+export * from '../models/DropVoter';
+export * from '../models/DropVoting';
+export * from '../models/DropVotingRequest';
 export * from '../models/IntRange';
 export * from '../models/LoginRequest';
 export * from '../models/LoginResponse';
@@ -96,10 +96,10 @@ import { DropMentionedUser } from '../models/DropMentionedUser';
 import { DropMetadata } from '../models/DropMetadata';
 import { DropPart } from '../models/DropPart';
 import { DropPartContextProfileContext } from '../models/DropPartContextProfileContext';
-import { DropRater } from '../models/DropRater';
-import { DropRatingCategory } from '../models/DropRatingCategory';
-import { DropRatingRequest } from '../models/DropRatingRequest';
 import { DropReferencedNFT } from '../models/DropReferencedNFT';
+import { DropVoter } from '../models/DropVoter';
+import { DropVoting } from '../models/DropVoting';
+import { DropVotingRequest } from '../models/DropVotingRequest';
 import { IntRange } from '../models/IntRange';
 import { LoginRequest } from '../models/LoginRequest';
 import { LoginResponse } from '../models/LoginResponse';
@@ -185,10 +185,10 @@ let typeMap: {[index: string]: any} = {
     "DropMetadata": DropMetadata,
     "DropPart": DropPart,
     "DropPartContextProfileContext": DropPartContextProfileContext,
-    "DropRater": DropRater,
-    "DropRatingCategory": DropRatingCategory,
-    "DropRatingRequest": DropRatingRequest,
     "DropReferencedNFT": DropReferencedNFT,
+    "DropVoter": DropVoter,
+    "DropVoting": DropVoting,
+    "DropVotingRequest": DropVotingRequest,
     "IntRange": IntRange,
     "LoginRequest": LoginRequest,
     "LoginResponse": LoginResponse,

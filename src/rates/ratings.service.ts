@@ -20,11 +20,7 @@ import {
   profileActivityLogsDb,
   ProfileActivityLogsDb
 } from '../profileActivityLogs/profile-activity-logs.db';
-import {
-  getMattersWhereTargetIsProfile,
-  RateMatter,
-  Rating
-} from '../entities/IRating';
+import { RateMatter, Rating } from '../entities/IRating';
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
@@ -66,18 +62,6 @@ export class RatingsService {
     connection?: ConnectionWrapper<any>
   ): Promise<AggregatedRating> {
     return this.ratingsDb.getAggregatedRatingOnMatter(request, connection);
-  }
-
-  public async getRatesSpentToTargetOnMatterForProfile(
-    param: {
-      matter: RateMatter;
-      profile_id: string;
-      matter_target_id: string;
-      matter_category: string;
-    },
-    connection?: ConnectionWrapper<any>
-  ): Promise<number> {
-    return this.ratingsDb.getCurrentRatingOnMatterForProfile(param, connection);
   }
 
   public async getRatesLeftOnMatterForProfile({
@@ -169,10 +153,7 @@ export class RatingsService {
     skipLogCreation?: boolean;
   }) {
     const profileId = request.rater_profile_id;
-    if (
-      getMattersWhereTargetIsProfile().includes(request.matter) &&
-      request.matter_target_id === profileId
-    ) {
+    if (request.matter_target_id === profileId) {
       throw new BadRequestException(`User can not rate their own profile`);
     }
     const currentRating = await this.ratingsDb.getRatingForUpdate(
@@ -229,10 +210,7 @@ export class RatingsService {
       {
         profile_id: request.rater_profile_id,
         target_id: request.matter_target_id,
-        type:
-          request.matter === RateMatter.DROP_RATING
-            ? ProfileActivityLogType.DROP_RATING_EDIT
-            : ProfileActivityLogType.RATING_EDIT,
+        type: ProfileActivityLogType.RATING_EDIT,
         contents: JSON.stringify({
           old_rating: currentRating.rating,
           new_rating: request.rating,
@@ -251,10 +229,7 @@ export class RatingsService {
         {
           profile_id: proxyContext.authenticatedProfileId,
           target_id: request.matter_target_id,
-          type:
-            request.matter === RateMatter.DROP_RATING
-              ? ProfileActivityLogType.PROXY_DROP_RATING_EDIT
-              : ProfileActivityLogType.PROXY_RATING_EDIT,
+          type: ProfileActivityLogType.PROXY_RATING_EDIT,
           contents: JSON.stringify({
             old_rating: currentRating.rating,
             new_rating: request.rating,
@@ -332,7 +307,7 @@ export class RatingsService {
     const start = Time.now();
     this.logger.info('Uploading ratings snapshots to Arweave');
     await Promise.all(
-      getMattersWhereTargetIsProfile().map((matter) => {
+      Object.values(RateMatter).map((matter) => {
         return this.uploadMatterRatingsToArweave(matter, connection);
       })
     );
@@ -552,13 +527,7 @@ export class RatingsService {
             ...it,
             rater_profile_id: targetProfile.external_id
           }))
-          .filter(
-            (it) =>
-              !(
-                it.matter_target_id === targetProfile.external_id &&
-                getMattersWhereTargetIsProfile().includes(it.matter)
-              )
-          ),
+          .filter((it) => it.matter_target_id !== targetProfile.external_id),
         sourceProfile.handle,
         targetProfile.handle,
         connectionHolder
@@ -581,7 +550,7 @@ export class RatingsService {
         await this.ratingsDb.lockNonZeroRatingsForMatterAndTargetIdOlderFirst(
           {
             matter_target_id: sourceProfile.external_id,
-            matters: getMattersWhereTargetIsProfile(),
+            matters: Object.values(RateMatter),
             page_request: {
               page,
               page_size: 1000
@@ -604,13 +573,7 @@ export class RatingsService {
             ...it,
             matter_target_id: targetProfile.external_id
           }))
-          .filter(
-            (it) =>
-              !(
-                it.rater_profile_id === targetProfile.external_id &&
-                getMattersWhereTargetIsProfile().includes(it.matter)
-              )
-          ),
+          .filter((it) => it.rater_profile_id !== targetProfile.external_id),
         sourceProfile.handle,
         targetProfile.handle,
         connectionHolder

@@ -22,7 +22,7 @@ import {
 } from '../profileActivityLogs/profile-activity-logs.db';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { ratingsService, RatingsService } from '../rates/ratings.service';
-import { RateMatter } from '../entities/IRating';
+import { RateMatter, Rating } from '../entities/IRating';
 import { cicService, CicService } from '../cic/cic.service';
 import {
   RepService,
@@ -1069,6 +1069,22 @@ export class ProfilesService {
       primaryAddress
     });
     await this.refreshPrimaryWalletEns(primaryAddress);
+  }
+
+  async getProfileTdh(profileId: string): Promise<number> {
+    return await this.profilesDb.getProfileTdh(profileId);
+  }
+
+  async getProfileRep(param: {
+    repCategory: string | null;
+    profileId: string;
+    repCreditor: string | null;
+  }): Promise<number> {
+    return await this.profilesDb.getProfileRep(param);
+  }
+
+  async getAllProfileIncomingReps(profileId: string): Promise<Rating[]> {
+    return this.profilesDb.getAllProfilesIncomingReps(profileId);
   }
 }
 
