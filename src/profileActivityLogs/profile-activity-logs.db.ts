@@ -95,7 +95,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     }
     if (params.profile_id) {
       if (params.includeProfileIdToIncoming) {
-        sql += ` and (pa_logs.profile_id = :profile_id or pa_logs.target_id = :profile_id)`;
+        sql += ` and (pa_logs.profile_id = :profile_id or pa_logs.proxy_id = :profile_id or pa_logs.target_id = :profile_id)`;
       } else {
         sql += ` and (pa_logs.profile_id = :profile_id or pa_logs.proxy_id = :profile_id)`;
       }
