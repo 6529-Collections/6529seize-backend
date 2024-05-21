@@ -317,6 +317,9 @@ export async function fetchNextGenCollectionTokens(
   const filters = getNextGenCollectionTokensFilters(collectionId, traits);
   let joins = `LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_SCORES_TABLE}.id`;
   joins += ` LEFT JOIN ${NEXTGEN_TOKEN_LISTINGS_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_LISTINGS_TABLE}.id `;
+  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} on ${WALLETS_CONSOLIDATION_KEYS_VIEW}.wallet = ${NEXTGEN_TOKENS_TABLE}.owner`;
+  joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} on ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
+  joins += ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
 
   if (sort === TokensSort.LAST_SALE) {
     joins += ` LEFT JOIN (
@@ -366,7 +369,12 @@ export async function fetchNextGenCollectionTokens(
   let fields = `
       ${NEXTGEN_TOKENS_TABLE}.*, 
       ${NEXTGEN_TOKEN_SCORES_TABLE}.*, 
-      ${NEXTGEN_TOKEN_LISTINGS_TABLE}.*`;
+      ${NEXTGEN_TOKEN_LISTINGS_TABLE}.*,
+      ${PROFILE_FULL}.normalised_handle,
+      ${PROFILE_FULL}.handle,
+      0 as level,
+      ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as tdh,
+      ${PROFILE_FULL}.rep_score`;
 
   if (sort === TokensSort.LAST_SALE) {
     fields += `,
@@ -393,6 +401,10 @@ export async function fetchNextGenCollectionTokens(
   results.data.forEach((token: any) => {
     token.generator = JSON.parse(token.generator);
     token.mint_data = JSON.parse(token.mint_data);
+    token.level = calculateLevel({
+      tdh: token.tdh ?? 0,
+      rep: token.rep_score
+    });
   });
 
   return results;
