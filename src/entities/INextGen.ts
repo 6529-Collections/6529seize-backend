@@ -667,14 +667,23 @@ export class NextGenTokenListing {
   id!: number;
 
   @Column({ type: 'double' })
+  price!: number;
+
+  @Column({ type: 'double' })
   opensea_price!: number;
 
   @Column({ type: 'double' })
   opensea_royalty!: number;
 
-  @Column({ type: 'double' })
+  @Column({ type: 'int' })
   opensea_listing_time!: number;
 
-  @Column({ type: 'double' })
+  @Column({ type: 'int' })
   opensea_expiration_time!: number;
+
+  @Column({ type: 'double' })
+  blur_price!: number;
+
+  @Column({ type: 'int' })
+  blur_listing_time!: number;
 }
