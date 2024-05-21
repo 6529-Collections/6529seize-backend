@@ -196,7 +196,7 @@ function getNextGenCollectionTokensSortQuery(
     sortQuery = `pending, RAND()`;
   } else {
     if (sort === TokensSort.LISTED_PRICE) {
-      return `${NEXTGEN_TOKEN_LISTINGS_TABLE}.opensea_price ${sortDirection}, ${NEXTGEN_TOKENS_TABLE}.id asc`;
+      return `${NEXTGEN_TOKEN_LISTINGS_TABLE}.price ${sortDirection}, ${NEXTGEN_TOKENS_TABLE}.id asc`;
     }
     if (sort === TokensSort.LAST_SALE) {
       return `last_sale.transaction_date ${sortDirection}, last_sale.value ${sortDirection}, ${NEXTGEN_TOKENS_TABLE}.id asc`;
@@ -350,12 +350,12 @@ export async function fetchNextGenCollectionTokens(
   if (listedType === ListedType.LISTED) {
     filters.filters = constructFilters(
       filters.filters,
-      `${NEXTGEN_TOKEN_LISTINGS_TABLE}.opensea_price > 0`
+      `${NEXTGEN_TOKEN_LISTINGS_TABLE}.price > 0`
     );
   } else if (listedType === ListedType.NOT_LISTED) {
     filters.filters = constructFilters(
       filters.filters,
-      `${NEXTGEN_TOKEN_LISTINGS_TABLE}.opensea_price IS NULL OR ${NEXTGEN_TOKEN_LISTINGS_TABLE}.opensea_price = 0`
+      `${NEXTGEN_TOKEN_LISTINGS_TABLE}.price IS NULL OR ${NEXTGEN_TOKEN_LISTINGS_TABLE}.price = 0`
     );
   }
 

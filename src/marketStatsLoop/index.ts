@@ -10,7 +10,7 @@ import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { NEXTGEN_CORE } from '../api-serverless/src/nextgen/abis';
 import { mainnet } from '@wagmi/chains';
-import { findNftMarketStatsOpensea } from '../nft_market_stats_opensea';
+import { findNextgenMarketStats } from './nft_market_stats_nextgen';
 import { NextGenToken, NextGenTokenListing } from '../entities/INextGen';
 
 const logger = Logger.get('MARKET_STATS_LOOP');
@@ -26,7 +26,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     ) {
       await findNftMarketStats(process.env.CONTRACT);
     } else if (process.env.CONTRACT === 'NEXTGEN') {
-      await findNftMarketStatsOpensea(NEXTGEN_CORE[mainnet.id]);
+      await findNextgenMarketStats(NEXTGEN_CORE[mainnet.id].toLowerCase());
     } else {
       logger.info(`[INVALID CONTRACT ${process.env.CONTRACT}]`);
     }
