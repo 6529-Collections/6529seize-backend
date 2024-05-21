@@ -1,0 +1,1 @@
+delete from profile_activity_logs where type = 'PROXY_RATING_EDIT';

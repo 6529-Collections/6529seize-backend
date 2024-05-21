@@ -285,7 +285,8 @@ export class CicService {
           type: CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE[
             cicStatement.statement_group
           ],
-          contents: JSON.stringify({ action: 'ADD', statement: cicStatement })
+          contents: JSON.stringify({ action: 'ADD', statement: cicStatement }),
+          proxy_id: null
         },
         connection
       );
@@ -322,7 +323,8 @@ export class CicService {
           contents: JSON.stringify({
             action: 'DELETE',
             statement: cicStatement
-          })
+          }),
+          proxy_id: null
         },
         connection
       );

@@ -13,6 +13,8 @@ export interface Page<T> {
   data: T[];
 }
 
+export type CountlessPage<T> = Omit<Page<T>, 'count'>;
+
 export function emptyPage<T>(pageNo = 1): Page<T> {
   return {
     count: 0,
