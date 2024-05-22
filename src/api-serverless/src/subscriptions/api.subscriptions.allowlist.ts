@@ -17,7 +17,7 @@ import {
 } from '../../../exceptions';
 import { sqlExecutor } from '../../../sql-executor';
 import { NFTFinalSubscription } from '../../../entities/ISubscription';
-import { getAuthenticatedWalletOrNull } from 'src/auth/auth';
+import { getAuthenticatedWalletOrNull } from '../auth/auth';
 import { Request } from 'express';
 
 export interface AllowlistResponse {
