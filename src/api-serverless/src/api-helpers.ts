@@ -105,10 +105,12 @@ export function resolveIntParam(param: string | string[] | undefined) {
   return undefined;
 }
 
-export function giveReadReplicaTimeToCatchUp() {
-  const millisToGive =
-    parseNumberOrNull(process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE) ?? 500;
-  return Time.millis(millisToGive).sleep();
+export function giveReadReplicaTimeToCatchUp(millisToGive?: number) {
+  const ms =
+    millisToGive ??
+    parseNumberOrNull(process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE) ??
+    500;
+  return Time.millis(ms).sleep();
 }
 
 export function resolveSortDirection(direction: any) {
