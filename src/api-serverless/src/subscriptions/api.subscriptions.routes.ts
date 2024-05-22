@@ -24,14 +24,21 @@ import {
 } from '../../../entities/ISubscription';
 import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { areEqualAddresses } from '../../../helpers';
-import { BadRequestException, ForbiddenException } from '../../../exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  UnauthorisedException
+} from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
 import {
   fetchPhaseName,
   fetchPhaseResults,
+  getPublicSubscriptions,
+  resetAllowlist,
   splitAllowlistResults,
-  validateDistribution
+  validateDistribution,
+  authenticateSubscriptionsAdmin
 } from './api.subscriptions.allowlist';
 import { getNft } from '../../../nftsLoop/db.nfts';
 import { fetchAirdropAddressForConsolidationKey } from '../../../delegationsLoop/db.delegations';
@@ -429,6 +436,7 @@ router.get(
 
 router.get(
   `/allowlists/:contract/:token_id/:allowlist_id/:phase_id`,
+  needsAuthenticatedUser(),
   async function (
     req: Request<
       {
@@ -457,19 +465,84 @@ router.get(
       });
     }
 
+    const authenticated = authenticateSubscriptionsAdmin(req);
+    if (!authenticated) {
+      throw new UnauthorisedException(
+        'Only Subscription Admins can download allowlists'
+      );
+    }
+
     const validate = await validateDistribution(auth, allowlistId, phaseId);
     if (!validate.valid) {
       return res.status(400).send(validate);
     }
 
-    const phaseResults = await fetchPhaseResults(auth, allowlistId, phaseId);
-    const phaseName = await fetchPhaseName(auth, allowlistId, phaseId);
-    const results = await splitAllowlistResults(
-      contract,
-      tokenId,
-      phaseName,
-      phaseResults
+    if (phaseId === 'public') {
+      const results = await getPublicSubscriptions(contract, tokenId);
+      return returnJsonResult(results, req, res);
+    } else {
+      const phaseResults = await fetchPhaseResults(auth, allowlistId, phaseId);
+      const phaseName = await fetchPhaseName(auth, allowlistId, phaseId);
+      const results = await splitAllowlistResults(
+        contract,
+        tokenId,
+        phaseName,
+        phaseResults
+      );
+      return returnJsonResult(results, req, res);
+    }
+  }
+);
+
+router.post(
+  `/allowlists/:contract/:token_id/:allowlist_id/reset`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<
+      {
+        contract: string;
+        token_id: string;
+        allowlist_id: string;
+      },
+      any,
+      any,
+      any
+    >,
+    res: Response<any>
+  ) {
+    const auth = req.headers.authorization ?? '';
+    const contract = req.params.contract;
+    const tokenIdStr = req.params.token_id;
+    const allowlistId = req.params.allowlist_id;
+
+    const tokenId = parseInt(tokenIdStr);
+    if (isNaN(tokenId)) {
+      return res.status(400).send({
+        valid: false,
+        statusText: 'Invalid token ID'
+      });
+    }
+
+    const authenticated = authenticateSubscriptionsAdmin(req);
+    if (!authenticated) {
+      throw new UnauthorisedException(
+        'Only Subscription Admins can reset allowlists'
+      );
+    }
+
+    const validate = await validateDistribution(auth, allowlistId);
+    if (!validate.valid) {
+      return res.status(400).send(validate);
+    }
+
+    await resetAllowlist(contract, tokenId);
+    return returnJsonResult(
+      {
+        success: true,
+        statusText: 'Reset successful'
+      },
+      req,
+      res
     );
-    return returnJsonResult(results, req, res);
   }
 );

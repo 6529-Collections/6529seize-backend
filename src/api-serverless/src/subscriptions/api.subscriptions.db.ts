@@ -468,6 +468,21 @@ export async function fetchAllNftFinalSubscriptionsForContractAndToken(
   );
 }
 
+export async function fetchAllPublicFinalSubscriptionsForContractAndToken(
+  contract: string,
+  token_id: number
+): Promise<NFTFinalSubscription[]> {
+  return sqlExecutor.execute(
+    `SELECT * FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
+    WHERE 
+      contract = :contract 
+      AND token_id = :token_id
+      AND phase IS NULL
+    ORDER BY subscribed_at ASC`,
+    { contract, token_id }
+  );
+}
+
 export async function fetchUpcomingMemeSubscriptionCounts(
   cardCount: number
 ): Promise<SubscriptionCounts[]> {
