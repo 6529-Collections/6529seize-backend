@@ -22,13 +22,13 @@ import {
   SubscriptionLog,
   SubscriptionTopUp
 } from '../../../entities/ISubscription';
-import {
-  getAuthenticatedWalletOrNull,
-  getWalletOrThrow,
-  needsAuthenticatedUser
-} from '../auth/auth';
+import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { areEqualAddresses } from '../../../helpers';
-import { BadRequestException, ForbiddenException } from '../../../exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  UnauthorisedException
+} from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
 import {
@@ -37,7 +37,8 @@ import {
   getPublicSubscriptions,
   resetAllowlist,
   splitAllowlistResults,
-  validateDistribution
+  validateDistribution,
+  authenticateSubscriptionsAdmin
 } from './api.subscriptions.allowlist';
 import { getNft } from '../../../nftsLoop/db.nfts';
 import { fetchAirdropAddressForConsolidationKey } from '../../../delegationsLoop/db.delegations';
@@ -435,6 +436,7 @@ router.get(
 
 router.get(
   `/allowlists/:contract/:token_id/:allowlist_id/:phase_id`,
+  needsAuthenticatedUser(),
   async function (
     req: Request<
       {
@@ -463,6 +465,13 @@ router.get(
       });
     }
 
+    const authenticated = authenticateSubscriptionsAdmin(req);
+    if (!authenticated) {
+      throw new UnauthorisedException(
+        'Only Subscription Admins can download allowlists'
+      );
+    }
+
     const validate = await validateDistribution(auth, allowlistId, phaseId);
     if (!validate.valid) {
       return res.status(400).send(validate);
@@ -487,6 +496,7 @@ router.get(
 
 router.post(
   `/allowlists/:contract/:token_id/:allowlist_id/reset`,
+  needsAuthenticatedUser(),
   async function (
     req: Request<
       {
@@ -511,6 +521,13 @@ router.post(
         valid: false,
         statusText: 'Invalid token ID'
       });
+    }
+
+    const authenticated = authenticateSubscriptionsAdmin(req);
+    if (!authenticated) {
+      throw new UnauthorisedException(
+        'Only Subscription Admins can reset allowlists'
+      );
     }
 
     const validate = await validateDistribution(auth, allowlistId);

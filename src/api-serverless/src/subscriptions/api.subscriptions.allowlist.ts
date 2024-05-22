@@ -6,6 +6,7 @@ import {
 import { areEqualAddresses } from '../../../helpers';
 import {
   MEMES_CONTRACT,
+  SUBSCRIPTIONS_ADMIN_WALLETS,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   USE_CASE_MINTING
 } from '../../../constants';
@@ -16,6 +17,8 @@ import {
 } from '../../../exceptions';
 import { sqlExecutor } from '../../../sql-executor';
 import { NFTFinalSubscription } from '../../../entities/ISubscription';
+import { getAuthenticatedWalletOrNull } from 'src/auth/auth';
+import { Request } from 'express';
 
 export interface AllowlistResponse {
   allowlist_id: string;
@@ -40,6 +43,16 @@ interface ALResultsResponse {
 interface ResultsResponse {
   wallet: string;
   amount: number;
+}
+
+export function authenticateSubscriptionsAdmin(
+  req: Request<any, any, any, any, any>
+) {
+  const wallet = getAuthenticatedWalletOrNull(req);
+  const isAdmin =
+    wallet &&
+    SUBSCRIPTIONS_ADMIN_WALLETS.some((a) => areEqualAddresses(a, wallet));
+  return isAdmin;
 }
 
 export async function validateDistribution(
