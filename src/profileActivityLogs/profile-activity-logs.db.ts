@@ -56,8 +56,8 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   ) {
     await this.db.execute(
       `
-    insert into ${PROFILES_ACTIVITY_LOGS_TABLE} (id, profile_id, target_id, contents, type, created_at)
-    values (:id, :profile_id, :target_id, :contents, :type, now())
+    insert into ${PROFILES_ACTIVITY_LOGS_TABLE} (id, profile_id, target_id, contents, type, proxy_id, created_at)
+    values (:id, :profile_id, :target_id, :contents, :type, :proxy_id, now())
     `,
       {
         ...log,
