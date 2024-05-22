@@ -8,7 +8,7 @@ import {
 import { Request, Response } from 'express';
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { profilesService } from '../../../profiles/profiles.service';
-import { Page } from '../page-request';
+import { CountlessPage } from '../page-request';
 
 const router = asyncRouter();
 
@@ -104,7 +104,7 @@ router.get(
       },
       any
     >,
-    res: Response<ApiResponse<Page<ApiProfileActivityLog>>>
+    res: Response<ApiResponse<CountlessPage<ApiProfileActivityLog>>>
   ) {
     const profileActivityLogsSearchRequest = await getBaseSearchRequest(req);
     const results =

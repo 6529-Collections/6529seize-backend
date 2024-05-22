@@ -70,29 +70,34 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   public async searchLogs(
     params: ProfileLogSearchParams
   ): Promise<ProfileActivityLog[]> {
-    const viewResult =
-      await this.communitySearchSqlGenerator.getSqlAndParamsByCriteriaId(
-        params.curation_criteria_id
-      );
-    if (viewResult === null) {
-      return [];
-    }
+    let sql: string;
     const page = params.pageRequest.page;
     const page_size =
       params.pageRequest.page_size < 1 || params.pageRequest.page_size > 2000
-        ? 2000
+        ? 2001
         : params.pageRequest.page_size;
-    let sql = `${viewResult.sql} select pa_logs.* from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs join ${CommunityMemberCriteriaService.GENERATED_VIEW} crit_view on crit_view.profile_id = pa_logs.profile_id where 1=1`;
-    const sqlParams: Record<string, any> = {
-      ...viewResult.params,
+    let sqlParams: Record<string, any> = {
       offset: (page - 1) * page_size,
-      limit: page_size
+      limit: page_size + 1
     };
+    if (params.curation_criteria_id) {
+      const viewResult =
+        await this.communitySearchSqlGenerator.getSqlAndParamsByCriteriaId(
+          params.curation_criteria_id
+        );
+      if (viewResult === null) {
+        return [];
+      }
+      sql = `${viewResult.sql} select pa_logs.* from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs join ${CommunityMemberCriteriaService.GENERATED_VIEW} crit_view on crit_view.profile_id = pa_logs.profile_id where 1=1`;
+      sqlParams = { ...sqlParams, ...viewResult.params };
+    } else {
+      sql = `select * from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs where 1=1 `;
+    }
     if (params.profile_id) {
       if (params.includeProfileIdToIncoming) {
-        sql += ` and (pa_logs.profile_id = :profile_id or pa_logs.target_id = :profile_id)`;
+        sql += ` and (pa_logs.profile_id = :profile_id or pa_logs.proxy_id = :profile_id or pa_logs.target_id = :profile_id)`;
       } else {
-        sql += ` and pa_logs.profile_id = :profile_id`;
+        sql += ` and (pa_logs.profile_id = :profile_id or pa_logs.proxy_id = :profile_id)`;
       }
       sqlParams.profile_id = params.profile_id;
     }
@@ -121,47 +126,6 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
         created_at: new Date(r.created_at)
       }))
     );
-  }
-
-  public async countLogs(params: ProfileLogSearchParams): Promise<number> {
-    const viewResult =
-      await this.communitySearchSqlGenerator.getSqlAndParamsByCriteriaId(
-        params.curation_criteria_id
-      );
-    if (viewResult === null) {
-      return 0;
-    }
-    let sql = `${viewResult.sql} select count(*) as cnt from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs join ${CommunityMemberCriteriaService.GENERATED_VIEW} crit_view on crit_view.profile_id = pa_logs.profile_id where 1=1`;
-    const sqlParams: Record<string, any> = {
-      ...viewResult.params
-    };
-    if (params.profile_id) {
-      if (params.includeProfileIdToIncoming) {
-        sql += ` and (pa_logs.profile_id = :profile_id or pa_logs.target_id = :profile_id)`;
-      } else {
-        sql += ` and pa_logs.profile_id = :profile_id`;
-      }
-      sqlParams.profile_id = params.profile_id;
-    }
-    if (params.rating_matter) {
-      sql += ` and JSON_UNQUOTE(JSON_EXTRACT(pa_logs.contents, '$.rating_matter')) = :rating_matter`;
-      sqlParams.rating_matter = params.rating_matter;
-    }
-    if (params.category) {
-      sql += ` and JSON_UNQUOTE(JSON_EXTRACT(pa_logs.contents, '$.rating_category')) = :rating_category`;
-      sqlParams.rating_category = params.category;
-    }
-    if (params.target_id) {
-      sql += ` and pa_logs.target_id = :target_id`;
-      sqlParams.target_id = params.target_id;
-    }
-    if (params.type?.length) {
-      sql += ` and pa_logs.type in (:type)`;
-      sqlParams.type = params.type;
-    }
-    return await this.db
-      .execute(sql, sqlParams)
-      .then((rows) => rows[0].cnt as number);
   }
 
   async changeSourceProfileIdInLogs(
