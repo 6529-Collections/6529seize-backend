@@ -22,7 +22,11 @@ import {
   SubscriptionLog,
   SubscriptionTopUp
 } from '../../../entities/ISubscription';
-import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
+import {
+  getAuthenticatedWalletOrNull,
+  getWalletOrThrow,
+  needsAuthenticatedUser
+} from '../auth/auth';
 import { areEqualAddresses } from '../../../helpers';
 import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
@@ -30,6 +34,7 @@ import * as Joi from 'joi';
 import {
   fetchPhaseName,
   fetchPhaseResults,
+  getPublicSubscriptions,
   resetAllowlist,
   splitAllowlistResults,
   validateDistribution
@@ -463,15 +468,20 @@ router.get(
       return res.status(400).send(validate);
     }
 
-    const phaseResults = await fetchPhaseResults(auth, allowlistId, phaseId);
-    const phaseName = await fetchPhaseName(auth, allowlistId, phaseId);
-    const results = await splitAllowlistResults(
-      contract,
-      tokenId,
-      phaseName,
-      phaseResults
-    );
-    return returnJsonResult(results, req, res);
+    if (phaseId === 'public') {
+      const results = await getPublicSubscriptions(contract, tokenId);
+      return returnJsonResult(results, req, res);
+    } else {
+      const phaseResults = await fetchPhaseResults(auth, allowlistId, phaseId);
+      const phaseName = await fetchPhaseName(auth, allowlistId, phaseId);
+      const results = await splitAllowlistResults(
+        contract,
+        tokenId,
+        phaseName,
+        phaseResults
+      );
+      return returnJsonResult(results, req, res);
+    }
   }
 );
 
