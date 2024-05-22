@@ -80,6 +80,10 @@ export const SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE =
   'subscriptions_nfts_final_upload';
 export const SUBSCRIPTIONS_LOGS_TABLE = 'subscriptions_logs';
 export const SUBSCRIPTIONS_REDEEMED_TABLE = 'subscriptions_redeemed';
+export const SUBSCRIPTIONS_ADMIN_WALLETS = [
+  '0x0187C9a182736ba18b44eE8134eE438374cf87DC',
+  '0xFe49A85E98941F1A115aCD4bEB98521023a25802'
+];
 
 export const DROPS_TABLE = 'drops';
 export const DROPS_PARTS_TABLE = 'drops_parts';

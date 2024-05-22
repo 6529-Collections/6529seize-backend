@@ -1,8 +1,12 @@
 import fetch from 'node-fetch';
-import { fetchAllNftFinalSubscriptionsForContractAndToken } from './api.subscriptions.db';
+import {
+  fetchAllNftFinalSubscriptionsForContractAndToken,
+  fetchAllPublicFinalSubscriptionsForContractAndToken
+} from './api.subscriptions.db';
 import { areEqualAddresses } from '../../../helpers';
 import {
   MEMES_CONTRACT,
+  SUBSCRIPTIONS_ADMIN_WALLETS,
   SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   USE_CASE_MINTING
 } from '../../../constants';
@@ -13,10 +17,12 @@ import {
 } from '../../../exceptions';
 import { sqlExecutor } from '../../../sql-executor';
 import { NFTFinalSubscription } from '../../../entities/ISubscription';
+import { getAuthenticatedWalletOrNull } from 'src/auth/auth';
+import { Request } from 'express';
 
 export interface AllowlistResponse {
   allowlist_id: string;
-  phase_id: string;
+  phase_id?: string;
   valid: boolean;
   statusText?: string;
 }
@@ -39,10 +45,20 @@ interface ResultsResponse {
   amount: number;
 }
 
+export function authenticateSubscriptionsAdmin(
+  req: Request<any, any, any, any, any>
+) {
+  const wallet = getAuthenticatedWalletOrNull(req);
+  const isAdmin =
+    wallet &&
+    SUBSCRIPTIONS_ADMIN_WALLETS.some((a) => areEqualAddresses(a, wallet));
+  return isAdmin;
+}
+
 export async function validateDistribution(
   auth: string,
   allowlistId: string,
-  phaseId: string
+  phaseId?: string
 ): Promise<AllowlistResponse> {
   const operations = await fetchDistributionOperations(auth, allowlistId);
   const hasRanDelegationMapping = operations.some(
@@ -211,6 +227,52 @@ export async function splitAllowlistResults(
   return { airdrops: mergedAirDrops, allowlists: mergedAllowlists };
 }
 
+export async function getPublicSubscriptions(
+  contract: string,
+  tokenId: number
+): Promise<{
+  airdrops: ResultsResponse[];
+}> {
+  const publicSubscriptions =
+    await fetchAllPublicFinalSubscriptionsForContractAndToken(
+      contract,
+      tokenId
+    );
+
+  const subscriptionRanks = new Map<string, number>();
+  for (let i = 0; i < publicSubscriptions.length; i++) {
+    subscriptionRanks.set(publicSubscriptions[i].consolidation_key, i + 1);
+  }
+
+  const phaseSubscriptions = publicSubscriptions.length;
+
+  const airdrops: ResultsResponse[] = [];
+  for (const sub of publicSubscriptions) {
+    airdrops.push({
+      wallet: sub.airdrop_address,
+      amount: 1
+    });
+    const rank = subscriptionRanks.get(sub.consolidation_key);
+    const updateQuery = `
+        UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
+        SET 
+          phase = :phaseName, 
+          phase_subscriptions = :phaseSubscriptions,
+          phase_position = :rank
+        WHERE id = :id`;
+    await sqlExecutor.execute(updateQuery, {
+      phaseName: 'Public',
+      phaseSubscriptions,
+      rank,
+      id: sub.id
+    });
+  }
+
+  const mergedAirDrops = mergeDuplicateWallets(airdrops);
+
+  return { airdrops: mergedAirDrops };
+}
+
 const mergeDuplicateWallets = (
   results: ResultsResponse[]
 ): ResultsResponse[] => {
@@ -233,5 +295,20 @@ function filterSubscriptions(
   return subscriptions.filter((s) => {
     const subWallets = s.consolidation_key.split('-');
     return !s.phase && subWallets.some((sw) => walletSet.has(sw));
+  });
+}
+
+export async function resetAllowlist(contract: string, tokenId: number) {
+  const updateQuery = `
+    UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} 
+    SET 
+      phase = NULL, 
+      phase_subscriptions = -1,
+      phase_position = -1
+    WHERE contract = :contract AND token_id = :tokenId`;
+
+  await sqlExecutor.execute(updateQuery, {
+    contract,
+    tokenId
   });
 }
