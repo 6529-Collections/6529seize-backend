@@ -6,7 +6,7 @@ import {
   JSON_HEADER_VALUE,
   ACCESS_CONTROL_ALLOW_ORIGIN_HEADER,
   corsOptions
-} from 'src/api-constants';
+} from '../api-constants';
 import * as SwaggerUI from 'swagger-ui-express';
 
 const YAML = require('yamljs');
@@ -24,7 +24,7 @@ function returnJsonResult(result: any, response: Response) {
   response.json(result);
 }
 
-const swaggerDocumentOracle = YAML.load('./src/oracle/oracle.swagger.yaml');
+const swaggerDocumentOracle = YAML.load('./openapi.oracle.yaml');
 router.use(
   '/docs',
   SwaggerUI.serveFiles(swaggerDocumentOracle, { explorer: true }),
@@ -197,7 +197,7 @@ router.get(
           },
           res
         );
-      } catch (e) {
+      } catch (e: any) {
         return res.status(400).send({ error: e.message });
       }
     }
