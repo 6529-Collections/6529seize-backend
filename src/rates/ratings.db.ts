@@ -182,7 +182,7 @@ from general_stats
             and matter_category = :matter_category
       `,
       ratingUpdate,
-      { wrappedConnection: connection }
+      { wrappedConnection: connection.connection }
     );
   }
 
