@@ -11,16 +11,16 @@ const router = asyncRouter({ mergeParams: true });
 router.get(
   '/',
   async (
-    req: Request<{ handleOrWallet: string }, any, any, any, any>,
+    req: Request<{ identity: string }, any, any, any, any>,
     res: Response<ApiResponse<ProfileProxy[]>>
   ) => {
     const targetProfile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        req.params.handleOrWallet
+      await profilesService.getProfileAndConsolidationsByIdentity(
+        req.params.identity
       );
     if (!targetProfile?.profile) {
       throw new NotFoundException(
-        `Profile with id ${req.params.handleOrWallet} does not exist`
+        `Profile with id ${req.params.identity} does not exist`
       );
     }
 
@@ -35,16 +35,16 @@ router.get(
 router.get(
   '/received',
   async (
-    req: Request<{ handleOrWallet: string }, any, any, any, any>,
+    req: Request<{ identity: string }, any, any, any, any>,
     res: Response<ApiResponse<ProfileProxy[]>>
   ) => {
     const targetProfile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        req.params.handleOrWallet
+      await profilesService.getProfileAndConsolidationsByIdentity(
+        req.params.identity
       );
     if (!targetProfile?.profile) {
       throw new NotFoundException(
-        `Profile with id ${req.params.handleOrWallet} does not exist`
+        `Profile with id ${req.params.identity} does not exist`
       );
     }
 
@@ -59,16 +59,16 @@ router.get(
 router.get(
   '/granted',
   async (
-    req: Request<{ handleOrWallet: string }, any, any, any, any>,
+    req: Request<{ identity: string }, any, any, any, any>,
     res: Response<ApiResponse<ProfileProxy[]>>
   ) => {
     const targetProfile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        req.params.handleOrWallet
+      await profilesService.getProfileAndConsolidationsByIdentity(
+        req.params.identity
       );
     if (!targetProfile?.profile) {
       throw new NotFoundException(
-        `Profile with id ${req.params.handleOrWallet} does not exist`
+        `Profile with id ${req.params.identity} does not exist`
       );
     }
 

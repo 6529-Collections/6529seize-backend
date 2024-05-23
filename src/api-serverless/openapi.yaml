@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: Seize API
-  description: Following is the API interface description for most common operations in Seize API. Some modifying endpoints may need authentication token.
+  description: This is the API interface description for the most commonly used operations in Seize API.  Some modifying endpoints require an authentication token.   We are in the process of documenting all Seize APIs.   If there is an API that you need, please ping us in Discord and we will aim to prioritize its documentation.
   version: 1.0.0
 servers:
   - url: /api
@@ -12,7 +12,7 @@ paths:
     get:
       tags:
         - Authentication
-      summary: Get a message to sign by your web3 wallet
+      summary: Get a message to sign with your web3 wallet
       operationId: getNonce
       parameters:
         - name: signer_address
@@ -32,7 +32,7 @@ paths:
     post:
       tags:
         - Authentication
-      summary: Get a message to sign by your web3 wallet
+      summary: Authenticate and get JWT token
       operationId: getAuthToken
       parameters:
         - name: signer_address
@@ -60,7 +60,7 @@ paths:
   /nfts:
     get:
       tags:
-        - Nfts
+        - NFTs
       summary: Get NFTs
       operationId: getNfts
       parameters:
@@ -111,14 +111,14 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/NftsPage"
-  /profiles/{handleOrWallet}/proxies:
+  /profiles/{identity}/proxies:
     get:
       tags:
         - Proxies
       summary: Get profile proxies
       operationId: getProfileProxies
       parameters:
-        - name: handleOrWallet
+        - name: identity
           in: path
           required: true
           schema:
@@ -134,14 +134,14 @@ paths:
                   $ref: "#/components/schemas/ProfileProxy"
         "404":
           description: Profile not found
-  /profiles/{handleOrWallet}/proxies/received:
+  /profiles/{identity}/proxies/received:
     get:
       tags:
         - Proxies
       summary: Get proxies received by a profile
       operationId: getProxiesReceived
       parameters:
-        - name: handleOrWallet
+        - name: identity
           in: path
           required: true
           schema:
@@ -157,14 +157,14 @@ paths:
                   $ref: "#/components/schemas/ProfileProxy"
         "404":
           description: Profile not found
-  /profiles/{handleOrWallet}/proxies/granted:
+  /profiles/{identity}/proxies/granted:
     get:
       tags:
         - Proxies
       summary: Get proxies granted by a profile
       operationId: getProxiesGranted
       parameters:
-        - name: handleOrWallet
+        - name: identity
           in: path
           required: true
           schema:
@@ -180,14 +180,14 @@ paths:
                   $ref: "#/components/schemas/ProfileProxy"
         "404":
           description: Profile not found
-  /profiles/{handleOrWallet}/rep/rating:
+  /profiles/{identity}/rep/rating:
     post:
       tags:
         - ProfileREP
       summary: Change profile REP rating. If you are authenticated as proxy, you will be rating on behalf of the profile you are proxying.
       operationId: rateProfileRep
       parameters:
-        - name: handleOrWallet
+        - name: identity
           in: path
           required: true
           schema:
@@ -207,14 +207,14 @@ paths:
                 $ref: "#/components/schemas/ChangeProfileRepRatingResponse"
         "400":
           description: "Invalid request"
-  /profiles/{handleOrWallet}/cic/rating:
+  /profiles/{identity}/cic/rating:
     post:
       tags:
         - ProfileCIC
       summary: Change profile CIC rating. If you are authenticated as proxy, you will be rating on behalf of the profile you are proxying.
       operationId: rateProfileCic
       parameters:
-        - name: handleOrWallet
+        - name: identity
           in: path
           required: true
           schema:
@@ -287,7 +287,7 @@ paths:
             minimum: 1
         - name: context_profile
           in: query
-          description: If supplied, each drop has some context related to given profile. It can be wallet, ENS, handle or profile ID.
+          description: If supplied, each drop has some context related to given profile. It can be wallet address, ENS, handle or profile ID.
           required: false
           schema:
             type: string
@@ -335,7 +335,7 @@ paths:
             type: string
         - name: context_profile
           in: query
-          description: If supplied drop has some context related to given profile. It can be wallet, ENS, handle or profile ID.
+          description: If supplied drop has some context related to given profile. It can be wallet address, ENS, handle or profile ID.
           required: false
           schema:
             type: string

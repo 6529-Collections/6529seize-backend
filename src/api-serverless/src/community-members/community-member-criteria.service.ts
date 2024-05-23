@@ -334,7 +334,7 @@ export class CommunityMemberCriteriaService {
     const userIds = await Promise.all(
       filterUsers.map((user) =>
         profilesService
-          .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(user)
+          .getProfileAndConsolidationsByIdentity(user)
           .then((result) => result?.profile?.external_id ?? null)
       )
     );
