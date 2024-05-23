@@ -14,7 +14,7 @@ import repCategorySearchRoutes from './profiles/rep-category-search.routes';
 import ratingsRoutes from './ratings/ratings.routes';
 import gasRoutes from './gas/gas.routes';
 import tdhRoutes from './tdh/api.tdh.routes';
-import chainlinkRoutes from './chainlink/api.chainlink.routes';
+import oracleRoutes from './oracle/api.oracle.routes';
 import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
 import ownersBalancesRoutes from './owners-balances/api.owners-balances.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
@@ -814,7 +814,6 @@ loadApi().then(() => {
   apiRouter.use(`/profile-logs`, profileActivityLogsRoutes);
   apiRouter.use(`/rep/categories`, repCategorySearchRoutes);
   apiRouter.use(`/tdh`, tdhRoutes);
-  apiRouter.use('', chainlinkRoutes);
   apiRouter.use(`/aggregated-activity`, aggregatedActivityRoutes);
   apiRouter.use(`/owners-balances`, ownersBalancesRoutes);
   apiRouter.use(`/ratings`, ratingsRoutes);
@@ -827,6 +826,7 @@ loadApi().then(() => {
   apiRouter.use(`/delegations`, delegationsRoutes);
   apiRouter.use(`/waves`, wavesRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
+  rootRouter.use(`/oracle`, oracleRoutes);
   app.use(rootRouter);
 
   app.use(customErrorMiddleware());
