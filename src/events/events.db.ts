@@ -19,7 +19,7 @@ export class EventsDb extends LazyDbAccessCompatibleService {
         where event_id in (:eventIds)
     `,
         { eventIds },
-        { wrappedConnection: { connection: connection.connection } }
+        { wrappedConnection: connection }
       );
     return result.reduce((acc, it) => {
       acc[it.event_id] = [...(acc[it.event_id] ?? []), it.listener_key];
@@ -38,7 +38,7 @@ export class EventsDb extends LazyDbAccessCompatibleService {
         insert into ${LISTENER_PROCESSED_EVENTS_TABLE} (event_id, listener_key) values (:event_id, :listener_key)
     `,
         { event_id, listener_key },
-        { wrappedConnection: { connection: connection.connection } }
+        { wrappedConnection: connection }
       );
     }
   }

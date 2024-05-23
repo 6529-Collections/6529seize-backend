@@ -47,7 +47,7 @@ export async function synchroniseCommunityMembersTable(
     .execute(
       `select lower(consolidation_key) as consolidation_key from ${COMMUNITY_MEMBERS_TABLE}`,
       undefined,
-      { wrappedConnection: connection.connection }
+      { wrappedConnection: connection }
     )
     .then((result: { consolidation_key: string }[]) =>
       result.map((it) => it.consolidation_key)
@@ -61,7 +61,7 @@ export async function synchroniseCommunityMembersTable(
     await db.execute(
       `delete from ${COMMUNITY_MEMBERS_TABLE} where consolidation_key in (:keys)`,
       { keys },
-      { wrappedConnection: connection.connection }
+      { wrappedConnection: connection }
     );
   }
   for (const key of keysToAdd) {
@@ -74,7 +74,7 @@ export async function synchroniseCommunityMembersTable(
         wallet2: communityMember[1] ?? null,
         wallet3: communityMember[2] ?? null
       },
-      { wrappedConnection: connection.connection }
+      { wrappedConnection: connection }
     );
   }
   logger.info(

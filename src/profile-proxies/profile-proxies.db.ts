@@ -370,7 +370,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `update ${PROFILE_PROXY_ACTIONS_TABLE} set credit_spent = :credit_spent where id = :id`,
       param,
-      { wrappedConnection: connection.connection }
+      { wrappedConnection: connection }
     );
   }
 
@@ -381,13 +381,13 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `delete from ${PROFILE_PROXY_ACTIONS_TABLE} where proxy_id in (select id from ${PROFILE_PROXIES_TABLE} where target_id = :profileId or created_by = :profileId)`,
       { profileId },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
 
     await this.db.execute(
       `delete from ${PROFILE_PROXIES_TABLE} where target_id = :profileId or created_by = :profileId`,
       { profileId },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
   }
 }
