@@ -72,7 +72,7 @@ export class ProfileProxyApiService {
     readonly target_id: string;
   }): Promise<ProfileAndConsolidations> {
     const targetProfile =
-      await this.profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+      await this.profilesService.getProfileAndConsolidationsByIdentity(
         target_id
       );
     if (!targetProfile) {

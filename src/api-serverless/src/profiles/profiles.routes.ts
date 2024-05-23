@@ -59,11 +59,11 @@ const router = asyncRouter();
  *
  */
 router.get(
-  `/:handleOrWallet`,
+  `/:identity`,
   async function (
     req: Request<
       {
-        handleOrWallet: string;
+        identity: string;
       },
       any,
       any,
@@ -72,11 +72,10 @@ router.get(
     >,
     res: Response<ApiResponse<ProfileAndConsolidations>>
   ) {
-    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
-    const profile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        handleOrWallet
-      );
+    const identity = req.params.identity.toLowerCase();
+    const profile = await profilesService.getProfileAndConsolidationsByIdentity(
+      identity
+    );
     if (!profile) {
       throw new NotFoundException('Profile not found');
     }
@@ -119,14 +118,14 @@ router.get(
     }
     const authenticatedHandle = maybeAuthenticatedWallet
       ? (
-          await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+          await profilesService.getProfileAndConsolidationsByIdentity(
             maybeAuthenticatedWallet
           )
         )?.profile?.handle
       : null;
     if (proposedHandle.toLowerCase() !== authenticatedHandle?.toLowerCase()) {
       const profile =
-        await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
+        await profilesService.getProfileAndConsolidationsByIdentity(
           proposedHandle
         );
       if (profile) {
@@ -187,13 +186,13 @@ router.post(
 );
 
 router.post(
-  `/:handleOrWallet/pfp`,
+  `/:identity/pfp`,
   needsAuthenticatedUser(),
   initMulterSingleMiddleware('pfp'),
   async function (
     req: Request<
       {
-        handleOrWallet: string;
+        identity: string;
       },
       any,
       ApiUploadProfilePictureRequest,
@@ -203,7 +202,7 @@ router.post(
     res: Response<ApiResponse<{ pfp_url: string }>>
   ) {
     const authenticatedWallet = getWalletOrThrow(req);
-    const handleOrWallet = req.params.handleOrWallet.toLowerCase();
+    const identity = req.params.identity.toLowerCase();
     const { meme } = getValidatedByJoiOrThrow(
       req.body,
       ApiUploadProfilePictureRequestSchema
@@ -211,7 +210,7 @@ router.post(
     const file = req.file;
     const response = await profilesService.updateProfilePfp({
       authenticatedWallet,
-      handleOrWallet,
+      identity,
       memeOrFile: { file, meme }
     });
     await giveReadReplicaTimeToCatchUp();
@@ -270,12 +269,12 @@ const ApiUploadProfilePictureRequestSchema: Joi.ObjectSchema<ApiUploadProfilePic
     meme: Joi.number().optional()
   });
 
-router.use('/:handleOrWallet/cic', profileCicRoutes);
-router.use('/:handleOrWallet/rep', profileRepRoutes);
-router.use('/:handleOrWallet/collected', profileCollectedRoutes);
-router.use('/:handleOrWallet/drops', profileDropsRoutes);
-router.use('/:handleOrWallet/primary-address', profilePrimaryAddressRoutes);
-router.use('/:handleOrWallet/proxies', profileProfileProxiesRoutes);
+router.use('/:identity/cic', profileCicRoutes);
+router.use('/:identity/rep', profileRepRoutes);
+router.use('/:identity/collected', profileCollectedRoutes);
+router.use('/:identity/drops', profileDropsRoutes);
+router.use('/:identity/primary-address', profilePrimaryAddressRoutes);
+router.use('/:identity/proxies', profileProfileProxiesRoutes);
 router.use('/:handleOrWallet/primary-address', profilePrimaryAddressRoutes);
 
 export default router;

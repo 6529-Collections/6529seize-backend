@@ -44,21 +44,21 @@ export class CollectedService {
     ) {
       return [];
     }
-    const handleOrEnsOrWalletAddress = query.handle_or_wallet;
+    const identity = query.identity;
     const profileAndConsolidations =
-      await this.profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        handleOrEnsOrWalletAddress
+      await this.profilesService.getProfileAndConsolidationsByIdentity(
+        identity
       );
     const consolidation = profileAndConsolidations?.consolidation;
     if (!consolidation) {
       return [];
     } else if (query.account_for_consolidations) {
       return consolidation.wallets.map((w) => w.wallet.address.toLowerCase());
-    } else if (WALLET_REGEX.exec(handleOrEnsOrWalletAddress)) {
-      return [handleOrEnsOrWalletAddress.toLowerCase()];
-    } else if (handleOrEnsOrWalletAddress.endsWith('.eth')) {
+    } else if (WALLET_REGEX.exec(identity)) {
+      return [identity.toLowerCase()];
+    } else if (identity.endsWith('.eth')) {
       const walletAddress = consolidation.wallets
-        .find((w) => w.wallet.ens === handleOrEnsOrWalletAddress.toLowerCase())
+        .find((w) => w.wallet.ens === identity.toLowerCase())
         ?.wallet?.address?.toLowerCase();
       return walletAddress ? [walletAddress.toLowerCase()] : [];
     } else {

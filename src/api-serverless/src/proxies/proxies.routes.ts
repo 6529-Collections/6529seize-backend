@@ -36,9 +36,7 @@ router.post(
     const { body } = req;
     const newProxy = getValidatedByJoiOrThrow(body, NewProfileProxySchema);
     const grantorProfile = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        getWalletOrThrow(req)
-      )
+      .getProfileAndConsolidationsByIdentity(getWalletOrThrow(req))
       ?.then((result) => result?.profile ?? null);
     if (!grantorProfile) {
       throw new ForbiddenException(
@@ -86,9 +84,7 @@ router.post(
   ) => {
     const { proxy_id } = req.params;
     const requesterProfile = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        getWalletOrThrow(req)
-      )
+      .getProfileAndConsolidationsByIdentity(getWalletOrThrow(req))
       ?.then((result) => result?.profile ?? null);
     if (!requesterProfile) {
       throw new BadRequestException(
@@ -171,9 +167,7 @@ router.post(
   ) => {
     const { proxy_id, action_id } = req.params;
     const requesterProfile = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        getWalletOrThrow(req)
-      )
+      .getProfileAndConsolidationsByIdentity(getWalletOrThrow(req))
       ?.then((result) => result?.profile ?? null);
     if (!requesterProfile) {
       throw new BadRequestException(
@@ -210,9 +204,7 @@ router.put(
   ) => {
     const { proxy_id, action_id } = req.params;
     const requesterProfile = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        getWalletOrThrow(req)
-      )
+      .getProfileAndConsolidationsByIdentity(getWalletOrThrow(req))
       ?.then((result) => result?.profile ?? null);
     if (!requesterProfile) {
       throw new BadRequestException(

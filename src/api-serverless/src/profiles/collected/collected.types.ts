@@ -26,7 +26,7 @@ export interface CollectedCard {
 
 export interface CollectedQuery
   extends FullPageRequest<'token_id' | 'tdh' | 'rank'> {
-  readonly handle_or_wallet: string;
+  readonly identity: string;
   readonly collection: CollectionType | null;
   readonly account_for_consolidations: boolean;
   readonly seized: CardSeizedStatus;

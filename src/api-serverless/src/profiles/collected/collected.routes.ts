@@ -26,18 +26,18 @@ router.get(
   async function (
     req: Request<
       {
-        handleOrWallet: string;
+        identity: string;
       },
       any,
       any,
-      Omit<CollectedQuery, 'handle_or_wallet'>,
+      Omit<CollectedQuery, 'identity'>,
       any
     >,
     res: Response<ApiResponse<Page<CollectedCard>>>
   ) {
     const query = getValidatedByJoiOrThrow(
       {
-        handle_or_wallet: req.params.handleOrWallet,
+        identity: req.params.identity,
         ...req.query
       },
       ApiGetCollectedCardsRequestSchema
@@ -49,7 +49,7 @@ router.get(
 
 const ApiGetCollectedCardsRequestSchema: Joi.ObjectSchema<CollectedQuery> =
   Joi.object({
-    handle_or_wallet: Joi.string().required(),
+    identity: Joi.string().required(),
     collection: Joi.valid(...Object.values(CollectionType)).optional(),
     account_for_consolidations: Joi.boolean().optional().default(true),
     seized: Joi.valid(...Object.values(CardSeizedStatus))

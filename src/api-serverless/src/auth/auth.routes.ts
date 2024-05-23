@@ -77,7 +77,7 @@ router.post(
         chosenRole = signingProfile;
       } else {
         const roleId = await profilesService
-          .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(role)
+          .getProfileAndConsolidationsByIdentity(role)
           .then((profile) => profile?.profile?.external_id ?? null);
         if (!roleId) {
           throw new BadRequestException(`Role ${role} not found`);
