@@ -45,7 +45,7 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
       sql += ' and rater_profile_id = :rater_profile_id';
       params.rater_profile_id = rater_profile_id;
     }
-    const opts = connection ? { wrappedConnection: connection } : {};
+    const opts = connection ? { wrappedConnection: connection.connection } : {};
     return this.db.execute(sql, params, opts).then(
       (results) =>
         results[0] ?? {
@@ -119,7 +119,7 @@ from general_stats
         rater_profile_id,
         matter
       },
-      { wrappedConnection: connection }
+      { wrappedConnection: connection.connection }
     );
   }
 
@@ -140,18 +140,26 @@ from general_stats
         values (:rater_profile_id, :matter_target_id, :matter, :matter_category, 0, current_time)
         on duplicate key update rater_profile_id = rater_profile_id
     `,
-      ratingLockRequest,
-      { wrappedConnection: connection }
+      {
+        rater_profile_id: ratingLockRequest.rater_profile_id,
+        matter_target_id: ratingLockRequest.matter_target_id,
+        matter: ratingLockRequest.matter,
+        matter_category: ratingLockRequest.matter_category
+      },
+      { wrappedConnection: connection.connection }
     );
     const allRatesOnMatter: Rating[] = await this.db.execute(
       `
           select * from ${RATINGS_TABLE}
           where rater_profile_id = :rater_profile_id
             and matter = :matter
-          for update
+            for update
       `,
-      ratingLockRequest,
-      { wrappedConnection: connection }
+      {
+        rater_profile_id: ratingLockRequest.rater_profile_id,
+        matter: ratingLockRequest.matter
+      },
+      { wrappedConnection: connection.connection }
     );
     const searchedMatter = allRatesOnMatter.find(
       (rate) =>
@@ -228,7 +236,7 @@ from general_stats
       .execute(
         `select rating from ${RATINGS_TABLE} where rater_profile_id = :profile_id and matter = :matter and matter_target_id = :matter_target_id and matter_category = :matter_category`,
         param,
-        connection ? { wrappedConnection: connection } : undefined
+        connection ? { wrappedConnection: connection.connection } : undefined
       )
       .then((results) => results[0]?.rating ?? 0);
   }
@@ -253,7 +261,7 @@ from general_stats
         offset: (page_request.page - 1) * page_request.page_size,
         limit: page_request.page_size
       },
-      { wrappedConnection: connection }
+      { wrappedConnection: connection.connection }
     );
   }
 
@@ -284,7 +292,7 @@ from general_stats
         offset: (page_request.page - 1) * page_request.page_size,
         limit: page_request.page_size
       },
-      { wrappedConnection: connection }
+      { wrappedConnection: connection.connection }
     );
   }
 
@@ -432,7 +440,7 @@ from grouped_rates r
     if (!targetIds.length) {
       return [];
     }
-    const opts = connection ? { wrappedConnection: connection } : {};
+    const opts = connection ? { wrappedConnection: connection.connection } : {};
     return this.db.execute(
       `
       select matter_target_id, sum(rating) as rating
@@ -468,7 +476,7 @@ from grouped_rates r
       {
         matter: RateMatter.CIC
       },
-      { wrappedConnection: connection }
+      { wrappedConnection: connection.connection }
     );
   }
 
@@ -494,7 +502,7 @@ from grouped_rates r
       {
         matter: RateMatter.REP
       },
-      { wrappedConnection: connection }
+      { wrappedConnection: connection.connection }
     );
   }
 
@@ -506,7 +514,7 @@ from grouped_rates r
       .execute(
         `select * from ${RATINGS_SNAPSHOTS_TABLE} where rating_matter = :matter order by snapshot_time desc limit 1`,
         { matter },
-        { wrappedConnection: connection }
+        { wrappedConnection: connection.connection }
       )
       .then((results) => results[0] ?? null);
   }
@@ -522,7 +530,7 @@ from grouped_rates r
     await this.db.execute(
       `insert into ${RATINGS_SNAPSHOTS_TABLE} (snapshot_time, rating_matter, url) values (:snapshot_time, :rating_matter, :url)`,
       param,
-      { wrappedConnection: connection }
+      { wrappedConnection: connection.connection }
     );
   }
 
