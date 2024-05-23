@@ -120,13 +120,13 @@ class DropVotingService {
             profile_id: voterId,
             contents: JSON.stringify({
               old_vote: dropVoteBeforeChange.drop_id,
-              new_vote: vote,
-              proxy_id: authenticationContext.isAuthenticatedAsProxy()
-                ? authenticationContext.authenticatedProfileId
-                : undefined
+              new_vote: vote
             }),
             target_id: drop_id,
-            type: ProfileActivityLogType.DROP_VOTED
+            type: ProfileActivityLogType.DROP_VOTED,
+            proxy_id: authenticationContext.isAuthenticatedAsProxy()
+              ? authenticationContext.authenticatedProfileId
+              : null
           },
           connection
         );
@@ -134,23 +134,6 @@ class DropVotingService {
           { voterId, dropId: drop_id, change: vote - oldVote },
           connection
         );
-        if (authenticationContext.isAuthenticatedAsProxy()) {
-          await this.profileActivityLogsDb.insert(
-            {
-              profile_id: authenticationContext.authenticatedProfileId!,
-              contents: JSON.stringify({
-                old_vote: dropVoteBeforeChange.drop_id,
-                new_vote: vote,
-                rater_profile_id: authenticationContext.isAuthenticatedAsProxy()
-                  ? authenticationContext.roleProfileId
-                  : undefined
-              }),
-              target_id: drop_id,
-              type: ProfileActivityLogType.PROXY_DROP_RATING_EDIT
-            },
-            connection
-          );
-        }
       }
     );
     await giveReadReplicaTimeToCatchUp();
