@@ -2,18 +2,32 @@ import { Request } from 'express';
 import { getAuthenticationContext } from '../auth/auth';
 import { profilesService } from '../../../profiles/profiles.service';
 import { NotFoundException } from '../../../exceptions';
+import { WALLET_REGEX } from '../../../constants';
+import { ProfileClassification } from '../../../entities/IProfile';
+import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { Time } from '../../../time';
 
 export async function getRaterInfoFromRequest(
   req: Request<{ handleOrWallet: string }, any, any, any, any>
 ) {
   const handleOrWallet = req.params.handleOrWallet.toLowerCase();
   const authContext = await getAuthenticationContext(req);
-  const targetProfile =
+  let targetProfile =
     await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
       handleOrWallet
     );
   if (!targetProfile?.profile) {
-    throw new NotFoundException(`No profile found for ${handleOrWallet}`);
+    const wallet = handleOrWallet.toLowerCase();
+    if (!WALLET_REGEX.test(wallet)) {
+      throw new NotFoundException(`No profile found for ${handleOrWallet}`);
+    }
+    targetProfile = await profilesService.createOrUpdateProfile({
+      handle: `id-${wallet}`,
+      creator_or_updater_wallet: wallet,
+      classification: ProfileClassification.PSEUDONYM,
+      sub_classification: null
+    });
+    await giveReadReplicaTimeToCatchUp(Time.seconds(2).toMillis());
   }
   if (!authContext.authenticatedProfileId) {
     throw new NotFoundException(
