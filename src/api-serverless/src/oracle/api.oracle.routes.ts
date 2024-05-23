@@ -24,7 +24,7 @@ function returnJsonResult(result: any, response: Response) {
   response.json(result);
 }
 
-const swaggerDocumentOracle = YAML.load('./openapi.oracle.yaml');
+const swaggerDocumentOracle = YAML.load('openapi.oracle.yaml');
 router.use(
   '/docs',
   SwaggerUI.serveFiles(swaggerDocumentOracle, { explorer: true }),
