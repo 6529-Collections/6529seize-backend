@@ -15,7 +15,7 @@ router.get(
   needsAuthenticatedUser(),
   async (
     req: Request<
-      { handleOrWallet: string },
+      { identity: string },
       any,
       any,
       { limit: number; serial_no_less_than?: number },
@@ -25,11 +25,9 @@ router.get(
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
-    const handleOrWallet = req.params.handleOrWallet;
+    const identity = req.params.identity;
     const profileId = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        handleOrWallet
-      )
+      .getProfileAndConsolidationsByIdentity(identity)
       .then((result) => result?.profile?.external_id ?? null);
     if (!profileId) {
       throw new NotFoundException('Profile not found');
@@ -47,14 +45,12 @@ router.get(
 router.get(
   '/available-credit-for-rating',
   async (
-    req: Request<{ handleOrWallet: string }, any, any, any, any>,
+    req: Request<{ identity: string }, any, any, any, any>,
     res: Response<ApiResponse<{ available_credit_for_rating: number }>>
   ) => {
-    const handleOrWallet = req.params.handleOrWallet;
+    const identity = req.params.identity;
     const profileId = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        handleOrWallet
-      )
+      .getProfileAndConsolidationsByIdentity(identity)
       .then((result) => result?.profile?.external_id ?? null);
     if (!profileId) {
       throw new NotFoundException('Profile not found');

@@ -17,14 +17,12 @@ interface AddressResult {
 router.get(
   '/tdh-address',
   async (
-    req: Request<{ handleOrWallet: string }, any, any, {}, any>,
+    req: Request<{ identity: string }, any, any, any, any>,
     res: Response<ApiResponse<AddressResult>>
   ) => {
-    const handleOrWallet = req.params.handleOrWallet;
+    const identity = req.params.identity;
     const consolidationKey = await profilesService
-      .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        handleOrWallet
-      )
+      .getProfileAndConsolidationsByIdentity(identity)
       .then((result) => result?.consolidation.consolidation_key);
     if (!consolidationKey) {
       throw new NotFoundException('Profile not found');

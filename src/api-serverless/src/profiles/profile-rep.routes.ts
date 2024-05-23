@@ -69,7 +69,7 @@ router.get(
   ) {
     const result = await ratingsService.getRatingsByRatersForMatter({
       queryParams: req.query,
-      handleOrWallet: req.params.handleOrWallet,
+      identity: req.params.identity,
       matter: RateMatter.REP
     });
     res.send(result);
@@ -80,7 +80,7 @@ router.get(
   `/ratings/received`,
   async function (
     req: Request<
-      { handleOrWallet: string },
+      { identity: string },
       any,
       any,
       {
@@ -90,25 +90,21 @@ router.get(
     >,
     res: Response<ApiResponse<ApiProfileReceivedRepRatesState>>
   ) {
-    const targetHandleOrWallet = req.params.handleOrWallet.toLowerCase();
-    const raterHandleOrWallet = req.query.rater?.toLowerCase() ?? null;
+    const identity = req.params.identity.toLowerCase();
+    const raterIdentity = req.query.rater?.toLowerCase() ?? null;
 
     const targetProfileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        targetHandleOrWallet
-      );
+      await profilesService.getProfileAndConsolidationsByIdentity(identity);
     const targetProfileId =
       targetProfileAndConsolidations?.profile?.external_id;
-    const raterProfileAndConsolidations = !raterHandleOrWallet
+    const raterProfileAndConsolidations = !raterIdentity
       ? null
-      : await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-          raterHandleOrWallet
+      : await profilesService.getProfileAndConsolidationsByIdentity(
+          raterIdentity
         );
     const raterProfileId = raterProfileAndConsolidations?.profile?.external_id;
     if (!targetProfileId) {
-      throw new NotFoundException(
-        `No profile found for ${targetHandleOrWallet}`
-      );
+      throw new NotFoundException(`No profile found for ${identity}`);
     }
     const response = await getReceivedRatingsStats(
       raterProfileId ?? null,
@@ -122,7 +118,7 @@ router.get(
   `/ratings/received/category-raters`,
   async function (
     req: Request<
-      { handleOrWallet: string },
+      { identity: string },
       any,
       any,
       {
@@ -132,22 +128,20 @@ router.get(
     >,
     res: Response<ApiResponse<RatingWithProfileInfoAndLevel[]>>
   ) {
-    const targetHandleOrWallet = req.params.handleOrWallet.toLowerCase();
+    const targetIdendity = req.params.identity.toLowerCase();
     const category = req.query.category;
     if (!category) {
       throw new BadRequestException(`Query parameter "category" is required`);
     }
 
     const targetProfileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        targetHandleOrWallet
+      await profilesService.getProfileAndConsolidationsByIdentity(
+        targetIdendity
       );
     const targetProfileId =
       targetProfileAndConsolidations?.profile?.external_id;
     if (!targetProfileId) {
-      throw new NotFoundException(
-        `No profile found for ${targetHandleOrWallet}`
-      );
+      throw new NotFoundException(`No profile found for ${targetIdendity}`);
     }
     const response =
       await ratingsService.getRatingsForMatterAndCategoryOnProfileWithRatersInfo(

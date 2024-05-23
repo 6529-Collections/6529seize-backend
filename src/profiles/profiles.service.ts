@@ -243,11 +243,11 @@ export class ProfilesService {
     return this.profilesDb.getProfilesByWallets(wallets, connection);
   }
 
-  public async getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-    handleOrEnsOrWalletAddress: string,
+  public async getProfileAndConsolidationsByIdentity(
+    identity: string,
     connection?: ConnectionWrapper<any>
   ): Promise<ProfileAndConsolidations | null> {
-    const query = handleOrEnsOrWalletAddress.toLowerCase();
+    const query = identity.toLowerCase();
     if (UUID_REGEX.exec(query)) {
       return this.getProfileAndConsolidationsById(query, connection);
     } else if (query.endsWith('.eth')) {
@@ -410,11 +410,10 @@ export class ProfilesService {
             connectionHolder: connection
           });
         }
-        const updatedProfile =
-          await this.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-            handle,
-            connection
-          );
+        const updatedProfile = await this.getProfileAndConsolidationsByIdentity(
+          handle,
+          connection
+        );
         return updatedProfile!;
       }
     );
@@ -611,11 +610,11 @@ export class ProfilesService {
 
   public async updateProfilePfp({
     authenticatedWallet,
-    handleOrWallet,
+    identity,
     memeOrFile
   }: {
     authenticatedWallet: string;
-    handleOrWallet: string;
+    identity: string;
     memeOrFile: { file?: Express.Multer.File; meme?: number };
   }): Promise<{ pfp_url: string }> {
     const { meme, file } = memeOrFile;
@@ -624,25 +623,22 @@ export class ProfilesService {
     }
     return await this.profilesDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        const profile =
-          await this.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-            handleOrWallet,
-            connection
-          ).then((it) => {
-            if (it?.profile) {
-              if (
-                it.consolidation.wallets.some(
-                  (it) => it.wallet.address === authenticatedWallet
-                )
-              ) {
-                return it.profile;
-              }
-              throw new BadRequestException(`Not authorised to update profile`);
+        const profile = await this.getProfileAndConsolidationsByIdentity(
+          identity,
+          connection
+        ).then((it) => {
+          if (it?.profile) {
+            if (
+              it.consolidation.wallets.some(
+                (it) => it.wallet.address === authenticatedWallet
+              )
+            ) {
+              return it.profile;
             }
-            throw new BadRequestException(
-              `Profile for ${handleOrWallet} not found`
-            );
-          });
+            throw new BadRequestException(`Not authorised to update profile`);
+          }
+          throw new BadRequestException(`Profile for ${identity} not found`);
+        });
         const thumbnailUri = await this.getOrCreatePfpFileUri(
           { meme, file },
           connection

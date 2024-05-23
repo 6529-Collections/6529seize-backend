@@ -8,18 +8,16 @@ import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { Time } from '../../../time';
 
 export async function getRaterInfoFromRequest(
-  req: Request<{ handleOrWallet: string }, any, any, any, any>
+  req: Request<{ identity: string }, any, any, any, any>
 ) {
-  const handleOrWallet = req.params.handleOrWallet.toLowerCase();
+  const identity = req.params.identity.toLowerCase();
   const authContext = await getAuthenticationContext(req);
   let targetProfile =
-    await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-      handleOrWallet
-    );
+    await profilesService.getProfileAndConsolidationsByIdentity(identity);
   if (!targetProfile?.profile) {
-    const wallet = handleOrWallet.toLowerCase();
+    const wallet = identity.toLowerCase();
     if (!WALLET_REGEX.test(wallet)) {
-      throw new NotFoundException(`No profile found for ${handleOrWallet}`);
+      throw new NotFoundException(`No profile found for ${identity}`);
     }
     targetProfile = await profilesService.createOrUpdateProfile({
       handle: `id-${wallet}`,
@@ -31,7 +29,7 @@ export async function getRaterInfoFromRequest(
   }
   if (!authContext.authenticatedProfileId) {
     throw new NotFoundException(
-      `No profile found for authenticated user ${handleOrWallet}`
+      `No profile found for authenticated user ${identity}`
     );
   }
   const targetProfileId = targetProfile.profile!.external_id;
@@ -40,7 +38,7 @@ export async function getRaterInfoFromRequest(
 
 export type RateProfileRequest<REQ_BODY> = Request<
   {
-    handleOrWallet: string;
+    identity: string;
   },
   any,
   REQ_BODY,
@@ -50,8 +48,8 @@ export type RateProfileRequest<REQ_BODY> = Request<
 
 export type GetRaterAggregatedRatingRequest = Request<
   {
-    handleOrWallet: string;
-    raterHandleOrWallet: string;
+    identity: string;
+    raterIdentity: string;
   },
   any,
   any,

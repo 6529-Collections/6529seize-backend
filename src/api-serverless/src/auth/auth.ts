@@ -57,7 +57,7 @@ export async function getAuthenticatedProfileIdOrNull(
     return null;
   }
   return profilesService
-    .getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(authWallet)
+    .getProfileAndConsolidationsByIdentity(authWallet)
     .then((profile) => profile?.profile?.external_id ?? null);
 }
 

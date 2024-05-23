@@ -677,16 +677,16 @@ export class RatingsService {
 
   async getRatingsByRatersForMatter({
     queryParams,
-    handleOrWallet,
+    identity,
     matter
   }: {
     queryParams: GetProfileRatingsRequest['query'];
-    handleOrWallet: string;
+    identity: string;
     matter: RateMatter;
   }): Promise<Page<RatingWithProfileInfoAndLevel>> {
     const params = await this.getRatingsSearchParamsFromRequest({
       queryParams,
-      handleOrWallet,
+      identity,
       matter
     });
     return this.ratingsDb
@@ -709,11 +709,11 @@ export class RatingsService {
 
   private async getRatingsSearchParamsFromRequest({
     queryParams,
-    handleOrWallet,
+    identity,
     matter
   }: {
     queryParams: GetProfileRatingsRequest['query'];
-    handleOrWallet: string;
+    identity: string;
     matter: RateMatter;
   }): Promise<GetRatingsByRatersForMatterParams> {
     const given = queryParams.given === 'true';
@@ -726,13 +726,12 @@ export class RatingsService {
       queryParams.order_by?.toLowerCase() === 'rating'
         ? 'rating'
         : 'last_modified';
-    const profile =
-      await profilesService.getProfileAndConsolidationsByHandleOrEnsOrIdOrWalletAddress(
-        handleOrWallet.toLocaleLowerCase()
-      );
+    const profile = await profilesService.getProfileAndConsolidationsByIdentity(
+      identity.toLocaleLowerCase()
+    );
     const profile_id = profile?.profile?.external_id;
     if (!profile_id) {
-      throw new NotFoundException(`No profile found for ${handleOrWallet}`);
+      throw new NotFoundException(`No profile found for ${identity}`);
     }
     return {
       profileId: profile_id,
@@ -763,7 +762,7 @@ export class RatingsService {
 
 export type GetProfileRatingsRequest = Request<
   {
-    handleOrWallet: string;
+    identity: string;
   },
   any,
   any,
