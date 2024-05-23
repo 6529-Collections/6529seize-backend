@@ -45,7 +45,7 @@ export class RatingsDb extends LazyDbAccessCompatibleService {
       sql += ' and rater_profile_id = :rater_profile_id';
       params.rater_profile_id = rater_profile_id;
     }
-    const opts = connection ? { wrappedConnection: connection.connection } : {};
+    const opts = connection ? { wrappedConnection: connection } : {};
     return this.db.execute(sql, params, opts).then(
       (results) =>
         results[0] ?? {
@@ -119,7 +119,7 @@ from general_stats
         rater_profile_id,
         matter
       },
-      { wrappedConnection: connection.connection }
+      { wrappedConnection: connection }
     );
   }
 
@@ -146,7 +146,7 @@ from general_stats
         matter: ratingLockRequest.matter,
         matter_category: ratingLockRequest.matter_category
       },
-      { wrappedConnection: connection.connection }
+      { wrappedConnection: connection }
     );
     const allRatesOnMatter: Rating[] = await this.db.execute(
       `
@@ -159,7 +159,7 @@ from general_stats
         rater_profile_id: ratingLockRequest.rater_profile_id,
         matter: ratingLockRequest.matter
       },
-      { wrappedConnection: connection.connection }
+      { wrappedConnection: connection }
     );
     const searchedMatter = allRatesOnMatter.find(
       (rate) =>
@@ -190,7 +190,7 @@ from general_stats
             and matter_category = :matter_category
       `,
       ratingUpdate,
-      { wrappedConnection: connection.connection }
+      { wrappedConnection: connection }
     );
   }
 
@@ -236,7 +236,7 @@ from general_stats
       .execute(
         `select rating from ${RATINGS_TABLE} where rater_profile_id = :profile_id and matter = :matter and matter_target_id = :matter_target_id and matter_category = :matter_category`,
         param,
-        connection ? { wrappedConnection: connection.connection } : undefined
+        connection ? { wrappedConnection: connection } : undefined
       )
       .then((results) => results[0]?.rating ?? 0);
   }
@@ -261,7 +261,7 @@ from general_stats
         offset: (page_request.page - 1) * page_request.page_size,
         limit: page_request.page_size
       },
-      { wrappedConnection: connection.connection }
+      { wrappedConnection: connection }
     );
   }
 
@@ -292,7 +292,7 @@ from general_stats
         offset: (page_request.page - 1) * page_request.page_size,
         limit: page_request.page_size
       },
-      { wrappedConnection: connection.connection }
+      { wrappedConnection: connection }
     );
   }
 
@@ -440,7 +440,7 @@ from grouped_rates r
     if (!targetIds.length) {
       return [];
     }
-    const opts = connection ? { wrappedConnection: connection.connection } : {};
+    const opts = connection ? { wrappedConnection: connection } : {};
     return this.db.execute(
       `
       select matter_target_id, sum(rating) as rating
@@ -476,7 +476,7 @@ from grouped_rates r
       {
         matter: RateMatter.CIC
       },
-      { wrappedConnection: connection.connection }
+      { wrappedConnection: connection }
     );
   }
 
@@ -502,7 +502,7 @@ from grouped_rates r
       {
         matter: RateMatter.REP
       },
-      { wrappedConnection: connection.connection }
+      { wrappedConnection: connection }
     );
   }
 
@@ -514,7 +514,7 @@ from grouped_rates r
       .execute(
         `select * from ${RATINGS_SNAPSHOTS_TABLE} where rating_matter = :matter order by snapshot_time desc limit 1`,
         { matter },
-        { wrappedConnection: connection.connection }
+        { wrappedConnection: connection }
       )
       .then((results) => results[0] ?? null);
   }
@@ -530,7 +530,7 @@ from grouped_rates r
     await this.db.execute(
       `insert into ${RATINGS_SNAPSHOTS_TABLE} (snapshot_time, rating_matter, url) values (:snapshot_time, :rating_matter, :url)`,
       param,
-      { wrappedConnection: connection.connection }
+      { wrappedConnection: connection }
     );
   }
 
@@ -579,7 +579,7 @@ from grouped_rates r
           } and matter_target_id = :to_profile_id
     `,
           param,
-          { wrappedConnection: connection.connection }
+          { wrappedConnection: connection }
         )
         .then((results) => results[0]?.rating ?? 0),
       this.db
@@ -590,7 +590,7 @@ from grouped_rates r
           } and matter_target_id = :to_profile_id and rater_profile_id = :from_profile_id
     `,
           param,
-          { wrappedConnection: connection.connection }
+          { wrappedConnection: connection }
         )
         .then((results) => results[0]?.rating ?? 0)
     ]);

@@ -28,7 +28,7 @@ export class RepScoreAggregationDb extends LazyDbAccessCompatibleService {
        VALUES (:profile_id, :score, :rater_count)
        ON DUPLICATE KEY UPDATE score = score + :score, rater_count = rater_count + :rater_count`,
       value,
-      { wrappedConnection: { connection: connection.connection } }
+      { wrappedConnection: connection }
     );
   }
 }
