@@ -1,13 +1,12 @@
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
-  NFTS_TABLE,
   MEMES_CONTRACT,
   GRADIENT_CONTRACT,
   TDH_NFT_TABLE,
   MEMES_EXTENDED_DATA_TABLE,
   CONSOLIDATED_WALLETS_TDH_MEMES_TABLE
 } from '../../../constants';
-import { MemesExtendedData, NFT } from '../../../entities/INFT';
+import { MemesExtendedData } from '../../../entities/INFT';
 import { NftTDH } from '../../../entities/ITDH';
 import {
   NEXTGEN_CORE_CONTRACT,
