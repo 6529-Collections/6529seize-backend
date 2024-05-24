@@ -176,7 +176,7 @@ paths:
                     type: integer
                     description: The latest block number associated with the update.
 
-  /tdh/{address}:
+  /address/{address}:
     get:
       tags:
         - TDH by Address
@@ -224,7 +224,7 @@ paths:
                     type: integer
                     description: The latest block number associated with the update.
 
-  /tdh/{address}/breakdown:
+  /address/{address}/breakdown:
     get:
       tags:
         - TDH by Address
@@ -296,7 +296,7 @@ paths:
                     type: integer
                     description: The latest block number associated with the update.
 
-  /tdh/{address}/memes_seasons:
+  /address/{address}/memes_seasons:
     get:
       tags:
         - TDH by Address
@@ -337,7 +337,7 @@ paths:
                     type: integer
                     description: The latest block number associated with the update.
 
-  /tdh/{address}/memes_seasons/{id}:
+  /address/{address}/memes_seasons/{id}:
     get:
       tags:
         - TDH by Address
