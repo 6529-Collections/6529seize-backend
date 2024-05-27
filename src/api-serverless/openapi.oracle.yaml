@@ -44,6 +44,11 @@ paths:
                   block:
                     type: integer
                     description: The latest block number associated with the update.
+                additionalProperties:
+                  type: integer
+                  description: >
+                    Dynamic fields representing TDH for specific meme seasons,
+                    such as "memes_tdh_szn1", "memes_tdh_szn2", etc.
 
   /tdh/above/{value}:
     get:
@@ -292,6 +297,54 @@ paths:
                         tdh:
                           type: integer
                           description: TDH for the item.
+                  block:
+                    type: integer
+                    description: The latest block number associated with the update.
+
+  /address/{address}/{contract}/{id}:
+    get:
+      tags:
+        - TDH by Address
+      summary: Retrieve TDH for a Specific Contract and Token by Address
+      description: >-
+        Get the Total Days Held (TDH) for a specific contract and token associated with
+        a specific address.
+      parameters:
+        - name: address
+          in: path
+          required: true
+          description: Address to retrieve the contract token TDH for.
+          schema:
+            type: string
+            example: '0x123456789abcdef'
+        - name: contract
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - memes
+              - gradients
+              - nextgen
+          description: The contract type for the token.
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: The identifier for the token.
+      responses:
+        '200':
+          description: >-
+            A JSON object containing the TDH, contract address, token ID, and the latest block number.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tdh:
+                    type: integer
+                    description: The total days held for the token by the address.
                   block:
                     type: integer
                     description: The latest block number associated with the update.
