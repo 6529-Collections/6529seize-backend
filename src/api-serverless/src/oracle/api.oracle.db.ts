@@ -74,6 +74,35 @@ export const fetchSingleAddressTDH = async (address: string) => {
   };
 };
 
+export const fetchSingleAddressTDHForNft = async (
+  address: string,
+  contract: string,
+  id: number
+) => {
+  const { block, tdh } = await fetchBlockAndAddressTdh(address);
+  const addressTdh = tdh[0]?.tdh;
+  let nftTdh = 0;
+  if (addressTdh) {
+    const boost = addressTdh.boost ?? 1;
+    let nfts = [];
+    if (contract === 'memes') {
+      nfts = JSON.parse(tdh[0]?.memes ?? JSON.stringify([]));
+    } else if (contract === 'gradients') {
+      nfts = JSON.parse(tdh[0]?.gradients ?? JSON.stringify([]));
+    } else if (contract === 'nextgen') {
+      nfts = JSON.parse(tdh[0]?.nextgen ?? JSON.stringify([]));
+    }
+    const nft = nfts.find((m: any) => m.id == id);
+    if (nft) {
+      nftTdh = parseToken(boost, nft).tdh;
+    }
+  }
+  return {
+    tdh: formatNumber(nftTdh),
+    block
+  };
+};
+
 export const fetchSingleAddressTDHBreakdown = async (address: string) => {
   const { block, tdh } = await fetchBlockAndAddressTdh(address);
   const boost = tdh[0]?.boost ?? 1;
@@ -100,13 +129,19 @@ export const fetchTotalTDH = async () => {
     SELECT SUM(boosted_tdh) as total_tdh, SUM(boosted_memes_tdh) as memes_tdh, SUM(boosted_gradients_tdh) as gradients_tdh, SUM(boosted_nextgen_tdh) as nextgen_tdh from ${CONSOLIDATED_WALLETS_TDH_TABLE}
   `;
   const tdh = await sqlExecutor.execute(sql);
-  return {
+  const seasonTdh = await fetchSeasonsTDH();
+
+  const totals: any = {
     tdh: formatNumber(tdh[0]?.total_tdh ?? 0),
     memes_tdh: formatNumber(tdh[0]?.memes_tdh ?? 0),
     gradients_tdh: formatNumber(tdh[0]?.gradients_tdh ?? 0),
-    nextgen_tdh: formatNumber(tdh[0]?.nextgen_tdh ?? 0),
-    block
+    nextgen_tdh: formatNumber(tdh[0]?.nextgen_tdh ?? 0)
   };
+  seasonTdh.seasons.forEach((s) => {
+    totals[`memes_tdh_szn${s.season}`] = s.tdh;
+  });
+  totals['block'] = block;
+  return totals;
 };
 
 export const fetchNfts = async (contract?: string, id?: string) => {
