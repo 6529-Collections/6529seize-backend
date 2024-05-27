@@ -206,6 +206,37 @@ router.get(
 );
 
 router.get(
+  '/address/:address/:contract/:id',
+  async function (
+    req: Request<
+      {
+        address: string;
+        contract: string;
+        id: string;
+      },
+      any,
+      any,
+      {}
+    >,
+    res: any
+  ) {
+    const address = req.params.address;
+    const contract = req.params.contract;
+    const id = req.params.id;
+    const tokenId = parseInt(id);
+    if (isNaN(tokenId)) {
+      return res.status(400).send({ error: 'Invalid token id' });
+    }
+    const result = await db.fetchSingleAddressTDHForNft(
+      address,
+      contract,
+      tokenId
+    );
+    return returnJsonResult(result, res);
+  }
+);
+
+router.get(
   '/nfts/memes_seasons/:season?',
   async function (
     req: Request<
