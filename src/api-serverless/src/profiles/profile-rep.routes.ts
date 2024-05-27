@@ -20,6 +20,7 @@ import { Page } from '../page-request';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { ChangeProfileRepRating } from '../generated/models/ChangeProfileRepRating';
 import { ChangeProfileRepRatingResponse } from '../generated/models/ChangeProfileRepRatingResponse';
+import { RepRating } from '../generated/models/RepRating';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -191,6 +192,48 @@ router.post(
       total_rep_rating_for_category: total,
       rep_rating_for_category_by_user: byUser
     });
+  }
+);
+
+router.get(
+  `/rating`,
+  async function (
+    req: Request<
+      { identity: string },
+      any,
+      any,
+      { readonly from_identity?: string; readonly category: string },
+      any
+    >,
+    res: Response<ApiResponse<RepRating>>
+  ) {
+    const identity = req.params.identity;
+    const { category, from_identity } = req.query;
+    const [target_profile_id, rater_profile_id] = await Promise.all([
+      profilesService
+        .getProfileAndConsolidationsByIdentity(identity)
+        .then((profile) => profile?.profile?.external_id ?? null),
+      from_identity
+        ? profilesService
+            .getProfileAndConsolidationsByIdentity(from_identity)
+            .then((profile) => profile?.profile?.external_id ?? null)
+        : null
+    ]);
+    if (from_identity && !rater_profile_id) {
+      res.send({ rating: 0 });
+    } else {
+      if (!target_profile_id) {
+        throw new NotFoundException(`No profile found for ${identity}`);
+      }
+      const repRating = await ratingsService.getRepRating({
+        rater_profile_id: rater_profile_id,
+        target_profile_id,
+        category: category ?? null
+      });
+      res.send({
+        rating: repRating
+      });
+    }
   }
 );
 
