@@ -312,7 +312,7 @@ export async function fetchSeasonsTDH(season?: string) {
     params = { season };
   }
   const query = `
-    SELECT season, SUM(tdh) AS tdh
+    SELECT season, SUM(boosted_tdh) AS tdh
     FROM ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}
     ${filters}
     GROUP BY season;
