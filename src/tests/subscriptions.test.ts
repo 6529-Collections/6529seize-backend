@@ -22,27 +22,11 @@ describe('SubscriptionTests', () => {
 
   describe('validateNonSubscriptionAirdrop', () => {
     it('not memes contract', async () => {
-      const transaction: Transaction = {
-        created_at: new Date(),
-        transaction: uuid(),
-        block: 1,
-        transaction_date: new Date(),
-        from_address: NULL_ADDRESS,
-        to_address: '0x123',
-        contract: GRADIENT_CONTRACT,
-        token_id: 237,
-        token_count: 1,
-        value: 0,
-        primary_proceeds: 0,
-        royalties: 0,
-        gas_gwei: 0,
-        gas_price: 0,
-        gas_price_gwei: 0,
-        gas: 0,
-        eth_price_usd: 0,
-        value_usd: 0,
-        gas_usd: 0
-      };
+      const transaction = buildTransaction(
+        NULL_ADDRESS,
+        '0x123',
+        GRADIENT_CONTRACT
+      );
       const response = await validateNonSubscriptionAirdrop(
         transaction,
         entityManager
@@ -55,27 +39,11 @@ describe('SubscriptionTests', () => {
     });
 
     it('airdrop to research', async () => {
-      const transaction: Transaction = {
-        created_at: new Date(),
-        transaction: uuid(),
-        block: 1,
-        transaction_date: new Date(),
-        from_address: NULL_ADDRESS,
-        to_address: RESEARCH_6529_ADDRESS,
-        contract: MEMES_CONTRACT,
-        token_id: 237,
-        token_count: 1,
-        value: 0,
-        primary_proceeds: 0,
-        royalties: 0,
-        gas_gwei: 0,
-        gas_price: 0,
-        gas_price_gwei: 0,
-        gas: 0,
-        eth_price_usd: 0,
-        value_usd: 0,
-        gas_usd: 0
-      };
+      const transaction = buildTransaction(
+        NULL_ADDRESS,
+        RESEARCH_6529_ADDRESS,
+        MEMES_CONTRACT
+      );
       const response = await validateNonSubscriptionAirdrop(
         transaction,
         entityManager
@@ -88,27 +56,11 @@ describe('SubscriptionTests', () => {
     });
 
     it('in initial airdrop', async () => {
-      const transaction: Transaction = {
-        created_at: new Date(),
-        transaction: uuid(),
-        block: 1,
-        transaction_date: new Date(),
-        from_address: NULL_ADDRESS,
-        to_address: '0x123',
-        contract: MEMES_CONTRACT,
-        token_id: 237,
-        token_count: 1,
-        value: 0,
-        primary_proceeds: 0,
-        royalties: 0,
-        gas_gwei: 0,
-        gas_price: 0,
-        gas_price_gwei: 0,
-        gas: 0,
-        eth_price_usd: 0,
-        value_usd: 0,
-        gas_usd: 0
-      };
+      const transaction = buildTransaction(
+        NULL_ADDRESS,
+        '0x123',
+        MEMES_CONTRACT
+      );
       whenRequestDistribution(entityManager, transaction, { count: 1 });
       whenRequestAirdrops(entityManager, transaction, 0);
       const response = await validateNonSubscriptionAirdrop(
@@ -123,27 +75,11 @@ describe('SubscriptionTests', () => {
     });
 
     it('in initial airdrop 2', async () => {
-      const transaction: Transaction = {
-        created_at: new Date(),
-        transaction: uuid(),
-        block: 1,
-        transaction_date: new Date(),
-        from_address: NULL_ADDRESS,
-        to_address: '0x123',
-        contract: MEMES_CONTRACT,
-        token_id: 237,
-        token_count: 1,
-        value: 0,
-        primary_proceeds: 0,
-        royalties: 0,
-        gas_gwei: 0,
-        gas_price: 0,
-        gas_price_gwei: 0,
-        gas: 0,
-        eth_price_usd: 0,
-        value_usd: 0,
-        gas_usd: 0
-      };
+      const transaction = buildTransaction(
+        NULL_ADDRESS,
+        '0x123',
+        MEMES_CONTRACT
+      );
       whenRequestDistribution(entityManager, transaction, { count: 2 });
       whenRequestAirdrops(entityManager, transaction, 1);
       const response = await validateNonSubscriptionAirdrop(
@@ -158,27 +94,11 @@ describe('SubscriptionTests', () => {
     });
 
     it('not in initial airdrop', async () => {
-      const transaction: Transaction = {
-        created_at: new Date(),
-        transaction: uuid(),
-        block: 1,
-        transaction_date: new Date(),
-        from_address: NULL_ADDRESS,
-        to_address: '0x123',
-        contract: MEMES_CONTRACT,
-        token_id: 237,
-        token_count: 1,
-        value: 0,
-        primary_proceeds: 0,
-        royalties: 0,
-        gas_gwei: 0,
-        gas_price: 0,
-        gas_price_gwei: 0,
-        gas: 0,
-        eth_price_usd: 0,
-        value_usd: 0,
-        gas_usd: 0
-      };
+      const transaction = buildTransaction(
+        NULL_ADDRESS,
+        '0x123',
+        MEMES_CONTRACT
+      );
       whenRequestDistribution(entityManager, transaction, undefined);
       const response = await validateNonSubscriptionAirdrop(
         transaction,
@@ -194,27 +114,11 @@ describe('SubscriptionTests', () => {
     });
 
     it('in initial airdrop and in phase airdrop', async () => {
-      const transaction: Transaction = {
-        created_at: new Date(),
-        transaction: uuid(),
-        block: 1,
-        transaction_date: new Date(),
-        from_address: NULL_ADDRESS,
-        to_address: '0x123',
-        contract: MEMES_CONTRACT,
-        token_id: 237,
-        token_count: 1,
-        value: 0,
-        primary_proceeds: 0,
-        royalties: 0,
-        gas_gwei: 0,
-        gas_price: 0,
-        gas_price_gwei: 0,
-        gas: 0,
-        eth_price_usd: 0,
-        value_usd: 0,
-        gas_usd: 0
-      };
+      const transaction = buildTransaction(
+        NULL_ADDRESS,
+        '0x123',
+        MEMES_CONTRACT
+      );
       whenRequestDistribution(entityManager, transaction, { count: 1 });
       whenRequestAirdrops(entityManager, transaction, 1);
       const response = await validateNonSubscriptionAirdrop(
@@ -287,4 +191,33 @@ function whenRequestAirdrops(
         previous_airdrops: response
       }
     ]);
+}
+
+function buildTransaction(
+  from_address: string,
+  to_address: string,
+  contract: string
+) {
+  const transaction: Transaction = {
+    created_at: new Date(),
+    transaction: uuid(),
+    block: 1,
+    transaction_date: new Date(),
+    from_address,
+    to_address,
+    contract,
+    token_id: 237,
+    token_count: 1,
+    value: 0,
+    primary_proceeds: 0,
+    royalties: 0,
+    gas_gwei: 0,
+    gas_price: 0,
+    gas_price_gwei: 0,
+    gas: 0,
+    eth_price_usd: 0,
+    value_usd: 0,
+    gas_usd: 0
+  };
+  return transaction;
 }
