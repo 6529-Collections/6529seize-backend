@@ -78,6 +78,38 @@ paths:
                   count:
                     type: integer
                     description: The number of entries that match the specified TDH value.
+                  block:
+                    type: integer
+                    description: The latest block number associated with the update.
+
+  /tdh/above/{value}/entries:
+    get:
+      tags:
+        - TDH
+      summary: Retrieve TDH Above Value
+      description: >-
+        Get a list of addresses with Total Days Held (TDH) above a specified
+        value.
+      parameters:
+        - name: value
+          in: path
+          required: true
+          description: The minimum TDH value to filter addresses.
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: >-
+            A JSON object containing the count of entries and the list of
+            entries with their consolidation key, TDH, and associated addresses.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+                    description: The number of entries that match the specified TDH value.
                   entries:
                     type: array
                     items:
