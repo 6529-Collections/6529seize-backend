@@ -80,11 +80,38 @@ async function processAirdrop(
   transaction: Transaction,
   entityManager: EntityManager
 ) {
-  if (!areEqualAddresses(MEMES_CONTRACT, transaction.contract)) {
-    logger.info(
-      `[SKIPPING TRANSACTION] : [CONTRACT ${transaction.contract}] : [Transaction ${transaction.transaction}]`
-    );
+  const validation = await validateNonSubscriptionAirdrop(
+    transaction,
+    entityManager
+  );
+
+  if (validation.valid) {
     return;
+  }
+
+  for (let i = 0; i < transaction.token_count; i++) {
+    await processSubscription(transaction, entityManager);
+  }
+
+  return {
+    valid: true,
+    message: 'Processed'
+  };
+}
+
+export async function validateNonSubscriptionAirdrop(
+  transaction: Transaction,
+  entityManager: EntityManager
+): Promise<{ valid: boolean; message: string }> {
+  if (!areEqualAddresses(MEMES_CONTRACT, transaction.contract)) {
+    const message = 'Not memes contract';
+    logger.info(
+      `[SKIPPING: ${message}] : [CONTRACT ${transaction.contract}] : [Transaction ${transaction.transaction}]`
+    );
+    return {
+      valid: true,
+      message
+    };
   } else {
     logger.info(
       `[PROCESSING AIRDROP] : [Transaction ${transaction.transaction}]`
@@ -95,22 +122,25 @@ async function processAirdrop(
     logger.info(
       `[SKIPPING TRANSACTION] : [AIRDROP TO RESEARCH] : [Transaction ${transaction.transaction}]`
     );
-    return;
+    return {
+      valid: true,
+      message: 'Airdrop to research'
+    };
   }
 
   const distributionAirdrop = (
-    await sqlExecutor.execute(
+    await entityManager.query(
       `SELECT * FROM ${DISTRIBUTION_TABLE} 
-        WHERE LOWER(wallet) = :toAddress 
-        AND LOWER(phase) = :phase 
-        AND LOWER(contract) = :contract 
-        AND card_id = :tokenId;`,
-      {
-        toAddress: transaction.to_address.toLowerCase(),
-        phase: 'airdrop',
-        contract: transaction.contract.toLowerCase(),
-        tokenId: transaction.token_id
-      }
+        WHERE LOWER(wallet) = ?
+        AND LOWER(phase) = ?
+        AND LOWER(contract) = ?
+        AND card_id = ?;`,
+      [
+        transaction.to_address.toLowerCase(),
+        'airdrop',
+        transaction.contract.toLowerCase(),
+        transaction.token_id
+      ]
     )
   )[0];
 
@@ -118,24 +148,37 @@ async function processAirdrop(
     const previousAirdrops = (
       await entityManager.query(
         `SELECT SUM(token_count) as previous_airdrops FROM ${TRANSACTIONS_TABLE}
-        WHERE contract = "${transaction.contract}"
-        AND token_id = ${transaction.token_id}
-        AND from_address = "${NULL_ADDRESS}"
-        AND block < ${transaction.block}
-        AND value = 0;`
+        WHERE contract = ?
+        AND token_id = ?
+        AND from_address = ?
+        AND block < ?
+        AND value = 0;`,
+        [
+          transaction.contract,
+          transaction.token_id,
+          NULL_ADDRESS,
+          transaction.block
+        ]
       )
     )[0].previous_airdrops;
     if (
       distributionAirdrop.count >=
       previousAirdrops + transaction.token_count
     ) {
-      return;
+      logger.info(
+        `[SKIPPING TRANSACTION] : [DISTRIBUTION AIRDROP] : [Transaction ${transaction.transaction}]`
+      );
+      return {
+        valid: true,
+        message: 'Initial airdrop'
+      };
     }
   }
 
-  for (let i = 0; i < transaction.token_count; i++) {
-    await processSubscription(transaction, entityManager);
-  }
+  return {
+    valid: false,
+    message: 'Subscription airdrop'
+  };
 }
 
 async function processSubscription(
@@ -145,11 +188,12 @@ async function processSubscription(
   const finalSubscription: NFTFinalSubscription | undefined = (
     await entityManager.query(
       `SELECT * FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
-      WHERE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.contract = "${transaction.contract}"
-      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.token_id = ${transaction.token_id}
-      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.airdrop_address = "${transaction.to_address}"
+      WHERE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.contract = ?
+      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.token_id = ?
+      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.airdrop_address = ?
       AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.redeemed = false
-      ORDER BY phase ASC, phase_position ASC;`
+      ORDER BY phase ASC, phase_position ASC;`,
+      [transaction.contract, transaction.token_id, transaction.to_address]
     )
   )[0];
 

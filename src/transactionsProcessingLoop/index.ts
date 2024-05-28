@@ -26,9 +26,9 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     TransactionsProcessedDistributionBlock,
     TransactionsProcessedSubscriptionsBlock
   ]);
-  await updateDistributionMints(
-    process.env.TRANSACTIONS_PROCESSING_RESET == 'true'
-  );
+  // await updateDistributionMints(
+  //   process.env.TRANSACTIONS_PROCESSING_RESET == 'true'
+  // );
   await redeemSubscriptions(
     process.env.TRANSACTIONS_PROCESSING_RESET == 'true'
   );
