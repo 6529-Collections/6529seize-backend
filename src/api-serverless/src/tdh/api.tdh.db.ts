@@ -283,6 +283,7 @@ export const fetchConsolidatedMetrics = async (
     ${PROFILE_FULL}.cic_score,
     ${PROFILE_FULL}.primary_wallet,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
+    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as total_tdh,
     ${tdhField},
     (${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh + ${PROFILE_FULL}.rep_score) as level,
     COALESCE(${TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change`;
