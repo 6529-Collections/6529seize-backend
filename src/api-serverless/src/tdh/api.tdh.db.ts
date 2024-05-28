@@ -2,6 +2,7 @@ import { constructFilters, constructFiltersOR } from '../api-helpers';
 import {
   CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE,
   CONSOLIDATED_OWNERS_BALANCES_TABLE,
+  CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   MEMES_CONTRACT,
   MEMES_SEASONS_TABLE,
@@ -236,6 +237,8 @@ export const fetchConsolidatedMetrics = async (
   let uniqueMemesColumn = 'unique_memes';
   let memeCardSetsColumn = 'memes_cards_sets';
   let balancesTable = CONSOLIDATED_OWNERS_BALANCES_TABLE;
+  let tdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as boosted_tdh`;
+
   switch (query.content) {
     case MetricsContent.MEMES:
       if (query.season) {
@@ -243,18 +246,23 @@ export const fetchConsolidatedMetrics = async (
         balanceColumn = 'balance';
         uniqueMemesColumn = 'unique';
         memeCardSetsColumn = 'sets';
+        tdhField = `${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.boosted_tdh as boosted_tdh`;
       } else {
         balanceColumn = 'memes_balance';
+        tdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_memes_tdh as boosted_tdh`;
       }
       break;
     case MetricsContent.GRADIENTS:
       balanceColumn = 'gradients_balance';
+      tdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_gradients_tdh as boosted_tdh`;
       break;
     case MetricsContent.MEMELAB:
       balanceColumn = 'memelab_balance';
+      tdhField = '0 as boosted_tdh';
       break;
     case MetricsContent.NEXTGEN:
       balanceColumn = 'nextgen_balance';
+      tdhField = `${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_nextgen_tdh as boosted_tdh`;
       break;
   }
 
@@ -275,7 +283,7 @@ export const fetchConsolidatedMetrics = async (
     ${PROFILE_FULL}.cic_score,
     ${PROFILE_FULL}.primary_wallet,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
-    ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as boosted_tdh,
+    ${tdhField},
     (${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh + ${PROFILE_FULL}.rep_score) as level,
     COALESCE(${TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change`;
 
@@ -288,8 +296,10 @@ export const fetchConsolidatedMetrics = async (
       query.collector == MetricsCollector.MEMES ||
       query.collector == MetricsCollector.MEMES_SETS) &&
     query.season;
+
   if (isMemesSeason) {
     joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} ON ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.consolidation_key and ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.season = ${query.season}`;
+    joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.consolidation_key and ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.season = ${query.season}`;
   }
 
   const results = await fetchPaginated(
@@ -316,7 +326,7 @@ export const fetchConsolidatedMetrics = async (
 
   results.data.forEach((d: any) => {
     d.level = calculateLevel({
-      tdh: d.boosted_tdh ?? 0,
+      tdh: d.level ?? 0,
       rep: d.rep_score
     });
     d.unique_memes_total = uniqueMemesTotal;
