@@ -43,11 +43,12 @@ router.get(
 );
 
 router.get(
-  '/tdh/above/:value',
+  '/tdh/above/:value/:extra?',
   async function (
     req: Request<
       {
         value: number;
+        extra?: string;
       },
       any,
       any,
@@ -56,10 +57,11 @@ router.get(
     res: any
   ) {
     const value = req.params.value;
+    const includeEntries = req.params.extra === 'entries';
     if (isNaN(value)) {
       return res.status(400).send({ error: 'Invalid value' });
     }
-    const result = await db.fetchTDHAbove(Number(value));
+    const result = await db.fetchTDHAbove(Number(value), includeEntries);
     return returnJsonResult(result, res);
   }
 );

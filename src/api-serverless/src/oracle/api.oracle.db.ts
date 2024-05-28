@@ -219,7 +219,7 @@ export const fetchSingleAddressTDHMemesSeasons = async (address: string) => {
   };
 };
 
-export async function fetchTDHAbove(value: number) {
+export async function fetchTDHAbove(value: number, includeEntries: boolean) {
   const block = await getBlock();
 
   const sql = `
@@ -228,18 +228,22 @@ export async function fetchTDHAbove(value: number) {
     ORDER BY boosted_tdh DESC
   `;
   const tdh = await sqlExecutor.execute(sql);
-  const entries = tdh.map((t: any) => {
-    return {
-      consolidation_key: t.consolidation_key,
-      tdh: t.boosted_tdh,
-      addresses: JSON.parse(t.wallets).map((w: string) => w.toLowerCase()),
-      block
-    };
-  });
-  return {
+  const response: any = {
     count: tdh.length,
-    entries
+    block
   };
+  if (includeEntries) {
+    response.entries = tdh.map((t: any) => {
+      return {
+        consolidation_key: t.consolidation_key,
+        tdh: t.boosted_tdh,
+        addresses: JSON.parse(t.wallets).map((w: string) => w.toLowerCase()),
+        block
+      };
+    });
+  }
+
+  return response;
 }
 
 export async function fetchTDHPercentile(percentile: number) {
