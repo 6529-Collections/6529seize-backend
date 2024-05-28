@@ -119,6 +119,7 @@ describe('SubscriptionTests', () => {
         valid: true,
         message: 'Initial airdrop'
       });
+      expect(entityManager.query).toHaveBeenCalledTimes(2);
     });
 
     it('in initial airdrop 2', async () => {
@@ -153,6 +154,7 @@ describe('SubscriptionTests', () => {
         valid: true,
         message: 'Initial airdrop'
       });
+      expect(entityManager.query).toHaveBeenCalledTimes(2);
     });
 
     it('not in initial airdrop', async () => {
@@ -188,6 +190,7 @@ describe('SubscriptionTests', () => {
         message: 'Subscription airdrop'
       });
       expect(entityManager.query).not.toHaveBeenCalledWith(adSql, adParams);
+      expect(entityManager.query).toHaveBeenCalledTimes(1);
     });
 
     it('in initial airdrop and in phase airdrop', async () => {
@@ -222,6 +225,7 @@ describe('SubscriptionTests', () => {
         valid: false,
         message: 'Subscription airdrop'
       });
+      expect(entityManager.query).toHaveBeenCalledTimes(2);
     });
   });
 });
