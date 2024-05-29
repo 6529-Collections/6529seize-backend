@@ -1067,6 +1067,7 @@ components:
           maxLength: 200
           nullable: true
         direction:
+          example: "RECEIVED"
           anyOf:
             - type: "null"
             - $ref: "#/components/schemas/GroupFilterDirection"
@@ -1099,6 +1100,7 @@ components:
           maxLength: 200
           nullable: true
         direction:
+          example: "RECEIVED"
           anyOf:
             - type: "null"
             - $ref: "#/components/schemas/GroupFilterDirection"
@@ -1135,8 +1137,6 @@ components:
           type: string
         group:
           $ref: "#/components/schemas/GroupDescription"
-        visible:
-          type: boolean
 
     ChangeGroupVisibility:
       type: object

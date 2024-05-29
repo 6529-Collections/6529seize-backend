@@ -16,7 +16,6 @@ import { HttpFile } from '../http/http';
 export class CreateGroup {
     'name': string;
     'group': GroupDescription;
-    'visible': boolean;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -31,12 +30,6 @@ export class CreateGroup {
             "name": "group",
             "baseName": "group",
             "type": "GroupDescription",
-            "format": ""
-        },
-        {
-            "name": "visible",
-            "baseName": "visible",
-            "type": "boolean",
             "format": ""
         }    ];
 

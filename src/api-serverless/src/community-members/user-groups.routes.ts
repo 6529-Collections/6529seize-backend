@@ -132,7 +132,7 @@ router.post(
       tdh_max: apiUserGroup.group.tdh.max,
       level_min: apiUserGroup.group.level.min,
       level_max: apiUserGroup.group.level.max,
-      visible: apiUserGroup.visible
+      visible: false
     };
     const response = await userGroupsService.save(userGroup, savingProfileId);
     res.send(response);

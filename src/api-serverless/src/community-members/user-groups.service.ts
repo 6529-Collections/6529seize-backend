@@ -2,7 +2,10 @@ import { ALL_COMMUNITY_MEMBERS_VIEW, RATINGS_TABLE } from '../../../constants';
 import { profilesService } from '../../../profiles/profiles.service';
 import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
 import { UserGroupEntity } from '../../../entities/ICommunityGroup';
-import { userGroupsDb, UserGroupsDb } from './user-groups.db';
+import {
+  userGroupsDb,
+  UserGroupsDb
+} from '../../../user-groups/user-groups.db';
 import slugify from 'slugify';
 import { distinct, resolveEnum, uniqueShortId } from '../../../helpers';
 import { ConnectionWrapper } from '../../../sql-executor';
@@ -521,7 +524,18 @@ export class UserGroupsService {
 
   private async mapForApi(group: UserGroupEntity[]): Promise<GroupFull[]> {
     const relatedProfiles = await profilesService
-      .getProfileMinsByIds(group.map((it) => it.created_by))
+      .getProfileMinsByIds(
+        distinct(
+          group
+            .map(
+              (it) =>
+                [it.created_by, it.rep_user, it.cic_user].filter(
+                  (it) => !!it
+                ) as string[]
+            )
+            .flat()
+        )
+      )
       .then((res) =>
         res.reduce((acc, it) => {
           acc[it.id] = it as ProfileMin;
@@ -532,7 +546,7 @@ export class UserGroupsService {
       id: it.id,
       name: it.name,
       visible: it.visible,
-      created_at: it.created_at?.getTime(),
+      created_at: new Date(it.created_at).getTime(),
       group: {
         cic: {
           min: it.cic_min,
@@ -541,6 +555,8 @@ export class UserGroupsService {
             ? resolveEnum(GroupFilterDirection, it.cic_direction)!
             : null,
           user_identity: it.cic_user
+            ? relatedProfiles[it.cic_user]?.handle ?? it.cic_user
+            : null
         },
         rep: {
           min: it.rep_min,
@@ -548,7 +564,9 @@ export class UserGroupsService {
           direction: it.rep_direction
             ? resolveEnum(GroupFilterDirection, it.rep_direction)!
             : null,
-          user_identity: it.rep_user,
+          user_identity: it.rep_user
+            ? relatedProfiles[it.rep_user]?.handle ?? it.rep_user
+            : null,
           category: it.rep_category
         },
         level: {
