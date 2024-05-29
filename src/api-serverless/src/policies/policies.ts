@@ -59,6 +59,14 @@ export const checkPolicies = async (
     ip = ip.substring(7);
   }
 
+  if (!ip) {
+    const image = await fetchRandomImage();
+    return res.status(403).send({
+      message: 'Failed to get IP address',
+      image: image[0].scaled ? image[0].scaled : image[0].image
+    });
+  }
+
   if (isLocalhost(ip)) {
     return next();
   }
@@ -68,7 +76,6 @@ export const checkPolicies = async (
 
   if (!country || BLOCKED_COUNTRIES.includes(country)) {
     logger.info(`[REQUEST FROM BLOCKED COUNTRY] : [${country} : ${ip}]`);
-    res.statusCode = 401;
     const image = await fetchRandomImage();
     return res.status(403).send({
       country: country,
