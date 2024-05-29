@@ -49,6 +49,7 @@ export * from '../models/ProfileProxy';
 export * from '../models/ProfileProxyAction';
 export * from '../models/ProfileProxyActionType';
 export * from '../models/QuotedDrop';
+export * from '../models/RepRating';
 export * from '../models/UpdateProxyActionRequest';
 export * from '../models/Wave';
 export * from '../models/WaveConfig';
@@ -114,6 +115,7 @@ import { ProfileProxy } from '../models/ProfileProxy';
 import { ProfileProxyAction             } from '../models/ProfileProxyAction';
 import { ProfileProxyActionType } from '../models/ProfileProxyActionType';
 import { QuotedDrop } from '../models/QuotedDrop';
+import { RepRating } from '../models/RepRating';
 import { UpdateProxyActionRequest } from '../models/UpdateProxyActionRequest';
 import { Wave } from '../models/Wave';
 import { WaveConfig      } from '../models/WaveConfig';
@@ -202,6 +204,7 @@ let typeMap: {[index: string]: any} = {
     "ProfileProxy": ProfileProxy,
     "ProfileProxyAction": ProfileProxyAction,
     "QuotedDrop": QuotedDrop,
+    "RepRating": RepRating,
     "UpdateProxyActionRequest": UpdateProxyActionRequest,
     "Wave": Wave,
     "WaveConfig": WaveConfig,
