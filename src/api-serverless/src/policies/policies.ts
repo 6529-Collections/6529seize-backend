@@ -5,6 +5,7 @@ import { fetchRandomImage } from '../../../db-api';
 const logger = Logger.get('API_POLICIES');
 
 const geoip = require('geoip-lite');
+geoip.startWatchingDataUpdate();
 
 export const BLOCKED_COUNTRIES = [
   'KP', // North Korea
