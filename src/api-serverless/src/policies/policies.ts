@@ -1,11 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { Logger } from '../../../logging';
 import { fetchRandomImage } from '../../../db-api';
+import fetch from 'node-fetch';
 
 const logger = Logger.get('API_POLICIES');
-
-const geoip = require('geoip-lite');
-geoip.startWatchingDataUpdate();
 
 export const BLOCKED_COUNTRIES = [
   'KP', // North Korea
@@ -61,12 +59,14 @@ export const checkPolicies = async (
     ip = ip.substring(7);
   }
 
+  ip = '104.28.100.0';
+
   if (isLocalhost(ip)) {
     return next();
   }
 
-  const geoInfo = geoip.lookup(ip);
-  const country = geoInfo?.country;
+  const ipInfo = await getIpInfo(ip);
+  const country = ipInfo?.country;
 
   if (!country || BLOCKED_COUNTRIES.includes(country)) {
     logger.info(`[REQUEST FROM BLOCKED COUNTRY] : [${country} : ${ip}]`);
@@ -84,3 +84,14 @@ export const checkPolicies = async (
 const isLocalhost = (ip: string) => {
   return ip === '127.0.0.1' || ip === '::1';
 };
+
+async function getIpInfo(ip: string) {
+  try {
+    const response = await fetch(`https://ipinfo.io/${ip}/json`);
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Failed to fetch client IP:', error);
+    return null;
+  }
+}
