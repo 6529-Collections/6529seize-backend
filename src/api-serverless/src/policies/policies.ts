@@ -51,6 +51,11 @@ export const checkPolicies = async (
   res: Response,
   next: NextFunction
 ) => {
+  if (req.method == 'OPTIONS') {
+    next();
+    return;
+  }
+
   let ip = req.ip?.split(',')[0].trim();
   if (ip && ip.startsWith('::ffff:')) {
     ip = ip.substring(7);
