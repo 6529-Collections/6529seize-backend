@@ -53,32 +53,31 @@ export const checkPolicies = async (
 ) => {
   if (req.method == 'OPTIONS') {
     next();
-    return;
+  } else {
+    let ip = req.ip?.split(',')[0].trim();
+    if (ip && ip.startsWith('::ffff:')) {
+      ip = ip.substring(7);
+    }
+
+    if (isLocalhost(ip)) {
+      return next();
+    }
+
+    const geoInfo = geoip.lookup(ip);
+    const country = geoInfo?.country;
+
+    if (!country || BLOCKED_COUNTRIES.includes(country)) {
+      logger.info(`[REQUEST FROM BLOCKED COUNTRY] : [${country} : ${ip}]`);
+      res.statusCode = 401;
+      const image = await fetchRandomImage();
+      return res.status(403).send({
+        country: country,
+        image: image[0].scaled ? image[0].scaled : image[0].image
+      });
+    }
+
+    next();
   }
-
-  let ip = req.ip?.split(',')[0].trim();
-  if (ip && ip.startsWith('::ffff:')) {
-    ip = ip.substring(7);
-  }
-
-  if (isLocalhost(ip)) {
-    return next();
-  }
-
-  const geoInfo = geoip.lookup(ip);
-  const country = geoInfo?.country;
-
-  if (!country || BLOCKED_COUNTRIES.includes(country)) {
-    logger.info(`[REQUEST FROM BLOCKED COUNTRY] : [${country} : ${ip}]`);
-    res.statusCode = 401;
-    const image = await fetchRandomImage();
-    return res.status(403).send({
-      country: country,
-      image: image[0].scaled ? image[0].scaled : image[0].image
-    });
-  }
-
-  next();
 };
 
 const isLocalhost = (ip: string) => {
