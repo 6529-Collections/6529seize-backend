@@ -686,4 +686,16 @@ export class NextGenTokenListing {
 
   @Column({ type: 'int' })
   blur_listing_time!: number;
+
+  @Column({ type: 'double' })
+  me_price!: number;
+
+  @Column({ type: 'double' })
+  me_royalty!: number;
+
+  @Column({ type: 'int' })
+  me_listing_time!: number;
+
+  @Column({ type: 'int' })
+  me_expiration_time!: number;
 }
