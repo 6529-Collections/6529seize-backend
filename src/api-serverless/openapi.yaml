@@ -207,6 +207,36 @@ paths:
                 $ref: "#/components/schemas/ChangeProfileRepRatingResponse"
         "400":
           description: "Invalid request"
+    get:
+      tags:
+          - ProfileREP
+      summary: Get profile REP rating
+      operationId: getProfileRepRating
+      parameters:
+        - name: identity
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: from_identity
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: category
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RepRating"
+        "404":
+          description: Profile not found
   /profiles/{identity}/cic/rating:
     post:
       tags:
@@ -2020,6 +2050,16 @@ components:
       properties:
         token:
           type: string
+
+    RepRating:
+      type: object
+      required:
+        - rating
+      properties:
+        rating:
+          type: number
+          format: int64
+
 
     ChangeProfileRepRating:
         type: object
