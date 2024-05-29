@@ -114,12 +114,13 @@ export async function validateNonSubscriptionAirdrop(
   }
 
   if (areEqualAddresses(RESEARCH_6529_ADDRESS, transaction.to_address)) {
+    const message = 'Airdrop to research';
     logger.info(
-      `[SKIPPING TRANSACTION] : [AIRDROP TO RESEARCH] : [Transaction ${transaction.transaction}]`
+      `[SKIPPING TRANSACTION] : [${message}] : [Transaction ${transaction.transaction}]`
     );
     return {
       valid: true,
-      message: 'Airdrop to research'
+      message
     };
   }
 
@@ -160,12 +161,13 @@ export async function validateNonSubscriptionAirdrop(
       distributionAirdrop.count >=
       previousAirdrops + transaction.token_count
     ) {
+      const message = 'Distribution airdrop';
       logger.info(
-        `[SKIPPING TRANSACTION] : [DISTRIBUTION AIRDROP] : [Transaction ${transaction.transaction}]`
+        `[SKIPPING TRANSACTION] : [${message}] : [Transaction ${transaction.transaction}]`
       );
       return {
         valid: true,
-        message: 'Initial airdrop'
+        message
       };
     }
   }

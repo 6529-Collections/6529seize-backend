@@ -69,7 +69,7 @@ describe('SubscriptionTests', () => {
       );
       expect(response).toEqual({
         valid: true,
-        message: 'Initial airdrop'
+        message: 'Distribution airdrop'
       });
       expect(entityManager.query).toHaveBeenCalledTimes(2);
     });
@@ -88,7 +88,7 @@ describe('SubscriptionTests', () => {
       );
       expect(response).toEqual({
         valid: true,
-        message: 'Initial airdrop'
+        message: 'Distribution airdrop'
       });
       expect(entityManager.query).toHaveBeenCalledTimes(2);
     });
