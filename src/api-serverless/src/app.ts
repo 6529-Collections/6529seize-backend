@@ -206,7 +206,9 @@ loadApi().then(() => {
     const ip = req.ip;
     const ips = req.ips;
 
-    logger.info(`[IP${ip}] : [IPS: ${ips}]`);
+    logger.info(`[IP: ${ip}] : [IPS: ${ips}]`);
+
+    next();
   };
 
   const requireLogin = async (req: any, res: any, next: any) => {
