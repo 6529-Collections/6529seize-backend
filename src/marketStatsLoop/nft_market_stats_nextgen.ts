@@ -94,8 +94,8 @@ async function processBatch(
       meListingTime = meListing?.validFrom;
       meExpirationTime = meListing?.validUntil;
       meRoyalty =
-        meListing?.feeBreakdown.find((f: any) => f.kind === 'royalty')?.bps /
-          100 ?? 0;
+        (meListing.feeBreakdown.find((f: any) => f.kind === 'royalty')?.bps ??
+          0) / 100;
     }
 
     const listing: NextGenTokenListing = {
