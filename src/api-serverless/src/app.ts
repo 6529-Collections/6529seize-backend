@@ -198,6 +198,17 @@ loadApi().then(() => {
     ? process.env.API_PASSWORD.split(',')
     : [];
 
+  const checkPolicies = async (
+    req: Request,
+    res: Response,
+    next: NextFunction
+  ) => {
+    const ip = req.ip;
+    const ips = req.ips;
+
+    logger.info(`[IP${ip}] : [IPS: ${ips}]`);
+  };
+
   const requireLogin = async (req: any, res: any, next: any) => {
     if (req.method == 'OPTIONS') {
       next();
@@ -239,6 +250,7 @@ loadApi().then(() => {
   const BASE_PATH = '/api';
   const apiRouter = asyncRouter();
 
+  app.all(`*`, checkPolicies);
   app.all(`${BASE_PATH}*`, requireLogin);
   app.all(`${BASE_PATH}*`, checkCache);
 
