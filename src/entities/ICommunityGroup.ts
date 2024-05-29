@@ -1,9 +1,9 @@
 import { FilterDirection } from '../api-serverless/src/community-members/community-search-criteria.types';
 import { Column, Entity, PrimaryColumn } from 'typeorm';
-import { COMMUNITY_GROUPS_TABLE } from '../constants';
+import { USER_GROUPS_TABLE } from '../constants';
 
-@Entity(COMMUNITY_GROUPS_TABLE)
-export class CommunityGroupEntity {
+@Entity(USER_GROUPS_TABLE)
+export class UserGroupEntity {
   @PrimaryColumn({ type: 'varchar', length: 200, nullable: false })
   readonly id!: string;
   @Column({ type: 'varchar', length: 200, nullable: false })

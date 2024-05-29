@@ -5,11 +5,8 @@ import {
 import { ALL_COMMUNITY_MEMBERS_VIEW, RATINGS_TABLE } from '../../../constants';
 import { profilesService } from '../../../profiles/profiles.service';
 import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
-import { CommunityGroupEntity } from '../../../entities/ICommunityGroup';
-import {
-  communityMemberCriteriaDb,
-  CommunityMemberCriteriaDb
-} from './community-member-criteria.db';
+import { UserGroupEntity } from '../../../entities/ICommunityGroup';
+import { userGroupsDb, UserGroupsDb } from './user-groups.db';
 import slugify from 'slugify';
 import { distinct, uniqueShortId } from '../../../helpers';
 import { ConnectionWrapper } from '../../../sql-executor';
@@ -24,7 +21,7 @@ import { ProfileMin } from '../generated/models/ProfileMin';
 import { RateMatter } from '../../../entities/IRating';
 
 export type NewCommunityMembersCurationCriteria = Omit<
-  CommunityGroupEntity,
+  UserGroupEntity,
   'id' | 'created_at' | 'created_by'
 >;
 
@@ -39,7 +36,7 @@ export class CommunityMemberCriteriaService {
   public static readonly GENERATED_VIEW = 'community_search_view';
 
   constructor(
-    private readonly communityMemberCriteriaDb: CommunityMemberCriteriaDb,
+    private readonly userGroupsDb: UserGroupsDb,
     private readonly abusivenessCheckService: AbusivenessCheckService
   ) {}
 
@@ -48,7 +45,7 @@ export class CommunityMemberCriteriaService {
     createdBy: { id: string; handle: string }
   ): Promise<ApiCommunityMembersCurationCriteria> {
     const savedEntity =
-      await this.communityMemberCriteriaDb.executeNativeQueriesInTransaction(
+      await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const id =
             slugify(criteria.name, {
@@ -58,7 +55,7 @@ export class CommunityMemberCriteriaService {
             }).slice(0, 50) +
             '-' +
             uniqueShortId();
-          await this.communityMemberCriteriaDb.save(
+          await this.userGroupsDb.save(
             {
               ...criteria,
               id,
@@ -79,16 +76,15 @@ export class CommunityMemberCriteriaService {
   public async getCriteriaIdsUserIsEligibleFor(
     profileId: string
   ): Promise<string[]> {
-    const profile = await this.communityMemberCriteriaDb.getCommunityMember(
+    const profile = await this.userGroupsDb.getProfileOverviewByProfileId(
       profileId
     );
     if (profile === null) {
       return [];
     }
-    const givenCicAndRep =
-      await this.communityMemberCriteriaDb.getGivenCicAndRep(profileId);
+    const givenCicAndRep = await this.userGroupsDb.getGivenCicAndRep(profileId);
     const initialSelection =
-      await this.communityMemberCriteriaDb.getCriteriasByConditions({
+      await this.userGroupsDb.getGroupsMatchingConditions({
         profileId,
         receivedCic: profile.cic,
         receivedRep: profile.rep,
@@ -115,7 +111,7 @@ export class CommunityMemberCriteriaService {
     const unambiguousInitial = initialSelection.filter(
       (crit) => !crit.cic_user && !crit.rep_user && !crit.rep_category
     );
-    const ratings = await this.communityMemberCriteriaDb.getRatings(
+    const ratings = await this.userGroupsDb.getRatings(
       profileId,
       distinct([...cicUsers, ...repUsers]),
       repCategories
@@ -206,7 +202,7 @@ export class CommunityMemberCriteriaService {
     profile_id
   }: ChangeCommunityMembersCurationCriteriaVisibility): Promise<ApiCommunityMembersCurationCriteria> {
     const updatedCriteriaEntity =
-      await this.communityMemberCriteriaDb.executeNativeQueriesInTransaction(
+      await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const criteriaEntity = await this.getCriteriaByIdOrThrow(criteria_id);
           if (old_version_id) {
@@ -229,10 +225,7 @@ export class CommunityMemberCriteriaService {
             ) {
               await this.doNameAbusivenessCheck(criteriaEntity);
             }
-            await this.communityMemberCriteriaDb.deleteCriteria(
-              old_version_id,
-              connection
-            );
+            await this.userGroupsDb.deleteById(old_version_id, connection);
           } else {
             await this.doNameAbusivenessCheck(criteriaEntity);
           }
@@ -241,7 +234,7 @@ export class CommunityMemberCriteriaService {
               `You are not allowed to change criteria ${criteria_id}. You can save a new one instead.`
             );
           }
-          await this.communityMemberCriteriaDb.changeCriteriaVisibilityAndSetId(
+          await this.userGroupsDb.changeVisibilityAndSetId(
             {
               currentId: criteria_id,
               newId: old_version_id,
@@ -278,10 +271,7 @@ export class CommunityMemberCriteriaService {
     id: string,
     connection?: ConnectionWrapper<any>
   ): Promise<ApiCommunityMembersCurationCriteria> {
-    const criteria = await this.communityMemberCriteriaDb.getById(
-      id,
-      connection
-    );
+    const criteria = await this.userGroupsDb.getById(id, connection);
     if (!criteria) {
       throw new NotFoundException(`Criteria with id ${id} not found`);
     }
@@ -528,19 +518,19 @@ export class CommunityMemberCriteriaService {
     curationCriteriaName: string | null,
     curationCriteriaUserId: string | null
   ): Promise<ApiCommunityMembersCurationCriteria[]> {
-    const criteria = await this.communityMemberCriteriaDb.searchCriteria(
+    const criteria = await this.userGroupsDb.searchByNameOrAuthor(
       curationCriteriaName,
       curationCriteriaUserId
     );
     return await this.mapCriteriaForApi(criteria);
   }
 
-  async getCriteriasByIds(ids: string[]): Promise<CommunityGroupEntity[]> {
-    return await this.communityMemberCriteriaDb.getCriteriasByIds(ids);
+  async getCriteriasByIds(ids: string[]): Promise<UserGroupEntity[]> {
+    return await this.userGroupsDb.getByIds(ids);
   }
 
   private async mapCriteriaForApi(
-    criteria: CommunityGroupEntity[]
+    criteria: UserGroupEntity[]
   ): Promise<ApiCommunityMembersCurationCriteria[]> {
     const relatedProfiles = await profilesService
       .getProfileMinsByIds(criteria.map((it) => it.created_by))
@@ -584,7 +574,4 @@ export class CommunityMemberCriteriaService {
 }
 
 export const communityMemberCriteriaService =
-  new CommunityMemberCriteriaService(
-    communityMemberCriteriaDb,
-    abusivenessCheckService
-  );
+  new CommunityMemberCriteriaService(userGroupsDb, abusivenessCheckService);
