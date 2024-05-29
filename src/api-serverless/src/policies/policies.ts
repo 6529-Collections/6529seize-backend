@@ -59,8 +59,6 @@ export const checkPolicies = async (
     ip = ip.substring(7);
   }
 
-  ip = '104.28.100.0';
-
   if (isLocalhost(ip)) {
     return next();
   }
