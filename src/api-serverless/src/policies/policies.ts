@@ -57,7 +57,7 @@ export const checkPolicies = async (
   }
 
   let ip = req.ip?.split(',')[0].trim();
-  if (ip && ip.startsWith('::ffff:')) {
+  if (ip?.startsWith('::ffff:')) {
     ip = ip.substring(7);
   }
 
