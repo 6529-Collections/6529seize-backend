@@ -1,5 +1,6 @@
 import {
   DISTRIBUTION_TABLE,
+  MEMES_CONTRACT,
   MEMES_MINT_PRICE,
   NULL_ADDRESS,
   RESEARCH_6529_ADDRESS,
@@ -65,9 +66,7 @@ export const redeemSubscriptions = async (reset?: boolean) => {
 
   await getDataSource().transaction(async (entityManager) => {
     for (const drop of airdrops) {
-      for (let i = 0; i < drop.token_count; i++) {
-        await redeemSubscriptionAirdrop(drop, entityManager);
-      }
+      await processAirdrop(drop, entityManager);
     }
     blockRepo = entityManager.getRepository(
       TransactionsProcessedSubscriptionsBlock
@@ -77,59 +76,135 @@ export const redeemSubscriptions = async (reset?: boolean) => {
   });
 };
 
-async function redeemSubscriptionAirdrop(
+async function processAirdrop(
   transaction: Transaction,
   entityManager: EntityManager
 ) {
-  logger.info(
-    `[REDEEMING SUBSCRIPTION AIRDROP] : [Transaction ${transaction.transaction}]`
+  const validation = await validateNonSubscriptionAirdrop(
+    transaction,
+    entityManager
   );
 
+  if (validation.valid) {
+    return;
+  }
+
+  for (let i = 0; i < transaction.token_count; i++) {
+    await processSubscription(transaction, entityManager);
+  }
+}
+
+export async function validateNonSubscriptionAirdrop(
+  transaction: Transaction,
+  entityManager: EntityManager
+): Promise<{ valid: boolean; message: string }> {
+  if (!areEqualAddresses(MEMES_CONTRACT, transaction.contract)) {
+    const message = 'Not memes contract';
+    logger.info(
+      `[SKIPPING: ${message}] : [CONTRACT ${transaction.contract}] : [Transaction ${transaction.transaction}]`
+    );
+    return {
+      valid: true,
+      message
+    };
+  } else {
+    logger.info(
+      `[PROCESSING AIRDROP] : [Transaction ${transaction.transaction}]`
+    );
+  }
+
+  if (areEqualAddresses(RESEARCH_6529_ADDRESS, transaction.to_address)) {
+    const message = 'Airdrop to research';
+    logger.info(
+      `[SKIPPING TRANSACTION] : [${message}] : [Transaction ${transaction.transaction}]`
+    );
+    return {
+      valid: true,
+      message
+    };
+  }
+
+  const distributionAirdrop = (
+    await entityManager.query(
+      `SELECT * FROM ${DISTRIBUTION_TABLE} 
+        WHERE LOWER(wallet) = ?
+        AND LOWER(phase) = ?
+        AND LOWER(contract) = ?
+        AND card_id = ?;`,
+      [
+        transaction.to_address.toLowerCase(),
+        'airdrop',
+        transaction.contract.toLowerCase(),
+        transaction.token_id
+      ]
+    )
+  )[0];
+
+  if (distributionAirdrop) {
+    const previousAirdrops = (
+      await entityManager.query(
+        `SELECT SUM(token_count) as previous_airdrops FROM ${TRANSACTIONS_TABLE}
+        WHERE contract = ?
+        AND token_id = ?
+        AND from_address = ?
+        AND block < ?
+        AND value = 0;`,
+        [
+          transaction.contract,
+          transaction.token_id,
+          NULL_ADDRESS,
+          transaction.block
+        ]
+      )
+    )[0].previous_airdrops;
+    if (
+      distributionAirdrop.count >=
+      previousAirdrops + transaction.token_count
+    ) {
+      const message = 'Distribution airdrop';
+      logger.info(
+        `[SKIPPING TRANSACTION] : [${message}] : [Transaction ${transaction.transaction}]`
+      );
+      return {
+        valid: true,
+        message
+      };
+    }
+  }
+
+  return {
+    valid: false,
+    message: 'Subscription airdrop'
+  };
+}
+
+async function processSubscription(
+  transaction: Transaction,
+  entityManager: EntityManager
+) {
   const finalSubscription: NFTFinalSubscription | undefined = (
     await entityManager.query(
       `SELECT * FROM ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
-      WHERE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.contract = "${transaction.contract}"
-      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.token_id = ${transaction.token_id}
-      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.airdrop_address = "${transaction.to_address}"
+      WHERE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.contract = ?
+      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.token_id = ?
+      AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.airdrop_address = ?
       AND ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}.redeemed = false
-      ORDER BY subscribed_at ASC;`
+      ORDER BY phase ASC, phase_position ASC;`,
+      [transaction.contract, transaction.token_id, transaction.to_address]
     )
   )[0];
 
   if (!finalSubscription) {
-    const distributionAirdrop = (
-      await sqlExecutor.execute(
-        `SELECT * FROM ${DISTRIBUTION_TABLE} 
-          WHERE LOWER(wallet) = :toAddress 
-          AND LOWER(phase) = :phase 
-          AND LOWER(contract) = :contract 
-          AND card_id = :tokenId;`,
-        {
-          toAddress: transaction.to_address.toLowerCase(),
-          phase: 'airdrop',
-          contract: transaction.contract.toLowerCase(),
-          tokenId: transaction.token_id
-        }
-      )
-    )[0];
-
-    const isAirdropList = !!distributionAirdrop;
-
-    if (
-      !isAirdropList &&
-      !areEqualAddresses(RESEARCH_6529_ADDRESS, transaction.to_address)
-    ) {
-      const message = `No subscription found for airdrop address: ${
-        transaction.to_address
-      } \nTransaction: ${getTransactionLink(1, transaction.transaction)}`;
-      logger.warn(message);
-      await sendDiscordUpdate(
-        process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
-        message,
-        'Subscriptions',
-        'warn'
-      );
-    }
+    const message = `No subscription found for airdrop address: ${
+      transaction.to_address
+    } \nTransaction: ${getTransactionLink(1, transaction.transaction)}`;
+    logger.warn(message);
+    await sendDiscordUpdate(
+      process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
+      message,
+      'Subscriptions',
+      'warn'
+    );
     return;
   }
 

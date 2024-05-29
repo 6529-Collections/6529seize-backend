@@ -221,10 +221,9 @@ export async function splitAllowlistResults(
     }
   }
 
-  const mergedAirDrops = mergeDuplicateWallets(airdrops);
   const mergedAllowlists = mergeDuplicateWallets(allowlists);
 
-  return { airdrops: mergedAirDrops, allowlists: mergedAllowlists };
+  return { airdrops, allowlists: mergedAllowlists };
 }
 
 export async function getPublicSubscriptions(

@@ -758,6 +758,14 @@ export class RatingsService {
       page: pageRequest.page
     };
   }
+
+  async getRepRating(param: {
+    rater_profile_id: string | null;
+    target_profile_id: string;
+    category: string | null;
+  }): Promise<number> {
+    return this.ratingsDb.getRepRating(param);
+  }
 }
 
 export type GetProfileRatingsRequest = Request<
