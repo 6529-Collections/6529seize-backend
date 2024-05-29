@@ -1,4 +1,3 @@
-import { FilterDirection } from '../api-serverless/src/community-members/user-group.types';
 import { Column, Entity, PrimaryColumn } from 'typeorm';
 import { USER_GROUPS_TABLE } from '../constants';
 
@@ -40,4 +39,9 @@ export class UserGroupEntity {
   readonly created_by!: string;
   @Column({ type: 'boolean', nullable: false })
   readonly visible!: boolean;
+}
+
+export enum FilterDirection {
+  Received = 'RECEIVED',
+  Sent = 'SENT'
 }

@@ -868,6 +868,84 @@ paths:
         "404":
           description: Wave not found
 
+  /groups:
+    get:
+      tags:
+        - Groups
+      summary: Search for user groups
+      operationId: searchUserGroups
+      parameters:
+        - name: group_name
+          description: Partial or full name
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: author_identity
+          description: Group author identity
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GroupFull"
+    post:
+      tags:
+        - Groups
+      summary: Create a group
+      operationId: createGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGroup"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupFull"
+        "400":
+          description: Invalid request
+  /groups/{id}/visibility:
+    post:
+      tags:
+        - Groups
+      summary: Change group visibility
+      operationId: changeGroupVisibility
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeGroupVisibility"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupFull"
+        "404":
+          description: Group not found
+        "400":
+          description: Invalid request
+
 components:
   securitySchemes:
     bearerAuth:
@@ -908,6 +986,170 @@ components:
         created_at:
           type: number
           format: int64
+
+    GroupFull:
+      type: object
+      required:
+        - id
+        - name
+        - group
+        - created_at
+        - created_by
+        - visible
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        group:
+          $ref: "#/components/schemas/GroupDescription"
+        created_at:
+          type: number
+          format: int64
+        created_by:
+          $ref: "#/components/schemas/ProfileMin"
+        visible:
+          type: boolean
+
+    GroupDescription:
+      type: object
+      required:
+        - tdh
+        - rep
+        - cic
+        - level
+      properties:
+        tdh:
+          $ref: "#/components/schemas/GroupTdhFilter"
+        rep:
+          $ref: "#/components/schemas/GroupRepFilter"
+        cic:
+          $ref: "#/components/schemas/GroupCicFilter"
+        level:
+          $ref: "#/components/schemas/GroupLevelFilter"
+
+    GroupTdhFilter:
+      type: object
+      required:
+        - min
+        - max
+      properties:
+        min:
+          type: number
+          minimum: 0
+          format: int64
+          nullable: true
+        max:
+          type: number
+          minimum: 0
+          format: int64
+          nullable: true
+
+    GroupCicFilter:
+      type: object
+      required:
+        - min
+        - max
+        - direction
+        - user_identity
+      properties:
+        min:
+          type: number
+          format: int64
+          nullable: true
+        max:
+          type: number
+          format: int64
+          nullable: true
+        user_identity:
+          type: string
+          minLength: 1
+          maxLength: 200
+          nullable: true
+        direction:
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/GroupFilterDirection"
+
+    GroupRepFilter:
+      type: object
+      required:
+        - min
+        - max
+        - category
+        - direction
+        - user_identity
+      properties:
+        min:
+          type: number
+          format: int64
+          nullable: true
+        max:
+          type: number
+          format: int64
+          nullable: true
+        category:
+          type: string
+          minLength: 1
+          maxLength: 200
+          nullable: true
+        user_identity:
+          type: string
+          minLength: 1
+          maxLength: 200
+          nullable: true
+        direction:
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/GroupFilterDirection"
+
+    GroupLevelFilter:
+      type: object
+      required:
+        - min
+        - max
+      properties:
+        min:
+          type: number
+          format: int64
+          nullable: true
+        max:
+          type: number
+          format: int64
+          nullable: true
+
+    GroupFilterDirection:
+        type: string
+        enum:
+          - RECEIVED
+          - SENT
+
+    CreateGroup:
+      type: object
+      required:
+        - name
+        - group
+        - visible
+      properties:
+        name:
+          type: string
+        group:
+          $ref: "#/components/schemas/GroupDescription"
+        visible:
+          type: boolean
+
+    ChangeGroupVisibility:
+      type: object
+      required:
+        - visible
+        - old_version_id
+      properties:
+        visible:
+          type: boolean
+        old_version_id:
+          type: string
+          minLength: 1
+          nullable: true
 
     PageBase:
       type: object

@@ -1,5 +1,6 @@
 export * from '../models/AcceptActionRequest';
 export * from '../models/AddActionToProxyRequest';
+export * from '../models/ChangeGroupVisibility';
 export * from '../models/ChangeProfileCicRating';
 export * from '../models/ChangeProfileCicRatingResponse';
 export * from '../models/ChangeProfileRepRating';
@@ -8,6 +9,7 @@ export * from '../models/CreateDropMediaUrl201Response';
 export * from '../models/CreateDropMediaUrlRequest';
 export * from '../models/CreateDropPart';
 export * from '../models/CreateDropRequest';
+export * from '../models/CreateGroup';
 export * from '../models/CreateNewProfileProxy';
 export * from '../models/CreateNewProfileProxyAllocateCicAction';
 export * from '../models/CreateNewProfileProxyAllocateRepAction';
@@ -35,6 +37,13 @@ export * from '../models/DropRatingCategory';
 export * from '../models/DropRatingRequest';
 export * from '../models/DropReferencedNFT';
 export * from '../models/Group';
+export * from '../models/GroupCicFilter';
+export * from '../models/GroupDescription';
+export * from '../models/GroupFilterDirection';
+export * from '../models/GroupFull';
+export * from '../models/GroupLevelFilter';
+export * from '../models/GroupRepFilter';
+export * from '../models/GroupTdhFilter';
 export * from '../models/IntRange';
 export * from '../models/LoginRequest';
 export * from '../models/LoginResponse';
@@ -65,6 +74,7 @@ export * from '../models/WaveVotingConfig';
 
 import { AcceptActionRequest, AcceptActionRequestActionEnum   } from '../models/AcceptActionRequest';
 import { AddActionToProxyRequest    } from '../models/AddActionToProxyRequest';
+import { ChangeGroupVisibility } from '../models/ChangeGroupVisibility';
 import { ChangeProfileCicRating } from '../models/ChangeProfileCicRating';
 import { ChangeProfileCicRatingResponse } from '../models/ChangeProfileCicRatingResponse';
 import { ChangeProfileRepRating } from '../models/ChangeProfileRepRating';
@@ -73,6 +83,7 @@ import { CreateDropMediaUrl201Response } from '../models/CreateDropMediaUrl201Re
 import { CreateDropMediaUrlRequest } from '../models/CreateDropMediaUrlRequest';
 import { CreateDropPart } from '../models/CreateDropPart';
 import { CreateDropRequest } from '../models/CreateDropRequest';
+import { CreateGroup } from '../models/CreateGroup';
 import { CreateNewProfileProxy } from '../models/CreateNewProfileProxy';
 import { CreateNewProfileProxyAllocateCicAction    } from '../models/CreateNewProfileProxyAllocateCicAction';
 import { CreateNewProfileProxyAllocateRepAction    } from '../models/CreateNewProfileProxyAllocateRepAction';
@@ -100,6 +111,13 @@ import { DropRatingCategory } from '../models/DropRatingCategory';
 import { DropRatingRequest } from '../models/DropRatingRequest';
 import { DropReferencedNFT } from '../models/DropReferencedNFT';
 import { Group } from '../models/Group';
+import { GroupCicFilter     } from '../models/GroupCicFilter';
+import { GroupDescription } from '../models/GroupDescription';
+import { GroupFilterDirection } from '../models/GroupFilterDirection';
+import { GroupFull } from '../models/GroupFull';
+import { GroupLevelFilter } from '../models/GroupLevelFilter';
+import { GroupRepFilter      } from '../models/GroupRepFilter';
+import { GroupTdhFilter } from '../models/GroupTdhFilter';
 import { IntRange } from '../models/IntRange';
 import { LoginRequest } from '../models/LoginRequest';
 import { LoginResponse } from '../models/LoginResponse';
@@ -143,6 +161,7 @@ let primitives = [
 let enumsMap: Set<string> = new Set<string>([
     "AcceptActionRequestActionEnum",
     "DropActivityLogTypeEnum",
+    "GroupFilterDirection",
     "NftTokenTypeEnum",
     "ProfileProxyActionType",
     "WaveCreditScope",
@@ -153,6 +172,7 @@ let enumsMap: Set<string> = new Set<string>([
 let typeMap: {[index: string]: any} = {
     "AcceptActionRequest": AcceptActionRequest,
     "AddActionToProxyRequest": AddActionToProxyRequest,
+    "ChangeGroupVisibility": ChangeGroupVisibility,
     "ChangeProfileCicRating": ChangeProfileCicRating,
     "ChangeProfileCicRatingResponse": ChangeProfileCicRatingResponse,
     "ChangeProfileRepRating": ChangeProfileRepRating,
@@ -161,6 +181,7 @@ let typeMap: {[index: string]: any} = {
     "CreateDropMediaUrlRequest": CreateDropMediaUrlRequest,
     "CreateDropPart": CreateDropPart,
     "CreateDropRequest": CreateDropRequest,
+    "CreateGroup": CreateGroup,
     "CreateNewProfileProxy": CreateNewProfileProxy,
     "CreateNewProfileProxyAllocateCicAction": CreateNewProfileProxyAllocateCicAction,
     "CreateNewProfileProxyAllocateRepAction": CreateNewProfileProxyAllocateRepAction,
@@ -188,6 +209,12 @@ let typeMap: {[index: string]: any} = {
     "DropRatingRequest": DropRatingRequest,
     "DropReferencedNFT": DropReferencedNFT,
     "Group": Group,
+    "GroupCicFilter": GroupCicFilter,
+    "GroupDescription": GroupDescription,
+    "GroupFull": GroupFull,
+    "GroupLevelFilter": GroupLevelFilter,
+    "GroupRepFilter": GroupRepFilter,
+    "GroupTdhFilter": GroupTdhFilter,
     "IntRange": IntRange,
     "LoginRequest": LoginRequest,
     "LoginResponse": LoginResponse,

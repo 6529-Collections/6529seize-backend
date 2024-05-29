@@ -1,33 +1,28 @@
-import { FilterDirection, UserGroup } from './user-group.types';
 import { ALL_COMMUNITY_MEMBERS_VIEW, RATINGS_TABLE } from '../../../constants';
 import { profilesService } from '../../../profiles/profiles.service';
 import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
 import { UserGroupEntity } from '../../../entities/ICommunityGroup';
 import { userGroupsDb, UserGroupsDb } from './user-groups.db';
 import slugify from 'slugify';
-import { distinct, uniqueShortId } from '../../../helpers';
+import { distinct, resolveEnum, uniqueShortId } from '../../../helpers';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
-import { ApiUserGroup } from './api-user-group';
 import {
   abusivenessCheckService,
   AbusivenessCheckService
 } from '../../../profiles/abusiveness-check.service';
 import { ProfileMin } from '../generated/models/ProfileMin';
 import { RateMatter } from '../../../entities/IRating';
+import { ChangeGroupVisibility } from '../generated/models/ChangeGroupVisibility';
+import { GroupFull } from '../generated/models/GroupFull';
+import { GroupFilterDirection } from '../generated/models/GroupFilterDirection';
+import { GroupDescription } from '../generated/models/GroupDescription';
 
-export type NewUserGroup = Omit<
+export type NewUserGroupEntity = Omit<
   UserGroupEntity,
   'id' | 'created_at' | 'created_by'
 >;
-
-export interface ChangeUserGroupVisibility {
-  group_id: string;
-  visible: boolean;
-  old_version_id: string | null;
-  profile_id: string;
-}
 
 export class UserGroupsService {
   public static readonly GENERATED_VIEW = 'user_groups_view';
@@ -38,9 +33,9 @@ export class UserGroupsService {
   ) {}
 
   async save(
-    group: NewUserGroup,
+    group: NewUserGroupEntity,
     createdBy: { id: string; handle: string }
-  ): Promise<ApiUserGroup> {
+  ): Promise<GroupFull> {
     const savedEntity =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -119,7 +114,7 @@ export class UserGroupsService {
           .filter(
             (rating) =>
               rating.matter === RateMatter.CIC &&
-              (FilterDirection.RECEIVED
+              (GroupFilterDirection.Received
                 ? rating.rater_profile_id
                 : rating.matter_target_id) === group.cic_user
           )
@@ -137,7 +132,7 @@ export class UserGroupsService {
           .filter(
             (rating) =>
               rating.matter === RateMatter.REP &&
-              (FilterDirection.RECEIVED
+              (GroupFilterDirection.Received
                 ? rating.rater_profile_id
                 : rating.matter_target_id) === group.rep_user
           )
@@ -155,7 +150,7 @@ export class UserGroupsService {
           .filter(
             (rating) =>
               rating.matter === RateMatter.REP &&
-              (FilterDirection.RECEIVED
+              (GroupFilterDirection.Received
                 ? rating.rater_profile_id
                 : rating.matter_target_id) === group.rep_user &&
               rating.matter_category === group.rep_category
@@ -174,7 +169,7 @@ export class UserGroupsService {
           .filter(
             (rating) =>
               rating.matter === RateMatter.REP &&
-              (FilterDirection.RECEIVED
+              (GroupFilterDirection.Received
                 ? rating.rater_profile_id
                 : rating.matter_target_id) === profileId &&
               rating.matter_category === group.rep_category
@@ -197,7 +192,10 @@ export class UserGroupsService {
     old_version_id,
     visible,
     profile_id
-  }: ChangeUserGroupVisibility): Promise<ApiUserGroup> {
+  }: ChangeGroupVisibility & {
+    group_id: string;
+    profile_id: string;
+  }): Promise<GroupFull> {
     const updatedGroupEntity =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -247,7 +245,7 @@ export class UserGroupsService {
     return updatedGroupEntity;
   }
 
-  private async doNameAbusivenessCheck(groupEntity: ApiUserGroup) {
+  private async doNameAbusivenessCheck(groupEntity: GroupFull) {
     const abusivenessDetectionResult =
       await this.abusivenessCheckService.checkFilterName({
         text: groupEntity.name,
@@ -263,7 +261,7 @@ export class UserGroupsService {
   public async getByIdOrThrow(
     id: string,
     connection?: ConnectionWrapper<any>
-  ): Promise<ApiUserGroup> {
+  ): Promise<GroupFull> {
     const group = await this.userGroupsDb.getById(id, connection);
     if (!group) {
       throw new NotFoundException(`Group with id ${id} not found`);
@@ -280,13 +278,13 @@ export class UserGroupsService {
         cic: {
           min: null,
           max: null,
-          user: null,
+          user_identity: null,
           direction: null
         },
         rep: {
           min: null,
           max: null,
-          user: null,
+          user_identity: null,
           direction: null,
           category: null
         },
@@ -305,13 +303,14 @@ export class UserGroupsService {
     }
   }
 
-  private async getSqlAndParams(group: UserGroup): Promise<{
+  private async getSqlAndParams(group: GroupDescription): Promise<{
     sql: string;
     params: Record<string, any>;
   } | null> {
-    const filterUsers = [group.cic.user, group.rep.user].filter(
-      (user) => !!user
-    ) as string[];
+    const filterUsers = [
+      group.cic.user_identity,
+      group.rep.user_identity
+    ].filter((user) => !!user) as string[];
     const userIds = await Promise.all(
       filterUsers.map((user) =>
         profilesService
@@ -326,8 +325,12 @@ export class UserGroupsService {
       acc[user] = userIds[index]!;
       return acc;
     }, {} as Record<string, string>);
-    group.cic.user = group.cic.user ? usersToUserIds[group.cic.user] : null;
-    group.rep.user = group.rep.user ? usersToUserIds[group.rep.user] : null;
+    group.cic.user_identity = group.cic.user_identity
+      ? usersToUserIds[group.cic.user_identity]
+      : null;
+    group.rep.user_identity = group.rep.user_identity
+      ? usersToUserIds[group.rep.user_identity]
+      : null;
     group.level.min = group.level.min
       ? getLevelComponentsBorderByLevel(group.level.min)
       : null;
@@ -350,7 +353,7 @@ export class UserGroupsService {
   private getGeneralPart(
     repPart: string | null,
     cicPart: string | null,
-    group: UserGroup,
+    group: GroupDescription,
     params: Record<string, any>
   ) {
     let cmPart = ` ${repPart || cicPart ? ',' : ''}
@@ -386,34 +389,34 @@ export class UserGroupsService {
   }
 
   private getCicPart(
-    group: UserGroup,
+    group: GroupDescription,
     params: Record<string, any>,
     repPart: string | null
   ) {
     const cicGroup = group.cic;
     let cicPart = null;
-    if (cicGroup.user || cicGroup.min || cicGroup.max) {
-      const direction = cicGroup.user
-        ? cicGroup.direction ?? FilterDirection.RECEIVED
-        : FilterDirection.RECEIVED;
-      if (cicGroup.user) {
-        params.cic_user = cicGroup.user;
+    if (cicGroup.user_identity || cicGroup.min || cicGroup.max) {
+      const direction = cicGroup.user_identity
+        ? cicGroup.direction ?? GroupFilterDirection.Received
+        : GroupFilterDirection.Received;
+      if (cicGroup.user_identity) {
+        params.cic_user = cicGroup.user_identity;
       }
       let groupedCicQuery;
-      if (cicGroup.user !== null) {
+      if (cicGroup.user_identity !== null) {
         groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${
-          direction === FilterDirection.RECEIVED
+          direction === GroupFilterDirection.Received
             ? 'matter_target_id'
             : 'rater_profile_id'
         } as profile_id, rating from ${RATINGS_TABLE} where matter = 'CIC' and rating <> 0 and ${
-          direction === FilterDirection.RECEIVED
+          direction === GroupFilterDirection.Received
             ? 'rater_profile_id'
             : 'matter_target_id'
         } = :cic_user)`;
-        params.cic_user = cicGroup.user;
+        params.cic_user = cicGroup.user_identity;
       } else {
         groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${
-          direction === FilterDirection.RECEIVED
+          direction === GroupFilterDirection.Received
             ? 'matter_target_id'
             : 'rater_profile_id'
         } as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' and rating <> 0 group by 1)`;
@@ -432,44 +435,55 @@ export class UserGroupsService {
     return cicPart;
   }
 
-  private getRepPart(group: UserGroup, params: Record<string, any>) {
+  private getRepPart(group: GroupDescription, params: Record<string, any>) {
     let repPart = null;
     const repGroup = group.rep;
-    if (repGroup.category || repGroup.user || repGroup.max || repGroup.min) {
-      const direction = repGroup.direction ?? FilterDirection.RECEIVED;
-      if (repGroup.user) {
-        params.rep_user = repGroup.user;
+    if (
+      repGroup.category ||
+      repGroup.user_identity ||
+      repGroup.max ||
+      repGroup.min
+    ) {
+      const direction = repGroup.direction ?? GroupFilterDirection.Received;
+      if (repGroup.user_identity) {
+        params.rep_user = repGroup.user_identity;
       }
       let groupedRepQuery: string;
-      if (repGroup.user !== null && repGroup.category !== null) {
+      if (repGroup.user_identity !== null && repGroup.category !== null) {
         groupedRepQuery = `grouped_reps as (select ${
-          direction === FilterDirection.RECEIVED
+          direction === GroupFilterDirection.Received
             ? 'matter_target_id'
             : 'rater_profile_id'
         } as profile_id, matter_category, rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 and ${
-          direction === FilterDirection.RECEIVED
+          direction === GroupFilterDirection.Received
             ? 'rater_profile_id'
             : 'matter_target_id'
         } = :rep_user)`;
-      } else if (repGroup.user !== null && repGroup.category === null) {
+      } else if (
+        repGroup.user_identity !== null &&
+        repGroup.category === null
+      ) {
         groupedRepQuery = `grouped_reps as (select ${
-          direction === FilterDirection.RECEIVED
+          direction === GroupFilterDirection.Received
             ? 'matter_target_id'
             : 'rater_profile_id'
         } as profile_id, matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 and ${
-          direction === FilterDirection.RECEIVED
+          direction === GroupFilterDirection.Received
             ? 'rater_profile_id'
             : 'matter_target_id'
         } = :rep_user group by 1, 2)`;
-      } else if (repGroup.user === null && repGroup.category !== null) {
+      } else if (
+        repGroup.user_identity === null &&
+        repGroup.category !== null
+      ) {
         groupedRepQuery = `grouped_reps as (select ${
-          direction === FilterDirection.RECEIVED
+          direction === GroupFilterDirection.Received
             ? 'matter_target_id'
             : 'rater_profile_id'
         } as profile_id, matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 group by 1, 2)`;
       } else {
         groupedRepQuery = `grouped_reps as (select ${
-          direction === FilterDirection.RECEIVED
+          direction === GroupFilterDirection.Received
             ? 'matter_target_id'
             : 'rater_profile_id'
         } as profile_id, null as matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 group by 1, 2)`;
@@ -496,7 +510,7 @@ export class UserGroupsService {
   async searchByNameOrAuthor(
     name: string | null,
     authorId: string | null
-  ): Promise<ApiUserGroup[]> {
+  ): Promise<GroupFull[]> {
     const group = await this.userGroupsDb.searchByNameOrAuthor(name, authorId);
     return await this.mapForApi(group);
   }
@@ -505,7 +519,7 @@ export class UserGroupsService {
     return await this.userGroupsDb.getByIds(ids);
   }
 
-  private async mapForApi(group: UserGroupEntity[]): Promise<ApiUserGroup[]> {
+  private async mapForApi(group: UserGroupEntity[]): Promise<GroupFull[]> {
     const relatedProfiles = await profilesService
       .getProfileMinsByIds(group.map((it) => it.created_by))
       .then((res) =>
@@ -514,23 +528,27 @@ export class UserGroupsService {
           return acc;
         }, {} as Record<string, ProfileMin>)
       );
-    return group.map((it) => ({
+    return group.map<GroupFull>((it) => ({
       id: it.id,
       name: it.name,
       visible: it.visible,
-      created_at: it.created_at,
+      created_at: it.created_at?.getTime(),
       group: {
         cic: {
           min: it.cic_min,
           max: it.cic_max,
-          direction: it.cic_direction,
-          user: it.cic_user
+          direction: it.cic_direction
+            ? resolveEnum(GroupFilterDirection, it.cic_direction)!
+            : null,
+          user_identity: it.cic_user
         },
         rep: {
           min: it.rep_min,
           max: it.rep_max,
-          direction: it.rep_direction,
-          user: it.rep_user,
+          direction: it.rep_direction
+            ? resolveEnum(GroupFilterDirection, it.rep_direction)!
+            : null,
+          user_identity: it.rep_user,
           category: it.rep_category
         },
         level: {
