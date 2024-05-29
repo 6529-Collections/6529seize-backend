@@ -74,9 +74,9 @@ export const checkPolicies = async (
         country: country,
         image: image[0].scaled ? image[0].scaled : image[0].image
       });
+    } else {
+      next();
     }
-
-    next();
   }
 };
 
