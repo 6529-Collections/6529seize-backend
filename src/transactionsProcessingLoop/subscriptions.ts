@@ -92,11 +92,6 @@ async function processAirdrop(
   for (let i = 0; i < transaction.token_count; i++) {
     await processSubscription(transaction, entityManager);
   }
-
-  return {
-    valid: true,
-    message: 'Processed'
-  };
 }
 
 export async function validateNonSubscriptionAirdrop(
