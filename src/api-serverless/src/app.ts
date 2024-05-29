@@ -62,6 +62,7 @@ import { parseTdhResultsFromDB } from '../../sql_helpers';
 import { loadLocalConfig, loadSecrets } from '../../env';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
 import * as SwaggerUI from 'swagger-ui-express';
+import { checkPolicies } from './policies/policies';
 
 const YAML = require('yamljs');
 
@@ -197,19 +198,6 @@ loadApi().then(() => {
   const pass = process.env.API_PASSWORD
     ? process.env.API_PASSWORD.split(',')
     : [];
-
-  const checkPolicies = async (
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ) => {
-    const ip = req.ip;
-    const ips = req.ips;
-
-    logger.info(`[IP: ${ip}] : [IPS: ${ips}]`);
-
-    next();
-  };
 
   const requireLogin = async (req: any, res: any, next: any) => {
     if (req.method == 'OPTIONS') {
