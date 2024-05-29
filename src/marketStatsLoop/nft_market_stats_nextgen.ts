@@ -15,6 +15,7 @@ export const findNextgenMarketStats = async (contract: string) => {
   logger.info(`[CONTRACT ${contract}] [RUNNING]`);
 
   const blurListings = await getBlurListings(contract);
+  const meListings = await getMagicEdenListings(contract);
 
   const dataSource = getDataSource();
   await dataSource.transaction(async (entityManager) => {
@@ -23,7 +24,13 @@ export const findNextgenMarketStats = async (contract: string) => {
     const batchedTokens = batchArray(sortedTokens, 30);
 
     for (const batch of batchedTokens) {
-      await processBatch(entityManager, batch, contract, blurListings);
+      await processBatch(
+        entityManager,
+        batch,
+        contract,
+        blurListings,
+        meListings
+      );
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
   });
@@ -33,7 +40,8 @@ async function processBatch(
   manager: EntityManager,
   tokens: NextGenToken[],
   contract: string,
-  blurListings: any[]
+  blurListings: any[],
+  meListings: any[]
 ) {
   let url = `https://api.opensea.io/api/v2/orders/ethereum/seaport/listings?asset_contract_address=${contract}&limit=${tokens.length}`;
   for (const token of tokens) {
@@ -51,6 +59,10 @@ async function processBatch(
     let osExpirationTime = 0;
     let blurPrice = 0;
     let blurListingTime = 0;
+    let mePrice = 0;
+    let meListingTime = 0;
+    let meExpirationTime = 0;
+    let meRoyalty = 0;
     const osOrder = orders?.find(
       (o) =>
         o.protocol_data.parameters.offer[0].identifierOrCriteria ===
@@ -74,15 +86,31 @@ async function processBatch(
       blurListingTime = new Date(blurListing.price?.listedAt).getTime() / 1000;
     }
 
+    const meListing = meListings.find(
+      (l) => l.criteria.data.token.tokenId === token.id.toString()
+    );
+    if (meListing?.price?.amount?.decimal) {
+      mePrice = meListing?.price?.amount?.decimal;
+      meListingTime = meListing?.validFrom;
+      meExpirationTime = meListing?.validUntil;
+      meRoyalty =
+        (meListing.feeBreakdown.find((f: any) => f.kind === 'royalty')?.bps ??
+          0) / 100;
+    }
+
     const listing: NextGenTokenListing = {
       id: token.id,
-      price: getMinPositivePrice(osPrice, blurPrice),
+      price: getMinPositivePrice([osPrice, blurPrice, mePrice]),
       opensea_price: osPrice,
       opensea_royalty: osRoyalty,
       opensea_listing_time: osListingTime,
       opensea_expiration_time: osExpirationTime,
       blur_price: blurPrice,
-      blur_listing_time: blurListingTime
+      blur_listing_time: blurListingTime,
+      me_price: mePrice,
+      me_listing_time: meListingTime,
+      me_expiration_time: meExpirationTime,
+      me_royalty: meRoyalty
     };
     listings.push(listing);
   }
@@ -114,15 +142,33 @@ async function getBlurListings(contract: string): Promise<any[]> {
   return jsonResponse?.tokens ?? [];
 }
 
-function getMinPositivePrice(osPrice: number, blurPrice: number) {
-  if (osPrice > 0 && blurPrice > 0) {
-    return Math.min(osPrice, blurPrice);
+async function getMagicEdenListings(contract: string): Promise<any[]> {
+  let orders: any[] = [];
+  let continuation: string | null = null;
+
+  do {
+    const url = `https://api-mainnet.magiceden.dev/v3/rtp/ethereum/orders/asks/v5?contracts=${contract}&excludeEOA=true${
+      continuation ? `&continuation=${continuation}` : ''
+    }`;
+    const response = await fetch(url);
+    const jsonResponse: any = await response.json();
+
+    orders = orders.concat(jsonResponse?.orders ?? []);
+
+    continuation = jsonResponse?.continuation ?? null;
+  } while (continuation);
+
+  const filteredOrders = orders.filter((o) => o.source.name === 'Magic Eden');
+  return filteredOrders;
+}
+
+function getMinPositivePrice(prices: number[]): number {
+  const positivePrices = prices.filter((price) => price > 0);
+
+  if (positivePrices.length === 0) {
+    return 0;
   }
-  if (osPrice > 0) {
-    return osPrice;
-  }
-  if (blurPrice > 0) {
-    return blurPrice;
-  }
-  return 0;
+
+  const minPositivePrice = Math.min(...positivePrices);
+  return minPositivePrice;
 }
