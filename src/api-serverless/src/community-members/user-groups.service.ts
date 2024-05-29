@@ -1,7 +1,7 @@
 import { ALL_COMMUNITY_MEMBERS_VIEW, RATINGS_TABLE } from '../../../constants';
 import { profilesService } from '../../../profiles/profiles.service';
 import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
-import { UserGroupEntity } from '../../../entities/ICommunityGroup';
+import { UserGroupEntity } from '../../../entities/IUserGroup';
 import {
   userGroupsDb,
   UserGroupsDb
@@ -21,6 +21,10 @@ import { ChangeGroupVisibility } from '../generated/models/ChangeGroupVisibility
 import { GroupFull } from '../generated/models/GroupFull';
 import { GroupFilterDirection } from '../generated/models/GroupFilterDirection';
 import { GroupDescription } from '../generated/models/GroupDescription';
+import {
+  GroupOwnsNft,
+  GroupOwnsNftNameEnum
+} from '../generated/models/GroupOwnsNft';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -298,7 +302,8 @@ export class UserGroupsService {
         tdh: {
           min: null,
           max: null
-        }
+        },
+        owns_nfts: []
       });
     } else {
       const group = await this.getByIdOrThrow(groupId);
@@ -576,7 +581,39 @@ export class UserGroupsService {
         tdh: {
           min: it.tdh_min,
           max: it.tdh_max
-        }
+        },
+        owns_nfts: [
+          it.owns_meme
+            ? {
+                name: GroupOwnsNftNameEnum.Memes,
+                tokens: it.owns_meme_tokens
+                  ? JSON.parse(it.owns_meme_tokens)
+                  : []
+              }
+            : null,
+          it.owns_gradient
+            ? {
+                name: GroupOwnsNftNameEnum.Gradients,
+                tokens: it.owns_gradient_tokens
+                  ? JSON.parse(it.owns_gradient_tokens)
+                  : []
+              }
+            : null,
+          it.owns_nextgen
+            ? {
+                name: GroupOwnsNftNameEnum.Nextgen,
+                tokens: it.owns_nextgen_tokens
+                  ? JSON.parse(it.owns_nextgen_tokens)
+                  : []
+              }
+            : null,
+          it.owns_lab
+            ? {
+                name: GroupOwnsNftNameEnum.Memelab,
+                tokens: it.owns_lab_tokens ? JSON.parse(it.owns_lab_tokens) : []
+              }
+            : null
+        ].filter((it) => !!it) as GroupOwnsNft[]
       },
       created_by: relatedProfiles[it.created_by] ?? null
     }));

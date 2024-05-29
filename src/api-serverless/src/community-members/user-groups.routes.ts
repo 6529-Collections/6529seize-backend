@@ -17,7 +17,11 @@ import { GroupRepFilter } from '../generated/models/GroupRepFilter';
 import { GroupLevelFilter } from '../generated/models/GroupLevelFilter';
 import { GroupTdhFilter } from '../generated/models/GroupTdhFilter';
 import { distinct, resolveEnum } from '../../../helpers';
-import { FilterDirection } from '../../../entities/ICommunityGroup';
+import { FilterDirection } from '../../../entities/IUserGroup';
+import {
+  GroupOwnsNft,
+  GroupOwnsNftNameEnum
+} from '../generated/models/GroupOwnsNft';
 
 const router = asyncRouter();
 
@@ -107,6 +111,18 @@ router.post(
         };
       })
     );
+    const ownsMemes = apiUserGroup.group.owns_nfts.find(
+      (it) => it.name === GroupOwnsNftNameEnum.Memes
+    );
+    const ownsGradient = apiUserGroup.group.owns_nfts.find(
+      (it) => it.name === GroupOwnsNftNameEnum.Gradients
+    );
+    const ownsLab = apiUserGroup.group.owns_nfts.find(
+      (it) => it.name === GroupOwnsNftNameEnum.Memelab
+    );
+    const ownsNextgen = apiUserGroup.group.owns_nfts.find(
+      (it) => it.name === GroupOwnsNftNameEnum.Nextgen
+    );
     const userGroup: NewUserGroupEntity = {
       name: apiUserGroup.name,
       cic_min: apiUserGroup.group.cic.min,
@@ -132,6 +148,20 @@ router.post(
       tdh_max: apiUserGroup.group.tdh.max,
       level_min: apiUserGroup.group.level.min,
       level_max: apiUserGroup.group.level.max,
+      owns_meme: !!ownsMemes,
+      owns_gradient: !!ownsGradient,
+      owns_lab: !!ownsLab,
+      owns_nextgen: !!ownsNextgen,
+      owns_meme_tokens: ownsMemes?.tokens
+        ? JSON.stringify(ownsMemes.tokens)
+        : null,
+      owns_gradient_tokens: ownsGradient?.tokens
+        ? JSON.stringify(ownsGradient.tokens)
+        : null,
+      owns_lab_tokens: ownsLab?.tokens ? JSON.stringify(ownsLab.tokens) : null,
+      owns_nextgen_tokens: ownsNextgen?.tokens
+        ? JSON.stringify(ownsNextgen.tokens)
+        : null,
       visible: false
     };
     const response = await userGroupsService.save(userGroup, savingProfileId);
@@ -219,12 +249,21 @@ const GroupCicFilterSchema: Joi.ObjectSchema<GroupCicFilter> =
     user_identity: NullableStringSchema
   });
 
+const GroupOwnsNftSchema: Joi.ObjectSchema<GroupOwnsNft> =
+  Joi.object<GroupOwnsNft>({
+    name: Joi.string()
+      .valid(...Object.values(GroupOwnsNftNameEnum))
+      .required(),
+    tokens: Joi.array().required().items(Joi.string()).allow(null)
+  });
+
 const GroupDescriptionSchema: Joi.ObjectSchema<GroupDescription> =
   Joi.object<GroupDescription>({
     tdh: GroupTdhFilterSchema,
     rep: GroupRepFilterSchema,
     cic: GroupCicFilterSchema,
-    level: GroupLevelFilterSchema
+    level: GroupLevelFilterSchema,
+    owns_nfts: Joi.array().required().items(GroupOwnsNftSchema)
   });
 
 const NewUserGroupSchema = Joi.object<CreateGroup>({

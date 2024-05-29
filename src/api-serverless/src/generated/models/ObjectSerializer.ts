@@ -42,6 +42,7 @@ export * from '../models/GroupDescription';
 export * from '../models/GroupFilterDirection';
 export * from '../models/GroupFull';
 export * from '../models/GroupLevelFilter';
+export * from '../models/GroupOwnsNft';
 export * from '../models/GroupRepFilter';
 export * from '../models/GroupTdhFilter';
 export * from '../models/IntRange';
@@ -116,6 +117,7 @@ import { GroupDescription } from '../models/GroupDescription';
 import { GroupFilterDirection } from '../models/GroupFilterDirection';
 import { GroupFull } from '../models/GroupFull';
 import { GroupLevelFilter } from '../models/GroupLevelFilter';
+import { GroupOwnsNft, GroupOwnsNftNameEnum    } from '../models/GroupOwnsNft';
 import { GroupRepFilter      } from '../models/GroupRepFilter';
 import { GroupTdhFilter } from '../models/GroupTdhFilter';
 import { IntRange } from '../models/IntRange';
@@ -162,6 +164,7 @@ let enumsMap: Set<string> = new Set<string>([
     "AcceptActionRequestActionEnum",
     "DropActivityLogTypeEnum",
     "GroupFilterDirection",
+    "GroupOwnsNftNameEnum",
     "NftTokenTypeEnum",
     "ProfileProxyActionType",
     "WaveCreditScope",
@@ -213,6 +216,7 @@ let typeMap: {[index: string]: any} = {
     "GroupDescription": GroupDescription,
     "GroupFull": GroupFull,
     "GroupLevelFilter": GroupLevelFilter,
+    "GroupOwnsNft": GroupOwnsNft,
     "GroupRepFilter": GroupRepFilter,
     "GroupTdhFilter": GroupTdhFilter,
     "IntRange": IntRange,

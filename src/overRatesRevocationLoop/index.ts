@@ -7,7 +7,7 @@ import { Rating } from '../entities/IRating';
 import { ratingsService } from '../rates/ratings.service';
 import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
 import * as sentryContext from '../sentry.context';
-import { UserGroupEntity } from '../entities/ICommunityGroup';
+import { UserGroupEntity } from '../entities/IUserGroup';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
 import {
   DropCommentEntity,

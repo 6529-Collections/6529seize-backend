@@ -39,6 +39,22 @@ export class UserGroupEntity {
   readonly created_by!: string;
   @Column({ type: 'boolean', nullable: false })
   readonly visible!: boolean;
+  @Column({ type: 'boolean' })
+  readonly owns_meme!: boolean | null;
+  @Column({ type: 'text', nullable: true })
+  readonly owns_meme_tokens!: string | null;
+  @Column({ type: 'boolean' })
+  readonly owns_gradient!: boolean | null;
+  @Column({ type: 'text', nullable: true })
+  readonly owns_gradient_tokens!: string | null;
+  @Column({ type: 'boolean' })
+  readonly owns_nextgen!: boolean | null;
+  @Column({ type: 'text', nullable: true })
+  readonly owns_nextgen_tokens!: string | null;
+  @Column({ type: 'boolean' })
+  readonly owns_lab!: boolean | null;
+  @Column({ type: 'text', nullable: true })
+  readonly owns_lab_tokens!: string | null;
 }
 
 export enum FilterDirection {

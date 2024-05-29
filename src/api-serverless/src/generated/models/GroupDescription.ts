@@ -12,6 +12,7 @@
 
 import { GroupCicFilter } from '../models/GroupCicFilter';
 import { GroupLevelFilter } from '../models/GroupLevelFilter';
+import { GroupOwnsNft } from '../models/GroupOwnsNft';
 import { GroupRepFilter } from '../models/GroupRepFilter';
 import { GroupTdhFilter } from '../models/GroupTdhFilter';
 import { HttpFile } from '../http/http';
@@ -21,6 +22,7 @@ export class GroupDescription {
     'rep': GroupRepFilter;
     'cic': GroupCicFilter;
     'level': GroupLevelFilter;
+    'owns_nfts': Array<GroupOwnsNft>;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -47,6 +49,12 @@ export class GroupDescription {
             "name": "level",
             "baseName": "level",
             "type": "GroupLevelFilter",
+            "format": ""
+        },
+        {
+            "name": "owns_nfts",
+            "baseName": "owns_nfts",
+            "type": "Array<GroupOwnsNft>",
             "format": ""
         }    ];
 

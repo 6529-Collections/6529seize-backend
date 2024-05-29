@@ -16,7 +16,7 @@ import { CicStatement } from './entities/ICICStatement';
 import { ProfileActivityLog } from './entities/IProfileActivityLog';
 import { Rating } from './entities/IRating';
 import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
-import { UserGroupEntity } from './entities/ICommunityGroup';
+import { UserGroupEntity } from './entities/IUserGroup';
 import { RatingsSnapshot } from './entities/IRatingsSnapshots';
 import { ProfileProxyEntity } from './entities/IProfileProxy';
 import { ProfileProxyActionEntity } from './entities/IProfileProxyAction';

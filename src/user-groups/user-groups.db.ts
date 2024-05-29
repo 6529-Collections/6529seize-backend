@@ -3,7 +3,7 @@ import {
   dbSupplier,
   LazyDbAccessCompatibleService
 } from '../sql-executor';
-import { UserGroupEntity } from '../entities/ICommunityGroup';
+import { UserGroupEntity } from '../entities/IUserGroup';
 import { PROFILE_FULL, RATINGS_TABLE, USER_GROUPS_TABLE } from '../constants';
 import { RateMatter } from '../entities/IRating';
 
@@ -28,6 +28,14 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                                             level_max,
                                             created_at,
                                             created_by,
+                                            owns_meme,
+                                            owns_meme_tokens,
+                                            owns_gradient,
+                                            owns_gradient_tokens,
+                                            owns_nextgen,
+                                            owns_nextgen_tokens,
+                                            owns_lab,
+                                            owns_lab_tokens,
                                             visible)
           values (:id,
                   :name,
@@ -46,6 +54,14 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                   :level_max,
                   :created_at,
                   :created_by,
+                  :owns_meme,
+                  :owns_meme_tokens,
+                  :owns_gradient,
+                  :owns_gradient_tokens,
+                  :owns_nextgen,
+                  :owns_nextgen_tokens,
+                  :owns_lab,
+                  :owns_lab_tokens,
                   :visible)
     `,
       { ...entity },

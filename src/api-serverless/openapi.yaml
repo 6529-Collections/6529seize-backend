@@ -1018,6 +1018,7 @@ components:
         - rep
         - cic
         - level
+        - owns_nfts
       properties:
         tdh:
           $ref: "#/components/schemas/GroupTdhFilter"
@@ -1027,6 +1028,28 @@ components:
           $ref: "#/components/schemas/GroupCicFilter"
         level:
           $ref: "#/components/schemas/GroupLevelFilter"
+        owns_nfts:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupOwnsNft"
+
+    GroupOwnsNft:
+      type: object
+      required:
+        - name
+        - tokens
+      properties:
+        name:
+          type: string
+          enum:
+            - MEMES
+            - MEMELAB
+            - NEXTGEN
+            - GRADIENTS
+        tokens:
+          type: array
+          items:
+            type: string
 
     GroupTdhFilter:
       type: object
