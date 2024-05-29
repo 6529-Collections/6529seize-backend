@@ -599,6 +599,28 @@ from grouped_rates r
       byUser
     };
   }
+
+  async getRepRating(param: {
+    rater_profile_id: string | null;
+    target_profile_id: string;
+    category: string | null;
+  }): Promise<number> {
+    const sqlParam: Record<string, any> = {
+      target_profile_id: param.target_profile_id
+    };
+    let sql = `select sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and matter_target_id = :target_profile_id`;
+    if (param.rater_profile_id) {
+      sqlParam.rater_profile_id = param.rater_profile_id;
+      sql += ` and rater_profile_id = :rater_profile_id`;
+    }
+    if (param.category) {
+      sqlParam.category = param.category;
+      sql += ` and matter_category = :category`;
+    }
+    return this.db
+      .execute(sql, sqlParam)
+      .then((results) => results[0]?.rating ?? 0);
+  }
 }
 
 export type UpdateRatingRequest = Omit<Rating, 'last_modified'>;
