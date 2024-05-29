@@ -17,7 +17,7 @@ export interface FilterRep extends FilterMinMaxDirectionAndUser {
   readonly category: string | null;
 }
 
-export interface CommunityMembersCurationCriteria {
+export interface UserGroup {
   readonly tdh: FilterMinMax;
   readonly rep: FilterRep;
   readonly cic: FilterMinMaxDirectionAndUser;

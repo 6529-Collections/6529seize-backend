@@ -26,9 +26,9 @@ import { DropPart } from '../generated/models/DropPart';
 import { DropComment } from '../generated/models/DropComment';
 import { Time } from '../../../time';
 import {
-  CommunityMemberCriteriaService,
-  communityMemberCriteriaService
-} from '../community-members/community-member-criteria.service';
+  UserGroupsService,
+  userGroupsService
+} from '../community-members/user-groups.service';
 import { AuthenticationContext } from '../../../auth-context';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 
@@ -36,7 +36,7 @@ export class DropsApiService {
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly profilesService: ProfilesService,
-    private readonly communityMemberCriteriaService: CommunityMemberCriteriaService
+    private readonly userGroupsService: UserGroupsService
   ) {}
 
   public async findDropByIdOrThrow(
@@ -57,9 +57,7 @@ export class DropsApiService {
       authenticationContext
     );
     const criteriasUserIsEligible =
-      await this.communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
-        contextProfileId
-      );
+      await this.userGroupsService.getGroupsUserIsEligibleFor(contextProfileId);
     const dropEntity = await this.dropsDb
       .findDropById(dropId, criteriasUserIsEligible, connection)
       .then(async (drop) => {
@@ -101,7 +99,7 @@ export class DropsApiService {
       authenticationContext
     );
     const eligible_curations =
-      await this.communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
         context_profile_id
       );
     if (
@@ -428,9 +426,7 @@ export class DropsApiService {
       param.authenticationContext
     );
     const criteriasUserIsEligible =
-      await this.communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
-        contextProfileId
-      );
+      await this.userGroupsService.getGroupsUserIsEligibleFor(contextProfileId);
     const dropEntities = await this.dropsDb.findProfileDrops(
       param,
       criteriasUserIsEligible
@@ -551,5 +547,5 @@ export class DropsApiService {
 export const dropsService = new DropsApiService(
   dropsDb,
   profilesService,
-  communityMemberCriteriaService
+  userGroupsService
 );

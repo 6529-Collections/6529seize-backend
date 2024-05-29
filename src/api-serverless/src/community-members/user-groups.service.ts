@@ -1,7 +1,4 @@
-import {
-  CommunityMembersCurationCriteria,
-  FilterDirection
-} from './community-search-criteria.types';
+import { FilterDirection, UserGroup } from './user-group.types';
 import { ALL_COMMUNITY_MEMBERS_VIEW, RATINGS_TABLE } from '../../../constants';
 import { profilesService } from '../../../profiles/profiles.service';
 import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
@@ -12,7 +9,7 @@ import { distinct, uniqueShortId } from '../../../helpers';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
-import { ApiCommunityMembersCurationCriteria } from './api-community-members-curation-criteria';
+import { ApiUserGroup } from './api-user-group';
 import {
   abusivenessCheckService,
   AbusivenessCheckService
@@ -20,35 +17,35 @@ import {
 import { ProfileMin } from '../generated/models/ProfileMin';
 import { RateMatter } from '../../../entities/IRating';
 
-export type NewCommunityMembersCurationCriteria = Omit<
+export type NewUserGroup = Omit<
   UserGroupEntity,
   'id' | 'created_at' | 'created_by'
 >;
 
-export interface ChangeCommunityMembersCurationCriteriaVisibility {
-  criteria_id: string;
+export interface ChangeUserGroupVisibility {
+  group_id: string;
   visible: boolean;
   old_version_id: string | null;
   profile_id: string;
 }
 
-export class CommunityMemberCriteriaService {
-  public static readonly GENERATED_VIEW = 'community_search_view';
+export class UserGroupsService {
+  public static readonly GENERATED_VIEW = 'user_groups_view';
 
   constructor(
     private readonly userGroupsDb: UserGroupsDb,
     private readonly abusivenessCheckService: AbusivenessCheckService
   ) {}
 
-  async saveCurationCriteria(
-    criteria: NewCommunityMembersCurationCriteria,
+  async save(
+    group: NewUserGroup,
     createdBy: { id: string; handle: string }
-  ): Promise<ApiCommunityMembersCurationCriteria> {
+  ): Promise<ApiUserGroup> {
     const savedEntity =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
           const id =
-            slugify(criteria.name, {
+            slugify(group.name, {
               replacement: '-',
               lower: true,
               strict: true
@@ -57,23 +54,23 @@ export class CommunityMemberCriteriaService {
             uniqueShortId();
           await this.userGroupsDb.save(
             {
-              ...criteria,
+              ...group,
               id,
               created_at: new Date(),
               created_by: createdBy.id,
               visible: false,
-              name: criteria.name
+              name: group.name
             },
             connection
           );
-          return await this.getCriteriaByIdOrThrow(id, connection);
+          return await this.getByIdOrThrow(id, connection);
         }
       );
     await giveReadReplicaTimeToCatchUp();
     return savedEntity;
   }
 
-  public async getCriteriaIdsUserIsEligibleFor(
+  public async getGroupsUserIsEligibleFor(
     profileId: string
   ): Promise<string[]> {
     const profile = await this.userGroupsDb.getProfileOverviewByProfileId(
@@ -94,85 +91,85 @@ export class CommunityMemberCriteriaService {
         givenRep: givenCicAndRep.rep
       });
     const ambiguousCandidates = initialSelection.filter(
-      (crit) => crit.cic_user ?? crit.rep_user ?? crit.rep_category
+      (group) => group.cic_user ?? group.rep_user ?? group.rep_category
     );
     if (!ambiguousCandidates.length) {
       return initialSelection.map((it) => it.id);
     }
     const cicUsers = ambiguousCandidates
-      .map((crit) => crit.cic_user)
+      .map((group) => group.cic_user)
       .filter((it) => !!it && it !== profileId) as string[];
     const repUsers = ambiguousCandidates
-      .map((crit) => crit.rep_user)
+      .map((group) => group.rep_user)
       .filter((it) => !!it && it !== profileId) as string[];
     const repCategories = ambiguousCandidates
-      .map((crit) => crit.rep_category)
+      .map((group) => group.rep_category)
       .filter((it) => !!it) as string[];
     const unambiguousInitial = initialSelection.filter(
-      (crit) => !crit.cic_user && !crit.rep_user && !crit.rep_category
+      (group) => !group.cic_user && !group.rep_user && !group.rep_category
     );
     const ratings = await this.userGroupsDb.getRatings(
       profileId,
       distinct([...cicUsers, ...repUsers]),
       repCategories
     );
-    const ambiguousCleaned = ambiguousCandidates.filter((crit) => {
-      if (crit.cic_user) {
+    const ambiguousCleaned = ambiguousCandidates.filter((group) => {
+      if (group.cic_user) {
         const userRating = ratings
           .filter(
             (rating) =>
               rating.matter === RateMatter.CIC &&
               (FilterDirection.RECEIVED
                 ? rating.rater_profile_id
-                : rating.matter_target_id) === crit.cic_user
+                : rating.matter_target_id) === group.cic_user
           )
           .map((it) => it.rating)
           .reduce((acc, it) => acc + it, 0);
         if (
-          userRating < (crit.cic_min ?? 0) ||
-          userRating > (crit.cic_max ?? Number.MAX_SAFE_INTEGER)
+          userRating < (group.cic_min ?? 0) ||
+          userRating > (group.cic_max ?? Number.MAX_SAFE_INTEGER)
         ) {
           return false;
         }
       }
-      if (crit.rep_user && !crit.rep_category) {
+      if (group.rep_user && !group.rep_category) {
         const userRating = ratings
           .filter(
             (rating) =>
               rating.matter === RateMatter.REP &&
               (FilterDirection.RECEIVED
                 ? rating.rater_profile_id
-                : rating.matter_target_id) === crit.rep_user
+                : rating.matter_target_id) === group.rep_user
           )
           .map((it) => it.rating)
           .reduce((acc, it) => acc + it, 0);
         if (
-          userRating < (crit.rep_min ?? 0) ||
-          userRating > (crit.rep_max ?? Number.MAX_SAFE_INTEGER)
+          userRating < (group.rep_min ?? 0) ||
+          userRating > (group.rep_max ?? Number.MAX_SAFE_INTEGER)
         ) {
           return false;
         }
       }
-      if (crit.rep_user && crit.rep_category) {
+      if (group.rep_user && group.rep_category) {
         const userRating = ratings
           .filter(
             (rating) =>
               rating.matter === RateMatter.REP &&
               (FilterDirection.RECEIVED
                 ? rating.rater_profile_id
-                : rating.matter_target_id) === crit.rep_user &&
-              rating.matter_category === crit.rep_category
+                : rating.matter_target_id) === group.rep_user &&
+              rating.matter_category === group.rep_category
           )
           .map((it) => it.rating)
           .reduce((acc, it) => acc + it, 0);
         if (
-          userRating < (crit.rep_min ?? 0) ||
-          userRating > (crit.rep_max ?? Number.MAX_SAFE_INTEGER)
+          userRating < (group.rep_min ?? 0) ||
+          userRating > (group.rep_max ?? Number.MAX_SAFE_INTEGER)
         ) {
           return false;
         }
       }
-      if (!crit.rep_user && crit.rep_category) {
+      if (!group.rep_user && group.rep_category) {
         const userRating = ratings
           .filter(
             (rating) =>
@@ -180,13 +177,13 @@ export class CommunityMemberCriteriaService {
               (FilterDirection.RECEIVED
                 ? rating.rater_profile_id
                 : rating.matter_target_id) === profileId &&
-              rating.matter_category === crit.rep_category
+              rating.matter_category === group.rep_category
           )
           .map((it) => it.rating)
           .reduce((acc, it) => acc + it, 0);
         if (
-          userRating < (crit.rep_min ?? 0) ||
-          userRating > (crit.rep_max ?? Number.MAX_SAFE_INTEGER)
+          userRating < (group.rep_min ?? 0) ||
+          userRating > (group.rep_max ?? Number.MAX_SAFE_INTEGER)
         ) {
           return false;
         }
@@ -195,94 +192,90 @@ export class CommunityMemberCriteriaService {
     return [...ambiguousCleaned, ...unambiguousInitial].map((it) => it.id);
   }
 
-  async changeCriteriaVisibility({
-    criteria_id,
+  async changeVisibility({
+    group_id,
     old_version_id,
     visible,
     profile_id
-  }: ChangeCommunityMembersCurationCriteriaVisibility): Promise<ApiCommunityMembersCurationCriteria> {
-    const updatedCriteriaEntity =
+  }: ChangeUserGroupVisibility): Promise<ApiUserGroup> {
+    const updatedGroupEntity =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
-          const criteriaEntity = await this.getCriteriaByIdOrThrow(criteria_id);
+          const groupEntity = await this.getByIdOrThrow(group_id);
           if (old_version_id) {
-            if (old_version_id === criteriaEntity.id) {
+            if (old_version_id === groupEntity.id) {
               throw new BadRequestException(
                 'Old version id should not be the same as the current'
               );
             }
-            const oldCriteriaEntity = await this.getCriteriaByIdOrThrow(
-              old_version_id
-            );
-            if (oldCriteriaEntity.created_by?.id !== profile_id) {
+            const oldGroupEntity = await this.getByIdOrThrow(old_version_id);
+            if (oldGroupEntity.created_by?.id !== profile_id) {
               throw new BadRequestException(
-                `You are not allowed to change criteria ${old_version_id}. You can save a new one instead.`
+                `You are not allowed to change group ${old_version_id}. You can save a new one instead.`
               );
             }
             if (
-              oldCriteriaEntity.name !== criteriaEntity.name ||
-              !oldCriteriaEntity.visible
+              oldGroupEntity.name !== groupEntity.name ||
+              !oldGroupEntity.visible
             ) {
-              await this.doNameAbusivenessCheck(criteriaEntity);
+              await this.doNameAbusivenessCheck(groupEntity);
             }
             await this.userGroupsDb.deleteById(old_version_id, connection);
           } else {
-            await this.doNameAbusivenessCheck(criteriaEntity);
+            await this.doNameAbusivenessCheck(groupEntity);
           }
-          if (criteriaEntity.created_by?.id !== profile_id) {
+          if (groupEntity.created_by?.id !== profile_id) {
             throw new BadRequestException(
-              `You are not allowed to change criteria ${criteria_id}. You can save a new one instead.`
+              `You are not allowed to change group ${group_id}. You can save a new one instead.`
             );
           }
           await this.userGroupsDb.changeVisibilityAndSetId(
             {
-              currentId: criteria_id,
+              currentId: group_id,
               newId: old_version_id,
               visibility: visible
             },
             connection
           );
-          return await this.getCriteriaByIdOrThrow(
-            old_version_id ?? criteria_id,
+          return await this.getByIdOrThrow(
+            old_version_id ?? group_id,
             connection
           );
         }
       );
     await giveReadReplicaTimeToCatchUp();
-    return updatedCriteriaEntity;
+    return updatedGroupEntity;
   }
 
-  private async doNameAbusivenessCheck(
-    criteriaEntity: ApiCommunityMembersCurationCriteria
-  ) {
+  private async doNameAbusivenessCheck(groupEntity: ApiUserGroup) {
     const abusivenessDetectionResult =
       await this.abusivenessCheckService.checkFilterName({
-        text: criteriaEntity.name,
-        handle: criteriaEntity.created_by?.handle ?? ''
+        text: groupEntity.name,
+        handle: groupEntity.created_by?.handle ?? ''
       });
     if (abusivenessDetectionResult.status !== 'ALLOWED') {
       throw new BadRequestException(
-        `Criteria name is not allowed: ${abusivenessDetectionResult.explanation}`
+        `Group name is not allowed: ${abusivenessDetectionResult.explanation}`
       );
     }
   }
 
-  public async getCriteriaByIdOrThrow(
+  public async getByIdOrThrow(
     id: string,
     connection?: ConnectionWrapper<any>
-  ): Promise<ApiCommunityMembersCurationCriteria> {
-    const criteria = await this.userGroupsDb.getById(id, connection);
-    if (!criteria) {
-      throw new NotFoundException(`Criteria with id ${id} not found`);
+  ): Promise<ApiUserGroup> {
+    const group = await this.userGroupsDb.getById(id, connection);
+    if (!group) {
+      throw new NotFoundException(`Group with id ${id} not found`);
     }
-    return (await this.mapCriteriaForApi([criteria])).at(0)!;
+    return (await this.mapForApi([group])).at(0)!;
   }
 
-  public async getSqlAndParamsByCriteriaId(criteriaId: string | null): Promise<{
+  public async getSqlAndParamsByGroupId(groupId: string | null): Promise<{
     sql: string;
     params: Record<string, any>;
   } | null> {
-    if (criteriaId === null) {
+    if (groupId === null) {
       return await this.getSqlAndParams({
         cic: {
           min: null,
@@ -307,18 +300,16 @@ export class CommunityMemberCriteriaService {
         }
       });
     } else {
-      const criteria = await this.getCriteriaByIdOrThrow(criteriaId);
-      return await this.getSqlAndParams(criteria.criteria);
+      const group = await this.getByIdOrThrow(groupId);
+      return await this.getSqlAndParams(group.group);
     }
   }
 
-  private async getSqlAndParams(
-    criteria: CommunityMembersCurationCriteria
-  ): Promise<{
+  private async getSqlAndParams(group: UserGroup): Promise<{
     sql: string;
     params: Record<string, any>;
   } | null> {
-    const filterUsers = [criteria.cic.user, criteria.rep.user].filter(
+    const filterUsers = [group.cic.user, group.rep.user].filter(
       (user) => !!user
     ) as string[];
     const userIds = await Promise.all(
@@ -335,23 +326,19 @@ export class CommunityMemberCriteriaService {
       acc[user] = userIds[index]!;
       return acc;
     }, {} as Record<string, string>);
-    criteria.cic.user = criteria.cic.user
-      ? usersToUserIds[criteria.cic.user]
+    group.cic.user = group.cic.user ? usersToUserIds[group.cic.user] : null;
+    group.rep.user = group.rep.user ? usersToUserIds[group.rep.user] : null;
+    group.level.min = group.level.min
+      ? getLevelComponentsBorderByLevel(group.level.min)
       : null;
-    criteria.rep.user = criteria.rep.user
-      ? usersToUserIds[criteria.rep.user]
-      : null;
-    criteria.level.min = criteria.level.min
-      ? getLevelComponentsBorderByLevel(criteria.level.min)
-      : null;
-    criteria.level.max = criteria.level.max
-      ? getLevelComponentsBorderByLevel(criteria.level.max)
+    group.level.max = group.level.max
+      ? getLevelComponentsBorderByLevel(group.level.max)
       : null;
 
     const params: Record<string, any> = {};
-    const repPart = this.getRepPart(criteria, params);
-    const cicPart = this.getCicPart(criteria, params, repPart);
-    const cmPart = this.getGeneralPart(repPart, cicPart, criteria, params);
+    const repPart = this.getRepPart(group, params);
+    const cicPart = this.getCicPart(group, params, repPart);
+    const cmPart = this.getGeneralPart(repPart, cicPart, group, params);
     const sql = `with ${repPart ?? ''}${cicPart ?? ''}${cmPart}`;
 
     return {
@@ -363,12 +350,12 @@ export class CommunityMemberCriteriaService {
   private getGeneralPart(
     repPart: string | null,
     cicPart: string | null,
-    criteria: CommunityMembersCurationCriteria,
+    group: UserGroup,
     params: Record<string, any>
   ) {
     let cmPart = ` ${repPart || cicPart ? ',' : ''}
     ${
-      CommunityMemberCriteriaService.GENERATED_VIEW
+      UserGroupsService.GENERATED_VIEW
     } as (select a.* from ${ALL_COMMUNITY_MEMBERS_VIEW} a
     `;
     if (repPart !== null) {
@@ -378,42 +365,42 @@ export class CommunityMemberCriteriaService {
       cmPart += `join cic_exchanges on a.profile_id = cic_exchanges.profile_id `;
     }
     cmPart += `where true `;
-    if (criteria.tdh.min !== null) {
+    if (group.tdh.min !== null) {
       cmPart += `and a.tdh >= :tdh_min `;
-      params.tdh_min = criteria.tdh.min;
+      params.tdh_min = group.tdh.min;
     }
-    if (criteria.tdh.max !== null) {
+    if (group.tdh.max !== null) {
       cmPart += `and a.tdh <= :tdh_max `;
-      params.tdh_max = criteria.tdh.max;
+      params.tdh_max = group.tdh.max;
     }
-    if (criteria.level.min !== null) {
+    if (group.level.min !== null) {
       cmPart += `and a.level >= :level_min `;
-      params.level_min = criteria.level.min;
+      params.level_min = group.level.min;
     }
-    if (criteria.level.max !== null) {
+    if (group.level.max !== null) {
       cmPart += `and a.level <= :level_max `;
-      params.level_max = criteria.level.max;
+      params.level_max = group.level.max;
     }
     cmPart += ') ';
     return cmPart;
   }
 
   private getCicPart(
-    criteria: CommunityMembersCurationCriteria,
+    group: UserGroup,
     params: Record<string, any>,
     repPart: string | null
   ) {
-    const cicCriteria = criteria.cic;
+    const cicGroup = group.cic;
     let cicPart = null;
-    if (cicCriteria.user || cicCriteria.min || cicCriteria.max) {
-      const direction = cicCriteria.user
-        ? cicCriteria.direction ?? FilterDirection.RECEIVED
+    if (cicGroup.user || cicGroup.min || cicGroup.max) {
+      const direction = cicGroup.user
+        ? cicGroup.direction ?? FilterDirection.RECEIVED
         : FilterDirection.RECEIVED;
-      if (cicCriteria.user) {
-        params.cic_user = cicCriteria.user;
+      if (cicGroup.user) {
+        params.cic_user = cicGroup.user;
       }
       let groupedCicQuery;
-      if (cicCriteria.user !== null) {
+      if (cicGroup.user !== null) {
         groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${
           direction === FilterDirection.RECEIVED
             ? 'matter_target_id'
@@ -423,7 +410,7 @@ export class CommunityMemberCriteriaService {
             ? 'rater_profile_id'
             : 'matter_target_id'
         } = :cic_user)`;
-        params.cic_user = cicCriteria.user;
+        params.cic_user = cicGroup.user;
       } else {
         groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${
           direction === FilterDirection.RECEIVED
@@ -432,37 +419,29 @@ export class CommunityMemberCriteriaService {
         } as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' and rating <> 0 group by 1)`;
       }
       cicPart = `${groupedCicQuery}, cic_exchanges as (select profile_id from grouped_cics where true `;
-      if (cicCriteria.max !== null) {
+      if (cicGroup.max !== null) {
         cicPart += `and rating <= :cic_amount_max `;
-        params.cic_amount_max = cicCriteria.max;
+        params.cic_amount_max = cicGroup.max;
       }
-      if (cicCriteria.min !== null) {
+      if (cicGroup.min !== null) {
         cicPart += `and rating >= :cic_amount_min `;
-        params.cic_amount_min = cicCriteria.min;
+        params.cic_amount_min = cicGroup.min;
       }
       cicPart += `) `;
     }
     return cicPart;
   }
 
-  private getRepPart(
-    criteria: CommunityMembersCurationCriteria,
-    params: Record<string, any>
-  ) {
+  private getRepPart(group: UserGroup, params: Record<string, any>) {
     let repPart = null;
-    const repCriteria = criteria.rep;
-    if (
-      repCriteria.category ||
-      repCriteria.user ||
-      repCriteria.max ||
-      repCriteria.min
-    ) {
-      const direction = repCriteria.direction ?? FilterDirection.RECEIVED;
-      if (repCriteria.user) {
-        params.rep_user = repCriteria.user;
+    const repGroup = group.rep;
+    if (repGroup.category || repGroup.user || repGroup.max || repGroup.min) {
+      const direction = repGroup.direction ?? FilterDirection.RECEIVED;
+      if (repGroup.user) {
+        params.rep_user = repGroup.user;
       }
       let groupedRepQuery: string;
-      if (repCriteria.user !== null && repCriteria.category !== null) {
+      if (repGroup.user !== null && repGroup.category !== null) {
         groupedRepQuery = `grouped_reps as (select ${
           direction === FilterDirection.RECEIVED
             ? 'matter_target_id'
@@ -472,7 +451,7 @@ export class CommunityMemberCriteriaService {
             ? 'rater_profile_id'
             : 'matter_target_id'
         } = :rep_user)`;
-      } else if (repCriteria.user !== null && repCriteria.category === null) {
+      } else if (repGroup.user !== null && repGroup.category === null) {
         groupedRepQuery = `grouped_reps as (select ${
           direction === FilterDirection.RECEIVED
             ? 'matter_target_id'
@@ -482,7 +461,7 @@ export class CommunityMemberCriteriaService {
             ? 'rater_profile_id'
             : 'matter_target_id'
         } = :rep_user group by 1, 2)`;
-      } else if (repCriteria.user === null && repCriteria.category !== null) {
+      } else if (repGroup.user === null && repGroup.category !== null) {
         groupedRepQuery = `grouped_reps as (select ${
           direction === FilterDirection.RECEIVED
             ? 'matter_target_id'
@@ -497,55 +476,50 @@ export class CommunityMemberCriteriaService {
       }
 
       repPart = `${groupedRepQuery}, rep_exchanges as (select distinct profile_id from grouped_reps where true `;
-      if (repCriteria.category !== null) {
+      if (repGroup.category !== null) {
         repPart += `and matter_category = :rep_category `;
-        params.rep_category = repCriteria.category;
+        params.rep_category = repGroup.category;
       }
-      if (repCriteria.max !== null) {
+      if (repGroup.max !== null) {
         repPart += `and rating <= :rep_amount_max `;
-        params.rep_amount_max = repCriteria.max;
+        params.rep_amount_max = repGroup.max;
       }
-      if (repCriteria.min !== null) {
+      if (repGroup.min !== null) {
         repPart += `and rating >= :rep_amount_min `;
-        params.rep_amount_min = repCriteria.min;
+        params.rep_amount_min = repGroup.min;
       }
       repPart += `) `;
     }
     return repPart;
   }
 
-  async searchCriteria(
-    curationCriteriaName: string | null,
-    curationCriteriaUserId: string | null
-  ): Promise<ApiCommunityMembersCurationCriteria[]> {
-    const criteria = await this.userGroupsDb.searchByNameOrAuthor(
-      curationCriteriaName,
-      curationCriteriaUserId
-    );
-    return await this.mapCriteriaForApi(criteria);
+  async searchByNameOrAuthor(
+    name: string | null,
+    authorId: string | null
+  ): Promise<ApiUserGroup[]> {
+    const group = await this.userGroupsDb.searchByNameOrAuthor(name, authorId);
+    return await this.mapForApi(group);
   }
 
-  async getCriteriasByIds(ids: string[]): Promise<UserGroupEntity[]> {
+  async getByIds(ids: string[]): Promise<UserGroupEntity[]> {
     return await this.userGroupsDb.getByIds(ids);
   }
 
-  private async mapCriteriaForApi(
-    criteria: UserGroupEntity[]
-  ): Promise<ApiCommunityMembersCurationCriteria[]> {
+  private async mapForApi(group: UserGroupEntity[]): Promise<ApiUserGroup[]> {
     const relatedProfiles = await profilesService
-      .getProfileMinsByIds(criteria.map((it) => it.created_by))
+      .getProfileMinsByIds(group.map((it) => it.created_by))
       .then((res) =>
         res.reduce((acc, it) => {
           acc[it.id] = it as ProfileMin;
           return acc;
         }, {} as Record<string, ProfileMin>)
       );
-    return criteria.map((it) => ({
+    return group.map((it) => ({
       id: it.id,
       name: it.name,
       visible: it.visible,
       created_at: it.created_at,
-      criteria: {
+      group: {
         cic: {
           min: it.cic_min,
           max: it.cic_max,
@@ -573,5 +547,7 @@ export class CommunityMemberCriteriaService {
   }
 }
 
-export const communityMemberCriteriaService =
-  new CommunityMemberCriteriaService(userGroupsDb, abusivenessCheckService);
+export const userGroupsService = new UserGroupsService(
+  userGroupsDb,
+  abusivenessCheckService
+);

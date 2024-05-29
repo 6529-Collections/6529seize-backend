@@ -15,9 +15,9 @@ import { QuotedDrop } from '../generated/models/QuotedDrop';
 import { DropMediaEntity, DropPartEntity } from '../../../entities/IDrop';
 import { waveApiService, WaveApiService } from '../waves/wave.api.service';
 import {
-  communityMemberCriteriaService,
-  CommunityMemberCriteriaService
-} from '../community-members/community-member-criteria.service';
+  userGroupsService,
+  UserGroupsService
+} from '../community-members/user-groups.service';
 import { WaveScopeType } from '../generated/models/WaveScopeType';
 import { AuthenticationContext } from '../../../auth-context';
 
@@ -29,7 +29,7 @@ export class DropCreationApiService {
     private readonly dropsDb: DropsDb,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly waveApiService: WaveApiService,
-    private readonly communityMemberCriteriaService: CommunityMemberCriteriaService
+    private readonly userGroupsService: UserGroupsService
   ) {}
 
   async createDrop(
@@ -151,7 +151,7 @@ export class DropCreationApiService {
       .map<QuotedDrop | null | undefined>((it) => it.quoted_drop)
       .filter((it) => it !== undefined && it !== null) as QuotedDrop[];
     const criteriaIdsUserIsEligible =
-      await this.communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
         authenticationContext.getActingAsId()!
       );
     const wave = await this.waveApiService.findWaveByIdOrThrow(
@@ -192,5 +192,5 @@ export const dropCreationService = new DropCreationApiService(
   dropsDb,
   profileActivityLogsDb,
   waveApiService,
-  communityMemberCriteriaService
+  userGroupsService
 );

@@ -28,9 +28,9 @@ import {
   WAVES_TABLE
 } from '../constants';
 import {
-  communityMemberCriteriaService,
-  CommunityMemberCriteriaService
-} from '../api-serverless/src/community-members/community-member-criteria.service';
+  userGroupsService,
+  UserGroupsService
+} from '../api-serverless/src/community-members/user-groups.service';
 import { Time } from '../time';
 import { DropVoteCreditSpending } from '../entities/IDropVoteCreditSpending';
 import { RateMatter } from '../entities/IRating';
@@ -47,7 +47,7 @@ import { WaveScopeType } from '../entities/IWave';
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
     supplyDb: () => SqlExecutor,
-    private readonly criteriaService: CommunityMemberCriteriaService
+    private readonly userGroupsService: UserGroupsService
   ) {
     super(supplyDb);
   }
@@ -190,7 +190,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     amount: number;
     wave_id: string | null;
   }): Promise<DropEntity[]> {
-    const sqlAndParams = await this.criteriaService.getSqlAndParamsByCriteriaId(
+    const sqlAndParams = await this.userGroupsService.getSqlAndParamsByGroupId(
       curation_criteria_id
     );
     if (!sqlAndParams) {
@@ -199,7 +199,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const serialNoLessThan = serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `${sqlAndParams.sql} select d.* from ${DROPS_TABLE} d
          join ${
-           CommunityMemberCriteriaService.GENERATED_VIEW
+           UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = d.author_id
          join ${WAVES_TABLE} w on d.wave_id = w.id and (${
       eligible_curations.length ? `w.id in (:eligible_curations) or` : ``
@@ -939,4 +939,4 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
 export type NewDropEntity = Omit<DropEntity, 'serial_no' | 'id' | 'created_at'>;
 
-export const dropsDb = new DropsDb(dbSupplier, communityMemberCriteriaService);
+export const dropsDb = new DropsDb(dbSupplier, userGroupsService);

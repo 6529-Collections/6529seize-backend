@@ -20,14 +20,14 @@ import {
   ProfilesService
 } from '../../../profiles/profiles.service';
 import {
-  communityMemberCriteriaService,
-  CommunityMemberCriteriaService
-} from '../community-members/community-member-criteria.service';
+  userGroupsService,
+  UserGroupsService
+} from '../community-members/user-groups.service';
 
 export class WavesMappers {
   constructor(
     private readonly profilesService: ProfilesService,
-    private readonly curationsService: CommunityMemberCriteriaService
+    private readonly userGroupsService: UserGroupsService
   ) {}
 
   public createWaveToNewWaveEntity(
@@ -98,7 +98,7 @@ export class WavesMappers {
   public async waveEntitiesToApiWaves(
     waveEntities: WaveEntity[]
   ): Promise<Wave[]> {
-    const curationEntities = await this.curationsService.getCriteriasByIds(
+    const curationEntities = await this.userGroupsService.getByIds(
       waveEntities
         .map(
           (waveEntity) =>
@@ -232,5 +232,5 @@ export class WavesMappers {
 
 export const wavesMappers = new WavesMappers(
   profilesService,
-  communityMemberCriteriaService
+  userGroupsService
 );

@@ -7,9 +7,9 @@ import {
   ProfilesService
 } from '../../../profiles/profiles.service';
 import {
-  communityMemberCriteriaService,
-  CommunityMemberCriteriaService
-} from '../community-members/community-member-criteria.service';
+  userGroupsService,
+  UserGroupsService
+} from '../community-members/user-groups.service';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { wavesMappers, WavesMappers } from './waves.mappers';
@@ -18,7 +18,7 @@ export class WaveApiService {
   constructor(
     private readonly wavesApiDb: WavesApiDb,
     private readonly profilesService: ProfilesService,
-    private readonly curationsService: CommunityMemberCriteriaService,
+    private readonly userGroupsService: UserGroupsService,
     private readonly waveMappers: WavesMappers
   ) {}
 
@@ -59,7 +59,7 @@ export class WaveApiService {
         createWaveRequest.voting.scope.curation_id
       ].filter((id) => id !== null) as string[]
     );
-    const curationEntities = await this.curationsService.getCriteriasByIds(
+    const curationEntities = await this.userGroupsService.getByIds(
       referencedCurationIds
     );
     const missingCurationIds = referencedCurationIds.filter(
@@ -100,6 +100,6 @@ export class WaveApiService {
 export const waveApiService = new WaveApiService(
   wavesApiDb,
   profilesService,
-  communityMemberCriteriaService,
+  userGroupsService,
   wavesMappers
 );

@@ -33,7 +33,7 @@ import { CreateDropPart } from '../generated/models/CreateDropPart';
 import { QuotedDrop } from '../generated/models/QuotedDrop';
 import { NewDropComment } from '../generated/models/NewDropComment';
 import { DropComment } from '../generated/models/DropComment';
-import { communityMemberCriteriaService } from '../community-members/community-member-criteria.service';
+import { userGroupsService } from '../community-members/user-groups.service';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 
 const router = asyncRouter();
@@ -227,9 +227,7 @@ router.post(
       );
     }
     const criteriasUserIsEligible =
-      await communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
-        raterProfileId
-      );
+      await userGroupsService.getGroupsUserIsEligibleFor(raterProfileId);
     await dropRaterService.updateRating({
       rater_profile_id: raterProfileId,
       criteriasUserIsEligible,

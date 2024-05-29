@@ -23,7 +23,7 @@ import { getValidatedByJoiOrThrow } from '../validation';
 import { waveApiService } from './wave.api.service';
 import { SearchWavesParams } from './waves.api.db';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
-import { communityMemberCriteriaService } from '../community-members/community-member-criteria.service';
+import { userGroupsService } from '../community-members/user-groups.service';
 
 const router = asyncRouter();
 
@@ -99,9 +99,7 @@ router.get(
     const wave = await waveApiService.findWaveByIdOrThrow(id);
     if (wave.visibility.scope.type === WaveScopeType.Curated) {
       const criteriaIdsUserISEligibleFor =
-        await communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
-          profileId
-        );
+        await userGroupsService.getGroupsUserIsEligibleFor(profileId);
       if (
         !criteriaIdsUserISEligibleFor.includes(
           wave.visibility.scope.curation!.id

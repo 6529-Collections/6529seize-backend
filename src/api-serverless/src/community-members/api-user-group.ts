@@ -1,10 +1,10 @@
-import { CommunityMembersCurationCriteria } from './community-search-criteria.types';
+import { UserGroup } from './user-group.types';
 import { ProfileMin } from '../generated/models/ProfileMin';
 
-export interface ApiCommunityMembersCurationCriteria {
+export interface ApiUserGroup {
   readonly id: string;
   readonly name: string;
-  readonly criteria: CommunityMembersCurationCriteria;
+  readonly group: UserGroup;
   readonly created_at: Date;
   readonly created_by: ProfileMin | null;
   readonly visible: boolean;

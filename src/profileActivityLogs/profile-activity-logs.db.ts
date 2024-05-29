@@ -14,14 +14,14 @@ import { PROFILES_ACTIVITY_LOGS_TABLE } from '../constants';
 import { PageRequest } from '../api-serverless/src/page-request';
 import { RateMatter } from '../entities/IRating';
 import {
-  CommunityMemberCriteriaService,
-  communityMemberCriteriaService
-} from '../api-serverless/src/community-members/community-member-criteria.service';
+  UserGroupsService,
+  userGroupsService
+} from '../api-serverless/src/community-members/user-groups.service';
 
 export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   constructor(
     dbSupplier: () => SqlExecutor,
-    private readonly communitySearchSqlGenerator: CommunityMemberCriteriaService
+    private readonly userGroupsService: UserGroupsService
   ) {
     super(dbSupplier);
   }
@@ -81,14 +81,13 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       limit: page_size + 1
     };
     if (params.curation_criteria_id) {
-      const viewResult =
-        await this.communitySearchSqlGenerator.getSqlAndParamsByCriteriaId(
-          params.curation_criteria_id
-        );
+      const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
+        params.curation_criteria_id
+      );
       if (viewResult === null) {
         return [];
       }
-      sql = `${viewResult.sql} select pa_logs.* from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs join ${CommunityMemberCriteriaService.GENERATED_VIEW} crit_view on crit_view.profile_id = pa_logs.profile_id where 1=1`;
+      sql = `${viewResult.sql} select pa_logs.* from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs join ${UserGroupsService.GENERATED_VIEW} crit_view on crit_view.profile_id = pa_logs.profile_id where 1=1`;
       sqlParams = { ...sqlParams, ...viewResult.params };
     } else {
       sql = `select * from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs where 1=1 `;
@@ -185,5 +184,5 @@ export interface ProfileLogSearchParams {
 
 export const profileActivityLogsDb = new ProfileActivityLogsDb(
   dbSupplier,
-  communityMemberCriteriaService
+  userGroupsService
 );

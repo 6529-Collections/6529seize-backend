@@ -9,14 +9,14 @@ import { randomUUID } from 'crypto';
 import { Time } from '../../../time';
 import { WAVES_TABLE } from '../../../constants';
 import {
-  communityMemberCriteriaService,
-  CommunityMemberCriteriaService
-} from '../community-members/community-member-criteria.service';
+  userGroupsService,
+  UserGroupsService
+} from '../community-members/user-groups.service';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   constructor(
     supplyDb: () => SqlExecutor,
-    private readonly criteriaService: CommunityMemberCriteriaService
+    private readonly userGroupsService: UserGroupsService
   ) {
     super(supplyDb);
   }
@@ -120,7 +120,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   }
 
   async searchWaves(searchParams: SearchWavesParams): Promise<WaveEntity[]> {
-    const sqlAndParams = await this.criteriaService.getSqlAndParamsByCriteriaId(
+    const sqlAndParams = await this.userGroupsService.getSqlAndParamsByGroupId(
       searchParams.curation_criteria_id ?? null
     );
     if (!sqlAndParams) {
@@ -129,7 +129,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const serialNoLessThan =
       searchParams.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `${sqlAndParams.sql} select w.* from ${WAVES_TABLE} w
-         join ${CommunityMemberCriteriaService.GENERATED_VIEW} cm on cm.profile_id = w.created_by
+         join ${UserGroupsService.GENERATED_VIEW} cm on cm.profile_id = w.created_by
          where w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${searchParams.limit}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
@@ -147,7 +147,4 @@ export interface SearchWavesParams {
   readonly curation_criteria_id?: string;
 }
 
-export const wavesApiDb = new WavesApiDb(
-  dbSupplier,
-  communityMemberCriteriaService
-);
+export const wavesApiDb = new WavesApiDb(dbSupplier, userGroupsService);

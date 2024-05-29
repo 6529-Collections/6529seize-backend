@@ -1,4 +1,4 @@
-import { FilterDirection } from '../api-serverless/src/community-members/community-search-criteria.types';
+import { FilterDirection } from '../api-serverless/src/community-members/user-group.types';
 import { Column, Entity, PrimaryColumn } from 'typeorm';
 import { USER_GROUPS_TABLE } from '../constants';
 
