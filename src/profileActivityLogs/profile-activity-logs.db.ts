@@ -80,14 +80,14 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       offset: (page - 1) * page_size,
       limit: page_size + 1
     };
-    if (params.curation_criteria_id) {
+    if (params.group_id) {
       const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
-        params.curation_criteria_id
+        params.group_id
       );
       if (viewResult === null) {
         return [];
       }
-      sql = `${viewResult.sql} select pa_logs.* from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs join ${UserGroupsService.GENERATED_VIEW} crit_view on crit_view.profile_id = pa_logs.profile_id where 1=1`;
+      sql = `${viewResult.sql} select pa_logs.* from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs join ${UserGroupsService.GENERATED_VIEW} group_view on group_view.profile_id = pa_logs.profile_id where 1=1`;
       sqlParams = { ...sqlParams, ...viewResult.params };
     } else {
       sql = `select * from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs where 1=1 `;
@@ -171,7 +171,7 @@ export type NewProfileActivityLog = Omit<
 >;
 
 export interface ProfileLogSearchParams {
-  readonly curation_criteria_id: string | null;
+  readonly group_id: string | null;
   profile_id?: string;
   target_id?: string;
   rating_matter?: RateMatter;

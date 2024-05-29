@@ -80,7 +80,7 @@ export class AbusivenessCheckService {
     if (txt.length > 100) {
       throw new BadRequestException(`Text must be up to 100 characters`);
     }
-    return await this.aiBasedAbusivenessDetector.checkCurationName({
+    return await this.aiBasedAbusivenessDetector.checkUserGroupName({
       text: txt,
       handle: query.handle
     });

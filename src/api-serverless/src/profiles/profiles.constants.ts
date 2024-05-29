@@ -420,6 +420,7 @@ export const RESERVED_HANDLES = [
   'followers',
   'following',
   'groups',
+  'group',
   'clubs',
   'societies',
   'circles',

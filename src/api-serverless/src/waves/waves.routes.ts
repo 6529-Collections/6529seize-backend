@@ -67,7 +67,7 @@ router.get(
       Joi.object<SearchWavesParams>({
         limit: Joi.number().integer().min(1).max(50).default(20),
         serial_no_less_than: Joi.number().integer().min(1).optional(),
-        curation_criteria_id: Joi.string().optional().min(1)
+        group_id: Joi.string().optional().min(1)
       })
     );
     const waves = await waveApiService.searchWaves(params);
@@ -98,11 +98,11 @@ router.get(
     }
     const wave = await waveApiService.findWaveByIdOrThrow(id);
     if (wave.visibility.scope.type === WaveScopeType.Curated) {
-      const criteriaIdsUserISEligibleFor =
+      const group_ids_user_is_eligible_for =
         await userGroupsService.getGroupsUserIsEligibleFor(profileId);
       if (
-        !criteriaIdsUserISEligibleFor.includes(
-          wave.visibility.scope.curation!.id
+        !group_ids_user_is_eligible_for.includes(
+          wave.visibility.scope.group!.id
         )
       ) {
         throw new ForbiddenException(`User is not eligible for this wave`);

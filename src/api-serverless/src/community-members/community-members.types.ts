@@ -21,5 +21,5 @@ export enum CommunityMembersSortOption {
 
 export interface CommunityMembersQuery
   extends FullPageRequest<CommunityMembersSortOption> {
-  readonly curation_criteria_id: string | null;
+  readonly group_id: string | null;
 }

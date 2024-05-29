@@ -56,10 +56,10 @@ export class DropsApiService {
     const contextProfileId = this.getDropsReadContextProfileId(
       authenticationContext
     );
-    const criteriasUserIsEligible =
+    const group_ids_user_is_eligible_for =
       await this.userGroupsService.getGroupsUserIsEligibleFor(contextProfileId);
     const dropEntity = await this.dropsDb
-      .findDropById(dropId, criteriasUserIsEligible, connection)
+      .findDropById(dropId, group_ids_user_is_eligible_for, connection)
       .then(async (drop) => {
         if (!drop) {
           throw new NotFoundException(`Drop ${dropId} not found`);
@@ -80,14 +80,14 @@ export class DropsApiService {
 
   public async findLatestDrops({
     amount,
-    curation_criteria_id,
+    group_id,
     wave_id,
     serial_no_less_than,
     min_part_id,
     max_part_id,
     authenticationContext
   }: {
-    curation_criteria_id: string | null;
+    group_id: string | null;
     serial_no_less_than: number | null;
     wave_id: string | null;
     min_part_id: number;
@@ -98,21 +98,18 @@ export class DropsApiService {
     const context_profile_id = this.getDropsReadContextProfileId(
       authenticationContext
     );
-    const eligible_curations =
+    const group_ids_user_is_eligible_for =
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         context_profile_id
       );
-    if (
-      curation_criteria_id &&
-      !eligible_curations.includes(curation_criteria_id)
-    ) {
+    if (group_id && !group_ids_user_is_eligible_for.includes(group_id)) {
       return [];
     }
     const dropEntities = await this.dropsDb.findLatestDrops({
       amount,
       serial_no_less_than,
-      curation_criteria_id,
-      eligible_curations,
+      group_id,
+      group_ids_user_is_eligible_for: group_ids_user_is_eligible_for,
       wave_id
     });
     return await this.convertToDropFulls({
@@ -425,11 +422,11 @@ export class DropsApiService {
     const contextProfileId = this.getDropsReadContextProfileId(
       param.authenticationContext
     );
-    const criteriasUserIsEligible =
+    const group_ids_user_is_eligible_for =
       await this.userGroupsService.getGroupsUserIsEligibleFor(contextProfileId);
     const dropEntities = await this.dropsDb.findProfileDrops(
       param,
-      criteriasUserIsEligible
+      group_ids_user_is_eligible_for
     );
     return await this.convertToDropFulls({
       dropEntities,

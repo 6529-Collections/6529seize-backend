@@ -32,7 +32,7 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
     query: CommunityMembersQuery
   ): Promise<CommunityMemberFromDb[]> {
     const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
-      query.curation_criteria_id
+      query.group_id
     );
     if (viewResult === null) {
       return [];
@@ -58,7 +58,7 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
 
   async countCommunityMembers(query: CommunityMembersQuery): Promise<number> {
     const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
-      query.curation_criteria_id
+      query.group_id
     );
     if (viewResult === null) {
       return 0;

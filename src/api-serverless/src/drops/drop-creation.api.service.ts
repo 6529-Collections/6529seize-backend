@@ -150,7 +150,7 @@ export class DropCreationApiService {
     const quotedDrops = createDropRequest.parts
       .map<QuotedDrop | null | undefined>((it) => it.quoted_drop)
       .filter((it) => it !== undefined && it !== null) as QuotedDrop[];
-    const criteriaIdsUserIsEligible =
+    const groupIdsUserIsEligibleFor =
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         authenticationContext.getActingAsId()!
       );
@@ -159,7 +159,7 @@ export class DropCreationApiService {
     );
     if (
       wave.participation.scope.type === WaveScopeType.Curated &&
-      !criteriaIdsUserIsEligible.includes(wave.participation.scope.curation!.id)
+      !groupIdsUserIsEligibleFor.includes(wave.participation.scope.group!.id)
     ) {
       throw new ForbiddenException(`User is not eligible for this wave`);
     }

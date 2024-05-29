@@ -121,7 +121,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
   async searchWaves(searchParams: SearchWavesParams): Promise<WaveEntity[]> {
     const sqlAndParams = await this.userGroupsService.getSqlAndParamsByGroupId(
-      searchParams.curation_criteria_id ?? null
+      searchParams.group_id ?? null
     );
     if (!sqlAndParams) {
       return [];
@@ -144,7 +144,7 @@ export type NewWaveEntity = Omit<WaveEntity, 'id' | 'serial_no' | 'created_at'>;
 export interface SearchWavesParams {
   readonly limit: number;
   readonly serial_no_less_than?: number;
-  readonly curation_criteria_id?: string;
+  readonly group_id?: string;
 }
 
 export const wavesApiDb = new WavesApiDb(dbSupplier, userGroupsService);

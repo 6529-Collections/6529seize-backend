@@ -157,7 +157,7 @@ export class WavesMappers {
               WaveScopeTypeApi,
               waveEntity.voting_scope_type
             ),
-            curation: waveEntity.voting_scope_curation_id
+            group: waveEntity.voting_scope_curation_id
               ? curations[waveEntity.voting_scope_curation_id] ?? null
               : null
           },
@@ -185,7 +185,7 @@ export class WavesMappers {
               WaveScopeTypeApi,
               waveEntity.visibility_scope_type
             ),
-            curation: waveEntity.visibility_scope_curation_id
+            group: waveEntity.visibility_scope_curation_id
               ? curations[waveEntity.visibility_scope_curation_id] ?? null
               : null
           }
@@ -196,7 +196,7 @@ export class WavesMappers {
               WaveScopeTypeApi,
               waveEntity.participation_scope_type
             ),
-            curation: waveEntity.participation_scope_curation_id
+            group: waveEntity.participation_scope_curation_id
               ? curations[waveEntity.participation_scope_curation_id] ?? null
               : null
           },
