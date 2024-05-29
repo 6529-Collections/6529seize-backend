@@ -240,7 +240,7 @@ loadApi().then(() => {
   const BASE_PATH = '/api';
   const apiRouter = asyncRouter();
 
-  // app.all(`*`, checkPolicies);
+  app.all(`*`, checkPolicies);
   app.all(`${BASE_PATH}*`, requireLogin);
   app.all(`${BASE_PATH}*`, checkCache);
 
