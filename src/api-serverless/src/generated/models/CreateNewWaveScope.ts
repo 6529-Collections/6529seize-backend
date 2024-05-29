@@ -10,28 +10,20 @@
  * Do not edit the class manually.
  */
 
-import { WaveScopeType } from '../models/WaveScopeType';
 import { HttpFile } from '../http/http';
 
 export class CreateNewWaveScope {
-    'type': WaveScopeType;
     /**
-    * Only relevant when type=CURATED.
+    * If null, everyone is included
     */
-    'curation_id': string | null;
+    'group_id': string | null;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "type",
-            "baseName": "type",
-            "type": "WaveScopeType",
-            "format": ""
-        },
-        {
-            "name": "curation_id",
-            "baseName": "curation_id",
+            "name": "group_id",
+            "baseName": "group_id",
             "type": "string",
             "format": ""
         }    ];
@@ -43,6 +35,4 @@ export class CreateNewWaveScope {
     public constructor() {
     }
 }
-
-
 

@@ -21,11 +21,8 @@ export class WaveEntity {
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly created_by!: string;
 
-  @Column({ type: 'varchar', length: 100, nullable: false })
-  readonly voting_scope_type!: WaveScopeType;
-
   @Column({ type: 'varchar', length: 100, nullable: true })
-  readonly voting_scope_curation_id!: string | null;
+  readonly voting_group_id!: string | null;
 
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly voting_credit_type!: WaveCreditType;
@@ -48,17 +45,11 @@ export class WaveEntity {
   @Column({ type: 'bigint', nullable: true })
   readonly voting_period_end!: number | null;
 
-  @Column({ type: 'varchar', length: 100, nullable: false })
-  readonly visibility_scope_type!: WaveScopeType;
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  readonly visibility_group_id!: string | null;
 
   @Column({ type: 'varchar', length: 100, nullable: true })
-  readonly visibility_scope_curation_id!: string | null;
-
-  @Column({ type: 'varchar', length: 100, nullable: false })
-  readonly participation_scope_type!: WaveScopeType;
-
-  @Column({ type: 'varchar', length: 100, nullable: true })
-  readonly participation_scope_curation_id!: string | null;
+  readonly participation_group_id!: string | null;
 
   @Column({ type: 'bigint', nullable: true })
   readonly participation_max_applications_per_participant!: number | null;
@@ -95,11 +86,6 @@ export class WaveEntity {
 
   @Column({ type: 'json', nullable: false })
   readonly outcomes!: string;
-}
-
-export enum WaveScopeType {
-  ALL = 'ALL',
-  CURATED = 'CURATED'
 }
 
 export enum WaveCreditType {

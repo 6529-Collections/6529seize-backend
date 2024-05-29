@@ -280,9 +280,9 @@ paths:
             format: int64
             minimum: 1
             maximum: 20
-        - name: curation_criteria_id
+        - name: group_id
           in: query
-          description: Drops by authors that match the supplied criteria
+          description: Drops by authors that fall into supplied group
           required: false
           schema:
             type: string
@@ -809,9 +809,9 @@ paths:
           schema:
             type: integer
             format: int64
-        - name: curation_criteria_id
+        - name: group_id
           in: query
-          description: Waves by authors that match the supplied criteria
+          description: Waves by authors that fall into supplied group
           required: false
           schema:
             type: string
@@ -891,7 +891,7 @@ components:
           format: int64
           nullable: true
 
-    Curation:
+    Group:
       type: object
       required:
         - id
@@ -1369,22 +1369,13 @@ components:
           items:
             $ref: "#/components/schemas/DropComment"
 
-    WaveScopeType:
-      type: string
-      enum:
-        - ALL
-        - CURATED
-
     CreateNewWaveScope:
       type: object
       required:
-        - type
-        - curation_id
+        - group_id
       properties:
-        type:
-          $ref: "#/components/schemas/WaveScopeType"
-        curation_id:
-          description: "Only relevant when type=CURATED."
+        group_id:
+          description: "If null, everyone is included"
           type: string
           nullable: true
 
@@ -1393,16 +1384,13 @@ components:
       description: A scope of audience
       type: object
       required:
-        - type
-        - curation
+        - group
       properties:
-        type:
-          $ref: "#/components/schemas/WaveScopeType"
-        curation:
-          description: "Only relevant when type=CURATED."
+        group:
+          description: "If null, everyone is included"
           anyOf:
             - type: "null"
-            - $ref: "#/components/schemas/Curation"
+            - $ref: "#/components/schemas/Group"
 
     WaveCreditType:
       type: string

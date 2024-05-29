@@ -18,7 +18,6 @@ import {
   userGroupsService,
   UserGroupsService
 } from '../community-members/user-groups.service';
-import { WaveScopeType } from '../generated/models/WaveScopeType';
 import { AuthenticationContext } from '../../../auth-context';
 
 export class DropCreationApiService {
@@ -157,10 +156,8 @@ export class DropCreationApiService {
     const wave = await this.waveApiService.findWaveByIdOrThrow(
       createDropRequest.wave_id
     );
-    if (
-      wave.participation.scope.type === WaveScopeType.Curated &&
-      !groupIdsUserIsEligibleFor.includes(wave.participation.scope.group!.id)
-    ) {
+    const groupId = wave.participation.scope.group?.id;
+    if (groupId && !groupIdsUserIsEligibleFor.includes(groupId)) {
       throw new ForbiddenException(`User is not eligible for this wave`);
     }
 

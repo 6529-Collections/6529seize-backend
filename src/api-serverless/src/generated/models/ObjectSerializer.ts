@@ -20,7 +20,6 @@ export * from '../models/CreateNewWaveParticipationConfig';
 export * from '../models/CreateNewWaveScope';
 export * from '../models/CreateNewWaveVisibilityConfig';
 export * from '../models/CreateNewWaveVotingConfig';
-export * from '../models/Curation';
 export * from '../models/Drop';
 export * from '../models/DropActivityLog';
 export * from '../models/DropComment';
@@ -35,6 +34,7 @@ export * from '../models/DropRater';
 export * from '../models/DropRatingCategory';
 export * from '../models/DropRatingRequest';
 export * from '../models/DropReferencedNFT';
+export * from '../models/Group';
 export * from '../models/IntRange';
 export * from '../models/LoginRequest';
 export * from '../models/LoginResponse';
@@ -59,7 +59,6 @@ export * from '../models/WaveOutcome';
 export * from '../models/WaveParticipationConfig';
 export * from '../models/WaveRequiredMetadata';
 export * from '../models/WaveScope';
-export * from '../models/WaveScopeType';
 export * from '../models/WaveType';
 export * from '../models/WaveVisibilityConfig';
 export * from '../models/WaveVotingConfig';
@@ -83,10 +82,9 @@ import { CreateNewProfileProxyRateWaveDropAction   } from '../models/CreateNewPr
 import { CreateNewProfileProxyReadWaveAction   } from '../models/CreateNewProfileProxyReadWaveAction';
 import { CreateNewWave } from '../models/CreateNewWave';
 import { CreateNewWaveParticipationConfig } from '../models/CreateNewWaveParticipationConfig';
-import { CreateNewWaveScope   } from '../models/CreateNewWaveScope';
+import { CreateNewWaveScope } from '../models/CreateNewWaveScope';
 import { CreateNewWaveVisibilityConfig } from '../models/CreateNewWaveVisibilityConfig';
 import { CreateNewWaveVotingConfig        } from '../models/CreateNewWaveVotingConfig';
-import { Curation } from '../models/Curation';
 import { Drop } from '../models/Drop';
 import { DropActivityLog     , DropActivityLogTypeEnum    } from '../models/DropActivityLog';
 import { DropComment } from '../models/DropComment';
@@ -101,6 +99,7 @@ import { DropRater } from '../models/DropRater';
 import { DropRatingCategory } from '../models/DropRatingCategory';
 import { DropRatingRequest } from '../models/DropRatingRequest';
 import { DropReferencedNFT } from '../models/DropReferencedNFT';
+import { Group } from '../models/Group';
 import { IntRange } from '../models/IntRange';
 import { LoginRequest } from '../models/LoginRequest';
 import { LoginResponse } from '../models/LoginResponse';
@@ -124,8 +123,7 @@ import { WaveCreditType } from '../models/WaveCreditType';
 import { WaveOutcome } from '../models/WaveOutcome';
 import { WaveParticipationConfig } from '../models/WaveParticipationConfig';
 import { WaveRequiredMetadata } from '../models/WaveRequiredMetadata';
-import { WaveScope   } from '../models/WaveScope';
-import { WaveScopeType } from '../models/WaveScopeType';
+import { WaveScope } from '../models/WaveScope';
 import { WaveType } from '../models/WaveType';
 import { WaveVisibilityConfig } from '../models/WaveVisibilityConfig';
 import { WaveVotingConfig        } from '../models/WaveVotingConfig';
@@ -149,7 +147,6 @@ let enumsMap: Set<string> = new Set<string>([
     "ProfileProxyActionType",
     "WaveCreditScope",
     "WaveCreditType",
-    "WaveScopeType",
     "WaveType",
 ]);
 
@@ -176,7 +173,6 @@ let typeMap: {[index: string]: any} = {
     "CreateNewWaveScope": CreateNewWaveScope,
     "CreateNewWaveVisibilityConfig": CreateNewWaveVisibilityConfig,
     "CreateNewWaveVotingConfig": CreateNewWaveVotingConfig,
-    "Curation": Curation,
     "Drop": Drop,
     "DropActivityLog": DropActivityLog,
     "DropComment": DropComment,
@@ -191,6 +187,7 @@ let typeMap: {[index: string]: any} = {
     "DropRatingCategory": DropRatingCategory,
     "DropRatingRequest": DropRatingRequest,
     "DropReferencedNFT": DropReferencedNFT,
+    "Group": Group,
     "IntRange": IntRange,
     "LoginRequest": LoginRequest,
     "LoginResponse": LoginResponse,

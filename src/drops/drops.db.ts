@@ -42,7 +42,6 @@ import {
 import { randomUUID } from 'crypto';
 import { PageSortDirection } from '../api-serverless/src/page-request';
 import { uniqueShortId } from '../helpers';
-import { WaveScopeType } from '../entities/IWave';
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -164,14 +163,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .execute(
         `
         select d.* from ${DROPS_TABLE} d
-         join waves w on d.wave_id = w.id and (${
-           group_ids_user_is_eligible_for.length
-             ? `w.visibility_scope_curation_id in (:group_ids_user_is_eligible_for) or `
-             : ``
-         } w.visibility_scope_type = '${WaveScopeType.ALL}')
+         join waves w on d.wave_id = w.id and w.visibility_scope_curation_id in (:group_ids_user_is_eligible_for)
          where d.id = :id
         `,
-        { id, group_ids_user_is_eligible_for: group_ids_user_is_eligible_for },
+        {
+          id,
+          group_ids_user_is_eligible_for: [
+            null,
+            ...group_ids_user_is_eligible_for
+          ]
+        },
         opts
       )
       .then((it) => it[0] || null);
@@ -201,18 +202,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          join ${
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = d.author_id
-         join ${WAVES_TABLE} w on d.wave_id = w.id and (${
-      group_ids_user_is_eligible_for.length
-        ? `w.id in (:group_ids_user_is_eligible_for) or`
-        : ``
-    } w.visibility_scope_type = '${WaveScopeType.ALL}') ${
+         join ${WAVES_TABLE} w on d.wave_id = w.id and w.id in (:group_ids_user_is_eligible_for) ${
       wave_id ? `and w.id = :wave_id` : ``
     }
          where d.serial_no < :serialNoLessThan order by d.serial_no desc limit ${amount}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       serialNoLessThan,
-      group_ids_user_is_eligible_for
+      group_ids_user_is_eligible_for: [...group_ids_user_is_eligible_for, null]
     };
     return this.db.execute(sql, params);
   }
@@ -228,16 +225,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const serialNoLessThan =
       param.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `select d.* from ${DROPS_TABLE} d
-         join waves w on w.id = d.wave_id and (${
-           groupIdsUserIfEligibleFor.length
-             ? `w.visibility_scope_curation_id in (:eligible_groups) or `
-             : ``
-         } w.visibility_scope_type = '${WaveScopeType.ALL}')
+         join waves w on w.id = d.wave_id and w.visibility_scope_curation_id in (:eligible_groups)
          where  d.serial_no < :serialNoLessThan and d.author_id = :profileId
          order by d.id desc limit ${param.amount}`;
     return this.db.execute(sql, {
       profileId: param.profile_id,
-      eligible_groups: groupIdsUserIfEligibleFor,
+      eligible_groups: [...groupIdsUserIfEligibleFor, null],
       serialNoLessThan
     });
   }
@@ -354,7 +347,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     connection: ConnectionWrapper<any>
   ) {
     await this.db.execute(
-      `update ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE}set credit_spent = :credit_spent where id = :reservationId`,
+      `update ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} set credit_spent = :credit_spent where id = :reservationId`,
       param,
       { wrappedConnection: connection }
     );

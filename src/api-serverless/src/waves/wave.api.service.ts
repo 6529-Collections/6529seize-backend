@@ -52,22 +52,22 @@ export class WaveApiService {
   }
 
   private async validateWaveRelations(createWaveRequest: CreateNewWave) {
-    const referencedCurationIds = distinct(
+    const referencedGroupIds = distinct(
       [
-        createWaveRequest.visibility.scope.curation_id,
-        createWaveRequest.participation.scope.curation_id,
-        createWaveRequest.voting.scope.curation_id
+        createWaveRequest.visibility.scope.group_id,
+        createWaveRequest.participation.scope.group_id,
+        createWaveRequest.voting.scope.group_id
       ].filter((id) => id !== null) as string[]
     );
-    const curationEntities = await this.userGroupsService.getByIds(
-      referencedCurationIds
+    const groupEntities = await this.userGroupsService.getByIds(
+      referencedGroupIds
     );
-    const missingCurationIds = referencedCurationIds.filter(
-      (it) => !curationEntities.find((e) => e.id === it)
+    const missingGroupIds = referencedGroupIds.filter(
+      (it) => !groupEntities.find((e) => e.id === it)
     );
-    if (missingCurationIds.length) {
+    if (missingGroupIds.length) {
       throw new BadRequestException(
-        `Curation(s) not found: ${missingCurationIds.join(', ')}`
+        `Group(s) not found: ${missingGroupIds.join(', ')}`
       );
     }
     const referencedCreditorId = createWaveRequest.voting.creditor_id;

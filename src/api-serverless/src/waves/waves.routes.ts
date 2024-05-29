@@ -9,7 +9,6 @@ import * as Joi from 'joi';
 import { CreateNewWaveScope } from '../generated/models/CreateNewWaveScope';
 import { CreateNewWaveVisibilityConfig } from '../generated/models/CreateNewWaveVisibilityConfig';
 import { CreateNewWaveVotingConfig } from '../generated/models/CreateNewWaveVotingConfig';
-import { WaveScopeType } from '../generated/models/WaveScopeType';
 import { WaveCreditType } from '../generated/models/WaveCreditType';
 import { WaveCreditScope } from '../generated/models/WaveCreditScope';
 import { IntRange } from '../generated/models/IntRange';
@@ -97,14 +96,11 @@ router.get(
       throw new ForbiddenException(`Proxy is not allowed to read waves`);
     }
     const wave = await waveApiService.findWaveByIdOrThrow(id);
-    if (wave.visibility.scope.type === WaveScopeType.Curated) {
+    const groupId = wave.visibility.scope.group?.id;
+    if (groupId) {
       const group_ids_user_is_eligible_for =
         await userGroupsService.getGroupsUserIsEligibleFor(profileId);
-      if (
-        !group_ids_user_is_eligible_for.includes(
-          wave.visibility.scope.group!.id
-        )
-      ) {
+      if (!group_ids_user_is_eligible_for.includes(groupId)) {
         throw new ForbiddenException(`User is not eligible for this wave`);
       }
     }
@@ -129,14 +125,7 @@ const IntRangeSchema = Joi.object<IntRange>({
   });
 
 const WaveScopeSchema = Joi.object<CreateNewWaveScope>({
-  type: Joi.string()
-    .required()
-    .allow(...Object.values(WaveScopeType)),
-  curation_id: Joi.when('type', {
-    is: Joi.string().valid(WaveScopeType.Curated),
-    then: Joi.string().required(),
-    otherwise: Joi.valid(null)
-  })
+  group_id: Joi.string().required().allow(null)
 });
 
 const WaveVisibilitySchema = Joi.object<CreateNewWaveVisibilityConfig>({

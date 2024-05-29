@@ -13,7 +13,7 @@
 import { ProfileMin } from '../models/ProfileMin';
 import { HttpFile } from '../http/http';
 
-export class Curation {
+export class Group {
     'id': string;
     'name': string;
     'author': ProfileMin;
@@ -48,7 +48,7 @@ export class Curation {
         }    ];
 
     static getAttributeTypeMap() {
-        return Curation.attributeTypeMap;
+        return Group.attributeTypeMap;
     }
 
     public constructor() {
