@@ -54,10 +54,7 @@ export const checkPolicies = async (
     return next();
   }
 
-  let ip = req.ip?.split(',')[0].trim();
-  if (ip?.startsWith('::ffff:')) {
-    ip = ip.substring(7);
-  }
+  let ip = getIp(req);
 
   if (!ip) {
     const image = await fetchRandomImage();
@@ -74,7 +71,7 @@ export const checkPolicies = async (
   const ipInfo = await getIpInfo(ip);
   const country = ipInfo?.country;
 
-  if (!country || BLOCKED_COUNTRIES.includes(country)) {
+  if (!country || isBlockedCountry(country)) {
     logger.info(`[REQUEST FROM BLOCKED COUNTRY] : [${country} : ${ip}]`);
     const image = await fetchRandomImage();
     return res.status(403).send({
@@ -86,11 +83,11 @@ export const checkPolicies = async (
   return next();
 };
 
-const isLocalhost = (ip: string) => {
+export const isLocalhost = (ip: string) => {
   return ip === '127.0.0.1' || ip === '::1';
 };
 
-async function getIpInfo(ip: string) {
+export async function getIpInfo(ip: string) {
   try {
     const response = await fetch(`https://ipinfo.io/${ip}/json`);
     const data = await response.json();
@@ -100,3 +97,19 @@ async function getIpInfo(ip: string) {
     return null;
   }
 }
+
+export const getIp = (req: Request): string => {
+  let ip = req.ip;
+  if (ip?.startsWith('::ffff:')) {
+    ip = ip.substring(7);
+  }
+  return ip ?? '';
+};
+
+export const isBlockedCountry = (country: string) => {
+  return BLOCKED_COUNTRIES.includes(country);
+};
+
+export const isEUCountry = (country: string) => {
+  return EU_EEA_COUNTRIES.includes(country);
+};

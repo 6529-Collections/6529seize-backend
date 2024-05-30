@@ -25,6 +25,7 @@ import dropsMediaRoutes from './drops/drops-media.routes';
 import profileSubClassificationsRoutes from './profiles/profiles-sub-classifications.routes';
 import delegationsRoutes from './delegations/delegations.routes';
 import wavesRoutes from './waves/waves.routes';
+import policiesRoutes from './policies/policies.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -827,6 +828,7 @@ loadApi().then(() => {
   apiRouter.use(`/profile-subclassifications`, profileSubClassificationsRoutes);
   apiRouter.use(`/delegations`, delegationsRoutes);
   apiRouter.use(`/waves`, wavesRoutes);
+  apiRouter.use(`/policies`, policiesRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   rootRouter.use(`/oracle`, oracleRoutes);
   app.use(rootRouter);

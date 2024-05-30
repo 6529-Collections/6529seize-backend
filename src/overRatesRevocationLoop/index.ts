@@ -23,6 +23,7 @@ import { ProfileProxyEntity } from '../entities/IProfileProxy';
 import { ProfileProxyActionEntity } from '../entities/IProfileProxyAction';
 import { WaveEntity } from '../entities/IWave';
 import { DropVoteEntity } from '../entities/IDropVote';
+import { CookiesConsent } from '../entities/ICookieConsent';
 
 const logger = Logger.get('OVER_RATES_REVOCATION_LOOP');
 
@@ -48,7 +49,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     ProfileProxyActionEntity,
     WaveEntity,
     CommunityGroupEntity,
-    DropVoteEntity
+    DropVoteEntity,
+    CookiesConsent
   ]);
   await ratingsService.reduceOverRates();
   await unload();

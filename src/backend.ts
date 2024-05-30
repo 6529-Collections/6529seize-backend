@@ -23,6 +23,7 @@ import { ProfileProxyActionEntity } from './entities/IProfileProxyAction';
 import { WaveEntity } from './entities/IWave';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
 import { DropVoteEntity } from './entities/IDropVote';
+import { CookiesConsent } from './entities/ICookieConsent';
 
 const logger = Logger.get('BACKEND');
 
@@ -50,7 +51,8 @@ async function start() {
     ProfileProxyActionEntity,
     WaveEntity,
     CommunityGroupEntity,
-    DropVoteEntity
+    DropVoteEntity,
+    CookiesConsent
   ]);
   await dbMigrationsLoop.handler(null, null as any, null as any);
 
