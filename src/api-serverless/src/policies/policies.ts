@@ -98,12 +98,12 @@ export async function getIpInfo(ip: string) {
   }
 }
 
-export const getIp = (req: Request) => {
+export const getIp = (req: Request): string => {
   let ip = req.ip;
   if (ip?.startsWith('::ffff:')) {
     ip = ip.substring(7);
   }
-  return ip;
+  return ip ?? '';
 };
 
 export const isBlockedCountry = (country: string) => {

@@ -30,7 +30,29 @@ async function start() {
   const start = Time.now();
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  await loadEnv([CookiesConsent]);
+  await loadEnv([
+    Profile,
+    ProfileArchived,
+    CicStatement,
+    ProfileActivityLog,
+    Rating,
+    AbusivenessDetectionResult,
+    RatingsSnapshot,
+    DropEntity,
+    DropPartEntity,
+    DropMentionEntity,
+    DropReferencedNftEntity,
+    DropMetadataEntity,
+    DropMediaEntity,
+    DropVoteCreditSpending,
+    DropCommentEntity,
+    ProfileProxyEntity,
+    ProfileProxyActionEntity,
+    WaveEntity,
+    CommunityGroupEntity,
+    CookiesConsent
+  ]);
+  await dbMigrationsLoop.handler(null, null as any, null as any);
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);

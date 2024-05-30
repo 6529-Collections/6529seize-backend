@@ -1,5 +1,5 @@
 import { Request } from 'express';
-import { asyncRouter } from 'src/async.router';
+import { asyncRouter } from '../async.router';
 import { getIp, getIpInfo, isEUCountry, isLocalhost } from './policies';
 import { isCookiesConsent, setCookiesConsent } from './policies.db';
 
@@ -8,7 +8,7 @@ const router = asyncRouter();
 export default router;
 
 router.get(`/cookies_consent`, function (req: Request, res: any) {
-  let ip = getIp(req);
+  let ip: string = getIp(req);
 
   if (!ip) {
     return res.status(400).send({
