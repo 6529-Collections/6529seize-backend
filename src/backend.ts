@@ -22,6 +22,7 @@ import { ProfileProxyEntity } from './entities/IProfileProxy';
 import { ProfileProxyActionEntity } from './entities/IProfileProxyAction';
 import { WaveEntity } from './entities/IWave';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
+import { CookiesConsent } from './entities/ICookieConsent';
 
 const logger = Logger.get('BACKEND');
 
@@ -29,28 +30,7 @@ async function start() {
   const start = Time.now();
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  await loadEnv([
-    Profile,
-    ProfileArchived,
-    CicStatement,
-    ProfileActivityLog,
-    Rating,
-    AbusivenessDetectionResult,
-    RatingsSnapshot,
-    DropEntity,
-    DropPartEntity,
-    DropMentionEntity,
-    DropReferencedNftEntity,
-    DropMetadataEntity,
-    DropMediaEntity,
-    DropVoteCreditSpending,
-    DropCommentEntity,
-    ProfileProxyEntity,
-    ProfileProxyActionEntity,
-    WaveEntity,
-    CommunityGroupEntity
-  ]);
-  await dbMigrationsLoop.handler(null, null as any, null as any);
+  await loadEnv([CookiesConsent]);
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
