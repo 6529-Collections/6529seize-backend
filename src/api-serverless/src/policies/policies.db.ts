@@ -13,7 +13,7 @@ export const isCookiesConsent = async (ip: string): Promise<boolean> => {
 
 export const setCookiesConsent = async (ip: string) => {
   const acceptedAt = Time.now().toMillis();
-  const expiresAt = Time.now().plusMinutes(2).toMillis();
+  const expiresAt = Time.now().plusDays(30).toMillis();
   await sqlExecutor.execute(
     `INSERT INTO ${COOKIES_CONSENT_TABLE} (ip, accepted_at, expires_at) 
       VALUES (:ip, :acceptedAt, :expiresAt)
