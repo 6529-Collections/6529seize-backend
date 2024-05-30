@@ -260,6 +260,11 @@ paths:
                   block:
                     type: integer
                     description: The latest block number associated with the update.
+                additionalProperties:
+                  type: integer
+                  description: >
+                    Dynamic fields representing TDH for specific meme seasons,
+                    such as "memes_tdh_szn1", "memes_tdh_szn2", etc.
 
   /address/{address}/breakdown:
     get:
