@@ -64,13 +64,12 @@ export const checkPolicies = async (
     });
   }
 
-  // if (isLocalhost(ip)) {
-  //   return next();
-  // }
+  if (isLocalhost(ip)) {
+    return next();
+  }
 
-  // const ipInfo = await getIpInfo(ip);
-  // const country = ipInfo?.country;
-  const country = 'KP';
+  const ipInfo = await getIpInfo(ip);
+  const country = ipInfo?.country;
 
   if (!country || isBlockedCountry(country)) {
     logger.info(`[REQUEST FROM BLOCKED COUNTRY] : [${country} : ${ip}]`);
