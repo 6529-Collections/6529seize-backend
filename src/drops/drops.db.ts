@@ -163,7 +163,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .execute(
         `
         select d.* from ${DROPS_TABLE} d
-         join waves w on d.wave_id = w.id and w.visibility_scope_curation_id in (:group_ids_user_is_eligible_for)
+         join waves w on d.wave_id = w.id and w.visibility_group_id in (:group_ids_user_is_eligible_for)
          where d.id = :id
         `,
         {
@@ -225,7 +225,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const serialNoLessThan =
       param.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `select d.* from ${DROPS_TABLE} d
-         join waves w on w.id = d.wave_id and w.visibility_scope_curation_id in (:eligible_groups)
+         join waves w on w.id = d.wave_id and w.visibility_group_id in (:eligible_groups)
          where  d.serial_no < :serialNoLessThan and d.author_id = :profileId
          order by d.id desc limit ${param.amount}`;
     return this.db.execute(sql, {
