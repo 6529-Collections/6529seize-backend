@@ -21,6 +21,9 @@ export class WaveEntity {
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly created_by!: string;
 
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  readonly admin_group_id!: string | null;
+
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly voting_scope_type!: WaveScopeType;
 
@@ -115,7 +118,7 @@ export enum WaveCreditScopeType {
 }
 
 export enum WaveType {
-  VOTE_TALLY_IN_RANGE = 'VOTE_TALLY_IN_RANGE',
-  TOP_VOTED = 'TOP_VOTED',
-  NONE = 'NONE'
+  APPROVE = 'APPROVE',
+  RANK = 'RANK',
+  CHAT = 'CHAT'
 }

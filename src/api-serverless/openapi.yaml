@@ -1401,15 +1401,10 @@ components:
 
     WaveType:
       type: string
-      description: |
-        Type of the wave:
-        * VOTE_TALLY_IN_RANGE - Everybody who will end up in specified range will win.
-        * TOP_VOTED - Top voted participant(s) will win.
-        * NONE - No winners.
       enum:
-        - VOTE_TALLY_IN_RANGE
-        - TOP_VOTED
-        - NONE
+        - APPROVE
+        - RANK
+        - CHAT
 
     WaveCreditScope:
       description: |
@@ -1578,16 +1573,17 @@ components:
         - winning_thresholds
         - period
         - max_winners
+        - admin_group_id
       properties:
         type:
           $ref: "#/components/schemas/WaveType"
         winning_thresholds:
-          description: Drops which vote ends up in this range will win. Must be set if and only if type is VOTE_TALLY_IN_RANGE
+          description: Drops which rate tally ends up in this range will win. Must be set if and only if type is APPROVE
           anyOf:
             - type: "null"
             - $ref: "#/components/schemas/IntRange"
         max_winners:
-          description: This amount of top voted drops will win. Must be set if and only if type is TOP_VOTED
+          description: This amount of top rated drops will win. Must be set if and only if type is RANK
           type: integer
           format: int64
           minimum: 1
@@ -1598,6 +1594,9 @@ components:
           type: integer
           format: int64
           minimum: 1
+        admin_group_id:
+          type: string
+          nullable: true
         period:
           anyOf:
             - type: "null"
