@@ -33,7 +33,7 @@ import { CreateDropPart } from '../generated/models/CreateDropPart';
 import { QuotedDrop } from '../generated/models/QuotedDrop';
 import { NewDropComment } from '../generated/models/NewDropComment';
 import { DropComment } from '../generated/models/DropComment';
-import { communityMemberCriteriaService } from '../community-members/community-member-criteria.service';
+import { userGroupsService } from '../community-members/user-groups.service';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 
 const router = asyncRouter();
@@ -48,7 +48,7 @@ router.get(
       any,
       {
         limit: number;
-        curation_criteria_id?: string;
+        group_id?: string;
         serial_no_less_than?: number;
         min_part_id?: number;
         max_part_id?: number;
@@ -61,7 +61,7 @@ router.get(
     const authenticationContext = await getAuthenticationContext(req);
     const limit = parseNumberOrNull(req.query.limit) ?? 10;
     const wave_id = req.query.wave_id ?? null;
-    const curation_criteria_id = req.query.curation_criteria_id ?? null;
+    const group_id = req.query.group_id ?? null;
     let min_part_id = parseIntOrNull(req.query.min_part_id);
     if (!min_part_id || min_part_id < 1) {
       min_part_id = 0;
@@ -77,7 +77,7 @@ router.get(
     }
     const latestDrops = await dropsService.findLatestDrops({
       amount: limit < 0 || limit > 20 ? 10 : limit,
-      curation_criteria_id,
+      group_id: group_id,
       serial_no_less_than: parseNumberOrNull(req.query.serial_no_less_than),
       min_part_id,
       max_part_id,
@@ -226,13 +226,11 @@ router.post(
         `Proxy doesn't have permission to rate drops`
       );
     }
-    const criteriasUserIsEligible =
-      await communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
-        raterProfileId
-      );
+    const group_ids_user_is_eligible_for =
+      await userGroupsService.getGroupsUserIsEligibleFor(raterProfileId);
     await dropRaterService.updateRating({
       rater_profile_id: raterProfileId,
-      criteriasUserIsEligible,
+      groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
       category: proposedCategory,
       drop_id: dropId,
       rating: rating

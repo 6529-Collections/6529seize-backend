@@ -91,7 +91,7 @@ const CommunityMembersQuerySchema: Joi.ObjectSchema<CommunityMembersQuery> =
       .optional()
       .allow(null)
       .default(DEFAULT_PAGE_SIZE),
-    curation_criteria_id: Joi.string().optional().default(null).allow(null)
+    group_id: Joi.string().optional().default(null).allow(null)
   });
 
 export default router;

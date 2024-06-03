@@ -2,37 +2,41 @@ import {
   ConnectionWrapper,
   dbSupplier,
   LazyDbAccessCompatibleService
-} from '../../../sql-executor';
-import { CommunityGroupEntity } from '../../../entities/ICommunityGroup';
-import {
-  COMMUNITY_GROUPS_TABLE,
-  PROFILE_FULL,
-  RATINGS_TABLE
-} from '../../../constants';
-import { RateMatter } from '../../../entities/IRating';
+} from '../sql-executor';
+import { UserGroupEntity } from '../entities/IUserGroup';
+import { PROFILE_FULL, RATINGS_TABLE, USER_GROUPS_TABLE } from '../constants';
+import { RateMatter } from '../entities/IRating';
 
-export class CommunityMemberCriteriaDb extends LazyDbAccessCompatibleService {
-  async save(entity: CommunityGroupEntity, connection: ConnectionWrapper<any>) {
+export class UserGroupsDb extends LazyDbAccessCompatibleService {
+  async save(entity: UserGroupEntity, connection: ConnectionWrapper<any>) {
     await this.db.execute(
       `
-          insert into ${COMMUNITY_GROUPS_TABLE} (id,
-                                                 name,
-                                                 cic_min,
-                                                 cic_max,
-                                                 cic_user,
-                                                 cic_direction,
-                                                 rep_min,
-                                                 rep_max,
-                                                 rep_user,
-                                                 rep_direction,
-                                                 rep_category,
-                                                 tdh_min,
-                                                 tdh_max,
-                                                 level_min,
-                                                 level_max,
-                                                 created_at,
-                                                 created_by,
-                                                 visible)
+          insert into ${USER_GROUPS_TABLE} (id,
+                                            name,
+                                            cic_min,
+                                            cic_max,
+                                            cic_user,
+                                            cic_direction,
+                                            rep_min,
+                                            rep_max,
+                                            rep_user,
+                                            rep_direction,
+                                            rep_category,
+                                            tdh_min,
+                                            tdh_max,
+                                            level_min,
+                                            level_max,
+                                            created_at,
+                                            created_by,
+                                            owns_meme,
+                                            owns_meme_tokens,
+                                            owns_gradient,
+                                            owns_gradient_tokens,
+                                            owns_nextgen,
+                                            owns_nextgen_tokens,
+                                            owns_lab,
+                                            owns_lab_tokens,
+                                            visible)
           values (:id,
                   :name,
                   :cic_min,
@@ -50,6 +54,14 @@ export class CommunityMemberCriteriaDb extends LazyDbAccessCompatibleService {
                   :level_max,
                   :created_at,
                   :created_by,
+                  :owns_meme,
+                  :owns_meme_tokens,
+                  :owns_gradient,
+                  :owns_gradient_tokens,
+                  :owns_nextgen,
+                  :owns_nextgen_tokens,
+                  :owns_lab,
+                  :owns_lab_tokens,
                   :visible)
     `,
       { ...entity },
@@ -60,18 +72,18 @@ export class CommunityMemberCriteriaDb extends LazyDbAccessCompatibleService {
   async getById(
     id: string,
     connection?: ConnectionWrapper<any>
-  ): Promise<CommunityGroupEntity | null> {
+  ): Promise<UserGroupEntity | null> {
     const opts = connection ? { wrappedConnection: connection } : undefined;
     return this.db
-      .execute<CommunityGroupEntity>(
-        `select * from ${COMMUNITY_GROUPS_TABLE} where id = :id`,
+      .execute<UserGroupEntity>(
+        `select * from ${USER_GROUPS_TABLE} where id = :id`,
         { id },
         opts
       )
       .then((res) => res[0] ?? null);
   }
 
-  async changeCriteriaVisibilityAndSetId(
+  async changeVisibilityAndSetId(
     {
       currentId,
       newId,
@@ -80,58 +92,58 @@ export class CommunityMemberCriteriaDb extends LazyDbAccessCompatibleService {
     connection: ConnectionWrapper<any>
   ) {
     await this.db.execute(
-      `update ${COMMUNITY_GROUPS_TABLE} set visible = :visible where id = :currentId`,
+      `update ${USER_GROUPS_TABLE} set visible = :visible where id = :currentId`,
       { currentId, visible: visibility },
       { wrappedConnection: connection }
     );
     if (newId) {
       await this.db.execute(
-        `update ${COMMUNITY_GROUPS_TABLE} set id = :newId where id = :currentId`,
+        `update ${USER_GROUPS_TABLE} set id = :newId where id = :currentId`,
         { currentId, newId, visible: visibility },
         { wrappedConnection: connection }
       );
     }
   }
 
-  async searchCriteria(
-    curationCriteriaName: string | null,
-    curationCriteriaUserId: string | null
-  ): Promise<CommunityGroupEntity[]> {
-    let sql = `select * from ${COMMUNITY_GROUPS_TABLE} where visible is true `;
+  async searchByNameOrAuthor(
+    name: string | null,
+    authorId: string | null
+  ): Promise<UserGroupEntity[]> {
+    let sql = `select * from ${USER_GROUPS_TABLE} where visible is true `;
     const params: Record<string, any> = {};
-    if (curationCriteriaName) {
-      sql += ` and name like :crit_name `;
-      params.crit_name = `%${curationCriteriaName}%`;
+    if (name) {
+      sql += ` and name like :name `;
+      params.name = `%${name}%`;
     }
-    if (curationCriteriaUserId) {
+    if (authorId) {
       sql += ` and created_by = :created_by `;
-      params.created_by = curationCriteriaUserId;
+      params.created_by = authorId;
     }
     sql += ` order by created_at desc limit 20`;
-    return this.db.execute<CommunityGroupEntity>(sql, params);
+    return this.db.execute<UserGroupEntity>(sql, params);
   }
 
-  async deleteCriteria(id: string, connection: ConnectionWrapper<any>) {
+  async deleteById(id: string, connection: ConnectionWrapper<any>) {
     await this.db.execute(
-      `delete from ${COMMUNITY_GROUPS_TABLE} where id = :id`,
+      `delete from ${USER_GROUPS_TABLE} where id = :id`,
       { id },
       { wrappedConnection: connection }
     );
   }
 
-  async getCriteriasByIds(ids: string[]): Promise<CommunityGroupEntity[]> {
+  async getByIds(ids: string[]): Promise<UserGroupEntity[]> {
     if (!ids.length) {
       return [];
     }
-    return this.db.execute<CommunityGroupEntity>(
+    return this.db.execute<UserGroupEntity>(
       `
-    select * from ${COMMUNITY_GROUPS_TABLE} where visible is true and id in (:ids)
+    select * from ${USER_GROUPS_TABLE} where visible is true and id in (:ids)
     `,
       { ids }
     );
   }
 
-  async getCommunityMember(profileId: string): Promise<{
+  async getProfileOverviewByProfileId(profileId: string): Promise<{
     profile_id: string;
     tdh: number;
     level: number;
@@ -181,7 +193,7 @@ export class CommunityMemberCriteriaDb extends LazyDbAccessCompatibleService {
       );
   }
 
-  async getCriteriasByConditions(param: {
+  async getGroupsMatchingConditions(param: {
     level: number;
     givenCic: number;
     givenRep: number;
@@ -189,10 +201,10 @@ export class CommunityMemberCriteriaDb extends LazyDbAccessCompatibleService {
     tdh: number;
     receivedCic: number;
     receivedRep: number;
-  }): Promise<CommunityGroupEntity[]> {
+  }): Promise<UserGroupEntity[]> {
     const sql = `
     select cg.*
-from community_groups cg
+from ${USER_GROUPS_TABLE} cg
 where ((cg.cic_direction = 'RECEIVED' and (
     (cg.cic_min is null or :receivedCic >= cg.cic_min) and
     (cg.cic_max is null or :receivedCic >= cg.cic_max) and
@@ -221,7 +233,19 @@ where ((cg.cic_direction = 'RECEIVED' and (
     return this.db.execute(sql, param);
   }
 
-  async getRatings(profileId: string, users: string[], categories: string[]) {
+  async getRatings(
+    profileId: string,
+    users: string[],
+    categories: string[]
+  ): Promise<
+    {
+      rater_profile_id: string;
+      matter_target_id: string;
+      matter: RateMatter;
+      matter_category: string;
+      rating: number;
+    }[]
+  > {
     if (users.length === 0 && !categories.length) {
       return [];
     }
@@ -257,8 +281,30 @@ where ((cg.cic_direction = 'RECEIVED' and (
       { profileId, users, categories }
     );
   }
+
+  async migrateProfileIdsInGroups(
+    old_profile_id: string,
+    new_profile_id: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await Promise.all([
+      this.db.execute(
+        `update ${USER_GROUPS_TABLE} set created_by = :new_profile_id where created_by = :old_profile_id`,
+        { old_profile_id, new_profile_id },
+        { wrappedConnection: connectionHolder }
+      ),
+      this.db.execute(
+        `update ${USER_GROUPS_TABLE} set cic_user = :new_profile_id where cic_user = :old_profile_id`,
+        { old_profile_id, new_profile_id },
+        { wrappedConnection: connectionHolder }
+      ),
+      this.db.execute(
+        `update ${USER_GROUPS_TABLE} set rep_user = :new_profile_id where rep_user = :old_profile_id`,
+        { old_profile_id, new_profile_id },
+        { wrappedConnection: connectionHolder }
+      )
+    ]);
+  }
 }
 
-export const communityMemberCriteriaDb = new CommunityMemberCriteriaDb(
-  dbSupplier
-);
+export const userGroupsDb = new UserGroupsDb(dbSupplier);

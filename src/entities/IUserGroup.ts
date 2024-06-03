@@ -1,9 +1,8 @@
-import { FilterDirection } from '../api-serverless/src/community-members/community-search-criteria.types';
 import { Column, Entity, PrimaryColumn } from 'typeorm';
-import { COMMUNITY_GROUPS_TABLE } from '../constants';
+import { USER_GROUPS_TABLE } from '../constants';
 
-@Entity(COMMUNITY_GROUPS_TABLE)
-export class CommunityGroupEntity {
+@Entity(USER_GROUPS_TABLE)
+export class UserGroupEntity {
   @PrimaryColumn({ type: 'varchar', length: 200, nullable: false })
   readonly id!: string;
   @Column({ type: 'varchar', length: 200, nullable: false })
@@ -40,4 +39,25 @@ export class CommunityGroupEntity {
   readonly created_by!: string;
   @Column({ type: 'boolean', nullable: false })
   readonly visible!: boolean;
+  @Column({ type: 'boolean' })
+  readonly owns_meme!: boolean | null;
+  @Column({ type: 'text', nullable: true })
+  readonly owns_meme_tokens!: string | null;
+  @Column({ type: 'boolean' })
+  readonly owns_gradient!: boolean | null;
+  @Column({ type: 'text', nullable: true })
+  readonly owns_gradient_tokens!: string | null;
+  @Column({ type: 'boolean' })
+  readonly owns_nextgen!: boolean | null;
+  @Column({ type: 'text', nullable: true })
+  readonly owns_nextgen_tokens!: string | null;
+  @Column({ type: 'boolean' })
+  readonly owns_lab!: boolean | null;
+  @Column({ type: 'text', nullable: true })
+  readonly owns_lab_tokens!: string | null;
+}
+
+export enum FilterDirection {
+  Received = 'RECEIVED',
+  Sent = 'SENT'
 }

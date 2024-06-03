@@ -26,9 +26,9 @@ import { DropPart } from '../generated/models/DropPart';
 import { DropComment } from '../generated/models/DropComment';
 import { Time } from '../../../time';
 import {
-  CommunityMemberCriteriaService,
-  communityMemberCriteriaService
-} from '../community-members/community-member-criteria.service';
+  UserGroupsService,
+  userGroupsService
+} from '../community-members/user-groups.service';
 import { AuthenticationContext } from '../../../auth-context';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 
@@ -36,7 +36,7 @@ export class DropsApiService {
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly profilesService: ProfilesService,
-    private readonly communityMemberCriteriaService: CommunityMemberCriteriaService
+    private readonly userGroupsService: UserGroupsService
   ) {}
 
   public async findDropByIdOrThrow(
@@ -56,12 +56,10 @@ export class DropsApiService {
     const contextProfileId = this.getDropsReadContextProfileId(
       authenticationContext
     );
-    const criteriasUserIsEligible =
-      await this.communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
-        contextProfileId
-      );
+    const group_ids_user_is_eligible_for =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(contextProfileId);
     const dropEntity = await this.dropsDb
-      .findDropById(dropId, criteriasUserIsEligible, connection)
+      .findDropById(dropId, group_ids_user_is_eligible_for, connection)
       .then(async (drop) => {
         if (!drop) {
           throw new NotFoundException(`Drop ${dropId} not found`);
@@ -82,14 +80,14 @@ export class DropsApiService {
 
   public async findLatestDrops({
     amount,
-    curation_criteria_id,
+    group_id,
     wave_id,
     serial_no_less_than,
     min_part_id,
     max_part_id,
     authenticationContext
   }: {
-    curation_criteria_id: string | null;
+    group_id: string | null;
     serial_no_less_than: number | null;
     wave_id: string | null;
     min_part_id: number;
@@ -100,21 +98,18 @@ export class DropsApiService {
     const context_profile_id = this.getDropsReadContextProfileId(
       authenticationContext
     );
-    const eligible_curations =
-      await this.communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
+    const group_ids_user_is_eligible_for =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
         context_profile_id
       );
-    if (
-      curation_criteria_id &&
-      !eligible_curations.includes(curation_criteria_id)
-    ) {
+    if (group_id && !group_ids_user_is_eligible_for.includes(group_id)) {
       return [];
     }
     const dropEntities = await this.dropsDb.findLatestDrops({
       amount,
       serial_no_less_than,
-      curation_criteria_id,
-      eligible_curations,
+      group_id,
+      group_ids_user_is_eligible_for: group_ids_user_is_eligible_for,
       wave_id
     });
     return await this.convertToDropFulls({
@@ -427,13 +422,11 @@ export class DropsApiService {
     const contextProfileId = this.getDropsReadContextProfileId(
       param.authenticationContext
     );
-    const criteriasUserIsEligible =
-      await this.communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
-        contextProfileId
-      );
+    const group_ids_user_is_eligible_for =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(contextProfileId);
     const dropEntities = await this.dropsDb.findProfileDrops(
       param,
-      criteriasUserIsEligible
+      group_ids_user_is_eligible_for
     );
     return await this.convertToDropFulls({
       dropEntities,
@@ -551,5 +544,5 @@ export class DropsApiService {
 export const dropsService = new DropsApiService(
   dropsDb,
   profilesService,
-  communityMemberCriteriaService
+  userGroupsService
 );

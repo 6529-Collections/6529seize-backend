@@ -219,7 +219,7 @@ Input
     return await this.formatChatResponse(text, responseMessage);
   }
 
-  public async checkCurationName({
+  public async checkUserGroupName({
     text,
     handle
   }: {
@@ -307,9 +307,9 @@ input
     if (process.env.NODE_ENV !== 'local') {
       await this.discord.sendMessage(
         DiscordChannel.OPENAI_BIO_CHECK_RESPONSES,
-        `Curation criteria name check:\n  Environment: \`${
+        `Group name check:\n  Environment: \`${
           process.env.NODE_ENV
-        }\`\n  Username: \`${handle}\`\n  Curation name: \`${text}\`\n  GPT response:\n\`\`\`json\n${responseMessage.substring(
+        }\`\n  Username: \`${handle}\`\n  Group name: \`${text}\`\n  GPT response:\n\`\`\`json\n${responseMessage.substring(
           0,
           1069
         )}\n\`\`\``

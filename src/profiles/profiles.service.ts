@@ -40,6 +40,7 @@ import {
   profileProxiesDb,
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
+import { userGroupsDb, UserGroupsDb } from '../user-groups/user-groups.db';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -51,6 +52,7 @@ export class ProfilesService {
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly cicService: CicService,
     private readonly repService: RepService,
+    private readonly userGroupsDb: UserGroupsDb,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
 
@@ -473,6 +475,7 @@ export class ProfilesService {
       );
       await this.mergeRatings(profileToBeMerged, target, connectionHolder);
       await this.mergeProxies(profileToBeMerged, target, connectionHolder);
+      await this.mergeGroups(profileToBeMerged, target, connectionHolder);
       await this.profilesDb.deleteProfile(
         { id: profileToBeMerged.external_id },
         connectionHolder
@@ -846,6 +849,18 @@ export class ProfilesService {
     );
   }
 
+  private async mergeGroups(
+    profileToBeMerged: Profile,
+    target: Profile,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.userGroupsDb.migrateProfileIdsInGroups(
+      profileToBeMerged.external_id,
+      target.external_id,
+      connectionHolder
+    );
+  }
+
   async searchCommunityMemberMinimalsOfClosestMatches({
     param,
     onlyProfileOwners,
@@ -1092,5 +1107,6 @@ export const profilesService = new ProfilesService(
   profileActivityLogsDb,
   cicService,
   repService,
+  userGroupsDb,
   getAlchemyInstance
 );

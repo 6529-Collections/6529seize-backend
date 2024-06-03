@@ -22,7 +22,7 @@ async function getBaseSearchRequest(
       profile?: string;
       target?: string;
       log_type?: ProfileActivityLogType;
-      curation_criteria_id?: string;
+      group_id?: string;
       page?: string;
       page_size?: string;
       rating_matter?: string;
@@ -66,7 +66,7 @@ async function getBaseSearchRequest(
   const sizeProposal = parseInt(queryParams.page_size || '2000');
   const size = !isNaN(sizeProposal) && sizeProposal > 0 ? sizeProposal : 50;
   return {
-    curation_criteria_id: req.query.curation_criteria_id ?? null,
+    group_id: req.query.group_id ?? null,
     profileId,
     order,
     includeProfileIdToIncoming,
@@ -89,7 +89,7 @@ router.get(
       any,
       any,
       {
-        curation_criteria_id?: string;
+        group_id?: string;
         order?: string;
         profile?: string;
         target?: string;

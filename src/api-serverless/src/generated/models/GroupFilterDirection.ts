@@ -12,7 +12,7 @@
 
 import { HttpFile } from '../http/http';
 
-export enum WaveScopeType {
-    All = 'ALL',
-    Curated = 'CURATED'
+export enum GroupFilterDirection {
+    Received = 'RECEIVED',
+    Sent = 'SENT'
 }

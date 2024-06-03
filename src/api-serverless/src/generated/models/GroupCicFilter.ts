@@ -10,30 +10,50 @@
  * Do not edit the class manually.
  */
 
-import { Group } from '../models/Group';
+import { GroupFilterDirection } from '../models/GroupFilterDirection';
 import { HttpFile } from '../http/http';
 
-/**
-* A scope of audience
-*/
-export class WaveScope {
-    'group': Group | null;
+export class GroupCicFilter {
+    'min': number | null;
+    'max': number | null;
+    'user_identity': string | null;
+    'direction': GroupFilterDirection | null;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "group",
-            "baseName": "group",
-            "type": "Group",
+            "name": "min",
+            "baseName": "min",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "max",
+            "baseName": "max",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "user_identity",
+            "baseName": "user_identity",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "direction",
+            "baseName": "direction",
+            "type": "GroupFilterDirection",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return WaveScope.attributeTypeMap;
+        return GroupCicFilter.attributeTypeMap;
     }
 
     public constructor() {
     }
 }
+
+
 
