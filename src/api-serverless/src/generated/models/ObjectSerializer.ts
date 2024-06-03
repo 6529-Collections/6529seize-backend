@@ -118,7 +118,7 @@ import { QuotedDrop } from '../models/QuotedDrop';
 import { RepRating } from '../models/RepRating';
 import { UpdateProxyActionRequest } from '../models/UpdateProxyActionRequest';
 import { Wave } from '../models/Wave';
-import { WaveConfig      } from '../models/WaveConfig';
+import { WaveConfig       } from '../models/WaveConfig';
 import { WaveCreditScope } from '../models/WaveCreditScope';
 import { WaveCreditType } from '../models/WaveCreditType';
 import { WaveOutcome } from '../models/WaveOutcome';
