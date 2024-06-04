@@ -37,6 +37,7 @@ export class WavesMappers {
       description: createWaveRequest.description,
       created_by: authorId,
       voting_group_id: createWaveRequest.voting.scope.group_id,
+      admin_group_id: createWaveRequest.wave.admin_group_id,
       voting_credit_type: resolveEnumOrThrow(
         WaveCreditType,
         createWaveRequest.voting.credit_type
@@ -194,7 +195,8 @@ export class WavesMappers {
           period: {
             min: waveEntity.wave_period_start,
             max: waveEntity.wave_period_end
-          }
+          },
+          admin_group_id: waveEntity.admin_group_id
         },
         outcomes: JSON.parse(waveEntity.outcomes)
       };

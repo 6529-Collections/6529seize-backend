@@ -61,17 +61,24 @@ const fetchMemes = async (): Promise<MemesExtendedData[]> => {
 export const fetchSingleAddressTDH = async (address: string) => {
   const { block, tdh } = await fetchBlockAndAddressTdh(address);
   const boost = tdh[0]?.boost ?? 1;
-  return {
+  const seasonTdh = await fetchSingleAddressTDHMemesSeasons(address);
+  const addressTdh: any = {
     tdh: formatNumber(tdh[0]?.boosted_tdh ?? 0),
     boost,
     memes_tdh: formatNumber(tdh[0]?.boosted_memes_tdh ?? 0),
     gradients_tdh: formatNumber(tdh[0]?.boosted_gradients_tdh ?? 0),
-    nextgen_tdh: formatNumber(tdh[0]?.boosted_nextgen_tdh ?? 0),
-    addresses: JSON.parse(tdh[0]?.wallets ?? JSON.stringify([address])).map(
-      (w: string) => w.toLowerCase()
-    ),
-    block
+    nextgen_tdh: formatNumber(tdh[0]?.boosted_nextgen_tdh ?? 0)
   };
+
+  seasonTdh.seasons.forEach((s) => {
+    addressTdh[`memes_tdh_szn${s.season}`] = s.tdh;
+  });
+  addressTdh['addresses'] = JSON.parse(
+    tdh[0]?.wallets ?? JSON.stringify([address])
+  ).map((w: string) => w.toLowerCase());
+  addressTdh['block'] = block;
+
+  return addressTdh;
 };
 
 export const fetchSingleAddressTDHForNft = async (

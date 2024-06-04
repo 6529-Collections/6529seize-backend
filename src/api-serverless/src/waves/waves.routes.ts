@@ -177,17 +177,18 @@ const WaveConfigSchema = Joi.object<WaveConfig>({
     .required()
     .allow(...Object.values(WaveType)),
   winning_thresholds: Joi.when('type', {
-    is: Joi.string().valid(WaveType.VoteTallyInRange),
+    is: Joi.string().valid(WaveType.Approve),
     then: IntRangeSchema.required().or('min', 'max'),
     otherwise: Joi.valid(null)
   }),
   max_winners: Joi.when('type', {
-    is: Joi.string().valid(WaveType.TopVoted),
+    is: Joi.string().valid(WaveType.Rank),
     then: Joi.number().integer().required().allow(null).min(1),
     otherwise: Joi.valid(null)
   }),
   time_lock_ms: Joi.number().integer().required().allow(null).min(1),
-  period: IntRangeSchema.required().allow(null)
+  period: IntRangeSchema.required().allow(null),
+  admin_group_id: Joi.string().required().allow(null)
 });
 
 const WaveOutcomeSchema = Joi.object<WaveOutcome>({
