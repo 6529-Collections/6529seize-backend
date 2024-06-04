@@ -15,7 +15,7 @@ import {
   fetchAllConsolidationAddresses,
   fetchAllNFTs,
   fetchAllSeasons,
-  fetchLatestTransactionsBlockNumber,
+  fetchLatestTDHTransactionsBlockNumber,
   fetchTDHForBlock,
   fetchWalletTransactions,
   persistTDH,
@@ -187,7 +187,7 @@ export const updateTDH = async (
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const block = await fetchLatestTransactionsBlockNumber(lastTDHCalc);
+  const block = await fetchLatestTDHTransactionsBlockNumber(lastTDHCalc);
 
   const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
   const nextgenNetwork = getNextgenNetwork();
