@@ -16,7 +16,7 @@ import { CicStatement } from './entities/ICICStatement';
 import { ProfileActivityLog } from './entities/IProfileActivityLog';
 import { Rating } from './entities/IRating';
 import { AbusivenessDetectionResult } from './entities/IAbusivenessDetectionResult';
-import { CommunityGroupEntity } from './entities/ICommunityGroup';
+import { UserGroupEntity } from './entities/IUserGroup';
 import { RatingsSnapshot } from './entities/IRatingsSnapshots';
 import { ProfileProxyEntity } from './entities/IProfileProxy';
 import { ProfileProxyActionEntity } from './entities/IProfileProxyAction';
@@ -48,7 +48,7 @@ async function start() {
     ProfileProxyEntity,
     ProfileProxyActionEntity,
     WaveEntity,
-    CommunityGroupEntity
+    UserGroupEntity
   ]);
   await dbMigrationsLoop.handler(null, null as any, null as any);
 

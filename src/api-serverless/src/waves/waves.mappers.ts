@@ -5,13 +5,10 @@ import {
   WaveCreditScopeType,
   WaveCreditType,
   WaveEntity,
-  WaveScopeType,
   WaveType
 } from '../../../entities/IWave';
 import { Wave } from '../generated/models/Wave';
 import { ProfileMin } from '../generated/models/ProfileMin';
-import { Curation } from '../generated/models/Curation';
-import { WaveScopeType as WaveScopeTypeApi } from '../generated/models/WaveScopeType';
 import { WaveCreditType as WaveCreditTypeApi } from '../generated/models/WaveCreditType';
 import { WaveCreditScope as WaveCreditScopeApi } from '../generated/models/WaveCreditScope';
 import { WaveType as WaveTypeApi } from '../generated/models/WaveType';
@@ -20,14 +17,15 @@ import {
   ProfilesService
 } from '../../../profiles/profiles.service';
 import {
-  communityMemberCriteriaService,
-  CommunityMemberCriteriaService
-} from '../community-members/community-member-criteria.service';
+  userGroupsService,
+  UserGroupsService
+} from '../community-members/user-groups.service';
+import { Group } from '../generated/models/Group';
 
 export class WavesMappers {
   constructor(
     private readonly profilesService: ProfilesService,
-    private readonly curationsService: CommunityMemberCriteriaService
+    private readonly userGroupsService: UserGroupsService
   ) {}
 
   public createWaveToNewWaveEntity(
@@ -38,12 +36,8 @@ export class WavesMappers {
       name: createWaveRequest.name,
       description: createWaveRequest.description,
       created_by: authorId,
+      voting_group_id: createWaveRequest.voting.scope.group_id,
       admin_group_id: createWaveRequest.wave.admin_group_id,
-      voting_scope_type: resolveEnumOrThrow(
-        WaveScopeType,
-        createWaveRequest.voting.scope.type
-      ),
-      voting_scope_curation_id: createWaveRequest.voting.scope.curation_id,
       voting_credit_type: resolveEnumOrThrow(
         WaveCreditType,
         createWaveRequest.voting.credit_type
@@ -57,18 +51,8 @@ export class WavesMappers {
       voting_signature_required: createWaveRequest.voting.signature_required,
       voting_period_start: createWaveRequest.voting.period?.min ?? null,
       voting_period_end: createWaveRequest.voting.period?.max ?? null,
-      visibility_scope_type: resolveEnumOrThrow(
-        WaveScopeType,
-        createWaveRequest.visibility.scope.type
-      ),
-      visibility_scope_curation_id:
-        createWaveRequest.visibility.scope.curation_id,
-      participation_scope_type: resolveEnumOrThrow(
-        WaveScopeType,
-        createWaveRequest.participation.scope.type
-      ),
-      participation_scope_curation_id:
-        createWaveRequest.participation.scope.curation_id,
+      visibility_group_id: createWaveRequest.visibility.scope.group_id,
+      participation_group_id: createWaveRequest.participation.scope.group_id,
       participation_max_applications_per_participant:
         createWaveRequest.participation
           .no_of_applications_allowed_per_participant,
@@ -99,14 +83,14 @@ export class WavesMappers {
   public async waveEntitiesToApiWaves(
     waveEntities: WaveEntity[]
   ): Promise<Wave[]> {
-    const curationEntities = await this.curationsService.getCriteriasByIds(
+    const curationEntities = await this.userGroupsService.getByIds(
       waveEntities
         .map(
           (waveEntity) =>
             [
-              waveEntity.visibility_scope_curation_id,
-              waveEntity.participation_scope_curation_id,
-              waveEntity.voting_scope_curation_id
+              waveEntity.visibility_group_id,
+              waveEntity.participation_group_id,
+              waveEntity.voting_group_id
             ].filter((id) => id !== null) as string[]
         )
         .flat()
@@ -132,7 +116,7 @@ export class WavesMappers {
           return acc;
         }, {} as Record<string, ProfileMin>)
       );
-    const curations: Record<string, Curation> = curationEntities.reduce(
+    const curations: Record<string, Group> = curationEntities.reduce(
       (acc, curationEntity) => {
         acc[curationEntity.id] = {
           id: curationEntity.id,
@@ -142,7 +126,7 @@ export class WavesMappers {
         };
         return acc;
       },
-      {} as Record<string, Curation>
+      {} as Record<string, Group>
     );
     return waveEntities.map<Wave>((waveEntity) => {
       return {
@@ -154,12 +138,8 @@ export class WavesMappers {
         created_at: waveEntity.created_at,
         voting: {
           scope: {
-            type: resolveEnumOrThrow(
-              WaveScopeTypeApi,
-              waveEntity.voting_scope_type
-            ),
-            curation: waveEntity.voting_scope_curation_id
-              ? curations[waveEntity.voting_scope_curation_id] ?? null
+            group: waveEntity.voting_group_id
+              ? curations[waveEntity.voting_group_id] ?? null
               : null
           },
           credit_type: resolveEnumOrThrow(
@@ -182,23 +162,15 @@ export class WavesMappers {
         },
         visibility: {
           scope: {
-            type: resolveEnumOrThrow(
-              WaveScopeTypeApi,
-              waveEntity.visibility_scope_type
-            ),
-            curation: waveEntity.visibility_scope_curation_id
-              ? curations[waveEntity.visibility_scope_curation_id] ?? null
+            group: waveEntity.visibility_group_id
+              ? curations[waveEntity.visibility_group_id] ?? null
               : null
           }
         },
         participation: {
           scope: {
-            type: resolveEnumOrThrow(
-              WaveScopeTypeApi,
-              waveEntity.participation_scope_type
-            ),
-            curation: waveEntity.participation_scope_curation_id
-              ? curations[waveEntity.participation_scope_curation_id] ?? null
+            group: waveEntity.participation_group_id
+              ? curations[waveEntity.participation_group_id] ?? null
               : null
           },
           no_of_applications_allowed_per_participant:
@@ -234,5 +206,5 @@ export class WavesMappers {
 
 export const wavesMappers = new WavesMappers(
   profilesService,
-  communityMemberCriteriaService
+  userGroupsService
 );

@@ -9,14 +9,14 @@ import { randomUUID } from 'crypto';
 import { Time } from '../../../time';
 import { WAVES_TABLE } from '../../../constants';
 import {
-  communityMemberCriteriaService,
-  CommunityMemberCriteriaService
-} from '../community-members/community-member-criteria.service';
+  userGroupsService,
+  UserGroupsService
+} from '../community-members/user-groups.service';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   constructor(
     supplyDb: () => SqlExecutor,
-    private readonly criteriaService: CommunityMemberCriteriaService
+    private readonly userGroupsService: UserGroupsService
   ) {
     super(supplyDb);
   }
@@ -53,9 +53,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             description,
             created_at,
             created_by,
+            voting_group_id,
             admin_group_id,
-            voting_scope_type,
-            voting_scope_curation_id,
             voting_credit_type,
             voting_credit_scope_type,
             voting_credit_category,
@@ -63,10 +62,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             voting_signature_required,
             voting_period_start,
             voting_period_end,
-            visibility_scope_type,
-            visibility_scope_curation_id,
-            participation_scope_type,
-            participation_scope_curation_id,
+            visibility_group_id,
+            participation_group_id,
             participation_max_applications_per_participant,
             participation_required_metadata,
             participation_period_start,
@@ -87,9 +84,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             :description,
             :created_at,
             :created_by,
+            :voting_group_id,
             :admin_group_id,
-            :voting_scope_type,
-            :voting_scope_curation_id,
             :voting_credit_type,
             :voting_credit_scope_type,
             :voting_credit_category,
@@ -97,10 +93,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             :voting_signature_required,
             :voting_period_start,
             :voting_period_end,
-            :visibility_scope_type,
-            :visibility_scope_curation_id,
-            :participation_scope_type,
-            :participation_scope_curation_id,
+            :visibility_group_id,
+            :participation_group_id,
             :participation_max_applications_per_participant,
             :participation_required_metadata,
             :participation_period_start,
@@ -122,8 +116,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   }
 
   async searchWaves(searchParams: SearchWavesParams): Promise<WaveEntity[]> {
-    const sqlAndParams = await this.criteriaService.getSqlAndParamsByCriteriaId(
-      searchParams.curation_criteria_id ?? null
+    const sqlAndParams = await this.userGroupsService.getSqlAndParamsByGroupId(
+      searchParams.group_id ?? null
     );
     if (!sqlAndParams) {
       return [];
@@ -131,7 +125,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const serialNoLessThan =
       searchParams.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `${sqlAndParams.sql} select w.* from ${WAVES_TABLE} w
-         join ${CommunityMemberCriteriaService.GENERATED_VIEW} cm on cm.profile_id = w.created_by
+         join ${UserGroupsService.GENERATED_VIEW} cm on cm.profile_id = w.created_by
          where w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${searchParams.limit}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
@@ -146,10 +140,7 @@ export type NewWaveEntity = Omit<WaveEntity, 'id' | 'serial_no' | 'created_at'>;
 export interface SearchWavesParams {
   readonly limit: number;
   readonly serial_no_less_than?: number;
-  readonly curation_criteria_id?: string;
+  readonly group_id?: string;
 }
 
-export const wavesApiDb = new WavesApiDb(
-  dbSupplier,
-  communityMemberCriteriaService
-);
+export const wavesApiDb = new WavesApiDb(dbSupplier, userGroupsService);

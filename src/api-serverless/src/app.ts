@@ -18,7 +18,7 @@ import oracleRoutes from './oracle/api.oracle.routes';
 import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activity.routes';
 import ownersBalancesRoutes from './owners-balances/api.owners-balances.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
-import communityMembersCurationRoutes from './community-members/community-members-curation.routes';
+import userGroupsRoutes from './community-members/user-groups.routes';
 import dropsRoutes from './drops/drops.routes';
 import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
 import dropsMediaRoutes from './drops/drops-media.routes';
@@ -805,7 +805,7 @@ loadApi().then(() => {
   apiRouter.use(`/profiles`, profilesRoutes);
   apiRouter.use(`/analytics`, analyticsRoutes);
   apiRouter.use(`/community-members`, communityMembersRoutes);
-  apiRouter.use(`/community-members-curation`, communityMembersCurationRoutes);
+  apiRouter.use(`/groups`, userGroupsRoutes);
   apiRouter.use(`/auth`, authRoutes);
   apiRouter.use(`/rememes`, rememesRoutes);
   apiRouter.use(`/nextgen`, nextgenRoutes);

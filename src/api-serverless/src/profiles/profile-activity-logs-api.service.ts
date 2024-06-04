@@ -21,7 +21,7 @@ export interface ProfileActivityLogsSearchRequest {
   pageRequest: PageRequest;
   category?: string;
   order: 'desc' | 'asc';
-  curation_criteria_id: string | null;
+  group_id: string | null;
 }
 
 export class ProfileActivityLogsApiService {
@@ -39,7 +39,7 @@ export class ProfileActivityLogsApiService {
     targetId,
     logType,
     category,
-    curation_criteria_id
+    group_id
   }: ProfileActivityLogsSearchRequest): Promise<
     CountlessPage<ApiProfileActivityLog>
   > {
@@ -47,7 +47,7 @@ export class ProfileActivityLogsApiService {
       order,
       pageRequest,
       includeProfileIdToIncoming,
-      curation_criteria_id: curation_criteria_id ?? null
+      group_id: group_id ?? null
     };
 
     if (category) {

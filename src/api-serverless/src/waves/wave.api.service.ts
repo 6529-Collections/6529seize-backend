@@ -7,9 +7,9 @@ import {
   ProfilesService
 } from '../../../profiles/profiles.service';
 import {
-  communityMemberCriteriaService,
-  CommunityMemberCriteriaService
-} from '../community-members/community-member-criteria.service';
+  userGroupsService,
+  UserGroupsService
+} from '../community-members/user-groups.service';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { wavesMappers, WavesMappers } from './waves.mappers';
@@ -18,7 +18,7 @@ export class WaveApiService {
   constructor(
     private readonly wavesApiDb: WavesApiDb,
     private readonly profilesService: ProfilesService,
-    private readonly curationsService: CommunityMemberCriteriaService,
+    private readonly userGroupsService: UserGroupsService,
     private readonly waveMappers: WavesMappers
   ) {}
 
@@ -52,22 +52,22 @@ export class WaveApiService {
   }
 
   private async validateWaveRelations(createWaveRequest: CreateNewWave) {
-    const referencedCurationIds = distinct(
+    const referencedGroupIds = distinct(
       [
-        createWaveRequest.visibility.scope.curation_id,
-        createWaveRequest.participation.scope.curation_id,
-        createWaveRequest.voting.scope.curation_id
+        createWaveRequest.visibility.scope.group_id,
+        createWaveRequest.participation.scope.group_id,
+        createWaveRequest.voting.scope.group_id
       ].filter((id) => id !== null) as string[]
     );
-    const curationEntities = await this.curationsService.getCriteriasByIds(
-      referencedCurationIds
+    const groupEntities = await this.userGroupsService.getByIds(
+      referencedGroupIds
     );
-    const missingCurationIds = referencedCurationIds.filter(
-      (it) => !curationEntities.find((e) => e.id === it)
+    const missingGroupIds = referencedGroupIds.filter(
+      (it) => !groupEntities.find((e) => e.id === it)
     );
-    if (missingCurationIds.length) {
+    if (missingGroupIds.length) {
       throw new BadRequestException(
-        `Curation(s) not found: ${missingCurationIds.join(', ')}`
+        `Group(s) not found: ${missingGroupIds.join(', ')}`
       );
     }
     const referencedCreditorId = createWaveRequest.voting.creditor_id;
@@ -100,6 +100,6 @@ export class WaveApiService {
 export const waveApiService = new WaveApiService(
   wavesApiDb,
   profilesService,
-  communityMemberCriteriaService,
+  userGroupsService,
   wavesMappers
 );

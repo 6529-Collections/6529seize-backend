@@ -10,30 +10,41 @@
  * Do not edit the class manually.
  */
 
-import { Group } from '../models/Group';
 import { HttpFile } from '../http/http';
 
-/**
-* A scope of audience
-*/
-export class WaveScope {
-    'group': Group | null;
+export class GroupOwnsNft {
+    'name': GroupOwnsNftNameEnum;
+    'tokens': Array<string>;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "group",
-            "baseName": "group",
-            "type": "Group",
+            "name": "name",
+            "baseName": "name",
+            "type": "GroupOwnsNftNameEnum",
+            "format": ""
+        },
+        {
+            "name": "tokens",
+            "baseName": "tokens",
+            "type": "Array<string>",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return WaveScope.attributeTypeMap;
+        return GroupOwnsNft.attributeTypeMap;
     }
 
     public constructor() {
     }
+}
+
+
+export enum GroupOwnsNftNameEnum {
+    Memes = 'MEMES',
+    Memelab = 'MEMELAB',
+    Nextgen = 'NEXTGEN',
+    Gradients = 'GRADIENTS'
 }
 

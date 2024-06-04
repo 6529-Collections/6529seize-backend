@@ -10,27 +10,45 @@
  * Do not edit the class manually.
  */
 
-import { Group } from '../models/Group';
+import { ProfileMin } from '../models/ProfileMin';
 import { HttpFile } from '../http/http';
 
-/**
-* A scope of audience
-*/
-export class WaveScope {
-    'group': Group | null;
+export class Group {
+    'id': string;
+    'name': string;
+    'author': ProfileMin;
+    'created_at': number;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "group",
-            "baseName": "group",
-            "type": "Group",
+            "name": "id",
+            "baseName": "id",
+            "type": "string",
             "format": ""
+        },
+        {
+            "name": "name",
+            "baseName": "name",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "author",
+            "baseName": "author",
+            "type": "ProfileMin",
+            "format": ""
+        },
+        {
+            "name": "created_at",
+            "baseName": "created_at",
+            "type": "number",
+            "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
-        return WaveScope.attributeTypeMap;
+        return Group.attributeTypeMap;
     }
 
     public constructor() {
