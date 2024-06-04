@@ -8,7 +8,4 @@ export class CookiesConsent {
 
   @Column({ type: 'bigint' })
   accepted_at!: number;
-
-  @Column({ type: 'bigint' })
-  expires_at!: number;
 }
