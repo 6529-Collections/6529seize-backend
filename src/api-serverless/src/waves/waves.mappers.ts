@@ -36,8 +36,8 @@ export class WavesMappers {
       name: createWaveRequest.name,
       description: createWaveRequest.description,
       created_by: authorId,
-      admin_group_id: createWaveRequest.wave.admin_group_id,
       voting_group_id: createWaveRequest.voting.scope.group_id,
+      admin_group_id: createWaveRequest.wave.admin_group_id,
       voting_credit_type: resolveEnumOrThrow(
         WaveCreditType,
         createWaveRequest.voting.credit_type
