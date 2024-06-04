@@ -409,7 +409,11 @@ export function calculateLevel({
   tdh: number;
   rep: number;
 }): number {
-  return LEVELS.find((l) => tdh + rep >= l.minTdh)?.level ?? 0;
+  return getLevelFromScore(tdh + rep);
+}
+
+export function getLevelFromScore(score: number): number {
+  return LEVELS.find((l) => score >= l.minTdh)?.level ?? 0;
 }
 
 export function getLevelComponentsBorderByLevel(level: number): number {

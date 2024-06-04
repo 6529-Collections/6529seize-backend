@@ -15,7 +15,10 @@ import {
 } from '../../../constants';
 import { NftTDH } from '../../../entities/ITDH';
 import { fetchPaginated } from '../../../db-api';
-import { calculateLevel } from '../../../profiles/profile-level';
+import {
+  calculateLevel,
+  getLevelFromScore
+} from '../../../profiles/profile-level';
 import { sqlExecutor } from '../../../sql-executor';
 
 export interface NftTdhResponse extends NftTDH {
@@ -326,10 +329,7 @@ export const fetchConsolidatedMetrics = async (
     )?.[0].total ?? 0;
 
   results.data.forEach((d: any) => {
-    d.level = calculateLevel({
-      tdh: d.level ?? 0,
-      rep: d.rep_score
-    });
+    d.level = getLevelFromScore(d.level);
     d.unique_memes_total = uniqueMemesTotal;
   });
   return results;
