@@ -15,7 +15,10 @@ import {
 } from '../../../constants';
 import { NftTDH } from '../../../entities/ITDH';
 import { fetchPaginated } from '../../../db-api';
-import { calculateLevel } from '../../../profiles/profile-level';
+import {
+  calculateLevel,
+  getLevelFromScore
+} from '../../../profiles/profile-level';
 import { sqlExecutor } from '../../../sql-executor';
 
 export interface NftTdhResponse extends NftTDH {
@@ -285,7 +288,7 @@ export const fetchConsolidatedMetrics = async (
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as total_tdh,
     ${tdhField},
-    (${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh + ${PROFILE_FULL}.rep_score) as level,
+    (COALESCE(${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 0) + COALESCE(${PROFILE_FULL}.rep_score, 0)) as level,
     COALESCE(${TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change`;
 
   let joins = ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key`;
@@ -326,10 +329,7 @@ export const fetchConsolidatedMetrics = async (
     )?.[0].total ?? 0;
 
   results.data.forEach((d: any) => {
-    d.level = calculateLevel({
-      tdh: d.level ?? 0,
-      rep: d.rep_score
-    });
+    d.level = getLevelFromScore(d.level);
     d.unique_memes_total = uniqueMemesTotal;
   });
   return results;
