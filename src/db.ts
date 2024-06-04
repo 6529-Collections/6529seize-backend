@@ -279,19 +279,19 @@ export async function persistNftDelegationBlock(
   await AppDataSource.getRepository(NFTDelegationBlock).save(block);
 }
 
-export async function fetchLatestTransactionsBlockNumber(
+export async function fetchLatestTDHTransactionsBlockNumber(
   beforeDate?: Date
 ): Promise<number> {
   let sql = `SELECT block FROM ${TRANSACTIONS_TABLE}`;
-  const params: any = {};
+  sql += ` WHERE contract != :memeLab`;
+  const params: any = {
+    memeLab: MEMELAB_CONTRACT
+  };
   if (beforeDate) {
-    sql += ` WHERE UNIX_TIMESTAMP(transaction_date) <= :date`;
-    params.date = beforeDate.getTime() / 1000;
-  } else {
-    sql += ` WHERE contract in (:contracts)`;
-    params.contracts = [MEMES_CONTRACT, GRADIENT_CONTRACT];
+    sql += ` AND UNIX_TIMESTAMP(transaction_date) <= :date`;
+    params.date = Math.floor(beforeDate.getTime() / 1000);
   }
-  sql += ` order by block desc limit 1;`;
+  sql += ` ORDER BY block DESC LIMIT 1;`;
   const r = await sqlExecutor.execute(sql, params);
   return r.length > 0 ? r[0].block : 0;
 }
