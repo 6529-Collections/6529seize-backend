@@ -10,27 +10,31 @@
  * Do not edit the class manually.
  */
 
-import { Group } from '../models/Group';
+import { GroupDescription } from '../models/GroupDescription';
 import { HttpFile } from '../http/http';
 
-/**
-* A scope of audience
-*/
-export class WaveScope {
-    'group': Group | null;
+export class CreateGroup {
+    'name': string;
+    'group': GroupDescription;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
+            "name": "name",
+            "baseName": "name",
+            "type": "string",
+            "format": ""
+        },
+        {
             "name": "group",
             "baseName": "group",
-            "type": "Group",
+            "type": "GroupDescription",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return WaveScope.attributeTypeMap;
+        return CreateGroup.attributeTypeMap;
     }
 
     public constructor() {

@@ -7,7 +7,7 @@ import { Rating } from '../entities/IRating';
 import { ratingsService } from '../rates/ratings.service';
 import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
 import * as sentryContext from '../sentry.context';
-import { CommunityGroupEntity } from '../entities/ICommunityGroup';
+import { UserGroupEntity } from '../entities/IUserGroup';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
 import {
   DropCommentEntity,
@@ -48,8 +48,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     ProfileProxyEntity,
     ProfileProxyActionEntity,
     WaveEntity,
-    CommunityGroupEntity,
-    CookiesConsent
+    CookiesConsent,
+    UserGroupEntity
   ]);
   await ratingsService.reduceOverRates();
   await dropOverRaterRevocationService.revokeOverRates();

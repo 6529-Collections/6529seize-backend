@@ -280,9 +280,9 @@ paths:
             format: int64
             minimum: 1
             maximum: 20
-        - name: curation_criteria_id
+        - name: group_id
           in: query
-          description: Drops by authors that match the supplied criteria
+          description: Drops by authors that fall into supplied group
           required: false
           schema:
             type: string
@@ -809,9 +809,9 @@ paths:
           schema:
             type: integer
             format: int64
-        - name: curation_criteria_id
+        - name: group_id
           in: query
-          description: Waves by authors that match the supplied criteria
+          description: Waves by authors that fall into supplied group
           required: false
           schema:
             type: string
@@ -868,6 +868,84 @@ paths:
         "404":
           description: Wave not found
 
+  /groups:
+    get:
+      tags:
+        - Groups
+      summary: Search for user groups
+      operationId: searchUserGroups
+      parameters:
+        - name: group_name
+          description: Partial or full name
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: author_identity
+          description: Group author identity
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GroupFull"
+    post:
+      tags:
+        - Groups
+      summary: Create a group
+      operationId: createGroup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGroup"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupFull"
+        "400":
+          description: Invalid request
+  /groups/{id}/visibility:
+    post:
+      tags:
+        - Groups
+      summary: Change group visibility
+      operationId: changeGroupVisibility
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangeGroupVisibility"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupFull"
+        "404":
+          description: Group not found
+        "400":
+          description: Invalid request
+
 components:
   securitySchemes:
     bearerAuth:
@@ -891,7 +969,7 @@ components:
           format: int64
           nullable: true
 
-    Curation:
+    Group:
       type: object
       required:
         - id
@@ -908,6 +986,193 @@ components:
         created_at:
           type: number
           format: int64
+
+    GroupFull:
+      type: object
+      required:
+        - id
+        - name
+        - group
+        - created_at
+        - created_by
+        - visible
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        group:
+          $ref: "#/components/schemas/GroupDescription"
+        created_at:
+          type: number
+          format: int64
+        created_by:
+          $ref: "#/components/schemas/ProfileMin"
+        visible:
+          type: boolean
+
+    GroupDescription:
+      type: object
+      required:
+        - tdh
+        - rep
+        - cic
+        - level
+        - owns_nfts
+      properties:
+        tdh:
+          $ref: "#/components/schemas/GroupTdhFilter"
+        rep:
+          $ref: "#/components/schemas/GroupRepFilter"
+        cic:
+          $ref: "#/components/schemas/GroupCicFilter"
+        level:
+          $ref: "#/components/schemas/GroupLevelFilter"
+        owns_nfts:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupOwnsNft"
+
+    GroupOwnsNft:
+      type: object
+      required:
+        - name
+        - tokens
+      properties:
+        name:
+          type: string
+          enum:
+            - MEMES
+            - MEMELAB
+            - NEXTGEN
+            - GRADIENTS
+        tokens:
+          type: array
+          items:
+            type: string
+
+    GroupTdhFilter:
+      type: object
+      required:
+        - min
+        - max
+      properties:
+        min:
+          type: number
+          minimum: 0
+          format: int64
+          nullable: true
+        max:
+          type: number
+          minimum: 0
+          format: int64
+          nullable: true
+
+    GroupCicFilter:
+      type: object
+      required:
+        - min
+        - max
+        - direction
+        - user_identity
+      properties:
+        min:
+          type: number
+          format: int64
+          nullable: true
+        max:
+          type: number
+          format: int64
+          nullable: true
+        user_identity:
+          type: string
+          minLength: 1
+          maxLength: 200
+          nullable: true
+        direction:
+          example: "RECEIVED"
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/GroupFilterDirection"
+
+    GroupRepFilter:
+      type: object
+      required:
+        - min
+        - max
+        - category
+        - direction
+        - user_identity
+      properties:
+        min:
+          type: number
+          format: int64
+          nullable: true
+        max:
+          type: number
+          format: int64
+          nullable: true
+        category:
+          type: string
+          minLength: 1
+          maxLength: 200
+          nullable: true
+        user_identity:
+          type: string
+          minLength: 1
+          maxLength: 200
+          nullable: true
+        direction:
+          example: "RECEIVED"
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/GroupFilterDirection"
+
+    GroupLevelFilter:
+      type: object
+      required:
+        - min
+        - max
+      properties:
+        min:
+          type: number
+          format: int64
+          nullable: true
+        max:
+          type: number
+          format: int64
+          nullable: true
+
+    GroupFilterDirection:
+        type: string
+        enum:
+          - RECEIVED
+          - SENT
+
+    CreateGroup:
+      type: object
+      required:
+        - name
+        - group
+        - visible
+      properties:
+        name:
+          type: string
+        group:
+          $ref: "#/components/schemas/GroupDescription"
+
+    ChangeGroupVisibility:
+      type: object
+      required:
+        - visible
+        - old_version_id
+      properties:
+        visible:
+          type: boolean
+        old_version_id:
+          type: string
+          minLength: 1
+          nullable: true
 
     PageBase:
       type: object
@@ -1369,22 +1634,13 @@ components:
           items:
             $ref: "#/components/schemas/DropComment"
 
-    WaveScopeType:
-      type: string
-      enum:
-        - ALL
-        - CURATED
-
     CreateNewWaveScope:
       type: object
       required:
-        - type
-        - curation_id
+        - group_id
       properties:
-        type:
-          $ref: "#/components/schemas/WaveScopeType"
-        curation_id:
-          description: "Only relevant when type=CURATED."
+        group_id:
+          description: "If null, everyone is included"
           type: string
           nullable: true
 
@@ -1393,16 +1649,13 @@ components:
       description: A scope of audience
       type: object
       required:
-        - type
-        - curation
+        - group
       properties:
-        type:
-          $ref: "#/components/schemas/WaveScopeType"
-        curation:
-          description: "Only relevant when type=CURATED."
+        group:
+          description: "If null, everyone is included"
           anyOf:
             - type: "null"
-            - $ref: "#/components/schemas/Curation"
+            - $ref: "#/components/schemas/Group"
 
     WaveCreditType:
       type: string
@@ -1415,15 +1668,10 @@ components:
 
     WaveType:
       type: string
-      description: |
-        Type of the wave:
-        * VOTE_TALLY_IN_RANGE - Everybody who will end up in specified range will win.
-        * TOP_VOTED - Top voted participant(s) will win.
-        * NONE - No winners.
       enum:
-        - VOTE_TALLY_IN_RANGE
-        - TOP_VOTED
-        - NONE
+        - APPROVE
+        - RANK
+        - CHAT
 
     WaveCreditScope:
       description: |
@@ -1592,16 +1840,17 @@ components:
         - winning_thresholds
         - period
         - max_winners
+        - admin_group_id
       properties:
         type:
           $ref: "#/components/schemas/WaveType"
         winning_thresholds:
-          description: Drops which rate tally ends up in this range will win. Must be set if and only if type is VOTE_TALLY_IN_RANGE
+          description: Drops which rate tally ends up in this range will win. Must be set if and only if type is APPROVE
           anyOf:
             - type: "null"
             - $ref: "#/components/schemas/IntRange"
         max_winners:
-          description: This amount of top rated drops will win. Must be set if and only if type is TOP_VOTED
+          description: This amount of top rated drops will win. Must be set if and only if type is RANK
           type: integer
           format: int64
           minimum: 1
@@ -1612,6 +1861,9 @@ components:
           type: integer
           format: int64
           minimum: 1
+        admin_group_id:
+          type: string
+          nullable: true
         period:
           anyOf:
             - type: "null"

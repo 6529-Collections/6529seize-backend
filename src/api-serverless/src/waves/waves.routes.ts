@@ -9,7 +9,6 @@ import * as Joi from 'joi';
 import { CreateNewWaveScope } from '../generated/models/CreateNewWaveScope';
 import { CreateNewWaveVisibilityConfig } from '../generated/models/CreateNewWaveVisibilityConfig';
 import { CreateNewWaveVotingConfig } from '../generated/models/CreateNewWaveVotingConfig';
-import { WaveScopeType } from '../generated/models/WaveScopeType';
 import { WaveCreditType } from '../generated/models/WaveCreditType';
 import { WaveCreditScope } from '../generated/models/WaveCreditScope';
 import { IntRange } from '../generated/models/IntRange';
@@ -23,7 +22,7 @@ import { getValidatedByJoiOrThrow } from '../validation';
 import { waveApiService } from './wave.api.service';
 import { SearchWavesParams } from './waves.api.db';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
-import { communityMemberCriteriaService } from '../community-members/community-member-criteria.service';
+import { userGroupsService } from '../community-members/user-groups.service';
 
 const router = asyncRouter();
 
@@ -67,7 +66,7 @@ router.get(
       Joi.object<SearchWavesParams>({
         limit: Joi.number().integer().min(1).max(50).default(20),
         serial_no_less_than: Joi.number().integer().min(1).optional(),
-        curation_criteria_id: Joi.string().optional().min(1)
+        group_id: Joi.string().optional().min(1)
       })
     );
     const waves = await waveApiService.searchWaves(params);
@@ -97,16 +96,11 @@ router.get(
       throw new ForbiddenException(`Proxy is not allowed to read waves`);
     }
     const wave = await waveApiService.findWaveByIdOrThrow(id);
-    if (wave.visibility.scope.type === WaveScopeType.Curated) {
-      const criteriaIdsUserISEligibleFor =
-        await communityMemberCriteriaService.getCriteriaIdsUserIsEligibleFor(
-          profileId
-        );
-      if (
-        !criteriaIdsUserISEligibleFor.includes(
-          wave.visibility.scope.curation!.id
-        )
-      ) {
+    const groupId = wave.visibility.scope.group?.id;
+    if (groupId) {
+      const group_ids_user_is_eligible_for =
+        await userGroupsService.getGroupsUserIsEligibleFor(profileId);
+      if (!group_ids_user_is_eligible_for.includes(groupId)) {
         throw new ForbiddenException(`User is not eligible for this wave`);
       }
     }
@@ -131,14 +125,7 @@ const IntRangeSchema = Joi.object<IntRange>({
   });
 
 const WaveScopeSchema = Joi.object<CreateNewWaveScope>({
-  type: Joi.string()
-    .required()
-    .allow(...Object.values(WaveScopeType)),
-  curation_id: Joi.when('type', {
-    is: Joi.string().valid(WaveScopeType.Curated),
-    then: Joi.string().required(),
-    otherwise: Joi.valid(null)
-  })
+  group_id: Joi.string().required().allow(null)
 });
 
 const WaveVisibilitySchema = Joi.object<CreateNewWaveVisibilityConfig>({
@@ -190,17 +177,18 @@ const WaveConfigSchema = Joi.object<WaveConfig>({
     .required()
     .allow(...Object.values(WaveType)),
   winning_thresholds: Joi.when('type', {
-    is: Joi.string().valid(WaveType.VoteTallyInRange),
+    is: Joi.string().valid(WaveType.Approve),
     then: IntRangeSchema.required().or('min', 'max'),
     otherwise: Joi.valid(null)
   }),
   max_winners: Joi.when('type', {
-    is: Joi.string().valid(WaveType.TopVoted),
+    is: Joi.string().valid(WaveType.Rank),
     then: Joi.number().integer().required().allow(null).min(1),
     otherwise: Joi.valid(null)
   }),
   time_lock_ms: Joi.number().integer().required().allow(null).min(1),
-  period: IntRangeSchema.required().allow(null)
+  period: IntRangeSchema.required().allow(null),
+  admin_group_id: Joi.string().required().allow(null)
 });
 
 const WaveOutcomeSchema = Joi.object<WaveOutcome>({

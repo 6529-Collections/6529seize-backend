@@ -15,7 +15,7 @@ class DropRaterService {
   async updateRating(param: {
     drop_id: string;
     rater_profile_id: string;
-    criteriasUserIsEligible: string[];
+    groupIdsUserIsEligibleFor: string[];
     rating: number;
     category: string;
   }) {
@@ -30,7 +30,7 @@ class DropRaterService {
       const dropId = param.drop_id;
       const dropEntity = await this.dropsDb.findDropById(
         dropId,
-        param.criteriasUserIsEligible,
+        param.groupIdsUserIsEligibleFor,
         connection
       );
       if (!dropEntity) {

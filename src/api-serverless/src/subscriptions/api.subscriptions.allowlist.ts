@@ -137,6 +137,7 @@ export async function splitAllowlistResults(
   results: ALResultsResponse[]
 ): Promise<{
   airdrops: ResultsResponse[];
+  airdrops_unconsolidated: ResultsResponse[];
   allowlists: ResultsResponse[];
 }> {
   const wallets = results.map((r) => r.wallet.toLowerCase());
@@ -221,9 +222,14 @@ export async function splitAllowlistResults(
     }
   }
 
+  const mergedAirdrops = mergeDuplicateWallets(airdrops);
   const mergedAllowlists = mergeDuplicateWallets(allowlists);
 
-  return { airdrops, allowlists: mergedAllowlists };
+  return {
+    airdrops: mergedAirdrops,
+    airdrops_unconsolidated: airdrops,
+    allowlists: mergedAllowlists
+  };
 }
 
 export async function getPublicSubscriptions(

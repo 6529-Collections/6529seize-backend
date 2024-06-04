@@ -13,10 +13,7 @@ import {
   TRANSACTIONS_TABLE,
   WALLETS_CONSOLIDATION_KEYS_VIEW
 } from '../../../constants';
-import {
-  CommunityMemberCriteriaService,
-  communityMemberCriteriaService
-} from './community-member-criteria.service';
+import { UserGroupsService, userGroupsService } from './user-groups.service';
 
 export interface CommunityMemberFromDb
   extends Omit<CommunityMemberOverview, 'last_activity'> {
@@ -26,7 +23,7 @@ export interface CommunityMemberFromDb
 export class CommunityMembersDb extends LazyDbAccessCompatibleService {
   constructor(
     dbSupplier: () => SqlExecutor,
-    private readonly communitySearchSqlGenerator: CommunityMemberCriteriaService
+    private readonly userGroupsService: UserGroupsService
   ) {
     super(dbSupplier);
   }
@@ -34,10 +31,9 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
   async getCommunityMembers(
     query: CommunityMembersQuery
   ): Promise<CommunityMemberFromDb[]> {
-    const viewResult =
-      await this.communitySearchSqlGenerator.getSqlAndParamsByCriteriaId(
-        query.curation_criteria_id
-      );
+    const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
+      query.group_id
+    );
     if (viewResult === null) {
       return [];
     }
@@ -54,17 +50,16 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
         cm.rep as rep,
         cm.pfp as pfp,
         cm.consolidation_key as consolidation_key
-      from ${CommunityMemberCriteriaService.GENERATED_VIEW} cm order by cm.${query.sort} ${query.sort_direction} limit ${query.page_size} offset ${offset}
+      from ${UserGroupsService.GENERATED_VIEW} cm order by cm.${query.sort} ${query.sort_direction} limit ${query.page_size} offset ${offset}
     `,
       viewResult.params
     );
   }
 
   async countCommunityMembers(query: CommunityMembersQuery): Promise<number> {
-    const viewResult =
-      await this.communitySearchSqlGenerator.getSqlAndParamsByCriteriaId(
-        query.curation_criteria_id
-      );
+    const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
+      query.group_id
+    );
     if (viewResult === null) {
       return 0;
     }
@@ -72,7 +67,7 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
       .execute(
         `
       ${viewResult.sql} 
-      select count(*) as cnt from ${CommunityMemberCriteriaService.GENERATED_VIEW} cm
+      select count(*) as cnt from ${UserGroupsService.GENERATED_VIEW} cm
     `,
         viewResult.params
       )
@@ -130,5 +125,5 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
 
 export const communityMembersDb = new CommunityMembersDb(
   dbSupplier,
-  communityMemberCriteriaService
+  userGroupsService
 );
