@@ -3,12 +3,16 @@ import axios, { AxiosResponse } from 'axios';
 import {
   CONSOLIDATIONS_LIMIT,
   NULL_ADDRESS,
-  NULL_ADDRESS_DEAD
+  NULL_ADDRESS_DEAD,
+  WALLET_REGEX
 } from './constants';
 import * as short from 'short-uuid';
 import { goerli, sepolia } from '@wagmi/chains';
 import { Network } from 'alchemy-sdk';
 import { Transaction } from './entities/ITransaction';
+import { getAlchemyInstance } from './alchemy';
+import * as mcache from 'memory-cache';
+import { Time } from './time';
 
 export function areEqualAddresses(w1: string, w2: string) {
   if (!w1 || !w2) {
@@ -397,5 +401,30 @@ export function getTransactionLink(chain_id: number, hash: string) {
       return `https://goerli.etherscan.io/tx/${hash}`;
     default:
       return `https://etherscan.io/tx/${hash}`;
+  }
+}
+
+export function isWallet(identity: string) {
+  return WALLET_REGEX.test(identity);
+}
+
+export async function getWalletFromEns(
+  identity: string
+): Promise<string | null> {
+  const normalisedIdentity = identity.toLowerCase();
+  if (!normalisedIdentity.endsWith('.eth')) {
+    return null;
+  }
+  const key = `ens2wallet-${normalisedIdentity}`;
+
+  const cacheHit = mcache.get(key);
+  if (cacheHit) {
+    return cacheHit;
+  } else {
+    const alchemyResponse = await getAlchemyInstance()
+      .core.resolveName(identity)
+      .then((response) => response?.toLowerCase() ?? ``);
+    mcache.put(key, alchemyResponse, Time.minutes(1).toMillis());
+    return isWallet(alchemyResponse) ? alchemyResponse : null;
   }
 }

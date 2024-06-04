@@ -104,7 +104,7 @@ export class ProfileActivityLogsApiService {
     return {
       page: pageRequest.page,
       next: pageRequest.page_size < convertedData.length,
-      data: convertedData.slice(0, convertedData.length - 1)
+      data: convertedData.slice(0, pageRequest.page_size)
     };
   }
 }

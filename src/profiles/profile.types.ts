@@ -24,4 +24,5 @@ export interface ProfileAndConsolidations {
   cic: AggregatedCicRating;
   rep: number;
   balance: number;
+  readonly input_identity: string;
 }

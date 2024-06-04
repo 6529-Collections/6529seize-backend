@@ -10,7 +10,7 @@ import { calculateLevel } from './profile-level';
 import { Profile } from '../entities/IProfile';
 import * as tdh_consolidation from '../tdhLoop/tdh_consolidation';
 import * as tdhs from '../tdhLoop/tdh';
-import { BadRequestException } from '../exceptions';
+import { BadRequestException, NotFoundException } from '../exceptions';
 import * as path from 'path';
 import { ConnectionWrapper } from '../sql-executor';
 import { Logger } from '../logging';
@@ -30,7 +30,12 @@ import {
 } from '../api-serverless/src/profiles/rep.service';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
-import { areEqualAddresses, replaceEmojisWithHex } from '../helpers';
+import {
+  areEqualAddresses,
+  getWalletFromEns,
+  isWallet,
+  replaceEmojisWithHex
+} from '../helpers';
 import {
   getDelegationPrimaryAddressForConsolidation,
   getHighestTdhAddressForConsolidationKey
@@ -106,7 +111,8 @@ export class ProfilesService {
       level: calculateLevel({ tdh, rep }),
       rep,
       cic,
-      balance
+      balance,
+      input_identity: id
     };
   }
 
@@ -162,7 +168,8 @@ export class ProfilesService {
       level: calculateLevel({ tdh, rep }),
       rep,
       cic,
-      balance
+      balance,
+      input_identity: query
     };
   }
 
@@ -234,7 +241,8 @@ export class ProfilesService {
       level: calculateLevel({ tdh, rep }),
       cic,
       rep,
-      balance
+      balance,
+      input_identity: query
     };
   }
 
@@ -243,6 +251,49 @@ export class ProfilesService {
     connection?: ConnectionWrapper<any>
   ): Promise<Profile[]> {
     return this.profilesDb.getProfilesByWallets(wallets, connection);
+  }
+
+  public async resolveIdentityOrThrowNotFound(identity: string): Promise<{
+    wallet: string;
+    profile_id: string | null;
+    profile_and_consolidations: ProfileAndConsolidations | null;
+  }> {
+    const profileAndConsolidations =
+      await this.getProfileAndConsolidationsByIdentity(identity);
+    const profileId = profileAndConsolidations?.profile?.external_id ?? null;
+    const wallets = profileAndConsolidations?.consolidation?.wallets ?? [];
+    const wallet =
+      profileAndConsolidations?.profile?.primary_wallet ??
+      wallets.find(
+        (it) =>
+          it.wallet.address.toLowerCase() === identity ||
+          it.wallet.ens?.toLowerCase() === identity
+      )?.wallet?.address ??
+      wallets.at(0)?.wallet?.address ??
+      null;
+    if (profileId || wallet) {
+      return {
+        wallet: wallet!,
+        profile_id: profileId,
+        profile_and_consolidations: profileAndConsolidations
+      };
+    }
+    if (isWallet(identity)) {
+      return {
+        wallet: identity.toLowerCase(),
+        profile_id: null,
+        profile_and_consolidations: null
+      };
+    }
+    const resolvedWalletFromMaybeEns = await getWalletFromEns(identity);
+    if (resolvedWalletFromMaybeEns) {
+      return {
+        wallet: resolvedWalletFromMaybeEns.toLowerCase(),
+        profile_id: null,
+        profile_and_consolidations: null
+      };
+    }
+    throw new NotFoundException(`Unknown identity ${identity}`);
   }
 
   public async getProfileAndConsolidationsByIdentity(
@@ -307,7 +358,8 @@ export class ProfilesService {
         level: calculateLevel({ tdh, rep }),
         cic,
         rep,
-        balance
+        balance,
+        input_identity: identity
       };
     }
   }
