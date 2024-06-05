@@ -1,7 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { Logger } from '../../../logging';
 import { fetchRandomImage } from '../../../db-api';
-import fetch from 'node-fetch';
+
+const geoip = require('geoip-lite');
 
 const logger = Logger.get('API_POLICIES');
 
@@ -71,7 +72,7 @@ export const checkPolicies = async (
   const ipInfo = await getIpInfo(ip);
   const country = ipInfo?.country;
 
-  if (isBlockedCountry(country)) {
+  if (!country || isBlockedCountry(country)) {
     logger.info(`[REQUEST FROM BLOCKED COUNTRY] : [${country} : ${ip}]`);
     const image = await fetchRandomImage();
     return res.status(403).send({
@@ -88,16 +89,8 @@ export const isLocalhost = (ip: string) => {
 };
 
 export async function getIpInfo(ip: string) {
-  try {
-    const url = `https://ipinfo.io/${ip}/json`;
-    const response = await fetch(url);
-    const data = await response.json();
-    console.log(`[IP INFO] : [${ip} : ${JSON.stringify(data)}] : [${url}]`);
-    return data;
-  } catch (error) {
-    console.error('Failed to fetch client IP:', error);
-    return null;
-  }
+  const geo = geoip.lookup(ip);
+  return geo;
 }
 
 export const getIp = (req: Request): string => {
