@@ -576,7 +576,7 @@ export async function fetchNFTs(
     pageSize,
     page,
     filters,
-    `${NFTS_TABLE}.*, CASE WHEN EXISTS (SELECT 1 FROM distribution d WHERE d.card_id = ${NFTS_TABLE}.id AND d.contract = ${NFTS_TABLE}.contract) THEN TRUE ELSE FALSE END AS has_distribution`,
+    `${NFTS_TABLE}.*, CASE WHEN EXISTS (SELECT 1 FROM ${DISTRIBUTION_NORMALIZED_TABLE} d WHERE d.card_id = ${NFTS_TABLE}.id AND d.contract = ${NFTS_TABLE}.contract) THEN TRUE ELSE FALSE END AS has_distribution`,
     ''
   );
 }
