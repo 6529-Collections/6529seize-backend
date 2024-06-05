@@ -71,7 +71,7 @@ export const checkPolicies = async (
   const ipInfo = await getIpInfo(ip);
   const country = ipInfo?.country;
 
-  if (!country || isBlockedCountry(country)) {
+  if (isBlockedCountry(country)) {
     logger.info(`[REQUEST FROM BLOCKED COUNTRY] : [${country} : ${ip}]`);
     const image = await fetchRandomImage();
     return res.status(403).send({
