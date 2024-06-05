@@ -3,6 +3,8 @@ import { Logger } from '../../../logging';
 import { fetchRandomImage } from '../../../db-api';
 import fetch from 'node-fetch';
 
+import * as geoip from 'geoip-country';
+
 const logger = Logger.get('API_POLICIES');
 
 export const BLOCKED_COUNTRIES = [
@@ -88,15 +90,18 @@ export const isLocalhost = (ip: string) => {
 };
 
 export async function getIpInfo(ip: string) {
-  try {
-    const url = `https://ipapi.co/${ip}/json/`;
-    const response = await fetch(url);
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error('Failed to fetch client IP:', error);
-    return null;
-  }
+  // try {
+  //   const url = `https://ipapi.co/${ip}/json/`;
+  //   const response = await fetch(url);
+  //   const data = await response.json();
+  //   return data;
+  // } catch (error) {
+  //   console.error('Failed to fetch client IP:', error);
+  //   return null;
+  // }
+  const geo = geoip.lookup(ip);
+  console.log(`GEO INFO FOR IP: ${ip}`, JSON.stringify(geo));
+  return geo;
 }
 
 export const getIp = (req: Request): string => {
