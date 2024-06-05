@@ -94,7 +94,7 @@ export async function getIpInfo(
     const url = `https://api.findip.net/${ip}/?token=${process.env.FINDIP_API_TOKEN}`;
     const response = await fetch(url);
     const data = await response.json();
-    console.log(`GEO INFO FOR IP: ${ip}`, data.country.iso_code);
+    console.log(`GEO INFO FOR IP: ${ip}`, JSON.stringify(data.country));
     return {
       country: data.country?.iso_code
     };
