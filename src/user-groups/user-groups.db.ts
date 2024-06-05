@@ -4,8 +4,16 @@ import {
   LazyDbAccessCompatibleService
 } from '../sql-executor';
 import { UserGroupEntity } from '../entities/IUserGroup';
-import { PROFILE_FULL, RATINGS_TABLE, USER_GROUPS_TABLE } from '../constants';
+import {
+  ALL_COMMUNITY_MEMBERS_VIEW,
+  PROFILE_FULL,
+  RATINGS_TABLE,
+  USER_GROUPS_TABLE,
+  WALLET_GROUPS_TABLE
+} from '../constants';
 import { RateMatter } from '../entities/IRating';
+import { randomUUID } from 'crypto';
+import { distinct } from '../helpers';
 
 export class UserGroupsDb extends LazyDbAccessCompatibleService {
   async save(entity: UserGroupEntity, connection: ConnectionWrapper<any>) {
@@ -36,7 +44,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                                             owns_nextgen_tokens,
                                             owns_lab,
                                             owns_lab_tokens,
-                                            visible)
+                                            visible,
+                                            wallet_group_id)
           values (:id,
                   :name,
                   :cic_min,
@@ -62,11 +71,27 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                   :owns_nextgen_tokens,
                   :owns_lab,
                   :owns_lab_tokens,
-                  :visible)
+                  :visible,
+                  :wallet_group_id)
     `,
       { ...entity },
       { wrappedConnection: connection }
     );
+  }
+
+  async insertWalletGroupWalletsAndGetGroupId(
+    wallets: string[],
+    connection: ConnectionWrapper<any>
+  ): Promise<string> {
+    const wallet_group_id = randomUUID();
+    for (const wallet of distinct(wallets.map((w) => w.toLowerCase()))) {
+      await this.db.execute(
+        `insert into ${WALLET_GROUPS_TABLE} (wallet_group_id, wallet) values (:wallet_group_id, :wallet)`,
+        { wallet_group_id, wallet },
+        { wrappedConnection: connection }
+      );
+    }
+    return wallet_group_id;
   }
 
   async getById(
@@ -304,6 +329,80 @@ where ((cg.cic_direction = 'RECEIVED' and (
         { wrappedConnection: connectionHolder }
       )
     ]);
+  }
+
+  async findWalletGroupsIdsAndWalletCountsByGroupIds(
+    groupIds: string[]
+  ): Promise<
+    Record<string, { wallet_group_id: string; wallets_count: number }>
+  > {
+    if (!groupIds.length) {
+      return {};
+    }
+    return this.db
+      .execute<{
+        group_id: string;
+        wallet_group_id: string;
+        wallets_count: number;
+      }>(
+        `select g.id as group_id, wg.wallet_group_id as wallet_group_id, count(wg.wallet) as wallets_count from ${USER_GROUPS_TABLE} g join ${WALLET_GROUPS_TABLE} wg on g.wallet_group_id = wg.wallet_group_id where g.id in (:groupIds) group by 1, 2`,
+        { groupIds }
+      )
+      .then((res) =>
+        res.reduce((acc, { group_id, wallet_group_id, wallets_count }) => {
+          acc[group_id] = { wallet_group_id, wallets_count };
+          return acc;
+        }, {} as Record<string, { wallet_group_id: string; wallets_count: number }>)
+      );
+  }
+
+  async findWalletGroupIdsContainingAnyOfProfilesWallets(
+    userGroupIds: string[],
+    profileId: string
+  ): Promise<string[]> {
+    if (!userGroupIds.length) {
+      return [];
+    }
+    const profileWallets = await this.db
+      .execute<{
+        wallet1: string;
+        wallet2: string;
+        wallet3: string;
+      }>(
+        `select wallet1, wallet2, wallet3 from ${ALL_COMMUNITY_MEMBERS_VIEW} where external_id = :profileId`,
+        { profileId }
+      )
+      .then((result) =>
+        [
+          result[0]?.wallet1 ?? null,
+          result[0]?.wallet2 ?? null,
+          result[0]?.wallet3 ?? null
+        ].filter((it) => it !== null)
+      );
+    if (!profileWallets) {
+      return [];
+    }
+    return this.db
+      .execute<{ wallet_group_id: string }>(
+        `select distinct g.wallet_group_id from ${USER_GROUPS_TABLE} g
+         join ${WALLET_GROUPS_TABLE} wg on wg.wallet_group_id is not null and wg.wallet_group_id = g.wallet_group_id 
+         where g.id in (:userGroupIds) and wg.wallet in (
+            :profileWallets
+         )`,
+        { userGroupIds, profileWallets }
+      )
+      .then((res) => res.map((it) => it.wallet_group_id));
+  }
+
+  async findUserGroupsWalletGroupWallets(
+    walletGroupId: string
+  ): Promise<string[]> {
+    return this.db
+      .execute<{ wallet: string }>(
+        `select wallet from ${WALLET_GROUPS_TABLE} where wallet_group_id = :walletGroupId`,
+        { walletGroupId }
+      )
+      .then((res) => res.map((it) => it.wallet));
   }
 }
 
