@@ -89,8 +89,10 @@ export const isLocalhost = (ip: string) => {
 
 export async function getIpInfo(ip: string) {
   try {
-    const response = await fetch(`https://ipinfo.io/${ip}/json`);
+    const url = `https://ipinfo.io/${ip}/json`;
+    const response = await fetch(url);
     const data = await response.json();
+    console.log(`[IP INFO] : [${ip} : ${JSON.stringify(data)}] : [${url}]`);
     return data;
   } catch (error) {
     console.error('Failed to fetch client IP:', error);
