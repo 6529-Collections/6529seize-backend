@@ -87,13 +87,17 @@ export const isLocalhost = (ip: string) => {
   return ip === '127.0.0.1' || ip === '::1';
 };
 
-export async function getIpInfo(ip: string) {
+export async function getIpInfo(
+  ip: string
+): Promise<{ country: string } | null> {
   try {
-    const url = `https://ipapi.co/${ip}/json/`;
+    const url = `https://api.findip.net/${ip}/?token=${process.env.FINDIP_API_TOKEN}`;
     const response = await fetch(url);
     const data = await response.json();
-    console.log(`GEO INFO FOR IP: ${ip}`, JSON.stringify(data));
-    return data;
+    console.log(`GEO INFO FOR IP: ${ip}`, data.country.iso_code);
+    return {
+      country: data.country?.iso_code
+    };
   } catch (error) {
     console.error('Failed to fetch client IP:', error);
     return null;
