@@ -58,29 +58,25 @@ router.get(
         raterIdentity
       );
     const raterProfile = profileAndConsolidationsOfRater?.profile;
-    if (raterProfile && targetProfile) {
-      const { rating: cicRatingByRater } =
-        await ratingsService.getAggregatedRatingOnMatter({
-          rater_profile_id: raterProfile.external_id,
-          matter: RateMatter.CIC,
-          matter_category: RateMatter.CIC,
-          matter_target_id: targetProfile.external_id
-        });
-      const cicRatingsLeftToGiveByRater =
-        await ratingsService.getRatesLeftOnMatterForProfile({
+    const { rating: cicRatingByRater } =
+      targetProfile && raterProfile
+        ? await ratingsService.getAggregatedRatingOnMatter({
+            rater_profile_id: raterProfile.external_id,
+            matter: RateMatter.CIC,
+            matter_category: RateMatter.CIC,
+            matter_target_id: targetProfile.external_id
+          })
+        : { rating: 0 };
+    const cicRatingsLeftToGiveByRater = raterProfile
+      ? await ratingsService.getRatesLeftOnMatterForProfile({
           profile_id: raterProfile.external_id,
           matter: RateMatter.CIC
-        });
-      res.send({
-        cic_rating_by_rater: cicRatingByRater,
-        cic_ratings_left_to_give_by_rater: cicRatingsLeftToGiveByRater
-      });
-    } else {
-      res.send({
-        cic_rating_by_rater: null,
-        cic_ratings_left_to_give_by_rater: null
-      });
-    }
+        })
+      : 0;
+    res.send({
+      cic_rating_by_rater: cicRatingByRater,
+      cic_ratings_left_to_give_by_rater: cicRatingsLeftToGiveByRater
+    });
   }
 );
 
