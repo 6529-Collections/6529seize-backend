@@ -58,29 +58,25 @@ router.get(
         raterIdentity
       );
     const raterProfile = profileAndConsolidationsOfRater?.profile;
-    if (raterProfile && targetProfile) {
-      const { rating: cicRatingByRater } =
-        await ratingsService.getAggregatedRatingOnMatter({
-          rater_profile_id: raterProfile.external_id,
-          matter: RateMatter.CIC,
-          matter_category: RateMatter.CIC,
-          matter_target_id: targetProfile.external_id
-        });
-      const cicRatingsLeftToGiveByRater =
-        await ratingsService.getRatesLeftOnMatterForProfile({
+    const { rating: cicRatingByRater } =
+      targetProfile && raterProfile
+        ? await ratingsService.getAggregatedRatingOnMatter({
+            rater_profile_id: raterProfile.external_id,
+            matter: RateMatter.CIC,
+            matter_category: RateMatter.CIC,
+            matter_target_id: targetProfile.external_id
+          })
+        : { rating: 0 };
+    const cicRatingsLeftToGiveByRater = raterProfile
+      ? await ratingsService.getRatesLeftOnMatterForProfile({
           profile_id: raterProfile.external_id,
           matter: RateMatter.CIC
-        });
-      res.send({
-        cic_rating_by_rater: cicRatingByRater,
-        cic_ratings_left_to_give_by_rater: cicRatingsLeftToGiveByRater
-      });
-    } else {
-      res.send({
-        cic_rating_by_rater: null,
-        cic_ratings_left_to_give_by_rater: null
-      });
-    }
+        })
+      : 0;
+    res.send({
+      cic_rating_by_rater: cicRatingByRater,
+      cic_ratings_left_to_give_by_rater: cicRatingsLeftToGiveByRater
+    });
   }
 );
 
@@ -142,14 +138,16 @@ router.get(
     res: Response<ApiResponse<CicStatement[]>>
   ) {
     const identity = req.params.identity.toLowerCase();
-    const profileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByIdentity(identity);
-    const profileId = profileAndConsolidations?.profile?.external_id;
-    if (!profileId) {
-      throw new NotFoundException(`No profile found for ${identity}`);
+    const resolvedIdentity =
+      await profilesService.resolveIdentityOrThrowNotFound(identity);
+    if (resolvedIdentity.profile_id) {
+      const statements = await cicService.getCicStatementsByProfileId(
+        resolvedIdentity.profile_id
+      );
+      res.status(200).send(statements);
+    } else {
+      res.status(200).send([]);
     }
-    const statements = await cicService.getCicStatementsByProfileId(profileId);
-    res.status(200).send(statements);
   }
 );
 

@@ -3,7 +3,7 @@ import { needsAuthenticatedUser } from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import { getValidatedByJoiOrThrow } from '../validation';
-import { BadRequestException, NotFoundException } from '../../../exceptions';
+import { BadRequestException } from '../../../exceptions';
 import * as Joi from 'joi';
 import {
   GetProfileRatingsRequest,
@@ -26,7 +26,7 @@ const router = asyncRouter({ mergeParams: true });
 
 async function getReceivedRatingsStats(
   raterProfileId: string | null,
-  targetProfileId: string
+  targetProfileId: string | null
 ): Promise<ApiProfileReceivedRepRatesState> {
   const repRatesLeftForRater = raterProfileId
     ? await ratingsService.getRatesLeftOnMatterForProfile({
@@ -35,18 +35,20 @@ async function getReceivedRatingsStats(
       })
     : null;
 
-  const ratingStats =
-    await ratingsService.getAllRatingsForMatterOnProfileGroupedByCategories({
-      matter: RateMatter.REP,
-      matter_target_id: targetProfileId,
-      rater_profile_id: raterProfileId ?? null
-    });
+  const ratingStats = targetProfileId
+    ? await ratingsService.getAllRatingsForMatterOnProfileGroupedByCategories({
+        matter: RateMatter.REP,
+        matter_target_id: targetProfileId,
+        rater_profile_id: raterProfileId ?? null
+      })
+    : [];
 
-  const numberOfProfileReppers =
-    await ratingsService.getNumberOfRatersForMatterOnProfile({
-      matter: RateMatter.REP,
-      profile_id: targetProfileId
-    });
+  const numberOfProfileReppers = targetProfileId
+    ? await ratingsService.getNumberOfRatersForMatterOnProfile({
+        matter: RateMatter.REP,
+        profile_id: targetProfileId
+      })
+    : 0;
 
   return {
     total_rep_rating: ratingStats.reduce(
@@ -94,22 +96,18 @@ router.get(
     const identity = req.params.identity.toLowerCase();
     const raterIdentity = req.query.rater?.toLowerCase() ?? null;
 
-    const targetProfileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByIdentity(identity);
-    const targetProfileId =
-      targetProfileAndConsolidations?.profile?.external_id;
+    const targetIdentity = await profilesService.resolveIdentityOrThrowNotFound(
+      identity
+    );
     const raterProfileAndConsolidations = !raterIdentity
       ? null
       : await profilesService.getProfileAndConsolidationsByIdentity(
           raterIdentity
         );
     const raterProfileId = raterProfileAndConsolidations?.profile?.external_id;
-    if (!targetProfileId) {
-      throw new NotFoundException(`No profile found for ${identity}`);
-    }
     const response = await getReceivedRatingsStats(
       raterProfileId ?? null,
-      targetProfileId
+      targetIdentity.profile_id
     );
     res.send(response);
   }
@@ -135,23 +133,18 @@ router.get(
       throw new BadRequestException(`Query parameter "category" is required`);
     }
 
-    const targetProfileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByIdentity(
-        targetIdendity
-      );
-    const targetProfileId =
-      targetProfileAndConsolidations?.profile?.external_id;
-    if (!targetProfileId) {
-      throw new NotFoundException(`No profile found for ${targetIdendity}`);
-    }
-    const response =
-      await ratingsService.getRatingsForMatterAndCategoryOnProfileWithRatersInfo(
-        {
-          matter: RateMatter.REP,
-          matter_target_id: targetProfileId,
-          matter_category: category
-        }
-      );
+    const resolvedTargetIdentity =
+      await profilesService.resolveIdentityOrThrowNotFound(targetIdendity);
+    const response: RatingWithProfileInfoAndLevel[] =
+      resolvedTargetIdentity.profile_id
+        ? await ratingsService.getRatingsForMatterAndCategoryOnProfileWithRatersInfo(
+            {
+              matter: RateMatter.REP,
+              matter_target_id: resolvedTargetIdentity.profile_id,
+              matter_category: category
+            }
+          )
+        : [];
     res.send(response);
   }
 );
@@ -209,25 +202,21 @@ router.get(
   ) {
     const identity = req.params.identity;
     const { category, from_identity } = req.query;
-    const [target_profile_id, rater_profile_id] = await Promise.all([
-      profilesService
-        .getProfileAndConsolidationsByIdentity(identity)
-        .then((profile) => profile?.profile?.external_id ?? null),
+    const [resolvedTargetIdentity, resolvedRaterIdentity] = await Promise.all([
+      profilesService.resolveIdentityOrThrowNotFound(identity),
       from_identity
-        ? profilesService
-            .getProfileAndConsolidationsByIdentity(from_identity)
-            .then((profile) => profile?.profile?.external_id ?? null)
+        ? profilesService.resolveIdentityOrThrowNotFound(from_identity)
         : null
     ]);
-    if (from_identity && !rater_profile_id) {
+    if (
+      (from_identity && !resolvedRaterIdentity) ||
+      !resolvedTargetIdentity.profile_id
+    ) {
       res.send({ rating: 0 });
     } else {
-      if (!target_profile_id) {
-        throw new NotFoundException(`No profile found for ${identity}`);
-      }
       const repRating = await ratingsService.getRepRating({
-        rater_profile_id: rater_profile_id,
-        target_profile_id,
+        rater_profile_id: resolvedRaterIdentity?.profile_id ?? null,
+        target_profile_id: resolvedTargetIdentity.profile_id,
         category: category ?? null
       });
       res.send({

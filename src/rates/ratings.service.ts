@@ -10,11 +10,7 @@ import {
   UpdateRatingRequest
 } from './ratings.db';
 import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
-import {
-  BadRequestException,
-  ForbiddenException,
-  NotFoundException
-} from '../exceptions';
+import { BadRequestException, ForbiddenException } from '../exceptions';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import {
   profileActivityLogsDb,
@@ -689,8 +685,16 @@ export class RatingsService {
       identity,
       matter
     });
+    if (!params.profileId) {
+      return {
+        count: 0,
+        data: [],
+        next: false,
+        page: 1
+      };
+    }
     return this.ratingsDb
-      .getRatingsByRatersForMatter(params)
+      .getRatingsByRatersForMatter({ ...params, profileId: params.profileId })
       .then(async (page) => {
         const profileIds = page.data.map((it) => it.profile_id);
         const profileReps = await this.repService.getRepForProfiles(profileIds);
@@ -726,15 +730,11 @@ export class RatingsService {
       queryParams.order_by?.toLowerCase() === 'rating'
         ? 'rating'
         : 'last_modified';
-    const profile = await profilesService.getProfileAndConsolidationsByIdentity(
-      identity.toLocaleLowerCase()
-    );
-    const profile_id = profile?.profile?.external_id;
-    if (!profile_id) {
-      throw new NotFoundException(`No profile found for ${identity}`);
-    }
+    const resolvedIdentity =
+      await profilesService.resolveIdentityOrThrowNotFound(identity);
     return {
-      profileId: profile_id,
+      profileId: resolvedIdentity.profile_id,
+      wallet: resolvedIdentity.wallet,
       matter,
       given,
       page,
@@ -786,7 +786,8 @@ export type GetProfileRatingsRequest = Request<
 
 export type GetRatingsByRatersForMatterParams = {
   given: boolean;
-  profileId: string;
+  profileId: string | null;
+  wallet: string;
   page: number;
   matter: RateMatter;
   page_size: number;
