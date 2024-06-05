@@ -16,10 +16,20 @@ router.get(`/country-check`, function (req: Request, res: any) {
     });
   }
 
-  getIpInfo(ip).then(async (ipInfo) => {
-    const isEU = isEUCountry(ipInfo?.country) || isLocalhost(ip);
+  if (isLocalhost(ip)) {
     return res.status(200).send({
-      is_eu: isEU
+      is_eu: true
+    });
+  }
+
+  getIpInfo(ip).then(async (ipInfo) => {
+    if (!ipInfo?.country) {
+      return res.status(400).send({
+        message: 'Failed to get country from IP address'
+      });
+    }
+    return res.status(200).send({
+      is_eu: isEUCountry(ipInfo.country)
     });
   });
 });
