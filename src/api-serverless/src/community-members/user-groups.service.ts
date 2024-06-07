@@ -1,8 +1,4 @@
-import {
-  ALL_COMMUNITY_MEMBERS_VIEW,
-  RATINGS_TABLE,
-  WALLET_GROUPS_TABLE
-} from '../../../constants';
+import { ALL_COMMUNITY_MEMBERS_VIEW, RATINGS_TABLE } from '../../../constants';
 import { profilesService } from '../../../profiles/profiles.service';
 import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
 import { UserGroupEntity } from '../../../entities/IUserGroup';
@@ -44,9 +40,7 @@ export class UserGroupsService {
   ) {}
 
   async save(
-    group: Omit<NewUserGroupEntity, 'wallet_group_id'> & {
-      wallets: string[];
-    },
+    group: NewUserGroupEntity,
     createdBy: { id: string; handle: string }
   ): Promise<GroupFull> {
     const savedEntity =
@@ -60,12 +54,6 @@ export class UserGroupsService {
             }).slice(0, 50) +
             '-' +
             uniqueShortId();
-          const wallet_group_id = group.wallets.length
-            ? await this.userGroupsDb.insertWalletGroupWalletsAndGetGroupId(
-                group.wallets,
-                connection
-              )
-            : null;
           await this.userGroupsDb.save(
             {
               ...group,
@@ -73,8 +61,7 @@ export class UserGroupsService {
               created_at: new Date(),
               created_by: createdBy.id,
               visible: false,
-              name: group.name,
-              wallet_group_id
+              name: group.name
             },
             connection
           );
@@ -204,23 +191,7 @@ export class UserGroupsService {
         }
       }
     });
-    const allThatIsLeft = [...ambiguousCleaned, ...unambiguousInitial];
-    const allowedWalletGroupIds: string[] = [];
-    if (profileId) {
-      const walletGroupIdsProfileIsIn =
-        await this.userGroupsDb.findWalletGroupIdsContainingAnyOfProfilesWallets(
-          allThatIsLeft.filter((it) => it.wallet_group_id).map((it) => it.id),
-          profileId
-        );
-      allowedWalletGroupIds.push(...walletGroupIdsProfileIsIn);
-    }
-    return allThatIsLeft
-      .filter(
-        (it) =>
-          it.wallet_group_id === null ||
-          allowedWalletGroupIds.includes(it.wallet_group_id)
-      )
-      .map((it) => it.id);
+    return [...ambiguousCleaned, ...unambiguousInitial].map((it) => it.id);
   }
 
   async changeVisibility({
@@ -332,8 +303,7 @@ export class UserGroupsService {
           min: null,
           max: null
         },
-        owns_nfts: [],
-        wallet_group_id: null
+        owns_nfts: []
       });
     } else {
       const group = await this.getByIdOrThrow(groupId);
@@ -341,9 +311,7 @@ export class UserGroupsService {
     }
   }
 
-  private async getSqlAndParams(
-    group: Omit<GroupDescription, 'wallet_group_wallets_count'>
-  ): Promise<{
+  private async getSqlAndParams(group: GroupDescription): Promise<{
     sql: string;
     params: Record<string, any>;
   } | null> {
@@ -393,7 +361,7 @@ export class UserGroupsService {
   private getGeneralPart(
     repPart: string | null,
     cicPart: string | null,
-    group: Omit<GroupDescription, 'wallet_group_wallets_count'>,
+    group: GroupDescription,
     params: Record<string, any>
   ) {
     let cmPart = ` ${repPart || cicPart ? ',' : ''}
@@ -406,9 +374,6 @@ export class UserGroupsService {
     }
     if (cicPart !== null) {
       cmPart += `join cic_exchanges on a.profile_id = cic_exchanges.profile_id `;
-    }
-    if (group.wallet_group_id !== null) {
-      cmPart += `join ${WALLET_GROUPS_TABLE} on a.wallet1 = ${WALLET_GROUPS_TABLE}.wallet or a.wallet2 = ${WALLET_GROUPS_TABLE}.wallet or a.wallet3 = ${WALLET_GROUPS_TABLE}.wallet `;
     }
     cmPart += `where true `;
     if (group.tdh.min !== null) {
@@ -432,7 +397,7 @@ export class UserGroupsService {
   }
 
   private getCicPart(
-    group: Omit<GroupDescription, 'wallet_group_wallets_count'>,
+    group: GroupDescription,
     params: Record<string, any>,
     repPart: string | null
   ) {
@@ -478,10 +443,7 @@ export class UserGroupsService {
     return cicPart;
   }
 
-  private getRepPart(
-    group: Omit<GroupDescription, 'wallet_group_wallets_count'>,
-    params: Record<string, any>
-  ) {
+  private getRepPart(group: GroupDescription, params: Record<string, any>) {
     let repPart = null;
     const repGroup = group.rep;
     if (
@@ -565,19 +527,11 @@ export class UserGroupsService {
     return await this.userGroupsDb.getByIds(ids);
   }
 
-  async findUserGroupsWalletGroupWallets(
-    walletGroupId: string
-  ): Promise<string[]> {
-    return await this.userGroupsDb.findUserGroupsWalletGroupWallets(
-      walletGroupId
-    );
-  }
-
-  private async mapForApi(groups: UserGroupEntity[]): Promise<GroupFull[]> {
+  private async mapForApi(group: UserGroupEntity[]): Promise<GroupFull[]> {
     const relatedProfiles = await profilesService
       .getProfileMinsByIds(
         distinct(
-          groups
+          group
             .map(
               (it) =>
                 [it.created_by, it.rep_user, it.cic_user].filter(
@@ -593,13 +547,7 @@ export class UserGroupsService {
           return acc;
         }, {} as Record<string, ProfileMin>)
       );
-    const groupsWalletGroupsIdsAndWalletCounts: Record<
-      string,
-      { wallet_group_id: string; wallets_count: number }
-    > = await this.userGroupsDb.findWalletGroupsIdsAndWalletCountsByGroupIds(
-      groups.map((it) => it.id)
-    );
-    return groups.map<GroupFull>((it) => ({
+    return group.map<GroupFull>((it) => ({
       id: it.id,
       name: it.name,
       visible: it.visible,
@@ -665,11 +613,7 @@ export class UserGroupsService {
                 tokens: it.owns_lab_tokens ? JSON.parse(it.owns_lab_tokens) : []
               }
             : null
-        ].filter((it) => !!it) as GroupOwnsNft[],
-        wallet_group_id:
-          groupsWalletGroupsIdsAndWalletCounts[it.id]?.wallet_group_id ?? null,
-        wallet_group_wallets_count:
-          groupsWalletGroupsIdsAndWalletCounts[it.id]?.wallets_count ?? 0
+        ].filter((it) => !!it) as GroupOwnsNft[]
       },
       created_by: relatedProfiles[it.created_by] ?? null
     }));
