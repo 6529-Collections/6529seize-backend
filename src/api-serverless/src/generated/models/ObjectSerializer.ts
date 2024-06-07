@@ -10,6 +10,7 @@ export * from '../models/CreateDropMediaUrlRequest';
 export * from '../models/CreateDropPart';
 export * from '../models/CreateDropRequest';
 export * from '../models/CreateGroup';
+export * from '../models/CreateGroupDescription';
 export * from '../models/CreateNewProfileProxy';
 export * from '../models/CreateNewProfileProxyAllocateCicAction';
 export * from '../models/CreateNewProfileProxyAllocateRepAction';
@@ -85,6 +86,7 @@ import { CreateDropMediaUrlRequest } from '../models/CreateDropMediaUrlRequest';
 import { CreateDropPart } from '../models/CreateDropPart';
 import { CreateDropRequest } from '../models/CreateDropRequest';
 import { CreateGroup } from '../models/CreateGroup';
+import { CreateGroupDescription } from '../models/CreateGroupDescription';
 import { CreateNewProfileProxy } from '../models/CreateNewProfileProxy';
 import { CreateNewProfileProxyAllocateCicAction    } from '../models/CreateNewProfileProxyAllocateCicAction';
 import { CreateNewProfileProxyAllocateRepAction    } from '../models/CreateNewProfileProxyAllocateRepAction';
@@ -185,6 +187,7 @@ let typeMap: {[index: string]: any} = {
     "CreateDropPart": CreateDropPart,
     "CreateDropRequest": CreateDropRequest,
     "CreateGroup": CreateGroup,
+    "CreateGroupDescription": CreateGroupDescription,
     "CreateNewProfileProxy": CreateNewProfileProxy,
     "CreateNewProfileProxyAllocateCicAction": CreateNewProfileProxyAllocateCicAction,
     "CreateNewProfileProxyAllocateRepAction": CreateNewProfileProxyAllocateRepAction,
