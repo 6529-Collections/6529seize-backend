@@ -555,9 +555,14 @@ export class UserGroupsService {
 
   async searchByNameOrAuthor(
     name: string | null,
-    authorId: string | null
+    authorId: string | null,
+    createdAtLessThan: number | null
   ): Promise<GroupFull[]> {
-    const group = await this.userGroupsDb.searchByNameOrAuthor(name, authorId);
+    const group = await this.userGroupsDb.searchByNameOrAuthor(
+      name,
+      authorId,
+      createdAtLessThan
+    );
     return await this.mapForApi(group);
   }
 
