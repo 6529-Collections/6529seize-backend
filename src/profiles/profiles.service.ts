@@ -1073,6 +1073,8 @@ export class ProfilesService {
         it.map<ProfileOverview>((p) => ({
           id: p.external_id,
           handle: p.handle,
+          banner1_color: p.banner1_color,
+          banner2_color: p.banner2_color,
           cic: 0,
           rep: 0,
           tdh: 0,
