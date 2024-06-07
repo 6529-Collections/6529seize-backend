@@ -2,10 +2,10 @@ import { Request } from 'express';
 import { getAuthenticationContext } from '../auth/auth';
 import { profilesService } from '../../../profiles/profiles.service';
 import { NotFoundException } from '../../../exceptions';
-import { WALLET_REGEX } from '../../../constants';
 import { ProfileClassification } from '../../../entities/IProfile';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { Time } from '../../../time';
+import { getWalletFromEns, isWallet } from '../../../helpers';
 
 export async function getRaterInfoFromRequest(
   req: Request<{ identity: string }, any, any, any, any>
@@ -15,9 +15,14 @@ export async function getRaterInfoFromRequest(
   let targetProfile =
     await profilesService.getProfileAndConsolidationsByIdentity(identity);
   if (!targetProfile?.profile) {
-    const wallet = identity.toLowerCase();
-    if (!WALLET_REGEX.test(wallet)) {
-      throw new NotFoundException(`No profile found for ${identity}`);
+    let wallet = identity.toLowerCase();
+    if (!isWallet(wallet)) {
+      wallet = await getWalletFromEns(identity).then((w) => {
+        if (!w) {
+          throw new NotFoundException(`No profile found for ${identity}`);
+        }
+        return w;
+      });
     }
     targetProfile = await profilesService.createOrUpdateProfile({
       handle: `id-${wallet}`,
