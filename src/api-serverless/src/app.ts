@@ -25,6 +25,7 @@ import dropsMediaRoutes from './drops/drops-media.routes';
 import profileSubClassificationsRoutes from './profiles/profiles-sub-classifications.routes';
 import delegationsRoutes from './delegations/delegations.routes';
 import wavesRoutes from './waves/waves.routes';
+import policiesRoutes from './policies/policies.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -62,6 +63,7 @@ import { parseTdhResultsFromDB } from '../../sql_helpers';
 import { loadLocalConfig, loadSecrets } from '../../env';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
 import * as SwaggerUI from 'swagger-ui-express';
+import { checkPolicies } from './policies/policies';
 
 const YAML = require('yamljs');
 
@@ -239,6 +241,7 @@ loadApi().then(() => {
   const BASE_PATH = '/api';
   const apiRouter = asyncRouter();
 
+  app.all(`*`, checkPolicies);
   app.all(`${BASE_PATH}*`, requireLogin);
   app.all(`${BASE_PATH}*`, checkCache);
 
@@ -825,6 +828,7 @@ loadApi().then(() => {
   apiRouter.use(`/profile-subclassifications`, profileSubClassificationsRoutes);
   apiRouter.use(`/delegations`, delegationsRoutes);
   apiRouter.use(`/waves`, wavesRoutes);
+  apiRouter.use(`/policies`, policiesRoutes);
   rootRouter.use(BASE_PATH, apiRouter);
   rootRouter.use(`/oracle`, oracleRoutes);
   app.use(rootRouter);

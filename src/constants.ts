@@ -96,6 +96,8 @@ export const DROP_METADATA_TABLE = 'drops_metadatas';
 export const DROP_MEDIA_TABLE = 'drop_medias';
 export const DROPS_COMMENTS_TABLE = 'drops_comments';
 
+export const COOKIES_CONSENT_TABLE = 'cookies_consent';
+
 export const ETH_PRICE_TABLE = 'eth_price';
 
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
