@@ -945,34 +945,6 @@ paths:
           description: Group not found
         "400":
           description: Invalid request
-  /groups/{id}/wallet_groups/{wallet_group_id}:
-    get:
-      tags:
-        - Groups
-      summary: Get groups wallet group wallets
-      operationId: getGroupsWalletGroupWallets
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: wallet_group_id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: successful operation
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: string
-        "404":
-          description: Group not found
 
 components:
   securitySchemes:
@@ -1047,8 +1019,6 @@ components:
         - cic
         - level
         - owns_nfts
-        - wallet_group_id
-        - wallet_group_wallets_count
       properties:
         tdh:
           $ref: "#/components/schemas/GroupTdhFilter"
@@ -1062,42 +1032,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/GroupOwnsNft"
-        wallet_group_id:
-          type: string
-          nullable: true
-        wallet_group_wallets_count:
-          type: number
-          format: int64
-          nullable: false
-
-    CreateGroupDescription:
-      type: object
-      required:
-        - tdh
-        - rep
-        - cic
-        - level
-        - owns_nfts
-        - wallets
-      properties:
-        tdh:
-          $ref: "#/components/schemas/GroupTdhFilter"
-        rep:
-          $ref: "#/components/schemas/GroupRepFilter"
-        cic:
-          $ref: "#/components/schemas/GroupCicFilter"
-        level:
-          $ref: "#/components/schemas/GroupLevelFilter"
-        owns_nfts:
-          type: array
-          items:
-            $ref: "#/components/schemas/GroupOwnsNft"
-        wallets:
-          anyOf:
-            - type: "null"
-            - type: array
-              items:
-                type: string
 
     GroupOwnsNft:
       type: object
@@ -1225,7 +1159,7 @@ components:
         name:
           type: string
         group:
-          $ref: "#/components/schemas/CreateGroupDescription"
+          $ref: "#/components/schemas/GroupDescription"
 
     ChangeGroupVisibility:
       type: object
