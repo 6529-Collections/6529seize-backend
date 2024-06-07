@@ -542,7 +542,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     }
     return this.db
       .execute(
-        `select external_id as id, handle, pfp_url as pfp, cic_score as cic, rep_score as rep, profile_tdh as tdh from ${PROFILE_FULL} where external_id in (:ids)`,
+        `select external_id as id, handle, pfp_url as pfp, cic_score as cic, rep_score as rep, profile_tdh as tdh, banner_1 as banner1_color, banner_2 as banner2_color from ${PROFILE_FULL} where external_id in (:ids)`,
         { ids }
       )
       .then((result) =>
@@ -577,13 +577,20 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
 
   async getNewestVersionHandlesOfArchivedProfiles(
     profileIds: string[]
-  ): Promise<{ external_id: string; handle: string }[]> {
+  ): Promise<
+    {
+      external_id: string;
+      handle: string;
+      banner1_color: string | null;
+      banner2_color: string | null;
+    }[]
+  > {
     if (profileIds.length === 0) {
       return [];
     }
     return this.db.execute(
       `with prof_ids_w_latest_versions as (select external_id, max(id) as id from ${PROFILES_ARCHIVE_TABLE} group by 1)
-            select p.external_id as external_id, p.handle as handle
+            select p.external_id as external_id, p.handle as handle, p.banner_1 as banner1_color, p.banner_2 as banner2_color
             from ${PROFILES_ARCHIVE_TABLE} p
                      join prof_ids_w_latest_versions l on p.id = l.id
             where l.external_id in (:profileIds)`,
@@ -613,6 +620,8 @@ export interface ProfileOverview {
   rep: number;
   tdh: number;
   level: number;
+  banner1_color: string | null;
+  banner2_color: string | null;
   archived: boolean;
 }
 

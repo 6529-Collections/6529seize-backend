@@ -197,6 +197,8 @@ export class DropsApiService {
       ) as ProfileMin) ?? {
         id: 'an-unknown-profile',
         handle: 'An unknown profile',
+        banner1_color: null,
+        banner2_color: null,
         pfp: null,
         cic: 0,
         rep: 0,
