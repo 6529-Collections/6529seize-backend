@@ -887,6 +887,13 @@ paths:
           required: false
           schema:
             type: string
+        - name: created_at_less_than
+          description: created at date less than
+          in: query
+          required: false
+          schema:
+            type: number
+            format: int64
       responses:
         "200":
           description: successful operation

@@ -132,7 +132,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
 
   async searchByNameOrAuthor(
     name: string | null,
-    authorId: string | null
+    authorId: string | null,
+    created_at_less_than: number | null
   ): Promise<UserGroupEntity[]> {
     let sql = `select * from ${USER_GROUPS_TABLE} where visible is true `;
     const params: Record<string, any> = {};
@@ -143,6 +144,10 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     if (authorId) {
       sql += ` and created_by = :created_by `;
       params.created_by = authorId;
+    }
+    if (created_at_less_than) {
+      sql += ` and created_at < :created_at_less_than `;
+      params.created_at_less_than = new Date(created_at_less_than);
     }
     sql += ` order by created_at desc limit 20`;
     return this.db.execute<UserGroupEntity>(sql, params);

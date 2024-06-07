@@ -15,7 +15,7 @@ import { GroupFilterDirection } from '../generated/models/GroupFilterDirection';
 import { GroupRepFilter } from '../generated/models/GroupRepFilter';
 import { GroupLevelFilter } from '../generated/models/GroupLevelFilter';
 import { GroupTdhFilter } from '../generated/models/GroupTdhFilter';
-import { distinct, resolveEnum } from '../../../helpers';
+import { distinct, parseIntOrNull, resolveEnum } from '../../../helpers';
 import { FilterDirection } from '../../../entities/IUserGroup';
 import {
   GroupOwnsNft,
@@ -31,13 +31,18 @@ router.get(
     req: Request<
       any,
       any,
-      { group_name: string; author_identity: string },
+      {
+        group_name: string;
+        author_identity: string;
+        created_at_less_than?: string;
+      },
       any,
       any
     >,
     res: Response<ApiResponse<GroupFull[]>>
   ) => {
     const groupName = req.query.group_name ?? null;
+    const createdAtLessThan = parseIntOrNull(req.query.created_at_less_than);
     let authorId: string | null = null;
     if (req.query.author_identity) {
       authorId = await profilesService
@@ -50,7 +55,8 @@ router.get(
     }
     const response = await userGroupsService.searchByNameOrAuthor(
       groupName,
-      authorId
+      authorId,
+      createdAtLessThan
     );
     res.send(response);
   }
