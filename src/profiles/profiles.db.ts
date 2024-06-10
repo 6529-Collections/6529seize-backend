@@ -14,6 +14,7 @@ import {
   PROFILES_TABLE,
   RATINGS_TABLE,
   TDH_BLOCKS_TABLE,
+  WALLETS_CONSOLIDATION_KEYS_VIEW,
   WALLETS_TDH_TABLE
 } from '../constants';
 import { Wallet } from '../entities/IWallet';
@@ -290,6 +291,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     connection: ConnectionWrapper<any>
   ): Promise<string> {
     const profileId = randomUUID();
+    const wallet = command.creator_or_updater_wallet.toLowerCase();
     await this.db.execute(
       `insert into ${PROFILES_TABLE}
        (handle,
@@ -317,7 +319,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       {
         handle: command.handle,
         normalisedHandle: command.handle.toLowerCase(),
-        primaryWallet: command.creator_or_updater_wallet.toLowerCase(),
+        primaryWallet: wallet,
         createdByWallet: command.creator_or_updater_wallet.toLowerCase(),
         banner1: command.banner_1 ?? null,
         banner2: command.banner_2 ?? null,
@@ -328,6 +330,28 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       },
       { wrappedConnection: connection }
     );
+    await this.db
+      .execute<{ cnt: number }>(
+        `select count(*) as cnt from ${WALLETS_CONSOLIDATION_KEYS_VIEW} where wallet = :wallet`,
+        {
+          wallet
+        },
+        { wrappedConnection: connection }
+      )
+      .then(async (result) => {
+        if (result[0].cnt === 0) {
+          await this.db.execute(
+            `insert into ${COMMUNITY_MEMBERS_TABLE} (consolidation_key, wallet1, wallet2, wallet3) values (:consolidationKey, :wallet1, :wallet2, :wallet3)`,
+            {
+              consolidationKey: wallet,
+              wallet1: wallet,
+              wallet2: null,
+              wallet3: null
+            },
+            { wrappedConnection: connection }
+          );
+        }
+      });
     const profile = await this.getProfileByHandle(command.handle, connection);
     if (profile) {
       await this.insertProfileArchiveRecord(profile, connection);
@@ -555,14 +579,16 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
   }
 
   async getProfileIdsAndHandlesByIds(
-    ids: string[]
+    ids: string[],
+    connection?: ConnectionWrapper<any>
   ): Promise<{ id: string; handle: string }[]> {
     if (!ids.length) {
       return [];
     }
     return this.db.execute(
       `select external_id as id, handle from ${PROFILES_TABLE} where external_id in (:ids)`,
-      { ids }
+      { ids },
+      { wrappedConnection: connection }
     );
   }
 
@@ -609,6 +635,28 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((result) => result.at(0) ?? null);
+  }
+
+  async findProfileIdsByWallets(wallets: string[]): Promise<
+    {
+      wallet: string;
+      consolidation_key: string;
+      profile_id: string | null;
+    }[]
+  > {
+    if (wallets.length === 0) {
+      return [];
+    }
+    const sql = `
+    select wck.wallet as wallet, wck.consolidation_key as consolidation_key, p.external_id as profile_id from ${WALLETS_CONSOLIDATION_KEYS_VIEW} wck
+    left join ${PROFILE_FULL} p on wck.consolidation_key = p.consolidation_key
+    where wck.wallet in (:wallets)
+    `;
+    return await this.db.execute<{
+      wallet: string;
+      consolidation_key: string;
+      profile_id: string | null;
+    }>(sql, { wallets });
   }
 }
 

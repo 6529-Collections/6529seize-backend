@@ -1,5 +1,7 @@
 export * from '../models/AcceptActionRequest';
 export * from '../models/AddActionToProxyRequest';
+export * from '../models/BulkRateRequest';
+export * from '../models/BulkRateResponse';
 export * from '../models/ChangeGroupVisibility';
 export * from '../models/ChangeProfileCicRating';
 export * from '../models/ChangeProfileCicRatingResponse';
@@ -59,6 +61,7 @@ export * from '../models/ProfileProxy';
 export * from '../models/ProfileProxyAction';
 export * from '../models/ProfileProxyActionType';
 export * from '../models/QuotedDrop';
+export * from '../models/RateMatter';
 export * from '../models/RepRating';
 export * from '../models/UpdateProxyActionRequest';
 export * from '../models/Wave';
@@ -75,6 +78,8 @@ export * from '../models/WaveVotingConfig';
 
 import { AcceptActionRequest, AcceptActionRequestActionEnum   } from '../models/AcceptActionRequest';
 import { AddActionToProxyRequest    } from '../models/AddActionToProxyRequest';
+import { BulkRateRequest     } from '../models/BulkRateRequest';
+import { BulkRateResponse } from '../models/BulkRateResponse';
 import { ChangeGroupVisibility } from '../models/ChangeGroupVisibility';
 import { ChangeProfileCicRating } from '../models/ChangeProfileCicRating';
 import { ChangeProfileCicRatingResponse } from '../models/ChangeProfileCicRatingResponse';
@@ -134,6 +139,7 @@ import { ProfileProxy } from '../models/ProfileProxy';
 import { ProfileProxyAction             } from '../models/ProfileProxyAction';
 import { ProfileProxyActionType } from '../models/ProfileProxyActionType';
 import { QuotedDrop } from '../models/QuotedDrop';
+import { RateMatter } from '../models/RateMatter';
 import { RepRating } from '../models/RepRating';
 import { UpdateProxyActionRequest } from '../models/UpdateProxyActionRequest';
 import { Wave } from '../models/Wave';
@@ -167,6 +173,7 @@ let enumsMap: Set<string> = new Set<string>([
     "GroupOwnsNftNameEnum",
     "NftTokenTypeEnum",
     "ProfileProxyActionType",
+    "RateMatter",
     "WaveCreditScope",
     "WaveCreditType",
     "WaveType",
@@ -175,6 +182,8 @@ let enumsMap: Set<string> = new Set<string>([
 let typeMap: {[index: string]: any} = {
     "AcceptActionRequest": AcceptActionRequest,
     "AddActionToProxyRequest": AddActionToProxyRequest,
+    "BulkRateRequest": BulkRateRequest,
+    "BulkRateResponse": BulkRateResponse,
     "ChangeGroupVisibility": ChangeGroupVisibility,
     "ChangeProfileCicRating": ChangeProfileCicRating,
     "ChangeProfileCicRatingResponse": ChangeProfileCicRatingResponse,

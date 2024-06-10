@@ -13,6 +13,7 @@ import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
 import { BadRequestException, ForbiddenException } from '../exceptions';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import {
+  NewProfileActivityLog,
   profileActivityLogsDb,
   ProfileActivityLogsDb
 } from '../profileActivityLogs/profile-activity-logs.db';
@@ -26,7 +27,7 @@ import { Time } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
 import { FullPageRequest, Page } from '../api-serverless/src/page-request';
 import { calculateLevel } from '../profiles/profile-level';
-import { Profile } from '../entities/IProfile';
+import { Profile, ProfileClassification } from '../entities/IProfile';
 import {
   repService,
   RepService
@@ -43,6 +44,8 @@ import {
   profileProxiesDb,
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
+import { BulkRateRequest } from '../api-serverless/src/generated/models/BulkRateRequest';
+import { distinct, resolveEnum } from '../helpers';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -96,46 +99,7 @@ export class RatingsService {
   ): Promise<{ total: number; byUser: number }> {
     return await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        const authenticatedProfileId =
-          request.authenticationContext.getActingAsId();
-        if (!authenticatedProfileId) {
-          throw new ForbiddenException(`Create a profile before you rate`);
-        }
-        if (!request.authenticationContext.isAuthenticatedAsProxy()) {
-          await this.updateRatingUnsafe({
-            request,
-            changeReason: 'USER_EDIT',
-            proxyContext: null,
-            connection
-          });
-        } else {
-          const action =
-            request.matter === RateMatter.REP
-              ? request.authenticationContext.activeProxyActions[
-                  ApiProfileProxyActionType.ALLOCATE_REP
-                ]
-              : request.authenticationContext.activeProxyActions[
-                  ApiProfileProxyActionType.ALLOCATE_CIC
-                ];
-          if (!action) {
-            throw new ForbiddenException(
-              `Proxy is not allowed to give ${request.matter} ratings`
-            );
-          }
-          const proxyContext: RatingProxyContext = {
-            authenticatedProfileId:
-              request.authenticationContext.authenticatedProfileId!,
-            action_id: action.id,
-            credit_amount: action.credit_amount,
-            credit_spent: action.credit_spent
-          };
-          await this.updateRatingUnsafe({
-            request,
-            changeReason: 'USER_EDIT',
-            proxyContext,
-            connection
-          });
-        }
+        await this.updateRatingInternal(request, connection);
         return await this.ratingsDb.getTotalAndUserRepRatingForCategoryToProfile(
           {
             matter: request.matter,
@@ -147,6 +111,52 @@ export class RatingsService {
         );
       }
     );
+  }
+
+  private async updateRatingInternal(
+    request: UpdateRatingViaApiRequest,
+    connection: ConnectionWrapper<any>
+  ) {
+    const authenticatedProfileId =
+      request.authenticationContext.getActingAsId();
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Create a profile before you rate`);
+    }
+    if (!request.authenticationContext.isAuthenticatedAsProxy()) {
+      await this.updateRatingUnsafe({
+        request,
+        changeReason: 'USER_EDIT',
+        proxyContext: null,
+        connection
+      });
+    } else {
+      const action =
+        request.matter === RateMatter.REP
+          ? request.authenticationContext.activeProxyActions[
+              ApiProfileProxyActionType.ALLOCATE_REP
+            ]
+          : request.authenticationContext.activeProxyActions[
+              ApiProfileProxyActionType.ALLOCATE_CIC
+            ];
+      if (!action) {
+        throw new ForbiddenException(
+          `Proxy is not allowed to give ${request.matter} ratings`
+        );
+      }
+      const proxyContext: RatingProxyContext = {
+        authenticatedProfileId:
+          request.authenticationContext.authenticatedProfileId!,
+        action_id: action.id,
+        credit_amount: action.credit_amount,
+        credit_spent: action.credit_spent
+      };
+      await this.updateRatingUnsafe({
+        request,
+        changeReason: 'USER_EDIT',
+        proxyContext,
+        connection
+      });
+    }
   }
 
   public async updateRatingUnsafe({
@@ -765,6 +775,189 @@ export class RatingsService {
     category: string | null;
   }): Promise<number> {
     return this.ratingsDb.getRepRating(param);
+  }
+
+  async bulkRateProfiles(
+    authContext: AuthenticationContext,
+    apiRequest: BulkRateRequest
+  ): Promise<{ skipped: string[] }> {
+    const errors = await this.ratingsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const actingAsId = authContext.getActingAsId();
+        if (!actingAsId) {
+          throw new ForbiddenException(`Create a profile before you rate`);
+        }
+        const matter = resolveEnum(RateMatter, apiRequest.matter)!;
+        const raterRatings = await this.ratingsDb.lockRatingsOnMatterForUpdate(
+          {
+            rater_profile_id: actingAsId,
+            matter
+          },
+          connection
+        );
+        const wallets = apiRequest.target_wallet_addresses.map((it) =>
+          it.toLowerCase()
+        );
+        const profileIdsByWallets = await profilesDb.findProfileIdsByWallets(
+          wallets
+        );
+        const existingProfileIds = profileIdsByWallets
+          .filter((it) => it.profile_id)
+          .map((it) => it.profile_id as string);
+        const walletsWithMissingProfiles = distinct([
+          ...Object.values(
+            profileIdsByWallets
+              .filter((it) => !it.profile_id)
+              .reduce((acc, it) => {
+                if (!acc[it.consolidation_key]) {
+                  acc[it.consolidation_key] = it.wallet;
+                }
+                return acc;
+              }, {} as Record<string, string>)
+          ),
+          ...wallets.filter(
+            (it) => !profileIdsByWallets.find((wallet) => wallet.wallet === it)
+          )
+        ]);
+        const newProfileIds = Object.values(
+          await this.bulkCreateProfiles(walletsWithMissingProfiles, connection)
+        );
+        this.logger.info(`Created ${newProfileIds.length} new profiles`);
+        const allProfileIds = [...existingProfileIds, ...newProfileIds];
+        const currentRatingsByProfileId = allProfileIds.reduce((acc, id) => {
+          acc[id] =
+            raterRatings.find((it) => it.matter_target_id === id)?.rating ?? 0;
+          return acc;
+        }, {} as Record<string, number>);
+        const newAmount = apiRequest.amount;
+        const groupedIds = allProfileIds.reduce(
+          (acc, red) => {
+            const currentRating = currentRatingsByProfileId[red] ?? 0;
+            if (newAmount > 0 && newAmount < currentRating) {
+              acc.notToChange.push({
+                profile_id: red,
+                reason: 'User already has a higher rating'
+              });
+            } else if (newAmount > 0 && currentRating < 0) {
+              acc.notToChange.push({
+                profile_id: red,
+                reason: 'User already has a negative rating'
+              });
+            } else if (newAmount < 0 && currentRating < newAmount) {
+              acc.notToChange.push({
+                profile_id: red,
+                reason: 'User already has a lower rating'
+              });
+            } else if (newAmount < 0 && currentRating > 0) {
+              acc.notToChange.push({
+                profile_id: red,
+                reason: 'User already has a positive rating'
+              });
+            } else if (currentRating === newAmount) {
+              acc.notToChange.push({
+                profile_id: red,
+                reason: 'Rating is already set to this value'
+              });
+            } else if (red === authContext.getActingAsId()) {
+              acc.notToChange.push({
+                profile_id: red,
+                reason: `User can't rate themselves`
+              });
+            } else {
+              acc.toChange.push(red);
+            }
+            return acc;
+          },
+          { toChange: [], notToChange: [] } as {
+            toChange: string[];
+            notToChange: { profile_id: string; reason: string }[];
+          }
+        );
+        for (const profileId of groupedIds.toChange) {
+          try {
+            await this.updateRatingInternal(
+              {
+                matter,
+                matter_category:
+                  matter === RateMatter.CIC ? 'CIC' : apiRequest.category!,
+                matter_target_id: profileId,
+                rater_profile_id: actingAsId,
+                rating: apiRequest.amount,
+                authenticationContext: authContext
+              },
+              connection
+            );
+          } catch (e: any) {
+            if (
+              e.message.startsWith(
+                `Not enough TDH left to spend on this matter`
+              )
+            ) {
+              throw new BadRequestException(
+                `Not enough TDH to go through with this bulk rating`
+              );
+            }
+          }
+        }
+        const idsAndHandles =
+          await this.profilesDb.getProfileIdsAndHandlesByIds(allProfileIds);
+        return groupedIds.notToChange.map(
+          (it) =>
+            `Rating on profile ${
+              idsAndHandles.find((idh) => it.profile_id === idh.id)?.handle ??
+              ''
+            } not set: ${it.reason}`
+        );
+      }
+    );
+    return { skipped: errors };
+  }
+
+  private async bulkCreateProfiles(
+    wallets: string[],
+    connection: ConnectionWrapper<any>
+  ): Promise<Record<string, string>> {
+    const result: Record<string, string> = {};
+    const logEvents: NewProfileActivityLog[] = [];
+    for (const wallet of wallets) {
+      const handle = `id-${wallet}`;
+      const profileId = await this.profilesDb.insertProfileRecord(
+        {
+          command: {
+            handle: handle,
+            classification: ProfileClassification.PSEUDONYM,
+            sub_classification: null,
+            creator_or_updater_wallet: wallet
+          }
+        },
+        connection
+      );
+      result[wallet] = profileId;
+      logEvents.push({
+        profile_id: profileId,
+        target_id: null,
+        type: ProfileActivityLogType.HANDLE_EDIT,
+        contents: JSON.stringify({
+          authenticated_wallet: wallet,
+          old_value: null,
+          new_value: handle
+        }),
+        proxy_id: null
+      });
+      logEvents.push({
+        profile_id: profileId,
+        target_id: null,
+        type: ProfileActivityLogType.CLASSIFICATION_EDIT,
+        contents: JSON.stringify({
+          authenticated_wallet: wallet,
+          old_value: null,
+          new_value: ProfileClassification.PSEUDONYM
+        }),
+        proxy_id: null
+      });
+    }
+    await this.profileActivityLogsDb.insertMany(logEvents, connection);
+    return result;
   }
 }
 
