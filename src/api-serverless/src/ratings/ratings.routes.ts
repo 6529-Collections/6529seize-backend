@@ -15,8 +15,34 @@ import {
 } from '../page-request';
 import { RatingsSnapshot } from '../../../entities/IRatingsSnapshots';
 import { RateMatter } from '../../../entities/IRating';
+import { RateMatter as ApiRateMatter } from '../generated/models/RateMatter';
+import { BulkRateRequest } from '../generated/models/BulkRateRequest';
+import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
+import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
+import { WALLET_REGEX } from '../../../constants';
+import { BulkRateResponse } from '../generated/models/BulkRateResponse';
 
 const router = asyncRouter();
+
+router.post(
+  `/`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<any, any, BulkRateRequest, any, any>,
+    res: Response<ApiResponse<BulkRateResponse>>
+  ) {
+    const apiRequest = getValidatedByJoiOrThrow(
+      req.body,
+      BulkRateRequestSchema
+    );
+    const authContext = await getAuthenticationContext(req);
+    const response = await ratingsService.bulkRateProfiles(
+      authContext,
+      apiRequest
+    );
+    res.send(response);
+  }
+);
 
 router.get(
   `/snapshots`,
@@ -54,6 +80,31 @@ const SnapshotsRequestSchema: Joi.ObjectSchema<RatingsSnapshotsPageRequest> =
       .optional()
       .valid(...Object.values(RateMatter))
       .default(null)
+  });
+
+const BulkRateRequestSchema: Joi.ObjectSchema<BulkRateRequest> =
+  Joi.object<BulkRateRequest>({
+    amount: Joi.number().integer().required(),
+    matter: Joi.string()
+      .valid(...Object.values(ApiRateMatter))
+      .required(),
+    category: Joi.when('matter', {
+      is: RateMatter.REP,
+      then: Joi.string()
+        .required()
+        .min(1)
+        .max(100)
+        .regex(REP_CATEGORY_PATTERN)
+        .messages({
+          'string.pattern.base': `Invalid category. Category can't be longer than 100 characters. It can only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes.`
+        }),
+      otherwise: Joi.allow(null).optional().default(null)
+    }),
+    target_wallet_addresses: Joi.array()
+      .items(Joi.string().regex(WALLET_REGEX).required())
+      .min(1)
+      .max(100)
+      .required()
   });
 
 export default router;
