@@ -366,6 +366,7 @@ from general_stats
     page_size: number;
     order: string;
     order_by: string;
+    category: string | null;
   }): Promise<Page<RatingWithProfileInfo>> {
     const profile_id_field = param.given
       ? 'matter_target_id'
@@ -374,7 +375,11 @@ from general_stats
       profile_id_field === 'rater_profile_id'
         ? 'matter_target_id'
         : 'rater_profile_id';
-    const sqlParams = { profile_id: param.profileId, matter: param.matter };
+    const sqlParams = {
+      profile_id: param.profileId,
+      matter: param.matter,
+      category: param.category
+    };
     const order = param.order;
     const order_by = param.order_by;
     const limit = param.page_size;
@@ -384,6 +389,11 @@ from general_stats
                                  where r.${where_profile_id_field} = :profile_id
                                    and r.matter = :matter
                                    and r.rating <> 0
+                                   ${
+                                     param.category
+                                       ? `and r.matter_category = :category`
+                                       : ''
+                                   }
                                  group by 1),
                rater_cic_ratings as (select matter_target_id as profile_id, sum(rating) as cic
                                      from ${RATINGS_TABLE}
@@ -397,7 +407,10 @@ from general_stats
        r.profile_id,
        r.rating,
        r.last_modified,
-       coalesce(rater_cic_ratings.cic, 0) as cic
+       coalesce(rater_cic_ratings.cic, 0) as cic,
+       c.wallet1 as wallet1, 
+       c.wallet2 as wallet2, 
+       c.wallet3 as wallet3
 from grouped_rates r
          join ${PROFILES_TABLE} p on p.external_id = r.profile_id
          left join ${COMMUNITY_MEMBERS_TABLE} c on p.primary_wallet = c.wallet1 or p.primary_wallet = c.wallet2 or p.primary_wallet = c.wallet3
@@ -423,7 +436,15 @@ from grouped_rates r
       page: param.page,
       next: count > param.page_size * param.page,
       count: count,
-      data: results
+      data: results.map((result) => ({
+        ...result,
+        wallet1: undefined,
+        wallet2: undefined,
+        wallet3: undefined,
+        wallets: [result.wallet1, result.wallet2, result.wallet3].filter(
+          (w) => w
+        )
+      }))
     };
   }
 
@@ -645,6 +666,7 @@ export interface RatingWithCategorySnapshotRow {
 export interface RatingWithProfileInfo {
   profile_id: string;
   handle: string;
+  wallets: string[];
   tdh: number;
   rating: number;
   cic: number;

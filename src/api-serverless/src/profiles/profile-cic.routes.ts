@@ -13,11 +13,9 @@ import {
 } from '../../../entities/ICICStatement';
 import {
   GetProfileRatingsRequest,
-  ratingsService,
-  RatingWithProfileInfoAndLevel
+  ratingsService
 } from '../../../rates/ratings.service';
 import { RateMatter } from '../../../entities/IRating';
-import { Page } from '../page-request';
 import { cicService } from '../../../cic/cic.service';
 import {
   GetRaterAggregatedRatingRequest,
@@ -27,6 +25,7 @@ import {
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { ChangeProfileCicRating } from '../generated/models/ChangeProfileCicRating';
 import { ChangeProfileCicRatingResponse } from '../generated/models/ChangeProfileCicRatingResponse';
+import { RatingWithProfileInfoAndLevelPage } from '../generated/models/RatingWithProfileInfoAndLevelPage';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -84,7 +83,7 @@ router.get(
   `/ratings/by-rater`,
   async function (
     req: GetProfileRatingsRequest,
-    res: Response<ApiResponse<Page<RatingWithProfileInfoAndLevel>>>
+    res: Response<ApiResponse<RatingWithProfileInfoAndLevelPage>>
   ) {
     const result = await ratingsService.getRatingsByRatersForMatter({
       queryParams: req.query,
