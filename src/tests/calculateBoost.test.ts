@@ -429,7 +429,7 @@ function getSeasonSet(id: number): TokenTDH[] {
 
   const tokens: TokenTDH[] = [];
   for (let i = s.start_index; i <= s.end_index; i++) {
-    tokens.push({ id: i, balance: 1, tdh: 1, tdh__raw: 1 });
+    tokens.push({ id: i, balance: 1, tdh: 1, tdh__raw: 1, hodl_rate: 1 });
   }
   return tokens;
 }
