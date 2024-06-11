@@ -46,6 +46,7 @@ import {
 } from '../profile-proxies/profile-proxies.db';
 import { BulkRateRequest } from '../api-serverless/src/generated/models/BulkRateRequest';
 import { distinct, resolveEnum } from '../helpers';
+import { AvailableRatingCredit } from '../api-serverless/src/generated/models/AvailableRatingCredit';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -958,6 +959,58 @@ export class RatingsService {
     }
     await this.profileActivityLogsDb.insertMany(logEvents, connection);
     return result;
+  }
+
+  async getCreditLeft({
+    rater_id,
+    rater_representative_id
+  }: {
+    rater_id: string;
+    rater_representative_id: string | null;
+  }): Promise<AvailableRatingCredit> {
+    const currentTdh = await this.profilesDb.getProfileTdh(rater_id);
+    const [repSpent, cicSpent] = await Promise.all([
+      this.ratingsDb.getRatesSpentOnMatterByProfile({
+        profile_id: rater_id,
+        matter: RateMatter.REP
+      }),
+      this.ratingsDb.getRatesSpentOnMatterByProfile({
+        profile_id: rater_id,
+        matter: RateMatter.CIC
+      })
+    ]);
+    let repLeft = currentTdh - repSpent;
+    let cicLeft = currentTdh - cicSpent;
+    if (rater_representative_id && rater_representative_id !== rater_id) {
+      const proxies =
+        await this.profileProxiesDb.findProfileProxiesByGrantorAndGrantee({
+          grantor: rater_id,
+          grantee: rater_representative_id
+        });
+      const proxyIds = proxies.map((it) => it.id);
+      const proxyActions =
+        await this.profileProxiesDb.findActiveProfileProxyActionsByProxyIds({
+          proxy_ids: proxyIds
+        });
+      const repAction = proxyActions.find(
+        (action) =>
+          action.action_type === ApiProfileProxyActionType.ALLOCATE_REP
+      );
+      const cicAction = proxyActions.find(
+        (action) =>
+          action.action_type === ApiProfileProxyActionType.ALLOCATE_CIC
+      );
+      const proxyRepLeft =
+        (repAction?.credit_amount ?? 0) - (repAction?.credit_spent ?? 0);
+      const proxyCicLeft =
+        (cicAction?.credit_amount ?? 0) - (cicAction?.credit_spent ?? 0);
+      repLeft = Math.min(repLeft, proxyRepLeft);
+      cicLeft = Math.min(cicLeft, proxyCicLeft);
+    }
+    return {
+      rep_credit: repLeft,
+      cic_credit: cicLeft
+    };
   }
 }
 
