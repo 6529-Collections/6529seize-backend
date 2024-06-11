@@ -21,7 +21,6 @@ import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { sqlExecutor } from '../sql-executor';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
-  CONSOLIDATIONS_TABLE,
   USE_CASE_PRIMARY_ADDRESS
 } from '../constants';
 import {

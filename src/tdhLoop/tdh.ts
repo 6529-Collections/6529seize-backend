@@ -639,7 +639,7 @@ function getTokenTdh(
   wallet: string,
   consolidations: string[],
   tokenConsolidatedTransactions: Transaction[]
-) {
+): TokenTDH | null {
   const tokenDatesForWallet = getTokenDatesFromConsolidation(
     wallet,
     consolidations,
@@ -655,13 +655,16 @@ function getTokenTdh(
   });
 
   const balance = tokenDatesForWallet.length;
+
+  hodlRate = Math.round(hodlRate * 100) / 100;
   const tdh = tdh__raw * hodlRate;
 
   if (tdh > 0 || balance > 0) {
     const tokenTDH = {
       id: id,
       balance: balance,
-      tdh: tdh,
+      hodl_rate: hodlRate,
+      tdh: Math.round(tdh),
       tdh__raw: tdh__raw
     };
     return tokenTDH;
@@ -751,18 +754,32 @@ export async function calculateBoosts(
       );
 
       const boost = boostBreakdown.total;
+
+      const boostedMemesTdh = w.memes.reduce(
+        (sum: number, m: TokenTDH) => sum + Math.round(m.tdh * boost),
+        0
+      );
+      const boostedGradientsTdh = w.gradients.reduce(
+        (sum: number, g: any) => sum + Math.round(g.tdh * boost),
+        0
+      );
+      const boostedNextgenTdh = w.nextgen.reduce(
+        (sum: number, n: any) => sum + Math.round(n.tdh * boost),
+        0
+      );
+
+      const boostedTdh =
+        Math.round(boostedMemesTdh) +
+        Math.round(boostedGradientsTdh) +
+        Math.round(boostedNextgenTdh);
+
       w.boost = boost;
-      w.boosted_tdh = w.tdh * boost;
-      w.boosted_memes_tdh = w.memes_tdh * boost;
-      w.boosted_memes_tdh_season1 = w.memes_tdh_season1 * boost;
-      w.boosted_memes_tdh_season2 = w.memes_tdh_season2 * boost;
-      w.boosted_memes_tdh_season3 = w.memes_tdh_season3 * boost;
-      w.boosted_memes_tdh_season4 = w.memes_tdh_season4 * boost;
-      w.boosted_memes_tdh_season5 = w.memes_tdh_season5 * boost;
-      w.boosted_memes_tdh_season6 = w.memes_tdh_season6 * boost;
-      w.boosted_gradients_tdh = w.gradients_tdh * boost;
-      w.boosted_nextgen_tdh = w.nextgen_tdh * boost;
       w.boost_breakdown = boostBreakdown.breakdown;
+      w.boosted_tdh = boostedTdh;
+      w.boosted_memes_tdh = boostedMemesTdh;
+      w.boosted_gradients_tdh = boostedGradientsTdh;
+      w.boosted_nextgen_tdh = boostedNextgenTdh;
+
       boostedTDH.push(w);
     })
   );

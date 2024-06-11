@@ -26,16 +26,16 @@ export class BaseTDHFields {
   @Column({ type: 'int', nullable: false })
   memes_cards_sets!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   tdh!: number;
 
   @Column({ type: 'double', nullable: false })
   boost!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   boosted_tdh!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   tdh__raw!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -64,13 +64,13 @@ export class BaseTDH extends BaseTDHFields {
   @Column({ type: 'int', nullable: false })
   nakamoto!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   boosted_memes_tdh!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   memes_tdh!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   memes_tdh__raw!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -85,13 +85,13 @@ export class BaseTDH extends BaseTDHFields {
   @Column({ type: 'int', nullable: false })
   gradients_balance!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   boosted_gradients_tdh!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   gradients_tdh!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   gradients_tdh__raw!: number;
 
   @Column({ type: 'json', nullable: true })
@@ -103,13 +103,13 @@ export class BaseTDH extends BaseTDHFields {
   @Column({ type: 'int', nullable: false })
   nextgen_balance!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   boosted_nextgen_tdh!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   nextgen_tdh!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   nextgen_tdh__raw!: number;
 
   @Column({ type: 'json', nullable: true })
@@ -180,16 +180,16 @@ export class NftTDH {
   @Column({ type: 'int', nullable: false })
   balance!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   tdh!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   boost!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   boosted_tdh!: number;
 
-  @Column({ type: 'double', nullable: false })
+  @Column({ type: 'int', nullable: false })
   tdh__raw!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -361,6 +361,7 @@ export class TDHHistory {
 export interface TokenTDH {
   id: number;
   balance: number;
+  hodl_rate: number;
   tdh: number;
   tdh__raw: number;
 }
