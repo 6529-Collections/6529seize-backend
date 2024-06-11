@@ -19,7 +19,11 @@ import { Time } from '../time';
 import { getLastTDH } from '../helpers';
 import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { sqlExecutor } from '../sql-executor';
-import { CONSOLIDATIONS_TABLE, USE_CASE_PRIMARY_ADDRESS } from '../constants';
+import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  CONSOLIDATIONS_TABLE,
+  USE_CASE_PRIMARY_ADDRESS
+} from '../constants';
 import {
   ConsolidatedTDH,
   ConsolidatedTDHMemes,
@@ -168,39 +172,45 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
     wallets.add(c.wallet2);
   });
 
-  const query = `
-    SELECT * FROM ${CONSOLIDATIONS_TABLE}
-    WHERE wallet1 IN (:wallets)
-    OR wallet2 IN (:wallets)
-`;
-  const distinctWalletConsolidations = await sqlExecutor.execute(query, {
-    wallets: Array.from(wallets)
-  });
+  const affectedWallets = await getAffectedWallets(wallets);
 
-  const distinctWallets = new Set<string>();
-  distinctWalletConsolidations.forEach((c: Consolidation) => {
-    distinctWallets.add(c.wallet1);
-    distinctWallets.add(c.wallet2);
-  });
-
-  if (distinctWallets.size > 0) {
+  if (affectedWallets.size > 0) {
     logger.info(
-      `[RECONSOLIDATING FOR ${distinctWallets.size} DISTINCT WALLETS]`
+      `[RECONSOLIDATING FOR ${affectedWallets.size} DISTINCT WALLETS]`
     );
 
     const lastTDHCalc = getLastTDH();
-    const walletsArray = Array.from(distinctWallets);
+    const walletsArray = Array.from(affectedWallets);
 
     await updateTDH(lastTDHCalc, walletsArray);
     await consolidateTDH(lastTDHCalc, walletsArray);
 
-    await consolidateNftOwners(distinctWallets);
-    await consolidateOwnerBalances(distinctWallets);
-    await consolidateActivity(distinctWallets);
-    await consolidateSubscriptions(distinctWallets);
+    await consolidateNftOwners(affectedWallets);
+    await consolidateOwnerBalances(affectedWallets);
+    await consolidateActivity(affectedWallets);
+    await consolidateSubscriptions(affectedWallets);
   } else {
     logger.info(`[NO WALLETS TO RECONSOLIDATE]`);
   }
+}
+
+async function getAffectedWallets(wallets: Set<string>) {
+  const likeConditions = Array.from(wallets)
+    .map((wallet) => `consolidation_key LIKE '%${wallet.toLowerCase()}%'`)
+    .join(' OR ');
+
+  const query = `
+    SELECT * FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
+    WHERE ${likeConditions}
+  `;
+
+  const allConsolidations = await sqlExecutor.execute(query);
+  allConsolidations.map((c: ConsolidatedTDH) => {
+    const cWallets = JSON.parse(c.wallets);
+    cWallets.forEach((w: string) => wallets.add(w.toLowerCase()));
+  });
+
+  return wallets;
 }
 
 async function updatePrimaryAddresses(events: DelegationEvent[]) {
