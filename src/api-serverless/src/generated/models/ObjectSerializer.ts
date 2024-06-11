@@ -59,6 +59,8 @@ export * from '../models/ProfileProxy';
 export * from '../models/ProfileProxyAction';
 export * from '../models/ProfileProxyActionType';
 export * from '../models/QuotedDrop';
+export * from '../models/RatingWithProfileInfoAndLevel';
+export * from '../models/RatingWithProfileInfoAndLevelPage';
 export * from '../models/RepRating';
 export * from '../models/UpdateProxyActionRequest';
 export * from '../models/Wave';
@@ -134,6 +136,8 @@ import { ProfileProxy } from '../models/ProfileProxy';
 import { ProfileProxyAction             } from '../models/ProfileProxyAction';
 import { ProfileProxyActionType } from '../models/ProfileProxyActionType';
 import { QuotedDrop } from '../models/QuotedDrop';
+import { RatingWithProfileInfoAndLevel } from '../models/RatingWithProfileInfoAndLevel';
+import { RatingWithProfileInfoAndLevelPage } from '../models/RatingWithProfileInfoAndLevelPage';
 import { RepRating } from '../models/RepRating';
 import { UpdateProxyActionRequest } from '../models/UpdateProxyActionRequest';
 import { Wave } from '../models/Wave';
@@ -232,6 +236,8 @@ let typeMap: {[index: string]: any} = {
     "ProfileProxy": ProfileProxy,
     "ProfileProxyAction": ProfileProxyAction,
     "QuotedDrop": QuotedDrop,
+    "RatingWithProfileInfoAndLevel": RatingWithProfileInfoAndLevel,
+    "RatingWithProfileInfoAndLevelPage": RatingWithProfileInfoAndLevelPage,
     "RepRating": RepRating,
     "UpdateProxyActionRequest": UpdateProxyActionRequest,
     "Wave": Wave,
