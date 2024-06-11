@@ -6,7 +6,6 @@ import {
   RatingsDb,
   RatingSnapshotRow,
   RatingStats,
-  RatingWithProfileInfo,
   UpdateRatingRequest
 } from './ratings.db';
 import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
@@ -44,6 +43,8 @@ import {
   profileProxiesDb,
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
+import { RatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/RatingWithProfileInfoAndLevel';
+import { RatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/RatingWithProfileInfoAndLevelPage';
 import { BulkRateRequest } from '../api-serverless/src/generated/models/BulkRateRequest';
 import { distinct, resolveEnum } from '../helpers';
 import { AvailableRatingCredit } from '../api-serverless/src/generated/models/AvailableRatingCredit';
@@ -690,7 +691,7 @@ export class RatingsService {
     queryParams: GetProfileRatingsRequest['query'];
     identity: string;
     matter: RateMatter;
-  }): Promise<Page<RatingWithProfileInfoAndLevel>> {
+  }): Promise<RatingWithProfileInfoAndLevelPage> {
     const params = await this.getRatingsSearchParamsFromRequest({
       queryParams,
       identity,
@@ -711,7 +712,7 @@ export class RatingsService {
         const profileReps = await this.repService.getRepForProfiles(profileIds);
         return {
           ...page,
-          data: page.data.map((result) => ({
+          data: page.data.map<RatingWithProfileInfoAndLevel>((result) => ({
             ...result,
             level: calculateLevel({
               tdh: result.tdh,
@@ -751,7 +752,8 @@ export class RatingsService {
       page,
       page_size,
       order,
-      order_by
+      order_by,
+      category: queryParams.category ?? null
     };
   }
 
@@ -1026,6 +1028,7 @@ export type GetProfileRatingsRequest = Request<
     page_size?: string;
     order?: string;
     order_by?: string;
+    category?: string;
   },
   any
 >;
@@ -1039,10 +1042,7 @@ export type GetRatingsByRatersForMatterParams = {
   page_size: number;
   order: string;
   order_by: string;
-};
-
-export type RatingWithProfileInfoAndLevel = RatingWithProfileInfo & {
-  level: number;
+  category: string | null;
 };
 
 export type RatingsSnapshotsPageRequest = FullPageRequest<'snapshot_time'> & {
