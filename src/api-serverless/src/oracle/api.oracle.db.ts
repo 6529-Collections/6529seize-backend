@@ -334,7 +334,7 @@ export async function fetchSeasonsTDH(season?: string) {
   const seasons = results.map((r: any) => {
     return {
       season: r.season,
-      tdh: r.tdh
+      tdh: formatNumber(r.tdh)
     };
   });
   return {

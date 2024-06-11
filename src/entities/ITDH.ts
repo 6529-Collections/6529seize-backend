@@ -26,16 +26,16 @@ export class BaseTDHFields {
   @Column({ type: 'int', nullable: false })
   memes_cards_sets!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   tdh!: number;
 
   @Column({ type: 'double', nullable: false })
   boost!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   boosted_tdh!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   tdh__raw!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -64,13 +64,13 @@ export class BaseTDH extends BaseTDHFields {
   @Column({ type: 'int', nullable: false })
   nakamoto!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   boosted_memes_tdh!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   memes_tdh!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   memes_tdh__raw!: number;
 
   @Column({ type: 'int', nullable: false })
@@ -88,10 +88,10 @@ export class BaseTDH extends BaseTDHFields {
   @Column({ type: 'double', nullable: false })
   boosted_gradients_tdh!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   gradients_tdh!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   gradients_tdh__raw!: number;
 
   @Column({ type: 'json', nullable: true })
@@ -106,10 +106,10 @@ export class BaseTDH extends BaseTDHFields {
   @Column({ type: 'double', nullable: false })
   boosted_nextgen_tdh!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   nextgen_tdh!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   nextgen_tdh__raw!: number;
 
   @Column({ type: 'json', nullable: true })
@@ -137,11 +137,11 @@ export interface TDHENS extends TDH {
 
 @Entity(CONSOLIDATED_WALLETS_TDH_TABLE)
 export class ConsolidatedTDH extends BaseTDH {
-  @PrimaryColumn({ type: 'varchar', length: 500 })
+  @Column({ type: 'varchar', length: 500 })
+  @Index()
   consolidation_display!: string;
 
-  @Column({ type: 'varchar', length: 200 })
-  @Index()
+  @PrimaryColumn({ type: 'varchar', length: 200 })
   consolidation_key!: string;
 
   @Column({ type: 'json', nullable: false })
@@ -180,16 +180,16 @@ export class NftTDH {
   @Column({ type: 'int', nullable: false })
   balance!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   tdh!: number;
 
   @Column({ type: 'double', nullable: false })
   boost!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   boosted_tdh!: number;
 
-  @Column({ type: 'int', nullable: false })
+  @Column({ type: 'double', nullable: false })
   tdh__raw!: number;
 
   @Column({ type: 'int', nullable: false })

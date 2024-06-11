@@ -8,7 +8,7 @@ import {
 } from '../constants';
 import { DefaultBoost, TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
 import { Transaction } from '../entities/ITransaction';
-import { areEqualAddresses, getDaysDiff } from '../helpers';
+import { areEqualAddresses, getDaysDiff, parseUTCDateString } from '../helpers';
 import { Alchemy } from 'alchemy-sdk';
 import {
   consolidateTransactions,
@@ -31,8 +31,9 @@ import {
   NEXTGEN_CORE_CONTRACT
 } from '../nextgen/nextgen_constants';
 import { MemesSeason } from '../entities/ISeason';
-import { fetchDistinctNftOwnerWallets } from '../nftOwnersLoop/db.nft_owners';
 import { calculateMemesTdh } from './tdh_memes';
+import { Time } from '../time';
+import { getOwnersForContracts } from '../nftOwnersLoop/owners';
 
 const logger = Logger.get('TDH');
 
@@ -154,8 +155,10 @@ export const getAdjustedMemesAndSeasons = async (lastTDHCalc: Date) => {
   const nfts: NFT[] = await fetchAllNFTs();
   const ADJUSTED_NFTS = [...nfts].filter(
     (nft) =>
-      lastTDHCalc.getTime() - 28 * 60 * 60 * 1000 >
-      new Date(nft.mint_date).getTime()
+      nft.mint_date &&
+      Time.fromString(nft.mint_date.toString()).lte(
+        Time.fromDate(lastTDHCalc).minusDays(1)
+      )
   );
 
   const MEMES_COUNT = [...ADJUSTED_NFTS].filter((nft) =>
@@ -207,13 +210,11 @@ export const updateTDH = async (
       combinedAddresses.add(w.wallet.toLowerCase())
     );
 
-    const nftOwners = await fetchDistinctNftOwnerWallets(tdhContracts);
-    nftOwners.forEach((w) => combinedAddresses.add(w));
-
-    logger.info(
-      `[OWNER UNIQUE WALLETS ${nftOwners.length}] : [CONSOLIDATIONS UNIQUE WALLETS ${consolidationAddresses.length}] : [COMBINED UNIQUE WALLETS ${combinedAddresses.size}]`
-    );
+    const nftOwners = await getOwnersForContracts(tdhContracts, block);
+    nftOwners.forEach((w) => combinedAddresses.add(w.wallet.toLowerCase()));
   }
+
+  logger.info(`[UNIQUE WALLETS ${combinedAddresses.size}]`);
 
   const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
     await getAdjustedMemesAndSeasons(lastTDHCalc);
@@ -325,33 +326,31 @@ export const updateTDH = async (
       });
 
       NEXTGEN_NFTS.forEach((nft: NextGenToken) => {
-        if (areEqualAddresses(wallet, nft.owner)) {
-          const tokenConsolidatedTransactions = [
-            ...consolidationTransactions
-          ].filter(
-            (t) =>
-              t.token_id == nft.id &&
-              areEqualAddresses(t.contract, NEXTGEN_CONTRACT)
-          );
+        const tokenConsolidatedTransactions = [
+          ...consolidationTransactions
+        ].filter(
+          (t) =>
+            t.token_id == nft.id &&
+            areEqualAddresses(t.contract, NEXTGEN_CONTRACT)
+        );
 
-          const tokenTDH = getTokenTdh(
-            lastTDHCalc,
-            nft.id,
-            nft.hodl_rate,
-            wallet,
-            consolidations,
-            tokenConsolidatedTransactions
-          );
+        const tokenTDH = getTokenTdh(
+          lastTDHCalc,
+          nft.id,
+          nft.hodl_rate,
+          wallet,
+          consolidations,
+          tokenConsolidatedTransactions
+        );
 
-          if (tokenTDH) {
-            totalTDH += tokenTDH.tdh;
-            totalTDH__raw += tokenTDH.tdh__raw;
-            totalBalance += tokenTDH.balance;
-            nextgenTDH += tokenTDH.tdh;
-            nextgenTDH__raw += tokenTDH.tdh__raw;
-            nextgenBalance += tokenTDH.balance;
-            walletNextgen.push(tokenTDH);
-          }
+        if (tokenTDH) {
+          totalTDH += tokenTDH.tdh;
+          totalTDH__raw += tokenTDH.tdh__raw;
+          totalBalance += tokenTDH.balance;
+          nextgenTDH += tokenTDH.tdh;
+          nextgenTDH__raw += tokenTDH.tdh__raw;
+          nextgenBalance += tokenTDH.balance;
+          walletNextgen.push(tokenTDH);
         }
       });
 
@@ -695,7 +694,7 @@ function getTokenDatesFromConsolidation(
 
   const sortedTransactions = consolidationTransactions
     .map((c) => {
-      c.transaction_date = new Date(c.transaction_date);
+      c.transaction_date = parseUTCDateString(c.transaction_date);
       c.from_address = c.from_address.toLowerCase();
       c.to_address = c.to_address.toLowerCase();
       return c;
