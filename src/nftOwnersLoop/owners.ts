@@ -1,5 +1,10 @@
-import { GetOwnersForContractWithTokenBalancesResponse } from 'alchemy-sdk';
-import { getAlchemyInstance } from '../alchemy';
+import { NftContractOwner } from 'alchemy-sdk';
+import fetch from 'node-fetch';
+
+interface OwnersApiResponse {
+  ownerAddresses: NftContractOwner[];
+  pageKey?: string;
+}
 
 export interface OwnedNft {
   wallet: string;
@@ -9,52 +14,73 @@ export interface OwnedNft {
 }
 
 export async function getOwnersForContracts(
-  contracts: string[]
+  contracts: string[],
+  block?: number
 ): Promise<OwnedNft[]> {
-  const owned = await getAllOwnersFromAlchemy(contracts);
+  const owned = await getAllOwnersFromAlchemy(contracts, block);
   return owned;
 }
 
 async function getAllOwnersFromAlchemy(
-  contracts: string[]
+  contracts: string[],
+  block?: number
 ): Promise<OwnedNft[]> {
   const owned = new Map<string, OwnedNft>();
 
   for (const contract of contracts) {
-    let pageKey: string | undefined = undefined;
-    let response: GetOwnersForContractWithTokenBalancesResponse;
-    do {
-      response = await getOwnersFromAlchemyPage(contract, pageKey);
-      response.owners.forEach((owner) => {
-        owner.tokenBalances.forEach((balance) => {
-          const key = `${owner.ownerAddress}-${contract}-${balance.tokenId}`;
-          const myOwned = owned.get(key);
-          if (myOwned) {
-            myOwned.balance += parseInt(balance.balance);
-          } else {
-            owned.set(key, {
-              wallet: owner.ownerAddress,
-              contract: contract,
-              token_id: parseInt(balance.tokenId),
-              balance: parseInt(balance.balance)
-            });
-          }
-        });
+    const owners = await getOwners(block ?? -1, contract);
+    owners.forEach((owner) => {
+      owner.tokenBalances.forEach((balance) => {
+        const key = `${owner.ownerAddress}-${contract}-${balance.tokenId}`;
+        const myOwned = owned.get(key);
+        if (myOwned) {
+          myOwned.balance += parseInt(balance.balance);
+        } else {
+          owned.set(key, {
+            wallet: owner.ownerAddress,
+            contract: contract,
+            token_id: parseInt(balance.tokenId),
+            balance: parseInt(balance.balance)
+          });
+        }
       });
-      pageKey = response.pageKey;
-    } while (pageKey);
+    });
   }
 
   return Array.from(owned.values());
 }
 
-async function getOwnersFromAlchemyPage(
-  contract: string,
-  pageKey: string | undefined
-) {
-  const alchemy = getAlchemyInstance();
-  return await alchemy.nft.getOwnersForContract(contract, {
-    withTokenBalances: true,
-    pageKey: pageKey
+async function getOwners(
+  block: number,
+  contract: string
+): Promise<NftContractOwner[]> {
+  let page: string | undefined = '';
+  let owners: NftContractOwner[] = [];
+  do {
+    const result = await getOwnersForPage(block, contract, page);
+    owners = owners.concat(result.owners);
+    page = result.pageKey;
+  } while (page);
+  return owners;
+}
+
+async function getOwnersForPage(block: number, contract: string, page: string) {
+  const baseUrl = `https://eth-mainnet.g.alchemy.com/nft/v2/${process.env.ALCHEMY_API_KEY}/getOwnersForContract`;
+  const urlParams = new URLSearchParams({
+    contractAddress: contract,
+    withTokenBalances: 'true',
+    ...(page ? { pageKey: page } : {})
   });
+  if (block > 0) {
+    urlParams.append('block', block.toString());
+  }
+
+  const url = `${baseUrl}?${urlParams.toString()}`;
+  const response = await fetch(url);
+  const data = (await response.json()) as OwnersApiResponse;
+
+  return {
+    owners: data.ownerAddresses,
+    pageKey: data.pageKey
+  };
 }
