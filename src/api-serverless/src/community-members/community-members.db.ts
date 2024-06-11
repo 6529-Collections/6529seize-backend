@@ -46,6 +46,7 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
         ifnull(cm.handle, cm.wallet1) as detail_view_key,
         cm.level as level,
         cm.tdh as tdh,
+        cm.wallet1 as wallet,
         cm.cic as cic,
         cm.rep as rep,
         cm.pfp as pfp,
