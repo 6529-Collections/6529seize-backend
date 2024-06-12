@@ -8,7 +8,7 @@ import {
 } from '../constants';
 import { DefaultBoost, TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
 import { Transaction } from '../entities/ITransaction';
-import { areEqualAddresses, getDaysDiff } from '../helpers';
+import { areEqualAddresses, getDaysDiff, parseUTCDateString } from '../helpers';
 import { Alchemy } from 'alchemy-sdk';
 import {
   consolidateTransactions,
@@ -31,8 +31,9 @@ import {
   NEXTGEN_CORE_CONTRACT
 } from '../nextgen/nextgen_constants';
 import { MemesSeason } from '../entities/ISeason';
-import { fetchDistinctNftOwnerWallets } from '../nftOwnersLoop/db.nft_owners';
 import { calculateMemesTdh } from './tdh_memes';
+import { Time } from '../time';
+import { getOwnersForContracts } from '../nftOwnersLoop/owners';
 
 const logger = Logger.get('TDH');
 
@@ -154,8 +155,10 @@ export const getAdjustedMemesAndSeasons = async (lastTDHCalc: Date) => {
   const nfts: NFT[] = await fetchAllNFTs();
   const ADJUSTED_NFTS = [...nfts].filter(
     (nft) =>
-      lastTDHCalc.getTime() - 28 * 60 * 60 * 1000 >
-      new Date(nft.mint_date).getTime()
+      nft.mint_date &&
+      Time.fromString(nft.mint_date.toString()).lte(
+        Time.fromDate(lastTDHCalc).minusDays(1)
+      )
   );
 
   const MEMES_COUNT = [...ADJUSTED_NFTS].filter((nft) =>
@@ -207,13 +210,11 @@ export const updateTDH = async (
       combinedAddresses.add(w.wallet.toLowerCase())
     );
 
-    const nftOwners = await fetchDistinctNftOwnerWallets(tdhContracts);
-    nftOwners.forEach((w) => combinedAddresses.add(w));
-
-    logger.info(
-      `[OWNER UNIQUE WALLETS ${nftOwners.length}] : [CONSOLIDATIONS UNIQUE WALLETS ${consolidationAddresses.length}] : [COMBINED UNIQUE WALLETS ${combinedAddresses.size}]`
-    );
+    const nftOwners = await getOwnersForContracts(tdhContracts, block);
+    nftOwners.forEach((w) => combinedAddresses.add(w.wallet.toLowerCase()));
   }
+
+  logger.info(`[UNIQUE WALLETS ${combinedAddresses.size}]`);
 
   const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
     await getAdjustedMemesAndSeasons(lastTDHCalc);
@@ -325,33 +326,31 @@ export const updateTDH = async (
       });
 
       NEXTGEN_NFTS.forEach((nft: NextGenToken) => {
-        if (areEqualAddresses(wallet, nft.owner)) {
-          const tokenConsolidatedTransactions = [
-            ...consolidationTransactions
-          ].filter(
-            (t) =>
-              t.token_id == nft.id &&
-              areEqualAddresses(t.contract, NEXTGEN_CONTRACT)
-          );
+        const tokenConsolidatedTransactions = [
+          ...consolidationTransactions
+        ].filter(
+          (t) =>
+            t.token_id == nft.id &&
+            areEqualAddresses(t.contract, NEXTGEN_CONTRACT)
+        );
 
-          const tokenTDH = getTokenTdh(
-            lastTDHCalc,
-            nft.id,
-            nft.hodl_rate,
-            wallet,
-            consolidations,
-            tokenConsolidatedTransactions
-          );
+        const tokenTDH = getTokenTdh(
+          lastTDHCalc,
+          nft.id,
+          nft.hodl_rate,
+          wallet,
+          consolidations,
+          tokenConsolidatedTransactions
+        );
 
-          if (tokenTDH) {
-            totalTDH += tokenTDH.tdh;
-            totalTDH__raw += tokenTDH.tdh__raw;
-            totalBalance += tokenTDH.balance;
-            nextgenTDH += tokenTDH.tdh;
-            nextgenTDH__raw += tokenTDH.tdh__raw;
-            nextgenBalance += tokenTDH.balance;
-            walletNextgen.push(tokenTDH);
-          }
+        if (tokenTDH) {
+          totalTDH += tokenTDH.tdh;
+          totalTDH__raw += tokenTDH.tdh__raw;
+          totalBalance += tokenTDH.balance;
+          nextgenTDH += tokenTDH.tdh;
+          nextgenTDH__raw += tokenTDH.tdh__raw;
+          nextgenBalance += tokenTDH.balance;
+          walletNextgen.push(tokenTDH);
         }
       });
 
@@ -640,7 +639,7 @@ function getTokenTdh(
   wallet: string,
   consolidations: string[],
   tokenConsolidatedTransactions: Transaction[]
-) {
+): TokenTDH | null {
   const tokenDatesForWallet = getTokenDatesFromConsolidation(
     wallet,
     consolidations,
@@ -656,13 +655,16 @@ function getTokenTdh(
   });
 
   const balance = tokenDatesForWallet.length;
+
+  hodlRate = Math.round(hodlRate * 100) / 100;
   const tdh = tdh__raw * hodlRate;
 
   if (tdh > 0 || balance > 0) {
     const tokenTDH = {
       id: id,
       balance: balance,
-      tdh: tdh,
+      hodl_rate: hodlRate,
+      tdh: Math.round(tdh),
       tdh__raw: tdh__raw
     };
     return tokenTDH;
@@ -695,7 +697,7 @@ function getTokenDatesFromConsolidation(
 
   const sortedTransactions = consolidationTransactions
     .map((c) => {
-      c.transaction_date = new Date(c.transaction_date);
+      c.transaction_date = parseUTCDateString(c.transaction_date);
       c.from_address = c.from_address.toLowerCase();
       c.to_address = c.to_address.toLowerCase();
       return c;
@@ -752,18 +754,32 @@ export async function calculateBoosts(
       );
 
       const boost = boostBreakdown.total;
+
+      const boostedMemesTdh = w.memes.reduce(
+        (sum: number, m: TokenTDH) => sum + Math.round(m.tdh * boost),
+        0
+      );
+      const boostedGradientsTdh = w.gradients.reduce(
+        (sum: number, g: any) => sum + Math.round(g.tdh * boost),
+        0
+      );
+      const boostedNextgenTdh = w.nextgen.reduce(
+        (sum: number, n: any) => sum + Math.round(n.tdh * boost),
+        0
+      );
+
+      const boostedTdh =
+        Math.round(boostedMemesTdh) +
+        Math.round(boostedGradientsTdh) +
+        Math.round(boostedNextgenTdh);
+
       w.boost = boost;
-      w.boosted_tdh = w.tdh * boost;
-      w.boosted_memes_tdh = w.memes_tdh * boost;
-      w.boosted_memes_tdh_season1 = w.memes_tdh_season1 * boost;
-      w.boosted_memes_tdh_season2 = w.memes_tdh_season2 * boost;
-      w.boosted_memes_tdh_season3 = w.memes_tdh_season3 * boost;
-      w.boosted_memes_tdh_season4 = w.memes_tdh_season4 * boost;
-      w.boosted_memes_tdh_season5 = w.memes_tdh_season5 * boost;
-      w.boosted_memes_tdh_season6 = w.memes_tdh_season6 * boost;
-      w.boosted_gradients_tdh = w.gradients_tdh * boost;
-      w.boosted_nextgen_tdh = w.nextgen_tdh * boost;
       w.boost_breakdown = boostBreakdown.breakdown;
+      w.boosted_tdh = boostedTdh;
+      w.boosted_memes_tdh = boostedMemesTdh;
+      w.boosted_gradients_tdh = boostedGradientsTdh;
+      w.boosted_nextgen_tdh = boostedNextgenTdh;
+
       boostedTDH.push(w);
     })
   );
