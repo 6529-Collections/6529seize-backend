@@ -92,13 +92,13 @@ export class NFT extends BaseNFT {
   @Column({ type: 'double' })
   hodl_rate!: number;
 
-  @Column({ type: 'double' })
+  @Column({ type: 'int' })
   boosted_tdh!: number;
 
-  @Column({ type: 'double' })
+  @Column({ type: 'int' })
   tdh!: number;
 
-  @Column({ type: 'double' })
+  @Column({ type: 'int' })
   tdh__raw!: number;
 
   @Column({ type: 'int' })
