@@ -637,26 +637,43 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       .then((result) => result.at(0) ?? null);
   }
 
-  async findProfileIdsByWallets(wallets: string[]): Promise<
-    {
-      wallet: string;
-      consolidation_key: string;
-      profile_id: string | null;
-    }[]
+  async findConsolidationKeysAndProfileIdsByWallets(
+    wallets: string[],
+    connection: ConnectionWrapper<any>
+  ): Promise<
+    Record<string, { consolidation_key: string; profile_id: string | null }>
   > {
     if (wallets.length === 0) {
-      return [];
+      return {};
     }
     const sql = `
     select wck.wallet as wallet, wck.consolidation_key as consolidation_key, p.external_id as profile_id from ${WALLETS_CONSOLIDATION_KEYS_VIEW} wck
     left join ${PROFILE_FULL} p on wck.consolidation_key = p.consolidation_key
     where wck.wallet in (:wallets)
     `;
-    return await this.db.execute<{
-      wallet: string;
-      consolidation_key: string;
-      profile_id: string | null;
-    }>(sql, { wallets });
+    return await this.db
+      .execute<{
+        wallet: string;
+        consolidation_key: string;
+        profile_id: string | null;
+      }>(sql, { wallets }, { wrappedConnection: connection })
+      .then((result) =>
+        wallets.reduce((acc, it) => {
+          const res = result.find((r) => {
+            return r.consolidation_key.split('-').includes(it);
+          });
+          acc[it] = res
+            ? {
+                consolidation_key: res.consolidation_key,
+                profile_id: res.profile_id
+              }
+            : {
+                consolidation_key: it,
+                profile_id: null
+              };
+          return acc;
+        }, {} as Record<string, { consolidation_key: string; profile_id: string | null }>)
+      );
   }
 }
 

@@ -269,7 +269,7 @@ paths:
     post:
       tags:
         - Ratings
-      summary: Bulk rate
+      summary: Bulk rate. Supplied amount will be added to all target identities. If same identity is supplied multiple times, all the additions will be summed up. Targets must be represented as Ethereum wallet addresses. ENS names and profile handles are not supported.
       operationId: bulkRate
       requestBody:
         required: true
@@ -1037,14 +1037,25 @@ components:
         skipped:
           type: array
           items:
-            type: string
+            $ref: "#/components/schemas/BulkRateSkippedIdentity"
+
+    BulkRateSkippedIdentity:
+      type: object
+      required:
+        - identity
+        - reason
+      properties:
+        identity:
+          type: string
+        reason:
+          type: string
 
     BulkRateRequest:
       type: object
       required:
         - matter
         - category
-        - amount
+        - amount_to_add
         - target_wallet_addresses
       properties:
         matter:
@@ -1055,9 +1066,10 @@ components:
           nullable: true
           pattern: "^[a-zA-Z0-9?!,.'() ]$"
           description: "Category of the rating must be set when matter is REP and null if matter is CIC"
-        amount:
+        amount_to_add:
           type: number
           format: int64
+          example: 1
         target_wallet_addresses:
           type: array
           items:

@@ -45,7 +45,7 @@ import {
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
 import { BulkRateRequest } from '../api-serverless/src/generated/models/BulkRateRequest';
-import { distinct, resolveEnum } from '../helpers';
+import { resolveEnum } from '../helpers';
 import { AvailableRatingCredit } from '../api-serverless/src/generated/models/AvailableRatingCredit';
 
 export class RatingsService {
@@ -781,7 +781,7 @@ export class RatingsService {
   async bulkRateProfiles(
     authContext: AuthenticationContext,
     apiRequest: BulkRateRequest
-  ): Promise<{ skipped: string[] }> {
+  ): Promise<{ skipped: { identity: string; reason: string }[] }> {
     const errors = await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const actingAsId = authContext.getActingAsId();
@@ -789,92 +789,74 @@ export class RatingsService {
           throw new ForbiddenException(`Create a profile before you rate`);
         }
         const matter = resolveEnum(RateMatter, apiRequest.matter)!;
-        const raterRatings = await this.ratingsDb.lockRatingsOnMatterForUpdate(
-          {
-            rater_profile_id: actingAsId,
-            matter
-          },
-          connection
-        );
         const wallets = apiRequest.target_wallet_addresses.map((it) =>
           it.toLowerCase()
         );
-        const profileIdsByWallets = await profilesDb.findProfileIdsByWallets(
-          wallets
-        );
-        const existingProfileIds = profileIdsByWallets
-          .filter((it) => it.profile_id)
-          .map((it) => it.profile_id as string);
-        const walletsWithMissingProfiles = distinct([
-          ...Object.values(
-            profileIdsByWallets
-              .filter((it) => !it.profile_id)
-              .reduce((acc, it) => {
-                if (!acc[it.consolidation_key]) {
-                  acc[it.consolidation_key] = it.wallet;
-                }
-                return acc;
-              }, {} as Record<string, string>)
-          ),
-          ...wallets.filter(
-            (it) => !profileIdsByWallets.find((wallet) => wallet.wallet === it)
+        const allConsolidationKeysAndProfileIdsByWallets =
+          await profilesDb.findConsolidationKeysAndProfileIdsByWallets(
+            wallets,
+            connection
+          );
+
+        const identitiesWithoutProfile = Object.entries(
+          allConsolidationKeysAndProfileIdsByWallets
+        ).filter(([_, { profile_id }]) => !profile_id);
+        const newIdentitiesToCreate = Object.entries(
+          identitiesWithoutProfile.reduce(
+            (acc, [wallet, { consolidation_key }]) => {
+              acc[consolidation_key] = wallet;
+              return acc;
+            },
+            {} as Record<string, string>
           )
-        ]);
-        const newProfileIds = Object.values(
-          await this.bulkCreateProfiles(walletsWithMissingProfiles, connection)
-        );
-        this.logger.info(`Created ${newProfileIds.length} new profiles`);
-        const allProfileIds = [...existingProfileIds, ...newProfileIds];
-        const currentRatingsByProfileId = allProfileIds.reduce((acc, id) => {
-          acc[id] =
-            raterRatings.find((it) => it.matter_target_id === id)?.rating ?? 0;
+        ).map(([_, wallet]) => wallet);
+        await this.bulkCreateProfiles(newIdentitiesToCreate, connection);
+        const profileIdsByWallets = await this.profilesDb
+          .findConsolidationKeysAndProfileIdsByWallets(wallets, connection)
+          .then((result) =>
+            Object.entries(result).reduce((acc, [wallet, { profile_id }]) => {
+              acc[wallet] = profile_id!;
+              return acc;
+            }, {} as Record<string, string>)
+          );
+        const raterRatingsByTargetProfileId = await this.ratingsDb
+          .lockRatingsOnMatterForUpdate(
+            {
+              rater_profile_id: actingAsId,
+              matter
+            },
+            connection
+          )
+          .then((result) =>
+            result.reduce((acc, it) => {
+              acc[it.matter_target_id] = it.rating;
+              return acc;
+            }, {} as Record<string, number>)
+          );
+        const skipped: { identity: string; reason: string }[] = [];
+        const ratingChangesByProfileId = Object.entries(
+          profileIdsByWallets
+        ).reduce((acc, [wallet, profileId]) => {
+          if (profileId === authContext.getActingAsId()!) {
+            skipped.push({
+              identity: wallet,
+              reason: `User can't rate themselves`
+            });
+          } else {
+            acc[profileId] = (acc[profileId] ?? 0) + apiRequest.amount_to_add;
+          }
           return acc;
         }, {} as Record<string, number>);
-        const newAmount = apiRequest.amount;
-        const groupedIds = allProfileIds.reduce(
-          (acc, red) => {
-            const currentRating = currentRatingsByProfileId[red] ?? 0;
-            if (newAmount > 0 && newAmount < currentRating) {
-              acc.notToChange.push({
-                profile_id: red,
-                reason: 'User already has a higher rating'
-              });
-            } else if (newAmount > 0 && currentRating < 0) {
-              acc.notToChange.push({
-                profile_id: red,
-                reason: 'User already has a negative rating'
-              });
-            } else if (newAmount < 0 && currentRating < newAmount) {
-              acc.notToChange.push({
-                profile_id: red,
-                reason: 'User already has a lower rating'
-              });
-            } else if (newAmount < 0 && currentRating > 0) {
-              acc.notToChange.push({
-                profile_id: red,
-                reason: 'User already has a positive rating'
-              });
-            } else if (currentRating === newAmount) {
-              acc.notToChange.push({
-                profile_id: red,
-                reason: 'Rating is already set to this value'
-              });
-            } else if (red === authContext.getActingAsId()) {
-              acc.notToChange.push({
-                profile_id: red,
-                reason: `User can't rate themselves`
-              });
-            } else {
-              acc.toChange.push(red);
-            }
-            return acc;
-          },
-          { toChange: [], notToChange: [] } as {
-            toChange: string[];
-            notToChange: { profile_id: string; reason: string }[];
-          }
-        );
-        for (const profileId of groupedIds.toChange) {
+        const newRatingsByProfileId = Object.entries(
+          ratingChangesByProfileId
+        ).reduce((acc, [profileId, ratingChange]) => {
+          acc[profileId] =
+            (raterRatingsByTargetProfileId[profileId] ?? 0) + ratingChange;
+          return acc;
+        }, {} as Record<string, number>);
+        for (const [profileId, newRating] of Object.entries(
+          newRatingsByProfileId
+        )) {
           try {
             await this.updateRatingInternal(
               {
@@ -883,7 +865,7 @@ export class RatingsService {
                   matter === RateMatter.CIC ? 'CIC' : apiRequest.category!,
                 matter_target_id: profileId,
                 rater_profile_id: actingAsId,
-                rating: apiRequest.amount,
+                rating: newRating,
                 authenticationContext: authContext
               },
               connection
@@ -900,15 +882,7 @@ export class RatingsService {
             }
           }
         }
-        const idsAndHandles =
-          await this.profilesDb.getProfileIdsAndHandlesByIds(allProfileIds);
-        return groupedIds.notToChange.map(
-          (it) =>
-            `Rating on profile ${
-              idsAndHandles.find((idh) => it.profile_id === idh.id)?.handle ??
-              ''
-            } not set: ${it.reason}`
-        );
+        return skipped;
       }
     );
     return { skipped: errors };
@@ -958,6 +932,9 @@ export class RatingsService {
       });
     }
     await this.profileActivityLogsDb.insertMany(logEvents, connection);
+    if (wallets.length) {
+      this.logger.info(`Created ${wallets.length} new profiles`);
+    }
     return result;
   }
 
