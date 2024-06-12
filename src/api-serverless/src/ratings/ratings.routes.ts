@@ -139,7 +139,7 @@ const SnapshotsRequestSchema: Joi.ObjectSchema<RatingsSnapshotsPageRequest> =
 
 const BulkRateRequestSchema: Joi.ObjectSchema<BulkRateRequest> =
   Joi.object<BulkRateRequest>({
-    amount: Joi.number().integer().required(),
+    amount_to_add: Joi.number().integer().not(0).required(),
     matter: Joi.string()
       .valid(...Object.values(ApiRateMatter))
       .required(),

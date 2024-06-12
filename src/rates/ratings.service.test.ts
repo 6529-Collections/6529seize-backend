@@ -17,7 +17,6 @@ import { EventScheduler } from '../events/event.scheduler';
 import { ArweaveFileUploader } from '../arweave';
 import { ProfileProxiesDb } from '../profile-proxies/profile-proxies.db';
 import { AuthenticationContext } from '../auth-context';
-import * as fs from 'fs';
 
 const authContext: AuthenticationContext = new AuthenticationContext({
   authenticatedProfileId: 'pid',
@@ -391,43 +390,5 @@ describe('RatingsService', () => {
       );
       expect(ratingsDb.insertSnapshot).toHaveBeenCalledTimes(2);
     });
-  });
-
-  it('wurks', async () => {
-    const arr = [
-      'a',
-      'b',
-      'c',
-      'd',
-      'e',
-      'f',
-      '0',
-      '1',
-      '2',
-      '3',
-      '4',
-      '5',
-      '6',
-      '7',
-      '8',
-      '9'
-    ];
-    const wallets = [];
-    for (let z = 0; z < 100; z++) {
-      let wallet = '0x';
-      for (let i = 0; i < 40; i++) {
-        const random = Math.floor(Math.random() * arr.length);
-        let randomChar = arr[random];
-        if (random < 6) {
-          const r = Math.random();
-          if (r > 0.5) {
-            randomChar = randomChar.toUpperCase();
-          }
-        }
-        wallet += randomChar;
-      }
-      wallets.push(wallet);
-    }
-    fs.writeFileSync('wallets.json', JSON.stringify({ wallets }));
   });
 });
