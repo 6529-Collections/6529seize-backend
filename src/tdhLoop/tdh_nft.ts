@@ -65,7 +65,7 @@ const findContractTDH = (
       tdh__raw: t.tdh__raw,
       tdh_rank: rank?.rank ?? -1,
       boost: boost,
-      boosted_tdh: t.tdh * boost
+      boosted_tdh: Math.round(t.tdh * boost)
     };
   });
 };
