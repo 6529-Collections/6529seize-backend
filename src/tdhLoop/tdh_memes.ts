@@ -27,17 +27,24 @@ export async function calculateMemesTdh<T extends TDH | ConsolidatedTDH>(
       const seasonMemes = t.memes.filter(
         (m: TokenTDH) => s.start_index <= m.id && m.id <= s.end_index
       );
+
+      interface BoostedTokenTDH extends TokenTDH {
+        boosted_tdh: number;
+      }
+
       const memeTotals = seasonMemes.reduce(
-        (acc: TokenTDH, cp: TokenTDH) => {
+        (acc: BoostedTokenTDH, cp: TokenTDH) => {
           acc.balance += cp.balance;
           acc.tdh += cp.tdh;
           acc.tdh__raw += cp.tdh__raw;
+          acc.boosted_tdh += Math.round(cp.tdh * t.boost);
           return acc;
         },
         {
           balance: 0,
           tdh: 0,
-          tdh__raw: 0
+          tdh__raw: 0,
+          boosted_tdh: 0
         }
       );
       const uniqueMemes = seasonMemes.length;
@@ -56,7 +63,7 @@ export async function calculateMemesTdh<T extends TDH | ConsolidatedTDH>(
         tdh: memeTotals.tdh,
         tdh__raw: memeTotals.tdh__raw,
         boost: t.boost,
-        boosted_tdh: memeTotals.tdh * t.boost,
+        boosted_tdh: memeTotals.boosted_tdh,
         unique_memes: uniqueMemes,
         memes_cards_sets: sets,
         tdh_rank: 0 //assigned later
