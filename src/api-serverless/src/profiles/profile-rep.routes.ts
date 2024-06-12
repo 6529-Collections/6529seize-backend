@@ -7,8 +7,7 @@ import { BadRequestException } from '../../../exceptions';
 import * as Joi from 'joi';
 import {
   GetProfileRatingsRequest,
-  ratingsService,
-  RatingWithProfileInfoAndLevel
+  ratingsService
 } from '../../../rates/ratings.service';
 import { RateMatter } from '../../../entities/IRating';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
@@ -16,11 +15,12 @@ import { abusivenessCheckService } from '../../../profiles/abusiveness-check.ser
 import { getRaterInfoFromRequest, RateProfileRequest } from './rating.helper';
 import { profilesService } from '../../../profiles/profiles.service';
 import { RatingStats } from '../../../rates/ratings.db';
-import { Page } from '../page-request';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { ChangeProfileRepRating } from '../generated/models/ChangeProfileRepRating';
 import { ChangeProfileRepRatingResponse } from '../generated/models/ChangeProfileRepRatingResponse';
 import { RepRating } from '../generated/models/RepRating';
+import { RatingWithProfileInfoAndLevel } from '../generated/models/RatingWithProfileInfoAndLevel';
+import { RatingWithProfileInfoAndLevelPage } from '../generated/models/RatingWithProfileInfoAndLevelPage';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -68,7 +68,7 @@ router.get(
   `/ratings/by-rater`,
   async function (
     req: GetProfileRatingsRequest,
-    res: Response<ApiResponse<Page<RatingWithProfileInfoAndLevel>>>
+    res: Response<ApiResponse<RatingWithProfileInfoAndLevelPage>>
   ) {
     const result = await ratingsService.getRatingsByRatersForMatter({
       queryParams: req.query,
