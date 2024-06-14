@@ -10,18 +10,18 @@ import { NewUserGroupEntity, userGroupsService } from './user-groups.service';
 import { ChangeGroupVisibility } from '../generated/models/ChangeGroupVisibility';
 import { GroupFull } from '../generated/models/GroupFull';
 import { CreateGroup } from '../generated/models/CreateGroup';
-import { GroupDescription } from '../generated/models/GroupDescription';
 import { GroupCicFilter } from '../generated/models/GroupCicFilter';
 import { GroupFilterDirection } from '../generated/models/GroupFilterDirection';
 import { GroupRepFilter } from '../generated/models/GroupRepFilter';
 import { GroupLevelFilter } from '../generated/models/GroupLevelFilter';
 import { GroupTdhFilter } from '../generated/models/GroupTdhFilter';
-import { distinct, resolveEnum } from '../../../helpers';
+import { distinct, parseIntOrNull, resolveEnum } from '../../../helpers';
 import { FilterDirection } from '../../../entities/IUserGroup';
 import {
   GroupOwnsNft,
   GroupOwnsNftNameEnum
 } from '../generated/models/GroupOwnsNft';
+import { CreateGroupDescription } from '../generated/models/CreateGroupDescription';
 
 const router = asyncRouter();
 
@@ -31,13 +31,18 @@ router.get(
     req: Request<
       any,
       any,
-      { group_name: string; author_identity: string },
+      {
+        group_name: string;
+        author_identity: string;
+        created_at_less_than?: string;
+      },
       any,
       any
     >,
     res: Response<ApiResponse<GroupFull[]>>
   ) => {
     const groupName = req.query.group_name ?? null;
+    const createdAtLessThan = parseIntOrNull(req.query.created_at_less_than);
     let authorId: string | null = null;
     if (req.query.author_identity) {
       authorId = await profilesService
@@ -50,7 +55,8 @@ router.get(
     }
     const response = await userGroupsService.searchByNameOrAuthor(
       groupName,
-      authorId
+      authorId,
+      createdAtLessThan
     );
     res.send(response);
   }
@@ -66,6 +72,33 @@ router.get(
       req.params.group_id
     );
     res.send(response);
+  }
+);
+
+router.get(
+  '/:group_id/wallet_groups/:wallet_group_id',
+  async (
+    req: Request<
+      { group_id: string; wallet_group_id: string },
+      any,
+      any,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<string[]>>
+  ) => {
+    const group = await userGroupsService.getByIdOrThrow(req.params.group_id);
+    const walletGroupId = group.group.wallet_group_id;
+    if (walletGroupId !== req.params.wallet_group_id) {
+      throw new NotFoundException(
+        `Group does not have wallet group with id ${req.params.wallet_group_id}`
+      );
+    } else {
+      const wallets = await userGroupsService.findUserGroupsWalletGroupWallets(
+        walletGroupId
+      );
+      res.send(wallets);
+    }
   }
 );
 
@@ -123,7 +156,9 @@ router.post(
     const ownsNextgen = apiUserGroup.group.owns_nfts.find(
       (it) => it.name === GroupOwnsNftNameEnum.Nextgen
     );
-    const userGroup: NewUserGroupEntity = {
+    const userGroup: Omit<NewUserGroupEntity, 'wallet_group_id'> & {
+      wallets: string[];
+    } = {
       name: apiUserGroup.name,
       cic_min: apiUserGroup.group.cic.min,
       cic_max: apiUserGroup.group.cic.max,
@@ -162,6 +197,9 @@ router.post(
       owns_nextgen_tokens: ownsNextgen?.tokens
         ? JSON.stringify(ownsNextgen.tokens)
         : null,
+      wallets: apiUserGroup.group.wallets?.length
+        ? apiUserGroup.group.wallets
+        : [],
       visible: false
     };
     const response = await userGroupsService.save(userGroup, savingProfileId);
@@ -257,13 +295,14 @@ const GroupOwnsNftSchema: Joi.ObjectSchema<GroupOwnsNft> =
     tokens: Joi.array().required().items(Joi.string()).allow(null)
   });
 
-const GroupDescriptionSchema: Joi.ObjectSchema<GroupDescription> =
-  Joi.object<GroupDescription>({
+const GroupDescriptionSchema: Joi.ObjectSchema<CreateGroupDescription> =
+  Joi.object<CreateGroupDescription>({
     tdh: GroupTdhFilterSchema,
     rep: GroupRepFilterSchema,
     cic: GroupCicFilterSchema,
     level: GroupLevelFilterSchema,
-    owns_nfts: Joi.array().required().items(GroupOwnsNftSchema)
+    owns_nfts: Joi.array().required().items(GroupOwnsNftSchema),
+    wallets: Joi.array().required().items(Joi.string()).allow(null).max(20000)
   });
 
 const NewUserGroupSchema = Joi.object<CreateGroup>({
