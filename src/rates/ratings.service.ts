@@ -12,7 +12,6 @@ import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
 import { BadRequestException, ForbiddenException } from '../exceptions';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import {
-  NewProfileActivityLog,
   profileActivityLogsDb,
   ProfileActivityLogsDb
 } from '../profileActivityLogs/profile-activity-logs.db';
@@ -48,6 +47,7 @@ import { resolveEnum } from '../helpers';
 import { AvailableRatingCredit } from '../api-serverless/src/generated/models/AvailableRatingCredit';
 import { RatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/RatingWithProfileInfoAndLevel';
 import { RatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/RatingWithProfileInfoAndLevelPage';
+import { identitiesDb } from '../identities/identities.db';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -211,7 +211,11 @@ export class RatingsService {
         );
       }
     }
-    await this.ratingsDb.updateRating(request, connection);
+    await this.ratingsDb.updateRating(
+      request,
+      request.rating - currentRating.rating,
+      connection
+    );
     await this.scheduleEvents(request, currentRating, connection);
     if (!skipLogCreation) {
       await this.insertLogs(
@@ -456,6 +460,7 @@ export class RatingsService {
         ...oldRating,
         rating: newRating
       },
+      newRating - oldRating.rating,
       connection
     );
     await this.profileActivityLogsDb.insert(
@@ -794,33 +799,75 @@ export class RatingsService {
         const wallets = apiRequest.target_wallet_addresses.map((it) =>
           it.toLowerCase()
         );
-        const allConsolidationKeysAndProfileIdsByWallets =
-          await profilesDb.findConsolidationKeysAndProfileIdsByWallets(
+        let allIdentitiesByAddresses =
+          await identitiesDb.lockEverythingRelatedToIdentitiesByAddresses(
+            wallets,
+            connection
+          );
+        await Promise.all(
+          wallets
+            .filter((wallet) => !allIdentitiesByAddresses[wallet])
+            .map((address) =>
+              identitiesDb.insertIdentity(
+                {
+                  consolidation_key: address,
+                  primary_address: address,
+                  profile_id: null,
+                  handle: null,
+                  normalised_handle: null,
+                  banner1: null,
+                  banner2: null,
+                  pfp: null,
+                  classification: null,
+                  sub_classification: null,
+                  cic: 0,
+                  rep: 0,
+                  tdh: 0,
+                  level_raw: 0
+                },
+                connection
+              )
+            )
+        );
+        allIdentitiesByAddresses =
+          await identitiesDb.lockEverythingRelatedToIdentitiesByAddresses(
             wallets,
             connection
           );
 
-        const identitiesWithoutProfile = Object.entries(
-          allConsolidationKeysAndProfileIdsByWallets
-        ).filter(([_, { profile_id }]) => !profile_id);
-        const newIdentitiesToCreate = Object.entries(
-          identitiesWithoutProfile.reduce(
-            (acc, [wallet, { consolidation_key }]) => {
-              acc[consolidation_key] = wallet;
-              return acc;
-            },
-            {} as Record<string, string>
+        const identitiesWithoutProfile = Object.values(
+          allIdentitiesByAddresses
+        ).filter(({ profile }) => !profile);
+        const addressesThatNeedNewProfiles = Array.from(
+          identitiesWithoutProfile.reduce((acc, { identity }) => {
+            acc.add(identity.primary_address);
+            return acc;
+          }, new Set<string>())
+        );
+        await Promise.all(
+          addressesThatNeedNewProfiles.map((address) =>
+            profilesService.createOrUpdateProfileWithGivenTransaction(
+              {
+                handle: `id-${address}`,
+                classification: ProfileClassification.PSEUDONYM,
+                sub_classification: null,
+                creator_or_updater_wallet: address
+              },
+              connection
+            )
           )
-        ).map(([_, wallet]) => wallet);
-        await this.bulkCreateProfiles(newIdentitiesToCreate, connection);
-        const profileIdsByWallets = await this.profilesDb
-          .findConsolidationKeysAndProfileIdsByWallets(wallets, connection)
-          .then((result) =>
-            Object.entries(result).reduce((acc, [wallet, { profile_id }]) => {
-              acc[wallet] = profile_id!;
-              return acc;
-            }, {} as Record<string, string>)
+        );
+        allIdentitiesByAddresses =
+          await identitiesDb.lockEverythingRelatedToIdentitiesByAddresses(
+            wallets,
+            connection
           );
+        const profileIdsByWallets = Object.entries(
+          allIdentitiesByAddresses
+        ).reduce((acc, [wallet, { profile }]) => {
+          acc[wallet] = profile!.external_id;
+          return acc;
+        }, {} as Record<string, string>);
         const raterRatingsByTargetProfileId = await this.ratingsDb
           .lockRatingsOnMatterForUpdate(
             {
@@ -888,56 +935,6 @@ export class RatingsService {
       }
     );
     return { skipped: errors };
-  }
-
-  private async bulkCreateProfiles(
-    wallets: string[],
-    connection: ConnectionWrapper<any>
-  ): Promise<Record<string, string>> {
-    const result: Record<string, string> = {};
-    const logEvents: NewProfileActivityLog[] = [];
-    for (const wallet of wallets) {
-      const handle = `id-${wallet}`;
-      const profileId = await this.profilesDb.insertProfileRecord(
-        {
-          command: {
-            handle: handle,
-            classification: ProfileClassification.PSEUDONYM,
-            sub_classification: null,
-            creator_or_updater_wallet: wallet
-          }
-        },
-        connection
-      );
-      result[wallet] = profileId;
-      logEvents.push({
-        profile_id: profileId,
-        target_id: null,
-        type: ProfileActivityLogType.HANDLE_EDIT,
-        contents: JSON.stringify({
-          authenticated_wallet: wallet,
-          old_value: null,
-          new_value: handle
-        }),
-        proxy_id: null
-      });
-      logEvents.push({
-        profile_id: profileId,
-        target_id: null,
-        type: ProfileActivityLogType.CLASSIFICATION_EDIT,
-        contents: JSON.stringify({
-          authenticated_wallet: wallet,
-          old_value: null,
-          new_value: ProfileClassification.PSEUDONYM
-        }),
-        proxy_id: null
-      });
-    }
-    await this.profileActivityLogsDb.insertMany(logEvents, connection);
-    if (wallets.length) {
-      this.logger.info(`Created ${wallets.length} new profiles`);
-    }
-    return result;
   }
 
   async getCreditLeft({
