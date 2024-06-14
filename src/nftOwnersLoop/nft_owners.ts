@@ -44,7 +44,10 @@ export const updateNftOwners = async (reset?: boolean) => {
   logger.info(
     `[lastOwnersBlock ${lastOwnersBlock}] : [blockReference ${blockReference}] : [RESET ${reset}] : [FETCHING OWNERS...]`
   );
-  const allOwners: OwnedNft[] = await getOwnersForContracts(allContracts);
+  const allOwners: OwnedNft[] = await getOwnersForContracts(
+    allContracts,
+    blockReference
+  );
   logger.info(`[OWNERS ${allOwners.length.toLocaleString()}]`);
 
   const addresses = new Set<string>();

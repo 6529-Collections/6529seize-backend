@@ -70,6 +70,8 @@ const YAML = require('yamljs');
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
 
+const API_PORT = 3000;
+
 function requestLogMiddleware() {
   return (request: Request, response: Response, next: NextFunction) => {
     Logger.registerAwsRequestId(request.apiGateway?.context?.awsRequestId);
@@ -854,9 +856,9 @@ loadApi().then(() => {
     app.use(sentryFlusherMiddleware());
   }
 
-  app.listen(3000, function () {
+  app.listen(API_PORT, function () {
     logger.info(
-      `[CONFIG ${process.env.NODE_ENV}] [SERVER RUNNING ON PORT 3000]`
+      `[CONFIG ${process.env.NODE_ENV}] [SERVER RUNNING ON PORT ${API_PORT}]`
     );
   });
 });
