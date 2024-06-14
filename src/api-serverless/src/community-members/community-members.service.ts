@@ -45,7 +45,8 @@ export class CommunityMembersService {
           rep: member.rep,
           cic: member.cic,
           last_activity: lastActivities[member.consolidation_key] ?? null,
-          pfp: member.pfp
+          pfp: member.pfp,
+          wallet: member.wallet
         }));
       });
   }

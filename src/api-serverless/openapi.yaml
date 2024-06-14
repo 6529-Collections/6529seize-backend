@@ -324,6 +324,54 @@ paths:
                 $ref: "#/components/schemas/ChangeProfileCicRatingResponse"
         "400":
           description: "Invalid request"
+
+  /ratings:
+    post:
+      tags:
+        - Ratings
+      summary: Bulk rate. Supplied amount will be added to all target identities. If same identity is supplied multiple times, all the additions will be summed up. Targets must be represented as Ethereum wallet addresses. ENS names and profile handles are not supported.
+      operationId: bulkRate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkRateRequest"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BulkRateResponse"
+        "400":
+          description: "Invalid request"
+
+  /ratings/credit:
+    get:
+      tags:
+        - Ratings
+      summary: Get available credit for rating
+      operationId: getCreditLeft
+      parameters:
+        - name: rater
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: rater_representative
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AvailableRatingCredit"
+
   /profiles/{identity}/repcic/ratings/by-rater:
     get:
       tags:
@@ -1118,6 +1166,74 @@ components:
           type: number
           format: int64
           nullable: true
+
+    AvailableRatingCredit:
+      type: object
+      required:
+        - credit
+      properties:
+        cic_credit:
+          type: number
+          format: int64
+        rep_credit:
+          type: number
+          format: int64
+
+    BulkRateResponse:
+      type: object
+      required:
+        - skipped
+      properties:
+        skipped:
+          type: array
+          items:
+            $ref: "#/components/schemas/BulkRateSkippedIdentity"
+
+    BulkRateSkippedIdentity:
+      type: object
+      required:
+        - identity
+        - reason
+      properties:
+        identity:
+          type: string
+        reason:
+          type: string
+
+    BulkRateRequest:
+      type: object
+      required:
+        - matter
+        - category
+        - amount_to_add
+        - target_wallet_addresses
+      properties:
+        matter:
+          $ref: "#/components/schemas/RateMatter"
+        category:
+          type: string
+          maxLength: 100
+          nullable: true
+          pattern: "^[a-zA-Z0-9?!,.'() ]$"
+          description: "Category of the rating must be set when matter is REP and null if matter is CIC"
+        amount_to_add:
+          type: number
+          format: int64
+          example: 1
+        target_wallet_addresses:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 100
+            pattern: "0x[a-fA-F0-9]{40}"
+            description: "Wallet address of the target profile"
+
+    RateMatter:
+      type: string
+      enum:
+        - REP
+        - CIC
 
     RatingWithProfileInfoAndLevel:
       type: object

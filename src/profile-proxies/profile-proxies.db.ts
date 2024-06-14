@@ -264,6 +264,27 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     }));
   }
 
+  async findActiveProfileProxyActionsByProxyIds({
+    proxy_ids
+  }: {
+    readonly proxy_ids: string[];
+  }): Promise<ProfileProxyActionEntity[]> {
+    if (!proxy_ids.length) {
+      return [];
+    }
+    const now = Time.currentMillis();
+    return await this.db.execute<ProfileProxyActionEntity>(
+      `select * from ${PROFILE_PROXY_ACTIONS_TABLE} 
+      where proxy_id in (:proxy_ids) 
+      and start_time <= :now 
+      and (end_time is null or end_time > :now)
+      and (revoked_at is null or revoked_at > :now)
+      and (rejected_at is null or rejected_at > :now)
+      and (accepted_at is not null and accepted_at < :now)`,
+      { proxy_ids, now }
+    );
+  }
+
   async acceptProfileProxyAction({
     action_id,
     is_active,
