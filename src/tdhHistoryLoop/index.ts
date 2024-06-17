@@ -459,7 +459,7 @@ function calculateChange(
       if (e) {
         existing.push({
           ...e,
-          boosted_tdh: e.tdh * y.boost
+          boosted_tdh: Math.round(e.tdh * y.boost)
         });
       }
     });
@@ -494,12 +494,12 @@ function calculateChange(
   if (change > 0) {
     tdhCreated += m.tdh - previousTdh.tdh;
     rawTdhCreated += m.tdh__raw - previousTdh.tdh__raw;
-    boostedTdhCreated += m.tdh * boost - previousTdh.boosted_tdh;
+    boostedTdhCreated += Math.round(m.tdh * boost) - previousTdh.boosted_tdh;
     balanceCreated += m.balance - previousTdh.balance;
   } else {
     tdhDestroyed += previousTdh.tdh - m.tdh;
     rawTdhDestroyed += previousTdh.tdh__raw - m.tdh__raw;
-    boostedTdhDestroyed += previousTdh.boosted_tdh - m.tdh * boost;
+    boostedTdhDestroyed += previousTdh.boosted_tdh - Math.round(m.tdh * boost);
     balanceDestroyed += previousTdh.balance - m.balance;
   }
   return {
