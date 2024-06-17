@@ -17,5 +17,5 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 async function replay() {
   // logger.info(`[CUSTOM REPLAY NOT IMPLEMENTED]`);
 
-  await tdhHistoryLoop(6);
+  await tdhHistoryLoop(10);
 }
