@@ -287,7 +287,7 @@ async function tdhHistory(date: Date) {
   logger.info(
     `[DATE ${date.toISOString().split('T')[0]}] [COUNT ${
       tdhHistory.length
-    }] [PERSISTNG...]`
+    }] [PERSISTING...]`
   );
 
   await persistTDHHistory(tdhHistory);
