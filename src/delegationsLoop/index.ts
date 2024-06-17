@@ -167,8 +167,8 @@ async function findNewDelegations(
 async function reconsolidateWallets(events: ConsolidationEvent[]) {
   const wallets = new Set<string>();
   events.forEach((c) => {
-    wallets.add(c.wallet1);
-    wallets.add(c.wallet2);
+    wallets.add(c.wallet1.toLowerCase());
+    wallets.add(c.wallet2.toLowerCase());
   });
 
   const affectedWallets = await getAffectedWallets(wallets);
