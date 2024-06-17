@@ -21,7 +21,7 @@ import { RatingsSnapshot } from './entities/IRatingsSnapshots';
 import { ProfileProxyEntity } from './entities/IProfileProxy';
 import { ProfileProxyActionEntity } from './entities/IProfileProxyAction';
 import { WaveEntity } from './entities/IWave';
-import * as dbMigrationsLoop from './dbMigrationsLoop';
+import * as customReplayLoop from './customReplayLoop';
 import { WalletGroupEntity } from './entities/IWalletGroup';
 import { CookiesConsent } from './entities/ICookieConsent';
 
@@ -31,30 +31,7 @@ async function start() {
   const start = Time.now();
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  await loadEnv([
-    Profile,
-    ProfileArchived,
-    CicStatement,
-    ProfileActivityLog,
-    Rating,
-    AbusivenessDetectionResult,
-    RatingsSnapshot,
-    DropEntity,
-    DropPartEntity,
-    DropMentionEntity,
-    DropReferencedNftEntity,
-    DropMetadataEntity,
-    DropMediaEntity,
-    DropVoteCreditSpending,
-    DropCommentEntity,
-    ProfileProxyEntity,
-    ProfileProxyActionEntity,
-    WaveEntity,
-    CookiesConsent,
-    UserGroupEntity,
-    WalletGroupEntity
-  ]);
-  await dbMigrationsLoop.handler(null, null as any, null as any);
+  await customReplayLoop.handler(null, null as any, null as any);
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);

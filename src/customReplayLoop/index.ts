@@ -1,6 +1,7 @@
 import { loadEnv, unload } from '../secrets';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
+import { tdhHistoryLoop } from '../tdhHistoryLoop';
 
 const logger = Logger.get('CUSTOM_REPLAY_LOOP');
 
@@ -13,5 +14,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 async function replay() {
-  logger.info(`[CUSTOM REPLAY NOT IMPLEMENTED]`);
+  // logger.info(`[CUSTOM REPLAY NOT IMPLEMENTED]`);
+
+  await tdhHistoryLoop(6);
 }
