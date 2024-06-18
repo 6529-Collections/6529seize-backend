@@ -32,7 +32,7 @@ export const handler = sentryContext.wrapLambdaHandler(
   }
 );
 
-export async function tdhHistoryLoop(iterations: number) {
+async function tdhHistoryLoop(iterations: number) {
   for (let i = iterations - 1; i >= 0; i--) {
     const start = Time.now();
     const myDate = new Date();
