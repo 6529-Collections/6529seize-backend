@@ -8,11 +8,9 @@ import { ConsolidatedTDHUpload } from '../entities/IUpload';
 import {
   ConsolidatedTDH,
   ConsolidatedTDHMemes,
-  GlobalTDHHistory,
   NftTDH,
   TDH,
   TDHBlock,
-  TDHHistory,
   TDHMemes
 } from '../entities/ITDH';
 import { NFT } from '../entities/INFT';
@@ -42,8 +40,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     NextGenTokenTDH,
     ConsolidatedTDHUpload,
     NFT,
-    TDHHistory,
-    GlobalTDHHistory,
     Profile,
     CommunityMember,
     MemesSeason,
