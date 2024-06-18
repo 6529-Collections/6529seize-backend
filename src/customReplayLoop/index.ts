@@ -6,7 +6,7 @@ const logger = Logger.get('CUSTOM_REPLAY_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   logger.info(`[RUNNING]`);
-  await loadEnv();
+  await loadEnv([]);
   await replay();
   await unload();
   logger.info('[COMPLETE]');
