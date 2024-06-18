@@ -300,10 +300,11 @@ export class TDHHistory {
   @PrimaryColumn({ type: 'date' })
   date!: Date;
 
-  @PrimaryColumn({ type: 'varchar', length: 500 })
+  @Index()
+  @Column({ type: 'varchar', length: 500 })
   consolidation_display!: string;
 
-  @Column({ type: 'varchar', length: 200 })
+  @PrimaryColumn({ type: 'varchar', length: 200 })
   consolidation_key!: string;
 
   @PrimaryColumn({ type: 'int' })
