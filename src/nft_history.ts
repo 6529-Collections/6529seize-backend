@@ -22,14 +22,10 @@ import {
 } from './db';
 import { NFTHistory, NFTHistoryClaim } from './entities/INFTHistory';
 import { NFT_HISTORY_IFACE } from './abis/nft_history';
-import { RequestInfo, RequestInit } from 'node-fetch';
 import { areEqualAddresses } from './helpers';
 import { Logger } from './logging';
 
 const logger = Logger.get('NFT_HISTORY');
-
-const fetch = (url: RequestInfo, init?: RequestInit) =>
-  import('node-fetch').then(({ default: fetch }) => fetch(url, init));
 
 let alchemy: Alchemy;
 
@@ -42,6 +38,7 @@ const AIRDROP_METHOD = '0xbd04e411';
 const INITIALIZE_BURN_METHOD = '0x38ec8995';
 const UPDATE_CLAIM_METHOD_1 = '0xa310099c';
 const UPDATE_CLAIM_METHOD_2 = '0x0a6330b8';
+const UPDATE_CLAIM_METHOD_3 = '0xe505bb01';
 
 async function getAllDeployerTransactions(
   startingBlock: number,
@@ -61,7 +58,7 @@ async function getAllDeployerTransactions(
     maxCount: 150,
     fromBlock: startingBlockHex,
     toBlock: latestBlockHex,
-    pageKey: key ? key : undefined,
+    pageKey: key ?? undefined,
     fromAddress: MEMES_DEPLOYER,
     withMetadata: true,
     order: SortingOrder.ASCENDING
@@ -186,9 +183,9 @@ const getEditDescription = async (
   blockNumber: number
 ) => {
   const previousUri = await fetchLatestNftUri(tokenId, contract, blockNumber);
-  if (previousUri) {
-    const previousMeta = await (await fetch(previousUri)).json();
-    const newMeta = await (await fetch(newUri)).json();
+  if (previousUri && !areEqualAddresses(previousUri, newUri)) {
+    const previousMeta: any = await (await fetch(previousUri)).json();
+    const newMeta: any = await (await fetch(newUri)).json();
 
     const changes: any[] = [];
     for (const key in previousMeta) {
@@ -261,10 +258,7 @@ const getEditDescription = async (
       changes: changes
     };
   }
-  return {
-    event: 'Edit',
-    changes: []
-  };
+  return null;
 };
 
 export const getDeployerTransactions = async (
@@ -457,17 +451,19 @@ export const getDeployerTransactions = async (
           details.tokenUri,
           tx.blockNumber!
         );
-        const nftEdit: NFTHistory = {
-          created_at: new Date(),
-          nft_id: details.tokenId,
-          contract: details.contract,
-          uri: details.tokenUri,
-          transaction_date: new Date(t.metadata.blockTimestamp),
-          transaction_hash: t.hash,
-          block: parseInt(t.blockNum, 16),
-          description: editDescription
-        };
-        await persistNftHistory([nftEdit]);
+        if (editDescription) {
+          const nftEdit: NFTHistory = {
+            created_at: new Date(),
+            nft_id: details.tokenId,
+            contract: details.contract,
+            uri: details.tokenUri,
+            transaction_date: new Date(t.metadata.blockTimestamp),
+            transaction_hash: t.hash,
+            block: parseInt(t.blockNum, 16),
+            description: editDescription
+          };
+          await persistNftHistory([nftEdit]);
+        }
       }
     } else if (tx?.data.startsWith(AIRDROP_METHOD)) {
       const data = tx.data;
@@ -510,7 +506,8 @@ export const getDeployerTransactions = async (
       }
     } else if (
       tx?.data.startsWith(UPDATE_CLAIM_METHOD_1) ||
-      tx?.data.startsWith(UPDATE_CLAIM_METHOD_2)
+      tx?.data.startsWith(UPDATE_CLAIM_METHOD_2) ||
+      tx?.data.startsWith(UPDATE_CLAIM_METHOD_3)
     ) {
       const data = tx.data;
       try {
@@ -518,7 +515,9 @@ export const getDeployerTransactions = async (
           data,
           value: 0
         });
-        const claimIndex = parsed.args.claimIndex.toNumber();
+        const claimIndex =
+          parsed.args.claimIndex?.toNumber() ??
+          parsed.args.instanceId?.toNumber();
         const location = parsed.args.claimParameters.location;
         const contract = parsed.args.creatorContractAddress;
         const existingClaims = await findClaim(claimIndex);
@@ -532,20 +531,19 @@ export const getDeployerTransactions = async (
                 `https://arweave.net/${location}`,
                 tx.blockNumber!
               );
-              if (editDescription.changes.length == 0) {
-                throw new Error(`no changes found ${tx.hash} ${location}`);
+              if (editDescription) {
+                const nftEdit: NFTHistory = {
+                  created_at: new Date(),
+                  nft_id: nftId,
+                  contract: contract,
+                  uri: `https://arweave.net/${location}`,
+                  transaction_date: new Date(t.metadata.blockTimestamp),
+                  transaction_hash: t.hash,
+                  block: parseInt(t.blockNum, 16),
+                  description: editDescription
+                };
+                await persistNftHistory([nftEdit]);
               }
-              const nftEdit: NFTHistory = {
-                created_at: new Date(),
-                nft_id: nftId,
-                contract: contract,
-                uri: `https://arweave.net/${location}`,
-                transaction_date: new Date(t.metadata.blockTimestamp),
-                transaction_hash: t.hash,
-                block: parseInt(t.blockNum, 16),
-                description: editDescription
-              };
-              await persistNftHistory([nftEdit]);
             }
           }
         }
