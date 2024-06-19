@@ -611,5 +611,85 @@ export const NFT_HISTORY_IFACE = new ethers.utils.Interface([
     outputs: [],
     stateMutability: 'nonpayable',
     type: 'function'
+  },
+  {
+    inputs: [
+      {
+        internalType: 'address',
+        name: 'creatorContractAddress',
+        type: 'address'
+      },
+      {
+        internalType: 'uint256',
+        name: 'instanceId',
+        type: 'uint256'
+      },
+      {
+        components: [
+          {
+            internalType: 'uint32',
+            name: 'totalMax',
+            type: 'uint32'
+          },
+          {
+            internalType: 'uint32',
+            name: 'walletMax',
+            type: 'uint32'
+          },
+          {
+            internalType: 'uint48',
+            name: 'startDate',
+            type: 'uint48'
+          },
+          {
+            internalType: 'uint48',
+            name: 'endDate',
+            type: 'uint48'
+          },
+          {
+            internalType: 'enum ILazyPayableClaim.StorageProtocol',
+            name: 'storageProtocol',
+            type: 'uint8'
+          },
+          {
+            internalType: 'bytes32',
+            name: 'merkleRoot',
+            type: 'bytes32'
+          },
+          {
+            internalType: 'string',
+            name: 'location',
+            type: 'string'
+          },
+          {
+            internalType: 'uint256',
+            name: 'cost',
+            type: 'uint256'
+          },
+          {
+            internalType: 'address payable',
+            name: 'paymentReceiver',
+            type: 'address'
+          },
+          {
+            internalType: 'address',
+            name: 'erc20',
+            type: 'address'
+          },
+          {
+            internalType: 'address',
+            name: 'signingAddress',
+            type: 'address'
+          }
+        ],
+        internalType: 'struct IERC1155LazyPayableClaim.ClaimParameters',
+        name: 'claimParameters',
+        type: 'tuple'
+      }
+    ],
+    name: 'updateClaim',
+    outputs: [],
+    stateMutability: 'nonpayable',
+    type: 'function'
   }
 ]);
