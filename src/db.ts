@@ -72,10 +72,13 @@ import { Profile } from './entities/IProfile';
 import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
-import { profilesService } from './profiles/profiles.service';
 import { synchroniseCommunityMembersTable } from './community-members';
 import { MemesSeason } from './entities/ISeason';
 import { insertWithoutUpdate } from './orm_helpers';
+import {
+  syncIdentitiesTdhNumbers,
+  syncIdentitiesWithTdhConsolidations
+} from './identity';
 
 const mysql = require('mysql');
 
@@ -108,7 +111,13 @@ export async function connect(entities: any[] = []) {
     ) => execSQLWithParams(sql, params, options),
     executeNativeQueriesInTransaction(executable) {
       return execNativeTransactionally(executable);
-    }
+    },
+    oneOrNull: (
+      sql: string,
+      params?: Record<string, any>,
+      options?: DbQueryOptions
+    ) =>
+      execSQLWithParams(sql, params, options).then((r) => (r[0] as any) ?? null)
   });
   logger.info(
     `[CONNECTION CREATED] [APP DATA SOURCE ${
@@ -817,7 +826,8 @@ export async function persistConsolidatedTDH(
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
     }
 
-    await profilesService.mergeProfiles(qrHolder);
+    await syncIdentitiesWithTdhConsolidations(qrHolder);
+    await syncIdentitiesTdhNumbers(qrHolder);
     await synchroniseCommunityMembersTable(qrHolder);
   });
 

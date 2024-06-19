@@ -24,6 +24,8 @@ import { WaveEntity } from './entities/IWave';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
 import { WalletGroupEntity } from './entities/IWalletGroup';
 import { CookiesConsent } from './entities/ICookieConsent';
+import { AddressConsolidationKey } from './entities/IAddressConsolidationKey';
+import { IdentityEntity } from './entities/IIdentity';
 
 const logger = Logger.get('BACKEND');
 
@@ -52,7 +54,9 @@ async function start() {
     WaveEntity,
     CookiesConsent,
     UserGroupEntity,
-    WalletGroupEntity
+    WalletGroupEntity,
+    AddressConsolidationKey,
+    IdentityEntity
   ]);
   await dbMigrationsLoop.handler(null, null as any, null as any);
 

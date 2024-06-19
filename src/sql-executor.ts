@@ -14,6 +14,12 @@ export interface SqlExecutor {
   executeNativeQueriesInTransaction<T>(
     executable: (connectionHolder: ConnectionWrapper<any>) => Promise<T>
   ): Promise<T>;
+
+  oneOrNull<T>(
+    sql: string,
+    params?: Record<string, any>,
+    options?: DbQueryOptions
+  ): Promise<T | null>;
 }
 
 export let sqlExecutor!: SqlExecutor;

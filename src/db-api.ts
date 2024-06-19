@@ -119,7 +119,13 @@ export async function connect() {
     ) => execSQLWithParams(sql, params, options),
     executeNativeQueriesInTransaction(executable) {
       return execNativeTransactionally(executable);
-    }
+    },
+    oneOrNull: (
+      sql: string,
+      params?: Record<string, any>,
+      options?: DbQueryOptions
+    ) =>
+      execSQLWithParams(sql, params, options).then((r) => (r[0] as any) ?? null)
   });
   logger.info(`[CONNECTION POOLS CREATED]`);
 }
