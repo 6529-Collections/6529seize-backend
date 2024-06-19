@@ -57,7 +57,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     AddressConsolidationKey,
     IdentityEntity
   ]);
-  console.log(IdentityEntity);
   await ratingsService.reduceOverRates();
   await dropOverRaterRevocationService.revokeOverRates();
   await unload();
