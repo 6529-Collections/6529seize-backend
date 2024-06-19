@@ -1147,11 +1147,19 @@ export async function persistDelegations(
 }
 
 export async function persistNftHistory(nftHistory: NFTHistory[]) {
-  await AppDataSource.getRepository(NFTHistory).save(nftHistory);
+  await AppDataSource.getRepository(NFTHistory).upsert(nftHistory, [
+    'nft_id',
+    'contract',
+    'uri'
+  ]);
 }
 
 export async function persistNftClaims(claims: NFTHistoryClaim[]) {
-  await AppDataSource.getRepository(NFTHistoryClaim).save(claims);
+  await AppDataSource.getRepository(NFTHistoryClaim).upsert(claims, [
+    'contract',
+    'location',
+    'claimIndex'
+  ]);
 }
 
 export async function findClaim(claimIndex: number, nftId?: number) {
@@ -1169,9 +1177,12 @@ export async function findClaim(claimIndex: number, nftId?: number) {
 }
 
 export async function persistNftHistoryBlock(block: number) {
-  await AppDataSource.getRepository(NFTHistoryBlock).save({
-    block
-  });
+  await AppDataSource.getRepository(NFTHistoryBlock).upsert(
+    {
+      block
+    },
+    ['block']
+  );
 }
 
 export async function fetchLatestNftUri(
@@ -1185,7 +1196,7 @@ export async function fetchLatestNftUri(
       contract: contract,
       block: LessThan(block)
     },
-    order: { transaction_date: 'DESC' }
+    order: { block: 'DESC' }
   });
   return latestHistory ? latestHistory.uri : null;
 }

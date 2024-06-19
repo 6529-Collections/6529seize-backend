@@ -42,6 +42,7 @@ const AIRDROP_METHOD = '0xbd04e411';
 const INITIALIZE_BURN_METHOD = '0x38ec8995';
 const UPDATE_CLAIM_METHOD_1 = '0xa310099c';
 const UPDATE_CLAIM_METHOD_2 = '0x0a6330b8';
+const UPDATE_CLAIM_METHOD_3 = '0xe505bb01';
 
 async function getAllDeployerTransactions(
   startingBlock: number,
@@ -61,7 +62,7 @@ async function getAllDeployerTransactions(
     maxCount: 150,
     fromBlock: startingBlockHex,
     toBlock: latestBlockHex,
-    pageKey: key ? key : undefined,
+    pageKey: key ?? undefined,
     fromAddress: MEMES_DEPLOYER,
     withMetadata: true,
     order: SortingOrder.ASCENDING
@@ -510,7 +511,8 @@ export const getDeployerTransactions = async (
       }
     } else if (
       tx?.data.startsWith(UPDATE_CLAIM_METHOD_1) ||
-      tx?.data.startsWith(UPDATE_CLAIM_METHOD_2)
+      tx?.data.startsWith(UPDATE_CLAIM_METHOD_2) ||
+      tx?.data.startsWith(UPDATE_CLAIM_METHOD_3)
     ) {
       const data = tx.data;
       try {
@@ -518,7 +520,9 @@ export const getDeployerTransactions = async (
           data,
           value: 0
         });
-        const claimIndex = parsed.args.claimIndex.toNumber();
+        const claimIndex =
+          parsed.args.claimIndex?.toNumber() ??
+          parsed.args.instanceId?.toNumber();
         const location = parsed.args.claimParameters.location;
         const contract = parsed.args.creatorContractAddress;
         const existingClaims = await findClaim(claimIndex);
@@ -532,9 +536,6 @@ export const getDeployerTransactions = async (
                 `https://arweave.net/${location}`,
                 tx.blockNumber!
               );
-              if (editDescription.changes.length == 0) {
-                throw new Error(`no changes found ${tx.hash} ${location}`);
-              }
               const nftEdit: NFTHistory = {
                 created_at: new Date(),
                 nft_id: nftId,
