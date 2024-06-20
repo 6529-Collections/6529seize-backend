@@ -7,6 +7,7 @@ import { RateMatter, Rating } from '../entities/IRating';
 import {
   COMMUNITY_MEMBERS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  IDENTITIES_TABLE,
   PROFILE_FULL,
   PROFILES_TABLE,
   RATINGS_SNAPSHOTS_TABLE,
@@ -177,6 +178,7 @@ from general_stats
 
   async updateRating(
     ratingUpdate: UpdateRatingRequest,
+    amountChanged: number,
     connection: ConnectionWrapper<any>
   ) {
     await this.db.execute(
@@ -192,6 +194,25 @@ from general_stats
       ratingUpdate,
       { wrappedConnection: connection }
     );
+    if (ratingUpdate.matter === RateMatter.CIC) {
+      await this.db.execute(
+        `update ${IDENTITIES_TABLE} set cic = (cic + :amount_changed) where profile_id = :profile_id`,
+        {
+          profile_id: ratingUpdate.matter_target_id,
+          amount_changed: amountChanged
+        },
+        { wrappedConnection: connection }
+      );
+    } else if (ratingUpdate.matter === RateMatter.REP) {
+      await this.db.execute(
+        `update ${IDENTITIES_TABLE} set rep = (rep + :amount_changed), level_raw = (level_raw + :amount_changed) where profile_id = :profile_id`,
+        {
+          profile_id: ratingUpdate.matter_target_id,
+          amount_changed: amountChanged
+        },
+        { wrappedConnection: connection }
+      );
+    }
   }
 
   public async getOverRateMatters(): Promise<OverRateMatter[]> {
@@ -641,6 +662,29 @@ from grouped_rates r
     return this.db
       .execute(sql, sqlParam)
       .then((results) => results[0]?.rating ?? 0);
+  }
+
+  async getMatterRatingForEachTarget(
+    param: {
+      matter: RateMatter;
+      target_profile_ids: string[];
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<Record<string, number>> {
+    if (!param.target_profile_ids.length) {
+      return {};
+    }
+    const sql = `select matter_target_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = :matter and matter_target_id in (:target_profile_ids) group by 1`;
+    return this.db
+      .execute<{ matter_target_id: string; rating: number }>(sql, param, {
+        wrappedConnection: connection
+      })
+      .then((results) =>
+        results.reduce((acc, result) => {
+          acc[result.matter_target_id] = result.rating;
+          return acc;
+        }, {} as Record<string, number>)
+      );
   }
 }
 

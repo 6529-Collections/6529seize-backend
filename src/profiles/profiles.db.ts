@@ -7,6 +7,7 @@ import {
   COMMUNITY_MEMBERS_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   ENS_TABLE,
+  IDENTITIES_TABLE,
   MEMES_CONTRACT,
   NFTS_TABLE,
   PROFILE_FULL,
@@ -383,6 +384,16 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `update ${PROFILES_TABLE}
        set pfp_url = :pfp
+       where normalised_handle = :handle`,
+      {
+        pfp: thumbnailUri,
+        handle: profile.normalised_handle
+      },
+      { wrappedConnection: connectionHolder }
+    );
+    await this.db.execute(
+      `update ${IDENTITIES_TABLE}
+       set pfp = :pfp
        where normalised_handle = :handle`,
       {
         pfp: thumbnailUri,

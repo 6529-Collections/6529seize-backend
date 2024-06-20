@@ -18,7 +18,7 @@ import { discoverEnsConsolidations, discoverEnsDelegations } from '../ens';
 import { Time } from '../time';
 import { getLastTDH } from '../helpers';
 import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
-import { sqlExecutor } from '../sql-executor';
+import { dbSupplier, sqlExecutor } from '../sql-executor';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   USE_CASE_PRIMARY_ADDRESS
@@ -54,6 +54,10 @@ import {
 } from '../entities/IAggregatedActivity';
 import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { profilesService } from '../profiles/profiles.service';
+import {
+  syncIdentitiesPrimaryWallets,
+  syncIdentitiesWithTdhConsolidations
+} from '../identity';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -120,6 +124,11 @@ async function handleDelegations(startBlock: number | undefined) {
     ...delegationsResponse.revocation
   ].filter((e) => e.use_case === USE_CASE_PRIMARY_ADDRESS);
   await updatePrimaryAddresses(primaryAddressEvents);
+
+  await dbSupplier().executeNativeQueriesInTransaction(async (connection) => {
+    await syncIdentitiesWithTdhConsolidations(connection);
+    await syncIdentitiesPrimaryWallets(connection);
+  });
 
   return delegationsResponse;
 }
@@ -193,7 +202,9 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
   }
 }
 
-async function getAffectedWallets(wallets: Set<string>) {
+async function getConsolidationsContainingAddress(
+  wallets: Set<string>
+): Promise<ConsolidatedTDH[]> {
   const likeConditions = Array.from(wallets)
     .map((wallet) => `consolidation_key LIKE '%${wallet.toLowerCase()}%'`)
     .join(' OR ');
@@ -203,8 +214,12 @@ async function getAffectedWallets(wallets: Set<string>) {
     WHERE ${likeConditions}
   `;
 
-  const allConsolidations = await sqlExecutor.execute(query);
-  allConsolidations.map((c: ConsolidatedTDH) => {
+  return await sqlExecutor.execute<ConsolidatedTDH>(query);
+}
+
+async function getAffectedWallets(wallets: Set<string>) {
+  const allConsolidations = await getConsolidationsContainingAddress(wallets);
+  allConsolidations.map((c) => {
     const cWallets = JSON.parse(c.wallets);
     cWallets.forEach((w: string) => wallets.add(w.toLowerCase()));
   });
