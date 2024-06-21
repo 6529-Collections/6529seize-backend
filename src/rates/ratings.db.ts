@@ -5,10 +5,7 @@ import {
 } from '../sql-executor';
 import { RateMatter, Rating } from '../entities/IRating';
 import {
-  COMMUNITY_MEMBERS_TABLE,
-  CONSOLIDATED_WALLETS_TDH_TABLE,
   IDENTITIES_TABLE,
-  PROFILE_FULL,
   PROFILES_TABLE,
   RATINGS_SNAPSHOTS_TABLE,
   RATINGS_TABLE
@@ -224,10 +221,10 @@ from general_stats
                                 from ${RATINGS_TABLE} r
                                 where r.matter in ('REP', 'CIC')
                                 group by 1, 2)
-          select rt.rater_profile_id, rt.matter, rt.tally, p.profile_tdh as rater_tdh
+          select rt.rater_profile_id, rt.matter, rt.tally, i.tdh as rater_tdh
           from rate_tallies rt
-                   left join ${PROFILE_FULL} p on rt.rater_profile_id = p.external_id
-          where p.profile_tdh < abs(rt.tally)
+                   left join ${IDENTITIES_TABLE} i on rt.rater_profile_id = i.profile_id
+          where i.tdh < abs(rt.tally)
       `
     );
   }
@@ -350,16 +347,14 @@ from general_stats
                                        and rating <> 0
                                      group by 1)
           select
-              p.external_id as profile_id,
-              p.handle                           as handle,
-              coalesce(t.boosted_tdh, 0)      as tdh,
+              i.profile_id as profile_id,
+              i.handle                           as handle,
+              i.tdh      as tdh,
               r.rating,
               r.last_modified,
               coalesce(rater_cic_ratings.cic, 0) as cic
           from grouped_rates r
-                   join ${PROFILES_TABLE} p on p.external_id = r.profile_id
-                   left join ${COMMUNITY_MEMBERS_TABLE} c on p.primary_wallet = c.wallet1 or p.primary_wallet = c.wallet2 or p.primary_wallet = c.wallet3
-                   left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = c.consolidation_key
+                   join ${IDENTITIES_TABLE} i on i.profile_id = r.profile_id
                    left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id
           order by 4 desc, 2 desc
           `,
@@ -372,11 +367,11 @@ from general_stats
     profile_id: string;
   }): Promise<number> {
     return this.db
-      .execute(
+      .oneOrNull<{ cnt: number }>(
         `select count(distinct rater_profile_id) as cnt from ${RATINGS_TABLE} where matter_target_id = :profile_id and matter = :matter and rating <> 0`,
         param
       )
-      .then((results) => results[0]?.cnt ?? 0);
+      .then((result) => result?.cnt ?? 0);
   }
 
   async getRatingsByRatersForMatter(param: {
@@ -423,21 +418,17 @@ from general_stats
                                      group by 1) `;
     const [results, count] = await Promise.all([
       this.db.execute(
-        `${sql_start} select p.handle                           as handle,
-       coalesce(t.boosted_tdh, 0)      as tdh,
-       r.profile_id,
+        `${sql_start} select i.handle                           as handle,
+       i.tdh as tdh,
+       i.profile_id as profile_id,
        r.rating,
        r.last_modified,
        coalesce(rater_cic_ratings.cic, 0) as cic,
-       c.wallet1 as wallet1, 
-       c.wallet2 as wallet2, 
-       c.wallet3 as wallet3
+       i.consolidation_key as consolidation_key
 from grouped_rates r
-         join ${PROFILES_TABLE} p on p.external_id = r.profile_id
-         left join ${COMMUNITY_MEMBERS_TABLE} c on p.primary_wallet = c.wallet1 or p.primary_wallet = c.wallet2 or p.primary_wallet = c.wallet3
-         left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on c.consolidation_key = t.consolidation_key
+         join ${IDENTITIES_TABLE} i on i.profile_id = r.profile_id
          left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id order by ${order_by} ${order} ${
-          order_by !== `handle` ? `, p.handle asc` : ``
+          order_by !== `handle` ? `, i.handle asc` : ``
         }  limit ${limit} offset ${offset}`,
         sqlParams
       ),
@@ -445,9 +436,7 @@ from grouped_rates r
         .execute(
           `${sql_start} select count(*) as cnt
           from grouped_rates r
-                   join ${PROFILES_TABLE} p on p.external_id = r.profile_id
-                   left join ${COMMUNITY_MEMBERS_TABLE} c on p.primary_wallet = c.wallet1 or p.primary_wallet = c.wallet2 or p.primary_wallet = c.wallet3
-                   left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on c.consolidation_key = t.consolidation_key
+                   join ${IDENTITIES_TABLE} i on i.profile_id = r.profile_id
                    left join rater_cic_ratings on rater_cic_ratings.profile_id = r.profile_id`,
           sqlParams
         )
@@ -457,15 +446,13 @@ from grouped_rates r
       page: param.page,
       next: count > param.page_size * param.page,
       count: count,
-      data: results.map((result) => ({
-        ...result,
-        wallet1: undefined,
-        wallet2: undefined,
-        wallet3: undefined,
-        wallets: [result.wallet1, result.wallet2, result.wallet3].filter(
-          (w) => w
-        )
-      }))
+      data: results.map((result) => {
+        const wallets = result.consolidation_key.split('-');
+        return {
+          ...result,
+          wallets
+        };
+      })
     };
   }
 
@@ -508,7 +495,7 @@ from grouped_rates r
        target_profile.external_id as target_profile_id,
        target_profile.handle as target_profile,
        r.rating as rating
-      from ratings r
+      from ${RATINGS_TABLE} r
                join profiles rater_profile on rater_profile.external_id = r.rater_profile_id
                join profiles target_profile on target_profile.external_id = r.matter_target_id
       where r.matter = :matter
@@ -534,9 +521,9 @@ from grouped_rates r
        target_profile.handle as target_profile,
        r.matter_category as category,
        r.rating as rating
-      from ratings r
-               join profiles rater_profile on rater_profile.external_id = r.rater_profile_id
-               join profiles target_profile on target_profile.external_id = r.matter_target_id
+      from ${RATINGS_TABLE} r
+               join ${PROFILES_TABLE} rater_profile on rater_profile.external_id = r.rater_profile_id
+               join ${PROFILES_TABLE} target_profile on target_profile.external_id = r.matter_target_id
       where r.matter = :matter
         and r.rating <> 0
       order by 2

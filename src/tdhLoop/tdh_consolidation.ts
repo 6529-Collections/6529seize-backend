@@ -20,7 +20,7 @@ import {
   getGenesisAndNaka
 } from './tdh';
 import {
-  COMMUNITY_MEMBERS_TABLE,
+  ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   WALLET_REGEX
 } from '../constants';
@@ -58,11 +58,9 @@ export async function getWalletTdhAndConsolidatedWallets(
   const tdhSqlResult = await sqlExecutor.execute(
     `
     select t.consolidation_key, t.consolidation_display, t.block, t.boosted_tdh as tdh, t.balance, t.wallets
-    from ${COMMUNITY_MEMBERS_TABLE} c
-             join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = c.consolidation_key
-    where c.wallet1 = :wallet
-       or c.wallet2 = :wallet
-       or c.wallet3 = :wallet
+    from ${ADDRESS_CONSOLIDATION_KEY} a
+             join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = a.consolidation_key
+    where a.address = :wallet
     `,
     { wallet: wallet.toLowerCase() },
     opts

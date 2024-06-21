@@ -4,12 +4,12 @@ import {
   CONSOLIDATED_OWNERS_BALANCES_TABLE,
   CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  IDENTITIES_TABLE,
+  MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMES_CONTRACT,
   MEMES_SEASONS_TABLE,
-  MEME_8_EDITION_BURN_ADJUSTMENT,
   NFT_OWNERS_CONSOLIDATION_TABLE,
   NULL_ADDRESS,
-  PROFILE_FULL,
   TDH_HISTORY_TABLE,
   TDH_NFT_TABLE
 } from '../../../constants';
@@ -77,7 +77,7 @@ export const fetchNftTdh = async (
         walletFilters = constructFiltersOR(
           walletFilters,
           `${TDH_NFT_TABLE}.consolidation_key like :search${index}
-          or ${PROFILE_FULL}.handle like :search${index}
+          or ${IDENTITIES_TABLE}.handle like :search${index}
           or ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display like :search${index}`
         );
       });
@@ -100,18 +100,18 @@ export const fetchNftTdh = async (
     ${TDH_NFT_TABLE}.boosted_tdh, 
     ${TDH_NFT_TABLE}.tdh__raw, 
     ${TDH_NFT_TABLE}.tdh_rank, 
-    ${PROFILE_FULL}.handle,
-    ${PROFILE_FULL}.pfp_url,
-    ${PROFILE_FULL}.rep_score,
-    ${PROFILE_FULL}.cic_score,
-    ${PROFILE_FULL}.primary_wallet,
+    ${IDENTITIES_TABLE}.handle,
+    ${IDENTITIES_TABLE}.pfp as pfp_url,
+    ${IDENTITIES_TABLE}.rep as rep_score,
+    ${IDENTITIES_TABLE}.cic as cic_score,
+    ${IDENTITIES_TABLE}.primary_address as primary_wallet,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.balance as total_balance, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh as total_tdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.tdh__raw as total_tdh__raw,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as total_boosted_tdh`;
   let joins = ` LEFT JOIN ${TDH_NFT_TABLE} on ${TDH_NFT_TABLE}.consolidation_key = ${NFT_OWNERS_CONSOLIDATION_TABLE}.consolidation_key AND ${TDH_NFT_TABLE}.contract = ${NFT_OWNERS_CONSOLIDATION_TABLE}.contract AND ${TDH_NFT_TABLE}.id = ${NFT_OWNERS_CONSOLIDATION_TABLE}.token_id`;
-  joins += ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${NFT_OWNERS_CONSOLIDATION_TABLE}.consolidation_key`;
+  joins += ` LEFT JOIN ${IDENTITIES_TABLE} on ${IDENTITIES_TABLE}.consolidation_key = ${NFT_OWNERS_CONSOLIDATION_TABLE}.consolidation_key`;
   joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${NFT_OWNERS_CONSOLIDATION_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
 
   const results = await fetchPaginated(
@@ -145,7 +145,7 @@ function getSearchFilters(search: string) {
       walletFilters = constructFiltersOR(
         walletFilters,
         `${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key like :search${index}
-          or ${PROFILE_FULL}.handle like :search${index}
+          or ${IDENTITIES_TABLE}.handle like :search${index}
           or ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display like :search${index}`
       );
     });
@@ -280,18 +280,18 @@ export const fetchConsolidatedMetrics = async (
     ${balancesTable}.${memeCardSetsColumn} as memes_cards_sets`;
 
   const fields = `${balancesTableField}, 
-    ${PROFILE_FULL}.handle,
-    ${PROFILE_FULL}.pfp_url,
-    ${PROFILE_FULL}.rep_score,
-    ${PROFILE_FULL}.cic_score,
-    ${PROFILE_FULL}.primary_wallet,
+    ${IDENTITIES_TABLE}.handle,
+    ${IDENTITIES_TABLE}.pfp as pfp_url,
+    ${IDENTITIES_TABLE}.rep as rep_score,
+    ${IDENTITIES_TABLE}.cic as cic_score,
+    ${IDENTITIES_TABLE}.primary_address as primary_wallet,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as total_tdh,
     ${tdhField},
-    (COALESCE(${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 0) + COALESCE(${PROFILE_FULL}.rep_score, 0)) as level,
+    ${IDENTITIES_TABLE}.level_raw as level,
     COALESCE(${TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change`;
 
-  let joins = ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key`;
+  let joins = ` LEFT JOIN ${IDENTITIES_TABLE} on ${IDENTITIES_TABLE}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key`;
   joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
   joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${TDH_HISTORY_TABLE}.consolidation_key and ${CONSOLIDATED_WALLETS_TDH_TABLE}.block=${TDH_HISTORY_TABLE}.block`;
 
