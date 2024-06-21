@@ -22,7 +22,6 @@ import * as sentryContext from '../sentry.context';
 import { NextGenTokenTDH } from '../entities/INextGen';
 import { MemesSeason } from '../entities/ISeason';
 import { NFTOwner } from '../entities/INFTOwner';
-import { CommunityMember } from '../entities/ICommunityMember';
 import { uploadTDH } from './tdh_upload';
 import {
   ConsolidatedOwnerBalances,
@@ -41,7 +40,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     ConsolidatedTDHUpload,
     NFT,
     Profile,
-    CommunityMember,
     MemesSeason,
     NFTOwner,
     NftTDH,

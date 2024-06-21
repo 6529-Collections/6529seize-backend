@@ -1,5 +1,6 @@
 import {
-  ALL_COMMUNITY_MEMBERS_VIEW,
+  ADDRESS_CONSOLIDATION_KEY,
+  IDENTITIES_TABLE,
   RATINGS_TABLE,
   WALLET_GROUPS_TABLE
 } from '../../../constants';
@@ -399,32 +400,34 @@ export class UserGroupsService {
     let cmPart = ` ${repPart || cicPart ? ',' : ''}
     ${
       UserGroupsService.GENERATED_VIEW
-    } as (select a.* from ${ALL_COMMUNITY_MEMBERS_VIEW} a
+    } as (select i.* from ${IDENTITIES_TABLE} i
     `;
     if (repPart !== null) {
-      cmPart += `join rep_exchanges on a.profile_id = rep_exchanges.profile_id `;
+      cmPart += `join rep_exchanges on i.profile_id = rep_exchanges.profile_id `;
     }
     if (cicPart !== null) {
-      cmPart += `join cic_exchanges on a.profile_id = cic_exchanges.profile_id `;
+      cmPart += `join cic_exchanges on i.profile_id = cic_exchanges.profile_id `;
     }
     if (group.wallet_group_id !== null) {
-      cmPart += `join ${WALLET_GROUPS_TABLE} on a.wallet1 = ${WALLET_GROUPS_TABLE}.wallet or a.wallet2 = ${WALLET_GROUPS_TABLE}.wallet or a.wallet3 = ${WALLET_GROUPS_TABLE}.wallet `;
+      cmPart += `
+      join ${ADDRESS_CONSOLIDATION_KEY} a on i.consolidation_key = a.consolidation_key
+      join ${WALLET_GROUPS_TABLE} on a.wallet = ${WALLET_GROUPS_TABLE}.address `;
     }
-    cmPart += `where true `;
+    cmPart += ` where true `;
     if (group.tdh.min !== null) {
-      cmPart += `and a.tdh >= :tdh_min `;
+      cmPart += `and i.tdh >= :tdh_min `;
       params.tdh_min = group.tdh.min;
     }
     if (group.tdh.max !== null) {
-      cmPart += `and a.tdh <= :tdh_max `;
+      cmPart += `and i.tdh <= :tdh_max `;
       params.tdh_max = group.tdh.max;
     }
     if (group.level.min !== null) {
-      cmPart += `and a.level >= :level_min `;
+      cmPart += `and i.level_raw >= :level_min `;
       params.level_min = group.level.min;
     }
     if (group.level.max !== null) {
-      cmPart += `and a.level <= :level_max `;
+      cmPart += `and i.level_raw <= :level_max `;
       params.level_max = group.level.max;
     }
     cmPart += ') ';

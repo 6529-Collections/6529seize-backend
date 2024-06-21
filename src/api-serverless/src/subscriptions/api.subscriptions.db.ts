@@ -1,4 +1,5 @@
 import {
+  ADDRESS_CONSOLIDATION_KEY,
   MEMES_CONTRACT,
   MEMES_MINT_PRICE,
   NFTS_TABLE,
@@ -9,8 +10,7 @@ import {
   SUBSCRIPTIONS_NFTS_FINAL_UPLOAD_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE,
-  SUBSCRIPTIONS_TOP_UP_TABLE,
-  WALLETS_CONSOLIDATION_KEYS_VIEW
+  SUBSCRIPTIONS_TOP_UP_TABLE
 } from '../../../constants';
 import { sqlExecutor } from '../../../sql-executor';
 import {
@@ -119,16 +119,15 @@ export async function fetchLogsForConsolidationKey(
   );
 }
 
-export async function fetchConsolidationWallets(
+export async function fetchConsolidationAddresses(
   consolidationKey: string
 ): Promise<string[]> {
-  const wallets: string[] = (
-    await sqlExecutor.execute(
-      `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE consolidation_key = :consolidationKey`,
+  return (
+    await sqlExecutor.execute<{ address: string }>(
+      `SELECT address FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE consolidation_key = :consolidationKey`,
       { consolidationKey }
     )
-  ).map((wallet: any) => wallet.wallet);
-  return wallets;
+  ).map((result) => result.address);
 }
 
 export async function updateSubscriptionMode(
@@ -375,7 +374,7 @@ export async function fetchTopUpsForConsolidationKey(
   next: boolean;
   data: SubscriptionTopUp[];
 }> {
-  const wallets = await fetchConsolidationWallets(consolidationKey);
+  const wallets = await fetchConsolidationAddresses(consolidationKey);
   const filters = constructFilters('', `from_wallet IN (:wallets)`);
   const params = { wallets };
 

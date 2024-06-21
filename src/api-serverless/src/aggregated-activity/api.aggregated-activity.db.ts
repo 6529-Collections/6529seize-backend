@@ -7,8 +7,8 @@ import {
   CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE,
   CONSOLIDATED_OWNERS_BALANCES_TABLE,
   CONSOLIDATED_WALLETS_TDH_TABLE,
-  MANIFOLD,
-  PROFILE_FULL
+  IDENTITIES_TABLE,
+  MANIFOLD
 } from '../../../constants';
 import { fetchPaginated } from '../../../db-api';
 import { calculateLevel } from '../../../profiles/profile-level';
@@ -26,7 +26,7 @@ function getSearchFilters(search: string) {
       walletFilters = constructFiltersOR(
         walletFilters,
         `${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key like :search${index}
-          or ${PROFILE_FULL}.handle like :search${index}
+          or ${IDENTITIES_TABLE}.handle like :search${index}
           or ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display like :search${index}`
       );
     });
@@ -202,16 +202,16 @@ export const fetchAggregatedActivity = async (
     ${activityTable}.${burns} as burns`;
 
   const fields = `${activityFields}, 
-    ${PROFILE_FULL}.handle,
-    ${PROFILE_FULL}.pfp_url,
-    ${PROFILE_FULL}.rep_score,
-    ${PROFILE_FULL}.cic_score,
-    ${PROFILE_FULL}.primary_wallet,
+    ${IDENTITIES_TABLE}.handle,
+    ${IDENTITIES_TABLE}.pfp as pfp_url,
+    ${IDENTITIES_TABLE}.rep as rep_score,
+    ${IDENTITIES_TABLE}.cic as cic_score,
+    ${IDENTITIES_TABLE}.primary_address as primary_wallet,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as boosted_tdh,
-    (${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh + ${PROFILE_FULL}.rep_score) as level`;
+    ${IDENTITIES_TABLE}.level_raw as level`;
 
-  let joins = ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key`;
+  let joins = ` LEFT JOIN ${IDENTITIES_TABLE} on ${IDENTITIES_TABLE}.consolidation_key = ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key`;
   joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
   if (query.collector) {
     joins += ` LEFT JOIN ${CONSOLIDATED_OWNERS_BALANCES_TABLE} ON ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key`;

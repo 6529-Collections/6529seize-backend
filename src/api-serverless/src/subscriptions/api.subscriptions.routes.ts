@@ -2,19 +2,19 @@ import { Request, Response } from 'express';
 import { asyncRouter } from '../async.router';
 import { giveReadReplicaTimeToCatchUp, returnJsonResult } from '../api-helpers';
 import {
+  fetchConsolidationAddresses,
   fetchDetailsForConsolidationKey,
-  fetchConsolidationWallets,
-  fetchTopUpsForConsolidationKey,
-  updateSubscriptionMode,
-  fetchUpcomingMemeSubscriptions,
-  updateSubscription,
+  fetchFinalSubscription,
   fetchLogsForConsolidationKey,
+  fetchPastMemeSubscriptionCounts,
   fetchRedeemedSubscriptionsForConsolidationKey,
   fetchSubscriptionUploads,
-  fetchFinalSubscription,
+  fetchTopUpsForConsolidationKey,
   fetchUpcomingMemeSubscriptionCounts,
+  fetchUpcomingMemeSubscriptions,
   SubscriptionCounts,
-  fetchPastMemeSubscriptionCounts
+  updateSubscription,
+  updateSubscriptionMode
 } from './api.subscriptions.db';
 import {
   NFTFinalSubscription,
@@ -32,13 +32,13 @@ import {
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
 import {
+  authenticateSubscriptionsAdmin,
   fetchPhaseName,
   fetchPhaseResults,
   getPublicSubscriptions,
   resetAllowlist,
   splitAllowlistResults,
-  validateDistribution,
-  authenticateSubscriptionsAdmin
+  validateDistribution
 } from './api.subscriptions.allowlist';
 import { getNft } from '../../../nftsLoop/db.nfts';
 import { fetchAirdropAddressForConsolidationKey } from '../../../delegationsLoop/db.delegations';
@@ -153,7 +153,7 @@ async function isAuthenticatedForConsolidationKey(
   consolidationKey: string
 ) {
   const authenticatedWallet = getWalletOrThrow(req);
-  const consolidationWallets = await fetchConsolidationWallets(
+  const consolidationWallets = await fetchConsolidationAddresses(
     consolidationKey
   );
   return (

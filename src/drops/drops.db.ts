@@ -22,7 +22,7 @@ import {
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
   DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-  PROFILE_FULL,
+  IDENTITIES_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
   WAVES_TABLE
@@ -288,15 +288,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return this.db
       .execute(
         `
-          select p.profile_tdh - ifnull(x.credit_spent, 0) as credit_left
-          from ${PROFILE_FULL} p
+          select i.tdh - ifnull(x.credit_spent, 0) as credit_left
+          from ${IDENTITIES_TABLE} i
                    left join (select t.rater_id,
                                      ifnull(sum(t.credit_spent), 0) as credit_spent
                               from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} t
                               where t.rater_id = :raterId
                                 and t.timestamp >= :reservationStartTime
-                              group by t.rater_id) x on x.rater_id = p.external_id
-          where p.external_id = :raterId
+                              group by t.rater_id) x on x.rater_id = i.profile_id
+          where i.profile_id = :raterId
         `,
         {
           raterId: profileId,
@@ -326,10 +326,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                               from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE}
                               where timestamp >= :reservationStartTime
                               group by 1),
-               overspenders as (select rater_id, ifnull(p.profile_tdh, 0) as profile_credit, s.spent_credit as spent_credit
+               overspenders as (select rater_id, ifnull(i.tdh, 0) as profile_credit, s.spent_credit as spent_credit
                                 from spent_credits s
-                                         left join ${PROFILE_FULL} p on p.external_id = s.rater_id
-                                where ifnull(p.profile_tdh, 0) - s.spent_credit < 0)
+                                         left join ${IDENTITIES_TABLE} i on i.profile_id = s.rater_id
+                                where ifnull(i.tdh, 0) - s.spent_credit < 0)
           select t.*, o.profile_credit as whole_credit, o.spent_credit as total_credit_spent
           from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} t
                    join overspenders o on o.rater_id = t.rater_id

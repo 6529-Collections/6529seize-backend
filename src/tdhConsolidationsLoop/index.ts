@@ -14,19 +14,18 @@ import { Profile } from '../entities/IProfile';
 import { fetchAllConsolidationAddresses } from '../db';
 import * as sentryContext from '../sentry.context';
 import { NextGenTokenTDH } from '../entities/INextGen';
-import { CommunityMember } from '../entities/ICommunityMember';
 import {
   AggregatedActivity,
-  ConsolidatedAggregatedActivity,
   AggregatedActivityMemes,
+  ConsolidatedAggregatedActivity,
   ConsolidatedAggregatedActivityMemes
 } from '../entities/IAggregatedActivity';
-import { NFTOwner, ConsolidatedNFTOwner } from '../entities/INFTOwner';
+import { ConsolidatedNFTOwner, NFTOwner } from '../entities/INFTOwner';
 import {
-  OwnerBalances,
-  OwnerBalancesMemes,
   ConsolidatedOwnerBalances,
-  ConsolidatedOwnerBalancesMemes
+  ConsolidatedOwnerBalancesMemes,
+  OwnerBalances,
+  OwnerBalancesMemes
 } from '../entities/IOwnerBalances';
 import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
 import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
@@ -44,7 +43,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     NextGenTokenTDH,
     TDHMemes,
     ConsolidatedTDHMemes,
-    CommunityMember,
     Profile,
     NFTOwner,
     ConsolidatedNFTOwner,

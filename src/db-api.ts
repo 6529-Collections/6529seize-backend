@@ -22,7 +22,6 @@ import {
   NFTS_TABLE,
   NULL_ADDRESS,
   NULL_ADDRESS_DEAD,
-  PROFILE_FULL,
   REMEMES_TABLE,
   REMEMES_UPLOADS,
   ROYALTIES_UPLOADS_TABLE,
@@ -34,7 +33,6 @@ import {
   UPLOADS_TABLE,
   USE_CASE_ALL,
   USE_CASE_MINTING,
-  WALLETS_CONSOLIDATION_KEYS_VIEW,
   WALLETS_TDH_TABLE
 } from './constants';
 import { RememeSource } from './entities/IRememe';
@@ -46,7 +44,6 @@ import * as mysql from 'mysql';
 import { Time } from './time';
 import { DbPoolName, DbQueryOptions } from './db-query.options';
 import { Logger } from './logging';
-import { calculateLevel } from './profiles/profile-level';
 import { Nft } from 'alchemy-sdk';
 import {
   constructFilters,
@@ -491,57 +488,6 @@ export async function fetchLabNFTs(
     joinClause,
     groupBy
   );
-}
-
-export async function fetchLabOwners(
-  pageSize: number,
-  page: number,
-  wallets: string,
-  nfts: string,
-  sort: string,
-  sortDir: string
-) {
-  let filters = constructFilters(
-    '',
-    `${NFT_OWNERS_TABLE}.contract = :meme_lab_contract`
-  );
-  const params: any = {
-    meme_lab_contract: MEMELAB_CONTRACT
-  };
-  if (wallets) {
-    filters = constructFilters(
-      filters,
-      `(${NFT_OWNERS_TABLE}.wallet in (:wallets) OR ${ENS_TABLE}.display in (:wallets))`
-    );
-    params.wallets = wallets.split(',');
-  }
-  if (nfts) {
-    filters = constructFilters(filters, `token_id in (:nfts)`);
-    params.nfts = nfts.split(',');
-  }
-
-  const fields = ` ${NFT_OWNERS_TABLE}.*,${ENS_TABLE}.display as wallet_display, p.handle as handle, p.rep_score as rep_score, p.cic_score as cic_score, p.profile_tdh as profile_tdh `;
-  let joins = `LEFT JOIN ${ENS_TABLE} ON ${NFT_OWNERS_TABLE}.wallet=${ENS_TABLE}.wallet `;
-  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} wc on wc.wallet = ${NFT_OWNERS_TABLE}.wallet`;
-  joins += ` LEFT JOIN ${PROFILE_FULL} p on p.consolidation_key = wc.consolidation_key`;
-
-  const result = await fetchPaginated(
-    NFT_OWNERS_TABLE,
-    params,
-    `${sort} ${sortDir}, token_id asc, created_at desc`,
-    pageSize,
-    page,
-    filters,
-    fields,
-    joins
-  );
-  result.data.forEach((d: any) => {
-    d.level = calculateLevel({
-      tdh: d.profile_tdh ?? 0,
-      rep: d.rep_score
-    });
-  });
-  return result;
 }
 
 export async function fetchTeam(pageSize: number, page: number) {

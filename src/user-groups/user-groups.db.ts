@@ -5,8 +5,8 @@ import {
 } from '../sql-executor';
 import { UserGroupEntity } from '../entities/IUserGroup';
 import {
-  ALL_COMMUNITY_MEMBERS_VIEW,
-  PROFILE_FULL,
+  ADDRESS_CONSOLIDATION_KEY,
+  IDENTITIES_TABLE,
   RATINGS_TABLE,
   USER_GROUPS_TABLE,
   WALLET_GROUPS_TABLE
@@ -189,7 +189,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
         rep: number;
       }>(
         `
-      select external_id as profile_id, profile_tdh as tdh, profile_tdh + rep_score as level, cic_score as cic, rep_score as rep from ${PROFILE_FULL} where external_id = :profileId
+      select profile_id, tdh, level_raw as level, cic, rep from ${IDENTITIES_TABLE} where profile_id = :profileId
     `,
         { profileId }
       )
@@ -370,20 +370,14 @@ where ((cg.cic_direction = 'RECEIVED' and (
     }
     const profileWallets = await this.db
       .execute<{
-        wallet1: string;
-        wallet2: string;
-        wallet3: string;
+        wallet: string;
       }>(
-        `select wallet1, wallet2, wallet3 from ${ALL_COMMUNITY_MEMBERS_VIEW} where external_id = :profileId`,
+        `select a.address as wallet from ${IDENTITIES_TABLE} i
+         join ${ADDRESS_CONSOLIDATION_KEY} a on a.consolidation_key = i.consolidation_key
+         where i.profile_id = :profileId`,
         { profileId }
       )
-      .then((result) =>
-        [
-          result[0]?.wallet1 ?? null,
-          result[0]?.wallet2 ?? null,
-          result[0]?.wallet3 ?? null
-        ].filter((it) => it !== null)
-      );
+      .then((result) => result.map((it) => it.wallet));
     if (!profileWallets) {
       return [];
     }

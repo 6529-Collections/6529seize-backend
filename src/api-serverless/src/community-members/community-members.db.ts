@@ -8,10 +8,10 @@ import {
   CommunityMembersQuery
 } from './community-members.types';
 import {
-  PROFILE_FULL,
+  ADDRESS_CONSOLIDATION_KEY,
+  IDENTITIES_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
-  TRANSACTIONS_TABLE,
-  WALLETS_CONSOLIDATION_KEYS_VIEW
+  TRANSACTIONS_TABLE
 } from '../../../constants';
 import { UserGroupsService, userGroupsService } from './user-groups.service';
 
@@ -38,20 +38,24 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
       return [];
     }
     const offset = query.page_size * (query.page - 1);
+    let sort: string = query.sort;
+    if (sort === 'level') {
+      sort = 'level_raw';
+    }
     return this.db.execute(
       `
       ${viewResult.sql} 
       select
-        cm.display as display,
-        ifnull(cm.handle, cm.wallet1) as detail_view_key,
-        cm.level as level,
+        ifnull(cm.handle, cm.primary_address) as display,
+        ifnull(cm.handle, cm.primary_address) as detail_view_key,
+        cm.level_raw as level,
         cm.tdh as tdh,
-        cm.wallet1 as wallet,
+        cm.primary_address as wallet,
         cm.cic as cic,
         cm.rep as rep,
         cm.pfp as pfp,
         cm.consolidation_key as consolidation_key
-      from ${UserGroupsService.GENERATED_VIEW} cm order by cm.${query.sort} ${query.sort_direction} limit ${query.page_size} offset ${offset}
+      from ${UserGroupsService.GENERATED_VIEW} cm order by cm.${sort} ${query.sort_direction} limit ${query.page_size} offset ${offset}
     `,
       viewResult.params
     );
@@ -88,17 +92,17 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
         promises.push(
           this.db.execute(
             `
-        with trx_max_dates as (select w.consolidation_key as consolidation_key, max(t.transaction_date) as last_activity
-                               from ${WALLETS_CONSOLIDATION_KEYS_VIEW} w
+        with trx_max_dates as (select a.consolidation_key as consolidation_key, max(t.transaction_date) as last_activity
+                               from ${ADDRESS_CONSOLIDATION_KEY} a
                                         join ${TRANSACTIONS_TABLE} t
-                                             on w.wallet is not null and t.from_address = w.wallet or t.to_address = w.wallet
-                               where w.consolidation_key in (:consolidationKeys)
+                                             on a.address is not null and t.from_address = a.address or t.to_address = a.address
+                               where a.consolidation_key in (:consolidationKeys)
                                group by 1),
-             prof_max_dates as (select p.consolidation_key as consolidation_key, max(l.created_at) as last_activity
-                                from ${PROFILE_FULL} p
+             prof_max_dates as (select i.consolidation_key as consolidation_key, max(l.created_at) as last_activity
+                                from ${IDENTITIES_TABLE} i
                                          join ${PROFILES_ACTIVITY_LOGS_TABLE} l
-                                              on l.profile_id = p.external_id
-                                where p.consolidation_key in (:consolidationKeys)
+                                              on l.profile_id = i.profile_id
+                                where i.consolidation_key in (:consolidationKeys)
                                 group by 1),
              last_activities_by_consolidation_key as (select t.consolidation_key,
                                                              t.last_activity

@@ -36,7 +36,6 @@ import { NextGenTokenTDH } from '../entities/INextGen';
 import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
 import { consolidateActivity } from '../aggregatedActivityLoop/aggregated_activity';
 import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
-import { CommunityMember } from '../entities/ICommunityMember';
 import { updateTDH } from '../tdhLoop/tdh';
 import { MemesSeason } from '../entities/ISeason';
 import { ConsolidatedNFTOwner, NFTOwner } from '../entities/INFTOwner';
@@ -66,7 +65,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
   await loadEnv([
     Delegation,
     Consolidation,
-    CommunityMember,
     NFTDelegationBlock,
     TDH,
     ConsolidatedTDH,
