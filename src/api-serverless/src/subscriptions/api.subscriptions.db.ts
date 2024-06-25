@@ -374,7 +374,10 @@ export async function fetchTopUpsForConsolidationKey(
   next: boolean;
   data: SubscriptionTopUp[];
 }> {
-  const wallets = await fetchConsolidationAddresses(consolidationKey);
+  let wallets = await fetchConsolidationAddresses(consolidationKey);
+  if (wallets.length === 0) {
+    wallets = [consolidationKey];
+  }
   const filters = constructFilters('', `from_wallet IN (:wallets)`);
   const params = { wallets };
 
