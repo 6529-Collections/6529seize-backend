@@ -88,21 +88,6 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     }, {} as Record<string, { consolidations: AddressConsolidationKey[]; identity: IdentityEntity; profile: Profile | null }>);
   }
 
-  public async lockIdentityByConsolidationKey(
-    consolidationKey: string,
-    connection: ConnectionWrapper<any>
-  ): Promise<IdentityEntity | null> {
-    return this.db.oneOrNull<IdentityEntity>(
-      `
-        select i.* from ${IDENTITIES_TABLE} i
-        where i.consolidation_key = :consolidationKey
-        for update
-      `,
-      { consolidationKey },
-      { wrappedConnection: connection }
-    );
-  }
-
   public async insertIdentity(
     identityEntity: IdentityEntity,
     connection: ConnectionWrapper<any>
