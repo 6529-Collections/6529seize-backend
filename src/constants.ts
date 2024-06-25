@@ -99,6 +99,8 @@ export const COOKIES_CONSENT_TABLE = 'cookies_consent';
 
 export const ETH_PRICE_TABLE = 'eth_price';
 
+export const PRENODES_TABLE = 'prenodes';
+
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
 export const GRADIENT_CONTRACT = '0x0c58ef43ff3032005e472cb5709f8908acb00205';
 export const MEMELAB_CONTRACT = '0x4db52a61dc491e15a2f78f5ac001c14ffe3568cb';
