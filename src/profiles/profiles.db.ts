@@ -475,7 +475,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
           e.wallet as wallet
       from ${PROFILES_TABLE} p
                join ${IDENTITIES_TABLE} i on i.profile_id = p.external_id
-               left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = c.consolidation_key
+               left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = i.consolidation_key
                left join ${ENS_TABLE} e on lower(e.wallet) = i.primary_address
       where p.normalised_handle like concat('%', lower(:handle), '%')
       order by i.tdh desc
