@@ -26,7 +26,6 @@ import { WalletGroupEntity } from './entities/IWalletGroup';
 import { CookiesConsent } from './entities/ICookieConsent';
 import { AddressConsolidationKey } from './entities/IAddressConsolidationKey';
 import { IdentityEntity } from './entities/IIdentity';
-import * as del from './delegationsLoop';
 
 const logger = Logger.get('BACKEND');
 
@@ -60,7 +59,6 @@ async function start() {
     IdentityEntity
   ]);
   await dbMigrationsLoop.handler(null, null as any, null as any);
-  await del.handler(null, null as any, null as any);
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
