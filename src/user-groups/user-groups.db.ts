@@ -84,7 +84,10 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     connection: ConnectionWrapper<any>
   ): Promise<string> {
     const wallet_group_id = randomUUID();
+    let i = 0;
     for (const wallet of distinct(wallets.map((w) => w.toLowerCase()))) {
+      i++;
+      console.log(i, wallet);
       await this.db.execute(
         `insert into ${WALLET_GROUPS_TABLE} (wallet_group_id, wallet) values (:wallet_group_id, :wallet)`,
         { wallet_group_id, wallet },
