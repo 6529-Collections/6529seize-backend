@@ -128,9 +128,7 @@ export async function fetchConsolidationWallets(
       { consolidationKey }
     )
   ).map((wallet: any) => wallet.wallet);
-  return wallets.length > 0
-    ? wallets
-    : consolidationKey.split('-').map((c) => c.trim().toLowerCase());
+  return wallets;
 }
 
 export async function updateSubscriptionMode(
@@ -377,7 +375,10 @@ export async function fetchTopUpsForConsolidationKey(
   next: boolean;
   data: SubscriptionTopUp[];
 }> {
-  const wallets = await fetchConsolidationWallets(consolidationKey);
+  let wallets = await fetchConsolidationWallets(consolidationKey);
+  if (wallets.length === 0) {
+    wallets = [consolidationKey];
+  }
   const filters = constructFilters('', `from_wallet IN (:wallets)`);
   const params = { wallets };
 
