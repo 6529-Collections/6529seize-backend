@@ -127,7 +127,7 @@ export async function fetchConsolidationAddresses(
       `SELECT address FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE consolidation_key = :consolidationKey`,
       { consolidationKey }
     )
-  ).map((result) => result.address);
+  ).map((address) => address.address);
 }
 
 export async function updateSubscriptionMode(
