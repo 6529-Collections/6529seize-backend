@@ -122,12 +122,16 @@ export async function fetchLogsForConsolidationKey(
 export async function fetchConsolidationAddresses(
   consolidationKey: string
 ): Promise<string[]> {
-  return (
+  const addresses: string[] = (
     await sqlExecutor.execute<{ address: string }>(
       `SELECT address FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE consolidation_key = :consolidationKey`,
       { consolidationKey }
     )
   ).map((result) => result.address);
+
+  return addresses.length > 0
+    ? addresses
+    : consolidationKey.split('-').map((c) => c.trim().toLowerCase());
 }
 
 export async function updateSubscriptionMode(
