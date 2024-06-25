@@ -411,7 +411,7 @@ export class UserGroupsService {
     if (group.wallet_group_id !== null) {
       cmPart += `
       join ${ADDRESS_CONSOLIDATION_KEY} a on i.consolidation_key = a.consolidation_key
-      join ${WALLET_GROUPS_TABLE} on a.wallet = ${WALLET_GROUPS_TABLE}.address `;
+      join ${WALLET_GROUPS_TABLE} on a.address = ${WALLET_GROUPS_TABLE}.wallet `;
     }
     cmPart += ` where true `;
     if (group.tdh.min !== null) {
