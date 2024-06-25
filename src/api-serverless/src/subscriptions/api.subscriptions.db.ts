@@ -128,7 +128,9 @@ export async function fetchConsolidationWallets(
       { consolidationKey }
     )
   ).map((wallet: any) => wallet.wallet);
-  return wallets;
+  return wallets.length > 0
+    ? wallets
+    : consolidationKey.split('-').map((c) => c.trim().toLowerCase());
 }
 
 export async function updateSubscriptionMode(
