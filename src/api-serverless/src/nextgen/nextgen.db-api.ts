@@ -1,11 +1,11 @@
 import { NextGenCollectionStatus } from '../api-filters';
 import { constructFilters, constructFiltersOR } from '../api-helpers';
 import {
+  ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   ENS_TABLE,
+  IDENTITIES_TABLE,
   NULL_ADDRESS,
-  PROFILE_FULL,
-  WALLETS_CONSOLIDATION_KEYS_VIEW,
   TRANSACTIONS_TABLE
 } from '../../../constants';
 import { getProof } from '../../../merkle_proof';
@@ -13,21 +13,21 @@ import { sqlExecutor } from '../../../sql-executor';
 import { Time } from '../../../time';
 import { fetchPaginated, resolveEns, returnEmpty } from '../../../db-api';
 import {
+  MINT_TYPE_TRAIT,
   NEXTGEN_ALLOWLIST_BURN_TABLE,
   NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE,
   NEXTGEN_ALLOWLIST_TABLE,
   NEXTGEN_BURN_COLLECTIONS_TABLE,
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_LOGS_TABLE,
-  NEXTGEN_TOKENS_TABLE,
-  NEXTGEN_TOKENS_TDH_TABLE,
+  NEXTGEN_TOKEN_LISTINGS_TABLE,
   NEXTGEN_TOKEN_SCORES_TABLE,
   NEXTGEN_TOKEN_TRAITS_TABLE,
-  MINT_TYPE_TRAIT,
-  NEXTGEN_TOKEN_LISTINGS_TABLE
+  NEXTGEN_TOKENS_TABLE,
+  NEXTGEN_TOKENS_TDH_TABLE
 } from '../../../nextgen/nextgen_constants';
 import { PageSortDirection } from '../page-request';
-import { NEXTGEN_CORE, getNextGenChainId } from './abis';
+import { getNextGenChainId, NEXTGEN_CORE } from './abis';
 import { calculateLevel } from '../../../profiles/profile-level';
 
 export enum TokensSort {
@@ -262,7 +262,7 @@ function getNextGenCollectionTokensFilters(
     '',
     `${NEXTGEN_TOKENS_TABLE}.collection_id=:collectionId`
   );
-  let params: any = {
+  const params: any = {
     collectionId: collectionId
   };
   if (traits.length > 0) {
@@ -317,9 +317,9 @@ export async function fetchNextGenCollectionTokens(
   const filters = getNextGenCollectionTokensFilters(collectionId, traits);
   let joins = `LEFT JOIN ${NEXTGEN_TOKEN_SCORES_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_SCORES_TABLE}.id`;
   joins += ` LEFT JOIN ${NEXTGEN_TOKEN_LISTINGS_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_LISTINGS_TABLE}.id `;
-  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} on ${WALLETS_CONSOLIDATION_KEYS_VIEW}.wallet = ${NEXTGEN_TOKENS_TABLE}.owner`;
-  joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} on ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
-  joins += ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
+  joins += ` LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} on ${ADDRESS_CONSOLIDATION_KEY}.address = ${NEXTGEN_TOKENS_TABLE}.owner`;
+  joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} on ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key`;
+  joins += ` LEFT JOIN ${IDENTITIES_TABLE} on ${IDENTITIES_TABLE}.consolidation_key = ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key`;
 
   if (sort === TokensSort.LAST_SALE) {
     joins += ` LEFT JOIN (
@@ -370,11 +370,11 @@ export async function fetchNextGenCollectionTokens(
       ${NEXTGEN_TOKENS_TABLE}.*, 
       ${NEXTGEN_TOKEN_SCORES_TABLE}.*, 
       ${NEXTGEN_TOKEN_LISTINGS_TABLE}.*,
-      ${PROFILE_FULL}.normalised_handle,
-      ${PROFILE_FULL}.handle,
+      ${IDENTITIES_TABLE}.normalised_handle,
+      ${IDENTITIES_TABLE}.handle,
       0 as level,
       ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as tdh,
-      ${PROFILE_FULL}.rep_score`;
+      ${IDENTITIES_TABLE}.rep as rep_score`;
 
   if (sort === TokensSort.LAST_SALE) {
     fields += `,
@@ -438,7 +438,7 @@ export async function fetchNextGenCollectionLogs(
   pageSize: number,
   page: number
 ) {
-  let filters = constructFilters(
+  const filters = constructFilters(
     '',
     `${NEXTGEN_LOGS_TABLE}.collection_id = :collectionId OR ${NEXTGEN_LOGS_TABLE}.collection_id = 0`
   );
@@ -476,7 +476,7 @@ export async function fetchNextGenCollectionOnlyLogs(
   pageSize: number,
   page: number
 ) {
-  let filters = constructFilters(
+  const filters = constructFilters(
     '',
     `(${NEXTGEN_LOGS_TABLE}.collection_id = :collectionId OR ${NEXTGEN_LOGS_TABLE}.collection_id = 0) AND token_id is NULL`
   );
@@ -636,7 +636,7 @@ export async function fetchNextGenAllowlistByPhase(
     '',
     `${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.collection_id=:id`
   );
-  let params: any = {
+  const params: any = {
     id: id
   };
   if (merkleRoot) {
@@ -655,7 +655,7 @@ export async function fetchNextGenAllowlistByPhase(
     params.addresses = addressesStr.toLowerCase().split(',');
   }
 
-  let joins = `LEFT JOIN ${NEXTGEN_ALLOWLIST_TABLE} ON 
+  const joins = `LEFT JOIN ${NEXTGEN_ALLOWLIST_TABLE} ON 
     ${NEXTGEN_ALLOWLIST_TABLE}.merkle_root=${NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE}.merkle_root 
   LEFT JOIN ${ENS_TABLE} ens ON ${NEXTGEN_ALLOWLIST_TABLE}.address=ens.wallet`;
 
@@ -677,7 +677,7 @@ export async function fetchNextGenProofs(
   page: number
 ) {
   let filters = '';
-  let params: any = {};
+  const params: any = {};
   if (addressesStr) {
     filters = constructFilters(filters, `address in (:addresses)`);
     params.addresses = addressesStr.toLowerCase().split(',');
@@ -700,7 +700,7 @@ export async function fetchNextGenTokenTDH(
   page: number
 ) {
   let filters = '';
-  let params: any = {};
+  const params: any = {};
   if (consolidationKeysStr) {
     filters = constructFilters(
       filters,
@@ -740,12 +740,12 @@ export async function fetchNextGenCollectionTraitSets(
 
   const fields = `
     ${NEXTGEN_TOKENS_TABLE}.owner, 
-    ${PROFILE_FULL}.normalised_handle,
-    ${PROFILE_FULL}.handle,
+    ${IDENTITIES_TABLE}.normalised_handle,
+    ${IDENTITIES_TABLE}.handle,
     0 as level,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as tdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
-    ${PROFILE_FULL}.rep_score,
+    ${IDENTITIES_TABLE}.rep as rep_score,
     COUNT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.value) AS distinct_values_count,
     GROUP_CONCAT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id ORDER BY ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id) AS token_ids,
     GROUP_CONCAT(DISTINCT ${NEXTGEN_TOKEN_TRAITS_TABLE}.value ORDER BY ${NEXTGEN_TOKEN_TRAITS_TABLE}.value) AS distinct_values`;
@@ -756,16 +756,16 @@ export async function fetchNextGenCollectionTraitSets(
   );
   const groups = `
     ${NEXTGEN_TOKENS_TABLE}.owner, 
-    ${PROFILE_FULL}.normalised_handle, 
-    ${PROFILE_FULL}.handle, 
+    ${IDENTITIES_TABLE}.normalised_handle, 
+    ${IDENTITIES_TABLE}.handle, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, 
-    ${PROFILE_FULL}.rep_score`;
+    ${IDENTITIES_TABLE}.rep as rep_score`;
 
   let joins = `JOIN ${NEXTGEN_TOKEN_TRAITS_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id`;
-  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} on ${WALLETS_CONSOLIDATION_KEYS_VIEW}.wallet = ${NEXTGEN_TOKENS_TABLE}.owner`;
-  joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} on ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
-  joins += ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
+  joins += ` LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} on ${ADDRESS_CONSOLIDATION_KEY}.address = ${NEXTGEN_TOKENS_TABLE}.owner`;
+  joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} on ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key`;
+  joins += ` LEFT JOIN ${IDENTITIES_TABLE} on ${IDENTITIES_TABLE}.consolidation_key = ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key`;
 
   const props: any = {
     collectionId: collectionId,
@@ -787,7 +787,7 @@ export async function fetchNextGenCollectionTraitSets(
         props[`search${index}`] = `%${s}%`;
         walletFilters = constructFiltersOR(
           walletFilters,
-          `${PROFILE_FULL}.normalised_handle like :search${index} or ${PROFILE_FULL}.handle like :search${index}`
+          `${IDENTITIES_TABLE}.normalised_handle like :search${index} or ${IDENTITIES_TABLE}.handle like :search${index}`
         );
       });
 
@@ -853,12 +853,12 @@ export async function fetchNextGenCollectionTraitSetsUltimate(
 
   let fields = `
     ${NEXTGEN_TOKENS_TABLE}.owner,
-    ${PROFILE_FULL}.normalised_handle,
-    ${PROFILE_FULL}.handle,
+    ${IDENTITIES_TABLE}.normalised_handle,
+    ${IDENTITIES_TABLE}.handle,
     0 as level,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as tdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display as consolidation_display,
-    ${PROFILE_FULL}.rep_score`;
+    ${IDENTITIES_TABLE}.rep as rep_score`;
 
   const params: any = {
     traits: traits,
@@ -883,17 +883,17 @@ export async function fetchNextGenCollectionTraitSetsUltimate(
   });
 
   let joins = `JOIN ${NEXTGEN_TOKEN_TRAITS_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id`;
-  joins += ` LEFT JOIN ${WALLETS_CONSOLIDATION_KEYS_VIEW} on ${WALLETS_CONSOLIDATION_KEYS_VIEW}.wallet = ${NEXTGEN_TOKENS_TABLE}.owner`;
-  joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} on ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
-  joins += ` LEFT JOIN ${PROFILE_FULL} on ${PROFILE_FULL}.consolidation_key = ${WALLETS_CONSOLIDATION_KEYS_VIEW}.consolidation_key`;
+  joins += ` LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} on ${ADDRESS_CONSOLIDATION_KEY}.address = ${NEXTGEN_TOKENS_TABLE}.owner`;
+  joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} on ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key = ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key`;
+  joins += ` LEFT JOIN ${IDENTITIES_TABLE} on ${IDENTITIES_TABLE}.consolidation_key = ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key`;
 
   const groups = `
     ${NEXTGEN_TOKENS_TABLE}.owner, 
-    ${PROFILE_FULL}.normalised_handle, 
-    ${PROFILE_FULL}.handle, 
+    ${IDENTITIES_TABLE}.normalised_handle, 
+    ${IDENTITIES_TABLE}.handle, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, 
-    ${PROFILE_FULL}.rep_score`;
+    ${IDENTITIES_TABLE}.rep as rep_score`;
 
   const limit = `LIMIT ${pageSize}`;
   const offset = page > 1 ? `OFFSET ${pageSize * (page - 1)}` : '';

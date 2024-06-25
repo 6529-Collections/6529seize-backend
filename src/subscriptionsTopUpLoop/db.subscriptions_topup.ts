@@ -1,8 +1,8 @@
 import { QueryRunner } from 'typeorm';
 import { updateSubscriptionMode } from '../api-serverless/src/subscriptions/api.subscriptions.db';
 import {
-  SUBSCRIPTIONS_TOP_UP_TABLE,
-  WALLETS_CONSOLIDATION_KEYS_VIEW
+  ADDRESS_CONSOLIDATION_KEY,
+  SUBSCRIPTIONS_TOP_UP_TABLE
 } from '../constants';
 import { getDataSource } from '../db';
 import {
@@ -23,7 +23,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
     for (const topUp of topUps) {
       let consolidationKey = (
         await manager.query(
-          `SELECT * FROM ${WALLETS_CONSOLIDATION_KEYS_VIEW} WHERE wallet = '${topUp.from_wallet}'`
+          `SELECT consolidation_key FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE address = '${topUp.from_wallet}'`
         )
       )[0]?.consolidation_key;
 

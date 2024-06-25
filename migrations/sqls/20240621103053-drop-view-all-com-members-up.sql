@@ -1,0 +1,1 @@
+drop view all_community_members;

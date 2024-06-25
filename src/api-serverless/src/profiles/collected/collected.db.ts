@@ -3,7 +3,7 @@ import {
   LazyDbAccessCompatibleService
 } from '../../../../sql-executor';
 import {
-  COMMUNITY_MEMBERS_TABLE,
+  ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_WALLETS_TDH_TABLE,
   GRADIENT_CONTRACT,
   MEMELAB_CONTRACT,
@@ -119,9 +119,9 @@ export class CollectedDb extends LazyDbAccessCompatibleService {
         `
       select
           t.boost, t.memes, t.memes_ranks, t.gradients, t.gradients_ranks
-      from ${COMMUNITY_MEMBERS_TABLE} c
+      from ${ADDRESS_CONSOLIDATION_KEY} c
       join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = c.consolidation_key
-      where  c.wallet1 = :wallet or c.wallet2 = :wallet or c.wallet3 = :wallet
+      where  c.address = :wallet
     `,
         { wallet }
       )
