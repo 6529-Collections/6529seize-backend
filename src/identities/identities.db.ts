@@ -15,6 +15,8 @@ import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
 import { NotFoundException } from '../exceptions';
 
+const mysql = require('mysql');
+
 export class IdentitiesDb extends LazyDbAccessCompatibleService {
   async lockEverythingRelatedToIdentitiesByAddresses(
     addresses: string[],
@@ -136,6 +138,39 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: connection }
       );
     }
+  }
+
+  public async insertIdentitiesOnAddressesOnly(
+    addresses: string[],
+    connection: ConnectionWrapper<any>
+  ) {
+    if (!addresses.length) {
+      return;
+    }
+    const identitiesSql = `insert into ${IDENTITIES_TABLE} (consolidation_key,
+                                         primary_address,
+                                         tdh,
+                                         rep,
+                                         cic,
+                                         level_raw)
+        values ${addresses
+          .map(
+            (address) =>
+              `(${mysql.escape(address)}, ${mysql.escape(address)}, 0, 0, 0, 0)`
+          )
+          .join(',')}`;
+    await this.db.execute(identitiesSql, undefined, {
+      wrappedConnection: connection
+    });
+    const paramsSql = `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+        values ${addresses
+          .map(
+            (address) => `(${mysql.escape(address)}, ${mysql.escape(address)})`
+          )
+          .join(',')}`;
+    await this.db.execute(paramsSql, undefined, {
+      wrappedConnection: connection
+    });
   }
 
   async updateIdentityProfile(
