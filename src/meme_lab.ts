@@ -208,6 +208,10 @@ async function processNFTs(
             memeReferences.push(
               ...[...memeNFTs].filter((m) => m.season == 6).map((m) => m.id)
             );
+          } else if (ref.toUpperCase() == 'ALL SZN7') {
+            memeReferences.push(
+              ...[...memeNFTs].filter((m) => m.season == 7).map((m) => m.id)
+            );
           } else {
             const memeRef = memeNFTs.find((m) => m.name == ref);
             if (memeRef) {
