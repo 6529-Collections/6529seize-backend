@@ -88,35 +88,35 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
   ): Promise<string> {
     const wallet_group_id = randomUUID();
     const distinctAddresses = distinct(wallets.map((w) => w.toLowerCase()));
-    if (!wallets.length) {
-      return wallet_group_id;
-    }
-    let sql = `insert into ${WALLET_GROUPS_TABLE} (wallet_group_id, wallet) values `;
-    for (const wallet of distinctAddresses) {
-      sql += `(${mysql.escape(wallet_group_id)}, ${mysql.escape(wallet)}),`;
-    }
-    await this.db.execute(sql.slice(0, sql.length - 1), undefined, {
-      wrappedConnection: connection
-    });
-    const chunkSize = 100;
-    for (let i = 0; i < distinctAddresses.length; i += chunkSize) {
-      const chunkOfAddresses = distinctAddresses.slice(i, i + chunkSize);
-      const existingAddresses = await this.db
-        .execute<{ address: string }>(
-          `
+    if (wallets.length) {
+      let sql = `insert into ${WALLET_GROUPS_TABLE} (wallet_group_id, wallet)
+                 values `;
+      for (const wallet of distinctAddresses) {
+        sql += `(${mysql.escape(wallet_group_id)}, ${mysql.escape(wallet)}),`;
+      }
+      await this.db.execute(sql.slice(0, sql.length - 1), undefined, {
+        wrappedConnection: connection
+      });
+      const chunkSize = 100;
+      for (let i = 0; i < distinctAddresses.length; i += chunkSize) {
+        const chunkOfAddresses = distinctAddresses.slice(i, i + chunkSize);
+        const existingAddresses = await this.db
+          .execute<{ address: string }>(
+            `
         select distinct address from ${ADDRESS_CONSOLIDATION_KEY} where address in (:addresses) for update
     `,
-          { addresses: chunkOfAddresses },
-          { wrappedConnection: connection }
-        )
-        .then((a) => a.map((it) => it.address));
-      const missingIdentities = chunkOfAddresses.filter(
-        (a) => !existingAddresses.includes(a)
-      );
-      await identitiesDb.insertIdentitiesOnAddressesOnly(
-        missingIdentities,
-        connection
-      );
+            { addresses: chunkOfAddresses },
+            { wrappedConnection: connection }
+          )
+          .then((a) => a.map((it) => it.address));
+        const missingIdentities = chunkOfAddresses.filter(
+          (a) => !existingAddresses.includes(a)
+        );
+        await identitiesDb.insertIdentitiesOnAddressesOnly(
+          missingIdentities,
+          connection
+        );
+      }
     }
     return wallet_group_id;
   }
