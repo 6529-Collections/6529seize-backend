@@ -8,7 +8,6 @@ import {
   corsOptions
 } from '../api-constants';
 import * as SwaggerUI from 'swagger-ui-express';
-import { Time } from '../../../time';
 import { getIp, isLocalhost } from '../policies/policies';
 import { isValidIP } from '../../../helpers';
 
