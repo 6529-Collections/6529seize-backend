@@ -1331,6 +1331,8 @@ components:
         - owns_nfts
         - wallet_group_id
         - wallet_group_wallets_count
+        - excluded_wallet_group_id
+        - excluded_wallet_group_wallets_count
       properties:
         tdh:
           $ref: "#/components/schemas/GroupTdhFilter"
@@ -1351,6 +1353,13 @@ components:
           type: number
           format: int64
           nullable: false
+        excluded_wallet_group_id:
+          type: string
+          nullable: true
+        excluded_wallet_group_wallets_count:
+          type: number
+          format: int64
+          nullable: false
 
     CreateGroupDescription:
       type: object
@@ -1361,6 +1370,7 @@ components:
         - level
         - owns_nfts
         - wallets
+        - excluded_wallets
       properties:
         tdh:
           $ref: "#/components/schemas/GroupTdhFilter"
@@ -1375,6 +1385,13 @@ components:
           items:
             $ref: "#/components/schemas/GroupOwnsNft"
         wallets:
+          anyOf:
+            - type: "null"
+            - type: array
+              items:
+                type: string
+          example: ["0x1234567890123456789012345678901234567890"]
+        excluded_wallets:
           anyOf:
             - type: "null"
             - type: array
