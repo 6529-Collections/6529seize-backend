@@ -9,7 +9,7 @@ import {
 } from '../api-constants';
 import * as SwaggerUI from 'swagger-ui-express';
 import { Time } from '../../../time';
-import { getIp } from '../policies/policies';
+import { getIp, isLocalhost } from '../policies/policies';
 import { isValidIP } from '../../../helpers';
 
 const YAML = require('yamljs');
@@ -327,9 +327,9 @@ router.post('/register-prenode', async (req: Request, res: Response) => {
   if (!block) {
     return res.status(400).send({ message: 'Missing block' });
   }
-  // if (!isValidIP(ip)) {
-  //   return res.status(400).send('Invalid IP');
-  // }
+  if (!isValidIP(ip) && !isLocalhost(ip)) {
+    return res.status(400).send('Invalid IP');
+  }
 
   const validation = await db.validatePrenode(ip, domain, tdh, block);
   const statusCode = validation.block_sync && validation.tdh_sync ? 200 : 400;
