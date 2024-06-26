@@ -332,6 +332,5 @@ router.post('/register-prenode', async (req: Request, res: Response) => {
   }
 
   const validation = await db.validatePrenode(ip, domain, tdh, block);
-  const statusCode = validation.block_sync && validation.tdh_sync ? 200 : 400;
-  return res.status(statusCode).send(validation);
+  return res.status(201).send(validation);
 });
