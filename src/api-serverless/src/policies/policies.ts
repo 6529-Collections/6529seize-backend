@@ -95,7 +95,7 @@ export async function getIpInfo(
     const response = await fetch(url);
     const data = await response.json();
     return {
-      country: data.country?.iso_code
+      country: data?.country?.iso_code
     };
   } catch (error) {
     console.error('Failed to fetch client IP:', error);

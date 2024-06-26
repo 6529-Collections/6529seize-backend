@@ -8,6 +8,8 @@ import {
   corsOptions
 } from '../api-constants';
 import * as SwaggerUI from 'swagger-ui-express';
+import { getIp, isLocalhost } from '../policies/policies';
+import { isValidIP } from '../../../helpers';
 
 const YAML = require('yamljs');
 
@@ -306,3 +308,28 @@ router.get(
     return returnJsonResult(result, res);
   }
 );
+
+router.post('/register-prenode', async (req: Request, res: Response) => {
+  const { domain, tdh, block } = req.body;
+
+  const ip = getIp(req);
+
+  if (!ip) {
+    return res.status(400).send({ message: 'Failed to get IP address' });
+  }
+  if (domain === undefined) {
+    return res.status(400).send({ message: 'Missing domain' });
+  }
+  if (!tdh) {
+    return res.status(400).send({ message: 'Missing tdh' });
+  }
+  if (!block) {
+    return res.status(400).send({ message: 'Missing block' });
+  }
+  if (!isValidIP(ip) && !isLocalhost(ip)) {
+    return res.status(400).send('Invalid IP');
+  }
+
+  const validation = await db.validatePrenode(ip, domain, tdh, block);
+  return res.status(201).send(validation);
+});
