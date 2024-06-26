@@ -387,6 +387,7 @@ export interface DefaultBoost {
   memes_szn4: BoostInfo;
   memes_szn5: BoostInfo;
   memes_szn6: BoostInfo;
+  memes_szn7: BoostInfo;
   memes_genesis: BoostInfo;
   memes_nakamoto: BoostInfo;
   gradients: BoostInfo;
