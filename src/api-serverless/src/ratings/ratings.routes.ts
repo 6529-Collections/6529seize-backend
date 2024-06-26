@@ -23,6 +23,8 @@ import { WALLET_REGEX } from '../../../constants';
 import { BulkRateResponse } from '../generated/models/BulkRateResponse';
 import { AvailableRatingCredit } from '../generated/models/AvailableRatingCredit';
 import { profilesService } from '../../../profiles/profiles.service';
+import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
+import { BadRequestException } from '../../../exceptions';
 
 const router = asyncRouter();
 
@@ -33,11 +35,24 @@ router.post(
     req: Request<any, any, BulkRateRequest, any, any>,
     res: Response<ApiResponse<BulkRateResponse>>
   ) {
-    const apiRequest = getValidatedByJoiOrThrow(
-      req.body,
-      BulkRateRequestSchema
-    );
+    let apiRequest = getValidatedByJoiOrThrow(req.body, BulkRateRequestSchema);
     const authContext = await getAuthenticationContext(req);
+    if (apiRequest.matter === ApiRateMatter.Rep) {
+      const proposedCategory = apiRequest.category?.trim() ?? '';
+      if (proposedCategory !== '') {
+        const abusivenessDetectionResult =
+          await abusivenessCheckService.checkRepPhrase(proposedCategory);
+        if (abusivenessDetectionResult.status === 'DISALLOWED') {
+          throw new BadRequestException(
+            abusivenessDetectionResult.explanation ??
+              'Given category is not allowed'
+          );
+        }
+        apiRequest = { ...apiRequest, category: proposedCategory };
+      } else {
+        throw new BadRequestException('Category is required');
+      }
+    }
     const response = await ratingsService.bulkRateProfiles(
       authContext,
       apiRequest
