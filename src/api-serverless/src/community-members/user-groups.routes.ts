@@ -156,8 +156,12 @@ router.post(
     const ownsNextgen = apiUserGroup.group.owns_nfts.find(
       (it) => it.name === GroupOwnsNftNameEnum.Nextgen
     );
-    const userGroup: Omit<NewUserGroupEntity, 'wallet_group_id'> & {
+    const userGroup: Omit<
+      NewUserGroupEntity,
+      'wallet_group_id' | 'excluded_wallet_group_id'
+    > & {
       wallets: string[];
+      excluded_wallets: string[];
     } = {
       name: apiUserGroup.name,
       cic_min: apiUserGroup.group.cic.min,
@@ -200,6 +204,7 @@ router.post(
       wallets: apiUserGroup.group.wallets?.length
         ? apiUserGroup.group.wallets
         : [],
+      excluded_wallets: apiUserGroup.group.excluded_wallets ?? [],
       visible: false
     };
     const response = await userGroupsService.save(userGroup, savingProfileId);
@@ -302,7 +307,13 @@ const GroupDescriptionSchema: Joi.ObjectSchema<CreateGroupDescription> =
     cic: GroupCicFilterSchema,
     level: GroupLevelFilterSchema,
     owns_nfts: Joi.array().required().items(GroupOwnsNftSchema),
-    wallets: Joi.array().required().items(Joi.string()).allow(null).max(20000)
+    wallets: Joi.array().required().items(Joi.string()).allow(null).max(20000),
+    excluded_wallets: Joi.array()
+      .optional()
+      .items(Joi.string())
+      .allow(null)
+      .default([])
+      .max(20000)
   });
 
 const NewUserGroupSchema = Joi.object<CreateGroup>({

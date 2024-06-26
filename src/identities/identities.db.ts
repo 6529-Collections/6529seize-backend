@@ -274,6 +274,15 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       }, {} as Record<string, { consolidations: AddressConsolidationKey[]; identity: IdentityEntity; profile: Profile }>)
     );
   }
+
+  async getWalletsByProfileId(profileId: string): Promise<string[]> {
+    return this.db
+      .execute<{ address: string }>(
+        `select a.address as address from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on a.consolidation_key = i.consolidation_key where i.profile_id = :profileId`,
+        { profileId }
+      )
+      .then((result) => result.map((it) => it.address));
+  }
 }
 
 export const identitiesDb = new IdentitiesDb(dbSupplier);
