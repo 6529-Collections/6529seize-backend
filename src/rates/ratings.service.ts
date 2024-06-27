@@ -878,7 +878,12 @@ export class RatingsService {
           )
           .then((result) =>
             result.reduce((acc, it) => {
-              acc[it.matter_target_id] = it.rating;
+              if (
+                !apiRequest.category ||
+                it.matter_category == apiRequest.category
+              ) {
+                acc[it.matter_target_id] = it.rating;
+              }
               return acc;
             }, {} as Record<string, number>)
           );
