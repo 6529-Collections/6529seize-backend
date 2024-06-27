@@ -16,6 +16,12 @@ export class Prenode {
   @Column({ type: 'text', nullable: true })
   domain!: string;
 
+  @Column({ type: 'text', nullable: true })
+  city!: string;
+
+  @Column({ type: 'text', nullable: true })
+  country!: string;
+
   @Column({ type: 'boolean', default: false })
   tdh_sync!: boolean;
 
