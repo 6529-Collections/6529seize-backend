@@ -7,6 +7,7 @@ import {
   CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
   PRENODES_TABLE
 } from '../../../constants';
+import { fetchPaginated } from '../../../db-api';
 import { MemesExtendedData } from '../../../entities/INFT';
 import { NftTDH } from '../../../entities/ITDH';
 import {
@@ -383,4 +384,21 @@ export async function validatePrenode(
     tdh_sync,
     block_sync
   };
+}
+
+export async function fetchPrenodes(pageSize: number, page: number) {
+  return fetchPaginated(
+    PRENODES_TABLE,
+    {},
+    `(tdh_sync AND block_sync) DESC,
+      (tdh_sync OR block_sync) DESC,
+      CASE 
+        WHEN tdh_sync AND block_sync THEN created_at
+        ELSE NULL
+      END ASC,
+      updated_at DESC`,
+    pageSize,
+    page,
+    ''
+  );
 }
