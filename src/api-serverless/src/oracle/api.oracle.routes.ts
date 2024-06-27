@@ -10,7 +10,7 @@ import {
 import * as SwaggerUI from 'swagger-ui-express';
 import { getIp, isLocalhost } from '../policies/policies';
 import { isValidIP } from '../../../helpers';
-import { getPage, getPageSize } from 'src/api-helpers';
+import { getPage, getPageSize } from '../api-helpers';
 
 const YAML = require('yamljs');
 
