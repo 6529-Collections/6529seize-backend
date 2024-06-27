@@ -4,7 +4,8 @@ import {
   GRADIENT_CONTRACT,
   TDH_NFT_TABLE,
   MEMES_EXTENDED_DATA_TABLE,
-  CONSOLIDATED_WALLETS_TDH_MEMES_TABLE
+  CONSOLIDATED_WALLETS_TDH_MEMES_TABLE,
+  PRENODES_TABLE
 } from '../../../constants';
 import { MemesExtendedData } from '../../../entities/INFT';
 import { NftTDH } from '../../../entities/ITDH';
@@ -340,5 +341,46 @@ export async function fetchSeasonsTDH(season?: string) {
   return {
     seasons,
     block
+  };
+}
+
+export async function validatePrenode(
+  ip: string,
+  domain: string,
+  prenodeTdh: number,
+  prenodeBlock: number
+) {
+  const block = await getBlock();
+  const tdh =
+    (
+      await sqlExecutor.execute(`
+        SELECT SUM(boosted_tdh) as total_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
+      `)
+    )[0]?.total_tdh ?? 0;
+
+  const tdh_sync = prenodeTdh === tdh;
+  const block_sync = prenodeBlock === block;
+
+  await sqlExecutor.execute(
+    `
+    INSERT INTO ${PRENODES_TABLE} (ip, domain, tdh_sync, block_sync)
+    VALUES (:ip, :domain, :tdh_sync, :block_sync)
+    ON DUPLICATE KEY UPDATE 
+      domain = VALUES(domain), 
+      tdh_sync = VALUES(tdh_sync), 
+      block_sync = VALUES(block_sync),
+      updated_at = UTC_TIMESTAMP(6)
+  `,
+    {
+      ip,
+      domain,
+      tdh_sync,
+      block_sync
+    }
+  );
+
+  return {
+    tdh_sync,
+    block_sync
   };
 }
