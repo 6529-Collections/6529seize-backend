@@ -10,6 +10,7 @@ import {
 import * as SwaggerUI from 'swagger-ui-express';
 import { getIp, isLocalhost } from '../policies/policies';
 import { isValidIP } from '../../../helpers';
+import { getPage, getPageSize } from 'src/api-helpers';
 
 const YAML = require('yamljs');
 
@@ -332,4 +333,11 @@ router.post('/register-prenode', async (req: Request, res: Response) => {
 
   const validation = await db.validatePrenode(ip, domain, tdh, block);
   return res.status(201).send(validation);
+});
+
+router.get('/prenodes', async (req: Request, res: Response) => {
+  const pageSize = getPageSize(req);
+  const page = getPage(req);
+  const prenodes = await db.fetchPrenodes(pageSize, page);
+  return res.json(prenodes);
 });
