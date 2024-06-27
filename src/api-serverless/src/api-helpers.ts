@@ -5,6 +5,7 @@ import {
   CACHE_TIME_MS,
   CONTENT_TYPE_HEADER,
   corsOptions,
+  DEFAULT_PAGE_SIZE,
   JSON_HEADER_VALUE,
   PaginatedResponse,
   SORT_DIRECTIONS
@@ -133,4 +134,14 @@ export function getSearchFilters(columnNames: string[], search: string) {
       );
     });
   return { filters, params };
+}
+
+export function getPageSize(req: any): number {
+  return req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+    ? parseInt(req.query.page_size)
+    : DEFAULT_PAGE_SIZE;
+}
+
+export function getPage(req: any): number {
+  return req.query.page ? parseInt(req.query.page) : 1;
 }
