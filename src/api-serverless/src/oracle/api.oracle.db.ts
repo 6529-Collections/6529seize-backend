@@ -363,13 +363,17 @@ export async function validatePrenode(
 
   await sqlExecutor.execute(
     `
-      INSERT INTO ${PRENODES_TABLE} (ip, domain, tdh_sync, block_sync)
-      VALUES (:ip, :domain, :tdh_sync, :block_sync)
-      ON DUPLICATE KEY UPDATE domain = VALUES(domain), tdh_sync = VALUES(tdh_sync), block_sync = VALUES(block_sync)
-    `,
+    INSERT INTO ${PRENODES_TABLE} (ip, domain, tdh_sync, block_sync)
+    VALUES (:ip, :domain, :tdh_sync, :block_sync)
+    ON DUPLICATE KEY UPDATE 
+      domain = VALUES(domain), 
+      tdh_sync = VALUES(tdh_sync), 
+      block_sync = VALUES(block_sync),
+      updated_at = UTC_TIMESTAMP(6)
+  `,
     {
-      ip: ip,
-      domain: domain,
+      ip,
+      domain,
       tdh_sync,
       block_sync
     }
