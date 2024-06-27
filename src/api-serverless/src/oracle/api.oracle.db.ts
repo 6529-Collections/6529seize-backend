@@ -15,6 +15,7 @@ import {
   getNextgenNetwork
 } from '../../../nextgen/nextgen_constants';
 import { sqlExecutor } from '../../../sql-executor';
+import { getIpInfo } from '../policies/policies';
 
 const formatNumber = (num: number) => {
   return parseFloat(num.toFixed(0));
@@ -362,12 +363,16 @@ export async function validatePrenode(
   const tdh_sync = prenodeTdh === tdh;
   const block_sync = prenodeBlock === block;
 
+  const ipInfo = await getIpInfo(ip);
+
   await sqlExecutor.execute(
     `
-    INSERT INTO ${PRENODES_TABLE} (ip, domain, tdh_sync, block_sync)
-    VALUES (:ip, :domain, :tdh_sync, :block_sync)
+    INSERT INTO ${PRENODES_TABLE} (ip, domain, city, country, tdh_sync, block_sync)
+    VALUES (:ip, :domain, :city, :country, :tdh_sync, :block_sync)
     ON DUPLICATE KEY UPDATE 
       domain = VALUES(domain), 
+      city = VALUES(city),
+      country = VALUES(country),
       tdh_sync = VALUES(tdh_sync), 
       block_sync = VALUES(block_sync),
       updated_at = UTC_TIMESTAMP(6)
@@ -375,6 +380,8 @@ export async function validatePrenode(
     {
       ip,
       domain,
+      city: ipInfo?.city_name,
+      country: ipInfo?.country_name,
       tdh_sync,
       block_sync
     }

@@ -87,14 +87,18 @@ export const isLocalhost = (ip: string) => {
   return ip === '127.0.0.1' || ip === '::1';
 };
 
-export async function getIpInfo(
-  ip: string
-): Promise<{ country: string } | null> {
+export async function getIpInfo(ip: string): Promise<{
+  city_name: string;
+  country_name: string;
+  country: string;
+} | null> {
   try {
     const url = `https://api.findip.net/${ip}/?token=${process.env.FINDIP_API_TOKEN}`;
     const response = await fetch(url);
     const data = await response.json();
     return {
+      city_name: data?.city?.names?.en,
+      country_name: data?.country?.names?.en,
       country: data?.country?.iso_code
     };
   } catch (error) {
