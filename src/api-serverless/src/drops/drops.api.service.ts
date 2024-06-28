@@ -7,7 +7,6 @@ import { ConnectionWrapper } from '../../../sql-executor';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { DropEntity } from '../../../entities/IDrop';
 import { distinct } from '../../../helpers';
-import { DropActivityLogsQuery } from './drops.routes';
 import { Page, PageSortDirection } from '../page-request';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { Drop } from '../generated/models/Drop';
@@ -31,6 +30,7 @@ import {
 } from '../community-members/user-groups.service';
 import { AuthenticationContext } from '../../../auth-context';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { DropActivityLogsQuery } from './drop.validator';
 
 export class DropsApiService {
   constructor(
@@ -44,12 +44,14 @@ export class DropsApiService {
       dropId,
       authenticationContext,
       min_part_id,
-      max_part_id
+      max_part_id,
+      skipEligibilityCheck
     }: {
       dropId: string;
       authenticationContext: AuthenticationContext;
       min_part_id: number;
       max_part_id: number;
+      skipEligibilityCheck?: boolean;
     },
     connection?: ConnectionWrapper<any>
   ): Promise<Drop> {
@@ -58,15 +60,20 @@ export class DropsApiService {
     );
     const group_ids_user_is_eligible_for =
       await this.userGroupsService.getGroupsUserIsEligibleFor(contextProfileId);
-    const dropEntity = await this.dropsDb
-      .findDropById(dropId, group_ids_user_is_eligible_for, connection)
-      .then(async (drop) => {
-        if (!drop) {
-          throw new NotFoundException(`Drop ${dropId} not found`);
-        }
+    const dropEntity = await (skipEligibilityCheck
+      ? this.dropsDb.findDropByIdWithoutEligibilityCheck(dropId, connection)
+      : this.dropsDb.findDropById(
+          dropId,
+          group_ids_user_is_eligible_for,
+          connection
+        )
+    ).then(async (drop) => {
+      if (!drop) {
+        throw new NotFoundException(`Drop ${dropId} not found`);
+      }
 
-        return drop;
-      });
+      return drop;
+    });
     return this.convertToDropFulls(
       {
         dropEntities: [dropEntity],
@@ -208,96 +215,99 @@ export class DropsApiService {
       };
       return acc;
     }, {} as Record<string, ProfileMin>);
-    return dropEntities.map<Drop>((dropEntity) => ({
-      id: dropEntity.id,
-      serial_no: dropEntity.serial_no,
-      wave_id: dropEntity.wave_id,
-      author: profilesByIds[dropEntity.author_id]!,
-      title: dropEntity.title,
-      parts:
-        dropsParts[dropEntity.id]?.map<DropPart>((it) => ({
-          content: it.content,
-          quoted_drop:
-            it.quoted_drop_id && it.quoted_drop_part_id
+    return dropEntities.map<Drop>((dropEntity) => {
+      return {
+        id: dropEntity.id,
+        serial_no: dropEntity.serial_no,
+        wave_id: dropEntity.wave_id,
+        author: profilesByIds[dropEntity.author_id]!,
+        title: dropEntity.title,
+        parts:
+          dropsParts[dropEntity.id]?.map<DropPart>((it) => ({
+            content: it.content,
+            quoted_drop:
+              it.quoted_drop_id && it.quoted_drop_part_id
+                ? {
+                    drop_id: it.quoted_drop_id,
+                    drop_part_id: it.quoted_drop_part_id
+                  }
+                : null,
+            part_id: it.drop_part_id,
+            media:
+              (dropMedia[dropEntity.id] ?? [])
+                .filter((m) => m.drop_part_id === it.drop_part_id)
+                .map<DropMedia>((it) => ({
+                  url: it.url,
+                  mime_type: it.mime_type
+                })) ?? [],
+            discussion_comments_count:
+              dropsCommentsCounts[it.drop_id]?.[it.drop_part_id]?.count ?? 0,
+            quotes_count:
+              dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]?.total ?? 0,
+            context_profile_context: contextProfileId
               ? {
-                  drop_id: it.quoted_drop_id,
-                  drop_part_id: it.quoted_drop_part_id
+                  discussion_comments_count:
+                    dropsCommentsCounts[it.drop_id]?.[it.drop_part_id]
+                      ?.context_profile_count ?? 0,
+                  quotes_count:
+                    dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]
+                      ?.by_context_profile ?? 0
                 }
-              : null,
-          part_id: it.drop_part_id,
-          media:
-            (dropMedia[dropEntity.id] ?? [])
-              .filter((m) => m.drop_part_id === it.drop_part_id)
-              .map<DropMedia>((it) => ({
-                url: it.url,
-                mime_type: it.mime_type
-              })) ?? [],
-          discussion_comments_count:
-            dropsCommentsCounts[it.drop_id]?.[it.drop_part_id]?.count ?? 0,
-          quotes_count:
-            dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]?.total ?? 0,
-          context_profile_context: contextProfileId
-            ? {
-                discussion_comments_count:
-                  dropsCommentsCounts[it.drop_id]?.[it.drop_part_id]
-                    ?.context_profile_count ?? 0,
-                quotes_count:
-                  dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]
-                    ?.by_context_profile ?? 0
-              }
-            : null
-        })) ?? [],
-      parts_count: dropEntity.parts_count,
-      created_at: dropEntity.created_at,
-      referenced_nfts: referencedNfts
-        .filter((it) => it.drop_id === dropEntity.id)
-        .map<DropReferencedNFT>((it) => ({
-          contract: it.contract,
-          token: it.token,
-          name: it.name
-        })),
-      mentioned_users: mentions
-        .filter((it) => it.drop_id === dropEntity.id)
-        .map<DropMentionedUser>((it) => ({
-          mentioned_profile_id: it.mentioned_profile_id,
-          handle_in_content: it.handle_in_content,
-          current_handle: profilesByIds[it.mentioned_profile_id]?.handle ?? null
-        })),
-      metadata: metadata
-        .filter((it) => it.drop_id === dropEntity.id)
-        .map<DropMetadata>((it) => ({
-          data_key: it.data_key,
-          data_value: it.data_value
-        })),
-      rating: dropsRatings[dropEntity.id]?.rating ?? 0,
-      raters_count: dropsRatings[dropEntity.id]?.distinct_raters ?? 0,
-      rating_categories_count:
-        dropsRatings[dropEntity.id]?.distinct_categories ?? 0,
-      top_raters: (dropsTopRaters[dropEntity.id] ?? [])
-        .map<DropRater>((rater) => ({
-          rating: rater.rating,
-          profile: profilesByIds[rater.rater_profile_id]!
-        }))
-        .sort((a, b) => b.rating - a.rating),
-      top_rating_categories: (dropsTopCategories[dropEntity.id] ?? [])
-        .map<DropRatingCategory>((cat) => ({
-          rating: cat.rating,
-          category: cat.category
-        }))
-        .sort((a, b) => b.rating - a.rating),
-      rating_logs_count: dropLogsStats[dropEntity.id]?.rating_logs_count ?? 0,
-      context_profile_context: contextProfileId
-        ? {
-            categories: (dropsContextProfileCategories[dropEntity.id] ?? [])
-              .map<DropRatingCategory>((cat) => ({
-                category: cat.category,
-                rating: cat.profile_rating
-              }))
-              .sort((a, b) => b.rating - a.rating),
-            rating: dropsRatingsByContextProfile[dropEntity.id] ?? 0
-          }
-        : null
-    }));
+              : null
+          })) ?? [],
+        parts_count: dropEntity.parts_count,
+        created_at: dropEntity.created_at,
+        referenced_nfts: referencedNfts
+          .filter((it) => it.drop_id === dropEntity.id)
+          .map<DropReferencedNFT>((it) => ({
+            contract: it.contract,
+            token: it.token,
+            name: it.name
+          })),
+        mentioned_users: mentions
+          .filter((it) => it.drop_id === dropEntity.id)
+          .map<DropMentionedUser>((it) => ({
+            mentioned_profile_id: it.mentioned_profile_id,
+            handle_in_content: it.handle_in_content,
+            current_handle:
+              profilesByIds[it.mentioned_profile_id]?.handle ?? null
+          })),
+        metadata: metadata
+          .filter((it) => it.drop_id === dropEntity.id)
+          .map<DropMetadata>((it) => ({
+            data_key: it.data_key,
+            data_value: it.data_value
+          })),
+        rating: dropsRatings[dropEntity.id]?.rating ?? 0,
+        raters_count: dropsRatings[dropEntity.id]?.distinct_raters ?? 0,
+        rating_categories_count:
+          dropsRatings[dropEntity.id]?.distinct_categories ?? 0,
+        top_raters: (dropsTopRaters[dropEntity.id] ?? [])
+          .map<DropRater>((rater) => ({
+            rating: rater.rating,
+            profile: profilesByIds[rater.rater_profile_id]!
+          }))
+          .sort((a, b) => b.rating - a.rating),
+        top_rating_categories: (dropsTopCategories[dropEntity.id] ?? [])
+          .map<DropRatingCategory>((cat) => ({
+            rating: cat.rating,
+            category: cat.category
+          }))
+          .sort((a, b) => b.rating - a.rating),
+        rating_logs_count: dropLogsStats[dropEntity.id]?.rating_logs_count ?? 0,
+        context_profile_context: contextProfileId
+          ? {
+              categories: (dropsContextProfileCategories[dropEntity.id] ?? [])
+                .map<DropRatingCategory>((cat) => ({
+                  category: cat.category,
+                  rating: cat.profile_rating
+                }))
+                .sort((a, b) => b.rating - a.rating),
+              rating: dropsRatingsByContextProfile[dropEntity.id] ?? 0
+            }
+          : null
+      };
+    });
   }
 
   private async getAllDropsRelatedData(
@@ -540,6 +550,31 @@ export class DropsApiService {
         )! as unknown as ProfileMin
       }))
     };
+  }
+
+  async findDropsByIdsOrThrow(
+    dropIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<string, Drop>> {
+    const dropEntities = await this.dropsDb.getDropsByIds(dropIds, connection);
+    const missingDrops = dropIds.filter(
+      (it) => !dropEntities.find((e) => e.id === it)
+    );
+    if (missingDrops.length) {
+      throw new NotFoundException(
+        `Drop(s) not found: ${missingDrops.join(', ')}`
+      );
+    }
+    return this.convertToDropFulls({
+      dropEntities,
+      min_part_id: 1,
+      max_part_id: Number.MAX_SAFE_INTEGER
+    }).then((drops) =>
+      drops.reduce((acc, drop) => {
+        acc[drop.id] = drop;
+        return acc;
+      }, {} as Record<string, Drop>)
+    );
   }
 }
 

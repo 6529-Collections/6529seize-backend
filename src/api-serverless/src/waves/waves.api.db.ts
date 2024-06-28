@@ -5,7 +5,6 @@ import {
   SqlExecutor
 } from '../../../sql-executor';
 import { WaveEntity } from '../../../entities/IWave';
-import { randomUUID } from 'crypto';
 import { Time } from '../../../time';
 import { WAVES_TABLE } from '../../../constants';
 import {
@@ -35,10 +34,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   }
 
   public async insertWave(
+    id: string,
     wave: NewWaveEntity,
     connection: ConnectionWrapper<any>
-  ): Promise<string> {
-    const id = randomUUID();
+  ) {
     const params = {
       ...wave,
       id,
@@ -50,7 +49,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         (
             id,
             name,
-            description,
+            description_drop_id,
             created_at,
             created_by,
             voting_group_id,
@@ -81,7 +80,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         (
             :id,
             :name,
-            :description,
+            :description_drop_id,
             :created_at,
             :created_by,
             :voting_group_id,
@@ -112,7 +111,6 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       params,
       { wrappedConnection: connection }
     );
-    return id;
   }
 
   async searchWaves(searchParams: SearchWavesParams): Promise<WaveEntity[]> {
