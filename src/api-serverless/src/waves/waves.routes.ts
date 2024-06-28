@@ -157,7 +157,10 @@ const WaveVotingSchema = Joi.object<CreateNewWaveVotingConfig>({
 });
 
 const WaveRequiredMetadataSchema = Joi.object<WaveRequiredMetadata>({
-  name: Joi.string().required().max(250).min(1)
+  name: Joi.string().required().max(250).min(1),
+  type: Joi.string()
+    .required()
+    .allow(...Object.values(WaveParticipationRequirement))
 });
 
 const WaveParticipationSchema = Joi.object<CreateNewWaveParticipationConfig>({
