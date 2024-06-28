@@ -24,6 +24,7 @@ import { SearchWavesParams } from './waves.api.db';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { userGroupsService } from '../community-members/user-groups.service';
 import { NewWaveDropSchema } from '../drops/drop.validator';
+import { WaveParticipationRequirement } from '../generated/models/WaveParticipationRequirement';
 
 const router = asyncRouter();
 
@@ -169,6 +170,9 @@ const WaveParticipationSchema = Joi.object<CreateNewWaveParticipationConfig>({
     .required()
     .min(0)
     .items(WaveRequiredMetadataSchema),
+  required_media: Joi.string()
+    .default(null)
+    .allow(...Object.values(WaveParticipationRequirement), null),
   signature_required: Joi.boolean().required(),
   period: IntRangeSchema.required().allow(null)
 });

@@ -21,6 +21,8 @@ import {
 import { AuthenticationContext } from '../../../auth-context';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { CreateWaveDropRequest } from '../generated/models/CreateWaveDropRequest';
+import { assertUnreachable } from '../../../helpers';
+import { WaveParticipationRequirement } from '../generated/models/WaveParticipationRequirement';
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(DropCreationApiService.name);
@@ -197,6 +199,32 @@ export class DropCreationApiService {
       const groupId = wave.participation.scope.group?.id;
       if (groupId && !groupIdsUserIsEligibleFor.includes(groupId)) {
         throw new ForbiddenException(`User is not eligible for this wave`);
+      }
+      const requiredMedia = wave.participation.required_media;
+      if (requiredMedia) {
+        const mimeTypes = createDropRequest.parts
+          .map((it) => it.media.map((media) => media.mime_type))
+          .flat()
+          .flat();
+        let requiredMimeType: string | undefined = undefined;
+        switch (requiredMedia) {
+          case WaveParticipationRequirement.Image:
+            requiredMimeType = mimeTypes.find((it) => it.startsWith('image/'));
+            break;
+          case WaveParticipationRequirement.Video:
+            requiredMimeType = mimeTypes.find((it) => it.startsWith('video/'));
+            break;
+          case WaveParticipationRequirement.Audio:
+            requiredMimeType = mimeTypes.find((it) => it.startsWith('audio/'));
+            break;
+          default:
+            assertUnreachable(requiredMedia);
+        }
+        if (!requiredMimeType) {
+          throw new BadRequestException(
+            `Wave requires media of type ${requiredMedia}`
+          );
+        }
       }
     }
 
