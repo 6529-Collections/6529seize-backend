@@ -188,7 +188,10 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async getByIds(ids: string[]): Promise<UserGroupEntity[]> {
+  async getByIds(
+    ids: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<UserGroupEntity[]> {
     if (!ids.length) {
       return [];
     }
@@ -196,7 +199,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       `
     select * from ${USER_GROUPS_TABLE} where visible is true and id in (:ids)
     `,
-      { ids }
+      { ids },
+      { wrappedConnection: connection }
     );
   }
 

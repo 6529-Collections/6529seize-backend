@@ -34,7 +34,6 @@ import {
 import { Time } from '../time';
 import { DropVoteCreditSpending } from '../entities/IDropVoteCreditSpending';
 import { RateMatter } from '../entities/IRating';
-import { DropActivityLogsQuery } from '../api-serverless/src/drops/drops.routes';
 import {
   ProfileActivityLog,
   ProfileActivityLogType
@@ -42,6 +41,7 @@ import {
 import { randomUUID } from 'crypto';
 import { PageSortDirection } from '../api-serverless/src/page-request';
 import { uniqueShortId } from '../helpers';
+import { DropActivityLogsQuery } from '../api-serverless/src/drops/drop.validator';
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -51,13 +51,20 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     super(supplyDb);
   }
 
-  async getDropsByIds(ids: string[]): Promise<DropEntity[]> {
+  async getDropsByIds(
+    ids: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropEntity[]> {
     if (!ids.length) {
       return [];
     }
-    return this.db.execute(`select * from ${DROPS_TABLE} where id in (:ids)`, {
-      ids
-    });
+    return this.db.execute(
+      `select * from ${DROPS_TABLE} where id in (:ids)`,
+      {
+        ids
+      },
+      connection ? { wrappedConnection: connection } : undefined
+    );
   }
 
   async insertDrop(
@@ -172,6 +179,25 @@ export class DropsDb extends LazyDbAccessCompatibleService {
             null,
             ...group_ids_user_is_eligible_for
           ]
+        },
+        opts
+      )
+      .then((it) => it[0] || null);
+  }
+
+  async findDropByIdWithoutEligibilityCheck(
+    id: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropEntity | null> {
+    const opts = connection ? { wrappedConnection: connection } : {};
+    return this.db
+      .execute(
+        `
+        select d.* from ${DROPS_TABLE} d
+         where d.id = :id
+        `,
+        {
+          id
         },
         opts
       )
@@ -865,15 +891,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         },
         connection ? { wrappedConnection: connection } : undefined
       )
-      .then((it: DropPartEntity[]) =>
-        it.reduce((acc, part) => {
+      .then((it: DropPartEntity[]) => {
+        return it.reduce((acc, part) => {
           if (!acc[part.drop_id]) {
             acc[part.drop_id] = [];
           }
           acc[part.drop_id].push(part);
           return acc;
-        }, {} as Record<string, DropPartEntity[]>)
-      );
+        }, {} as Record<string, DropPartEntity[]>);
+      });
   }
 
   async insertDropParts(

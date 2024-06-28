@@ -1858,17 +1858,14 @@ components:
           items:
             $ref: "#/components/schemas/DropMedia"
 
-    CreateDropRequest:
+    CreateWaveDropRequest:
       type: object
       required:
-        - wave_id
         - referenced_nfts
         - mentioned_users
         - metadata
         - parts
       properties:
-        wave_id:
-          type: string
         title:
           type: string
           maxLength: 250
@@ -1890,6 +1887,16 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DropMetadata"
+
+    CreateDropRequest:
+      type: object
+      required:
+        - wave_id
+      allOf:
+        - $ref: "#/components/schemas/CreateWaveDropRequest"
+      properties:
+        wave_id:
+          type: string
 
     DropMedia:
       type: object
@@ -2247,7 +2254,7 @@ components:
         - serial_no
         - author
         - name
-        - description
+        - description_drop
         - voting
         - visibility
         - participation
@@ -2266,9 +2273,8 @@ components:
         name:
           description: The name of the wave
           type: string
-        description:
-          description: The description of the wave
-          type: string
+        description_drop:
+          $ref: "#/components/schemas/Drop"
         voting:
           $ref: "#/components/schemas/WaveVotingConfig"
         visibility:
@@ -2286,7 +2292,7 @@ components:
       type: object
       required:
         - name
-        - description
+        - description_drop
         - voting
         - visibility
         - participation
@@ -2297,9 +2303,8 @@ components:
           description: The name of the wave
           type: string
           maxLength: 250
-        description:
-          description: The description of the wave
-          type: string
+        description_drop:
+          $ref: "#/components/schemas/CreateWaveDropRequest"
         voting:
           $ref: "#/components/schemas/CreateNewWaveVotingConfig"
         visibility:

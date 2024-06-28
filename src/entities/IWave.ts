@@ -13,7 +13,7 @@ export class WaveEntity {
   readonly name!: string;
 
   @Column({ type: 'text', nullable: false })
-  readonly description!: string;
+  readonly description_drop_id!: string;
 
   @Column({ type: 'bigint', nullable: false })
   readonly created_at!: number;

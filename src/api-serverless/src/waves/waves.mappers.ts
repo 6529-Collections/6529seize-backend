@@ -21,6 +21,8 @@ import {
   UserGroupsService
 } from '../community-members/user-groups.service';
 import { Group } from '../generated/models/Group';
+import { dropsService } from '../drops/drops.api.service';
+import { ConnectionWrapper } from '../../../sql-executor';
 
 export class WavesMappers {
   constructor(
@@ -30,11 +32,12 @@ export class WavesMappers {
 
   public createWaveToNewWaveEntity(
     createWaveRequest: CreateNewWave,
-    authorId: string
+    authorId: string,
+    descriptionDropId: string
   ): NewWaveEntity {
     return {
       name: createWaveRequest.name,
-      description: createWaveRequest.description,
+      description_drop_id: descriptionDropId,
       created_by: authorId,
       voting_group_id: createWaveRequest.voting.scope.group_id,
       admin_group_id: createWaveRequest.wave.admin_group_id,
@@ -76,12 +79,18 @@ export class WavesMappers {
     };
   }
 
-  public async waveEntityToApiWave(waveEntity: WaveEntity): Promise<Wave> {
-    return this.waveEntitiesToApiWaves([waveEntity]).then((waves) => waves[0]);
+  public async waveEntityToApiWave(
+    waveEntity: WaveEntity,
+    connection?: ConnectionWrapper<any>
+  ): Promise<Wave> {
+    return this.waveEntitiesToApiWaves([waveEntity], connection).then(
+      (waves) => waves[0]
+    );
   }
 
   public async waveEntitiesToApiWaves(
-    waveEntities: WaveEntity[]
+    waveEntities: WaveEntity[],
+    connection?: ConnectionWrapper<any>
   ): Promise<Wave[]> {
     const curationEntities = await this.userGroupsService.getByIds(
       waveEntities
@@ -93,7 +102,8 @@ export class WavesMappers {
               waveEntity.voting_group_id
             ].filter((id) => id !== null) as string[]
         )
-        .flat()
+        .flat(),
+      connection
     );
     const profileIds = distinct([
       ...waveEntities
@@ -107,7 +117,7 @@ export class WavesMappers {
       ...curationEntities.map((curationEntity) => curationEntity.created_by)
     ]);
     const profileMins: Record<string, ProfileMin> = await this.profilesService
-      .getProfileMinsByIds(profileIds)
+      .getProfileMinsByIds(profileIds, connection)
       .then((profileMins) =>
         profileMins.reduce((acc, profileMin) => {
           acc[profileMin.id] = {
@@ -128,13 +138,18 @@ export class WavesMappers {
       },
       {} as Record<string, Group>
     );
+    const creationDropsByDropId = await dropsService.findDropsByIdsOrThrow(
+      distinct(waveEntities.map((it) => it.description_drop_id)),
+      connection
+    );
     return waveEntities.map<Wave>((waveEntity) => {
       return {
         id: waveEntity.id,
         name: waveEntity.name,
         serial_no: waveEntity.serial_no,
         author: profileMins[waveEntity.created_by],
-        description: waveEntity.description,
+        description_drop:
+          creationDropsByDropId[waveEntity.description_drop_id]!,
         created_at: waveEntity.created_at,
         voting: {
           scope: {

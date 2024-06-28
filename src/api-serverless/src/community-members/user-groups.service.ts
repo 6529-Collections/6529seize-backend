@@ -570,8 +570,11 @@ export class UserGroupsService {
     return await this.mapForApi(group);
   }
 
-  async getByIds(ids: string[]): Promise<UserGroupEntity[]> {
-    return await this.userGroupsDb.getByIds(ids);
+  async getByIds(
+    ids: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<UserGroupEntity[]> {
+    return await this.userGroupsDb.getByIds(ids, connection);
   }
 
   async findUserGroupsWalletGroupWallets(

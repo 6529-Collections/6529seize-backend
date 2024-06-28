@@ -233,7 +233,7 @@ export async function syncIdentitiesTdhNumbers(
     update ${IDENTITIES_TABLE} inner join (select i.consolidation_key, ifnull(t.boosted_tdh, 0) - i.tdh as tdh_adjustment
                               from ${IDENTITIES_TABLE} i
                                        left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = i.consolidation_key
-                              where i.tdh <> ifnull(t.boosted_tdh, 0) limit 1000) needed_tdh_adjustments on ${IDENTITIES_TABLE} .consolidation_key = needed_tdh_adjustments.consolidation_key
+                              where i.tdh <> ifnull(t.boosted_tdh, 0) limit 100000) needed_tdh_adjustments on ${IDENTITIES_TABLE} .consolidation_key = needed_tdh_adjustments.consolidation_key
     set ${IDENTITIES_TABLE}.tdh       = ${IDENTITIES_TABLE}.tdh + needed_tdh_adjustments.tdh_adjustment,
         ${IDENTITIES_TABLE}.level_raw = ${IDENTITIES_TABLE}.level_raw + needed_tdh_adjustments.tdh_adjustment
   `,
