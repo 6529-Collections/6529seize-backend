@@ -2144,6 +2144,7 @@ components:
         - required_metadata
         - signature_required
         - no_of_applications_allowed_per_participant
+        - required_media
       properties:
         scope:
           $ref: "#/components/schemas/WaveScope"
@@ -2160,6 +2161,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/WaveRequiredMetadata"
+        required_media:
+          oneOf:
+            - $ref: "#/components/schemas/WaveParticipationRequirement"
+            - type: "null"
         signature_required:
           description: If true then the votes must be signed by voters.
           type: boolean
@@ -2173,6 +2178,7 @@ components:
         - required_metadata
         - signature_required
         - no_of_applications_allowed_per_participant
+        - required_media
       properties:
         scope:
           $ref: "#/components/schemas/CreateNewWaveScope"
@@ -2182,6 +2188,10 @@ components:
           format: int64
           nullable: true
           minimum: 1
+        required_media:
+          oneOf:
+            - $ref: "#/components/schemas/WaveParticipationRequirement"
+            - type: "null"
         required_metadata:
           description: |
             The metadata that must be provided by the participant. 
@@ -2246,6 +2256,13 @@ components:
           type: object
           additionalProperties:
             type: string
+
+    WaveParticipationRequirement:
+      type: string
+      enum:
+        - IMAGE
+        - AUDIO
+        - VIDEO
 
     Wave:
       type: object

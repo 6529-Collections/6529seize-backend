@@ -2,6 +2,7 @@ import { CreateNewWave } from '../generated/models/CreateNewWave';
 import { NewWaveEntity } from './waves.api.db';
 import { distinct, resolveEnumOrThrow } from '../../../helpers';
 import {
+  ParticipationRequiredMedia,
   WaveCreditScopeType,
   WaveCreditType,
   WaveEntity,
@@ -23,6 +24,7 @@ import {
 import { Group } from '../generated/models/Group';
 import { dropsService } from '../drops/drops.api.service';
 import { ConnectionWrapper } from '../../../sql-executor';
+import { WaveParticipationRequirement } from '../generated/models/WaveParticipationRequirement';
 
 export class WavesMappers {
   constructor(
@@ -62,6 +64,13 @@ export class WavesMappers {
       participation_required_metadata: JSON.stringify(
         createWaveRequest.participation.required_metadata
       ),
+      participation_required_media: createWaveRequest.participation
+        .required_media
+        ? resolveEnumOrThrow(
+            ParticipationRequiredMedia,
+            createWaveRequest.participation.required_media
+          )
+        : null,
       participation_period_start:
         createWaveRequest.participation.period?.min ?? null,
       participation_period_end:
@@ -193,6 +202,12 @@ export class WavesMappers {
           required_metadata: JSON.parse(
             waveEntity.participation_required_metadata
           ),
+          required_media: waveEntity.participation_required_media
+            ? resolveEnumOrThrow(
+                WaveParticipationRequirement,
+                waveEntity.participation_required_media
+              )
+            : null,
           signature_required: waveEntity.voting_signature_required,
           period: {
             min: waveEntity.participation_period_start,
