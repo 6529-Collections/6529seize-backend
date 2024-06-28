@@ -23,6 +23,7 @@ import { waveApiService } from './wave.api.service';
 import { SearchWavesParams } from './waves.api.db';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { userGroupsService } from '../community-members/user-groups.service';
+import { NewWaveDropSchema } from '../drops/drop.validator';
 
 const router = asyncRouter();
 
@@ -49,7 +50,7 @@ router.post(
     const request = getValidatedByJoiOrThrow(req.body, WaveSchema);
     const wave = await waveApiService.createWave({
       createWaveRequest: request,
-      authorId: authenticatedProfileId
+      authenticationContext
     });
     res.send(wave);
   }
@@ -198,7 +199,7 @@ const WaveOutcomeSchema = Joi.object<WaveOutcome>({
 
 const WaveSchema = Joi.object<CreateNewWave>({
   name: Joi.string().required().max(250).min(1),
-  description: Joi.string().required().max(2000).min(1),
+  description_drop: NewWaveDropSchema.required(),
   voting: WaveVotingSchema.required(),
   visibility: WaveVisibilitySchema.required(),
   participation: WaveParticipationSchema.required(),

@@ -13,6 +13,9 @@ import {
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { wavesMappers, WavesMappers } from './waves.mappers';
+import { randomUUID } from 'crypto';
+import { dropCreationService } from '../drops/drop-creation.api.service';
+import { AuthenticationContext } from '../../../auth-context';
 
 export class WaveApiService {
   constructor(
@@ -24,19 +27,29 @@ export class WaveApiService {
 
   public async createWave({
     createWaveRequest,
-    authorId
+    authenticationContext
   }: {
     createWaveRequest: CreateNewWave;
-    authorId: string;
+    authenticationContext: AuthenticationContext;
   }): Promise<Wave> {
     await this.validateWaveRelations(createWaveRequest);
     const createdWave = await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        const id = randomUUID();
+        const descriptionDropId = await dropCreationService
+          .createWaveDrop(
+            id,
+            createWaveRequest.description_drop,
+            authenticationContext,
+            connection
+          )
+          .then((drop) => drop.id);
         const newEntity = this.waveMappers.createWaveToNewWaveEntity(
           createWaveRequest,
-          authorId
+          authenticationContext.getActingAsId()!,
+          descriptionDropId
         );
-        const id = await this.wavesApiDb.insertWave(newEntity, connection);
+        await this.wavesApiDb.insertWave(id, newEntity, connection);
 
         const waveEntity = await this.wavesApiDb.findWaveById(id, connection);
 
@@ -44,7 +57,10 @@ export class WaveApiService {
           throw new Error(`Something went wrong while creating wave ${id}`);
         }
 
-        return await this.waveMappers.waveEntityToApiWave(waveEntity);
+        return await this.waveMappers.waveEntityToApiWave(
+          waveEntity,
+          connection
+        );
       }
     );
     await giveReadReplicaTimeToCatchUp();

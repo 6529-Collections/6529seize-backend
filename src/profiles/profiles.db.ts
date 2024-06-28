@@ -516,14 +516,18 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async getProfileMinsByIds(ids: string[]): Promise<ProfileOverview[]> {
+  async getProfileMinsByIds(
+    ids: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<ProfileOverview[]> {
     if (!ids.length) {
       return [];
     }
     return this.db
       .execute(
         `select profile_id as id, handle, pfp, cic, rep, tdh, banner1 as banner1_color, banner2 as banner2_color, level_raw as level from ${IDENTITIES_TABLE} where profile_id in (:ids)`,
-        { ids }
+        { ids },
+        connection ? { wrappedConnection: connection } : undefined
       )
       .then((result) =>
         result.map((it: ProfileOverview) => ({
@@ -535,7 +539,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
   }
 
   async getNewestVersionHandlesOfArchivedProfiles(
-    profileIds: string[]
+    profileIds: string[],
+    connection?: ConnectionWrapper<any>
   ): Promise<
     {
       external_id: string;
@@ -553,7 +558,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
             from ${PROFILES_ARCHIVE_TABLE} p
                      join prof_ids_w_latest_versions l on p.id = l.id
             where l.external_id in (:profileIds)`,
-      { profileIds }
+      { profileIds },
+      connection ? { wrappedConnection: connection } : undefined
     );
   }
 

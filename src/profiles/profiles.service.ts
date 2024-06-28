@@ -1088,13 +1088,19 @@ export class ProfilesService {
     throw new Error('Failed to upload image');
   }
 
-  async getProfileMinsByIds(ids: string[]): Promise<ProfileOverview[]> {
-    const activeProfiles = await this.profilesDb.getProfileMinsByIds(ids);
+  async getProfileMinsByIds(
+    ids: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<ProfileOverview[]> {
+    const activeProfiles = await this.profilesDb.getProfileMinsByIds(
+      ids,
+      connection
+    );
     const notFoundProfileIds = ids.filter(
       (id) => !activeProfiles.find((p) => p.id === id)
     );
     const archivedProfiles: ProfileOverview[] = await this.profilesDb
-      .getNewestVersionHandlesOfArchivedProfiles(notFoundProfileIds)
+      .getNewestVersionHandlesOfArchivedProfiles(notFoundProfileIds, connection)
       .then((it) =>
         it.map<ProfileOverview>((p) => ({
           id: p.external_id,
