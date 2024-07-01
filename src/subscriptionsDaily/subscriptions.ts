@@ -350,27 +350,52 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
       await manager.query(
         `UPDATE ${SUBSCRIPTIONS_NFTS_TABLE}
         SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'`
+        WHERE consolidation_key = '${oldKey}'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${SUBSCRIPTIONS_NFTS_TABLE}
+          WHERE consolidation_key = '${newKey}'
+        )`
       );
       await manager.query(
         `UPDATE ${SUBSCRIPTIONS_LOGS_TABLE}
         SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'`
+        WHERE consolidation_key = '${oldKey}'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${SUBSCRIPTIONS_LOGS_TABLE}
+          WHERE consolidation_key = '${newKey}'
+        )`
       );
       await manager.query(
         `UPDATE ${SUBSCRIPTIONS_REDEEMED_TABLE}
         SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'`
+        WHERE consolidation_key = '${oldKey}'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}
+          WHERE consolidation_key = '${newKey}'
+        )`
       );
       await manager.query(
         `UPDATE ${SUBSCRIPTIONS_BALANCES_TABLE}
         SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'`
+        WHERE consolidation_key = '${oldKey}'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
+          WHERE consolidation_key = '${newKey}'
+        )`
       );
       await manager.query(
         `UPDATE ${SUBSCRIPTIONS_MODE_TABLE}
         SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'`
+        WHERE consolidation_key = '${oldKey}'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${SUBSCRIPTIONS_MODE_TABLE}
+          WHERE consolidation_key = '${newKey}'
+        )`
       );
     }
   });
