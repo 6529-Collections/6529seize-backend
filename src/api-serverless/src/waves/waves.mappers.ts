@@ -64,13 +64,10 @@ export class WavesMappers {
       participation_required_metadata: JSON.stringify(
         createWaveRequest.participation.required_metadata
       ),
-      participation_required_media: createWaveRequest.participation
-        .required_media
-        ? resolveEnumOrThrow(
-            ParticipationRequiredMedia,
-            createWaveRequest.participation.required_media
-          )
-        : null,
+      participation_required_media:
+        createWaveRequest.participation.required_media.map((it) =>
+          resolveEnumOrThrow(ParticipationRequiredMedia, it)
+        ),
       participation_period_start:
         createWaveRequest.participation.period?.min ?? null,
       participation_period_end:
@@ -202,12 +199,9 @@ export class WavesMappers {
           required_metadata: JSON.parse(
             waveEntity.participation_required_metadata
           ),
-          required_media: waveEntity.participation_required_media
-            ? resolveEnumOrThrow(
-                WaveParticipationRequirement,
-                waveEntity.participation_required_media
-              )
-            : null,
+          required_media: waveEntity.participation_required_media.map((it) =>
+            resolveEnumOrThrow(WaveParticipationRequirement, it)
+          ),
           signature_required: waveEntity.voting_signature_required,
           period: {
             min: waveEntity.participation_period_start,

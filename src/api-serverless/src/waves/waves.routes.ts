@@ -173,9 +173,9 @@ const WaveParticipationSchema = Joi.object<CreateNewWaveParticipationConfig>({
     .required()
     .min(0)
     .items(WaveRequiredMetadataSchema),
-  required_media: Joi.string()
-    .default(null)
-    .allow(...Object.values(WaveParticipationRequirement), null),
+  required_media: Joi.array().items(
+    Joi.string().valid(...Object.values(WaveParticipationRequirement))
+  ),
   signature_required: Joi.boolean().required(),
   period: IntRangeSchema.required().allow(null)
 });
