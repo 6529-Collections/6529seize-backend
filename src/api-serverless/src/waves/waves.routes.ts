@@ -121,6 +121,7 @@ const IntRangeSchema = Joi.object<IntRange>({
     if (min !== null && max !== null && min > max) {
       return helpers.error('min.max.flip');
     }
+    return { min, max };
   })
   .messages({
     'min.max.flip': `There's a range in request where max is less than min. This is not allowed.`
