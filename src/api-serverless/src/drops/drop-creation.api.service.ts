@@ -259,30 +259,32 @@ export class DropCreationApiService {
   }
 
   private verifyMedia(wave: Wave, createDropRequest: CreateDropRequest) {
-    const requiredMedia = wave.participation.required_media;
-    if (requiredMedia) {
+    const requiredMedias = wave.participation.required_media;
+    if (requiredMedias.length) {
       const mimeTypes = createDropRequest.parts
         .map((it) => it.media.map((media) => media.mime_type))
         .flat()
         .flat();
-      let requiredMimeType: string | undefined = undefined;
-      switch (requiredMedia) {
-        case WaveParticipationRequirement.Image:
-          requiredMimeType = mimeTypes.find((it) => it.startsWith('image/'));
-          break;
-        case WaveParticipationRequirement.Video:
-          requiredMimeType = mimeTypes.find((it) => it.startsWith('video/'));
-          break;
-        case WaveParticipationRequirement.Audio:
-          requiredMimeType = mimeTypes.find((it) => it.startsWith('audio/'));
-          break;
-        default:
-          assertUnreachable(requiredMedia);
-      }
-      if (!requiredMimeType) {
-        throw new BadRequestException(
-          `Wave requires media of type ${requiredMedia}`
-        );
+      for (const requiredMedia of requiredMedias) {
+        let requiredMimeType: string | undefined = undefined;
+        switch (requiredMedia) {
+          case WaveParticipationRequirement.Image:
+            requiredMimeType = mimeTypes.find((it) => it.startsWith('image/'));
+            break;
+          case WaveParticipationRequirement.Video:
+            requiredMimeType = mimeTypes.find((it) => it.startsWith('video/'));
+            break;
+          case WaveParticipationRequirement.Audio:
+            requiredMimeType = mimeTypes.find((it) => it.startsWith('audio/'));
+            break;
+          default:
+            assertUnreachable(requiredMedia);
+        }
+        if (!requiredMimeType) {
+          throw new BadRequestException(
+            `Wave requires media of type ${requiredMedia}`
+          );
+        }
       }
     }
   }

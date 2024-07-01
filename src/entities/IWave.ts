@@ -60,8 +60,8 @@ export class WaveEntity {
   @Column({ type: 'json', nullable: false })
   readonly participation_required_metadata!: string;
 
-  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
-  readonly participation_required_media!: ParticipationRequiredMedia | null;
+  @Column({ type: 'json', nullable: false })
+  readonly participation_required_media!: ParticipationRequiredMedia[];
 
   @Column({ type: 'bigint', nullable: true })
   readonly participation_period_start!: number | null;

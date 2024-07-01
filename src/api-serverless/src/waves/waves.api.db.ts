@@ -25,12 +25,25 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>
   ): Promise<WaveEntity | null> {
     return this.db
-      .execute<WaveEntity>(
-        `SELECT * FROM waves WHERE id = :id`,
+      .oneOrNull<
+        Omit<WaveEntity, 'participation_required_media'> & {
+          participation_required_media: string;
+        }
+      >(
+        `SELECT * FROM ${WAVES_TABLE} WHERE id = :id`,
         { id },
         connection ? { wrappedConnection: connection } : undefined
       )
-      .then((it) => it[0] ?? null);
+      .then((it) =>
+        it
+          ? {
+              ...it,
+              participation_required_media: JSON.parse(
+                it.participation_required_media
+              )
+            }
+          : null
+      );
   }
 
   public async insertWave(
@@ -110,7 +123,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             :outcomes
         )
     `,
-      params,
+      {
+        ...params,
+        participation_required_media: JSON.stringify(
+          params.participation_required_media
+        )
+      },
       { wrappedConnection: connection }
     );
   }
@@ -131,7 +149,20 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       ...sqlAndParams.params,
       serialNoLessThan
     };
-    return this.db.execute(sql, params);
+    return this.db
+      .execute<
+        Omit<WaveEntity, 'participation_required_media'> & {
+          participation_required_media: string;
+        }
+      >(sql, params)
+      .then((it) =>
+        it.map((wave) => ({
+          ...wave,
+          participation_required_media: JSON.parse(
+            wave.participation_required_media
+          )
+        }))
+      );
   }
 }
 
