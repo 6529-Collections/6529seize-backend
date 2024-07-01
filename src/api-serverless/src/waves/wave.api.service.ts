@@ -1,7 +1,7 @@
 import { SearchWavesParams, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { CreateNewWave } from '../generated/models/CreateNewWave';
 import { Wave } from '../generated/models/Wave';
-import { distinct } from '../../../helpers';
+import { assertUnreachable, distinct } from '../../../helpers';
 import {
   profilesService,
   ProfilesService
@@ -16,6 +16,9 @@ import { wavesMappers, WavesMappers } from './waves.mappers';
 import { randomUUID } from 'crypto';
 import { dropCreationService } from '../drops/drop-creation.api.service';
 import { AuthenticationContext } from '../../../auth-context';
+import { WaveType } from '../generated/models/WaveType';
+import { WaveOutcomeType } from '../generated/models/WaveOutcomeType';
+import { WaveOutcomeSubType } from '../generated/models/WaveOutcomeSubType';
 
 export class WaveApiService {
   constructor(
@@ -67,12 +70,13 @@ export class WaveApiService {
     return createdWave;
   }
 
-  private async validateWaveRelations(createWaveRequest: CreateNewWave) {
+  private async validateWaveRelations(createWave: CreateNewWave) {
+    this.validateOutcomes(createWave);
     const referencedGroupIds = distinct(
       [
-        createWaveRequest.visibility.scope.group_id,
-        createWaveRequest.participation.scope.group_id,
-        createWaveRequest.voting.scope.group_id
+        createWave.visibility.scope.group_id,
+        createWave.participation.scope.group_id,
+        createWave.voting.scope.group_id
       ].filter((id) => id !== null) as string[]
     );
     const groupEntities = await this.userGroupsService.getByIds(
@@ -86,7 +90,7 @@ export class WaveApiService {
         `Group(s) not found: ${missingGroupIds.join(', ')}`
       );
     }
-    const referencedCreditorId = createWaveRequest.voting.creditor_id;
+    const referencedCreditorId = createWave.voting.creditor_id;
     if (referencedCreditorId) {
       const creditorProfile = await this.profilesService.getProfileMinsByIds([
         referencedCreditorId
@@ -95,6 +99,56 @@ export class WaveApiService {
         throw new BadRequestException(
           `Creditor not found: ${referencedCreditorId}`
         );
+      }
+    }
+  }
+
+  private validateOutcomes(createWave: CreateNewWave) {
+    const waveType = createWave.wave.type;
+    switch (waveType) {
+      case WaveType.Approve: {
+        if (createWave.outcomes.find((it) => it.distribution?.length)) {
+          throw new BadRequestException(
+            `Waves of type ${WaveType.Approve} can't have distribution in outcomes`
+          );
+        }
+        break;
+      }
+      case WaveType.Rank: {
+        const creditDistributionOutcomes = createWave.outcomes.filter(
+          (it) =>
+            it.type == WaveOutcomeType.Automatic &&
+            it.subtype === WaveOutcomeSubType.CreditDistribution
+        );
+        if (
+          creditDistributionOutcomes.length &&
+          !creditDistributionOutcomes.find((it) => it.distribution?.length)
+        ) {
+          throw new BadRequestException(
+            `Credit distribution outcomes for waves of type ${WaveType.Rank} need to have distribution described`
+          );
+        }
+        const non100PercentDistributions = creditDistributionOutcomes.filter(
+          (outcome) =>
+            outcome.distribution?.reduce((acc, it) => acc + it, 0) !== 100
+        );
+        if (non100PercentDistributions.length) {
+          throw new BadRequestException(
+            `There are ${non100PercentDistributions.length} credit distribution outcomes where the distribution does not add up to 100%`
+          );
+        }
+        break;
+      }
+      case WaveType.Chat: {
+        if (createWave.outcomes.length) {
+          throw new BadRequestException(
+            `Waves of type ${WaveType.Chat} can't have outcomes`
+          );
+        }
+        break;
+      }
+      default: {
+        assertUnreachable(waveType);
       }
     }
   }
