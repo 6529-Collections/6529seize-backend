@@ -27,38 +27,15 @@ import { CookiesConsent } from './entities/ICookieConsent';
 import { AddressConsolidationKey } from './entities/IAddressConsolidationKey';
 import { IdentityEntity } from './entities/IIdentity';
 
+import * as customLoop from './customReplayLoop';
+
 const logger = Logger.get('BACKEND');
 
 async function start() {
   const start = Time.now();
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  await loadEnv([
-    Profile,
-    ProfileArchived,
-    CicStatement,
-    ProfileActivityLog,
-    Rating,
-    AbusivenessDetectionResult,
-    RatingsSnapshot,
-    DropEntity,
-    DropPartEntity,
-    DropMentionEntity,
-    DropReferencedNftEntity,
-    DropMetadataEntity,
-    DropMediaEntity,
-    DropVoteCreditSpending,
-    DropCommentEntity,
-    ProfileProxyEntity,
-    ProfileProxyActionEntity,
-    WaveEntity,
-    CookiesConsent,
-    UserGroupEntity,
-    WalletGroupEntity,
-    AddressConsolidationKey,
-    IdentityEntity
-  ]);
-  await dbMigrationsLoop.handler(null, null as any, null as any);
+  await customLoop.handler(null, null as any, null as any);
 
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
