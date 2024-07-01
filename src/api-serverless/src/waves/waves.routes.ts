@@ -25,6 +25,10 @@ import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction
 import { userGroupsService } from '../community-members/user-groups.service';
 import { NewWaveDropSchema } from '../drops/drop.validator';
 import { WaveParticipationRequirement } from '../generated/models/WaveParticipationRequirement';
+import { WaveOutcomeType } from '../generated/models/WaveOutcomeType';
+import { WaveOutcomeSubType } from '../generated/models/WaveOutcomeSubType';
+import { WaveOutcomeCredit } from '../generated/models/WaveOutcomeCredit';
+import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 
 const router = asyncRouter();
 
@@ -201,8 +205,48 @@ const WaveConfigSchema = Joi.object<WaveConfig>({
 });
 
 const WaveOutcomeSchema = Joi.object<WaveOutcome>({
-  type: Joi.string().required().min(1),
-  properties: Joi.object().required()
+  type: Joi.string()
+    .required()
+    .valid(...Object.values(WaveOutcomeType)),
+  subtype: Joi.when('type', {
+    is: WaveOutcomeType.Automatic,
+    then: Joi.string()
+      .required()
+      .valid(...Object.values(WaveOutcomeSubType)),
+    otherwise: Joi.optional().valid(null)
+  }),
+  description: Joi.string().required().max(250).min(1),
+  credit: Joi.when('subtype', {
+    is: WaveOutcomeSubType.CreditDistribution,
+    then: Joi.string()
+      .required()
+      .valid(...Object.values(WaveOutcomeCredit)),
+    otherwise: Joi.optional().valid(null)
+  }),
+  rep_category: Joi.when('credit', {
+    is: WaveOutcomeCredit.Rep,
+    then: Joi.string()
+      .required()
+      .min(3)
+      .max(100)
+      .regex(REP_CATEGORY_PATTERN)
+      .messages({
+        'string.pattern.base': `Invalid category. Category can't be longer than 100 characters. It can only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes.`
+      }),
+    otherwise: Joi.optional().valid(null)
+  }),
+  amount: Joi.when('subtype', {
+    is: WaveOutcomeSubType.CreditDistribution,
+    then: Joi.number().integer().required().min(1),
+    otherwise: Joi.optional().valid(null)
+  }),
+  distribution: Joi.when('subtype', {
+    is: WaveOutcomeSubType.CreditDistribution,
+    then: Joi.array()
+      .optional()
+      .items(Joi.number().integer().required().min(0)),
+    otherwise: Joi.optional().valid(null)
+  })
 });
 
 const WaveSchema = Joi.object<CreateNewWave>({
