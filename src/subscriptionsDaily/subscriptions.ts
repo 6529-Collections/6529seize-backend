@@ -359,7 +359,8 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
       }
       await manager.query(
         `UPDATE ${SUBSCRIPTIONS_NFTS_TABLE}
-        SET consolidation_key = '${newKey}'`
+        SET consolidation_key = '${newKey}'
+        WHERE consolidation_key = '${oldKey}'`
       );
       await manager.query(
         `UPDATE ${SUBSCRIPTIONS_LOGS_TABLE}
