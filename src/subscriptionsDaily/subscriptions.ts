@@ -347,55 +347,39 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
   await getDataSource().transaction(async (manager) => {
     for (const oldKey of Array.from(replaceConsolidations.keys())) {
       const newKey = replaceConsolidations.get(oldKey);
+      const exists = await manager.query(
+        `SELECT 1 FROM ${SUBSCRIPTIONS_NFTS_TABLE}
+        WHERE consolidation_key = '${newKey}'`
+      );
+      if (exists.length > 0) {
+        logger.info(
+          `[CONSOLIDATING SUBSCRIPTIONS] : [DUPLICATE CONSOLIDATION KEY ${newKey}] : [SKIPPING]`
+        );
+        continue;
+      }
       await manager.query(
         `UPDATE ${SUBSCRIPTIONS_NFTS_TABLE}
-        SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM ${SUBSCRIPTIONS_NFTS_TABLE}
-          WHERE consolidation_key = '${newKey}'
-        )`
+        SET consolidation_key = '${newKey}'`
       );
       await manager.query(
         `UPDATE ${SUBSCRIPTIONS_LOGS_TABLE}
         SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM ${SUBSCRIPTIONS_LOGS_TABLE}
-          WHERE consolidation_key = '${newKey}'
-        )`
+        WHERE consolidation_key = '${oldKey}'`
       );
       await manager.query(
         `UPDATE ${SUBSCRIPTIONS_REDEEMED_TABLE}
         SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM ${SUBSCRIPTIONS_REDEEMED_TABLE}
-          WHERE consolidation_key = '${newKey}'
-        )`
+        WHERE consolidation_key = '${oldKey}'`
       );
       await manager.query(
         `UPDATE ${SUBSCRIPTIONS_BALANCES_TABLE}
         SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
-          WHERE consolidation_key = '${newKey}'
-        )`
+        WHERE consolidation_key = '${oldKey}'`
       );
       await manager.query(
         `UPDATE ${SUBSCRIPTIONS_MODE_TABLE}
         SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'
-        AND NOT EXISTS (
-          SELECT 1
-          FROM ${SUBSCRIPTIONS_MODE_TABLE}
-          WHERE consolidation_key = '${newKey}'
-        )`
+        WHERE consolidation_key = '${oldKey}'`
       );
     }
   });
