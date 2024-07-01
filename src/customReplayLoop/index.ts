@@ -25,17 +25,16 @@ async function replay() {
 
   logger.info(`[MISSING AIRDROPS ${missingAirdrops.length}]`);
 
-  // for (const missingAirdrop of missingAirdrops) {
-  //   const airdropAddress = await fetchAirdropAddressForConsolidationKey(
-  //     missingAirdrop.consolidation_key
-  //   );
-
-  //   await sqlExecutor.execute(
-  //     `UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} SET airdrop_address = :airdropAddress WHERE id = :id `,
-  //     {
-  //       airdropAddress: airdropAddress.airdrop_address,
-  //       id: missingAirdrop.id
-  //     }
-  //   );
-  // }
+  for (const missingAirdrop of missingAirdrops) {
+    const airdropAddress = await fetchAirdropAddressForConsolidationKey(
+      missingAirdrop.consolidation_key
+    );
+    await sqlExecutor.execute(
+      `UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE} SET airdrop_address = :airdropAddress WHERE id = :id `,
+      {
+        airdropAddress: airdropAddress.airdrop_address,
+        id: missingAirdrop.id
+      }
+    );
+  }
 }
