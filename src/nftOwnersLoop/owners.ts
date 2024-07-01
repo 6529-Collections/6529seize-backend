@@ -1,5 +1,6 @@
 import { NftContractOwner } from 'alchemy-sdk';
 import fetch from 'node-fetch';
+import { sleep } from '../helpers';
 
 interface OwnersApiResponse {
   ownerAddresses: NftContractOwner[];
@@ -65,6 +66,7 @@ async function getOwners(
 }
 
 async function getOwnersForPage(block: number, contract: string, page: string) {
+  await sleep(1000);
   const baseUrl = `https://eth-mainnet.g.alchemy.com/nft/v2/${process.env.ALCHEMY_API_KEY}/getOwnersForContract`;
   const urlParams = new URLSearchParams({
     contractAddress: contract,

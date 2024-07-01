@@ -446,3 +446,7 @@ export function isValidIP(ip: string): boolean {
   const octets = ip.split('.').map(Number);
   return octets.every((octet) => octet >= 0 && octet <= 255);
 }
+
+export async function sleep(millis: number) {
+  return new Promise((resolve) => setTimeout(resolve, millis));
+}
