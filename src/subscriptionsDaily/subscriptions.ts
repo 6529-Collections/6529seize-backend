@@ -347,6 +347,16 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
   await getDataSource().transaction(async (manager) => {
     for (const oldKey of Array.from(replaceConsolidations.keys())) {
       const newKey = replaceConsolidations.get(oldKey);
+      const exists = await manager.query(
+        `SELECT 1 FROM ${SUBSCRIPTIONS_NFTS_TABLE}
+        WHERE consolidation_key = '${newKey}'`
+      );
+      if (exists.length > 0) {
+        logger.info(
+          `[CONSOLIDATING SUBSCRIPTIONS] : [DUPLICATE CONSOLIDATION KEY ${newKey}] : [SKIPPING]`
+        );
+        continue;
+      }
       await manager.query(
         `UPDATE ${SUBSCRIPTIONS_NFTS_TABLE}
         SET consolidation_key = '${newKey}'
