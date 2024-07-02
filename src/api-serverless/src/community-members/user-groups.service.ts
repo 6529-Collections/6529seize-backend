@@ -30,6 +30,7 @@ import {
   GroupOwnsNft,
   GroupOwnsNftNameEnum
 } from '../generated/models/GroupOwnsNft';
+import { identitiesDb } from '../../../identities/identities.db';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -45,8 +46,12 @@ export class UserGroupsService {
   ) {}
 
   async save(
-    group: Omit<NewUserGroupEntity, 'wallet_group_id'> & {
+    group: Omit<
+      NewUserGroupEntity,
+      'wallet_group_id' | 'excluded_wallet_group_id'
+    > & {
       wallets: string[];
+      excluded_wallets: string[];
     },
     createdBy: { id: string; handle: string }
   ): Promise<GroupFull> {
@@ -67,6 +72,12 @@ export class UserGroupsService {
                 connection
               )
             : null;
+          const excluded_wallet_group_id = group.excluded_wallets.length
+            ? await this.userGroupsDb.insertWalletGroupWalletsAndGetGroupId(
+                group.excluded_wallets,
+                connection
+              )
+            : null;
           await this.userGroupsDb.save(
             {
               ...group,
@@ -75,7 +86,8 @@ export class UserGroupsService {
               created_by: createdBy.id,
               visible: false,
               name: group.name,
-              wallet_group_id
+              wallet_group_id,
+              excluded_wallet_group_id
             },
             connection
           );
@@ -96,16 +108,44 @@ export class UserGroupsService {
       return [];
     }
     const givenCicAndRep = await this.userGroupsDb.getGivenCicAndRep(profileId);
-    const initialSelection =
-      await this.userGroupsDb.getGroupsMatchingConditions({
-        profileId,
-        receivedCic: profile.cic,
-        receivedRep: profile.rep,
-        tdh: profile.tdh,
-        level: profile.level,
-        givenCic: givenCicAndRep.cic,
-        givenRep: givenCicAndRep.rep
-      });
+    let initialSelection = await this.userGroupsDb.getGroupsMatchingConditions({
+      profileId,
+      receivedCic: profile.cic,
+      receivedRep: profile.rep,
+      tdh: profile.tdh,
+      level: profile.level,
+      givenCic: givenCicAndRep.cic,
+      givenRep: givenCicAndRep.rep
+    });
+    let inclusionGroups = initialSelection
+      .map((it) => it.wallet_group_id)
+      .filter((it) => !!it) as string[];
+    let exclusionGroups = initialSelection
+      .map((it) => it.excluded_wallet_group_id)
+      .filter((it) => !!it) as string[];
+    if (inclusionGroups.length || exclusionGroups.length) {
+      const profileWallets = await identitiesDb.getWalletsByProfileId(
+        profileId
+      );
+      const walletGroupIdsContainingProfileWallets =
+        await this.userGroupsDb.getWalletGroupIdsHavingWallets(
+          [...inclusionGroups, ...exclusionGroups],
+          profileWallets
+        );
+      inclusionGroups = inclusionGroups.filter((it) =>
+        walletGroupIdsContainingProfileWallets.includes(it)
+      );
+      exclusionGroups = exclusionGroups.filter((it) =>
+        walletGroupIdsContainingProfileWallets.includes(it)
+      );
+      initialSelection = initialSelection.filter(
+        (it) =>
+          (it.excluded_wallet_group_id === null ||
+            !exclusionGroups.includes(it.excluded_wallet_group_id)) &&
+          (it.wallet_group_id === null ||
+            inclusionGroups.includes(it.wallet_group_id))
+      );
+    }
     const ambiguousCandidates = initialSelection.filter(
       (group) => group.cic_user ?? group.rep_user ?? group.rep_category
     );
@@ -334,7 +374,8 @@ export class UserGroupsService {
           max: null
         },
         owns_nfts: [],
-        wallet_group_id: null
+        wallet_group_id: null,
+        excluded_wallet_group_id: null
       });
     } else {
       const group = await this.getByIdOrThrow(groupId);
@@ -343,7 +384,10 @@ export class UserGroupsService {
   }
 
   private async getSqlAndParams(
-    group: Omit<GroupDescription, 'wallet_group_wallets_count'>
+    group: Omit<
+      GroupDescription,
+      'wallet_group_wallets_count' | 'excluded_wallet_group_wallets_count'
+    >
   ): Promise<{
     sql: string;
     params: Record<string, any>;
@@ -383,8 +427,7 @@ export class UserGroupsService {
     const repPart = this.getRepPart(group, params);
     const cicPart = this.getCicPart(group, params, repPart);
     const cmPart = this.getGeneralPart(repPart, cicPart, group, params);
-    const sql = `with ${repPart ?? ''}${cicPart ?? ''}${cmPart}`;
-
+    const sql = `with ${repPart ?? ''} ${cicPart ?? ''} ${cmPart}`;
     return {
       sql,
       params
@@ -394,14 +437,31 @@ export class UserGroupsService {
   private getGeneralPart(
     repPart: string | null,
     cicPart: string | null,
-    group: Omit<GroupDescription, 'wallet_group_wallets_count'>,
+    group: Omit<
+      GroupDescription,
+      'wallet_group_wallets_count' | 'excluded_wallet_group_wallets_count'
+    >,
     params: Record<string, any>
   ) {
-    let cmPart = ` ${repPart || cicPart ? ',' : ''}
-    ${
-      UserGroupsService.GENERATED_VIEW
-    } as (select i.* from ${IDENTITIES_TABLE} i
-    `;
+    let cmPart = ` ${repPart || cicPart ? ', ' : ' '}`;
+    if (group.wallet_group_id) {
+      cmPart += ` included_consolidation_keys as (select distinct ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key as inc_consolidation_k from ${WALLET_GROUPS_TABLE}
+                     join ${ADDRESS_CONSOLIDATION_KEY} on ${WALLET_GROUPS_TABLE}.wallet = ${ADDRESS_CONSOLIDATION_KEY}.address
+                     where ${WALLET_GROUPS_TABLE}.wallet_group_id = :wallet_group_id), `;
+      params.wallet_group_id = group.wallet_group_id;
+    }
+    if (group.excluded_wallet_group_id) {
+      cmPart += ` excluded_consolidation_keys as (select distinct ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key as ex_consolidation_k
+                                     from ${WALLET_GROUPS_TABLE}
+                                              join ${ADDRESS_CONSOLIDATION_KEY}
+                                                   on ${WALLET_GROUPS_TABLE}.wallet = ${ADDRESS_CONSOLIDATION_KEY}.address
+                                     where ${WALLET_GROUPS_TABLE}.wallet_group_id = :excluded_wallet_group_id), `;
+      params.excluded_wallet_group_id = group.excluded_wallet_group_id;
+    }
+    cmPart += ` ${UserGroupsService.GENERATED_VIEW} as (select i.* from ${IDENTITIES_TABLE} i `;
+    if (group.wallet_group_id) {
+      cmPart += `join included_consolidation_keys on i.consolidation_key = included_consolidation_keys.inc_consolidation_k `;
+    }
     if (repPart !== null) {
       cmPart += `join rep_exchanges on i.profile_id = rep_exchanges.profile_id `;
     }
@@ -415,6 +475,9 @@ export class UserGroupsService {
       params.wallet_group_id = group.wallet_group_id;
     }
     cmPart += ` where true `;
+    if (group.excluded_wallet_group_id) {
+      cmPart += `and i.consolidation_key not in (select ex_consolidation_k from excluded_consolidation_keys) `;
+    }
     if (group.tdh.min !== null) {
       cmPart += `and i.tdh >= :tdh_min `;
       params.tdh_min = group.tdh.min;
@@ -436,7 +499,10 @@ export class UserGroupsService {
   }
 
   private getCicPart(
-    group: Omit<GroupDescription, 'wallet_group_wallets_count'>,
+    group: Omit<
+      GroupDescription,
+      'wallet_group_wallets_count' | 'excluded_wallet_group_wallets_count'
+    >,
     params: Record<string, any>,
     repPart: string | null
   ) {
@@ -483,7 +549,10 @@ export class UserGroupsService {
   }
 
   private getRepPart(
-    group: Omit<GroupDescription, 'wallet_group_wallets_count'>,
+    group: Omit<
+      GroupDescription,
+      'wallet_group_wallets_count' | 'excluded_wallet_group_wallets_count'
+    >,
     params: Record<string, any>
   ) {
     let repPart = null;
@@ -607,7 +676,12 @@ export class UserGroupsService {
       );
     const groupsWalletGroupsIdsAndWalletCounts: Record<
       string,
-      { wallet_group_id: string; wallets_count: number }
+      {
+        wallet_group_id: string | null;
+        wallets_count: number;
+        excluded_wallet_group_id: string | null;
+        excluded_wallets_count: number;
+      }
     > = await this.userGroupsDb.findWalletGroupsIdsAndWalletCountsByGroupIds(
       groups.map((it) => it.id)
     );
@@ -681,7 +755,13 @@ export class UserGroupsService {
         wallet_group_id:
           groupsWalletGroupsIdsAndWalletCounts[it.id]?.wallet_group_id ?? null,
         wallet_group_wallets_count:
-          groupsWalletGroupsIdsAndWalletCounts[it.id]?.wallets_count ?? 0
+          groupsWalletGroupsIdsAndWalletCounts[it.id]?.wallets_count ?? 0,
+        excluded_wallet_group_id:
+          groupsWalletGroupsIdsAndWalletCounts[it.id]
+            ?.excluded_wallet_group_id ?? null,
+        excluded_wallet_group_wallets_count:
+          groupsWalletGroupsIdsAndWalletCounts[it.id]?.excluded_wallets_count ??
+          0
       },
       created_by: relatedProfiles[it.created_by] ?? null
     }));

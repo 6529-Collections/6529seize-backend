@@ -48,7 +48,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                                             owns_lab,
                                             owns_lab_tokens,
                                             visible,
-                                            wallet_group_id)
+                                            wallet_group_id,
+                                            excluded_wallet_group_id)
           values (:id,
                   :name,
                   :cic_min,
@@ -75,7 +76,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                   :owns_lab,
                   :owns_lab_tokens,
                   :visible,
-                  :wallet_group_id)
+                  :wallet_group_id,
+                  :excluded_wallet_group_id)
     `,
       { ...entity },
       { wrappedConnection: connection }
@@ -370,26 +372,78 @@ where ((cg.cic_direction = 'RECEIVED' and (
   async findWalletGroupsIdsAndWalletCountsByGroupIds(
     groupIds: string[]
   ): Promise<
-    Record<string, { wallet_group_id: string; wallets_count: number }>
+    Record<
+      string,
+      {
+        wallet_group_id: string | null;
+        wallets_count: number;
+        excluded_wallet_group_id: string | null;
+        excluded_wallets_count: number;
+      }
+    >
   > {
     if (!groupIds.length) {
       return {};
     }
-    return this.db
-      .execute<{
+    return Promise.all([
+      this.db.execute<{
         group_id: string;
         wallet_group_id: string;
         wallets_count: number;
       }>(
         `select g.id as group_id, wg.wallet_group_id as wallet_group_id, count(wg.wallet) as wallets_count from ${USER_GROUPS_TABLE} g join ${WALLET_GROUPS_TABLE} wg on g.wallet_group_id = wg.wallet_group_id where g.id in (:groupIds) group by 1, 2`,
         { groupIds }
+      ),
+      this.db.execute<{
+        group_id: string;
+        wallet_group_id: string;
+        wallets_count: number;
+      }>(
+        `select g.id as group_id, wg.wallet_group_id as wallet_group_id, count(wg.wallet) as wallets_count from ${USER_GROUPS_TABLE} g join ${WALLET_GROUPS_TABLE} wg on g.excluded_wallet_group_id = wg.wallet_group_id where g.id in (:groupIds) group by 1, 2`,
+        { groupIds }
       )
-      .then((res) =>
-        res.reduce((acc, { group_id, wallet_group_id, wallets_count }) => {
+    ]).then((results) => {
+      const [res1, res2] = results;
+      const includedWallets = res1.reduce(
+        (acc, { group_id, wallet_group_id, wallets_count }) => {
           acc[group_id] = { wallet_group_id, wallets_count };
           return acc;
-        }, {} as Record<string, { wallet_group_id: string; wallets_count: number }>)
+        },
+        {} as Record<string, { wallet_group_id: string; wallets_count: number }>
       );
+      const excludedWallets = res2.reduce(
+        (acc, { group_id, wallet_group_id, wallets_count }) => {
+          acc[group_id] = { wallet_group_id, wallets_count };
+          return acc;
+        },
+        {} as Record<string, { wallet_group_id: string; wallets_count: number }>
+      );
+      const keys = distinct([
+        ...Object.keys(includedWallets),
+        ...Object.keys(excludedWallets)
+      ]);
+      return keys.reduce(
+        (acc, key) => {
+          acc[key] = {
+            wallet_group_id: includedWallets[key]?.wallet_group_id ?? null,
+            wallets_count: includedWallets[key]?.wallets_count ?? 0,
+            excluded_wallet_group_id:
+              excludedWallets[key]?.wallet_group_id ?? null,
+            excluded_wallets_count: excludedWallets[key]?.wallets_count ?? 0
+          };
+          return acc;
+        },
+        {} as Record<
+          string,
+          {
+            wallet_group_id: string | null;
+            wallets_count: number;
+            excluded_wallet_group_id: string | null;
+            excluded_wallets_count: number;
+          }
+        >
+      );
+    });
   }
 
   async findWalletGroupIdsContainingAnyOfProfilesWallets(
@@ -433,6 +487,21 @@ where ((cg.cic_direction = 'RECEIVED' and (
         { walletGroupId }
       )
       .then((res) => res.map((it) => it.wallet));
+  }
+
+  async getWalletGroupIdsHavingWallets(
+    walletGroupIds: string[],
+    profileWallets: string[]
+  ): Promise<string[]> {
+    if (!walletGroupIds.length || !profileWallets.length) {
+      return [];
+    }
+    return this.db
+      .execute<{ wallet_group_id: string }>(
+        `select distinct wallet_group_id from ${WALLET_GROUPS_TABLE} where wallet_group_id in (:walletGroupIds) and wallet in (:profileWallets)`,
+        { walletGroupIds, profileWallets }
+      )
+      .then((res) => res.map((it) => it.wallet_group_id));
   }
 }
 
