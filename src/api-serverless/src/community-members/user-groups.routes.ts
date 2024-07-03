@@ -158,7 +158,10 @@ router.post(
     );
     const userGroup: Omit<
       NewUserGroupEntity,
-      'wallet_group_id' | 'excluded_wallet_group_id'
+      | 'wallet_group_id'
+      | 'excluded_wallet_group_id'
+      | 'profile_group_id'
+      | 'excluded_profile_group_id'
     > & {
       wallets: string[];
       excluded_wallets: string[];

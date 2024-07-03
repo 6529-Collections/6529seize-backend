@@ -26,6 +26,7 @@ import { WalletGroupEntity } from './entities/IWalletGroup';
 import { CookiesConsent } from './entities/ICookieConsent';
 import { AddressConsolidationKey } from './entities/IAddressConsolidationKey';
 import { IdentityEntity } from './entities/IIdentity';
+import { ProfileGroupEntity } from './entities/IProfileGroup';
 
 const logger = Logger.get('BACKEND');
 
@@ -56,10 +57,10 @@ async function start() {
     UserGroupEntity,
     WalletGroupEntity,
     AddressConsolidationKey,
-    IdentityEntity
+    IdentityEntity,
+    ProfileGroupEntity
   ]);
   await dbMigrationsLoop.handler(null, null as any, null as any);
-
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
   process.exit(0);

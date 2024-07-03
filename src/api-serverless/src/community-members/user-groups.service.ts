@@ -48,7 +48,10 @@ export class UserGroupsService {
   async save(
     group: Omit<
       NewUserGroupEntity,
-      'wallet_group_id' | 'excluded_wallet_group_id'
+      | 'wallet_group_id'
+      | 'excluded_wallet_group_id'
+      | 'profile_group_id'
+      | 'excluded_profile_group_id'
     > & {
       wallets: string[];
       excluded_wallets: string[];
@@ -66,14 +69,14 @@ export class UserGroupsService {
             }).slice(0, 50) +
             '-' +
             uniqueShortId();
-          const wallet_group_id = group.wallets.length
-            ? await this.userGroupsDb.insertWalletGroupWalletsAndGetGroupId(
+          const inclusionGroups = group.wallets.length
+            ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
                 group.wallets,
                 connection
               )
             : null;
-          const excluded_wallet_group_id = group.excluded_wallets.length
-            ? await this.userGroupsDb.insertWalletGroupWalletsAndGetGroupId(
+          const exclusionGroups = group.excluded_wallets.length
+            ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
                 group.excluded_wallets,
                 connection
               )
@@ -86,8 +89,12 @@ export class UserGroupsService {
               created_by: createdBy.id,
               visible: false,
               name: group.name,
-              wallet_group_id,
-              excluded_wallet_group_id
+              wallet_group_id: inclusionGroups?.wallet_group_id ?? null,
+              excluded_wallet_group_id:
+                exclusionGroups?.wallet_group_id ?? null,
+              profile_group_id: inclusionGroups?.profile_group_id ?? null,
+              excluded_profile_group_id:
+                exclusionGroups?.profile_group_id ?? null
             },
             connection
           );

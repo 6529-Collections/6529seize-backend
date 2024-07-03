@@ -28,6 +28,7 @@ import { CookiesConsent } from '../entities/ICookieConsent';
 import { IdentityEntity } from '../entities/IIdentity';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
 import { Prenode } from '../entities/IPrenode';
+import { ProfileGroupEntity } from '../entities/IProfileGroup';
 
 const logger = Logger.get('OVER_RATES_REVOCATION_LOOP');
 
@@ -57,7 +58,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     WalletGroupEntity,
     AddressConsolidationKey,
     IdentityEntity,
-    Prenode
+    Prenode,
+    ProfileGroupEntity
   ]);
   await ratingsService.reduceOverRates();
   await dropOverRaterRevocationService.revokeOverRates();

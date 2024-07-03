@@ -59,6 +59,10 @@ export class UserGroupEntity {
   readonly wallet_group_id!: string | null;
   @Column({ type: 'varchar', length: 50, nullable: true, default: null })
   readonly excluded_wallet_group_id!: string | null;
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  readonly profile_group_id!: string | null;
+  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  readonly excluded_profile_group_id!: string | null;
 }
 
 export enum FilterDirection {

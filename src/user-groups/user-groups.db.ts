@@ -7,6 +7,7 @@ import { UserGroupEntity } from '../entities/IUserGroup';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
+  PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
   USER_GROUPS_TABLE,
   WALLET_GROUPS_TABLE
@@ -49,7 +50,9 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                                             owns_lab_tokens,
                                             visible,
                                             wallet_group_id,
-                                            excluded_wallet_group_id)
+                                            excluded_wallet_group_id,
+                                            profile_group_id,
+                                            excluded_profile_group_id)
           values (:id,
                   :name,
                   :cic_min,
@@ -77,18 +80,21 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                   :owns_lab_tokens,
                   :visible,
                   :wallet_group_id,
-                  :excluded_wallet_group_id)
+                  :excluded_wallet_group_id,
+                  :profile_group_id,
+                  :excluded_profile_group_id)
     `,
       { ...entity },
       { wrappedConnection: connection }
     );
   }
 
-  async insertWalletGroupWalletsAndGetGroupId(
+  async insertGroupEntriesAndGetGroupIds(
     wallets: string[],
     connection: ConnectionWrapper<any>
-  ): Promise<string> {
+  ): Promise<{ wallet_group_id: string; profile_group_id: string }> {
     const wallet_group_id = randomUUID();
+    const profile_group_id = randomUUID();
     const distinctAddresses = distinct(wallets.map((w) => w.toLowerCase()));
     if (wallets.length) {
       let sql = `insert into ${WALLET_GROUPS_TABLE} (wallet_group_id, wallet)
@@ -102,25 +108,51 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       const chunkSize = 100;
       for (let i = 0; i < distinctAddresses.length; i += chunkSize) {
         const chunkOfAddresses = distinctAddresses.slice(i, i + chunkSize);
-        const existingAddresses = await this.db
-          .execute<{ address: string }>(
-            `
-        select distinct address from ${ADDRESS_CONSOLIDATION_KEY} where address in (:addresses) for update
-    `,
-            { addresses: chunkOfAddresses },
-            { wrappedConnection: connection }
-          )
-          .then((a) => a.map((it) => it.address));
+        const identities =
+          await identitiesDb.lockEverythingRelatedToIdentitiesByAddresses(
+            chunkOfAddresses,
+            connection
+          );
         const missingIdentities = chunkOfAddresses.filter(
-          (a) => !existingAddresses.includes(a)
+          (a) => !identities[a]
         );
         await identitiesDb.insertIdentitiesOnAddressesOnly(
           missingIdentities,
           connection
         );
+        const profileIds = await identitiesDb
+          .lockEverythingRelatedToIdentitiesByAddresses(
+            chunkOfAddresses,
+            connection
+          )
+          .then((it) =>
+            distinct(Object.values(it).map((it) => it.identity.profile_id!))
+          );
+        const alreadyInsertedProfileIds = await this.db
+          .execute<{ profile_id: string }>(
+            `select profile_id from ${PROFILE_GROUPS_TABLE} where profile_id in (:profileIds) and profile_group_id = :profile_group_id`,
+            { profileIds, profile_group_id },
+            { wrappedConnection: connection }
+          )
+          .then((it) => it.map((it) => it.profile_id));
+        const missingProfileIds = profileIds.filter(
+          (it) => !alreadyInsertedProfileIds.includes(it)
+        );
+        if (missingProfileIds.length) {
+          let sql = `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id)
+                 values `;
+          for (const profileId of missingProfileIds) {
+            sql += `(${mysql.escape(profile_group_id)}, ${mysql.escape(
+              profileId
+            )}),`;
+          }
+          await this.db.execute(sql.slice(0, sql.length - 1), undefined, {
+            wrappedConnection: connection
+          });
+        }
       }
     }
-    return wallet_group_id;
+    return { wallet_group_id, profile_group_id };
   }
 
   async getById(
@@ -502,6 +534,54 @@ where ((cg.cic_direction = 'RECEIVED' and (
         { walletGroupIds, profileWallets }
       )
       .then((res) => res.map((it) => it.wallet_group_id));
+  }
+
+  async findProfileGroupsWhereProfileIdIn(
+    profileId: string,
+    connectionHolder: ConnectionWrapper<any>
+  ): Promise<string[]> {
+    return await this.db
+      .execute<{ profile_group_id: string }>(
+        `
+      select profile_group_id from ${PROFILE_GROUPS_TABLE} where profile_id = :profileId
+    `,
+        { profileId },
+        { wrappedConnection: connectionHolder }
+      )
+      .then((result) => result.map((it) => it.profile_group_id));
+  }
+
+  async deleteProfileIdsInProfileGroups(
+    profileIds: string[],
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    if (!profileIds.length) {
+      return;
+    }
+    await this.db.execute(
+      `delete from ${PROFILE_GROUPS_TABLE} where profile_id in (:profileIds)`,
+      { profileIds },
+      { wrappedConnection: connectionHolder }
+    );
+  }
+
+  async insertProfileIdsInProfileGroups(
+    targetIdentity: string,
+    profileGroupIds: string[],
+    connection: ConnectionWrapper<any>
+  ) {
+    if (!profileGroupIds.length) {
+      return;
+    }
+    const sql = `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id) values ${profileGroupIds
+      .map(
+        (profileGroupId) =>
+          `(${mysql.escape(profileGroupId)}, ${mysql.escape(targetIdentity)}) `
+      )
+      .join(',')}`;
+    await this.db.execute(sql, undefined, {
+      wrappedConnection: connection
+    });
   }
 }
 
