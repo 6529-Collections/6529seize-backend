@@ -228,14 +228,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          join ${
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = d.author_id
-         join ${WAVES_TABLE} w on d.wave_id = w.id and w.id in (:group_ids_user_is_eligible_for) ${
+         join ${WAVES_TABLE} w on d.wave_id = w.id and w.visibility_group_id in (:group_ids_user_is_eligible_for) or w.visibility_group_id is null ${
       wave_id ? `and w.id = :wave_id` : ``
     }
          where d.serial_no < :serialNoLessThan order by d.serial_no desc limit ${amount}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       serialNoLessThan,
-      group_ids_user_is_eligible_for: [...group_ids_user_is_eligible_for, null],
+      group_ids_user_is_eligible_for: [...group_ids_user_is_eligible_for],
       wave_id
     };
     return this.db.execute(sql, params);
