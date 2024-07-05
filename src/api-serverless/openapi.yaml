@@ -2243,7 +2243,7 @@ components:
         - winning_thresholds
         - period
         - max_winners
-        - admin_group_id
+        - admin_group
       properties:
         type:
           $ref: "#/components/schemas/WaveType"
@@ -2264,14 +2264,52 @@ components:
           type: integer
           format: int64
           minimum: 1
-        admin_group_id:
-          type: string
-          nullable: true
+        admin_group:
+          $ref: "#/components/schemas/WaveScope"
         period:
           anyOf:
             - type: "null"
             - $ref: "#/components/schemas/IntRange"
           example: {"min": 1719850339996, "max": 1719850339996}
+
+    CreateWaveConfig:
+      type: object
+      required:
+        - type
+        - time_lock_ms
+        - winning_thresholds
+        - period
+        - max_winners
+        - admin_group
+      properties:
+        type:
+          $ref: "#/components/schemas/WaveType"
+        winning_thresholds:
+          description: Drops which rate tally ends up in this range will win. Must be set if and only if type is APPROVE
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/IntRange"
+        max_winners:
+          description: This amount of top rated drops will win. Must be set if and only if type is RANK
+          type: integer
+          format: int64
+          minimum: 1
+          nullable: true
+        time_lock_ms:
+          nullable: true
+          description: Vote of a voter is considered eligible after this amount of time after casting it. If not set then votes are eligible immediately after casting.
+          type: integer
+          format: int64
+          minimum: 1
+        admin_group:
+          oneOf:
+            - type: "null"
+            - $ref: "#/components/schemas/CreateNewWaveScope"
+        period:
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/IntRange"
+          example: { "min": 1719850339996, "max": 1719850339996 }
 
 
     WaveOutcomeType:
@@ -2404,7 +2442,7 @@ components:
         participation:
           $ref: "#/components/schemas/CreateNewWaveParticipationConfig"
         wave:
-          $ref: "#/components/schemas/WaveConfig"
+          $ref: "#/components/schemas/CreateWaveConfig"
         outcomes:
           type: array
           items:

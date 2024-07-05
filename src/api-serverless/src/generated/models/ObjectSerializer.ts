@@ -27,6 +27,7 @@ export * from '../models/CreateNewWaveParticipationConfig';
 export * from '../models/CreateNewWaveScope';
 export * from '../models/CreateNewWaveVisibilityConfig';
 export * from '../models/CreateNewWaveVotingConfig';
+export * from '../models/CreateWaveConfig';
 export * from '../models/CreateWaveDropRequest';
 export * from '../models/Drop';
 export * from '../models/DropActivityLog';
@@ -116,6 +117,7 @@ import { CreateNewWaveParticipationConfig } from '../models/CreateNewWavePartici
 import { CreateNewWaveScope } from '../models/CreateNewWaveScope';
 import { CreateNewWaveVisibilityConfig } from '../models/CreateNewWaveVisibilityConfig';
 import { CreateNewWaveVotingConfig        } from '../models/CreateNewWaveVotingConfig';
+import { CreateWaveConfig       } from '../models/CreateWaveConfig';
 import { CreateWaveDropRequest } from '../models/CreateWaveDropRequest';
 import { Drop } from '../models/Drop';
 import { DropActivityLog     , DropActivityLogTypeEnum    } from '../models/DropActivityLog';
@@ -236,6 +238,7 @@ let typeMap: {[index: string]: any} = {
     "CreateNewWaveScope": CreateNewWaveScope,
     "CreateNewWaveVisibilityConfig": CreateNewWaveVisibilityConfig,
     "CreateNewWaveVotingConfig": CreateNewWaveVotingConfig,
+    "CreateWaveConfig": CreateWaveConfig,
     "CreateWaveDropRequest": CreateWaveDropRequest,
     "Drop": Drop,
     "DropActivityLog": DropActivityLog,

@@ -13,8 +13,8 @@
 import { CreateNewWaveParticipationConfig } from '../models/CreateNewWaveParticipationConfig';
 import { CreateNewWaveVisibilityConfig } from '../models/CreateNewWaveVisibilityConfig';
 import { CreateNewWaveVotingConfig } from '../models/CreateNewWaveVotingConfig';
+import { CreateWaveConfig } from '../models/CreateWaveConfig';
 import { CreateWaveDropRequest } from '../models/CreateWaveDropRequest';
-import { WaveConfig } from '../models/WaveConfig';
 import { WaveOutcome } from '../models/WaveOutcome';
 import { HttpFile } from '../http/http';
 
@@ -31,7 +31,7 @@ export class CreateNewWave {
     'voting': CreateNewWaveVotingConfig;
     'visibility': CreateNewWaveVisibilityConfig;
     'participation': CreateNewWaveParticipationConfig;
-    'wave': WaveConfig;
+    'wave': CreateWaveConfig;
     'outcomes': Array<WaveOutcome>;
 
     static readonly discriminator: string | undefined = undefined;
@@ -76,7 +76,7 @@ export class CreateNewWave {
         {
             "name": "wave",
             "baseName": "wave",
-            "type": "WaveConfig",
+            "type": "CreateWaveConfig",
             "format": ""
         },
         {
