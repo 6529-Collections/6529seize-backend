@@ -62,6 +62,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         (
             id,
             name,
+            picture,
             description_drop_id,
             created_at,
             created_by,
@@ -94,6 +95,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         (
             :id,
             :name,
+            :picture,
             :description_drop_id,
             :created_at,
             :created_by,

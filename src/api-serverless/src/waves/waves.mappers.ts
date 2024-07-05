@@ -40,6 +40,7 @@ export class WavesMappers {
     return {
       name: createWaveRequest.name,
       description_drop_id: descriptionDropId,
+      picture: createWaveRequest.picture,
       created_by: authorId,
       voting_group_id: createWaveRequest.voting.scope.group_id,
       admin_group_id: createWaveRequest.wave.admin_group_id,
@@ -152,6 +153,7 @@ export class WavesMappers {
       return {
         id: waveEntity.id,
         name: waveEntity.name,
+        picture: waveEntity.picture,
         serial_no: waveEntity.serial_no,
         author: profileMins[waveEntity.created_by],
         description_drop:

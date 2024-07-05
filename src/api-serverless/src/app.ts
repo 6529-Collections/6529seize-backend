@@ -26,6 +26,7 @@ import profileSubClassificationsRoutes from './profiles/profiles-sub-classificat
 import delegationsRoutes from './delegations/delegations.routes';
 import wavesRoutes from './waves/waves.routes';
 import policiesRoutes from './policies/policies.routes';
+import waveMediaRoutes from './waves/wave-media.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -827,6 +828,7 @@ loadApi().then(() => {
   apiRouter.use(`/drops`, dropsRoutes);
   apiRouter.use(`/nft-owners`, nftOwnersRoutes);
   apiRouter.use(`/drop-media`, dropsMediaRoutes);
+  apiRouter.use(`/wave-media`, waveMediaRoutes);
   apiRouter.use(`/profile-subclassifications`, profileSubClassificationsRoutes);
   apiRouter.use(`/delegations`, delegationsRoutes);
   apiRouter.use(`/waves`, wavesRoutes);
