@@ -252,6 +252,10 @@ const WaveOutcomeSchema = Joi.object<WaveOutcome>({
 const WaveSchema = Joi.object<CreateNewWave>({
   name: Joi.string().required().max(250).min(1),
   description_drop: NewWaveDropSchema.required(),
+  picture: Joi.string()
+    .optional()
+    .allow(null)
+    .regex(/^https:\/\/d3lqz0a4bldqgf.cloudfront.net\//),
   voting: WaveVotingSchema.required(),
   visibility: WaveVisibilitySchema.required(),
   participation: WaveParticipationSchema.required(),

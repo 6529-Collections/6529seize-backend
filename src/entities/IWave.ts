@@ -12,6 +12,9 @@ export class WaveEntity {
   @Column({ type: 'varchar', length: 250, nullable: false })
   readonly name!: string;
 
+  @Column({ type: 'text', nullable: true, default: null })
+  readonly picture!: string | null;
+
   @Column({ type: 'text', nullable: false })
   readonly description_drop_id!: string;
 

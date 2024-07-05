@@ -23,6 +23,10 @@ export class CreateNewWave {
     * The name of the wave
     */
     'name': string;
+    /**
+    * The picture of the wave
+    */
+    'picture': string | null;
     'description_drop': CreateWaveDropRequest;
     'voting': CreateNewWaveVotingConfig;
     'visibility': CreateNewWaveVisibilityConfig;
@@ -36,6 +40,12 @@ export class CreateNewWave {
         {
             "name": "name",
             "baseName": "name",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "picture",
+            "baseName": "picture",
             "type": "string",
             "format": ""
         },
