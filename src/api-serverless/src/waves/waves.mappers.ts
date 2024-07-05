@@ -43,7 +43,7 @@ export class WavesMappers {
       picture: createWaveRequest.picture,
       created_by: authorId,
       voting_group_id: createWaveRequest.voting.scope.group_id,
-      admin_group_id: createWaveRequest.wave.admin_group_id,
+      admin_group_id: createWaveRequest.wave.admin_group?.group_id ?? null,
       voting_credit_type: resolveEnumOrThrow(
         WaveCreditType,
         createWaveRequest.voting.credit_type
@@ -106,7 +106,8 @@ export class WavesMappers {
             [
               waveEntity.visibility_group_id,
               waveEntity.participation_group_id,
-              waveEntity.voting_group_id
+              waveEntity.voting_group_id,
+              waveEntity.admin_group_id
             ].filter((id) => id !== null) as string[]
         )
         .flat(),
@@ -222,7 +223,11 @@ export class WavesMappers {
             min: waveEntity.wave_period_start,
             max: waveEntity.wave_period_end
           },
-          admin_group_id: waveEntity.admin_group_id
+          admin_group: {
+            group: waveEntity.admin_group_id
+              ? curations[waveEntity.admin_group_id] ?? null
+              : null
+          }
         },
         outcomes: JSON.parse(waveEntity.outcomes)
       };

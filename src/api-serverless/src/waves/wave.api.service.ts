@@ -19,6 +19,7 @@ import { AuthenticationContext } from '../../../auth-context';
 import { WaveType } from '../generated/models/WaveType';
 import { WaveOutcomeType } from '../generated/models/WaveOutcomeType';
 import { WaveOutcomeSubType } from '../generated/models/WaveOutcomeSubType';
+import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 
 export class WaveApiService {
   constructor(
@@ -153,8 +154,32 @@ export class WaveApiService {
     }
   }
 
-  async searchWaves(params: SearchWavesParams): Promise<Wave[]> {
-    const entities = await this.wavesApiDb.searchWaves(params);
+  async searchWaves(
+    params: SearchWavesParams,
+    authenticationContext: AuthenticationContext
+  ): Promise<Wave[]> {
+    const authenticatedProfileId = authenticationContext.getActingAsId();
+    if (!authenticatedProfileId) {
+      throw new BadRequestException(`Please create a profile first`);
+    }
+    let groupsUserIsEligibleFor: string[];
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.CREATE_WAVE
+      ]
+    ) {
+      groupsUserIsEligibleFor = [];
+    } else {
+      groupsUserIsEligibleFor =
+        await this.userGroupsService.getGroupsUserIsEligibleFor(
+          authenticatedProfileId
+        );
+    }
+    const entities = await this.wavesApiDb.searchWaves(
+      params,
+      groupsUserIsEligibleFor
+    );
     return await this.waveMappers.waveEntitiesToApiWaves(entities);
   }
 

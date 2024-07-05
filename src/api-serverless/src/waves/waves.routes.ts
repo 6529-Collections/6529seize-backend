@@ -63,10 +63,12 @@ router.post(
 
 router.get(
   '/',
+  needsAuthenticatedUser(),
   async (
     req: Request<any, any, any, SearchWavesParams, any>,
     res: Response<ApiResponse<Wave[]>>
   ) => {
+    const authenticationContext = await getAuthenticationContext(req);
     const params = getValidatedByJoiOrThrow(
       req.query,
       Joi.object<SearchWavesParams>({
@@ -75,7 +77,10 @@ router.get(
         group_id: Joi.string().optional().min(1)
       })
     );
-    const waves = await waveApiService.searchWaves(params);
+    const waves = await waveApiService.searchWaves(
+      params,
+      authenticationContext
+    );
     res.send(waves);
   }
 );
@@ -107,7 +112,13 @@ router.get(
       const group_ids_user_is_eligible_for =
         await userGroupsService.getGroupsUserIsEligibleFor(profileId);
       if (!group_ids_user_is_eligible_for.includes(groupId)) {
-        throw new ForbiddenException(`User is not eligible for this wave`);
+        const adminGroupId = wave.wave.admin_group.group?.id;
+        if (
+          !adminGroupId ||
+          !group_ids_user_is_eligible_for.includes(adminGroupId)
+        ) {
+          throw new ForbiddenException(`User is not eligible for this wave`);
+        }
       }
     }
 
@@ -201,7 +212,7 @@ const WaveConfigSchema = Joi.object<WaveConfig>({
   }),
   time_lock_ms: Joi.number().integer().required().allow(null).min(1),
   period: IntRangeSchema.required().allow(null),
-  admin_group_id: Joi.string().required().allow(null)
+  admin_group: WaveScopeSchema.required()
 });
 
 const WaveOutcomeSchema = Joi.object<WaveOutcome>({
