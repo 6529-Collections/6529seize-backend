@@ -94,6 +94,7 @@ export class DropsApiService {
     serial_no_less_than,
     min_part_id,
     max_part_id,
+    author_id,
     authenticationContext
   }: {
     group_id: string | null;
@@ -102,6 +103,7 @@ export class DropsApiService {
     min_part_id: number;
     max_part_id: number;
     amount: number;
+    author_id: string | null;
     authenticationContext: AuthenticationContext;
   }): Promise<Drop[]> {
     const context_profile_id = this.getDropsReadContextProfileId(
@@ -119,7 +121,8 @@ export class DropsApiService {
       serial_no_less_than,
       group_id,
       group_ids_user_is_eligible_for: group_ids_user_is_eligible_for,
-      wave_id
+      wave_id,
+      author_id
     });
     return await this.convertToDropFulls({
       dropEntities: dropEntities,
