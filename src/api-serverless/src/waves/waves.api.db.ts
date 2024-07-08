@@ -6,7 +6,7 @@ import {
 } from '../../../sql-executor';
 import { WaveEntity } from '../../../entities/IWave';
 import { Time } from '../../../time';
-import { WAVES_TABLE } from '../../../constants';
+import { DROPS_TABLE, WAVES_TABLE } from '../../../constants';
 import {
   userGroupsService,
   UserGroupsService
@@ -177,6 +177,36 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         }))
       );
   }
+
+  async getWaveOverviewsByDropIds(
+    dropIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<string, WaveOverview>> {
+    if (dropIds.length === 0) {
+      return {};
+    }
+    return this.db
+      .execute<WaveOverview & { drop_id: string }>(
+        `select 
+        d.id as drop_id, w.id, w.name, w.picture, w.picture, w.description_drop_id 
+        from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)`,
+        {
+          dropIds
+        },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((it) =>
+        it.reduce<Record<string, WaveOverview>>((acc, wave) => {
+          acc[wave.drop_id] = {
+            id: wave.id,
+            name: wave.name,
+            picture: wave.picture,
+            description_drop_id: wave.description_drop_id
+          };
+          return acc;
+        }, {} as Record<string, WaveOverview>)
+      );
+  }
 }
 
 export type NewWaveEntity = Omit<WaveEntity, 'id' | 'serial_no' | 'created_at'>;
@@ -185,6 +215,13 @@ export interface SearchWavesParams {
   readonly limit: number;
   readonly serial_no_less_than?: number;
   readonly group_id?: string;
+}
+
+export interface WaveOverview {
+  readonly id: string;
+  readonly name: string;
+  readonly picture: string;
+  readonly description_drop_id: string;
 }
 
 export const wavesApiDb = new WavesApiDb(dbSupplier, userGroupsService);
