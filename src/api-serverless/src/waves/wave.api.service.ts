@@ -60,9 +60,27 @@ export class WaveApiService {
         if (!waveEntity) {
           throw new Error(`Something went wrong while creating wave ${id}`);
         }
-
+        const groupIdsUserIsEligibleFor =
+          await this.userGroupsService.getGroupsUserIsEligibleFor(
+            authenticationContext.getActingAsId()!
+          );
+        const noRightToVote =
+          authenticationContext.isAuthenticatedAsProxy() &&
+          !authenticationContext.activeProxyActions[
+            ApiProfileProxyActionType.RATE_WAVE_DROP
+          ];
+        const noRightToParticipate =
+          authenticationContext.isAuthenticatedAsProxy() &&
+          !authenticationContext.activeProxyActions[
+            ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+          ];
         return await this.waveMappers.waveEntityToApiWave(
-          waveEntity,
+          {
+            waveEntity,
+            groupIdsUserIsEligibleFor,
+            noRightToVote,
+            noRightToParticipate
+          },
           connection
         );
       }
@@ -180,15 +198,49 @@ export class WaveApiService {
       params,
       groupsUserIsEligibleFor
     );
-    return await this.waveMappers.waveEntitiesToApiWaves(entities);
+    const noRightToVote =
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.RATE_WAVE_DROP
+      ];
+    const noRightToParticipate =
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+      ];
+    return await this.waveMappers.waveEntitiesToApiWaves({
+      waveEntities: entities,
+      groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
+      noRightToVote,
+      noRightToParticipate
+    });
   }
 
-  async findWaveByIdOrThrow(id: string): Promise<Wave> {
+  async findWaveByIdOrThrow(
+    id: string,
+    groupIdsUserIsEligibleFor: string[],
+    authenticationContext: AuthenticationContext
+  ): Promise<Wave> {
     const entity = await this.wavesApiDb.findWaveById(id);
     if (!entity) {
       throw new NotFoundException(`Wave ${id} not found`);
     }
-    return await this.waveMappers.waveEntityToApiWave(entity);
+    const noRightToVote =
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.RATE_WAVE_DROP
+      ];
+    const noRightToParticipate =
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+      ];
+    return await this.waveMappers.waveEntityToApiWave({
+      waveEntity: entity,
+      groupIdsUserIsEligibleFor,
+      noRightToVote,
+      noRightToParticipate
+    });
   }
 }
 

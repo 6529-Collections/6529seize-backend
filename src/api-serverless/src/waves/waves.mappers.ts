@@ -87,16 +87,42 @@ export class WavesMappers {
   }
 
   public async waveEntityToApiWave(
-    waveEntity: WaveEntity,
+    {
+      waveEntity,
+      groupIdsUserIsEligibleFor,
+      noRightToVote,
+      noRightToParticipate
+    }: {
+      waveEntity: WaveEntity;
+      groupIdsUserIsEligibleFor: string[];
+      noRightToVote: boolean;
+      noRightToParticipate: boolean;
+    },
     connection?: ConnectionWrapper<any>
   ): Promise<Wave> {
-    return this.waveEntitiesToApiWaves([waveEntity], connection).then(
-      (waves) => waves[0]
-    );
+    return this.waveEntitiesToApiWaves(
+      {
+        waveEntities: [waveEntity],
+        groupIdsUserIsEligibleFor,
+        noRightToVote,
+        noRightToParticipate
+      },
+      connection
+    ).then((waves) => waves[0]);
   }
 
   public async waveEntitiesToApiWaves(
-    waveEntities: WaveEntity[],
+    {
+      waveEntities,
+      groupIdsUserIsEligibleFor,
+      noRightToVote,
+      noRightToParticipate
+    }: {
+      waveEntities: WaveEntity[];
+      groupIdsUserIsEligibleFor: string[];
+      noRightToVote: boolean;
+      noRightToParticipate: boolean;
+    },
     connection?: ConnectionWrapper<any>
   ): Promise<Wave[]> {
     const curationEntities = await this.userGroupsService.getByIds(
@@ -182,7 +208,11 @@ export class WavesMappers {
           period: {
             min: waveEntity.voting_period_start,
             max: waveEntity.voting_period_end
-          }
+          },
+          authenticated_user_eligible:
+            !noRightToVote &&
+            (!waveEntity.voting_group_id ||
+              groupIdsUserIsEligibleFor.includes(waveEntity.voting_group_id))
         },
         visibility: {
           scope: {
@@ -209,7 +239,13 @@ export class WavesMappers {
           period: {
             min: waveEntity.participation_period_start,
             max: waveEntity.participation_period_end
-          }
+          },
+          authenticated_user_eligible:
+            !noRightToParticipate &&
+            (!waveEntity.participation_group_id ||
+              groupIdsUserIsEligibleFor.includes(
+                waveEntity.participation_group_id
+              ))
         },
         wave: {
           type: resolveEnumOrThrow(WaveTypeApi, waveEntity.type),
