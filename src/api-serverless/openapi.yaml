@@ -443,6 +443,12 @@ paths:
             format: int64
             minimum: 1
             maximum: 20
+        - name: author
+          in: query
+          description: Drops by author
+          required: false
+          schema:
+            type: string
         - name: group_id
           in: query
           description: Drops by authors that fall into supplied group

@@ -29,6 +29,7 @@ import {
   DropDiscussionCommentsQuerySchema,
   NewDropSchema
 } from './drop.validator';
+import { profilesService } from '../../../profiles/profiles.service';
 
 const router = asyncRouter();
 
@@ -44,6 +45,7 @@ router.get(
         limit: number;
         group_id?: string;
         serial_no_less_than?: number;
+        author?: string;
         min_part_id?: number;
         max_part_id?: number;
         wave_id?: string;
@@ -69,6 +71,19 @@ router.get(
         'max_part_id must be greater or equal than min_part_id'
       );
     }
+    const author_id = req.query.author
+      ? await profilesService
+          .resolveIdentityOrThrowNotFound(req.query.author)
+          .then((it) => {
+            const profileId = it.profile_id;
+            if (!profileId) {
+              throw new NotFoundException(
+                `Author ${req.query.author} not found`
+              );
+            }
+            return profileId;
+          })
+      : null;
     const latestDrops = await dropsService.findLatestDrops({
       amount: limit < 0 || limit > 20 ? 10 : limit,
       group_id: group_id,
@@ -76,6 +91,7 @@ router.get(
       min_part_id,
       max_part_id,
       wave_id,
+      author_id,
       authenticationContext
     });
     res.send(latestDrops);

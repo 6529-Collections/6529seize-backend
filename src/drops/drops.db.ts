@@ -206,13 +206,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     serial_no_less_than,
     group_ids_user_is_eligible_for,
     group_id,
-    wave_id
+    wave_id,
+    author_id
   }: {
     group_id: string | null;
     group_ids_user_is_eligible_for: string[];
     serial_no_less_than: number | null;
     amount: number;
     wave_id: string | null;
+    author_id: string | null;
   }): Promise<DropEntity[]> {
     const sqlAndParams = await this.userGroupsService.getSqlAndParamsByGroupId(
       group_id
@@ -228,11 +230,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          join ${WAVES_TABLE} w on d.wave_id = w.id and (w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or w.visibility_group_id is null) ${
       wave_id ? `and w.id = :wave_id` : ``
     }
-         where d.serial_no < :serialNoLessThan order by d.serial_no desc limit ${amount}`;
+         where d.serial_no < :serialNoLessThan ${
+           author_id ? ` and d.author_id = :author_id ` : ``
+         } order by d.serial_no desc limit ${amount}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       serialNoLessThan,
       groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
+      author_id,
       wave_id
     };
     return this.db.execute(sql, params);
