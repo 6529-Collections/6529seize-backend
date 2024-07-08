@@ -235,7 +235,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       serialNoLessThan,
-      group_ids_user_is_eligible_for: [...group_ids_user_is_eligible_for],
+      groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
       wave_id
     };
     return this.db.execute(sql, params);
