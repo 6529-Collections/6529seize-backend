@@ -159,6 +159,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
          where (w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or w.visibility_group_id is null) and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${searchParams.limit}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
+      groupsUserIsEligibleFor,
       serialNoLessThan
     };
     return this.db
