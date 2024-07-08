@@ -226,12 +226,14 @@ export class DropsApiService {
       return {
         id: dropEntity.id,
         serial_no: dropEntity.serial_no,
-        wave: {
-          id: dropWave.id,
-          name: dropWave.name,
-          picture: dropWave.picture,
-          description_drop_id: dropWave.description_drop_id
-        },
+        wave: (dropWave
+          ? {
+              id: dropWave.id,
+              name: dropWave.name,
+              picture: dropWave.picture,
+              description_drop_id: dropWave.description_drop_id
+            }
+          : null) as any,
         author: profilesByIds[dropEntity.author_id]!,
         title: dropEntity.title,
         parts:
