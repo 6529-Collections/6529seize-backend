@@ -178,7 +178,7 @@ import { WaveRequiredMetadata   } from '../models/WaveRequiredMetadata';
 import { WaveScope } from '../models/WaveScope';
 import { WaveType } from '../models/WaveType';
 import { WaveVisibilityConfig } from '../models/WaveVisibilityConfig';
-import { WaveVotingConfig        } from '../models/WaveVotingConfig';
+import { WaveVotingConfig         } from '../models/WaveVotingConfig';
 
 /* tslint:disable:no-unused-variable */
 let primitives = [

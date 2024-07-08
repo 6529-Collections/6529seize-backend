@@ -197,7 +197,8 @@ export class DropCreationApiService {
     if (!skipWaveIdCheck) {
       await this.verifyWaveLimitations(
         createDropRequest,
-        groupIdsUserIsEligibleFor
+        groupIdsUserIsEligibleFor,
+        authenticationContext
       );
     }
 
@@ -225,10 +226,13 @@ export class DropCreationApiService {
 
   private async verifyWaveLimitations(
     createDropRequest: CreateDropRequest,
-    groupIdsUserIsEligibleFor: string[]
+    groupIdsUserIsEligibleFor: string[],
+    authenticationContext: AuthenticationContext
   ) {
     const wave = await this.waveApiService.findWaveByIdOrThrow(
-      createDropRequest.wave_id
+      createDropRequest.wave_id,
+      groupIdsUserIsEligibleFor,
+      authenticationContext
     );
     const groupId = wave.participation.scope.group?.id;
     if (groupId && !groupIdsUserIsEligibleFor.includes(groupId)) {

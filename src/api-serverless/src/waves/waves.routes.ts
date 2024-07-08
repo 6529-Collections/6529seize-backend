@@ -106,11 +106,15 @@ router.get(
     ) {
       throw new ForbiddenException(`Proxy is not allowed to read waves`);
     }
-    const wave = await waveApiService.findWaveByIdOrThrow(id);
+    const group_ids_user_is_eligible_for =
+      await userGroupsService.getGroupsUserIsEligibleFor(profileId);
+    const wave = await waveApiService.findWaveByIdOrThrow(
+      id,
+      group_ids_user_is_eligible_for,
+      authenticationContext
+    );
     const groupId = wave.visibility.scope.group?.id;
     if (groupId) {
-      const group_ids_user_is_eligible_for =
-        await userGroupsService.getGroupsUserIsEligibleFor(profileId);
       if (!group_ids_user_is_eligible_for.includes(groupId)) {
         const adminGroupId = wave.wave.admin_group.group?.id;
         if (

@@ -2127,6 +2127,7 @@ components:
         - credit_category
         - signature_required
         - creditor
+        - authenticated_user_eligible
       properties:
         scope:
           $ref: "#/components/schemas/WaveScope"
@@ -2150,6 +2151,8 @@ components:
           type: boolean
         period:
           $ref: "#/components/schemas/IntRange"
+        authenticated_user_eligible:
+          type: boolean
 
     WaveVisibilityConfig:
       type: object
@@ -2175,6 +2178,7 @@ components:
         - signature_required
         - no_of_applications_allowed_per_participant
         - required_media
+        - authenticated_user_eligible
       properties:
         scope:
           $ref: "#/components/schemas/WaveScope"
@@ -2200,6 +2204,8 @@ components:
           type: boolean
         period:
           $ref: "#/components/schemas/IntRange"
+        authenticated_user_eligible:
+          type: boolean
 
     CreateNewWaveParticipationConfig:
       type: object
