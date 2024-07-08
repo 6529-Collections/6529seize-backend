@@ -1,5 +1,5 @@
 import { CreateNewWave } from '../generated/models/CreateNewWave';
-import { NewWaveEntity } from './waves.api.db';
+import { NewWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { distinct, resolveEnumOrThrow } from '../../../helpers';
 import {
   ParticipationRequiredMedia,
@@ -29,7 +29,8 @@ import { WaveParticipationRequirement } from '../generated/models/WaveParticipat
 export class WavesMappers {
   constructor(
     private readonly profilesService: ProfilesService,
-    private readonly userGroupsService: UserGroupsService
+    private readonly userGroupsService: UserGroupsService,
+    private readonly wavesApiDb: WavesApiDb
   ) {}
 
   public createWaveToNewWaveEntity(
@@ -150,6 +151,11 @@ export class WavesMappers {
         .flat(),
       ...curationEntities.map((curationEntity) => curationEntity.created_by)
     ]);
+    const contributorsOverViews =
+      await this.wavesApiDb.getWavesContributorsOverviews(
+        waveEntities.map((it) => it.id),
+        connection
+      );
     const profileMins: Record<string, ProfileMin> = await this.profilesService
       .getProfileMinsByIds(profileIds, connection)
       .then((profileMins) =>
@@ -183,6 +189,12 @@ export class WavesMappers {
         picture: waveEntity.picture,
         serial_no: waveEntity.serial_no,
         author: profileMins[waveEntity.created_by],
+        contributors_overview: (contributorsOverViews[waveEntity.id] ?? []).map(
+          (it) => ({
+            contributor_identity: it.contributor_identity,
+            contributor_pfp: it.contributor_pfp
+          })
+        ),
         description_drop:
           creationDropsByDropId[waveEntity.description_drop_id]!,
         created_at: waveEntity.created_at,
@@ -273,5 +285,6 @@ export class WavesMappers {
 
 export const wavesMappers = new WavesMappers(
   profilesService,
-  userGroupsService
+  userGroupsService,
+  wavesApiDb
 );
