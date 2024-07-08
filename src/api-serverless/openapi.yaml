@@ -2388,6 +2388,7 @@ components:
         - wave
         - outcomes
         - created_at
+        - contributors_overview
       properties:
         id:
           description: The ID of the wave
@@ -2423,6 +2424,20 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/WaveOutcome"
+        contributors_overview:
+          type: array
+          items:
+            $ref: "#/components/schemas/WaveContributorOverview"
+
+    WaveContributorOverview:
+      required:
+        - contributor_identity
+        - contributor_pfp
+      properties:
+        contributor_identity:
+          type: string
+        contributor_pfp:
+          type: string
 
     CreateNewWave:
       type: object

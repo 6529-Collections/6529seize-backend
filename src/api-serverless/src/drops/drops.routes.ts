@@ -172,9 +172,9 @@ router.post(
     const contentLength = newDrop.parts
       .map((part) => part.content ?? '')
       .join('').length;
-    if (contentLength > 25000) {
+    if (contentLength > 32768) {
       throw new BadRequestException(
-        'Total content length of all parts must be less than 25000 characters'
+        'Total content length of all parts must be less than 32768 characters'
       );
     }
     const createDropRequest: CreateDropRequest & {

@@ -6,7 +6,7 @@ import {
 } from '../../../sql-executor';
 import { WaveEntity } from '../../../entities/IWave';
 import { Time } from '../../../time';
-import { DROPS_TABLE, WAVES_TABLE } from '../../../constants';
+import { DROPS_TABLE, IDENTITIES_TABLE, WAVES_TABLE } from '../../../constants';
 import {
   userGroupsService,
   UserGroupsService
@@ -205,6 +205,63 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           };
           return acc;
         }, {} as Record<string, WaveOverview>)
+      );
+  }
+
+  async getWavesContributorsOverviews(
+    waveIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<
+    Record<string, { contributor_identity: string; contributor_pfp: string }[]>
+  > {
+    if (waveIds.length === 0) {
+      return {};
+    }
+    return this.db
+      .execute<{
+        wave_id: string;
+        contributor_identity: string;
+        contributor_pfp: string;
+      }>(
+        `with waves_with_top_contributors_pfps as (
+    select
+        ${DROPS_TABLE}.wave_id,
+        ${IDENTITIES_TABLE}.pfp as contributor_pfp,
+        ${IDENTITIES_TABLE}.primary_address,
+        row_number() over (partition by ${IDENTITIES_TABLE}.profile_id order by ${IDENTITIES_TABLE}.level_raw desc) as rn
+    from
+        ${DROPS_TABLE}
+    join ${IDENTITIES_TABLE} on ${DROPS_TABLE}.author_id = ${IDENTITIES_TABLE}.profile_id
+    where ${IDENTITIES_TABLE}.pfp is not null
+)
+select
+    distinct wave_id, primary_address as contributor_identity, contributor_pfp
+from
+    waves_with_top_contributors_pfps
+where
+    rn <= 5
+    and wave_id in (:waveIds)`,
+        {
+          waveIds
+        },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((it) =>
+        it.reduce<
+          Record<
+            string,
+            { contributor_identity: string; contributor_pfp: string }[]
+          >
+        >((acc, wave) => {
+          if (!acc[wave.wave_id]) {
+            acc[wave.wave_id] = [];
+          }
+          acc[wave.wave_id].push({
+            contributor_identity: wave.contributor_identity,
+            contributor_pfp: wave.contributor_pfp
+          });
+          return acc;
+        }, {} as Record<string, { contributor_identity: string; contributor_pfp: string }[]>)
       );
   }
 }
