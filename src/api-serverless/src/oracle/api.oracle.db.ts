@@ -424,6 +424,6 @@ export async function fetchPrenodes(pageSize: number, page: number) {
         WHEN updated_at >= UTC_TIMESTAMP() - INTERVAL 1 HOUR THEN 'green'
         WHEN updated_at >= UTC_TIMESTAMP() - INTERVAL 24 HOUR THEN 'orange'
         ELSE 'red'
-    END AS "ping_status"`
+    END AS 'ping_status'`
   );
 }
