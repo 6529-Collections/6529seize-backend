@@ -25,6 +25,13 @@ import { Group } from '../generated/models/Group';
 import { dropsService } from '../drops/drops.api.service';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { WaveParticipationRequirement } from '../generated/models/WaveParticipationRequirement';
+import { Drop } from '../generated/models/Drop';
+import { WaveVotingConfig } from '../generated/models/WaveVotingConfig';
+import { WaveScope } from '../generated/models/WaveScope';
+import { WaveContributorOverview } from '../generated/models/WaveContributorOverview';
+import { WaveVisibilityConfig } from '../generated/models/WaveVisibilityConfig';
+import { WaveParticipationConfig } from '../generated/models/WaveParticipationConfig';
+import { WaveConfig } from '../generated/models/WaveConfig';
 
 export class WavesMappers {
   constructor(
@@ -126,6 +133,157 @@ export class WavesMappers {
     },
     connection?: ConnectionWrapper<any>
   ): Promise<Wave[]> {
+    const { contributors, profiles, curations, creationDrops } =
+      await this.getRelatedData(waveEntities, connection);
+    return waveEntities.map<Wave>((waveEntity) =>
+      this.mapWaveEntityToApiWave({
+        waveEntity,
+        profiles,
+        contributors,
+        creationDrops,
+        curations,
+        noRightToVote,
+        groupIdsUserIsEligibleFor,
+        noRightToParticipate
+      })
+    );
+  }
+
+  private mapWaveEntityToApiWave({
+    waveEntity,
+    profiles,
+    contributors,
+    creationDrops,
+    curations,
+    noRightToVote,
+    groupIdsUserIsEligibleFor,
+    noRightToParticipate
+  }: {
+    waveEntity: WaveEntity;
+    profiles: Record<string, ProfileMin>;
+    contributors: Record<
+      string,
+      {
+        contributor_identity: string;
+        contributor_pfp: string;
+      }[]
+    >;
+    creationDrops: Record<string, Drop>;
+    curations: Record<string, Group>;
+    noRightToVote: boolean;
+    groupIdsUserIsEligibleFor: string[];
+    noRightToParticipate: boolean;
+  }) {
+    const contributorsOverview: WaveContributorOverview[] =
+      contributors[waveEntity.id]?.map((it) => ({
+        contributor_identity: it.contributor_identity,
+        contributor_pfp: it.contributor_pfp
+      })) ?? [];
+    const creationDrop: Drop = creationDrops[waveEntity.description_drop_id];
+    const votingScope: WaveScope = {
+      group: curations[waveEntity.voting_group_id!] ?? null
+    };
+    const voteCreditor: ProfileMin | null =
+      profiles[waveEntity.voting_credit_creditor!] ?? null;
+    const authenticatedUserEligibleToVote =
+      !noRightToVote &&
+      (!waveEntity.voting_group_id ||
+        groupIdsUserIsEligibleFor.includes(waveEntity.voting_group_id));
+    const voting: WaveVotingConfig = {
+      scope: votingScope,
+      credit_type: resolveEnumOrThrow(
+        WaveCreditTypeApi,
+        waveEntity.voting_credit_type
+      ),
+      credit_scope: resolveEnumOrThrow(
+        WaveCreditScopeApi,
+        waveEntity.voting_credit_scope_type
+      ),
+      credit_category: waveEntity.voting_credit_category,
+      creditor: voteCreditor,
+      signature_required: waveEntity.voting_signature_required,
+      period: {
+        min: waveEntity.voting_period_start,
+        max: waveEntity.voting_period_end
+      },
+      authenticated_user_eligible: authenticatedUserEligibleToVote
+    };
+    const visibility: WaveVisibilityConfig = {
+      scope: {
+        group: curations[waveEntity.visibility_group_id!] ?? null
+      }
+    };
+    const authenticatedUserEligibleToParticipate =
+      !noRightToParticipate &&
+      (!waveEntity.participation_group_id ||
+        groupIdsUserIsEligibleFor.includes(waveEntity.participation_group_id));
+    const participation: WaveParticipationConfig = {
+      scope: {
+        group: curations[waveEntity.participation_group_id!] ?? null
+      },
+      no_of_applications_allowed_per_participant:
+        waveEntity.participation_max_applications_per_participant,
+      required_metadata: JSON.parse(waveEntity.participation_required_metadata),
+      required_media: waveEntity.participation_required_media.map((it) =>
+        resolveEnumOrThrow(WaveParticipationRequirement, it)
+      ),
+      signature_required: waveEntity.voting_signature_required,
+      period: {
+        min: waveEntity.participation_period_start,
+        max: waveEntity.participation_period_end
+      },
+      authenticated_user_eligible: authenticatedUserEligibleToParticipate
+    };
+    const authenticatedUserEligibleForAdmin = !!(
+      waveEntity.admin_group_id &&
+      groupIdsUserIsEligibleFor.includes(waveEntity.admin_group_id)
+    );
+    const waveConf: WaveConfig = {
+      type: resolveEnumOrThrow(WaveTypeApi, waveEntity.type),
+      winning_thresholds: {
+        min: waveEntity.winning_min_threshold,
+        max: waveEntity.winning_max_threshold
+      },
+      max_winners: waveEntity.max_winners,
+      time_lock_ms: waveEntity.time_lock_ms,
+      period: {
+        min: waveEntity.wave_period_start,
+        max: waveEntity.wave_period_end
+      },
+      admin_group: {
+        group: curations[waveEntity.admin_group_id!] ?? null
+      },
+      authenticated_user_eligible_for_admin: authenticatedUserEligibleForAdmin
+    };
+    return {
+      id: waveEntity.id,
+      name: waveEntity.name,
+      picture: waveEntity.picture,
+      serial_no: waveEntity.serial_no,
+      author: profiles[waveEntity.created_by],
+      contributors_overview: contributorsOverview,
+      description_drop: creationDrop,
+      created_at: waveEntity.created_at,
+      voting: voting,
+      visibility: visibility,
+      participation: participation,
+      wave: waveConf,
+      outcomes: JSON.parse(waveEntity.outcomes)
+    };
+  }
+
+  private async getRelatedData(
+    waveEntities: WaveEntity[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<{
+    contributors: Record<
+      string,
+      { contributor_identity: string; contributor_pfp: string }[]
+    >;
+    profiles: Record<string, ProfileMin>;
+    curations: Record<string, Group>;
+    creationDrops: Record<string, Drop>;
+  }> {
     const curationEntities = await this.userGroupsService.getByIds(
       waveEntities
         .map(
@@ -182,104 +340,12 @@ export class WavesMappers {
       distinct(waveEntities.map((it) => it.description_drop_id)),
       connection
     );
-    return waveEntities.map<Wave>((waveEntity) => {
-      return {
-        id: waveEntity.id,
-        name: waveEntity.name,
-        picture: waveEntity.picture,
-        serial_no: waveEntity.serial_no,
-        author: profileMins[waveEntity.created_by],
-        contributors_overview: (contributorsOverViews[waveEntity.id] ?? []).map(
-          (it) => ({
-            contributor_identity: it.contributor_identity,
-            contributor_pfp: it.contributor_pfp
-          })
-        ),
-        description_drop:
-          creationDropsByDropId[waveEntity.description_drop_id]!,
-        created_at: waveEntity.created_at,
-        voting: {
-          scope: {
-            group: waveEntity.voting_group_id
-              ? curations[waveEntity.voting_group_id] ?? null
-              : null
-          },
-          credit_type: resolveEnumOrThrow(
-            WaveCreditTypeApi,
-            waveEntity.voting_credit_type
-          ),
-          credit_scope: resolveEnumOrThrow(
-            WaveCreditScopeApi,
-            waveEntity.voting_credit_scope_type
-          ),
-          credit_category: waveEntity.voting_credit_category,
-          creditor: waveEntity.voting_credit_creditor
-            ? profileMins[waveEntity.voting_credit_creditor] ?? null
-            : null,
-          signature_required: waveEntity.voting_signature_required,
-          period: {
-            min: waveEntity.voting_period_start,
-            max: waveEntity.voting_period_end
-          },
-          authenticated_user_eligible:
-            !noRightToVote &&
-            (!waveEntity.voting_group_id ||
-              groupIdsUserIsEligibleFor.includes(waveEntity.voting_group_id))
-        },
-        visibility: {
-          scope: {
-            group: waveEntity.visibility_group_id
-              ? curations[waveEntity.visibility_group_id] ?? null
-              : null
-          }
-        },
-        participation: {
-          scope: {
-            group: waveEntity.participation_group_id
-              ? curations[waveEntity.participation_group_id] ?? null
-              : null
-          },
-          no_of_applications_allowed_per_participant:
-            waveEntity.participation_max_applications_per_participant,
-          required_metadata: JSON.parse(
-            waveEntity.participation_required_metadata
-          ),
-          required_media: waveEntity.participation_required_media.map((it) =>
-            resolveEnumOrThrow(WaveParticipationRequirement, it)
-          ),
-          signature_required: waveEntity.voting_signature_required,
-          period: {
-            min: waveEntity.participation_period_start,
-            max: waveEntity.participation_period_end
-          },
-          authenticated_user_eligible:
-            !noRightToParticipate &&
-            (!waveEntity.participation_group_id ||
-              groupIdsUserIsEligibleFor.includes(
-                waveEntity.participation_group_id
-              ))
-        },
-        wave: {
-          type: resolveEnumOrThrow(WaveTypeApi, waveEntity.type),
-          winning_thresholds: {
-            min: waveEntity.winning_min_threshold,
-            max: waveEntity.winning_max_threshold
-          },
-          max_winners: waveEntity.max_winners,
-          time_lock_ms: waveEntity.time_lock_ms,
-          period: {
-            min: waveEntity.wave_period_start,
-            max: waveEntity.wave_period_end
-          },
-          admin_group: {
-            group: waveEntity.admin_group_id
-              ? curations[waveEntity.admin_group_id] ?? null
-              : null
-          }
-        },
-        outcomes: JSON.parse(waveEntity.outcomes)
-      };
-    });
+    return {
+      contributors: contributorsOverViews,
+      profiles: profileMins,
+      curations,
+      creationDrops: creationDropsByDropId
+    };
   }
 }
 
