@@ -6,11 +6,11 @@ import {
   needsAuthenticatedUser
 } from '../auth/auth';
 import { ForbiddenException } from '../../../exceptions';
-import { uploadMediaService } from '../media/upload-media.service';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
 import { CreateMediaUrlResponse } from '../generated/models/CreateMediaUrlResponse';
 import { CreateMediaUploadUrlRequest } from '../generated/models/CreateMediaUploadUrlRequest';
+import { uploadMediaService } from '../media/upload-media.service';
 
 const router = asyncRouter();
 
@@ -34,7 +34,7 @@ router.post(
       },
       MediaPrepRequestSchema
     );
-    const response = await uploadMediaService.createSingedDropMediaUploadUrl(
+    const response = await uploadMediaService.createSingedWaveMediaUploadUrl(
       createMediaUploadUrlRequest
     );
     res.send(response);
@@ -47,25 +47,9 @@ const MediaPrepRequestSchema: Joi.ObjectSchema<
   author: Joi.string().required(),
   content_type: Joi.string()
     .required()
-    .allow(
-      ...[
-        'image/png',
-        'image/jpeg',
-        'image/gif',
-        'video/mp4',
-        'video/x-msvideo',
-        'audio/mpeg',
-        'audio/mpeg3',
-        'audio/ogg',
-        'audio/mp3',
-        'audio/wav',
-        'audio/aac',
-        'audio/x-aac',
-        'model/gltf-binary'
-      ]
-    ),
+    .allow(...['image/png', 'image/jpeg', 'image/gif']),
   file_name: Joi.string().required(),
-  file_size: Joi.number().integer().required().min(1).max(500000000) // 500MB
+  file_size: Joi.number().integer().required().min(1).max(2000000) // 2MB
 });
 
 export default router;

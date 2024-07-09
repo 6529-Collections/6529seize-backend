@@ -31,12 +31,14 @@ import {
 import { AuthenticationContext } from '../../../auth-context';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { DropActivityLogsQuery } from './drop.validator';
+import { WavesApiDb, wavesApiDb } from '../waves/waves.api.db';
 
 export class DropsApiService {
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly profilesService: ProfilesService,
-    private readonly userGroupsService: UserGroupsService
+    private readonly userGroupsService: UserGroupsService,
+    private readonly wavesApiDb: WavesApiDb
   ) {}
 
   public async findDropByIdOrThrow(
@@ -92,6 +94,7 @@ export class DropsApiService {
     serial_no_less_than,
     min_part_id,
     max_part_id,
+    author_id,
     authenticationContext
   }: {
     group_id: string | null;
@@ -100,6 +103,7 @@ export class DropsApiService {
     min_part_id: number;
     max_part_id: number;
     amount: number;
+    author_id: string | null;
     authenticationContext: AuthenticationContext;
   }): Promise<Drop[]> {
     const context_profile_id = this.getDropsReadContextProfileId(
@@ -117,7 +121,8 @@ export class DropsApiService {
       serial_no_less_than,
       group_id,
       group_ids_user_is_eligible_for: group_ids_user_is_eligible_for,
-      wave_id
+      wave_id,
+      author_id
     });
     return await this.convertToDropFulls({
       dropEntities: dropEntities,
@@ -177,7 +182,8 @@ export class DropsApiService {
       dropsQuoteCounts,
       dropMedia,
       dropsParts,
-      dropsCommentsCounts
+      dropsCommentsCounts,
+      dropWaveOverviews
     } = await this.getAllDropsRelatedData(
       {
         dropIds,
@@ -216,10 +222,18 @@ export class DropsApiService {
       return acc;
     }, {} as Record<string, ProfileMin>);
     return dropEntities.map<Drop>((dropEntity) => {
+      const dropWave = dropWaveOverviews[dropEntity.id];
       return {
         id: dropEntity.id,
         serial_no: dropEntity.serial_no,
-        wave_id: dropEntity.wave_id,
+        wave: (dropWave
+          ? {
+              id: dropWave.id,
+              name: dropWave.name,
+              picture: dropWave.picture,
+              description_drop_id: dropWave.description_drop_id
+            }
+          : null) as any,
         author: profilesByIds[dropEntity.author_id]!,
         title: dropEntity.title,
         parts:
@@ -337,7 +351,8 @@ export class DropsApiService {
       dropsQuoteCounts,
       dropMedia,
       dropsParts,
-      dropsCommentsCounts
+      dropsCommentsCounts,
+      dropWaveOverviews
     ] = await Promise.all([
       this.dropsDb.findMentionsByDropIds(dropIds, connection),
       this.dropsDb.findReferencedNftsByDropIds(dropIds, connection),
@@ -371,7 +386,8 @@ export class DropsApiService {
       this.dropsDb.countDiscussionCommentsByDropIds(
         { dropIds, context_profile_id: contextProfileId },
         connection
-      )
+      ),
+      this.wavesApiDb.getWaveOverviewsByDropIds(dropIds, connection)
     ]);
     return {
       mentions,
@@ -386,7 +402,8 @@ export class DropsApiService {
       dropsQuoteCounts,
       dropMedia,
       dropsParts,
-      dropsCommentsCounts
+      dropsCommentsCounts,
+      dropWaveOverviews
     };
   }
 
@@ -581,5 +598,6 @@ export class DropsApiService {
 export const dropsService = new DropsApiService(
   dropsDb,
   profilesService,
-  userGroupsService
+  userGroupsService,
+  wavesApiDb
 );

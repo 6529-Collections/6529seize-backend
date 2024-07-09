@@ -6,7 +6,7 @@ import {
 } from '../../../sql-executor';
 import { WaveEntity } from '../../../entities/IWave';
 import { Time } from '../../../time';
-import { WAVES_TABLE } from '../../../constants';
+import { DROPS_TABLE, IDENTITIES_TABLE, WAVES_TABLE } from '../../../constants';
 import {
   userGroupsService,
   UserGroupsService
@@ -62,6 +62,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         (
             id,
             name,
+            picture,
             description_drop_id,
             created_at,
             created_by,
@@ -94,6 +95,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         (
             :id,
             :name,
+            :picture,
             :description_drop_id,
             :created_at,
             :created_by,
@@ -133,7 +135,17 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async searchWaves(searchParams: SearchWavesParams): Promise<WaveEntity[]> {
+  async searchWaves(
+    searchParams: SearchWavesParams,
+    groupsUserIsEligibleFor: string[]
+  ): Promise<WaveEntity[]> {
+    if (
+      !groupsUserIsEligibleFor.length ||
+      (searchParams.group_id &&
+        !groupsUserIsEligibleFor.includes(searchParams.group_id))
+    ) {
+      return [];
+    }
     const sqlAndParams = await this.userGroupsService.getSqlAndParamsByGroupId(
       searchParams.group_id ?? null
     );
@@ -144,9 +156,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       searchParams.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `${sqlAndParams.sql} select w.* from ${WAVES_TABLE} w
          join ${UserGroupsService.GENERATED_VIEW} cm on cm.profile_id = w.created_by
-         where w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${searchParams.limit}`;
+         where (w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or w.visibility_group_id is null) and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${searchParams.limit}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
+      groupsUserIsEligibleFor,
       serialNoLessThan
     };
     return this.db
@@ -164,6 +177,93 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         }))
       );
   }
+
+  async getWaveOverviewsByDropIds(
+    dropIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<string, WaveOverview>> {
+    if (dropIds.length === 0) {
+      return {};
+    }
+    return this.db
+      .execute<WaveOverview & { drop_id: string }>(
+        `select 
+        d.id as drop_id, w.id, w.name, w.picture, w.picture, w.description_drop_id 
+        from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)`,
+        {
+          dropIds
+        },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((it) =>
+        it.reduce<Record<string, WaveOverview>>((acc, wave) => {
+          acc[wave.drop_id] = {
+            id: wave.id,
+            name: wave.name,
+            picture: wave.picture,
+            description_drop_id: wave.description_drop_id
+          };
+          return acc;
+        }, {} as Record<string, WaveOverview>)
+      );
+  }
+
+  async getWavesContributorsOverviews(
+    waveIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<
+    Record<string, { contributor_identity: string; contributor_pfp: string }[]>
+  > {
+    if (waveIds.length === 0) {
+      return {};
+    }
+    return this.db
+      .execute<{
+        wave_id: string;
+        contributor_identity: string;
+        contributor_pfp: string;
+      }>(
+        `with waves_with_top_contributors_pfps as (
+    select
+        ${DROPS_TABLE}.wave_id,
+        ${IDENTITIES_TABLE}.pfp as contributor_pfp,
+        ${IDENTITIES_TABLE}.primary_address,
+        row_number() over (partition by ${IDENTITIES_TABLE}.profile_id order by ${IDENTITIES_TABLE}.level_raw desc) as rn
+    from
+        ${DROPS_TABLE}
+    join ${IDENTITIES_TABLE} on ${DROPS_TABLE}.author_id = ${IDENTITIES_TABLE}.profile_id
+    where ${IDENTITIES_TABLE}.pfp is not null
+)
+select
+    distinct wave_id, primary_address as contributor_identity, contributor_pfp
+from
+    waves_with_top_contributors_pfps
+where
+    rn <= 5
+    and wave_id in (:waveIds)`,
+        {
+          waveIds
+        },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((it) =>
+        it.reduce<
+          Record<
+            string,
+            { contributor_identity: string; contributor_pfp: string }[]
+          >
+        >((acc, wave) => {
+          if (!acc[wave.wave_id]) {
+            acc[wave.wave_id] = [];
+          }
+          acc[wave.wave_id].push({
+            contributor_identity: wave.contributor_identity,
+            contributor_pfp: wave.contributor_pfp
+          });
+          return acc;
+        }, {} as Record<string, { contributor_identity: string; contributor_pfp: string }[]>)
+      );
+  }
 }
 
 export type NewWaveEntity = Omit<WaveEntity, 'id' | 'serial_no' | 'created_at'>;
@@ -172,6 +272,13 @@ export interface SearchWavesParams {
   readonly limit: number;
   readonly serial_no_less_than?: number;
   readonly group_id?: string;
+}
+
+export interface WaveOverview {
+  readonly id: string;
+  readonly name: string;
+  readonly picture: string;
+  readonly description_drop_id: string;
 }
 
 export const wavesApiDb = new WavesApiDb(dbSupplier, userGroupsService);

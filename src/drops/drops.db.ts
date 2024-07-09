@@ -170,15 +170,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .execute(
         `
         select d.* from ${DROPS_TABLE} d
-         join waves w on d.wave_id = w.id and w.visibility_group_id in (:group_ids_user_is_eligible_for)
+         join waves w on d.wave_id = w.id and (w.visibility_group_id in (:group_ids_user_is_eligible_for) or w.visibility_group_id is null or w.admin_group_id in (:group_ids_user_is_eligible_for))
          where d.id = :id
         `,
         {
           id,
-          group_ids_user_is_eligible_for: [
-            null,
-            ...group_ids_user_is_eligible_for
-          ]
+          group_ids_user_is_eligible_for
         },
         opts
       )
@@ -209,13 +206,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     serial_no_less_than,
     group_ids_user_is_eligible_for,
     group_id,
-    wave_id
+    wave_id,
+    author_id
   }: {
     group_id: string | null;
     group_ids_user_is_eligible_for: string[];
     serial_no_less_than: number | null;
     amount: number;
     wave_id: string | null;
+    author_id: string | null;
   }): Promise<DropEntity[]> {
     const sqlAndParams = await this.userGroupsService.getSqlAndParamsByGroupId(
       group_id
@@ -228,14 +227,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          join ${
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = d.author_id
-         join ${WAVES_TABLE} w on d.wave_id = w.id and w.id in (:group_ids_user_is_eligible_for) ${
+         join ${WAVES_TABLE} w on d.wave_id = w.id and (w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or w.visibility_group_id is null) ${
       wave_id ? `and w.id = :wave_id` : ``
     }
-         where d.serial_no < :serialNoLessThan order by d.serial_no desc limit ${amount}`;
+         where d.serial_no < :serialNoLessThan ${
+           author_id ? ` and d.author_id = :author_id ` : ``
+         } order by d.serial_no desc limit ${amount}`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       serialNoLessThan,
-      group_ids_user_is_eligible_for: [...group_ids_user_is_eligible_for, null]
+      groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
+      author_id,
+      wave_id
     };
     return this.db.execute(sql, params);
   }

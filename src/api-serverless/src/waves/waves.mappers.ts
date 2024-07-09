@@ -1,5 +1,5 @@
 import { CreateNewWave } from '../generated/models/CreateNewWave';
-import { NewWaveEntity } from './waves.api.db';
+import { NewWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { distinct, resolveEnumOrThrow } from '../../../helpers';
 import {
   ParticipationRequiredMedia,
@@ -29,7 +29,8 @@ import { WaveParticipationRequirement } from '../generated/models/WaveParticipat
 export class WavesMappers {
   constructor(
     private readonly profilesService: ProfilesService,
-    private readonly userGroupsService: UserGroupsService
+    private readonly userGroupsService: UserGroupsService,
+    private readonly wavesApiDb: WavesApiDb
   ) {}
 
   public createWaveToNewWaveEntity(
@@ -40,9 +41,10 @@ export class WavesMappers {
     return {
       name: createWaveRequest.name,
       description_drop_id: descriptionDropId,
+      picture: createWaveRequest.picture,
       created_by: authorId,
       voting_group_id: createWaveRequest.voting.scope.group_id,
-      admin_group_id: createWaveRequest.wave.admin_group_id,
+      admin_group_id: createWaveRequest.wave.admin_group?.group_id ?? null,
       voting_credit_type: resolveEnumOrThrow(
         WaveCreditType,
         createWaveRequest.voting.credit_type
@@ -86,16 +88,42 @@ export class WavesMappers {
   }
 
   public async waveEntityToApiWave(
-    waveEntity: WaveEntity,
+    {
+      waveEntity,
+      groupIdsUserIsEligibleFor,
+      noRightToVote,
+      noRightToParticipate
+    }: {
+      waveEntity: WaveEntity;
+      groupIdsUserIsEligibleFor: string[];
+      noRightToVote: boolean;
+      noRightToParticipate: boolean;
+    },
     connection?: ConnectionWrapper<any>
   ): Promise<Wave> {
-    return this.waveEntitiesToApiWaves([waveEntity], connection).then(
-      (waves) => waves[0]
-    );
+    return this.waveEntitiesToApiWaves(
+      {
+        waveEntities: [waveEntity],
+        groupIdsUserIsEligibleFor,
+        noRightToVote,
+        noRightToParticipate
+      },
+      connection
+    ).then((waves) => waves[0]);
   }
 
   public async waveEntitiesToApiWaves(
-    waveEntities: WaveEntity[],
+    {
+      waveEntities,
+      groupIdsUserIsEligibleFor,
+      noRightToVote,
+      noRightToParticipate
+    }: {
+      waveEntities: WaveEntity[];
+      groupIdsUserIsEligibleFor: string[];
+      noRightToVote: boolean;
+      noRightToParticipate: boolean;
+    },
     connection?: ConnectionWrapper<any>
   ): Promise<Wave[]> {
     const curationEntities = await this.userGroupsService.getByIds(
@@ -105,7 +133,8 @@ export class WavesMappers {
             [
               waveEntity.visibility_group_id,
               waveEntity.participation_group_id,
-              waveEntity.voting_group_id
+              waveEntity.voting_group_id,
+              waveEntity.admin_group_id
             ].filter((id) => id !== null) as string[]
         )
         .flat(),
@@ -122,6 +151,11 @@ export class WavesMappers {
         .flat(),
       ...curationEntities.map((curationEntity) => curationEntity.created_by)
     ]);
+    const contributorsOverViews =
+      await this.wavesApiDb.getWavesContributorsOverviews(
+        waveEntities.map((it) => it.id),
+        connection
+      );
     const profileMins: Record<string, ProfileMin> = await this.profilesService
       .getProfileMinsByIds(profileIds, connection)
       .then((profileMins) =>
@@ -152,8 +186,15 @@ export class WavesMappers {
       return {
         id: waveEntity.id,
         name: waveEntity.name,
+        picture: waveEntity.picture,
         serial_no: waveEntity.serial_no,
         author: profileMins[waveEntity.created_by],
+        contributors_overview: (contributorsOverViews[waveEntity.id] ?? []).map(
+          (it) => ({
+            contributor_identity: it.contributor_identity,
+            contributor_pfp: it.contributor_pfp
+          })
+        ),
         description_drop:
           creationDropsByDropId[waveEntity.description_drop_id]!,
         created_at: waveEntity.created_at,
@@ -179,7 +220,11 @@ export class WavesMappers {
           period: {
             min: waveEntity.voting_period_start,
             max: waveEntity.voting_period_end
-          }
+          },
+          authenticated_user_eligible:
+            !noRightToVote &&
+            (!waveEntity.voting_group_id ||
+              groupIdsUserIsEligibleFor.includes(waveEntity.voting_group_id))
         },
         visibility: {
           scope: {
@@ -206,7 +251,13 @@ export class WavesMappers {
           period: {
             min: waveEntity.participation_period_start,
             max: waveEntity.participation_period_end
-          }
+          },
+          authenticated_user_eligible:
+            !noRightToParticipate &&
+            (!waveEntity.participation_group_id ||
+              groupIdsUserIsEligibleFor.includes(
+                waveEntity.participation_group_id
+              ))
         },
         wave: {
           type: resolveEnumOrThrow(WaveTypeApi, waveEntity.type),
@@ -220,7 +271,11 @@ export class WavesMappers {
             min: waveEntity.wave_period_start,
             max: waveEntity.wave_period_end
           },
-          admin_group_id: waveEntity.admin_group_id
+          admin_group: {
+            group: waveEntity.admin_group_id
+              ? curations[waveEntity.admin_group_id] ?? null
+              : null
+          }
         },
         outcomes: JSON.parse(waveEntity.outcomes)
       };
@@ -230,5 +285,6 @@ export class WavesMappers {
 
 export const wavesMappers = new WavesMappers(
   profilesService,
-  userGroupsService
+  userGroupsService,
+  wavesApiDb
 );
