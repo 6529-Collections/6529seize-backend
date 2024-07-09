@@ -22,7 +22,6 @@ import { ProfileProxyEntity } from './entities/IProfileProxy';
 import { ProfileProxyActionEntity } from './entities/IProfileProxyAction';
 import { WaveEntity } from './entities/IWave';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
-import { WalletGroupEntity } from './entities/IWalletGroup';
 import { CookiesConsent } from './entities/ICookieConsent';
 import { AddressConsolidationKey } from './entities/IAddressConsolidationKey';
 import { IdentityEntity } from './entities/IIdentity';
@@ -55,7 +54,6 @@ async function start() {
     WaveEntity,
     CookiesConsent,
     UserGroupEntity,
-    WalletGroupEntity,
     AddressConsolidationKey,
     IdentityEntity,
     ProfileGroupEntity

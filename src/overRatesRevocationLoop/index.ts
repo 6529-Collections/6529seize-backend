@@ -23,7 +23,6 @@ import { dropOverRaterRevocationService } from '../drops/drop-over-rater-revocat
 import { ProfileProxyEntity } from '../entities/IProfileProxy';
 import { ProfileProxyActionEntity } from '../entities/IProfileProxyAction';
 import { WaveEntity } from '../entities/IWave';
-import { WalletGroupEntity } from '../entities/IWalletGroup';
 import { CookiesConsent } from '../entities/ICookieConsent';
 import { IdentityEntity } from '../entities/IIdentity';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
@@ -55,7 +54,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     WaveEntity,
     CookiesConsent,
     UserGroupEntity,
-    WalletGroupEntity,
     AddressConsolidationKey,
     IdentityEntity,
     Prenode,
