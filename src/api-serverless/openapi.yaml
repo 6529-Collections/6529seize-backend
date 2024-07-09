@@ -2256,6 +2256,7 @@ components:
         - period
         - max_winners
         - admin_group
+        - authenticated_user_eligible_for_admin
       properties:
         type:
           $ref: "#/components/schemas/WaveType"
@@ -2283,6 +2284,8 @@ components:
             - type: "null"
             - $ref: "#/components/schemas/IntRange"
           example: {"min": 1719850339996, "max": 1719850339996}
+        authenticated_user_eligible_for_admin:
+          type: boolean
 
     CreateWaveConfig:
       type: object
