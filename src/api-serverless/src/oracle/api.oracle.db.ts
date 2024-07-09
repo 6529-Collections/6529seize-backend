@@ -398,14 +398,32 @@ export async function fetchPrenodes(pageSize: number, page: number) {
     PRENODES_TABLE,
     {},
     `(tdh_sync AND block_sync) DESC,
-      (tdh_sync OR block_sync) DESC,
-      CASE 
-        WHEN tdh_sync AND block_sync THEN created_at
+    (tdh_sync OR block_sync) DESC,
+    CASE 
+        WHEN ping_status = 'green' THEN 1
+        WHEN ping_status = 'orange' THEN 2
+        ELSE 3
+    END ASC,
+    CASE 
+        WHEN tdh_sync AND block_sync AND ping_status = 'green' THEN created_at
         ELSE NULL
-      END ASC,
-      updated_at DESC`,
+    END ASC,
+    updated_at DESC`,
     pageSize,
     page,
-    ''
+    '',
+    `ip, 
+    domain, 
+    tdh_sync, 
+    block_sync, 
+    created_at, 
+    updated_at, 
+    city, 
+    country,
+    CASE 
+        WHEN updated_at >= UTC_TIMESTAMP() - INTERVAL 1 HOUR THEN 'green'
+        WHEN updated_at >= UTC_TIMESTAMP() - INTERVAL 24 HOUR THEN 'orange'
+        ELSE 'red'
+    END AS 'ping_status'`
   );
 }
