@@ -188,7 +188,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     return this.db
       .execute<WaveOverview & { drop_id: string }>(
         `select 
-        d.id as drop_id, w.id, w.name, w.picture, w.picture, w.description_drop_id 
+        d.id as drop_id, w.id, w.name, w.picture, w.picture, w.description_drop_id w.voting_group_id
         from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)`,
         {
           dropIds
@@ -201,7 +201,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             id: wave.id,
             name: wave.name,
             picture: wave.picture,
-            description_drop_id: wave.description_drop_id
+            description_drop_id: wave.description_drop_id,
+            voting_group_id: wave.voting_group_id
           };
           return acc;
         }, {} as Record<string, WaveOverview>)
@@ -276,6 +277,7 @@ export interface WaveOverview {
   readonly name: string;
   readonly picture: string;
   readonly description_drop_id: string;
+  readonly voting_group_id: string | null;
 }
 
 export const wavesApiDb = new WavesApiDb(dbSupplier, userGroupsService);

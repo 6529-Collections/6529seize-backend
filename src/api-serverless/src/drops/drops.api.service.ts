@@ -193,6 +193,11 @@ export class DropsApiService {
       },
       connection
     );
+    const groupsUserIsEligibleFor = contextProfileId
+      ? await this.userGroupsService.getGroupsUserIsEligibleFor(
+          contextProfileId
+        )
+      : [];
     const raterProfileIds = Object.values(dropsTopRaters)
       .map((it) => it.map((r) => r.rater_profile_id))
       .flat();
@@ -231,7 +236,10 @@ export class DropsApiService {
               id: dropWave.id,
               name: dropWave.name,
               picture: dropWave.picture,
-              description_drop_id: dropWave.description_drop_id
+              description_drop_id: dropWave.description_drop_id,
+              authenticated_user_eligible_to_vote:
+                dropWave.voting_group_id === null ||
+                groupsUserIsEligibleFor.includes(dropWave.voting_group_id)
             }
           : null) as any,
         author: profilesByIds[dropEntity.author_id]!,
@@ -440,29 +448,6 @@ export class DropsApiService {
       contextProfileId,
       connection
     );
-  }
-
-  async findProfilesLatestDrops(param: {
-    amount: number;
-    profile_id: string;
-    serial_no_less_than: number | null;
-    authenticationContext: AuthenticationContext;
-  }): Promise<Drop[]> {
-    const contextProfileId = this.getDropsReadContextProfileId(
-      param.authenticationContext
-    );
-    const group_ids_user_is_eligible_for =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(contextProfileId);
-    const dropEntities = await this.dropsDb.findProfileDrops(
-      param,
-      group_ids_user_is_eligible_for
-    );
-    return await this.convertToDropFulls({
-      dropEntities,
-      contextProfileId,
-      min_part_id: 1,
-      max_part_id: 1
-    });
   }
 
   async findAvailableCreditForRatingForProfile(

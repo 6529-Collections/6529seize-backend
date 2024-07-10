@@ -245,27 +245,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return this.db.execute(sql, params);
   }
 
-  async findProfileDrops(
-    param: {
-      amount: number;
-      serial_no_less_than: number | null;
-      profile_id: string;
-    },
-    groupIdsUserIfEligibleFor: string[]
-  ): Promise<DropEntity[]> {
-    const serialNoLessThan =
-      param.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
-    const sql = `select d.* from ${DROPS_TABLE} d
-         join waves w on w.id = d.wave_id and w.visibility_group_id in (:eligible_groups)
-         where  d.serial_no < :serialNoLessThan and d.author_id = :profileId
-         order by d.id desc limit ${param.amount}`;
-    return this.db.execute(sql, {
-      profileId: param.profile_id,
-      eligible_groups: [...groupIdsUserIfEligibleFor, null],
-      serialNoLessThan
-    });
-  }
-
   async findMentionsByDropIds(
     dropIds: string[],
     connection?: ConnectionWrapper<any>
