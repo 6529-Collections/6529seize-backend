@@ -25,7 +25,7 @@ import { Time } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
 import { FullPageRequest, Page } from '../api-serverless/src/page-request';
 import { calculateLevel } from '../profiles/profile-level';
-import { Profile, ProfileClassification } from '../entities/IProfile';
+import { ProfileClassification } from '../entities/IProfile';
 import {
   repService,
   RepService
@@ -514,16 +514,27 @@ export class RatingsService {
   }
 
   async transferAllGivenProfileRatings(
-    sourceProfile: Profile,
-    targetProfile: Profile,
+    sourceProfileId: string,
+    targetProfileId: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
     let page = 1;
+    const { sourceProfileHandle, targetProfileHandle } = await profilesDb
+      .getProfileHandlesByIds(
+        [sourceProfileId, targetProfileId],
+        connectionHolder
+      )
+      .then((results) => {
+        return {
+          sourceProfileHandle: results[sourceProfileId],
+          targetProfileHandle: results[targetProfileId]
+        };
+      });
     while (true) {
       const ratings =
         await this.ratingsDb.lockNonZeroRatingsForProfileOlderFirst(
           {
-            rater_profile_id: sourceProfile.external_id,
+            rater_profile_id: sourceProfileId,
             page_request: {
               page,
               page_size: 1000
@@ -533,25 +544,26 @@ export class RatingsService {
         );
       await this.deleteRatingsForProfileArchival(
         ratings,
-        sourceProfile.handle,
-        targetProfile.handle,
+        sourceProfileHandle,
+        targetProfileHandle,
         connectionHolder
       );
+      const rrr = ratings
+        .map((it) => ({
+          ...it,
+          rater_profile_id: targetProfileId
+        }))
+        .filter(
+          (it) =>
+            !(
+              it.matter_target_id === targetProfileId &&
+              getMattersWhereTargetIsProfile().includes(it.matter)
+            )
+        );
       await this.insertRatingsAfterProfileArchival(
-        ratings
-          .map((it) => ({
-            ...it,
-            rater_profile_id: targetProfile.external_id
-          }))
-          .filter(
-            (it) =>
-              !(
-                it.matter_target_id === targetProfile.external_id &&
-                getMattersWhereTargetIsProfile().includes(it.matter)
-              )
-          ),
-        sourceProfile.handle,
-        targetProfile.handle,
+        rrr,
+        sourceProfileHandle,
+        targetProfileHandle,
         connectionHolder
       );
       if (!ratings.length) {
@@ -562,8 +574,8 @@ export class RatingsService {
   }
 
   async transferAllReceivedProfileRatings(
-    sourceProfile: Profile,
-    targetProfile: Profile,
+    sourceProfile: string,
+    targetProfile: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
     let page = 1;
@@ -571,7 +583,7 @@ export class RatingsService {
       const ratings =
         await this.ratingsDb.lockNonZeroRatingsForMatterAndTargetIdOlderFirst(
           {
-            matter_target_id: sourceProfile.external_id,
+            matter_target_id: sourceProfile,
             matters: getMattersWhereTargetIsProfile(),
             page_request: {
               page,
@@ -585,25 +597,25 @@ export class RatingsService {
       }
       await this.deleteRatingsForProfileArchival(
         ratings,
-        sourceProfile.handle,
-        targetProfile.handle,
+        sourceProfile,
+        targetProfile,
         connectionHolder
       );
       await this.insertRatingsAfterProfileArchival(
         ratings
           .map((it) => ({
             ...it,
-            matter_target_id: targetProfile.external_id
+            matter_target_id: targetProfile
           }))
           .filter(
             (it) =>
               !(
-                it.rater_profile_id === targetProfile.external_id &&
+                it.rater_profile_id === targetProfile &&
                 getMattersWhereTargetIsProfile().includes(it.matter)
               )
           ),
-        sourceProfile.handle,
-        targetProfile.handle,
+        sourceProfile,
+        targetProfile,
         connectionHolder
       );
       if (!ratings.length) {

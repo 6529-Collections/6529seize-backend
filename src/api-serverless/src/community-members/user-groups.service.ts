@@ -1,8 +1,7 @@
 import {
-  ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
-  RATINGS_TABLE,
-  WALLET_GROUPS_TABLE
+  PROFILE_GROUPS_TABLE,
+  RATINGS_TABLE
 } from '../../../constants';
 import { profilesService } from '../../../profiles/profiles.service';
 import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
@@ -30,7 +29,6 @@ import {
   GroupOwnsNft,
   GroupOwnsNftNameEnum
 } from '../generated/models/GroupOwnsNft';
-import { identitiesDb } from '../../../identities/identities.db';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -48,10 +46,10 @@ export class UserGroupsService {
   async save(
     group: Omit<
       NewUserGroupEntity,
-      'wallet_group_id' | 'excluded_wallet_group_id'
+      'profile_group_id' | 'excluded_profile_group_id'
     > & {
-      wallets: string[];
-      excluded_wallets: string[];
+      addresses: string[];
+      excluded_addresses: string[];
     },
     createdBy: { id: string; handle: string }
   ): Promise<GroupFull> {
@@ -66,15 +64,15 @@ export class UserGroupsService {
             }).slice(0, 50) +
             '-' +
             uniqueShortId();
-          const wallet_group_id = group.wallets.length
-            ? await this.userGroupsDb.insertWalletGroupWalletsAndGetGroupId(
-                group.wallets,
+          const inclusionGroups = group.addresses.length
+            ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
+                group.addresses,
                 connection
               )
             : null;
-          const excluded_wallet_group_id = group.excluded_wallets.length
-            ? await this.userGroupsDb.insertWalletGroupWalletsAndGetGroupId(
-                group.excluded_wallets,
+          const exclusionGroups = group.excluded_addresses.length
+            ? await this.userGroupsDb.insertGroupEntriesAndGetGroupIds(
+                group.excluded_addresses,
                 connection
               )
             : null;
@@ -86,8 +84,9 @@ export class UserGroupsService {
               created_by: createdBy.id,
               visible: false,
               name: group.name,
-              wallet_group_id,
-              excluded_wallet_group_id
+              profile_group_id: inclusionGroups?.profile_group_id ?? null,
+              excluded_profile_group_id:
+                exclusionGroups?.profile_group_id ?? null
             },
             connection
           );
@@ -118,32 +117,29 @@ export class UserGroupsService {
       givenRep: givenCicAndRep.rep
     });
     let inclusionGroups = initialSelection
-      .map((it) => it.wallet_group_id)
+      .map((it) => it.profile_group_id)
       .filter((it) => !!it) as string[];
     let exclusionGroups = initialSelection
-      .map((it) => it.excluded_wallet_group_id)
+      .map((it) => it.excluded_profile_group_id)
       .filter((it) => !!it) as string[];
     if (inclusionGroups.length || exclusionGroups.length) {
-      const profileWallets = await identitiesDb.getWalletsByProfileId(
-        profileId
-      );
-      const walletGroupIdsContainingProfileWallets =
-        await this.userGroupsDb.getWalletGroupIdsHavingWallets(
+      const profileGroupIdsContainingProfileIds =
+        await this.userGroupsDb.getProfileGroupIdsHavingIdentities(
           [...inclusionGroups, ...exclusionGroups],
-          profileWallets
+          profileId
         );
       inclusionGroups = inclusionGroups.filter((it) =>
-        walletGroupIdsContainingProfileWallets.includes(it)
+        profileGroupIdsContainingProfileIds.includes(it)
       );
       exclusionGroups = exclusionGroups.filter((it) =>
-        walletGroupIdsContainingProfileWallets.includes(it)
+        profileGroupIdsContainingProfileIds.includes(it)
       );
       initialSelection = initialSelection.filter(
         (it) =>
-          (it.excluded_wallet_group_id === null ||
-            !exclusionGroups.includes(it.excluded_wallet_group_id)) &&
-          (it.wallet_group_id === null ||
-            inclusionGroups.includes(it.wallet_group_id))
+          (it.excluded_profile_group_id === null ||
+            !exclusionGroups.includes(it.excluded_profile_group_id)) &&
+          (it.profile_group_id === null ||
+            inclusionGroups.includes(it.profile_group_id))
       );
     }
     const ambiguousCandidates = initialSelection.filter(
@@ -246,20 +242,20 @@ export class UserGroupsService {
       }
     });
     const allThatIsLeft = [...ambiguousCleaned, ...unambiguousInitial];
-    const allowedWalletGroupIds: string[] = [];
+    const allowedProfileGroupIds: string[] = [];
     if (profileId) {
-      const walletGroupIdsProfileIsIn =
-        await this.userGroupsDb.findWalletGroupIdsContainingAnyOfProfilesWallets(
-          allThatIsLeft.filter((it) => it.wallet_group_id).map((it) => it.id),
+      const profileGroupIdsProfileIsIn =
+        await this.userGroupsDb.findProfileGroupIdsContainingIdentity(
+          allThatIsLeft.filter((it) => it.profile_group_id).map((it) => it.id),
           profileId
         );
-      allowedWalletGroupIds.push(...walletGroupIdsProfileIsIn);
+      allowedProfileGroupIds.push(...profileGroupIdsProfileIsIn);
     }
     return allThatIsLeft
       .filter(
         (it) =>
-          it.wallet_group_id === null ||
-          allowedWalletGroupIds.includes(it.wallet_group_id)
+          it.profile_group_id === null ||
+          allowedProfileGroupIds.includes(it.profile_group_id)
       )
       .map((it) => it.id);
   }
@@ -374,8 +370,8 @@ export class UserGroupsService {
           max: null
         },
         owns_nfts: [],
-        wallet_group_id: null,
-        excluded_wallet_group_id: null
+        identity_group_id: null,
+        excluded_identity_group_id: null
       });
     } else {
       const group = await this.getByIdOrThrow(groupId);
@@ -386,7 +382,8 @@ export class UserGroupsService {
   private async getSqlAndParams(
     group: Omit<
       GroupDescription,
-      'wallet_group_wallets_count' | 'excluded_wallet_group_wallets_count'
+      | 'identity_group_identities_count'
+      | 'excluded_identity_group_identities_count'
     >
   ): Promise<{
     sql: string;
@@ -439,44 +436,28 @@ export class UserGroupsService {
     cicPart: string | null,
     group: Omit<
       GroupDescription,
-      'wallet_group_wallets_count' | 'excluded_wallet_group_wallets_count'
+      | 'identity_group_identities_count'
+      | 'excluded_identity_group_identities_count'
     >,
     params: Record<string, any>
   ) {
     let cmPart = ` ${repPart || cicPart ? ', ' : ' '}`;
-    if (group.wallet_group_id) {
-      cmPart += ` included_consolidation_keys as (select distinct ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key as inc_consolidation_k from ${WALLET_GROUPS_TABLE}
-                     join ${ADDRESS_CONSOLIDATION_KEY} on ${WALLET_GROUPS_TABLE}.wallet = ${ADDRESS_CONSOLIDATION_KEY}.address
-                     where ${WALLET_GROUPS_TABLE}.wallet_group_id = :wallet_group_id), `;
-      params.wallet_group_id = group.wallet_group_id;
-    }
-    if (group.excluded_wallet_group_id) {
-      cmPart += ` excluded_consolidation_keys as (select distinct ${ADDRESS_CONSOLIDATION_KEY}.consolidation_key as ex_consolidation_k
-                                     from ${WALLET_GROUPS_TABLE}
-                                              join ${ADDRESS_CONSOLIDATION_KEY}
-                                                   on ${WALLET_GROUPS_TABLE}.wallet = ${ADDRESS_CONSOLIDATION_KEY}.address
-                                     where ${WALLET_GROUPS_TABLE}.wallet_group_id = :excluded_wallet_group_id), `;
-      params.excluded_wallet_group_id = group.excluded_wallet_group_id;
-    }
     cmPart += ` ${UserGroupsService.GENERATED_VIEW} as (select i.* from ${IDENTITIES_TABLE} i `;
-    if (group.wallet_group_id) {
-      cmPart += `join included_consolidation_keys on i.consolidation_key = included_consolidation_keys.inc_consolidation_k `;
-    }
     if (repPart !== null) {
       cmPart += `join rep_exchanges on i.profile_id = rep_exchanges.profile_id `;
     }
     if (cicPart !== null) {
       cmPart += `join cic_exchanges on i.profile_id = cic_exchanges.profile_id `;
     }
-    if (group.wallet_group_id !== null) {
+    if (group.identity_group_id !== null) {
       cmPart += `
-      join ${ADDRESS_CONSOLIDATION_KEY} a on i.consolidation_key = a.consolidation_key
-      join ${WALLET_GROUPS_TABLE} on a.address = ${WALLET_GROUPS_TABLE}.wallet and ${WALLET_GROUPS_TABLE}.wallet_group_id = :wallet_group_id`;
-      params.wallet_group_id = group.wallet_group_id;
+      join ${PROFILE_GROUPS_TABLE} pg on pg.profile_id = i.profile_id and pg.profile_group_id = :profile_group_id`;
+      params.profile_group_id = group.identity_group_id;
     }
     cmPart += ` where true `;
-    if (group.excluded_wallet_group_id) {
-      cmPart += `and i.consolidation_key not in (select ex_consolidation_k from excluded_consolidation_keys) `;
+    if (group.excluded_identity_group_id !== null) {
+      cmPart += `and i.profile_id not in (select pgt.profile_id from ${PROFILE_GROUPS_TABLE} pgt where pgt.profile_group_id = :excluded_profile_group_id) `;
+      params.excluded_profile_group_id = group.excluded_identity_group_id;
     }
     if (group.tdh.min !== null) {
       cmPart += `and i.tdh >= :tdh_min `;
@@ -501,7 +482,8 @@ export class UserGroupsService {
   private getCicPart(
     group: Omit<
       GroupDescription,
-      'wallet_group_wallets_count' | 'excluded_wallet_group_wallets_count'
+      | 'identity_group_identities_count'
+      | 'excluded_identity_group_identities_count'
     >,
     params: Record<string, any>,
     repPart: string | null
@@ -551,7 +533,8 @@ export class UserGroupsService {
   private getRepPart(
     group: Omit<
       GroupDescription,
-      'wallet_group_wallets_count' | 'excluded_wallet_group_wallets_count'
+      | 'identity_group_identities_count'
+      | 'excluded_identity_group_identities_count'
     >,
     params: Record<string, any>
   ) {
@@ -646,11 +629,11 @@ export class UserGroupsService {
     return await this.userGroupsDb.getByIds(ids, connection);
   }
 
-  async findUserGroupsWalletGroupWallets(
-    walletGroupId: string
+  async findUserGroupsIdentityGroupIdentities(
+    identityGroupId: string
   ): Promise<string[]> {
-    return await this.userGroupsDb.findUserGroupsWalletGroupWallets(
-      walletGroupId
+    return await this.userGroupsDb.findUserGroupsIdentityGroupPrimaryAddresses(
+      identityGroupId
     );
   }
 
@@ -674,17 +657,18 @@ export class UserGroupsService {
           return acc;
         }, {} as Record<string, ProfileMin>)
       );
-    const groupsWalletGroupsIdsAndWalletCounts: Record<
+    const groupsIdentityGroupsIdsAndIdentityCounts: Record<
       string,
       {
-        wallet_group_id: string | null;
-        wallets_count: number;
-        excluded_wallet_group_id: string | null;
-        excluded_wallets_count: number;
+        identity_group_id: string | null;
+        identity_count: number;
+        excluded_identity_group_id: string | null;
+        excluded_identity_count: number;
       }
-    > = await this.userGroupsDb.findWalletGroupsIdsAndWalletCountsByGroupIds(
-      groups.map((it) => it.id)
-    );
+    > =
+      await this.userGroupsDb.findIdentityGroupsIdsAndIdentityCountsByGroupIds(
+        groups.map((it) => it.id)
+      );
     return groups.map<GroupFull>((it) => ({
       id: it.id,
       name: it.name,
@@ -752,16 +736,17 @@ export class UserGroupsService {
               }
             : null
         ].filter((it) => !!it) as GroupOwnsNft[],
-        wallet_group_id:
-          groupsWalletGroupsIdsAndWalletCounts[it.id]?.wallet_group_id ?? null,
-        wallet_group_wallets_count:
-          groupsWalletGroupsIdsAndWalletCounts[it.id]?.wallets_count ?? 0,
-        excluded_wallet_group_id:
-          groupsWalletGroupsIdsAndWalletCounts[it.id]
-            ?.excluded_wallet_group_id ?? null,
-        excluded_wallet_group_wallets_count:
-          groupsWalletGroupsIdsAndWalletCounts[it.id]?.excluded_wallets_count ??
-          0
+        identity_group_id:
+          groupsIdentityGroupsIdsAndIdentityCounts[it.id]?.identity_group_id ??
+          null,
+        identity_group_identities_count:
+          groupsIdentityGroupsIdsAndIdentityCounts[it.id]?.identity_count ?? 0,
+        excluded_identity_group_id:
+          groupsIdentityGroupsIdsAndIdentityCounts[it.id]
+            ?.excluded_identity_group_id ?? null,
+        excluded_identity_group_identities_count:
+          groupsIdentityGroupsIdsAndIdentityCounts[it.id]
+            ?.excluded_identity_count ?? 0
       },
       created_by: relatedProfiles[it.created_by] ?? null
     }));

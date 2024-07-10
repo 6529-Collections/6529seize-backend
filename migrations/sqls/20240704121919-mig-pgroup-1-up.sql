@@ -1,0 +1,1 @@
+delete from profile_groups where true;

@@ -3,11 +3,10 @@ import { identitiesDb } from './identities/identities.db';
 import { IdentityEntity } from './entities/IIdentity';
 import { profilesService } from './profiles/profiles.service';
 import { Profile } from './entities/IProfile';
-import { ratingsDb } from './rates/ratings.db';
-import { RateMatter } from './entities/IRating';
-import { distinct, parseIntOrNull } from './helpers';
+import { distinct, parseNumberOrNull } from './helpers';
 import { Logger } from './logging';
 import { CONSOLIDATED_WALLETS_TDH_TABLE, IDENTITIES_TABLE } from './constants';
+import { randomUUID } from 'crypto';
 
 const logger = Logger.get('IDENTITIES');
 
@@ -48,49 +47,111 @@ export async function syncIdentitiesWithTdhConsolidations(
   connection: ConnectionWrapper<any>
 ) {
   logger.info(`Syncing identities with tdh_consolidations`);
-  const newConsolidationKeys = await getUnsynchronisedConsolidationKeysWithTdhs(
+  const newConsolidations = await getUnsynchronisedConsolidationKeysWithTdhs(
     connection
   );
-  if (newConsolidationKeys.length > 0) {
-    const affectedWallets = newConsolidationKeys
+
+  function mergeDuplicates(identitiesToSave: IdentityEntity[]) {
+    return Object.values(
+      identitiesToSave.reduce((acc, it) => {
+        const profileId = it.profile_id!;
+        if (!acc[profileId]) {
+          acc[profileId] = it;
+        } else {
+          const oldIdentity = acc[profileId];
+          if (oldIdentity.tdh < it.tdh) {
+            const newProfileId = randomUUID();
+            const oldIdentitiesNewVersion: IdentityEntity = {
+              ...oldIdentity,
+              profile_id: newProfileId,
+              handle: null,
+              normalised_handle: null,
+              rep: 0,
+              cic: 0,
+              level_raw: oldIdentity.level_raw - oldIdentity.rep,
+              classification: null,
+              sub_classification: null,
+              banner1: null,
+              banner2: null,
+              pfp: null
+            };
+            acc[profileId] = it;
+            acc[newProfileId] = oldIdentitiesNewVersion;
+          } else {
+            const newProfileId = randomUUID();
+            acc[newProfileId] = {
+              ...it,
+              profile_id: newProfileId,
+              handle: null,
+              normalised_handle: null,
+              rep: 0,
+              cic: 0,
+              level_raw: it.level_raw - it.rep,
+              classification: null,
+              sub_classification: null,
+              banner1: null,
+              banner2: null,
+              pfp: null
+            };
+          }
+        }
+        return acc;
+      }, {} as Record<string, IdentityEntity>)
+    );
+  }
+
+  if (newConsolidations.length) {
+    const addressesInNewConsolidationKeys = newConsolidations
       .map((it) => it.consolidation_key.split('-'))
       .flat();
     const oldDataByWallets =
       await identitiesDb.lockEverythingRelatedToIdentitiesByAddresses(
-        affectedWallets,
+        addressesInNewConsolidationKeys,
         connection
       );
-    const oldConsolidationKeys = Object.values(oldDataByWallets)
-      .map((it) => it.identity.consolidation_key)
-      .filter((it) => it);
-    const allWalletsInOldStateOfIdentities = oldConsolidationKeys
-      .map((it) => it.split('-'))
-      .flat();
-    if (oldConsolidationKeys.length > 0) {
-      logger.info(`Deleting identitie(s): ${oldConsolidationKeys.join(`, `)}`);
-      await identitiesDb.deleteIdentities(
-        { consolidationKeys: oldConsolidationKeys },
-        connection
+    const { brandNewConsolidations, consolidationsThatNeedWork } =
+      newConsolidations.reduce(
+        (acc, newConsolidation) => {
+          const newConsolidationsWallets =
+            newConsolidation.consolidation_key.split('-');
+          const isRepresentedInOldConsolidations =
+            newConsolidationsWallets.some((wallet) => oldDataByWallets[wallet]);
+          if (isRepresentedInOldConsolidations) {
+            acc.consolidationsThatNeedWork.push(newConsolidation);
+          } else {
+            acc.brandNewConsolidations.push(newConsolidation);
+          }
+          return acc;
+        },
+        {
+          brandNewConsolidations: [] as {
+            consolidation_key: string;
+            tdh: number;
+          }[],
+          consolidationsThatNeedWork: [] as {
+            consolidation_key: string;
+            tdh: number;
+          }[]
+        }
       );
-    }
-    const identities = await Promise.all(
-      newConsolidationKeys.map<Promise<IdentityEntity>>((consolidationKey) =>
+    const brandNewIdentities: IdentityEntity[] = await Promise.all(
+      brandNewConsolidations.map<Promise<IdentityEntity>>((consolidation) =>
         profilesService
           .determinePrimaryAddress(
-            consolidationKey.consolidation_key.split('-'),
-            consolidationKey.consolidation_key
+            consolidation.consolidation_key.split('-'),
+            consolidation.consolidation_key
           )
           .then((primaryAddress) => {
             return {
-              consolidation_key: consolidationKey.consolidation_key,
+              consolidation_key: consolidation.consolidation_key,
               primary_address: primaryAddress,
-              profile_id: null,
+              profile_id: randomUUID(),
               handle: null,
               normalised_handle: null,
-              tdh: consolidationKey.tdh,
+              tdh: consolidation.tdh,
               rep: 0,
               cic: 0,
-              level_raw: 0,
+              level_raw: consolidation.tdh,
               pfp: null,
               banner1: null,
               banner2: null,
@@ -100,124 +161,150 @@ export async function syncIdentitiesWithTdhConsolidations(
           })
       )
     );
-    const affectedProfiles = Object.values(oldDataByWallets)
-      .map((it) => it.profile)
-      .filter((it) => it) as Profile[];
-    const identitiesWithAffectedProfiles = identities.map((identity) => ({
-      identity,
-      profiles:
-        affectedProfiles.filter((profile) =>
-          identity.consolidation_key.split('-').includes(profile.primary_wallet)
-        ) ?? null
-    }));
-    const affectedProfilesIds = affectedProfiles.map((it) => it.external_id);
-    const affectedProfilesCics = await ratingsDb.getMatterRatingForEachTarget(
-      {
-        target_profile_ids: affectedProfilesIds,
-        matter: RateMatter.CIC
-      },
+    const identitiesToMerge: {
+      sourceIdentities: IdentityEntity[];
+      targetIdentity: IdentityEntity;
+    }[] = [];
+    for (const consolidationThatNeedsWork of consolidationsThatNeedWork) {
+      const walletsForConsolidationThatNeedsWork =
+        consolidationThatNeedsWork.consolidation_key.split('-');
+      const newPrimaryAddress = await profilesService.determinePrimaryAddress(
+        walletsForConsolidationThatNeedsWork,
+        consolidationThatNeedsWork.consolidation_key
+      );
+      let targetIdentity = oldDataByWallets[newPrimaryAddress]?.identity ??
+        oldDataByWallets[0]?.identity ?? {
+          consolidation_key: consolidationsThatNeedWork,
+          primary_address: newPrimaryAddress,
+          profile_id: randomUUID(),
+          handle: null,
+          normalised_handle: null,
+          tdh: consolidationThatNeedsWork.tdh,
+          rep: 0,
+          cic: 0,
+          level_raw: consolidationThatNeedsWork.tdh,
+          pfp: null,
+          banner1: null,
+          banner2: null,
+          classification: null,
+          sub_classification: null
+        };
+      const mainProfileForNewConsolidation =
+        walletsForConsolidationThatNeedsWork
+          .map((it) => oldDataByWallets[it])
+          .filter((it) => !!it)
+          .reduce((acc, data) => {
+            const thisProfile = data.profile;
+            const thisCic = parseNumberOrNull(`${data.identity.cic}`)!;
+            const thisTdh = parseNumberOrNull(`${data.identity.tdh}`)!;
+            if (thisProfile) {
+              if (
+                !acc ||
+                thisCic > acc.cic ||
+                (thisCic === acc.cic && thisTdh > acc.tdh)
+              ) {
+                return { ...thisProfile, cic: thisCic, tdh: thisTdh };
+              }
+            }
+            return acc;
+          }, null as (Profile & { cic: number; tdh: number }) | null);
+      targetIdentity = {
+        ...targetIdentity,
+        consolidation_key: consolidationThatNeedsWork.consolidation_key,
+        handle: mainProfileForNewConsolidation?.handle ?? null,
+        normalised_handle:
+          mainProfileForNewConsolidation?.normalised_handle ?? null,
+        pfp: mainProfileForNewConsolidation?.pfp_url ?? null,
+        banner1: mainProfileForNewConsolidation?.banner_1 ?? null,
+        banner2: mainProfileForNewConsolidation?.banner_2 ?? null,
+        classification: mainProfileForNewConsolidation?.classification ?? null,
+        sub_classification:
+          mainProfileForNewConsolidation?.sub_classification ?? null
+      };
+      const sourceIdentities = walletsForConsolidationThatNeedsWork
+        .map((wallet) => oldDataByWallets[wallet])
+        .filter((it) => !!it)
+        .filter((it) => it.identity.profile_id !== targetIdentity.profile_id)
+        .map((it) => it.identity);
+      identitiesToMerge.push({ sourceIdentities, targetIdentity });
+    }
+    const allOldWallets = distinct(
+      Object.values(oldDataByWallets)
+        .map((it) => it.identity.consolidation_key.split('-'))
+        .flat()
+    );
+    for (const address of allOldWallets) {
+      const newIdentity =
+        brandNewIdentities.find((it) =>
+          it.consolidation_key.split('-').includes(address)
+        ) ??
+        identitiesToMerge.find((it) =>
+          it.targetIdentity.consolidation_key.split('-').includes(address)
+        );
+      if (!newIdentity) {
+        brandNewIdentities.push({
+          consolidation_key: address,
+          primary_address: address,
+          profile_id: randomUUID(),
+          handle: null,
+          normalised_handle: null,
+          tdh: 0,
+          rep: 0,
+          cic: 0,
+          level_raw: 0,
+          pfp: null,
+          banner1: null,
+          banner2: null,
+          classification: null,
+          sub_classification: null
+        });
+      }
+    }
+    await identitiesDb.deleteAddressConsolidations(allOldWallets, connection);
+    const allOldConsolidationKeys = distinct(
+      Object.values(oldDataByWallets).map((it) => it.identity.consolidation_key)
+    );
+    await identitiesDb.deleteIdentities(
+      { consolidationKeys: allOldConsolidationKeys },
       connection
     );
-    const profilesToArchive: { source: Profile; destination: Profile }[] = [];
-    const identitiesWithProfiles =
-      identitiesWithAffectedProfiles.map<IdentityEntity>((it) => {
-        const distinctProfiles = it.profiles.reduce((acc, profile) => {
-          if (!acc.find((p) => p.external_id === profile.external_id)) {
-            acc.push(profile);
-          }
-          return acc;
-        }, [] as Profile[]);
-        distinctProfiles.sort(
-          (a, d) =>
-            (affectedProfilesCics[d.external_id] ?? 0) -
-            (affectedProfilesCics[a.external_id] ?? 0)
-        );
-        const mainProfile = distinctProfiles[0];
-        const otherProfiles = distinctProfiles.slice(1);
-        for (const otherProfile of otherProfiles) {
-          profilesToArchive.push({
-            source: otherProfile,
-            destination: mainProfile
-          });
-        }
-        return {
-          ...it.identity,
-          profile_id: mainProfile?.external_id ?? null,
-          handle: mainProfile?.handle ?? null,
-          normalised_handle: mainProfile?.normalised_handle ?? null,
-          pfp: mainProfile?.pfp_url ?? null,
-          banner1: mainProfile?.banner_1 ?? null,
-          banner2: mainProfile?.banner_2 ?? null,
-          classification: mainProfile?.classification ?? null,
-          sub_classification: mainProfile?.sub_classification ?? null
-        };
-      });
-    for (const profilesToArchiveElement of profilesToArchive) {
+    brandNewIdentities.push(
+      ...identitiesToMerge.map((it) => it.targetIdentity)
+    );
+    const identitiesToSave: IdentityEntity[] = await Promise.all(
+      brandNewIdentities.map((it) =>
+        profilesService
+          .determinePrimaryAddress(
+            it.consolidation_key.split('-'),
+            it.consolidation_key
+          )
+          .then((primaryAddress) => ({
+            ...it,
+            primary_address: primaryAddress
+          }))
+      )
+    );
+    const identitiesReadyForSaving = mergeDuplicates(identitiesToSave);
+    await identitiesDb.bulkInsertIdentities(
+      identitiesReadyForSaving,
+      connection
+    );
+    for (const identitiesToMergeElement of identitiesToMerge) {
       await profilesService.mergeProfileSet(
         {
-          toBeMerged: [profilesToArchiveElement.source],
-          target: profilesToArchiveElement.destination
+          toBeMerged: identitiesToMergeElement.sourceIdentities.map(
+            (it) => it.profile_id!
+          ),
+          target: identitiesToMergeElement.targetIdentity.profile_id!
         },
         connection
       );
     }
-    await identitiesDb.deleteAddressConsolidations(
-      distinct([...allWalletsInOldStateOfIdentities, ...affectedWallets]),
+    await identitiesDb.syncProfileAddressesFromIdentitiesToProfiles(connection);
+    await identitiesDb.fixIdentitiesMetrics(
+      identitiesReadyForSaving.map((it) => it.profile_id!),
       connection
     );
-    const [reps, cics] = await Promise.all([
-      ratingsDb.getMatterRatingForEachTarget(
-        {
-          target_profile_ids: affectedProfilesIds,
-          matter: RateMatter.REP
-        },
-        connection
-      ),
-      ratingsDb.getMatterRatingForEachTarget(
-        {
-          target_profile_ids: affectedProfilesIds,
-          matter: RateMatter.CIC
-        },
-        connection
-      )
-    ]);
-    const newIdentities = identitiesWithProfiles.map((it) => {
-      const rep =
-        parseIntOrNull(`${it.profile_id ? reps[it.profile_id] ?? 0 : 0}`) ?? 0;
-      const cic =
-        parseIntOrNull(`${it.profile_id ? cics[it.profile_id] ?? 0 : 0}`) ?? 0;
-      const tdh = parseIntOrNull(`${it.tdh}`) ?? 0;
-      const level_raw = tdh + rep;
-      return {
-        ...it,
-        rep,
-        cic,
-        level_raw
-      };
-    });
-    const abandonedIdentities = distinct(allWalletsInOldStateOfIdentities)
-      .filter((it) => !affectedWallets.includes(it))
-      .map<IdentityEntity>((address) => ({
-        consolidation_key: address,
-        primary_address: address,
-        profile_id: null,
-        handle: null,
-        normalised_handle: null,
-        tdh: 0,
-        rep: 0,
-        cic: 0,
-        level_raw: 0,
-        pfp: null,
-        banner1: null,
-        banner2: null,
-        classification: null,
-        sub_classification: null
-      }));
-    const finalNewIdentities = [...newIdentities, ...abandonedIdentities];
-    for (const identityEntity of finalNewIdentities) {
-      logger.info(`Inserted identity ${identityEntity.consolidation_key}`);
-      await identitiesDb.insertIdentity(identityEntity, connection);
-    }
   }
   logger.info(`Syncing identities with tdh_consolidations done!`);
 }

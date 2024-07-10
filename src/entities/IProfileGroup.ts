@@ -1,20 +1,20 @@
 import { Entity, PrimaryColumn } from 'typeorm';
-import { WALLET_GROUPS_TABLE } from '../constants';
+import { PROFILE_GROUPS_TABLE } from '../constants';
 
-@Entity(WALLET_GROUPS_TABLE)
-export class WalletGroupEntity {
+@Entity(PROFILE_GROUPS_TABLE)
+export class ProfileGroupEntity {
   @PrimaryColumn({
     type: 'varchar',
     length: 50,
     nullable: false,
     collation: 'utf8_bin'
   })
-  readonly wallet_group_id!: string;
+  readonly profile_group_id!: string;
   @PrimaryColumn({
     type: 'varchar',
-    length: 50,
+    length: 100,
     nullable: false,
     collation: 'utf8_bin'
   })
-  readonly wallet!: string;
+  readonly profile_id!: string;
 }
