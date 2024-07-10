@@ -50,6 +50,56 @@ export async function syncIdentitiesWithTdhConsolidations(
   const newConsolidations = await getUnsynchronisedConsolidationKeysWithTdhs(
     connection
   );
+
+  function mergeDuplicates(identitiesToSave: IdentityEntity[]) {
+    return Object.values(
+      identitiesToSave.reduce((acc, it) => {
+        const profileId = it.profile_id!;
+        if (!acc[profileId]) {
+          acc[profileId] = it;
+        } else {
+          const oldIdentity = acc[profileId];
+          if (oldIdentity.tdh < it.tdh) {
+            const newProfileId = randomUUID();
+            const oldIdentitiesNewVersion: IdentityEntity = {
+              ...oldIdentity,
+              profile_id: newProfileId,
+              handle: null,
+              normalised_handle: null,
+              rep: 0,
+              cic: 0,
+              level_raw: oldIdentity.level_raw - oldIdentity.rep,
+              classification: null,
+              sub_classification: null,
+              banner1: null,
+              banner2: null,
+              pfp: null
+            };
+            acc[profileId] = it;
+            acc[newProfileId] = oldIdentitiesNewVersion;
+          } else {
+            const newProfileId = randomUUID();
+            acc[newProfileId] = {
+              ...it,
+              profile_id: newProfileId,
+              handle: null,
+              normalised_handle: null,
+              rep: 0,
+              cic: 0,
+              level_raw: it.level_raw - it.rep,
+              classification: null,
+              sub_classification: null,
+              banner1: null,
+              banner2: null,
+              pfp: null
+            };
+          }
+        }
+        return acc;
+      }, {} as Record<string, IdentityEntity>)
+    );
+  }
+
   if (newConsolidations.length) {
     const addressesInNewConsolidationKeys = newConsolidations
       .map((it) => it.consolidation_key.split('-'))
@@ -234,7 +284,11 @@ export async function syncIdentitiesWithTdhConsolidations(
           }))
       )
     );
-    await identitiesDb.bulkInsertIdentities(identitiesToSave, connection);
+    const identitiesReadyForSaving = mergeDuplicates(identitiesToSave);
+    await identitiesDb.bulkInsertIdentities(
+      identitiesReadyForSaving,
+      connection
+    );
     for (const identitiesToMergeElement of identitiesToMerge) {
       await profilesService.mergeProfileSet(
         {
@@ -248,7 +302,7 @@ export async function syncIdentitiesWithTdhConsolidations(
     }
     await identitiesDb.syncProfileAddressesFromIdentitiesToProfiles(connection);
     await identitiesDb.fixIdentitiesMetrics(
-      identitiesToSave.map((it) => it.profile_id!),
+      identitiesReadyForSaving.map((it) => it.profile_id!),
       connection
     );
   }
