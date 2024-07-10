@@ -450,3 +450,15 @@ export function isValidIP(ip: string): boolean {
 export async function sleep(millis: number) {
   return new Promise((resolve) => setTimeout(resolve, millis));
 }
+
+export function getUniqueValuesWithKeys<K, V>(map: Map<K, V>): Map<V, K[]> {
+  const valueToKeysMap = new Map<V, K[]>();
+  map.forEach((value, key) => {
+    if (valueToKeysMap.has(value)) {
+      valueToKeysMap.get(value)!.push(key);
+    } else {
+      valueToKeysMap.set(value, [key]);
+    }
+  });
+  return valueToKeysMap;
+}
