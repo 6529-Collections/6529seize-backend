@@ -188,8 +188,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     return this.db
       .execute<WaveOverview & { drop_id: string }>(
         `select 
-        d.id as drop_id, w.id, w.name, w.picture, w.picture, w.description_drop_id w.voting_group_id
-        from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)`,
+    d.id as drop_id, w.id, w.name, w.picture, w.picture, w.description_drop_id, w.voting_group_id
+    from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)`,
         {
           dropIds
         },
