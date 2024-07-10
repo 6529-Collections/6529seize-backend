@@ -4,6 +4,7 @@ import { ratingsDb, RatingsDb } from '../../../rates/ratings.db';
 import { RateMatter } from '../../../entities/IRating';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { Time } from '../../../time';
 
 class DropRaterService {
   constructor(
@@ -38,6 +39,32 @@ class DropRaterService {
       }
       if (dropEntity.author_id === param.rater_profile_id) {
         throw new BadRequestException(`You can't rate your own drop`);
+      }
+      const wave = await this.dropsDb.findWaveByIdOrThrow(
+        dropEntity.wave_id,
+        connection
+      );
+      if (
+        wave.voting_period_start !== null &&
+        wave.voting_period_start > Time.currentMillis()
+      ) {
+        throw new BadRequestException(
+          `Voting period for this drop hasn't started`
+        );
+      }
+      if (
+        wave.voting_period_end !== null &&
+        wave.voting_period_end < Time.currentMillis()
+      ) {
+        throw new BadRequestException(`Voting period for this drop has ended`);
+      }
+      if (
+        wave.voting_group_id !== null &&
+        !param.groupIdsUserIsEligibleFor.includes(wave.voting_group_id)
+      ) {
+        throw new BadRequestException(
+          `User is not eligible to vote in this wave`
+        );
       }
       const tdhLeftForRep = await this.dropsDb.findCreditLeftForDropsForProfile(
         {

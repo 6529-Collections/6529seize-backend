@@ -42,6 +42,8 @@ import { randomUUID } from 'crypto';
 import { PageSortDirection } from '../api-serverless/src/page-request';
 import { uniqueShortId } from '../helpers';
 import { DropActivityLogsQuery } from '../api-serverless/src/drops/drop.validator';
+import { WaveEntity } from '../entities/IWave';
+import { NotFoundException } from '../exceptions';
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -958,6 +960,24 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           return acc;
         }, {} as Record<string, number>)
       );
+  }
+
+  async findWaveByIdOrThrow(
+    id: string,
+    connection: ConnectionWrapper<any>
+  ): Promise<WaveEntity> {
+    return this.db
+      .oneOrNull<WaveEntity>(
+        `select * from ${WAVES_TABLE} where id = :id`,
+        { id },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((it) => {
+        if (!it) {
+          throw new NotFoundException(`Wave with id ${id} not found`);
+        }
+        return it;
+      });
   }
 }
 
