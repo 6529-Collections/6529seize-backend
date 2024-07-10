@@ -6,6 +6,7 @@ import {
   SUBSCRIPTIONS_BALANCES_TABLE,
   SUBSCRIPTIONS_LOGS_TABLE,
   SUBSCRIPTIONS_MODE_TABLE,
+  SUBSCRIPTIONS_NFTS_FINAL_TABLE,
   SUBSCRIPTIONS_NFTS_TABLE,
   SUBSCRIPTIONS_REDEEMED_TABLE
 } from '../constants';
@@ -24,7 +25,7 @@ import {
   SubscriptionLog,
   SubscriptionMode
 } from '../entities/ISubscription';
-import { areEqualAddresses } from '../helpers';
+import { areEqualAddresses, getUniqueValuesWithKeys } from '../helpers';
 import { Logger } from '../logging';
 import { getMaxMemeId } from '../nftsLoop/db.nfts';
 import { sendDiscordUpdate } from '../notifier-discord';
@@ -320,14 +321,16 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
           (
             await sqlExecutor.execute(
               `SELECT boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
-              WHERE consolidation_key = '${replaceConsolidation}'`
+              WHERE consolidation_key = :replaceConsolidation`,
+              { replaceConsolidation }
             )
           )[0]?.boosted_tdh ?? 0;
         const newTdh =
           (
             await sqlExecutor.execute(
               `SELECT boosted_tdh FROM ${CONSOLIDATED_WALLETS_TDH_TABLE}
-              WHERE consolidation_key = '${newConsolidationKey}'`
+              WHERE consolidation_key = :newConsolidationKey`,
+              { newConsolidationKey }
             )
           )[0]?.boosted_tdh ?? 0;
         if (newTdh > replaceTdh) {
@@ -347,40 +350,88 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
   await getDataSource().transaction(async (manager) => {
     for (const oldKey of Array.from(replaceConsolidations.keys())) {
       const newKey = replaceConsolidations.get(oldKey);
-      const exists = await manager.query(
-        `SELECT 1 FROM ${SUBSCRIPTIONS_NFTS_TABLE}
-        WHERE consolidation_key = '${newKey}'`
-      );
-      if (exists.length > 0) {
-        logger.info(
-          `[CONSOLIDATING SUBSCRIPTIONS] : [DUPLICATE CONSOLIDATION KEY ${newKey}] : [SKIPPING]`
+      if (newKey) {
+        await manager.query(
+          `UPDATE ${SUBSCRIPTIONS_NFTS_TABLE}
+            SET consolidation_key = ?
+            WHERE consolidation_key = ?`,
+          [newKey, oldKey]
         );
+        await manager.query(
+          `UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
+            SET consolidation_key = ?
+            WHERE consolidation_key = ?`,
+          [newKey, oldKey]
+        );
+        await manager.query(
+          `UPDATE ${SUBSCRIPTIONS_LOGS_TABLE}
+            SET consolidation_key = ?
+            WHERE consolidation_key = ?`,
+          [newKey, oldKey]
+        );
+        try {
+          await manager.query(
+            `UPDATE ${SUBSCRIPTIONS_REDEEMED_TABLE}
+            SET consolidation_key = ?
+            WHERE consolidation_key = ?`,
+            [newKey, oldKey]
+          );
+        } catch (e) {
+          logger.error(
+            `Error updating ${SUBSCRIPTIONS_REDEEMED_TABLE} for old key: ${oldKey} and new key: ${newKey}`,
+            e
+          );
+        }
+      }
+    }
+
+    const uniqueValuesWithKeys = getUniqueValuesWithKeys(replaceConsolidations);
+    for (const value of Array.from(uniqueValuesWithKeys.keys())) {
+      const keys = uniqueValuesWithKeys.get(value);
+      if (!keys) {
+        logger.error(`No keys found for value: ${value}`);
         continue;
       }
+
+      const balanceQuery = `
+            SELECT SUM(balance) as total_balance 
+            FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
+            WHERE consolidation_key IN (${keys.map(() => '?').join(',')})
+        `;
+      const balanceResult = await manager.query(balanceQuery, keys);
+      const totalBalance = balanceResult[0]?.total_balance;
+
+      const isSubscribedQuery = `
+            SELECT COUNT(*) as automatic_count
+            FROM ${SUBSCRIPTIONS_MODE_TABLE}
+            WHERE consolidation_key IN (${keys.map(() => '?').join(',')})
+            AND automatic = true
+        `;
+      const isSubscribedResult = await manager.query(isSubscribedQuery, keys);
+      const isSubscribed = isSubscribedResult[0]?.automatic_count > 0;
+
+      for (const key of keys) {
+        await manager.query(
+          `DELETE FROM ${SUBSCRIPTIONS_BALANCES_TABLE}
+                WHERE consolidation_key = ?`,
+          [key]
+        );
+        await manager.query(
+          `DELETE FROM ${SUBSCRIPTIONS_MODE_TABLE}
+                WHERE consolidation_key = ?`,
+          [key]
+        );
+      }
+
       await manager.query(
-        `UPDATE ${SUBSCRIPTIONS_NFTS_TABLE}
-        SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'`
+        `INSERT INTO ${SUBSCRIPTIONS_BALANCES_TABLE} (consolidation_key, balance)
+            VALUES (?, ?)`,
+        [value, totalBalance]
       );
       await manager.query(
-        `UPDATE ${SUBSCRIPTIONS_LOGS_TABLE}
-        SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'`
-      );
-      await manager.query(
-        `UPDATE ${SUBSCRIPTIONS_REDEEMED_TABLE}
-        SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'`
-      );
-      await manager.query(
-        `UPDATE ${SUBSCRIPTIONS_BALANCES_TABLE}
-        SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'`
-      );
-      await manager.query(
-        `UPDATE ${SUBSCRIPTIONS_MODE_TABLE}
-        SET consolidation_key = '${newKey}'
-        WHERE consolidation_key = '${oldKey}'`
+        `INSERT INTO ${SUBSCRIPTIONS_MODE_TABLE} (consolidation_key, automatic)
+            VALUES (?, ?)`,
+        [value, isSubscribed]
       );
     }
   });
