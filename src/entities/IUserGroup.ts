@@ -56,10 +56,6 @@ export class UserGroupEntity {
   @Column({ type: 'text', nullable: true })
   readonly owns_lab_tokens!: string | null;
   @Column({ type: 'varchar', length: 50, nullable: true })
-  readonly wallet_group_id!: string | null;
-  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
-  readonly excluded_wallet_group_id!: string | null;
-  @Column({ type: 'varchar', length: 50, nullable: true })
   readonly profile_group_id!: string | null;
   @Column({ type: 'varchar', length: 50, nullable: true, default: null })
   readonly excluded_profile_group_id!: string | null;

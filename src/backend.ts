@@ -21,12 +21,12 @@ import { RatingsSnapshot } from './entities/IRatingsSnapshots';
 import { ProfileProxyEntity } from './entities/IProfileProxy';
 import { ProfileProxyActionEntity } from './entities/IProfileProxyAction';
 import { WaveEntity } from './entities/IWave';
-import * as dbMigrationsLoop from './dbMigrationsLoop';
-import { WalletGroupEntity } from './entities/IWalletGroup';
 import { CookiesConsent } from './entities/ICookieConsent';
 import { AddressConsolidationKey } from './entities/IAddressConsolidationKey';
 import { IdentityEntity } from './entities/IIdentity';
 import { ProfileGroupEntity } from './entities/IProfileGroup';
+import { dbSupplier } from './sql-executor';
+import { syncIdentitiesWithTdhConsolidations } from './identity';
 
 const logger = Logger.get('BACKEND');
 
@@ -55,12 +55,13 @@ async function start() {
     WaveEntity,
     CookiesConsent,
     UserGroupEntity,
-    WalletGroupEntity,
     AddressConsolidationKey,
     IdentityEntity,
     ProfileGroupEntity
   ]);
-  await dbMigrationsLoop.handler(null, null as any, null as any);
+  await dbSupplier().executeNativeQueriesInTransaction(async (tx) => {
+    await syncIdentitiesWithTdhConsolidations(tx);
+  });
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
   process.exit(0);
