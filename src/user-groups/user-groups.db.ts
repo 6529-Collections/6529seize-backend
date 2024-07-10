@@ -5,11 +5,10 @@ import {
 } from '../sql-executor';
 import { UserGroupEntity } from '../entities/IUserGroup';
 import {
-  ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
+  PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
-  USER_GROUPS_TABLE,
-  WALLET_GROUPS_TABLE
+  USER_GROUPS_TABLE
 } from '../constants';
 import { RateMatter } from '../entities/IRating';
 import { randomUUID } from 'crypto';
@@ -48,8 +47,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                                             owns_lab,
                                             owns_lab_tokens,
                                             visible,
-                                            wallet_group_id,
-                                            excluded_wallet_group_id)
+                                            profile_group_id,
+                                            excluded_profile_group_id)
           values (:id,
                   :name,
                   :cic_min,
@@ -76,51 +75,69 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                   :owns_lab,
                   :owns_lab_tokens,
                   :visible,
-                  :wallet_group_id,
-                  :excluded_wallet_group_id)
+                  :profile_group_id,
+                  :excluded_profile_group_id)
     `,
       { ...entity },
       { wrappedConnection: connection }
     );
   }
 
-  async insertWalletGroupWalletsAndGetGroupId(
-    wallets: string[],
+  async insertGroupEntriesAndGetGroupIds(
+    addresses: string[],
     connection: ConnectionWrapper<any>
-  ): Promise<string> {
-    const wallet_group_id = randomUUID();
-    const distinctAddresses = distinct(wallets.map((w) => w.toLowerCase()));
-    if (wallets.length) {
-      let sql = `insert into ${WALLET_GROUPS_TABLE} (wallet_group_id, wallet)
-                 values `;
-      for (const wallet of distinctAddresses) {
-        sql += `(${mysql.escape(wallet_group_id)}, ${mysql.escape(wallet)}),`;
-      }
-      await this.db.execute(sql.slice(0, sql.length - 1), undefined, {
-        wrappedConnection: connection
-      });
+  ): Promise<{ profile_group_id: string }> {
+    const profile_group_id = randomUUID();
+    const distinctAddresses = distinct(addresses.map((w) => w.toLowerCase()));
+    if (addresses.length) {
       const chunkSize = 100;
       for (let i = 0; i < distinctAddresses.length; i += chunkSize) {
         const chunkOfAddresses = distinctAddresses.slice(i, i + chunkSize);
-        const existingAddresses = await this.db
-          .execute<{ address: string }>(
-            `
-        select distinct address from ${ADDRESS_CONSOLIDATION_KEY} where address in (:addresses) for update
-    `,
-            { addresses: chunkOfAddresses },
-            { wrappedConnection: connection }
-          )
-          .then((a) => a.map((it) => it.address));
+        const identities =
+          await identitiesDb.lockEverythingRelatedToIdentitiesByAddresses(
+            chunkOfAddresses,
+            connection
+          );
         const missingIdentities = chunkOfAddresses.filter(
-          (a) => !existingAddresses.includes(a)
+          (a) => !identities[a]
         );
         await identitiesDb.insertIdentitiesOnAddressesOnly(
           missingIdentities,
           connection
         );
+        const profileIds = await identitiesDb
+          .lockEverythingRelatedToIdentitiesByAddresses(
+            chunkOfAddresses,
+            connection
+          )
+          .then((it) =>
+            distinct(Object.values(it).map((it) => it.identity.profile_id!))
+          );
+        const alreadyInsertedProfileIds = await this.db
+          .execute<{ profile_id: string }>(
+            `select profile_id from ${PROFILE_GROUPS_TABLE} where profile_id in (:profileIds) and profile_group_id = :profile_group_id`,
+            { profileIds, profile_group_id },
+            { wrappedConnection: connection }
+          )
+          .then((it) => it.map((it) => it.profile_id));
+        const missingProfileIds = profileIds.filter(
+          (it) => !alreadyInsertedProfileIds.includes(it)
+        );
+        if (missingProfileIds.length) {
+          let sql = `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id)
+                 values `;
+          for (const profileId of missingProfileIds) {
+            sql += `(${mysql.escape(profile_group_id)}, ${mysql.escape(
+              profileId
+            )}),`;
+          }
+          await this.db.execute(sql.slice(0, sql.length - 1), undefined, {
+            wrappedConnection: connection
+          });
+        }
       }
     }
-    return wallet_group_id;
+    return { profile_group_id };
   }
 
   async getById(
@@ -369,16 +386,16 @@ where ((cg.cic_direction = 'RECEIVED' and (
     ]);
   }
 
-  async findWalletGroupsIdsAndWalletCountsByGroupIds(
+  async findIdentityGroupsIdsAndIdentityCountsByGroupIds(
     groupIds: string[]
   ): Promise<
     Record<
       string,
       {
-        wallet_group_id: string | null;
-        wallets_count: number;
-        excluded_wallet_group_id: string | null;
-        excluded_wallets_count: number;
+        identity_group_id: string | null;
+        identity_count: number;
+        excluded_identity_group_id: string | null;
+        excluded_identity_count: number;
       }
     >
   > {
@@ -388,120 +405,173 @@ where ((cg.cic_direction = 'RECEIVED' and (
     return Promise.all([
       this.db.execute<{
         group_id: string;
-        wallet_group_id: string;
-        wallets_count: number;
+        identity_group_id: string;
+        identity_count: number;
       }>(
-        `select g.id as group_id, wg.wallet_group_id as wallet_group_id, count(wg.wallet) as wallets_count from ${USER_GROUPS_TABLE} g join ${WALLET_GROUPS_TABLE} wg on g.wallet_group_id = wg.wallet_group_id where g.id in (:groupIds) group by 1, 2`,
+        `select g.id as group_id, pg.profile_group_id as identity_group_id, count(pg.profile_id) as identity_count from ${USER_GROUPS_TABLE} g 
+        join ${PROFILE_GROUPS_TABLE} pg on g.profile_group_id = pg.profile_group_id where g.id in (:groupIds) group by 1, 2`,
         { groupIds }
       ),
       this.db.execute<{
         group_id: string;
-        wallet_group_id: string;
-        wallets_count: number;
+        excluded_identity_group_id: string;
+        excluded_identity_count: number;
       }>(
-        `select g.id as group_id, wg.wallet_group_id as wallet_group_id, count(wg.wallet) as wallets_count from ${USER_GROUPS_TABLE} g join ${WALLET_GROUPS_TABLE} wg on g.excluded_wallet_group_id = wg.wallet_group_id where g.id in (:groupIds) group by 1, 2`,
+        `select g.id as group_id, pg.profile_group_id as excluded_identity_group_id, count(pg.profile_id) as excluded_identity_count from ${USER_GROUPS_TABLE} g 
+        join ${PROFILE_GROUPS_TABLE} pg on g.excluded_profile_group_id = pg.profile_group_id where g.id in (:groupIds) group by 1, 2`,
         { groupIds }
       )
     ]).then((results) => {
       const [res1, res2] = results;
-      const includedWallets = res1.reduce(
-        (acc, { group_id, wallet_group_id, wallets_count }) => {
-          acc[group_id] = { wallet_group_id, wallets_count };
+      const includedIdentities = res1.reduce(
+        (acc, { group_id, identity_group_id, identity_count }) => {
+          acc[group_id] = { identity_group_id, identity_count };
           return acc;
         },
-        {} as Record<string, { wallet_group_id: string; wallets_count: number }>
+        {} as Record<
+          string,
+          { identity_group_id: string; identity_count: number }
+        >
       );
-      const excludedWallets = res2.reduce(
-        (acc, { group_id, wallet_group_id, wallets_count }) => {
-          acc[group_id] = { wallet_group_id, wallets_count };
-          return acc;
-        },
-        {} as Record<string, { wallet_group_id: string; wallets_count: number }>
-      );
-      const keys = distinct([
-        ...Object.keys(includedWallets),
-        ...Object.keys(excludedWallets)
-      ]);
-      return keys.reduce(
-        (acc, key) => {
-          acc[key] = {
-            wallet_group_id: includedWallets[key]?.wallet_group_id ?? null,
-            wallets_count: includedWallets[key]?.wallets_count ?? 0,
-            excluded_wallet_group_id:
-              excludedWallets[key]?.wallet_group_id ?? null,
-            excluded_wallets_count: excludedWallets[key]?.wallets_count ?? 0
+      const excludedIdentities = res2.reduce(
+        (
+          acc,
+          { group_id, excluded_identity_group_id, excluded_identity_count }
+        ) => {
+          acc[group_id] = {
+            excluded_identity_group_id,
+            excluded_identity_count
           };
           return acc;
         },
         {} as Record<
           string,
           {
-            wallet_group_id: string | null;
-            wallets_count: number;
-            excluded_wallet_group_id: string | null;
-            excluded_wallets_count: number;
+            excluded_identity_group_id: string;
+            excluded_identity_count: number;
+          }
+        >
+      );
+      const keys = distinct([
+        ...Object.keys(includedIdentities),
+        ...Object.keys(excludedIdentities)
+      ]);
+      return keys.reduce(
+        (acc, key) => {
+          acc[key] = {
+            identity_group_id:
+              includedIdentities[key]?.identity_group_id ?? null,
+            identity_count: includedIdentities[key]?.identity_count ?? 0,
+            excluded_identity_group_id:
+              excludedIdentities[key]?.excluded_identity_group_id ?? null,
+            excluded_identity_count:
+              excludedIdentities[key]?.excluded_identity_count ?? 0
+          };
+          return acc;
+        },
+        {} as Record<
+          string,
+          {
+            identity_group_id: string | null;
+            identity_count: number;
+            excluded_identity_group_id: string | null;
+            excluded_identity_count: number;
           }
         >
       );
     });
   }
 
-  async findWalletGroupIdsContainingAnyOfProfilesWallets(
+  async findProfileGroupIdsContainingIdentity(
     userGroupIds: string[],
     profileId: string
   ): Promise<string[]> {
     if (!userGroupIds.length) {
       return [];
     }
-    const profileWallets = await this.db
-      .execute<{
-        wallet: string;
-      }>(
-        `select a.address as wallet from ${IDENTITIES_TABLE} i
-         join ${ADDRESS_CONSOLIDATION_KEY} a on a.consolidation_key = i.consolidation_key
-         where i.profile_id = :profileId`,
-        { profileId }
+    return this.db
+      .execute<{ profile_group_id: string }>(
+        `select distinct g.profile_group_id from ${USER_GROUPS_TABLE} g
+         join ${PROFILE_GROUPS_TABLE} pg on pg.profile_group_id is not null and pg.profile_group_id = g.profile_group_id 
+         where g.id in (:userGroupIds) and pg.profile_id = :profileId`,
+        { userGroupIds, profileId }
       )
-      .then((result) => result.map((it) => it.wallet));
-    if (!profileWallets) {
+      .then((res) => res.map((it) => it.profile_group_id));
+  }
+
+  async findUserGroupsIdentityGroupPrimaryAddresses(
+    identityGroupId: string
+  ): Promise<string[]> {
+    return this.db
+      .execute<{ address: string }>(
+        `select i.primary_address as address from ${PROFILE_GROUPS_TABLE} pg 
+        join ${IDENTITIES_TABLE} i on i.profile_id = pg.profile_id where pg.profile_group_id = :identityGroupId`,
+        { identityGroupId }
+      )
+      .then((res) => res.map((it) => it.address));
+  }
+
+  async getProfileGroupIdsHavingIdentities(
+    profileGroupIds: string[],
+    profileId: string
+  ): Promise<string[]> {
+    if (!profileGroupIds.length) {
       return [];
     }
     return this.db
-      .execute<{ wallet_group_id: string }>(
-        `select distinct g.wallet_group_id from ${USER_GROUPS_TABLE} g
-         join ${WALLET_GROUPS_TABLE} wg on wg.wallet_group_id is not null and wg.wallet_group_id = g.wallet_group_id 
-         where g.id in (:userGroupIds) and wg.wallet in (
-            :profileWallets
-         )`,
-        { userGroupIds, profileWallets }
+      .execute<{ profile_group_id: string }>(
+        `select distinct profile_group_id from ${PROFILE_GROUPS_TABLE} where profile_group_id in (:profileGroupIds) and profile_id = :profileId`,
+        { profileGroupIds, profileId }
       )
-      .then((res) => res.map((it) => it.wallet_group_id));
+      .then((res) => res.map((it) => it.profile_group_id));
   }
 
-  async findUserGroupsWalletGroupWallets(
-    walletGroupId: string
+  async findProfileGroupsWhereProfileIdIn(
+    profileId: string,
+    connectionHolder: ConnectionWrapper<any>
   ): Promise<string[]> {
-    return this.db
-      .execute<{ wallet: string }>(
-        `select wallet from ${WALLET_GROUPS_TABLE} where wallet_group_id = :walletGroupId`,
-        { walletGroupId }
+    return await this.db
+      .execute<{ profile_group_id: string }>(
+        `
+      select profile_group_id from ${PROFILE_GROUPS_TABLE} where profile_id = :profileId
+    `,
+        { profileId },
+        { wrappedConnection: connectionHolder }
       )
-      .then((res) => res.map((it) => it.wallet));
+      .then((result) => result.map((it) => it.profile_group_id));
   }
 
-  async getWalletGroupIdsHavingWallets(
-    walletGroupIds: string[],
-    profileWallets: string[]
-  ): Promise<string[]> {
-    if (!walletGroupIds.length || !profileWallets.length) {
-      return [];
+  async deleteProfileIdsInProfileGroups(
+    profileIds: string[],
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    if (!profileIds.length) {
+      return;
     }
-    return this.db
-      .execute<{ wallet_group_id: string }>(
-        `select distinct wallet_group_id from ${WALLET_GROUPS_TABLE} where wallet_group_id in (:walletGroupIds) and wallet in (:profileWallets)`,
-        { walletGroupIds, profileWallets }
+    await this.db.execute(
+      `delete from ${PROFILE_GROUPS_TABLE} where profile_id in (:profileIds)`,
+      { profileIds },
+      { wrappedConnection: connectionHolder }
+    );
+  }
+
+  async insertProfileIdsInProfileGroups(
+    targetIdentity: string,
+    profileGroupIds: string[],
+    connection: ConnectionWrapper<any>
+  ) {
+    if (!profileGroupIds.length) {
+      return;
+    }
+    const sql = `insert into ${PROFILE_GROUPS_TABLE} (profile_group_id, profile_id) values ${profileGroupIds
+      .map(
+        (profileGroupId) =>
+          `(${mysql.escape(profileGroupId)}, ${mysql.escape(targetIdentity)}) `
       )
-      .then((res) => res.map((it) => it.wallet_group_id));
+      .join(',')}`;
+    await this.db.execute(sql, undefined, {
+      wrappedConnection: connection
+    });
   }
 }
 

@@ -32,6 +32,7 @@ import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import {
   areEqualAddresses,
+  distinct,
   getWalletFromEns,
   isWallet,
   replaceEmojisWithHex
@@ -411,12 +412,13 @@ export class ProfilesService {
       );
     let creatorOrUpdatorIdentityResponse =
       identityResponse[creator_or_updater_wallet];
-    if (!creatorOrUpdatorIdentityResponse?.consolidations?.length) {
+    if (!creatorOrUpdatorIdentityResponse) {
+      const id = randomUUID();
       await this.identitiesDb.insertIdentity(
         {
           consolidation_key: creator_or_updater_wallet,
           primary_address: creator_or_updater_wallet,
-          profile_id: null,
+          profile_id: id,
           handle: null,
           normalised_handle: null,
           tdh: 0,
@@ -454,6 +456,7 @@ export class ProfilesService {
     if (someoneElsesProfileWithSameHandle) {
       throw new BadRequestException(`Handle ${handle} is already taken`);
     }
+    const identityId = creatorOrUpdatorIdentityResponse.identity.profile_id!;
     const createProfileCommand: CreateOrUpdateProfileCommand = {
       handle,
       banner_1,
@@ -463,16 +466,16 @@ export class ProfilesService {
       classification,
       sub_classification
     };
-    let profileId: string;
     if (!creatorOrUpdatorProfile) {
-      profileId = await this.profilesDb.insertProfileRecord(
+      await this.profilesDb.insertProfileRecord(
+        identityId,
         {
           command: createProfileCommand
         },
         connection
       );
       await this.createProfileEditLogs({
-        profileId: profileId,
+        profileId: identityId,
         profileBeforeChange: null,
         newHandle: handle,
         newBanner1: banner_1,
@@ -483,7 +486,7 @@ export class ProfilesService {
         newSubClassification: sub_classification
       });
     } else {
-      profileId = creatorOrUpdatorProfile.external_id;
+      const identityId = creatorOrUpdatorIdentityResponse.identity.profile_id!;
       await this.profilesDb.updateProfileRecord(
         {
           oldHandle: creatorOrUpdatorProfile.normalised_handle,
@@ -500,7 +503,7 @@ export class ProfilesService {
         connection
       );
       await this.createProfileEditLogs({
-        profileId,
+        profileId: identityId,
         profileBeforeChange: creatorOrUpdatorProfile,
         newHandle: handle,
         newBanner1: banner_1,
@@ -514,7 +517,7 @@ export class ProfilesService {
     await this.identitiesDb.updateIdentityProfile(
       creatorOrUpdatorIdentityResponse.identity.consolidation_key,
       {
-        profile_id: profileId,
+        profile_id: identityId,
         handle: createProfileCommand.handle,
         normalised_handle: createProfileCommand.handle.toLowerCase(),
         banner1: createProfileCommand.banner_1 ?? null,
@@ -536,62 +539,90 @@ export class ProfilesService {
       toBeMerged,
       target
     }: {
-      toBeMerged: Profile[];
-      target: Profile;
+      toBeMerged: string[];
+      target: string;
     },
     connectionHolder: ConnectionWrapper<any>
   ) {
-    for (const profileToBeMerged of toBeMerged) {
+    const targetIdentity = await this.identitiesDb.getIdentityByProfileId(
+      target,
+      connectionHolder
+    );
+    if (!targetIdentity) {
+      throw new Error(`Expected target identity ${target} but didn't find it`);
+    }
+    for (const sourceIdentity of toBeMerged) {
       const start = Time.now();
       this.logger.info(
-        `Merging profile ${profileToBeMerged.external_id}/${profileToBeMerged.handle} to profile ${target.external_id}/${target.handle}`
+        `Merging identity ${sourceIdentity} to identity ${target}`
       );
-      await this.mergeProfileStatements(
-        profileToBeMerged,
-        target,
+      const sourceProfile = await this.profilesDb.getProfileById(
+        sourceIdentity,
         connectionHolder
       );
-      await this.mergeRatings(profileToBeMerged, target, connectionHolder);
-      await this.mergeProxies(profileToBeMerged, target, connectionHolder);
-      await this.mergeGroups(profileToBeMerged, target, connectionHolder);
-      await this.profilesDb.deleteProfile(
-        { id: profileToBeMerged.external_id },
-        connectionHolder
-      );
-      await this.profileActivityLogsDb.changeSourceProfileIdInLogs(
-        {
-          oldSourceId: profileToBeMerged.external_id,
-          newSourceId: target.external_id
-        },
-        connectionHolder
-      );
+      if (sourceProfile) {
+        await this.mergeProfileStatements(
+          sourceIdentity,
+          target,
+          connectionHolder
+        );
+        await this.mergeRatings(sourceIdentity, target, connectionHolder);
+        await this.mergeProxies(sourceIdentity, target, connectionHolder);
+        await this.mergeGroups(sourceIdentity, target, connectionHolder);
+        const targetProfile = await this.profilesDb.getProfileById(
+          target,
+          connectionHolder
+        );
+        if (targetProfile) {
+          await this.profilesDb.deleteProfile(
+            { id: sourceIdentity },
+            connectionHolder
+          );
+        } else {
+          await this.profilesDb.updateProfileId(
+            { from: sourceIdentity, to: target },
+            connectionHolder
+          );
+        }
+        await this.profileActivityLogsDb.changeSourceProfileIdInLogs(
+          {
+            oldSourceId: sourceIdentity,
+            newSourceId: target
+          },
+          connectionHolder
+        );
 
-      await this.profileActivityLogsDb.changeTargetProfileIdInLogs(
-        {
-          oldSourceId: profileToBeMerged.external_id,
-          newSourceId: target.external_id
-        },
-        connectionHolder
-      );
-      await this.profileActivityLogsDb.insert(
-        {
-          profile_id: profileToBeMerged.external_id,
-          target_id: null,
-          type: ProfileActivityLogType.PROFILE_ARCHIVED,
-          contents: JSON.stringify({
-            handle: profileToBeMerged.handle,
-            reason: 'CONFLICTING_CONSOLIDATION'
-          }),
-          proxy_id: null
-        },
+        await this.profileActivityLogsDb.changeTargetProfileIdInLogs(
+          {
+            oldSourceId: sourceIdentity,
+            newSourceId: target
+          },
+          connectionHolder
+        );
+        await this.profileActivityLogsDb.insert(
+          {
+            profile_id: sourceIdentity,
+            target_id: null,
+            type: ProfileActivityLogType.PROFILE_ARCHIVED,
+            contents: JSON.stringify({
+              handle: sourceProfile.handle,
+              reason: 'CONFLICTING_CONSOLIDATION'
+            }),
+            proxy_id: null
+          },
+          connectionHolder
+        );
+        this.logger.info(
+          `Profile ${sourceIdentity} deleted and merged to profile ${target} on ${start.diffFromNow()}`
+        );
+      }
+      await this.mergeProfileGroups(
+        sourceIdentity,
+        targetIdentity.profile_id!,
         connectionHolder
       );
       this.logger.info(
-        `Profile ${profileToBeMerged.external_id}/${
-          profileToBeMerged.handle
-        } deleted and merged to profile ${target.external_id}/${
-          target.handle
-        } on ${start.diffFromNow()}`
+        `Merged identity ${sourceIdentity} to identity ${target}`
       );
     }
   }
@@ -859,16 +890,16 @@ export class ProfilesService {
   }
 
   private async mergeProfileStatements(
-    source: Profile,
-    target: Profile,
+    source: string,
+    target: string,
     connection: ConnectionWrapper<any>
   ) {
     const sourceStatements = await this.cicService.getCicStatementsByProfileId(
-      source.external_id,
+      source,
       connection
     );
     const targetStatements = await this.cicService.getCicStatementsByProfileId(
-      target.external_id,
+      target,
       connection
     );
     const missingTargetStatements = sourceStatements.filter(
@@ -888,7 +919,7 @@ export class ProfilesService {
       await this.cicService.insertStatement(
         {
           ...statement,
-          profile_id: target.external_id
+          profile_id: target
         },
         connection,
         true
@@ -900,8 +931,8 @@ export class ProfilesService {
   }
 
   private async mergeRatings(
-    sourceProfile: Profile,
-    targetProfile: Profile,
+    sourceProfile: string,
+    targetProfile: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
     await this.ratingsService.transferAllGivenProfileRatings(
@@ -917,24 +948,24 @@ export class ProfilesService {
   }
 
   private async mergeProxies(
-    sourceProfile: Profile,
-    targetProfile: Profile,
+    sourceProfile: string,
+    targetProfile: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
     await this.profileProxiesDb.deleteAllProxiesAndActionsForProfile(
-      sourceProfile.external_id,
+      sourceProfile,
       connectionHolder
     );
   }
 
   private async mergeGroups(
-    profileToBeMerged: Profile,
-    target: Profile,
+    profileToBeMerged: string,
+    target: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
     await this.userGroupsDb.migrateProfileIdsInGroups(
-      profileToBeMerged.external_id,
-      target.external_id,
+      profileToBeMerged,
+      target,
       connectionHolder
     );
   }
@@ -1170,6 +1201,35 @@ export class ProfilesService {
       primaryAddress
     });
     await this.refreshPrimaryWalletEns(primaryAddress);
+  }
+
+  private async mergeProfileGroups(
+    sourceIdentity: string,
+    targetIdentity: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    const sourceGroups =
+      await this.userGroupsDb.findProfileGroupsWhereProfileIdIn(
+        sourceIdentity,
+        connectionHolder
+      );
+    const targetGroups =
+      await this.userGroupsDb.findProfileGroupsWhereProfileIdIn(
+        targetIdentity,
+        connectionHolder
+      );
+    const distinctGroups = distinct([...sourceGroups, ...targetGroups]);
+    if (distinctGroups) {
+      await this.userGroupsDb.deleteProfileIdsInProfileGroups(
+        [sourceIdentity, targetIdentity],
+        connectionHolder
+      );
+      await this.userGroupsDb.insertProfileIdsInProfileGroups(
+        targetIdentity,
+        distinctGroups,
+        connectionHolder
+      );
+    }
   }
 }
 

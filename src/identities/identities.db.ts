@@ -6,6 +6,7 @@ import {
 import { IdentityEntity } from '../entities/IIdentity';
 import {
   ADDRESS_CONSOLIDATION_KEY,
+  CONSOLIDATED_WALLETS_TDH_TABLE,
   IDENTITIES_TABLE,
   PROFILE_PROXIES_TABLE,
   PROFILES_TABLE,
@@ -13,7 +14,8 @@ import {
 } from '../constants';
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
-import { NotFoundException } from '../exceptions';
+import { randomUUID } from 'crypto';
+import { RateMatter } from '../entities/IRating';
 
 const mysql = require('mysql');
 
@@ -50,7 +52,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     );
     const profiles = await this.db.execute<Profile>(
       `select p.* from ${PROFILES_TABLE} p where p.external_id in (
-      select distinct i.profile_id from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:addresses) and i.profile_id is not null
+      select distinct i.profile_id from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:addresses) and i.handle is not null
       )  for update`,
       { addresses },
       { wrappedConnection: connection }
@@ -147,7 +149,9 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     if (!addresses.length) {
       return;
     }
-    const identitiesSql = `insert into ${IDENTITIES_TABLE} (consolidation_key,
+    const identitiesSql = `insert into ${IDENTITIES_TABLE} (
+                                         profile_id,
+                                         consolidation_key,
                                          primary_address,
                                          tdh,
                                          rep,
@@ -156,7 +160,9 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         values ${addresses
           .map(
             (address) =>
-              `(${mysql.escape(address)}, ${mysql.escape(address)}, 0, 0, 0, 0)`
+              `(${mysql.escape(randomUUID())}, ${mysql.escape(
+                address
+              )}, ${mysql.escape(address)}, 0, 0, 0, 0)`
           )
           .join(',')}`;
     await this.db.execute(identitiesSql, undefined, {
@@ -221,57 +227,13 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     param: { consolidationKeys: string[] },
     connection: ConnectionWrapper<any>
   ) {
+    if (param.consolidationKeys.length === 0) return;
     await this.db.execute(
       `
       delete from ${IDENTITIES_TABLE} where consolidation_key in (:consolidationKeys)
     `,
       param,
       { wrappedConnection: connection }
-    );
-  }
-
-  async lockEverythingRelatedToProfileIdsByProfileIdsOrThrow(
-    profileIds: string[],
-    connection: ConnectionWrapper<any>
-  ): Promise<
-    Record<
-      string,
-      {
-        consolidations: AddressConsolidationKey[];
-        identity: IdentityEntity;
-        profile: Profile | null;
-      }
-    >
-  > {
-    if (!profileIds) {
-      return {};
-    }
-    const profileIdsAndPrimaryAddresses = await this.db.execute<{
-      profile_id: string;
-      primary_address: string;
-    }>(
-      `select profile_id, primary_address from ${IDENTITIES_TABLE} where profile_id in (:profileIds) for update`,
-      { profileIds },
-      { wrappedConnection: connection }
-    );
-    const missingProfiles = profileIds.filter(
-      (it) => !profileIdsAndPrimaryAddresses.some((p) => p.profile_id === it)
-    );
-    if (missingProfiles.length > 0) {
-      throw new NotFoundException(
-        `Missing profile(s) for profile id(s): ${missingProfiles.join(', ')}`
-      );
-    }
-    return this.lockEverythingRelatedToIdentitiesByAddresses(
-      profileIdsAndPrimaryAddresses.map((it) => it.primary_address),
-      connection
-    ).then((result) =>
-      Object.values(result).reduce((acc, it) => {
-        if (it.profile && profileIds.includes(it.profile.external_id)) {
-          acc[it.profile.external_id] = { ...it, profile: it.profile! };
-        }
-        return acc;
-      }, {} as Record<string, { consolidations: AddressConsolidationKey[]; identity: IdentityEntity; profile: Profile }>)
     );
   }
 
@@ -282,6 +244,140 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         { profileId }
       )
       .then((result) => result.map((it) => it.address));
+  }
+
+  async bulkInsertIdentities(
+    identities: IdentityEntity[],
+    connection: ConnectionWrapper<any>
+  ) {
+    if (!identities.length) {
+      return;
+    }
+    const identitiesSql = `insert into ${IDENTITIES_TABLE} (
+                                         profile_id,
+                                         consolidation_key,
+                                         primary_address,
+                                         handle,
+                                         normalised_handle,
+                                         tdh,
+                                         rep,
+                                         cic,
+                                         level_raw,
+                                         pfp,
+                                         banner1,
+                                         banner2,
+                                         classification,
+                                         sub_classification)
+        values ${identities
+          .map(
+            (identity) =>
+              `(${mysql.escape(identity.profile_id!)}, ${mysql.escape(
+                identity.consolidation_key
+              )}, ${mysql.escape(identity.primary_address)}, ${mysql.escape(
+                identity.handle
+              )}, ${mysql.escape(identity.normalised_handle)}, ${mysql.escape(
+                identity.tdh
+              )}, 0, 0, ${mysql.escape(identity.level_raw)}, ${mysql.escape(
+                identity.pfp
+              )}, ${mysql.escape(identity.banner1)}, ${mysql.escape(
+                identity.banner2
+              )}, ${mysql.escape(identity.classification)}, ${mysql.escape(
+                identity.sub_classification
+              )})`
+          )
+          .join(',')}`;
+    await this.db.execute(identitiesSql, undefined, {
+      wrappedConnection: connection
+    });
+    const addressesSql = `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
+        values ${identities
+          .map((identity) =>
+            identity.consolidation_key
+              .split('-')
+              .map((address) => ({
+                address,
+                consolidationKey: identity.consolidation_key
+              }))
+              .flat()
+              .map(
+                ({ address, consolidationKey }) =>
+                  `(${mysql.escape(address)}, ${mysql.escape(
+                    consolidationKey
+                  )})`
+              )
+          )
+          .flat()
+          .join(',')}`;
+    await this.db.execute(addressesSql, undefined, {
+      wrappedConnection: connection
+    });
+  }
+
+  async getIdentityByProfileId(
+    targetProfileId: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    return await this.db.oneOrNull<IdentityEntity>(
+      `select * from identities where profile_id = :targetProfileId`,
+      { targetProfileId },
+      { wrappedConnection: connectionHolder }
+    );
+  }
+
+  async syncProfileAddressesFromIdentitiesToProfiles(
+    connection: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update profiles join identities on identities.profile_id = profiles.external_id
+                           set profiles.primary_wallet = identities.primary_address
+                           where profiles.primary_wallet != identities.primary_address`,
+      undefined,
+      { wrappedConnection: connection }
+    );
+  }
+
+  async fixIdentitiesMetrics(
+    profileIds: string[],
+    connection: ConnectionWrapper<any>
+  ) {
+    if (profileIds.length === 0) {
+      return;
+    }
+    const ratings = await this.db.execute<{
+      matter: RateMatter;
+      profile_id: string;
+      rating: number;
+    }>(
+      `select matter, matter_target_id as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter_target_id in (:profileIds) group by 1, 2`,
+      { profileIds },
+      { wrappedConnection: connection }
+    );
+    const tdhsByProfileIds = await this.db.execute<{
+      profile_id: string;
+      tdh: number;
+    }>(
+      `select i.profile_id as profile_id, c.boosted_tdh as tdh from ${IDENTITIES_TABLE} i join ${CONSOLIDATED_WALLETS_TDH_TABLE} c on i.consolidation_key = c.consolidation_key where i.profile_id in (:profileIds)`,
+      { profileIds },
+      { wrappedConnection: connection }
+    );
+    for (const profileId of profileIds) {
+      const cic =
+        ratings.find(
+          (it) => it.profile_id === profileId && it.matter === RateMatter.CIC
+        )?.rating ?? 0;
+      const rep =
+        ratings.find(
+          (it) => it.profile_id === profileId && it.matter === RateMatter.CIC
+        )?.rating ?? 0;
+      const tdh =
+        tdhsByProfileIds.find((it) => it.profile_id === profileId)?.tdh ?? 0;
+      const level = tdh + rep;
+      await this.db.execute(
+        `update ${IDENTITIES_TABLE} set level_raw = :level, rep = :rep, cic = :cic, tdh = :tdh where profile_id = :profileId`,
+        { cic, rep: rep, profileId, level, tdh },
+        { wrappedConnection: connection }
+      );
+    }
   }
 }
 

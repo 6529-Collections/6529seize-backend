@@ -18,7 +18,6 @@ import {
 import { Wallet } from '../entities/IWallet';
 import { Profile } from '../entities/IProfile';
 import { CreateOrUpdateProfileCommand } from './profile.types';
-import { randomUUID } from 'crypto';
 import { distinct } from '../helpers';
 import { getLevelFromScore } from './profile-level';
 
@@ -59,8 +58,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         { wallet: wallet.toLowerCase() },
         opts
       )
-      .then((result) =>
-        result.map(
+      .then((result) => {
+        return result.map(
           (it: {
             tdh: number;
             wallets: string;
@@ -80,8 +79,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
             raw_tdh: it.raw_tdh,
             balance: it.balance
           })
-        )
-      );
+        );
+      });
   }
 
   public async getPrediscoveredEnsNames(
@@ -281,14 +280,14 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
   }
 
   public async insertProfileRecord(
+    id: string,
     {
       command
     }: {
       command: CreateOrUpdateProfileCommand;
     },
     connection: ConnectionWrapper<any>
-  ): Promise<string> {
-    const profileId = randomUUID();
+  ) {
     const wallet = command.creator_or_updater_wallet.toLowerCase();
     await this.db.execute(
       `insert into ${PROFILES_TABLE}
@@ -323,7 +322,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         banner2: command.banner_2 ?? null,
         website: command.website ?? null,
         classification: command.classification,
-        externalId: profileId,
+        externalId: id,
         subClassification: command.sub_classification
       },
       { wrappedConnection: connection }
@@ -332,7 +331,6 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     if (profile) {
       await this.insertProfileArchiveRecord(profile, connection);
     }
-    return profileId;
   }
 
   public async getMemeThumbnailUriById(
@@ -400,7 +398,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
   }
 
   async getProfileHandlesByIds(
-    profileIds: string[]
+    profileIds: string[],
+    connection?: ConnectionWrapper<any>
   ): Promise<Record<string, string>> {
     const distinctProfileIds = distinct(profileIds);
     if (!distinctProfileIds.length) {
@@ -411,7 +410,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         `select external_id, handle from ${PROFILES_TABLE} where external_id in (:profileIds)`,
         {
           profileIds: distinctProfileIds
-        }
+        },
+        connection ? { wrappedConnection: connection } : undefined
       )
       .then((result) =>
         result.reduce(
@@ -571,6 +571,17 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       `select * from ${PROFILES_TABLE} where external_id = :id`,
       { id },
       connection ? { wrappedConnection: connection } : undefined
+    );
+  }
+
+  async updateProfileId(
+    param: { from: string; to: string },
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update ${PROFILES_TABLE} set external_id = :to where external_id = :from`,
+      param,
+      { wrappedConnection: connectionHolder }
     );
   }
 }

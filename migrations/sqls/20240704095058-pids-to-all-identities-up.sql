@@ -1,0 +1,1 @@
+update identities set profile_id = uuid() where profile_id is null;

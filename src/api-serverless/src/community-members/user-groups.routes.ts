@@ -76,10 +76,10 @@ router.get(
 );
 
 router.get(
-  '/:group_id/wallet_groups/:wallet_group_id',
+  '/:group_id/identity_groups/:identity_group_id',
   async (
     req: Request<
-      { group_id: string; wallet_group_id: string },
+      { group_id: string; identity_group_id: string },
       any,
       any,
       any,
@@ -88,16 +88,17 @@ router.get(
     res: Response<ApiResponse<string[]>>
   ) => {
     const group = await userGroupsService.getByIdOrThrow(req.params.group_id);
-    const walletGroupId = group.group.wallet_group_id;
-    if (walletGroupId !== req.params.wallet_group_id) {
+    const identityGroupId = group.group.identity_group_id;
+    if (identityGroupId !== req.params.identity_group_id) {
       throw new NotFoundException(
-        `Group does not have wallet group with id ${req.params.wallet_group_id}`
+        `Group does not have identity group with id ${req.params.identity_group_id}`
       );
     } else {
-      const wallets = await userGroupsService.findUserGroupsWalletGroupWallets(
-        walletGroupId
-      );
-      res.send(wallets);
+      const addresses =
+        await userGroupsService.findUserGroupsIdentityGroupIdentities(
+          identityGroupId
+        );
+      res.send(addresses);
     }
   }
 );
@@ -158,10 +159,10 @@ router.post(
     );
     const userGroup: Omit<
       NewUserGroupEntity,
-      'wallet_group_id' | 'excluded_wallet_group_id'
+      'profile_group_id' | 'excluded_profile_group_id'
     > & {
-      wallets: string[];
-      excluded_wallets: string[];
+      addresses: string[];
+      excluded_addresses: string[];
     } = {
       name: apiUserGroup.name,
       cic_min: apiUserGroup.group.cic.min,
@@ -201,10 +202,10 @@ router.post(
       owns_nextgen_tokens: ownsNextgen?.tokens
         ? JSON.stringify(ownsNextgen.tokens)
         : null,
-      wallets: apiUserGroup.group.wallets?.length
-        ? apiUserGroup.group.wallets
+      addresses: apiUserGroup.group.identity_addresses?.length
+        ? apiUserGroup.group.identity_addresses
         : [],
-      excluded_wallets: apiUserGroup.group.excluded_wallets ?? [],
+      excluded_addresses: apiUserGroup.group.excluded_identity_addresses ?? [],
       visible: false
     };
     const response = await userGroupsService.save(userGroup, savingProfileId);
@@ -307,8 +308,12 @@ const GroupDescriptionSchema: Joi.ObjectSchema<CreateGroupDescription> =
     cic: GroupCicFilterSchema,
     level: GroupLevelFilterSchema,
     owns_nfts: Joi.array().required().items(GroupOwnsNftSchema),
-    wallets: Joi.array().required().items(Joi.string()).allow(null).max(20000),
-    excluded_wallets: Joi.array()
+    identity_addresses: Joi.array()
+      .required()
+      .items(Joi.string())
+      .allow(null)
+      .max(20000),
+    excluded_identity_addresses: Joi.array()
       .optional()
       .items(Joi.string())
       .allow(null)

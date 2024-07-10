@@ -1,0 +1,1 @@
+update community_groups set profile_group_id = wallet_group_id, excluded_profile_group_id = excluded_wallet_group_id where true;

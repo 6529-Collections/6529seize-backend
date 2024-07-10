@@ -35,6 +35,7 @@ export class AuthenticationContext {
   public isAuthenticatedAsProxy(): boolean {
     return (
       this.roleProfileId !== null &&
+      this.roleProfileId !== undefined &&
       this.authenticatedProfileId !== this.roleProfileId
     );
   }
