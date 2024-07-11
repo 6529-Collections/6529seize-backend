@@ -50,7 +50,7 @@ export class DropsApiService {
       skipEligibilityCheck
     }: {
       dropId: string;
-      authenticationContext: AuthenticationContext;
+      authenticationContext?: AuthenticationContext;
       min_part_id: number;
       max_part_id: number;
       skipEligibilityCheck?: boolean;
@@ -104,7 +104,7 @@ export class DropsApiService {
     max_part_id: number;
     amount: number;
     author_id: string | null;
-    authenticationContext: AuthenticationContext;
+    authenticationContext?: AuthenticationContext;
   }): Promise<Drop[]> {
     const context_profile_id = this.getDropsReadContextProfileId(
       authenticationContext
@@ -120,7 +120,7 @@ export class DropsApiService {
       amount,
       serial_no_less_than,
       group_id,
-      group_ids_user_is_eligible_for: group_ids_user_is_eligible_for,
+      group_ids_user_is_eligible_for,
       wave_id,
       author_id
     });
@@ -133,8 +133,11 @@ export class DropsApiService {
   }
 
   private getDropsReadContextProfileId(
-    authenticationContext: AuthenticationContext
-  ): string {
+    authenticationContext?: AuthenticationContext
+  ): string | null {
+    if (!authenticationContext) {
+      return null;
+    }
     const context_profile_id = authenticationContext.getActingAsId();
     if (!context_profile_id) {
       throw new ForbiddenException(
@@ -147,9 +150,7 @@ export class DropsApiService {
         ApiProfileProxyActionType.READ_WAVE
       ]
     ) {
-      throw new ForbiddenException(
-        `Profile ${context_profile_id} hasn't given profile ${authenticationContext.authenticatedProfileId} right to read waves`
-      );
+      return null;
     }
     return context_profile_id;
   }
@@ -162,7 +163,7 @@ export class DropsApiService {
       max_part_id
     }: {
       dropEntities: DropEntity[];
-      contextProfileId?: string;
+      contextProfileId?: string | null;
       min_part_id: number;
       max_part_id: number;
     },
@@ -187,7 +188,7 @@ export class DropsApiService {
     } = await this.getAllDropsRelatedData(
       {
         dropIds,
-        contextProfileId: contextProfileId,
+        contextProfileId,
         min_part_id,
         max_part_id
       },
@@ -340,7 +341,7 @@ export class DropsApiService {
       max_part_id
     }: {
       dropIds: string[];
-      contextProfileId?: string;
+      contextProfileId?: string | null;
       min_part_id: number;
       max_part_id: number;
     },
@@ -416,7 +417,7 @@ export class DropsApiService {
   }
 
   private async findContextProfilesCategoryRatingsForDrops(
-    contextProfileId: string | undefined,
+    contextProfileId: string | undefined | null,
     dropIds: string[],
     connection?: ConnectionWrapper<any>
   ): Promise<
@@ -436,7 +437,7 @@ export class DropsApiService {
   }
 
   private async findContextProfilesTotalRatingsForDrops(
-    contextProfileId: string | undefined,
+    contextProfileId: string | undefined | null,
     dropIds: string[],
     connection?: ConnectionWrapper<any>
   ): Promise<Record<string, number>> {

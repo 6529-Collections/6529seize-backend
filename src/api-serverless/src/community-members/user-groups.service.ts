@@ -98,8 +98,11 @@ export class UserGroupsService {
   }
 
   public async getGroupsUserIsEligibleFor(
-    profileId: string
+    profileId: string | null
   ): Promise<string[]> {
+    if (!profileId) {
+      return [];
+    }
     const profile = await this.userGroupsDb.getProfileOverviewByProfileId(
       profileId
     );

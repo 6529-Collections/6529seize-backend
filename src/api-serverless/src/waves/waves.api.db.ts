@@ -140,9 +140,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     groupsUserIsEligibleFor: string[]
   ): Promise<WaveEntity[]> {
     if (
-      !groupsUserIsEligibleFor.length ||
-      (searchParams.group_id &&
-        !groupsUserIsEligibleFor.includes(searchParams.group_id))
+      searchParams.group_id &&
+      !groupsUserIsEligibleFor.includes(searchParams.group_id)
     ) {
       return [];
     }
@@ -155,8 +154,16 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const serialNoLessThan =
       searchParams.serial_no_less_than ?? Number.MAX_SAFE_INTEGER;
     const sql = `${sqlAndParams.sql} select w.* from ${WAVES_TABLE} w
-         join ${UserGroupsService.GENERATED_VIEW} cm on cm.profile_id = w.created_by
-         where (w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or w.visibility_group_id is null) and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${searchParams.limit}`;
+         join ${
+           UserGroupsService.GENERATED_VIEW
+         } cm on cm.profile_id = w.created_by
+         where (${
+           groupsUserIsEligibleFor.length
+             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
+             : ``
+         } w.visibility_group_id is null) and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
+      searchParams.limit
+    }`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       groupsUserIsEligibleFor,

@@ -172,7 +172,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .execute(
         `
         select d.* from ${DROPS_TABLE} d
-         join waves w on d.wave_id = w.id and (w.visibility_group_id in (:group_ids_user_is_eligible_for) or w.visibility_group_id is null or w.admin_group_id in (:group_ids_user_is_eligible_for))
+         join waves w on d.wave_id = w.id and (${
+           group_ids_user_is_eligible_for.length
+             ? `w.visibility_group_id in (:group_ids_user_is_eligible_for) or w.admin_group_id in (:group_ids_user_is_eligible_for) or`
+             : ``
+         } w.visibility_group_id is null)
          where d.id = :id
         `,
         {
@@ -229,9 +233,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
          join ${
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = d.author_id
-         join ${WAVES_TABLE} w on d.wave_id = w.id and (w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or w.visibility_group_id is null) ${
-      wave_id ? `and w.id = :wave_id` : ``
-    }
+         join ${WAVES_TABLE} w on d.wave_id = w.id and (${
+      group_ids_user_is_eligible_for.length
+        ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
+        : ``
+    } w.visibility_group_id is null) ${wave_id ? `and w.id = :wave_id` : ``}
          where d.serial_no < :serialNoLessThan ${
            author_id ? ` and d.author_id = :author_id ` : ``
          } order by d.serial_no desc limit ${amount}`;
@@ -587,7 +593,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     {
       dropIds,
       context_profile_id
-    }: { dropIds: string[]; context_profile_id?: string },
+    }: { dropIds: string[]; context_profile_id?: string | null },
     connection?: ConnectionWrapper<any>
   ): Promise<
     Record<
@@ -709,7 +715,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   }
 
   async getDropLogsStats(
-    { dropIds, profileId }: { dropIds: string[]; profileId?: string },
+    { dropIds, profileId }: { dropIds: string[]; profileId?: string | null },
     connection?: ConnectionWrapper<any>
   ): Promise<
     Record<
@@ -764,7 +770,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async getDropsQuoteCounts(
     dropsIds: string[],
-    contextProfileId: string | undefined,
+    contextProfileId: string | undefined | null,
     min_part_id: number,
     max_part_id: number,
     connection?: ConnectionWrapper<any>
