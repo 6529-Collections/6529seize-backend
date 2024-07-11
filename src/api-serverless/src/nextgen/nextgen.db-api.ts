@@ -760,7 +760,7 @@ export async function fetchNextGenCollectionTraitSets(
     ${IDENTITIES_TABLE}.handle, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, 
-    ${IDENTITIES_TABLE}.rep as rep_score`;
+    ${IDENTITIES_TABLE}.rep`;
 
   let joins = `JOIN ${NEXTGEN_TOKEN_TRAITS_TABLE} ON ${NEXTGEN_TOKENS_TABLE}.id = ${NEXTGEN_TOKEN_TRAITS_TABLE}.token_id`;
   joins += ` LEFT JOIN ${ADDRESS_CONSOLIDATION_KEY} on ${ADDRESS_CONSOLIDATION_KEY}.address = ${NEXTGEN_TOKENS_TABLE}.owner`;
@@ -893,7 +893,7 @@ export async function fetchNextGenCollectionTraitSetsUltimate(
     ${IDENTITIES_TABLE}.handle, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh, 
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_display, 
-    ${IDENTITIES_TABLE}.rep as rep_score`;
+    ${IDENTITIES_TABLE}.rep`;
 
   const limit = `LIMIT ${pageSize}`;
   const offset = page > 1 ? `OFFSET ${pageSize * (page - 1)}` : '';
