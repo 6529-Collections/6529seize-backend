@@ -81,6 +81,7 @@ export class WaveApiService {
             noRightToVote,
             noRightToParticipate
           },
+          authenticationContext,
           connection
         );
       }
@@ -211,12 +212,15 @@ export class WaveApiService {
         !authenticationContext.activeProxyActions[
           ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
         ]);
-    return await this.waveMappers.waveEntitiesToApiWaves({
-      waveEntities: entities,
-      groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
-      noRightToVote,
-      noRightToParticipate
-    });
+    return await this.waveMappers.waveEntitiesToApiWaves(
+      {
+        waveEntities: entities,
+        groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
+        noRightToVote,
+        noRightToParticipate
+      },
+      authenticationContext
+    );
   }
 
   async findWaveByIdOrThrow(
@@ -240,12 +244,15 @@ export class WaveApiService {
         !authenticationContext.activeProxyActions[
           ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
         ]);
-    return await this.waveMappers.waveEntityToApiWave({
-      waveEntity: entity,
-      groupIdsUserIsEligibleFor,
-      noRightToVote,
-      noRightToParticipate
-    });
+    return await this.waveMappers.waveEntityToApiWave(
+      {
+        waveEntity: entity,
+        groupIdsUserIsEligibleFor,
+        noRightToVote,
+        noRightToParticipate
+      },
+      authenticationContext
+    );
   }
 }
 
