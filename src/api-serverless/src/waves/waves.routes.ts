@@ -98,16 +98,13 @@ router.get(
     if (!profileId) {
       throw new ForbiddenException(`Create a profile before reading waves`);
     }
-    if (
+    const group_ids_user_is_eligible_for =
       authenticationContext.isAuthenticatedAsProxy() &&
       !authenticationContext.activeProxyActions[
         ApiProfileProxyActionType.READ_WAVE
       ]
-    ) {
-      throw new ForbiddenException(`Proxy is not allowed to read waves`);
-    }
-    const group_ids_user_is_eligible_for =
-      await userGroupsService.getGroupsUserIsEligibleFor(profileId);
+        ? []
+        : await userGroupsService.getGroupsUserIsEligibleFor(profileId);
     const wave = await waveApiService.findWaveByIdOrThrow(
       id,
       group_ids_user_is_eligible_for,

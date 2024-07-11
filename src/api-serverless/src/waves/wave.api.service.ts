@@ -62,7 +62,7 @@ export class WaveApiService {
         }
         const groupIdsUserIsEligibleFor =
           await this.userGroupsService.getGroupsUserIsEligibleFor(
-            authenticationContext.getActingAsId()!
+            authenticationContext.getActingAsId()
           );
         const noRightToVote =
           authenticationContext.isAuthenticatedAsProxy() &&
@@ -174,40 +174,43 @@ export class WaveApiService {
 
   async searchWaves(
     params: SearchWavesParams,
-    authenticationContext: AuthenticationContext
+    authenticationContext?: AuthenticationContext
   ): Promise<Wave[]> {
-    const authenticatedProfileId = authenticationContext.getActingAsId();
-    if (!authenticatedProfileId) {
-      throw new BadRequestException(`Please create a profile first`);
-    }
     let groupsUserIsEligibleFor: string[];
-    if (
-      authenticationContext.isAuthenticatedAsProxy() &&
-      !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.CREATE_WAVE
-      ]
-    ) {
+    if (!authenticationContext) {
       groupsUserIsEligibleFor = [];
     } else {
-      groupsUserIsEligibleFor =
-        await this.userGroupsService.getGroupsUserIsEligibleFor(
-          authenticatedProfileId
-        );
+      const authenticatedProfileId = authenticationContext.getActingAsId();
+      if (
+        authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ApiProfileProxyActionType.READ_WAVE
+        ]
+      ) {
+        groupsUserIsEligibleFor = [];
+      } else {
+        groupsUserIsEligibleFor =
+          await this.userGroupsService.getGroupsUserIsEligibleFor(
+            authenticatedProfileId
+          );
+      }
     }
     const entities = await this.wavesApiDb.searchWaves(
       params,
       groupsUserIsEligibleFor
     );
     const noRightToVote =
-      authenticationContext.isAuthenticatedAsProxy() &&
-      !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.RATE_WAVE_DROP
-      ];
+      !authenticationContext ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ApiProfileProxyActionType.RATE_WAVE_DROP
+        ]);
     const noRightToParticipate =
-      authenticationContext.isAuthenticatedAsProxy() &&
-      !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
-      ];
+      !authenticationContext ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+        ]);
     return await this.waveMappers.waveEntitiesToApiWaves({
       waveEntities: entities,
       groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
@@ -219,22 +222,24 @@ export class WaveApiService {
   async findWaveByIdOrThrow(
     id: string,
     groupIdsUserIsEligibleFor: string[],
-    authenticationContext: AuthenticationContext
+    authenticationContext?: AuthenticationContext
   ): Promise<Wave> {
     const entity = await this.wavesApiDb.findWaveById(id);
     if (!entity) {
       throw new NotFoundException(`Wave ${id} not found`);
     }
     const noRightToVote =
-      authenticationContext.isAuthenticatedAsProxy() &&
-      !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.RATE_WAVE_DROP
-      ];
+      !authenticationContext ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ApiProfileProxyActionType.RATE_WAVE_DROP
+        ]);
     const noRightToParticipate =
-      authenticationContext.isAuthenticatedAsProxy() &&
-      !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
-      ];
+      !authenticationContext ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+        ]);
     return await this.waveMappers.waveEntityToApiWave({
       waveEntity: entity,
       groupIdsUserIsEligibleFor,
