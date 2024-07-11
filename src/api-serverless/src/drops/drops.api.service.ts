@@ -240,7 +240,12 @@ export class DropsApiService {
               description_drop_id: dropWave.description_drop_id,
               authenticated_user_eligible_to_vote:
                 dropWave.voting_group_id === null ||
-                groupsUserIsEligibleFor.includes(dropWave.voting_group_id)
+                groupsUserIsEligibleFor.includes(dropWave.voting_group_id),
+              authenticated_user_eligible_to_participate:
+                dropWave.participation_group_id === null ||
+                groupsUserIsEligibleFor.includes(
+                  dropWave.participation_group_id
+                )
             }
           : null) as any,
         author: profilesByIds[dropEntity.author_id]!,
