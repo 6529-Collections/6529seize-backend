@@ -557,6 +557,7 @@ export class DropsApiService {
 
   async findDropsByIdsOrThrow(
     dropIds: string[],
+    authenticationContext: AuthenticationContext | undefined,
     connection?: ConnectionWrapper<any>
   ): Promise<Record<string, Drop>> {
     const dropEntities = await this.dropsDb.getDropsByIds(dropIds, connection);
@@ -570,6 +571,7 @@ export class DropsApiService {
     }
     return this.convertToDropFulls({
       dropEntities,
+      contextProfileId: authenticationContext?.getActingAsId(),
       min_part_id: 1,
       max_part_id: Number.MAX_SAFE_INTEGER
     }).then((drops) =>

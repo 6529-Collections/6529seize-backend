@@ -32,6 +32,7 @@ import { WaveContributorOverview } from '../generated/models/WaveContributorOver
 import { WaveVisibilityConfig } from '../generated/models/WaveVisibilityConfig';
 import { WaveParticipationConfig } from '../generated/models/WaveParticipationConfig';
 import { WaveConfig } from '../generated/models/WaveConfig';
+import { AuthenticationContext } from '../../../auth-context';
 
 export class WavesMappers {
   constructor(
@@ -106,6 +107,7 @@ export class WavesMappers {
       noRightToVote: boolean;
       noRightToParticipate: boolean;
     },
+    authenticationContext: AuthenticationContext | undefined,
     connection?: ConnectionWrapper<any>
   ): Promise<Wave> {
     return this.waveEntitiesToApiWaves(
@@ -115,6 +117,7 @@ export class WavesMappers {
         noRightToVote,
         noRightToParticipate
       },
+      authenticationContext,
       connection
     ).then((waves) => waves[0]);
   }
@@ -131,10 +134,15 @@ export class WavesMappers {
       noRightToVote: boolean;
       noRightToParticipate: boolean;
     },
+    authenticationContext: AuthenticationContext | undefined,
     connection?: ConnectionWrapper<any>
   ): Promise<Wave[]> {
     const { contributors, profiles, curations, creationDrops } =
-      await this.getRelatedData(waveEntities, connection);
+      await this.getRelatedData(
+        waveEntities,
+        authenticationContext,
+        connection
+      );
     return waveEntities.map<Wave>((waveEntity) =>
       this.mapWaveEntityToApiWave({
         waveEntity,
@@ -274,6 +282,7 @@ export class WavesMappers {
 
   private async getRelatedData(
     waveEntities: WaveEntity[],
+    authenticationContext: AuthenticationContext | undefined,
     connection?: ConnectionWrapper<any>
   ): Promise<{
     contributors: Record<
@@ -338,6 +347,7 @@ export class WavesMappers {
     );
     const creationDropsByDropId = await dropsService.findDropsByIdsOrThrow(
       distinct(waveEntities.map((it) => it.description_drop_id)),
+      authenticationContext,
       connection
     );
     return {
