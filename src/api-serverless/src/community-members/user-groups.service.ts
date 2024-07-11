@@ -109,42 +109,22 @@ export class UserGroupsService {
     if (profile === null) {
       return [];
     }
+    const [groupsUserIsEligibleByIdentity, groupsUserIsBannedFromByIdentity] =
+      await Promise.all([
+        this.userGroupsDb.getGroupsUserIsEligibleByIdentity(profileId),
+        this.userGroupsDb.getGroupsUserIsExcludedFromByIdentity(profileId)
+      ]);
     const givenCicAndRep = await this.userGroupsDb.getGivenCicAndRep(profileId);
-    let initialSelection = await this.userGroupsDb.getGroupsMatchingConditions({
-      profileId,
-      receivedCic: profile.cic,
-      receivedRep: profile.rep,
-      tdh: profile.tdh,
-      level: profile.level,
-      givenCic: givenCicAndRep.cic,
-      givenRep: givenCicAndRep.rep
-    });
-    let inclusionGroups = initialSelection
-      .map((it) => it.profile_group_id)
-      .filter((it) => !!it) as string[];
-    let exclusionGroups = initialSelection
-      .map((it) => it.excluded_profile_group_id)
-      .filter((it) => !!it) as string[];
-    if (inclusionGroups.length || exclusionGroups.length) {
-      const profileGroupIdsContainingProfileIds =
-        await this.userGroupsDb.getProfileGroupIdsHavingIdentities(
-          [...inclusionGroups, ...exclusionGroups],
-          profileId
-        );
-      inclusionGroups = inclusionGroups.filter((it) =>
-        profileGroupIdsContainingProfileIds.includes(it)
-      );
-      exclusionGroups = exclusionGroups.filter((it) =>
-        profileGroupIdsContainingProfileIds.includes(it)
-      );
-      initialSelection = initialSelection.filter(
-        (it) =>
-          (it.excluded_profile_group_id === null ||
-            !exclusionGroups.includes(it.excluded_profile_group_id)) &&
-          (it.profile_group_id === null ||
-            inclusionGroups.includes(it.profile_group_id))
-      );
-    }
+    const initialSelection =
+      await this.userGroupsDb.getGroupsMatchingConditions({
+        profileId,
+        receivedCic: profile.cic,
+        receivedRep: profile.rep,
+        tdh: profile.tdh,
+        level: profile.level,
+        givenCic: givenCicAndRep.cic,
+        givenRep: givenCicAndRep.rep
+      });
     const ambiguousCandidates = initialSelection.filter(
       (group) => group.cic_user ?? group.rep_user ?? group.rep_category
     );
@@ -245,22 +225,27 @@ export class UserGroupsService {
       }
     });
     const allThatIsLeft = [...ambiguousCleaned, ...unambiguousInitial];
-    const allowedProfileGroupIds: string[] = [];
-    if (profileId) {
-      const profileGroupIdsProfileIsIn =
-        await this.userGroupsDb.findProfileGroupIdsContainingIdentity(
-          allThatIsLeft.filter((it) => it.profile_group_id).map((it) => it.id),
-          profileId
-        );
-      allowedProfileGroupIds.push(...profileGroupIdsProfileIsIn);
-    }
-    return allThatIsLeft
-      .filter(
-        (it) =>
-          it.profile_group_id === null ||
-          allowedProfileGroupIds.includes(it.profile_group_id)
-      )
-      .map((it) => it.id);
+    const onlyProfileGroupsFilteredOut = allThatIsLeft.filter((group) => {
+      return !(
+        group.level_max === null ||
+        group.level_min === null ||
+        group.tdh_max === null ||
+        group.tdh_min === null ||
+        group.rep_max === null ||
+        group.rep_min === null ||
+        group.rep_user === null ||
+        group.rep_category === null ||
+        group.cic_max === null ||
+        group.cic_min === null ||
+        group.cic_user === null
+      );
+    });
+    return distinct(
+      [
+        ...onlyProfileGroupsFilteredOut.map((it) => it.id),
+        ...groupsUserIsEligibleByIdentity
+      ].filter((it) => !groupsUserIsBannedFromByIdentity.includes(it) && !!it)
+    );
   }
 
   async changeVisibility({
@@ -427,11 +412,68 @@ export class UserGroupsService {
     const repPart = this.getRepPart(group, params);
     const cicPart = this.getCicPart(group, params, repPart);
     const cmPart = this.getGeneralPart(repPart, cicPart, group, params);
-    const sql = `with ${repPart ?? ''} ${cicPart ?? ''} ${cmPart}`;
+    const inclusionExclusionPart = this.getInclusionExclusionPart(
+      group,
+      params
+    );
+    const sql = `with ${repPart ?? ''} ${
+      cicPart ?? ''
+    } ${cmPart} ${inclusionExclusionPart} `;
     return {
       sql,
       params
     };
+  }
+
+  private getInclusionExclusionPart(
+    group: Omit<
+      GroupDescription,
+      | 'identity_group_identities_count'
+      | 'excluded_identity_group_identities_count'
+    >,
+    params: Record<string, any>
+  ): string {
+    const anyOtherDescriptionButInclusion = !!(
+      group.level.max !== null ||
+      group.level.min !== null ||
+      group.tdh.max !== null ||
+      group.tdh.min !== null ||
+      group.owns_nfts.length ||
+      group.rep.max !== null ||
+      group.rep.min !== null ||
+      group.rep.user_identity ||
+      group.rep.category ||
+      group.cic.max !== null ||
+      group.cic.min !== null ||
+      group.cic.user_identity
+    );
+    if (
+      !anyOtherDescriptionButInclusion &&
+      group.identity_group_id === null &&
+      group.excluded_identity_group_id === null
+    ) {
+      return ` ${UserGroupsService.GENERATED_VIEW} as (select * from cm_view)`;
+    }
+    let sql = ` included_profile_ids as (select distinct profile_id from (${
+      anyOtherDescriptionButInclusion
+        ? `select i.profile_id from cm_view i`
+        : ``
+    }`;
+    if (group.identity_group_id !== null) {
+      sql += ` ${
+        anyOtherDescriptionButInclusion ? ` union all ` : ` `
+      } select profile_id from ${PROFILE_GROUPS_TABLE} where profile_group_id = :profile_group_id `;
+      params['profile_group_id'] = group.identity_group_id;
+    }
+    sql += `) idxs), ${
+      UserGroupsService.GENERATED_VIEW
+    } as (select i.* from ${IDENTITIES_TABLE} i join included_profile_ids on i.profile_id = included_profile_ids.profile_id ${
+      group.excluded_identity_group_id
+        ? `where included_profile_ids.profile_id not in (select exc.profile_id from ${PROFILE_GROUPS_TABLE} exc where exc.profile_group_id = :excluded_profile_group_id)`
+        : ``
+    }) `;
+    params['excluded_profile_group_id'] = group.excluded_identity_group_id;
+    return sql;
   }
 
   private getGeneralPart(
@@ -445,23 +487,14 @@ export class UserGroupsService {
     params: Record<string, any>
   ) {
     let cmPart = ` ${repPart || cicPart ? ', ' : ' '}`;
-    cmPart += ` ${UserGroupsService.GENERATED_VIEW} as (select i.* from ${IDENTITIES_TABLE} i `;
+    cmPart += ` cm_view as (select i.* from ${IDENTITIES_TABLE} i `;
     if (repPart !== null) {
       cmPart += `join rep_exchanges on i.profile_id = rep_exchanges.profile_id `;
     }
     if (cicPart !== null) {
       cmPart += `join cic_exchanges on i.profile_id = cic_exchanges.profile_id `;
     }
-    if (group.identity_group_id !== null) {
-      cmPart += `
-      join ${PROFILE_GROUPS_TABLE} pg on pg.profile_id = i.profile_id and pg.profile_group_id = :profile_group_id`;
-      params.profile_group_id = group.identity_group_id;
-    }
     cmPart += ` where true `;
-    if (group.excluded_identity_group_id !== null) {
-      cmPart += `and i.profile_id not in (select pgt.profile_id from ${PROFILE_GROUPS_TABLE} pgt where pgt.profile_group_id = :excluded_profile_group_id) `;
-      params.excluded_profile_group_id = group.excluded_identity_group_id;
-    }
     if (group.tdh.min !== null) {
       cmPart += `and i.tdh >= :tdh_min `;
       params.tdh_min = group.tdh.min;
@@ -478,7 +511,7 @@ export class UserGroupsService {
       cmPart += `and i.level_raw <= :level_max `;
       params.level_max = group.level.max;
     }
-    cmPart += ') ';
+    cmPart += '), ';
     return cmPart;
   }
 
