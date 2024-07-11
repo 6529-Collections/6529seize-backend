@@ -964,6 +964,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         return it;
       });
   }
+
+  async countAuthorDropsInWave(param: {
+    wave_id: string;
+    author_id: string;
+  }): Promise<number> {
+    return this.db
+      .oneOrNull<{ cnt: number }>(
+        `select count(*) as cnt from ${DROPS_TABLE} where wave_id = :wave_id and author_id = :author_id`,
+        param
+      )
+      .then((it) => it?.cnt ?? 0);
+  }
 }
 
 export type NewDropEntity = Omit<DropEntity, 'serial_no' | 'id' | 'created_at'>;

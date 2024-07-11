@@ -13,7 +13,7 @@ import {
   DropDiscussionCommentsQuerySchema
 } from './drop.validator';
 import {
-  getDropPartQuery,
+  prepDropPartQuery,
   prepLatestDropsSearchQuery,
   prepSingleDropSearchRequest
 } from './drops.routes';
@@ -120,7 +120,7 @@ router.get(
     >,
     res: Response<Page<DropComment>>
   ) => {
-    const { drop_part_id, drop_id, query } = await getDropPartQuery(req);
+    const { drop_part_id, drop_id, query } = await prepDropPartQuery(req);
     const comments = await dropsService.findDropPartComments({
       ...query,
       drop_part_id,

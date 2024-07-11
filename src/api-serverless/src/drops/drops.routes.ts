@@ -34,53 +34,6 @@ import { AuthenticationContext } from '../../../auth-context';
 
 const router = asyncRouter();
 
-export async function prepLatestDropsSearchQuery(
-  req: Request<
-    any,
-    any,
-    any,
-    {
-      limit: number;
-      group_id?: string;
-      serial_no_less_than?: number;
-      author?: string;
-      min_part_id?: number;
-      max_part_id?: number;
-      wave_id?: string;
-    },
-    any
-  >
-) {
-  const limit = parseNumberOrNull(req.query.limit) ?? 10;
-  const wave_id = req.query.wave_id ?? null;
-  const group_id = req.query.group_id ?? null;
-  let min_part_id = parseIntOrNull(req.query.min_part_id);
-  if (!min_part_id || min_part_id < 1) {
-    min_part_id = 0;
-  }
-  let max_part_id = parseIntOrNull(req.query.max_part_id);
-  if (!max_part_id || max_part_id < 1) {
-    max_part_id = Number.MAX_SAFE_INTEGER;
-  }
-  if (max_part_id < min_part_id) {
-    throw new BadRequestException(
-      'max_part_id must be greater or equal than min_part_id'
-    );
-  }
-  const author_id = req.query.author
-    ? await profilesService
-        .resolveIdentityOrThrowNotFound(req.query.author)
-        .then((it) => {
-          const profileId = it.profile_id;
-          if (!profileId) {
-            throw new NotFoundException(`Author ${req.query.author} not found`);
-          }
-          return profileId;
-        })
-    : null;
-  return { limit, wave_id, group_id, min_part_id, max_part_id, author_id };
-}
-
 router.get(
   '/',
   needsAuthenticatedUser(),
@@ -118,27 +71,6 @@ router.get(
     res.send(latestDrops);
   }
 );
-
-export function prepSingleDropSearchRequest(
-  req: Request<
-    { drop_id: string },
-    any,
-    any,
-    { min_part_id?: number; max_part_id?: number },
-    any
-  >
-) {
-  const dropId = req.params.drop_id;
-  let min_part_id = parseIntOrNull(req.query.min_part_id);
-  if (!min_part_id || min_part_id < 1) {
-    min_part_id = 0;
-  }
-  let max_part_id = parseIntOrNull(req.query.max_part_id);
-  if (!max_part_id || max_part_id < 1) {
-    max_part_id = Number.MAX_SAFE_INTEGER;
-  }
-  return { dropId, min_part_id, max_part_id };
-}
 
 router.get(
   '/:drop_id',
@@ -323,55 +255,6 @@ router.get(
   }
 );
 
-export async function getDropPartQuery(
-  req: Request<
-    {
-      drop_id: string;
-      drop_part_id: string;
-    },
-    any,
-    any,
-    FullPageRequest<'created_at'>,
-    any
-  >,
-  authenticationContext?: AuthenticationContext
-) {
-  const drop_part_id = parseIntOrNull(req.params.drop_part_id);
-  const drop_id = req.params.drop_id;
-  if (drop_part_id === null) {
-    throw new NotFoundException(
-      `Drop part ${drop_id}/${req.params.drop_part_id} not found`
-    );
-  }
-  await dropsService
-    .findDropByIdOrThrow({
-      authenticationContext,
-      dropId: drop_id,
-      min_part_id: drop_part_id,
-      max_part_id: drop_part_id
-    })
-    .then((drop) => {
-      if (drop.parts.length === 0) {
-        throw new NotFoundException(
-          `Drop part ${drop_id}/${req.params.drop_part_id} not found`
-        );
-      }
-    });
-  const query = getValidatedByJoiOrThrow(
-    req.query,
-    Joi.object<FullPageRequest<'created_at'>>({
-      sort_direction: Joi.string()
-        .optional()
-        .default(PageSortDirection.DESC)
-        .valid(...Object.values(PageSortDirection)),
-      sort: Joi.string().optional().default('created_at').valid('created_at'),
-      page: Joi.number().integer().min(1).optional().default(1),
-      page_size: Joi.number().integer().min(1).max(50).optional().default(20)
-    })
-  );
-  return { drop_part_id, drop_id, query };
-}
-
 router.get(
   `/:drop_id/parts/:drop_part_id/comments`,
   needsAuthenticatedUser(),
@@ -386,7 +269,7 @@ router.get(
     res: Response<Page<DropComment>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
-    const { drop_part_id, drop_id, query } = await getDropPartQuery(
+    const { drop_part_id, drop_id, query } = await prepDropPartQuery(
       req,
       authenticationContext
     );
@@ -464,5 +347,122 @@ router.post(
     res.send(addedComment);
   }
 );
+
+export function prepSingleDropSearchRequest(
+  req: Request<
+    { drop_id: string },
+    any,
+    any,
+    { min_part_id?: number; max_part_id?: number },
+    any
+  >
+) {
+  const dropId = req.params.drop_id;
+  let min_part_id = parseIntOrNull(req.query.min_part_id);
+  if (!min_part_id || min_part_id < 1) {
+    min_part_id = 0;
+  }
+  let max_part_id = parseIntOrNull(req.query.max_part_id);
+  if (!max_part_id || max_part_id < 1) {
+    max_part_id = Number.MAX_SAFE_INTEGER;
+  }
+  return { dropId, min_part_id, max_part_id };
+}
+
+export async function prepLatestDropsSearchQuery(
+  req: Request<
+    any,
+    any,
+    any,
+    {
+      limit: number;
+      group_id?: string;
+      serial_no_less_than?: number;
+      author?: string;
+      min_part_id?: number;
+      max_part_id?: number;
+      wave_id?: string;
+    },
+    any
+  >
+) {
+  const limit = parseNumberOrNull(req.query.limit) ?? 10;
+  const wave_id = req.query.wave_id ?? null;
+  const group_id = req.query.group_id ?? null;
+  let min_part_id = parseIntOrNull(req.query.min_part_id);
+  if (!min_part_id || min_part_id < 1) {
+    min_part_id = 0;
+  }
+  let max_part_id = parseIntOrNull(req.query.max_part_id);
+  if (!max_part_id || max_part_id < 1) {
+    max_part_id = Number.MAX_SAFE_INTEGER;
+  }
+  if (max_part_id < min_part_id) {
+    throw new BadRequestException(
+      'max_part_id must be greater or equal than min_part_id'
+    );
+  }
+  const author_id = req.query.author
+    ? await profilesService
+        .resolveIdentityOrThrowNotFound(req.query.author)
+        .then((it) => {
+          const profileId = it.profile_id;
+          if (!profileId) {
+            throw new NotFoundException(`Author ${req.query.author} not found`);
+          }
+          return profileId;
+        })
+    : null;
+  return { limit, wave_id, group_id, min_part_id, max_part_id, author_id };
+}
+
+export async function prepDropPartQuery(
+  req: Request<
+    {
+      drop_id: string;
+      drop_part_id: string;
+    },
+    any,
+    any,
+    FullPageRequest<'created_at'>,
+    any
+  >,
+  authenticationContext?: AuthenticationContext
+) {
+  const drop_part_id = parseIntOrNull(req.params.drop_part_id);
+  const drop_id = req.params.drop_id;
+  if (drop_part_id === null) {
+    throw new NotFoundException(
+      `Drop part ${drop_id}/${req.params.drop_part_id} not found`
+    );
+  }
+  await dropsService
+    .findDropByIdOrThrow({
+      authenticationContext,
+      dropId: drop_id,
+      min_part_id: drop_part_id,
+      max_part_id: drop_part_id
+    })
+    .then((drop) => {
+      if (drop.parts.length === 0) {
+        throw new NotFoundException(
+          `Drop part ${drop_id}/${req.params.drop_part_id} not found`
+        );
+      }
+    });
+  const query = getValidatedByJoiOrThrow(
+    req.query,
+    Joi.object<FullPageRequest<'created_at'>>({
+      sort_direction: Joi.string()
+        .optional()
+        .default(PageSortDirection.DESC)
+        .valid(...Object.values(PageSortDirection)),
+      sort: Joi.string().optional().default('created_at').valid('created_at'),
+      page: Joi.number().integer().min(1).optional().default(1),
+      page_size: Joi.number().integer().min(1).max(50).optional().default(20)
+    })
+  );
+  return { drop_part_id, drop_id, query };
+}
 
 export default router;
