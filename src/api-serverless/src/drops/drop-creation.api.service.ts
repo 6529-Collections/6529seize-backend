@@ -240,6 +240,10 @@ export class DropCreationApiService {
     }
     this.verifyMedia(wave, createDropRequest);
     this.verifyMetadata(wave, createDropRequest);
+    await this.verifyParticipatoryLimitations(
+      wave,
+      authenticationContext.getActingAsId()!
+    );
   }
 
   private verifyMetadata(wave: Wave, createDropRequest: CreateDropRequest) {
@@ -289,6 +293,23 @@ export class DropCreationApiService {
             `Wave requires media of type ${requiredMedia}`
           );
         }
+      }
+    }
+  }
+
+  private async verifyParticipatoryLimitations(wave: Wave, author_id: string) {
+    const noOfApplicationsAllowedPerParticipant =
+      wave.participation.no_of_applications_allowed_per_participant;
+    if (noOfApplicationsAllowedPerParticipant !== null) {
+      const countOfDropsByAuthorInWave =
+        await this.dropsDb.countAuthorDropsInWave({
+          wave_id: wave.id,
+          author_id
+        });
+      if (countOfDropsByAuthorInWave >= noOfApplicationsAllowedPerParticipant) {
+        throw new ForbiddenException(
+          `Wave allows ${noOfApplicationsAllowedPerParticipant} drops per participant. User has dropped applied ${countOfDropsByAuthorInWave} times.`
+        );
       }
     }
   }
