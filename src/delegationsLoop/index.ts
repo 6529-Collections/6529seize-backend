@@ -54,6 +54,7 @@ import {
 import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
 import { profilesService } from '../profiles/profiles.service';
 import {
+  syncIdentitiesMetrics,
   syncIdentitiesPrimaryWallets,
   syncIdentitiesWithTdhConsolidations
 } from '../identity';
@@ -126,6 +127,7 @@ async function handleDelegations(startBlock: number | undefined) {
   await dbSupplier().executeNativeQueriesInTransaction(async (connection) => {
     await syncIdentitiesWithTdhConsolidations(connection);
     await syncIdentitiesPrimaryWallets(connection);
+    await syncIdentitiesMetrics(connection);
   });
 
   return delegationsResponse;
