@@ -75,7 +75,7 @@ import { Time } from './time';
 import { MemesSeason } from './entities/ISeason';
 import { insertWithoutUpdate } from './orm_helpers';
 import {
-  syncIdentitiesTdhNumbers,
+  syncIdentitiesMetrics,
   syncIdentitiesWithTdhConsolidations
 } from './identity';
 
@@ -826,7 +826,7 @@ export async function persistConsolidatedTDH(
     }
 
     await syncIdentitiesWithTdhConsolidations(qrHolder);
-    await syncIdentitiesTdhNumbers(qrHolder);
+    await syncIdentitiesMetrics(qrHolder);
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
