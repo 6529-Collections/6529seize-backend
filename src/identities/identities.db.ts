@@ -6,7 +6,6 @@ import {
 import { IdentityEntity } from '../entities/IIdentity';
 import {
   ADDRESS_CONSOLIDATION_KEY,
-  CONSOLIDATED_WALLETS_TDH_TABLE,
   IDENTITIES_TABLE,
   PROFILE_PROXIES_TABLE,
   PROFILES_TABLE,
@@ -15,7 +14,6 @@ import {
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
 import { randomUUID } from 'crypto';
-import { RateMatter } from '../entities/IRating';
 
 const mysql = require('mysql');
 
@@ -237,15 +235,6 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async getWalletsByProfileId(profileId: string): Promise<string[]> {
-    return this.db
-      .execute<{ address: string }>(
-        `select a.address as address from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on a.consolidation_key = i.consolidation_key where i.profile_id = :profileId`,
-        { profileId }
-      )
-      .then((result) => result.map((it) => it.address));
-  }
-
   async bulkInsertIdentities(
     identities: IdentityEntity[],
     connection: ConnectionWrapper<any>
@@ -334,50 +323,6 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       undefined,
       { wrappedConnection: connection }
     );
-  }
-
-  async fixIdentitiesMetrics(
-    profileIds: string[],
-    connection: ConnectionWrapper<any>
-  ) {
-    if (profileIds.length === 0) {
-      return;
-    }
-    const ratings = await this.db.execute<{
-      matter: RateMatter;
-      profile_id: string;
-      rating: number;
-    }>(
-      `select matter, matter_target_id as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter_target_id in (:profileIds) group by 1, 2`,
-      { profileIds },
-      { wrappedConnection: connection }
-    );
-    const tdhsByProfileIds = await this.db.execute<{
-      profile_id: string;
-      tdh: number;
-    }>(
-      `select i.profile_id as profile_id, c.boosted_tdh as tdh from ${IDENTITIES_TABLE} i join ${CONSOLIDATED_WALLETS_TDH_TABLE} c on i.consolidation_key = c.consolidation_key where i.profile_id in (:profileIds)`,
-      { profileIds },
-      { wrappedConnection: connection }
-    );
-    for (const profileId of profileIds) {
-      const cic =
-        ratings.find(
-          (it) => it.profile_id === profileId && it.matter === RateMatter.CIC
-        )?.rating ?? 0;
-      const rep =
-        ratings.find(
-          (it) => it.profile_id === profileId && it.matter === RateMatter.CIC
-        )?.rating ?? 0;
-      const tdh =
-        tdhsByProfileIds.find((it) => it.profile_id === profileId)?.tdh ?? 0;
-      const level = tdh + rep;
-      await this.db.execute(
-        `update ${IDENTITIES_TABLE} set level_raw = :level, rep = :rep, cic = :cic, tdh = :tdh where profile_id = :profileId`,
-        { cic, rep: rep, profileId, level, tdh },
-        { wrappedConnection: connection }
-      );
-    }
   }
 }
 

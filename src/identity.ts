@@ -5,7 +5,11 @@ import { profilesService } from './profiles/profiles.service';
 import { Profile } from './entities/IProfile';
 import { distinct, parseNumberOrNull } from './helpers';
 import { Logger } from './logging';
-import { CONSOLIDATED_WALLETS_TDH_TABLE, IDENTITIES_TABLE } from './constants';
+import {
+  CONSOLIDATED_WALLETS_TDH_TABLE,
+  IDENTITIES_TABLE,
+  RATINGS_TABLE
+} from './constants';
 import { randomUUID } from 'crypto';
 
 const logger = Logger.get('IDENTITIES');
@@ -43,6 +47,55 @@ export async function syncIdentitiesPrimaryWallets(
   logger.info(`Syncing identities primary wallets done!`);
 }
 
+function mergeDuplicates(identitiesToSave: IdentityEntity[]) {
+  return Object.values(
+    identitiesToSave.reduce((acc, it) => {
+      const profileId = it.profile_id!;
+      if (!acc[profileId]) {
+        acc[profileId] = it;
+      } else {
+        const oldIdentity = acc[profileId];
+        if (oldIdentity.tdh < it.tdh) {
+          const newProfileId = randomUUID();
+          const oldIdentitiesNewVersion: IdentityEntity = {
+            ...oldIdentity,
+            profile_id: newProfileId,
+            handle: null,
+            normalised_handle: null,
+            rep: 0,
+            cic: 0,
+            level_raw: oldIdentity.level_raw - oldIdentity.rep,
+            classification: null,
+            sub_classification: null,
+            banner1: null,
+            banner2: null,
+            pfp: null
+          };
+          acc[profileId] = it;
+          acc[newProfileId] = oldIdentitiesNewVersion;
+        } else {
+          const newProfileId = randomUUID();
+          acc[newProfileId] = {
+            ...it,
+            profile_id: newProfileId,
+            handle: null,
+            normalised_handle: null,
+            rep: 0,
+            cic: 0,
+            level_raw: it.level_raw - it.rep,
+            classification: null,
+            sub_classification: null,
+            banner1: null,
+            banner2: null,
+            pfp: null
+          };
+        }
+      }
+      return acc;
+    }, {} as Record<string, IdentityEntity>)
+  );
+}
+
 export async function syncIdentitiesWithTdhConsolidations(
   connection: ConnectionWrapper<any>
 ) {
@@ -50,55 +103,6 @@ export async function syncIdentitiesWithTdhConsolidations(
   const newConsolidations = await getUnsynchronisedConsolidationKeysWithTdhs(
     connection
   );
-
-  function mergeDuplicates(identitiesToSave: IdentityEntity[]) {
-    return Object.values(
-      identitiesToSave.reduce((acc, it) => {
-        const profileId = it.profile_id!;
-        if (!acc[profileId]) {
-          acc[profileId] = it;
-        } else {
-          const oldIdentity = acc[profileId];
-          if (oldIdentity.tdh < it.tdh) {
-            const newProfileId = randomUUID();
-            const oldIdentitiesNewVersion: IdentityEntity = {
-              ...oldIdentity,
-              profile_id: newProfileId,
-              handle: null,
-              normalised_handle: null,
-              rep: 0,
-              cic: 0,
-              level_raw: oldIdentity.level_raw - oldIdentity.rep,
-              classification: null,
-              sub_classification: null,
-              banner1: null,
-              banner2: null,
-              pfp: null
-            };
-            acc[profileId] = it;
-            acc[newProfileId] = oldIdentitiesNewVersion;
-          } else {
-            const newProfileId = randomUUID();
-            acc[newProfileId] = {
-              ...it,
-              profile_id: newProfileId,
-              handle: null,
-              normalised_handle: null,
-              rep: 0,
-              cic: 0,
-              level_raw: it.level_raw - it.rep,
-              classification: null,
-              sub_classification: null,
-              banner1: null,
-              banner2: null,
-              pfp: null
-            };
-          }
-        }
-        return acc;
-      }, {} as Record<string, IdentityEntity>)
-    );
-  }
 
   if (newConsolidations.length) {
     const addressesInNewConsolidationKeys = newConsolidations
@@ -301,44 +305,57 @@ export async function syncIdentitiesWithTdhConsolidations(
       );
     }
     await identitiesDb.syncProfileAddressesFromIdentitiesToProfiles(connection);
-    await identitiesDb.fixIdentitiesMetrics(
-      identitiesReadyForSaving.map((it) => it.profile_id!),
-      connection
-    );
   }
   logger.info(`Syncing identities with tdh_consolidations done!`);
 }
 
-export async function syncIdentitiesTdhNumbers(
+export async function syncIdentitiesMetrics(
   connection: ConnectionWrapper<any>
 ) {
-  logger.info(`Syncing identities TDH numbers`);
-  let moreToDo = true;
-  while (moreToDo) {
-    await dbSupplier().execute(
-      `
-    update ${IDENTITIES_TABLE} inner join (select i.consolidation_key, ifnull(t.boosted_tdh, 0) - i.tdh as tdh_adjustment
-                              from ${IDENTITIES_TABLE} i
-                                       left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = i.consolidation_key
-                              where i.tdh <> ifnull(t.boosted_tdh, 0) limit 100000) needed_tdh_adjustments on ${IDENTITIES_TABLE} .consolidation_key = needed_tdh_adjustments.consolidation_key
-    set ${IDENTITIES_TABLE}.tdh       = ${IDENTITIES_TABLE}.tdh + needed_tdh_adjustments.tdh_adjustment,
-        ${IDENTITIES_TABLE}.level_raw = ${IDENTITIES_TABLE}.level_raw + needed_tdh_adjustments.tdh_adjustment
+  logger.info(`Syncing identities metrics`);
+  const db = dbSupplier();
+  await db.execute(
+    `
+    with cs as (
+        select matter_target_id as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' group by 1
+    ), out_of_sync_reps as (select i.profile_id, i.rep, c.rating from ${IDENTITIES_TABLE} i join cs c on c.profile_id = i.profile_id where c.rating <> i.rep)
+    update ${IDENTITIES_TABLE} i
+        inner join out_of_sync_reps on i.profile_id = out_of_sync_reps.profile_id
+    set i.rep = out_of_sync_reps.rating where true
   `,
-      undefined,
-      { wrappedConnection: connection }
-    );
-    moreToDo = await dbSupplier()
-      .execute(
-        `
-    select 1 as smth from ${IDENTITIES_TABLE} inner join (select i.consolidation_key, ifnull(t.boosted_tdh, 0) - i.tdh as tdh_adjustment
-from ${IDENTITIES_TABLE} i
-         left join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = i.consolidation_key
-where i.tdh <> ifnull(t.boosted_tdh, 0)) needed_tdh_adjustments on needed_tdh_adjustments.consolidation_key = identities.consolidation_key limit 1
+    undefined,
+    { wrappedConnection: connection }
+  );
+  await db.execute(
+    `
+        with cs as (
+            select matter_target_id as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' group by 1
+        ), out_of_sync_cics as (select i.profile_id, i.rep, c.rating from ${IDENTITIES_TABLE} i join cs c on c.profile_id = i.profile_id where c.rating <> i.cic)
+        update ${IDENTITIES_TABLE} i
+            inner join out_of_sync_cics on i.profile_id = out_of_sync_cics.profile_id
+        set i.cic = out_of_sync_cics.rating where true
   `,
-        undefined,
-        { wrappedConnection: connection }
-      )
-      .then((result) => result.length > 0);
-  }
-  logger.info(`Syncing identities TDH numbers done!`);
+    undefined,
+    { wrappedConnection: connection }
+  );
+  await db.execute(
+    `
+        with out_of_sync_tdhs as (
+            select i.profile_id, ifnull(c.boosted_tdh, 0) as tdh from ${IDENTITIES_TABLE} i left join ${CONSOLIDATED_WALLETS_TDH_TABLE} c on i.consolidation_key = c.consolidation_key where ifnull(c.boosted_tdh, 0) <> i.tdh limit 1000000
+        )
+        update ${IDENTITIES_TABLE} i
+            inner join out_of_sync_tdhs on i.profile_id = out_of_sync_tdhs.profile_id
+        set i.tdh = out_of_sync_tdhs.tdh where true
+  `,
+    undefined,
+    { wrappedConnection: connection }
+  );
+  await db.execute(
+    `
+        update ${IDENTITIES_TABLE} set level_raw = (rep+tdh) where level_raw <> (rep+tdh)
+  `,
+    undefined,
+    { wrappedConnection: connection }
+  );
+  logger.info(`Syncing identities metrics done`);
 }

@@ -26,7 +26,10 @@ import { AddressConsolidationKey } from './entities/IAddressConsolidationKey';
 import { IdentityEntity } from './entities/IIdentity';
 import { ProfileGroupEntity } from './entities/IProfileGroup';
 import { dbSupplier } from './sql-executor';
-import { syncIdentitiesWithTdhConsolidations } from './identity';
+import {
+  syncIdentitiesMetrics,
+  syncIdentitiesWithTdhConsolidations
+} from './identity';
 
 const logger = Logger.get('BACKEND');
 
@@ -61,6 +64,7 @@ async function start() {
   ]);
   await dbSupplier().executeNativeQueriesInTransaction(async (tx) => {
     await syncIdentitiesWithTdhConsolidations(tx);
+    await syncIdentitiesMetrics(tx);
   });
   const diff = start.diffFromNow().formatAsDuration();
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
