@@ -645,6 +645,18 @@ export async function fetchMemesLite(sortDir: string) {
   );
 }
 
+export async function fetchMemesLatest() {
+  const sql = `SELECT * FROM 
+    ${NFTS_TABLE} LEFT JOIN ${MEMES_EXTENDED_DATA_TABLE} ON ${NFTS_TABLE}.id = ${MEMES_EXTENDED_DATA_TABLE}.id
+    WHERE ${NFTS_TABLE}.contract = :memes_contract
+    ORDER BY ${NFTS_TABLE}.id DESC
+    LIMIT 1`;
+  const result = await sqlExecutor.execute(sql, {
+    memes_contract: MEMES_CONTRACT
+  });
+  return result[0];
+}
+
 export async function searchNfts(
   search: string,
   pageSize: number

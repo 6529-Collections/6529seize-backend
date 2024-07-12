@@ -478,6 +478,13 @@ loadApi().then(() => {
     });
   });
 
+  apiRouter.get(`/memes_latest`, function (req: any, res: any) {
+    db.fetchMemesLatest().then((result) => {
+      result.metadata = JSON.parse(result.metadata);
+      return returnJsonResult(result, req, res);
+    });
+  });
+
   apiRouter.get(`/nfts_search`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
