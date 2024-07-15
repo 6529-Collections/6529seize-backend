@@ -19,6 +19,8 @@
     "@sentry/serverless": "^7.91.0",
     "memory-cache": "^0.2.0",
     "winston": "^3.11.0",
-    "reflect-metadata": "^0.1.13"
+    "typeorm": "^0.3.12",
+    "reflect-metadata": "^0.1.13",
+    "alchemy-sdk": "^3.0.0"
   }
 }
