@@ -5,12 +5,17 @@ import { RateMatter } from '../../../entities/IRating';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { Time } from '../../../time';
+import {
+  activityRecorder,
+  ActivityRecorder
+} from '../../../activity/activity.recorder';
 
 class DropRaterService {
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly ratingsService: RatingsService,
-    private readonly ratingsDb: RatingsDb
+    private readonly ratingsDb: RatingsDb,
+    private readonly activityRecorder: ActivityRecorder
   ) {}
 
   async updateRating(param: {
@@ -98,6 +103,15 @@ class DropRaterService {
           },
           connection
         );
+        await this.activityRecorder.recordDropVoted(
+          {
+            drop_id: dropId,
+            voter_id: param.rater_profile_id,
+            vote: newRating,
+            visibility_group_id: wave.visibility_group_id
+          },
+          connection
+        );
         await this.ratingsService.updateRatingUnsafe({
           request: {
             rater_profile_id: param.rater_profile_id,
@@ -120,5 +134,6 @@ class DropRaterService {
 export const dropRaterService = new DropRaterService(
   dropsDb,
   ratingsService,
-  ratingsDb
+  ratingsDb,
+  activityRecorder
 );

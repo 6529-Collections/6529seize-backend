@@ -20,13 +20,18 @@ import { WaveType } from '../generated/models/WaveType';
 import { WaveOutcomeType } from '../generated/models/WaveOutcomeType';
 import { WaveOutcomeSubType } from '../generated/models/WaveOutcomeSubType';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import {
+  activityRecorder,
+  ActivityRecorder
+} from '../../../activity/activity.recorder';
 
 export class WaveApiService {
   constructor(
     private readonly wavesApiDb: WavesApiDb,
     private readonly profilesService: ProfilesService,
     private readonly userGroupsService: UserGroupsService,
-    private readonly waveMappers: WavesMappers
+    private readonly waveMappers: WavesMappers,
+    private readonly activityRecorder: ActivityRecorder
   ) {}
 
   public async createWave({
@@ -60,6 +65,14 @@ export class WaveApiService {
         if (!waveEntity) {
           throw new Error(`Something went wrong while creating wave ${id}`);
         }
+        await this.activityRecorder.recordWaveCreated(
+          {
+            creator_id: waveEntity.created_by,
+            wave_id: id,
+            visibility_group_id: waveEntity.visibility_group_id
+          },
+          connection
+        );
         const groupIdsUserIsEligibleFor =
           await this.userGroupsService.getGroupsUserIsEligibleFor(
             authenticationContext.getActingAsId()
@@ -260,5 +273,6 @@ export const waveApiService = new WaveApiService(
   wavesApiDb,
   profilesService,
   userGroupsService,
-  wavesMappers
+  wavesMappers,
+  activityRecorder
 );

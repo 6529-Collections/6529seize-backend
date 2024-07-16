@@ -270,6 +270,21 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
         }, {} as Record<string, { contributor_identity: string; contributor_pfp: string }[]>)
       );
   }
+
+  async findWaveVisibilityGroupByDropId(
+    drop_id: string,
+    connection: ConnectionWrapper<any>
+  ): Promise<string | null> {
+    return this.db
+      .oneOrNull<{
+        visibility_group_id: string;
+      }>(
+        `select w.visibility_group_id from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id = :drop_id`,
+        { drop_id },
+        { wrappedConnection: connection }
+      )
+      .then((it) => it?.visibility_group_id ?? null);
+  }
 }
 
 export type NewWaveEntity = Omit<WaveEntity, 'id' | 'serial_no' | 'created_at'>;
