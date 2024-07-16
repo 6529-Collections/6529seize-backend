@@ -25,11 +25,7 @@ import { CookiesConsent } from './entities/ICookieConsent';
 import { AddressConsolidationKey } from './entities/IAddressConsolidationKey';
 import { IdentityEntity } from './entities/IIdentity';
 import { ProfileGroupEntity } from './entities/IProfileGroup';
-import { dbSupplier } from './sql-executor';
-import {
-  syncIdentitiesMetrics,
-  syncIdentitiesWithTdhConsolidations
-} from './identity';
+import * as dbMigrationsLoop from './dbMigrationsLoop';
 
 const logger = Logger.get('BACKEND');
 
@@ -62,11 +58,12 @@ async function start() {
     IdentityEntity,
     ProfileGroupEntity
   ]);
-  await dbSupplier().executeNativeQueriesInTransaction(async (tx) => {
-    await syncIdentitiesWithTdhConsolidations(tx);
-    await syncIdentitiesMetrics(tx);
-  });
   const diff = start.diffFromNow().formatAsDuration();
+  await dbMigrationsLoop.handler(
+    undefined as any,
+    undefined as any,
+    undefined as any
+  );
   logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
   process.exit(0);
 }
