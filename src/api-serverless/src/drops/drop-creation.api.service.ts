@@ -25,6 +25,11 @@ import { assertUnreachable, parseNumberOrNull } from '../../../helpers';
 import { WaveParticipationRequirement } from '../generated/models/WaveParticipationRequirement';
 import { WaveMetadataType } from '../generated/models/WaveMetadataType';
 import { Wave } from '../generated/models/Wave';
+import {
+  activityRecorder,
+  ActivityRecorder
+} from '../../../activity/activity.recorder';
+import { wavesApiDb } from '../waves/waves.api.db';
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(DropCreationApiService.name);
@@ -34,7 +39,8 @@ export class DropCreationApiService {
     private readonly dropsDb: DropsDb,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly waveApiService: WaveApiService,
-    private readonly userGroupsService: UserGroupsService
+    private readonly userGroupsService: UserGroupsService,
+    private readonly activityRecorder: ActivityRecorder
   ) {}
 
   async createDrop(
@@ -51,6 +57,7 @@ export class DropCreationApiService {
         return await this.persistDrop(
           createDropRequest,
           authenticationContext,
+          false,
           connection
         );
       }
@@ -80,6 +87,7 @@ export class DropCreationApiService {
     const dropFull = await this.persistDrop(
       createDropRequest,
       authenticationContext,
+      true,
       connection
     );
     this.logger.info(
@@ -91,6 +99,7 @@ export class DropCreationApiService {
   private async persistDrop(
     createDropRequest: CreateDropRequest,
     authenticationContext: AuthenticationContext,
+    isDescriptionDrop: boolean,
     connection: ConnectionWrapper<any>
   ) {
     const createDropParts = createDropRequest.parts;
@@ -104,6 +113,16 @@ export class DropCreationApiService {
       },
       connection
     );
+    if (!isDescriptionDrop) {
+      const visibilityGroupId =
+        await wavesApiDb.findWaveVisibilityGroupByDropId(dropId, connection);
+      await this.activityRecorder.recordDropCreated({
+        drop_id: dropId,
+        creator_id: authorId,
+        wave_id: createDropRequest.wave_id,
+        visibility_group_id: visibilityGroupId
+      });
+    }
     await this.profileActivityLogsDb.insert(
       {
         profile_id: authorId,
@@ -320,5 +339,6 @@ export const dropCreationService = new DropCreationApiService(
   dropsDb,
   profileActivityLogsDb,
   waveApiService,
-  userGroupsService
+  userGroupsService,
+  activityRecorder
 );

@@ -32,13 +32,18 @@ import { AuthenticationContext } from '../../../auth-context';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { DropActivityLogsQuery } from './drop.validator';
 import { WavesApiDb, wavesApiDb } from '../waves/waves.api.db';
+import {
+  activityRecorder,
+  ActivityRecorder
+} from '../../../activity/activity.recorder';
 
 export class DropsApiService {
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly profilesService: ProfilesService,
     private readonly userGroupsService: UserGroupsService,
-    private readonly wavesApiDb: WavesApiDb
+    private readonly wavesApiDb: WavesApiDb,
+    private readonly activityRecorder: ActivityRecorder
   ) {}
 
   public async findDropByIdOrThrow(
@@ -504,6 +509,21 @@ export class DropsApiService {
           commentRequest,
           connection
         );
+        const visibilityGroupId =
+          await this.wavesApiDb.findWaveVisibilityGroupByDropId(
+            commentRequest.drop_id,
+            connection
+          );
+        await this.activityRecorder.recordDropCommented(
+          {
+            drop_id: commentRequest.drop_id,
+            commenter_id: commentRequest.author_id,
+            drop_part_id: commentRequest.drop_part_id,
+            comment_id: commentId,
+            visibility_group_id: visibilityGroupId
+          },
+          connection
+        );
         const comment = await this.dropsDb.findDiscussionCommentById(
           commentId,
           connection
@@ -592,5 +612,6 @@ export const dropsService = new DropsApiService(
   dropsDb,
   profilesService,
   userGroupsService,
-  wavesApiDb
+  wavesApiDb,
+  activityRecorder
 );
