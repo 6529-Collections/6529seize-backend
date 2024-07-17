@@ -29,6 +29,8 @@ import { WaveOutcomeType } from '../generated/models/WaveOutcomeType';
 import { WaveOutcomeSubType } from '../generated/models/WaveOutcomeSubType';
 import { WaveOutcomeCredit } from '../generated/models/WaveOutcomeCredit';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
+import { WaveSubscriptionActions } from '../generated/models/WaveSubscriptionActions';
+import { WaveSubscriptionTargetAction } from '../generated/models/WaveSubscriptionTargetAction';
 
 const router = asyncRouter();
 
@@ -124,6 +126,80 @@ router.get(
     }
 
     res.send(wave);
+  }
+);
+
+router.post(
+  '/:id/subscriptions',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, WaveSubscriptionActions, any, any>,
+    res: Response<ApiResponse<WaveSubscriptionActions>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    const authenticatedProfileId = authenticationContext.getActingAsId();
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.READ_WAVE
+      ]
+    ) {
+      throw new ForbiddenException(
+        `Proxy is not allowed to read waves or subscribe to them`
+      );
+    }
+    const request = getValidatedByJoiOrThrow(
+      req.body,
+      WaveSubscriptionActionsSchema
+    );
+    const activeActions = await waveApiService.addWaveSubscriptionActions({
+      waveId: req.params.id,
+      subscriber: authenticatedProfileId,
+      actions: request.actions
+    });
+    res.send({
+      actions: activeActions
+    });
+  }
+);
+
+router.delete(
+  '/:id/subscriptions',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, WaveSubscriptionActions, any, any>,
+    res: Response<ApiResponse<WaveSubscriptionActions>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    const authenticatedProfileId = authenticationContext.getActingAsId();
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.READ_WAVE
+      ]
+    ) {
+      throw new ForbiddenException(
+        `Proxy is not allowed to read waves or unsubscribe for them`
+      );
+    }
+    const request = getValidatedByJoiOrThrow(
+      req.body,
+      WaveSubscriptionActionsSchema
+    );
+    const activeActions = await waveApiService.removeWaveSubscriptionActions({
+      waveId: req.params.id,
+      subscriber: authenticatedProfileId,
+      actions: request.actions
+    });
+    res.send({
+      actions: activeActions
+    });
   }
 );
 
@@ -273,6 +349,12 @@ const WaveSchema = Joi.object<CreateNewWave>({
   participation: WaveParticipationSchema.required(),
   wave: WaveConfigSchema.required(),
   outcomes: Joi.array().required().min(0).items(WaveOutcomeSchema)
+});
+
+const WaveSubscriptionActionsSchema = Joi.object<WaveSubscriptionActions>({
+  actions: Joi.array()
+    .items(Joi.string().valid(...Object.values(WaveSubscriptionTargetAction)))
+    .required()
 });
 
 export default router;

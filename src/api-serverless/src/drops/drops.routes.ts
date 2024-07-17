@@ -31,6 +31,8 @@ import {
 } from './drop.validator';
 import { profilesService } from '../../../profiles/profiles.service';
 import { AuthenticationContext } from '../../../auth-context';
+import { DropSubscriptionActions } from '../generated/models/DropSubscriptionActions';
+import { DropSubscriptionTargetAction } from '../generated/models/DropSubscriptionTargetAction';
 
 const router = asyncRouter();
 
@@ -348,6 +350,82 @@ router.post(
   }
 );
 
+router.post(
+  '/:drop_id/subscriptions',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }, any, DropSubscriptionActions, any, any>,
+    res: Response<ApiResponse<DropSubscriptionActions>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    const authenticatedProfileId = authenticationContext.getActingAsId();
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.READ_WAVE
+      ]
+    ) {
+      throw new ForbiddenException(
+        `Proxy is not allowed to read drops or subscribe to them`
+      );
+    }
+    const request = getValidatedByJoiOrThrow(
+      req.body,
+      DropSubscriptionActionsSchema
+    );
+    const activeActions = await dropsService.addDropSubscriptionActions({
+      dropId: req.params.drop_id,
+      subscriber: authenticatedProfileId,
+      actions: request.actions,
+      authenticationContext
+    });
+    res.send({
+      actions: activeActions
+    });
+  }
+);
+
+router.delete(
+  '/:drop_id/subscriptions',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }, any, DropSubscriptionActions, any, any>,
+    res: Response<ApiResponse<DropSubscriptionActions>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    const authenticatedProfileId = authenticationContext.getActingAsId();
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ApiProfileProxyActionType.READ_WAVE
+      ]
+    ) {
+      throw new ForbiddenException(
+        `Proxy is not allowed to read drops or unsubscribe for them`
+      );
+    }
+    const request = getValidatedByJoiOrThrow(
+      req.body,
+      DropSubscriptionActionsSchema
+    );
+    const activeActions = await dropsService.removeDropSubscriptionActions({
+      dropId: req.params.drop_id,
+      subscriber: authenticatedProfileId,
+      actions: request.actions,
+      authenticationContext
+    });
+    res.send({
+      actions: activeActions
+    });
+  }
+);
+
 export function prepSingleDropSearchRequest(
   req: Request<
     { drop_id: string },
@@ -464,5 +542,11 @@ export async function prepDropPartQuery(
   );
   return { drop_part_id, drop_id, query };
 }
+
+const DropSubscriptionActionsSchema = Joi.object<DropSubscriptionActions>({
+  actions: Joi.array()
+    .items(Joi.string().valid(...Object.values(DropSubscriptionTargetAction)))
+    .required()
+});
 
 export default router;

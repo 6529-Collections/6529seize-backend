@@ -6,7 +6,7 @@ import {
 import { ConnectionWrapper } from '../../../sql-executor';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { DropEntity } from '../../../entities/IDrop';
-import { distinct } from '../../../helpers';
+import { distinct, resolveEnumOrThrow } from '../../../helpers';
 import { Page, PageSortDirection } from '../page-request';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { Drop } from '../generated/models/Drop';
@@ -36,6 +36,15 @@ import {
   activityRecorder,
   ActivityRecorder
 } from '../../../activity/activity.recorder';
+import { DropSubscriptionTargetAction } from '../generated/models/DropSubscriptionTargetAction';
+import {
+  ActivityEventAction,
+  ActivityEventTargetType
+} from '../../../entities/IActivityEvent';
+import {
+  identitySubscriptionsDb,
+  IdentitySubscriptionsDb
+} from '../identity-subscriptions/identity-subscriptions.db';
 
 export class DropsApiService {
   constructor(
@@ -43,7 +52,8 @@ export class DropsApiService {
     private readonly profilesService: ProfilesService,
     private readonly userGroupsService: UserGroupsService,
     private readonly wavesApiDb: WavesApiDb,
-    private readonly activityRecorder: ActivityRecorder
+    private readonly activityRecorder: ActivityRecorder,
+    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
   ) {}
 
   public async findDropByIdOrThrow(
@@ -606,6 +616,117 @@ export class DropsApiService {
       }, {} as Record<string, Drop>)
     );
   }
+
+  async addDropSubscriptionActions({
+    subscriber,
+    dropId,
+    actions,
+    authenticationContext
+  }: {
+    subscriber: string;
+    dropId: string;
+    actions: DropSubscriptionTargetAction[];
+    authenticationContext: AuthenticationContext;
+  }): Promise<DropSubscriptionTargetAction[]> {
+    await this.findDropByIdOrThrow({
+      dropId,
+      authenticationContext,
+      min_part_id: 1,
+      max_part_id: 1
+    });
+    const proposedActions = Object.values(actions).map((it) =>
+      resolveEnumOrThrow(ActivityEventAction, it)
+    );
+    return await this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const existingActions =
+          await this.identitySubscriptionsDb.findIdentitySubscriptionActionsOfTarget(
+            {
+              subscriber_id: subscriber,
+              target_id: dropId,
+              target_type: ActivityEventTargetType.DROP
+            },
+            connection
+          );
+        const actionsToAdd = proposedActions.filter(
+          (it) => !existingActions.includes(it)
+        );
+        for (const action of actionsToAdd) {
+          await this.identitySubscriptionsDb.addIdentitySubscription(
+            {
+              subscriber_id: subscriber,
+              target_id: dropId,
+              target_type: ActivityEventTargetType.DROP,
+              target_action: action
+            },
+            connection
+          );
+        }
+        return await this.identitySubscriptionsDb
+          .findIdentitySubscriptionActionsOfTarget(
+            {
+              subscriber_id: subscriber,
+              target_id: dropId,
+              target_type: ActivityEventTargetType.DROP
+            },
+            connection
+          )
+          .then((result) =>
+            result.map((it) =>
+              resolveEnumOrThrow(DropSubscriptionTargetAction, it)
+            )
+          );
+      }
+    );
+  }
+
+  async removeDropSubscriptionActions({
+    subscriber,
+    dropId,
+    authenticationContext,
+    actions
+  }: {
+    subscriber: string;
+    dropId: string;
+    authenticationContext: AuthenticationContext;
+    actions: DropSubscriptionTargetAction[];
+  }): Promise<DropSubscriptionTargetAction[]> {
+    await this.findDropByIdOrThrow({
+      dropId,
+      authenticationContext,
+      min_part_id: 1,
+      max_part_id: 1
+    });
+    return this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        for (const action of actions) {
+          await this.identitySubscriptionsDb.deleteIdentitySubscription(
+            {
+              subscriber_id: subscriber,
+              target_id: dropId,
+              target_type: ActivityEventTargetType.DROP,
+              target_action: resolveEnumOrThrow(ActivityEventAction, action)
+            },
+            connection
+          );
+        }
+        return await this.identitySubscriptionsDb
+          .findIdentitySubscriptionActionsOfTarget(
+            {
+              subscriber_id: subscriber,
+              target_id: dropId,
+              target_type: ActivityEventTargetType.DROP
+            },
+            connection
+          )
+          .then((result) =>
+            result.map((it) =>
+              resolveEnumOrThrow(DropSubscriptionTargetAction, it)
+            )
+          );
+      }
+    );
+  }
 }
 
 export const dropsService = new DropsApiService(
@@ -613,5 +734,6 @@ export const dropsService = new DropsApiService(
   profilesService,
   userGroupsService,
   wavesApiDb,
-  activityRecorder
+  activityRecorder,
+  identitySubscriptionsDb
 );
