@@ -2052,6 +2052,7 @@ components:
         - rating_logs_count
         - title
         - context_profile_context
+        - subscribed_actions
       properties:
         id:
           type: string
@@ -2115,6 +2116,10 @@ components:
           anyOf:
             - type: "null"
             - $ref: "#/components/schemas/DropContextProfileContext"
+        subscribed_actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/DropSubscriptionTargetAction"
 
     QuotedDrop:
       type: object
@@ -2844,6 +2849,7 @@ components:
         - outcomes
         - created_at
         - contributors_overview
+        - subscribed_actions
       properties:
         id:
           description: The ID of the wave
@@ -2883,6 +2889,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/WaveContributorOverview"
+        subscribed_actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/WaveSubscriptionTargetAction"
 
     WaveContributorOverview:
       required:

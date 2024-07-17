@@ -27,6 +27,37 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async findIdentitySubscriptionActionsOfTargets(
+    param: {
+      subscriber_id: string;
+      target_ids: string[];
+      target_type: ActivityEventTargetType;
+    },
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<string, ActivityEventAction[]>> {
+    if (!param.target_ids) {
+      return {};
+    }
+    return this.db
+      .execute<{ target_id: string; target_action: ActivityEventAction }>(
+        `
+      select target_id, target_action from ${IDENTITY_SUBSCRIPTIONS_TABLE} 
+      where subscriber_id = :subscriber_id 
+      and target_id in (:target_ids) and target_type = :target_type`,
+        param,
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((result) =>
+        result.reduce((acc, it) => {
+          if (!acc[it.target_id]) {
+            acc[it.target_id] = [];
+          }
+          acc[it.target_id].push(it.target_action);
+          return acc;
+        }, {} as Record<string, ActivityEventAction[]>)
+      );
+  }
+
   async findIdentitySubscriptionActionsOfTarget(
     param: {
       subscriber_id: string;
