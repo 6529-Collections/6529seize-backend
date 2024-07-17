@@ -199,7 +199,8 @@ export class DropsApiService {
       dropMedia,
       dropsParts,
       dropsCommentsCounts,
-      dropWaveOverviews
+      dropWaveOverviews,
+      subscribedActions
     } = await this.getAllDropsRelatedData(
       {
         dropIds,
@@ -348,7 +349,8 @@ export class DropsApiService {
                 .sort((a, b) => b.rating - a.rating),
               rating: dropsRatingsByContextProfile[dropEntity.id] ?? 0
             }
-          : null
+          : null,
+        subscribed_actions: subscribedActions[dropEntity.id] ?? []
       };
     });
   }
@@ -381,7 +383,8 @@ export class DropsApiService {
       dropMedia,
       dropsParts,
       dropsCommentsCounts,
-      dropWaveOverviews
+      dropWaveOverviews,
+      subscribedActions
     ] = await Promise.all([
       this.dropsDb.findMentionsByDropIds(dropIds, connection),
       this.dropsDb.findReferencedNftsByDropIds(dropIds, connection),
@@ -416,7 +419,17 @@ export class DropsApiService {
         { dropIds, context_profile_id: contextProfileId },
         connection
       ),
-      this.wavesApiDb.getWaveOverviewsByDropIds(dropIds, connection)
+      this.wavesApiDb.getWaveOverviewsByDropIds(dropIds, connection),
+      !contextProfileId
+        ? Promise.resolve({} as Record<string, ActivityEventAction[]>)
+        : this.identitySubscriptionsDb.findIdentitySubscriptionActionsOfTargets(
+            {
+              subscriber_id: contextProfileId,
+              target_ids: dropIds,
+              target_type: ActivityEventTargetType.DROP
+            },
+            connection
+          )
     ]);
     return {
       mentions,
@@ -432,7 +445,16 @@ export class DropsApiService {
       dropMedia,
       dropsParts,
       dropsCommentsCounts,
-      dropWaveOverviews
+      dropWaveOverviews,
+      subscribedActions: Object.entries(subscribedActions).reduce(
+        (acc, [id, actions]) => {
+          acc[id] = actions.map((it) =>
+            resolveEnumOrThrow(DropSubscriptionTargetAction, it)
+          );
+          return acc;
+        },
+        {} as Record<string, DropSubscriptionTargetAction[]>
+      )
     };
   }
 
