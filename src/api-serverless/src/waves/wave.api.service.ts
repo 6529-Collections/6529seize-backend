@@ -1,7 +1,11 @@
 import { SearchWavesParams, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { CreateNewWave } from '../generated/models/CreateNewWave';
 import { Wave } from '../generated/models/Wave';
-import { assertUnreachable, distinct } from '../../../helpers';
+import {
+  assertUnreachable,
+  distinct,
+  resolveEnumOrThrow
+} from '../../../helpers';
 import {
   profilesService,
   ProfilesService
@@ -24,6 +28,15 @@ import {
   activityRecorder,
   ActivityRecorder
 } from '../../../activity/activity.recorder';
+import { WaveSubscriptionTargetAction } from '../generated/models/WaveSubscriptionTargetAction';
+import {
+  identitySubscriptionsDb,
+  IdentitySubscriptionsDb
+} from '../identity-subscriptions/identity-subscriptions.db';
+import {
+  ActivityEventAction,
+  ActivityEventTargetType
+} from '../../../entities/IActivityEvent';
 
 export class WaveApiService {
   constructor(
@@ -31,7 +44,8 @@ export class WaveApiService {
     private readonly profilesService: ProfilesService,
     private readonly userGroupsService: UserGroupsService,
     private readonly waveMappers: WavesMappers,
-    private readonly activityRecorder: ActivityRecorder
+    private readonly activityRecorder: ActivityRecorder,
+    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
   ) {}
 
   public async createWave({
@@ -267,6 +281,107 @@ export class WaveApiService {
       authenticationContext
     );
   }
+
+  async addWaveSubscriptionActions({
+    subscriber,
+    waveId,
+    actions
+  }: {
+    subscriber: string;
+    waveId: string;
+    actions: WaveSubscriptionTargetAction[];
+  }): Promise<WaveSubscriptionTargetAction[]> {
+    const groupsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(subscriber);
+    await this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor);
+    const proposedActions = Object.values(actions).map((it) =>
+      resolveEnumOrThrow(ActivityEventAction, it)
+    );
+    return await this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const existingActions =
+          await this.identitySubscriptionsDb.findIdentitySubscriptionActionsOfTarget(
+            {
+              subscriber_id: subscriber,
+              target_id: waveId,
+              target_type: ActivityEventTargetType.WAVE
+            },
+            connection
+          );
+        const actionsToAdd = proposedActions.filter(
+          (it) => !existingActions.includes(it)
+        );
+        for (const action of actionsToAdd) {
+          await this.identitySubscriptionsDb.addIdentitySubscription(
+            {
+              subscriber_id: subscriber,
+              target_id: waveId,
+              target_type: ActivityEventTargetType.WAVE,
+              target_action: action
+            },
+            connection
+          );
+        }
+        return await this.identitySubscriptionsDb
+          .findIdentitySubscriptionActionsOfTarget(
+            {
+              subscriber_id: subscriber,
+              target_id: waveId,
+              target_type: ActivityEventTargetType.WAVE
+            },
+            connection
+          )
+          .then((result) =>
+            result.map((it) =>
+              resolveEnumOrThrow(WaveSubscriptionTargetAction, it)
+            )
+          );
+      }
+    );
+  }
+
+  async removeWaveSubscriptionActions({
+    subscriber,
+    waveId,
+    actions
+  }: {
+    subscriber: string;
+    waveId: string;
+    actions: WaveSubscriptionTargetAction[];
+  }): Promise<WaveSubscriptionTargetAction[]> {
+    const groupsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(subscriber);
+    await this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor);
+    return this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        for (const action of actions) {
+          await this.identitySubscriptionsDb.deleteIdentitySubscription(
+            {
+              subscriber_id: subscriber,
+              target_id: waveId,
+              target_type: ActivityEventTargetType.WAVE,
+              target_action: resolveEnumOrThrow(ActivityEventAction, action)
+            },
+            connection
+          );
+        }
+        return await this.identitySubscriptionsDb
+          .findIdentitySubscriptionActionsOfTarget(
+            {
+              subscriber_id: subscriber,
+              target_id: waveId,
+              target_type: ActivityEventTargetType.WAVE
+            },
+            connection
+          )
+          .then((result) =>
+            result.map((it) =>
+              resolveEnumOrThrow(WaveSubscriptionTargetAction, it)
+            )
+          );
+      }
+    );
+  }
 }
 
 export const waveApiService = new WaveApiService(
@@ -274,5 +389,6 @@ export const waveApiService = new WaveApiService(
   profilesService,
   userGroupsService,
   wavesMappers,
-  activityRecorder
+  activityRecorder,
+  identitySubscriptionsDb
 );
