@@ -14,10 +14,6 @@ import { WaveCreditType as WaveCreditTypeApi } from '../generated/models/WaveCre
 import { WaveCreditScope as WaveCreditScopeApi } from '../generated/models/WaveCreditScope';
 import { WaveType as WaveTypeApi } from '../generated/models/WaveType';
 import {
-  profilesService,
-  ProfilesService
-} from '../../../profiles/profiles.service';
-import {
   userGroupsService,
   UserGroupsService
 } from '../community-members/user-groups.service';
@@ -39,10 +35,14 @@ import {
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { WaveSubscriptionTargetAction } from '../generated/models/WaveSubscriptionTargetAction';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
+import {
+  profilesApiService,
+  ProfilesApiService
+} from '../profiles/profiles.api.service';
 
 export class WavesMappers {
   constructor(
-    private readonly profilesService: ProfilesService,
+    private readonly profilesApiService: ProfilesApiService,
     private readonly userGroupsService: UserGroupsService,
     private readonly wavesApiDb: WavesApiDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
@@ -340,15 +340,13 @@ export class WavesMappers {
         waveEntities.map((it) => it.id),
         connection
       );
-    const profileMins: Record<string, ProfileMin> = await this.profilesService
-      .getProfileMinsByIds(profileIds, connection)
-      .then((profileMins) =>
-        profileMins.reduce((acc, profileMin) => {
-          acc[profileMin.id] = {
-            ...profileMin
-          };
-          return acc;
-        }, {} as Record<string, ProfileMin>)
+    const profileMins: Record<string, ProfileMin> =
+      await this.profilesApiService.getProfileMinsByIds(
+        {
+          ids: profileIds,
+          authenticatedProfileId: authenticationContext?.getActingAsId()
+        },
+        connection
       );
     const curations: Record<string, Group> = curationEntities.reduce(
       (acc, curationEntity) => {
@@ -397,7 +395,7 @@ export class WavesMappers {
 }
 
 export const wavesMappers = new WavesMappers(
-  profilesService,
+  profilesApiService,
   userGroupsService,
   wavesApiDb,
   identitySubscriptionsDb

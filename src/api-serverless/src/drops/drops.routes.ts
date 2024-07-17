@@ -252,7 +252,10 @@ router.get(
       min_part_id: 1,
       max_part_id: 1
     });
-    const discussionCommentsPage = await dropsService.findLogs(validatedQuery);
+    const discussionCommentsPage = await dropsService.findLogs(
+      validatedQuery,
+      authenticationContext.getActingAsId()
+    );
     res.send(discussionCommentsPage);
   }
 );
@@ -275,11 +278,14 @@ router.get(
       req,
       authenticationContext
     );
-    const comments = await dropsService.findDropPartComments({
-      ...query,
-      drop_part_id,
-      drop_id
-    });
+    const comments = await dropsService.findDropPartComments(
+      {
+        ...query,
+        drop_part_id,
+        drop_id
+      },
+      authenticationContext.getActingAsId()
+    );
     res.send(comments);
   }
 );

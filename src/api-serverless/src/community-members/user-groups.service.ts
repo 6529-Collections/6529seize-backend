@@ -19,7 +19,6 @@ import {
   abusivenessCheckService,
   AbusivenessCheckService
 } from '../../../profiles/abusiveness-check.service';
-import { ProfileMin } from '../generated/models/ProfileMin';
 import { RateMatter } from '../../../entities/IRating';
 import { ChangeGroupVisibility } from '../generated/models/ChangeGroupVisibility';
 import { GroupFull } from '../generated/models/GroupFull';
@@ -29,6 +28,7 @@ import {
   GroupOwnsNft,
   GroupOwnsNftNameEnum
 } from '../generated/models/GroupOwnsNft';
+import { profilesApiService } from '../profiles/profiles.api.service';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -640,26 +640,23 @@ export class UserGroupsService {
     );
   }
 
-  private async mapForApi(groups: UserGroupEntity[]): Promise<GroupFull[]> {
-    const relatedProfiles = await profilesService
-      .getProfileMinsByIds(
-        distinct(
-          groups
-            .map(
-              (it) =>
-                [it.created_by, it.rep_user, it.cic_user].filter(
-                  (it) => !!it
-                ) as string[]
-            )
-            .flat()
-        )
-      )
-      .then((res) =>
-        res.reduce((acc, it) => {
-          acc[it.id] = it as ProfileMin;
-          return acc;
-        }, {} as Record<string, ProfileMin>)
-      );
+  private async mapForApi(
+    groups: UserGroupEntity[],
+    authenticatedUserId?: string
+  ): Promise<GroupFull[]> {
+    const relatedProfiles = await profilesApiService.getProfileMinsByIds({
+      ids: distinct(
+        groups
+          .map(
+            (it) =>
+              [it.created_by, it.rep_user, it.cic_user].filter(
+                (it) => !!it
+              ) as string[]
+          )
+          .flat()
+      ),
+      authenticatedProfileId: authenticatedUserId
+    });
     const groupsIdentityGroupsIdsAndIdentityCounts: Record<
       string,
       {

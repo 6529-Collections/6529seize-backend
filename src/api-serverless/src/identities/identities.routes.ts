@@ -9,8 +9,38 @@ import * as Joi from 'joi';
 import { IdentitySubscriptionTargetAction } from '../generated/models/IdentitySubscriptionTargetAction';
 import { identitiesService } from './identities.service';
 import { profilesService } from '../../../profiles/profiles.service';
+import { profilesApiService } from '../profiles/profiles.api.service';
 
 const router = asyncRouter();
+
+router.get(
+  '/:id/subscriptions',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, any, any, any>,
+    res: Response<ApiResponse<IdentitySubscriptionActions>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    const authenticatedProfileId = authenticationContext.getActingAsId();
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    const profileId = await profilesService
+      .resolveIdentityOrThrowNotFound(req.params.id)
+      .then((it) => it.profile_id);
+    const activeActions = !profileId
+      ? []
+      : (
+          await profilesApiService.getProfileMinsByIds({
+            ids: [profileId],
+            authenticatedProfileId: authenticatedProfileId
+          })
+        )[profileId]?.subscribed_actions ?? [];
+    res.send({
+      actions: activeActions
+    });
+  }
+);
 
 router.post(
   '/:id/subscriptions',

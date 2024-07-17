@@ -7,10 +7,6 @@ import {
   resolveEnumOrThrow
 } from '../../../helpers';
 import {
-  profilesService,
-  ProfilesService
-} from '../../../profiles/profiles.service';
-import {
   userGroupsService,
   UserGroupsService
 } from '../community-members/user-groups.service';
@@ -37,11 +33,15 @@ import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
+import {
+  profilesApiService,
+  ProfilesApiService
+} from '../profiles/profiles.api.service';
 
 export class WaveApiService {
   constructor(
     private readonly wavesApiDb: WavesApiDb,
-    private readonly profilesService: ProfilesService,
+    private readonly profilesService: ProfilesApiService,
     private readonly userGroupsService: UserGroupsService,
     private readonly waveMappers: WavesMappers,
     private readonly activityRecorder: ActivityRecorder,
@@ -55,7 +55,10 @@ export class WaveApiService {
     createWaveRequest: CreateNewWave;
     authenticationContext: AuthenticationContext;
   }): Promise<Wave> {
-    await this.validateWaveRelations(createWaveRequest);
+    await this.validateWaveRelations(
+      createWaveRequest,
+      authenticationContext?.authenticatedProfileId
+    );
     const createdWave = await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const id = randomUUID();
@@ -117,7 +120,10 @@ export class WaveApiService {
     return createdWave;
   }
 
-  private async validateWaveRelations(createWave: CreateNewWave) {
+  private async validateWaveRelations(
+    createWave: CreateNewWave,
+    authenticatedProfileId?: string | null
+  ) {
     this.validateOutcomes(createWave);
     const referencedGroupIds = distinct(
       [
@@ -139,10 +145,13 @@ export class WaveApiService {
     }
     const referencedCreditorId = createWave.voting.creditor_id;
     if (referencedCreditorId) {
-      const creditorProfile = await this.profilesService.getProfileMinsByIds([
-        referencedCreditorId
-      ]);
-      if (!creditorProfile.length) {
+      const creditorProfile = (
+        await this.profilesService.getProfileMinsByIds({
+          ids: [referencedCreditorId],
+          authenticatedProfileId
+        })
+      )[referencedCreditorId];
+      if (!creditorProfile) {
         throw new BadRequestException(
           `Creditor not found: ${referencedCreditorId}`
         );
@@ -386,7 +395,7 @@ export class WaveApiService {
 
 export const waveApiService = new WaveApiService(
   wavesApiDb,
-  profilesService,
+  profilesApiService,
   userGroupsService,
   wavesMappers,
   activityRecorder,

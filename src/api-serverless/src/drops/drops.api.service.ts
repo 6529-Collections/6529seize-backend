@@ -1,8 +1,4 @@
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
-import {
-  profilesService,
-  ProfilesService
-} from '../../../profiles/profiles.service';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { DropEntity } from '../../../entities/IDrop';
@@ -45,11 +41,15 @@ import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
+import {
+  profilesApiService,
+  ProfilesApiService
+} from '../profiles/profiles.api.service';
 
 export class DropsApiService {
   constructor(
     private readonly dropsDb: DropsDb,
-    private readonly profilesService: ProfilesService,
+    private readonly profilesService: ProfilesApiService,
     private readonly userGroupsService: UserGroupsService,
     private readonly wavesApiDb: WavesApiDb,
     private readonly activityRecorder: ActivityRecorder,
@@ -223,13 +223,12 @@ export class DropsApiService {
       ...mentions.map((it) => it.mentioned_profile_id),
       ...raterProfileIds
     ]);
-    const profileMins = await this.profilesService.getProfileMinsByIds(
-      allProfileIds
-    );
+    const profileMins = await this.profilesService.getProfileMinsByIds({
+      ids: allProfileIds,
+      authenticatedProfileId: contextProfileId
+    });
     const profilesByIds = allProfileIds.reduce((acc, profileId) => {
-      acc[profileId] = (profileMins.find(
-        (it) => it.id === profileId
-      ) as ProfileMin) ?? {
+      acc[profileId] = profileMins[profileId] ?? {
         id: 'an-unknown-profile',
         handle: 'An unknown profile',
         banner1_color: null,
@@ -239,7 +238,8 @@ export class DropsApiService {
         rep: 0,
         tdh: 0,
         level: 0,
-        archived: true
+        archived: true,
+        subscribed_actions: []
       };
       return acc;
     }, {} as Record<string, ProfileMin>);
@@ -502,7 +502,10 @@ export class DropsApiService {
     return { available_credit_for_rating: creditLeft };
   }
 
-  async findLogs(query: DropActivityLogsQuery): Promise<Page<DropActivityLog>> {
+  async findLogs(
+    query: DropActivityLogsQuery,
+    contextProfileId?: string | null
+  ): Promise<Page<DropActivityLog>> {
     const [logs, count] = await Promise.all([
       this.dropsDb.findLogsByDropId(query),
       this.dropsDb
@@ -510,9 +513,10 @@ export class DropsApiService {
         .then((it) => it[query.drop_id] ?? 0)
     ]);
     const commentAuthorIds = logs.map((it) => it.profile_id);
-    const profileMins = await this.profilesService.getProfileMinsByIds(
-      commentAuthorIds
-    );
+    const profileMins = await this.profilesService.getProfileMinsByIds({
+      ids: commentAuthorIds,
+      authenticatedProfileId: contextProfileId
+    });
     return {
       count,
       page: query.page,
@@ -522,9 +526,7 @@ export class DropsApiService {
         created_at: Time.fromDate(log.created_at).toMillis(),
         target_id: log.target_id!,
         type: log.type as unknown as DropActivityLogTypeEnum,
-        author:
-          (profileMins.find((it) => it.id === log.profile_id) as ProfileMin) ??
-          null
+        author: profileMins[log.profile_id] ?? null
       }))
     };
   }
@@ -566,8 +568,11 @@ export class DropsApiService {
           );
         }
         const authorProfile = await this.profilesService
-          .getProfileMinsByIds([comment.author_id])
-          .then((it) => it[0] ?? null);
+          .getProfileMinsByIds({
+            ids: [comment.author_id],
+            authenticatedProfileId: commentRequest.author_id
+          })
+          .then((it) => it[comment.author_id] ?? null);
         return {
           id: comment.id,
           author: authorProfile as ProfileMin,
@@ -580,23 +585,27 @@ export class DropsApiService {
     return comment;
   }
 
-  async findDropPartComments(param: {
-    sort_direction: PageSortDirection;
-    drop_id: string;
-    drop_part_id: number;
-    sort: string;
-    page: number;
-    page_size: number;
-  }): Promise<Page<DropComment>> {
+  async findDropPartComments(
+    param: {
+      sort_direction: PageSortDirection;
+      drop_id: string;
+      drop_part_id: number;
+      sort: string;
+      page: number;
+      page_size: number;
+    },
+    authenticatedProfileId?: string | null
+  ): Promise<Page<DropComment>> {
     const count = await this.dropsDb
       .countDiscussionCommentsByDropIds({ dropIds: [param.drop_id] })
       .then(
         (result) => result[param.drop_id]?.[param.drop_part_id]?.count ?? 0
       );
     const comments = await this.dropsDb.findDiscussionCommentsByDropId(param);
-    const relatedProfiles = await this.profilesService.getProfileMinsByIds(
-      distinct(comments.map((it) => it.author_id))
-    );
+    const relatedProfiles = await this.profilesService.getProfileMinsByIds({
+      ids: distinct(comments.map((it) => it.author_id)),
+      authenticatedProfileId
+    });
     return {
       count,
       page: param.page,
@@ -605,9 +614,7 @@ export class DropsApiService {
         id: comment.id,
         comment: comment.comment,
         created_at: comment.created_at,
-        author: relatedProfiles.find(
-          (profile) => profile.id === comment.author_id
-        )! as unknown as ProfileMin
+        author: relatedProfiles[comment.author_id]!
       }))
     };
   }
@@ -753,7 +760,7 @@ export class DropsApiService {
 
 export const dropsService = new DropsApiService(
   dropsDb,
-  profilesService,
+  profilesApiService,
   userGroupsService,
   wavesApiDb,
   activityRecorder,

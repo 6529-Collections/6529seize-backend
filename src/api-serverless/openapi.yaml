@@ -113,6 +113,26 @@ paths:
                   $ref: "#/components/schemas/NftsPage"
 
   /identities/{id}/subscriptions:
+    get:
+      tags:
+        - Identities
+      summary: Get subscribed actions to identity for authenticated user.
+      operationId: getIdentitySubscriptions
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentitySubscriptionActions"
+        "404":
+          description: Identity not found
     post:
       tags:
         - Identities
@@ -2180,7 +2200,8 @@ components:
         - tdh
         - level
         - banner1_color
-        - banner2_coloe
+        - banner2_color
+        - subscribed_actions
         - archived
       properties:
         id:
@@ -2209,6 +2230,10 @@ components:
         level:
           type: number
           format: int64
+        subscribed_actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/IdentitySubscriptionTargetAction"
         archived:
           type: boolean
 
