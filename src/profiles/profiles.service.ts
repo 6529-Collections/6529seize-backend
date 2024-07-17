@@ -1119,7 +1119,7 @@ export class ProfilesService {
     throw new Error('Failed to upload image');
   }
 
-  async getProfileMinsByIds(
+  async getProfileOverviewsByIds(
     ids: string[],
     connection?: ConnectionWrapper<any>
   ): Promise<ProfileOverview[]> {

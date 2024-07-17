@@ -4,13 +4,13 @@ import {
   ProfileProxyActionEntity
 } from '../../../entities/IProfileProxyAction';
 import { distinct } from '../../../helpers';
-import {
-  profilesService,
-  ProfilesService
-} from '../../../profiles/profiles.service';
 import { ProfileProxyActionType } from '../generated/models/ProfileProxyActionType';
 import { ProfileMin } from '../generated/models/ProfileMin';
 import { ProfileProxy } from '../generated/models/ProfileProxy';
+import {
+  profilesApiService,
+  ProfilesApiService
+} from '../profiles/profiles.api.service';
 
 const ACTION_MAP: Record<ApiProfileProxyActionType, ProfileProxyActionType> = {
   [ApiProfileProxyActionType.ALLOCATE_REP]: ProfileProxyActionType.AllocateRep,
@@ -24,32 +24,29 @@ const ACTION_MAP: Record<ApiProfileProxyActionType, ProfileProxyActionType> = {
 };
 
 export class ProfileProxiesMapper {
-  constructor(private readonly profilesService: ProfilesService) {}
+  constructor(private readonly profilesService: ProfilesApiService) {}
 
-  public async profileProxyEntitiesToApiProfileProxies({
-    profileProxyEntities,
-    actions
-  }: {
-    readonly profileProxyEntities: ProfileProxyEntity[];
-    readonly actions: ProfileProxyActionEntity[];
-  }): Promise<ProfileProxy[]> {
+  public async profileProxyEntitiesToApiProfileProxies(
+    {
+      profileProxyEntities,
+      actions
+    }: {
+      readonly profileProxyEntities: ProfileProxyEntity[];
+      readonly actions: ProfileProxyActionEntity[];
+    },
+    authenticatedProfileId?: string
+  ): Promise<ProfileProxy[]> {
     const profileIds = distinct(
       profileProxyEntities.flatMap((entity) => [
         entity.target_id,
         entity.created_by
       ])
     );
-
-    const profileMins: Record<string, ProfileMin> = await this.profilesService
-      .getProfileMinsByIds(profileIds)
-      .then((profileMins) =>
-        profileMins.reduce((acc, profileMin) => {
-          acc[profileMin.id] = {
-            ...profileMin
-          };
-          return acc;
-        }, {} as Record<string, ProfileMin>)
-      );
+    const profileMins: Record<string, ProfileMin> =
+      await this.profilesService.getProfileMinsByIds({
+        ids: profileIds,
+        authenticatedProfileId
+      });
 
     return profileProxyEntities.map<ProfileProxy>((entity) => ({
       id: entity.id,
@@ -66,4 +63,6 @@ export class ProfileProxiesMapper {
   }
 }
 
-export const profileProxiesMapper = new ProfileProxiesMapper(profilesService);
+export const profileProxiesMapper = new ProfileProxiesMapper(
+  profilesApiService
+);
