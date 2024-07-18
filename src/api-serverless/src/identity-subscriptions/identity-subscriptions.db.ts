@@ -35,7 +35,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
     },
     connection?: ConnectionWrapper<any>
   ): Promise<Record<string, ActivityEventAction[]>> {
-    if (!param.target_ids) {
+    if (!param.target_ids.length) {
       return {};
     }
     return this.db
