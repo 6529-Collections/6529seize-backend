@@ -123,14 +123,14 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
           target_id: creator_id,
           target_type: ActivityEventTargetType.IDENTITY,
           action: ActivityEventAction.DROP_CREATED,
-          data: { drop_id },
+          data: { drop_id, wave_id },
           visibility_group_id
         },
         {
           target_id: wave_id,
           target_type: ActivityEventTargetType.WAVE,
           action: ActivityEventAction.DROP_CREATED,
-          data: { drop_id },
+          data: { drop_id, creator_id },
           visibility_group_id
         }
       ],

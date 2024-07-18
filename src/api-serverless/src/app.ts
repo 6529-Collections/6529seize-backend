@@ -2,6 +2,7 @@ import fetch from 'node-fetch';
 import * as db from '../../db-api';
 import { isNumber } from '../../helpers';
 
+import feedRoutes from './feed/feed.routes';
 import identitiesRoutes from './identities/identities.routes';
 import profilesRoutes from './profiles/profiles.routes';
 import authRoutes from './auth/auth.routes';
@@ -818,6 +819,7 @@ loadApi().then(() => {
     );
   });
 
+  apiRouter.use(`/feed`, feedRoutes);
   apiRouter.use(`/identities`, identitiesRoutes);
   apiRouter.use(`/profiles`, profilesRoutes);
   apiRouter.use(`/analytics`, analyticsRoutes);

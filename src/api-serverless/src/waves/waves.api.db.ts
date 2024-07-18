@@ -46,6 +46,38 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       );
   }
 
+  public async findWavesByIds(
+    ids: string[],
+    groupIdsUserIsEligibleFor: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<WaveEntity[]> {
+    if (!ids.length) {
+      return [];
+    }
+    return this.db
+      .execute<
+        Omit<WaveEntity, 'participation_required_media'> & {
+          participation_required_media: string;
+        }
+      >(
+        `SELECT * FROM ${WAVES_TABLE} WHERE id in (:ids) and (visibility_group_id is null ${
+          groupIdsUserIsEligibleFor.length
+            ? `or visibility_group_id in (:groupIdsUserIsEligibleFor)`
+            : ``
+        })`,
+        { ids, groupIdsUserIsEligibleFor },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((res) =>
+        res.map((it) => ({
+          ...it,
+          participation_required_media: JSON.parse(
+            it.participation_required_media
+          )
+        }))
+      );
+  }
+
   public async insertWave(
     id: string,
     wave: NewWaveEntity,

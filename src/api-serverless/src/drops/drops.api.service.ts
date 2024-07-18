@@ -619,6 +619,28 @@ export class DropsApiService {
     };
   }
 
+  async findCommentsByIds(
+    ids: number[],
+    authenticatedProfileId?: string | null
+  ): Promise<Record<number, DropComment>> {
+    const comments = await this.dropsDb.findDiscussionCommentsByIds(ids);
+    const relatedProfiles = await this.profilesService.getProfileMinsByIds({
+      ids: distinct(comments.map((it) => it.author_id)),
+      authenticatedProfileId
+    });
+    return comments
+      .map<DropComment>((comment) => ({
+        id: comment.id,
+        comment: comment.comment,
+        created_at: comment.created_at,
+        author: relatedProfiles[comment.author_id]!
+      }))
+      .reduce((acc, comment) => {
+        acc[comment.id] = comment;
+        return acc;
+      }, {} as Record<number, DropComment>);
+  }
+
   async findDropsByIdsOrThrow(
     dropIds: string[],
     authenticationContext: AuthenticationContext | undefined,
