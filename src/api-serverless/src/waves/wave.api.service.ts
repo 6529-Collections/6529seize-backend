@@ -259,6 +259,51 @@ export class WaveApiService {
     );
   }
 
+  async findWavesByIdsOrThrow(
+    ids: string[],
+    groupIdsUserIsEligibleFor: string[],
+    authenticationContext?: AuthenticationContext
+  ): Promise<Record<string, Wave>> {
+    const entities = await this.wavesApiDb.findWavesByIds(
+      ids,
+      groupIdsUserIsEligibleFor
+    );
+    const missingWaves = ids.filter((it) => !entities.find((e) => e.id === it));
+    if (missingWaves.length) {
+      throw new NotFoundException(
+        `Wave(s) not found: ${missingWaves.join(', ')}`
+      );
+    }
+    const noRightToVote =
+      !authenticationContext ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ApiProfileProxyActionType.RATE_WAVE_DROP
+        ]);
+    const noRightToParticipate =
+      !authenticationContext ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+        ]);
+    return await this.waveMappers
+      .waveEntitiesToApiWaves(
+        {
+          waveEntities: entities,
+          groupIdsUserIsEligibleFor,
+          noRightToVote,
+          noRightToParticipate
+        },
+        authenticationContext
+      )
+      .then((res) =>
+        res.reduce((acc, it) => {
+          acc[it.id] = it;
+          return acc;
+        }, {} as Record<string, Wave>)
+      );
+  }
+
   async findWaveByIdOrThrow(
     id: string,
     groupIdsUserIsEligibleFor: string[],

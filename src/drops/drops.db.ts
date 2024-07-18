@@ -923,6 +923,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async findDiscussionCommentsByIds(
+    ids: number[]
+  ): Promise<DropCommentEntity[]> {
+    if (!ids.length) {
+      return [];
+    }
+    return this.db.execute(
+      `select * from ${DROPS_COMMENTS_TABLE} where id in (:ids)`,
+      { ids }
+    );
+  }
+
   async countLogsByDropIds(
     drop_ids: string[],
     log_type?: ProfileActivityLogType
