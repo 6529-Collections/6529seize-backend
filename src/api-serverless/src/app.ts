@@ -31,6 +31,8 @@ import wavesRoutes from './waves/waves.routes';
 import publicWavesRoutes from './waves/waves-public.routes';
 import policiesRoutes from './policies/policies.routes';
 import waveMediaRoutes from './waves/wave-media.routes';
+import wavesOverviewRoutes from './waves/waves-overview.routes';
+import wavesOverviewPublicRoutes from './waves/waves-overview-public.routes';
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -820,6 +822,8 @@ loadApi().then(() => {
   });
 
   apiRouter.use(`/feed`, feedRoutes);
+  apiRouter.use(`/waves-overview`, wavesOverviewRoutes);
+  apiRouter.use(`/public/waves-overview`, wavesOverviewPublicRoutes);
   apiRouter.use(`/identities`, identitiesRoutes);
   apiRouter.use(`/profiles`, profilesRoutes);
   apiRouter.use(`/analytics`, analyticsRoutes);
