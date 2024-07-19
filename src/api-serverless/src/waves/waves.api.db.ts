@@ -6,11 +6,19 @@ import {
 } from '../../../sql-executor';
 import { WaveEntity } from '../../../entities/IWave';
 import { Time } from '../../../time';
-import { DROPS_TABLE, IDENTITIES_TABLE, WAVES_TABLE } from '../../../constants';
+import {
+  DROPS_TABLE,
+  IDENTITIES_TABLE,
+  IDENTITY_SUBSCRIPTIONS_TABLE,
+  RATINGS_TABLE,
+  WAVES_TABLE
+} from '../../../constants';
 import {
   userGroupsService,
   UserGroupsService
 } from '../community-members/user-groups.service';
+import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
+import { RateMatter } from '../../../entities/IRating';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -316,6 +324,157 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
         { wrappedConnection: connection }
       )
       .then((it) => it?.visibility_group_id ?? null);
+  }
+
+  async findLatestWaves(
+    eligibleGroups: string[],
+    limit: number,
+    offset: number
+  ): Promise<WaveEntity[]> {
+    return this.db
+      .execute<
+        Omit<WaveEntity, 'participation_required_media'> & {
+          participation_required_media: string;
+        }
+      >(
+        `
+      select * from ${WAVES_TABLE} where (visibility_group_id is null ${
+          eligibleGroups.length
+            ? `or visibility_group_id in (:eligibleGroups)`
+            : ``
+        }) order by serial_no desc, id limit :limit offset :offset
+    `,
+        { limit, eligibleGroups, offset }
+      )
+      .then((res) =>
+        res.map((it) => ({
+          ...it,
+          participation_required_media: JSON.parse(
+            it.participation_required_media
+          )
+        }))
+      );
+  }
+
+  async findHighLevelAuthorWaves(
+    eligibleGroups: string[],
+    limit: number,
+    offset: number
+  ): Promise<WaveEntity[]> {
+    return this.db
+      .execute<
+        Omit<WaveEntity, 'participation_required_media'> & {
+          participation_required_media: string;
+        }
+      >(
+        `
+      select w.* from ${WAVES_TABLE} w 
+      join ${IDENTITIES_TABLE} i on w.created_by = i.profile_id
+      where i.level_raw > :level and (w.visibility_group_id is null ${
+        eligibleGroups.length
+          ? `or w.visibility_group_id in (:eligibleGroups)`
+          : ``
+      }) order by w.serial_no desc, w.id limit :limit offset :offset
+    `,
+        {
+          limit,
+          eligibleGroups,
+          offset,
+          level: getLevelComponentsBorderByLevel(50)
+        }
+      )
+      .then((res) =>
+        res.map((it) => ({
+          ...it,
+          participation_required_media: JSON.parse(
+            it.participation_required_media
+          )
+        }))
+      );
+  }
+
+  async findWavesByAuthorsYouHaveRepped(
+    eligibleGroups: string[],
+    authenticatedUserId: string,
+    limit: number,
+    offset: number
+  ): Promise<WaveEntity[]> {
+    return this.db
+      .execute<
+        Omit<WaveEntity, 'participation_required_media'> & {
+          participation_required_media: string;
+        }
+      >(
+        `
+      with reps as (select rater_profile_id as profile_id from ${RATINGS_TABLE} where matter_target_id = :authenticatedUserId and matter = '${
+          RateMatter.REP
+        }' and rating <> 0)
+      select w.* from ${WAVES_TABLE} w 
+      join reps r on w.created_by = r.profile_id
+      where (w.visibility_group_id is null ${
+        eligibleGroups.length
+          ? `or w.visibility_group_id in (:eligibleGroups)`
+          : ``
+      }) order by w.serial_no desc, w.id limit :limit offset :offset
+    `,
+        {
+          limit,
+          eligibleGroups,
+          offset,
+          authenticatedUserId
+        }
+      )
+      .then((res) =>
+        res.map((it) => ({
+          ...it,
+          participation_required_media: JSON.parse(
+            it.participation_required_media
+          )
+        }))
+      );
+  }
+
+  async findMostSubscribedWaves(
+    eligibleGroups: string[],
+    limit: number,
+    offset: number
+  ): Promise<WaveEntity[]> {
+    return this.db
+      .execute<
+        Omit<WaveEntity, 'participation_required_media'> & {
+          participation_required_media: string;
+        }
+      >(
+        `
+          with subscription_counts as (select target_id as wave_id, count(*) as count
+                                       from ${IDENTITY_SUBSCRIPTIONS_TABLE}
+                                       where target_type = 'WAVE'
+                                       group by target_id)
+          select w.*
+          from ${WAVES_TABLE} w
+                   join subscription_counts sc on sc.wave_id = w.id
+          where (w.visibility_group_id is null ${
+            eligibleGroups.length
+              ? `or w.visibility_group_id in (:eligibleGroups)`
+              : ``
+          })
+          order by sc.count desc, w.id desc
+          limit :limit offset :offset
+      `,
+        {
+          limit,
+          offset,
+          eligibleGroups
+        }
+      )
+      .then((res) =>
+        res.map((it) => ({
+          ...it,
+          participation_required_media: JSON.parse(
+            it.participation_required_media
+          )
+        }))
+      );
   }
 }
 

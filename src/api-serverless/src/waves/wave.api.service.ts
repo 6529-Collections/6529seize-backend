@@ -37,6 +37,8 @@ import {
   profilesApiService,
   ProfilesApiService
 } from '../profiles/profiles.api.service';
+import { WavesOverviewType } from '../generated/models/WavesOverviewType';
+import { WaveEntity } from '../../../entities/IWave';
 
 export class WaveApiService {
   constructor(
@@ -436,6 +438,112 @@ export class WaveApiService {
       }
     );
   }
+
+  public async getWavesOverview(
+    { type, limit, offset }: WavesOverviewParams,
+    authenticationContext?: AuthenticationContext
+  ) {
+    const authenticatedProfileId = authenticationContext?.getActingAsId();
+    if (!authenticatedProfileId) {
+      if (type === WavesOverviewType.AuthorYouHaveRepped) {
+        throw new BadRequestException(
+          `You can't see waves you have repped without having a profile or being authenticated`
+        );
+      }
+    }
+    const eligibleGroups =
+      !authenticationContext ||
+      !authenticatedProfileId ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ApiProfileProxyActionType.READ_WAVE
+        ])
+        ? []
+        : await this.userGroupsService.getGroupsUserIsEligibleFor(
+            authenticatedProfileId
+          );
+    const entities = await this.findWaveEntitiesByType({
+      type,
+      limit,
+      authenticatedUserId: authenticatedProfileId ?? null,
+      eligibleGroups,
+      offset
+    });
+    const noRightToVote =
+      !authenticationContext ||
+      !authenticatedProfileId ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ApiProfileProxyActionType.RATE_WAVE_DROP
+        ]);
+    const noRightToParticipate =
+      !authenticationContext ||
+      !authenticatedProfileId ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+        ]);
+    return this.waveMappers.waveEntitiesToApiWaves(
+      {
+        waveEntities: entities,
+        groupIdsUserIsEligibleFor: eligibleGroups,
+        noRightToVote,
+        noRightToParticipate
+      },
+      authenticationContext
+    );
+  }
+
+  private async findWaveEntitiesByType({
+    eligibleGroups,
+    type,
+    authenticatedUserId,
+    limit,
+    offset
+  }: {
+    eligibleGroups: string[];
+    type: WavesOverviewType;
+    limit: number;
+    offset: number;
+    authenticatedUserId: string | null;
+  }): Promise<WaveEntity[]> {
+    switch (type) {
+      case WavesOverviewType.Latest:
+        return await this.wavesApiDb.findLatestWaves(
+          eligibleGroups,
+          limit,
+          offset
+        );
+      case WavesOverviewType.MostSubscribed:
+        return await this.wavesApiDb.findMostSubscribedWaves(
+          eligibleGroups,
+          limit,
+          offset
+        );
+      case WavesOverviewType.HighLevelAuthor:
+        return await this.wavesApiDb.findHighLevelAuthorWaves(
+          eligibleGroups,
+          limit,
+          offset
+        );
+      case WavesOverviewType.AuthorYouHaveRepped:
+        return await this.wavesApiDb.findWavesByAuthorsYouHaveRepped(
+          eligibleGroups,
+          authenticatedUserId!,
+          limit,
+          offset
+        );
+      default:
+        assertUnreachable(type);
+    }
+    return []; // unreachable code but typescript doesn't know that
+  }
+}
+
+export interface WavesOverviewParams {
+  limit: number;
+  offset: number;
+  type: WavesOverviewType;
 }
 
 export const waveApiService = new WaveApiService(
