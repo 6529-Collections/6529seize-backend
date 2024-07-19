@@ -13,7 +13,7 @@ import { Drop } from '../generated/models/Drop';
 import { DropReferencedNFT } from '../generated/models/DropReferencedNFT';
 import { QuotedDrop } from '../generated/models/QuotedDrop';
 import { DropMediaEntity, DropPartEntity } from '../../../entities/IDrop';
-import { waveApiService, WaveApiService } from '../waves/wave.api.service';
+import { waveApiService } from '../waves/wave.api.service';
 import {
   userGroupsService,
   UserGroupsService
@@ -38,7 +38,6 @@ export class DropCreationApiService {
     private readonly dropsService: DropsApiService,
     private readonly dropsDb: DropsDb,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
-    private readonly waveApiService: WaveApiService,
     private readonly userGroupsService: UserGroupsService,
     private readonly activityRecorder: ActivityRecorder
   ) {}
@@ -248,7 +247,7 @@ export class DropCreationApiService {
     groupIdsUserIsEligibleFor: string[],
     authenticationContext: AuthenticationContext
   ) {
-    const wave = await this.waveApiService.findWaveByIdOrThrow(
+    const wave = await waveApiService.findWaveByIdOrThrow(
       createDropRequest.wave_id,
       groupIdsUserIsEligibleFor,
       authenticationContext
@@ -338,7 +337,6 @@ export const dropCreationService = new DropCreationApiService(
   dropsService,
   dropsDb,
   profileActivityLogsDb,
-  waveApiService,
   userGroupsService,
   activityRecorder
 );
