@@ -48,7 +48,11 @@ async function loadABIs() {
   const f = await fetch(
     `https://api.etherscan.io/api?module=contract&action=getabi&address=${OPENSEA_ADDRESS}&apikey=${process.env.ETHERSCAN_API_KEY}`
   );
-  const abi = await f.json();
+  const text = await f.text();
+  logger.info(
+    `[ROYALTIES] [LOADING SEAPORT ABI RESPONSE] [${f.status}] ${text}`
+  );
+  const abi = JSON.parse(text);
   SEAPORT_IFACE = new ethers.utils.Interface(abi.result);
 
   logger.info(`[ROYALTIES] [ABIs LOADED] [SEAPORT ${f.status}]`);
