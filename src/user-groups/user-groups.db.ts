@@ -273,6 +273,32 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       );
   }
 
+  async getGroupsUserIsEligibleByIdentity(
+    profileId: string
+  ): Promise<string[]> {
+    return this.db
+      .execute<{
+        group_id: string;
+      }>(
+        `select distinct ug.id as group_id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.profile_group_id = pg.profile_group_id where pg.profile_id = :profileId and ug.visible`,
+        { profileId }
+      )
+      .then((res) => res.map((it) => it.group_id));
+  }
+
+  async getGroupsUserIsExcludedFromByIdentity(
+    profileId: string
+  ): Promise<string[]> {
+    return this.db
+      .execute<{
+        group_id: string;
+      }>(
+        `select distinct ug.id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.excluded_profile_group_id = pg.profile_group_id where pg.profile_id = :profileId`,
+        { profileId }
+      )
+      .then((res) => res.map((it) => it.group_id));
+  }
+
   async getGroupsMatchingConditions(param: {
     level: number;
     givenCic: number;
@@ -482,23 +508,6 @@ where ((cg.cic_direction = 'RECEIVED' and (
     });
   }
 
-  async findProfileGroupIdsContainingIdentity(
-    userGroupIds: string[],
-    profileId: string
-  ): Promise<string[]> {
-    if (!userGroupIds.length) {
-      return [];
-    }
-    return this.db
-      .execute<{ profile_group_id: string }>(
-        `select distinct g.profile_group_id from ${USER_GROUPS_TABLE} g
-         join ${PROFILE_GROUPS_TABLE} pg on pg.profile_group_id is not null and pg.profile_group_id = g.profile_group_id 
-         where g.id in (:userGroupIds) and pg.profile_id = :profileId`,
-        { userGroupIds, profileId }
-      )
-      .then((res) => res.map((it) => it.profile_group_id));
-  }
-
   async findUserGroupsIdentityGroupPrimaryAddresses(
     identityGroupId: string
   ): Promise<string[]> {
@@ -509,21 +518,6 @@ where ((cg.cic_direction = 'RECEIVED' and (
         { identityGroupId }
       )
       .then((res) => res.map((it) => it.address));
-  }
-
-  async getProfileGroupIdsHavingIdentities(
-    profileGroupIds: string[],
-    profileId: string
-  ): Promise<string[]> {
-    if (!profileGroupIds.length) {
-      return [];
-    }
-    return this.db
-      .execute<{ profile_group_id: string }>(
-        `select distinct profile_group_id from ${PROFILE_GROUPS_TABLE} where profile_group_id in (:profileGroupIds) and profile_id = :profileId`,
-        { profileGroupIds, profileId }
-      )
-      .then((res) => res.map((it) => it.profile_group_id));
   }
 
   async findProfileGroupsWhereProfileIdIn(
