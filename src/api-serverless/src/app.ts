@@ -71,6 +71,7 @@ import { loadLocalConfig, loadSecrets } from '../../env';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
 import * as SwaggerUI from 'swagger-ui-express';
 import { checkPolicies } from './policies/policies';
+import { DEFAULT_MAX_SIZE } from './page-request';
 
 const YAML = require('yamljs');
 
@@ -669,7 +670,7 @@ loadApi().then(() => {
   apiRouter.get(`/consolidations`, function (req: any, res: any) {
     const block = req.query.block;
     const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+      req.query.page_size && req.query.page_size < DEFAULT_MAX_SIZE
         ? parseInt(req.query.page_size)
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
