@@ -607,10 +607,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const sql = `select p.drop_id, p.drop_part_id, count(*) as cnt
      ${
        context_profile_id
-         ? `, sum(case when d.author_id = :context_profile_id then 1 else 0 end) as context_profile_count`
+         ? `, sum(case when p.author_id = :context_profile_id then 1 else 0 end) as context_profile_count`
          : ``
      }
-     from ${DROPS_COMMENTS_TABLE} p join ${DROPS_TABLE} d on d.id = p.drop_id where p.drop_id in (:dropIds) group by 1, 2`;
+     from ${DROPS_COMMENTS_TABLE} p where p.drop_id in (:dropIds) group by 1, 2`;
     return this.db
       .execute(
         sql,
@@ -628,8 +628,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
             cnt: number;
             context_profile_count: number;
           }[]
-        ) =>
-          dropIds.reduce((byDropId, dropId) => {
+        ) => {
+          return dropIds.reduce((byDropId, dropId) => {
             byDropId[dropId] = dbResult
               .filter((entity) => entity.drop_id === dropId)
               .reduce((byDropPartId, entity) => {
@@ -640,7 +640,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                 return byDropPartId;
               }, {} as Record<number, { count: number; context_profile_count: number }>);
             return byDropId;
-          }, {} as Record<string, Record<number, { count: number; context_profile_count: number }>>)
+          }, {} as Record<string, Record<number, { count: number; context_profile_count: number }>>);
+        }
       );
   }
 
@@ -786,21 +787,22 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return this.db
       .execute(
         `
-    select p.quoted_drop_id                                                 as drop_id,
-           p.drop_part_id as drop_part_id,
-           count(*)                                                       as total
-           ${
-             contextProfileId
-               ? `, sum(case when d.author_id = :contextProfileId then 1 else 0 end) as by_context_profile `
-               : ``
-           }
-    from ${DROPS_PARTS_TABLE} p
-    join ${DROPS_TABLE} d on d.id = p.quoted_drop_id
-    where p.quoted_drop_id in (:dropsIds)
-      and p.drop_part_id >= :min_part_id
-      and p.drop_part_id <= :max_part_id
-    group by 1, 2
-    `,
+        select p.quoted_drop_id                                                 as drop_id,
+               p.drop_part_id as drop_part_id,
+               count(*)                                                       as total
+               ${
+                 contextProfileId
+                   ? `, sum(case when qd.author_id = :contextProfileId then 1 else 0 end) as by_context_profile `
+                   : ``
+               }
+        from ${DROPS_PARTS_TABLE} p
+        join ${DROPS_TABLE} d on d.id = p.quoted_drop_id
+        join ${DROPS_TABLE} qd on qd.id = p.drop_id
+        where p.quoted_drop_id in (:dropsIds)
+          and p.drop_part_id >= :min_part_id
+          and p.drop_part_id <= :max_part_id
+        group by 1, 2
+        `,
         { dropsIds, contextProfileId, min_part_id, max_part_id },
         connection ? { wrappedConnection: connection } : undefined
       )
