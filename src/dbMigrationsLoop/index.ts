@@ -32,12 +32,16 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     synchronize: true,
     logging: false
   });
-  await ormDs.initialize().catch((error) => logger.error(error));
+  try {
+    await ormDs.initialize().catch((error) => logger.error(error));
 
-  const dbmigrate = await DBMigrate.getInstance(true, {
-    config: './database.json',
-    env: 'main'
-  });
-  await dbmigrate.up();
+    const dbmigrate = await DBMigrate.getInstance(true, {
+      config: './database.json',
+      env: 'main'
+    });
+    await dbmigrate.up();
+  } finally {
+    await ormDs.destroy();
+  }
   logger.info(`[FINISHED]`);
 });

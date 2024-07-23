@@ -6,7 +6,6 @@ import {
   NEXTGEN_BUCKET_AWS_REGION,
   NEXTGEN_CF_BASE_PATH
 } from '../nextgen/nextgen_constants';
-import { Time } from '../time';
 import {
   getGenDetailsFromUri,
   getImageBlobFromGenerator,
@@ -15,7 +14,7 @@ import {
   listS3Objects,
   s3UploadNextgenImage
 } from '../nextgen/nextgen_generator';
-import { loadEnv } from '../secrets';
+import { doInDbContext } from '../secrets';
 import { CloudFrontClient } from '@aws-sdk/client-cloudfront';
 import { s3ObjectExists } from '../helpers/s3_helpers';
 import { sendDiscordUpdate } from '../notifier-discord';
@@ -38,29 +37,28 @@ async function setup() {
 }
 
 export const handler = async () => {
-  const start = Time.now();
-  logger.info(`[RUNNING]`);
-  await loadEnv([]);
-  setup();
+  await doInDbContext(
+    async () => {
+      setup();
 
-  const allExisting = await listS3Objects(s3, CURRENT_PATH);
+      const allExisting = await listS3Objects(s3, CURRENT_PATH);
 
-  logger.info(`[CURRENT IMAGE COUNT ${allExisting.length}]`);
+      logger.info(`[CURRENT IMAGE COUNT ${allExisting.length}]`);
 
-  const nextBatch = await getNextBatch(
-    allExisting,
-    START_INDEX,
-    END_INDEX,
-    BATCH_SIZE
+      const nextBatch = await getNextBatch(
+        allExisting,
+        START_INDEX,
+        END_INDEX,
+        BATCH_SIZE
+      );
+      if (nextBatch.length) {
+        await uploadBatch(nextBatch);
+      } else {
+        logger.info(`[NO MISSING IMAGES]`);
+      }
+    },
+    { logger }
   );
-  if (nextBatch.length) {
-    await uploadBatch(nextBatch);
-  } else {
-    logger.info(`[NO MISSING IMAGES]`);
-  }
-
-  const diff = start.diffFromNow().formatAsDuration();
-  logger.info(`[COMPLETE IN ${diff}]`);
 };
 
 async function uploadBatch(batch: number[]) {

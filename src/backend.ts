@@ -1,6 +1,5 @@
 import { Logger } from './logging';
-import { Time } from './time';
-import { loadEnv } from './secrets';
+import { doInDbContext } from './secrets';
 import {
   DropCommentEntity,
   DropEntity,
@@ -30,41 +29,45 @@ import * as dbMigrationsLoop from './dbMigrationsLoop';
 const logger = Logger.get('BACKEND');
 
 async function start() {
-  const start = Time.now();
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  await loadEnv([
-    Profile,
-    ProfileArchived,
-    CicStatement,
-    ProfileActivityLog,
-    Rating,
-    AbusivenessDetectionResult,
-    RatingsSnapshot,
-    DropEntity,
-    DropPartEntity,
-    DropMentionEntity,
-    DropReferencedNftEntity,
-    DropMetadataEntity,
-    DropMediaEntity,
-    DropVoteCreditSpending,
-    DropCommentEntity,
-    ProfileProxyEntity,
-    ProfileProxyActionEntity,
-    WaveEntity,
-    CookiesConsent,
-    UserGroupEntity,
-    AddressConsolidationKey,
-    IdentityEntity,
-    ProfileGroupEntity
-  ]);
-  const diff = start.diffFromNow().formatAsDuration();
-  await dbMigrationsLoop.handler(
-    undefined as any,
-    undefined as any,
-    undefined as any
+  await doInDbContext(
+    async () => {
+      await dbMigrationsLoop.handler(
+        undefined as any,
+        undefined as any,
+        undefined as any
+      );
+    },
+    {
+      logger,
+      entities: [
+        Profile,
+        ProfileArchived,
+        CicStatement,
+        ProfileActivityLog,
+        Rating,
+        AbusivenessDetectionResult,
+        RatingsSnapshot,
+        DropEntity,
+        DropPartEntity,
+        DropMentionEntity,
+        DropReferencedNftEntity,
+        DropMetadataEntity,
+        DropMediaEntity,
+        DropVoteCreditSpending,
+        DropCommentEntity,
+        ProfileProxyEntity,
+        ProfileProxyActionEntity,
+        WaveEntity,
+        CookiesConsent,
+        UserGroupEntity,
+        AddressConsolidationKey,
+        IdentityEntity,
+        ProfileGroupEntity
+      ]
+    }
   );
-  logger.info(`[START SCRIPT COMPLETE IN ${diff}]`);
   process.exit(0);
 }
 

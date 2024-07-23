@@ -1,4 +1,3 @@
-import { loadEnv, unload } from '../secrets';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import {
@@ -10,25 +9,25 @@ import {
 import { sqlExecutor } from '../sql-executor';
 import converter from 'json-2-csv';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { doInDbContext } from '../secrets';
 
 const logger = Logger.get('DB_DUMPS_DAILY');
 const s3 = new S3Client({ region: 'eu-west-1' });
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
-  logger.info(`[RUNNING]`);
-  await loadEnv([]);
+  await doInDbContext(
+    async () => {
+      await dumpTable(TRANSACTIONS_TABLE);
+      await dumpTable(DELEGATIONS_TABLE);
+      await dumpTable(CONSOLIDATIONS_TABLE);
 
-  await dumpTable(TRANSACTIONS_TABLE);
-  await dumpTable(DELEGATIONS_TABLE);
-  await dumpTable(CONSOLIDATIONS_TABLE);
-
-  const nftDelData = await sqlExecutor.execute(
-    `SELECT * FROM ${NFTDELEGATION_BLOCKS_TABLE} ORDER BY block DESC LIMIT 1`
+      const nftDelData = await sqlExecutor.execute(
+        `SELECT * FROM ${NFTDELEGATION_BLOCKS_TABLE} ORDER BY block DESC LIMIT 1`
+      );
+      await dumpData(NFTDELEGATION_BLOCKS_TABLE, nftDelData);
+    },
+    { logger }
   );
-  await dumpData(NFTDELEGATION_BLOCKS_TABLE, nftDelData);
-
-  await unload();
-  logger.info(`[COMPLETE]`);
 });
 
 async function dumpTable(tableName: string) {
