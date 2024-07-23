@@ -406,17 +406,15 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
         }
       >(
         `
-      with reps as (select rater_profile_id as profile_id from ${RATINGS_TABLE} where matter_target_id = :authenticatedUserId and matter = '${
+  with reps as (select matter_target_id as profile_id from ${RATINGS_TABLE} where rater_profile_id = :authenticatedUserId and matter = '${
           RateMatter.REP
         }' and rating <> 0)
-      select w.* from ${WAVES_TABLE} w 
-      join reps r on w.created_by = r.profile_id
-      where (w.visibility_group_id is null ${
-        eligibleGroups.length
-          ? `or w.visibility_group_id in (:eligibleGroups)`
-          : ``
-      }) order by w.serial_no desc, w.id limit :limit offset :offset
-    `,
+  select w.* from ${WAVES_TABLE} w 
+  join reps r on w.created_by = r.profile_id
+  where (w.visibility_group_id is null ${
+    eligibleGroups.length ? `or w.visibility_group_id in (:eligibleGroups)` : ``
+  }) order by w.serial_no desc, w.id limit :limit offset :offset
+`,
         {
           limit,
           eligibleGroups,
