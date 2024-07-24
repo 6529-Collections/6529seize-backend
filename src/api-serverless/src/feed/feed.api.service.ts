@@ -72,7 +72,7 @@ export class FeedApiService {
         return acc;
       }, {} as Record<string, ActivityEventEntity[]>)
     )
-      .map((it) => it.at(-1)!)
+      .map((it) => it.at(0)!)
       .sort((a, d) => parseInt(`${d.id}`) - parseInt(`${a.id}`))
       .slice(0, estimatedLimit);
   }
@@ -161,6 +161,7 @@ export class FeedApiService {
       dropId: string;
       voterId: string;
       vote: number;
+      time: number;
     }[] = activityEvents
       .filter((it) => {
         const action = it.action;
@@ -170,7 +171,7 @@ export class FeedApiService {
         const data = JSON.parse(it.data);
         const dropId = (data.drop_id ?? it.target_id) as string;
         const voterId = (data.voter_id ?? it.target_id) as string;
-        return { dropId, voterId, vote: data.vote };
+        return { dropId, voterId, vote: data.vote, time: it.created_at };
       });
     const { drops, waves, votes, comments } = await this.getRelatedData({
       dropsIdsNeeded,
@@ -268,7 +269,12 @@ export class FeedApiService {
     dropsIdsNeeded: string[];
     waveIdsNeeded: string[];
     commentsNeeded: number[];
-    votesNeeded: { dropId: string; vote: number; voterId: string }[];
+    votesNeeded: {
+      dropId: string;
+      vote: number;
+      voterId: string;
+      time: number;
+    }[];
     authenticationContext: AuthenticationContext;
   }): Promise<{
     drops: Record<string, Drop>;
@@ -299,7 +305,8 @@ export class FeedApiService {
             vote.vote = it.vote;
             acc[`${it.dropId}-${it.voterId}`] = {
               voter: result[it.voterId],
-              vote: it.vote
+              vote: it.vote,
+              time: it.time
             };
             return acc;
           }, {} as Record<string, DropVote>);
