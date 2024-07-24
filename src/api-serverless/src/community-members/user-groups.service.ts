@@ -226,18 +226,18 @@ export class UserGroupsService {
     });
     const allThatIsLeft = [...ambiguousCleaned, ...unambiguousInitial];
     const onlyProfileGroupsFilteredOut = allThatIsLeft.filter((group) => {
-      return !(
-        group.level_max === null ||
-        group.level_min === null ||
-        group.tdh_max === null ||
-        group.tdh_min === null ||
-        group.rep_max === null ||
-        group.rep_min === null ||
-        group.rep_user === null ||
-        group.rep_category === null ||
-        group.cic_max === null ||
-        group.cic_min === null ||
-        group.cic_user === null
+      return (
+        group.level_max !== null ||
+        group.level_min !== null ||
+        group.tdh_max !== null ||
+        group.tdh_min !== null ||
+        group.rep_max !== null ||
+        group.rep_min !== null ||
+        group.rep_user !== null ||
+        group.rep_category !== null ||
+        group.cic_max !== null ||
+        group.cic_min !== null ||
+        group.cic_user !== null
       );
     });
     return distinct(
