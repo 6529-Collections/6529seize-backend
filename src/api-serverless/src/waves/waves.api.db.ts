@@ -11,6 +11,7 @@ import {
   IDENTITIES_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   RATINGS_TABLE,
+  WAVE_METRICS_TABLE,
   WAVES_TABLE
 } from '../../../constants';
 import {
@@ -19,6 +20,7 @@ import {
 } from '../community-members/user-groups.service';
 import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
 import { RateMatter } from '../../../entities/IRating';
+import { WaveMetricEntity } from '../../../entities/IWaveMetric';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -472,6 +474,31 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
             it.participation_required_media
           )
         }))
+      );
+  }
+
+  async findWavesMetricsByWaveIds(
+    waveIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<string, WaveMetricEntity>> {
+    if (!waveIds.length) {
+      return {};
+    }
+    return this.db
+      .execute<WaveMetricEntity>(
+        `select * from ${WAVE_METRICS_TABLE} where wave_id in (:waveIds)`,
+        { waveIds },
+        { wrappedConnection: connection }
+      )
+      .then((results) =>
+        waveIds.reduce((acc, waveId) => {
+          acc[waveId] = results.find((it) => it.wave_id === waveId) ?? {
+            wave_id: waveId,
+            subscribers_count: 0,
+            drops_count: 0
+          };
+          return acc;
+        }, {} as Record<string, WaveMetricEntity>)
       );
   }
 }

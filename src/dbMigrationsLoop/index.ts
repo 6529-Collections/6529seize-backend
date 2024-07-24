@@ -4,12 +4,17 @@ import { ActivityEventEntity } from '../entities/IActivityEvent';
 import { IdentitySubscriptionEntity } from '../entities/IIdentitySubscription';
 import { DataSource } from 'typeorm';
 import { prepEnvironment } from '../env';
+import { WaveMetricEntity } from '../entities/IWaveMetric';
 
 const DBMigrate = require('db-migrate');
 
 const logger = Logger.get('DB_MIGRATIONS_LOOP');
 
-const MANAGED_ENTITIES = [ActivityEventEntity, IdentitySubscriptionEntity];
+const MANAGED_ENTITIES = [
+  ActivityEventEntity,
+  IdentitySubscriptionEntity,
+  WaveMetricEntity
+];
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
   logger.info(`[RUNNING]`);

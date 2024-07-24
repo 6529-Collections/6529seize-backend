@@ -8,13 +8,29 @@ import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
-import { IDENTITY_SUBSCRIPTIONS_TABLE } from '../../../constants';
+import {
+  IDENTITY_SUBSCRIPTIONS_TABLE,
+  WAVE_METRICS_TABLE
+} from '../../../constants';
 
 export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   async addIdentitySubscription(
     identitySubscription: Omit<IdentitySubscriptionEntity, 'id'>,
     connection: ConnectionWrapper<any>
   ) {
+    if (identitySubscription.target_type === ActivityEventTargetType.WAVE) {
+      const waveId = identitySubscription.target_id;
+      await this.db.execute(
+        `
+        insert into ${WAVE_METRICS_TABLE} 
+            (wave_id, drops_count, subscribers_count) 
+        values (:waveId, 0, 1) 
+        on duplicate key update subscribers_count = (subscribers_count + 1);
+      `,
+        { waveId },
+        { wrappedConnection: connection }
+      );
+    }
     await this.db.execute(
       `
       insert into ${IDENTITY_SUBSCRIPTIONS_TABLE} (subscriber_id, target_id, target_type, target_action)
@@ -87,6 +103,19 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
     },
     connection: ConnectionWrapper<any>
   ) {
+    if (param.target_type === ActivityEventTargetType.WAVE) {
+      const waveId = param.target_id;
+      await this.db.execute(
+        `
+        insert into ${WAVE_METRICS_TABLE} 
+            (wave_id, drops_count, subscribers_count) 
+        values (:waveId, 0, 1) 
+        on duplicate key update subscribers_count = (subscribers_count - 1);
+      `,
+        { waveId },
+        { wrappedConnection: connection }
+      );
+    }
     await this.db.execute(
       `
       delete from ${IDENTITY_SUBSCRIPTIONS_TABLE}

@@ -2973,6 +2973,7 @@ components:
         - created_at
         - contributors_overview
         - subscribed_actions
+        - metrics
       properties:
         id:
           description: The ID of the wave
@@ -3016,6 +3017,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/WaveSubscriptionTargetAction"
+        metrics:
+          $ref: "#/components/schemas/WaveMetrics"
 
     WaveContributorOverview:
       required:
@@ -3674,6 +3677,18 @@ components:
         - MOST_SUBSCRIBED
         - HIGH_LEVEL_AUTHOR
         - AUTHOR_YOU_HAVE_REPPED
+
+    WaveMetrics:
+      required:
+        - subscribers_count
+        - drops_count
+      properties:
+        subscribers_count:
+          type: number
+          format: int64
+        drops_count:
+          type: number
+          format: int64
 
 security:
   - bearerAuth: []

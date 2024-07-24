@@ -1,0 +1,1 @@
+insert into wave_metrics (wave_id, drops_count, subscribers_count) select w.id, 0, 0 from waves w;
