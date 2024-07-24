@@ -39,6 +39,8 @@ import {
   profilesApiService,
   ProfilesApiService
 } from '../profiles/profiles.api.service';
+import { WaveMetricEntity } from '../../../entities/IWaveMetric';
+import { WaveMetrics } from '../generated/models/WaveMetrics';
 
 export class WavesMappers {
   constructor(
@@ -149,7 +151,8 @@ export class WavesMappers {
       profiles,
       curations,
       creationDrops,
-      subscribedActions
+      subscribedActions,
+      metrics
     } = await this.getRelatedData(
       waveEntities,
       authenticationContext,
@@ -165,7 +168,8 @@ export class WavesMappers {
         subscribedActions,
         noRightToVote,
         groupIdsUserIsEligibleFor,
-        noRightToParticipate
+        noRightToParticipate,
+        metrics
       })
     );
   }
@@ -179,7 +183,8 @@ export class WavesMappers {
     subscribedActions,
     noRightToVote,
     groupIdsUserIsEligibleFor,
-    noRightToParticipate
+    noRightToParticipate,
+    metrics
   }: {
     waveEntity: WaveEntity;
     profiles: Record<string, ProfileMin>;
@@ -196,6 +201,7 @@ export class WavesMappers {
     noRightToVote: boolean;
     groupIdsUserIsEligibleFor: string[];
     noRightToParticipate: boolean;
+    metrics: Record<string, WaveMetricEntity>;
   }) {
     const contributorsOverview: WaveContributorOverview[] =
       contributors[waveEntity.id]?.map((it) => ({
@@ -278,6 +284,12 @@ export class WavesMappers {
       },
       authenticated_user_eligible_for_admin: authenticatedUserEligibleForAdmin
     };
+    const waveMetrics = metrics[waveEntity.id];
+
+    const apiWaveMetrics: WaveMetrics = {
+      drops_count: waveMetrics.drops_count,
+      subscribers_count: waveMetrics.subscribers_count
+    };
     return {
       id: waveEntity.id,
       name: waveEntity.name,
@@ -292,7 +304,8 @@ export class WavesMappers {
       participation: participation,
       wave: waveConf,
       outcomes: JSON.parse(waveEntity.outcomes),
-      subscribed_actions: subscribedActions[waveEntity.id] ?? []
+      subscribed_actions: subscribedActions[waveEntity.id] ?? [],
+      metrics: apiWaveMetrics
     };
   }
 
@@ -309,6 +322,7 @@ export class WavesMappers {
     curations: Record<string, Group>;
     creationDrops: Record<string, Drop>;
     subscribedActions: Record<string, WaveSubscriptionTargetAction[]>;
+    metrics: Record<string, WaveMetricEntity>;
   }> {
     const curationEntities = await this.userGroupsService.getByIds(
       waveEntities
@@ -322,6 +336,10 @@ export class WavesMappers {
             ].filter((id) => id !== null) as string[]
         )
         .flat(),
+      connection
+    );
+    const metrics = await this.wavesApiDb.findWavesMetricsByWaveIds(
+      waveEntities.map((it) => it.id),
       connection
     );
     const profileIds = distinct([
@@ -389,7 +407,8 @@ export class WavesMappers {
           return acc;
         },
         {} as Record<string, WaveSubscriptionTargetAction[]>
-      )
+      ),
+      metrics
     };
   }
 }

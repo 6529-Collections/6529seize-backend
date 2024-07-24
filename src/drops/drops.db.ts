@@ -25,6 +25,7 @@ import {
   IDENTITIES_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
+  WAVE_METRICS_TABLE,
   WAVES_TABLE
 } from '../constants';
 import {
@@ -74,6 +75,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     connection: ConnectionWrapper<any>
   ): Promise<string> {
     const id = randomUUID();
+    const waveId = newDropEntity.wave_id;
+    await this.db.execute(
+      `
+        insert into ${WAVE_METRICS_TABLE} 
+            (wave_id, drops_count, subscribers_count) 
+        values (:waveId, 1, 0) 
+        on duplicate key update drops_count = (drops_count + 1);
+      `,
+      { waveId },
+      { wrappedConnection: connection }
+    );
     await this.db.execute(
       `insert into ${DROPS_TABLE} (
                             id,
