@@ -3622,12 +3622,16 @@ components:
       required:
         - vote
         - voter
+        - time
       properties:
         vote:
           type: number
           format: int64
         voter:
           $ref: "#/components/schemas/ProfileMin"
+        time:
+          type: number
+          format: int64
 
     DropAndDropVote:
       type: object

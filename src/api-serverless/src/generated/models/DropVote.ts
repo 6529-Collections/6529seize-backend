@@ -16,6 +16,7 @@ import { HttpFile } from '../http/http';
 export class DropVote {
     'vote': number;
     'voter': ProfileMin;
+    'time': number;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -31,6 +32,12 @@ export class DropVote {
             "baseName": "voter",
             "type": "ProfileMin",
             "format": ""
+        },
+        {
+            "name": "time",
+            "baseName": "time",
+            "type": "number",
+            "format": "int64"
         }    ];
 
     static getAttributeTypeMap() {
