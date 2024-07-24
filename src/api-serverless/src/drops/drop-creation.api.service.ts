@@ -30,6 +30,11 @@ import {
   ActivityRecorder
 } from '../../../activity/activity.recorder';
 import { wavesApiDb } from '../waves/waves.api.db';
+import { identitySubscriptionsDb } from '../identity-subscriptions/identity-subscriptions.db';
+import {
+  ActivityEventAction,
+  ActivityEventTargetType
+} from '../../../entities/IActivityEvent';
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(DropCreationApiService.name);
@@ -109,6 +114,24 @@ export class DropCreationApiService {
         title: createDropRequest.title ?? null,
         parts_count: createDropParts.length,
         wave_id: createDropRequest.wave_id
+      },
+      connection
+    );
+    await identitySubscriptionsDb.addIdentitySubscription(
+      {
+        subscriber_id: authorId,
+        target_id: dropId.toString(),
+        target_type: ActivityEventTargetType.DROP,
+        target_action: ActivityEventAction.DROP_VOTED
+      },
+      connection
+    );
+    await identitySubscriptionsDb.addIdentitySubscription(
+      {
+        subscriber_id: authorId,
+        target_id: dropId.toString(),
+        target_type: ActivityEventTargetType.DROP,
+        target_action: ActivityEventAction.DROP_COMMENTED
       },
       connection
     );

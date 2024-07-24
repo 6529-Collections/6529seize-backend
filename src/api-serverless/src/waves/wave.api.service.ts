@@ -78,6 +78,15 @@ export class WaveApiService {
           descriptionDropId
         );
         await this.wavesApiDb.insertWave(id, newEntity, connection);
+        await this.identitySubscriptionsDb.addIdentitySubscription(
+          {
+            subscriber_id: newEntity.created_by,
+            target_id: id,
+            target_type: ActivityEventTargetType.WAVE,
+            target_action: ActivityEventAction.DROP_CREATED
+          },
+          connection
+        );
 
         const waveEntity = await this.wavesApiDb.findWaveById(id, connection);
 

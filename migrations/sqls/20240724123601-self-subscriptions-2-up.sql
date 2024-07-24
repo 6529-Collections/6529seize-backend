@@ -1,0 +1,1 @@
+insert into identity_subscriptions (subscriber_id, target_id, target_type, target_action)  select profile_id, profile_id, 'IDENTITY', 'DROP_CREATED' from identities;
