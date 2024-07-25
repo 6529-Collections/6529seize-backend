@@ -199,17 +199,21 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
          join ${
            UserGroupsService.GENERATED_VIEW
          } cm on cm.profile_id = w.created_by
-         where (${
-           groupsUserIsEligibleFor.length
-             ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
-             : ``
-         } w.visibility_group_id is null) and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
+         where ${searchParams.author ? ` w.created_by = :author and ` : ``} ${
+      searchParams.name ? ` w.name like :name and ` : ``
+    } (${
+      groupsUserIsEligibleFor.length
+        ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
+        : ``
+    } w.visibility_group_id is null) and w.serial_no < :serialNoLessThan order by w.serial_no desc limit ${
       searchParams.limit
     }`;
     const params: Record<string, any> = {
       ...sqlAndParams.params,
       groupsUserIsEligibleFor,
-      serialNoLessThan
+      serialNoLessThan,
+      name: searchParams.name ? `%${searchParams.name}%` : undefined,
+      author: searchParams.author
     };
     return this.db
       .execute<
@@ -506,6 +510,8 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
 export type NewWaveEntity = Omit<WaveEntity, 'id' | 'serial_no' | 'created_at'>;
 
 export interface SearchWavesParams {
+  readonly author?: string;
+  readonly name?: string;
   readonly limit: number;
   readonly serial_no_less_than?: number;
   readonly group_id?: string;
