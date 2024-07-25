@@ -3,10 +3,9 @@ import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import { Wave } from '../generated/models/Wave';
 import { NotFoundException } from '../../../exceptions';
-import * as Joi from 'joi';
-import { getValidatedByJoiOrThrow } from '../validation';
 import { waveApiService } from './wave.api.service';
 import { SearchWavesParams } from './waves.api.db';
+import { validateWavesSearchParams } from './waves.routes';
 
 const router = asyncRouter();
 
@@ -16,14 +15,7 @@ router.get(
     req: Request<any, any, any, SearchWavesParams, any>,
     res: Response<ApiResponse<Wave[]>>
   ) => {
-    const params = getValidatedByJoiOrThrow(
-      req.query,
-      Joi.object<SearchWavesParams>({
-        limit: Joi.number().integer().min(1).max(50).default(20),
-        serial_no_less_than: Joi.number().integer().min(1).optional(),
-        group_id: Joi.string().optional().min(1)
-      })
-    );
+    const params = await validateWavesSearchParams(req);
     const waves = await waveApiService.searchWaves(params);
     res.send(waves);
   }

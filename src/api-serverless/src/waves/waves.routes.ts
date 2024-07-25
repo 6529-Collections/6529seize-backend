@@ -4,7 +4,7 @@ import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import { Wave } from '../generated/models/Wave';
 import { CreateNewWave } from '../generated/models/CreateNewWave';
-import { ForbiddenException } from '../../../exceptions';
+import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import * as Joi from 'joi';
 import { CreateNewWaveScope } from '../generated/models/CreateNewWaveScope';
 import { CreateNewWaveVisibilityConfig } from '../generated/models/CreateNewWaveVisibilityConfig';
@@ -31,6 +31,7 @@ import { WaveOutcomeCredit } from '../generated/models/WaveOutcomeCredit';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { WaveSubscriptionActions } from '../generated/models/WaveSubscriptionActions';
 import { WaveSubscriptionTargetAction } from '../generated/models/WaveSubscriptionTargetAction';
+import { profilesService } from '../../../profiles/profiles.service';
 
 const router = asyncRouter();
 
@@ -71,14 +72,7 @@ router.get(
     res: Response<ApiResponse<Wave[]>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
-    const params = getValidatedByJoiOrThrow(
-      req.query,
-      Joi.object<SearchWavesParams>({
-        limit: Joi.number().integer().min(1).max(50).default(20),
-        serial_no_less_than: Joi.number().integer().min(1).optional(),
-        group_id: Joi.string().optional().min(1)
-      })
-    );
+    const params = await validateWavesSearchParams(req);
     const waves = await waveApiService.searchWaves(
       params,
       authenticationContext
@@ -356,5 +350,33 @@ const WaveSubscriptionActionsSchema = Joi.object<WaveSubscriptionActions>({
     .items(Joi.string().valid(...Object.values(WaveSubscriptionTargetAction)))
     .required()
 });
+
+export async function validateWavesSearchParams(
+  req: Request<any, any, any, SearchWavesParams, any>
+): Promise<SearchWavesParams> {
+  const validatedRequest = getValidatedByJoiOrThrow(
+    req.query,
+    Joi.object<SearchWavesParams>({
+      name: Joi.string().optional(),
+      author: Joi.string().optional(),
+      limit: Joi.number().integer().min(1).max(50).default(20),
+      serial_no_less_than: Joi.number().integer().min(1).optional(),
+      group_id: Joi.string().optional().min(1)
+    })
+  );
+  if (validatedRequest.author) {
+    const authorIdentity = await profilesService.resolveIdentityOrThrowNotFound(
+      validatedRequest.author
+    );
+    if (!authorIdentity.profile_id) {
+      throw new NotFoundException('Author not found');
+    }
+    return {
+      ...validatedRequest,
+      author: authorIdentity.profile_id
+    };
+  }
+  return validatedRequest;
+}
 
 export default router;
