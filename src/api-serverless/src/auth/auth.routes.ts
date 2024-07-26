@@ -21,16 +21,25 @@ const router = asyncRouter();
 router.get(
   '/nonce',
   function (
-    req: Request<any, any, any, { signer_address: string }, any>,
+    req: Request<
+      any,
+      any,
+      any,
+      { signer_address: string; short_nonce?: string },
+      any
+    >,
     res: Response<ApiResponse<NonceResponse>>
   ) {
+    const shortNonce = req.query.short_nonce?.toLowerCase() === 'true';
     const signerAddress = req.query.signer_address?.toLocaleLowerCase();
     if (!signerAddress || !ethers.utils.isAddress(signerAddress)) {
       throw new UnauthorisedException(
         `Invalid signer address ${signerAddress}`
       );
     }
-    const nonce = `
+    const nonce = shortNonce
+      ? randomUUID()
+      : `
 Are you ready to Seize The Memes of Production?
 
 Please sign to confirm ownership of this address to allow use of the social features of Seize.io.
