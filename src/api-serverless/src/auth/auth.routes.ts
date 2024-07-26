@@ -101,6 +101,7 @@ router.post(
             `Profile ${role} hasn't creared a proxy for you, so you can't authenticated as this role.`
           );
         }
+        chosenRole = roleId;
       }
       const token = jwt.sign(
         {
