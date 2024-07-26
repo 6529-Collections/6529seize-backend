@@ -410,12 +410,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async findDropsTotalRatingsStats(
     dropIds: string[],
     connection?: ConnectionWrapper<any>
-  ): Promise<
-    Record<
-      string,
-      { rating: number; distinct_raters: number; distinct_categories: number }
-    >
-  > {
+  ): Promise<Record<string, { rating: number; distinct_raters: number }>> {
     return !dropIds.length
       ? {}
       : await this.db
@@ -423,8 +418,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
             `
       select matter_target_id                 as drop_id,
              sum(rating)                      as rating,
-             count(distinct rater_profile_id) as distinct_raters,
-             count(distinct matter_category)  as distinct_categories
+             count(distinct rater_profile_id) as distinct_raters
       from ${RATINGS_TABLE}
       where matter = '${RateMatter.DROP_RATING}'
         and matter_target_id in (:dropIds)
@@ -440,11 +434,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
             dbResult.reduce((acc, it) => {
               acc[it.drop_id] = {
                 rating: it.rating,
-                distinct_raters: it.distinct_raters,
-                distinct_categories: it.distinct_categories
+                distinct_raters: it.distinct_raters
               };
               return acc;
-            }, {} as Record<string, { rating: number; distinct_raters: number; distinct_categories: number }>)
+            }, {} as Record<string, { rating: number; distinct_raters: number }>)
           );
   }
 
@@ -481,42 +474,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
               }
               return acc;
             }, {} as Record<string, { rating: number; rater_profile_id: string }[]>)
-          );
-  }
-
-  async findDropsTopRatingCategories(
-    dropIds: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, { rating: number; category: string }[]>> {
-    return !dropIds.length
-      ? {}
-      : await this.db
-          .execute(
-            `
-    select matter_category as category, matter_target_id as drop_id, sum(rating) as rating
-    from ${RATINGS_TABLE}
-    where matter = '${RateMatter.DROP_RATING}'
-      and rating <> 0
-      and matter_target_id in (:dropIds)
-    group by 1, 2
-    order by abs(sum(rating)) desc
-    `,
-            { dropIds },
-            {
-              wrappedConnection: connection
-            }
-          )
-          .then((dbResult: any[]) =>
-            dropIds.reduce((acc, it) => {
-              const f = dbResult.filter((r) => r.drop_id === it);
-              if (f) {
-                acc[it] = f.map((s) => ({
-                  rating: s.rating,
-                  category: s.category
-                }));
-              }
-              return acc;
-            }, {} as Record<string, { rating: number; category: string }[]>)
           );
   }
 
