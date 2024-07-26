@@ -49,7 +49,7 @@ const MediaPrepRequestSchema: Joi.ObjectSchema<
     .required()
     .allow(...['image/png', 'image/jpeg', 'image/gif']),
   file_name: Joi.string().required(),
-  file_size: Joi.number().integer().required().min(1).max(2000000) // 2MB
+  file_size: Joi.number().integer().required().min(1).max(500000000) // 500MB
 });
 
 export default router;
