@@ -15,7 +15,6 @@ import { DropMentionedUser } from '../models/DropMentionedUser';
 import { DropMetadata } from '../models/DropMetadata';
 import { DropPart } from '../models/DropPart';
 import { DropRater } from '../models/DropRater';
-import { DropRatingCategory } from '../models/DropRatingCategory';
 import { DropReferencedNFT } from '../models/DropReferencedNFT';
 import { DropSubscriptionTargetAction } from '../models/DropSubscriptionTargetAction';
 import { ProfileMin } from '../models/ProfileMin';
@@ -46,8 +45,6 @@ export class Drop {
     'rating': number;
     'top_raters': Array<DropRater>;
     'raters_count': number;
-    'top_rating_categories': Array<DropRatingCategory>;
-    'rating_categories_count': number;
     'rating_logs_count': number;
     'context_profile_context': DropContextProfileContext | null;
     'subscribed_actions': Array<DropSubscriptionTargetAction>;
@@ -136,18 +133,6 @@ export class Drop {
         {
             "name": "raters_count",
             "baseName": "raters_count",
-            "type": "number",
-            "format": "int64"
-        },
-        {
-            "name": "top_rating_categories",
-            "baseName": "top_rating_categories",
-            "type": "Array<DropRatingCategory>",
-            "format": ""
-        },
-        {
-            "name": "rating_categories_count",
-            "baseName": "rating_categories_count",
             "type": "number",
             "format": "int64"
         },

@@ -42,7 +42,6 @@ export * from '../models/DropMetadata';
 export * from '../models/DropPart';
 export * from '../models/DropPartContextProfileContext';
 export * from '../models/DropRater';
-export * from '../models/DropRatingCategory';
 export * from '../models/DropRatingRequest';
 export * from '../models/DropReferencedNFT';
 export * from '../models/DropSubscriptionActions';
@@ -148,7 +147,6 @@ import { DropMetadata } from '../models/DropMetadata';
 import { DropPart } from '../models/DropPart';
 import { DropPartContextProfileContext } from '../models/DropPartContextProfileContext';
 import { DropRater } from '../models/DropRater';
-import { DropRatingCategory } from '../models/DropRatingCategory';
 import { DropRatingRequest } from '../models/DropRatingRequest';
 import { DropReferencedNFT } from '../models/DropReferencedNFT';
 import { DropSubscriptionActions } from '../models/DropSubscriptionActions';
@@ -291,7 +289,6 @@ let typeMap: {[index: string]: any} = {
     "DropPart": DropPart,
     "DropPartContextProfileContext": DropPartContextProfileContext,
     "DropRater": DropRater,
-    "DropRatingCategory": DropRatingCategory,
     "DropRatingRequest": DropRatingRequest,
     "DropReferencedNFT": DropReferencedNFT,
     "DropSubscriptionActions": DropSubscriptionActions,

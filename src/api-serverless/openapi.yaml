@@ -2195,8 +2195,6 @@ components:
         - rating
         - top_raters
         - raters_count
-        - top_rating_categories
-        - rating_categories_count
         - rating_logs_count
         - title
         - context_profile_context
@@ -2248,13 +2246,6 @@ components:
           items:
             $ref: "#/components/schemas/DropRater"
         raters_count:
-          type: number
-          format: int64
-        top_rating_categories:
-          type: array
-          items:
-            $ref: "#/components/schemas/DropRatingCategory"
-        rating_categories_count:
           type: number
           format: int64
         rating_logs_count:
@@ -2437,28 +2428,11 @@ components:
             nullable: true
             example: 1719850339996
 
-    DropRatingCategory:
-      type: object
-      required:
-        - category
-        - rating
-      properties:
-        category:
-          type: string
-        rating:
-          type: number
-          format: int64
-
     DropContextProfileContext:
       type: object
       required:
-        - categories
         - rating
       properties:
-        categories:
-          type: array
-          items:
-            $ref: "#/components/schemas/DropRatingCategory"
         rating:
           type: number
           format: int64

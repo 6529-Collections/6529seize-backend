@@ -324,24 +324,47 @@ export class WavesMappers {
     subscribedActions: Record<string, WaveSubscriptionTargetAction[]>;
     metrics: Record<string, WaveMetricEntity>;
   }> {
-    const curationEntities = await this.userGroupsService.getByIds(
-      waveEntities
-        .map(
-          (waveEntity) =>
-            [
-              waveEntity.visibility_group_id,
-              waveEntity.participation_group_id,
-              waveEntity.voting_group_id,
-              waveEntity.admin_group_id
-            ].filter((id) => id !== null) as string[]
-        )
-        .flat(),
-      connection
-    );
-    const metrics = await this.wavesApiDb.findWavesMetricsByWaveIds(
-      waveEntities.map((it) => it.id),
-      connection
-    );
+    const waveIds = waveEntities.map((it) => it.id);
+    const authenticatedUserId = authenticationContext?.getActingAsId();
+    const [
+      curationEntities,
+      metrics,
+      contributorsOverViews,
+      creationDropsByDropId,
+      subscribedActions
+    ] = await Promise.all([
+      this.userGroupsService.getByIds(
+        waveEntities
+          .map(
+            (waveEntity) =>
+              [
+                waveEntity.visibility_group_id,
+                waveEntity.participation_group_id,
+                waveEntity.voting_group_id,
+                waveEntity.admin_group_id
+              ].filter((id) => id !== null) as string[]
+          )
+          .flat(),
+        connection
+      ),
+      this.wavesApiDb.findWavesMetricsByWaveIds(waveIds, connection),
+      this.wavesApiDb.getWavesContributorsOverviews(waveIds, connection),
+      dropsService.findDropsByIdsOrThrow(
+        distinct(waveEntities.map((it) => it.description_drop_id)),
+        authenticationContext,
+        connection
+      ),
+      authenticatedUserId
+        ? await this.identitySubscriptionsDb.findIdentitySubscriptionActionsOfTargets(
+            {
+              subscriber_id: authenticatedUserId,
+              target_ids: waveIds,
+              target_type: ActivityEventTargetType.WAVE
+            },
+            connection
+          )
+        : Promise.resolve({})
+    ]);
     const profileIds = distinct([
       ...waveEntities
         .map(
@@ -353,11 +376,6 @@ export class WavesMappers {
         .flat(),
       ...curationEntities.map((curationEntity) => curationEntity.created_by)
     ]);
-    const contributorsOverViews =
-      await this.wavesApiDb.getWavesContributorsOverviews(
-        waveEntities.map((it) => it.id),
-        connection
-      );
     const profileMins: Record<string, ProfileMin> =
       await this.profilesApiService.getProfileMinsByIds(
         {
@@ -378,22 +396,6 @@ export class WavesMappers {
       },
       {} as Record<string, Group>
     );
-    const creationDropsByDropId = await dropsService.findDropsByIdsOrThrow(
-      distinct(waveEntities.map((it) => it.description_drop_id)),
-      authenticationContext,
-      connection
-    );
-    const authenticatedUserId = authenticationContext?.getActingAsId();
-    const subscribedActions = authenticatedUserId
-      ? await this.identitySubscriptionsDb.findIdentitySubscriptionActionsOfTargets(
-          {
-            subscriber_id: authenticatedUserId,
-            target_ids: waveEntities.map((it) => it.id),
-            target_type: ActivityEventTargetType.WAVE
-          },
-          connection
-        )
-      : {};
     return {
       contributors: contributorsOverViews,
       profiles: profileMins,
