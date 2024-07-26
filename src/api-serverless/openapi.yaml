@@ -21,6 +21,12 @@ paths:
           required: true
           schema:
             type: string
+        - name: short_nonce
+          in: query
+          description: If true, the nonce will be shorter and easier to sign. Default is false.
+          required: false
+          schema:
+            type: boolean
       responses:
         '200':
           description: successful operation
