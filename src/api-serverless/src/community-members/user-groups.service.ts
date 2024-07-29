@@ -151,13 +151,23 @@ export class UserGroupsService {
     const ambiguousCleaned = ambiguousCandidates.filter((group) => {
       if (group.cic_user) {
         const userRating = ratings
-          .filter(
-            (rating) =>
-              rating.matter === RateMatter.CIC &&
-              (GroupFilterDirection.Received
+          .filter((rating) => {
+            const side1 =
+              !group.cic_direction ||
+              group.cic_direction.toString() === GroupFilterDirection.Received
+                ? rating.matter_target_id
+                : rating.rater_profile_id;
+            const side2 =
+              !group.cic_direction ||
+              group.cic_direction.toString() === GroupFilterDirection.Received
                 ? rating.rater_profile_id
-                : rating.matter_target_id) === group.cic_user
-          )
+                : rating.matter_target_id;
+            return (
+              rating.matter === RateMatter.CIC &&
+              side1 === profileId &&
+              side2 === group.cic_user
+            );
+          })
           .map((it) => it.rating)
           .reduce((acc, it) => acc + it, 0);
         if (
@@ -169,13 +179,23 @@ export class UserGroupsService {
       }
       if (group.rep_user && !group.rep_category) {
         const userRating = ratings
-          .filter(
-            (rating) =>
-              rating.matter === RateMatter.REP &&
-              (GroupFilterDirection.Received
+          .filter((rating) => {
+            const side1 =
+              !group.rep_direction ||
+              group.rep_direction.toString() === GroupFilterDirection.Received
+                ? rating.matter_target_id
+                : rating.rater_profile_id;
+            const side2 =
+              !group.rep_direction ||
+              group.rep_direction.toString() === GroupFilterDirection.Received
                 ? rating.rater_profile_id
-                : rating.matter_target_id) === group.rep_user
-          )
+                : rating.matter_target_id;
+            return (
+              rating.matter === RateMatter.CIC &&
+              side1 === profileId &&
+              side2 === group.rep_user
+            );
+          })
           .map((it) => it.rating)
           .reduce((acc, it) => acc + it, 0);
         if (
@@ -187,14 +207,24 @@ export class UserGroupsService {
       }
       if (group.rep_user && group.rep_category) {
         const userRating = ratings
-          .filter(
-            (rating) =>
-              rating.matter === RateMatter.REP &&
-              (GroupFilterDirection.Received
+          .filter((rating) => {
+            const side1 =
+              !group.rep_direction ||
+              group.rep_direction.toString() === GroupFilterDirection.Received
+                ? rating.matter_target_id
+                : rating.rater_profile_id;
+            const side2 =
+              !group.rep_direction ||
+              group.rep_direction.toString() === GroupFilterDirection.Received
                 ? rating.rater_profile_id
-                : rating.matter_target_id) === group.rep_user &&
+                : rating.matter_target_id;
+            return (
+              rating.matter === RateMatter.CIC &&
+              side1 === profileId &&
+              side2 === group.rep_user &&
               rating.matter_category === group.rep_category
-          )
+            );
+          })
           .map((it) => it.rating)
           .reduce((acc, it) => acc + it, 0);
         if (
@@ -206,14 +236,18 @@ export class UserGroupsService {
       }
       if (!group.rep_user && group.rep_category) {
         const userRating = ratings
-          .filter(
-            (rating) =>
+          .filter((rating) => {
+            const side1 =
+              !group.rep_direction ||
+              group.rep_direction.toString() === GroupFilterDirection.Received
+                ? rating.matter_target_id
+                : rating.rater_profile_id;
+            return (
               rating.matter === RateMatter.REP &&
-              (GroupFilterDirection.Received
-                ? rating.rater_profile_id
-                : rating.matter_target_id) === profileId &&
+              side1 === profileId &&
               rating.matter_category === group.rep_category
-          )
+            );
+          })
           .map((it) => it.rating)
           .reduce((acc, it) => acc + it, 0);
         if (
@@ -223,6 +257,7 @@ export class UserGroupsService {
           return false;
         }
       }
+      return true;
     });
     const allThatIsLeft = [...ambiguousCleaned, ...unambiguousInitial];
     const onlyProfileGroupsFilteredOut = allThatIsLeft.filter((group) => {
