@@ -7,9 +7,7 @@ import { IdentityEntity } from '../entities/IIdentity';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
-  PROFILE_PROXIES_TABLE,
-  PROFILES_TABLE,
-  RATINGS_TABLE
+  PROFILES_TABLE
 } from '../constants';
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
@@ -18,7 +16,7 @@ import { randomUUID } from 'crypto';
 const mysql = require('mysql');
 
 export class IdentitiesDb extends LazyDbAccessCompatibleService {
-  async lockEverythingRelatedToIdentitiesByAddresses(
+  async getEverythingRelatedToIdentitiesByAddresses(
     addresses: string[],
     connection: ConnectionWrapper<any>
   ): Promise<
@@ -36,7 +34,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     }
     const consolidations = await this.db.execute<AddressConsolidationKey>(
       `
-      select * from ${ADDRESS_CONSOLIDATION_KEY} where address in (:addresses) for update
+      select * from ${ADDRESS_CONSOLIDATION_KEY} where address in (:addresses)
     `,
       { addresses },
       { wrappedConnection: connection }
@@ -44,35 +42,17 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     const identities = await this.db.execute<IdentityEntity>(
       `select * from ${IDENTITIES_TABLE} identity where identity.consolidation_key in (
       select distinct i.consolidation_key from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:addresses)
-      )  for update`,
+      )`,
       { addresses },
       { wrappedConnection: connection }
     );
     const profiles = await this.db.execute<Profile>(
       `select p.* from ${PROFILES_TABLE} p where p.external_id in (
       select distinct i.profile_id from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:addresses) and i.handle is not null
-      )  for update`,
+      )`,
       { addresses },
       { wrappedConnection: connection }
     );
-    if (profiles.length > 0) {
-      const profileIds = profiles.map((p) => p.external_id);
-      await this.db.execute(
-        `select 1 from ${RATINGS_TABLE} where rater_profile_id in (:profileIds) for update`,
-        { profileIds },
-        { wrappedConnection: connection }
-      );
-      await this.db.execute(
-        `select 1 from ${RATINGS_TABLE} where rater_profile_id in (:profileIds) or matter_target_id in (:profileIds) for update`,
-        { profileIds },
-        { wrappedConnection: connection }
-      );
-      await this.db.execute(
-        `select 1 from ${PROFILE_PROXIES_TABLE} where created_by in (:profileIds) or target_id in (:profileIds) for update`,
-        { profileIds },
-        { wrappedConnection: connection }
-      );
-    }
     return addresses.reduce((acc, address) => {
       const consolidationKeys = consolidations.filter(
         (consolidation) => consolidation.address === address

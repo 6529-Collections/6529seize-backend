@@ -29,7 +29,7 @@ export class IdentitiesService {
     return await this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const identityId = await this.identitiesDb
-          .lockEverythingRelatedToIdentitiesByAddresses(
+          .getEverythingRelatedToIdentitiesByAddresses(
             [identityAddress],
             connection
           )
@@ -94,7 +94,7 @@ export class IdentitiesService {
     return this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const identityId = await this.identitiesDb
-          .lockEverythingRelatedToIdentitiesByAddresses(
+          .getEverythingRelatedToIdentitiesByAddresses(
             [identityAddress],
             connection
           )

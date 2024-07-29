@@ -183,10 +183,7 @@ export class RatingsService {
     ) {
       throw new BadRequestException(`User can not rate their own profile`);
     }
-    const currentRating = await this.ratingsDb.getRatingForUpdate(
-      request,
-      connection
-    );
+    const currentRating = await this.ratingsDb.getRating(request, connection);
     if (currentRating.rating === request.rating) {
       return;
     }
@@ -421,7 +418,7 @@ export class RatingsService {
       const coefficient = overRatedMatter.rater_tdh / overRatedMatter.tally;
       await this.ratingsDb.executeNativeQueriesInTransaction(
         async (connection) => {
-          const ratings = await this.ratingsDb.lockRatingsOnMatterForUpdate(
+          const ratings = await this.ratingsDb.getRatingsOnMatter(
             {
               rater_profile_id: raterProfileId,
               matter: overRatedMatter.matter
@@ -532,7 +529,7 @@ export class RatingsService {
       });
     while (true) {
       const ratings =
-        await this.ratingsDb.lockNonZeroRatingsForProfileOlderFirst(
+        await this.ratingsDb.getNonZeroRatingsForProfileOlderFirst(
           {
             rater_profile_id: sourceProfileId,
             page_request: {
@@ -581,7 +578,7 @@ export class RatingsService {
     let page = 1;
     while (true) {
       const ratings =
-        await this.ratingsDb.lockNonZeroRatingsForMatterAndTargetIdOlderFirst(
+        await this.ratingsDb.getNonZeroRatingsForMatterAndTargetIdOlderFirst(
           {
             matter_target_id: sourceProfile,
             matters: getMattersWhereTargetIsProfile(),
@@ -632,7 +629,7 @@ export class RatingsService {
     connectionHolder: ConnectionWrapper<any>
   ) {
     for (const rating of ratings) {
-      const targetRating = await this.ratingsDb.getRatingForUpdate(
+      const targetRating = await this.ratingsDb.getRating(
         rating,
         connectionHolder
       );
@@ -812,7 +809,7 @@ export class RatingsService {
           it.toLowerCase()
         );
         let allIdentitiesByAddresses =
-          await identitiesDb.lockEverythingRelatedToIdentitiesByAddresses(
+          await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
             wallets,
             connection
           );
@@ -842,7 +839,7 @@ export class RatingsService {
             )
         );
         allIdentitiesByAddresses =
-          await identitiesDb.lockEverythingRelatedToIdentitiesByAddresses(
+          await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
             wallets,
             connection
           );
@@ -870,7 +867,7 @@ export class RatingsService {
           )
         );
         allIdentitiesByAddresses =
-          await identitiesDb.lockEverythingRelatedToIdentitiesByAddresses(
+          await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
             wallets,
             connection
           );
@@ -881,7 +878,7 @@ export class RatingsService {
           return acc;
         }, {} as Record<string, string>);
         const raterRatingsByTargetProfileId = await this.ratingsDb
-          .lockRatingsOnMatterForUpdate(
+          .getRatingsOnMatter(
             {
               rater_profile_id: actingAsId,
               matter

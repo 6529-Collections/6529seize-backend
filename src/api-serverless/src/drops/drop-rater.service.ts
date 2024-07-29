@@ -26,13 +26,6 @@ class DropRaterService {
     category: string;
   }) {
     await this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
-      await this.ratingsDb.lockRatingsOnMatterForUpdate(
-        {
-          rater_profile_id: param.rater_profile_id,
-          matter: RateMatter.DROP_RATING
-        },
-        connection
-      );
       const dropId = param.drop_id;
       const dropEntity = await this.dropsDb.findDropById(
         dropId,

@@ -99,7 +99,7 @@ from general_stats
     });
   }
 
-  async lockRatingsOnMatterForUpdate(
+  async getRatingsOnMatter(
     {
       rater_profile_id,
       matter
@@ -111,7 +111,7 @@ from general_stats
   ): Promise<Rating[]> {
     return this.db.execute(
       `
-          select * from ${RATINGS_TABLE} where rater_profile_id = :rater_profile_id and matter = :matter for update
+          select * from ${RATINGS_TABLE} where rater_profile_id = :rater_profile_id and matter = :matter
       `,
       {
         rater_profile_id,
@@ -121,7 +121,7 @@ from general_stats
     );
   }
 
-  async getRatingForUpdate(
+  async getRating(
     ratingLockRequest: UpdateRatingRequest,
     connection: ConnectionWrapper<any>
   ): Promise<Rating & { total_tdh_spent_on_matter: number }> {
@@ -146,30 +146,32 @@ from general_stats
       },
       { wrappedConnection: connection }
     );
-    const allRatesOnMatter: Rating[] = await this.db.execute(
-      `
+    const [searchedMatter, total_tdh_spent_on_matter] = await Promise.all([
+      this.db.oneOrNull<Rating>(
+        `
           select * from ${RATINGS_TABLE}
           where rater_profile_id = :rater_profile_id
+            and matter_target_id = :matter_target_id
+            and matter_category = :matter_category
             and matter = :matter
-            for update
       `,
-      {
-        rater_profile_id: ratingLockRequest.rater_profile_id,
-        matter: ratingLockRequest.matter
-      },
-      { wrappedConnection: connection }
-    );
-    const searchedMatter = allRatesOnMatter.find(
-      (rate) =>
-        rate.matter_category === ratingLockRequest.matter_category &&
-        rate.matter_target_id === ratingLockRequest.matter_target_id
-    )!;
-    const total_tdh_spent_on_matter = allRatesOnMatter.reduce((acc, rate) => {
-      return acc + Math.abs(rate.rating);
-    }, 0);
+        ratingLockRequest,
+        { wrappedConnection: connection }
+      ),
+      this.db.oneOrNull<{ total_tdh_spent_on_matter: number }>(
+        `
+          select sum(rating) as total_tdh_spent_on_matter from ${RATINGS_TABLE}
+          where rater_profile_id = :rater_profile_id
+            and matter = :matter
+      `,
+        ratingLockRequest,
+        { wrappedConnection: connection }
+      )
+    ]);
     return {
-      total_tdh_spent_on_matter,
-      ...searchedMatter
+      total_tdh_spent_on_matter:
+        total_tdh_spent_on_matter?.total_tdh_spent_on_matter ?? 0,
+      ...searchedMatter!
     };
   }
 
@@ -259,7 +261,7 @@ from general_stats
       .then((results) => results[0]?.rating ?? 0);
   }
 
-  async lockNonZeroRatingsForProfileOlderFirst(
+  async getNonZeroRatingsForProfileOlderFirst(
     {
       rater_profile_id,
       page_request
@@ -273,7 +275,7 @@ from general_stats
       return [];
     }
     return this.db.execute(
-      `select * from ${RATINGS_TABLE} where rater_profile_id = :rater_profile_id and rating <> 0 order by last_modified asc limit :limit offset :offset for update`,
+      `select * from ${RATINGS_TABLE} where rater_profile_id = :rater_profile_id and rating <> 0 order by last_modified asc limit :limit offset :offset`,
       {
         rater_profile_id,
         offset: (page_request.page - 1) * page_request.page_size,
@@ -283,7 +285,7 @@ from general_stats
     );
   }
 
-  async lockNonZeroRatingsForMatterAndTargetIdOlderFirst(
+  async getNonZeroRatingsForMatterAndTargetIdOlderFirst(
     {
       matter_target_id,
       matters,
@@ -303,7 +305,7 @@ from general_stats
       return [];
     }
     return this.db.execute(
-      `select * from ${RATINGS_TABLE} where matter_target_id = :matter_target_id and matter in (:matters) and rating <> 0 order by last_modified asc limit :limit offset :offset for update`,
+      `select * from ${RATINGS_TABLE} where matter_target_id = :matter_target_id and matter in (:matters) and rating <> 0 order by last_modified asc limit :limit offset :offset`,
       {
         matter_target_id,
         matters,
@@ -649,29 +651,6 @@ from grouped_rates r
     return this.db
       .execute(sql, sqlParam)
       .then((results) => results[0]?.rating ?? 0);
-  }
-
-  async getMatterRatingForEachTarget(
-    param: {
-      matter: RateMatter;
-      target_profile_ids: string[];
-    },
-    connection: ConnectionWrapper<any>
-  ): Promise<Record<string, number>> {
-    if (!param.target_profile_ids.length) {
-      return {};
-    }
-    const sql = `select matter_target_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = :matter and matter_target_id in (:target_profile_ids) group by 1`;
-    return this.db
-      .execute<{ matter_target_id: string; rating: number }>(sql, param, {
-        wrappedConnection: connection
-      })
-      .then((results) =>
-        results.reduce((acc, result) => {
-          acc[result.matter_target_id] = result.rating;
-          return acc;
-        }, {} as Record<string, number>)
-      );
   }
 }
 

@@ -411,7 +411,7 @@ export class ProfilesService {
     connection: ConnectionWrapper<any>
   ) {
     const identityResponse =
-      await this.identitiesDb.lockEverythingRelatedToIdentitiesByAddresses(
+      await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
         [creator_or_updater_wallet],
         connection
       );
@@ -452,7 +452,7 @@ export class ProfilesService {
         )
       );
       creatorOrUpdatorIdentityResponse = await this.identitiesDb
-        .lockEverythingRelatedToIdentitiesByAddresses(
+        .getEverythingRelatedToIdentitiesByAddresses(
           [creator_or_updater_wallet],
           connection
         )

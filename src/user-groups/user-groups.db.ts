@@ -94,7 +94,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       for (let i = 0; i < distinctAddresses.length; i += chunkSize) {
         const chunkOfAddresses = distinctAddresses.slice(i, i + chunkSize);
         const identities =
-          await identitiesDb.lockEverythingRelatedToIdentitiesByAddresses(
+          await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
             chunkOfAddresses,
             connection
           );
@@ -106,7 +106,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
           connection
         );
         const profileIds = await identitiesDb
-          .lockEverythingRelatedToIdentitiesByAddresses(
+          .getEverythingRelatedToIdentitiesByAddresses(
             chunkOfAddresses,
             connection
           )
