@@ -109,7 +109,7 @@ export async function syncIdentitiesWithTdhConsolidations(
       .map((it) => it.consolidation_key.split('-'))
       .flat();
     const oldDataByWallets =
-      await identitiesDb.lockEverythingRelatedToIdentitiesByAddresses(
+      await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
         addressesInNewConsolidationKeys,
         connection
       );
