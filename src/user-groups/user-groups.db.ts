@@ -313,23 +313,23 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
 from ${USER_GROUPS_TABLE} cg
 where ((cg.cic_direction = 'RECEIVED' and (
     (cg.cic_min is null or :receivedCic >= cg.cic_min) and
-    (cg.cic_max is null or :receivedCic >= cg.cic_max) and
+    (cg.cic_max is null or :receivedCic >= cg.cic_max)
+    )) or (cg.cic_direction = 'SENT' and (
+    (cg.cic_min is null or :givenCic >= cg.cic_min) and
+    (cg.cic_max is null or :givenCic >= cg.cic_max) and
     (cg.cic_user is null ${
       param.profileId ? ` or cg.cic_user = :profileId ` : ``
     })
-    )) or (cg.cic_direction = 'SENT' and (
-    (cg.cic_min is null or :givenCic >= cg.cic_min) and
-    (cg.cic_max is null or :givenCic >= cg.cic_max)
     )))
   and ((cg.rep_direction = 'RECEIVED' and (
     (cg.rep_min is null or :receivedRep >= cg.rep_min) and
-    (cg.rep_max is null or :receivedRep >= cg.rep_max) and
+    (cg.rep_max is null or :receivedRep >= cg.rep_max)
+    )) or (cg.rep_direction = 'SENT' and (
+    (cg.rep_min is null or :givenRep >= cg.rep_min) and
+    (cg.rep_max is null or :givenRep >= cg.rep_max) and
     (cg.rep_user is null ${
       param.profileId ? ` or cg.rep_user = :profileId ` : ``
     })
-    )) or (cg.rep_direction = 'SENT' and (
-    (cg.rep_min is null or :givenRep >= cg.rep_min) and
-    (cg.rep_max is null or :givenRep >= cg.rep_max)
     )))
   and (cg.level_min is null or :level >= cg.level_min)
   and (cg.level_max is null or :level <= cg.level_max)

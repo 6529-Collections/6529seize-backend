@@ -191,7 +191,7 @@ export class UserGroupsService {
                 ? rating.rater_profile_id
                 : rating.matter_target_id;
             return (
-              rating.matter === RateMatter.CIC &&
+              rating.matter === RateMatter.REP &&
               side1 === profileId &&
               side2 === group.rep_user
             );
@@ -219,7 +219,7 @@ export class UserGroupsService {
                 ? rating.rater_profile_id
                 : rating.matter_target_id;
             return (
-              rating.matter === RateMatter.CIC &&
+              rating.matter === RateMatter.REP &&
               side1 === profileId &&
               side2 === group.rep_user &&
               rating.matter_category === group.rep_category
