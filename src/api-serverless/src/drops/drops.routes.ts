@@ -17,16 +17,11 @@ import { dropRaterService } from './drop-rater.service';
 import { FullPageRequest, Page, PageSortDirection } from '../page-request';
 import { Drop } from '../generated/models/Drop';
 import { CreateDropRequest } from '../generated/models/CreateDropRequest';
-import { DropActivityLog } from '../generated/models/DropActivityLog';
-import { NewDropComment } from '../generated/models/NewDropComment';
-import { DropComment } from '../generated/models/DropComment';
 import { userGroupsService } from '../community-members/user-groups.service';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import {
   ApiAddRatingToDropRequest,
   ApiAddRatingToDropRequestSchema,
-  DropActivityLogsQuery,
-  DropDiscussionCommentsQuerySchema,
   NewDropSchema
 } from './drop.validator';
 import { profilesService } from '../../../profiles/profiles.service';
@@ -52,14 +47,22 @@ router.get(
         min_part_id?: number;
         max_part_id?: number;
         wave_id?: string;
+        include_replies?: string;
       },
       any
     >,
     res: Response<ApiResponse<Drop[]>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
-    const { limit, wave_id, group_id, min_part_id, max_part_id, author_id } =
-      await prepLatestDropsSearchQuery(req);
+    const {
+      limit,
+      wave_id,
+      group_id,
+      min_part_id,
+      max_part_id,
+      author_id,
+      include_replies
+    } = await prepLatestDropsSearchQuery(req);
     const latestDrops = await dropsService.findLatestDrops({
       amount: limit < 0 || limit > 20 ? 10 : limit,
       group_id: group_id,
@@ -68,6 +71,7 @@ router.get(
       max_part_id,
       wave_id,
       author_id,
+      include_replies,
       authenticationContext
     });
     res.send(latestDrops);
@@ -155,7 +159,8 @@ router.post(
       referenced_nfts: newDrop.referenced_nfts,
       mentioned_users: newDrop.mentioned_users,
       metadata: newDrop.metadata,
-      wave_id: newDrop.wave_id
+      wave_id: newDrop.wave_id,
+      reply_to: newDrop.reply_to
     };
     const createdDrop = await dropCreationService.createDrop(
       createDropRequest,
@@ -225,43 +230,7 @@ router.post(
 );
 
 router.get(
-  `/:drop_id/log`,
-  needsAuthenticatedUser(),
-  async (
-    req: Request<
-      { drop_id: string },
-      any,
-      any,
-      Omit<DropActivityLogsQuery, 'drop_id'>,
-      any
-    >,
-    res: Response<Page<DropActivityLog>>
-  ) => {
-    const unvalidatedQuery: DropActivityLogsQuery = {
-      drop_id: req.params.drop_id,
-      ...req.query
-    };
-    const validatedQuery: DropActivityLogsQuery = getValidatedByJoiOrThrow(
-      unvalidatedQuery,
-      DropDiscussionCommentsQuerySchema
-    );
-    const authenticationContext = await getAuthenticationContext(req);
-    await dropsService.findDropByIdOrThrow({
-      authenticationContext,
-      dropId: validatedQuery.drop_id,
-      min_part_id: 1,
-      max_part_id: 1
-    });
-    const discussionCommentsPage = await dropsService.findLogs(
-      validatedQuery,
-      authenticationContext.getActingAsId()
-    );
-    res.send(discussionCommentsPage);
-  }
-);
-
-router.get(
-  `/:drop_id/parts/:drop_part_id/comments`,
+  `/:drop_id/parts/:drop_part_id/replies`,
   needsAuthenticatedUser(),
   async (
     req: Request<
@@ -271,14 +240,14 @@ router.get(
       FullPageRequest<'created_at'>,
       any
     >,
-    res: Response<Page<DropComment>>
+    res: Response<Page<Drop>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     const { drop_part_id, drop_id, query } = await prepDropPartQuery(
       req,
       authenticationContext
     );
-    const comments = await dropsService.findDropPartComments(
+    const replies = await dropsService.findDropReplies(
       {
         ...query,
         drop_part_id,
@@ -286,73 +255,7 @@ router.get(
       },
       authenticationContext.getActingAsId()
     );
-    res.send(comments);
-  }
-);
-
-router.post(
-  `/:drop_id/parts/:drop_part_id/comments`,
-  needsAuthenticatedUser(),
-  async (
-    req: Request<
-      { drop_id: string; drop_part_id: string },
-      any,
-      NewDropComment,
-      any,
-      any
-    >,
-    res: Response<DropComment>
-  ) => {
-    const authenticationContext = await getAuthenticationContext(req);
-    if (authenticationContext.isAuthenticatedAsProxy()) {
-      throw new ForbiddenException(`Proxies can't comment on drops.`);
-    }
-    const drop_part_id = parseIntOrNull(req.params.drop_part_id);
-    if (drop_part_id === null) {
-      throw new NotFoundException(
-        `Drop part ${req.params.drop_id}/${req.params.drop_part_id} not found`
-      );
-    }
-    if (!authenticationContext.getActingAsId()) {
-      throw new ForbiddenException(
-        `Create a profile before commenting on a drop`
-      );
-    }
-    const commentRequest = getValidatedByJoiOrThrow(
-      {
-        drop_part_id,
-        drop_id: req.params.drop_id,
-        comment: req.body.comment,
-        author_id: authenticationContext.getActingAsId()!
-      },
-      Joi.object<{
-        drop_id: string;
-        comment: string;
-        author_id: string;
-        drop_part_id: number;
-      }>({
-        drop_part_id: Joi.number().integer().min(1).required(),
-        drop_id: Joi.string().required(),
-        comment: Joi.string().min(1).max(2000).required(),
-        author_id: Joi.string().required()
-      })
-    );
-    await dropsService
-      .findDropByIdOrThrow({
-        authenticationContext,
-        dropId: commentRequest.drop_id,
-        min_part_id: drop_part_id,
-        max_part_id: drop_part_id
-      })
-      .then((drop) => {
-        if (drop.parts.length === 0) {
-          throw new NotFoundException(
-            `Drop part ${commentRequest.drop_id}/${commentRequest.drop_part_id} not found`
-          );
-        }
-      });
-    const addedComment = await dropsService.commentDrop(commentRequest);
-    res.send(addedComment);
+    res.send(replies);
   }
 );
 
@@ -466,6 +369,7 @@ export async function prepLatestDropsSearchQuery(
       min_part_id?: number;
       max_part_id?: number;
       wave_id?: string;
+      include_replies?: string;
     },
     any
   >
@@ -473,6 +377,7 @@ export async function prepLatestDropsSearchQuery(
   const limit = parseNumberOrNull(req.query.limit) ?? 10;
   const wave_id = req.query.wave_id ?? null;
   const group_id = req.query.group_id ?? null;
+  const include_replies = req.query.include_replies === 'true';
   let min_part_id = parseIntOrNull(req.query.min_part_id);
   if (!min_part_id || min_part_id < 1) {
     min_part_id = 0;
@@ -497,7 +402,15 @@ export async function prepLatestDropsSearchQuery(
           return profileId;
         })
     : null;
-  return { limit, wave_id, group_id, min_part_id, max_part_id, author_id };
+  return {
+    limit,
+    wave_id,
+    group_id,
+    min_part_id,
+    max_part_id,
+    author_id,
+    include_replies
+  };
 }
 
 export async function prepDropPartQuery(

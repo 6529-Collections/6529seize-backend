@@ -1,0 +1,1 @@
+update identity_subscriptions set target_action = 'DROP_REPLIED' where target_action = 'DROP_COMMENTED';

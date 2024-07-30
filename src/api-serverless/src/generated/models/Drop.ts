@@ -47,7 +47,6 @@ export class Drop {
     'rating': number;
     'top_raters': Array<DropRater>;
     'raters_count': number;
-    'rating_logs_count': number;
     'context_profile_context': DropContextProfileContext | null;
     'subscribed_actions': Array<DropSubscriptionTargetAction>;
 
@@ -141,12 +140,6 @@ export class Drop {
         {
             "name": "raters_count",
             "baseName": "raters_count",
-            "type": "number",
-            "format": "int64"
-        },
-        {
-            "name": "rating_logs_count",
-            "baseName": "rating_logs_count",
             "type": "number",
             "format": "int64"
         },

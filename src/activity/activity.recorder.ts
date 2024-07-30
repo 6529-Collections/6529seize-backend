@@ -20,12 +20,12 @@ const ACTIVITY_EVENT_ACTIONS_BY_TYPE: Record<
   [ActivityEventTargetType.IDENTITY]: [
     ActivityEventAction.WAVE_CREATED,
     ActivityEventAction.DROP_CREATED,
-    ActivityEventAction.DROP_COMMENTED,
+    ActivityEventAction.DROP_REPLIED,
     ActivityEventAction.DROP_VOTED
   ],
   [ActivityEventTargetType.WAVE]: [ActivityEventAction.DROP_CREATED],
   [ActivityEventTargetType.DROP]: [
-    ActivityEventAction.DROP_COMMENTED,
+    ActivityEventAction.DROP_REPLIED,
     ActivityEventAction.DROP_VOTED
   ]
 };
@@ -66,76 +66,56 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
     );
   }
 
-  async recordDropCommented(
-    {
-      drop_id,
-      commenter_id,
-      drop_part_id,
-      comment_id,
-      visibility_group_id
-    }: {
-      drop_id: string;
-      commenter_id: string;
-      drop_part_id: number;
-      comment_id: number;
-      visibility_group_id: string | null;
-    },
-    connection?: ConnectionWrapper<any>
-  ) {
-    await this.recordEvents(
-      [
-        {
-          target_id: commenter_id,
-          target_type: ActivityEventTargetType.IDENTITY,
-          action: ActivityEventAction.DROP_COMMENTED,
-          data: { drop_id, drop_part_id, comment_id },
-          visibility_group_id
-        },
-        {
-          target_id: drop_id,
-          target_type: ActivityEventTargetType.DROP,
-          action: ActivityEventAction.DROP_COMMENTED,
-          data: { commenter_id, drop_part_id, comment_id },
-          visibility_group_id
-        }
-      ],
-      connection
-    );
-  }
-
   async recordDropCreated(
     {
       drop_id,
       wave_id,
       creator_id,
-      visibility_group_id
+      visibility_group_id,
+      reply_to
     }: {
       drop_id: string;
       wave_id: string;
       creator_id: string;
       visibility_group_id: string | null;
+      reply_to: {
+        drop_id: string;
+        part_id: number;
+      } | null;
     },
     connection?: ConnectionWrapper<any>
   ) {
-    await this.recordEvents(
-      [
-        {
-          target_id: creator_id,
-          target_type: ActivityEventTargetType.IDENTITY,
-          action: ActivityEventAction.DROP_CREATED,
-          data: { drop_id, wave_id },
-          visibility_group_id
+    const events: NewActivityEvent[] = [
+      {
+        target_id: creator_id,
+        target_type: ActivityEventTargetType.IDENTITY,
+        action: ActivityEventAction.DROP_CREATED,
+        data: { drop_id, wave_id },
+        visibility_group_id
+      }
+    ];
+    if (reply_to === null) {
+      events.push({
+        target_id: wave_id,
+        target_type: ActivityEventTargetType.WAVE,
+        action: ActivityEventAction.DROP_CREATED,
+        data: { drop_id, creator_id },
+        visibility_group_id
+      });
+    } else {
+      events.push({
+        target_id: reply_to.drop_id,
+        target_type: ActivityEventTargetType.DROP,
+        action: ActivityEventAction.DROP_REPLIED,
+        data: {
+          replier_id: creator_id,
+          drop_part_id: reply_to.part_id,
+          reply_id: drop_id
         },
-        {
-          target_id: wave_id,
-          target_type: ActivityEventTargetType.WAVE,
-          action: ActivityEventAction.DROP_CREATED,
-          data: { drop_id, creator_id },
-          visibility_group_id
-        }
-      ],
-      connection
-    );
+        visibility_group_id
+      });
+    }
+    await this.recordEvents(events, connection);
   }
 
   async recordWaveCreated(

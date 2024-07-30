@@ -1,29 +1,15 @@
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
-import { distinct, resolveEnumOrThrow } from '../../../helpers';
+import { resolveEnumOrThrow } from '../../../helpers';
 import { Page, PageSortDirection } from '../page-request';
-import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { Drop } from '../generated/models/Drop';
-import {
-  DropActivityLog,
-  DropActivityLogTypeEnum
-} from '../generated/models/DropActivityLog';
-import { ProfileMin } from '../generated/models/ProfileMin';
-import { DropComment } from '../generated/models/DropComment';
-import { Time } from '../../../time';
 import {
   UserGroupsService,
   userGroupsService
 } from '../community-members/user-groups.service';
 import { AuthenticationContext } from '../../../auth-context';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
-import { DropActivityLogsQuery } from './drop.validator';
-import { WavesApiDb, wavesApiDb } from '../waves/waves.api.db';
-import {
-  activityRecorder,
-  ActivityRecorder
-} from '../../../activity/activity.recorder';
 import { DropSubscriptionTargetAction } from '../generated/models/DropSubscriptionTargetAction';
 import {
   ActivityEventAction,
@@ -45,8 +31,6 @@ export class DropsApiService {
     private readonly dropsDb: DropsDb,
     private readonly profilesService: ProfilesApiService,
     private readonly userGroupsService: UserGroupsService,
-    private readonly wavesApiDb: WavesApiDb,
-    private readonly activityRecorder: ActivityRecorder,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
   ) {}
 
@@ -106,6 +90,7 @@ export class DropsApiService {
     min_part_id,
     max_part_id,
     author_id,
+    include_replies,
     authenticationContext
   }: {
     group_id: string | null;
@@ -115,6 +100,7 @@ export class DropsApiService {
     max_part_id: number;
     amount: number;
     author_id: string | null;
+    include_replies: boolean;
     authenticationContext?: AuthenticationContext;
   }): Promise<Drop[]> {
     const context_profile_id = this.getDropsReadContextProfileId(
@@ -133,7 +119,8 @@ export class DropsApiService {
       group_id,
       group_ids_user_is_eligible_for,
       wave_id,
-      author_id
+      author_id,
+      include_replies
     });
     return await this.dropsMappers.convertToDropFulls({
       dropEntities: dropEntities,
@@ -175,90 +162,7 @@ export class DropsApiService {
     return { available_credit_for_rating: creditLeft };
   }
 
-  async findLogs(
-    query: DropActivityLogsQuery,
-    contextProfileId?: string | null
-  ): Promise<Page<DropActivityLog>> {
-    const [logs, count] = await Promise.all([
-      this.dropsDb.findLogsByDropId(query),
-      this.dropsDb
-        .countLogsByDropIds([query.drop_id], query.log_type)
-        .then((it) => it[query.drop_id] ?? 0)
-    ]);
-    const commentAuthorIds = logs.map((it) => it.profile_id);
-    const profileMins = await this.profilesService.getProfileMinsByIds({
-      ids: commentAuthorIds,
-      authenticatedProfileId: contextProfileId
-    });
-    return {
-      count,
-      page: query.page,
-      next: logs.length === query.page_size,
-      data: logs.map((log) => ({
-        ...log,
-        created_at: Time.fromDate(log.created_at).toMillis(),
-        target_id: log.target_id!,
-        type: log.type as unknown as DropActivityLogTypeEnum,
-        author: profileMins[log.profile_id] ?? null
-      }))
-    };
-  }
-
-  async commentDrop(commentRequest: {
-    drop_id: string;
-    drop_part_id: number;
-    comment: string;
-    author_id: string;
-  }): Promise<DropComment> {
-    const comment = await this.dropsDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const commentId = await this.dropsDb.insertDiscussionComment(
-          commentRequest,
-          connection
-        );
-        const visibilityGroupId =
-          await this.wavesApiDb.findWaveVisibilityGroupByDropId(
-            commentRequest.drop_id,
-            connection
-          );
-        await this.activityRecorder.recordDropCommented(
-          {
-            drop_id: commentRequest.drop_id,
-            commenter_id: commentRequest.author_id,
-            drop_part_id: commentRequest.drop_part_id,
-            comment_id: commentId,
-            visibility_group_id: visibilityGroupId
-          },
-          connection
-        );
-        const comment = await this.dropsDb.findDiscussionCommentById(
-          commentId,
-          connection
-        );
-        if (!comment) {
-          throw new Error(
-            `Something went wrong. Couldn't find the comment that was just inserted`
-          );
-        }
-        const authorProfile = await this.profilesService
-          .getProfileMinsByIds({
-            ids: [comment.author_id],
-            authenticatedProfileId: commentRequest.author_id
-          })
-          .then((it) => it[comment.author_id] ?? null);
-        return {
-          id: comment.id,
-          author: authorProfile as ProfileMin,
-          comment: comment.comment,
-          created_at: comment.created_at
-        };
-      }
-    );
-    await giveReadReplicaTimeToCatchUp();
-    return comment;
-  }
-
-  async findDropPartComments(
+  async findDropReplies(
     param: {
       sort_direction: PageSortDirection;
       drop_id: string;
@@ -268,50 +172,25 @@ export class DropsApiService {
       page_size: number;
     },
     authenticatedProfileId?: string | null
-  ): Promise<Page<DropComment>> {
+  ): Promise<Page<Drop>> {
     const count = await this.dropsDb
-      .countDiscussionCommentsByDropIds({ dropIds: [param.drop_id] })
+      .countRepliesByDropIds({ dropIds: [param.drop_id] })
       .then(
         (result) => result[param.drop_id]?.[param.drop_part_id]?.count ?? 0
       );
-    const comments = await this.dropsDb.findDiscussionCommentsByDropId(param);
-    const relatedProfiles = await this.profilesService.getProfileMinsByIds({
-      ids: distinct(comments.map((it) => it.author_id)),
-      authenticatedProfileId
+    const replies = await this.dropsDb.findRepliesByDropId(param);
+    const drops = await this.dropsMappers.convertToDropFulls({
+      dropEntities: replies,
+      contextProfileId: authenticatedProfileId,
+      min_part_id: 1,
+      max_part_id: Number.MAX_SAFE_INTEGER
     });
     return {
       count,
       page: param.page,
       next: count > param.page_size * param.page,
-      data: comments.map((comment) => ({
-        id: comment.id,
-        comment: comment.comment,
-        created_at: comment.created_at,
-        author: relatedProfiles[comment.author_id]!
-      }))
+      data: drops
     };
-  }
-
-  async findCommentsByIds(
-    ids: number[],
-    authenticatedProfileId?: string | null
-  ): Promise<Record<number, DropComment>> {
-    const comments = await this.dropsDb.findDiscussionCommentsByIds(ids);
-    const relatedProfiles = await this.profilesService.getProfileMinsByIds({
-      ids: distinct(comments.map((it) => it.author_id)),
-      authenticatedProfileId
-    });
-    return comments
-      .map<DropComment>((comment) => ({
-        id: comment.id,
-        comment: comment.comment,
-        created_at: comment.created_at,
-        author: relatedProfiles[comment.author_id]!
-      }))
-      .reduce((acc, comment) => {
-        acc[comment.id] = comment;
-        return acc;
-      }, {} as Record<number, DropComment>);
   }
 
   async findDropsByIdsOrThrow(
@@ -460,7 +339,5 @@ export const dropsService = new DropsApiService(
   dropsDb,
   profilesApiService,
   userGroupsService,
-  wavesApiDb,
-  activityRecorder,
   identitySubscriptionsDb
 );

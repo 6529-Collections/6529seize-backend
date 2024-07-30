@@ -1,17 +1,10 @@
 import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
-import { getValidatedByJoiOrThrow } from '../validation';
 import { dropsService } from './drops.api.service';
 import { parseNumberOrNull } from '../../../helpers';
 import { FullPageRequest, Page } from '../page-request';
 import { Drop } from '../generated/models/Drop';
-import { DropActivityLog } from '../generated/models/DropActivityLog';
-import { DropComment } from '../generated/models/DropComment';
-import {
-  DropActivityLogsQuery,
-  DropDiscussionCommentsQuerySchema
-} from './drop.validator';
 import {
   prepDropPartQuery,
   prepLatestDropsSearchQuery,
@@ -35,13 +28,21 @@ router.get(
         min_part_id?: number;
         max_part_id?: number;
         wave_id?: string;
+        include_replies?: string;
       },
       any
     >,
     res: Response<ApiResponse<Drop[]>>
   ) => {
-    const { limit, wave_id, group_id, min_part_id, max_part_id, author_id } =
-      await prepLatestDropsSearchQuery(req);
+    const {
+      limit,
+      wave_id,
+      group_id,
+      min_part_id,
+      max_part_id,
+      author_id,
+      include_replies
+    } = await prepLatestDropsSearchQuery(req);
     const latestDrops = await dropsService.findLatestDrops({
       amount: limit < 0 || limit > 20 ? 10 : limit,
       group_id: group_id,
@@ -49,6 +50,7 @@ router.get(
       min_part_id,
       max_part_id,
       wave_id,
+      include_replies,
       author_id
     });
     res.send(latestDrops);
@@ -79,37 +81,7 @@ router.get(
 );
 
 router.get(
-  `/:drop_id/log`,
-  async (
-    req: Request<
-      { drop_id: string },
-      any,
-      any,
-      Omit<DropActivityLogsQuery, 'drop_id'>,
-      any
-    >,
-    res: Response<Page<DropActivityLog>>
-  ) => {
-    const unvalidatedQuery: DropActivityLogsQuery = {
-      drop_id: req.params.drop_id,
-      ...req.query
-    };
-    const validatedQuery: DropActivityLogsQuery = getValidatedByJoiOrThrow(
-      unvalidatedQuery,
-      DropDiscussionCommentsQuerySchema
-    );
-    await dropsService.findDropByIdOrThrow({
-      dropId: validatedQuery.drop_id,
-      min_part_id: 1,
-      max_part_id: 1
-    });
-    const discussionCommentsPage = await dropsService.findLogs(validatedQuery);
-    res.send(discussionCommentsPage);
-  }
-);
-
-router.get(
-  `/:drop_id/parts/:drop_part_id/comments`,
+  `/:drop_id/parts/:drop_part_id/replies`,
   async (
     req: Request<
       { drop_id: string; drop_part_id: string },
@@ -118,15 +90,15 @@ router.get(
       FullPageRequest<'created_at'>,
       any
     >,
-    res: Response<Page<DropComment>>
+    res: Response<Page<Drop>>
   ) => {
     const { drop_part_id, drop_id, query } = await prepDropPartQuery(req);
-    const comments = await dropsService.findDropPartComments({
+    const replies = await dropsService.findDropReplies({
       ...query,
       drop_part_id,
       drop_id
     });
-    res.send(comments);
+    res.send(replies);
   }
 );
 

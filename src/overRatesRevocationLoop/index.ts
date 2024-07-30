@@ -8,7 +8,6 @@ import * as sentryContext from '../sentry.context';
 import { UserGroupEntity } from '../entities/IUserGroup';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
 import {
-  DropCommentEntity,
   DropEntity,
   DropMediaEntity,
   DropMentionEntity,
@@ -54,7 +53,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         DropMetadataEntity,
         DropMediaEntity,
         DropVoteCreditSpending,
-        DropCommentEntity,
         ProfileProxyEntity,
         ProfileProxyActionEntity,
         WaveEntity,

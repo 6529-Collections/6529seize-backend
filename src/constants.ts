@@ -94,7 +94,6 @@ export const DROPS_MENTIONS_TABLE = 'drops_mentions';
 export const DROP_REFERENCED_NFTS_TABLE = 'drops_referenced_nfts';
 export const DROP_METADATA_TABLE = 'drops_metadatas';
 export const DROP_MEDIA_TABLE = 'drop_medias';
-export const DROPS_COMMENTS_TABLE = 'drops_comments';
 
 export const COOKIES_CONSENT_TABLE = 'cookies_consent';
 
