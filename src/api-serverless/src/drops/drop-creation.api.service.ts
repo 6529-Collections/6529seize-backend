@@ -113,7 +113,9 @@ export class DropCreationApiService {
         author_id: authorId,
         title: createDropRequest.title ?? null,
         parts_count: createDropParts.length,
-        wave_id: createDropRequest.wave_id
+        wave_id: createDropRequest.wave_id,
+        reply_to_drop_id: createDropRequest.reply_to?.drop_id ?? null,
+        reply_to_part_id: createDropRequest.reply_to?.drop_part_id ?? null
       },
       connection
     );
@@ -260,6 +262,24 @@ export class DropCreationApiService {
           `Invalid quoted drops: ${invalidQuotedDrops
             .map((it) => `${it.drop_id}/${it.drop_part_id}`)
             .join(', ')}`
+        );
+      }
+    }
+
+    if (createDropRequest.reply_to) {
+      const dropId = createDropRequest.reply_to.drop_id;
+      const dropPartId = createDropRequest.reply_to.drop_part_id;
+      const replyToEntity = await this.dropsDb
+        .getDropsByIds([dropId])
+        .then(
+          (res) =>
+            res.find(
+              (it) => it.id === dropId && it.parts_count >= dropPartId
+            ) ?? null
+        );
+      if (!replyToEntity) {
+        throw new BadRequestException(
+          `Invalid reply. Drop $${dropId}/${dropPartId} doesn't exist`
         );
       }
     }

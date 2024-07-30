@@ -33,6 +33,11 @@ export class DropEntity {
   readonly title!: string | null;
   @Column({ type: 'bigint' })
   readonly parts_count!: number;
+  @Index()
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly reply_to_drop_id!: string | null;
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly reply_to_part_id!: number | null;
 }
 
 @Entity(DROPS_PARTS_TABLE)

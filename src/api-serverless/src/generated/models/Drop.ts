@@ -18,6 +18,7 @@ import { DropRater } from '../models/DropRater';
 import { DropReferencedNFT } from '../models/DropReferencedNFT';
 import { DropSubscriptionTargetAction } from '../models/DropSubscriptionTargetAction';
 import { ProfileMin } from '../models/ProfileMin';
+import { ReplyToDrop } from '../models/ReplyToDrop';
 import { WaveMin } from '../models/WaveMin';
 import { HttpFile } from '../http/http';
 
@@ -28,6 +29,7 @@ export class Drop {
     */
     'serial_no': number;
     'wave': WaveMin;
+    'reply_to'?: ReplyToDrop;
     'author': ProfileMin;
     /**
     * Time when the drop was created in milliseconds since 1-1-1970 00:00:00.0 UTC
@@ -68,6 +70,12 @@ export class Drop {
             "name": "wave",
             "baseName": "wave",
             "type": "WaveMin",
+            "format": ""
+        },
+        {
+            "name": "reply_to",
+            "baseName": "reply_to",
+            "type": "ReplyToDrop",
             "format": ""
         },
         {

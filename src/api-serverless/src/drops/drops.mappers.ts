@@ -114,6 +114,12 @@ export class DropsMappers {
       return {
         id: dropEntity.id,
         serial_no: dropEntity.serial_no,
+        reply_to: dropEntity.reply_to_drop_id
+          ? {
+              drop_id: dropEntity.reply_to_drop_id,
+              drop_part_id: dropEntity.reply_to_part_id ?? 0
+            }
+          : undefined,
         wave: (dropWave
           ? {
               id: dropWave.id,

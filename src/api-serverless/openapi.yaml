@@ -2208,6 +2208,8 @@ components:
           format: int64
         wave:
           $ref: "#/components/schemas/WaveMin"
+        reply_to:
+          $ref: "#/components/schemas/ReplyToDrop"
         author:
           $ref: "#/components/schemas/ProfileMin"
         created_at:
@@ -2261,6 +2263,18 @@ components:
             $ref: "#/components/schemas/DropSubscriptionTargetAction"
 
     QuotedDrop:
+      type: object
+      required:
+        - drop_id
+        - drop_part_id
+      properties:
+        drop_id:
+          type: string
+        drop_part_id:
+          type: number
+          format: int64
+
+    ReplyToDrop:
       type: object
       required:
         - drop_id
@@ -2507,6 +2521,8 @@ components:
       properties:
         wave_id:
           type: string
+        reply_to:
+          $ref: "#/components/schemas/ReplyToDrop"
 
     DropMedia:
       type: object
