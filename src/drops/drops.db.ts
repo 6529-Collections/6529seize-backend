@@ -93,14 +93,18 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                             wave_id,
                             created_at, 
                             title,
-                            parts_count
+                            parts_count,
+                            reply_to_drop_id,
+                            reply_to_part_id
     ) values (
               :id,
               :author_id,
               :wave_id,
               ROUND(UNIX_TIMESTAMP(CURTIME(4)) * 1000), 
               :title,
-              :parts_count
+              :parts_count,
+              :reply_to_drop_id,
+              :reply_to_part_id
              )`,
 
       { ...newDropEntity, id },

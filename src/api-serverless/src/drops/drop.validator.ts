@@ -14,6 +14,7 @@ import {
 } from '../page-request';
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { CreateWaveDropRequest } from '../generated/models/CreateWaveDropRequest';
+import { ReplyToDrop } from '../generated/models/ReplyToDrop';
 
 export interface DropActivityLogsQuery
   extends FullPageRequest<DropActivityLogsQuerySortOption> {
@@ -88,6 +89,12 @@ export const NewDropSchema: Joi.ObjectSchema<CreateDropRequest> = Joi.object({
     .default([])
     .allow(null),
   metadata: Joi.array().optional().items(MetadataSchema).default([]),
+  reply_to: Joi.object<ReplyToDrop>({
+    drop_id: Joi.string().required(),
+    drop_part_id: Joi.number().integer().min(0)
+  })
+    .optional()
+    .allow(null),
   wave_id: Joi.string().required()
 });
 

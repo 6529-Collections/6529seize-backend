@@ -79,6 +79,7 @@ export * from '../models/RateMatter';
 export * from '../models/RatingWithProfileInfoAndLevel';
 export * from '../models/RatingWithProfileInfoAndLevelPage';
 export * from '../models/RepRating';
+export * from '../models/ReplyToDrop';
 export * from '../models/UpdateProxyActionRequest';
 export * from '../models/Wave';
 export * from '../models/WaveConfig';
@@ -184,6 +185,7 @@ import { RateMatter } from '../models/RateMatter';
 import { RatingWithProfileInfoAndLevel } from '../models/RatingWithProfileInfoAndLevel';
 import { RatingWithProfileInfoAndLevelPage } from '../models/RatingWithProfileInfoAndLevelPage';
 import { RepRating } from '../models/RepRating';
+import { ReplyToDrop } from '../models/ReplyToDrop';
 import { UpdateProxyActionRequest } from '../models/UpdateProxyActionRequest';
 import { Wave } from '../models/Wave';
 import { WaveConfig        } from '../models/WaveConfig';
@@ -319,6 +321,7 @@ let typeMap: {[index: string]: any} = {
     "RatingWithProfileInfoAndLevel": RatingWithProfileInfoAndLevel,
     "RatingWithProfileInfoAndLevelPage": RatingWithProfileInfoAndLevelPage,
     "RepRating": RepRating,
+    "ReplyToDrop": ReplyToDrop,
     "UpdateProxyActionRequest": UpdateProxyActionRequest,
     "Wave": Wave,
     "WaveConfig": WaveConfig,
