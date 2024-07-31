@@ -64,7 +64,6 @@ export class UserNotificationMapper {
       data: {
         mentioned_identity_id: entity.identity_id,
         drop_id: entity.related_drop_id!,
-        drop_part_id: entity.related_drop_part_no!,
         mentioner_identity_id: entity.additional_identity_id!
       }
     };
@@ -99,7 +98,6 @@ export class UserNotificationMapper {
         replied_drop_author_id: entity.identity_id,
         reply_drop_author_id: entity.additional_identity_id!,
         reply_drop_id: entity.related_drop_id!,
-        reply_drop_part: entity.related_drop_part_no!,
         replied_drop_id: entity.related_drop_2_id!,
         replied_drop_part: entity.related_drop_2_part_no!
       }

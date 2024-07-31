@@ -10,11 +10,16 @@ import {
 import { identitiesDb, IdentitiesDb } from '../../../identities/identities.db';
 import { IdentitySubscriptionTargetAction } from '../generated/models/IdentitySubscriptionTargetAction';
 import { NotFoundException } from '../../../exceptions';
+import {
+  userNotifier,
+  UserNotifier
+} from '../../../notifications/user.notifier';
 
 export class IdentitiesService {
   constructor(
     private readonly identitiesDb: IdentitiesDb,
-    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
+    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
+    private readonly userNotifier: UserNotifier
   ) {}
 
   async addIdentitySubscriptionActions({
@@ -53,6 +58,15 @@ export class IdentitiesService {
         const actionsToAdd = proposedActions.filter(
           (it) => !existingActions.includes(it)
         );
+        if (!existingActions.length) {
+          await this.userNotifier.notifyOfIdentitySubscription(
+            {
+              subscriber_id: subscriber,
+              subscribed_to: identityId
+            },
+            connection
+          );
+        }
         for (const action of actionsToAdd) {
           await this.identitySubscriptionsDb.addIdentitySubscription(
             {
@@ -134,5 +148,6 @@ export class IdentitiesService {
 
 export const identitiesService = new IdentitiesService(
   identitiesDb,
-  identitySubscriptionsDb
+  identitySubscriptionsDb,
+  userNotifier
 );

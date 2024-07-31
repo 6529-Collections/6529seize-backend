@@ -1,6 +1,5 @@
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { ratingsService, RatingsService } from '../../../rates/ratings.service';
-import { ratingsDb, RatingsDb } from '../../../rates/ratings.db';
 import { RateMatter } from '../../../entities/IRating';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
@@ -9,12 +8,16 @@ import {
   activityRecorder,
   ActivityRecorder
 } from '../../../activity/activity.recorder';
+import {
+  userNotifier,
+  UserNotifier
+} from '../../../notifications/user.notifier';
 
 class DropRaterService {
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly ratingsService: RatingsService,
-    private readonly ratingsDb: RatingsDb,
+    private readonly userNotifier: UserNotifier,
     private readonly activityRecorder: ActivityRecorder
   ) {}
 
@@ -105,6 +108,16 @@ class DropRaterService {
           },
           connection
         );
+        await this.userNotifier.notifyOfDropVote(
+          {
+            drop_id: dropId,
+            drop_author_id: dropEntity.author_id,
+            voter_id: param.rater_profile_id,
+            vote: newRating
+          },
+          wave.visibility_group_id,
+          connection
+        );
         await this.ratingsService.updateRatingUnsafe({
           request: {
             rater_profile_id: param.rater_profile_id,
@@ -127,6 +140,6 @@ class DropRaterService {
 export const dropRaterService = new DropRaterService(
   dropsDb,
   ratingsService,
-  ratingsDb,
+  userNotifier,
   activityRecorder
 );
