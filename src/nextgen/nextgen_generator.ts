@@ -1,7 +1,8 @@
 import {
   S3Client,
   PutObjectCommand,
-  ListObjectsCommand
+  ListObjectsV2CommandOutput,
+  ListObjectsV2Command
 } from '@aws-sdk/client-s3';
 import {
   CLOUDFRONT_DISTRIBUTION,
@@ -27,17 +28,30 @@ export async function listS3Objects(
   s3: S3Client,
   path: string
 ): Promise<number[]> {
-  const command = new ListObjectsCommand({
-    Bucket: NEXTGEN_BUCKET,
-    Prefix: path
-  });
+  let isTruncated = true;
+  let continuationToken: string | undefined = undefined;
   const contents: number[] = [];
-  const response = await s3.send(command);
-  response.Contents?.forEach((object) => {
-    if (object.Key) {
-      contents.push(parseInt(object.Key?.replace(path, '')));
-    }
-  });
+
+  while (isTruncated) {
+    const command = new ListObjectsV2Command({
+      Bucket: NEXTGEN_BUCKET,
+      Prefix: path,
+      ContinuationToken: continuationToken
+    });
+    const response: ListObjectsV2CommandOutput = await s3.send(command);
+    response.Contents?.forEach((object) => {
+      if (object.Key) {
+        const parsedKey = parseInt(object.Key.replace(path, ''));
+        if (!isNaN(parsedKey)) {
+          contents.push(parsedKey);
+        }
+      }
+    });
+
+    isTruncated = response.IsTruncated ?? false;
+    continuationToken = response.NextContinuationToken;
+  }
+
   return contents;
 }
 
