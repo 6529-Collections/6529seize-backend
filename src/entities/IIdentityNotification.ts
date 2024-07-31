@@ -5,7 +5,7 @@ import { IDENTITY_NOTIFICATIONS_TABLE } from '../constants';
 @Index(['identity_id', 'created_at', 'read_at'])
 export class IdentityNotificationEntity {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
-  readonly id!: bigint;
+  readonly id!: number;
 
   @Index(`${IDENTITY_NOTIFICATIONS_TABLE}_identity_id_idx`)
   @Column({ type: 'varchar', length: 50, nullable: false })
