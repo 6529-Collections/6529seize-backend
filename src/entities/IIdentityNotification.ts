@@ -11,14 +11,26 @@ export class IdentityNotificationEntity {
   @Column({ type: 'varchar', length: 50, nullable: false })
   readonly identity_id!: string;
 
-  @Column({ type: 'varchar', length: 50, nullable: false })
-  readonly target_id!: string;
+  @Index(`${IDENTITY_NOTIFICATIONS_TABLE}_additional_identity_id_idx`)
+  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  readonly additional_identity_id!: string | null;
+
+  @Index(`${IDENTITY_NOTIFICATIONS_TABLE}_related_drop_id_idx`)
+  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  readonly related_drop_id!: string | null;
+
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly related_drop_part_no!: number | null;
+
+  @Index(`${IDENTITY_NOTIFICATIONS_TABLE}_related_drop_2_id_idx`)
+  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  readonly related_drop_2_id!: string | null;
+
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly related_drop_2_part_no!: number | null;
 
   @Column({ type: 'varchar', length: 50, nullable: false })
-  readonly target_type!: IdentityNotificationTargetType;
-
-  @Column({ type: 'varchar', length: 50, nullable: false })
-  readonly target_action!: IdentityNotificationAction;
+  readonly cause!: IdentityNotificationCause;
 
   @Column({ type: 'json', nullable: false })
   readonly additional_data!: string;
@@ -28,15 +40,15 @@ export class IdentityNotificationEntity {
 
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly read_at!: number | null;
+
+  @Column({ type: 'varchar', length: 50, nullable: true, default: null })
+  readonly visibility_group_id!: string | null;
 }
 
-export enum IdentityNotificationTargetType {
-  IDENTITY = 'IDENTITY',
-  DROP = 'DROP'
-}
-
-export enum IdentityNotificationAction {
+export enum IdentityNotificationCause {
+  IDENTITY_SUBSCRIBED = 'IDENTITY_SUBSCRIBED',
+  IDENTITY_MENTIONED = 'IDENTITY_MENTIONED',
+  DROP_QUOTED = 'DROP_QUOTED',
   DROP_REPLIED = 'DROP_REPLIED',
-  DROP_VOTED = 'DROP_VOTED',
-  SUBSCRIPTION_CREATED = 'SUBSCRIPTION_CREATED'
+  DROP_VOTED = 'DROP_VOTED'
 }

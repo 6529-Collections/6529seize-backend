@@ -52,6 +52,10 @@ import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '../entities/IActivityEvent';
+import {
+  identityNotificationsDb,
+  IdentityNotificationsDb
+} from '../notifications/identity-notifications.db';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -65,6 +69,7 @@ export class ProfilesService {
     private readonly repService: RepService,
     private readonly userGroupsDb: UserGroupsDb,
     private readonly identitiesDb: IdentitiesDb,
+    private readonly notificationsDb: IdentityNotificationsDb,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
 
@@ -587,6 +592,7 @@ export class ProfilesService {
         await this.mergeRatings(sourceIdentity, target, connectionHolder);
         await this.mergeProxies(sourceIdentity, target, connectionHolder);
         await this.mergeGroups(sourceIdentity, target, connectionHolder);
+        await this.mergeNotifications(sourceIdentity, target, connectionHolder);
         const targetProfile = await this.profilesDb.getProfileById(
           target,
           connectionHolder
@@ -1249,6 +1255,18 @@ export class ProfilesService {
       );
     }
   }
+
+  private async mergeNotifications(
+    sourceIdentity: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.notificationsDb.updateIdentityIdsInNotifications(
+      sourceIdentity,
+      target,
+      connectionHolder
+    );
+  }
 }
 
 export interface CommunityMemberMinimal {
@@ -1273,5 +1291,6 @@ export const profilesService = new ProfilesService(
   repService,
   userGroupsDb,
   identitiesDb,
+  identityNotificationsDb,
   getAlchemyInstance
 );

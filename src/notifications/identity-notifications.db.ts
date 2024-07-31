@@ -17,18 +17,26 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       `
         insert into ${IDENTITY_NOTIFICATIONS_TABLE} (
           identity_id, 
-          target_id, 
-          target_type, 
-          target_action, 
+          additional_identity_id,
+          related_drop_id,
+          related_drop_part_no,
+          related_drop_2_id,
+          related_drop_2_part_no,
+          cause,
           additional_data, 
-          created_at
+          created_at,
+          visibility_group_id
         ) values (
-          :identity_id, 
-          :target_id, 
-          :target_type, 
-          :target_action, 
-          :additional_data, 
-          :created_at
+          :identity_id,
+          :additional_identity_id,
+          :related_drop_id,
+          :related_drop_part_no,
+          :related_drop_2_id,
+          :related_drop_2_part_no,
+          :cause,
+          :additional_data,
+          :created_at,
+          :visibility_group_id
         )
       `,
       {
@@ -78,7 +86,12 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   }
 
   async findNotifications(
-    param: { identity_id: string; id_less_than: number | null; limit: number },
+    param: {
+      identity_id: string;
+      id_less_than: number | null;
+      limit: number;
+      eligible_group_ids: string[];
+    },
     connection?: ConnectionWrapper<any>
   ): Promise<IdentityNotificationDeserialized[]> {
     return this.db
@@ -87,7 +100,12 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         select * from ${IDENTITY_NOTIFICATIONS_TABLE}
         where identity_id = :identity_id ${
           param.id_less_than !== null ? `and id < :id_less_than` : ``
-        } 
+        }
+        and (visibility_group_id is null ${
+          param.eligible_group_ids.length
+            ? ` or visibility_group_id in (:eligible_group_ids) `
+            : ``
+        })
         order by id desc limit :limit
       `,
         param,
@@ -97,6 +115,12 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         results.map((it) => ({
           ...it,
           additional_data: JSON.parse(it.additional_data),
+          related_drop_part_no: parseIntOrNull(
+            it.related_drop_part_no?.toString()
+          ),
+          related_drop_2_part_no: parseIntOrNull(
+            it.related_drop_2_part_no?.toString()
+          ),
           created_at: parseInt(it.created_at.toString()),
           read_at: parseIntOrNull(it.read_at?.toString()),
           id: parseInt(it.id.toString())
@@ -106,19 +130,42 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
 
   async countUnreadNotificationsForIdentity(
     identity_id: string,
+    eligibleGroupIds: string[],
     connection?: ConnectionWrapper<any>
   ): Promise<number> {
     return this.db
       .oneOrNull<{ cnt: number }>(
         `
-        select count(*) as cnt from ${IDENTITY_NOTIFICATIONS_TABLE} where identity_id = :identity_id and read_at is null
+        select count(*) as cnt from ${IDENTITY_NOTIFICATIONS_TABLE} where identity_id = :identity_id and read_at is null and (visibility_group_id is null ${
+          eligibleGroupIds.length
+            ? ` or visibility_group_id in (:eligibleGroupIds) `
+            : ``
+        })
       `,
         {
-          identity_id
+          identity_id,
+          eligibleGroupIds
         },
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((it) => it?.cnt ?? 0);
+  }
+
+  async updateIdentityIdsInNotifications(
+    sourceIdentity: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update ${IDENTITY_NOTIFICATIONS_TABLE} set identity_id = :target where identity_id = :sourceIdentity`,
+      { sourceIdentity, target },
+      { wrappedConnection: connectionHolder }
+    );
+    await this.db.execute(
+      `update ${IDENTITY_NOTIFICATIONS_TABLE} set additional_identity_id = :target where additional_identity_id = :sourceIdentity`,
+      { sourceIdentity, target },
+      { wrappedConnection: connectionHolder }
+    );
   }
 }
 
