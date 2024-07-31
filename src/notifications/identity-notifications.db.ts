@@ -9,12 +9,17 @@ import { Time } from '../time';
 import { parseIntOrNull } from '../helpers';
 
 export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
+  private isNotifierActivated() {
+    return process.env.USER_NOTIFIER_ACTIVATED === 'true';
+  }
+
   async insertNotification(
     notification: NewIdentityNotification,
     connection?: ConnectionWrapper<any>
   ) {
-    await this.db.execute(
-      `
+    if (this.isNotifierActivated()) {
+      await this.db.execute(
+        `
         insert into ${IDENTITY_NOTIFICATIONS_TABLE} (
           identity_id, 
           additional_identity_id,
@@ -39,13 +44,14 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
           :visibility_group_id
         )
       `,
-      {
-        ...notification,
-        created_at: Time.currentMillis(),
-        additional_data: JSON.stringify(notification.additional_data)
-      },
-      connection ? { wrappedConnection: connection } : undefined
-    );
+        {
+          ...notification,
+          created_at: Time.currentMillis(),
+          additional_data: JSON.stringify(notification.additional_data)
+        },
+        connection ? { wrappedConnection: connection } : undefined
+      );
+    }
   }
 
   async markNotificationAsRead(
