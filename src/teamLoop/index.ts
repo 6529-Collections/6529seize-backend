@@ -1,9 +1,9 @@
-import { readFileSync, createReadStream } from 'fs';
+import { createReadStream, readFileSync } from 'fs';
 import { replaceTeam } from '../db';
 import { Team } from '../entities/ITeam';
-import { loadEnv } from '../secrets';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
+import { doInDbContext } from '../secrets';
 
 const Arweave = require('arweave');
 const csvParser = require('csv-parser');
@@ -18,15 +18,15 @@ const myarweave = Arweave.init({
   protocol: 'https'
 });
 
-export const handler = sentryContext.wrapLambdaHandler(
-  async (event?: any, context?: any) => {
-    logger.info('[RUNNING]');
-    await loadEnv([Team]);
-    await saveTeam();
-    await uploadTeam();
-    logger.info('[COMPLETE]');
-  }
-);
+export const handler = sentryContext.wrapLambdaHandler(async () => {
+  await doInDbContext(
+    async () => {
+      await saveTeam();
+      await uploadTeam();
+    },
+    { logger, entities: [Team] }
+  );
+});
 
 async function saveTeam() {
   const team: Team[] = [];

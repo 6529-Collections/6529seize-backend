@@ -1,18 +1,22 @@
 import { LabExtendedData, LabNFT } from '../entities/INFT';
 import { memeLabExtendedData, memeLabNfts } from '../meme_lab';
-import { loadEnv, unload } from '../secrets';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { NFTOwner } from '../entities/INFTOwner';
+import { doInDbContext } from '../secrets';
 
 const logger = Logger.get('MEME_LAB_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
-  logger.info('[RUNNING]');
-  await loadEnv([LabNFT, LabExtendedData, NFTOwner]);
-  await memeLabLoop();
-  await unload();
-  logger.info('[COMPLETE]');
+  await doInDbContext(
+    async () => {
+      await memeLabLoop();
+    },
+    {
+      entities: [LabNFT, LabExtendedData, NFTOwner],
+      logger
+    }
+  );
 });
 
 async function memeLabLoop() {

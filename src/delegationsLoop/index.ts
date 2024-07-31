@@ -12,10 +12,8 @@ import {
   DelegationEvent,
   NFTDelegationBlock
 } from '../entities/IDelegation';
-import { loadEnv, unload } from '../secrets';
 import { Logger } from '../logging';
 import { discoverEnsConsolidations, discoverEnsDelegations } from '../ens';
-import { Time } from '../time';
 import { getLastTDH } from '../helpers';
 import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
 import { dbSupplier, sqlExecutor } from '../sql-executor';
@@ -58,49 +56,53 @@ import {
   syncIdentitiesPrimaryWallets,
   syncIdentitiesWithTdhConsolidations
 } from '../identity';
+import { doInDbContext } from '../secrets';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
-  const start = Time.now();
-  await loadEnv([
-    Delegation,
-    Consolidation,
-    NFTDelegationBlock,
-    TDH,
-    ConsolidatedTDH,
-    NextGenTokenTDH,
-    TDHMemes,
-    ConsolidatedTDHMemes,
-    Profile,
-    MemesSeason,
-    NFTOwner,
-    ConsolidatedNFTOwner,
-    OwnerBalances,
-    OwnerBalancesMemes,
-    ConsolidatedOwnerBalances,
-    ConsolidatedOwnerBalancesMemes,
-    AggregatedActivity,
-    ConsolidatedAggregatedActivity,
-    AggregatedActivityMemes,
-    ConsolidatedAggregatedActivityMemes,
-    NftTDH
-  ]);
-  const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
-  const startBlock =
-    startBlockEnv && Number.isInteger(Number(startBlockEnv))
-      ? parseInt(startBlockEnv, 10)
-      : undefined;
+  await doInDbContext(
+    async () => {
+      const startBlockEnv = process.env.DELEGATIONS_RESET_BLOCK;
+      const startBlock =
+        startBlockEnv && Number.isInteger(Number(startBlockEnv))
+          ? parseInt(startBlockEnv, 10)
+          : undefined;
 
-  logger.info(`[RUNNING] [START_BLOCK ${startBlock}]`);
-  const delegationsResponse = await handleDelegations(startBlock);
-  await persistNftDelegationBlock(
-    delegationsResponse.block,
-    delegationsResponse.blockTimestamp
+      logger.info(`[START_BLOCK ${startBlock}]`);
+      const delegationsResponse = await handleDelegations(startBlock);
+      await persistNftDelegationBlock(
+        delegationsResponse.block,
+        delegationsResponse.blockTimestamp
+      );
+    },
+    {
+      logger,
+      entities: [
+        Delegation,
+        Consolidation,
+        NFTDelegationBlock,
+        TDH,
+        ConsolidatedTDH,
+        NextGenTokenTDH,
+        TDHMemes,
+        ConsolidatedTDHMemes,
+        Profile,
+        MemesSeason,
+        NFTOwner,
+        ConsolidatedNFTOwner,
+        OwnerBalances,
+        OwnerBalancesMemes,
+        ConsolidatedOwnerBalances,
+        ConsolidatedOwnerBalancesMemes,
+        AggregatedActivity,
+        ConsolidatedAggregatedActivity,
+        AggregatedActivityMemes,
+        ConsolidatedAggregatedActivityMemes,
+        NftTDH
+      ]
+    }
   );
-  await unload();
-  const diff = start.diffFromNow().formatAsDuration();
-  logger.info(`[COMPLETE IN ${diff}]`);
 });
 
 async function handleDelegations(startBlock: number | undefined) {

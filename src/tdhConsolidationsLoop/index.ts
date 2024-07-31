@@ -1,6 +1,5 @@
 import { distinct, getLastTDH } from '../helpers';
 import { consolidateTDH } from '../tdhLoop/tdh_consolidation';
-import { loadEnv, unload } from '../secrets';
 import {
   ConsolidatedTDH,
   ConsolidatedTDHMemes,
@@ -9,7 +8,6 @@ import {
   TDHMemes
 } from '../entities/ITDH';
 import { Logger } from '../logging';
-import { Time } from '../time';
 import { Profile } from '../entities/IProfile';
 import { fetchAllConsolidationAddresses } from '../db';
 import * as sentryContext from '../sentry.context';
@@ -32,37 +30,41 @@ import { consolidateNftOwners } from '../nftOwnersLoop/nft_owners';
 import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
 import { updateTDH } from '../tdhLoop/tdh';
 import { MemesSeason } from '../entities/ISeason';
+import { doInDbContext } from '../secrets';
 
 const logger = Logger.get('TDH_CONSOLIDATIONS_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
-  const start = Time.now();
-  await loadEnv([
-    TDH,
-    ConsolidatedTDH,
-    NextGenTokenTDH,
-    TDHMemes,
-    ConsolidatedTDHMemes,
-    Profile,
-    NFTOwner,
-    ConsolidatedNFTOwner,
-    OwnerBalances,
-    OwnerBalancesMemes,
-    ConsolidatedOwnerBalances,
-    ConsolidatedOwnerBalancesMemes,
-    AggregatedActivity,
-    ConsolidatedAggregatedActivity,
-    AggregatedActivityMemes,
-    ConsolidatedAggregatedActivityMemes,
-    NftTDH,
-    MemesSeason
-  ]);
-  const force = process.env.TDH_RESET == 'true';
-  logger.info(`[RUNNING force=${force}]`);
-  await consolidatedTdhLoop();
-  await unload();
-  const diff = start.diffFromNow().formatAsDuration();
-  logger.info(`[COMPLETE IN ${diff}]`);
+  await doInDbContext(
+    async () => {
+      const force = process.env.TDH_RESET == 'true';
+      logger.info(`[force=${force}]`);
+      await consolidatedTdhLoop();
+    },
+    {
+      logger,
+      entities: [
+        TDH,
+        ConsolidatedTDH,
+        NextGenTokenTDH,
+        TDHMemes,
+        ConsolidatedTDHMemes,
+        Profile,
+        NFTOwner,
+        ConsolidatedNFTOwner,
+        OwnerBalances,
+        OwnerBalancesMemes,
+        ConsolidatedOwnerBalances,
+        ConsolidatedOwnerBalancesMemes,
+        AggregatedActivity,
+        ConsolidatedAggregatedActivity,
+        AggregatedActivityMemes,
+        ConsolidatedAggregatedActivityMemes,
+        NftTDH,
+        MemesSeason
+      ]
+    }
+  );
 });
 
 async function consolidatedTdhLoop() {

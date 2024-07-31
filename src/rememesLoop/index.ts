@@ -1,5 +1,5 @@
 import { createReadStream } from 'fs';
-import { loadEnv } from '../secrets';
+import { doInDbContext } from '../secrets';
 import { Rememe, RememeSource, RememeUpload } from '../entities/IRememe';
 import { Alchemy } from 'alchemy-sdk';
 import { ALCHEMY_SETTINGS, CLOUDFRONT_LINK } from '../constants';
@@ -14,7 +14,6 @@ import converter from 'json-2-csv';
 import { persistRememesS3 } from '../s3_rememes';
 import { areEqualAddresses, getContentType } from '../helpers';
 import { Logger } from '../logging';
-import { Time } from '../time';
 import * as sentryContext from '../sentry.context';
 
 const Arweave = require('arweave');
@@ -38,35 +37,36 @@ const myarweave = Arweave.init({
 
 let alchemy: Alchemy;
 
-export const handler = sentryContext.wrapLambdaHandler(
-  async (event?: any, context?: any) => {
-    logger.info('[RUNNING]');
-    const start = Time.now();
-    await loadEnv([Rememe, RememeUpload]);
-    const loadFile = process.env.REMEMES_LOAD_FILE == 'true';
-    const rememesS3 = process.env.REMEMES_S3 == 'true';
+export const handler = sentryContext.wrapLambdaHandler(async () => {
+  await doInDbContext(
+    async () => {
+      const loadFile = process.env.REMEMES_LOAD_FILE == 'true';
+      const rememesS3 = process.env.REMEMES_S3 == 'true';
 
-    alchemy = new Alchemy({
-      ...ALCHEMY_SETTINGS,
-      apiKey: process.env.ALCHEMY_API_KEY
-    });
+      alchemy = new Alchemy({
+        ...ALCHEMY_SETTINGS,
+        apiKey: process.env.ALCHEMY_API_KEY
+      });
 
-    const rememes: Rememe[] = await fetchRememes();
+      const rememes: Rememe[] = await fetchRememes();
 
-    if (rememesS3) {
-      await persistS3();
-    } else if (loadFile) {
-      const csvData = await loadRememes();
-      await processRememes(rememes, csvData);
-      await uploadRememes();
-    } else {
-      await refreshRememes(rememes);
-      await uploadRememes();
+      if (rememesS3) {
+        await persistS3();
+      } else if (loadFile) {
+        const csvData = await loadRememes();
+        await processRememes(rememes, csvData);
+        await uploadRememes();
+      } else {
+        await refreshRememes(rememes);
+        await uploadRememes();
+      }
+    },
+    {
+      logger,
+      entities: [Rememe, RememeUpload]
     }
-
-    logger.info(`[COMPLETE in ${start.diffFromNow()}]`);
-  }
-);
+  );
+});
 
 async function loadRememes() {
   const csvData: CSVData[] = [];

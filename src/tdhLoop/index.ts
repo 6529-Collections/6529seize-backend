@@ -3,7 +3,6 @@ import { getLastTDH } from '../helpers';
 import { findNftTDH } from './nft_tdh';
 import { updateTDH } from './tdh';
 import { consolidateTDH } from './tdh_consolidation';
-import { loadEnv, unload } from '../secrets';
 import { ConsolidatedTDHUpload } from '../entities/IUpload';
 import {
   ConsolidatedTDH,
@@ -27,31 +26,37 @@ import {
   ConsolidatedOwnerBalances,
   OwnerBalances
 } from '../entities/IOwnerBalances';
+import { doInDbContext } from '../secrets';
 
 const logger = Logger.get('TDH_LOOP');
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
-  await loadEnv([
-    TDH,
-    ConsolidatedTDH,
-    TDHMemes,
-    ConsolidatedTDHMemes,
-    NextGenTokenTDH,
-    ConsolidatedTDHUpload,
-    NFT,
-    Profile,
-    MemesSeason,
-    NFTOwner,
-    NftTDH,
-    OwnerBalances,
-    ConsolidatedOwnerBalances,
-    TDHBlock
-  ]);
-  const force = process.env.TDH_RESET == 'true';
-  logger.info(`[RUNNING force=${force}]`);
-  await tdhLoop(force);
-  await unload();
-  logger.info('[COMPLETE]');
+  await doInDbContext(
+    async () => {
+      const force = process.env.TDH_RESET == 'true';
+      logger.info(`[force=${force}]`);
+      await tdhLoop(force);
+    },
+    {
+      logger,
+      entities: [
+        TDH,
+        ConsolidatedTDH,
+        TDHMemes,
+        ConsolidatedTDHMemes,
+        NextGenTokenTDH,
+        ConsolidatedTDHUpload,
+        NFT,
+        Profile,
+        MemesSeason,
+        NFTOwner,
+        NftTDH,
+        OwnerBalances,
+        ConsolidatedOwnerBalances,
+        TDHBlock
+      ]
+    }
+  );
 });
 
 export async function tdhLoop(force?: boolean) {

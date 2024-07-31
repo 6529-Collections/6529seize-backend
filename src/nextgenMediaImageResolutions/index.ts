@@ -4,7 +4,6 @@ import {
   NEXTGEN_BUCKET_AWS_REGION,
   NEXTGEN_CF_BASE_PATH
 } from '../nextgen/nextgen_constants';
-import { Time } from '../time';
 import {
   getImageBlobFromGenerator,
   getNextBatch,
@@ -12,7 +11,7 @@ import {
   s3UploadNextgenImage
 } from '../nextgen/nextgen_generator';
 import { sepolia } from '@wagmi/chains';
-import { loadEnv } from '../secrets';
+import { doInDbContext } from '../secrets';
 import { sendDiscordUpdate } from '../notifier-discord';
 
 const logger = Logger.get('NEXTGEN_IMAGES_LOOP');
@@ -39,25 +38,29 @@ const END_INDEX = 10000000999;
 const BATCH_SIZE = 60;
 
 export const handler = async () => {
-  const start = Time.now();
-  logger.info(`[RUNNING]`);
-  await loadEnv([]);
-  setup();
+  await doInDbContext(
+    async () => {
+      setup();
 
-  const resolutions = [Resolution['thumbnail'], Resolution['0.5k']];
+      const resolutions = [Resolution['thumbnail'], Resolution['0.5k']];
 
-  for (let resolution of resolutions) {
-    const path =
-      resolution == Resolution['thumbnail'] ? resolution : `png${resolution}`;
-    const isFinished = await findMissingImages(resolution, path);
-    if (!isFinished) {
-      logger.info(`[RESOLUTION ${resolution.toUpperCase()}] : [NOT FINISHED]`);
-      break;
-    }
-    logger.info(`[RESOLUTION ${resolution.toUpperCase()}] : [FINISHED]`);
-  }
-  const diff = start.diffFromNow().formatAsDuration();
-  logger.info(`[COMPLETE IN ${diff}]`);
+      for (const resolution of resolutions) {
+        const path =
+          resolution == Resolution['thumbnail']
+            ? resolution
+            : `png${resolution}`;
+        const isFinished = await findMissingImages(resolution, path);
+        if (!isFinished) {
+          logger.info(
+            `[RESOLUTION ${resolution.toUpperCase()}] : [NOT FINISHED]`
+          );
+          break;
+        }
+        logger.info(`[RESOLUTION ${resolution.toUpperCase()}] : [FINISHED]`);
+      }
+    },
+    { logger }
+  );
 };
 
 function getNetworkPath() {
