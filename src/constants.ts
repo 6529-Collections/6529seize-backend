@@ -103,6 +103,7 @@ export const ETH_PRICE_TABLE = 'eth_price';
 export const PRENODES_TABLE = 'prenodes';
 
 export const IDENTITY_SUBSCRIPTIONS_TABLE = 'identity_subscriptions';
+export const IDENTITY_NOTIFICATIONS_TABLE = 'identity_notifications';
 export const ACTIVITY_EVENTS_TABLE = 'activity_events';
 
 export const MEMES_CONTRACT = '0x33FD426905F149f8376e227d0C9D3340AaD17aF1';
