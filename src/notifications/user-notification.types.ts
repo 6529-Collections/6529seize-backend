@@ -8,7 +8,6 @@ export interface IdentitySubscriptionNotificationData {
 export interface IdentityMentionNotificationData {
   mentioned_identity_id: string;
   drop_id: string;
-  drop_part_id: number;
   mentioner_identity_id: string;
 }
 
@@ -21,7 +20,6 @@ export interface DropVoteNotificationData {
 
 export interface DropReplyNotificationData {
   reply_drop_id: string;
-  reply_drop_part: number;
   reply_drop_author_id: string;
   replied_drop_id: string;
   replied_drop_part: number;

@@ -41,7 +41,6 @@ export class UserNotifier {
     {
       mentioned_identity_id,
       drop_id,
-      drop_part_id,
       mentioner_identity_id
     }: IdentityMentionNotificationData,
     visibility_group_id: string | null,
@@ -52,7 +51,7 @@ export class UserNotifier {
         identity_id: mentioned_identity_id,
         additional_identity_id: mentioner_identity_id,
         related_drop_id: drop_id,
-        related_drop_part_no: drop_part_id,
+        related_drop_part_no: null,
         related_drop_2_id: null,
         related_drop_2_part_no: null,
         cause: IdentityNotificationCause.IDENTITY_MENTIONED,
@@ -87,7 +86,6 @@ export class UserNotifier {
   public async notifyOfDropReply(
     {
       reply_drop_id,
-      reply_drop_part,
       reply_drop_author_id,
       replied_drop_id,
       replied_drop_part,
@@ -101,7 +99,7 @@ export class UserNotifier {
         identity_id: replied_drop_author_id,
         additional_identity_id: reply_drop_author_id,
         related_drop_id: reply_drop_id,
-        related_drop_part_no: reply_drop_part,
+        related_drop_part_no: null,
         related_drop_2_id: replied_drop_id,
         related_drop_2_part_no: replied_drop_part,
         cause: IdentityNotificationCause.DROP_REPLIED,

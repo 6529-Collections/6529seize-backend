@@ -35,6 +35,10 @@ import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
+import {
+  userNotifier,
+  UserNotifier
+} from '../../../notifications/user.notifier';
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(DropCreationApiService.name);
@@ -44,7 +48,8 @@ export class DropCreationApiService {
     private readonly dropsDb: DropsDb,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly userGroupsService: UserGroupsService,
-    private readonly activityRecorder: ActivityRecorder
+    private readonly activityRecorder: ActivityRecorder,
+    private readonly userNotifier: UserNotifier
   ) {}
 
   async createDrop(
@@ -119,6 +124,25 @@ export class DropCreationApiService {
       },
       connection
     );
+    const visibilityGroupId = await wavesApiDb.findWaveVisibilityGroupByDropId(
+      dropId,
+      connection
+    );
+    if (createDropRequest.reply_to) {
+      const replyToEntity = await this.dropsDb
+        .getDropsByIds([createDropRequest.reply_to.drop_id], connection)
+        .then((it) => it[0]);
+      await this.userNotifier.notifyOfDropReply(
+        {
+          reply_drop_id: dropId,
+          reply_drop_author_id: replyToEntity.author_id,
+          replied_drop_id: createDropRequest.reply_to.drop_id,
+          replied_drop_part: createDropRequest.reply_to.drop_part_id,
+          replied_drop_author_id: replyToEntity.author_id
+        },
+        visibilityGroupId
+      );
+    }
     await identitySubscriptionsDb.addIdentitySubscription(
       {
         subscriber_id: authorId,
@@ -138,8 +162,6 @@ export class DropCreationApiService {
       connection
     );
     if (!isDescriptionDrop) {
-      const visibilityGroupId =
-        await wavesApiDb.findWaveVisibilityGroupByDropId(dropId, connection);
       await this.activityRecorder.recordDropCreated({
         drop_id: dropId,
         creator_id: authorId,
@@ -169,6 +191,17 @@ export class DropCreationApiService {
       mentioned_profile_id: it.mentioned_profile_id,
       handle_in_content: it.handle_in_content
     }));
+    for (const mentionEntity of mentionEntities) {
+      await this.userNotifier.notifyOfIdentityMention(
+        {
+          mentioned_identity_id: mentionEntity.mentioned_profile_id,
+          drop_id: dropId,
+          mentioner_identity_id: authorId
+        },
+        visibilityGroupId,
+        connection
+      );
+    }
     await this.dropsDb.insertMentions(mentionEntities, connection);
     const referencedNfts = Object.values(
       createDropRequest.referenced_nfts.reduce<
@@ -213,6 +246,27 @@ export class DropCreationApiService {
       })),
       connection
     );
+    let idx = 1;
+    for (const createDropPart of createDropParts) {
+      const quotedDrop = createDropPart.quoted_drop;
+      if (quotedDrop) {
+        const quotedEntity = await this.dropsDb
+          .getDropsByIds([quotedDrop.drop_id], connection)
+          .then((it) => it[0]);
+        await this.userNotifier.notifyOfDropQuote(
+          {
+            quote_drop_id: dropId,
+            quote_drop_part: idx,
+            quote_drop_author_id: quotedEntity.author_id,
+            quoted_drop_id: quotedDrop.drop_id,
+            quoted_drop_part: quotedDrop.drop_part_id,
+            quoted_drop_author_id: quotedEntity.author_id
+          },
+          visibilityGroupId
+        );
+      }
+      idx++;
+    }
     return this.dropsService.findDropByIdOrThrow(
       {
         dropId,
@@ -381,5 +435,6 @@ export const dropCreationService = new DropCreationApiService(
   dropsDb,
   profileActivityLogsDb,
   userGroupsService,
-  activityRecorder
+  activityRecorder,
+  userNotifier
 );

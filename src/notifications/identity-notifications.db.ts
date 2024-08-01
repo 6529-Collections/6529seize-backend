@@ -73,7 +73,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async markAllIdentityNotificationsAsRead(
+  async markAllNotificationsAsRead(
     identity_id: string,
     connection?: ConnectionWrapper<any>
   ) {
