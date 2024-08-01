@@ -9,9 +9,16 @@ import {
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
 import {
+  DROPS_TABLE,
+  IDENTITIES_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
-  WAVE_METRICS_TABLE
+  WAVE_METRICS_TABLE,
+  WAVES_TABLE
 } from '../../../constants';
+import {
+  IncomingIdentitySubscriptionsParams,
+  OutgoingIdentitySubscriptionsParams
+} from './identity-subscriptions.routes';
 
 export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   async addIdentitySubscription(
@@ -129,6 +136,137 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
         wrappedConnection: connection
       }
     );
+  }
+
+  async findSubscriberIdsAndActionsForTarget(
+    params: IncomingIdentitySubscriptionsParams
+  ): Promise<Record<string, ActivityEventAction[]>> {
+    return this.db
+      .execute<{ id: string; actions: string }>(
+        `
+      with scr as (select s.subscriber_id as id, group_concat(target_action) as actions
+             from ${IDENTITY_SUBSCRIPTIONS_TABLE} s
+             where s.target_id = :target_id
+               and s.target_type = :target_type
+             group by 1)
+      select scr.*
+      from scr
+               join ${IDENTITIES_TABLE} i on scr.id = i.profile_id
+      order by i.level_raw desc
+      limit :limit offset :offset
+    `,
+        {
+          ...params,
+          offset: (params.page - 1) * params.page_size,
+          limit: params.page_size
+        }
+      )
+      .then((result) =>
+        result.reduce((acc, it) => {
+          acc[it.id] = it.actions.split(',') as ActivityEventAction[];
+          return acc;
+        }, {} as Record<string, ActivityEventAction[]>)
+      );
+  }
+
+  async findTargetIdsAndActionsForTarget(
+    params: OutgoingIdentitySubscriptionsParams,
+    eligibleGroupIds: string[]
+  ): Promise<Record<string, ActivityEventAction[]>> {
+    return this.db
+      .execute<{ id: string; actions: string }>(
+        `
+      with scr as (select s.target_id as id, group_concat(target_action) as actions
+             from ${IDENTITY_SUBSCRIPTIONS_TABLE} s
+             ${
+               params.target_type === ActivityEventTargetType.WAVE
+                 ? `join ${WAVES_TABLE} w on s.target_id = w.id and (w.visibility_group_id is null ${
+                     eligibleGroupIds.length
+                       ? `or w.visibility_group_id in (:eligibleGroupIds)`
+                       : ``
+                   })`
+                 : ''
+             }
+          ${
+            params.target_type === ActivityEventTargetType.DROP
+              ? `join ${DROPS_TABLE} d on s.target_id = d.id
+              join ${WAVES_TABLE} w on d.wave_id = w.id and (w.visibility_group_id is null ${
+                  eligibleGroupIds.length
+                    ? `or w.visibility_group_id in (:eligibleGroupIds)`
+                    : ``
+                })`
+              : ''
+          }
+             where s.subscriber_id = :subscriber_id
+               and s.target_type = :target_type
+             group by 1)
+      select scr.* from scr
+      order by scr.id desc
+      limit :limit offset :offset
+    `,
+        {
+          ...params,
+          eligibleGroupIds,
+          offset: (params.page - 1) * params.page_size,
+          limit: params.page_size
+        }
+      )
+      .then((result) =>
+        result.reduce((acc, it) => {
+          acc[it.id] = it.actions.split(',') as ActivityEventAction[];
+          return acc;
+        }, {} as Record<string, ActivityEventAction[]>)
+      );
+  }
+
+  async countDistinctSubscriberIdsForTarget(
+    params: IncomingIdentitySubscriptionsParams
+  ): Promise<number> {
+    return this.db
+      .oneOrNull<{
+        cnt: number;
+      }>(
+        `select count(distinct subscriber_id) as cnt from ${IDENTITY_SUBSCRIPTIONS_TABLE} where target_id = :target_id and target_type = :target_type`,
+        params
+      )
+      .then((it) => it?.cnt ?? 0);
+  }
+
+  async countTargetIdsAndActionsForTarget(
+    params: OutgoingIdentitySubscriptionsParams,
+    eligibleGroupIds: string[]
+  ): Promise<number> {
+    return this.db
+      .oneOrNull<{ cnt: number }>(
+        `select count(distinct s.target_id) as cnt from ${IDENTITY_SUBSCRIPTIONS_TABLE} s 
+        ${
+          params.target_type === ActivityEventTargetType.WAVE
+            ? `join ${WAVES_TABLE} w on s.target_id = w.id and (w.visibility_group_id is null ${
+                eligibleGroupIds.length
+                  ? `or w.visibility_group_id in (:eligibleGroupIds)`
+                  : ``
+              })`
+            : ''
+        }
+          ${
+            params.target_type === ActivityEventTargetType.DROP
+              ? `join ${DROPS_TABLE} d on s.target_id = d.id
+              join ${WAVES_TABLE} w on d.wave_id = w.id and (w.visibility_group_id is null ${
+                  eligibleGroupIds.length
+                    ? `or w.visibility_group_id in (:eligibleGroupIds)`
+                    : ``
+                })`
+              : ''
+          }
+        where s.subscriber_id = :subscriber_id and s.target_type = :target_type`,
+        {
+          ...params,
+          eligibleGroupIds,
+          offset: (params.page - 1) * params.page_size,
+          limit: params.page_size
+        }
+      )
+      .then((result) => result?.cnt ?? 0);
   }
 }
 
