@@ -38,7 +38,19 @@ export class AbusivenessCheckService {
       const result = await this.aiBasedAbusivenessDetector.checkRepPhraseText(
         txt
       );
-      await this.abusivenessCheckDb.saveResult(result);
+      try {
+        await this.abusivenessCheckDb.saveResult(result);
+      } catch (e) {
+        const dbError = e as { code?: string };
+        if (dbError.code === 'ER_DUP_ENTRY') {
+          const existingResult = await this.abusivenessCheckDb.findResult(txt);
+          if (existingResult) {
+            return existingResult;
+          }
+        }
+        // If it's not a duplicate entry error or we couldn't find the existing result, rethrow:
+        throw e;
+      }
       return result;
     } catch (e) {
       this.logger.error('AI abusiveness check threw an error');
