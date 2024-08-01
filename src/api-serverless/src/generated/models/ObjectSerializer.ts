@@ -30,11 +30,7 @@ export * from '../models/CreateNewWaveVotingConfig';
 export * from '../models/CreateWaveConfig';
 export * from '../models/CreateWaveDropRequest';
 export * from '../models/Drop';
-export * from '../models/DropActivityLog';
-export * from '../models/DropAndDropComment';
 export * from '../models/DropAndDropVote';
-export * from '../models/DropComment';
-export * from '../models/DropCommentsPage';
 export * from '../models/DropContextProfileContext';
 export * from '../models/DropMedia';
 export * from '../models/DropMentionedUser';
@@ -47,6 +43,7 @@ export * from '../models/DropReferencedNFT';
 export * from '../models/DropSubscriptionActions';
 export * from '../models/DropSubscriptionTargetAction';
 export * from '../models/DropVote';
+export * from '../models/DropsPage';
 export * from '../models/FeedItem';
 export * from '../models/FeedItemType';
 export * from '../models/Group';
@@ -64,7 +61,6 @@ export * from '../models/IdentitySubscriptionTargetType';
 export * from '../models/IntRange';
 export * from '../models/LoginRequest';
 export * from '../models/LoginResponse';
-export * from '../models/NewDropComment';
 export * from '../models/Nft';
 export * from '../models/NftsPage';
 export * from '../models/NonceResponse';
@@ -139,11 +135,7 @@ import { CreateNewWaveVotingConfig        } from '../models/CreateNewWaveVotingC
 import { CreateWaveConfig       } from '../models/CreateWaveConfig';
 import { CreateWaveDropRequest } from '../models/CreateWaveDropRequest';
 import { Drop } from '../models/Drop';
-import { DropActivityLog     , DropActivityLogTypeEnum    } from '../models/DropActivityLog';
-import { DropAndDropComment } from '../models/DropAndDropComment';
 import { DropAndDropVote } from '../models/DropAndDropVote';
-import { DropComment } from '../models/DropComment';
-import { DropCommentsPage } from '../models/DropCommentsPage';
 import { DropContextProfileContext } from '../models/DropContextProfileContext';
 import { DropMedia } from '../models/DropMedia';
 import { DropMentionedUser } from '../models/DropMentionedUser';
@@ -156,6 +148,7 @@ import { DropReferencedNFT } from '../models/DropReferencedNFT';
 import { DropSubscriptionActions } from '../models/DropSubscriptionActions';
 import { DropSubscriptionTargetAction } from '../models/DropSubscriptionTargetAction';
 import { DropVote } from '../models/DropVote';
+import { DropsPage } from '../models/DropsPage';
 import { FeedItem    } from '../models/FeedItem';
 import { FeedItemType } from '../models/FeedItemType';
 import { Group } from '../models/Group';
@@ -173,7 +166,6 @@ import { IdentitySubscriptionTargetType } from '../models/IdentitySubscriptionTa
 import { IntRange } from '../models/IntRange';
 import { LoginRequest } from '../models/LoginRequest';
 import { LoginResponse } from '../models/LoginResponse';
-import { NewDropComment } from '../models/NewDropComment';
 import { Nft      , NftTokenTypeEnum                            } from '../models/Nft';
 import { NftsPage } from '../models/NftsPage';
 import { NonceResponse } from '../models/NonceResponse';
@@ -230,7 +222,6 @@ let primitives = [
 
 let enumsMap: Set<string> = new Set<string>([
     "AcceptActionRequestActionEnum",
-    "DropActivityLogTypeEnum",
     "DropSubscriptionTargetAction",
     "FeedItemType",
     "GroupFilterDirection",
@@ -286,11 +277,7 @@ let typeMap: {[index: string]: any} = {
     "CreateWaveConfig": CreateWaveConfig,
     "CreateWaveDropRequest": CreateWaveDropRequest,
     "Drop": Drop,
-    "DropActivityLog": DropActivityLog,
-    "DropAndDropComment": DropAndDropComment,
     "DropAndDropVote": DropAndDropVote,
-    "DropComment": DropComment,
-    "DropCommentsPage": DropCommentsPage,
     "DropContextProfileContext": DropContextProfileContext,
     "DropMedia": DropMedia,
     "DropMentionedUser": DropMentionedUser,
@@ -302,6 +289,7 @@ let typeMap: {[index: string]: any} = {
     "DropReferencedNFT": DropReferencedNFT,
     "DropSubscriptionActions": DropSubscriptionActions,
     "DropVote": DropVote,
+    "DropsPage": DropsPage,
     "FeedItem": FeedItem,
     "Group": Group,
     "GroupCicFilter": GroupCicFilter,
@@ -315,7 +303,6 @@ let typeMap: {[index: string]: any} = {
     "IntRange": IntRange,
     "LoginRequest": LoginRequest,
     "LoginResponse": LoginResponse,
-    "NewDropComment": NewDropComment,
     "Nft": Nft,
     "NftsPage": NftsPage,
     "NonceResponse": NonceResponse,

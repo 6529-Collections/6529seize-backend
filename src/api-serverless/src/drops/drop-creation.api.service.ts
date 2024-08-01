@@ -157,7 +157,7 @@ export class DropCreationApiService {
         subscriber_id: authorId,
         target_id: dropId.toString(),
         target_type: ActivityEventTargetType.DROP,
-        target_action: ActivityEventAction.DROP_COMMENTED
+        target_action: ActivityEventAction.DROP_REPLIED
       },
       connection
     );
@@ -166,7 +166,13 @@ export class DropCreationApiService {
         drop_id: dropId,
         creator_id: authorId,
         wave_id: createDropRequest.wave_id,
-        visibility_group_id: visibilityGroupId
+        visibility_group_id: visibilityGroupId,
+        reply_to: createDropRequest.reply_to
+          ? {
+              drop_id: createDropRequest.reply_to.drop_id,
+              part_id: createDropRequest.reply_to.drop_part_id
+            }
+          : null
       });
     }
     await this.profileActivityLogsDb.insert(
@@ -336,6 +342,11 @@ export class DropCreationApiService {
           `Invalid reply. Drop $${dropId}/${dropPartId} doesn't exist`
         );
       }
+      if (replyToEntity.wave_id !== createDropRequest.wave_id) {
+        throw new BadRequestException(
+          `Invalid reply. Drop you are replying to is not in the same wave as you attempt to create a drop in`
+        );
+      }
     }
   }
 
@@ -353,8 +364,10 @@ export class DropCreationApiService {
     if (groupId && !groupIdsUserIsEligibleFor.includes(groupId)) {
       throw new ForbiddenException(`User is not eligible for this wave`);
     }
-    this.verifyMedia(wave, createDropRequest);
-    this.verifyMetadata(wave, createDropRequest);
+    if (!createDropRequest.reply_to?.drop_id) {
+      this.verifyMedia(wave, createDropRequest);
+      this.verifyMetadata(wave, createDropRequest);
+    }
     await this.verifyParticipatoryLimitations(
       wave,
       authenticationContext.getActingAsId()!

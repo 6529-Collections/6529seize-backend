@@ -9,10 +9,9 @@ import {
   ActivityEventEntity,
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
-import { assertUnreachable, parseIntOrNull } from '../../../helpers';
+import { assertUnreachable, distinct } from '../../../helpers';
 import { Drop } from '../generated/models/Drop';
 import { Wave } from '../generated/models/Wave';
-import { DropComment } from '../generated/models/DropComment';
 import { DropVote } from '../generated/models/DropVote';
 import { dropsService } from '../drops/drops.api.service';
 import { AuthenticationContext } from '../../../auth-context';
@@ -80,7 +79,7 @@ export class FeedApiService {
   private createActionKey(it: ActivityEventEntity): string {
     const data = JSON.parse(it.data);
     switch (it.action) {
-      case ActivityEventAction.DROP_COMMENTED: {
+      case ActivityEventAction.DROP_REPLIED: {
         const dropId =
           it.target_type === ActivityEventTargetType.DROP
             ? it.target_id
@@ -89,7 +88,7 @@ export class FeedApiService {
           it.target_type === ActivityEventTargetType.IDENTITY
             ? data.drop_id
             : it.target_id;
-        return `drop-comment-${dropId}-${voterId}`;
+        return `drop-reply-${dropId}-${voterId}`;
       }
       case ActivityEventAction.DROP_VOTED: {
         const dropId =
@@ -132,7 +131,7 @@ export class FeedApiService {
         return [
           ActivityEventAction.DROP_CREATED,
           ActivityEventAction.DROP_VOTED,
-          ActivityEventAction.DROP_COMMENTED
+          ActivityEventAction.DROP_REPLIED
         ].includes(action);
       })
       .map((it) => {
@@ -148,14 +147,14 @@ export class FeedApiService {
         const data = JSON.parse(it.data);
         return data.wave_id ?? it.target_id;
       });
-    const commentsNeeded: number[] = activityEvents
+    const repliesNeeded: string[] = activityEvents
       .filter((it) => {
         const action = it.action;
-        return [ActivityEventAction.DROP_COMMENTED].includes(action);
+        return [ActivityEventAction.DROP_REPLIED].includes(action);
       })
       .map((it) => {
         const data = JSON.parse(it.data);
-        return parseIntOrNull(data.comment_id as string)!;
+        return data.reply_id as string;
       });
     const votesNeeded: {
       dropId: string;
@@ -173,36 +172,45 @@ export class FeedApiService {
         const voterId = (data.voter_id ?? it.target_id) as string;
         return { dropId, voterId, vote: data.vote, time: it.created_at };
       });
-    const { drops, waves, votes, comments } = await this.getRelatedData({
+    const { drops, waves, votes } = await this.getRelatedData({
       dropsIdsNeeded,
       waveIdsNeeded,
-      commentsNeeded,
+      replyDropsNeeded: repliesNeeded,
       votesNeeded,
       groupIdsUserIsEligibleFor,
       authenticationContext
     });
-    return activityEvents.map<FeedItem>((it) => {
+    const feedItems = activityEvents.map<FeedItem>((it) => {
       return this.activityEventToFeedItem({
         activityEvent: it,
         waves,
         drops,
-        comments,
         votes
       });
     });
+    const seenReplyPairs = new Set<string>();
+    return feedItems.reduce((acc, it) => {
+      if (it.type === FeedItemType.DropReplied) {
+        const key = `${it.item.drop.id}-${it.item.reply.id}`;
+        if (seenReplyPairs.has(key)) {
+          return acc;
+        }
+        seenReplyPairs.add(key);
+      }
+      acc.push(it);
+      return acc;
+    }, [] as FeedItem[]);
   }
 
   private activityEventToFeedItem({
     activityEvent,
     waves,
     drops,
-    comments,
     votes
   }: {
     activityEvent: ActivityEventEntity;
     waves: Record<string, Wave>;
     drops: Record<string, Drop>;
-    comments: Record<string, DropComment>;
     votes: Record<string, DropVote>;
   }): FeedItem {
     const action = activityEvent.action;
@@ -219,23 +227,34 @@ export class FeedApiService {
       case ActivityEventAction.DROP_CREATED: {
         const dropId = (JSON.parse(activityEvent.data).drop_id ??
           activityEvent.target_id) as string;
+        const drop = drops[dropId];
+        if (drop.reply_to) {
+          return {
+            item: {
+              reply: drop,
+              drop: drops[drop.reply_to.drop_id]
+            },
+            serial_no: eventId,
+            type: FeedItemType.DropReplied
+          };
+        }
         return {
-          item: drops[dropId],
+          item: drop,
           serial_no: eventId,
           type: FeedItemType.DropCreated
         };
       }
-      case ActivityEventAction.DROP_COMMENTED: {
+      case ActivityEventAction.DROP_REPLIED: {
         const data = JSON.parse(activityEvent.data);
+        const replyId = data.reply_id as string;
         const dropId = (data.drop_id ?? activityEvent.target_id) as string;
-        const commentId = data.comment_id as string;
         return {
           item: {
             drop: drops[dropId],
-            comment: comments[commentId]
+            reply: drops[replyId]
           },
           serial_no: eventId,
-          type: FeedItemType.DropCommented
+          type: FeedItemType.DropReplied
         };
       }
       case ActivityEventAction.DROP_VOTED: {
@@ -261,14 +280,14 @@ export class FeedApiService {
     groupIdsUserIsEligibleFor,
     dropsIdsNeeded,
     waveIdsNeeded,
-    commentsNeeded,
+    replyDropsNeeded,
     votesNeeded,
     authenticationContext
   }: {
     groupIdsUserIsEligibleFor: string[];
     dropsIdsNeeded: string[];
     waveIdsNeeded: string[];
-    commentsNeeded: number[];
+    replyDropsNeeded: string[];
     votesNeeded: {
       dropId: string;
       vote: number;
@@ -279,19 +298,30 @@ export class FeedApiService {
   }): Promise<{
     drops: Record<string, Drop>;
     waves: Record<string, Wave>;
-    comments: Record<string, DropComment>;
     votes: Record<string, DropVote>;
   }> {
-    const [drops, waves, comments, votes] = await Promise.all([
-      dropsService.findDropsByIdsOrThrow(dropsIdsNeeded, authenticationContext),
+    const [drops, waves, votes] = await Promise.all([
+      dropsService
+        .findDropsByIdsOrThrow(dropsIdsNeeded, authenticationContext)
+        .then(async (drops) => {
+          const replyDropIds = Object.values(drops)
+            .map((it) => it.reply_to?.drop_id)
+            .filter((it) => !!it)
+            .map((it) => it!);
+          const allReplyDropIds = distinct([
+            ...replyDropsNeeded,
+            ...replyDropIds
+          ]);
+          const replies = await dropsService.findDropsByIdsOrThrow(
+            allReplyDropIds,
+            authenticationContext
+          );
+          return { ...drops, ...replies };
+        }),
       waveApiService.findWavesByIdsOrThrow(
         waveIdsNeeded,
         groupIdsUserIsEligibleFor,
         authenticationContext
-      ),
-      dropsService.findCommentsByIds(
-        commentsNeeded,
-        authenticationContext.getActingAsId()
       ),
       profilesApiService
         .getProfileMinsByIds({
@@ -315,7 +345,6 @@ export class FeedApiService {
     return {
       drops,
       waves,
-      comments,
       votes
     };
   }

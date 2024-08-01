@@ -31,6 +31,6 @@ export enum ActivityEventTargetType {
 export enum ActivityEventAction {
   DROP_CREATED = 'DROP_CREATED',
   WAVE_CREATED = 'WAVE_CREATED',
-  DROP_COMMENTED = 'DROP_COMMENTED',
+  DROP_REPLIED = 'DROP_REPLIED',
   DROP_VOTED = 'DROP_VOTED'
 }

@@ -1,7 +1,6 @@
 import { Logger } from './logging';
 import { doInDbContext } from './secrets';
 import {
-  DropCommentEntity,
   DropEntity,
   DropMediaEntity,
   DropMentionEntity,
@@ -56,7 +55,6 @@ async function start() {
         DropMetadataEntity,
         DropMediaEntity,
         DropVoteCreditSpending,
-        DropCommentEntity,
         ProfileProxyEntity,
         ProfileProxyActionEntity,
         WaveEntity,

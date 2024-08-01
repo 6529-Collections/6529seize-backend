@@ -60,11 +60,10 @@ export class DropsMappers {
       dropsTopRaters,
       dropsRatings,
       dropsRatingsByContextProfile,
-      dropLogsStats,
       dropsQuoteCounts,
       dropMedia,
       dropsParts,
-      dropsCommentsCounts,
+      dropsRepliesCounts,
       dropWaveOverviews,
       subscribedActions
     } = await this.getAllDropsRelatedData(
@@ -156,14 +155,14 @@ export class DropsMappers {
                   url: it.url,
                   mime_type: it.mime_type
                 })) ?? [],
-            discussion_comments_count:
-              dropsCommentsCounts[it.drop_id]?.[it.drop_part_id]?.count ?? 0,
+            replies_count:
+              dropsRepliesCounts[it.drop_id]?.[it.drop_part_id]?.count ?? 0,
             quotes_count:
               dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]?.total ?? 0,
             context_profile_context: contextProfileId
               ? {
-                  discussion_comments_count:
-                    dropsCommentsCounts[it.drop_id]?.[it.drop_part_id]
+                  replies_count:
+                    dropsRepliesCounts[it.drop_id]?.[it.drop_part_id]
                       ?.context_profile_count ?? 0,
                   quotes_count:
                     dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]
@@ -202,7 +201,6 @@ export class DropsMappers {
             profile: profilesByIds[rater.rater_profile_id]!
           }))
           .sort((a, b) => b.rating - a.rating),
-        rating_logs_count: dropLogsStats[dropEntity.id]?.rating_logs_count ?? 0,
         context_profile_context: contextProfileId
           ? {
               rating: dropsRatingsByContextProfile[dropEntity.id] ?? 0
@@ -234,11 +232,10 @@ export class DropsMappers {
       dropsTopRaters,
       dropsRatings,
       dropsRatingsByContextProfile,
-      dropLogsStats,
       dropsQuoteCounts,
       dropMedia,
       dropsParts,
-      dropsCommentsCounts,
+      dropsRepliesCounts,
       dropWaveOverviews,
       subscribedActions
     ] = await Promise.all([
@@ -252,10 +249,6 @@ export class DropsMappers {
         dropIds,
         connection
       ),
-      this.dropsDb.getDropLogsStats(
-        { dropIds, profileId: contextProfileId },
-        connection
-      ),
       this.dropsDb.getDropsQuoteCounts(
         dropIds,
         contextProfileId,
@@ -265,7 +258,7 @@ export class DropsMappers {
       ),
       this.dropsDb.getDropMedia(dropIds, min_part_id, max_part_id, connection),
       this.dropsDb.getDropsParts(dropIds, min_part_id, max_part_id, connection),
-      this.dropsDb.countDiscussionCommentsByDropIds(
+      this.dropsDb.countRepliesByDropIds(
         { dropIds, context_profile_id: contextProfileId },
         connection
       ),
@@ -288,11 +281,10 @@ export class DropsMappers {
       dropsTopRaters,
       dropsRatings,
       dropsRatingsByContextProfile,
-      dropLogsStats,
       dropsQuoteCounts,
       dropMedia,
       dropsParts,
-      dropsCommentsCounts,
+      dropsRepliesCounts,
       dropWaveOverviews,
       subscribedActions: Object.entries(subscribedActions).reduce(
         (acc, [id, actions]) => {
