@@ -140,7 +140,8 @@ export class DropCreationApiService {
           replied_drop_part: createDropRequest.reply_to.drop_part_id,
           replied_drop_author_id: replyToEntity.author_id
         },
-        visibilityGroupId
+        visibilityGroupId,
+        connection
       );
     }
     await identitySubscriptionsDb.addIdentitySubscription(
@@ -162,18 +163,21 @@ export class DropCreationApiService {
       connection
     );
     if (!isDescriptionDrop) {
-      await this.activityRecorder.recordDropCreated({
-        drop_id: dropId,
-        creator_id: authorId,
-        wave_id: createDropRequest.wave_id,
-        visibility_group_id: visibilityGroupId,
-        reply_to: createDropRequest.reply_to
-          ? {
-              drop_id: createDropRequest.reply_to.drop_id,
-              part_id: createDropRequest.reply_to.drop_part_id
-            }
-          : null
-      });
+      await this.activityRecorder.recordDropCreated(
+        {
+          drop_id: dropId,
+          creator_id: authorId,
+          wave_id: createDropRequest.wave_id,
+          visibility_group_id: visibilityGroupId,
+          reply_to: createDropRequest.reply_to
+            ? {
+                drop_id: createDropRequest.reply_to.drop_id,
+                part_id: createDropRequest.reply_to.drop_part_id
+              }
+            : null
+        },
+        connection
+      );
     }
     await this.profileActivityLogsDb.insert(
       {
@@ -268,7 +272,8 @@ export class DropCreationApiService {
             quoted_drop_part: quotedDrop.drop_part_id,
             quoted_drop_author_id: quotedEntity.author_id
           },
-          visibilityGroupId
+          visibilityGroupId,
+          connection
         );
       }
       idx++;
