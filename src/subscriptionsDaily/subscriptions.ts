@@ -347,41 +347,45 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
     }
   }
 
+  const replaceTable = async (
+    manager: any,
+    table: string,
+    newKey: string,
+    oldKey: string
+  ) => {
+    try {
+      await manager.query(
+        `UPDATE ${table}
+            SET consolidation_key = ?
+            WHERE consolidation_key = ?`,
+        [newKey, oldKey]
+      );
+    } catch (e) {
+      logger.error(
+        `Error updating ${table} for old key: ${oldKey} and new key: ${newKey}`,
+        e
+      );
+    }
+  };
+
   await getDataSource().transaction(async (manager) => {
     for (const oldKey of Array.from(replaceConsolidations.keys())) {
       const newKey = replaceConsolidations.get(oldKey);
       if (newKey) {
-        await manager.query(
-          `UPDATE ${SUBSCRIPTIONS_NFTS_TABLE}
-            SET consolidation_key = ?
-            WHERE consolidation_key = ?`,
-          [newKey, oldKey]
+        await replaceTable(manager, SUBSCRIPTIONS_NFTS_TABLE, newKey, oldKey);
+        await replaceTable(
+          manager,
+          SUBSCRIPTIONS_NFTS_FINAL_TABLE,
+          newKey,
+          oldKey
         );
-        await manager.query(
-          `UPDATE ${SUBSCRIPTIONS_NFTS_FINAL_TABLE}
-            SET consolidation_key = ?
-            WHERE consolidation_key = ?`,
-          [newKey, oldKey]
+        await replaceTable(manager, SUBSCRIPTIONS_LOGS_TABLE, newKey, oldKey);
+        await replaceTable(
+          manager,
+          SUBSCRIPTIONS_REDEEMED_TABLE,
+          newKey,
+          oldKey
         );
-        await manager.query(
-          `UPDATE ${SUBSCRIPTIONS_LOGS_TABLE}
-            SET consolidation_key = ?
-            WHERE consolidation_key = ?`,
-          [newKey, oldKey]
-        );
-        try {
-          await manager.query(
-            `UPDATE ${SUBSCRIPTIONS_REDEEMED_TABLE}
-            SET consolidation_key = ?
-            WHERE consolidation_key = ?`,
-            [newKey, oldKey]
-          );
-        } catch (e) {
-          logger.error(
-            `Error updating ${SUBSCRIPTIONS_REDEEMED_TABLE} for old key: ${oldKey} and new key: ${newKey}`,
-            e
-          );
-        }
       }
     }
 
