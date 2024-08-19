@@ -592,6 +592,8 @@ export class ProfilesService {
         await this.mergeRatings(sourceIdentity, target, connectionHolder);
         await this.mergeProxies(sourceIdentity, target, connectionHolder);
         await this.mergeGroups(sourceIdentity, target, connectionHolder);
+        await this.mergeWaves(sourceIdentity, target, connectionHolder);
+        await this.mergeDrops(sourceIdentity, target, connectionHolder);
         await this.mergeNotifications(sourceIdentity, target, connectionHolder);
         const targetProfile = await this.profilesDb.getProfileById(
           target,
@@ -988,6 +990,30 @@ export class ProfilesService {
     connectionHolder: ConnectionWrapper<any>
   ) {
     await this.userGroupsDb.migrateProfileIdsInGroups(
+      profileToBeMerged,
+      target,
+      connectionHolder
+    );
+  }
+
+  private async mergeWaves(
+    profileToBeMerged: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.profilesDb.migrateAuthorIdsInWaves(
+      profileToBeMerged,
+      target,
+      connectionHolder
+    );
+  }
+
+  private async mergeDrops(
+    profileToBeMerged: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.profilesDb.migrateAuthorIdsInDrops(
       profileToBeMerged,
       target,
       connectionHolder
