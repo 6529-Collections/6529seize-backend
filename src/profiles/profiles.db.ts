@@ -6,6 +6,7 @@ import {
 import {
   ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  DROPS_TABLE,
   ENS_TABLE,
   IDENTITIES_TABLE,
   MEMES_CONTRACT,
@@ -13,7 +14,8 @@ import {
   PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
   TDH_BLOCKS_TABLE,
-  WALLETS_TDH_TABLE
+  WALLETS_TDH_TABLE,
+  WAVES_TABLE
 } from '../constants';
 import { Wallet } from '../entities/IWallet';
 import { Profile } from '../entities/IProfile';
@@ -581,6 +583,30 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `update ${PROFILES_TABLE} set external_id = :to where external_id = :from`,
       param,
+      { wrappedConnection: connectionHolder }
+    );
+  }
+
+  async migrateAuthorIdsInWaves(
+    profileToBeMerged: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update ${WAVES_TABLE} set created_by = :target where created_by = :profileToBeMerged`,
+      { profileToBeMerged, target },
+      { wrappedConnection: connectionHolder }
+    );
+  }
+
+  async migrateAuthorIdsInDrops(
+    profileToBeMerged: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update ${DROPS_TABLE} set author_id = :target where author_id = :profileToBeMerged`,
+      { profileToBeMerged, target },
       { wrappedConnection: connectionHolder }
     );
   }
