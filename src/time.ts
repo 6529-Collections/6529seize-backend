@@ -1,3 +1,7 @@
+import { Logger } from './logging';
+
+export const logger = Logger.get('TIMER');
+
 /**
  * Utility class for all time related operations.
  */
@@ -328,6 +332,14 @@ export class Time {
 
   public eq(other: Time): boolean {
     return this.ms === other.ms;
+  }
+
+  public static async timed<T>(l: () => Promise<T>, id: string): Promise<T> {
+    const start = Time.now();
+    const result = await l();
+    const diff = start.diffFromNow();
+    logger.debug(`Executing ${id} took ${diff}`);
+    return result;
   }
 }
 

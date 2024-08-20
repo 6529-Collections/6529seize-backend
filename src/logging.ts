@@ -6,11 +6,10 @@ import {
 } from 'winston';
 
 import * as mcache from 'memory-cache';
-import { Time } from './time';
 
 const { combine, timestamp, printf, errors, splat } = format;
 
-const REQ_ID_CACHE_TIMEOUT_MS = Time.minutes(15).toMillis();
+const REQ_ID_CACHE_TIMEOUT_MS = 900000;
 
 const winstonInstances = new Map<string, WinstonLogger>();
 

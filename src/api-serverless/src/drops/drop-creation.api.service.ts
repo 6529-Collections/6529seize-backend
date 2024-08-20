@@ -1,6 +1,5 @@
 import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
-import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { Logger } from '../../../logging';
 import { DropsApiService, dropsService } from './drops.api.service';
 import {
@@ -39,6 +38,8 @@ import {
   userNotifier,
   UserNotifier
 } from '../../../notifications/user.notifier';
+import { Time } from '../../../time';
+import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(DropCreationApiService.name);
@@ -113,106 +114,124 @@ export class DropCreationApiService {
   ) {
     const createDropParts = createDropRequest.parts;
     const authorId = authenticationContext.getActingAsId()!;
-    const dropId = await this.dropsDb.insertDrop(
-      {
-        author_id: authorId,
-        title: createDropRequest.title ?? null,
-        parts_count: createDropParts.length,
-        wave_id: createDropRequest.wave_id,
-        reply_to_drop_id: createDropRequest.reply_to?.drop_id ?? null,
-        reply_to_part_id: createDropRequest.reply_to?.drop_part_id ?? null
-      },
-      connection
-    );
-    const visibilityGroupId = await wavesApiDb.findWaveVisibilityGroupByDropId(
-      dropId,
-      connection
-    );
-    if (createDropRequest.reply_to) {
-      const replyToEntity = await this.dropsDb
-        .getDropsByIds([createDropRequest.reply_to.drop_id], connection)
-        .then((it) => it[0]);
-      await this.userNotifier.notifyOfDropReply(
+    const dropId = await Time.timed(() => {
+      return this.dropsDb.insertDrop(
         {
-          reply_drop_id: dropId,
-          reply_drop_author_id: replyToEntity.author_id,
-          replied_drop_id: createDropRequest.reply_to.drop_id,
-          replied_drop_part: createDropRequest.reply_to.drop_part_id,
-          replied_drop_author_id: replyToEntity.author_id
+          author_id: authorId,
+          title: createDropRequest.title ?? null,
+          parts_count: createDropParts.length,
+          wave_id: createDropRequest.wave_id,
+          reply_to_drop_id: createDropRequest.reply_to?.drop_id ?? null,
+          reply_to_part_id: createDropRequest.reply_to?.drop_part_id ?? null
         },
-        visibilityGroupId,
         connection
       );
+    }, 'createDrop->insertDrop');
+    const visibilityGroupId = await Time.timed(() => {
+      return wavesApiDb.findWaveVisibilityGroupByDropId(dropId, connection);
+    }, 'createDrop->findWaveVisibilityGroupByDropId');
+    const replyTo = createDropRequest.reply_to;
+    if (replyTo) {
+      const replyToEntity = await Time.timed(async () => {
+        const it = await this.dropsDb.getDropsByIds(
+          [replyTo.drop_id],
+          connection
+        );
+        return it[0];
+      }, 'createDrop->getReplyDropEntity');
+      await Time.timed(async () => {
+        await this.userNotifier.notifyOfDropReply(
+          {
+            reply_drop_id: dropId,
+            reply_drop_author_id: replyToEntity.author_id,
+            replied_drop_id: replyTo.drop_id,
+            replied_drop_part: replyTo.drop_part_id,
+            replied_drop_author_id: replyToEntity.author_id
+          },
+          visibilityGroupId,
+          connection
+        );
+      }, 'createDrop->notifyOfDropReply');
     }
-    await identitySubscriptionsDb.addIdentitySubscription(
-      {
-        subscriber_id: authorId,
-        target_id: dropId.toString(),
-        target_type: ActivityEventTargetType.DROP,
-        target_action: ActivityEventAction.DROP_VOTED
-      },
-      connection
-    );
-    await identitySubscriptionsDb.addIdentitySubscription(
-      {
-        subscriber_id: authorId,
-        target_id: dropId.toString(),
-        target_type: ActivityEventTargetType.DROP,
-        target_action: ActivityEventAction.DROP_REPLIED
-      },
-      connection
-    );
-    if (!isDescriptionDrop) {
-      await this.activityRecorder.recordDropCreated(
+    await Time.timed(async () => {
+      await identitySubscriptionsDb.addIdentitySubscription(
         {
-          drop_id: dropId,
-          creator_id: authorId,
-          wave_id: createDropRequest.wave_id,
-          visibility_group_id: visibilityGroupId,
-          reply_to: createDropRequest.reply_to
-            ? {
-                drop_id: createDropRequest.reply_to.drop_id,
-                part_id: createDropRequest.reply_to.drop_part_id
-              }
+          subscriber_id: authorId,
+          target_id: dropId.toString(),
+          target_type: ActivityEventTargetType.DROP,
+          target_action: ActivityEventAction.DROP_VOTED
+        },
+        connection
+      );
+    }, 'createDrop->addIdentitySubscriptionDROP_VOTED');
+    await Time.timed(async () => {
+      await identitySubscriptionsDb.addIdentitySubscription(
+        {
+          subscriber_id: authorId,
+          target_id: dropId.toString(),
+          target_type: ActivityEventTargetType.DROP,
+          target_action: ActivityEventAction.DROP_REPLIED
+        },
+        connection
+      );
+    }, 'createDrop->addIdentitySubscriptionDROP_REPLIED');
+    if (!isDescriptionDrop) {
+      await Time.timed(async () => {
+        await this.activityRecorder.recordDropCreated(
+          {
+            drop_id: dropId,
+            creator_id: authorId,
+            wave_id: createDropRequest.wave_id,
+            visibility_group_id: visibilityGroupId,
+            reply_to: createDropRequest.reply_to
+              ? {
+                  drop_id: createDropRequest.reply_to.drop_id,
+                  part_id: createDropRequest.reply_to.drop_part_id
+                }
+              : null
+          },
+          connection
+        );
+      }, 'createDrop->recordDropCreated');
+    }
+    await Time.timed(async () => {
+      await this.profileActivityLogsDb.insert(
+        {
+          profile_id: authorId,
+          target_id: dropId.toString(),
+          contents: JSON.stringify({
+            drop_id: dropId,
+            proxy_id: authenticationContext.isAuthenticatedAsProxy()
+              ? authenticationContext.authenticatedProfileId
+              : undefined
+          }),
+          type: ProfileActivityLogType.DROP_CREATED,
+          proxy_id: authenticationContext.isAuthenticatedAsProxy()
+            ? authenticationContext.authenticatedProfileId!
             : null
         },
         connection
       );
-    }
-    await this.profileActivityLogsDb.insert(
-      {
-        profile_id: authorId,
-        target_id: dropId.toString(),
-        contents: JSON.stringify({
-          drop_id: dropId,
-          proxy_id: authenticationContext.isAuthenticatedAsProxy()
-            ? authenticationContext.authenticatedProfileId
-            : undefined
-        }),
-        type: ProfileActivityLogType.DROP_CREATED,
-        proxy_id: authenticationContext.isAuthenticatedAsProxy()
-          ? authenticationContext.authenticatedProfileId!
-          : null
-      },
-      connection
-    );
-    const mentionEntities = createDropRequest.mentioned_users.map((it) => ({
-      drop_id: dropId,
-      mentioned_profile_id: it.mentioned_profile_id,
-      handle_in_content: it.handle_in_content
-    }));
-    for (const mentionEntity of mentionEntities) {
-      await this.userNotifier.notifyOfIdentityMention(
-        {
-          mentioned_identity_id: mentionEntity.mentioned_profile_id,
-          drop_id: dropId,
-          mentioner_identity_id: authorId
-        },
-        visibilityGroupId,
-        connection
-      );
-    }
-    await this.dropsDb.insertMentions(mentionEntities, connection);
+    }, 'createDrop->profileActivityLogsInsert');
+    await Time.timed(async () => {
+      const mentionEntities = createDropRequest.mentioned_users.map((it) => ({
+        drop_id: dropId,
+        mentioned_profile_id: it.mentioned_profile_id,
+        handle_in_content: it.handle_in_content
+      }));
+      for (const mentionEntity of mentionEntities) {
+        await this.userNotifier.notifyOfIdentityMention(
+          {
+            mentioned_identity_id: mentionEntity.mentioned_profile_id,
+            drop_id: dropId,
+            mentioner_identity_id: authorId
+          },
+          visibilityGroupId,
+          connection
+        );
+      }
+      await this.dropsDb.insertMentions(mentionEntities, connection);
+    }, 'createDrop->notifyOfIdentityMention&insertMentions');
     const referencedNfts = Object.values(
       createDropRequest.referenced_nfts.reduce<
         Record<string, DropReferencedNFT>
@@ -221,20 +240,24 @@ export class DropCreationApiService {
         return acc;
       }, {} as Record<string, DropReferencedNFT>)
     );
-    await this.dropsDb.insertReferencedNfts(
-      referencedNfts.map((it) => ({
-        drop_id: dropId,
-        contract: it.contract,
-        token: it.token,
-        name: it.name
-      })),
-      connection
-    );
+    await Time.timed(async () => {
+      await this.dropsDb.insertReferencedNfts(
+        referencedNfts.map((it) => ({
+          drop_id: dropId,
+          contract: it.contract,
+          token: it.token,
+          name: it.name
+        })),
+        connection
+      );
+    }, 'createDrop->insertReferencedNfts');
     const metadata = createDropRequest.metadata.map((it) => ({
       ...it,
       drop_id: dropId
     }));
-    await this.dropsDb.insertDropMetadata(metadata, connection);
+    await Time.timed(async () => {
+      await this.dropsDb.insertDropMetadata(metadata, connection);
+    }, 'createDrop->insertDropMetadata');
     const media = createDropParts
       .map(
         (part, index) =>
@@ -245,48 +268,58 @@ export class DropCreationApiService {
           })) ?? []
       )
       .flat();
-    await this.dropsDb.insertDropMedia(media, connection);
-    await this.dropsDb.insertDropParts(
-      createDropParts.map<DropPartEntity>((part, index) => ({
-        drop_id: dropId,
-        drop_part_id: index + 1,
-        content: part.content ?? null,
-        quoted_drop_id: part.quoted_drop?.drop_id ?? null,
-        quoted_drop_part_id: part.quoted_drop?.drop_part_id ?? null
-      })),
-      connection
-    );
-    let idx = 1;
-    for (const createDropPart of createDropParts) {
-      const quotedDrop = createDropPart.quoted_drop;
-      if (quotedDrop) {
-        const quotedEntity = await this.dropsDb
-          .getDropsByIds([quotedDrop.drop_id], connection)
-          .then((it) => it[0]);
-        await this.userNotifier.notifyOfDropQuote(
-          {
-            quote_drop_id: dropId,
-            quote_drop_part: idx,
-            quote_drop_author_id: quotedEntity.author_id,
-            quoted_drop_id: quotedDrop.drop_id,
-            quoted_drop_part: quotedDrop.drop_part_id,
-            quoted_drop_author_id: quotedEntity.author_id
-          },
-          visibilityGroupId,
-          connection
-        );
+    await Time.timed(async () => {
+      await this.dropsDb.insertDropMedia(media, connection);
+    }, 'createDrop->insertDropMedia');
+    await Time.timed(async () => {
+      await this.dropsDb.insertDropParts(
+        createDropParts.map<DropPartEntity>((part, index) => ({
+          drop_id: dropId,
+          drop_part_id: index + 1,
+          content: part.content ?? null,
+          quoted_drop_id: part.quoted_drop?.drop_id ?? null,
+          quoted_drop_part_id: part.quoted_drop?.drop_part_id ?? null
+        })),
+        connection
+      );
+    }, 'createDrop->insertDropParts');
+    await Time.timed(async () => {
+      let idx = 1;
+      for (const createDropPart of createDropParts) {
+        const quotedDrop = createDropPart.quoted_drop;
+        if (quotedDrop) {
+          const quotedEntity = await this.dropsDb
+            .getDropsByIds([quotedDrop.drop_id], connection)
+            .then((it) => it[0]);
+          await this.userNotifier.notifyOfDropQuote(
+            {
+              quote_drop_id: dropId,
+              quote_drop_part: idx,
+              quote_drop_author_id: quotedEntity.author_id,
+              quoted_drop_id: quotedDrop.drop_id,
+              quoted_drop_part: quotedDrop.drop_part_id,
+              quoted_drop_author_id: quotedEntity.author_id
+            },
+            visibilityGroupId,
+            connection
+          );
+        }
+        idx++;
       }
-      idx++;
-    }
-    return this.dropsService.findDropByIdOrThrow(
-      {
-        dropId,
-        authenticationContext,
-        min_part_id: 0,
-        max_part_id: Number.MAX_SAFE_INTEGER,
-        skipEligibilityCheck: true
-      },
-      connection
+    }, 'createDrop->notifyOfDropQuote');
+    return await Time.timed(
+      async () =>
+        this.dropsService.findDropByIdOrThrow(
+          {
+            dropId,
+            authenticationContext,
+            min_part_id: 0,
+            max_part_id: Number.MAX_SAFE_INTEGER,
+            skipEligibilityCheck: true
+          },
+          connection
+        ),
+      'createDrop->refindDrop'
     );
   }
 
@@ -298,60 +331,69 @@ export class DropCreationApiService {
     const quotedDrops = createDropRequest.parts
       .map<QuotedDrop | null | undefined>((it) => it.quoted_drop)
       .filter((it) => it !== undefined && it !== null) as QuotedDrop[];
-    const groupIdsUserIsEligibleFor =
-      await this.userGroupsService.getGroupsUserIsEligibleFor(
+    const groupIdsUserIsEligibleFor = await Time.timed(() => {
+      return this.userGroupsService.getGroupsUserIsEligibleFor(
         authenticationContext.getActingAsId()!
       );
+    }, 'createDrop->getGroupsUserIsEligibleFor');
+
     if (!skipWaveIdCheck) {
-      await this.verifyWaveLimitations(
-        createDropRequest,
-        groupIdsUserIsEligibleFor,
-        authenticationContext
-      );
+      await Time.timed(async () => {
+        await this.verifyWaveLimitations(
+          createDropRequest,
+          groupIdsUserIsEligibleFor,
+          authenticationContext
+        );
+      }, 'createDrop->verifyWaveLimitations');
     }
 
     if (quotedDrops.length) {
-      const dropIds = quotedDrops.map((it) => it.drop_id);
-      const entities = await this.dropsDb.getDropsByIds(dropIds);
-      const invalidQuotedDrops = quotedDrops.filter(
-        (quotedDrop) =>
-          !entities.find((it) => {
-            return (
-              it.id === quotedDrop.drop_id &&
-              quotedDrop.drop_part_id <= it.parts_count
-            );
-          })
-      );
-      if (invalidQuotedDrops.length) {
-        throw new BadRequestException(
-          `Invalid quoted drops: ${invalidQuotedDrops
-            .map((it) => `${it.drop_id}/${it.drop_part_id}`)
-            .join(', ')}`
+      await Time.timed(async () => {
+        const dropIds = quotedDrops.map((it) => it.drop_id);
+        const entities = await this.dropsDb.getDropsByIds(dropIds);
+        const invalidQuotedDrops = quotedDrops.filter(
+          (quotedDrop) =>
+            !entities.find((it) => {
+              return (
+                it.id === quotedDrop.drop_id &&
+                quotedDrop.drop_part_id <= it.parts_count
+              );
+            })
         );
-      }
+        if (invalidQuotedDrops.length) {
+          throw new BadRequestException(
+            `Invalid quoted drops: ${invalidQuotedDrops
+              .map((it) => `${it.drop_id}/${it.drop_part_id}`)
+              .join(', ')}`
+          );
+        }
+      }, 'createDrop->verifyQuotedDrops');
     }
 
-    if (createDropRequest.reply_to) {
-      const dropId = createDropRequest.reply_to.drop_id;
-      const dropPartId = createDropRequest.reply_to.drop_part_id;
-      const replyToEntity = await this.dropsDb
-        .getDropsByIds([dropId])
-        .then(
-          (res) =>
-            res.find(
-              (it) => it.id === dropId && it.parts_count >= dropPartId
-            ) ?? null
-        );
-      if (!replyToEntity) {
-        throw new BadRequestException(
-          `Invalid reply. Drop $${dropId}/${dropPartId} doesn't exist`
-        );
-      }
-      if (replyToEntity.wave_id !== createDropRequest.wave_id) {
-        throw new BadRequestException(
-          `Invalid reply. Drop you are replying to is not in the same wave as you attempt to create a drop in`
-        );
-      }
+    const replyTo = createDropRequest.reply_to;
+    if (replyTo) {
+      await Time.timed(async () => {
+        const dropId = replyTo.drop_id;
+        const dropPartId = replyTo.drop_part_id;
+        const replyToEntity = await this.dropsDb
+          .getDropsByIds([dropId])
+          .then(
+            (res) =>
+              res.find(
+                (it) => it.id === dropId && it.parts_count >= dropPartId
+              ) ?? null
+          );
+        if (!replyToEntity) {
+          throw new BadRequestException(
+            `Invalid reply. Drop $${dropId}/${dropPartId} doesn't exist`
+          );
+        }
+        if (replyToEntity.wave_id !== createDropRequest.wave_id) {
+          throw new BadRequestException(
+            `Invalid reply. Drop you are replying to is not in the same wave as you attempt to create a drop in`
+          );
+        }
+      }, 'createDrop->verifyReplyTo');
     }
   }
 
