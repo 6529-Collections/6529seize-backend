@@ -14,6 +14,7 @@ import { RateMatter } from '../entities/IRating';
 import { randomUUID } from 'crypto';
 import { distinct } from '../helpers';
 import { identitiesDb } from '../identities/identities.db';
+import { calculateLevel } from '../profiles/profile-level';
 
 const mysql = require('mysql');
 
@@ -336,7 +337,11 @@ where ((cg.cic_direction = 'RECEIVED' and (
   and (cg.tdh_min is null or :tdh >= cg.tdh_min)
   and (cg.tdh_max is null or :tdh <= cg.tdh_max)
   and cg.visible = true`;
-    return this.db.execute(sql, param);
+    const level = calculateLevel({ tdh: param.tdh, rep: param.receivedRep });
+    return this.db.execute(sql, {
+      ...param,
+      level: level
+    });
   }
 
   async getRatings(
