@@ -28,6 +28,7 @@ import { profilesService } from '../../../profiles/profiles.service';
 import { AuthenticationContext } from '../../../auth-context';
 import { DropSubscriptionActions } from '../generated/models/DropSubscriptionActions';
 import { DropSubscriptionTargetAction } from '../generated/models/DropSubscriptionTargetAction';
+import { Time } from '../../../time';
 
 const router = asyncRouter();
 
@@ -111,7 +112,9 @@ router.post(
     req: Request<any, any, CreateDropRequest, any, any>,
     res: Response<ApiResponse<Drop>>
   ) => {
-    const authenticationContext = await getAuthenticationContext(req);
+    const authenticationContext = await Time.timed(() => {
+      return getAuthenticationContext(req);
+    }, 'createDrop->getAuthContext');
     const authorProfileId = authenticationContext.getActingAsId();
     if (!authorProfileId) {
       throw new ForbiddenException(
