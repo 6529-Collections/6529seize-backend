@@ -378,19 +378,15 @@ export class Timer {
   }
 
   public getReport(): string {
-    const timesStr = Object.entries(this.stoppedTimers)
-      .map(([key, time]) => `${key}: ${time}`)
-      .join('\n');
-    const ongoingTimerKeys = Object.keys(this.ongoingTimers);
-    return `Total time of ${
-      this.key
-    }: ${this.getTotalTimePassed()}. Subtimes:\n${timesStr}${
-      ongoingTimerKeys.length
-        ? `\n+ ${
-            ongoingTimerKeys.length
-          } ongoing timer(s) with key(s): ${ongoingTimerKeys.join(', ')}`
-        : ``
-    }`;
+    return JSON.stringify({
+      key: this.key,
+      total: this.getTotalTimePassed(),
+      times: Object.keys(this.stoppedTimers).map((key) => ({
+        key,
+        time: this.stoppedTimers[key].formatAsDuration()
+      })),
+      ongoingTimers: Object.keys(this.ongoingTimers)
+    });
   }
 
   public static getFromRequest(request: Request): Timer {
