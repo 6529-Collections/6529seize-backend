@@ -11,6 +11,7 @@ import {
   IdentityMentionNotificationData,
   IdentitySubscriptionNotificationData
 } from './user-notification.types';
+import { Timer } from '../time';
 
 export class UserNotifier {
   constructor(
@@ -44,8 +45,10 @@ export class UserNotifier {
       mentioner_identity_id
     }: IdentityMentionNotificationData,
     visibility_group_id: string | null,
-    connection?: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    timer: Timer
   ) {
+    timer.start('userNotifier->notifyOfIdentityMention');
     await this.identityNotificationsDb.insertNotification(
       {
         identity_id: mentioned_identity_id,
@@ -60,6 +63,7 @@ export class UserNotifier {
       },
       connection
     );
+    timer.stop('userNotifier->notifyOfIdentityMention');
   }
 
   public async notifyOfDropVote(
@@ -92,8 +96,10 @@ export class UserNotifier {
       replied_drop_author_id
     }: DropReplyNotificationData,
     visibility_group_id: string | null,
-    connection?: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    timer: Timer
   ) {
+    timer.start('userNotifier->notifyOfDropReply');
     await this.identityNotificationsDb.insertNotification(
       {
         identity_id: replied_drop_author_id,
@@ -108,6 +114,7 @@ export class UserNotifier {
       },
       connection
     );
+    timer.stop('userNotifier->notifyOfDropReply');
   }
 
   public async notifyOfDropQuote(
@@ -120,8 +127,10 @@ export class UserNotifier {
       quoted_drop_author_id
     }: DropQuoteNotificationData,
     visibility_group_id: string | null,
-    connection?: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    timer: Timer
   ) {
+    timer.start('userNotifier->notifyOfDropQuote');
     await this.identityNotificationsDb.insertNotification(
       {
         identity_id: quoted_drop_author_id,
@@ -136,6 +145,7 @@ export class UserNotifier {
       },
       connection
     );
+    timer.stop('userNotifier->notifyOfDropQuote');
   }
 }
 

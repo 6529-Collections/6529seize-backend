@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 import * as db from '../../db-api';
-import { isNumber } from '../../helpers';
+import { isNumber, uniqueShortId } from '../../helpers';
 
 import feedRoutes from './feed/feed.routes';
 import identitiesRoutes from './identities/identities.routes';
@@ -43,7 +43,7 @@ import {
 } from 'passport-jwt';
 import { getJwtSecret } from './auth/auth';
 import { NextFunction, Request, Response } from 'express';
-import { Time } from '../../time';
+import { Time, Timer } from '../../time';
 import * as sentryContext from '../../sentry.context';
 import * as Sentry from '@sentry/serverless';
 import { asyncRouter } from './async.router';
@@ -84,16 +84,40 @@ const API_PORT = 3000;
 
 function requestLogMiddleware() {
   return (request: Request, response: Response, next: NextFunction) => {
-    Logger.registerAwsRequestId(request.apiGateway?.context?.awsRequestId);
+    const requestId =
+      request.apiGateway?.context?.awsRequestId ?? uniqueShortId();
+    Logger.registerAwsRequestId(requestId);
     const { method, originalUrl: url } = request;
-    const start = Time.now();
+    const uqKey = `${method} ${url}`;
+    const timer = new Timer(uqKey);
+    (request as any).timer = timer;
     response.on('close', () => {
       const { statusCode } = response;
-      requestLogger.info(
-        `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${start
-          .diffFromNow()
-          .toMillis()}]`
-      );
+      if (
+        timer.getTotalTimePassed().gt(Time.seconds(1)) &&
+        timer.hasStoppedTimers()
+      ) {
+        requestLogger.info(
+          `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${timer
+            .getTotalTimePassed()
+            .toMillis()}] [${timer.getReport()}]`
+        );
+      } else if (
+        process.env.LOG_LEVEL_API_REQUEST === 'debug' &&
+        timer.hasStoppedTimers()
+      ) {
+        requestLogger.debug(
+          `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${timer
+            .getTotalTimePassed()
+            .toMillis()}] [${timer.getReport()}]`
+        );
+      } else {
+        requestLogger.info(
+          `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${timer
+            .getTotalTimePassed()
+            .toMillis()}]`
+        );
+      }
       Logger.deregisterRequestId();
     });
     next();

@@ -32,6 +32,7 @@ import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionRes
 import { WaveSubscriptionActions } from '../generated/models/WaveSubscriptionActions';
 import { WaveSubscriptionTargetAction } from '../generated/models/WaveSubscriptionTargetAction';
 import { profilesService } from '../../../profiles/profiles.service';
+import { Timer } from '../../../time';
 
 const router = asyncRouter();
 
@@ -42,7 +43,8 @@ router.post(
     req: Request<any, any, CreateNewWave, any, any>,
     res: Response<ApiResponse<Wave>>
   ) => {
-    const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     const authenticatedProfileId = authenticationContext.getActingAsId();
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
@@ -58,7 +60,8 @@ router.post(
     const request = getValidatedByJoiOrThrow(req.body, WaveSchema);
     const wave = await waveApiService.createWave({
       createWaveRequest: request,
-      authenticationContext
+      authenticationContext,
+      timer
     });
     res.send(wave);
   }

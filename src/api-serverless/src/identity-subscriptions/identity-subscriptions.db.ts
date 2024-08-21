@@ -19,12 +19,15 @@ import {
   IncomingIdentitySubscriptionsParams,
   OutgoingIdentitySubscriptionsParams
 } from './identity-subscriptions.routes';
+import { Timer } from '../../../time';
 
 export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   async addIdentitySubscription(
     identitySubscription: Omit<IdentitySubscriptionEntity, 'id'>,
-    connection: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    timer?: Timer
   ) {
+    timer?.start('identitySubscriptionsDb->addIdentitySubscription');
     if (identitySubscription.target_type === ActivityEventTargetType.WAVE) {
       const waveId = identitySubscription.target_id;
       await this.db.execute(
@@ -48,6 +51,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
         wrappedConnection: connection
       }
     );
+    timer?.stop('identitySubscriptionsDb->addIdentitySubscription');
   }
 
   async findIdentitySubscriptionActionsOfTargets(

@@ -39,6 +39,7 @@ import {
 } from '../profiles/profiles.api.service';
 import { WavesOverviewType } from '../generated/models/WavesOverviewType';
 import { WaveEntity } from '../../../entities/IWave';
+import { Timer } from '../../../time';
 
 export class WaveApiService {
   constructor(
@@ -52,10 +53,12 @@ export class WaveApiService {
 
   public async createWave({
     createWaveRequest,
-    authenticationContext
+    authenticationContext,
+    timer
   }: {
     createWaveRequest: CreateNewWave;
     authenticationContext: AuthenticationContext;
+    timer: Timer;
   }): Promise<Wave> {
     await this.validateWaveRelations(
       createWaveRequest,
@@ -69,7 +72,8 @@ export class WaveApiService {
             id,
             createWaveRequest.description_drop,
             authenticationContext,
-            connection
+            connection,
+            timer
           )
           .then((drop) => drop.id);
         const newEntity = this.waveMappers.createWaveToNewWaveEntity(

@@ -1,6 +1,4 @@
-import { Logger } from './logging';
-
-export const logger = Logger.get('TIMER');
+import { Request } from 'express';
 
 /**
  * Utility class for all time related operations.
@@ -333,14 +331,6 @@ export class Time {
   public eq(other: Time): boolean {
     return this.ms === other.ms;
   }
-
-  public static async timed<T>(l: () => Promise<T>, id: string): Promise<T> {
-    const start = Time.now();
-    const result = await l();
-    const diff = start.diffFromNow();
-    logger.debug(`Executing ${id} took ${diff}`);
-    return result;
-  }
 }
 
 enum TimeUnit {
@@ -360,3 +350,50 @@ const MILLIS_IN_UNIT: Record<TimeUnit, number> = {
   DAYS: 86400000,
   WEEKS: 604800000
 };
+
+export class Timer {
+  constructor(private readonly key: string) {}
+
+  private readonly creationTime: Time = Time.now();
+  private readonly ongoingTimers: Record<string, Time> = {};
+  private readonly stoppedTimers: Record<string, Time> = {};
+
+  public start(key: string) {
+    this.ongoingTimers[key] = Time.now();
+  }
+
+  public stop(key: string) {
+    if (this.ongoingTimers[key]) {
+      this.stoppedTimers[key] = this.ongoingTimers[key].diffFromNow();
+      delete this.ongoingTimers[key];
+    }
+  }
+
+  public getTotalTimePassed(): Time {
+    return this.creationTime.diffFromNow();
+  }
+
+  public hasStoppedTimers(): boolean {
+    return Object.keys(this.stoppedTimers).length > 0;
+  }
+
+  public getReport(): string {
+    const timesStr = Object.entries(this.stoppedTimers)
+      .map(([key, time]) => `${key}: ${time}`)
+      .join('\n');
+    const ongoingTimerKeys = Object.keys(this.ongoingTimers);
+    return `Total time of ${
+      this.key
+    }: ${this.getTotalTimePassed()}. Subtimes:\n${timesStr}${
+      ongoingTimerKeys.length
+        ? `\n+ ${
+            ongoingTimerKeys.length
+          } ongoing timer(s) with key(s): ${ongoingTimerKeys.join(', ')}`
+        : ``
+    }`;
+  }
+
+  public static getFromRequest(request: Request): Timer {
+    return (request as any).timer as Timer;
+  }
+}

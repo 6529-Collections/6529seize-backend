@@ -8,7 +8,7 @@ import {
 } from '../../../auth-context';
 import { resolveEnum } from '../../../helpers';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
-import { Time } from '../../../time';
+import { Time, Timer } from '../../../time';
 import { ProfileProxyAction } from '../generated/models/ProfileProxyAction';
 
 export function getJwtSecret() {
@@ -62,8 +62,10 @@ export async function getAuthenticatedProfileIdOrNull(
 }
 
 export async function getAuthenticationContext(
-  req: Request<any, any, any, any, any>
+  req: Request<any, any, any, any, any>,
+  timer?: Timer
 ): Promise<AuthenticationContext> {
+  timer?.start('getAuthenticationContext');
   const authenticatedWallet = getWalletOrThrow(req);
   const roleProfileId = (req.user as any).role as string | null;
   const authenticatedProfileId = await profilesService
@@ -92,6 +94,7 @@ export async function getAuthenticationContext(
               }))
           )
       : [];
+  timer?.stop('getAuthenticationContext');
   return new AuthenticationContext({
     authenticatedWallet,
     authenticatedProfileId,
