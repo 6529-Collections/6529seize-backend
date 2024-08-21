@@ -11,7 +11,7 @@
     "postbuild": "cd dist && zip -r index.zip *"
   },
   "dependencies": {
-    "@openapitools/openapi-generator-cli": "^2.13.4",
+    "@openapitools/openapi-generator-cli": "^2.13.5",
     "@types/express": "^4.17.21",
     "@types/swagger-ui-express": "^4.1.6",
     "@wagmi/chains": "^1.8.0",
