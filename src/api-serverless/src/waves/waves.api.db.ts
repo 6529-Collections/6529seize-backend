@@ -320,7 +320,7 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
   async findWaveVisibilityGroupByDropId(
     drop_id: string,
     connection: ConnectionWrapper<any>
-  ): Promise<string | null> {
+  ): Promise<string> {
     return this.db
       .oneOrNull<{
         visibility_group_id: string;
@@ -329,7 +329,7 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
         { drop_id },
         { wrappedConnection: connection }
       )
-      .then((it) => it?.visibility_group_id ?? null);
+      .then((it) => it!.visibility_group_id);
   }
 
   async findLatestWaves(

@@ -29,6 +29,7 @@ import {
   GroupOwnsNftNameEnum
 } from '../generated/models/GroupOwnsNft';
 import { profilesApiService } from '../profiles/profiles.api.service';
+import { Timer } from '../../../time';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -98,15 +99,20 @@ export class UserGroupsService {
   }
 
   public async getGroupsUserIsEligibleFor(
-    profileId: string | null
+    profileId: string | null,
+    timer?: Timer
   ): Promise<string[]> {
+    const timerKey = 'getGroupsUserIsEligibleFor';
+    timer?.start(timerKey);
     if (!profileId) {
+      timer?.stop(timerKey);
       return [];
     }
     const profile = await this.userGroupsDb.getProfileOverviewByProfileId(
       profileId
     );
     if (profile === null) {
+      timer?.stop(timerKey);
       return [];
     }
     const [groupsUserIsEligibleByIdentity, groupsUserIsBannedFromByIdentity] =
@@ -275,6 +281,7 @@ export class UserGroupsService {
         group.cic_user !== null
       );
     });
+    timer?.stop(timerKey);
     return distinct(
       [
         ...onlyProfileGroupsFilteredOut.map((it) => it.id),

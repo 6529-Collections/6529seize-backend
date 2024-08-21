@@ -17,6 +17,7 @@ import {
   UserGroupsService,
   userGroupsService
 } from '../api-serverless/src/community-members/user-groups.service';
+import { Timer } from '../time';
 
 export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -52,8 +53,10 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
 
   public async insert(
     log: Omit<ProfileActivityLog, 'id' | 'created_at'>,
-    connectionHolder: ConnectionWrapper<any>
+    connectionHolder: ConnectionWrapper<any>,
+    timer?: Timer
   ) {
+    timer?.start('ProfileActivityLogsDb->insert');
     await this.db.execute(
       `
     insert into ${PROFILES_ACTIVITY_LOGS_TABLE} (id, profile_id, target_id, contents, type, proxy_id, created_at)
@@ -65,6 +68,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       },
       { wrappedConnection: connectionHolder }
     );
+    timer?.stop('ProfileActivityLogsDb->insert');
   }
 
   public async searchLogs(

@@ -5,7 +5,7 @@ import {
 } from '../sql-executor';
 import { NewActivityEvent } from './new-activity-event';
 import { ACTIVITY_EVENTS_TABLE } from '../constants';
-import { Time } from '../time';
+import { Time, Timer } from '../time';
 import {
   ActivityEventAction,
   ActivityEventTargetType
@@ -83,8 +83,10 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
         part_id: number;
       } | null;
     },
-    connection?: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    timer: Timer
   ) {
+    timer.start('activityRecorder->recordDropCreated');
     const events: NewActivityEvent[] = [
       {
         target_id: creator_id,
@@ -116,6 +118,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
       });
     }
     await this.recordEvents(events, connection);
+    timer.stop('activityRecorder->recordDropCreated');
   }
 
   async recordWaveCreated(

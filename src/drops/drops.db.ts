@@ -30,7 +30,7 @@ import {
   userGroupsService,
   UserGroupsService
 } from '../api-serverless/src/community-members/user-groups.service';
-import { Time } from '../time';
+import { Time, Timer } from '../time';
 import { DropVoteCreditSpending } from '../entities/IDropVoteCreditSpending';
 import { RateMatter } from '../entities/IRating';
 import {
@@ -133,11 +133,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async insertReferencedNfts(
     references: Omit<DropReferencedNftEntity, 'id'>[],
-    connection: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    timer: Timer
   ) {
-    for (const reference of references) {
-      await this.db.execute(
-        `insert into ${DROP_REFERENCED_NFTS_TABLE} (
+    timer.start('dropsDb->insertReferencedNfts');
+    await Promise.all(
+      references.map((reference) =>
+        this.db.execute(
+          `insert into ${DROP_REFERENCED_NFTS_TABLE} (
                             drop_id, 
                             contract,
                             token,
@@ -148,19 +151,24 @@ export class DropsDb extends LazyDbAccessCompatibleService {
               :token,
               :name
              )`,
-        reference,
-        { wrappedConnection: connection }
-      );
-    }
+          reference,
+          { wrappedConnection: connection }
+        )
+      )
+    );
+    timer.stop('dropsDb->insertReferencedNfts');
   }
 
   async insertDropMetadata(
     metadatas: Omit<DropMetadataEntity, 'id'>[],
-    connection: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    timer: Timer
   ) {
-    for (const metadata of metadatas) {
-      await this.db.execute(
-        `insert into ${DROP_METADATA_TABLE} (
+    timer.start(`dropsDb->insertDropMetadata`);
+    await Promise.all(
+      metadatas.map((metadata) =>
+        this.db.execute(
+          `insert into ${DROP_METADATA_TABLE} (
                             drop_id, 
                             data_key,
                             data_value
@@ -169,10 +177,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
               :data_key,
               :data_value
              )`,
-        metadata,
-        { wrappedConnection: connection }
-      );
-    }
+          metadata,
+          { wrappedConnection: connection }
+        )
+      )
+    );
+    timer.stop(`dropsDb->insertDropMetadata`);
   }
 
   async findDropById(
@@ -715,16 +725,21 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async insertDropMedia(
     media: Omit<DropMediaEntity, 'id'>[],
-    connection: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    timer: Timer
   ) {
-    for (const medium of media) {
-      await this.db.execute(
-        `insert into ${DROP_MEDIA_TABLE} (drop_id, drop_part_id, url, mime_type)
+    timer.start(`dropsDb->insertDropMedia`);
+    await Promise.all(
+      media.map((medium) =>
+        this.db.execute(
+          `insert into ${DROP_MEDIA_TABLE} (drop_id, drop_part_id, url, mime_type)
          values (:drop_id, :drop_part_id, :url, :mime_type)`,
-        medium,
-        { wrappedConnection: connection }
-      );
-    }
+          medium,
+          { wrappedConnection: connection }
+        )
+      )
+    );
+    timer.stop(`dropsDb->insertDropMedia`);
   }
 
   async getDropMedia(
@@ -779,15 +794,20 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async insertDropParts(
     parts: DropPartEntity[],
-    connection: ConnectionWrapper<any>
+    connection: ConnectionWrapper<any>,
+    timer: Timer
   ) {
-    for (const part of parts) {
-      await this.db.execute(
-        `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content, quoted_drop_id, quoted_drop_part_id) values (:drop_id, :drop_part_id, :content, :quoted_drop_id, :quoted_drop_part_id)`,
-        part,
-        { wrappedConnection: connection }
-      );
-    }
+    timer.start(`dropsDb->insertDropParts`);
+    await Promise.all(
+      parts.map((part) =>
+        this.db.execute(
+          `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content, quoted_drop_id, quoted_drop_part_id) values (:drop_id, :drop_part_id, :content, :quoted_drop_id, :quoted_drop_part_id)`,
+          part,
+          { wrappedConnection: connection }
+        )
+      )
+    );
+    timer.stop(`dropsDb->insertDropParts`);
   }
 
   async findRepliesByDropId(param: {
