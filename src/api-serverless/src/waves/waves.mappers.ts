@@ -18,8 +18,6 @@ import {
   UserGroupsService
 } from '../community-members/user-groups.service';
 import { Group } from '../generated/models/Group';
-import { dropsService } from '../drops/drops.api.service';
-import { ConnectionWrapper } from '../../../sql-executor';
 import { WaveParticipationRequirement } from '../generated/models/WaveParticipationRequirement';
 import { Drop } from '../generated/models/Drop';
 import { WaveVotingConfig } from '../generated/models/WaveVotingConfig';
@@ -28,19 +26,23 @@ import { WaveContributorOverview } from '../generated/models/WaveContributorOver
 import { WaveVisibilityConfig } from '../generated/models/WaveVisibilityConfig';
 import { WaveParticipationConfig } from '../generated/models/WaveParticipationConfig';
 import { WaveConfig } from '../generated/models/WaveConfig';
-import { AuthenticationContext } from '../../../auth-context';
 import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { WaveSubscriptionTargetAction } from '../generated/models/WaveSubscriptionTargetAction';
-import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
+import {
+  ActivityEventAction,
+  ActivityEventTargetType
+} from '../../../entities/IActivityEvent';
 import {
   profilesApiService,
   ProfilesApiService
 } from '../profiles/profiles.api.service';
 import { WaveMetricEntity } from '../../../entities/IWaveMetric';
 import { WaveMetrics } from '../generated/models/WaveMetrics';
+import { RequestContext } from '../../../request.context';
+import { dropsService } from '../drops/drops.api.service';
 
 export class WavesMappers {
   constructor(
@@ -52,14 +54,14 @@ export class WavesMappers {
 
   public createWaveToNewWaveEntity(
     createWaveRequest: CreateNewWave,
-    authorId: string,
-    descriptionDropId: string
+    descriptionDropId: string,
+    ctx: RequestContext
   ): NewWaveEntity {
     return {
       name: createWaveRequest.name,
       description_drop_id: descriptionDropId,
       picture: createWaveRequest.picture,
-      created_by: authorId,
+      created_by: ctx.authenticationContext!.getActingAsId()!,
       voting_group_id: createWaveRequest.voting.scope.group_id,
       admin_group_id: createWaveRequest.wave.admin_group?.group_id ?? null,
       voting_credit_type: resolveEnumOrThrow(
@@ -116,8 +118,7 @@ export class WavesMappers {
       noRightToVote: boolean;
       noRightToParticipate: boolean;
     },
-    authenticationContext: AuthenticationContext | undefined,
-    connection?: ConnectionWrapper<any>
+    ctx: RequestContext
   ): Promise<Wave> {
     return this.waveEntitiesToApiWaves(
       {
@@ -126,8 +127,7 @@ export class WavesMappers {
         noRightToVote,
         noRightToParticipate
       },
-      authenticationContext,
-      connection
+      ctx
     ).then((waves) => waves[0]);
   }
 
@@ -143,8 +143,7 @@ export class WavesMappers {
       noRightToVote: boolean;
       noRightToParticipate: boolean;
     },
-    authenticationContext: AuthenticationContext | undefined,
-    connection?: ConnectionWrapper<any>
+    ctx: RequestContext
   ): Promise<Wave[]> {
     const {
       contributors,
@@ -153,11 +152,7 @@ export class WavesMappers {
       creationDrops,
       subscribedActions,
       metrics
-    } = await this.getRelatedData(
-      waveEntities,
-      authenticationContext,
-      connection
-    );
+    } = await this.getRelatedData(waveEntities, ctx);
     return waveEntities.map<Wave>((waveEntity) =>
       this.mapWaveEntityToApiWave({
         waveEntity,
@@ -311,8 +306,7 @@ export class WavesMappers {
 
   private async getRelatedData(
     waveEntities: WaveEntity[],
-    authenticationContext: AuthenticationContext | undefined,
-    connection?: ConnectionWrapper<any>
+    ctx: RequestContext
   ): Promise<{
     contributors: Record<
       string,
@@ -324,8 +318,13 @@ export class WavesMappers {
     subscribedActions: Record<string, WaveSubscriptionTargetAction[]>;
     metrics: Record<string, WaveMetricEntity>;
   }> {
+    ctx.timer?.start('wavesMappers->getRelatedData');
     const waveIds = waveEntities.map((it) => it.id);
-    const authenticatedUserId = authenticationContext?.getActingAsId();
+    const authenticatedUserId = ctx.authenticationContext?.getActingAsId();
+    ctx.timer?.start('dropsService->findDropsByIdsOrThrow');
+    ctx.timer?.start(
+      'identitySubscriptionsDb->findIdentitySubscriptionActionsOfTargets'
+    );
     const [
       curationEntities,
       metrics,
@@ -345,25 +344,38 @@ export class WavesMappers {
               ].filter((id) => id !== null) as string[]
           )
           .flat(),
-        connection
+        ctx
       ),
-      this.wavesApiDb.findWavesMetricsByWaveIds(waveIds, connection),
-      this.wavesApiDb.getWavesContributorsOverviews(waveIds, connection),
-      dropsService.findDropsByIdsOrThrow(
-        distinct(waveEntities.map((it) => it.description_drop_id)),
-        authenticationContext,
-        connection
-      ),
+      this.wavesApiDb.findWavesMetricsByWaveIds(waveIds, ctx),
+      this.wavesApiDb.getWavesContributorsOverviews(waveIds, ctx),
+
+      dropsService
+        .findDropsByIdsOrThrow(
+          distinct(waveEntities.map((it) => it.description_drop_id)),
+          ctx.authenticationContext,
+          ctx.connection
+        )
+        .then((drops) => {
+          ctx.timer?.stop('dropsService->findDropsByIdsOrThrow');
+          return drops;
+        }),
       authenticatedUserId
-        ? await this.identitySubscriptionsDb.findIdentitySubscriptionActionsOfTargets(
-            {
-              subscriber_id: authenticatedUserId,
-              target_ids: waveIds,
-              target_type: ActivityEventTargetType.WAVE
-            },
-            connection
-          )
-        : Promise.resolve({})
+        ? this.identitySubscriptionsDb
+            .findIdentitySubscriptionActionsOfTargets(
+              {
+                subscriber_id: authenticatedUserId,
+                target_ids: waveIds,
+                target_type: ActivityEventTargetType.WAVE
+              },
+              ctx.connection
+            )
+            .then((result) => {
+              ctx.timer?.stop(
+                'identitySubscriptionsDb->findIdentitySubscriptionActionsOfTargets'
+              );
+              return result;
+            })
+        : Promise.resolve({} as Record<string, ActivityEventAction[]>)
     ]);
     const profileIds = distinct([
       ...waveEntities
@@ -380,9 +392,10 @@ export class WavesMappers {
       await this.profilesApiService.getProfileMinsByIds(
         {
           ids: profileIds,
-          authenticatedProfileId: authenticationContext?.getActingAsId()
+          authenticatedProfileId: ctx.authenticationContext?.getActingAsId(),
+          timer: ctx.timer
         },
-        connection
+        ctx.connection
       );
     const curations: Record<string, Group> = curationEntities.reduce(
       (acc, curationEntity) => {
@@ -396,6 +409,7 @@ export class WavesMappers {
       },
       {} as Record<string, Group>
     );
+    ctx.timer?.stop('wavesMappers->getRelatedData');
     return {
       contributors: contributorsOverViews,
       profiles: profileMins,

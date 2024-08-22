@@ -42,6 +42,7 @@ import { Timer } from '../../../time';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { DropQuoteNotificationData } from '../../../notifications/user-notification.types';
 import { CreateDropPart } from '../generated/models/CreateDropPart';
+import { RequestContext } from '../../../request.context';
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(DropCreationApiService.name);
@@ -89,14 +90,15 @@ export class DropCreationApiService {
   async createWaveDrop(
     waveId: string,
     createWaveDropRequest: CreateWaveDropRequest,
-    authenticationContext: AuthenticationContext,
-    connection: ConnectionWrapper<any>,
-    timer: Timer
+    ctx: RequestContext
   ): Promise<Drop> {
     const createDropRequest: CreateDropRequest = {
       ...createWaveDropRequest,
       wave_id: waveId
     };
+    const authenticationContext = ctx.authenticationContext!;
+    const timer = ctx.timer!;
+    const connection = ctx.connection!;
     await this.validateReferences(
       createDropRequest,
       authenticationContext,
@@ -287,7 +289,7 @@ export class DropCreationApiService {
     createDropParts: CreateDropPart[],
     connection: ConnectionWrapper<any>,
     dropId: string,
-    visibilityGroupId: string
+    visibilityGroupId: string | null
   ) {
     timer.start('dropCreationApiService->notifyOfDropQuotes');
     let idx = 1;
@@ -327,7 +329,7 @@ export class DropCreationApiService {
     createDropRequest: CreateDropRequest,
     dropId: string,
     authorId: string,
-    visibilityGroupId: string,
+    visibilityGroupId: string | null,
     connection: ConnectionWrapper<any>
   ) {
     timer.start('dropCreationApiService->insertMentions');
@@ -359,7 +361,7 @@ export class DropCreationApiService {
     dropId: string,
     authorId: string,
     createDropRequest: CreateDropRequest,
-    visibilityGroupId: string,
+    visibilityGroupId: string | null,
     connection: ConnectionWrapper<any>,
     timer: Timer
   ) {
@@ -388,7 +390,7 @@ export class DropCreationApiService {
     timer: Timer,
     connection: ConnectionWrapper<any>,
     dropId: string,
-    visibilityGroupId: string
+    visibilityGroupId: string | null
   ) {
     const replyTo = createDropRequest.reply_to;
     if (replyTo) {

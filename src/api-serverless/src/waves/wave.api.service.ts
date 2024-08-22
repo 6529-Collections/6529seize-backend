@@ -39,7 +39,7 @@ import {
 } from '../profiles/profiles.api.service';
 import { WavesOverviewType } from '../generated/models/WavesOverviewType';
 import { WaveEntity } from '../../../entities/IWave';
-import { Timer } from '../../../time';
+import { RequestContext } from '../../../request.context';
 
 export class WaveApiService {
   constructor(
@@ -51,37 +51,31 @@ export class WaveApiService {
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
   ) {}
 
-  public async createWave({
-    createWaveRequest,
-    authenticationContext,
-    timer
-  }: {
-    createWaveRequest: CreateNewWave;
-    authenticationContext: AuthenticationContext;
-    timer: Timer;
-  }): Promise<Wave> {
-    await this.validateWaveRelations(
-      createWaveRequest,
-      authenticationContext?.authenticatedProfileId
-    );
+  public async createWave(
+    createWaveRequest: CreateNewWave,
+    ctx: RequestContext
+  ): Promise<Wave> {
+    const timer = ctx.timer!;
+    const authenticationContext = ctx.authenticationContext!;
+    timer.start('waveApiService->createWave');
+    await this.validateWaveRelations(createWaveRequest, ctx);
     const createdWave = await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        const ctxWithConnection = { ...ctx, connection };
         const id = randomUUID();
         const descriptionDropId = await dropCreationService
           .createWaveDrop(
             id,
             createWaveRequest.description_drop,
-            authenticationContext,
-            connection,
-            timer
+            ctxWithConnection
           )
           .then((drop) => drop.id);
         const newEntity = this.waveMappers.createWaveToNewWaveEntity(
           createWaveRequest,
-          authenticationContext.getActingAsId()!,
-          descriptionDropId
+          descriptionDropId,
+          ctx
         );
-        await this.wavesApiDb.insertWave(id, newEntity, connection);
+        await this.wavesApiDb.insertWave(id, newEntity, ctxWithConnection);
         await this.identitySubscriptionsDb.addIdentitySubscription(
           {
             subscriber_id: newEntity.created_by,
@@ -89,10 +83,12 @@ export class WaveApiService {
             target_type: ActivityEventTargetType.WAVE,
             target_action: ActivityEventAction.DROP_CREATED
           },
-          connection
+          connection,
+          timer
         );
-
+        timer.start(`waveApiService->findWaveById`);
         const waveEntity = await this.wavesApiDb.findWaveById(id, connection);
+        timer.stop(`waveApiService->findWaveById`);
 
         if (!waveEntity) {
           throw new Error(`Something went wrong while creating wave ${id}`);
@@ -103,11 +99,12 @@ export class WaveApiService {
             wave_id: id,
             visibility_group_id: waveEntity.visibility_group_id
           },
-          connection
+          ctxWithConnection
         );
         const groupIdsUserIsEligibleFor =
           await this.userGroupsService.getGroupsUserIsEligibleFor(
-            authenticationContext.getActingAsId()
+            authenticationContext.getActingAsId(),
+            timer
           );
         const noRightToVote =
           authenticationContext.isAuthenticatedAsProxy() &&
@@ -126,19 +123,22 @@ export class WaveApiService {
             noRightToVote,
             noRightToParticipate
           },
-          authenticationContext,
-          connection
+          ctxWithConnection
         );
       }
     );
     await giveReadReplicaTimeToCatchUp();
+    timer.stop('waveApiService->createWave');
     return createdWave;
   }
 
   private async validateWaveRelations(
     createWave: CreateNewWave,
-    authenticatedProfileId?: string | null
+    ctx: RequestContext
   ) {
+    const authenticatedProfileId = ctx.authenticationContext!.getActingAsId()!;
+    const timer = ctx.timer;
+    timer?.start(`waveApiService->validateWaveRelations`);
     this.validateOutcomes(createWave);
     const referencedGroupIds = distinct(
       [
@@ -147,13 +147,17 @@ export class WaveApiService {
         createWave.voting.scope.group_id
       ].filter((id) => id !== null) as string[]
     );
+    timer?.start(`waveApiService->userGroupsService->getByIds`);
     const groupEntities = await this.userGroupsService.getByIds(
-      referencedGroupIds
+      referencedGroupIds,
+      ctx
     );
+    timer?.stop(`waveApiService->userGroupsService->getByIds`);
     const missingGroupIds = referencedGroupIds.filter(
       (it) => !groupEntities.find((e) => e.id === it)
     );
     if (missingGroupIds.length) {
+      timer?.stop(`waveApiService->validateWaveRelations`);
       throw new BadRequestException(
         `Group(s) not found: ${missingGroupIds.join(', ')}`
       );
@@ -163,14 +167,18 @@ export class WaveApiService {
       const creditorProfile = (
         await this.profilesService.getProfileMinsByIds({
           ids: [referencedCreditorId],
-          authenticatedProfileId
+          authenticatedProfileId,
+          timer
         })
       )[referencedCreditorId];
+      timer?.stop(`waveApiService->validateWaveRelations`);
       if (!creditorProfile) {
         throw new BadRequestException(
           `Creditor not found: ${referencedCreditorId}`
         );
       }
+    } else {
+      timer?.stop(`waveApiService->validateWaveRelations`);
     }
   }
 
@@ -226,8 +234,9 @@ export class WaveApiService {
 
   async searchWaves(
     params: SearchWavesParams,
-    authenticationContext?: AuthenticationContext
+    ctx: RequestContext
   ): Promise<Wave[]> {
+    const authenticationContext = ctx.authenticationContext;
     let groupsUserIsEligibleFor: string[];
     if (!authenticationContext) {
       groupsUserIsEligibleFor = [];
@@ -270,7 +279,7 @@ export class WaveApiService {
         noRightToVote,
         noRightToParticipate
       },
-      authenticationContext
+      ctx
     );
   }
 
@@ -309,7 +318,7 @@ export class WaveApiService {
           noRightToVote,
           noRightToParticipate
         },
-        authenticationContext
+        { authenticationContext }
       )
       .then((res) =>
         res.reduce((acc, it) => {
@@ -347,7 +356,7 @@ export class WaveApiService {
         noRightToVote,
         noRightToParticipate
       },
-      authenticationContext
+      { authenticationContext }
     );
   }
 
@@ -503,7 +512,7 @@ export class WaveApiService {
         noRightToVote,
         noRightToParticipate
       },
-      authenticationContext
+      { authenticationContext }
     );
   }
 

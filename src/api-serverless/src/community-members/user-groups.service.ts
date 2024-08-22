@@ -30,6 +30,7 @@ import {
 } from '../generated/models/GroupOwnsNft';
 import { profilesApiService } from '../profiles/profiles.api.service';
 import { Timer } from '../../../time';
+import { RequestContext } from '../../../request.context';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -702,9 +703,9 @@ export class UserGroupsService {
 
   async getByIds(
     ids: string[],
-    connection?: ConnectionWrapper<any>
+    ctx: RequestContext
   ): Promise<UserGroupEntity[]> {
-    return await this.userGroupsDb.getByIds(ids, connection);
+    return await this.userGroupsDb.getByIds(ids, ctx);
   }
 
   async findUserGroupsIdentityGroupIdentities(

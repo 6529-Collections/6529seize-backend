@@ -389,7 +389,9 @@ export class Timer {
     });
   }
 
-  public static getFromRequest(request: Request): Timer {
+  public static getFromRequest(
+    request: Request<any, any, any, any, any>
+  ): Timer {
     return (request as any).timer as Timer;
   }
 }
