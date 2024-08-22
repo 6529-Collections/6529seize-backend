@@ -33,6 +33,7 @@ import { WaveSubscriptionActions } from '../generated/models/WaveSubscriptionAct
 import { WaveSubscriptionTargetAction } from '../generated/models/WaveSubscriptionTargetAction';
 import { profilesService } from '../../../profiles/profiles.service';
 import { Timer } from '../../../time';
+import { RequestContext } from '../../../request.context';
 
 const router = asyncRouter();
 
@@ -45,6 +46,7 @@ router.post(
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
+    const requestContext: RequestContext = { authenticationContext, timer };
     const authenticatedProfileId = authenticationContext.getActingAsId();
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
@@ -58,11 +60,7 @@ router.post(
       throw new ForbiddenException(`Proxy is not allowed to create waves`);
     }
     const request = getValidatedByJoiOrThrow(req.body, WaveSchema);
-    const wave = await waveApiService.createWave({
-      createWaveRequest: request,
-      authenticationContext,
-      timer
-    });
+    const wave = await waveApiService.createWave(request, requestContext);
     res.send(wave);
   }
 );
@@ -74,12 +72,13 @@ router.get(
     req: Request<any, any, any, SearchWavesParams, any>,
     res: Response<ApiResponse<Wave[]>>
   ) => {
-    const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     const params = await validateWavesSearchParams(req);
-    const waves = await waveApiService.searchWaves(
-      params,
-      authenticationContext
-    );
+    const waves = await waveApiService.searchWaves(params, {
+      authenticationContext,
+      timer
+    });
     res.send(waves);
   }
 );

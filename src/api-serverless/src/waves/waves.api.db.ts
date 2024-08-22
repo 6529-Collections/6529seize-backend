@@ -21,6 +21,7 @@ import {
 import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
 import { RateMatter } from '../../../entities/IRating';
 import { WaveMetricEntity } from '../../../entities/IWaveMetric';
+import { RequestContext } from '../../../request.context';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -91,8 +92,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   public async insertWave(
     id: string,
     wave: NewWaveEntity,
-    connection: ConnectionWrapper<any>
+    ctx: RequestContext
   ) {
+    const timer = ctx.timer!;
+    timer.start('waveApiDb->insertWave');
     const params = {
       ...wave,
       id,
@@ -173,8 +176,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           params.participation_required_media
         )
       },
-      { wrappedConnection: connection }
+      { wrappedConnection: ctx.connection }
     );
+    timer.stop('waveApiDb->insertWave');
   }
 
   async searchWaves(
@@ -265,14 +269,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
   async getWavesContributorsOverviews(
     waveIds: string[],
-    connection?: ConnectionWrapper<any>
+    { connection, timer }: RequestContext
   ): Promise<
     Record<string, { contributor_identity: string; contributor_pfp: string }[]>
   > {
     if (waveIds.length === 0) {
       return {};
     }
-    return this.db
+    timer?.start('wavesApiDb->getWavesContributorsOverviews');
+    const result = await this.db
       .execute<{
         wave_id: string;
         contributor_identity: string;
@@ -315,12 +320,14 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
           return acc;
         }, {} as Record<string, { contributor_identity: string; contributor_pfp: string }[]>)
       );
+    timer?.stop('wavesApiDb->getWavesContributorsOverviews');
+    return result;
   }
 
   async findWaveVisibilityGroupByDropId(
     drop_id: string,
     connection: ConnectionWrapper<any>
-  ): Promise<string> {
+  ): Promise<string | null> {
     return this.db
       .oneOrNull<{
         visibility_group_id: string;
@@ -329,7 +336,7 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
         { drop_id },
         { wrappedConnection: connection }
       )
-      .then((it) => it!.visibility_group_id);
+      .then((it) => it?.visibility_group_id ?? null);
   }
 
   async findLatestWaves(
@@ -488,12 +495,13 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
 
   async findWavesMetricsByWaveIds(
     waveIds: string[],
-    connection?: ConnectionWrapper<any>
+    { connection, timer }: RequestContext
   ): Promise<Record<string, WaveMetricEntity>> {
     if (!waveIds.length) {
       return {};
     }
-    return this.db
+    timer?.start('wavesApiDb->findWavesMetricsByWaveIds');
+    const result = await this.db
       .execute<WaveMetricEntity>(
         `select * from ${WAVE_METRICS_TABLE} where wave_id in (:waveIds)`,
         { waveIds },
@@ -509,6 +517,8 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
           return acc;
         }, {} as Record<string, WaveMetricEntity>)
       );
+    timer?.stop('wavesApiDb->findWavesMetricsByWaveIds');
+    return result;
   }
 }
 

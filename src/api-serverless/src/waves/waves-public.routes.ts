@@ -6,6 +6,7 @@ import { NotFoundException } from '../../../exceptions';
 import { waveApiService } from './wave.api.service';
 import { SearchWavesParams } from './waves.api.db';
 import { validateWavesSearchParams } from './waves.routes';
+import { Timer } from '../../../time';
 
 const router = asyncRouter();
 
@@ -16,7 +17,9 @@ router.get(
     res: Response<ApiResponse<Wave[]>>
   ) => {
     const params = await validateWavesSearchParams(req);
-    const waves = await waveApiService.searchWaves(params);
+    const waves = await waveApiService.searchWaves(params, {
+      timer: Timer.getFromRequest(req)
+    });
     res.send(waves);
   }
 );

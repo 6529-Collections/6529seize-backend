@@ -8,6 +8,7 @@ import { ProfileMin } from '../generated/models/ProfileMin';
 import { IdentitySubscriptionTargetAction } from '../generated/models/IdentitySubscriptionTargetAction';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 import { resolveEnumOrThrow } from '../../../helpers';
+import { Timer } from '../../../time';
 
 export class ProfilesApiService {
   constructor(
@@ -17,13 +18,24 @@ export class ProfilesApiService {
   async getProfileMinsByIds(
     {
       ids,
-      authenticatedProfileId
-    }: { ids: string[]; authenticatedProfileId?: string | null },
+      authenticatedProfileId,
+      timer
+    }: { ids: string[]; authenticatedProfileId?: string | null; timer?: Timer },
     connection?: ConnectionWrapper<any>
   ): Promise<Record<string, ProfileMin>> {
+    timer?.start('profilesApiService->getProfileMinsByIds');
+    timer?.start(
+      'profilesApiService->getProfileMinsByIds->getProfileOverviewsByIds'
+    );
     const profileOverviews = await profilesService.getProfileOverviewsByIds(
       ids,
       connection
+    );
+    timer?.stop(
+      'profilesApiService->getProfileMinsByIds->getProfileOverviewsByIds'
+    );
+    timer?.start(
+      'profilesApiService->getProfileMinsByIds->findIdentitySubscriptionActionsOfTargets'
     );
     const subscribedActions: Record<
       string,
@@ -47,6 +59,10 @@ export class ProfilesApiService {
             }, {} as Record<string, IdentitySubscriptionTargetAction[]>)
           )
       : {};
+    timer?.stop(
+      'profilesApiService->getProfileMinsByIds->findIdentitySubscriptionActionsOfTargets'
+    );
+    timer?.stop('profilesApiService->getProfileMinsByIds');
     return Object.values(profileOverviews).reduce((acc, profile) => {
       acc[profile.id] = {
         ...profile,

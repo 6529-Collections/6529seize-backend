@@ -15,6 +15,7 @@ import { randomUUID } from 'crypto';
 import { distinct } from '../helpers';
 import { identitiesDb } from '../identities/identities.db';
 import { calculateLevel } from '../profiles/profile-level';
+import { RequestContext } from '../request.context';
 
 const mysql = require('mysql');
 
@@ -210,18 +211,21 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
 
   async getByIds(
     ids: string[],
-    connection?: ConnectionWrapper<any>
+    ctx: RequestContext
   ): Promise<UserGroupEntity[]> {
     if (!ids.length) {
       return [];
     }
-    return this.db.execute<UserGroupEntity>(
+    ctx.timer?.start('userGroupsDb->getByIds');
+    const result = await this.db.execute<UserGroupEntity>(
       `
     select * from ${USER_GROUPS_TABLE} where visible is true and id in (:ids)
     `,
       { ids },
-      { wrappedConnection: connection }
+      { wrappedConnection: ctx?.connection }
     );
+    ctx.timer?.stop('userGroupsDb->getByIds');
+    return result;
   }
 
   async getProfileOverviewByProfileId(profileId: string): Promise<{

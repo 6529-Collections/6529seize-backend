@@ -10,6 +10,7 @@ import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '../entities/IActivityEvent';
+import { RequestContext } from '../request.context';
 
 const mysql = require('mysql');
 
@@ -131,8 +132,9 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
       creator_id: string;
       visibility_group_id: string | null;
     },
-    connection?: ConnectionWrapper<any>
+    { timer, connection }: RequestContext
   ) {
+    timer?.start('activityRecorder->recordWaveCreated');
     await this.recordEvent(
       {
         target_id: creator_id,
@@ -143,6 +145,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
       },
       connection
     );
+    timer?.stop('activityRecorder->recordWaveCreated');
   }
 
   async recordEvents(
