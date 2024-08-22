@@ -10,6 +10,7 @@ import { resolveEnum } from '../../../helpers';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { Time, Timer } from '../../../time';
 import { ProfileProxyAction } from '../generated/models/ProfileProxyAction';
+import * as mcache from 'memory-cache';
 
 export function getJwtSecret() {
   const jwtsecret = process.env.JWT_SECRET;
@@ -65,9 +66,14 @@ export async function getAuthenticationContext(
   req: Request<any, any, any, any, any>,
   timer?: Timer
 ): Promise<AuthenticationContext> {
-  timer?.start('getAuthenticationContext');
   const authenticatedWallet = getWalletOrThrow(req);
   const roleProfileId = (req.user as any).role as string | null;
+  const cacheKey = `auth-context-${authenticatedWallet}-${roleProfileId}`;
+  const cachedContext = mcache.get(cacheKey);
+  if (cachedContext) {
+    return cachedContext;
+  }
+  timer?.start('getAuthenticationContext');
   const authenticatedProfileId = await profilesService
     .getProfileByWallet(authenticatedWallet)
     .then((profile) => profile?.profile?.external_id ?? null);
@@ -95,12 +101,14 @@ export async function getAuthenticationContext(
           )
       : [];
   timer?.stop('getAuthenticationContext');
-  return new AuthenticationContext({
+  const authenticationContext = new AuthenticationContext({
     authenticatedWallet,
     authenticatedProfileId,
     roleProfileId,
     activeProxyActions
   });
+  mcache.put(cacheKey, authenticationContext, Time.minutes(1).toMillis());
+  return authenticationContext;
 }
 
 function isProxyActionActive(action: ProfileProxyAction): boolean {

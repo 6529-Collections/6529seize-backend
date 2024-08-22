@@ -12,7 +12,6 @@ import { Drop } from '../generated/models/Drop';
 import { DropReferencedNFT } from '../generated/models/DropReferencedNFT';
 import { QuotedDrop } from '../generated/models/QuotedDrop';
 import { DropMediaEntity, DropPartEntity } from '../../../entities/IDrop';
-import { waveApiService } from '../waves/wave.api.service';
 import {
   userGroupsService,
   UserGroupsService
@@ -20,10 +19,13 @@ import {
 import { AuthenticationContext } from '../../../auth-context';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { CreateWaveDropRequest } from '../generated/models/CreateWaveDropRequest';
-import { assertUnreachable, parseNumberOrNull } from '../../../helpers';
+import {
+  assertUnreachable,
+  parseNumberOrNull,
+  resolveEnumOrThrow
+} from '../../../helpers';
 import { WaveParticipationRequirement } from '../generated/models/WaveParticipationRequirement';
 import { WaveMetadataType } from '../generated/models/WaveMetadataType';
-import { Wave } from '../generated/models/Wave';
 import {
   activityRecorder,
   ActivityRecorder
@@ -42,6 +44,7 @@ import { Timer } from '../../../time';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { DropQuoteNotificationData } from '../../../notifications/user-notification.types';
 import { CreateDropPart } from '../generated/models/CreateDropPart';
+import { ParticipationRequiredMedia } from '../../../entities/IWave';
 import { RequestContext } from '../../../request.context';
 
 export class DropCreationApiService {
@@ -513,29 +516,45 @@ export class DropCreationApiService {
     timer: Timer
   ) {
     timer.start('dropCreationApiService->verifyWaveLimitations');
-    const wave = await waveApiService.findWaveByIdOrThrow(
-      createDropRequest.wave_id,
-      groupIdsUserIsEligibleFor,
-      authenticationContext
-    );
-    const groupId = wave.participation.scope.group?.id;
+    const waveId = createDropRequest.wave_id;
+    const wave = await wavesApiDb.findWaveAccessibiltiyDataForDroping(waveId);
+    if (!wave) {
+      throw new BadRequestException(`Wave not found`);
+    }
+    const groupId = wave.participation_group_id;
     if (groupId && !groupIdsUserIsEligibleFor.includes(groupId)) {
       throw new ForbiddenException(`User is not eligible for this wave`);
     }
-    if (!createDropRequest.reply_to?.drop_id) {
-      this.verifyMedia(wave, createDropRequest);
-      this.verifyMetadata(wave, createDropRequest);
-    }
-    await this.verifyParticipatoryLimitations(
-      wave,
-      authenticationContext.getActingAsId()!,
-      timer
-    );
+
+    const isReplyDrop = createDropRequest.reply_to?.drop_id;
+    await Promise.all([
+      this.verifyParticipatoryLimitations(
+        waveId,
+        wave.participation_max_applications_per_participant,
+        authenticationContext.getActingAsId()!,
+        timer
+      ),
+      isReplyDrop
+        ? Promise.resolve()
+        : this.verifyMedia(
+            wave.participation_required_media,
+            createDropRequest
+          ),
+      isReplyDrop
+        ? Promise.resolve()
+        : this.verifyMetadata(
+            wave.participation_required_metadata,
+            createDropRequest
+          )
+    ]);
     timer.stop('dropCreationApiService->verifyWaveLimitations');
   }
 
-  private verifyMetadata(wave: Wave, createDropRequest: CreateDropRequest) {
-    for (const requiredMetadata of wave.participation.required_metadata) {
+  private verifyMetadata(
+    requiredMetadatas: any,
+    createDropRequest: CreateDropRequest
+  ) {
+    for (const requiredMetadata of requiredMetadatas) {
       const metadata = createDropRequest.metadata.filter(
         (it) => it.data_key === requiredMetadata.name
       );
@@ -554,8 +573,10 @@ export class DropCreationApiService {
     }
   }
 
-  private verifyMedia(wave: Wave, createDropRequest: CreateDropRequest) {
-    const requiredMedias = wave.participation.required_media;
+  private verifyMedia(
+    requiredMedias: ParticipationRequiredMedia[],
+    createDropRequest: CreateDropRequest
+  ) {
     if (requiredMedias.length) {
       const mimeTypes = createDropRequest.parts
         .map((it) => it.media.map((media) => media.mime_type))
@@ -563,7 +584,11 @@ export class DropCreationApiService {
         .flat();
       for (const requiredMedia of requiredMedias) {
         let requiredMimeType: string | undefined = undefined;
-        switch (requiredMedia) {
+        const requiredMediaEnum = resolveEnumOrThrow(
+          WaveParticipationRequirement,
+          requiredMedia
+        );
+        switch (requiredMediaEnum) {
           case WaveParticipationRequirement.Image:
             requiredMimeType = mimeTypes.find((it) => it.startsWith('image/'));
             break;
@@ -574,7 +599,7 @@ export class DropCreationApiService {
             requiredMimeType = mimeTypes.find((it) => it.startsWith('audio/'));
             break;
           default:
-            assertUnreachable(requiredMedia);
+            assertUnreachable(requiredMediaEnum);
         }
         if (!requiredMimeType) {
           throw new BadRequestException(
@@ -586,23 +611,25 @@ export class DropCreationApiService {
   }
 
   private async verifyParticipatoryLimitations(
-    wave: Wave,
+    waveId: string,
+    noOfApplicationsAllowedPerParticipantInWave: number | null,
     author_id: string,
     timer: Timer
   ) {
     timer.start('dropCreationApiService->verifyParticipatoryLimitations');
-    const noOfApplicationsAllowedPerParticipant =
-      wave.participation.no_of_applications_allowed_per_participant;
-    if (noOfApplicationsAllowedPerParticipant !== null) {
+    if (noOfApplicationsAllowedPerParticipantInWave !== null) {
       const countOfDropsByAuthorInWave =
         await this.dropsDb.countAuthorDropsInWave({
-          wave_id: wave.id,
+          wave_id: waveId,
           author_id
         });
       timer.stop('dropCreationApiService->verifyParticipatoryLimitations');
-      if (countOfDropsByAuthorInWave >= noOfApplicationsAllowedPerParticipant) {
+      if (
+        countOfDropsByAuthorInWave >=
+        noOfApplicationsAllowedPerParticipantInWave
+      ) {
         throw new ForbiddenException(
-          `Wave allows ${noOfApplicationsAllowedPerParticipant} drops per participant. User has dropped applied ${countOfDropsByAuthorInWave} times.`
+          `Wave allows ${noOfApplicationsAllowedPerParticipantInWave} drops per participant. User has dropped applied ${countOfDropsByAuthorInWave} times.`
         );
       }
     } else {

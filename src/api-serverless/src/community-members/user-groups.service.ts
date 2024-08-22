@@ -29,7 +29,8 @@ import {
   GroupOwnsNftNameEnum
 } from '../generated/models/GroupOwnsNft';
 import { profilesApiService } from '../profiles/profiles.api.service';
-import { Timer } from '../../../time';
+import { Time, Timer } from '../../../time';
+import * as mcache from 'memory-cache';
 import { RequestContext } from '../../../request.context';
 
 export type NewUserGroupEntity = Omit<
@@ -103,12 +104,16 @@ export class UserGroupsService {
     profileId: string | null,
     timer?: Timer
   ): Promise<string[]> {
-    const timerKey = 'getGroupsUserIsEligibleFor';
-    timer?.start(timerKey);
     if (!profileId) {
-      timer?.stop(timerKey);
       return [];
     }
+    const key = `eligible-groups-${profileId}`;
+    const cachedGroupsUserIsEligibleFor = mcache.get(key);
+    if (cachedGroupsUserIsEligibleFor) {
+      return cachedGroupsUserIsEligibleFor;
+    }
+    const timerKey = 'getGroupsUserIsEligibleFor';
+    timer?.start(timerKey);
     const profile = await this.userGroupsDb.getProfileOverviewByProfileId(
       profileId
     );
@@ -283,12 +288,14 @@ export class UserGroupsService {
       );
     });
     timer?.stop(timerKey);
-    return distinct(
+    const result = distinct(
       [
         ...onlyProfileGroupsFilteredOut.map((it) => it.id),
         ...groupsUserIsEligibleByIdentity
       ].filter((it) => !groupsUserIsBannedFromByIdentity.includes(it) && !!it)
     );
+    mcache.put(key, result, Time.minutes(1).toMillis());
+    return result;
   }
 
   async changeVisibility({
