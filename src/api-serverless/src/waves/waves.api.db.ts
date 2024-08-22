@@ -4,7 +4,10 @@ import {
   LazyDbAccessCompatibleService,
   SqlExecutor
 } from '../../../sql-executor';
-import { WaveEntity } from '../../../entities/IWave';
+import {
+  ParticipationRequiredMedia,
+  WaveEntity
+} from '../../../entities/IWave';
 import { Time } from '../../../time';
 import {
   DROPS_TABLE,
@@ -519,6 +522,53 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
       );
     timer?.stop('wavesApiDb->findWavesMetricsByWaveIds');
     return result;
+  }
+
+  async findWaveAccessibiltiyDataForDroping(wave_id: string): Promise<{
+    participation_group_id: string | null;
+    participation_max_applications_per_participant: number | null;
+    participation_period_start: number | null;
+    participation_period_end: number | null;
+    participation_required_media: ParticipationRequiredMedia[];
+    participation_required_metadata: any;
+  } | null> {
+    return this.db
+      .oneOrNull<{
+        participation_group_id: string;
+        participation_max_applications_per_participant: number | null;
+        participation_period_start: number | null;
+        participation_period_end: number | null;
+        participation_required_media: string;
+        participation_required_metadata: string;
+      }>(
+        `
+        select 
+          participation_group_id, 
+          participation_max_applications_per_participant, 
+          participation_period_start, 
+          participation_period_end,
+          participation_required_media,
+          participation_required_metadata
+          from ${WAVES_TABLE} where id = :wave_id`,
+        { wave_id }
+      )
+      .then((it) =>
+        it
+          ? {
+              participation_group_id: it.participation_group_id,
+              participation_max_applications_per_participant:
+                it.participation_max_applications_per_participant,
+              participation_period_start: it.participation_period_start,
+              participation_period_end: it.participation_period_end,
+              participation_required_media: JSON.parse(
+                it.participation_required_media
+              ),
+              participation_required_metadata: JSON.parse(
+                it.participation_required_metadata
+              )
+            }
+          : null
+      );
   }
 }
 
