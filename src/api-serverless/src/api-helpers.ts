@@ -106,7 +106,7 @@ export function resolveIntParam(param: string | string[] | undefined) {
   return undefined;
 }
 
-export function giveReadReplicaTimeToCatchUp(millisToGive?: number) {
+export function giveReadReplicaTimeToCatchUp(millisToGive?: number | null) {
   const ms =
     millisToGive ??
     parseNumberOrNull(process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE) ??
