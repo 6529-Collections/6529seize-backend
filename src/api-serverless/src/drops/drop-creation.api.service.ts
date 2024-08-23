@@ -46,6 +46,7 @@ import { DropQuoteNotificationData } from '../../../notifications/user-notificat
 import { CreateDropPart } from '../generated/models/CreateDropPart';
 import { ParticipationRequiredMedia } from '../../../entities/IWave';
 import { RequestContext } from '../../../request.context';
+import * as process from 'node:process';
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(DropCreationApiService.name);
@@ -82,7 +83,9 @@ export class DropCreationApiService {
         );
       }
     );
-    await giveReadReplicaTimeToCatchUp();
+    await giveReadReplicaTimeToCatchUp(
+      parseNumberOrNull(process.env.CREATE_DROP_WAIT_TIME_MS)
+    );
     this.logger.info(
       `Drop ${dropFull.id} created by user ${dropFull.author.id}`
     );
