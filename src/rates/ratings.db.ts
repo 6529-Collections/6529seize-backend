@@ -13,6 +13,7 @@ import {
 import { Page } from '../api-serverless/src/page-request';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
 import { RatingsSnapshotsPageRequest } from './ratings.service';
+import { RequestContext } from '../request.context';
 
 export class RatingsDb extends LazyDbAccessCompatibleService {
   async getAggregatedRatingOnMatter(
@@ -651,6 +652,21 @@ from grouped_rates r
     return this.db
       .execute(sql, sqlParam)
       .then((results) => results[0]?.rating ?? 0);
+  }
+
+  async deleteRatingsForMatter(
+    param: {
+      matter_target_id: string;
+      matter: RateMatter;
+    },
+    ctx: RequestContext
+  ) {
+    ctx?.timer?.start('ratingsDb->deleteRatingsForMatter');
+    await this.db.execute(
+      `delete from ${RATINGS_TABLE} where matter_target_id = :matter_target_id and matter = :matter`,
+      param
+    );
+    ctx?.timer?.stop('ratingsDb->deleteRatingsForMatter');
   }
 }
 

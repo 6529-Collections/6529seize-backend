@@ -48,6 +48,7 @@ import { AvailableRatingCredit } from '../api-serverless/src/generated/models/Av
 import { RatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/RatingWithProfileInfoAndLevel';
 import { RatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/RatingWithProfileInfoAndLevelPage';
 import { identitiesDb } from '../identities/identities.db';
+import { RequestContext } from '../request.context';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -1001,6 +1002,13 @@ export class RatingsService {
       rep_credit: repLeft,
       cic_credit: cicLeft
     };
+  }
+
+  async deleteRatingsForMatter(
+    param: { matter_target_id: string; matter: RateMatter },
+    ctx: RequestContext
+  ) {
+    return await this.ratingsDb.deleteRatingsForMatter(param, ctx);
   }
 }
 

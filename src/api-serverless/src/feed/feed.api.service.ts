@@ -191,6 +191,9 @@ export class FeedApiService {
     const seenReplyPairs = new Set<string>();
     return feedItems.reduce((acc, it) => {
       if (it.type === FeedItemType.DropReplied) {
+        if (!it.item.drop?.id || !it.item.reply?.id) {
+          return acc;
+        }
         const key = `${it.item.drop.id}-${it.item.reply.id}`;
         if (seenReplyPairs.has(key)) {
           return acc;
@@ -302,7 +305,7 @@ export class FeedApiService {
   }> {
     const [drops, waves, votes] = await Promise.all([
       dropsService
-        .findDropsByIdsOrThrow(dropsIdsNeeded, authenticationContext)
+        .findDropsByIds(dropsIdsNeeded, authenticationContext)
         .then(async (drops) => {
           const replyDropIds = Object.values(drops)
             .map((it) => it.reply_to?.drop_id)
@@ -312,7 +315,7 @@ export class FeedApiService {
             ...replyDropsNeeded,
             ...replyDropIds
           ]);
-          const replies = await dropsService.findDropsByIdsOrThrow(
+          const replies = await dropsService.findDropsByIds(
             allReplyDropIds,
             authenticationContext
           );

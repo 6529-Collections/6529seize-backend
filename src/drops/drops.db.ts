@@ -13,6 +13,7 @@ import {
   DropReferencedNftEntity
 } from '../entities/IDrop';
 import {
+  ACTIVITY_EVENTS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
@@ -21,6 +22,7 @@ import {
   DROPS_TABLE,
   DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
   IDENTITIES_TABLE,
+  IDENTITY_NOTIFICATIONS_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
   WAVE_METRICS_TABLE,
@@ -42,6 +44,7 @@ import { PageSortDirection } from '../api-serverless/src/page-request';
 import { DropActivityLogsQuery } from '../api-serverless/src/drops/drop.validator';
 import { WaveEntity } from '../entities/IWave';
 import { NotFoundException } from '../exceptions';
+import { RequestContext } from '../request.context';
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -209,6 +212,41 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         opts
       )
       .then((it) => it[0] || null);
+  }
+
+  async findDropByIdAndAuthor(
+    {
+      id,
+      author_id,
+      eligible_groups
+    }: { id: string; author_id: string; eligible_groups?: string[] },
+    { connection, timer }: RequestContext
+  ): Promise<DropEntity | null> {
+    timer?.start(`dropsDb->findDropByIdAndAuthor`);
+    const opts = connection ? { wrappedConnection: connection } : {};
+    const result = await this.db.oneOrNull<DropEntity>(
+      `
+        select d.* from ${DROPS_TABLE} d
+         ${
+           eligible_groups === undefined
+             ? ``
+             : `join waves w on d.wave_id = w.id and (${
+                 eligible_groups.length
+                   ? `w.visibility_group_id in (:group_ids_user_is_eligible_for) or w.admin_group_id in (:group_ids_user_is_eligible_for) or`
+                   : ``
+               } w.visibility_group_id is null)`
+         }
+         where d.id = :id and d.author_id = :author_id
+        `,
+      {
+        id,
+        eligible_groups,
+        author_id
+      },
+      opts
+    );
+    timer?.stop(`dropsDb->findDropByIdAndAuthor`);
+    return result;
   }
 
   async findDropByIdWithoutEligibilityCheck(
@@ -856,6 +894,106 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         param
       )
       .then((it) => it?.cnt ?? 0);
+  }
+
+  public async deleteDropParts(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->deleteDropParts');
+    await this.db.execute(
+      `delete from ${DROPS_PARTS_TABLE} where drop_id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropParts');
+  }
+
+  public async deleteDropMentions(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->deleteDropMentions');
+    await this.db.execute(
+      `delete from ${DROPS_MENTIONS_TABLE} where drop_id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropMentions');
+  }
+
+  public async deleteDropMedia(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->deleteDropMedia');
+    await this.db.execute(
+      `delete from ${DROP_MEDIA_TABLE} where drop_id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropMedia');
+  }
+
+  public async deleteDropReferencedNfts(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->deleteDropReferencedNfts');
+    await this.db.execute(
+      `delete from ${DROP_REFERENCED_NFTS_TABLE} where drop_id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropReferencedNfts');
+  }
+
+  public async deleteDropMetadata(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->deleteDropMetadata');
+    await this.db.execute(
+      `delete from ${DROP_METADATA_TABLE} where drop_id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropMetadata');
+  }
+
+  public async deleteDropNotifications(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->deleteDropNotifications');
+    await this.db.execute(
+      `delete from ${IDENTITY_NOTIFICATIONS_TABLE} where related_drop_id = :dropId or related_drop_2_id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropNotifications');
+  }
+
+  public async deleteDropFeedItems(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->deleteDropFeedItems');
+    await this.db.execute(
+      `delete from ${ACTIVITY_EVENTS_TABLE} where target_id = :dropId or data like :likeDropId`,
+      { dropId, likeDropId: `%"${dropId}"%` },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropFeedItems');
+  }
+
+  public async deleteDropEntity(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->deleteDropEntity');
+    await this.db.execute(
+      `delete from ${DROPS_TABLE} where id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropEntity');
+  }
+
+  public async updateWaveDropCounters(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->updateWaveDropCounters');
+    await this.db.execute(
+      `update ${WAVE_METRICS_TABLE} set drops_count = drops_count - 1 where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->updateWaveDropCounters');
+  }
+
+  public async deleteDropsCreditSpendings(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->deleteDropsCreditSpendings');
+    await this.db.execute(
+      `delete from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} where drop_id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropsCreditSpendings');
   }
 }
 
