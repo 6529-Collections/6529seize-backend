@@ -198,16 +198,30 @@ export class DropsApiService {
     authenticationContext: AuthenticationContext | undefined,
     connection?: ConnectionWrapper<any>
   ): Promise<Record<string, Drop>> {
-    const dropEntities = await this.dropsDb.getDropsByIds(dropIds, connection);
+    const result = await this.findDropsByIds(
+      dropIds,
+      authenticationContext,
+      connection
+    );
+    const dropFulls = Object.values(result);
     const missingDrops = dropIds.filter(
-      (it) => !dropEntities.find((e) => e.id === it)
+      (it) => !dropFulls.find((e) => e.id === it)
     );
     if (missingDrops.length) {
       throw new NotFoundException(
         `Drop(s) not found: ${missingDrops.join(', ')}`
       );
     }
-    return this.dropsMappers
+    return result;
+  }
+
+  public async findDropsByIds(
+    dropIds: string[],
+    authenticationContext: AuthenticationContext | undefined,
+    connection?: ConnectionWrapper<any>
+  ) {
+    const dropEntities = await this.dropsDb.getDropsByIds(dropIds, connection);
+    return await this.dropsMappers
       .convertToDropFulls({
         dropEntities,
         contextProfileId: authenticationContext?.getActingAsId(),

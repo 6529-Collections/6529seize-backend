@@ -945,6 +945,22 @@ paths:
                 $ref: "#/components/schemas/Drop"
         "404":
           description: Drop not found
+    delete:
+      tags:
+        - Drops
+      summary: Delete drop by ID
+      operationId: deleteDropById
+      parameters:
+        - name: dropId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: successful operation
+        "404":
+          description: Drop not found
 
   /drops/{dropId}/ratings:
     post:

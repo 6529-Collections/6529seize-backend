@@ -173,6 +173,28 @@ router.post(
   }
 );
 
+router.delete(
+  '/:drop_id',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<void>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    await dropCreationService.deleteDrop(
+      {
+        id: req.params.drop_id
+      },
+      {
+        timer,
+        authenticationContext
+      }
+    );
+    res.send();
+  }
+);
+
 router.post(
   `/:drop_id/ratings`,
   needsAuthenticatedUser(),

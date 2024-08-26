@@ -12,6 +12,7 @@ import {
   userNotifier,
   UserNotifier
 } from '../../../notifications/user.notifier';
+import { RequestContext } from '../../../request.context';
 
 class DropRaterService {
   constructor(
@@ -134,6 +135,21 @@ class DropRaterService {
       }
     });
     await giveReadReplicaTimeToCatchUp();
+  }
+
+  public async deleteDropVotes(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropRaterService->deleteDropVotes');
+    await Promise.all([
+      this.ratingsService.deleteRatingsForMatter(
+        {
+          matter_target_id: dropId,
+          matter: RateMatter.DROP_RATING
+        },
+        ctx
+      ),
+      this.dropsDb.deleteDropsCreditSpendings(dropId, ctx)
+    ]);
+    ctx.timer?.stop('dropRaterService->deleteDropVotes');
   }
 }
 

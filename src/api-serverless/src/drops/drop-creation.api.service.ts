@@ -1,4 +1,8 @@
-import { BadRequestException, ForbiddenException } from '../../../exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '../../../exceptions';
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { Logger } from '../../../logging';
 import { DropsApiService, dropsService } from './drops.api.service';
@@ -47,6 +51,7 @@ import { CreateDropPart } from '../generated/models/CreateDropPart';
 import { ParticipationRequiredMedia } from '../../../entities/IWave';
 import { RequestContext } from '../../../request.context';
 import * as process from 'node:process';
+import { dropRaterService } from './drop-rater.service';
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(DropCreationApiService.name);
@@ -638,6 +643,55 @@ export class DropCreationApiService {
     } else {
       timer.stop('dropCreationApiService->verifyParticipatoryLimitations');
     }
+  }
+
+  public async deleteDrop(
+    { id }: { id: string },
+    { timer, authenticationContext }: RequestContext
+  ) {
+    timer?.start('dropCreationApiService->deleteDrop');
+    const authenticatedProfileId = authenticationContext?.getActingAsId();
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    if (authenticationContext?.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(`Proxy is not allowed to delete drops`);
+    }
+    await this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
+      const ctxWithConnection = { timer, connection, authenticationContext };
+      const dropEntity = await this.dropsDb.findDropByIdAndAuthor(
+        { id, author_id: authenticatedProfileId },
+        ctxWithConnection
+      );
+      if (!dropEntity) {
+        throw new NotFoundException(
+          `Drop ${id} not found or you are not the author`
+        );
+      }
+      const waveId = dropEntity.wave_id;
+      const wave = await this.dropsDb.findWaveByIdOrThrow(
+        waveId,
+        ctxWithConnection.connection
+      );
+      if (id === wave.description_drop_id) {
+        throw new BadRequestException(
+          `Cannot delete the description drop of a wave`
+        );
+      }
+      await Promise.all([
+        this.dropsDb.deleteDropParts(id, ctxWithConnection),
+        this.dropsDb.deleteDropMentions(id, ctxWithConnection),
+        this.dropsDb.deleteDropMedia(id, ctxWithConnection),
+        this.dropsDb.deleteDropReferencedNfts(id, ctxWithConnection),
+        this.dropsDb.deleteDropMetadata(id, ctxWithConnection),
+        this.dropsDb.deleteDropEntity(id, ctxWithConnection),
+        this.dropsDb.updateWaveDropCounters(waveId, ctxWithConnection),
+        dropRaterService.deleteDropVotes(id, ctxWithConnection),
+        this.dropsDb.deleteDropFeedItems(id, ctxWithConnection),
+        this.dropsDb.deleteDropNotifications(id, ctxWithConnection)
+      ]);
+    });
+    timer?.stop('dropCreationApiService->deleteDrop');
   }
 }
 
