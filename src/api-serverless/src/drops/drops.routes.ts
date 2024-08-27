@@ -22,13 +22,15 @@ import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction
 import {
   ApiAddRatingToDropRequest,
   ApiAddRatingToDropRequestSchema,
-  NewDropSchema
+  NewDropSchema,
+  UpdateDropSchema
 } from './drop.validator';
 import { profilesService } from '../../../profiles/profiles.service';
 import { AuthenticationContext } from '../../../auth-context';
 import { DropSubscriptionActions } from '../generated/models/DropSubscriptionActions';
 import { DropSubscriptionTargetAction } from '../generated/models/DropSubscriptionTargetAction';
 import { Timer } from '../../../time';
+import { UpdateDropRequest } from '../generated/models/UpdateDropRequest';
 
 const router = asyncRouter();
 
@@ -170,6 +172,34 @@ router.post(
       timer
     );
     res.send(createdDrop);
+  }
+);
+
+router.post(
+  '/:drop_id',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ drop_id: string }, any, UpdateDropRequest, any, any>,
+    res: Response<ApiResponse<Drop>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const apiRequest = req.body;
+    const updateRequest: UpdateDropRequest = getValidatedByJoiOrThrow(
+      apiRequest,
+      UpdateDropSchema
+    );
+    const updatedDrop = await dropCreationService.updateDrop(
+      {
+        dropId: req.params.drop_id,
+        request: updateRequest
+      },
+      {
+        timer,
+        authenticationContext
+      }
+    );
+    res.send(updatedDrop);
   }
 );
 

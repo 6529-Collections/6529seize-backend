@@ -945,6 +945,34 @@ paths:
                 $ref: "#/components/schemas/Drop"
         "404":
           description: Drop not found
+    post:
+      tags:
+        - Drops
+      summary: Update drop by ID
+      operationId: updateDropById
+      parameters:
+        - name: dropId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDropRequest"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Drop"
+        "404":
+          description: Drop not found
+        "400":
+          description: "Invalid request"
     delete:
       tags:
         - Drops
@@ -2197,6 +2225,7 @@ components:
         - wave
         - author
         - created_at
+        - updated_at
         - referenced_nfts
         - mentioned_users
         - metadata
@@ -2225,6 +2254,11 @@ components:
           description: Time when the drop was created in milliseconds since 1-1-1970 00:00:00.0 UTC
           type: number
           format: int64
+        updated_at:
+          description: Time when the drop was updated in milliseconds since 1-1-1970 00:00:00.0 UTC
+          type: number
+          format: int64
+          nullable: true
         title:
           type: string
           maxLength: 250
@@ -2529,6 +2563,12 @@ components:
           type: string
         reply_to:
           $ref: "#/components/schemas/ReplyToDrop"
+
+    UpdateDropRequest:
+      type: object
+      allOf:
+        - $ref: "#/components/schemas/CreateWaveDropRequest"
+
 
     DropMedia:
       type: object

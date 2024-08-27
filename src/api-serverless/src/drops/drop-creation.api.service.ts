@@ -25,6 +25,7 @@ import { ConnectionWrapper } from '../../../sql-executor';
 import { CreateWaveDropRequest } from '../generated/models/CreateWaveDropRequest';
 import {
   assertUnreachable,
+  parseIntOrNull,
   parseNumberOrNull,
   resolveEnumOrThrow
 } from '../../../helpers';
@@ -44,14 +45,17 @@ import {
   userNotifier,
   UserNotifier
 } from '../../../notifications/user.notifier';
-import { Timer } from '../../../time';
-import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { Time, Timer } from '../../../time';
 import { DropQuoteNotificationData } from '../../../notifications/user-notification.types';
 import { CreateDropPart } from '../generated/models/CreateDropPart';
 import { ParticipationRequiredMedia } from '../../../entities/IWave';
 import { RequestContext } from '../../../request.context';
-import * as process from 'node:process';
 import { dropRaterService } from './drop-rater.service';
+import { UpdateDropRequest } from '../generated/models/UpdateDropRequest';
+import * as process from 'node:process';
+import { DropMentionedUser } from '../generated/models/DropMentionedUser';
+import { ReplyToDrop } from '../generated/models/ReplyToDrop';
+import { randomUUID } from 'crypto';
 
 export class DropCreationApiService {
   private readonly logger = Logger.get(DropCreationApiService.name);
@@ -87,9 +91,6 @@ export class DropCreationApiService {
           timer
         );
       }
-    );
-    await giveReadReplicaTimeToCatchUp(
-      parseNumberOrNull(process.env.CREATE_DROP_WAIT_TIME_MS)
     );
     this.logger.info(
       `Drop ${dropFull.id} created by user ${dropFull.author.id}`
@@ -130,27 +131,14 @@ export class DropCreationApiService {
   }
 
   private async persistDrop(
-    createDropRequest: CreateDropRequest,
+    request: CreateDropRequest,
     authenticationContext: AuthenticationContext,
     isDescriptionDrop: boolean,
     connection: ConnectionWrapper<any>,
     timer: Timer
   ) {
-    const createDropParts = createDropRequest.parts;
     const authorId = authenticationContext.getActingAsId()!;
-    timer.start('dropCreationApiService->insertDrop');
-    const dropId = await this.dropsDb.insertDrop(
-      {
-        author_id: authorId,
-        title: createDropRequest.title ?? null,
-        parts_count: createDropParts.length,
-        wave_id: createDropRequest.wave_id,
-        reply_to_drop_id: createDropRequest.reply_to?.drop_id ?? null,
-        reply_to_part_id: createDropRequest.reply_to?.drop_part_id ?? null
-      },
-      connection
-    );
-    timer.stop('dropCreationApiService->insertDrop');
+    const dropId = randomUUID();
     timer.start('dropCreationApiService->findWaveVisibilityGroupByDropId');
     const visibilityGroupId = await wavesApiDb.findWaveVisibilityGroupByDropId(
       dropId,
@@ -158,127 +146,21 @@ export class DropCreationApiService {
     );
     timer.stop('dropCreationApiService->findWaveVisibilityGroupByDropId');
 
-    await Promise.all([
-      this.createDropReplyNotifications(
-        createDropRequest,
-        timer,
-        connection,
+    await this.insertAllDropComponents(
+      {
         dropId,
-        visibilityGroupId
-      ),
-      identitySubscriptionsDb.addIdentitySubscription(
-        {
-          subscriber_id: authorId,
-          target_id: dropId.toString(),
-          target_type: ActivityEventTargetType.DROP,
-          target_action: ActivityEventAction.DROP_VOTED
-        },
-        connection,
-        timer
-      ),
-      identitySubscriptionsDb.addIdentitySubscription(
-        {
-          subscriber_id: authorId,
-          target_id: dropId.toString(),
-          target_type: ActivityEventTargetType.DROP,
-          target_action: ActivityEventAction.DROP_REPLIED
-        },
-        connection,
-        timer
-      ),
-      this.recordDropCreatedActivity(
-        isDescriptionDrop,
-        dropId,
+        request,
         authorId,
-        createDropRequest,
+        waveId: request.wave_id,
+        replyTo: request.reply_to,
+        createdAt: Time.currentMillis(),
+        serialNo: null,
+        updatedAt: Time.currentMillis(),
         visibilityGroupId,
-        connection,
-        timer
-      ),
-      this.profileActivityLogsDb.insert(
-        {
-          profile_id: authorId,
-          target_id: dropId.toString(),
-          contents: JSON.stringify({
-            drop_id: dropId,
-            proxy_id: authenticationContext.isAuthenticatedAsProxy()
-              ? authenticationContext.authenticatedProfileId
-              : undefined
-          }),
-          type: ProfileActivityLogType.DROP_CREATED,
-          proxy_id: authenticationContext.isAuthenticatedAsProxy()
-            ? authenticationContext.authenticatedProfileId!
-            : null
-        },
-        connection,
-        timer
-      ),
-      this.insertMentionsInDrop(
-        timer,
-        createDropRequest,
-        dropId,
-        authorId,
-        visibilityGroupId,
-        connection
-      ),
-      this.dropsDb.insertReferencedNfts(
-        Object.values(
-          createDropRequest.referenced_nfts.reduce<
-            Record<string, DropReferencedNFT>
-          >((acc, it) => {
-            acc[JSON.stringify(it)] = it;
-            return acc;
-          }, {} as Record<string, DropReferencedNFT>)
-        ).map((it) => ({
-          drop_id: dropId,
-          contract: it.contract,
-          token: it.token,
-          name: it.name
-        })),
-        connection,
-        timer
-      ),
-      this.dropsDb.insertDropMetadata(
-        createDropRequest.metadata.map((it) => ({
-          ...it,
-          drop_id: dropId
-        })),
-        connection,
-        timer
-      ),
-      this.dropsDb.insertDropMedia(
-        createDropParts
-          .map(
-            (part, index) =>
-              part.media?.map<Omit<DropMediaEntity, 'id'>>((media) => ({
-                ...media,
-                drop_id: dropId,
-                drop_part_id: index + 1
-              })) ?? []
-          )
-          .flat(),
-        connection,
-        timer
-      ),
-      this.dropsDb.insertDropParts(
-        createDropParts.map<DropPartEntity>((part, index) => ({
-          drop_id: dropId,
-          drop_part_id: index + 1,
-          content: part.content ?? null,
-          quoted_drop_id: part.quoted_drop?.drop_id ?? null,
-          quoted_drop_part_id: part.quoted_drop?.drop_part_id ?? null
-        })),
-        connection,
-        timer
-      ),
-      this.recordQuoteNotifications(
-        timer,
-        createDropParts,
-        connection,
-        dropId,
-        visibilityGroupId
-      )
-    ]);
+        isDescriptionDrop
+      },
+      { authenticationContext, timer, connection }
+    );
 
     timer.start('dropCreationApiService->findInsertedDropAndConstructForApi');
     const drop = await this.dropsService.findDropByIdOrThrow(
@@ -337,14 +219,14 @@ export class DropCreationApiService {
 
   private async insertMentionsInDrop(
     timer: Timer,
-    createDropRequest: CreateDropRequest,
+    mentionedUsers: DropMentionedUser[],
     dropId: string,
     authorId: string,
     visibilityGroupId: string | null,
     connection: ConnectionWrapper<any>
   ) {
     timer.start('dropCreationApiService->insertMentions');
-    const mentionEntities = createDropRequest.mentioned_users.map((it) => ({
+    const mentionEntities = mentionedUsers.map((it) => ({
       drop_id: dropId,
       mentioned_profile_id: it.mentioned_profile_id,
       handle_in_content: it.handle_in_content
@@ -371,7 +253,9 @@ export class DropCreationApiService {
     isDescriptionDrop: boolean,
     dropId: string,
     authorId: string,
-    createDropRequest: CreateDropRequest,
+    dropRequest:
+      | CreateDropRequest
+      | (UpdateDropRequest & { reply_to?: ReplyToDrop; wave_id: string }),
     visibilityGroupId: string | null,
     connection: ConnectionWrapper<any>,
     timer: Timer
@@ -381,12 +265,12 @@ export class DropCreationApiService {
         {
           drop_id: dropId,
           creator_id: authorId,
-          wave_id: createDropRequest.wave_id,
+          wave_id: dropRequest.wave_id,
           visibility_group_id: visibilityGroupId,
-          reply_to: createDropRequest.reply_to
+          reply_to: dropRequest.reply_to
             ? {
-                drop_id: createDropRequest.reply_to.drop_id,
-                part_id: createDropRequest.reply_to.drop_part_id
+                drop_id: dropRequest.reply_to.drop_id,
+                part_id: dropRequest.reply_to.drop_part_id
               }
             : null
         },
@@ -397,7 +281,9 @@ export class DropCreationApiService {
   }
 
   private async createDropReplyNotifications(
-    createDropRequest: CreateDropRequest,
+    createDropRequest:
+      | CreateDropRequest
+      | (UpdateDropRequest & { reply_to?: ReplyToDrop }),
     timer: Timer,
     connection: ConnectionWrapper<any>,
     dropId: string,
@@ -487,7 +373,7 @@ export class DropCreationApiService {
   }
 
   private async verifyQuotedDrops(
-    createDropRequest: CreateDropRequest,
+    createDropRequest: CreateDropRequest | UpdateDropRequest,
     timer: Timer
   ) {
     const quotedDrops = createDropRequest.parts
@@ -678,20 +564,307 @@ export class DropCreationApiService {
           `Cannot delete the description drop of a wave`
         );
       }
-      await Promise.all([
-        this.dropsDb.deleteDropParts(id, ctxWithConnection),
-        this.dropsDb.deleteDropMentions(id, ctxWithConnection),
-        this.dropsDb.deleteDropMedia(id, ctxWithConnection),
-        this.dropsDb.deleteDropReferencedNfts(id, ctxWithConnection),
-        this.dropsDb.deleteDropMetadata(id, ctxWithConnection),
-        this.dropsDb.deleteDropEntity(id, ctxWithConnection),
-        this.dropsDb.updateWaveDropCounters(waveId, ctxWithConnection),
-        dropRaterService.deleteDropVotes(id, ctxWithConnection),
-        this.dropsDb.deleteDropFeedItems(id, ctxWithConnection),
-        this.dropsDb.deleteDropNotifications(id, ctxWithConnection)
-      ]);
+      await this.deleteAllDropComponentsById({ id, waveId }, ctxWithConnection);
     });
     timer?.stop('dropCreationApiService->deleteDrop');
+  }
+
+  private async deleteAllDropComponentsById(
+    { id, waveId }: { id: string; waveId: string },
+    ctxWithConnection: RequestContext
+  ) {
+    await Promise.all([
+      this.dropsDb.deleteDropParts(id, ctxWithConnection),
+      this.dropsDb.deleteDropMentions(id, ctxWithConnection),
+      this.dropsDb.deleteDropMedia(id, ctxWithConnection),
+      this.dropsDb.deleteDropReferencedNfts(id, ctxWithConnection),
+      this.dropsDb.deleteDropMetadata(id, ctxWithConnection),
+      this.dropsDb.deleteDropEntity(id, ctxWithConnection),
+      this.dropsDb.updateWaveDropCounters(waveId, ctxWithConnection),
+      dropRaterService.deleteDropVotes(id, ctxWithConnection),
+      this.dropsDb.deleteDropFeedItems(id, ctxWithConnection),
+      this.dropsDb.deleteDropNotifications(id, ctxWithConnection),
+      this.dropsDb.deleteDropSubscriptions(id, ctxWithConnection)
+    ]);
+  }
+
+  async updateDrop(
+    { dropId, request }: { dropId: string; request: UpdateDropRequest },
+    ctx: RequestContext
+  ): Promise<Drop> {
+    ctx.timer?.start(`dropCreationApiService->updateDrop`);
+    const authenticationContext = ctx.authenticationContext!;
+    const authorProfileId = authenticationContext.getActingAsId();
+    if (!authorProfileId) {
+      throw new ForbiddenException(
+        'You need to create a profile before you can create a drop'
+      );
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(
+        `Proxy doesn't have permission to create drops`
+      );
+    }
+    const updatedDrop = await this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctxWithConnection = { ...ctx, connection };
+        const timer = ctxWithConnection.timer!;
+        timer.start(`dropCreationApiService->updateDrop->findOldDrop`);
+        const dropBeforeUpdate = await this.dropsService.findDropByIdOrThrow(
+          {
+            dropId,
+            authenticationContext: authenticationContext,
+            min_part_id: 0,
+            max_part_id: Number.MAX_SAFE_INTEGER,
+            skipEligibilityCheck: true
+          },
+          connection
+        );
+        timer.stop(`dropCreationApiService->updateDrop->findOldDrop`);
+        const authorId = dropBeforeUpdate.author.id;
+        if (authorId !== authenticationContext.getActingAsId()) {
+          throw new ForbiddenException(`You are not the author of this drop`);
+        }
+        const dropLastTouched = Time.millis(
+          dropBeforeUpdate.updated_at ?? dropBeforeUpdate.created_at
+        );
+        const maximumTimeAllowedForEdit = Time.millis(
+          parseIntOrNull(process.env.MAX_DROP_EDIT_TIME_MS) ?? 0
+        );
+        if (dropLastTouched.diffFromNow().gt(maximumTimeAllowedForEdit)) {
+          throw new ForbiddenException(
+            `Drop can't be edited after ${maximumTimeAllowedForEdit}`
+          );
+        }
+        await this.validateUpdateReferences(request, ctxWithConnection);
+
+        const visibilityGroupId =
+          await wavesApiDb.findWaveVisibilityGroupByDropId(dropId, connection);
+
+        const waveId = dropBeforeUpdate.wave.id;
+        timer.start(`dropCreationApiService->deleteAllDropComponentsById`);
+        await this.deleteAllDropComponentsById(
+          { id: dropId, waveId },
+          ctxWithConnection
+        );
+        timer.stop(`dropCreationApiService->deleteAllDropComponentsById`);
+        timer.start(`dropCreationApiService->insertAllDropComponentsById`);
+        const replyTo = dropBeforeUpdate.reply_to;
+        const serialNo = dropBeforeUpdate.serial_no;
+        await this.insertAllDropComponents(
+          {
+            dropId,
+            request,
+            authorId,
+            waveId,
+            replyTo,
+            createdAt: dropBeforeUpdate.created_at,
+            serialNo,
+            updatedAt: Time.currentMillis(),
+            visibilityGroupId,
+            isDescriptionDrop:
+              dropBeforeUpdate.wave.description_drop_id === dropId
+          },
+          { authenticationContext, timer, connection }
+        );
+        timer.stop(`dropCreationApiService->insertAllDropComponentsById`);
+        return await this.dropsService.findDropByIdOrThrow(
+          {
+            dropId,
+            authenticationContext: authenticationContext,
+            min_part_id: 0,
+            max_part_id: Number.MAX_SAFE_INTEGER,
+            skipEligibilityCheck: true
+          },
+          connection
+        );
+      }
+    );
+    ctx.timer?.stop(`dropCreationApiService->updateDrop`);
+    return updatedDrop;
+  }
+
+  private async insertAllDropComponents(
+    {
+      dropId,
+      request,
+      authorId,
+      waveId,
+      replyTo,
+      createdAt,
+      serialNo,
+      visibilityGroupId,
+      isDescriptionDrop,
+      updatedAt
+    }: {
+      dropId: string;
+      request: UpdateDropRequest | CreateDropRequest;
+      authorId: string;
+      waveId: string;
+      replyTo?: ReplyToDrop;
+      createdAt: number;
+      updatedAt: number | null;
+      serialNo: number | null;
+      visibilityGroupId: string | null;
+      isDescriptionDrop: boolean;
+    },
+    ctx: RequestContext
+  ) {
+    const connection = ctx.connection!;
+    const timer = ctx.timer!;
+    const authenticationContext = ctx.authenticationContext!;
+    const parts = request.parts;
+    await Promise.all([
+      this.dropsDb.insertDrop(
+        {
+          id: dropId,
+          author_id: authorId,
+          title: request.title ?? null,
+          parts_count: parts.length,
+          wave_id: waveId,
+          reply_to_drop_id: replyTo?.drop_id ?? null,
+          reply_to_part_id: replyTo?.drop_part_id ?? null,
+          created_at: createdAt,
+          updated_at: updatedAt,
+          serial_no: serialNo
+        },
+        connection
+      ),
+      this.createDropReplyNotifications(
+        { ...request, reply_to: replyTo },
+        timer,
+        connection,
+        dropId,
+        visibilityGroupId
+      ),
+      identitySubscriptionsDb.addIdentitySubscription(
+        {
+          subscriber_id: authorId,
+          target_id: dropId.toString(),
+          target_type: ActivityEventTargetType.DROP,
+          target_action: ActivityEventAction.DROP_VOTED
+        },
+        connection,
+        timer
+      ),
+      identitySubscriptionsDb.addIdentitySubscription(
+        {
+          subscriber_id: authorId,
+          target_id: dropId.toString(),
+          target_type: ActivityEventTargetType.DROP,
+          target_action: ActivityEventAction.DROP_REPLIED
+        },
+        connection,
+        timer
+      ),
+      this.recordDropCreatedActivity(
+        isDescriptionDrop,
+        dropId,
+        authorId,
+        {
+          ...request,
+          reply_to: replyTo,
+          wave_id: waveId
+        },
+        visibilityGroupId,
+        connection,
+        timer
+      ),
+      this.profileActivityLogsDb.insert(
+        {
+          profile_id: authorId,
+          target_id: dropId.toString(),
+          contents: JSON.stringify({
+            drop_id: dropId,
+            proxy_id: authenticationContext.isAuthenticatedAsProxy()
+              ? authenticationContext.authenticatedProfileId
+              : undefined
+          }),
+          type: ProfileActivityLogType.DROP_CREATED,
+          proxy_id: authenticationContext.isAuthenticatedAsProxy()
+            ? authenticationContext.authenticatedProfileId!
+            : null
+        },
+        connection,
+        timer
+      ),
+      this.insertMentionsInDrop(
+        timer,
+        request.mentioned_users,
+        dropId,
+        authorId,
+        visibilityGroupId,
+        connection
+      ),
+      this.dropsDb.insertReferencedNfts(
+        Object.values(
+          request.referenced_nfts.reduce<Record<string, DropReferencedNFT>>(
+            (acc, it) => {
+              acc[JSON.stringify(it)] = it;
+              return acc;
+            },
+            {} as Record<string, DropReferencedNFT>
+          )
+        ).map((it) => ({
+          drop_id: dropId,
+          contract: it.contract,
+          token: it.token,
+          name: it.name
+        })),
+        connection,
+        timer
+      ),
+      this.dropsDb.insertDropMetadata(
+        request.metadata.map((it) => ({
+          ...it,
+          drop_id: dropId
+        })),
+        connection,
+        timer
+      ),
+      this.dropsDb.insertDropMedia(
+        parts
+          .map(
+            (part, index) =>
+              part.media?.map<Omit<DropMediaEntity, 'id'>>((media) => ({
+                ...media,
+                drop_id: dropId,
+                drop_part_id: index + 1
+              })) ?? []
+          )
+          .flat(),
+        connection,
+        timer
+      ),
+      this.dropsDb.insertDropParts(
+        parts.map<DropPartEntity>((part, index) => ({
+          drop_id: dropId,
+          drop_part_id: index + 1,
+          content: part.content ?? null,
+          quoted_drop_id: part.quoted_drop?.drop_id ?? null,
+          quoted_drop_part_id: part.quoted_drop?.drop_part_id ?? null
+        })),
+        connection,
+        timer
+      ),
+      this.recordQuoteNotifications(
+        timer,
+        parts,
+        connection,
+        dropId,
+        visibilityGroupId
+      )
+    ]);
+  }
+
+  private async validateUpdateReferences(
+    request: UpdateDropRequest,
+    ctx: RequestContext
+  ) {
+    const timer = ctx.timer!;
+    timer.start('dropCreationApiService->validateReferences');
+    await this.verifyQuotedDrops(request, timer);
+    timer.stop('dropCreationApiService->validateReferences');
   }
 }
 

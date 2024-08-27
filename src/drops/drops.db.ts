@@ -23,6 +23,7 @@ import {
   DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
+  IDENTITY_SUBSCRIPTIONS_TABLE,
   PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
   WAVE_METRICS_TABLE,
@@ -39,12 +40,12 @@ import {
   ProfileActivityLog,
   ProfileActivityLogType
 } from '../entities/IProfileActivityLog';
-import { randomUUID } from 'crypto';
 import { PageSortDirection } from '../api-serverless/src/page-request';
 import { DropActivityLogsQuery } from '../api-serverless/src/drops/drop.validator';
 import { WaveEntity } from '../entities/IWave';
 import { NotFoundException } from '../exceptions';
 import { RequestContext } from '../request.context';
+import { ActivityEventTargetType } from '../entities/IActivityEvent';
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -73,8 +74,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async insertDrop(
     newDropEntity: NewDropEntity,
     connection: ConnectionWrapper<any>
-  ): Promise<string> {
-    const id = randomUUID();
+  ) {
     const waveId = newDropEntity.wave_id;
     await this.db.execute(
       `
@@ -92,25 +92,31 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                             author_id, 
                             wave_id,
                             created_at, 
+                            updated_at,
                             title,
                             parts_count,
                             reply_to_drop_id,
-                            reply_to_part_id
+                            reply_to_part_id${
+                              newDropEntity.serial_no !== null
+                                ? `, serial_no`
+                                : ``
+                            }
     ) values (
               :id,
               :author_id,
               :wave_id,
-              ROUND(UNIX_TIMESTAMP(CURTIME(4)) * 1000), 
+              :created_at,
+              :updated_at,
               :title,
               :parts_count,
               :reply_to_drop_id,
               :reply_to_part_id
+              ${newDropEntity.serial_no !== null ? `, :serial_no` : ``}
              )`,
 
-      { ...newDropEntity, id },
+      { ...newDropEntity },
       { wrappedConnection: connection }
     );
-    return id;
   }
 
   async insertMentions(
@@ -995,8 +1001,20 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     );
     ctx.timer?.stop('dropsDb->deleteDropsCreditSpendings');
   }
+
+  public async deleteDropSubscriptions(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->deleteDropSubscriptions');
+    await this.db.execute(
+      `delete from ${IDENTITY_SUBSCRIPTIONS_TABLE} where target_id = :dropId and target_type = :targetType`,
+      { dropId, targetType: ActivityEventTargetType.DROP },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->deleteDropSubscriptions');
+  }
 }
 
-export type NewDropEntity = Omit<DropEntity, 'serial_no' | 'id' | 'created_at'>;
+export type NewDropEntity = Omit<DropEntity, 'serial_no'> & {
+  serial_no: number | null;
+};
 
 export const dropsDb = new DropsDb(dbSupplier, userGroupsService);
