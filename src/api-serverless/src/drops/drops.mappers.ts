@@ -1,7 +1,7 @@
 import { DropEntity } from '../../../entities/IDrop';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { Drop } from '../generated/models/Drop';
-import { distinct, resolveEnumOrThrow } from '../../../helpers';
+import { distinct, parseIntOrNull, resolveEnumOrThrow } from '../../../helpers';
 import { ProfileMin } from '../generated/models/ProfileMin';
 import { DropPart } from '../generated/models/DropPart';
 import { DropMedia } from '../generated/models/DropMedia';
@@ -172,6 +172,7 @@ export class DropsMappers {
           })) ?? [],
         parts_count: dropEntity.parts_count,
         created_at: dropEntity.created_at,
+        updated_at: parseIntOrNull(dropEntity.updated_at),
         referenced_nfts: referencedNfts
           .filter((it) => it.drop_id === dropEntity.id)
           .map<DropReferencedNFT>((it) => ({

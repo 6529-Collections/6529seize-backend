@@ -15,6 +15,7 @@ import {
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { CreateWaveDropRequest } from '../generated/models/CreateWaveDropRequest';
 import { ReplyToDrop } from '../generated/models/ReplyToDrop';
+import { UpdateDropRequest } from '../generated/models/UpdateDropRequest';
 
 export interface DropActivityLogsQuery
   extends FullPageRequest<DropActivityLogsQuerySortOption> {
@@ -75,7 +76,7 @@ const NewDropPartSchema: Joi.ObjectSchema<CreateDropPart> = Joi.object({
     )
 });
 
-export const NewDropSchema: Joi.ObjectSchema<CreateDropRequest> = Joi.object({
+const baseDropFieldsValidators = {
   title: Joi.string().optional().max(250).default(null).allow(null),
   parts: Joi.array().required().items(NewDropPartSchema).min(1),
   referenced_nfts: Joi.array()
@@ -88,7 +89,11 @@ export const NewDropSchema: Joi.ObjectSchema<CreateDropRequest> = Joi.object({
     .items(MentionedUserSchema)
     .default([])
     .allow(null),
-  metadata: Joi.array().optional().items(MetadataSchema).default([]),
+  metadata: Joi.array().optional().items(MetadataSchema).default([])
+};
+
+export const NewDropSchema: Joi.ObjectSchema<CreateDropRequest> = Joi.object({
+  ...baseDropFieldsValidators,
   reply_to: Joi.object<ReplyToDrop>({
     drop_id: Joi.string().required(),
     drop_part_id: Joi.number().integer().min(0)
@@ -98,22 +103,11 @@ export const NewDropSchema: Joi.ObjectSchema<CreateDropRequest> = Joi.object({
   wave_id: Joi.string().required()
 });
 
+export const UpdateDropSchema: Joi.ObjectSchema<UpdateDropRequest> =
+  Joi.object<UpdateDropRequest>({ ...baseDropFieldsValidators });
+
 export const NewWaveDropSchema: Joi.ObjectSchema<CreateWaveDropRequest> =
-  Joi.object({
-    title: Joi.string().optional().max(250).default(null).allow(null),
-    parts: Joi.array().required().items(NewDropPartSchema).min(1),
-    referenced_nfts: Joi.array()
-      .optional()
-      .items(NftSchema)
-      .default([])
-      .allow(null),
-    mentioned_users: Joi.array()
-      .optional()
-      .items(MentionedUserSchema)
-      .default([])
-      .allow(null),
-    metadata: Joi.array().optional().items(MetadataSchema).default([])
-  });
+  Joi.object({ ...baseDropFieldsValidators });
 
 export const DropDiscussionCommentsQuerySchema: Joi.ObjectSchema<DropActivityLogsQuery> =
   Joi.object({

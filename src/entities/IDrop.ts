@@ -28,6 +28,8 @@ export class DropEntity {
   readonly author_id!: string;
   @Column({ type: 'bigint' })
   readonly created_at!: number;
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly updated_at!: number | null;
   @Column({ type: 'varchar', length: 250, nullable: true })
   readonly title!: string | null;
   @Column({ type: 'bigint' })
