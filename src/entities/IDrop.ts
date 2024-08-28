@@ -53,6 +53,8 @@ export class DropPartEntity {
   readonly quoted_drop_id!: string | null;
   @Column({ type: 'bigint', nullable: true })
   readonly quoted_drop_part_id!: number | null;
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly wave_id!: string | null;
 }
 
 @Entity(DROPS_MENTIONS_TABLE)
@@ -67,6 +69,8 @@ export class DropMentionEntity {
   readonly mentioned_profile_id!: string;
   @Column({ type: 'varchar', length: 100 })
   readonly handle_in_content!: string;
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly wave_id!: string | null;
 }
 
 @Entity(DROP_REFERENCED_NFTS_TABLE)
@@ -84,6 +88,8 @@ export class DropReferencedNftEntity {
   readonly token!: string;
   @Column({ type: 'varchar', length: 500 })
   readonly name!: string;
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly wave_id!: string | null;
 }
 
 @Entity(DROP_METADATA_TABLE)
@@ -97,6 +103,8 @@ export class DropMetadataEntity {
   readonly data_key!: string;
   @Column({ type: 'varchar', length: 500 })
   readonly data_value!: string;
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly wave_id!: string | null;
 }
 
 @Entity(DROP_MEDIA_TABLE)
@@ -112,4 +120,6 @@ export class DropMediaEntity {
   readonly url!: string;
   @Column({ type: 'varchar', length: 100 })
   readonly mime_type!: string;
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly wave_id!: string | null;
 }

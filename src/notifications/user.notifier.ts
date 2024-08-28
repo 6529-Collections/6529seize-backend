@@ -30,6 +30,7 @@ export class UserNotifier {
         related_drop_part_no: null,
         related_drop_2_id: null,
         related_drop_2_part_no: null,
+        wave_id: null,
         cause: IdentityNotificationCause.IDENTITY_SUBSCRIBED,
         additional_data: {},
         visibility_group_id: null
@@ -42,7 +43,8 @@ export class UserNotifier {
     {
       mentioned_identity_id,
       drop_id,
-      mentioner_identity_id
+      mentioner_identity_id,
+      wave_id
     }: IdentityMentionNotificationData,
     visibility_group_id: string | null,
     connection: ConnectionWrapper<any>,
@@ -59,6 +61,7 @@ export class UserNotifier {
         related_drop_2_part_no: null,
         cause: IdentityNotificationCause.IDENTITY_MENTIONED,
         additional_data: {},
+        wave_id,
         visibility_group_id
       },
       connection
@@ -67,7 +70,13 @@ export class UserNotifier {
   }
 
   public async notifyOfDropVote(
-    { voter_id, drop_id, drop_author_id, vote }: DropVoteNotificationData,
+    {
+      voter_id,
+      drop_id,
+      drop_author_id,
+      vote,
+      wave_id
+    }: DropVoteNotificationData,
     visibility_group_id: string | null,
     connection?: ConnectionWrapper<any>
   ) {
@@ -81,6 +90,7 @@ export class UserNotifier {
         related_drop_2_part_no: null,
         cause: IdentityNotificationCause.DROP_VOTED,
         additional_data: { vote },
+        wave_id,
         visibility_group_id
       },
       connection
@@ -93,7 +103,8 @@ export class UserNotifier {
       reply_drop_author_id,
       replied_drop_id,
       replied_drop_part,
-      replied_drop_author_id
+      replied_drop_author_id,
+      wave_id
     }: DropReplyNotificationData,
     visibility_group_id: string | null,
     connection: ConnectionWrapper<any>,
@@ -110,6 +121,7 @@ export class UserNotifier {
         related_drop_2_part_no: replied_drop_part,
         cause: IdentityNotificationCause.DROP_REPLIED,
         additional_data: {},
+        wave_id,
         visibility_group_id
       },
       connection
@@ -124,7 +136,8 @@ export class UserNotifier {
       quote_drop_author_id,
       quoted_drop_id,
       quoted_drop_part,
-      quoted_drop_author_id
+      quoted_drop_author_id,
+      wave_id
     }: DropQuoteNotificationData,
     visibility_group_id: string | null,
     connection: ConnectionWrapper<any>,
@@ -141,6 +154,7 @@ export class UserNotifier {
         related_drop_2_part_no: quoted_drop_part,
         cause: IdentityNotificationCause.DROP_QUOTED,
         additional_data: {},
+        wave_id,
         visibility_group_id
       },
       connection

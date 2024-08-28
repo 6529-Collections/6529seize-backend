@@ -30,7 +30,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
           cause,
           additional_data, 
           created_at,
-          visibility_group_id
+          visibility_group_id,
+          wave_id
         ) values (
           :identity_id,
           :additional_identity_id,
@@ -41,7 +42,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
           :cause,
           :additional_data,
           :created_at,
-          :visibility_group_id
+          :visibility_group_id,
+          :wave_id
         )
       `,
         {

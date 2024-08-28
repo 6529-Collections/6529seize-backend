@@ -25,4 +25,7 @@ export class IdentitySubscriptionEntity {
   @Index('identity_subscription_target_action_idx')
   @Column({ type: 'varchar', length: 50, nullable: false })
   readonly target_action!: ActivityEventAction;
+
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly wave_id!: string | null;
 }

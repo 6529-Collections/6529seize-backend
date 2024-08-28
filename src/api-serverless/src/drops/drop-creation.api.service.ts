@@ -182,6 +182,7 @@ export class DropCreationApiService {
     createDropParts: CreateDropPart[],
     connection: ConnectionWrapper<any>,
     dropId: string,
+    waveId: string,
     visibilityGroupId: string | null
   ) {
     timer.start('dropCreationApiService->notifyOfDropQuotes');
@@ -199,7 +200,8 @@ export class DropCreationApiService {
           quote_drop_author_id: quotedEntity.author_id,
           quoted_drop_id: quotedDrop.drop_id,
           quoted_drop_part: quotedDrop.drop_part_id,
-          quoted_drop_author_id: quotedEntity.author_id
+          quoted_drop_author_id: quotedEntity.author_id,
+          wave_id: waveId
         });
       }
       idx++;
@@ -221,6 +223,7 @@ export class DropCreationApiService {
     timer: Timer,
     mentionedUsers: DropMentionedUser[],
     dropId: string,
+    waveId: string,
     authorId: string,
     visibilityGroupId: string | null,
     connection: ConnectionWrapper<any>
@@ -229,7 +232,8 @@ export class DropCreationApiService {
     const mentionEntities = mentionedUsers.map((it) => ({
       drop_id: dropId,
       mentioned_profile_id: it.mentioned_profile_id,
-      handle_in_content: it.handle_in_content
+      handle_in_content: it.handle_in_content,
+      wave_id: waveId
     }));
     await Promise.all([
       ...mentionEntities.map((mentionEntity) =>
@@ -237,7 +241,8 @@ export class DropCreationApiService {
           {
             mentioned_identity_id: mentionEntity.mentioned_profile_id,
             drop_id: dropId,
-            mentioner_identity_id: authorId
+            mentioner_identity_id: authorId,
+            wave_id: waveId
           },
           visibilityGroupId,
           connection,
@@ -287,6 +292,7 @@ export class DropCreationApiService {
     timer: Timer,
     connection: ConnectionWrapper<any>,
     dropId: string,
+    waveId: string,
     visibilityGroupId: string | null
   ) {
     const replyTo = createDropRequest.reply_to;
@@ -303,7 +309,8 @@ export class DropCreationApiService {
           reply_drop_author_id: replyToEntity.author_id,
           replied_drop_id: replyTo.drop_id,
           replied_drop_part: replyTo.drop_part_id,
-          replied_drop_author_id: replyToEntity.author_id
+          replied_drop_author_id: replyToEntity.author_id,
+          wave_id: waveId
         },
         visibilityGroupId,
         connection,
@@ -735,6 +742,7 @@ export class DropCreationApiService {
         timer,
         connection,
         dropId,
+        waveId,
         visibilityGroupId
       ),
       identitySubscriptionsDb.addIdentitySubscription(
@@ -742,7 +750,8 @@ export class DropCreationApiService {
           subscriber_id: authorId,
           target_id: dropId.toString(),
           target_type: ActivityEventTargetType.DROP,
-          target_action: ActivityEventAction.DROP_VOTED
+          target_action: ActivityEventAction.DROP_VOTED,
+          wave_id: waveId
         },
         connection,
         timer
@@ -752,7 +761,8 @@ export class DropCreationApiService {
           subscriber_id: authorId,
           target_id: dropId.toString(),
           target_type: ActivityEventTargetType.DROP,
-          target_action: ActivityEventAction.DROP_REPLIED
+          target_action: ActivityEventAction.DROP_REPLIED,
+          wave_id: waveId
         },
         connection,
         timer
@@ -792,6 +802,7 @@ export class DropCreationApiService {
         timer,
         request.mentioned_users,
         dropId,
+        waveId,
         authorId,
         visibilityGroupId,
         connection
@@ -809,7 +820,8 @@ export class DropCreationApiService {
           drop_id: dropId,
           contract: it.contract,
           token: it.token,
-          name: it.name
+          name: it.name,
+          wave_id: waveId
         })),
         connection,
         timer
@@ -817,7 +829,8 @@ export class DropCreationApiService {
       this.dropsDb.insertDropMetadata(
         request.metadata.map((it) => ({
           ...it,
-          drop_id: dropId
+          drop_id: dropId,
+          wave_id: waveId
         })),
         connection,
         timer
@@ -829,7 +842,8 @@ export class DropCreationApiService {
               part.media?.map<Omit<DropMediaEntity, 'id'>>((media) => ({
                 ...media,
                 drop_id: dropId,
-                drop_part_id: index + 1
+                drop_part_id: index + 1,
+                wave_id: waveId
               })) ?? []
           )
           .flat(),
@@ -842,7 +856,8 @@ export class DropCreationApiService {
           drop_part_id: index + 1,
           content: part.content ?? null,
           quoted_drop_id: part.quoted_drop?.drop_id ?? null,
-          quoted_drop_part_id: part.quoted_drop?.drop_part_id ?? null
+          quoted_drop_part_id: part.quoted_drop?.drop_part_id ?? null,
+          wave_id: waveId
         })),
         connection,
         timer
@@ -852,6 +867,7 @@ export class DropCreationApiService {
         parts,
         connection,
         dropId,
+        waveId,
         visibilityGroupId
       )
     ]);

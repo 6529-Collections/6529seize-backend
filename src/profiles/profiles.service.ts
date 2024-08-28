@@ -450,7 +450,8 @@ export class ProfilesService {
               subscriber_id: id,
               target_id: id,
               target_type: ActivityEventTargetType.IDENTITY,
-              target_action: action
+              target_action: action,
+              wave_id: null
             },
             connection
           )

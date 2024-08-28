@@ -247,12 +247,12 @@ export class DropsApiService {
     actions: DropSubscriptionTargetAction[];
     authenticationContext: AuthenticationContext;
   }): Promise<DropSubscriptionTargetAction[]> {
-    await this.findDropByIdOrThrow({
+    const waveId = await this.findDropByIdOrThrow({
       dropId,
       authenticationContext,
       min_part_id: 1,
       max_part_id: 1
-    });
+    }).then((it) => it.wave.id);
     const proposedActions = Object.values(actions).map((it) =>
       resolveEnumOrThrow(ActivityEventAction, it)
     );
@@ -276,7 +276,8 @@ export class DropsApiService {
               subscriber_id: subscriber,
               target_id: dropId,
               target_type: ActivityEventTargetType.DROP,
-              target_action: action
+              target_action: action,
+              wave_id: waveId
             },
             connection
           );

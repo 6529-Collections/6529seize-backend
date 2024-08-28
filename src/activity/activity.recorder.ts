@@ -37,9 +37,11 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
       drop_id,
       voter_id,
       vote,
+      wave_id,
       visibility_group_id
     }: {
       drop_id: string;
+      wave_id: string;
       voter_id: string;
       vote: number;
       visibility_group_id: string | null;
@@ -53,6 +55,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
           target_type: ActivityEventTargetType.IDENTITY,
           action: ActivityEventAction.DROP_VOTED,
           data: { drop_id, vote },
+          wave_id,
           visibility_group_id
         },
         {
@@ -60,6 +63,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
           target_type: ActivityEventTargetType.DROP,
           action: ActivityEventAction.DROP_VOTED,
           data: { voter_id, vote },
+          wave_id,
           visibility_group_id
         }
       ],
@@ -94,6 +98,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
         target_type: ActivityEventTargetType.IDENTITY,
         action: ActivityEventAction.DROP_CREATED,
         data: { drop_id, wave_id },
+        wave_id,
         visibility_group_id
       }
     ];
@@ -103,6 +108,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
         target_type: ActivityEventTargetType.WAVE,
         action: ActivityEventAction.DROP_CREATED,
         data: { drop_id, creator_id },
+        wave_id,
         visibility_group_id
       });
     } else {
@@ -115,6 +121,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
           drop_part_id: reply_to.part_id,
           reply_id: drop_id
         },
+        wave_id,
         visibility_group_id
       });
     }
@@ -141,6 +148,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
         target_type: ActivityEventTargetType.IDENTITY,
         action: ActivityEventAction.WAVE_CREATED,
         data: { wave_id },
+        wave_id,
         visibility_group_id
       },
       connection
@@ -164,7 +172,8 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
             action,
             data,
             visibility_group_id,
-            created_at
+            created_at,
+            wave_id
         ) values ${events
           .map(
             (event) =>
@@ -172,7 +181,9 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
                 event.target_type
               )}, ${mysql.escape(event.action)}, ${mysql.escape(
                 JSON.stringify(event.data)
-              )}, ${mysql.escape(event.visibility_group_id)}, ${now})`
+              )}, ${mysql.escape(
+                event.visibility_group_id
+              )}, ${now}, ${mysql.escape(event.wave_id)})`
           )
           .join(', ')}
     `;

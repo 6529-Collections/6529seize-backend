@@ -96,13 +96,15 @@ class DropRaterService {
           {
             rater_id: param.rater_profile_id,
             drop_id: dropId,
-            credit_spent: ratingChange
+            credit_spent: ratingChange,
+            wave_id: wave.id
           },
           connection
         );
         await this.activityRecorder.recordDropVoted(
           {
             drop_id: dropId,
+            wave_id: wave.id,
             voter_id: param.rater_profile_id,
             vote: newRating,
             visibility_group_id: wave.visibility_group_id
@@ -114,7 +116,8 @@ class DropRaterService {
             drop_id: dropId,
             drop_author_id: dropEntity.author_id,
             voter_id: param.rater_profile_id,
-            vote: newRating
+            vote: newRating,
+            wave_id: wave.id
           },
           wave.visibility_group_id,
           connection

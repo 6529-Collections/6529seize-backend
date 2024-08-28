@@ -38,7 +38,8 @@ class DropOverRatesRevocationService {
               rater_id: overRate.rater_id,
               drop_id: overRate.drop_id,
               credit_spent: overRate.credit_spent,
-              timestamp: overRate.timestamp
+              timestamp: overRate.timestamp,
+              wave_id: overRate.wave_id
             });
             return acc;
           }, {} as Record<string, { tdhSpentOnDropReps: DropVoteCreditSpending[]; rater_id: string; profile_tdh: number; total_reserved_tdh: number }>)
