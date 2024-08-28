@@ -1583,6 +1583,22 @@ paths:
                 $ref: "#/components/schemas/Wave"
         "404":
           description: Wave not found
+    delete:
+        tags:
+            - Waves
+        summary: Delete wave by ID
+        operationId: deleteWaveById
+        parameters:
+          - name: id
+            in: path
+            required: true
+            schema:
+                type: string
+        responses:
+          "201":
+            description: successful operation
+          "404":
+            description: Wave not found
 
   /waves/{id}/subscriptions:
     post:

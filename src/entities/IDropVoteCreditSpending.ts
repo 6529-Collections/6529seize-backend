@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 import { DROPS_VOTES_CREDIT_SPENDINGS_TABLE } from '../constants';
 
 @Entity(DROPS_VOTES_CREDIT_SPENDINGS_TABLE)
@@ -13,6 +13,7 @@ export class DropVoteCreditSpending {
   readonly credit_spent!: number;
   @Column({ type: 'datetime' })
   readonly timestamp!: Date;
+  @Index()
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly wave_id!: string | null;
 }
