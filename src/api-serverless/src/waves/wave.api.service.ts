@@ -11,7 +11,11 @@ import {
   UserGroupsService
 } from '../community-members/user-groups.service';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
-import { BadRequestException, NotFoundException } from '../../../exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '../../../exceptions';
 import { wavesMappers, WavesMappers } from './waves.mappers';
 import { randomUUID } from 'crypto';
 import { dropCreationService } from '../drops/drop-creation.api.service';
@@ -561,6 +565,76 @@ export class WaveApiService {
         assertUnreachable(type);
     }
     return []; // unreachable code but typescript doesn't know that
+  }
+
+  async deleteWave(waveId: string, ctx: RequestContext) {
+    const authenticationContext = ctx.authenticationContext!;
+    const authenticatedUserId = authenticationContext.getActingAsId();
+    if (!authenticatedUserId) {
+      throw new ForbiddenException(
+        `You need to be authenticated and have a profile to delete a wave`
+      );
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(`Proxies can't delete waves`);
+    }
+    await this.wavesApiDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctxWithConnection = { ...ctx, connection };
+        const waveEntity = await this.wavesApiDb.findWaveById(
+          waveId,
+          connection
+        );
+        if (!waveEntity) {
+          throw new NotFoundException(`Wave ${waveId} not found`);
+        }
+        const groupsUserIsEligibleFor =
+          await this.userGroupsService.getGroupsUserIsEligibleFor(
+            authenticatedUserId
+          );
+        if (waveEntity.created_by !== authenticatedUserId) {
+          if (
+            waveEntity.admin_group_id === null ||
+            !groupsUserIsEligibleFor.includes(waveEntity.admin_group_id)
+          ) {
+            throw new ForbiddenException(
+              `You can't delete a wave you didn't create and are not an admin of`
+            );
+          }
+        }
+
+        await Promise.all([
+          this.wavesApiDb.deleteDropPartsByWaveId(waveId, ctxWithConnection),
+          this.wavesApiDb.deleteDropMentionsByWaveId(waveId, ctxWithConnection),
+          this.wavesApiDb.deleteDropMediaByWaveId(waveId, ctxWithConnection),
+          this.wavesApiDb.deleteDropReferencedNftsByWaveId(
+            waveId,
+            ctxWithConnection
+          ),
+          this.wavesApiDb.deleteDropMetadataByWaveId(waveId, ctxWithConnection),
+          this.wavesApiDb.deleteDropsCreditSpendingsByWaveId(
+            waveId,
+            ctxWithConnection
+          ),
+          this.wavesApiDb.deleteDropRatingsByWaveId(waveId, ctxWithConnection),
+          this.wavesApiDb.deleteDropFeedItemsByWaveId(
+            waveId,
+            ctxWithConnection
+          ),
+          this.wavesApiDb.deleteDropNotificationsByWaveId(
+            waveId,
+            ctxWithConnection
+          ),
+          this.wavesApiDb.deleteDropSubscriptionsByWaveId(
+            waveId,
+            ctxWithConnection
+          ),
+          this.wavesApiDb.deleteDropEntitiesByWaveId(waveId, ctxWithConnection),
+          this.wavesApiDb.deleteWaveMetrics(waveId, ctxWithConnection),
+          this.wavesApiDb.deleteWave(waveId, ctxWithConnection)
+        ]);
+      }
+    );
   }
 }
 

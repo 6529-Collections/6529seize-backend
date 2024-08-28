@@ -88,6 +88,7 @@ export class DropReferencedNftEntity {
   readonly token!: string;
   @Column({ type: 'varchar', length: 500 })
   readonly name!: string;
+  @Index()
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly wave_id!: string | null;
 }
@@ -103,6 +104,7 @@ export class DropMetadataEntity {
   readonly data_key!: string;
   @Column({ type: 'varchar', length: 500 })
   readonly data_value!: string;
+  @Index()
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly wave_id!: string | null;
 }
@@ -120,6 +122,7 @@ export class DropMediaEntity {
   readonly url!: string;
   @Column({ type: 'varchar', length: 100 })
   readonly mime_type!: string;
+  @Index()
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly wave_id!: string | null;
 }

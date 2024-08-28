@@ -44,6 +44,7 @@ export class IdentityNotificationEntity {
   @Column({ type: 'varchar', length: 50, nullable: true, default: null })
   readonly visibility_group_id!: string | null;
 
+  @Index()
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly wave_id!: string | null;
 }

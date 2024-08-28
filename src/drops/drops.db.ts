@@ -24,7 +24,6 @@ import {
   IDENTITIES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
-  PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
   WAVE_METRICS_TABLE,
   WAVES_TABLE
@@ -36,12 +35,7 @@ import {
 import { Time, Timer } from '../time';
 import { DropVoteCreditSpending } from '../entities/IDropVoteCreditSpending';
 import { RateMatter } from '../entities/IRating';
-import {
-  ProfileActivityLog,
-  ProfileActivityLogType
-} from '../entities/IProfileActivityLog';
 import { PageSortDirection } from '../api-serverless/src/page-request';
-import { DropActivityLogsQuery } from '../api-serverless/src/drops/drop.validator';
 import { WaveEntity } from '../entities/IWave';
 import { NotFoundException } from '../exceptions';
 import { RequestContext } from '../request.context';
@@ -627,90 +621,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           }, {} as Record<string, Record<number, { count: number; context_profile_count: number }>>);
         }
       );
-  }
-
-  async findLogsByDropId(
-    query: DropActivityLogsQuery
-  ): Promise<ProfileActivityLog[]> {
-    const logTypes = query.log_type
-      ? [query.log_type]
-      : [
-          ProfileActivityLogType.DROP_COMMENT,
-          ProfileActivityLogType.DROP_RATING_EDIT,
-          ProfileActivityLogType.DROP_CREATED
-        ];
-    const page = query.page;
-    const pageSize = query.page_size;
-    const offset = (page - 1) * pageSize;
-    return this.db
-      .execute(
-        `select * from ${PROFILES_ACTIVITY_LOGS_TABLE} where target_id = :dropId and type in (:logTypes) order by ${query.sort} ${query.sort_direction} limit ${pageSize} offset ${offset}`,
-        {
-          dropId: query.drop_id,
-          logTypes
-        }
-      )
-      .then((it) => {
-        return it.map((log: any) => ({
-          ...log,
-          contents: JSON.parse(log.contents),
-          created_at: new Date(log.created_at)
-        }));
-      });
-  }
-
-  async getDropLogsStats(
-    { dropIds, profileId }: { dropIds: string[]; profileId?: string | null },
-    connection?: ConnectionWrapper<any>
-  ): Promise<
-    Record<
-      string,
-      {
-        discussion_comments_count: number;
-        rating_logs_count: number;
-        context_profile_discussion_comments_count: number | null;
-      }
-    >
-  > {
-    if (!dropIds.length) {
-      return {};
-    }
-    const sql = `
-  select 
-     target_id, 
-     sum(case when type = '${
-       ProfileActivityLogType.DROP_COMMENT
-     }' then 1 else 0 end) as discussion_comments_count,
-     ${
-       profileId
-         ? `sum(case when type = '${ProfileActivityLogType.DROP_COMMENT}' and profile_id = :profileId then 1 else 0 end) as context_profile_discussion_comments_count,`
-         : ``
-     }
-     sum(case when type = '${
-       ProfileActivityLogType.DROP_RATING_EDIT
-     }' then 1 else 0 end) as rating_logs_count
-  from ${PROFILES_ACTIVITY_LOGS_TABLE}
-  where target_id in (:dropIds) group by 1
-     `;
-    const dbResults: {
-      target_id: string;
-      discussion_comments_count: number;
-      rating_logs_count: number;
-      context_profile_discussion_comments_count?: number;
-    }[] = await this.db.execute(
-      sql,
-      { dropIds, profileId },
-      connection ? { wrappedConnection: connection } : undefined
-    );
-    return dbResults.reduce((acc, it) => {
-      acc[it.target_id] = {
-        discussion_comments_count: it.discussion_comments_count,
-        rating_logs_count: it.rating_logs_count,
-        context_profile_discussion_comments_count:
-          it.context_profile_discussion_comments_count ?? null
-      };
-      return acc;
-    }, {} as Record<string, { discussion_comments_count: number; rating_logs_count: number; context_profile_discussion_comments_count: number | null }>);
   }
 
   async getDropsQuoteCounts(

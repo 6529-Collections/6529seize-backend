@@ -10,8 +10,16 @@ import {
 } from '../../../entities/IWave';
 import { Time } from '../../../time';
 import {
+  ACTIVITY_EVENTS_TABLE,
+  DROP_MEDIA_TABLE,
+  DROP_METADATA_TABLE,
+  DROP_REFERENCED_NFTS_TABLE,
+  DROPS_MENTIONS_TABLE,
+  DROPS_PARTS_TABLE,
   DROPS_TABLE,
+  DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
   IDENTITIES_TABLE,
+  IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   RATINGS_TABLE,
   WAVE_METRICS_TABLE,
@@ -25,6 +33,7 @@ import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level
 import { RateMatter } from '../../../entities/IRating';
 import { WaveMetricEntity } from '../../../entities/IWaveMetric';
 import { RequestContext } from '../../../request.context';
+import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -569,6 +578,151 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
             }
           : null
       );
+  }
+
+  async deleteWave(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->deleteWave');
+    await this.db.execute(
+      `delete from ${WAVES_TABLE} where id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteWave');
+  }
+
+  async deleteWaveMetrics(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->deleteWaveMetrics');
+    await this.db.execute(
+      `delete from ${WAVE_METRICS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteWaveMetrics');
+  }
+
+  async deleteDropPartsByWaveId(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->deleteDropPartsByWaveId');
+    await this.db.execute(
+      `delete from ${DROPS_PARTS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteDropPartsByWaveId');
+  }
+
+  async deleteDropMentionsByWaveId(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->deleteDropMentionsByWaveId');
+    await this.db.execute(
+      `delete from ${DROPS_MENTIONS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteDropMentionsByWaveId');
+  }
+
+  public async deleteDropMediaByWaveId(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->deleteDropMediaByWaveId');
+    await this.db.execute(
+      `delete from ${DROP_MEDIA_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteDropMediaByWaveId');
+  }
+
+  public async deleteDropReferencedNftsByWaveId(
+    waveId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start('wavesApiDb->deleteDropReferencedNftsByWaveId');
+    await this.db.execute(
+      `delete from ${DROP_REFERENCED_NFTS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteDropReferencedNftsByWaveId');
+  }
+
+  public async deleteDropMetadataByWaveId(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->deleteDropMetadataByWaveId');
+    await this.db.execute(
+      `delete from ${DROP_METADATA_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteDropMetadataByWaveId');
+  }
+
+  public async deleteDropNotificationsByWaveId(
+    waveId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start('wavesApiDb->deleteDropNotificationsByWaveId');
+    await this.db.execute(
+      `delete from ${IDENTITY_NOTIFICATIONS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteDropNotificationsByWaveId');
+  }
+
+  public async deleteDropFeedItemsByWaveId(
+    waveId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start('wavesApiDb->deleteDropFeedItemsByWaveId');
+    await this.db.execute(
+      `delete from ${ACTIVITY_EVENTS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteDropFeedItemsByWaveId');
+  }
+
+  public async deleteDropSubscriptionsByWaveId(
+    waveId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start('wavesApiDb->deleteDropSubscriptionsByWaveId');
+    await this.db.execute(
+      `delete from ${IDENTITY_SUBSCRIPTIONS_TABLE} where wave_id = :waveId`,
+      { waveId, targetType: ActivityEventTargetType.DROP },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteDropSubscriptionsByWaveId');
+  }
+
+  public async deleteDropEntitiesByWaveId(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->deleteDropEntitiesByWaveId');
+    await this.db.execute(
+      `delete from ${DROPS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteDropEntitiesByWaveId');
+  }
+
+  async deleteDropRatingsByWaveId(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->deleteDropRatingsByWaveId');
+    await this.db.execute(
+      `delete from ${RATINGS_TABLE} where matter_target_id in (select id from ${DROPS_TABLE} where wave_id = :waveId) and matter = :matter`,
+      { waveId, matter: RateMatter.DROP_RATING },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteDropRatingsByWaveId');
+  }
+
+  async deleteDropsCreditSpendingsByWaveId(
+    waveId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start('wavesApiDb->deleteDropsCreditSpendingsByWaveId');
+    await this.db.execute(
+      `delete from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteDropsCreditSpendingsByWaveId');
   }
 }
 

@@ -20,6 +20,7 @@ export class ActivityEventEntity {
   readonly visibility_group_id!: string | null;
   @Column({ type: 'bigint', nullable: false })
   readonly created_at!: number;
+  @Index()
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly wave_id!: string | null;
 }
