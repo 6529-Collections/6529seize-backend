@@ -128,11 +128,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         `insert into ${DROPS_MENTIONS_TABLE} (
                             drop_id, 
                             mentioned_profile_id,
-                            handle_in_content
+                            handle_in_content,
+                            wave_id
     ) values (
               :drop_id, 
               :mentioned_profile_id,
-              :handle_in_content
+              :handle_in_content,
+              :wave_id
    )`,
         mention,
         { wrappedConnection: connection }
@@ -153,12 +155,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                             drop_id, 
                             contract,
                             token,
-                            name
+                            name,
+                            wave_id
     ) values (
               :drop_id, 
               :contract,
               :token,
-              :name
+              :name,
+              :wave_id
              )`,
           reference,
           { wrappedConnection: connection }
@@ -180,11 +184,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           `insert into ${DROP_METADATA_TABLE} (
                             drop_id, 
                             data_key,
-                            data_value
+                            data_value,
+                            wave_id
     ) values (
               :drop_id, 
               :data_key,
-              :data_value
+              :data_value,
+              :wave_id
              )`,
           metadata,
           { wrappedConnection: connection }
@@ -445,11 +451,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       rater_id: string;
       credit_spent: number;
       drop_id: string;
+      wave_id: string;
     },
     connection: ConnectionWrapper<any>
   ) {
     await this.db.execute(
-      `insert into ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} (rater_id, drop_id, credit_spent, timestamp)values (:rater_id, :drop_id, :credit_spent, NOW())`,
+      `insert into ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} (rater_id, drop_id, credit_spent, timestamp, wave_id) values (:rater_id, :drop_id, :credit_spent, NOW(), :wave_id)`,
       param,
       { wrappedConnection: connection }
     );
@@ -776,8 +783,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     await Promise.all(
       media.map((medium) =>
         this.db.execute(
-          `insert into ${DROP_MEDIA_TABLE} (drop_id, drop_part_id, url, mime_type)
-         values (:drop_id, :drop_part_id, :url, :mime_type)`,
+          `insert into ${DROP_MEDIA_TABLE} (drop_id, drop_part_id, url, mime_type, wave_id)
+         values (:drop_id, :drop_part_id, :url, :mime_type, :wave_id)`,
           medium,
           { wrappedConnection: connection }
         )
@@ -845,7 +852,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     await Promise.all(
       parts.map((part) =>
         this.db.execute(
-          `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content, quoted_drop_id, quoted_drop_part_id) values (:drop_id, :drop_part_id, :content, :quoted_drop_id, :quoted_drop_part_id)`,
+          `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content, quoted_drop_id, quoted_drop_part_id, wave_id) values (:drop_id, :drop_part_id, :content, :quoted_drop_id, :quoted_drop_part_id, :wave_id)`,
           part,
           { wrappedConnection: connection }
         )

@@ -64,7 +64,8 @@ export class UserNotificationMapper {
       data: {
         mentioned_identity_id: entity.identity_id,
         drop_id: entity.related_drop_id!,
-        mentioner_identity_id: entity.additional_identity_id!
+        mentioner_identity_id: entity.additional_identity_id!,
+        wave_id: entity.wave_id!
       }
     };
   }
@@ -81,7 +82,8 @@ export class UserNotificationMapper {
         drop_author_id: entity.identity_id,
         drop_id: entity.related_drop_id!,
         voter_id: entity.additional_identity_id!,
-        vote: parseIntOrNull(entity.additional_data.vote)!
+        vote: parseIntOrNull(entity.additional_data.vote)!,
+        wave_id: entity.wave_id!
       }
     };
   }
@@ -99,7 +101,8 @@ export class UserNotificationMapper {
         reply_drop_author_id: entity.additional_identity_id!,
         reply_drop_id: entity.related_drop_id!,
         replied_drop_id: entity.related_drop_2_id!,
-        replied_drop_part: entity.related_drop_2_part_no!
+        replied_drop_part: entity.related_drop_2_part_no!,
+        wave_id: entity.wave_id!
       }
     };
   }
@@ -118,7 +121,8 @@ export class UserNotificationMapper {
         quote_drop_id: entity.related_drop_id!,
         quote_drop_part: entity.related_drop_part_no!,
         quoted_drop_id: entity.related_drop_2_id!,
-        quoted_drop_part: entity.related_drop_2_part_no!
+        quoted_drop_part: entity.related_drop_2_part_no!,
+        wave_id: entity.wave_id!
       }
     };
   }

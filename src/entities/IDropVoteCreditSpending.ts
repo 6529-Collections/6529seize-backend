@@ -13,4 +13,6 @@ export class DropVoteCreditSpending {
   readonly credit_spent!: number;
   @Column({ type: 'datetime' })
   readonly timestamp!: Date;
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly wave_id!: string | null;
 }

@@ -73,7 +73,8 @@ export class IdentitiesService {
               subscriber_id: subscriber,
               target_id: identityId,
               target_type: ActivityEventTargetType.IDENTITY,
-              target_action: action
+              target_action: action,
+              wave_id: null
             },
             connection
           );

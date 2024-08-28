@@ -81,7 +81,8 @@ export class WaveApiService {
             subscriber_id: newEntity.created_by,
             target_id: id,
             target_type: ActivityEventTargetType.WAVE,
-            target_action: ActivityEventAction.DROP_CREATED
+            target_action: ActivityEventAction.DROP_CREATED,
+            wave_id: id
           },
           connection,
           timer
@@ -395,7 +396,8 @@ export class WaveApiService {
               subscriber_id: subscriber,
               target_id: waveId,
               target_type: ActivityEventTargetType.WAVE,
-              target_action: action
+              target_action: action,
+              wave_id: waveId
             },
             connection
           );

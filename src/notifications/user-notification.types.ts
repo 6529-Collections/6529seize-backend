@@ -9,6 +9,7 @@ export interface IdentityMentionNotificationData {
   mentioned_identity_id: string;
   drop_id: string;
   mentioner_identity_id: string;
+  wave_id: string;
 }
 
 export interface DropVoteNotificationData {
@@ -16,6 +17,7 @@ export interface DropVoteNotificationData {
   drop_id: string;
   drop_author_id: string;
   vote: number;
+  wave_id: string;
 }
 
 export interface DropReplyNotificationData {
@@ -24,6 +26,7 @@ export interface DropReplyNotificationData {
   replied_drop_id: string;
   replied_drop_part: number;
   replied_drop_author_id: string;
+  wave_id: string;
 }
 
 export interface DropQuoteNotificationData {
@@ -33,6 +36,7 @@ export interface DropQuoteNotificationData {
   quoted_drop_id: string;
   quoted_drop_part: number;
   quoted_drop_author_id: string;
+  wave_id: string;
 }
 
 export interface UserNotificationBase {

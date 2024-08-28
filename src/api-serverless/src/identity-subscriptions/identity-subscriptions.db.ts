@@ -43,8 +43,8 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
     }
     await this.db.execute(
       `
-      insert into ${IDENTITY_SUBSCRIPTIONS_TABLE} (subscriber_id, target_id, target_type, target_action)
-      values (:subscriber_id, :target_id, :target_type, :target_action)
+      insert into ${IDENTITY_SUBSCRIPTIONS_TABLE} (subscriber_id, target_id, target_type, target_action, wave_id)
+      values (:subscriber_id, :target_id, :target_type, :target_action, :wave_id)
     `,
       identitySubscription,
       {
