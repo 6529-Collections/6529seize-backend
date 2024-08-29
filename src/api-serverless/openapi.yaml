@@ -1599,6 +1599,34 @@ paths:
             description: successful operation
           "404":
             description: Wave not found
+    post:
+      tags:
+        - Waves
+      summary: Update wave by ID
+      operationId: updateWaveById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWaveRequest"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Wave"
+        "404":
+          description: Drop not found
+        "400":
+          description: "Invalid request"
 
   /waves/{id}/subscriptions:
     post:
@@ -3038,6 +3066,39 @@ components:
           type: string
         contributor_pfp:
           type: string
+
+    UpdateWaveRequest:
+      type: object
+      required:
+        - name
+        - picture
+        - voting
+        - visibility
+        - participation
+        - wave
+        - outcomes
+      properties:
+        name:
+          description: The name of the wave
+          type: string
+          maxLength: 250
+        picture:
+          description: The picture of the wave
+          type: string
+          example: "https://example.com/picture.jpg"
+          nullable: true
+        voting:
+          $ref: "#/components/schemas/CreateNewWaveVotingConfig"
+        visibility:
+          $ref: "#/components/schemas/CreateNewWaveVisibilityConfig"
+        participation:
+          $ref: "#/components/schemas/CreateNewWaveParticipationConfig"
+        wave:
+          $ref: "#/components/schemas/CreateWaveConfig"
+        outcomes:
+          type: array
+          items:
+            $ref: "#/components/schemas/WaveOutcome"
 
     CreateNewWave:
       type: object

@@ -21,6 +21,9 @@ export class WaveEntity {
   @Column({ type: 'bigint', nullable: false })
   readonly created_at!: number;
 
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly updated_at!: number | null;
+
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly created_by!: string;
 

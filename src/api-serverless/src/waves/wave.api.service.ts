@@ -44,6 +44,8 @@ import {
 import { WavesOverviewType } from '../generated/models/WavesOverviewType';
 import { WaveEntity } from '../../../entities/IWave';
 import { RequestContext } from '../../../request.context';
+import { UpdateWaveRequest } from '../generated/models/UpdateWaveRequest';
+import { Time } from '../../../time';
 
 export class WaveApiService {
   constructor(
@@ -75,11 +77,15 @@ export class WaveApiService {
           )
           .then((drop) => drop.id);
         const newEntity = this.waveMappers.createWaveToNewWaveEntity(
+          id,
+          null,
+          Time.currentMillis(),
+          null,
           createWaveRequest,
-          descriptionDropId,
-          ctx
+          authenticationContext.getActingAsId()!,
+          descriptionDropId
         );
-        await this.wavesApiDb.insertWave(id, newEntity, ctxWithConnection);
+        await this.wavesApiDb.insertWave(newEntity, ctxWithConnection);
         await this.identitySubscriptionsDb.addIdentitySubscription(
           {
             subscriber_id: newEntity.created_by,
@@ -138,7 +144,7 @@ export class WaveApiService {
   }
 
   private async validateWaveRelations(
-    createWave: CreateNewWave,
+    createWave: CreateNewWave | UpdateWaveRequest,
     ctx: RequestContext
   ) {
     const authenticatedProfileId = ctx.authenticationContext!.getActingAsId()!;
@@ -187,7 +193,7 @@ export class WaveApiService {
     }
   }
 
-  private validateOutcomes(createWave: CreateNewWave) {
+  private validateOutcomes(createWave: CreateNewWave | UpdateWaveRequest) {
     const waveType = createWave.wave.type;
     switch (waveType) {
       case WaveType.Approve: {
@@ -633,6 +639,98 @@ export class WaveApiService {
           this.wavesApiDb.deleteWaveMetrics(waveId, ctxWithConnection),
           this.wavesApiDb.deleteWave(waveId, ctxWithConnection)
         ]);
+      }
+    );
+  }
+
+  async updateWave(
+    waveId: string,
+    request: UpdateWaveRequest,
+    ctx: RequestContext
+  ): Promise<Wave> {
+    const authenticationContext = ctx.authenticationContext!;
+    const authenticatedProfileId = authenticationContext.authenticatedProfileId;
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(
+        `You need to be authenticated and have a profile to update a wave`
+      );
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(`Proxies can't update waves`);
+    }
+    const groupsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        authenticatedProfileId
+      );
+    return await this.wavesApiDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const ctxWithConnection = { ...ctx, connection };
+        await this.validateWaveRelations(request, ctxWithConnection);
+        const waveBeforeUpdate = await this.wavesApiDb.findWaveById(
+          waveId,
+          connection
+        );
+        if (!waveBeforeUpdate) {
+          throw new NotFoundException(`Wave ${waveId} not found`);
+        }
+        if (waveBeforeUpdate.created_by !== authenticatedProfileId) {
+          if (
+            waveBeforeUpdate.admin_group_id === null ||
+            !groupsUserIsEligibleFor.includes(waveBeforeUpdate.admin_group_id)
+          ) {
+            throw new ForbiddenException(
+              `You can't update a wave you didn't create and are not an admin of`
+            );
+          }
+        }
+        await this.wavesApiDb.deleteWave(waveId, ctxWithConnection);
+        const updatedEntity = this.waveMappers.createWaveToNewWaveEntity(
+          waveId,
+          waveBeforeUpdate.serial_no,
+          waveBeforeUpdate.created_at,
+          Time.currentMillis(),
+          request,
+          waveBeforeUpdate.created_by,
+          waveBeforeUpdate.description_drop_id
+        );
+        await this.wavesApiDb.insertWave(updatedEntity, ctxWithConnection);
+        const newVisibilityGroupId = request.visibility.scope.group_id;
+        const oldVisibilityGroupId = waveBeforeUpdate.visibility_group_id;
+        if (newVisibilityGroupId !== oldVisibilityGroupId) {
+          await Promise.all([
+            this.wavesApiDb.updateVisibilityInFeedEntities(
+              { waveId, newVisibilityGroupId },
+              ctxWithConnection
+            ),
+            this.wavesApiDb.updateVisibilityInNotifications(
+              { waveId, newVisibilityGroupId },
+              ctxWithConnection
+            )
+          ]);
+        }
+        const noRightToVote =
+          authenticationContext.isAuthenticatedAsProxy() &&
+          !authenticationContext.activeProxyActions[
+            ApiProfileProxyActionType.RATE_WAVE_DROP
+          ];
+        const noRightToParticipate =
+          authenticationContext.isAuthenticatedAsProxy() &&
+          !authenticationContext.activeProxyActions[
+            ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+          ];
+        const waveEntity = await this.wavesApiDb.findWaveById(
+          waveId,
+          connection
+        );
+        return await this.waveMappers.waveEntityToApiWave(
+          {
+            waveEntity: waveEntity!,
+            groupIdsUserIsEligibleFor: groupsUserIsEligibleFor,
+            noRightToVote,
+            noRightToParticipate
+          },
+          ctxWithConnection
+        );
       }
     );
   }
