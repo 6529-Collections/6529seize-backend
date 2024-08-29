@@ -8,7 +8,6 @@ import {
   ParticipationRequiredMedia,
   WaveEntity
 } from '../../../entities/IWave';
-import { Time } from '../../../time';
 import {
   ACTIVITY_EVENTS_TABLE,
   DROP_MEDIA_TABLE,
@@ -101,17 +100,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       );
   }
 
-  public async insertWave(
-    id: string,
-    wave: NewWaveEntity,
-    ctx: RequestContext
-  ) {
+  public async insertWave(wave: InsertWaveEntity, ctx: RequestContext) {
     const timer = ctx.timer!;
     timer.start('waveApiDb->insertWave');
     const params = {
-      ...wave,
-      id,
-      created_at: Time.currentMillis()
+      ...wave
     };
     await this.db.execute(
       `
@@ -122,6 +115,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             picture,
             description_drop_id,
             created_at,
+            updated_at,
             created_by,
             voting_group_id,
             admin_group_id,
@@ -146,7 +140,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             time_lock_ms,
             wave_period_start,
             wave_period_end,
-            outcomes
+            outcomes${wave.serial_no !== null ? ', serial_no' : ''}
         )
     values
         (
@@ -155,6 +149,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             :picture,
             :description_drop_id,
             :created_at,
+            :updated_at,
             :created_by,
             :voting_group_id,
             :admin_group_id,
@@ -179,7 +174,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             :time_lock_ms,
             :wave_period_start,
             :wave_period_end,
-            :outcomes
+            :outcomes${wave.serial_no !== null ? ', :serial_no' : ''}
         )
     `,
       {
@@ -724,9 +719,40 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
     );
     ctx.timer?.stop('wavesApiDb->deleteDropsCreditSpendingsByWaveId');
   }
+
+  async updateVisibilityInFeedEntities(
+    param: {
+      waveId: string;
+      newVisibilityGroupId: string | null;
+    },
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start('wavesApiDb->updateVisibilityInFeedEntities');
+    await this.db.execute(
+      `update ${ACTIVITY_EVENTS_TABLE} set visibility_group_id = :newVisibilityGroupId where wave_id = :waveId`,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->updateVisibilityInFeedEntities');
+  }
+
+  async updateVisibilityInNotifications(
+    param: { waveId: string; newVisibilityGroupId: string | null },
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start('wavesApiDb->updateVisibilityInNotifications');
+    await this.db.execute(
+      `update ${IDENTITY_NOTIFICATIONS_TABLE} set visibility_group_id = :newVisibilityGroupId where wave_id = :waveId`,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->updateVisibilityInNotifications');
+  }
 }
 
-export type NewWaveEntity = Omit<WaveEntity, 'id' | 'serial_no' | 'created_at'>;
+export interface InsertWaveEntity extends Omit<WaveEntity, 'serial_no'> {
+  readonly serial_no: number | null;
+}
 
 export interface SearchWavesParams {
   readonly author?: string;

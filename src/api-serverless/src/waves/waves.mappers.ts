@@ -1,5 +1,5 @@
 import { CreateNewWave } from '../generated/models/CreateNewWave';
-import { NewWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
+import { InsertWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { distinct, resolveEnumOrThrow } from '../../../helpers';
 import {
   ParticipationRequiredMedia,
@@ -43,6 +43,7 @@ import { WaveMetricEntity } from '../../../entities/IWaveMetric';
 import { WaveMetrics } from '../generated/models/WaveMetrics';
 import { RequestContext } from '../../../request.context';
 import { dropsService } from '../drops/drops.api.service';
+import { UpdateWaveRequest } from '../generated/models/UpdateWaveRequest';
 
 export class WavesMappers {
   constructor(
@@ -53,15 +54,23 @@ export class WavesMappers {
   ) {}
 
   public createWaveToNewWaveEntity(
-    createWaveRequest: CreateNewWave,
-    descriptionDropId: string,
-    ctx: RequestContext
-  ): NewWaveEntity {
+    id: string,
+    serial_no: number | null,
+    created_at: number,
+    updated_at: number | null,
+    createWaveRequest: CreateNewWave | UpdateWaveRequest,
+    created_by: string,
+    descriptionDropId: string
+  ): InsertWaveEntity {
     return {
+      id,
+      serial_no,
+      created_at,
+      updated_at,
       name: createWaveRequest.name,
       description_drop_id: descriptionDropId,
       picture: createWaveRequest.picture,
-      created_by: ctx.authenticationContext!.getActingAsId()!,
+      created_by,
       voting_group_id: createWaveRequest.voting.scope.group_id,
       admin_group_id: createWaveRequest.wave.admin_group?.group_id ?? null,
       voting_credit_type: resolveEnumOrThrow(
