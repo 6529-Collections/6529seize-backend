@@ -336,16 +336,16 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
     return result;
   }
 
-  async findWaveVisibilityGroupByDropId(
-    drop_id: string,
+  async findWaveVisibilityGroupByWaveId(
+    waveId: string,
     connection: ConnectionWrapper<any>
   ): Promise<string | null> {
     return this.db
       .oneOrNull<{
         visibility_group_id: string;
       }>(
-        `select w.visibility_group_id from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id = :drop_id`,
-        { drop_id },
+        `select w.visibility_group_id from ${WAVES_TABLE} w where w.id = :waveId`,
+        { waveId },
         { wrappedConnection: connection }
       )
       .then((it) => it?.visibility_group_id ?? null);
