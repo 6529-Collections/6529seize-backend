@@ -140,8 +140,8 @@ export class DropCreationApiService {
     const authorId = authenticationContext.getActingAsId()!;
     const dropId = randomUUID();
     timer.start('dropCreationApiService->findWaveVisibilityGroupByDropId');
-    const visibilityGroupId = await wavesApiDb.findWaveVisibilityGroupByDropId(
-      dropId,
+    const visibilityGroupId = await wavesApiDb.findWaveVisibilityGroupByWaveId(
+      request.wave_id,
       connection
     );
     timer.stop('dropCreationApiService->findWaveVisibilityGroupByDropId');
@@ -645,10 +645,9 @@ export class DropCreationApiService {
         }
         await this.validateUpdateReferences(request, ctxWithConnection);
 
-        const visibilityGroupId =
-          await wavesApiDb.findWaveVisibilityGroupByDropId(dropId, connection);
-
         const waveId = dropBeforeUpdate.wave.id;
+        const visibilityGroupId =
+          await wavesApiDb.findWaveVisibilityGroupByWaveId(waveId, connection);
         timer.start(`dropCreationApiService->deleteAllDropComponentsById`);
         await this.deleteAllDropComponentsById(
           { id: dropId, waveId },
