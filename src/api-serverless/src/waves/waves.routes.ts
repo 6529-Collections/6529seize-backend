@@ -34,6 +34,8 @@ import { WaveSubscriptionTargetAction } from '../generated/models/WaveSubscripti
 import { profilesService } from '../../../profiles/profiles.service';
 import { Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
+import { UpdateWaveRequest } from '../generated/models/UpdateWaveRequest';
+import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 
 const router = asyncRouter();
 
@@ -61,6 +63,27 @@ router.post(
     }
     const request = getValidatedByJoiOrThrow(req.body, WaveSchema);
     const wave = await waveApiService.createWave(request, requestContext);
+    res.send(wave);
+  }
+);
+
+router.post(
+  '/:id',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, CreateNewWave, any, any>,
+    res: Response<ApiResponse<Wave>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const requestContext: RequestContext = { authenticationContext, timer };
+    const request = getValidatedByJoiOrThrow(req.body, UpdateWaveSchema);
+    const wave = await waveApiService.updateWave(
+      req.params.id,
+      request,
+      requestContext
+    );
+    await giveReadReplicaTimeToCatchUp();
     res.send(wave);
   }
 );
@@ -348,9 +371,8 @@ const WaveOutcomeSchema = Joi.object<WaveOutcome>({
   })
 });
 
-const WaveSchema = Joi.object<CreateNewWave>({
+const waveSchemaBaseValidations = {
   name: Joi.string().required().max(250).min(1),
-  description_drop: NewWaveDropSchema.required(),
   picture: Joi.string()
     .optional()
     .allow(null)
@@ -360,7 +382,14 @@ const WaveSchema = Joi.object<CreateNewWave>({
   participation: WaveParticipationSchema.required(),
   wave: WaveConfigSchema.required(),
   outcomes: Joi.array().required().min(0).items(WaveOutcomeSchema)
+};
+
+const WaveSchema = Joi.object<CreateNewWave>({
+  ...waveSchemaBaseValidations,
+  description_drop: NewWaveDropSchema.required()
 });
+
+const UpdateWaveSchema = Joi.object<UpdateWaveRequest>();
 
 const WaveSubscriptionActionsSchema = Joi.object<WaveSubscriptionActions>({
   actions: Joi.array()

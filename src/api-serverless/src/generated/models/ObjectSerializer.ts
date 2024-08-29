@@ -85,6 +85,7 @@ export * from '../models/ReplyToDrop';
 export * from '../models/TargetAndSubscriptionActions';
 export * from '../models/UpdateDropRequest';
 export * from '../models/UpdateProxyActionRequest';
+export * from '../models/UpdateWaveRequest';
 export * from '../models/Wave';
 export * from '../models/WaveConfig';
 export * from '../models/WaveContributorOverview';
@@ -195,6 +196,7 @@ import { ReplyToDrop } from '../models/ReplyToDrop';
 import { TargetAndSubscriptionActions } from '../models/TargetAndSubscriptionActions';
 import { UpdateDropRequest } from '../models/UpdateDropRequest';
 import { UpdateProxyActionRequest } from '../models/UpdateProxyActionRequest';
+import { UpdateWaveRequest } from '../models/UpdateWaveRequest';
 import { Wave } from '../models/Wave';
 import { WaveConfig        } from '../models/WaveConfig';
 import { WaveContributorOverview } from '../models/WaveContributorOverview';
@@ -334,6 +336,7 @@ let typeMap: {[index: string]: any} = {
     "TargetAndSubscriptionActions": TargetAndSubscriptionActions,
     "UpdateDropRequest": UpdateDropRequest,
     "UpdateProxyActionRequest": UpdateProxyActionRequest,
+    "UpdateWaveRequest": UpdateWaveRequest,
     "Wave": Wave,
     "WaveConfig": WaveConfig,
     "WaveContributorOverview": WaveContributorOverview,
