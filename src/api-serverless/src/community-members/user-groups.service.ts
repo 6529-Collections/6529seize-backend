@@ -756,6 +756,7 @@ export class UserGroupsService {
       id: it.id,
       name: it.name,
       visible: it.visible,
+      is_private: !!it.is_private,
       created_at: new Date(it.created_at).getTime(),
       group: {
         cic: {

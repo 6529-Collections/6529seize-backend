@@ -50,7 +50,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                                             owns_lab_tokens,
                                             visible,
                                             profile_group_id,
-                                            excluded_profile_group_id)
+                                            excluded_profile_group_id,
+                                            is_private)
           values (:id,
                   :name,
                   :cic_min,
@@ -78,7 +79,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                   :owns_lab_tokens,
                   :visible,
                   :profile_group_id,
-                  :excluded_profile_group_id)
+                  :excluded_profile_group_id,
+                  :is_private)
     `,
       { ...entity },
       { wrappedConnection: connection }

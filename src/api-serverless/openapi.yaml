@@ -1994,6 +1994,7 @@ components:
         - created_at
         - created_by
         - visible
+        - is_private
       properties:
         id:
           type: string
@@ -2007,6 +2008,8 @@ components:
         created_by:
           $ref: "#/components/schemas/ProfileMin"
         visible:
+          type: boolean
+        is_private:
           type: boolean
 
     GroupDescription:
@@ -2208,12 +2211,13 @@ components:
       required:
         - name
         - group
-        - visible
       properties:
         name:
           type: string
         group:
           $ref: "#/components/schemas/CreateGroupDescription"
+        is_private:
+          type: boolean
 
     ChangeGroupVisibility:
       type: object

@@ -157,6 +157,7 @@ router.post(
     const ownsNextgen = apiUserGroup.group.owns_nfts.find(
       (it) => it.name === GroupOwnsNftNameEnum.Nextgen
     );
+    const isPrivate = apiUserGroup.is_private ?? false;
     const userGroup: Omit<
       NewUserGroupEntity,
       'profile_group_id' | 'excluded_profile_group_id'
@@ -206,7 +207,8 @@ router.post(
         ? apiUserGroup.group.identity_addresses
         : [],
       excluded_addresses: apiUserGroup.group.excluded_identity_addresses ?? [],
-      visible: false
+      visible: false,
+      is_private: isPrivate
     };
     const response = await userGroupsService.save(userGroup, savingProfileId);
     res.send(response);
@@ -328,7 +330,8 @@ const NewUserGroupSchema = Joi.object<CreateGroup>({
     .messages({
       'string.pattern.base': `Invalid name. Name can't be longer than 100 characters. It can only alphanumeric characters and spaces`
     }),
-  group: GroupDescriptionSchema
+  group: GroupDescriptionSchema,
+  is_private: Joi.boolean().optional().default(false)
 });
 
 const ChangeUserGroupVisibilitySchema: Joi.ObjectSchema<
