@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import { USER_GROUPS_TABLE } from '../constants';
 
 @Entity(USER_GROUPS_TABLE)
@@ -59,6 +59,9 @@ export class UserGroupEntity {
   readonly profile_group_id!: string | null;
   @Column({ type: 'varchar', length: 50, nullable: true, default: null })
   readonly excluded_profile_group_id!: string | null;
+  @Index('idx_user_group_is_private')
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly is_private!: boolean;
 }
 
 export enum FilterDirection {
