@@ -22,7 +22,6 @@ import ownersBalancesRoutes from './owners-balances/api.owners-balances.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
 import userGroupsRoutes from './community-members/user-groups.routes';
 import dropsRoutes from './drops/drops.routes';
-import publicDropsRoutes from './drops/drops-public.routes';
 import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
 import dropsMediaRoutes from './drops/drops-media.routes';
 import profileSubClassificationsRoutes from './profiles/profiles-sub-classifications.routes';
@@ -33,7 +32,6 @@ import policiesRoutes from './policies/policies.routes';
 import notificationsRoutes from './notifications/notifications.routes';
 import waveMediaRoutes from './waves/wave-media.routes';
 import wavesOverviewRoutes from './waves/waves-overview.routes';
-import wavesOverviewPublicRoutes from './waves/waves-overview-public.routes';
 import identitySubscriptionsRoutes from './identity-subscriptions/identity-subscriptions.routes';
 import * as passport from 'passport';
 import {
@@ -852,7 +850,6 @@ loadApi().then(() => {
   apiRouter.use(`/notifications`, notificationsRoutes);
   apiRouter.use(`/identity-subscriptions`, identitySubscriptionsRoutes);
   apiRouter.use(`/waves-overview`, wavesOverviewRoutes);
-  apiRouter.use(`/public/waves-overview`, wavesOverviewPublicRoutes);
   apiRouter.use(`/identities`, identitiesRoutes);
   apiRouter.use(`/profiles`, profilesRoutes);
   apiRouter.use(`/analytics`, analyticsRoutes);
@@ -872,7 +869,6 @@ loadApi().then(() => {
   apiRouter.use(`/proxies`, proxiesRoutes);
   apiRouter.use(`/subscriptions`, subscriptionsRoutes);
   apiRouter.use(`/drops`, dropsRoutes);
-  apiRouter.use(`/public/drops`, publicDropsRoutes);
   apiRouter.use(`/nft-owners`, nftOwnersRoutes);
   apiRouter.use(`/drop-media`, dropsMediaRoutes);
   apiRouter.use(`/wave-media`, waveMediaRoutes);
