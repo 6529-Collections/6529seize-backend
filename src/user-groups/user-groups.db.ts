@@ -146,13 +146,17 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
 
   async getById(
     id: string,
+    authenticatedUserId: string | null,
+    eligibleGroupIds: string[],
     connection?: ConnectionWrapper<any>
   ): Promise<UserGroupEntity | null> {
     const opts = connection ? { wrappedConnection: connection } : undefined;
     return this.db
       .execute<UserGroupEntity>(
-        `select * from ${USER_GROUPS_TABLE} where id = :id`,
-        { id },
+        `select * from ${USER_GROUPS_TABLE} where id = :id and (is_private is false or (created_by = :authenticatedUserId ${
+          eligibleGroupIds.length ? ` or id in (:eligibleGroupIds)` : ``
+        }))`,
+        { id, authenticatedUserId, eligibleGroupIds },
         opts
       )
       .then((res) => res[0] ?? null);
@@ -183,10 +187,19 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
   async searchByNameOrAuthor(
     name: string | null,
     authorId: string | null,
-    created_at_less_than: number | null
+    created_at_less_than: number | null,
+    authenticatedUserId: string | null,
+    eligibleGroupIds: string[],
+    ctx: RequestContext
   ): Promise<UserGroupEntity[]> {
-    let sql = `select * from ${USER_GROUPS_TABLE} where visible is true `;
-    const params: Record<string, any> = {};
+    ctx.timer?.start('userGroupsDb->searchByNameOrAuthor');
+    let sql = `select * from ${USER_GROUPS_TABLE} where visible is true and (is_private is false or (created_by = :authenticatedUserId ${
+      eligibleGroupIds.length ? ` or id in (:eligibleGroupIds)` : ``
+    })) `;
+    const params: Record<string, any> = {
+      authenticatedUserId,
+      eligibleGroupIds
+    };
     if (name) {
       sql += ` and name like :name `;
       params.name = `%${name}%`;
@@ -200,7 +213,9 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       params.created_at_less_than = new Date(created_at_less_than);
     }
     sql += ` order by created_at desc limit 20`;
-    return this.db.execute<UserGroupEntity>(sql, params);
+    const result = await this.db.execute<UserGroupEntity>(sql, params);
+    ctx.timer?.stop('userGroupsDb->searchByNameOrAuthor');
+    return result;
   }
 
   async deleteById(id: string, connection: ConnectionWrapper<any>) {
@@ -424,7 +439,8 @@ where ((cg.cic_direction = 'RECEIVED' and (
   }
 
   async findIdentityGroupsIdsAndIdentityCountsByGroupIds(
-    groupIds: string[]
+    groupIds: string[],
+    ctx: RequestContext
   ): Promise<
     Record<
       string,
@@ -447,7 +463,8 @@ where ((cg.cic_direction = 'RECEIVED' and (
       }>(
         `select g.id as group_id, pg.profile_group_id as identity_group_id, count(pg.profile_id) as identity_count from ${USER_GROUPS_TABLE} g 
         join ${PROFILE_GROUPS_TABLE} pg on g.profile_group_id = pg.profile_group_id where g.id in (:groupIds) group by 1, 2`,
-        { groupIds }
+        { groupIds },
+        { wrappedConnection: ctx.connection }
       ),
       this.db.execute<{
         group_id: string;
@@ -456,7 +473,8 @@ where ((cg.cic_direction = 'RECEIVED' and (
       }>(
         `select g.id as group_id, pg.profile_group_id as excluded_identity_group_id, count(pg.profile_id) as excluded_identity_count from ${USER_GROUPS_TABLE} g 
         join ${PROFILE_GROUPS_TABLE} pg on g.excluded_profile_group_id = pg.profile_group_id where g.id in (:groupIds) group by 1, 2`,
-        { groupIds }
+        { groupIds },
+        { wrappedConnection: ctx.connection }
       )
     ]).then((results) => {
       const [res1, res2] = results;

@@ -14,6 +14,7 @@ import {
   TRANSACTIONS_TABLE
 } from '../../../constants';
 import { UserGroupsService, userGroupsService } from './user-groups.service';
+import { RequestContext } from '../../../request.context';
 
 export interface CommunityMemberFromDb
   extends Omit<CommunityMemberOverview, 'last_activity'> {
@@ -29,10 +30,12 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
   }
 
   async getCommunityMembers(
-    query: CommunityMembersQuery
+    query: CommunityMembersQuery,
+    ctx: RequestContext
   ): Promise<CommunityMemberFromDb[]> {
     const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
-      query.group_id
+      query.group_id,
+      ctx
     );
     if (viewResult === null) {
       return [];
@@ -61,9 +64,13 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async countCommunityMembers(query: CommunityMembersQuery): Promise<number> {
+  async countCommunityMembers(
+    query: CommunityMembersQuery,
+    ctx: RequestContext
+  ): Promise<number> {
     const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
-      query.group_id
+      query.group_id,
+      ctx
     );
     if (viewResult === null) {
       return 0;

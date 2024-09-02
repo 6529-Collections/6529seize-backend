@@ -1977,10 +1977,7 @@ components:
     Group:
       type: object
       required:
-        - id
-        - name
-        - author
-        - created_at
+        - is_hidden
       properties:
         id:
           type: string
@@ -1991,6 +1988,8 @@ components:
         created_at:
           type: number
           format: int64
+        is_hidden:
+          type: boolean
 
     GroupFull:
       type: object

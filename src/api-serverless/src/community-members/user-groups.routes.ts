@@ -3,7 +3,11 @@ import { Request, Response } from 'express';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
 import { ApiResponse } from '../api-response';
-import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
+import {
+  getAuthenticationContext,
+  maybeAuthenticatedUser,
+  needsAuthenticatedUser
+} from '../auth/auth';
 import { profilesService } from '../../../profiles/profiles.service';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { NewUserGroupEntity, userGroupsService } from './user-groups.service';
@@ -22,11 +26,14 @@ import {
   GroupOwnsNftNameEnum
 } from '../generated/models/GroupOwnsNft';
 import { CreateGroupDescription } from '../generated/models/CreateGroupDescription';
+import { Timer } from '../../../time';
+import { RequestContext } from '../../../request.context';
 
 const router = asyncRouter();
 
 router.get(
   '/',
+  maybeAuthenticatedUser(),
   async (
     req: Request<
       any,
@@ -41,6 +48,8 @@ router.get(
     >,
     res: Response<ApiResponse<GroupFull[]>>
   ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     const groupName = req.query.group_name ?? null;
     const createdAtLessThan = parseIntOrNull(req.query.created_at_less_than);
     let authorId: string | null = null;
@@ -56,7 +65,8 @@ router.get(
     const response = await userGroupsService.searchByNameOrAuthor(
       groupName,
       authorId,
-      createdAtLessThan
+      createdAtLessThan,
+      { authenticationContext, timer }
     );
     res.send(response);
   }
@@ -64,12 +74,16 @@ router.get(
 
 router.get(
   '/:group_id',
+  maybeAuthenticatedUser(),
   async (
     req: Request<{ group_id: string }, any, any, any, any>,
     res: Response<ApiResponse<GroupFull>>
   ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     const response = await userGroupsService.getByIdOrThrow(
-      req.params.group_id
+      req.params.group_id,
+      { authenticationContext, timer }
     );
     res.send(response);
   }
@@ -77,6 +91,7 @@ router.get(
 
 router.get(
   '/:group_id/identity_groups/:identity_group_id',
+  maybeAuthenticatedUser(),
   async (
     req: Request<
       { group_id: string; identity_group_id: string },
@@ -87,7 +102,16 @@ router.get(
     >,
     res: Response<ApiResponse<string[]>>
   ) => {
-    const group = await userGroupsService.getByIdOrThrow(req.params.group_id);
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const ctx: RequestContext = {
+      timer,
+      authenticationContext
+    };
+    const group = await userGroupsService.getByIdOrThrow(
+      req.params.group_id,
+      ctx
+    );
     const identityGroupId = group.group.identity_group_id;
     if (identityGroupId !== req.params.identity_group_id) {
       throw new NotFoundException(
@@ -110,17 +134,10 @@ router.post(
     req: Request<any, any, CreateGroup, any, any>,
     res: Response<ApiResponse<GroupFull>>
   ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     const apiUserGroup = getValidatedByJoiOrThrow(req.body, NewUserGroupSchema);
-    const savingProfileId = await profilesService
-      .getProfileAndConsolidationsByIdentity(getWalletOrThrow(req))
-      .then((pc) =>
-        pc?.profile?.external_id
-          ? {
-              id: pc.profile.external_id,
-              handle: pc.profile.handle
-            }
-          : null
-      );
+    const savingProfileId = authenticationContext.authenticatedProfileId;
     if (!savingProfileId) {
       throw new ForbiddenException(`Please create a profile first.`);
     }
@@ -210,7 +227,10 @@ router.post(
       visible: false,
       is_private: isPrivate
     };
-    const response = await userGroupsService.save(userGroup, savingProfileId);
+    const response = await userGroupsService.save(userGroup, savingProfileId, {
+      authenticationContext,
+      timer
+    });
     res.send(response);
   }
 );
@@ -222,9 +242,10 @@ router.post(
     req: Request<any, any, ChangeGroupVisibility, any, any>,
     res: Response<ApiResponse<GroupFull>>
   ) => {
-    const savingProfileId = await profilesService
-      .getProfileAndConsolidationsByIdentity(getWalletOrThrow(req))
-      .then((pc) => pc?.profile?.external_id ?? null);
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const requestContext: RequestContext = { timer, authenticationContext };
+    const savingProfileId = authenticationContext.getActingAsId();
     if (!savingProfileId) {
       throw new ForbiddenException(`Please create a profile first.`);
     }
@@ -237,7 +258,10 @@ router.post(
       },
       ChangeUserGroupVisibilitySchema
     );
-    const response = await userGroupsService.changeVisibility(request);
+    const response = await userGroupsService.changeVisibility(
+      request,
+      requestContext
+    );
     res.send(response);
   }
 );

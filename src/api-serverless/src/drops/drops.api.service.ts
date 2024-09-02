@@ -109,15 +109,18 @@ export class DropsApiService {
     if (group_id && !group_ids_user_is_eligible_for.includes(group_id)) {
       return [];
     }
-    const dropEntities = await this.dropsDb.findLatestDrops({
-      amount,
-      serial_no_less_than,
-      group_id,
-      group_ids_user_is_eligible_for,
-      wave_id,
-      author_id,
-      include_replies
-    });
+    const dropEntities = await this.dropsDb.findLatestDrops(
+      {
+        amount,
+        serial_no_less_than,
+        group_id,
+        group_ids_user_is_eligible_for,
+        wave_id,
+        author_id,
+        include_replies
+      },
+      ctx
+    );
     return await this.dropsMappers.convertToDropFulls({
       dropEntities: dropEntities,
       contextProfileId: context_profile_id,

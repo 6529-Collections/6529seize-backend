@@ -9,6 +9,8 @@ import { Request, Response } from 'express';
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { profilesService } from '../../../profiles/profiles.service';
 import { CountlessPage } from '../page-request';
+import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
+import { Timer } from '../../../time';
 
 const router = asyncRouter();
 
@@ -83,6 +85,7 @@ async function getBaseSearchRequest(
 
 router.get(
   `/`,
+  maybeAuthenticatedUser(),
   async function (
     req: Request<
       any,
@@ -104,10 +107,13 @@ router.get(
     >,
     res: Response<ApiResponse<CountlessPage<ApiProfileActivityLog>>>
   ) {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     const profileActivityLogsSearchRequest = await getBaseSearchRequest(req);
     const results =
       await profileActivityLogsApiService.getProfileActivityLogsFiltered(
-        profileActivityLogsSearchRequest
+        profileActivityLogsSearchRequest,
+        { timer, authenticationContext }
       );
     res.status(200).send(results);
   }
