@@ -19,6 +19,8 @@ import {
   CommunityMembersSortOption
 } from './community-members.types';
 import { communityMembersService } from './community-members.service';
+import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
+import { Timer } from '../../../time';
 
 const router = asyncRouter();
 
@@ -56,16 +58,20 @@ router.get(
 
 router.get(
   '/top',
+  maybeAuthenticatedUser(),
   async (
     req: Request<any, any, any, CommunityMembersQuery, any>,
     res: Response<ApiResponse<Page<CommunityMemberOverview>>>
   ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     const query = getValidatedByJoiOrThrow(
       req.query,
       CommunityMembersQuerySchema
     );
     const response = await communityMembersService.getCommunityMembersPage(
-      query
+      query,
+      { timer, authenticationContext }
     );
     res.send(response);
   }

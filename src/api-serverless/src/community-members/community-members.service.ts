@@ -5,16 +5,18 @@ import {
 import { communityMembersDb, CommunityMembersDb } from './community-members.db';
 import { calculateLevel } from '../../../profiles/profile-level';
 import { Page } from '../page-request';
+import { RequestContext } from '../../../request.context';
 
 export class CommunityMembersService {
   constructor(private readonly communityMembersDb: CommunityMembersDb) {}
 
   async getCommunityMembersPage(
-    query: CommunityMembersQuery
+    query: CommunityMembersQuery,
+    ctx: RequestContext
   ): Promise<Page<CommunityMemberOverview>> {
     const [data, count] = await Promise.all([
-      this.getAndConvertCommunityMembers(query),
-      this.communityMembersDb.countCommunityMembers(query)
+      this.getAndConvertCommunityMembers(query, ctx),
+      this.communityMembersDb.countCommunityMembers(query, ctx)
     ]);
     return {
       next: count > query.page_size * query.page,
@@ -25,10 +27,11 @@ export class CommunityMembersService {
   }
 
   private async getAndConvertCommunityMembers(
-    query: CommunityMembersQuery
+    query: CommunityMembersQuery,
+    ctx: RequestContext
   ): Promise<CommunityMemberOverview[]> {
     return await this.communityMembersDb
-      .getCommunityMembers(query)
+      .getCommunityMembers(query, ctx)
       .then(async (members) => {
         const consolidationKeys = members.map(
           (member) => member.consolidation_key

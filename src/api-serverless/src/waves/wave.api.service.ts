@@ -269,7 +269,8 @@ export class WaveApiService {
     }
     const entities = await this.wavesApiDb.searchWaves(
       params,
-      groupsUserIsEligibleFor
+      groupsUserIsEligibleFor,
+      ctx
     );
     const noRightToVote =
       !authenticationContext ||

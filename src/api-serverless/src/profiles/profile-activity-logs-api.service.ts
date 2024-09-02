@@ -11,6 +11,7 @@ import {
 import { CountlessPage, PageRequest } from '../page-request';
 import { profilesDb, ProfilesDb } from '../../../profiles/profiles.db';
 import { RateMatter } from '../../../entities/IRating';
+import { RequestContext } from '../../../request.context';
 
 export interface ProfileActivityLogsSearchRequest {
   profileId?: string;
@@ -30,19 +31,20 @@ export class ProfileActivityLogsApiService {
     private readonly profilesDb: ProfilesDb
   ) {}
 
-  async getProfileActivityLogsFiltered({
-    profileId,
-    order,
-    pageRequest,
-    includeProfileIdToIncoming,
-    ratingMatter,
-    targetId,
-    logType,
-    category,
-    group_id
-  }: ProfileActivityLogsSearchRequest): Promise<
-    CountlessPage<ApiProfileActivityLog>
-  > {
+  async getProfileActivityLogsFiltered(
+    {
+      profileId,
+      order,
+      pageRequest,
+      includeProfileIdToIncoming,
+      ratingMatter,
+      targetId,
+      logType,
+      category,
+      group_id
+    }: ProfileActivityLogsSearchRequest,
+    ctx: RequestContext
+  ): Promise<CountlessPage<ApiProfileActivityLog>> {
     const params: ProfileLogSearchParams = {
       order,
       pageRequest,
@@ -67,7 +69,7 @@ export class ProfileActivityLogsApiService {
         params.rating_matter = ratingMatter as RateMatter;
       }
     }
-    const foundLogs = await this.profileActivityLogsDb.searchLogs(params);
+    const foundLogs = await this.profileActivityLogsDb.searchLogs(params, ctx);
     const profileIdsInLogs = foundLogs.reduce((acc, log) => {
       acc.push(log.profile_id);
       if (log.target_id && !isTargetOfTypeDrop(log.type)) {

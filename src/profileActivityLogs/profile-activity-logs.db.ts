@@ -18,6 +18,7 @@ import {
   userGroupsService
 } from '../api-serverless/src/community-members/user-groups.service';
 import { Timer } from '../time';
+import { RequestContext } from '../request.context';
 
 export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -72,7 +73,8 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   }
 
   public async searchLogs(
-    params: ProfileLogSearchParams
+    params: ProfileLogSearchParams,
+    ctx: RequestContext
   ): Promise<ProfileActivityLog[]> {
     let sql: string;
     const page = params.pageRequest.page;
@@ -86,7 +88,8 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     };
     if (params.group_id) {
       const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
-        params.group_id
+        params.group_id,
+        ctx
       );
       if (viewResult === null) {
         return [];

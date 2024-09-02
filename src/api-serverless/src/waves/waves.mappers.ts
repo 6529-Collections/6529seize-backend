@@ -161,7 +161,7 @@ export class WavesMappers {
       creationDrops,
       subscribedActions,
       metrics
-    } = await this.getRelatedData(waveEntities, ctx);
+    } = await this.getRelatedData(waveEntities, groupIdsUserIsEligibleFor, ctx);
     return waveEntities.map<Wave>((waveEntity) =>
       this.mapWaveEntityToApiWave({
         waveEntity,
@@ -315,6 +315,7 @@ export class WavesMappers {
 
   private async getRelatedData(
     waveEntities: WaveEntity[],
+    groupIdsUserIsEligibleFor: string[],
     ctx: RequestContext
   ): Promise<{
     contributors: Record<
@@ -408,12 +409,23 @@ export class WavesMappers {
       );
     const curations: Record<string, Group> = curationEntities.reduce(
       (acc, curationEntity) => {
-        acc[curationEntity.id] = {
-          id: curationEntity.id,
-          name: curationEntity.name,
-          author: profileMins[curationEntity.created_by],
-          created_at: new Date(curationEntity.created_at).getTime()
-        };
+        const isHidden =
+          curationEntity.is_private &&
+          !groupIdsUserIsEligibleFor.includes(curationEntity.id) &&
+          curationEntity.created_by !== authenticatedUserId;
+        if (isHidden) {
+          acc[curationEntity.id] = {
+            is_hidden: true
+          };
+        } else {
+          acc[curationEntity.id] = {
+            id: curationEntity.id,
+            name: curationEntity.name,
+            author: profileMins[curationEntity.created_by],
+            created_at: new Date(curationEntity.created_at).getTime(),
+            is_hidden: false
+          };
+        }
         return acc;
       },
       {} as Record<string, Group>
