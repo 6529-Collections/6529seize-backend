@@ -9,6 +9,9 @@ import { WavesOverviewType } from '../generated/models/WavesOverviewType';
 
 const router = asyncRouter();
 
+/**
+ * DEPRECATED: Use /waves/overview instead
+ */
 router.get(
   '/',
   async (
@@ -19,7 +22,7 @@ router.get(
       req.query,
       WavesOverviewParamsSchema
     );
-    const waves = await waveApiService.getWavesOverview(params);
+    const waves = await waveApiService.getWavesOverview(params, {});
     res.send(waves);
   }
 );

@@ -10,6 +10,9 @@ import { Timer } from '../../../time';
 
 const router = asyncRouter();
 
+/**
+ * DEPRECATED: Use /waves instead
+ */
 router.get(
   '/',
   async (
@@ -24,6 +27,9 @@ router.get(
   }
 );
 
+/**
+ * DEPRECATED: Use /waves/:id instead
+ */
 router.get(
   '/:id',
   async (
@@ -31,7 +37,7 @@ router.get(
     res: Response<ApiResponse<Wave>>
   ) => {
     const { id } = req.params;
-    const wave = await waveApiService.findWaveByIdOrThrow(id, []);
+    const wave = await waveApiService.findWaveByIdOrThrow(id, [], {});
     const groupId = wave.visibility.scope.group?.id;
     if (groupId) {
       throw new NotFoundException(`Wave ${id} not found`);

@@ -1,5 +1,5 @@
 import { asyncRouter } from '../async.router';
-import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
+import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import { Wave } from '../generated/models/Wave';
@@ -7,25 +7,27 @@ import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { waveApiService, WavesOverviewParams } from './wave.api.service';
 import { WavesOverviewType } from '../generated/models/WavesOverviewType';
+import { Timer } from '../../../time';
 
 const router = asyncRouter();
 
 router.get(
   '/',
-  needsAuthenticatedUser(),
+  maybeAuthenticatedUser(),
   async (
     req: Request<any, any, any, WavesOverviewParams, any>,
     res: Response<ApiResponse<Wave[]>>
   ) => {
-    const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     const params = getValidatedByJoiOrThrow(
       req.query,
       WavesOverviewParamsSchema
     );
-    const waves = await waveApiService.getWavesOverview(
-      params,
-      authenticationContext
-    );
+    const waves = await waveApiService.getWavesOverview(params, {
+      authenticationContext,
+      timer
+    });
     res.send(waves);
   }
 );

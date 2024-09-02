@@ -66,7 +66,10 @@ export async function getAuthenticationContext(
   req: Request<any, any, any, any, any>,
   timer?: Timer
 ): Promise<AuthenticationContext> {
-  const authenticatedWallet = getWalletOrThrow(req);
+  const authenticatedWallet = getAuthenticatedWalletOrNull(req);
+  if (!authenticatedWallet) {
+    return AuthenticationContext.notAuthenticated();
+  }
   const roleProfileId = (req.user as any).role as string | null;
   const cacheKey = `auth-context-${authenticatedWallet}-${roleProfileId}`;
   const cachedContext = mcache.get(cacheKey);
