@@ -647,9 +647,10 @@ paths:
           description: Profile not found
   /public/drops:
     get:
+      deprecated: true
       tags:
         - Drops
-      summary: Get latest drops viewable to anyone.
+      summary: Get latest drops viewable to anyone. /drops now works with and without auth token so use this instead.
       operationId: getLatestPublicDrops
       parameters:
         - name: limit
@@ -717,11 +718,13 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Drop"
+
   /public/drops/{dropId}:
     get:
+      deprecated: true
       tags:
         - Drops
-      summary: Get a public drop by ID
+      summary: Get a public drop by ID. /drops/{id} now works with and without auth token so use this instead.
       operationId: getPublicDropById
       parameters:
         - name: dropId
@@ -756,9 +759,10 @@ paths:
           description: Drop not found
   /public/drops/{dropId}/parts/{dropPartId}/replies:
     get:
+      deprecated: true
       tags:
         - Drops
-      summary: Get public reply drops
+      summary: Get public reply drops. /drops/{dropId}/parts/{dropPartId}/replies now works with and without auth token so use this instead.
       operationId: getPublicReplyDrops
       parameters:
         - name: dropId
@@ -819,7 +823,7 @@ paths:
     get:
       tags:
         - Drops
-      summary: Get latest drops. Needs authentication. Use /public/drops for public drops.
+      summary: Get latest drops.
       operationId: getLatestDrops
       parameters:
         - name: limit
@@ -912,7 +916,7 @@ paths:
     get:
       tags:
         - Drops
-      summary: Get drop by ID. Needs authenticated user. Use /public/drops/{dropId} for public drops.
+      summary: Get drop by ID.
       operationId: getDropById
       parameters:
         - name: dropId
@@ -1333,9 +1337,10 @@ paths:
 
   /public/waves:
     get:
+      deprecated: true
       tags:
         - Waves
-      summary: Get public waves
+      summary: Get public waves. /waves now works with and without auth token so use this instead.
       operationId: getPublicWaves
       parameters:
         - name: name
@@ -1384,9 +1389,10 @@ paths:
 
   /public/waves/{id}:
     get:
+      deprecated: true
       tags:
         - Waves
-      summary: Get public wave by ID
+      summary: Get public wave by ID. /waves/{id} now works with and without auth token so use this instead.
       operationId: getPublicWaveById
       parameters:
         - name: id
@@ -1406,9 +1412,10 @@ paths:
 
   /public/waves-overview:
     get:
+      deprecated: true
       tags:
         - Waves
-      summary: Get overview of waves by different criteria.
+      summary: Get overview of waves by different criteria. /waves-overview now works with and without auth token so use this instead.
       operationId: getPublicWavesOverview
       parameters:
         - name: limit
@@ -1494,7 +1501,7 @@ paths:
     get:
       tags:
         - Waves
-      summary: Get waves. Needs authentication. Use /public/waves for public waves.
+      summary: Get waves.
       operationId: getWaves
       parameters:
         - name: name
@@ -1566,7 +1573,7 @@ paths:
     get:
       tags:
         - Waves
-      summary: Get wave by ID. Needs authenticated user. Use /public/waves/{id} for public waves.
+      summary: Get wave by ID.
       operationId: getWaveById
       parameters:
         - name: id
@@ -1970,10 +1977,7 @@ components:
     Group:
       type: object
       required:
-        - id
-        - name
-        - author
-        - created_at
+        - is_hidden
       properties:
         id:
           type: string
@@ -1984,6 +1988,8 @@ components:
         created_at:
           type: number
           format: int64
+        is_hidden:
+          type: boolean
 
     GroupFull:
       type: object

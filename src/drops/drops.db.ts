@@ -274,25 +274,29 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .then((it) => it[0] || null);
   }
 
-  async findLatestDrops({
-    amount,
-    serial_no_less_than,
-    group_ids_user_is_eligible_for,
-    group_id,
-    wave_id,
-    author_id,
-    include_replies
-  }: {
-    group_id: string | null;
-    group_ids_user_is_eligible_for: string[];
-    serial_no_less_than: number | null;
-    amount: number;
-    wave_id: string | null;
-    author_id: string | null;
-    include_replies: boolean;
-  }): Promise<DropEntity[]> {
+  async findLatestDrops(
+    {
+      amount,
+      serial_no_less_than,
+      group_ids_user_is_eligible_for,
+      group_id,
+      wave_id,
+      author_id,
+      include_replies
+    }: {
+      group_id: string | null;
+      group_ids_user_is_eligible_for: string[];
+      serial_no_less_than: number | null;
+      amount: number;
+      wave_id: string | null;
+      author_id: string | null;
+      include_replies: boolean;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
     const sqlAndParams = await this.userGroupsService.getSqlAndParamsByGroupId(
-      group_id
+      group_id,
+      ctx
     );
     if (!sqlAndParams) {
       return [];

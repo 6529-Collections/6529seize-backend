@@ -1,6 +1,6 @@
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { ConnectionWrapper } from '../../../sql-executor';
-import { ForbiddenException, NotFoundException } from '../../../exceptions';
+import { NotFoundException } from '../../../exceptions';
 import { resolveEnumOrThrow } from '../../../helpers';
 import { Page, PageSortDirection } from '../page-request';
 import { Drop } from '../generated/models/Drop';
@@ -19,17 +19,13 @@ import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
-import {
-  profilesApiService,
-  ProfilesApiService
-} from '../profiles/profiles.api.service';
 import { dropsMappers, DropsMappers } from './drops.mappers';
+import { RequestContext } from '../../../request.context';
 
 export class DropsApiService {
   constructor(
     private readonly dropsMappers: DropsMappers,
     private readonly dropsDb: DropsDb,
-    private readonly profilesService: ProfilesApiService,
     private readonly userGroupsService: UserGroupsService,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
   ) {}
@@ -37,30 +33,28 @@ export class DropsApiService {
   public async findDropByIdOrThrow(
     {
       dropId,
-      authenticationContext,
       min_part_id,
       max_part_id,
       skipEligibilityCheck
     }: {
       dropId: string;
-      authenticationContext?: AuthenticationContext;
       min_part_id: number;
       max_part_id: number;
       skipEligibilityCheck?: boolean;
     },
-    connection?: ConnectionWrapper<any>
+    ctx: RequestContext
   ): Promise<Drop> {
     const contextProfileId = this.getDropsReadContextProfileId(
-      authenticationContext
+      ctx.authenticationContext
     );
     const group_ids_user_is_eligible_for =
       await this.userGroupsService.getGroupsUserIsEligibleFor(contextProfileId);
     const dropEntity = await (skipEligibilityCheck
-      ? this.dropsDb.findDropByIdWithoutEligibilityCheck(dropId, connection)
+      ? this.dropsDb.findDropByIdWithoutEligibilityCheck(dropId, ctx.connection)
       : this.dropsDb.findDropById(
           dropId,
           group_ids_user_is_eligible_for,
-          connection
+          ctx.connection
         )
     ).then(async (drop) => {
       if (!drop) {
@@ -77,32 +71,34 @@ export class DropsApiService {
           min_part_id,
           max_part_id
         },
-        connection
+        ctx.connection
       )
       .then((it) => it[0]);
   }
 
-  public async findLatestDrops({
-    amount,
-    group_id,
-    wave_id,
-    serial_no_less_than,
-    min_part_id,
-    max_part_id,
-    author_id,
-    include_replies,
-    authenticationContext
-  }: {
-    group_id: string | null;
-    serial_no_less_than: number | null;
-    wave_id: string | null;
-    min_part_id: number;
-    max_part_id: number;
-    amount: number;
-    author_id: string | null;
-    include_replies: boolean;
-    authenticationContext?: AuthenticationContext;
-  }): Promise<Drop[]> {
+  public async findLatestDrops(
+    {
+      amount,
+      group_id,
+      wave_id,
+      serial_no_less_than,
+      min_part_id,
+      max_part_id,
+      author_id,
+      include_replies
+    }: {
+      group_id: string | null;
+      serial_no_less_than: number | null;
+      wave_id: string | null;
+      min_part_id: number;
+      max_part_id: number;
+      amount: number;
+      author_id: string | null;
+      include_replies: boolean;
+    },
+    ctx: RequestContext
+  ): Promise<Drop[]> {
+    const authenticationContext = ctx.authenticationContext;
     const context_profile_id = this.getDropsReadContextProfileId(
       authenticationContext
     );
@@ -113,15 +109,18 @@ export class DropsApiService {
     if (group_id && !group_ids_user_is_eligible_for.includes(group_id)) {
       return [];
     }
-    const dropEntities = await this.dropsDb.findLatestDrops({
-      amount,
-      serial_no_less_than,
-      group_id,
-      group_ids_user_is_eligible_for,
-      wave_id,
-      author_id,
-      include_replies
-    });
+    const dropEntities = await this.dropsDb.findLatestDrops(
+      {
+        amount,
+        serial_no_less_than,
+        group_id,
+        group_ids_user_is_eligible_for,
+        wave_id,
+        author_id,
+        include_replies
+      },
+      ctx
+    );
     return await this.dropsMappers.convertToDropFulls({
       dropEntities: dropEntities,
       contextProfileId: context_profile_id,
@@ -133,20 +132,13 @@ export class DropsApiService {
   private getDropsReadContextProfileId(
     authenticationContext?: AuthenticationContext
   ): string | null {
-    if (!authenticationContext) {
+    if (!authenticationContext?.isUserFullyAuthenticated()) {
       return null;
     }
-    const context_profile_id = authenticationContext.getActingAsId();
-    if (!context_profile_id) {
-      throw new ForbiddenException(
-        `Please create a profile before browsing drops`
-      );
-    }
+    const context_profile_id = authenticationContext.getActingAsId()!;
     if (
       authenticationContext.isAuthenticatedAsProxy() &&
-      !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.READ_WAVE
-      ]
+      !authenticationContext.hasProxyAction(ApiProfileProxyActionType.READ_WAVE)
     ) {
       return null;
     }
@@ -171,7 +163,7 @@ export class DropsApiService {
       page: number;
       page_size: number;
     },
-    authenticatedProfileId?: string | null
+    ctx: RequestContext
   ): Promise<Page<Drop>> {
     const count = await this.dropsDb
       .countRepliesByDropIds({ dropIds: [param.drop_id] })
@@ -181,7 +173,7 @@ export class DropsApiService {
     const replies = await this.dropsDb.findRepliesByDropId(param);
     const drops = await this.dropsMappers.convertToDropFulls({
       dropEntities: replies,
-      contextProfileId: authenticatedProfileId,
+      contextProfileId: ctx.authenticationContext?.getActingAsId(),
       min_part_id: 1,
       max_part_id: Number.MAX_SAFE_INTEGER
     });
@@ -247,12 +239,14 @@ export class DropsApiService {
     actions: DropSubscriptionTargetAction[];
     authenticationContext: AuthenticationContext;
   }): Promise<DropSubscriptionTargetAction[]> {
-    const waveId = await this.findDropByIdOrThrow({
-      dropId,
-      authenticationContext,
-      min_part_id: 1,
-      max_part_id: 1
-    }).then((it) => it.wave.id);
+    const waveId = await this.findDropByIdOrThrow(
+      {
+        dropId,
+        min_part_id: 1,
+        max_part_id: 1
+      },
+      { authenticationContext }
+    ).then((it) => it.wave.id);
     const proposedActions = Object.values(actions).map((it) =>
       resolveEnumOrThrow(ActivityEventAction, it)
     );
@@ -311,12 +305,14 @@ export class DropsApiService {
     authenticationContext: AuthenticationContext;
     actions: DropSubscriptionTargetAction[];
   }): Promise<DropSubscriptionTargetAction[]> {
-    await this.findDropByIdOrThrow({
-      dropId,
-      authenticationContext,
-      min_part_id: 1,
-      max_part_id: 1
-    });
+    await this.findDropByIdOrThrow(
+      {
+        dropId,
+        min_part_id: 1,
+        max_part_id: 1
+      },
+      { authenticationContext }
+    );
     return this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         for (const action of actions) {
@@ -352,7 +348,6 @@ export class DropsApiService {
 export const dropsService = new DropsApiService(
   dropsMappers,
   dropsDb,
-  profilesApiService,
   userGroupsService,
   identitySubscriptionsDb
 );

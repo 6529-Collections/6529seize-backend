@@ -190,7 +190,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
   async searchWaves(
     searchParams: SearchWavesParams,
-    groupsUserIsEligibleFor: string[]
+    groupsUserIsEligibleFor: string[],
+    ctx: RequestContext
   ): Promise<WaveEntity[]> {
     if (
       searchParams.group_id &&
@@ -199,7 +200,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       return [];
     }
     const sqlAndParams = await this.userGroupsService.getSqlAndParamsByGroupId(
-      searchParams.group_id ?? null
+      searchParams.group_id ?? null,
+      ctx
     );
     if (!sqlAndParams) {
       return [];

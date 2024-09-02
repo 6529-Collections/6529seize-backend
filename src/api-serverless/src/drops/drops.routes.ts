@@ -1,5 +1,9 @@
 import { asyncRouter } from '../async.router';
-import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
+import {
+  getAuthenticationContext,
+  maybeAuthenticatedUser,
+  needsAuthenticatedUser
+} from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
@@ -26,17 +30,17 @@ import {
   UpdateDropSchema
 } from './drop.validator';
 import { profilesService } from '../../../profiles/profiles.service';
-import { AuthenticationContext } from '../../../auth-context';
 import { DropSubscriptionActions } from '../generated/models/DropSubscriptionActions';
 import { DropSubscriptionTargetAction } from '../generated/models/DropSubscriptionTargetAction';
 import { Timer } from '../../../time';
 import { UpdateDropRequest } from '../generated/models/UpdateDropRequest';
+import { RequestContext } from '../../../request.context';
 
 const router = asyncRouter();
 
 router.get(
   '/',
-  needsAuthenticatedUser(),
+  maybeAuthenticatedUser(),
   async (
     req: Request<
       any,
@@ -56,7 +60,8 @@ router.get(
     >,
     res: Response<ApiResponse<Drop[]>>
   ) => {
-    const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     const {
       limit,
       wave_id,
@@ -66,24 +71,26 @@ router.get(
       author_id,
       include_replies
     } = await prepLatestDropsSearchQuery(req);
-    const latestDrops = await dropsService.findLatestDrops({
-      amount: limit < 0 || limit > 20 ? 10 : limit,
-      group_id: group_id,
-      serial_no_less_than: parseNumberOrNull(req.query.serial_no_less_than),
-      min_part_id,
-      max_part_id,
-      wave_id,
-      author_id,
-      include_replies,
-      authenticationContext
-    });
+    const latestDrops = await dropsService.findLatestDrops(
+      {
+        amount: limit < 0 || limit > 20 ? 10 : limit,
+        group_id: group_id,
+        serial_no_less_than: parseNumberOrNull(req.query.serial_no_less_than),
+        min_part_id,
+        max_part_id,
+        wave_id,
+        author_id,
+        include_replies
+      },
+      { timer, authenticationContext }
+    );
     res.send(latestDrops);
   }
 );
 
 router.get(
   '/:drop_id',
-  needsAuthenticatedUser(),
+  maybeAuthenticatedUser(),
   async (
     req: Request<
       { drop_id: string },
@@ -94,15 +101,18 @@ router.get(
     >,
     res: Response<ApiResponse<Drop>>
   ) => {
-    const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     const { dropId, min_part_id, max_part_id } =
       prepSingleDropSearchRequest(req);
-    const drop = await dropsService.findDropByIdOrThrow({
-      dropId,
-      authenticationContext,
-      min_part_id,
-      max_part_id
-    });
+    const drop = await dropsService.findDropByIdOrThrow(
+      {
+        dropId,
+        min_part_id,
+        max_part_id
+      },
+      { timer, authenticationContext }
+    );
     res.send(drop);
   }
 );
@@ -237,7 +247,8 @@ router.post(
       ApiAddRatingToDropRequestSchema
     );
     const proposedCategory = category?.trim() ?? '';
-    const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     if (!authenticationContext.getActingAsId()) {
       throw new ForbiddenException(
         `No profile found for authenticated user ${authenticationContext.authenticatedWallet}`
@@ -266,7 +277,7 @@ router.post(
       );
     }
     const group_ids_user_is_eligible_for =
-      await userGroupsService.getGroupsUserIsEligibleFor(raterProfileId);
+      await userGroupsService.getGroupsUserIsEligibleFor(raterProfileId, timer);
     await dropRaterService.updateRating({
       rater_profile_id: raterProfileId,
       groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
@@ -274,19 +285,21 @@ router.post(
       drop_id: dropId,
       rating: rating
     });
-    const drop = await dropsService.findDropByIdOrThrow({
-      dropId,
-      authenticationContext,
-      min_part_id: 1,
-      max_part_id: 1
-    });
+    const drop = await dropsService.findDropByIdOrThrow(
+      {
+        dropId,
+        min_part_id: 1,
+        max_part_id: 1
+      },
+      { authenticationContext, timer }
+    );
     res.send(drop);
   }
 );
 
 router.get(
   `/:drop_id/parts/:drop_part_id/replies`,
-  needsAuthenticatedUser(),
+  maybeAuthenticatedUser(),
   async (
     req: Request<
       { drop_id: string; drop_part_id: string },
@@ -297,18 +310,20 @@ router.get(
     >,
     res: Response<Page<Drop>>
   ) => {
-    const authenticationContext = await getAuthenticationContext(req);
-    const { drop_part_id, drop_id, query } = await prepDropPartQuery(
-      req,
-      authenticationContext
-    );
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const ctx: RequestContext = {
+      authenticationContext,
+      timer
+    };
+    const { drop_part_id, drop_id, query } = await prepDropPartQuery(req, ctx);
     const replies = await dropsService.findDropReplies(
       {
         ...query,
         drop_part_id,
         drop_id
       },
-      authenticationContext.getActingAsId()
+      ctx
     );
     res.send(replies);
   }
@@ -479,7 +494,7 @@ export async function prepDropPartQuery(
     FullPageRequest<'created_at'>,
     any
   >,
-  authenticationContext?: AuthenticationContext
+  ctx: RequestContext
 ) {
   const drop_part_id = parseIntOrNull(req.params.drop_part_id);
   const drop_id = req.params.drop_id;
@@ -489,12 +504,14 @@ export async function prepDropPartQuery(
     );
   }
   await dropsService
-    .findDropByIdOrThrow({
-      authenticationContext,
-      dropId: drop_id,
-      min_part_id: drop_part_id,
-      max_part_id: drop_part_id
-    })
+    .findDropByIdOrThrow(
+      {
+        dropId: drop_id,
+        min_part_id: drop_part_id,
+        max_part_id: drop_part_id
+      },
+      ctx
+    )
     .then((drop) => {
       if (drop.parts.length === 0) {
         throw new NotFoundException(

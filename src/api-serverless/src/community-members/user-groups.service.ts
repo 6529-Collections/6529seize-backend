@@ -12,7 +12,6 @@ import {
 } from '../../../user-groups/user-groups.db';
 import slugify from 'slugify';
 import { distinct, resolveEnum, uniqueShortId } from '../../../helpers';
-import { ConnectionWrapper } from '../../../sql-executor';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import {
@@ -54,11 +53,13 @@ export class UserGroupsService {
       addresses: string[];
       excluded_addresses: string[];
     },
-    createdBy: { id: string; handle: string }
+    createdBy: string,
+    ctx: RequestContext
   ): Promise<GroupFull> {
     const savedEntity =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
+          const ctxWithConnection = { ...ctx, connection };
           const id =
             slugify(group.name, {
               replacement: '-',
@@ -84,7 +85,7 @@ export class UserGroupsService {
               ...group,
               id,
               created_at: new Date(),
-              created_by: createdBy.id,
+              created_by: createdBy,
               visible: false,
               name: group.name,
               profile_group_id: inclusionGroups?.profile_group_id ?? null,
@@ -93,7 +94,7 @@ export class UserGroupsService {
             },
             connection
           );
-          return await this.getByIdOrThrow(id, connection);
+          return await this.getByIdOrThrow(id, ctxWithConnection);
         }
       );
     await giveReadReplicaTimeToCatchUp();
@@ -298,26 +299,36 @@ export class UserGroupsService {
     return result;
   }
 
-  async changeVisibility({
-    group_id,
-    old_version_id,
-    visible,
-    profile_id
-  }: ChangeGroupVisibility & {
-    group_id: string;
-    profile_id: string;
-  }): Promise<GroupFull> {
+  async changeVisibility(
+    {
+      group_id,
+      old_version_id,
+      visible,
+      profile_id
+    }: ChangeGroupVisibility & {
+      group_id: string;
+      profile_id: string;
+    },
+    ctx: RequestContext
+  ): Promise<GroupFull> {
     const updatedGroupEntity =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
-          const groupEntity = await this.getByIdOrThrow(group_id);
+          const ctxWithConnection = { ...ctx, connection };
+          const groupEntity = await this.getByIdOrThrow(
+            group_id,
+            ctxWithConnection
+          );
           if (old_version_id) {
             if (old_version_id === groupEntity.id) {
               throw new BadRequestException(
                 'Old version id should not be the same as the current'
               );
             }
-            const oldGroupEntity = await this.getByIdOrThrow(old_version_id);
+            const oldGroupEntity = await this.getByIdOrThrow(
+              old_version_id,
+              ctxWithConnection
+            );
             if (oldGroupEntity.created_by?.id !== profile_id) {
               throw new BadRequestException(
                 `You are not allowed to change group ${old_version_id}. You can save a new one instead.`
@@ -348,7 +359,7 @@ export class UserGroupsService {
           );
           return await this.getByIdOrThrow(
             old_version_id ?? group_id,
-            connection
+            ctxWithConnection
           );
         }
       );
@@ -371,16 +382,30 @@ export class UserGroupsService {
 
   public async getByIdOrThrow(
     id: string,
-    connection?: ConnectionWrapper<any>
+    ctx: RequestContext
   ): Promise<GroupFull> {
-    const group = await this.userGroupsDb.getById(id, connection);
+    const authenticatedUserId =
+      ctx.authenticationContext?.getActingAsId() ?? null;
+    const eligibleGroupIds = await this.getGroupsUserIsEligibleFor(
+      authenticatedUserId,
+      ctx.timer
+    );
+    const group = await this.userGroupsDb.getById(
+      id,
+      authenticatedUserId,
+      eligibleGroupIds,
+      ctx.connection
+    );
     if (!group) {
       throw new NotFoundException(`Group with id ${id} not found`);
     }
-    return (await this.mapForApi([group])).at(0)!;
+    return (await this.mapForApi([group], ctx)).at(0)!;
   }
 
-  public async getSqlAndParamsByGroupId(groupId: string | null): Promise<{
+  public async getSqlAndParamsByGroupId(
+    groupId: string | null,
+    ctx: RequestContext
+  ): Promise<{
     sql: string;
     params: Record<string, any>;
   } | null> {
@@ -412,7 +437,7 @@ export class UserGroupsService {
         excluded_identity_group_id: null
       });
     } else {
-      const group = await this.getByIdOrThrow(groupId);
+      const group = await this.getByIdOrThrow(groupId, ctx);
       return await this.getSqlAndParams(group.group);
     }
   }
@@ -698,14 +723,28 @@ export class UserGroupsService {
   async searchByNameOrAuthor(
     name: string | null,
     authorId: string | null,
-    createdAtLessThan: number | null
+    createdAtLessThan: number | null,
+    ctx: RequestContext
   ): Promise<GroupFull[]> {
+    ctx.timer?.start('userGroupsService->searchByNameOrAuthor');
+    const authenticatedUserId =
+      ctx.authenticationContext?.getActingAsId() ?? null;
+    const eligibleGroupIds = await this.getGroupsUserIsEligibleFor(
+      authenticatedUserId,
+      ctx?.timer
+    );
+
     const group = await this.userGroupsDb.searchByNameOrAuthor(
       name,
       authorId,
-      createdAtLessThan
+      createdAtLessThan,
+      authenticatedUserId,
+      eligibleGroupIds,
+      ctx
     );
-    return await this.mapForApi(group);
+    const result = await this.mapForApi(group, ctx);
+    ctx.timer?.stop('userGroupsService->searchByNameOrAuthor');
+    return result;
   }
 
   async getByIds(
@@ -725,21 +764,27 @@ export class UserGroupsService {
 
   private async mapForApi(
     groups: UserGroupEntity[],
-    authenticatedUserId?: string
+    ctx: RequestContext
   ): Promise<GroupFull[]> {
-    const relatedProfiles = await profilesApiService.getProfileMinsByIds({
-      ids: distinct(
-        groups
-          .map(
-            (it) =>
-              [it.created_by, it.rep_user, it.cic_user].filter(
-                (it) => !!it
-              ) as string[]
-          )
-          .flat()
-      ),
-      authenticatedProfileId: authenticatedUserId
-    });
+    ctx.timer?.start('userGroupsService->mapForApi');
+    const relatedProfiles = await profilesApiService.getProfileMinsByIds(
+      {
+        ids: distinct(
+          groups
+            .map(
+              (it) =>
+                [it.created_by, it.rep_user, it.cic_user].filter(
+                  (it) => !!it
+                ) as string[]
+            )
+            .flat()
+        ),
+        authenticatedProfileId:
+          ctx.authenticationContext?.getActingAsId() ?? null,
+        timer: ctx.timer
+      },
+      ctx.connection
+    );
     const groupsIdentityGroupsIdsAndIdentityCounts: Record<
       string,
       {
@@ -750,9 +795,10 @@ export class UserGroupsService {
       }
     > =
       await this.userGroupsDb.findIdentityGroupsIdsAndIdentityCountsByGroupIds(
-        groups.map((it) => it.id)
+        groups.map((it) => it.id),
+        ctx
       );
-    return groups.map<GroupFull>((it) => ({
+    const result = groups.map<GroupFull>((it) => ({
       id: it.id,
       name: it.name,
       visible: it.visible,
@@ -834,6 +880,8 @@ export class UserGroupsService {
       },
       created_by: relatedProfiles[it.created_by] ?? null
     }));
+    ctx.timer?.stop('userGroupsService->mapForApi');
+    return result;
   }
 }
 
