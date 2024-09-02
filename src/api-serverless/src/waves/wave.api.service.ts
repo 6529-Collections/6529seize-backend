@@ -249,7 +249,7 @@ export class WaveApiService {
   ): Promise<Wave[]> {
     const authenticationContext = ctx.authenticationContext;
     let groupsUserIsEligibleFor: string[];
-    if (!authenticationContext) {
+    if (!authenticationContext?.isUserFullyAuthenticated()) {
       groupsUserIsEligibleFor = [];
     } else {
       const authenticatedProfileId = authenticationContext.getActingAsId();
@@ -342,24 +342,25 @@ export class WaveApiService {
   async findWaveByIdOrThrow(
     id: string,
     groupIdsUserIsEligibleFor: string[],
-    authenticationContext?: AuthenticationContext
+    ctx: RequestContext
   ): Promise<Wave> {
+    const authenticationContext = ctx.authenticationContext;
     const entity = await this.wavesApiDb.findWaveById(id);
     if (!entity) {
       throw new NotFoundException(`Wave ${id} not found`);
     }
     const noRightToVote =
-      !authenticationContext ||
-      (authenticationContext.isAuthenticatedAsProxy() &&
-        !authenticationContext.activeProxyActions[
+      !authenticationContext?.isUserFullyAuthenticated() ||
+      (authenticationContext?.isAuthenticatedAsProxy() &&
+        !authenticationContext?.hasProxyAction(
           ApiProfileProxyActionType.RATE_WAVE_DROP
-        ]);
+        ));
     const noRightToParticipate =
-      !authenticationContext ||
-      (authenticationContext.isAuthenticatedAsProxy() &&
-        !authenticationContext.activeProxyActions[
+      !authenticationContext?.isUserFullyAuthenticated() ||
+      (authenticationContext?.isAuthenticatedAsProxy() &&
+        !authenticationContext?.hasProxyAction(
           ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
-        ]);
+        ));
     return await this.waveMappers.waveEntityToApiWave(
       {
         waveEntity: entity,
@@ -367,7 +368,7 @@ export class WaveApiService {
         noRightToVote,
         noRightToParticipate
       },
-      { authenticationContext }
+      ctx
     );
   }
 
@@ -382,7 +383,7 @@ export class WaveApiService {
   }): Promise<WaveSubscriptionTargetAction[]> {
     const groupsUserIsEligibleFor =
       await this.userGroupsService.getGroupsUserIsEligibleFor(subscriber);
-    await this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor);
+    await this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor, {});
     const proposedActions = Object.values(actions).map((it) =>
       resolveEnumOrThrow(ActivityEventAction, it)
     );
@@ -441,7 +442,7 @@ export class WaveApiService {
   }): Promise<WaveSubscriptionTargetAction[]> {
     const groupsUserIsEligibleFor =
       await this.userGroupsService.getGroupsUserIsEligibleFor(subscriber);
-    await this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor);
+    await this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor, {});
     return this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         for (const action of actions) {
@@ -475,9 +476,11 @@ export class WaveApiService {
 
   public async getWavesOverview(
     { type, limit, offset }: WavesOverviewParams,
-    authenticationContext?: AuthenticationContext
+    ctx: RequestContext
   ) {
-    const authenticatedProfileId = authenticationContext?.getActingAsId();
+    const authenticationContext = ctx?.authenticationContext;
+    const authenticatedProfileId =
+      authenticationContext?.getActingAsId() ?? null;
     if (!authenticatedProfileId) {
       if (type === WavesOverviewType.AuthorYouHaveRepped) {
         throw new BadRequestException(
@@ -494,7 +497,8 @@ export class WaveApiService {
         ])
         ? []
         : await this.userGroupsService.getGroupsUserIsEligibleFor(
-            authenticatedProfileId
+            authenticatedProfileId,
+            ctx.timer
           );
     const entities = await this.findWaveEntitiesByType({
       type,
@@ -524,7 +528,7 @@ export class WaveApiService {
         noRightToVote,
         noRightToParticipate
       },
-      { authenticationContext }
+      ctx
     );
   }
 

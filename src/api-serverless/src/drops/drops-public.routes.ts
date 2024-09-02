@@ -13,6 +13,9 @@ import {
 
 const router = asyncRouter();
 
+/**
+ * DEPRECATED: Use /drops instead
+ */
 router.get(
   '/',
   async (
@@ -43,20 +46,26 @@ router.get(
       author_id,
       include_replies
     } = await prepLatestDropsSearchQuery(req);
-    const latestDrops = await dropsService.findLatestDrops({
-      amount: limit < 0 || limit > 20 ? 10 : limit,
-      group_id: group_id,
-      serial_no_less_than: parseNumberOrNull(req.query.serial_no_less_than),
-      min_part_id,
-      max_part_id,
-      wave_id,
-      include_replies,
-      author_id
-    });
+    const latestDrops = await dropsService.findLatestDrops(
+      {
+        amount: limit < 0 || limit > 20 ? 10 : limit,
+        group_id: group_id,
+        serial_no_less_than: parseNumberOrNull(req.query.serial_no_less_than),
+        min_part_id,
+        max_part_id,
+        wave_id,
+        include_replies,
+        author_id
+      },
+      {}
+    );
     res.send(latestDrops);
   }
 );
 
+/**
+ * DEPRECATED: Use /drops/:id instead
+ */
 router.get(
   '/:drop_id',
   async (
@@ -71,15 +80,21 @@ router.get(
   ) => {
     const { dropId, min_part_id, max_part_id } =
       prepSingleDropSearchRequest(req);
-    const drop = await dropsService.findDropByIdOrThrow({
-      dropId,
-      min_part_id,
-      max_part_id
-    });
+    const drop = await dropsService.findDropByIdOrThrow(
+      {
+        dropId,
+        min_part_id,
+        max_part_id
+      },
+      {}
+    );
     res.send(drop);
   }
 );
 
+/**
+ * DEPRECATED: Use /:drop_id/parts/:drop_part_id/replies instead
+ */
 router.get(
   `/:drop_id/parts/:drop_part_id/replies`,
   async (
@@ -92,12 +107,15 @@ router.get(
     >,
     res: Response<Page<Drop>>
   ) => {
-    const { drop_part_id, drop_id, query } = await prepDropPartQuery(req);
-    const replies = await dropsService.findDropReplies({
-      ...query,
-      drop_part_id,
-      drop_id
-    });
+    const { drop_part_id, drop_id, query } = await prepDropPartQuery(req, {});
+    const replies = await dropsService.findDropReplies(
+      {
+        ...query,
+        drop_part_id,
+        drop_id
+      },
+      {}
+    );
     res.send(replies);
   }
 );

@@ -1,5 +1,9 @@
 import { asyncRouter } from '../async.router';
-import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
+import {
+  getAuthenticationContext,
+  maybeAuthenticatedUser,
+  needsAuthenticatedUser
+} from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import { Wave } from '../generated/models/Wave';
@@ -90,7 +94,7 @@ router.post(
 
 router.get(
   '/',
-  needsAuthenticatedUser(),
+  maybeAuthenticatedUser(),
   async (
     req: Request<any, any, any, SearchWavesParams, any>,
     res: Response<ApiResponse<Wave[]>>
@@ -108,28 +112,27 @@ router.get(
 
 router.get(
   '/:id',
-  needsAuthenticatedUser(),
+  maybeAuthenticatedUser(),
   async (
     req: Request<{ id: string }, any, any, any, any>,
     res: Response<ApiResponse<Wave>>
   ) => {
     const { id } = req.params;
+    const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req);
     const profileId = authenticationContext.getActingAsId();
-    if (!profileId) {
-      throw new ForbiddenException(`Create a profile before reading waves`);
-    }
     const group_ids_user_is_eligible_for =
-      authenticationContext.isAuthenticatedAsProxy() &&
-      !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.READ_WAVE
-      ]
+      !profileId ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.activeProxyActions[
+          ApiProfileProxyActionType.READ_WAVE
+        ])
         ? []
         : await userGroupsService.getGroupsUserIsEligibleFor(profileId);
     const wave = await waveApiService.findWaveByIdOrThrow(
       id,
       group_ids_user_is_eligible_for,
-      authenticationContext
+      { authenticationContext, timer }
     );
     const groupId = wave.visibility.scope.group?.id;
     if (groupId) {

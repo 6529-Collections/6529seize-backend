@@ -166,12 +166,11 @@ export class DropCreationApiService {
     const drop = await this.dropsService.findDropByIdOrThrow(
       {
         dropId,
-        authenticationContext,
         min_part_id: 0,
         max_part_id: Number.MAX_SAFE_INTEGER,
         skipEligibilityCheck: true
       },
-      connection
+      { connection, authenticationContext, timer }
     );
     timer.stop('dropCreationApiService->findInsertedDropAndConstructForApi');
     return drop;
@@ -620,12 +619,11 @@ export class DropCreationApiService {
         const dropBeforeUpdate = await this.dropsService.findDropByIdOrThrow(
           {
             dropId,
-            authenticationContext: authenticationContext,
             min_part_id: 0,
             max_part_id: Number.MAX_SAFE_INTEGER,
             skipEligibilityCheck: true
           },
-          connection
+          { connection, authenticationContext }
         );
         timer.stop(`dropCreationApiService->updateDrop->findOldDrop`);
         const authorId = dropBeforeUpdate.author.id;
@@ -677,12 +675,11 @@ export class DropCreationApiService {
         return await this.dropsService.findDropByIdOrThrow(
           {
             dropId,
-            authenticationContext: authenticationContext,
             min_part_id: 0,
             max_part_id: Number.MAX_SAFE_INTEGER,
             skipEligibilityCheck: true
           },
-          connection
+          { connection, authenticationContext, timer }
         );
       }
     );
