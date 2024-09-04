@@ -756,17 +756,6 @@ export class DropCreationApiService {
           subscriber_id: authorId,
           target_id: dropId.toString(),
           target_type: ActivityEventTargetType.DROP,
-          target_action: ActivityEventAction.DROP_VOTED,
-          wave_id: waveId
-        },
-        connection,
-        timer
-      ),
-      identitySubscriptionsDb.addIdentitySubscription(
-        {
-          subscriber_id: authorId,
-          target_id: dropId.toString(),
-          target_type: ActivityEventTargetType.DROP,
           target_action: ActivityEventAction.DROP_REPLIED,
           wave_id: waveId
         },

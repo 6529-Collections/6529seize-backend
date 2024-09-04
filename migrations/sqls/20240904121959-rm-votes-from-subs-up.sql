@@ -1,0 +1,1 @@
+delete from identity_subscriptions where target_action = 'DROP_VOTED';

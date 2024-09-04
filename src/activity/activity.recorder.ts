@@ -21,56 +21,13 @@ const ACTIVITY_EVENT_ACTIONS_BY_TYPE: Record<
   [ActivityEventTargetType.IDENTITY]: [
     ActivityEventAction.WAVE_CREATED,
     ActivityEventAction.DROP_CREATED,
-    ActivityEventAction.DROP_REPLIED,
-    ActivityEventAction.DROP_VOTED
+    ActivityEventAction.DROP_REPLIED
   ],
   [ActivityEventTargetType.WAVE]: [ActivityEventAction.DROP_CREATED],
-  [ActivityEventTargetType.DROP]: [
-    ActivityEventAction.DROP_REPLIED,
-    ActivityEventAction.DROP_VOTED
-  ]
+  [ActivityEventTargetType.DROP]: [ActivityEventAction.DROP_REPLIED]
 };
 
 export class ActivityRecorder extends LazyDbAccessCompatibleService {
-  async recordDropVoted(
-    {
-      drop_id,
-      voter_id,
-      vote,
-      wave_id,
-      visibility_group_id
-    }: {
-      drop_id: string;
-      wave_id: string;
-      voter_id: string;
-      vote: number;
-      visibility_group_id: string | null;
-    },
-    connection?: ConnectionWrapper<any>
-  ) {
-    await this.recordEvents(
-      [
-        {
-          target_id: voter_id,
-          target_type: ActivityEventTargetType.IDENTITY,
-          action: ActivityEventAction.DROP_VOTED,
-          data: { drop_id, vote },
-          wave_id,
-          visibility_group_id
-        },
-        {
-          target_id: drop_id,
-          target_type: ActivityEventTargetType.DROP,
-          action: ActivityEventAction.DROP_VOTED,
-          data: { voter_id, vote },
-          wave_id,
-          visibility_group_id
-        }
-      ],
-      connection
-    );
-  }
-
   async recordDropCreated(
     {
       drop_id,
