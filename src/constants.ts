@@ -84,6 +84,7 @@ export const SUBSCRIPTIONS_ADMIN_WALLETS = [
   '0xFe49A85E98941F1A115aCD4bEB98521023a25802'
 ];
 
+export const DELETED_DROPS_TABLE = 'deleted_drops';
 export const DROPS_TABLE = 'drops';
 export const DROPS_PARTS_TABLE = 'drops_parts';
 export const PROFILE_PROXIES_TABLE = 'profile_proxies';

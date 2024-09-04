@@ -571,6 +571,16 @@ export class DropCreationApiService {
         );
       }
       await this.deleteAllDropComponentsById({ id, waveId }, ctxWithConnection);
+      await this.dropsDb.insertDeletedDrop(
+        {
+          id,
+          wave_id: waveId,
+          author_id: dropEntity.author_id,
+          created_at: dropEntity.created_at,
+          deleted_at: Time.currentMillis()
+        },
+        ctxWithConnection
+      );
     });
     timer?.stop('dropCreationApiService->deleteDrop');
   }

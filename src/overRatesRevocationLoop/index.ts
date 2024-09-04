@@ -27,6 +27,7 @@ import { ProfileGroupEntity } from '../entities/IProfileGroup';
 import { doInDbContext } from '../secrets';
 import { ratingsService } from '../rates/ratings.service';
 import { dropOverRaterRevocationService } from '../drops/drop-over-rater-revocation.service';
+import { DeletedDropEntity } from '../entities/IDeletedDrop';
 
 const logger = Logger.get('OVER_RATES_REVOCATION_LOOP');
 
@@ -61,7 +62,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         AddressConsolidationKey,
         IdentityEntity,
         Prenode,
-        ProfileGroupEntity
+        ProfileGroupEntity,
+        DeletedDropEntity
       ]
     }
   );

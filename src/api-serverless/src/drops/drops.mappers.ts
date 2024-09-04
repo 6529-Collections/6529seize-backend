@@ -65,10 +65,16 @@ export class DropsMappers {
       dropsParts,
       dropsRepliesCounts,
       dropWaveOverviews,
-      subscribedActions
+      subscribedActions,
+      deletedDrops
     } = await this.getAllDropsRelatedData(
       {
         dropIds,
+        replyDropIds: distinct(
+          [...dropEntities.map((it) => it.reply_to_drop_id)].filter(
+            (it) => it !== null
+          ) as string[]
+        ),
         contextProfileId,
         min_part_id,
         max_part_id
@@ -86,36 +92,40 @@ export class DropsMappers {
     const allProfileIds = distinct([
       ...dropEntities.map((it) => it.author_id),
       ...mentions.map((it) => it.mentioned_profile_id),
-      ...raterProfileIds
+      ...raterProfileIds,
+      ...Object.values(deletedDrops).map((it) => it.author_id)
     ]);
     const profileMins = await this.profilesService.getProfileMinsByIds({
       ids: allProfileIds,
       authenticatedProfileId: contextProfileId
     });
+    const UNKNOWN_PROFILE: ProfileMin = {
+      id: 'an-unknown-profile',
+      handle: 'An unknown profile',
+      banner1_color: null,
+      banner2_color: null,
+      pfp: null,
+      cic: 0,
+      rep: 0,
+      tdh: 0,
+      level: 0,
+      archived: true,
+      subscribed_actions: []
+    };
     const profilesByIds = allProfileIds.reduce((acc, profileId) => {
-      acc[profileId] = profileMins[profileId] ?? {
-        id: 'an-unknown-profile',
-        handle: 'An unknown profile',
-        banner1_color: null,
-        banner2_color: null,
-        pfp: null,
-        cic: 0,
-        rep: 0,
-        tdh: 0,
-        level: 0,
-        archived: true,
-        subscribed_actions: []
-      };
+      acc[profileId] = profileMins[profileId] ?? UNKNOWN_PROFILE;
       return acc;
     }, {} as Record<string, ProfileMin>);
     return dropEntities.map<Drop>((dropEntity) => {
       const dropWave = dropWaveOverviews[dropEntity.id];
+      const replyToDropId = dropEntity.reply_to_drop_id;
       return {
         id: dropEntity.id,
         serial_no: dropEntity.serial_no,
-        reply_to: dropEntity.reply_to_drop_id
+        reply_to: replyToDropId
           ? {
-              drop_id: dropEntity.reply_to_drop_id,
+              is_deleted: !!deletedDrops[replyToDropId],
+              drop_id: replyToDropId,
               drop_part_id: dropEntity.reply_to_part_id ?? 0
             }
           : undefined,
@@ -138,38 +148,42 @@ export class DropsMappers {
         author: profilesByIds[dropEntity.author_id]!,
         title: dropEntity.title,
         parts:
-          dropsParts[dropEntity.id]?.map<DropPart>((it) => ({
-            content: it.content,
-            quoted_drop:
-              it.quoted_drop_id && it.quoted_drop_part_id
+          dropsParts[dropEntity.id]?.map<DropPart>((it) => {
+            const quotedDropId = it.quoted_drop_id;
+            return {
+              content: it.content,
+              quoted_drop:
+                quotedDropId && it.quoted_drop_part_id
+                  ? {
+                      is_deleted: !!deletedDrops[quotedDropId],
+                      drop_id: quotedDropId,
+                      drop_part_id: it.quoted_drop_part_id
+                    }
+                  : null,
+              part_id: it.drop_part_id,
+              media:
+                (dropMedia[dropEntity.id] ?? [])
+                  .filter((m) => m.drop_part_id === it.drop_part_id)
+                  .map<DropMedia>((it) => ({
+                    url: it.url,
+                    mime_type: it.mime_type
+                  })) ?? [],
+              replies_count:
+                dropsRepliesCounts[it.drop_id]?.[it.drop_part_id]?.count ?? 0,
+              quotes_count:
+                dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]?.total ?? 0,
+              context_profile_context: contextProfileId
                 ? {
-                    drop_id: it.quoted_drop_id,
-                    drop_part_id: it.quoted_drop_part_id
+                    replies_count:
+                      dropsRepliesCounts[it.drop_id]?.[it.drop_part_id]
+                        ?.context_profile_count ?? 0,
+                    quotes_count:
+                      dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]
+                        ?.by_context_profile ?? 0
                   }
-                : null,
-            part_id: it.drop_part_id,
-            media:
-              (dropMedia[dropEntity.id] ?? [])
-                .filter((m) => m.drop_part_id === it.drop_part_id)
-                .map<DropMedia>((it) => ({
-                  url: it.url,
-                  mime_type: it.mime_type
-                })) ?? [],
-            replies_count:
-              dropsRepliesCounts[it.drop_id]?.[it.drop_part_id]?.count ?? 0,
-            quotes_count:
-              dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]?.total ?? 0,
-            context_profile_context: contextProfileId
-              ? {
-                  replies_count:
-                    dropsRepliesCounts[it.drop_id]?.[it.drop_part_id]
-                      ?.context_profile_count ?? 0,
-                  quotes_count:
-                    dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]
-                      ?.by_context_profile ?? 0
-                }
-              : null
-          })) ?? [],
+                : null
+            };
+          }) ?? [],
         parts_count: dropEntity.parts_count,
         created_at: dropEntity.created_at,
         updated_at: parseIntOrNull(dropEntity.updated_at),
@@ -216,10 +230,12 @@ export class DropsMappers {
     {
       dropIds,
       contextProfileId,
+      replyDropIds,
       min_part_id,
       max_part_id
     }: {
       dropIds: string[];
+      replyDropIds: string[];
       contextProfileId?: string | null;
       min_part_id: number;
       max_part_id: number;
@@ -275,6 +291,21 @@ export class DropsMappers {
             connection
           )
     ]);
+    const quotedDropIds = distinct(
+      Object.values(dropsParts)
+        .flat()
+        .map((it) => it.quoted_drop_id)
+        .filter((it) => it !== null) as string[]
+    );
+    const relatedDropIds = distinct([
+      ...quotedDropIds,
+      ...replyDropIds,
+      ...dropIds
+    ]);
+    const deletedDrops = await this.dropsDb.findDeletedDrops(
+      relatedDropIds,
+      connection
+    );
     return {
       mentions,
       referencedNfts,
@@ -295,7 +326,8 @@ export class DropsMappers {
           return acc;
         },
         {} as Record<string, DropSubscriptionTargetAction[]>
-      )
+      ),
+      deletedDrops
     };
   }
 
