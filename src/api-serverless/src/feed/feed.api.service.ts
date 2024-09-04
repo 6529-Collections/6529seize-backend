@@ -12,12 +12,10 @@ import {
 import { assertUnreachable, distinct } from '../../../helpers';
 import { Drop } from '../generated/models/Drop';
 import { Wave } from '../generated/models/Wave';
-import { DropVote } from '../generated/models/DropVote';
 import { dropsService } from '../drops/drops.api.service';
 import { AuthenticationContext } from '../../../auth-context';
 import { waveApiService } from '../waves/wave.api.service';
 import { ForbiddenException } from '../../../exceptions';
-import { profilesApiService } from '../profiles/profiles.api.service';
 import { FeedItemType } from '../generated/models/FeedItemType';
 
 export class FeedApiService {
@@ -84,22 +82,11 @@ export class FeedApiService {
           it.target_type === ActivityEventTargetType.DROP
             ? it.target_id
             : data.drop_id;
-        const voterId =
+        const replyId =
           it.target_type === ActivityEventTargetType.IDENTITY
             ? data.drop_id
             : it.target_id;
-        return `drop-reply-${dropId}-${voterId}`;
-      }
-      case ActivityEventAction.DROP_VOTED: {
-        const dropId =
-          it.target_type === ActivityEventTargetType.DROP
-            ? it.target_id
-            : data.drop_id;
-        const voterId =
-          it.target_type === ActivityEventTargetType.IDENTITY
-            ? data.drop_id
-            : it.target_id;
-        return `drop-vote-${dropId}-${voterId}`;
+        return `drop-reply-${dropId}-${replyId}`;
       }
       case ActivityEventAction.DROP_CREATED: {
         const creatorId =
@@ -130,7 +117,6 @@ export class FeedApiService {
         const action = it.action;
         return [
           ActivityEventAction.DROP_CREATED,
-          ActivityEventAction.DROP_VOTED,
           ActivityEventAction.DROP_REPLIED
         ].includes(action);
       })
@@ -156,27 +142,10 @@ export class FeedApiService {
         const data = JSON.parse(it.data);
         return data.reply_id as string;
       });
-    const votesNeeded: {
-      dropId: string;
-      voterId: string;
-      vote: number;
-      time: number;
-    }[] = activityEvents
-      .filter((it) => {
-        const action = it.action;
-        return [ActivityEventAction.DROP_VOTED].includes(action);
-      })
-      .map((it) => {
-        const data = JSON.parse(it.data);
-        const dropId = (data.drop_id ?? it.target_id) as string;
-        const voterId = (data.voter_id ?? it.target_id) as string;
-        return { dropId, voterId, vote: data.vote, time: it.created_at };
-      });
-    const { drops, waves, votes } = await this.getRelatedData({
+    const { drops, waves } = await this.getRelatedData({
       dropsIdsNeeded,
       waveIdsNeeded,
       replyDropsNeeded: repliesNeeded,
-      votesNeeded,
       groupIdsUserIsEligibleFor,
       authenticationContext
     });
@@ -184,8 +153,7 @@ export class FeedApiService {
       return this.activityEventToFeedItem({
         activityEvent: it,
         waves,
-        drops,
-        votes
+        drops
       });
     });
     const seenReplyPairs = new Set<string>();
@@ -208,13 +176,11 @@ export class FeedApiService {
   private activityEventToFeedItem({
     activityEvent,
     waves,
-    drops,
-    votes
+    drops
   }: {
     activityEvent: ActivityEventEntity;
     waves: Record<string, Wave>;
     drops: Record<string, Drop>;
-    votes: Record<string, DropVote>;
   }): FeedItem {
     const action = activityEvent.action;
     const eventId = parseInt(`${activityEvent.id}`);
@@ -260,19 +226,6 @@ export class FeedApiService {
           type: FeedItemType.DropReplied
         };
       }
-      case ActivityEventAction.DROP_VOTED: {
-        const data = JSON.parse(activityEvent.data);
-        const dropId = (data.drop_id ?? activityEvent.target_id) as string;
-        const voterId = (data.voter_id ?? activityEvent.target_id) as string;
-        return {
-          item: {
-            drop: drops[dropId],
-            vote: votes[`${dropId}-${voterId}`]
-          },
-          serial_no: eventId,
-          type: FeedItemType.DropVoted
-        };
-      }
       default: {
         return assertUnreachable(action);
       }
@@ -284,26 +237,18 @@ export class FeedApiService {
     dropsIdsNeeded,
     waveIdsNeeded,
     replyDropsNeeded,
-    votesNeeded,
     authenticationContext
   }: {
     groupIdsUserIsEligibleFor: string[];
     dropsIdsNeeded: string[];
     waveIdsNeeded: string[];
     replyDropsNeeded: string[];
-    votesNeeded: {
-      dropId: string;
-      vote: number;
-      voterId: string;
-      time: number;
-    }[];
     authenticationContext: AuthenticationContext;
   }): Promise<{
     drops: Record<string, Drop>;
     waves: Record<string, Wave>;
-    votes: Record<string, DropVote>;
   }> {
-    const [drops, waves, votes] = await Promise.all([
+    const [drops, waves] = await Promise.all([
       dropsService
         .findDropsByIds(dropsIdsNeeded, authenticationContext)
         .then(async (drops) => {
@@ -325,30 +270,11 @@ export class FeedApiService {
         waveIdsNeeded,
         groupIdsUserIsEligibleFor,
         authenticationContext
-      ),
-      profilesApiService
-        .getProfileMinsByIds({
-          ids: votesNeeded.map((it) => it.voterId),
-          authenticatedProfileId: authenticationContext.getActingAsId()
-        })
-        .then((result) => {
-          return votesNeeded.reduce((acc, it) => {
-            const vote = new DropVote();
-            vote.voter = result[it.voterId];
-            vote.vote = it.vote;
-            acc[`${it.dropId}-${it.voterId}`] = {
-              voter: result[it.voterId],
-              vote: it.vote,
-              time: it.time
-            };
-            return acc;
-          }, {} as Record<string, DropVote>);
-        })
+      )
     ]);
     return {
       drops,
-      waves,
-      votes
+      waves
     };
   }
 }

@@ -2078,30 +2078,24 @@ components:
       required:
         - drop_id
         - drop_part_id
-        - is_deleted
       properties:
         drop_id:
           type: string
         drop_part_id:
           type: number
           format: int64
-        is_deleted:
-          type: boolean
 
     ReplyToDrop:
       type: object
       required:
         - drop_id
         - drop_part_id
-        - is_deleted
       properties:
         drop_id:
           type: string
         drop_part_id:
           type: number
           format: int64
-        is_deleted:
-          type: boolean
 
     ReplyToDropResponse:
       type: object
@@ -3397,7 +3391,6 @@ components:
       type: string
       enum:
         - DROP_REPLIED
-        - DROP_VOTED
 
     DropSubscriptionActions:
       type: object
@@ -3415,7 +3408,6 @@ components:
         - WAVE_CREATED
         - DROP_CREATED
         - DROP_REPLIED
-        - DROP_VOTED
 
     IdentitySubscriptionActions:
       type: object
@@ -3460,7 +3452,6 @@ components:
         - WAVE_CREATED
         - DROP_CREATED
         - DROP_REPLIED
-        - DROP_VOTED
 
     FeedItem:
       type: object

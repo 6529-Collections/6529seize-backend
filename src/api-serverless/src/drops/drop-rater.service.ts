@@ -5,10 +5,6 @@ import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { Time } from '../../../time';
 import {
-  activityRecorder,
-  ActivityRecorder
-} from '../../../activity/activity.recorder';
-import {
   userNotifier,
   UserNotifier
 } from '../../../notifications/user.notifier';
@@ -18,8 +14,7 @@ class DropRaterService {
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly ratingsService: RatingsService,
-    private readonly userNotifier: UserNotifier,
-    private readonly activityRecorder: ActivityRecorder
+    private readonly userNotifier: UserNotifier
   ) {}
 
   async updateRating(param: {
@@ -101,16 +96,6 @@ class DropRaterService {
           },
           connection
         );
-        await this.activityRecorder.recordDropVoted(
-          {
-            drop_id: dropId,
-            wave_id: wave.id,
-            voter_id: param.rater_profile_id,
-            vote: newRating,
-            visibility_group_id: wave.visibility_group_id
-          },
-          connection
-        );
         await this.userNotifier.notifyOfDropVote(
           {
             drop_id: dropId,
@@ -159,6 +144,5 @@ class DropRaterService {
 export const dropRaterService = new DropRaterService(
   dropsDb,
   ratingsService,
-  userNotifier,
-  activityRecorder
+  userNotifier
 );
