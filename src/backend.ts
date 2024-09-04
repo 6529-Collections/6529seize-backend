@@ -24,6 +24,7 @@ import { AddressConsolidationKey } from './entities/IAddressConsolidationKey';
 import { IdentityEntity } from './entities/IIdentity';
 import { ProfileGroupEntity } from './entities/IProfileGroup';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
+import { DeletedDropEntity } from './entities/IDeletedDrop';
 
 const logger = Logger.get('BACKEND');
 
@@ -62,7 +63,8 @@ async function start() {
         UserGroupEntity,
         AddressConsolidationKey,
         IdentityEntity,
-        ProfileGroupEntity
+        ProfileGroupEntity,
+        DeletedDropEntity
       ]
     }
   );

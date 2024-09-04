@@ -14,6 +14,7 @@ import {
 } from '../entities/IDrop';
 import {
   ACTIVITY_EVENTS_TABLE,
+  DELETED_DROPS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
@@ -40,6 +41,7 @@ import { WaveEntity } from '../entities/IWave';
 import { NotFoundException } from '../exceptions';
 import { RequestContext } from '../request.context';
 import { ActivityEventTargetType } from '../entities/IActivityEvent';
+import { DeletedDropEntity } from '../entities/IDeletedDrop';
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -931,6 +933,37 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('dropsDb->deleteDropSubscriptions');
+  }
+
+  async insertDeletedDrop(param: DeletedDropEntity, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->insertDeletedDrop');
+    await this.db.execute(
+      `insert into ${DELETED_DROPS_TABLE} (id, wave_id, author_id, created_at, deleted_at) values (:id, :wave_id, :author_id, :created_at, :deleted_at)`,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->insertDeletedDrop');
+  }
+
+  async findDeletedDrops(
+    dropIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<string, DeletedDropEntity>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    return this.db
+      .execute<DeletedDropEntity>(
+        `select * from ${DELETED_DROPS_TABLE} where id in (:dropIds)`,
+        { dropIds },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((result) =>
+        result.reduce((acc, it) => {
+          acc[it.id] = it;
+          return acc;
+        }, {} as Record<string, DeletedDropEntity>)
+      );
   }
 }
 
