@@ -1,0 +1,1 @@
+delete from activity_events where action = 'DROP_VOTED';
