@@ -47,11 +47,6 @@ import {
 } from '../profile-proxies/profile-proxies.db';
 import { userGroupsDb, UserGroupsDb } from '../user-groups/user-groups.db';
 import { IdentitiesDb, identitiesDb } from '../identities/identities.db';
-import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
-import {
-  ActivityEventAction,
-  ActivityEventTargetType
-} from '../entities/IActivityEvent';
 import {
   identityNotificationsDb,
   IdentityNotificationsDb
@@ -442,20 +437,6 @@ export class ProfilesService {
           sub_classification: null
         },
         connection
-      );
-      await Promise.all(
-        Object.values(ActivityEventAction).map((action) =>
-          identitySubscriptionsDb.addIdentitySubscription(
-            {
-              subscriber_id: id,
-              target_id: id,
-              target_type: ActivityEventTargetType.IDENTITY,
-              target_action: action,
-              wave_id: null
-            },
-            connection
-          )
-        )
       );
       creatorOrUpdatorIdentityResponse = await this.identitiesDb
         .getEverythingRelatedToIdentitiesByAddresses(
