@@ -51,21 +51,23 @@ export class UserNotifier {
     timer: Timer
   ) {
     timer.start('userNotifier->notifyOfIdentityMention');
-    await this.identityNotificationsDb.insertNotification(
-      {
-        identity_id: mentioned_identity_id,
-        additional_identity_id: mentioner_identity_id,
-        related_drop_id: drop_id,
-        related_drop_part_no: null,
-        related_drop_2_id: null,
-        related_drop_2_part_no: null,
-        cause: IdentityNotificationCause.IDENTITY_MENTIONED,
-        additional_data: {},
-        wave_id,
-        visibility_group_id
-      },
-      connection
-    );
+    if (mentioned_identity_id !== mentioner_identity_id) {
+      await this.identityNotificationsDb.insertNotification(
+        {
+          identity_id: mentioned_identity_id,
+          additional_identity_id: mentioner_identity_id,
+          related_drop_id: drop_id,
+          related_drop_part_no: null,
+          related_drop_2_id: null,
+          related_drop_2_part_no: null,
+          cause: IdentityNotificationCause.IDENTITY_MENTIONED,
+          additional_data: {},
+          wave_id,
+          visibility_group_id
+        },
+        connection
+      );
+    }
     timer.stop('userNotifier->notifyOfIdentityMention');
   }
 
@@ -111,21 +113,23 @@ export class UserNotifier {
     timer: Timer
   ) {
     timer.start('userNotifier->notifyOfDropReply');
-    await this.identityNotificationsDb.insertNotification(
-      {
-        identity_id: replied_drop_author_id,
-        additional_identity_id: reply_drop_author_id,
-        related_drop_id: reply_drop_id,
-        related_drop_part_no: null,
-        related_drop_2_id: replied_drop_id,
-        related_drop_2_part_no: replied_drop_part,
-        cause: IdentityNotificationCause.DROP_REPLIED,
-        additional_data: {},
-        wave_id,
-        visibility_group_id
-      },
-      connection
-    );
+    if (reply_drop_author_id !== replied_drop_author_id) {
+      await this.identityNotificationsDb.insertNotification(
+        {
+          identity_id: replied_drop_author_id,
+          additional_identity_id: reply_drop_author_id,
+          related_drop_id: reply_drop_id,
+          related_drop_part_no: null,
+          related_drop_2_id: replied_drop_id,
+          related_drop_2_part_no: replied_drop_part,
+          cause: IdentityNotificationCause.DROP_REPLIED,
+          additional_data: {},
+          wave_id,
+          visibility_group_id
+        },
+        connection
+      );
+    }
     timer.stop('userNotifier->notifyOfDropReply');
   }
 
@@ -144,21 +148,23 @@ export class UserNotifier {
     timer: Timer
   ) {
     timer.start('userNotifier->notifyOfDropQuote');
-    await this.identityNotificationsDb.insertNotification(
-      {
-        identity_id: quoted_drop_author_id,
-        additional_identity_id: quote_drop_author_id,
-        related_drop_id: quote_drop_id,
-        related_drop_part_no: quote_drop_part,
-        related_drop_2_id: quoted_drop_id,
-        related_drop_2_part_no: quoted_drop_part,
-        cause: IdentityNotificationCause.DROP_QUOTED,
-        additional_data: {},
-        wave_id,
-        visibility_group_id
-      },
-      connection
-    );
+    if (quote_drop_author_id !== quoted_drop_author_id) {
+      await this.identityNotificationsDb.insertNotification(
+        {
+          identity_id: quoted_drop_author_id,
+          additional_identity_id: quote_drop_author_id,
+          related_drop_id: quote_drop_id,
+          related_drop_part_no: quote_drop_part,
+          related_drop_2_id: quoted_drop_id,
+          related_drop_2_part_no: quoted_drop_part,
+          cause: IdentityNotificationCause.DROP_QUOTED,
+          additional_data: {},
+          wave_id,
+          visibility_group_id
+        },
+        connection
+      );
+    }
     timer.stop('userNotifier->notifyOfDropQuote');
   }
 }
