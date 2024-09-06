@@ -64,7 +64,7 @@ export class WaveEntity {
   readonly participation_max_applications_per_participant!: number | null;
 
   @Column({ type: 'json', nullable: false })
-  readonly participation_required_metadata!: string;
+  readonly participation_required_metadata!: WaveRequiredMetadataItem[];
 
   @Column({ type: 'json', nullable: false })
   readonly participation_required_media!: ParticipationRequiredMedia[];
@@ -122,4 +122,14 @@ export enum ParticipationRequiredMedia {
   IMAGE = 'IMAGE',
   VIDEO = 'VIDEO',
   AUDIO = 'AUDIO'
+}
+
+export interface WaveRequiredMetadataItem {
+  readonly name: string;
+  readonly type: WaveRequiredMetadataItemType;
+}
+
+export enum WaveRequiredMetadataItemType {
+  STRING = 'STRING',
+  NUMBER = 'NUMBER'
 }
