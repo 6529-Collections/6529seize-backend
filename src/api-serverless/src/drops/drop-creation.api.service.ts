@@ -295,7 +295,8 @@ export class DropCreationApiService {
     connection: ConnectionWrapper<any>,
     dropId: string,
     waveId: string,
-    visibilityGroupId: string | null
+    visibilityGroupId: string | null,
+    authorId: string
   ) {
     const replyTo = createDropRequest.reply_to;
     if (replyTo) {
@@ -308,7 +309,7 @@ export class DropCreationApiService {
       await this.userNotifier.notifyOfDropReply(
         {
           reply_drop_id: dropId,
-          reply_drop_author_id: replyToEntity.author_id,
+          reply_drop_author_id: authorId,
           replied_drop_id: replyTo.drop_id,
           replied_drop_part: replyTo.drop_part_id,
           replied_drop_author_id: replyToEntity.author_id,
@@ -752,7 +753,8 @@ export class DropCreationApiService {
         connection,
         dropId,
         waveId,
-        visibilityGroupId
+        visibilityGroupId,
+        authorId
       ),
       identitySubscriptionsDb.addIdentitySubscription(
         {
