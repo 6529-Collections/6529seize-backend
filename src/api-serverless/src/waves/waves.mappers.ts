@@ -6,6 +6,7 @@ import {
   WaveCreditScopeType,
   WaveCreditType,
   WaveEntity,
+  WaveRequiredMetadataItemType,
   WaveType
 } from '../../../entities/IWave';
 import { Wave } from '../generated/models/Wave';
@@ -44,6 +45,7 @@ import { WaveMetrics } from '../generated/models/WaveMetrics';
 import { RequestContext } from '../../../request.context';
 import { dropsService } from '../drops/drops.api.service';
 import { UpdateWaveRequest } from '../generated/models/UpdateWaveRequest';
+import { WaveMetadataType } from '../generated/models/WaveMetadataType';
 
 export class WavesMappers {
   constructor(
@@ -91,9 +93,14 @@ export class WavesMappers {
       participation_max_applications_per_participant:
         createWaveRequest.participation
           .no_of_applications_allowed_per_participant,
-      participation_required_metadata: JSON.stringify(
-        createWaveRequest.participation.required_metadata
-      ),
+      participation_required_metadata:
+        createWaveRequest.participation.required_metadata.map((md) => ({
+          name: md.name,
+          type: resolveEnumOrThrow(
+            WaveRequiredMetadataItemType,
+            md.type.toString()
+          )
+        })),
       participation_required_media:
         createWaveRequest.participation.required_media.map((it) =>
           resolveEnumOrThrow(ParticipationRequiredMedia, it)
@@ -256,7 +263,12 @@ export class WavesMappers {
       },
       no_of_applications_allowed_per_participant:
         waveEntity.participation_max_applications_per_participant,
-      required_metadata: JSON.parse(waveEntity.participation_required_metadata),
+      required_metadata: waveEntity.participation_required_metadata.map(
+        (it) => ({
+          name: it.name,
+          type: resolveEnumOrThrow(WaveMetadataType, it.type)
+        })
+      ),
       required_media: waveEntity.participation_required_media.map((it) =>
         resolveEnumOrThrow(WaveParticipationRequirement, it)
       ),
