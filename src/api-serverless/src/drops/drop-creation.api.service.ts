@@ -30,7 +30,6 @@ import {
   resolveEnumOrThrow
 } from '../../../helpers';
 import { WaveParticipationRequirement } from '../generated/models/WaveParticipationRequirement';
-import { WaveMetadataType } from '../generated/models/WaveMetadataType';
 import {
   activityRecorder,
   ActivityRecorder
@@ -48,7 +47,11 @@ import {
 import { Time, Timer } from '../../../time';
 import { DropQuoteNotificationData } from '../../../notifications/user-notification.types';
 import { CreateDropPart } from '../generated/models/CreateDropPart';
-import { ParticipationRequiredMedia } from '../../../entities/IWave';
+import {
+  ParticipationRequiredMedia,
+  WaveRequiredMetadataItem,
+  WaveRequiredMetadataItemType
+} from '../../../entities/IWave';
 import { RequestContext } from '../../../request.context';
 import { dropRaterService } from './drop-rater.service';
 import { UpdateDropRequest } from '../generated/models/UpdateDropRequest';
@@ -451,7 +454,7 @@ export class DropCreationApiService {
   }
 
   private verifyMetadata(
-    requiredMetadatas: any,
+    requiredMetadatas: WaveRequiredMetadataItem[],
     createDropRequest: CreateDropRequest
   ) {
     for (const requiredMetadata of requiredMetadatas) {
@@ -463,7 +466,7 @@ export class DropCreationApiService {
           `Wave requires metadata ${requiredMetadata.name}`
         );
       }
-      if (requiredMetadata.type === WaveMetadataType.Number) {
+      if (requiredMetadata.type === WaveRequiredMetadataItemType.NUMBER) {
         if (!metadata.some((it) => parseNumberOrNull(it.data_value) !== null)) {
           throw new BadRequestException(
             `Wave requires metadata ${requiredMetadata.name} to be a number`

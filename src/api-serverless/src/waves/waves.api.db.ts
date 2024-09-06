@@ -6,7 +6,8 @@ import {
 } from '../../../sql-executor';
 import {
   ParticipationRequiredMedia,
-  WaveEntity
+  WaveEntity,
+  WaveRequiredMetadataItem
 } from '../../../entities/IWave';
 import {
   ACTIVITY_EVENTS_TABLE,
@@ -48,8 +49,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
   ): Promise<WaveEntity | null> {
     return this.db
       .oneOrNull<
-        Omit<WaveEntity, 'participation_required_media'> & {
+        Omit<
+          WaveEntity,
+          'participation_required_media' | 'participation_required_metadata'
+        > & {
           participation_required_media: string;
+          participation_required_metadata: string;
         }
       >(
         `SELECT * FROM ${WAVES_TABLE} WHERE id = :id`,
@@ -62,6 +67,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               ...it,
               participation_required_media: JSON.parse(
                 it.participation_required_media
+              ),
+              participation_required_metadata: JSON.parse(
+                it.participation_required_metadata
               )
             }
           : null
@@ -78,8 +86,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     }
     return this.db
       .execute<
-        Omit<WaveEntity, 'participation_required_media'> & {
+        Omit<
+          WaveEntity,
+          'participation_required_media' | 'participation_required_metadata'
+        > & {
           participation_required_media: string;
+          participation_required_metadata: string;
         }
       >(
         `SELECT * FROM ${WAVES_TABLE} WHERE id in (:ids) and (visibility_group_id is null ${
@@ -95,6 +107,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ...it,
           participation_required_media: JSON.parse(
             it.participation_required_media
+          ),
+          participation_required_metadata: JSON.parse(
+            it.participation_required_metadata
           )
         }))
       );
@@ -181,6 +196,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         ...params,
         participation_required_media: JSON.stringify(
           params.participation_required_media
+        ),
+        participation_required_metadata: JSON.stringify(
+          params.participation_required_metadata
         )
       },
       { wrappedConnection: ctx.connection }
@@ -230,8 +248,12 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     };
     return this.db
       .execute<
-        Omit<WaveEntity, 'participation_required_media'> & {
+        Omit<
+          WaveEntity,
+          'participation_required_media' | 'participation_required_metadata'
+        > & {
           participation_required_media: string;
+          participation_required_metadata: string;
         }
       >(sql, params)
       .then((it) =>
@@ -239,6 +261,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ...wave,
           participation_required_media: JSON.parse(
             wave.participation_required_media
+          ),
+          participation_required_metadata: JSON.parse(
+            wave.participation_required_metadata
           )
         }))
       );
@@ -355,8 +380,12 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
   ): Promise<WaveEntity[]> {
     return this.db
       .execute<
-        Omit<WaveEntity, 'participation_required_media'> & {
+        Omit<
+          WaveEntity,
+          'participation_required_media' | 'participation_required_metadata'
+        > & {
           participation_required_media: string;
+          participation_required_metadata: string;
         }
       >(
         `
@@ -373,6 +402,9 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
           ...it,
           participation_required_media: JSON.parse(
             it.participation_required_media
+          ),
+          participation_required_metadata: JSON.parse(
+            it.participation_required_metadata
           )
         }))
       );
@@ -385,8 +417,12 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
   ): Promise<WaveEntity[]> {
     return this.db
       .execute<
-        Omit<WaveEntity, 'participation_required_media'> & {
+        Omit<
+          WaveEntity,
+          'participation_required_media' | 'participation_required_metadata'
+        > & {
           participation_required_media: string;
+          participation_required_metadata: string;
         }
       >(
         `
@@ -410,6 +446,9 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
           ...it,
           participation_required_media: JSON.parse(
             it.participation_required_media
+          ),
+          participation_required_metadata: JSON.parse(
+            it.participation_required_metadata
           )
         }))
       );
@@ -423,8 +462,12 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
   ): Promise<WaveEntity[]> {
     return this.db
       .execute<
-        Omit<WaveEntity, 'participation_required_media'> & {
+        Omit<
+          WaveEntity,
+          'participation_required_media' | 'participation_required_metadata'
+        > & {
           participation_required_media: string;
+          participation_required_metadata: string;
         }
       >(
         `
@@ -454,6 +497,9 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
           ...it,
           participation_required_media: JSON.parse(
             it.participation_required_media
+          ),
+          participation_required_metadata: JSON.parse(
+            it.participation_required_metadata
           )
         }))
       );
@@ -466,8 +512,12 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
   ): Promise<WaveEntity[]> {
     return this.db
       .execute<
-        Omit<WaveEntity, 'participation_required_media'> & {
+        Omit<
+          WaveEntity,
+          'participation_required_media' | 'participation_required_metadata'
+        > & {
           participation_required_media: string;
+          participation_required_metadata: string;
         }
       >(
         `
@@ -497,6 +547,9 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
           ...it,
           participation_required_media: JSON.parse(
             it.participation_required_media
+          ),
+          participation_required_metadata: JSON.parse(
+            it.participation_required_metadata
           )
         }))
       );
@@ -536,7 +589,7 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
     participation_period_start: number | null;
     participation_period_end: number | null;
     participation_required_media: ParticipationRequiredMedia[];
-    participation_required_metadata: any;
+    participation_required_metadata: WaveRequiredMetadataItem[];
   } | null> {
     return this.db
       .oneOrNull<{
