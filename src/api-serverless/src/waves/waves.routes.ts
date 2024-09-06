@@ -75,7 +75,7 @@ router.post(
   '/:id',
   needsAuthenticatedUser(),
   async (
-    req: Request<{ id: string }, any, CreateNewWave, any, any>,
+    req: Request<{ id: string }, any, UpdateWaveRequest, any, any>,
     res: Response<ApiResponse<Wave>>
   ) => {
     const timer = Timer.getFromRequest(req);
