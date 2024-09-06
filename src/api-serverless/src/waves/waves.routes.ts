@@ -392,7 +392,9 @@ const WaveSchema = Joi.object<CreateNewWave>({
   description_drop: NewWaveDropSchema.required()
 });
 
-const UpdateWaveSchema = Joi.object<UpdateWaveRequest>();
+const UpdateWaveSchema = Joi.object<UpdateWaveRequest>({
+  ...waveSchemaBaseValidations
+});
 
 const WaveSubscriptionActionsSchema = Joi.object<WaveSubscriptionActions>({
   actions: Joi.array()
