@@ -77,6 +77,7 @@ import { ApiResponse } from './api-response';
 import { BlockItem } from './generated/models/BlockItem';
 import { TDHBlock } from '../../entities/ITDH';
 import { BlocksPage } from './generated/models/BlocksPage';
+import { SeizeSettings } from './generated/models/SeizeSettings';
 
 const YAML = require('yamljs');
 
@@ -309,9 +310,16 @@ loadApi().then(() => {
     }
   );
 
-  apiRouter.get(`/settings`, function (req: any, res: any) {
-    returnJsonResult(SEIZE_SETTINGS, req, res);
-  });
+  apiRouter.get(
+    `/settings`,
+    function (req: any, res: Response<ApiResponse<SeizeSettings>>) {
+      const settingsResp: SeizeSettings = {
+        rememes_submission_tdh_threshold:
+          SEIZE_SETTINGS.rememes_submission_tdh_threshold
+      };
+      returnJsonResult(settingsResp, req, res);
+    }
+  );
 
   apiRouter.get(`/uploads`, function (req: any, res: any) {
     const pageSize: number =

@@ -86,6 +86,7 @@ export * from '../models/RatingWithProfileInfoAndLevelPage';
 export * from '../models/RepRating';
 export * from '../models/ReplyToDrop';
 export * from '../models/ReplyToDropResponse';
+export * from '../models/SeizeSettings';
 export * from '../models/TargetAndSubscriptionActions';
 export * from '../models/UpdateDropRequest';
 export * from '../models/UpdateProxyActionRequest';
@@ -201,6 +202,7 @@ import { RatingWithProfileInfoAndLevelPage } from '../models/RatingWithProfileIn
 import { RepRating } from '../models/RepRating';
 import { ReplyToDrop } from '../models/ReplyToDrop';
 import { ReplyToDropResponse } from '../models/ReplyToDropResponse';
+import { SeizeSettings } from '../models/SeizeSettings';
 import { TargetAndSubscriptionActions } from '../models/TargetAndSubscriptionActions';
 import { UpdateDropRequest } from '../models/UpdateDropRequest';
 import { UpdateProxyActionRequest } from '../models/UpdateProxyActionRequest';
@@ -345,6 +347,7 @@ let typeMap: {[index: string]: any} = {
     "RepRating": RepRating,
     "ReplyToDrop": ReplyToDrop,
     "ReplyToDropResponse": ReplyToDropResponse,
+    "SeizeSettings": SeizeSettings,
     "TargetAndSubscriptionActions": TargetAndSubscriptionActions,
     "UpdateDropRequest": UpdateDropRequest,
     "UpdateProxyActionRequest": UpdateProxyActionRequest,
