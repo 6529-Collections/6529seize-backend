@@ -3572,6 +3572,7 @@ components:
       type: string
       enum:
         - DROP_REPLIED
+        - DROP_VOTED
 
     DropSubscriptionActions:
       type: object
@@ -3589,6 +3590,7 @@ components:
         - WAVE_CREATED
         - DROP_CREATED
         - DROP_REPLIED
+        - DROP_VOTED
 
     IdentitySubscriptionActions:
       type: object

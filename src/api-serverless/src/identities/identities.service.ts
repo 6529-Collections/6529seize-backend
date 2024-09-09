@@ -31,6 +31,9 @@ export class IdentitiesService {
     identityAddress: string;
     actions: IdentitySubscriptionTargetAction[];
   }): Promise<IdentitySubscriptionTargetAction[]> {
+    const acceptedActions = actions.filter(
+      (it) => it !== IdentitySubscriptionTargetAction.DropVoted
+    );
     return await this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const identityId = await this.identitiesDb
@@ -42,7 +45,7 @@ export class IdentitiesService {
         if (!identityId) {
           throw new NotFoundException(`Identity ${identityAddress} not found`);
         }
-        const proposedActions = Object.values(actions).map((it) =>
+        const proposedActions = Object.values(acceptedActions).map((it) =>
           resolveEnumOrThrow(ActivityEventAction, it)
         );
 
