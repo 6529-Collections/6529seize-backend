@@ -78,6 +78,16 @@ import { BlockItem } from './generated/models/BlockItem';
 import { TDHBlock } from '../../entities/ITDH';
 import { BlocksPage } from './generated/models/BlocksPage';
 import { SeizeSettings } from './generated/models/SeizeSettings';
+import { UploadsPage } from './generated/models/UploadsPage';
+import { Upload } from '../../entities/IUpload';
+import { UploadItem } from './generated/models/UploadItem';
+import { ArtistsPage } from './generated/models/ArtistsPage';
+import { Artist } from '../../entities/IArtist';
+import { ArtistItem } from './generated/models/ArtistItem';
+import { NftsPage } from './generated/models/NftsPage';
+import { NFT } from '../../entities/INFT';
+import { Nft } from './generated/models/Nft';
+import { ArtistNameItem } from './generated/models/ArtistNameItem';
 
 const YAML = require('yamljs');
 
@@ -321,74 +331,114 @@ loadApi().then(() => {
     }
   );
 
-  apiRouter.get(`/uploads`, function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
-    const date = req.query.date;
-    db.fetchUploads(pageSize, page, block, date).then((result) => {
-      result.data.forEach((e: any) => {
-        e.url = e.tdh;
-        delete e.tdh;
+  apiRouter.get(
+    `/uploads`,
+    function (req: any, res: Response<ApiResponse<UploadsPage>>) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
+      const date = req.query.date;
+      db.fetchUploads(pageSize, page, block, date).then((result) => {
+        returnPaginatedResult(
+          transformPaginatedResponse(
+            (orig: Upload): UploadItem => ({
+              date: orig.date,
+              block: orig.block,
+              url: orig.tdh
+            }),
+            result
+          ),
+          req,
+          res
+        );
       });
-      returnPaginatedResult(result, req, res);
-    });
-  });
+    }
+  );
 
-  apiRouter.get(`/consolidated_uploads`, function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
-    const date = req.query.date;
-    db.fetchConsolidatedUploads(pageSize, page, block, date).then((result) => {
-      result.data.forEach((e: any) => {
-        e.url = e.tdh;
-        delete e.tdh;
+  apiRouter.get(
+    `/consolidated_uploads`,
+    function (req: any, res: Response<ApiResponse<UploadsPage>>) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      const block = isNumber(req.query.block) ? parseInt(req.query.block) : 0;
+      const date = req.query.date;
+      db.fetchConsolidatedUploads(pageSize, page, block, date).then(
+        (result) => {
+          returnPaginatedResult(
+            transformPaginatedResponse(
+              (orig: Upload): UploadItem => ({
+                date: orig.date,
+                block: orig.block,
+                url: orig.tdh
+              }),
+              result
+            ),
+            req,
+            res
+          );
+        }
+      );
+    }
+  );
+
+  apiRouter.get(
+    `/artists`,
+    function (req: any, res: Response<ApiResponse<ArtistsPage>>) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+
+      const meme_nfts = req.query.meme_id;
+
+      db.fetchArtists(pageSize, page, meme_nfts).then((result) => {
+        returnPaginatedResult(
+          transformPaginatedResponse(
+            (orig: Artist): ArtistItem => ({
+              name: orig.name,
+              bio: orig.bio ?? null,
+              pfp: orig.pfp ?? null,
+              memes: JSON.parse(orig.memes as any),
+              memelab: JSON.parse(orig.memelab as any),
+              gradients: JSON.parse(orig.gradients as any),
+              work: JSON.parse(orig.work as any),
+              social_links: JSON.parse(orig.social_links as any)
+            }),
+            result
+          ),
+          req,
+          res
+        );
       });
-      returnPaginatedResult(result, req, res);
-    });
-  });
+    }
+  );
 
-  apiRouter.get(`/artists`, function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-
-    const meme_nfts = req.query.meme_id;
-
-    db.fetchArtists(pageSize, page, meme_nfts).then((result) => {
-      result.data.map((a: any) => {
-        a.memes = JSON.parse(a.memes);
-        a.memelab = JSON.parse(a.memelab);
-        a.gradients = JSON.parse(a.gradients);
-        a.work = JSON.parse(a.work);
-        a.social_links = JSON.parse(a.social_links);
+  apiRouter.get(
+    `/memes/artists_names`,
+    function (req: any, res: Response<ApiResponse<ArtistNameItem[]>>) {
+      db.fetchArtistsNamesMemes().then((result) => {
+        return returnJsonResult(result, req, res);
       });
-      returnPaginatedResult(result, req, res);
-    });
-  });
+    }
+  );
 
-  apiRouter.get(`/memes/artists_names`, function (req: any, res: any) {
-    db.fetchArtistsNamesMemes().then((result) => {
-      return returnJsonResult(result, req, res);
-    });
-  });
+  apiRouter.get(
+    `/memelab/artists_names`,
+    function (req: any, res: Response<ApiResponse<ArtistNameItem[]>>) {
+      db.fetchArtistsNamesMemeLab().then((result) => {
+        return returnJsonResult(result, req, res);
+      });
+    }
+  );
 
-  apiRouter.get(`/memelab/artists_names`, function (req: any, res: any) {
-    db.fetchArtistsNamesMemeLab().then((result) => {
-      return returnJsonResult(result, req, res);
-    });
-  });
-
-  apiRouter.get(`/nfts`, function (req: any, res: any) {
+  apiRouter.get(`/nfts`, function (req: any, res: Response<NftsPage>) {
     const pageSize: number =
       req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -404,15 +454,35 @@ loadApi().then(() => {
     const contracts = req.query.contract;
     const nfts = req.query.id;
     db.fetchNFTs(pageSize, page, contracts, nfts, sortDir).then((result) => {
-      result.data.map((d: any) => {
-        d.metadata = JSON.parse(d.metadata);
-        if (typeof d.metadata.animation_details === 'string') {
-          d.metadata.animation_details = JSON.parse(
-            d.metadata.animation_details
-          );
-        }
-      });
-      returnPaginatedResult(result, req, res);
+      returnPaginatedResult(
+        transformPaginatedResponse(
+          (orig: NFT & { has_distribution: boolean }): Nft => {
+            const metadata = JSON.parse(orig.metadata!);
+            return {
+              ...orig,
+              name: orig.name!,
+              token_type: orig.token_type as any,
+              uri: orig.uri ?? null,
+              thumbnail: orig.thumbnail!,
+              image: orig.image ?? null,
+              animation: orig.animation ?? null,
+              metadata: {
+                ...metadata,
+                animation_details:
+                  typeof metadata.animation_details === 'string'
+                    ? JSON.parse(metadata.animation_details)
+                    : metadata.animation_details
+              },
+              scaled: orig.scaled!,
+              compressed_animation: orig.compressed_animation ?? null,
+              icon: orig.icon!
+            };
+          },
+          result
+        ),
+        req,
+        res
+      );
     });
   });
 

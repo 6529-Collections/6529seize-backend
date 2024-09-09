@@ -1,7 +1,7 @@
-import { Entity, Column, PrimaryColumn } from 'typeorm';
+import { Column, Entity, PrimaryColumn } from 'typeorm';
 import { CONSOLIDATED_UPLOADS_TABLE } from '../constants';
 
-class Upload {
+export class Upload {
   @PrimaryColumn({ type: 'varchar', length: 8 })
   date!: Date;
 
