@@ -23,6 +23,9 @@ export class ActivityEventEntity {
   @Index()
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly wave_id!: string | null;
+  @Index()
+  @Column({ type: 'varchar', length: 100, nullable: true, default: null })
+  readonly action_author_id!: string | null;
 }
 
 export enum ActivityEventTargetType {
