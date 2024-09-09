@@ -56,7 +56,8 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
         action: ActivityEventAction.DROP_CREATED,
         data: { drop_id, wave_id },
         wave_id,
-        visibility_group_id
+        visibility_group_id,
+        action_author_id: creator_id
       }
     ];
     if (reply_to === null) {
@@ -66,7 +67,8 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
         action: ActivityEventAction.DROP_CREATED,
         data: { drop_id, creator_id },
         wave_id,
-        visibility_group_id
+        visibility_group_id,
+        action_author_id: creator_id
       });
     } else {
       events.push({
@@ -79,7 +81,8 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
           reply_id: drop_id
         },
         wave_id,
-        visibility_group_id
+        visibility_group_id,
+        action_author_id: creator_id
       });
     }
     await this.recordEvents(events, connection);
@@ -106,7 +109,8 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
         action: ActivityEventAction.WAVE_CREATED,
         data: { wave_id },
         wave_id,
-        visibility_group_id
+        visibility_group_id,
+        action_author_id: creator_id
       },
       connection
     );
@@ -130,7 +134,8 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
             data,
             visibility_group_id,
             created_at,
-            wave_id
+            wave_id,
+            action_author_id
         ) values ${events
           .map(
             (event) =>
@@ -140,7 +145,9 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
                 JSON.stringify(event.data)
               )}, ${mysql.escape(
                 event.visibility_group_id
-              )}, ${now}, ${mysql.escape(event.wave_id)})`
+              )}, ${now}, ${mysql.escape(event.wave_id)}, ${mysql.escape(
+                event.action_author_id
+              )})`
           )
           .join(', ')}
     `;
