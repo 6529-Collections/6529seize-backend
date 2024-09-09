@@ -55,7 +55,8 @@ import * as mcache from 'memory-cache';
 import {
   cacheKey,
   returnJsonResult,
-  returnPaginatedResult
+  returnPaginatedResult,
+  transformPaginatedResponse
 } from './api-helpers';
 import {
   corsOptions,
@@ -72,6 +73,11 @@ import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
 import * as SwaggerUI from 'swagger-ui-express';
 import { checkPolicies } from './policies/policies';
 import { DEFAULT_MAX_SIZE } from './page-request';
+import { ApiResponse } from './api-response';
+import { BlockItem } from './generated/models/BlockItem';
+import { TDHBlock } from '../../entities/ITDH';
+import { BlocksPage } from './generated/models/BlocksPage';
+import { SeizeSettings } from './generated/models/SeizeSettings';
 
 const YAML = require('yamljs');
 
@@ -279,20 +285,41 @@ loadApi().then(() => {
   app.all(`${BASE_PATH}*`, requireLogin);
   app.all(`${BASE_PATH}*`, checkCache);
 
-  apiRouter.get(`/blocks`, function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
-    db.fetchBlocks(pageSize, page).then((result) => {
-      returnPaginatedResult(result, req, res);
-    });
-  });
+  apiRouter.get(
+    `/blocks`,
+    function (req: any, res: Response<ApiResponse<BlocksPage>>) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
+      db.fetchBlocks(pageSize, page).then((result) => {
+        returnPaginatedResult(
+          transformPaginatedResponse(
+            (orig: TDHBlock): BlockItem => ({
+              block_number: orig.block_number,
+              timestamp: orig.timestamp,
+              created_at: orig.created_at!
+            }),
+            result
+          ),
+          req,
+          res
+        );
+      });
+    }
+  );
 
-  apiRouter.get(`/settings`, function (req: any, res: any) {
-    returnJsonResult(SEIZE_SETTINGS, req, res);
-  });
+  apiRouter.get(
+    `/settings`,
+    function (req: any, res: Response<ApiResponse<SeizeSettings>>) {
+      const settingsResp: SeizeSettings = {
+        rememes_submission_tdh_threshold:
+          SEIZE_SETTINGS.rememes_submission_tdh_threshold
+      };
+      returnJsonResult(settingsResp, req, res);
+    }
+  );
 
   apiRouter.get(`/uploads`, function (req: any, res: any) {
     const pageSize: number =

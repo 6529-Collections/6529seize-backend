@@ -72,6 +72,18 @@ export function returnJsonResult(
   response.json(result);
 }
 
+export function transformPaginatedResponse<K, V>(
+  transformer: (original: K) => V,
+  original: PaginatedResponse<K>
+): PaginatedResponse<V> {
+  return {
+    count: original.count,
+    page: original.page,
+    next: original.next,
+    data: original.data.map(transformer)
+  };
+}
+
 export function returnPaginatedResult<T>(
   result: PaginatedResponse<T>,
   request: Request<any, any, any, any>,
