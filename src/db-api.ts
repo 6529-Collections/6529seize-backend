@@ -60,6 +60,9 @@ import {
   PaginatedResponse
 } from './api-serverless/src/api-constants';
 import { TDHBlock } from './entities/ITDH';
+import { Upload } from './entities/IUpload';
+import { Artist } from './entities/IArtist';
+import { NFT } from './entities/INFT';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -337,7 +340,7 @@ export async function fetchUploads(
   page: number,
   block: number,
   date: string
-) {
+): Promise<PaginatedResponse<Upload>> {
   return fetchUploadsByTable(UPLOADS_TABLE, pageSize, page, block, date);
 }
 
@@ -346,7 +349,7 @@ export async function fetchConsolidatedUploads(
   page: number,
   block: number,
   date: string
-) {
+): Promise<PaginatedResponse<Upload>> {
   return fetchUploadsByTable(
     CONSOLIDATED_UPLOADS_TABLE,
     pageSize,
@@ -408,7 +411,7 @@ export async function fetchArtists(
     });
   }
 
-  return fetchPaginated(
+  return fetchPaginated<Artist>(
     ARTISTS_TABLE,
     params,
     'created_at desc',
@@ -528,7 +531,7 @@ export async function fetchNFTs(
     params.nfts = nfts.split(',');
   }
 
-  return fetchPaginated(
+  return fetchPaginated<NFT & { has_distribution: boolean }>(
     NFTS_TABLE,
     params,
     `contract desc, id ${sortDir}`,
