@@ -147,7 +147,7 @@ export class ActivityRecorder extends LazyDbAccessCompatibleService {
                 event.visibility_group_id
               )}, ${now}, ${mysql.escape(event.wave_id)}, ${mysql.escape(
                 event.action_author_id
-              )}`
+              )})`
           )
           .join(', ')}
     `;

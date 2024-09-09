@@ -25,7 +25,7 @@ export class FeedDb extends LazyDbAccessCompatibleService {
         from ${IDENTITY_SUBSCRIPTIONS_TABLE} ids
                  join ${ACTIVITY_EVENTS_TABLE} ae
                       on ids.target_id = ae.target_id and ids.target_type = ae.target_type and ids.target_action = ae.action
-        where ${
+        where ae.action_author_id <> ids.subscriber_id and ${
           params.serial_no_less_than !== null
             ? `ae.id < :serial_no_less_than and `
             : ``
