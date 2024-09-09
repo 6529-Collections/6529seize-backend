@@ -358,7 +358,9 @@ router.post(
     const activeActions = await dropsService.addDropSubscriptionActions({
       dropId: req.params.drop_id,
       subscriber: authenticatedProfileId,
-      actions: request.actions,
+      actions: request.actions.filter(
+        (it) => it !== DropSubscriptionTargetAction.Voted
+      ),
       authenticationContext
     });
     res.send({
@@ -396,7 +398,9 @@ router.delete(
     const activeActions = await dropsService.removeDropSubscriptionActions({
       dropId: req.params.drop_id,
       subscriber: authenticatedProfileId,
-      actions: request.actions,
+      actions: request.actions.filter(
+        (it) => it !== DropSubscriptionTargetAction.Voted
+      ),
       authenticationContext
     });
     res.send({
