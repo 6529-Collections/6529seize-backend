@@ -55,7 +55,11 @@ import {
   NEXTGEN_CORE
 } from './api-serverless/src/nextgen/abis';
 import { NEXTGEN_TOKENS_TABLE } from './nextgen/nextgen_constants';
-import { NFTSearchResult } from './api-serverless/src/api-constants';
+import {
+  NFTSearchResult,
+  PaginatedResponse
+} from './api-serverless/src/api-constants';
+import { TDHBlock } from './entities/ITDH';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -262,7 +266,7 @@ async function getTeamWallets() {
   return results;
 }
 
-export async function fetchPaginated(
+export async function fetchPaginated<T = any>(
   table: string,
   params: any,
   orderBy: string,
@@ -272,7 +276,7 @@ export async function fetchPaginated(
   fields?: string,
   joins?: string,
   groups?: string
-) {
+): Promise<PaginatedResponse<T>> {
   const groupPart = groups ? ` GROUP BY ${groups}` : '';
   const countSql = `SELECT COUNT(1) as count FROM (SELECT 1 FROM ${table} ${
     joins ?? ''
@@ -313,8 +317,11 @@ export async function fetchRandomImage() {
   });
 }
 
-export async function fetchBlocks(pageSize: number, page: number) {
-  return fetchPaginated(
+export async function fetchBlocks(
+  pageSize: number,
+  page: number
+): Promise<PaginatedResponse<TDHBlock>> {
+  return fetchPaginated<TDHBlock>(
     TDH_BLOCKS_TABLE,
     {},
     'block_number desc',

@@ -25,6 +25,7 @@ import { fetchPaginated } from '../../../db-api';
 import { getMaxMemeId } from '../../../nftsLoop/db.nfts';
 import { BadRequestException } from '../../../exceptions';
 import { areEqualAddresses } from '../../../helpers';
+import { PaginatedResponse } from '../api-constants';
 
 export interface SubscriptionDetails {
   consolidation_key: string;
@@ -99,12 +100,7 @@ export async function fetchLogsForConsolidationKey(
   consolidationKey: string,
   pageSize: number,
   page: number
-): Promise<{
-  count: number;
-  page: number;
-  next: boolean;
-  data: SubscriptionTopUp[];
-}> {
+): Promise<PaginatedResponse<SubscriptionTopUp>> {
   const filters = constructFilters('', `consolidation_key = :consolidationKey`);
   const params = { consolidationKey };
 
@@ -368,12 +364,7 @@ export async function fetchTopUpsForConsolidationKey(
   consolidationKey: string,
   pageSize: number,
   page: number
-): Promise<{
-  count: number;
-  page: number;
-  next: boolean;
-  data: SubscriptionTopUp[];
-}> {
+): Promise<PaginatedResponse<SubscriptionTopUp>> {
   let wallets = await fetchConsolidationAddresses(consolidationKey);
   if (wallets.length === 0) {
     wallets = [consolidationKey];
@@ -396,12 +387,7 @@ export async function fetchRedeemedSubscriptionsForConsolidationKey(
   consolidationKey: string,
   pageSize: number,
   page: number
-): Promise<{
-  count: number;
-  page: number;
-  next: boolean;
-  data: RedeemedSubscription[];
-}> {
+): Promise<PaginatedResponse<RedeemedSubscription>> {
   const filters = constructFilters('', `consolidation_key = :consolidationKey`);
   const params = { consolidationKey };
 
