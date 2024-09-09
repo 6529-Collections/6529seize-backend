@@ -1,6 +1,8 @@
 export * from '../models/AcceptActionRequest';
 export * from '../models/AddActionToProxyRequest';
 export * from '../models/AvailableRatingCredit';
+export * from '../models/BlockItem';
+export * from '../models/BlocksPage';
 export * from '../models/BulkRateRequest';
 export * from '../models/BulkRateResponse';
 export * from '../models/BulkRateSkippedIdentity';
@@ -114,6 +116,8 @@ export * from '../models/WavesOverviewType';
 import { AcceptActionRequest, AcceptActionRequestActionEnum   } from '../models/AcceptActionRequest';
 import { AddActionToProxyRequest    } from '../models/AddActionToProxyRequest';
 import { AvailableRatingCredit } from '../models/AvailableRatingCredit';
+import { BlockItem } from '../models/BlockItem';
+import { BlocksPage } from '../models/BlocksPage';
 import { BulkRateRequest     } from '../models/BulkRateRequest';
 import { BulkRateResponse } from '../models/BulkRateResponse';
 import { BulkRateSkippedIdentity } from '../models/BulkRateSkippedIdentity';
@@ -264,6 +268,8 @@ let typeMap: {[index: string]: any} = {
     "AcceptActionRequest": AcceptActionRequest,
     "AddActionToProxyRequest": AddActionToProxyRequest,
     "AvailableRatingCredit": AvailableRatingCredit,
+    "BlockItem": BlockItem,
+    "BlocksPage": BlocksPage,
     "BulkRateRequest": BulkRateRequest,
     "BulkRateResponse": BulkRateResponse,
     "BulkRateSkippedIdentity": BulkRateSkippedIdentity,
