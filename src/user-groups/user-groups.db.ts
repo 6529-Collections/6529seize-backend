@@ -5,7 +5,9 @@ import {
 } from '../sql-executor';
 import { UserGroupEntity } from '../entities/IUserGroup';
 import {
+  ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
+  NFT_OWNERS_TABLE,
   PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
   USER_GROUPS_TABLE
@@ -595,6 +597,41 @@ where ((cg.cic_direction = 'RECEIVED' and (
     await this.db.execute(sql, undefined, {
       wrappedConnection: connection
     });
+  }
+
+  async getAllProfileOwnedTokensByProfileIdGroupedByContract(
+    profileId: string,
+    ctx: RequestContext
+  ): Promise<Record<string, string[]>> {
+    ctx.timer?.start(
+      'userGroupsDb->getAllProfileOwnedTokensByProfileIdGroupedByContract'
+    );
+    const result = await this.db
+      .execute<{
+        contract: string;
+        token_ids: string;
+      }>(
+        `
+        select o.contract as contract, group_concat(o.token_id separator ',') as token_ids
+        from ${IDENTITIES_TABLE} i
+                 join ${ADDRESS_CONSOLIDATION_KEY} ack on ack.consolidation_key = i.consolidation_key
+                 join ${NFT_OWNERS_TABLE} o on o.wallet = ack.address
+        where i.profile_id = :profileId
+        group by 1
+        `,
+        { profileId },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((res) =>
+        res.reduce((acc, it) => {
+          acc[it.contract.toLowerCase()] = it.token_ids.split(',');
+          return acc;
+        }, {} as Record<string, string[]>)
+      );
+    ctx.timer?.stop(
+      'userGroupsDb->getAllProfileOwnedTokensByProfileIdGroupedByContract'
+    );
+    return result;
   }
 }
 
