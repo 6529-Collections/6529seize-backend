@@ -6,6 +6,7 @@ import { DataSource } from 'typeorm';
 import { prepEnvironment } from '../env';
 import { WaveMetricEntity } from '../entities/IWaveMetric';
 import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
+import { DropRelationEntity } from '../entities/IDropRelation';
 
 const DBMigrate = require('db-migrate');
 
@@ -15,7 +16,8 @@ const MANAGED_ENTITIES = [
   ActivityEventEntity,
   IdentitySubscriptionEntity,
   WaveMetricEntity,
-  IdentityNotificationEntity
+  IdentityNotificationEntity,
+  DropRelationEntity
 ];
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
