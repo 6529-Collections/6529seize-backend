@@ -41,19 +41,19 @@ export class UserGroupEntity {
   readonly visible!: boolean;
   @Column({ type: 'boolean' })
   readonly owns_meme!: boolean | null;
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'json', nullable: true })
   readonly owns_meme_tokens!: string | null;
   @Column({ type: 'boolean' })
   readonly owns_gradient!: boolean | null;
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'json', nullable: true })
   readonly owns_gradient_tokens!: string | null;
   @Column({ type: 'boolean' })
   readonly owns_nextgen!: boolean | null;
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'json', nullable: true })
   readonly owns_nextgen_tokens!: string | null;
   @Column({ type: 'boolean' })
   readonly owns_lab!: boolean | null;
-  @Column({ type: 'text', nullable: true })
+  @Column({ type: 'json', nullable: true })
   readonly owns_lab_tokens!: string | null;
   @Column({ type: 'varchar', length: 50, nullable: true })
   readonly profile_group_id!: string | null;
