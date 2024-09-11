@@ -1,5 +1,10 @@
 import {
+  ADDRESS_CONSOLIDATION_KEY,
+  GRADIENT_CONTRACT,
   IDENTITIES_TABLE,
+  MEMELAB_CONTRACT,
+  MEMES_CONTRACT,
+  NFT_OWNERS_TABLE,
   PROFILE_GROUPS_TABLE,
   RATINGS_TABLE
 } from '../../../constants';
@@ -31,6 +36,8 @@ import { profilesApiService } from '../profiles/profiles.api.service';
 import { Time, Timer } from '../../../time';
 import * as mcache from 'memory-cache';
 import { RequestContext } from '../../../request.context';
+import { NEXTGEN_CORE_CONTRACT } from '../../../nextgen/nextgen_constants';
+import { Network } from 'alchemy-sdk';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -139,7 +146,12 @@ export class UserGroupsService {
         givenRep: givenCicAndRep.rep
       });
     const ambiguousCandidates = initialSelection.filter(
-      (group) => group.cic_user ?? group.rep_user ?? group.rep_category
+      (group) =>
+        !!(group.cic_user ?? group.rep_user ?? group.rep_category) ||
+        group.owns_meme ||
+        group.owns_lab ||
+        group.owns_gradient ||
+        group.owns_nextgen
     );
     if (!ambiguousCandidates.length) {
       return initialSelection.map((it) => it.id);
@@ -154,124 +166,211 @@ export class UserGroupsService {
       .map((group) => group.rep_category)
       .filter((it) => !!it) as string[];
     const unambiguousInitial = initialSelection.filter(
-      (group) => !group.cic_user && !group.rep_user && !group.rep_category
+      (group) =>
+        !group.cic_user &&
+        !group.rep_user &&
+        !group.rep_category &&
+        !group.owns_meme &&
+        !group.owns_lab &&
+        !group.owns_gradient &&
+        !group.owns_nextgen
     );
-    const ratings = await this.userGroupsDb.getRatings(
-      profileId,
-      distinct([...cicUsers, ...repUsers]),
-      repCategories
-    );
-    const ambiguousCleaned = ambiguousCandidates.filter((group) => {
-      if (group.cic_user) {
-        const userRating = ratings
-          .filter((rating) => {
-            const side1 =
-              !group.cic_direction ||
-              group.cic_direction.toString() === GroupFilterDirection.Received
-                ? rating.matter_target_id
-                : rating.rater_profile_id;
-            const side2 =
-              !group.cic_direction ||
-              group.cic_direction.toString() === GroupFilterDirection.Received
-                ? rating.rater_profile_id
-                : rating.matter_target_id;
-            return (
-              rating.matter === RateMatter.CIC &&
-              side1 === profileId &&
-              side2 === group.cic_user
-            );
-          })
-          .map((it) => it.rating)
-          .reduce((acc, it) => acc + it, 0);
-        if (
-          userRating < (group.cic_min ?? 0) ||
-          userRating > (group.cic_max ?? Number.MAX_SAFE_INTEGER)
-        ) {
-          return false;
+    const [ratings, ownings] = await Promise.all([
+      this.userGroupsDb.getRatings(
+        profileId,
+        distinct([...cicUsers, ...repUsers]),
+        repCategories
+      ),
+      this.userGroupsDb.getAllProfileOwnedTokensByProfileIdGroupedByContract(
+        profileId,
+        { timer }
+      )
+    ]);
+    const ambiguousCleaned = ambiguousCandidates
+      .filter((group) => {
+        if (group.owns_meme) {
+          const actualOwnings = ownings[MEMES_CONTRACT.toLowerCase()] ?? [];
+          const neededTokens: string[] = group.owns_meme_tokens
+            ? JSON.parse(group.owns_meme_tokens)
+            : [];
+          if (neededTokens.length === 0) {
+            if (actualOwnings.length === 0) {
+              return false;
+            }
+          } else if (
+            neededTokens.find(
+              (neededToken) => !actualOwnings.includes(neededToken)
+            )
+          ) {
+            return false;
+          }
         }
-      }
-      if (group.rep_user && !group.rep_category) {
-        const userRating = ratings
-          .filter((rating) => {
-            const side1 =
-              !group.rep_direction ||
-              group.rep_direction.toString() === GroupFilterDirection.Received
-                ? rating.matter_target_id
-                : rating.rater_profile_id;
-            const side2 =
-              !group.rep_direction ||
-              group.rep_direction.toString() === GroupFilterDirection.Received
-                ? rating.rater_profile_id
-                : rating.matter_target_id;
-            return (
-              rating.matter === RateMatter.REP &&
-              side1 === profileId &&
-              side2 === group.rep_user
-            );
-          })
-          .map((it) => it.rating)
-          .reduce((acc, it) => acc + it, 0);
-        if (
-          userRating < (group.rep_min ?? 0) ||
-          userRating > (group.rep_max ?? Number.MAX_SAFE_INTEGER)
-        ) {
-          return false;
+        if (group.owns_lab) {
+          const actualOwnings = ownings[MEMELAB_CONTRACT.toLowerCase()] ?? [];
+          const neededTokens: string[] = group.owns_lab_tokens
+            ? JSON.parse(group.owns_lab_tokens)
+            : [];
+          if (neededTokens.length === 0) {
+            if (actualOwnings.length === 0) {
+              return false;
+            }
+          } else if (
+            neededTokens.find(
+              (neededToken) => !actualOwnings.includes(neededToken)
+            )
+          ) {
+            return false;
+          }
         }
-      }
-      if (group.rep_user && group.rep_category) {
-        const userRating = ratings
-          .filter((rating) => {
-            const side1 =
-              !group.rep_direction ||
-              group.rep_direction.toString() === GroupFilterDirection.Received
-                ? rating.matter_target_id
-                : rating.rater_profile_id;
-            const side2 =
-              !group.rep_direction ||
-              group.rep_direction.toString() === GroupFilterDirection.Received
-                ? rating.rater_profile_id
-                : rating.matter_target_id;
-            return (
-              rating.matter === RateMatter.REP &&
-              side1 === profileId &&
-              side2 === group.rep_user &&
-              rating.matter_category === group.rep_category
-            );
-          })
-          .map((it) => it.rating)
-          .reduce((acc, it) => acc + it, 0);
-        if (
-          userRating < (group.rep_min ?? 0) ||
-          userRating > (group.rep_max ?? Number.MAX_SAFE_INTEGER)
-        ) {
-          return false;
+        if (group.owns_gradient) {
+          const actualOwnings = ownings[GRADIENT_CONTRACT.toLowerCase()] ?? [];
+          const neededTokens: string[] = group.owns_gradient_tokens
+            ? JSON.parse(group.owns_gradient_tokens)
+            : [];
+          if (neededTokens.length === 0) {
+            if (actualOwnings.length === 0) {
+              return false;
+            }
+          } else if (
+            neededTokens.find(
+              (neededToken) => !actualOwnings.includes(neededToken)
+            )
+          ) {
+            return false;
+          }
         }
-      }
-      if (!group.rep_user && group.rep_category) {
-        const userRating = ratings
-          .filter((rating) => {
-            const side1 =
-              !group.rep_direction ||
-              group.rep_direction.toString() === GroupFilterDirection.Received
-                ? rating.matter_target_id
-                : rating.rater_profile_id;
-            return (
-              rating.matter === RateMatter.REP &&
-              side1 === profileId &&
-              rating.matter_category === group.rep_category
-            );
-          })
-          .map((it) => it.rating)
-          .reduce((acc, it) => acc + it, 0);
-        if (
-          userRating < (group.rep_min ?? 0) ||
-          userRating > (group.rep_max ?? Number.MAX_SAFE_INTEGER)
-        ) {
-          return false;
+        if (group.owns_nextgen) {
+          const actualOwnings =
+            ownings[NEXTGEN_CORE_CONTRACT[Network.ETH_MAINNET].toLowerCase()] ??
+            [];
+          const neededTokens: string[] = group.owns_nextgen_tokens
+            ? JSON.parse(group.owns_nextgen_tokens)
+            : [];
+          if (neededTokens.length === 0) {
+            if (actualOwnings.length === 0) {
+              return false;
+            }
+          } else if (
+            neededTokens.find(
+              (neededToken) => !actualOwnings.includes(neededToken)
+            )
+          ) {
+            return false;
+          }
         }
-      }
-      return true;
-    });
+        return true;
+      })
+      .filter((group) => {
+        if (group.cic_user) {
+          const userRating = ratings
+            .filter((rating) => {
+              const side1 =
+                !group.cic_direction ||
+                group.cic_direction.toString() === GroupFilterDirection.Received
+                  ? rating.matter_target_id
+                  : rating.rater_profile_id;
+              const side2 =
+                !group.cic_direction ||
+                group.cic_direction.toString() === GroupFilterDirection.Received
+                  ? rating.rater_profile_id
+                  : rating.matter_target_id;
+              return (
+                rating.matter === RateMatter.CIC &&
+                side1 === profileId &&
+                side2 === group.cic_user
+              );
+            })
+            .map((it) => it.rating)
+            .reduce((acc, it) => acc + it, 0);
+          if (
+            userRating < (group.cic_min ?? 0) ||
+            userRating > (group.cic_max ?? Number.MAX_SAFE_INTEGER)
+          ) {
+            return false;
+          }
+        }
+        if (group.rep_user && !group.rep_category) {
+          const userRating = ratings
+            .filter((rating) => {
+              const side1 =
+                !group.rep_direction ||
+                group.rep_direction.toString() === GroupFilterDirection.Received
+                  ? rating.matter_target_id
+                  : rating.rater_profile_id;
+              const side2 =
+                !group.rep_direction ||
+                group.rep_direction.toString() === GroupFilterDirection.Received
+                  ? rating.rater_profile_id
+                  : rating.matter_target_id;
+              return (
+                rating.matter === RateMatter.REP &&
+                side1 === profileId &&
+                side2 === group.rep_user
+              );
+            })
+            .map((it) => it.rating)
+            .reduce((acc, it) => acc + it, 0);
+          if (
+            userRating < (group.rep_min ?? 0) ||
+            userRating > (group.rep_max ?? Number.MAX_SAFE_INTEGER)
+          ) {
+            return false;
+          }
+        }
+        if (group.rep_user && group.rep_category) {
+          const userRating = ratings
+            .filter((rating) => {
+              const side1 =
+                !group.rep_direction ||
+                group.rep_direction.toString() === GroupFilterDirection.Received
+                  ? rating.matter_target_id
+                  : rating.rater_profile_id;
+              const side2 =
+                !group.rep_direction ||
+                group.rep_direction.toString() === GroupFilterDirection.Received
+                  ? rating.rater_profile_id
+                  : rating.matter_target_id;
+              return (
+                rating.matter === RateMatter.REP &&
+                side1 === profileId &&
+                side2 === group.rep_user &&
+                rating.matter_category === group.rep_category
+              );
+            })
+            .map((it) => it.rating)
+            .reduce((acc, it) => acc + it, 0);
+          if (
+            userRating < (group.rep_min ?? 0) ||
+            userRating > (group.rep_max ?? Number.MAX_SAFE_INTEGER)
+          ) {
+            return false;
+          }
+        }
+        if (!group.rep_user && group.rep_category) {
+          const userRating = ratings
+            .filter((rating) => {
+              const side1 =
+                !group.rep_direction ||
+                group.rep_direction.toString() === GroupFilterDirection.Received
+                  ? rating.matter_target_id
+                  : rating.rater_profile_id;
+              return (
+                rating.matter === RateMatter.REP &&
+                side1 === profileId &&
+                rating.matter_category === group.rep_category
+              );
+            })
+            .map((it) => it.rating)
+            .reduce((acc, it) => acc + it, 0);
+          if (
+            userRating < (group.rep_min ?? 0) ||
+            userRating > (group.rep_max ?? Number.MAX_SAFE_INTEGER)
+          ) {
+            return false;
+          }
+        }
+        return true;
+      });
     const allThatIsLeft = [...ambiguousCleaned, ...unambiguousInitial];
     const onlyProfileGroupsFilteredOut = allThatIsLeft.filter((group) => {
       return (
@@ -285,7 +384,11 @@ export class UserGroupsService {
         group.rep_category !== null ||
         group.cic_max !== null ||
         group.cic_min !== null ||
-        group.cic_user !== null
+        group.cic_user !== null ||
+        group.owns_meme ||
+        group.owns_lab ||
+        group.owns_gradient ||
+        group.owns_nextgen
       );
     });
     timer?.stop(timerKey);
@@ -410,35 +513,38 @@ export class UserGroupsService {
     params: Record<string, any>;
   } | null> {
     if (groupId === null) {
-      return await this.getSqlAndParams({
-        cic: {
-          min: null,
-          max: null,
-          user_identity: null,
-          direction: null
+      return await this.getSqlAndParams(
+        {
+          cic: {
+            min: null,
+            max: null,
+            user_identity: null,
+            direction: null
+          },
+          rep: {
+            min: null,
+            max: null,
+            user_identity: null,
+            direction: null,
+            category: null
+          },
+          level: {
+            min: null,
+            max: null
+          },
+          tdh: {
+            min: null,
+            max: null
+          },
+          owns_nfts: [],
+          identity_group_id: null,
+          excluded_identity_group_id: null
         },
-        rep: {
-          min: null,
-          max: null,
-          user_identity: null,
-          direction: null,
-          category: null
-        },
-        level: {
-          min: null,
-          max: null
-        },
-        tdh: {
-          min: null,
-          max: null
-        },
-        owns_nfts: [],
-        identity_group_id: null,
-        excluded_identity_group_id: null
-      });
+        null
+      );
     } else {
       const group = await this.getByIdOrThrow(groupId, ctx);
-      return await this.getSqlAndParams(group.group);
+      return await this.getSqlAndParams(group.group, groupId);
     }
   }
 
@@ -447,7 +553,8 @@ export class UserGroupsService {
       GroupDescription,
       | 'identity_group_identities_count'
       | 'excluded_identity_group_identities_count'
-    >
+    >,
+    group_id: string | null
   ): Promise<{
     sql: string;
     params: Record<string, any>;
@@ -486,13 +593,26 @@ export class UserGroupsService {
     const params: Record<string, any> = {};
     const repPart = this.getRepPart(group, params);
     const cicPart = this.getCicPart(group, params, repPart);
-    const cmPart = this.getGeneralPart(repPart, cicPart, group, params);
+    const nftsPart = this.getNftsPart(
+      group,
+      group_id,
+      params,
+      repPart,
+      cicPart
+    );
+    const cmPart = this.getGeneralPart(
+      repPart,
+      cicPart,
+      nftsPart,
+      group,
+      params
+    );
     const inclusionExclusionPart = this.getInclusionExclusionPart(
       group,
       params
     );
-    const sql = `with ${repPart ?? ''} ${
-      cicPart ?? ''
+    const sql = `with ${repPart ?? ''} ${cicPart ?? ''} ${
+      nftsPart ?? ''
     } ${cmPart} ${inclusionExclusionPart} `;
     return {
       sql,
@@ -551,9 +671,115 @@ export class UserGroupsService {
     return sql;
   }
 
+  private getTypeOfNftPart({
+    viewName,
+    comGroupFieldName,
+    tokenOwnerships,
+    contract
+  }: {
+    viewName: string;
+    comGroupFieldName: string;
+    tokenOwnerships: GroupOwnsNft[];
+    contract: string;
+  }): string | null {
+    let nftPart: string | null = null;
+    if (tokenOwnerships.length) {
+      nftPart = ``;
+      nftPart += ` ${viewName}_s1 as (select i.profile_id as profile_id, token_id
+                     from ${NFT_OWNERS_TABLE} o
+                              join ${ADDRESS_CONSOLIDATION_KEY} ac on ac.address = lower(wallet)
+                              join ${IDENTITIES_TABLE} i on i.consolidation_key = ac.consolidation_key
+                     where contract = '${contract}'), `;
+      const ownsSpecificTokens =
+        tokenOwnerships.map((it) => it.tokens).flat().length > 0;
+      if (ownsSpecificTokens) {
+        nftPart += ` 
+            ${viewName} as (SELECT profile_id
+                              FROM ${viewName}_s1
+                                       JOIN (SELECT token_id
+                                             FROM community_groups,
+                                                  JSON_TABLE(community_groups.${comGroupFieldName}, '$[*]'
+                                                             COLUMNS (token_id VARCHAR(255) PATH '$')) AS tokens
+                                             WHERE community_groups.id =
+                                                   :user_group_id) AS criteria_tokens
+                                            ON ${viewName}_s1.token_id = criteria_tokens.token_id
+                              GROUP BY profile_id
+                              HAVING COUNT(DISTINCT ${viewName}_s1.token_id) = (SELECT COUNT(*)
+                                                                             FROM community_groups,
+                                                                                  JSON_TABLE(
+                                                                                          community_groups.${comGroupFieldName},
+                                                                                          '$[*]'
+                                                                                          COLUMNS (token_id VARCHAR(255) PATH '$')) AS tokens
+                                                                             WHERE community_groups.id = :user_group_id))
+       `;
+      } else {
+        nftPart += ` 
+            ${viewName} as (SELECT distinct profile_id FROM ${viewName}_s1)
+       `;
+      }
+    }
+    return nftPart;
+  }
+
+  private getNftsPart(
+    group: Omit<
+      GroupDescription,
+      | 'identity_group_identities_count'
+      | 'excluded_identity_group_identities_count'
+    >,
+    group_id: string | null,
+    params: Record<string, any>,
+    repPart: string | null,
+    cicPart: string | null
+  ): string | null {
+    const memesPart = this.getTypeOfNftPart({
+      viewName: 'meme_owners_of_group',
+      comGroupFieldName: 'owns_meme_tokens',
+      tokenOwnerships: group.owns_nfts.filter(
+        (it) => it.name === GroupOwnsNftNameEnum.Memes
+      ),
+      contract: MEMES_CONTRACT
+    });
+    const labsPart = this.getTypeOfNftPart({
+      viewName: 'labs_owners_of_group',
+      comGroupFieldName: 'owns_lab_tokens',
+      tokenOwnerships: group.owns_nfts.filter(
+        (it) => it.name === GroupOwnsNftNameEnum.Memelab
+      ),
+      contract: MEMELAB_CONTRACT
+    });
+    const gradientsPart = this.getTypeOfNftPart({
+      viewName: 'gradients_owners_of_group',
+      comGroupFieldName: 'owns_gradient_tokens',
+      tokenOwnerships: group.owns_nfts.filter(
+        (it) => it.name === GroupOwnsNftNameEnum.Gradients
+      ),
+      contract: GRADIENT_CONTRACT
+    });
+    const nextgensPart = this.getTypeOfNftPart({
+      viewName: 'nextgens_owners_of_group',
+      comGroupFieldName: 'owns_nextgen_tokens',
+      tokenOwnerships: group.owns_nfts.filter(
+        (it) => it.name === GroupOwnsNftNameEnum.Nextgen
+      ),
+      contract: NEXTGEN_CORE_CONTRACT[Network.ETH_MAINNET]
+    });
+    const nftsParts = [memesPart, labsPart, gradientsPart, nextgensPart].filter(
+      (it) => it !== null
+    );
+    if (nftsParts.length === 0) {
+      return null;
+    }
+    params['user_group_id'] = group_id;
+    const nftsPart = nftsParts.join(', ');
+
+    return ` ${repPart || cicPart ? ',' : ''} ${nftsPart}`;
+  }
+
   private getGeneralPart(
     repPart: string | null,
     cicPart: string | null,
+    nftsPart: string | null,
     group: Omit<
       GroupDescription,
       | 'identity_group_identities_count'
@@ -561,13 +787,50 @@ export class UserGroupsService {
     >,
     params: Record<string, any>
   ) {
-    let cmPart = ` ${repPart || cicPart ? ', ' : ' '}`;
+    let cmPart = ` ${repPart || cicPart || nftsPart ? ', ' : ' '}`;
     cmPart += ` cm_view as (select i.* from ${IDENTITIES_TABLE} i `;
     if (repPart !== null) {
       cmPart += `join rep_exchanges on i.profile_id = rep_exchanges.profile_id `;
     }
     if (cicPart !== null) {
       cmPart += `join cic_exchanges on i.profile_id = cic_exchanges.profile_id `;
+    }
+    const {
+      joinMemeOwnerships,
+      joinLabOwnerships,
+      joinNextgenOwnerships,
+      joinGradientOwnerships
+    } = group.owns_nfts.reduce(
+      (acc, it) => {
+        if (it.name === GroupOwnsNftNameEnum.Memes) {
+          acc.joinMemeOwnerships = true;
+        } else if (it.name === GroupOwnsNftNameEnum.Memelab) {
+          acc.joinLabOwnerships = true;
+        } else if (it.name === GroupOwnsNftNameEnum.Gradients) {
+          acc.joinGradientOwnerships = true;
+        } else if (it.name === GroupOwnsNftNameEnum.Nextgen) {
+          acc.joinNextgenOwnerships = true;
+        }
+        return acc;
+      },
+      {
+        joinMemeOwnerships: false,
+        joinLabOwnerships: false,
+        joinGradientOwnerships: false,
+        joinNextgenOwnerships: false
+      }
+    );
+    if (joinMemeOwnerships) {
+      cmPart += ` join meme_owners_of_group on i.profile_id = meme_owners_of_group.profile_id `;
+    }
+    if (joinLabOwnerships) {
+      cmPart += ` join labs_owners_of_group on i.profile_id = labs_owners_of_group.profile_id `;
+    }
+    if (joinGradientOwnerships) {
+      cmPart += ` join gradients_owners_of_group on i.profile_id = gradients_owners_of_group.profile_id `;
+    }
+    if (joinNextgenOwnerships) {
+      cmPart += ` join nextgens_owners_of_group on i.profile_id = nextgens_owners_of_group.profile_id `;
     }
     cmPart += ` where true `;
     if (group.tdh.min !== null) {
