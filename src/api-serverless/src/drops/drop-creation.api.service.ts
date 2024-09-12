@@ -575,6 +575,7 @@ export class DropCreationApiService {
         );
       }
       await this.deleteAllDropComponentsById({ id, waveId }, ctxWithConnection);
+      await this.dropsDb.markDropDeletedInRelations(id, ctxWithConnection);
       await this.dropsDb.insertDeletedDrop(
         {
           id,
