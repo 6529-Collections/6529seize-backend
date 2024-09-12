@@ -18,6 +18,7 @@ import {
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
+  DROP_RELATIONS_TABLE,
   DROPS_MENTIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
@@ -42,6 +43,9 @@ import { NotFoundException } from '../exceptions';
 import { RequestContext } from '../request.context';
 import { ActivityEventTargetType } from '../entities/IActivityEvent';
 import { DeletedDropEntity } from '../entities/IDeletedDrop';
+import { DropRelationEntity } from '../entities/IDropRelation';
+
+const mysql = require('mysql');
 
 export class DropsDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -71,7 +75,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     newDropEntity: NewDropEntity,
     connection: ConnectionWrapper<any>
   ) {
+    const dropId = newDropEntity.id;
     const waveId = newDropEntity.wave_id;
+    const replyToDropId = newDropEntity.reply_to_drop_id;
+    const newDropSerialNo = newDropEntity.serial_no;
     await this.db.execute(
       `
         insert into ${WAVE_METRICS_TABLE} 
@@ -93,9 +100,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                             parts_count,
                             reply_to_drop_id,
                             reply_to_part_id${
-                              newDropEntity.serial_no !== null
-                                ? `, serial_no`
-                                : ``
+                              newDropSerialNo !== null ? `, serial_no` : ``
                             }
     ) values (
               :id,
@@ -107,12 +112,72 @@ export class DropsDb extends LazyDbAccessCompatibleService {
               :parts_count,
               :reply_to_drop_id,
               :reply_to_part_id
-              ${newDropEntity.serial_no !== null ? `, :serial_no` : ``}
+              ${newDropSerialNo !== null ? `, :serial_no` : ``}
              )`,
 
       { ...newDropEntity },
       { wrappedConnection: connection }
     );
+    if (replyToDropId) {
+      const serialNo = await this.db
+        .oneOrNull<{ serial_no: number }>(
+          `select serial_no from ${DROPS_TABLE} where id = :id and wave_id = :wave_id`,
+          { id: dropId, wave_id: waveId },
+          { wrappedConnection: connection }
+        )
+        .then((it) => it!.serial_no);
+      const existingDropRelations = await this.db.execute<DropRelationEntity>(
+        `select * from ${DROP_RELATIONS_TABLE} where child_id = :child_id and wave_id = :wave_id`,
+        {
+          child_id: replyToDropId,
+          wave_id: waveId
+        },
+        { wrappedConnection: connection }
+      );
+      const newRelations: Omit<DropRelationEntity, 'id'>[] =
+        existingDropRelations.map((it) => ({
+          ...it,
+          id: undefined,
+          child_id: dropId,
+          child_serial_no: serialNo!,
+          waveId: waveId
+        }));
+      newRelations.push({
+        parent_id: replyToDropId,
+        child_id: dropId,
+        child_serial_no: serialNo!,
+        wave_id: waveId,
+        parent_deleted: false
+      });
+      await this.db.execute(
+        `delete from ${DROP_RELATIONS_TABLE} where child_id = :id`,
+        { id: dropId },
+        { wrappedConnection: connection }
+      );
+      const insertRelationsSql = `
+        insert into ${DROP_RELATIONS_TABLE} (
+            parent_id,
+            child_id,
+            child_serial_no,
+            wave_id,
+            parent_deleted
+        ) values ${newRelations
+          .map(
+            (relation) =>
+              `(${mysql.escape(relation.parent_id)}, ${mysql.escape(
+                relation.child_id
+              )}, ${mysql.escape(relation.child_serial_no)}, ${mysql.escape(
+                relation.wave_id
+              )}, ${mysql.escape(relation.parent_deleted)})`
+          )
+          .join(', ')}
+        `;
+      await this.db.execute(
+        insertRelationsSql,
+        {},
+        { wrappedConnection: connection }
+      );
+    }
   }
 
   async insertMentions(
@@ -964,6 +1029,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           return acc;
         }, {} as Record<string, DeletedDropEntity>)
       );
+  }
+
+  async markDropDeletedInRelations(id: string, ctx: RequestContext) {
+    ctx.timer?.start('dropsDb->markDropDeletedInRelations');
+    await this.db.execute(
+      `update ${DROP_RELATIONS_TABLE} set parent_deleted = true where parent_id = :id`,
+      { id },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->markDropDeletedInRelations');
   }
 }
 

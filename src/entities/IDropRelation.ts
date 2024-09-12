@@ -18,5 +18,5 @@ export class DropRelationEntity {
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly wave_id!: string;
   @Column({ type: 'boolean', default: false, nullable: false })
-  readonly deleted!: boolean;
+  readonly parent_deleted!: boolean;
 }
