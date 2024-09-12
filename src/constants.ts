@@ -42,6 +42,7 @@ export const TDH_HISTORY_TABLE = 'tdh_history';
 export const NFTDELEGATION_BLOCKS_TABLE = 'nftdelegation_blocks';
 export const CONSOLIDATIONS_TABLE = 'consolidations';
 export const DELEGATIONS_TABLE = 'delegations';
+export const DROP_RELATIONS_TABLE = 'drop_relations';
 export const NFTS_HISTORY_TABLE = 'nfts_history';
 export const NFTS_HISTORY_BLOCKS_TABLE = 'nfts_history_blocks';
 export const NFTS_HISTORY_CLAIMS_TABLE = 'nfts_history_claims';

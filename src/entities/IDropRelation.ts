@@ -1,5 +1,7 @@
-import { Column, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { DROP_RELATIONS_TABLE } from '../constants';
 
+@Entity(DROP_RELATIONS_TABLE)
 export class DropRelationEntity {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   readonly id!: number;
@@ -11,8 +13,10 @@ export class DropRelationEntity {
   readonly child_id!: string;
   @Index()
   @Column({ type: 'bigint', nullable: false })
-  readonly timestamp!: number;
+  readonly child_serial_no!: number;
   @Index()
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly wave_id!: string;
+  @Column({ type: 'boolean', default: false, nullable: false })
+  readonly deleted!: boolean;
 }
