@@ -14,6 +14,7 @@ import {
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
+  DROP_RELATIONS_TABLE,
   DROPS_MENTIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
@@ -802,6 +803,16 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('wavesApiDb->updateVisibilityInNotifications');
+  }
+
+  async deleteDropRelations(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->deleteDropRelations');
+    await this.db.execute(
+      `delete from ${DROP_RELATIONS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteDropRelations');
   }
 }
 
