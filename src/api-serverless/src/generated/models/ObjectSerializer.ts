@@ -50,6 +50,7 @@ export * from '../models/DropReferencedNFT';
 export * from '../models/DropSubscriptionActions';
 export * from '../models/DropSubscriptionTargetAction';
 export * from '../models/DropVote';
+export * from '../models/DropWithoutWave';
 export * from '../models/DropsPage';
 export * from '../models/FeedItem';
 export * from '../models/FeedItemType';
@@ -103,6 +104,7 @@ export * from '../models/WaveConfig';
 export * from '../models/WaveContributorOverview';
 export * from '../models/WaveCreditScope';
 export * from '../models/WaveCreditType';
+export * from '../models/WaveDropsFeed';
 export * from '../models/WaveMetadataType';
 export * from '../models/WaveMetrics';
 export * from '../models/WaveMin';
@@ -173,6 +175,7 @@ import { DropReferencedNFT } from '../models/DropReferencedNFT';
 import { DropSubscriptionActions } from '../models/DropSubscriptionActions';
 import { DropSubscriptionTargetAction } from '../models/DropSubscriptionTargetAction';
 import { DropVote } from '../models/DropVote';
+import { DropWithoutWave } from '../models/DropWithoutWave';
 import { DropsPage } from '../models/DropsPage';
 import { FeedItem    } from '../models/FeedItem';
 import { FeedItemType } from '../models/FeedItemType';
@@ -226,6 +229,7 @@ import { WaveConfig        } from '../models/WaveConfig';
 import { WaveContributorOverview } from '../models/WaveContributorOverview';
 import { WaveCreditScope } from '../models/WaveCreditScope';
 import { WaveCreditType } from '../models/WaveCreditType';
+import { WaveDropsFeed } from '../models/WaveDropsFeed';
 import { WaveMetadataType } from '../models/WaveMetadataType';
 import { WaveMetrics } from '../models/WaveMetrics';
 import { WaveMin } from '../models/WaveMin';
@@ -332,6 +336,7 @@ let typeMap: {[index: string]: any} = {
     "DropReferencedNFT": DropReferencedNFT,
     "DropSubscriptionActions": DropSubscriptionActions,
     "DropVote": DropVote,
+    "DropWithoutWave": DropWithoutWave,
     "DropsPage": DropsPage,
     "FeedItem": FeedItem,
     "Group": Group,
@@ -376,6 +381,7 @@ let typeMap: {[index: string]: any} = {
     "Wave": Wave,
     "WaveConfig": WaveConfig,
     "WaveContributorOverview": WaveContributorOverview,
+    "WaveDropsFeed": WaveDropsFeed,
     "WaveMetrics": WaveMetrics,
     "WaveMin": WaveMin,
     "WaveOutcome": WaveOutcome,
