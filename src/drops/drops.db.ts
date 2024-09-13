@@ -139,13 +139,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           ...it,
           id: undefined,
           child_id: dropId,
-          child_serial_no: serialNo!,
+          child_serial_no: serialNo,
           waveId: waveId
         }));
       newRelations.push({
         parent_id: replyToDropId,
         child_id: dropId,
-        child_serial_no: serialNo!,
+        child_serial_no: serialNo,
         wave_id: waveId,
         parent_deleted: false
       });
