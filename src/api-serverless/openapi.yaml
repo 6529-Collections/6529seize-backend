@@ -686,22 +686,6 @@ paths:
           schema:
             type: integer
             format: int64
-        - name: min_part_id
-          in: query
-          description: Minimum ID of the parts wrapped in drops
-          required: false
-          schema:
-            type: number
-            format: int64
-            minimum: 1
-        - name: max_part_id
-          in: query
-          description: Maximum ID of the parts wrapped in drops
-          required: false
-          schema:
-            type: number
-            format: int64
-            minimum: 1
         - name: include_replies
           in: query
           description: If true then reply drops will be included in top level (false by default)
@@ -750,22 +734,6 @@ paths:
           required: true
           schema:
             type: string
-        - name: min_part_id
-          in: query
-          description: Minimum ID of the parts wrapped in drops
-          required: false
-          schema:
-            type: number
-            format: int64
-            minimum: 1
-        - name: max_part_id
-          in: query
-          description: Maximum ID of the parts wrapped in drops
-          required: false
-          schema:
-            type: number
-            format: int64
-            minimum: 1
       responses:
         "200":
           description: successful operation
@@ -1346,15 +1314,13 @@ paths:
         - Waves
       summary: Get drops related to wave or parent drop
       operationId: getDropsOfWave
-      deprecated: true
-      description: This route is not usable yet.
       parameters:
         - name: id
           in: path
           required: true
           schema:
             type: string
-        - name: dropId
+        - name: drop_id
           in: query
           required: false
           schema:
@@ -1366,8 +1332,8 @@ paths:
             type: integer
             format: int64
             minimum: 1
-            maximum: 20
-            default: 10
+            maximum: 50
+            default: 20
         - name: serial_no_less_than
           in: query
           required: false
@@ -2217,6 +2183,7 @@ components:
         - raters_count
         - title
         - subscribed_actions
+        - context_profile_context
       properties:
         id:
           type: string
@@ -2272,7 +2239,9 @@ components:
           type: number
           format: int64
         context_profile_context:
-          $ref: "#/components/schemas/DropContextProfileContext"
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/DropContextProfileContext"
         subscribed_actions:
           type: array
           items:
@@ -4058,6 +4027,17 @@ components:
             type: integer
             format: int64
 
+    DropTraceItem:
+      type: object
+      required:
+        - drop_id
+        - is_deleted
+      properties:
+        drop_id:
+          type: string
+        is_deleted:
+          type: boolean
+
     WaveDropsFeed:
       type: object
       required:
@@ -4075,7 +4055,9 @@ components:
         trace:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/DropTraceItem'
+
+
 
 security:
   - bearerAuth: []

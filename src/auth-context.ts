@@ -42,9 +42,7 @@ export class AuthenticationContext {
   }
 
   public isUserFullyAuthenticated(): boolean {
-    return (
-      this.authenticatedWallet !== null && this.authenticatedProfileId !== null
-    );
+    return this.authenticatedProfileId !== null;
   }
 
   public isAuthenticatedAsProxy(): boolean {
@@ -63,6 +61,15 @@ export class AuthenticationContext {
 
   public hasProxyAction(type: ApiProfileProxyActionType): boolean {
     return !!this.activeProxyActions[type];
+  }
+
+  static fromProfileId(contextProfileId: string) {
+    return new AuthenticationContext({
+      authenticatedWallet: null,
+      authenticatedProfileId: contextProfileId,
+      roleProfileId: null,
+      activeProxyActions: []
+    });
   }
 }
 

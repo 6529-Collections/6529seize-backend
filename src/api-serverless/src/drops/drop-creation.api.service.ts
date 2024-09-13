@@ -169,8 +169,6 @@ export class DropCreationApiService {
     const drop = await this.dropsService.findDropByIdOrThrow(
       {
         dropId,
-        min_part_id: 0,
-        max_part_id: Number.MAX_SAFE_INTEGER,
         skipEligibilityCheck: true
       },
       { connection, authenticationContext, timer }
@@ -634,8 +632,6 @@ export class DropCreationApiService {
         const dropBeforeUpdate = await this.dropsService.findDropByIdOrThrow(
           {
             dropId,
-            min_part_id: 0,
-            max_part_id: Number.MAX_SAFE_INTEGER,
             skipEligibilityCheck: true
           },
           { connection, authenticationContext }
@@ -690,8 +686,6 @@ export class DropCreationApiService {
         return await this.dropsService.findDropByIdOrThrow(
           {
             dropId,
-            min_part_id: 0,
-            max_part_id: Number.MAX_SAFE_INTEGER,
             skipEligibilityCheck: true
           },
           { connection, authenticationContext, timer }

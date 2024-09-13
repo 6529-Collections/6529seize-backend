@@ -21,6 +21,10 @@ import {
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { dropsMappers, DropsMappers } from './drops.mappers';
 import { RequestContext } from '../../../request.context';
+import { wavesApiDb } from '../waves/waves.api.db';
+import { WaveMin } from '../generated/models/WaveMin';
+import { WaveDropsFeed } from '../generated/models/WaveDropsFeed';
+import { DropTraceItem } from '../generated/models/DropTraceItem';
 
 export class DropsApiService {
   constructor(
@@ -33,13 +37,9 @@ export class DropsApiService {
   public async findDropByIdOrThrow(
     {
       dropId,
-      min_part_id,
-      max_part_id,
       skipEligibilityCheck
     }: {
       dropId: string;
-      min_part_id: number;
-      max_part_id: number;
       skipEligibilityCheck?: boolean;
     },
     ctx: RequestContext
@@ -67,9 +67,7 @@ export class DropsApiService {
       .convertToDropFulls(
         {
           dropEntities: [dropEntity],
-          contextProfileId: contextProfileId,
-          min_part_id,
-          max_part_id
+          contextProfileId: contextProfileId
         },
         ctx.connection
       )
@@ -82,16 +80,12 @@ export class DropsApiService {
       group_id,
       wave_id,
       serial_no_less_than,
-      min_part_id,
-      max_part_id,
       author_id,
       include_replies
     }: {
       group_id: string | null;
       serial_no_less_than: number | null;
       wave_id: string | null;
-      min_part_id: number;
-      max_part_id: number;
       amount: number;
       author_id: string | null;
       include_replies: boolean;
@@ -123,9 +117,7 @@ export class DropsApiService {
     );
     return await this.dropsMappers.convertToDropFulls({
       dropEntities: dropEntities,
-      contextProfileId: context_profile_id,
-      min_part_id,
-      max_part_id
+      contextProfileId: context_profile_id
     });
   }
 
@@ -173,9 +165,7 @@ export class DropsApiService {
     const replies = await this.dropsDb.findRepliesByDropId(param);
     const drops = await this.dropsMappers.convertToDropFulls({
       dropEntities: replies,
-      contextProfileId: ctx.authenticationContext?.getActingAsId(),
-      min_part_id: 1,
-      max_part_id: Number.MAX_SAFE_INTEGER
+      contextProfileId: ctx.authenticationContext?.getActingAsId()
     });
     return {
       count,
@@ -216,9 +206,7 @@ export class DropsApiService {
     return await this.dropsMappers
       .convertToDropFulls({
         dropEntities,
-        contextProfileId: authenticationContext?.getActingAsId(),
-        min_part_id: 1,
-        max_part_id: Number.MAX_SAFE_INTEGER
+        contextProfileId: authenticationContext?.getActingAsId()
       })
       .then((drops) =>
         drops.reduce((acc, drop) => {
@@ -241,9 +229,7 @@ export class DropsApiService {
   }): Promise<DropSubscriptionTargetAction[]> {
     const waveId = await this.findDropByIdOrThrow(
       {
-        dropId,
-        min_part_id: 1,
-        max_part_id: 1
+        dropId
       },
       { authenticationContext }
     ).then((it) => it.wave.id);
@@ -307,9 +293,7 @@ export class DropsApiService {
   }): Promise<DropSubscriptionTargetAction[]> {
     await this.findDropByIdOrThrow(
       {
-        dropId,
-        min_part_id: 1,
-        max_part_id: 1
+        dropId
       },
       { authenticationContext }
     );
@@ -342,6 +326,113 @@ export class DropsApiService {
           );
       }
     );
+  }
+
+  public async findWaveDropsFeed(
+    {
+      drop_id,
+      wave_id,
+      serial_no_less_than,
+      amount
+    }: {
+      drop_id: string | null;
+      serial_no_less_than: number | null;
+      wave_id: string;
+      amount: number;
+    },
+    ctx: RequestContext
+  ): Promise<WaveDropsFeed> {
+    ctx.timer?.start('dropsApiService->findWaveDropsFeed');
+    const authenticationContext = ctx.authenticationContext!;
+    const context_profile_id = this.getDropsReadContextProfileId(
+      authenticationContext
+    );
+    const group_ids_user_is_eligible_for =
+      !authenticationContext.isUserFullyAuthenticated() ||
+      (authenticationContext.isAuthenticatedAsProxy() &&
+        !authenticationContext.hasProxyAction(
+          ApiProfileProxyActionType.READ_WAVE
+        ))
+        ? []
+        : await this.userGroupsService.getGroupsUserIsEligibleFor(
+            context_profile_id
+          );
+    const wave = await wavesApiDb.findWaveById(wave_id);
+    if (
+      !wave ||
+      (wave.visibility_group_id &&
+        !group_ids_user_is_eligible_for.includes(wave.visibility_group_id))
+    ) {
+      throw new NotFoundException(`Wave ${wave_id} not found`);
+    }
+    const waveMin: WaveMin = {
+      id: wave.id,
+      name: wave.name,
+      picture: wave.picture!,
+      description_drop_id: wave.description_drop_id,
+      authenticated_user_eligible_to_vote:
+        wave.voting_group_id === null ||
+        group_ids_user_is_eligible_for.includes(wave.voting_group_id),
+      authenticated_user_eligible_to_participate:
+        wave.participation_group_id === null ||
+        group_ids_user_is_eligible_for.includes(wave.participation_group_id)
+    };
+    if (drop_id) {
+      const dropEntity = await this.dropsDb.findDropById(
+        drop_id,
+        group_ids_user_is_eligible_for,
+        ctx.connection
+      );
+      if (!dropEntity || dropEntity.wave_id !== wave_id) {
+        throw new NotFoundException(`Drop ${drop_id} not found`);
+      }
+      const trace = await this.dropsDb.getTraceForDrop(drop_id, ctx);
+      const dropEntities = await this.dropsDb.findLatestDropRepliesSimple(
+        {
+          drop_id: drop_id,
+          amount,
+          serial_no_less_than
+        },
+        ctx
+      );
+      const drops = await this.dropsMappers.convertToDropsWithoutWaves(
+        dropEntities,
+        ctx
+      );
+      const rootDrop = await this.dropsMappers
+        .convertToDropsWithoutWaves([dropEntity], ctx)
+        .then((it) => it[0]!);
+      const resp: WaveDropsFeed = {
+        drops,
+        wave: waveMin,
+        trace: trace.map<DropTraceItem>((it) => ({
+          drop_id: it.drop_id,
+          is_deleted: it.is_deleted
+        })),
+        root_drop: rootDrop
+      };
+      ctx.timer?.stop('dropsApiService->findWaveDropsFeed');
+      return resp;
+    } else {
+      const dropEntities = await this.dropsDb.findLatestDropsSimple(
+        {
+          wave_id: wave.id,
+          amount,
+          serial_no_less_than
+        },
+        ctx
+      );
+      const drops = await this.dropsMappers.convertToDropsWithoutWaves(
+        dropEntities,
+        ctx
+      );
+      const resp: WaveDropsFeed = {
+        drops,
+        wave: waveMin
+      };
+      ctx.timer?.stop('dropsApiService->findWaveDropsFeed');
+      return resp;
+    }
   }
 }
 
