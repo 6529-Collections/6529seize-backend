@@ -28,6 +28,10 @@ import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
+import { DropWithoutWave } from '../generated/models/DropWithoutWave';
+import { RequestContext } from '../../../request.context';
+import { AuthenticationContext } from '../../../auth-context';
+import { WaveMin } from '../generated/models/WaveMin';
 
 export class DropsMappers {
   constructor(
@@ -41,18 +45,165 @@ export class DropsMappers {
   public async convertToDropFulls(
     {
       dropEntities,
-      contextProfileId,
-      min_part_id,
-      max_part_id
+      contextProfileId
     }: {
       dropEntities: DropEntity[];
       contextProfileId?: string | null;
-      min_part_id: number;
-      max_part_id: number;
     },
     connection?: ConnectionWrapper<any>
   ): Promise<Drop[]> {
+    const dWoW = await this.convertToDropsWithoutWaves(dropEntities, {
+      connection,
+      authenticationContext: contextProfileId
+        ? AuthenticationContext.fromProfileId(contextProfileId)
+        : AuthenticationContext.notAuthenticated()
+    });
+    const waveOverviews = await this.wavesApiDb.getWaveOverviewsByDropIds(
+      dropEntities.map((it) => it.id),
+      connection
+    );
+    const group_ids_user_is_eligible_for =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        contextProfileId ?? null
+      );
+    return dWoW.map<Drop>((d) => {
+      const wave = waveOverviews[d.id];
+      const waveMin: WaveMin | null = wave
+        ? {
+            id: wave.id,
+            name: wave.name,
+            picture: wave.picture,
+            description_drop_id: wave.description_drop_id,
+            authenticated_user_eligible_to_vote:
+              wave.voting_group_id === null ||
+              group_ids_user_is_eligible_for.includes(wave.voting_group_id),
+            authenticated_user_eligible_to_participate:
+              wave.participation_group_id === null ||
+              group_ids_user_is_eligible_for.includes(
+                wave.participation_group_id
+              )
+          }
+        : null;
+      return {
+        ...d,
+        wave: waveMin as any
+      };
+    });
+  }
+
+  private async getAllDropsRelatedData(
+    {
+      dropIds,
+      contextProfileId,
+      replyDropIds
+    }: {
+      dropIds: string[];
+      replyDropIds: string[];
+      contextProfileId?: string | null;
+    },
+    connection?: ConnectionWrapper<any>
+  ) {
+    const [
+      mentions,
+      referencedNfts,
+      metadata,
+      dropsTopRaters,
+      dropsRatings,
+      dropsRatingsByContextProfile,
+      dropsQuoteCounts,
+      dropMedia,
+      dropsParts,
+      dropsRepliesCounts,
+      subscribedActions
+    ] = await Promise.all([
+      this.dropsDb.findMentionsByDropIds(dropIds, connection),
+      this.dropsDb.findReferencedNftsByDropIds(dropIds, connection),
+      this.dropsDb.findMetadataByDropIds(dropIds, connection),
+      this.dropsDb.findDropsTopRaters(dropIds, connection),
+      this.dropsDb.findDropsTotalRatingsStats(dropIds, connection),
+      this.findContextProfilesTotalRatingsForDrops(
+        contextProfileId,
+        dropIds,
+        connection
+      ),
+      this.dropsDb.getDropsQuoteCounts(dropIds, contextProfileId, connection),
+      this.dropsDb.getDropMedia(dropIds, connection),
+      this.dropsDb.getDropsParts(dropIds, connection),
+      this.dropsDb.countRepliesByDropIds(
+        { dropIds, context_profile_id: contextProfileId },
+        connection
+      ),
+      !contextProfileId
+        ? Promise.resolve({} as Record<string, ActivityEventAction[]>)
+        : this.identitySubscriptionsDb.findIdentitySubscriptionActionsOfTargets(
+            {
+              subscriber_id: contextProfileId,
+              target_ids: dropIds,
+              target_type: ActivityEventTargetType.DROP
+            },
+            connection
+          )
+    ]);
+    const quotedDropIds = distinct(
+      Object.values(dropsParts)
+        .flat()
+        .map((it) => it.quoted_drop_id)
+        .filter((it) => it !== null) as string[]
+    );
+    const relatedDropIds = distinct([
+      ...quotedDropIds,
+      ...replyDropIds,
+      ...dropIds
+    ]);
+    const deletedDrops = await this.dropsDb.findDeletedDrops(
+      relatedDropIds,
+      connection
+    );
+    return {
+      mentions,
+      referencedNfts,
+      metadata,
+      dropsTopRaters,
+      dropsRatings,
+      dropsRatingsByContextProfile,
+      dropsQuoteCounts,
+      dropMedia,
+      dropsParts,
+      dropsRepliesCounts,
+      subscribedActions: Object.entries(subscribedActions).reduce(
+        (acc, [id, actions]) => {
+          acc[id] = actions.map((it) =>
+            resolveEnumOrThrow(DropSubscriptionTargetAction, it)
+          );
+          return acc;
+        },
+        {} as Record<string, DropSubscriptionTargetAction[]>
+      ),
+      deletedDrops
+    };
+  }
+
+  private async findContextProfilesTotalRatingsForDrops(
+    contextProfileId: string | undefined | null,
+    dropIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<string, number>> {
+    if (!contextProfileId) {
+      return {};
+    }
+    return this.dropsDb.findDropsTotalRatingsByProfile(
+      dropIds,
+      contextProfileId,
+      connection
+    );
+  }
+
+  async convertToDropsWithoutWaves(
+    dropEntities: DropEntity[],
+    ctx: RequestContext
+  ): Promise<DropWithoutWave[]> {
     const dropIds = dropEntities.map((it) => it.id);
+    const contextProfileId = ctx.authenticationContext?.getActingAsId() ?? null;
     const {
       mentions,
       referencedNfts,
@@ -64,7 +215,6 @@ export class DropsMappers {
       dropMedia,
       dropsParts,
       dropsRepliesCounts,
-      dropWaveOverviews,
       subscribedActions,
       deletedDrops
     } = await this.getAllDropsRelatedData(
@@ -75,17 +225,10 @@ export class DropsMappers {
             (it) => it !== null
           ) as string[]
         ),
-        contextProfileId,
-        min_part_id,
-        max_part_id
+        contextProfileId
       },
-      connection
+      ctx.connection
     );
-    const groupsUserIsEligibleFor = contextProfileId
-      ? await this.userGroupsService.getGroupsUserIsEligibleFor(
-          contextProfileId
-        )
-      : [];
     const raterProfileIds = Object.values(dropsTopRaters)
       .map((it) => it.map((r) => r.rater_profile_id))
       .flat();
@@ -116,8 +259,7 @@ export class DropsMappers {
       acc[profileId] = profileMins[profileId] ?? UNKNOWN_PROFILE;
       return acc;
     }, {} as Record<string, ProfileMin>);
-    return dropEntities.map<Drop>((dropEntity) => {
-      const dropWave = dropWaveOverviews[dropEntity.id];
+    return dropEntities.map<DropWithoutWave>((dropEntity) => {
       const replyToDropId = dropEntity.reply_to_drop_id;
       return {
         id: dropEntity.id,
@@ -129,22 +271,6 @@ export class DropsMappers {
               drop_part_id: dropEntity.reply_to_part_id ?? 0
             }
           : undefined,
-        wave: (dropWave
-          ? {
-              id: dropWave.id,
-              name: dropWave.name,
-              picture: dropWave.picture,
-              description_drop_id: dropWave.description_drop_id,
-              authenticated_user_eligible_to_vote:
-                dropWave.voting_group_id === null ||
-                groupsUserIsEligibleFor.includes(dropWave.voting_group_id),
-              authenticated_user_eligible_to_participate:
-                dropWave.participation_group_id === null ||
-                groupsUserIsEligibleFor.includes(
-                  dropWave.participation_group_id
-                )
-            }
-          : null) as any,
         author: profilesByIds[dropEntity.author_id]!,
         title: dropEntity.title,
         parts:
@@ -224,126 +350,6 @@ export class DropsMappers {
         subscribed_actions: subscribedActions[dropEntity.id] ?? []
       };
     });
-  }
-
-  private async getAllDropsRelatedData(
-    {
-      dropIds,
-      contextProfileId,
-      replyDropIds,
-      min_part_id,
-      max_part_id
-    }: {
-      dropIds: string[];
-      replyDropIds: string[];
-      contextProfileId?: string | null;
-      min_part_id: number;
-      max_part_id: number;
-    },
-    connection?: ConnectionWrapper<any>
-  ) {
-    const [
-      mentions,
-      referencedNfts,
-      metadata,
-      dropsTopRaters,
-      dropsRatings,
-      dropsRatingsByContextProfile,
-      dropsQuoteCounts,
-      dropMedia,
-      dropsParts,
-      dropsRepliesCounts,
-      dropWaveOverviews,
-      subscribedActions
-    ] = await Promise.all([
-      this.dropsDb.findMentionsByDropIds(dropIds, connection),
-      this.dropsDb.findReferencedNftsByDropIds(dropIds, connection),
-      this.dropsDb.findMetadataByDropIds(dropIds, connection),
-      this.dropsDb.findDropsTopRaters(dropIds, connection),
-      this.dropsDb.findDropsTotalRatingsStats(dropIds, connection),
-      this.findContextProfilesTotalRatingsForDrops(
-        contextProfileId,
-        dropIds,
-        connection
-      ),
-      this.dropsDb.getDropsQuoteCounts(
-        dropIds,
-        contextProfileId,
-        min_part_id,
-        max_part_id,
-        connection
-      ),
-      this.dropsDb.getDropMedia(dropIds, min_part_id, max_part_id, connection),
-      this.dropsDb.getDropsParts(dropIds, min_part_id, max_part_id, connection),
-      this.dropsDb.countRepliesByDropIds(
-        { dropIds, context_profile_id: contextProfileId },
-        connection
-      ),
-      this.wavesApiDb.getWaveOverviewsByDropIds(dropIds, connection),
-      !contextProfileId
-        ? Promise.resolve({} as Record<string, ActivityEventAction[]>)
-        : this.identitySubscriptionsDb.findIdentitySubscriptionActionsOfTargets(
-            {
-              subscriber_id: contextProfileId,
-              target_ids: dropIds,
-              target_type: ActivityEventTargetType.DROP
-            },
-            connection
-          )
-    ]);
-    const quotedDropIds = distinct(
-      Object.values(dropsParts)
-        .flat()
-        .map((it) => it.quoted_drop_id)
-        .filter((it) => it !== null) as string[]
-    );
-    const relatedDropIds = distinct([
-      ...quotedDropIds,
-      ...replyDropIds,
-      ...dropIds
-    ]);
-    const deletedDrops = await this.dropsDb.findDeletedDrops(
-      relatedDropIds,
-      connection
-    );
-    return {
-      mentions,
-      referencedNfts,
-      metadata,
-      dropsTopRaters,
-      dropsRatings,
-      dropsRatingsByContextProfile,
-      dropsQuoteCounts,
-      dropMedia,
-      dropsParts,
-      dropsRepliesCounts,
-      dropWaveOverviews,
-      subscribedActions: Object.entries(subscribedActions).reduce(
-        (acc, [id, actions]) => {
-          acc[id] = actions.map((it) =>
-            resolveEnumOrThrow(DropSubscriptionTargetAction, it)
-          );
-          return acc;
-        },
-        {} as Record<string, DropSubscriptionTargetAction[]>
-      ),
-      deletedDrops
-    };
-  }
-
-  private async findContextProfilesTotalRatingsForDrops(
-    contextProfileId: string | undefined | null,
-    dropIds: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, number>> {
-    if (!contextProfileId) {
-      return {};
-    }
-    return this.dropsDb.findDropsTotalRatingsByProfile(
-      dropIds,
-      contextProfileId,
-      connection
-    );
   }
 }
 
