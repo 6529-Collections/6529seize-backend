@@ -49,6 +49,7 @@ export * from '../models/DropRatingRequest';
 export * from '../models/DropReferencedNFT';
 export * from '../models/DropSubscriptionActions';
 export * from '../models/DropSubscriptionTargetAction';
+export * from '../models/DropTraceItem';
 export * from '../models/DropVote';
 export * from '../models/DropWithoutWave';
 export * from '../models/DropsPage';
@@ -174,6 +175,7 @@ import { DropRatingRequest } from '../models/DropRatingRequest';
 import { DropReferencedNFT } from '../models/DropReferencedNFT';
 import { DropSubscriptionActions } from '../models/DropSubscriptionActions';
 import { DropSubscriptionTargetAction } from '../models/DropSubscriptionTargetAction';
+import { DropTraceItem } from '../models/DropTraceItem';
 import { DropVote } from '../models/DropVote';
 import { DropWithoutWave } from '../models/DropWithoutWave';
 import { DropsPage } from '../models/DropsPage';
@@ -335,6 +337,7 @@ let typeMap: {[index: string]: any} = {
     "DropRatingRequest": DropRatingRequest,
     "DropReferencedNFT": DropReferencedNFT,
     "DropSubscriptionActions": DropSubscriptionActions,
+    "DropTraceItem": DropTraceItem,
     "DropVote": DropVote,
     "DropWithoutWave": DropWithoutWave,
     "DropsPage": DropsPage,

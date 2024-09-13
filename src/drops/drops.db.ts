@@ -393,6 +393,58 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return this.db.execute(sql, params);
   }
 
+  async findLatestDropsSimple(
+    {
+      amount,
+      serial_no_less_than,
+      wave_id
+    }: {
+      serial_no_less_than: number | null;
+      amount: number;
+      wave_id: string;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    ctx.timer?.start('dropsDb->findLatestDropsSimple');
+    const results = await this.db.execute<DropEntity>(
+      `select d.* from ${DROPS_TABLE} d where d.wave_id = :wave_id and serial_no < :serial_no_less_than order by d.serial_no desc limit ${amount}`,
+      {
+        serial_no_less_than: serial_no_less_than ?? Number.MAX_SAFE_INTEGER,
+        wave_id
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->findLatestDropsSimple');
+    return results;
+  }
+
+  async findLatestDropRepliesSimple(
+    {
+      amount,
+      serial_no_less_than,
+      drop_id
+    }: {
+      serial_no_less_than: number | null;
+      amount: number;
+      drop_id: string;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    ctx.timer?.start('dropsDb->findLatestDropRepliesSimple');
+    const results = await this.db.execute<DropEntity>(
+      `select d.* from ${DROPS_TABLE} d
+      join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id
+      where r.parent_id = :drop_id and serial_no < :serial_no_less_than order by d.serial_no desc limit ${amount}`,
+      {
+        serial_no_less_than: serial_no_less_than ?? Number.MAX_SAFE_INTEGER,
+        drop_id
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('dropsDb->findLatestDropRepliesSimple');
+    return results;
+  }
+
   async findMentionsByDropIds(
     dropIds: string[],
     connection?: ConnectionWrapper<any>
@@ -697,8 +749,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async getDropsQuoteCounts(
     dropsIds: string[],
     contextProfileId: string | undefined | null,
-    min_part_id: number,
-    max_part_id: number,
     connection?: ConnectionWrapper<any>
   ): Promise<
     Record<
@@ -724,11 +774,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         join ${DROPS_TABLE} d on d.id = p.quoted_drop_id
         join ${DROPS_TABLE} qd on qd.id = p.drop_id
         where p.quoted_drop_id in (:dropsIds)
-          and p.drop_part_id >= :min_part_id
-          and p.drop_part_id <= :max_part_id
         group by 1, 2
         `,
-        { dropsIds, contextProfileId, min_part_id, max_part_id },
+        { dropsIds, contextProfileId },
         connection ? { wrappedConnection: connection } : undefined
       )
       .then(
@@ -776,16 +824,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async getDropMedia(
     dropIds: string[],
-    min_part_id: number,
-    max_part_id: number,
     connection?: ConnectionWrapper<any>
   ): Promise<Record<string, DropMediaEntity[]>> {
     if (!dropIds.length) {
       return {};
     }
     const dbResult: DropMediaEntity[] = await this.db.execute(
-      `select * from ${DROP_MEDIA_TABLE} where drop_id in (:dropIds) and drop_part_id >= :min_part_id and drop_part_id <= :max_part_id`,
-      { dropIds, min_part_id, max_part_id },
+      `select * from ${DROP_MEDIA_TABLE} where drop_id in (:dropIds)`,
+      { dropIds },
       connection ? { wrappedConnection: connection } : undefined
     );
     return dropIds.reduce((acc, it) => {
@@ -796,8 +842,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async getDropsParts(
     dropIds: string[],
-    min_part_id: number,
-    max_part_id: number,
     connection: ConnectionWrapper<any> | undefined
   ): Promise<Record<string, DropPartEntity[]>> {
     if (!dropIds.length) {
@@ -805,11 +849,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     }
     return this.db
       .execute(
-        `select * from ${DROPS_PARTS_TABLE} where drop_id in (:dropIds) and drop_part_id >= :min_part_id and drop_part_id <= :max_part_id order by drop_part_id asc`,
+        `select * from ${DROPS_PARTS_TABLE} where drop_id in (:dropIds) order by drop_part_id asc`,
         {
-          dropIds,
-          min_part_id,
-          max_part_id
+          dropIds
         },
         connection ? { wrappedConnection: connection } : undefined
       )
@@ -1039,6 +1081,41 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('dropsDb->markDropDeletedInRelations');
+  }
+
+  async getTraceForDrop(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<{ drop_id: string; is_deleted: boolean }[]> {
+    ctx.timer?.start('dropsDb->getTraceForDrop');
+    const dbResult = await this.db.execute<{
+      drop_id: string;
+      created_at: number;
+      is_deleted: 1 | 0;
+    }>(
+      `
+      select 
+        distinct
+        dr.parent_id as drop_id,
+        ifnull(d.created_at, dd.created_at) as created_at,
+        dd.id is not null as is_deleted
+      from ${DROP_RELATIONS_TABLE} dr
+      left join ${DELETED_DROPS_TABLE} dd on dr.parent_id = dd.id
+      left join ${DROPS_TABLE} d on dr.parent_id = d.id
+      where dr.child_id = :dropId
+      order by 2
+      `,
+      { dropId }
+    );
+    const trace: { drop_id: string; is_deleted: boolean }[] = dbResult.map(
+      (entity) => ({
+        drop_id: entity.drop_id,
+        is_deleted: entity.is_deleted === 1
+      })
+    );
+    trace.push({ drop_id: dropId, is_deleted: false });
+    ctx.timer?.stop('dropsDb->getTraceForDrop');
+    return trace;
   }
 }
 
