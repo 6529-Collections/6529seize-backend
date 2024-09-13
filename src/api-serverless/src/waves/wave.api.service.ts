@@ -642,7 +642,8 @@ export class WaveApiService {
           ),
           this.wavesApiDb.deleteDropEntitiesByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteWaveMetrics(waveId, ctxWithConnection),
-          this.wavesApiDb.deleteWave(waveId, ctxWithConnection)
+          this.wavesApiDb.deleteWave(waveId, ctxWithConnection),
+          this.wavesApiDb.deleteDropRelations(waveId, ctxWithConnection)
         ]);
       }
     );
