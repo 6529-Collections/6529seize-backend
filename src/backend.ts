@@ -24,21 +24,50 @@ import { AddressConsolidationKey } from './entities/IAddressConsolidationKey';
 import { IdentityEntity } from './entities/IIdentity';
 import { ProfileGroupEntity } from './entities/IProfileGroup';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
-import * as tdh from './tdhLoop';
-import * as nfts from './nftsLoop';
-import * as owners from './nftOwnersLoop';
-import * as marketStats from './marketStatsLoop';
+import { DeletedDropEntity } from './entities/IDeletedDrop';
 
 const logger = Logger.get('BACKEND');
 
 async function start() {
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  await nfts.handler(null as any, null as any, null as any);
-  await owners.handler(null as any, null as any, null as any);
-  // await tdh.handler(null as any, null as any, null as any);
-  await marketStats.handler(null as any, null as any, null as any);
-
+  await doInDbContext(
+    async () => {
+      await dbMigrationsLoop.handler(
+        undefined as any,
+        undefined as any,
+        undefined as any
+      );
+    },
+    {
+      logger,
+      entities: [
+        Profile,
+        ProfileArchived,
+        CicStatement,
+        ProfileActivityLog,
+        Rating,
+        AbusivenessDetectionResult,
+        RatingsSnapshot,
+        DropEntity,
+        DropPartEntity,
+        DropMentionEntity,
+        DropReferencedNftEntity,
+        DropMetadataEntity,
+        DropMediaEntity,
+        DropVoteCreditSpending,
+        ProfileProxyEntity,
+        ProfileProxyActionEntity,
+        WaveEntity,
+        CookiesConsent,
+        UserGroupEntity,
+        AddressConsolidationKey,
+        IdentityEntity,
+        ProfileGroupEntity,
+        DeletedDropEntity
+      ]
+    }
+  );
   process.exit(0);
 }
 

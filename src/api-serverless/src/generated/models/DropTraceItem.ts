@@ -10,47 +10,30 @@
  * Do not edit the class manually.
  */
 
-import { DropTraceItem } from '../models/DropTraceItem';
-import { DropWithoutWave } from '../models/DropWithoutWave';
-import { WaveMin } from '../models/WaveMin';
 import { HttpFile } from '../http/http';
 
-export class WaveDropsFeed {
-    'wave': WaveMin;
-    'drops': Array<DropWithoutWave>;
-    'root_drop'?: DropWithoutWave;
-    'trace'?: Array<DropTraceItem>;
+export class DropTraceItem {
+    'drop_id': string;
+    'is_deleted': boolean;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "wave",
-            "baseName": "wave",
-            "type": "WaveMin",
+            "name": "drop_id",
+            "baseName": "drop_id",
+            "type": "string",
             "format": ""
         },
         {
-            "name": "drops",
-            "baseName": "drops",
-            "type": "Array<DropWithoutWave>",
-            "format": ""
-        },
-        {
-            "name": "root_drop",
-            "baseName": "root_drop",
-            "type": "DropWithoutWave",
-            "format": ""
-        },
-        {
-            "name": "trace",
-            "baseName": "trace",
-            "type": "Array<DropTraceItem>",
+            "name": "is_deleted",
+            "baseName": "is_deleted",
+            "type": "boolean",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return WaveDropsFeed.attributeTypeMap;
+        return DropTraceItem.attributeTypeMap;
     }
 
     public constructor() {

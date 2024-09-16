@@ -40,6 +40,8 @@ import { Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
 import { UpdateWaveRequest } from '../generated/models/UpdateWaveRequest';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { dropsService } from '../drops/drops.api.service';
+import { WaveDropsFeed } from '../generated/models/WaveDropsFeed';
 
 const router = asyncRouter();
 
@@ -237,6 +239,38 @@ router.delete(
     res.send({
       actions: activeActions
     });
+  }
+);
+
+router.get(
+  '/:id/drops',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { id: string },
+      any,
+      any,
+      { drop_id?: string; amount?: string; serial_no_less_than?: string },
+      any
+    >,
+    res: Response<ApiResponse<WaveDropsFeed>>
+  ) => {
+    const { id } = req.params;
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req);
+    const dropId = req.query.drop_id ?? null;
+    const amount = parseIntOrNull(req.query.amount) ?? 20;
+    const serialNoLessThan = parseIntOrNull(req.query.serial_no_less_than);
+    const result = await dropsService.findWaveDropsFeed(
+      {
+        wave_id: id,
+        drop_id: dropId,
+        amount: amount >= 50 || amount < 1 ? 50 : amount,
+        serial_no_less_than: serialNoLessThan
+      },
+      { authenticationContext, timer }
+    );
+    res.send(result);
   }
 );
 

@@ -51,8 +51,6 @@ router.get(
         group_id?: string;
         serial_no_less_than?: number;
         author?: string;
-        min_part_id?: number;
-        max_part_id?: number;
         wave_id?: string;
         include_replies?: string;
       },
@@ -62,22 +60,13 @@ router.get(
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    const {
-      limit,
-      wave_id,
-      group_id,
-      min_part_id,
-      max_part_id,
-      author_id,
-      include_replies
-    } = await prepLatestDropsSearchQuery(req);
+    const { limit, wave_id, group_id, author_id, include_replies } =
+      await prepLatestDropsSearchQuery(req);
     const latestDrops = await dropsService.findLatestDrops(
       {
         amount: limit < 0 || limit > 20 ? 10 : limit,
         group_id: group_id,
         serial_no_less_than: parseNumberOrNull(req.query.serial_no_less_than),
-        min_part_id,
-        max_part_id,
         wave_id,
         author_id,
         include_replies
@@ -92,24 +81,15 @@ router.get(
   '/:drop_id',
   maybeAuthenticatedUser(),
   async (
-    req: Request<
-      { drop_id: string },
-      any,
-      any,
-      { min_part_id?: number; max_part_id?: number },
-      any
-    >,
+    req: Request<{ drop_id: string }, any, any, any, any>,
     res: Response<ApiResponse<Drop>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    const { dropId, min_part_id, max_part_id } =
-      prepSingleDropSearchRequest(req);
+    const dropId = req.params.drop_id;
     const drop = await dropsService.findDropByIdOrThrow(
       {
-        dropId,
-        min_part_id,
-        max_part_id
+        dropId
       },
       { timer, authenticationContext }
     );
@@ -287,9 +267,7 @@ router.post(
     });
     const drop = await dropsService.findDropByIdOrThrow(
       {
-        dropId,
-        min_part_id: 1,
-        max_part_id: 1
+        dropId
       },
       { authenticationContext, timer }
     );
@@ -409,27 +387,6 @@ router.delete(
   }
 );
 
-export function prepSingleDropSearchRequest(
-  req: Request<
-    { drop_id: string },
-    any,
-    any,
-    { min_part_id?: number; max_part_id?: number },
-    any
-  >
-) {
-  const dropId = req.params.drop_id;
-  let min_part_id = parseIntOrNull(req.query.min_part_id);
-  if (!min_part_id || min_part_id < 1) {
-    min_part_id = 0;
-  }
-  let max_part_id = parseIntOrNull(req.query.max_part_id);
-  if (!max_part_id || max_part_id < 1) {
-    max_part_id = Number.MAX_SAFE_INTEGER;
-  }
-  return { dropId, min_part_id, max_part_id };
-}
-
 export async function prepLatestDropsSearchQuery(
   req: Request<
     any,
@@ -440,8 +397,6 @@ export async function prepLatestDropsSearchQuery(
       group_id?: string;
       serial_no_less_than?: number;
       author?: string;
-      min_part_id?: number;
-      max_part_id?: number;
       wave_id?: string;
       include_replies?: string;
     },
@@ -452,19 +407,6 @@ export async function prepLatestDropsSearchQuery(
   const wave_id = req.query.wave_id ?? null;
   const group_id = req.query.group_id ?? null;
   const include_replies = req.query.include_replies === 'true';
-  let min_part_id = parseIntOrNull(req.query.min_part_id);
-  if (!min_part_id || min_part_id < 1) {
-    min_part_id = 0;
-  }
-  let max_part_id = parseIntOrNull(req.query.max_part_id);
-  if (!max_part_id || max_part_id < 1) {
-    max_part_id = Number.MAX_SAFE_INTEGER;
-  }
-  if (max_part_id < min_part_id) {
-    throw new BadRequestException(
-      'max_part_id must be greater or equal than min_part_id'
-    );
-  }
   const author_id = req.query.author
     ? await profilesService
         .resolveIdentityOrThrowNotFound(req.query.author)
@@ -480,8 +422,6 @@ export async function prepLatestDropsSearchQuery(
     limit,
     wave_id,
     group_id,
-    min_part_id,
-    max_part_id,
     author_id,
     include_replies
   };
@@ -510,9 +450,7 @@ export async function prepDropPartQuery(
   await dropsService
     .findDropByIdOrThrow(
       {
-        dropId: drop_id,
-        min_part_id: drop_part_id,
-        max_part_id: drop_part_id
+        dropId: drop_id
       },
       ctx
     )

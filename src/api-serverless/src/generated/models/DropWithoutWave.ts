@@ -49,7 +49,7 @@ export class DropWithoutWave {
     'rating': number;
     'top_raters': Array<DropRater>;
     'raters_count': number;
-    'context_profile_context'?: DropContextProfileContext;
+    'context_profile_context': DropContextProfileContext | null;
     'subscribed_actions': Array<DropSubscriptionTargetAction>;
 
     static readonly discriminator: string | undefined = undefined;
