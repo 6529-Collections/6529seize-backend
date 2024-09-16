@@ -27,7 +27,6 @@ import { Artist } from './entities/IArtist';
 import { ENS } from './entities/IENS';
 
 import {
-  BaseNFT,
   LabExtendedData,
   LabNFT,
   MemesExtendedData,
