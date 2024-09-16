@@ -26,14 +26,13 @@ export async function getOpenseaResponse(url: string): Promise<any[]> {
   let pageToken: any = '';
   const response: any[] = [];
   while (pageToken !== null) {
-    const res = await getOpenseaResponseForPage(url, pageToken);
     try {
+      const res = await getOpenseaResponseForPage(url, pageToken);
       const data: any = await res.json();
       response.push(...data.orders);
       pageToken = data.next;
     } catch (e) {
       logger.error(`[OPENSEA ERROR] ${e}`);
-      logger.error(await res.text());
       pageToken = null;
     }
   }
@@ -140,15 +139,21 @@ const filterOffersForNft = (
 
 const getLowestListing = (nftListings: any[]): any => {
   return (
-    [...nftListings].sort((a, d) => a.current_price - d.current_price)?.[0] ??
-    null
+    [...nftListings].sort(
+      (a, d) =>
+        a.current_price / a.remaining_quantity -
+        d.current_price / d.remaining_quantity
+    )?.[0] ?? null
   );
 };
 
 const getHighestOffer = (nftOffers: any[]): any => {
   return (
-    [...nftOffers].sort((a, d) => d.current_price - a.current_price)?.[0] ??
-    null
+    [...nftOffers].sort(
+      (a, d) =>
+        d.current_price / d.remaining_quantity -
+        a.current_price / a.remaining_quantity
+    )?.[0] ?? null
   );
 };
 
@@ -164,12 +169,20 @@ const updateNftMarketStats = (
   lowestListing: any,
   highestOffer: any
 ): void => {
-  let lowestListingPrice = weiToEth(lowestListing?.current_price ?? 0);
+  let lowestListingPrice = weiToEth(
+    lowestListing
+      ? lowestListing.current_price / lowestListing.remaining_quantity
+      : 0
+  );
   lowestListingPrice = Math.round(lowestListingPrice * 10000) / 10000;
   nft.floor_price = lowestListingPrice;
   nft.market_cap = lowestListingPrice * nft.supply;
 
-  let highestOfferPrice = weiToEth(highestOffer?.current_price ?? 0);
+  let highestOfferPrice = weiToEth(
+    highestOffer
+      ? highestOffer.current_price / highestOffer.remaining_quantity
+      : 0
+  );
   highestOfferPrice = Math.round(highestOfferPrice * 10000) / 10000;
   nft.highest_offer = highestOfferPrice;
 };
