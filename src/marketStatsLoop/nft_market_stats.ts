@@ -83,10 +83,10 @@ export const findNftMarketStats = async (contract: string) => {
         nftOffers.sort((a, d) => d.current_price - a.current_price)?.[0] ??
         null;
       const volumes = await findVolume(nft.id, contract);
-      nft.total_volume_last_24_hours = volumes.total_volume_last_24_hours;
-      nft.total_volume_last_7_days = volumes.total_volume_last_7_days;
-      nft.total_volume_last_1_month = volumes.total_volume_last_1_month;
-      nft.total_volume = volumes.total_volume;
+      nft.total_volume_last_24_hours = volumes?.total_volume_last_24_hours ?? 0;
+      nft.total_volume_last_7_days = volumes?.total_volume_last_7_days ?? 0;
+      nft.total_volume_last_1_month = volumes?.total_volume_last_1_month ?? 0;
+      nft.total_volume = volumes?.total_volume ?? 0;
 
       let lowestListingPrice = weiToEth(lowestListing?.current_price ?? 0);
       lowestListingPrice = Math.round(lowestListingPrice * 10000) / 10000;
