@@ -250,7 +250,7 @@ router.get(
       { id: string },
       any,
       any,
-      { drop_id?: string; amount?: string; serial_no_less_than?: string },
+      { drop_id?: string; limit?: string; serial_no_less_than?: string },
       any
     >,
     res: Response<ApiResponse<WaveDropsFeed>>
@@ -259,7 +259,7 @@ router.get(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req);
     const dropId = req.query.drop_id ?? null;
-    const amount = parseIntOrNull(req.query.amount) ?? 20;
+    const amount = parseIntOrNull(req.query.limit) ?? 20;
     const serialNoLessThan = parseIntOrNull(req.query.serial_no_less_than);
     const result = await dropsService.findWaveDropsFeed(
       {
