@@ -77,11 +77,13 @@ export const findNftMarketStats = async (contract: string) => {
         )
       );
       const lowestListing =
-        nftListings.sort((a, d) => a.current_price - d.current_price)?.[0] ??
-        null;
+        [...nftListings].sort(
+          (a, d) => a.current_price - d.current_price
+        )?.[0] ?? null;
       const highestOffer =
-        nftOffers.sort((a, d) => d.current_price - a.current_price)?.[0] ??
+        [...nftOffers].sort((a, d) => d.current_price - a.current_price)?.[0] ??
         null;
+
       const volumes = await findVolume(nft.id, contract);
       nft.total_volume_last_24_hours = volumes?.total_volume_last_24_hours ?? 0;
       nft.total_volume_last_7_days = volumes?.total_volume_last_7_days ?? 0;
