@@ -23,13 +23,18 @@ async function getOpenseaResponseForPage(url: string, pageToken: string) {
 }
 
 export async function getOpenseaResponse(url: string): Promise<any[]> {
-  let pageToken = '';
+  let pageToken: any = '';
   const response = [];
   while (pageToken !== null) {
-    const res = await getOpenseaResponseForPage(url, pageToken);
-    const data: any = await res.json();
-    response.push(...data.orders);
-    pageToken = data.next;
+    try {
+      const res = await getOpenseaResponseForPage(url, pageToken);
+      const data: any = await res.json();
+      response.push(...data.orders);
+      pageToken = data.next;
+    } catch (e) {
+      logger.error(`[OPENSEA ERROR] ${e}`);
+      pageToken = null;
+    }
   }
   return response;
 }
