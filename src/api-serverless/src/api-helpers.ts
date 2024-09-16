@@ -129,7 +129,7 @@ export function giveReadReplicaTimeToCatchUp(millisToGive?: number | null) {
 export function resolveSortDirection(direction: any) {
   return direction && SORT_DIRECTIONS.includes(direction.toUpperCase())
     ? direction
-    : 'asc';
+    : 'DESC';
 }
 
 export function getSearchFilters(columnNames: string[], search: string) {

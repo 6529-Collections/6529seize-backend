@@ -12,6 +12,21 @@ import {
 import { fetchLatestTDHBlockNumber, fetchPaginated } from '../../../db-api';
 import { sqlExecutor } from '../../../sql-executor';
 
+export const fetchAllOwnerBalances = async (
+  page: number,
+  pageSize: number,
+  sortDir: string
+) => {
+  return fetchPaginated(
+    CONSOLIDATED_OWNERS_BALANCES_TABLE,
+    {},
+    `total_balance ${sortDir}`,
+    pageSize,
+    page,
+    ''
+  );
+};
+
 export const fetchOwnerBalancesForConsolidationKey = async (
   consolidationKey: string
 ) => {
