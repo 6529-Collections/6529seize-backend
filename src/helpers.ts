@@ -325,7 +325,7 @@ export function capitalizeEveryWord(input: string): string {
 
 export function replaceEmojisWithHex(inputString: string) {
   return inputString.replace(
-    /[\u{1F300}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}]/gu,
+    /[\uD83C-\uDBFF][\uDC00-\uDFFF]/g,
     (match: string) => {
       const codePoint = match.codePointAt(0);
       if (codePoint) {

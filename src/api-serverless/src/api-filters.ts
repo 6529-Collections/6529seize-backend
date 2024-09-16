@@ -40,7 +40,8 @@ export const MEMES_EXTENDED_SORT = [
   'total_volume_last_24_hours',
   'total_volume_last_7_days',
   'total_volume_last_1_month',
-  'total_volume'
+  'total_volume',
+  'highest_offer'
 ];
 
 export enum NextGenCollectionStatus {

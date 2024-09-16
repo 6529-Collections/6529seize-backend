@@ -641,26 +641,7 @@ export async function persistMemesExtendedData(data: MemesExtendedData[]) {
   await AppDataSource.getRepository(MemesExtendedData).save(data);
 }
 
-export async function findVolumeNFTs(nft: NFT): Promise<{
-  total_volume_last_24_hours: number;
-  total_volume_last_7_days: number;
-  total_volume_last_1_month: number;
-  total_volume: number;
-}> {
-  return findVolume(TRANSACTIONS_TABLE, nft.id, nft.contract);
-}
-
-export async function findVolumeLab(nft: LabNFT): Promise<{
-  total_volume_last_24_hours: number;
-  total_volume_last_7_days: number;
-  total_volume_last_1_month: number;
-  total_volume: number;
-}> {
-  return findVolume(TRANSACTIONS_TABLE, nft.id, nft.contract);
-}
-
-async function findVolume(
-  table: string,
+export async function findVolume(
   nft_id: number,
   contract: string
 ): Promise<{
@@ -674,7 +655,7 @@ async function findVolume(
       SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN value ELSE 0 END) AS total_volume_last_7_days,
       SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH) THEN value ELSE 0 END) AS total_volume_last_1_month,
       SUM(value) AS total_volume
-    FROM ${table}
+    FROM ${TRANSACTIONS_TABLE}
     WHERE token_id =:token_id and contract =:contract;`;
   const results = await sqlExecutor.execute(sql, {
     token_id: nft_id,

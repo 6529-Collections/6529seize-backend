@@ -239,7 +239,8 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
         total_volume_last_1_month: startingNft
           ? startingNft.total_volume_last_1_month
           : 0,
-        total_volume: startingNft ? startingNft.total_volume : 0
+        total_volume: startingNft ? startingNft.total_volume : 0,
+        highest_offer: startingNft ? startingNft.highest_offer : 0
       };
 
       newNFTS.push(nft);
@@ -335,7 +336,8 @@ async function processGradients(
       total_volume_last_1_month: startingNft
         ? startingNft.total_volume_last_1_month
         : 0,
-      total_volume: startingNft ? startingNft.total_volume : 0
+      total_volume: startingNft ? startingNft.total_volume : 0,
+      highest_offer: startingNft ? startingNft.highest_offer : 0
     };
 
     newNFTS.push(nft);
