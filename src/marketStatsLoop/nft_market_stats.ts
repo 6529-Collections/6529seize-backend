@@ -24,15 +24,16 @@ async function getOpenseaResponseForPage(url: string, pageToken: string) {
 
 export async function getOpenseaResponse(url: string): Promise<any[]> {
   let pageToken: any = '';
-  const response = [];
+  const response: any[] = [];
   while (pageToken !== null) {
+    const res = await getOpenseaResponseForPage(url, pageToken);
     try {
-      const res = await getOpenseaResponseForPage(url, pageToken);
       const data: any = await res.json();
       response.push(...data.orders);
       pageToken = data.next;
     } catch (e) {
       logger.error(`[OPENSEA ERROR] ${e}`);
+      logger.error(await res.text());
       pageToken = null;
     }
   }
