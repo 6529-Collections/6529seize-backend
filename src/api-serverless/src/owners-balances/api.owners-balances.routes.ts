@@ -14,7 +14,7 @@ import {
   fetchAllOwnerBalances
 } from './api.owners-balances.db';
 import { NotFoundException } from '../../../exceptions';
-import { DEFAULT_PAGE_SIZE } from 'src/page-request';
+import { DEFAULT_PAGE_SIZE } from '../page-request';
 
 const router = asyncRouter();
 
