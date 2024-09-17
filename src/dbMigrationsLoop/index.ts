@@ -7,17 +7,68 @@ import { prepEnvironment } from '../env';
 import { WaveMetricEntity } from '../entities/IWaveMetric';
 import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
 import { DropRelationEntity } from '../entities/IDropRelation';
+import {
+  DropEntity,
+  DropMediaEntity,
+  DropMentionEntity,
+  DropMetadataEntity,
+  DropPartEntity,
+  DropReferencedNftEntity
+} from '../entities/IDrop';
+import { DropVoteCreditSpending } from '../entities/IDropVoteCreditSpending';
+import { DeletedDropEntity } from '../entities/IDeletedDrop';
+import { WaveEntity } from '../entities/IWave';
+import { Profile, ProfileArchived } from '../entities/IProfile';
+import { CicStatement } from '../entities/ICICStatement';
+import { Rating } from '../entities/IRating';
+import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
+import { ProfileActivityLog } from '../entities/IProfileActivityLog';
+import { AbusivenessDetectionResult } from '../entities/IAbusivenessDetectionResult';
+import { ProfileProxyEntity } from '../entities/IProfileProxy';
+import { ProfileProxyActionEntity } from '../entities/IProfileProxyAction';
+import { UserGroupEntity } from '../entities/IUserGroup';
+import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
+import { IdentityEntity } from '../entities/IIdentity';
+import { ProfileGroupEntity } from '../entities/IProfileGroup';
+import { CookiesConsent } from '../entities/ICookieConsent';
+import { Prenode } from '../entities/IPrenode';
 
 const DBMigrate = require('db-migrate');
 
 const logger = Logger.get('DB_MIGRATIONS_LOOP');
 
 const MANAGED_ENTITIES = [
+  AbusivenessDetectionResult,
   ActivityEventEntity,
-  IdentitySubscriptionEntity,
-  WaveMetricEntity,
+  AddressConsolidationKey,
+  CicStatement,
+  CookiesConsent,
+  DeletedDropEntity,
+  DropEntity,
+  DropMediaEntity,
+  DropMentionEntity,
+  DropMetadataEntity,
+  DropPartEntity,
+  DropReferencedNftEntity,
+  DropRelationEntity,
+  DropVoteCreditSpending,
+  IdentityEntity,
   IdentityNotificationEntity,
-  DropRelationEntity
+  IdentitySubscriptionEntity,
+  Prenode,
+  Profile,
+  Profile,
+  ProfileActivityLog,
+  ProfileArchived,
+  ProfileArchived,
+  ProfileGroupEntity,
+  ProfileProxyActionEntity,
+  ProfileProxyEntity,
+  Rating,
+  RatingsSnapshot,
+  UserGroupEntity,
+  WaveEntity,
+  WaveMetricEntity
 ];
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
