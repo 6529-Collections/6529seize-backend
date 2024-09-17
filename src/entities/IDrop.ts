@@ -14,6 +14,11 @@ import {
   DROPS_TABLE
 } from '../constants';
 
+export enum DropType {
+  CHAT = 'CHAT',
+  PARTICIPATORY = 'PARTICIPATORY'
+}
+
 @Entity(DROPS_TABLE)
 export class DropEntity {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
@@ -39,6 +44,13 @@ export class DropEntity {
   readonly reply_to_drop_id!: string | null;
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly reply_to_part_id!: number | null;
+  @Column({
+    type: 'varchar',
+    length: 50,
+    nullable: false,
+    default: DropType.CHAT
+  })
+  readonly drop_type!: DropType;
 }
 
 @Entity(DROPS_PARTS_TABLE)
