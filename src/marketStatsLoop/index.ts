@@ -4,7 +4,7 @@ import {
   MEMES_CONTRACT
 } from '../constants';
 import { LabNFT, NFT } from '../entities/INFT';
-import { findNftMarketStats } from '../nft_market_stats';
+import { findNftMarketStats } from './nft_market_stats';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { NEXTGEN_CORE } from '../api-serverless/src/nextgen/abis';

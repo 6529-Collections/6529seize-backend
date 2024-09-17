@@ -79,6 +79,9 @@ export class BaseNFT {
 
   @Column({ type: 'double' })
   total_volume!: number;
+
+  @Column({ type: 'double' })
+  highest_offer!: number;
 }
 
 @Entity('nfts_meme_lab')

@@ -256,7 +256,8 @@ async function processNFTs(
         total_volume_last_1_month: startingNft
           ? startingNft.total_volume_last_1_month
           : 0,
-        total_volume: startingNft ? startingNft.total_volume : 0
+        total_volume: startingNft ? startingNft.total_volume : 0,
+        highest_offer: startingNft ? startingNft.highest_offer : 0
       };
 
       newNFTS.push(nft);
@@ -293,10 +294,12 @@ export const findNFTs = async (
       const nClone: any = { ...n };
       const mClone: any = { ...m };
       delete nClone.floor_price;
+      delete nClone.highest_offer;
       delete nClone.market_cap;
       delete nClone.created_at;
       delete nClone.mint_date;
       delete mClone.floor_price;
+      delete mClone.highest_offer;
       delete mClone.market_cap;
       delete mClone.created_at;
 
@@ -307,6 +310,7 @@ export const findNFTs = async (
     if (changed || reset) {
       n.floor_price = m ? m.floor_price : n.floor_price;
       n.market_cap = m ? m.market_cap : n.market_cap;
+      n.highest_offer = m ? m.highest_offer : n.highest_offer;
       delta.push(n);
     }
   });

@@ -1,18 +1,47 @@
 import { Request } from 'express';
 import { asyncRouter } from '../async.router';
 
-import { returnJsonResult } from '../api-helpers';
+import {
+  resolveSortDirection,
+  returnJsonResult,
+  returnPaginatedResult
+} from '../api-helpers';
 import {
   fetchMemesOwnerBalancesForConsolidationKey,
   fetchMemesOwnerBalancesForWallet,
   fetchOwnerBalancesForConsolidationKey,
-  fetchOwnerBalancesForWallet
+  fetchOwnerBalancesForWallet,
+  fetchAllOwnerBalances
 } from './api.owners-balances.db';
 import { NotFoundException } from '../../../exceptions';
+import { DEFAULT_PAGE_SIZE } from '../page-request';
 
 const router = asyncRouter();
 
 export default router;
+
+router.get(
+  '/',
+  async function (
+    req: Request<
+      any,
+      any,
+      any,
+      {
+        sort_direction: any;
+        page?: number;
+        page_size?: number;
+      }
+    >,
+    res: any
+  ) {
+    const page = req.query.page ?? 1;
+    const pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
+    const sortDir = resolveSortDirection(req.query.sort_direction);
+    const result = await fetchAllOwnerBalances(page, pageSize, sortDir);
+    return returnPaginatedResult(result, req, res);
+  }
+);
 
 router.get(
   '/consolidation/:consolidation_key',
@@ -91,11 +120,11 @@ router.get(
 );
 
 router.get(
-  '/wallet/:consolidation_key/memes',
+  '/wallet/:wallet/memes',
   async function (
     req: Request<
       {
-        consolidation_key: string;
+        wallet: string;
       },
       any,
       any,
@@ -103,14 +132,14 @@ router.get(
     >,
     res: any
   ) {
-    const consolidationKey = req.params.consolidation_key;
+    const wallet = req.params.wallet;
 
-    const result = await fetchMemesOwnerBalancesForWallet(consolidationKey);
+    const result = await fetchMemesOwnerBalancesForWallet(wallet);
     if (result) {
       return returnJsonResult(result, req, res);
     }
     throw new NotFoundException(
-      `Wallet Memes Owner Balance for ${consolidationKey} not found`
+      `Wallet Memes Owner Balance for ${wallet} not found`
     );
   }
 );

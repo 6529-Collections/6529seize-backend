@@ -8,6 +8,7 @@ import {
   persitNextgenTokenListings
 } from '../nextgen/nextgen.db';
 import { NEXTGEN_ROYALTIES_ADDRESS } from '../nextgen/nextgen_constants';
+import { getOpenseaResponse } from './nft_market_stats';
 
 const logger = Logger.get('NEXTGEN_MARKET_STATS');
 
@@ -47,9 +48,7 @@ async function processBatch(
   for (const token of tokens) {
     url += `&token_ids=${token.id}`;
   }
-  const response = await getOpenseaResponse(url);
-  const data: any = await response.json();
-  const orders: any[] = data.orders;
+  const orders: any[] = await getOpenseaResponse(url);
   const listings: NextGenTokenListing[] = [];
 
   for (const token of tokens) {
@@ -121,14 +120,6 @@ async function processBatch(
       tokens[tokens.length - 1].id
     }] [PROCESSED]`
   );
-}
-
-async function getOpenseaResponse(url: string) {
-  return await fetch(url, {
-    headers: {
-      'x-api-key': process.env.OPENSEA_API_KEY!
-    }
-  });
 }
 
 async function getBlurListings(contract: string): Promise<any[]> {

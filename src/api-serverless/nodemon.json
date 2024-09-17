@@ -1,6 +1,6 @@
 {
-  "watch": ["src/**/*"],
-  "ext": "ts",
+  "watch": ["../../src"],
+  "ext": "ts,yaml",
   "ignore": ["src/**/*.spec.ts"],
   "exec": "ts-node -r tsconfig-paths/register src/app.ts"
 }
