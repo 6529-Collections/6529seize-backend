@@ -15,7 +15,11 @@ import { CreateDropRequest } from '../generated/models/CreateDropRequest';
 import { Drop } from '../generated/models/Drop';
 import { DropReferencedNFT } from '../generated/models/DropReferencedNFT';
 import { QuotedDrop } from '../generated/models/QuotedDrop';
-import { DropMediaEntity, DropPartEntity } from '../../../entities/IDrop';
+import {
+  DropMediaEntity,
+  DropPartEntity,
+  DropType
+} from '../../../entities/IDrop';
 import {
   userGroupsService,
   UserGroupsService
@@ -738,7 +742,8 @@ export class DropCreationApiService {
           reply_to_part_id: replyTo?.drop_part_id ?? null,
           created_at: createdAt,
           updated_at: updatedAt,
-          serial_no: serialNo
+          serial_no: serialNo,
+          drop_type: DropType.CHAT
         },
         connection
       ),

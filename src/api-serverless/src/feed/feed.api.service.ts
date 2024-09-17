@@ -149,13 +149,15 @@ export class FeedApiService {
       groupIdsUserIsEligibleFor,
       authenticationContext
     });
-    const feedItems = activityEvents.map<FeedItem>((it) => {
-      return this.activityEventToFeedItem({
-        activityEvent: it,
-        waves,
-        drops
-      });
-    });
+    const feedItems = activityEvents
+      .map<FeedItem | null>((it) => {
+        return this.activityEventToFeedItem({
+          activityEvent: it,
+          waves,
+          drops
+        });
+      })
+      .filter((it) => !!it) as FeedItem[];
     const seenReplyPairs = new Set<string>();
     return feedItems.reduce((acc, it) => {
       if (it.type === FeedItemType.DropReplied) {
@@ -181,7 +183,7 @@ export class FeedApiService {
     activityEvent: ActivityEventEntity;
     waves: Record<string, Wave>;
     drops: Record<string, Drop>;
-  }): FeedItem {
+  }): FeedItem | null {
     const action = activityEvent.action;
     const eventId = parseInt(`${activityEvent.id}`);
     switch (action) {
@@ -197,6 +199,9 @@ export class FeedApiService {
         const dropId = (JSON.parse(activityEvent.data).drop_id ??
           activityEvent.target_id) as string;
         const drop = drops[dropId];
+        if (!drop) {
+          return null;
+        }
         if (drop.reply_to) {
           return {
             item: {
