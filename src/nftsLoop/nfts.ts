@@ -229,6 +229,7 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
         tdh__raw: startingNft ? startingNft.tdh__raw : 0,
         tdh_rank: startingNft ? startingNft.tdh_rank : 0,
         floor_price: startingNft ? startingNft.floor_price : 0,
+        floor_price_from: startingNft ? startingNft.floor_price_from : null,
         market_cap: startingNft ? startingNft.market_cap : 0,
         total_volume_last_24_hours: startingNft
           ? startingNft.total_volume_last_24_hours
@@ -240,7 +241,8 @@ async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
           ? startingNft.total_volume_last_1_month
           : 0,
         total_volume: startingNft ? startingNft.total_volume : 0,
-        highest_offer: startingNft ? startingNft.highest_offer : 0
+        highest_offer: startingNft ? startingNft.highest_offer : 0,
+        highest_offer_from: startingNft ? startingNft.highest_offer_from : null
       };
 
       newNFTS.push(nft);
@@ -326,6 +328,7 @@ async function processGradients(
       tdh__raw: startingNft ? startingNft.tdh__raw : 0,
       tdh_rank: startingNft ? startingNft.tdh_rank : 0,
       floor_price: startingNft ? startingNft.floor_price : 0,
+      floor_price_from: startingNft ? startingNft.floor_price_from : null,
       market_cap: startingNft ? startingNft.market_cap : 0,
       total_volume_last_24_hours: startingNft
         ? startingNft.total_volume_last_24_hours
@@ -337,7 +340,8 @@ async function processGradients(
         ? startingNft.total_volume_last_1_month
         : 0,
       total_volume: startingNft ? startingNft.total_volume : 0,
-      highest_offer: startingNft ? startingNft.highest_offer : 0
+      highest_offer: startingNft ? startingNft.highest_offer : 0,
+      highest_offer_from: startingNft ? startingNft.highest_offer_from : null
     };
 
     newNFTS.push(nft);

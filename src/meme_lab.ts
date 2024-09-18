@@ -246,6 +246,7 @@ async function processNFTs(
         metadata: fullMetadata,
         meme_references: memeReferences,
         floor_price: startingNft ? startingNft.floor_price : 0,
+        floor_price_from: startingNft ? startingNft.floor_price_from : null,
         market_cap: startingNft ? startingNft.market_cap : 0,
         total_volume_last_24_hours: startingNft
           ? startingNft.total_volume_last_24_hours
@@ -257,7 +258,8 @@ async function processNFTs(
           ? startingNft.total_volume_last_1_month
           : 0,
         total_volume: startingNft ? startingNft.total_volume : 0,
-        highest_offer: startingNft ? startingNft.highest_offer : 0
+        highest_offer: startingNft ? startingNft.highest_offer : 0,
+        highest_offer_from: startingNft ? startingNft.highest_offer_from : null
       };
 
       newNFTS.push(nft);
@@ -309,8 +311,10 @@ export const findNFTs = async (
     }
     if (changed || reset) {
       n.floor_price = m ? m.floor_price : n.floor_price;
+      n.floor_price_from = m ? m.floor_price_from : n.floor_price_from;
       n.market_cap = m ? m.market_cap : n.market_cap;
       n.highest_offer = m ? m.highest_offer : n.highest_offer;
+      n.highest_offer_from = m ? m.highest_offer_from : n.highest_offer_from;
       delta.push(n);
     }
   });
