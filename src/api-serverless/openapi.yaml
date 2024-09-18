@@ -28,12 +28,12 @@ paths:
           schema:
             type: boolean
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NonceResponse'
+                $ref: "#/components/schemas/NonceResponse"
   /auth/login:
     post:
       tags:
@@ -52,16 +52,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LoginRequest'
+              $ref: "#/components/schemas/LoginRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/LoginResponse'
-        '400':
-          description: 'Invalid request'
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          description: "Invalid request"
 
   /nfts:
     get:
@@ -116,7 +116,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/NftsPage'
+                  $ref: "#/components/schemas/NftsPage"
 
   /owners-balances:
     get:
@@ -152,14 +152,14 @@ paths:
               - ASC
               - DESC
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/OwnerBalance'
+                  $ref: "#/components/schemas/OwnerBalance"
 
   /owners-balances/consolidation/{consolidation_key}:
     get:
@@ -174,13 +174,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/OwnerBalance'
-        '404':
+                $ref: "#/components/schemas/OwnerBalance"
+        "404":
           description: Owner Balance for consolidation key not found
 
   /owners-balances/consolidation/{consolidation_key}/memes:
@@ -196,15 +196,15 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/OwnerBalanceMemes'
-        '404':
+                  $ref: "#/components/schemas/OwnerBalanceMemes"
+        "404":
           description: Memes Owner Balance for consolidation key not found
 
   /aggregated-activity:
@@ -296,14 +296,14 @@ paths:
               - MemeLab
               - NextGen
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/AggregatedActivityPage'
+                  $ref: "#/components/schemas/AggregatedActivityPage"
 
   /aggregated-activity/consolidation/{consolidation_key}:
     get:
@@ -318,13 +318,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AggregatedActivity'
-        '404':
+                $ref: "#/components/schemas/AggregatedActivity"
+        "404":
           description: Aggregated Activity for consolidation key not found
 
   /aggregated-activity/consolidation/{consolidation_key}/memes:
@@ -340,15 +340,15 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/AggregatedActivityMemes'
-        '404':
+                  $ref: "#/components/schemas/AggregatedActivityMemes"
+        "404":
           description: Memes Aggregated Activity for consolidation key not found
 
   /notifications:
@@ -375,12 +375,12 @@ paths:
             type: number
             format: int64
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/NotificationsResponse'
+                $ref: "#/components/schemas/NotificationsResponse"
 
   /notifications/{id}/read:
     post:
@@ -396,7 +396,7 @@ paths:
             type: string
           description: Notification ID or string "all" to mark all notifications as read
       responses:
-        '201':
+        "201":
           description: successful operation
 
   /identity-subscriptions/outgoing/{target_type}:
@@ -433,14 +433,14 @@ paths:
             default: 1
             minimum: 1
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/OutgoingIdentitySubscriptionsPage'
+                  $ref: "#/components/schemas/OutgoingIdentitySubscriptionsPage"
 
   /identity-subscriptions/incoming/{target_type}/{target_id}:
     get:
@@ -481,14 +481,14 @@ paths:
             default: 1
             minimum: 1
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/IncomingIdentitySubscriptionsPage'
+                  $ref: "#/components/schemas/IncomingIdentitySubscriptionsPage"
 
   /identities/{id}/subscriptions:
     get:
@@ -503,13 +503,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IdentitySubscriptionActions'
-        '404':
+                $ref: "#/components/schemas/IdentitySubscriptionActions"
+        "404":
           description: Identity not found
     post:
       tags:
@@ -527,15 +527,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/IdentitySubscriptionActions'
+              $ref: "#/components/schemas/IdentitySubscriptionActions"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IdentitySubscriptionActions'
-        '404':
+                $ref: "#/components/schemas/IdentitySubscriptionActions"
+        "404":
           description: Identity not found
     delete:
       tags:
@@ -553,14 +553,14 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/IdentitySubscriptionActions'
+              $ref: "#/components/schemas/IdentitySubscriptionActions"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/IdentitySubscriptionActions'
+                $ref: "#/components/schemas/IdentitySubscriptionActions"
 
   /profiles/{identity}/proxies:
     get:
@@ -575,15 +575,15 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ProfileProxy'
-        '404':
+                  $ref: "#/components/schemas/ProfileProxy"
+        "404":
           description: Profile not found
   /profiles/{identity}/proxies/received:
     get:
@@ -598,15 +598,15 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ProfileProxy'
-        '404':
+                  $ref: "#/components/schemas/ProfileProxy"
+        "404":
           description: Profile not found
   /profiles/{identity}/proxies/granted:
     get:
@@ -621,15 +621,15 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ProfileProxy'
-        '404':
+                  $ref: "#/components/schemas/ProfileProxy"
+        "404":
           description: Profile not found
   /profiles/{identity}/rep/rating:
     post:
@@ -648,16 +648,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ChangeProfileRepRating'
+              $ref: "#/components/schemas/ChangeProfileRepRating"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ChangeProfileRepRatingResponse'
-        '400':
-          description: 'Invalid request'
+                $ref: "#/components/schemas/ChangeProfileRepRatingResponse"
+        "400":
+          description: "Invalid request"
     get:
       tags:
         - ProfileREP
@@ -680,13 +680,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RepRating'
-        '404':
+                $ref: "#/components/schemas/RepRating"
+        "404":
           description: Profile not found
   /profiles/{identity}/rep/ratings/by-rater:
     get:
@@ -740,13 +740,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RatingWithProfileInfoAndLevelPage'
-        '404':
+                $ref: "#/components/schemas/RatingWithProfileInfoAndLevelPage"
+        "404":
           description: Profile not found
   /profiles/{identity}/cic/rating:
     post:
@@ -765,16 +765,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ChangeProfileCicRating'
+              $ref: "#/components/schemas/ChangeProfileCicRating"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ChangeProfileCicRatingResponse'
-        '400':
-          description: 'Invalid request'
+                $ref: "#/components/schemas/ChangeProfileCicRatingResponse"
+        "400":
+          description: "Invalid request"
 
   /ratings:
     post:
@@ -787,16 +787,16 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/BulkRateRequest'
+              $ref: "#/components/schemas/BulkRateRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BulkRateResponse'
-        '400':
-          description: 'Invalid request'
+                $ref: "#/components/schemas/BulkRateResponse"
+        "400":
+          description: "Invalid request"
 
   /ratings/credit:
     get:
@@ -816,12 +816,12 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AvailableRatingCredit'
+                $ref: "#/components/schemas/AvailableRatingCredit"
 
   /profiles/{identity}/repcic/ratings/by-rater:
     get:
@@ -870,13 +870,13 @@ paths:
               - last_modified
               - rating
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RatingWithProfileInfoAndLevelPage'
-        '404':
+                $ref: "#/components/schemas/RatingWithProfileInfoAndLevelPage"
+        "404":
           description: Profile not found
   /drops:
     get:
@@ -926,35 +926,35 @@ paths:
           schema:
             type: boolean
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Drop'
+                  $ref: "#/components/schemas/Drop"
     post:
       tags:
         - Drops
       summary: Create a drop
-      description: 'Requires the user to be authenticated'
+      description: "Requires the user to be authenticated"
       operationId: createDrop
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateDropRequest'
+              $ref: "#/components/schemas/CreateDropRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Drop'
-        '400':
-          description: 'Invalid request'
+                $ref: "#/components/schemas/Drop"
+        "400":
+          description: "Invalid request"
   /drops/{dropId}:
     get:
       tags:
@@ -968,13 +968,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Drop'
-        '404':
+                $ref: "#/components/schemas/Drop"
+        "404":
           description: Drop not found
     post:
       tags:
@@ -992,18 +992,18 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateDropRequest'
+              $ref: "#/components/schemas/UpdateDropRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Drop'
-        '404':
+                $ref: "#/components/schemas/Drop"
+        "404":
           description: Drop not found
-        '400':
-          description: 'Invalid request'
+        "400":
+          description: "Invalid request"
     delete:
       tags:
         - Drops
@@ -1016,9 +1016,9 @@ paths:
           schema:
             type: string
       responses:
-        '201':
+        "201":
           description: successful operation
-        '404':
+        "404":
           description: Drop not found
 
   /drops/{dropId}/ratings:
@@ -1026,7 +1026,7 @@ paths:
       tags:
         - Drops
       summary: Rate a drop
-      description: 'Requires the user to be authenticated'
+      description: "Requires the user to be authenticated"
       operationId: rateDrop
       parameters:
         - name: dropId
@@ -1039,18 +1039,18 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DropRatingRequest'
+              $ref: "#/components/schemas/DropRatingRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Drop'
-        '404':
+                $ref: "#/components/schemas/Drop"
+        "404":
           description: Drop not found
-        '400':
-          description: 'Invalid request'
+        "400":
+          description: "Invalid request"
   /drops/{dropId}/subscriptions:
     post:
       tags:
@@ -1068,15 +1068,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DropSubscriptionActions'
+              $ref: "#/components/schemas/DropSubscriptionActions"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DropSubscriptionActions'
-        '404':
+                $ref: "#/components/schemas/DropSubscriptionActions"
+        "404":
           description: Wave not found
     delete:
       tags:
@@ -1094,15 +1094,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DropSubscriptionActions'
+              $ref: "#/components/schemas/DropSubscriptionActions"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DropSubscriptionActions'
-        '404':
+                $ref: "#/components/schemas/DropSubscriptionActions"
+        "404":
           description: Wave not found
   /drops/{dropId}/parts/{dropPartId}/replies:
     get:
@@ -1157,13 +1157,13 @@ paths:
             minimum: 1
             maximum: 50
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DropsPage'
-        '404':
+                $ref: "#/components/schemas/DropsPage"
+        "404":
           description: Drop not found
 
   /drop-media/prep:
@@ -1171,23 +1171,23 @@ paths:
       tags:
         - Drops
       summary: Create S3 URL for drop media upload
-      description: 'Requires the user to be authenticated'
+      description: "Requires the user to be authenticated"
       operationId: createDropMediaUrl
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateMediaUploadUrlRequest'
+              $ref: "#/components/schemas/CreateMediaUploadUrlRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CreateMediaUrlResponse'
-        '400':
-          description: 'Invalid request'
+                $ref: "#/components/schemas/CreateMediaUrlResponse"
+        "400":
+          description: "Invalid request"
   /proxies:
     post:
       tags:
@@ -1200,15 +1200,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateNewProfileProxy'
+              $ref: "#/components/schemas/CreateNewProfileProxy"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProfileProxy'
-        '400':
+                $ref: "#/components/schemas/ProfileProxy"
+        "400":
           description: Invalid request
   /proxies/{proxyId}:
     get:
@@ -1223,13 +1223,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProfileProxy'
-        '404':
+                $ref: "#/components/schemas/ProfileProxy"
+        "404":
           description: Proxy not found
   /proxies/{proxyId}/actions:
     post:
@@ -1250,21 +1250,21 @@ paths:
           application/json:
             schema:
               anyOf:
-                - $ref: '#/components/schemas/CreateNewProfileProxyAllocateRepAction'
-                - $ref: '#/components/schemas/CreateNewProfileProxyAllocateCicAction'
-                - $ref: '#/components/schemas/CreateNewProfileProxyCreateWaveAction'
-                - $ref: '#/components/schemas/CreateNewProfileProxyReadWaveAction'
-                - $ref: '#/components/schemas/CreateNewProfileProxyCreateWaveParticipationDropAction'
+                - $ref: "#/components/schemas/CreateNewProfileProxyAllocateRepAction"
+                - $ref: "#/components/schemas/CreateNewProfileProxyAllocateCicAction"
+                - $ref: "#/components/schemas/CreateNewProfileProxyCreateWaveAction"
+                - $ref: "#/components/schemas/CreateNewProfileProxyReadWaveAction"
+                - $ref: "#/components/schemas/CreateNewProfileProxyCreateWaveParticipationDropAction"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ProfileProxyAction'
-        '404':
+                $ref: "#/components/schemas/ProfileProxyAction"
+        "404":
           description: Proxy not found
-        '400':
+        "400":
           description: Invalid request
 
   /proxies/{proxyId}/actions/{actionId}/acceptance:
@@ -1301,11 +1301,11 @@ paths:
                     - REVOKE
                     - RESTORE
       responses:
-        '201':
+        "201":
           description: successful operation
-        '404':
+        "404":
           description: Proxy or action not found
-        '400':
+        "400":
           description: Invalid request
 
   /proxies/{proxyId}/actions/{actionId}:
@@ -1330,13 +1330,13 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateProxyActionRequest'
+              $ref: "#/components/schemas/UpdateProxyActionRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
-        '404':
+        "404":
           description: Proxy or action not found
-        '400':
+        "400":
           description: Invalid request
 
   /wave-media/prep:
@@ -1344,23 +1344,23 @@ paths:
       tags:
         - Waves
       summary: Create S3 URL for wave PFP
-      description: 'Requires the user to be authenticated'
+      description: "Requires the user to be authenticated"
       operationId: createWaveMediaUrl
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateMediaUploadUrlRequest'
+              $ref: "#/components/schemas/CreateMediaUploadUrlRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CreateMediaUrlResponse'
-        '400':
-          description: 'Invalid request'
+                $ref: "#/components/schemas/CreateMediaUrlResponse"
+        "400":
+          description: "Invalid request"
 
   /waves-overview:
     get:
@@ -1392,16 +1392,16 @@ paths:
           description: Type of overview
           required: true
           schema:
-            $ref: '#/components/schemas/WavesOverviewType'
+            $ref: "#/components/schemas/WavesOverviewType"
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Wave'
+                  $ref: "#/components/schemas/Wave"
 
   /waves:
     get:
@@ -1445,14 +1445,14 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Wave'
+                  $ref: "#/components/schemas/Wave"
     post:
       tags:
         - Waves
@@ -1464,15 +1464,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateNewWave'
+              $ref: "#/components/schemas/CreateNewWave"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Wave'
-        '400':
+                $ref: "#/components/schemas/Wave"
+        "400":
           description: Invalid request
 
   /waves/{id}:
@@ -1488,13 +1488,13 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Wave'
-        '404':
+                $ref: "#/components/schemas/Wave"
+        "404":
           description: Wave not found
     delete:
       tags:
@@ -1508,9 +1508,9 @@ paths:
           schema:
             type: string
       responses:
-        '201':
+        "201":
           description: successful operation
-        '404':
+        "404":
           description: Wave not found
     post:
       tags:
@@ -1528,18 +1528,18 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/UpdateWaveRequest'
+              $ref: "#/components/schemas/UpdateWaveRequest"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Wave'
-        '404':
+                $ref: "#/components/schemas/Wave"
+        "404":
           description: Drop not found
-        '400':
-          description: 'Invalid request'
+        "400":
+          description: "Invalid request"
 
   /waves/{id}/drops:
     get:
@@ -1574,12 +1574,12 @@ paths:
             type: integer
             format: int64
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WaveDropsFeed'
+                $ref: "#/components/schemas/WaveDropsFeed"
 
   /waves/{id}/subscriptions:
     post:
@@ -1598,15 +1598,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/WaveSubscriptionActions'
+              $ref: "#/components/schemas/WaveSubscriptionActions"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WaveSubscriptionActions'
-        '404':
+                $ref: "#/components/schemas/WaveSubscriptionActions"
+        "404":
           description: Wave not found
     delete:
       tags:
@@ -1624,15 +1624,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/WaveSubscriptionActions'
+              $ref: "#/components/schemas/WaveSubscriptionActions"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WaveSubscriptionActions'
-        '404':
+                $ref: "#/components/schemas/WaveSubscriptionActions"
+        "404":
           description: Wave not found
 
   /feed:
@@ -1650,14 +1650,14 @@ paths:
             type: integer
             format: int64
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/FeedItem'
+                  $ref: "#/components/schemas/FeedItem"
 
   /groups:
     get:
@@ -1686,14 +1686,14 @@ paths:
             type: number
             format: int64
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/GroupFull'
+                  $ref: "#/components/schemas/GroupFull"
     post:
       tags:
         - Groups
@@ -1704,15 +1704,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateGroup'
+              $ref: "#/components/schemas/CreateGroup"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GroupFull'
-        '400':
+                $ref: "#/components/schemas/GroupFull"
+        "400":
           description: Invalid request
   /groups/{id}/visible:
     post:
@@ -1731,17 +1731,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ChangeGroupVisibility'
+              $ref: "#/components/schemas/ChangeGroupVisibility"
       responses:
-        '201':
+        "201":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GroupFull'
-        '404':
+                $ref: "#/components/schemas/GroupFull"
+        "404":
           description: Group not found
-        '400':
+        "400":
           description: Invalid request
   /groups/{id}/identity_groups/{identity_group_id}:
     get:
@@ -1761,7 +1761,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
@@ -1769,7 +1769,7 @@ paths:
                 type: array
                 items:
                   type: string
-        '404':
+        "404":
           description: Group not found
 
   /blocks:
@@ -1792,12 +1792,12 @@ paths:
             type: integer
             format: int64
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BlocksPage'
+                $ref: "#/components/schemas/BlocksPage"
 
   /uploads:
     get:
@@ -1829,14 +1829,14 @@ paths:
           required: false
           schema:
             type: string
-            format: 'date-time'
+            format: "date-time"
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UploadsPage'
+                $ref: "#/components/schemas/UploadsPage"
 
   /consolidated_uploads:
     get:
@@ -1868,14 +1868,14 @@ paths:
           required: false
           schema:
             type: string
-            format: 'date-time'
+            format: "date-time"
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UploadsPage'
+                $ref: "#/components/schemas/UploadsPage"
 
   /settings:
     get:
@@ -1884,12 +1884,12 @@ paths:
       summary: Seize settings
       operationId: getSettings
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SeizeSettings'
+                $ref: "#/components/schemas/SeizeSettings"
   /artists:
     get:
       tags:
@@ -1916,12 +1916,12 @@ paths:
             type: integer
             format: int64
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ArtistsPage'
+                $ref: "#/components/schemas/ArtistsPage"
   /memes/artists_names:
     get:
       tags:
@@ -1929,14 +1929,14 @@ paths:
       summary: meme artists names
       operationId: getMemeArtistsNames
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ArtistNameItem'
+                  $ref: "#/components/schemas/ArtistNameItem"
   /memelab/artists_names:
     get:
       tags:
@@ -1944,14 +1944,14 @@ paths:
       summary: memelab artists names
       operationId: getMemelabArtistsNames
       responses:
-        '200':
+        "200":
           description: successful operation
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/ArtistNameItem'
+                  $ref: "#/components/schemas/ArtistNameItem"
 
 components:
   securitySchemes:
@@ -1996,7 +1996,7 @@ components:
         skipped:
           type: array
           items:
-            $ref: '#/components/schemas/BulkRateSkippedIdentity'
+            $ref: "#/components/schemas/BulkRateSkippedIdentity"
 
     BulkRateSkippedIdentity:
       type: object
@@ -2018,13 +2018,13 @@ components:
         - target_wallet_addresses
       properties:
         matter:
-          $ref: '#/components/schemas/RateMatter'
+          $ref: "#/components/schemas/RateMatter"
         category:
           type: string
           maxLength: 100
           nullable: true
           pattern: "^[a-zA-Z0-9?!,.'() ]$"
-          description: 'Category of the rating must be set when matter is REP and null if matter is CIC'
+          description: "Category of the rating must be set when matter is REP and null if matter is CIC"
         amount_to_add:
           type: number
           format: int64
@@ -2035,8 +2035,8 @@ components:
             type: string
             minLength: 1
             maxLength: 100
-            pattern: '0x[a-fA-F0-9]{40}'
-            description: 'Wallet address of the target profile'
+            pattern: "0x[a-fA-F0-9]{40}"
+            description: "Wallet address of the target profile"
 
     RateMatter:
       type: string
@@ -2081,24 +2081,24 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/PageBase'
+        - $ref: "#/components/schemas/PageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/RatingWithProfileInfoAndLevel'
+            $ref: "#/components/schemas/RatingWithProfileInfoAndLevel"
 
     DropsPage:
       type: object
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/PageBase'
+        - $ref: "#/components/schemas/PageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/Drop'
+            $ref: "#/components/schemas/Drop"
 
     Group:
       type: object
@@ -2110,7 +2110,7 @@ components:
         name:
           type: string
         author:
-          $ref: '#/components/schemas/ProfileMin'
+          $ref: "#/components/schemas/ProfileMin"
         created_at:
           type: number
           format: int64
@@ -2133,12 +2133,12 @@ components:
         name:
           type: string
         group:
-          $ref: '#/components/schemas/GroupDescription'
+          $ref: "#/components/schemas/GroupDescription"
         created_at:
           type: number
           format: int64
         created_by:
-          $ref: '#/components/schemas/ProfileMin'
+          $ref: "#/components/schemas/ProfileMin"
         visible:
           type: boolean
         is_private:
@@ -2158,17 +2158,17 @@ components:
         - excluded_identity_group_identities_count
       properties:
         tdh:
-          $ref: '#/components/schemas/GroupTdhFilter'
+          $ref: "#/components/schemas/GroupTdhFilter"
         rep:
-          $ref: '#/components/schemas/GroupRepFilter'
+          $ref: "#/components/schemas/GroupRepFilter"
         cic:
-          $ref: '#/components/schemas/GroupCicFilter'
+          $ref: "#/components/schemas/GroupCicFilter"
         level:
-          $ref: '#/components/schemas/GroupLevelFilter'
+          $ref: "#/components/schemas/GroupLevelFilter"
         owns_nfts:
           type: array
           items:
-            $ref: '#/components/schemas/GroupOwnsNft'
+            $ref: "#/components/schemas/GroupOwnsNft"
         identity_group_id:
           type: string
           nullable: true
@@ -2196,31 +2196,31 @@ components:
         - excluded_identity_addresses
       properties:
         tdh:
-          $ref: '#/components/schemas/GroupTdhFilter'
+          $ref: "#/components/schemas/GroupTdhFilter"
         rep:
-          $ref: '#/components/schemas/GroupRepFilter'
+          $ref: "#/components/schemas/GroupRepFilter"
         cic:
-          $ref: '#/components/schemas/GroupCicFilter'
+          $ref: "#/components/schemas/GroupCicFilter"
         level:
-          $ref: '#/components/schemas/GroupLevelFilter'
+          $ref: "#/components/schemas/GroupLevelFilter"
         owns_nfts:
           type: array
           items:
-            $ref: '#/components/schemas/GroupOwnsNft'
+            $ref: "#/components/schemas/GroupOwnsNft"
         identity_addresses:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: array
               items:
                 type: string
-          example: ['0x1234567890123456789012345678901234567890']
+          example: ["0x1234567890123456789012345678901234567890"]
         excluded_identity_addresses:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: array
               items:
                 type: string
-          example: ['0x1234567890123456789012345678901234567890']
+          example: ["0x1234567890123456789012345678901234567890"]
 
     GroupOwnsNft:
       type: object
@@ -2279,10 +2279,10 @@ components:
           maxLength: 200
           nullable: true
         direction:
-          example: 'RECEIVED'
+          example: "RECEIVED"
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/GroupFilterDirection'
+            - type: "null"
+            - $ref: "#/components/schemas/GroupFilterDirection"
 
     GroupRepFilter:
       type: object
@@ -2312,10 +2312,10 @@ components:
           maxLength: 200
           nullable: true
         direction:
-          example: 'RECEIVED'
+          example: "RECEIVED"
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/GroupFilterDirection'
+            - type: "null"
+            - $ref: "#/components/schemas/GroupFilterDirection"
 
     GroupLevelFilter:
       type: object
@@ -2347,7 +2347,7 @@ components:
         name:
           type: string
         group:
-          $ref: '#/components/schemas/CreateGroupDescription'
+          $ref: "#/components/schemas/CreateGroupDescription"
         is_private:
           type: boolean
 
@@ -2424,9 +2424,9 @@ components:
           type: number
           format: int64
         reply_to:
-          $ref: '#/components/schemas/ReplyToDropResponse'
+          $ref: "#/components/schemas/ReplyToDropResponse"
         author:
-          $ref: '#/components/schemas/ProfileMin'
+          $ref: "#/components/schemas/ProfileMin"
         created_at:
           description: Time when the drop was created in milliseconds since 1-1-1970 00:00:00.0 UTC
           type: number
@@ -2443,41 +2443,41 @@ components:
         parts:
           type: array
           items:
-            $ref: '#/components/schemas/DropPart'
+            $ref: "#/components/schemas/DropPart"
         parts_count:
-          description: 'Number of drops in the storm'
+          description: "Number of drops in the storm"
           type: number
           format: int64
         referenced_nfts:
           type: array
           items:
-            $ref: '#/components/schemas/DropReferencedNFT'
+            $ref: "#/components/schemas/DropReferencedNFT"
         mentioned_users:
           type: array
           items:
-            $ref: '#/components/schemas/DropMentionedUser'
+            $ref: "#/components/schemas/DropMentionedUser"
         metadata:
           type: array
           items:
-            $ref: '#/components/schemas/DropMetadata'
+            $ref: "#/components/schemas/DropMetadata"
         rating:
           type: number
           format: int64
         top_raters:
           type: array
           items:
-            $ref: '#/components/schemas/DropRater'
+            $ref: "#/components/schemas/DropRater"
         raters_count:
           type: number
           format: int64
         context_profile_context:
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/DropContextProfileContext'
+            - type: "null"
+            - $ref: "#/components/schemas/DropContextProfileContext"
         subscribed_actions:
           type: array
           items:
-            $ref: '#/components/schemas/DropSubscriptionTargetAction'
+            $ref: "#/components/schemas/DropSubscriptionTargetAction"
 
     Drop:
       type: object
@@ -2507,11 +2507,11 @@ components:
           type: number
           format: int64
         wave:
-          $ref: '#/components/schemas/WaveMin'
+          $ref: "#/components/schemas/WaveMin"
         reply_to:
-          $ref: '#/components/schemas/ReplyToDropResponse'
+          $ref: "#/components/schemas/ReplyToDropResponse"
         author:
-          $ref: '#/components/schemas/ProfileMin'
+          $ref: "#/components/schemas/ProfileMin"
         created_at:
           description: Time when the drop was created in milliseconds since 1-1-1970 00:00:00.0 UTC
           type: number
@@ -2528,41 +2528,41 @@ components:
         parts:
           type: array
           items:
-            $ref: '#/components/schemas/DropPart'
+            $ref: "#/components/schemas/DropPart"
         parts_count:
-          description: 'Number of drops in the storm'
+          description: "Number of drops in the storm"
           type: number
           format: int64
         referenced_nfts:
           type: array
           items:
-            $ref: '#/components/schemas/DropReferencedNFT'
+            $ref: "#/components/schemas/DropReferencedNFT"
         mentioned_users:
           type: array
           items:
-            $ref: '#/components/schemas/DropMentionedUser'
+            $ref: "#/components/schemas/DropMentionedUser"
         metadata:
           type: array
           items:
-            $ref: '#/components/schemas/DropMetadata'
+            $ref: "#/components/schemas/DropMetadata"
         rating:
           type: number
           format: int64
         top_raters:
           type: array
           items:
-            $ref: '#/components/schemas/DropRater'
+            $ref: "#/components/schemas/DropRater"
         raters_count:
           type: number
           format: int64
         context_profile_context:
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/DropContextProfileContext'
+            - type: "null"
+            - $ref: "#/components/schemas/DropContextProfileContext"
         subscribed_actions:
           type: array
           items:
-            $ref: '#/components/schemas/DropSubscriptionTargetAction'
+            $ref: "#/components/schemas/DropSubscriptionTargetAction"
 
     QuotedDrop:
       type: object
@@ -2626,7 +2626,7 @@ components:
         - content
       properties:
         part_id:
-          description: 'Which drop in the storm is this drop'
+          description: "Which drop in the storm is this drop"
           type: number
           format: int64
         content:
@@ -2636,11 +2636,11 @@ components:
         media:
           type: array
           items:
-            $ref: '#/components/schemas/DropMedia'
+            $ref: "#/components/schemas/DropMedia"
         quoted_drop:
           anyOf:
-            - $ref: '#/components/schemas/QuotedDropResponse'
-            - type: 'null'
+            - $ref: "#/components/schemas/QuotedDropResponse"
+            - type: "null"
         replies_count:
           type: number
           format: int64
@@ -2649,8 +2649,8 @@ components:
           format: int64
         context_profile_context:
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/DropPartContextProfileContext'
+            - type: "null"
+            - $ref: "#/components/schemas/DropPartContextProfileContext"
     ProfileMin:
       type: object
       required:
@@ -2695,7 +2695,7 @@ components:
         subscribed_actions:
           type: array
           items:
-            $ref: '#/components/schemas/IdentitySubscriptionTargetAction'
+            $ref: "#/components/schemas/IdentitySubscriptionTargetAction"
         archived:
           type: boolean
 
@@ -2753,7 +2753,7 @@ components:
         - rating
       properties:
         profile:
-          $ref: '#/components/schemas/ProfileMin'
+          $ref: "#/components/schemas/ProfileMin"
         rating:
           type: number
           format: int64
@@ -2804,12 +2804,12 @@ components:
           nullable: true
         quoted_drop:
           anyOf:
-            - $ref: '#/components/schemas/QuotedDrop'
-            - type: 'null'
+            - $ref: "#/components/schemas/QuotedDrop"
+            - type: "null"
         media:
           type: array
           items:
-            $ref: '#/components/schemas/DropMedia'
+            $ref: "#/components/schemas/DropMedia"
 
     CreateWaveDropRequest:
       type: object
@@ -2827,36 +2827,36 @@ components:
           type: array
           minItems: 1
           items:
-            $ref: '#/components/schemas/CreateDropPart'
+            $ref: "#/components/schemas/CreateDropPart"
         referenced_nfts:
           type: array
           items:
-            $ref: '#/components/schemas/DropReferencedNFT'
+            $ref: "#/components/schemas/DropReferencedNFT"
         mentioned_users:
           type: array
           items:
-            $ref: '#/components/schemas/DropMentionedUser'
+            $ref: "#/components/schemas/DropMentionedUser"
         metadata:
           type: array
           items:
-            $ref: '#/components/schemas/DropMetadata'
+            $ref: "#/components/schemas/DropMetadata"
 
     CreateDropRequest:
       type: object
       required:
         - wave_id
       allOf:
-        - $ref: '#/components/schemas/CreateWaveDropRequest'
+        - $ref: "#/components/schemas/CreateWaveDropRequest"
       properties:
         wave_id:
           type: string
         reply_to:
-          $ref: '#/components/schemas/ReplyToDrop'
+          $ref: "#/components/schemas/ReplyToDrop"
 
     UpdateDropRequest:
       type: object
       allOf:
-        - $ref: '#/components/schemas/CreateWaveDropRequest'
+        - $ref: "#/components/schemas/CreateWaveDropRequest"
 
     DropMedia:
       type: object
@@ -2890,7 +2890,7 @@ components:
         - group_id
       properties:
         group_id:
-          description: 'If null, everyone is included'
+          description: "If null, everyone is included"
           type: string
           nullable: true
 
@@ -2902,10 +2902,10 @@ components:
         - group
       properties:
         group:
-          description: 'If null, everyone is included'
+          description: "If null, everyone is included"
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/Group'
+            - type: "null"
+            - $ref: "#/components/schemas/Group"
 
     WaveCreditType:
       type: string
@@ -2950,7 +2950,7 @@ components:
           description: Metadata key
           type: string
         type:
-          $ref: '#/components/schemas/WaveMetadataType'
+          $ref: "#/components/schemas/WaveMetadataType"
 
     CreateNewWaveVotingConfig:
       type: object
@@ -2963,26 +2963,26 @@ components:
         - creditor_id
       properties:
         scope:
-          $ref: '#/components/schemas/CreateNewWaveScope'
+          $ref: "#/components/schemas/CreateNewWaveScope"
         credit_type:
-          $ref: '#/components/schemas/WaveCreditType'
+          $ref: "#/components/schemas/WaveCreditType"
         credit_scope:
-          $ref: '#/components/schemas/WaveCreditScope'
+          $ref: "#/components/schemas/WaveCreditScope"
         credit_category:
-          description: 'Only relevant when credit_type=REP.
+          description: "Only relevant when credit_type=REP.
             The REP category which is usable as credit.
-            If not set then all categories will be usable as voting credits.'
+            If not set then all categories will be usable as voting credits."
           type: string
           nullable: true
         creditor_id:
-          description: 'Only relevant when credit_type=REP'
+          description: "Only relevant when credit_type=REP"
           type: string
           nullable: true
         signature_required:
           description: If true then the votes must be signed by voters.
           type: boolean
         period:
-          $ref: '#/components/schemas/IntRange'
+          $ref: "#/components/schemas/IntRange"
 
     WaveVotingConfig:
       type: object
@@ -2996,27 +2996,27 @@ components:
         - authenticated_user_eligible
       properties:
         scope:
-          $ref: '#/components/schemas/WaveScope'
+          $ref: "#/components/schemas/WaveScope"
         credit_type:
-          $ref: '#/components/schemas/WaveCreditType'
+          $ref: "#/components/schemas/WaveCreditType"
         credit_scope:
-          $ref: '#/components/schemas/WaveCreditScope'
+          $ref: "#/components/schemas/WaveCreditScope"
         credit_category:
-          description: 'Only relevant when credit_type=REP.
+          description: "Only relevant when credit_type=REP.
             The REP category which is usable as credit.
-            If not set then all categories will be usable as voting credits.'
+            If not set then all categories will be usable as voting credits."
           type: string
           nullable: true
         creditor:
-          description: 'Only relevant when credit_type=REP'
+          description: "Only relevant when credit_type=REP"
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/ProfileMin'
+            - type: "null"
+            - $ref: "#/components/schemas/ProfileMin"
         signature_required:
           description: If true then the votes must be signed by voters.
           type: boolean
         period:
-          $ref: '#/components/schemas/IntRange'
+          $ref: "#/components/schemas/IntRange"
         authenticated_user_eligible:
           type: boolean
 
@@ -3026,7 +3026,7 @@ components:
         - scope
       properties:
         scope:
-          $ref: '#/components/schemas/WaveScope'
+          $ref: "#/components/schemas/WaveScope"
 
     CreateNewWaveVisibilityConfig:
       type: object
@@ -3034,7 +3034,7 @@ components:
         - scope
       properties:
         scope:
-          $ref: '#/components/schemas/CreateNewWaveScope'
+          $ref: "#/components/schemas/CreateNewWaveScope"
 
     WaveParticipationConfig:
       type: object
@@ -3047,9 +3047,9 @@ components:
         - authenticated_user_eligible
       properties:
         scope:
-          $ref: '#/components/schemas/WaveScope'
+          $ref: "#/components/schemas/WaveScope"
         no_of_applications_allowed_per_participant:
-          description: 'The number of applications allowed per participant. Infinite if omitted.'
+          description: "The number of applications allowed per participant. Infinite if omitted."
           type: integer
           format: int64
           minimum: 1
@@ -3060,16 +3060,16 @@ components:
             Empty array if nothing is required.
           type: array
           items:
-            $ref: '#/components/schemas/WaveRequiredMetadata'
+            $ref: "#/components/schemas/WaveRequiredMetadata"
         required_media:
           type: array
           items:
-            $ref: '#/components/schemas/WaveParticipationRequirement'
+            $ref: "#/components/schemas/WaveParticipationRequirement"
         signature_required:
           description: If true then the votes must be signed by voters.
           type: boolean
         period:
-          $ref: '#/components/schemas/IntRange'
+          $ref: "#/components/schemas/IntRange"
         authenticated_user_eligible:
           type: boolean
 
@@ -3083,9 +3083,9 @@ components:
         - required_media
       properties:
         scope:
-          $ref: '#/components/schemas/CreateNewWaveScope'
+          $ref: "#/components/schemas/CreateNewWaveScope"
         no_of_applications_allowed_per_participant:
-          description: 'The number of applications allowed per participant. Infinite if omitted.'
+          description: "The number of applications allowed per participant. Infinite if omitted."
           type: integer
           format: int64
           nullable: true
@@ -3093,19 +3093,19 @@ components:
         required_media:
           type: array
           items:
-            $ref: '#/components/schemas/WaveParticipationRequirement'
+            $ref: "#/components/schemas/WaveParticipationRequirement"
         required_metadata:
           description: |
             The metadata that must be provided by the participant. 
             Empty array if nothing is required.
           type: array
           items:
-            $ref: '#/components/schemas/WaveRequiredMetadata'
+            $ref: "#/components/schemas/WaveRequiredMetadata"
         signature_required:
           description: If true then the votes must be signed by voters.
           type: boolean
         period:
-          $ref: '#/components/schemas/IntRange'
+          $ref: "#/components/schemas/IntRange"
 
     WaveConfig:
       type: object
@@ -3119,12 +3119,12 @@ components:
         - authenticated_user_eligible_for_admin
       properties:
         type:
-          $ref: '#/components/schemas/WaveType'
+          $ref: "#/components/schemas/WaveType"
         winning_thresholds:
           description: Drops which rate tally ends up in this range will win. Must be set if and only if type is APPROVE
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/IntRange'
+            - type: "null"
+            - $ref: "#/components/schemas/IntRange"
         max_winners:
           description: This amount of top rated drops will win. Must be set if and only if type is RANK
           type: integer
@@ -3138,12 +3138,12 @@ components:
           format: int64
           minimum: 1
         admin_group:
-          $ref: '#/components/schemas/WaveScope'
+          $ref: "#/components/schemas/WaveScope"
         period:
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/IntRange'
-          example: { 'min': 1719850339996, 'max': 1719850339996 }
+            - type: "null"
+            - $ref: "#/components/schemas/IntRange"
+          example: { "min": 1719850339996, "max": 1719850339996 }
         authenticated_user_eligible_for_admin:
           type: boolean
 
@@ -3158,12 +3158,12 @@ components:
         - admin_group
       properties:
         type:
-          $ref: '#/components/schemas/WaveType'
+          $ref: "#/components/schemas/WaveType"
         winning_thresholds:
           description: Drops which rate tally ends up in this range will win. Must be set if and only if type is APPROVE
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/IntRange'
+            - type: "null"
+            - $ref: "#/components/schemas/IntRange"
         max_winners:
           description: This amount of top rated drops will win. Must be set if and only if type is RANK
           type: integer
@@ -3178,13 +3178,13 @@ components:
           minimum: 1
         admin_group:
           oneOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/CreateNewWaveScope'
+            - type: "null"
+            - $ref: "#/components/schemas/CreateNewWaveScope"
         period:
           anyOf:
-            - type: 'null'
-            - $ref: '#/components/schemas/IntRange'
-          example: { 'min': 1719850339996, 'max': 1719850339996 }
+            - type: "null"
+            - $ref: "#/components/schemas/IntRange"
+          example: { "min": 1719850339996, "max": 1719850339996 }
 
     WaveOutcomeType:
       type: string
@@ -3210,13 +3210,13 @@ components:
         - description
       properties:
         type:
-          $ref: '#/components/schemas/WaveOutcomeType'
+          $ref: "#/components/schemas/WaveOutcomeType"
         subtype:
-          $ref: '#/components/schemas/WaveOutcomeSubType'
+          $ref: "#/components/schemas/WaveOutcomeSubType"
         description:
           type: string
         credit:
-          $ref: '#/components/schemas/WaveOutcomeCredit'
+          $ref: "#/components/schemas/WaveOutcomeCredit"
         rep_category:
           type: string
         amount:
@@ -3261,42 +3261,42 @@ components:
           type: number
           format: int64
         author:
-          $ref: '#/components/schemas/ProfileMin'
+          $ref: "#/components/schemas/ProfileMin"
         name:
           description: The name of the wave
           type: string
         picture:
           description: The picture of the wave
           type: string
-          example: 'https://example.com/picture.jpg'
+          example: "https://example.com/picture.jpg"
           nullable: true
         created_at:
           type: number
           format: int64
         description_drop:
-          $ref: '#/components/schemas/Drop'
+          $ref: "#/components/schemas/Drop"
         voting:
-          $ref: '#/components/schemas/WaveVotingConfig'
+          $ref: "#/components/schemas/WaveVotingConfig"
         visibility:
-          $ref: '#/components/schemas/WaveVisibilityConfig'
+          $ref: "#/components/schemas/WaveVisibilityConfig"
         participation:
-          $ref: '#/components/schemas/WaveParticipationConfig'
+          $ref: "#/components/schemas/WaveParticipationConfig"
         wave:
-          $ref: '#/components/schemas/WaveConfig'
+          $ref: "#/components/schemas/WaveConfig"
         outcomes:
           type: array
           items:
-            $ref: '#/components/schemas/WaveOutcome'
+            $ref: "#/components/schemas/WaveOutcome"
         contributors_overview:
           type: array
           items:
-            $ref: '#/components/schemas/WaveContributorOverview'
+            $ref: "#/components/schemas/WaveContributorOverview"
         subscribed_actions:
           type: array
           items:
-            $ref: '#/components/schemas/WaveSubscriptionTargetAction'
+            $ref: "#/components/schemas/WaveSubscriptionTargetAction"
         metrics:
-          $ref: '#/components/schemas/WaveMetrics'
+          $ref: "#/components/schemas/WaveMetrics"
 
     WaveContributorOverview:
       required:
@@ -3326,20 +3326,20 @@ components:
         picture:
           description: The picture of the wave
           type: string
-          example: 'https://example.com/picture.jpg'
+          example: "https://example.com/picture.jpg"
           nullable: true
         voting:
-          $ref: '#/components/schemas/CreateNewWaveVotingConfig'
+          $ref: "#/components/schemas/CreateNewWaveVotingConfig"
         visibility:
-          $ref: '#/components/schemas/CreateNewWaveVisibilityConfig'
+          $ref: "#/components/schemas/CreateNewWaveVisibilityConfig"
         participation:
-          $ref: '#/components/schemas/CreateNewWaveParticipationConfig'
+          $ref: "#/components/schemas/CreateNewWaveParticipationConfig"
         wave:
-          $ref: '#/components/schemas/CreateWaveConfig'
+          $ref: "#/components/schemas/CreateWaveConfig"
         outcomes:
           type: array
           items:
-            $ref: '#/components/schemas/WaveOutcome'
+            $ref: "#/components/schemas/WaveOutcome"
 
     CreateNewWave:
       type: object
@@ -3360,22 +3360,22 @@ components:
         picture:
           description: The picture of the wave
           type: string
-          example: 'https://example.com/picture.jpg'
+          example: "https://example.com/picture.jpg"
           nullable: true
         description_drop:
-          $ref: '#/components/schemas/CreateWaveDropRequest'
+          $ref: "#/components/schemas/CreateWaveDropRequest"
         voting:
-          $ref: '#/components/schemas/CreateNewWaveVotingConfig'
+          $ref: "#/components/schemas/CreateNewWaveVotingConfig"
         visibility:
-          $ref: '#/components/schemas/CreateNewWaveVisibilityConfig'
+          $ref: "#/components/schemas/CreateNewWaveVisibilityConfig"
         participation:
-          $ref: '#/components/schemas/CreateNewWaveParticipationConfig'
+          $ref: "#/components/schemas/CreateNewWaveParticipationConfig"
         wave:
-          $ref: '#/components/schemas/CreateWaveConfig'
+          $ref: "#/components/schemas/CreateWaveConfig"
         outcomes:
           type: array
           items:
-            $ref: '#/components/schemas/WaveOutcome'
+            $ref: "#/components/schemas/WaveOutcome"
 
     CreateNewProfileProxy:
       type: object
@@ -3397,15 +3397,15 @@ components:
         id:
           type: string
         granted_to:
-          $ref: '#/components/schemas/ProfileMin'
+          $ref: "#/components/schemas/ProfileMin"
         created_at:
           type: number
         created_by:
-          $ref: '#/components/schemas/ProfileMin'
+          $ref: "#/components/schemas/ProfileMin"
         actions:
           type: array
           items:
-            $ref: '#/components/schemas/ProfileProxyAction'
+            $ref: "#/components/schemas/ProfileProxyAction"
 
     CreateNewProfileProxyAllocateRepAction:
       type: object
@@ -3415,10 +3415,10 @@ components:
         - credit_amount
       properties:
         action_type:
-          $ref: '#/components/schemas/ProfileProxyActionType'
+          $ref: "#/components/schemas/ProfileProxyActionType"
         end_time:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
           example: 1719850339996
@@ -3435,10 +3435,10 @@ components:
         - credit_amount
       properties:
         action_type:
-          $ref: '#/components/schemas/ProfileProxyActionType'
+          $ref: "#/components/schemas/ProfileProxyActionType"
         end_time:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
         credit_amount:
@@ -3453,10 +3453,10 @@ components:
         - end_time
       properties:
         action_type:
-          $ref: '#/components/schemas/ProfileProxyActionType'
+          $ref: "#/components/schemas/ProfileProxyActionType"
         end_time:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
 
@@ -3467,10 +3467,10 @@ components:
         - end_time
       properties:
         action_type:
-          $ref: '#/components/schemas/ProfileProxyActionType'
+          $ref: "#/components/schemas/ProfileProxyActionType"
         end_time:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
 
@@ -3481,10 +3481,10 @@ components:
         - end_time
       properties:
         action_type:
-          $ref: '#/components/schemas/ProfileProxyActionType'
+          $ref: "#/components/schemas/ProfileProxyActionType"
         end_time:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
     CreateNewProfileProxyRateWaveDropAction:
@@ -3494,10 +3494,10 @@ components:
         - end_time
       properties:
         action_type:
-          $ref: '#/components/schemas/ProfileProxyActionType'
+          $ref: "#/components/schemas/ProfileProxyActionType"
         end_time:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
 
@@ -3531,16 +3531,16 @@ components:
         proxy_id:
           type: string
         action_type:
-          $ref: '#/components/schemas/ProfileProxyActionType'
+          $ref: "#/components/schemas/ProfileProxyActionType"
         credit_amount:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
           example: 1000
         credit_spent:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
           example: 1000
@@ -3550,7 +3550,7 @@ components:
           example: 1719850339996
         end_time:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
           example: 1719850339996
@@ -3560,19 +3560,19 @@ components:
           example: 1719850339996
         accepted_at:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
           example: 1719850339996
         rejected_at:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
           example: 1719850339996
         revoked_at:
           anyOf:
-            - type: 'null'
+            - type: "null"
             - type: number
               format: int64
           example: 1719850339996
@@ -3721,12 +3721,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/PageWithNextUriBase'
+        - $ref: "#/components/schemas/PageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/Nft'
+            $ref: "#/components/schemas/Nft"
 
     NonceResponse:
       type: object
@@ -3828,10 +3828,10 @@ components:
       properties:
         content_type:
           type: string
-          example: 'image/png'
+          example: "image/png"
         file_name:
           type: string
-          example: 'image.png'
+          example: "image.png"
         file_size:
           type: number
           format: int64
@@ -3845,13 +3845,13 @@ components:
       properties:
         upload_url:
           type: string
-          example: 'https://example.com/upload/image.png'
+          example: "https://example.com/upload/image.png"
         content_type:
           type: string
-          example: 'image/png'
+          example: "image/png"
         media_url:
           type: string
-          example: 'https://example.com/final/image.png'
+          example: "https://example.com/final/image.png"
 
     WaveMin:
       required:
@@ -3895,7 +3895,7 @@ components:
         actions:
           type: array
           items:
-            $ref: '#/components/schemas/WaveSubscriptionTargetAction'
+            $ref: "#/components/schemas/WaveSubscriptionTargetAction"
 
     DropSubscriptionTargetAction:
       type: string
@@ -3911,7 +3911,7 @@ components:
         actions:
           type: array
           items:
-            $ref: '#/components/schemas/DropSubscriptionTargetAction'
+            $ref: "#/components/schemas/DropSubscriptionTargetAction"
 
     IdentitySubscriptionTargetAction:
       type: string
@@ -3929,7 +3929,7 @@ components:
         actions:
           type: array
           items:
-            $ref: '#/components/schemas/IdentitySubscriptionTargetAction'
+            $ref: "#/components/schemas/IdentitySubscriptionTargetAction"
 
     DropVote:
       type: object
@@ -3942,7 +3942,7 @@ components:
           type: number
           format: int64
         voter:
-          $ref: '#/components/schemas/ProfileMin'
+          $ref: "#/components/schemas/ProfileMin"
         time:
           type: number
           format: int64
@@ -3954,9 +3954,9 @@ components:
         - vote
       properties:
         drop:
-          $ref: '#/components/schemas/Drop'
+          $ref: "#/components/schemas/Drop"
         vote:
-          $ref: '#/components/schemas/DropVote'
+          $ref: "#/components/schemas/DropVote"
 
     FeedItemType:
       type: string
@@ -3976,7 +3976,7 @@ components:
           type: number
           format: int64
         type:
-          $ref: '#/components/schemas/FeedItemType'
+          $ref: "#/components/schemas/FeedItemType"
         item:
           type: object
 
@@ -4009,7 +4009,7 @@ components:
         notifications:
           type: array
           items:
-            $ref: '#/components/schemas/Notification'
+            $ref: "#/components/schemas/Notification"
         unread_count:
           type: number
           format: int64
@@ -4038,7 +4038,7 @@ components:
           type: number
           format: int64
         cause:
-          $ref: '#/components/schemas/NotificationCause'
+          $ref: "#/components/schemas/NotificationCause"
         created_at:
           type: number
           format: int64
@@ -4047,11 +4047,11 @@ components:
           format: int64
           nullable: true
         related_identity:
-          $ref: '#/components/schemas/ProfileMin'
+          $ref: "#/components/schemas/ProfileMin"
         related_drops:
           type: array
           items:
-            $ref: '#/components/schemas/Drop'
+            $ref: "#/components/schemas/Drop"
         additional_context:
           type: object
 
@@ -4062,11 +4062,11 @@ components:
         - actions
       properties:
         identity:
-          $ref: '#/components/schemas/ProfileMin'
+          $ref: "#/components/schemas/ProfileMin"
         actions:
           type: array
           items:
-            $ref: '#/components/schemas/IdentitySubscriptionTargetAction'
+            $ref: "#/components/schemas/IdentitySubscriptionTargetAction"
 
     TargetAndSubscriptionActions:
       type: object
@@ -4075,36 +4075,36 @@ components:
         - actions
       properties:
         target:
-          description: 'Wave or drop or identity'
+          description: "Wave or drop or identity"
           type: object
         actions:
           type: array
           items:
-            $ref: '#/components/schemas/IdentitySubscriptionTargetAction'
+            $ref: "#/components/schemas/IdentitySubscriptionTargetAction"
 
     IncomingIdentitySubscriptionsPage:
       type: object
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/PageBase'
+        - $ref: "#/components/schemas/PageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/IdentityAndSubscriptionActions'
+            $ref: "#/components/schemas/IdentityAndSubscriptionActions"
 
     OutgoingIdentitySubscriptionsPage:
       type: object
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/PageBase'
+        - $ref: "#/components/schemas/PageBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/TargetAndSubscriptionActions'
+            $ref: "#/components/schemas/TargetAndSubscriptionActions"
 
     BlockItem:
       type: object
@@ -4118,22 +4118,22 @@ components:
           format: int64
         created_at:
           type: string
-          format: 'date-time'
+          format: "date-time"
         timestamp:
           type: string
-          format: 'date-time'
+          format: "date-time"
 
     BlocksPage:
       type: object
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/PageWithNextUriBase'
+        - $ref: "#/components/schemas/PageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/BlockItem'
+            $ref: "#/components/schemas/BlockItem"
 
     SeizeSettings:
       type: object
@@ -4153,7 +4153,7 @@ components:
       properties:
         date:
           type: string
-          format: 'date-time'
+          format: "date-time"
         block:
           type: integer
           format: int64
@@ -4165,12 +4165,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/PageWithNextUriBase'
+        - $ref: "#/components/schemas/PageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/UploadItem'
+            $ref: "#/components/schemas/UploadItem"
 
     ArtistsNft:
       type: object
@@ -4220,11 +4220,11 @@ components:
         memes:
           type: array
           items:
-            $ref: '#/components/schemas/ArtistsNft'
+            $ref: "#/components/schemas/ArtistsNft"
         memelab:
           type: array
           items:
-            $ref: '#/components/schemas/ArtistsNft'
+            $ref: "#/components/schemas/ArtistsNft"
         gradients:
           type: array
           items:
@@ -4233,7 +4233,7 @@ components:
         work:
           type: array
           items:
-            $ref: '#/components/schemas/ArtistsWork'
+            $ref: "#/components/schemas/ArtistsWork"
         social_links:
           type: array
           items:
@@ -4244,12 +4244,12 @@ components:
       required:
         - data
       allOf:
-        - $ref: '#/components/schemas/PageWithNextUriBase'
+        - $ref: "#/components/schemas/PageWithNextUriBase"
       properties:
         data:
           type: array
           items:
-            $ref: '#/components/schemas/ArtistItem'
+            $ref: "#/components/schemas/ArtistItem"
 
     ArtistNameItem:
       type: object
@@ -4283,17 +4283,17 @@ components:
         - drops
       properties:
         wave:
-          $ref: '#/components/schemas/WaveMin'
+          $ref: "#/components/schemas/WaveMin"
         drops:
           type: array
           items:
-            $ref: '#/components/schemas/DropWithoutWave'
+            $ref: "#/components/schemas/DropWithoutWave"
         root_drop:
-          $ref: '#/components/schemas/DropWithoutWave'
+          $ref: "#/components/schemas/DropWithoutWave"
         trace:
           type: array
           items:
-            $ref: '#/components/schemas/DropTraceItem'
+            $ref: "#/components/schemas/DropTraceItem"
 
     OwnerBalance:
       type: object
@@ -4334,10 +4334,10 @@ components:
           type: string
         created_at:
           type: string
-          format: 'date-time'
+          format: "date-time"
         updated_at:
           type: string
-          format: 'date-time'
+          format: "date-time"
         total_balance:
           type: integer
           format: int64
@@ -4440,10 +4440,10 @@ components:
           type: string
         created_at:
           type: string
-          format: 'date-time'
+          format: "date-time"
         updated_at:
           type: string
-          format: 'date-time'
+          format: "date-time"
         season:
           type: integer
           format: int64
@@ -4601,10 +4601,10 @@ components:
           type: string
         created_at:
           type: string
-          format: 'date-time'
+          format: "date-time"
         updated_at:
           type: string
-          format: 'date-time'
+          format: "date-time"
         primary_purchases_value:
           type: integer
           format: int64
@@ -4778,10 +4778,10 @@ components:
           type: string
         created_at:
           type: string
-          format: 'date-time'
+          format: "date-time"
         updated_at:
           type: string
-          format: 'date-time'
+          format: "date-time"
         primary_purchases_value:
           type: integer
           format: int64
