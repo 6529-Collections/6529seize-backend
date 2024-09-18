@@ -176,6 +176,7 @@ const updateNftMarketStats = (
   );
   lowestListingPrice = Math.round(lowestListingPrice * 10000) / 10000;
   nft.floor_price = lowestListingPrice;
+  nft.floor_price_from = lowestListing?.maker.address ?? null;
   nft.market_cap = lowestListingPrice * nft.supply;
 
   let highestOfferPrice = weiToEth(
@@ -185,6 +186,7 @@ const updateNftMarketStats = (
   );
   highestOfferPrice = Math.round(highestOfferPrice * 10000) / 10000;
   nft.highest_offer = highestOfferPrice;
+  nft.highest_offer_from = highestOffer?.maker.address ?? null;
 };
 
 const persistNFTsForContract = async (

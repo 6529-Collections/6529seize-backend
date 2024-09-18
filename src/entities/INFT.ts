@@ -65,6 +65,9 @@ export class BaseNFT {
   @Column({ type: 'double' })
   floor_price!: number;
 
+  @Column({ type: 'text', nullable: true })
+  floor_price_from!: string | null;
+
   @Column({ type: 'double' })
   market_cap!: number;
 
@@ -82,6 +85,9 @@ export class BaseNFT {
 
   @Column({ type: 'double' })
   highest_offer!: number;
+
+  @Column({ type: 'text', nullable: true })
+  highest_offer_from!: string | null;
 }
 
 @Entity('nfts_meme_lab')
