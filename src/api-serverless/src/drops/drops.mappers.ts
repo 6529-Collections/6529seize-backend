@@ -1,4 +1,11 @@
-import { DropEntity } from '../../../entities/IDrop';
+import {
+  DropEntity,
+  DropMediaEntity,
+  DropMentionEntity,
+  DropMetadataEntity,
+  DropPartEntity,
+  DropReferencedNftEntity
+} from '../../../entities/IDrop';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { Drop } from '../generated/models/Drop';
 import { distinct, parseIntOrNull, resolveEnumOrThrow } from '../../../helpers';
@@ -32,6 +39,7 @@ import { DropWithoutWave } from '../generated/models/DropWithoutWave';
 import { RequestContext } from '../../../request.context';
 import { AuthenticationContext } from '../../../auth-context';
 import { WaveMin } from '../generated/models/WaveMin';
+import { DeletedDropEntity } from '../../../entities/IDeletedDrop';
 
 export class DropsMappers {
   constructor(
@@ -93,16 +101,29 @@ export class DropsMappers {
 
   private async getAllDropsRelatedData(
     {
-      dropIds,
-      contextProfileId,
-      replyDropIds
+      dropEntities,
+      contextProfileId
     }: {
-      dropIds: string[];
-      replyDropIds: string[];
+      dropEntities: DropEntity[];
       contextProfileId?: string | null;
     },
     connection?: ConnectionWrapper<any>
   ) {
+    const rootDropIds = dropEntities.map((it) => it.id);
+    const quoteIds = Object.values(
+      await this.dropsDb.getDropsParts(rootDropIds, connection)
+    )
+      .flat()
+      .map((it) => it.quoted_drop_id)
+      .filter((it) => it !== null) as string[];
+    const replyDropIds = dropEntities
+      .map((it) => it.reply_to_drop_id)
+      .filter((it) => it !== null) as string[];
+    const dropIds = distinct([...rootDropIds, ...quoteIds, ...replyDropIds]);
+    const allEntities = await this.dropsDb.getDropsByIds(dropIds, connection);
+    const allReplyDropIds = allEntities
+      .map((it) => it.reply_to_drop_id)
+      .filter((it) => it !== null) as string[];
     const [
       mentions,
       referencedNfts,
@@ -152,7 +173,7 @@ export class DropsMappers {
     );
     const relatedDropIds = distinct([
       ...quotedDropIds,
-      ...replyDropIds,
+      ...allReplyDropIds,
       ...dropIds
     ]);
     const deletedDrops = await this.dropsDb.findDeletedDrops(
@@ -179,7 +200,8 @@ export class DropsMappers {
         },
         {} as Record<string, DropSubscriptionTargetAction[]>
       ),
-      deletedDrops
+      deletedDrops,
+      allEntities
     };
   }
 
@@ -199,10 +221,9 @@ export class DropsMappers {
   }
 
   async convertToDropsWithoutWaves(
-    dropEntities: DropEntity[],
+    entities: DropEntity[],
     ctx: RequestContext
   ): Promise<DropWithoutWave[]> {
-    const dropIds = dropEntities.map((it) => it.id);
     const contextProfileId = ctx.authenticationContext?.getActingAsId() ?? null;
     const {
       mentions,
@@ -216,15 +237,11 @@ export class DropsMappers {
       dropsParts,
       dropsRepliesCounts,
       subscribedActions,
-      deletedDrops
+      deletedDrops,
+      allEntities
     } = await this.getAllDropsRelatedData(
       {
-        dropIds,
-        replyDropIds: distinct(
-          [...dropEntities.map((it) => it.reply_to_drop_id)].filter(
-            (it) => it !== null
-          ) as string[]
-        ),
+        dropEntities: entities,
         contextProfileId
       },
       ctx.connection
@@ -233,7 +250,7 @@ export class DropsMappers {
       .map((it) => it.map((r) => r.rater_profile_id))
       .flat();
     const allProfileIds = distinct([
-      ...dropEntities.map((it) => it.author_id),
+      ...allEntities.map((it) => it.author_id),
       ...mentions.map((it) => it.mentioned_profile_id),
       ...raterProfileIds,
       ...Object.values(deletedDrops).map((it) => it.author_id)
@@ -259,97 +276,203 @@ export class DropsMappers {
       acc[profileId] = profileMins[profileId] ?? UNKNOWN_PROFILE;
       return acc;
     }, {} as Record<string, ProfileMin>);
-    return dropEntities.map<DropWithoutWave>((dropEntity) => {
-      const replyToDropId = dropEntity.reply_to_drop_id;
-      return {
-        id: dropEntity.id,
-        serial_no: dropEntity.serial_no,
-        reply_to: replyToDropId
-          ? {
-              is_deleted: !!deletedDrops[replyToDropId],
-              drop_id: replyToDropId,
-              drop_part_id: dropEntity.reply_to_part_id ?? 0
-            }
-          : undefined,
-        author: profilesByIds[dropEntity.author_id]!,
-        title: dropEntity.title,
-        parts:
-          dropsParts[dropEntity.id]?.map<DropPart>((it) => {
-            const quotedDropId = it.quoted_drop_id;
-            return {
-              content: it.content,
-              quoted_drop:
-                quotedDropId && it.quoted_drop_part_id
-                  ? {
-                      is_deleted: !!deletedDrops[quotedDropId],
-                      drop_id: quotedDropId,
-                      drop_part_id: it.quoted_drop_part_id
-                    }
-                  : null,
-              part_id: it.drop_part_id,
-              media:
-                (dropMedia[dropEntity.id] ?? [])
-                  .filter((m) => m.drop_part_id === it.drop_part_id)
-                  .map<DropMedia>((it) => ({
-                    url: it.url,
-                    mime_type: it.mime_type
-                  })) ?? [],
-              replies_count:
-                dropsRepliesCounts[it.drop_id]?.[it.drop_part_id]?.count ?? 0,
-              quotes_count:
-                dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]?.total ?? 0,
-              context_profile_context: contextProfileId
-                ? {
-                    replies_count:
-                      dropsRepliesCounts[it.drop_id]?.[it.drop_part_id]
-                        ?.context_profile_count ?? 0,
-                    quotes_count:
-                      dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]
-                        ?.by_context_profile ?? 0
-                  }
-                : null
-            };
-          }) ?? [],
-        parts_count: dropEntity.parts_count,
-        created_at: dropEntity.created_at,
-        updated_at: parseIntOrNull(dropEntity.updated_at),
-        referenced_nfts: referencedNfts
-          .filter((it) => it.drop_id === dropEntity.id)
-          .map<DropReferencedNFT>((it) => ({
-            contract: it.contract,
-            token: it.token,
-            name: it.name
-          })),
-        mentioned_users: mentions
-          .filter((it) => it.drop_id === dropEntity.id)
-          .map<DropMentionedUser>((it) => ({
-            mentioned_profile_id: it.mentioned_profile_id,
-            handle_in_content: it.handle_in_content,
-            current_handle:
-              profilesByIds[it.mentioned_profile_id]?.handle ?? null
-          })),
-        metadata: metadata
-          .filter((it) => it.drop_id === dropEntity.id)
-          .map<DropMetadata>((it) => ({
-            data_key: it.data_key,
-            data_value: it.data_value
-          })),
-        rating: dropsRatings[dropEntity.id]?.rating ?? 0,
-        raters_count: dropsRatings[dropEntity.id]?.distinct_raters ?? 0,
-        top_raters: (dropsTopRaters[dropEntity.id] ?? [])
-          .map<DropRater>((rater) => ({
-            rating: rater.rating,
-            profile: profilesByIds[rater.rater_profile_id]!
-          }))
-          .sort((a, b) => b.rating - a.rating),
-        context_profile_context: contextProfileId
-          ? {
-              rating: dropsRatingsByContextProfile[dropEntity.id] ?? 0
-            }
-          : null,
-        subscribed_actions: subscribedActions[dropEntity.id] ?? []
-      };
+    return entities.map<DropWithoutWave>((dropEntity) => {
+      return this.toDrop({
+        dropEntity,
+        deletedDrops,
+        profilesByIds,
+        dropsParts,
+        dropMedia,
+        dropsRepliesCounts,
+        dropsQuoteCounts,
+        contextProfileId,
+        referencedNfts,
+        mentions,
+        metadata,
+        dropsRatings,
+        dropsTopRaters,
+        dropsRatingsByContextProfile,
+        subscribedActions,
+        allEntities: allEntities.reduce((acc, it) => {
+          acc[it.id] = it;
+          return acc;
+        }, {} as Record<string, DropEntity>)
+      });
     });
+  }
+
+  private toDrop({
+    dropEntity,
+    deletedDrops,
+    profilesByIds,
+    dropsParts,
+    dropMedia,
+    dropsRepliesCounts,
+    dropsQuoteCounts,
+    contextProfileId,
+    referencedNfts,
+    mentions,
+    metadata,
+    dropsRatings,
+    dropsTopRaters,
+    dropsRatingsByContextProfile,
+    subscribedActions,
+    allEntities
+  }: {
+    dropEntity: DropEntity;
+    deletedDrops: Record<string, DeletedDropEntity>;
+    profilesByIds: Record<string, ProfileMin>;
+    dropsParts: Record<string, DropPartEntity[]>;
+    dropMedia: Record<string, DropMediaEntity[]>;
+    dropsRepliesCounts: Record<
+      string,
+      Record<number, { count: number; context_profile_count: number }>
+    >;
+    dropsQuoteCounts: Record<
+      string,
+      Record<number, { total: number; by_context_profile: number | null }>
+    >;
+    contextProfileId: string | undefined | null;
+    referencedNfts: DropReferencedNftEntity[];
+    mentions: DropMentionEntity[];
+    metadata: DropMetadataEntity[];
+    dropsRatings: Record<string, { rating: number; distinct_raters: number }>;
+    dropsTopRaters: Record<
+      string,
+      { rating: number; rater_profile_id: string }[]
+    >;
+    dropsRatingsByContextProfile: Record<string, number>;
+    subscribedActions: Record<string, DropSubscriptionTargetAction[]>;
+    allEntities: Record<string, DropEntity>;
+  }): DropWithoutWave {
+    const replyToDropId = dropEntity.reply_to_drop_id;
+    return {
+      id: dropEntity.id,
+      serial_no: dropEntity.serial_no,
+      reply_to: replyToDropId
+        ? {
+            is_deleted: !!deletedDrops[replyToDropId],
+            drop_id: replyToDropId,
+            drop_part_id: dropEntity.reply_to_part_id ?? 0,
+            drop: allEntities[replyToDropId]
+              ? this.toDrop({
+                  dropEntity: allEntities[replyToDropId],
+                  deletedDrops,
+                  profilesByIds,
+                  dropsParts,
+                  dropMedia,
+                  dropsRepliesCounts,
+                  dropsQuoteCounts,
+                  contextProfileId,
+                  referencedNfts,
+                  mentions,
+                  metadata,
+                  dropsRatings,
+                  dropsTopRaters,
+                  dropsRatingsByContextProfile,
+                  subscribedActions,
+                  allEntities
+                })
+              : undefined
+          }
+        : undefined,
+      author: profilesByIds[dropEntity.author_id],
+      title: dropEntity.title,
+      parts:
+        dropsParts[dropEntity.id]?.map<DropPart>((it) => {
+          const quotedDropId = it.quoted_drop_id;
+          return {
+            content: it.content,
+            quoted_drop:
+              quotedDropId && it.quoted_drop_part_id
+                ? {
+                    is_deleted: !!deletedDrops[quotedDropId],
+                    drop_id: quotedDropId,
+                    drop_part_id: it.quoted_drop_part_id,
+                    drop: allEntities[quotedDropId]
+                      ? this.toDrop({
+                          dropEntity: allEntities[quotedDropId],
+                          deletedDrops,
+                          profilesByIds,
+                          dropsParts,
+                          dropMedia,
+                          dropsRepliesCounts,
+                          dropsQuoteCounts,
+                          contextProfileId,
+                          referencedNfts,
+                          mentions,
+                          metadata,
+                          dropsRatings,
+                          dropsTopRaters,
+                          dropsRatingsByContextProfile,
+                          subscribedActions,
+                          allEntities
+                        })
+                      : undefined
+                  }
+                : null,
+            part_id: it.drop_part_id,
+            media:
+              (dropMedia[dropEntity.id] ?? [])
+                .filter((m) => m.drop_part_id === it.drop_part_id)
+                .map<DropMedia>((it) => ({
+                  url: it.url,
+                  mime_type: it.mime_type
+                })) ?? [],
+            replies_count:
+              dropsRepliesCounts[it.drop_id]?.[it.drop_part_id]?.count ?? 0,
+            quotes_count:
+              dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]?.total ?? 0,
+            context_profile_context: contextProfileId
+              ? {
+                  replies_count:
+                    dropsRepliesCounts[it.drop_id]?.[it.drop_part_id]
+                      ?.context_profile_count ?? 0,
+                  quotes_count:
+                    dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]
+                      ?.by_context_profile ?? 0
+                }
+              : null
+          };
+        }) ?? [],
+      parts_count: dropEntity.parts_count,
+      created_at: dropEntity.created_at,
+      updated_at: parseIntOrNull(dropEntity.updated_at),
+      referenced_nfts: referencedNfts
+        .filter((it) => it.drop_id === dropEntity.id)
+        .map<DropReferencedNFT>((it) => ({
+          contract: it.contract,
+          token: it.token,
+          name: it.name
+        })),
+      mentioned_users: mentions
+        .filter((it) => it.drop_id === dropEntity.id)
+        .map<DropMentionedUser>((it) => ({
+          mentioned_profile_id: it.mentioned_profile_id,
+          handle_in_content: it.handle_in_content,
+          current_handle: profilesByIds[it.mentioned_profile_id]?.handle ?? null
+        })),
+      metadata: metadata
+        .filter((it) => it.drop_id === dropEntity.id)
+        .map<DropMetadata>((it) => ({
+          data_key: it.data_key,
+          data_value: it.data_value
+        })),
+      rating: dropsRatings[dropEntity.id]?.rating ?? 0,
+      raters_count: dropsRatings[dropEntity.id]?.distinct_raters ?? 0,
+      top_raters: (dropsTopRaters[dropEntity.id] ?? [])
+        .map<DropRater>((rater) => ({
+          rating: rater.rating,
+          profile: profilesByIds[rater.rater_profile_id]
+        }))
+        .sort((a, b) => b.rating - a.rating),
+      context_profile_context: contextProfileId
+        ? {
+            rating: dropsRatingsByContextProfile[dropEntity.id] ?? 0
+          }
+        : null,
+      subscribed_actions: subscribedActions[dropEntity.id] ?? []
+    };
   }
 }
 
