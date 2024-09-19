@@ -32,7 +32,7 @@ export const fetchAllOwnerBalances = async (
 
 export const fetchOwnerBalancesForConsolidationKey = async (
   consolidationKey: string
-): Promise<OwnerBalance> => {
+): Promise<OwnerBalance | null> => {
   let filters = constructFilters(
     '',
     `${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key = :consolidation_key`

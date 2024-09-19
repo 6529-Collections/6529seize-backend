@@ -254,7 +254,7 @@ export const fetchAggregatedActivity = async (
 
 export const fetchAggregatedActivityForConsolidationKey = async (
   key: string
-): Promise<AggregatedActivity> => {
+): Promise<AggregatedActivity | null> => {
   return fetchSingleAggregatedActivity(
     'consolidation_key',
     key,
@@ -264,7 +264,7 @@ export const fetchAggregatedActivityForConsolidationKey = async (
 
 export const fetchMemesAggregatedActivityForConsolidationKey = async (
   key: string
-): Promise<AggregatedActivityMemes> => {
+): Promise<AggregatedActivityMemes | null> => {
   return fetchMemesAggregatedActivity(
     'consolidation_key',
     key,
@@ -292,7 +292,7 @@ async function fetchSingleAggregatedActivity(
   key: string,
   value: string,
   table: string
-): Promise<AggregatedActivity> {
+): Promise<AggregatedActivity | null> {
   const sql = `
     SELECT * from ${table} where ${key} = :value
     `;
@@ -307,7 +307,7 @@ async function fetchMemesAggregatedActivity(
   key: string,
   value: string,
   table: string
-): Promise<AggregatedActivityMemes> {
+): Promise<AggregatedActivityMemes | null> {
   const sql = `
     SELECT * from ${table} where ${key} = :value
     `;
