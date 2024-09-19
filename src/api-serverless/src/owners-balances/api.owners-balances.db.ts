@@ -11,13 +11,16 @@ import {
 } from '../../../constants';
 import { fetchLatestTDHBlockNumber, fetchPaginated } from '../../../db-api';
 import { sqlExecutor } from '../../../sql-executor';
+import { OwnerBalancePage } from '../generated/models/OwnerBalancePage';
+import { OwnerBalance } from '../generated/models/OwnerBalance';
+import { OwnerBalanceMemes } from '../generated/models/OwnerBalanceMemes';
 
 export const fetchAllOwnerBalances = async (
   page: number,
   pageSize: number,
   sortDir: string
-) => {
-  return fetchPaginated(
+): Promise<OwnerBalancePage> => {
+  return fetchPaginated<OwnerBalance>(
     CONSOLIDATED_OWNERS_BALANCES_TABLE,
     {},
     `total_balance ${sortDir}`,
@@ -29,7 +32,7 @@ export const fetchAllOwnerBalances = async (
 
 export const fetchOwnerBalancesForConsolidationKey = async (
   consolidationKey: string
-) => {
+): Promise<OwnerBalance> => {
   let filters = constructFilters(
     '',
     `${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key = :consolidation_key`
@@ -226,7 +229,7 @@ export const fetchOwnerBalancesForWallet = async (wallet: string) => {
 
 export async function fetchMemesOwnerBalancesForConsolidationKey(
   consolidationKey: string
-) {
+): Promise<OwnerBalanceMemes[]> {
   const sql = `
     SELECT 
       ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.*,
@@ -238,7 +241,7 @@ export async function fetchMemesOwnerBalancesForConsolidationKey(
       AND ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.season = ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.season 
     WHERE ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.consolidation_key = :consolidation_key 
   `;
-  const balancesResult = await sqlExecutor.execute(sql, {
+  const balancesResult: OwnerBalanceMemes[] = await sqlExecutor.execute(sql, {
     consolidation_key: consolidationKey
   });
 

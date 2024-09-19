@@ -10,11 +10,11 @@
  * Do not edit the class manually.
  */
 
-import { AggregatedActivity } from '../models/AggregatedActivity';
+import { NftOwner } from '../models/NftOwner';
 import { HttpFile } from '../http/http';
 
-export class AggregatedActivityPage {
-    'data': Array<AggregatedActivity>;
+export class NftOwnerPage {
+    'data': Array<NftOwner>;
     'count': number;
     'page': number;
     'next': string | null;
@@ -25,7 +25,7 @@ export class AggregatedActivityPage {
         {
             "name": "data",
             "baseName": "data",
-            "type": "Array<AggregatedActivity>",
+            "type": "Array<NftOwner>",
             "format": ""
         },
         {
@@ -48,7 +48,7 @@ export class AggregatedActivityPage {
         }    ];
 
     static getAttributeTypeMap() {
-        return AggregatedActivityPage.attributeTypeMap;
+        return NftOwnerPage.attributeTypeMap;
     }
 
     public constructor() {

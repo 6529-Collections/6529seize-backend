@@ -10,45 +10,58 @@
  * Do not edit the class manually.
  */
 
-import { AggregatedActivity } from '../models/AggregatedActivity';
 import { HttpFile } from '../http/http';
 
-export class AggregatedActivityPage {
-    'data': Array<AggregatedActivity>;
-    'count': number;
-    'page': number;
-    'next': string | null;
+export class NftOwner {
+    'created_at': Date;
+    'updated_at': Date;
+    'token_id': number;
+    'contract': string;
+    'balance': number;
+    'consolidation_key': string;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "data",
-            "baseName": "data",
-            "type": "Array<AggregatedActivity>",
+            "name": "created_at",
+            "baseName": "created_at",
+            "type": "Date",
+            "format": "date-time"
+        },
+        {
+            "name": "updated_at",
+            "baseName": "updated_at",
+            "type": "Date",
+            "format": "date-time"
+        },
+        {
+            "name": "token_id",
+            "baseName": "token_id",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "contract",
+            "baseName": "contract",
+            "type": "string",
             "format": ""
         },
         {
-            "name": "count",
-            "baseName": "count",
+            "name": "balance",
+            "baseName": "balance",
             "type": "number",
             "format": "int64"
         },
         {
-            "name": "page",
-            "baseName": "page",
-            "type": "number",
-            "format": "int64"
-        },
-        {
-            "name": "next",
-            "baseName": "next",
+            "name": "consolidation_key",
+            "baseName": "consolidation_key",
             "type": "string",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return AggregatedActivityPage.attributeTypeMap;
+        return NftOwner.attributeTypeMap;
     }
 
     public constructor() {

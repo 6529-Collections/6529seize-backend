@@ -1,4 +1,4 @@
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { asyncRouter } from '../async.router';
 
 import { DEFAULT_PAGE_SIZE } from '../page-request';
@@ -18,6 +18,10 @@ import {
   fetchMemesAggregatedActivityForWallet
 } from './api.aggregated-activity.db';
 import { NotFoundException } from '../../../exceptions';
+import { ApiResponse } from '../api-response';
+import { AggregatedActivityPage } from '../generated/models/AggregatedActivityPage';
+import { AggregatedActivity } from '../generated/models/AggregatedActivity';
+import { AggregatedActivityMemes } from '../generated/models/AggregatedActivityMemes';
 
 const router = asyncRouter();
 
@@ -56,7 +60,7 @@ router.get(
         download_all?: boolean;
       }
     >,
-    res: any
+    res: Response<ApiResponse<AggregatedActivityPage>>
   ) {
     let page = req.query.page ?? 1;
     let pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
@@ -104,7 +108,7 @@ router.get(
       any,
       {}
     >,
-    res: any
+    res: Response<ApiResponse<AggregatedActivity>>
   ) {
     const consolidationKey = req.params.consolidation_key;
 
@@ -131,7 +135,7 @@ router.get(
       any,
       {}
     >,
-    res: any
+    res: Response<ApiResponse<AggregatedActivityMemes>>
   ) {
     const consolidationKey = req.params.consolidation_key;
     const result = await fetchMemesAggregatedActivityForConsolidationKey(

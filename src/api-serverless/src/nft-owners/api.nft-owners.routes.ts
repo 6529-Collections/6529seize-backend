@@ -1,4 +1,4 @@
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { asyncRouter } from '../async.router';
 import { DEFAULT_PAGE_SIZE } from '../page-request';
 import { resolveSortDirection, returnPaginatedResult } from '../api-helpers';
@@ -6,6 +6,8 @@ import {
   fetchAllNftOwners,
   fetchNftOwnersForConsolidation
 } from './api.nft-owners.db';
+import { NftOwnerPage } from '../generated/models/NftOwnerPage';
+import { ApiResponse } from '../api-response';
 
 const router = asyncRouter();
 
@@ -26,7 +28,7 @@ router.get(
         page_size?: number;
       }
     >,
-    res: any
+    res: Response<ApiResponse<NftOwnerPage>>
   ) {
     const contract = req.query.contract;
     const tokenId = req.query.token_id;
@@ -60,7 +62,7 @@ router.get(
         page_size?: number;
       }
     >,
-    res: any
+    res: Response<ApiResponse<NftOwnerPage>>
   ) {
     const consolidationKey = req.params.consolidation_key;
     const contract = req.query.contract;

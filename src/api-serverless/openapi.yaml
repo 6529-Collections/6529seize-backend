@@ -777,9 +777,8 @@ paths:
           content:
             application/json:
               schema:
-                type: array
                 items:
-                  $ref: "#/components/schemas/NftOwner"
+                  $ref: "#/components/schemas/NftOwnerPage"
   /nft-owners/consolidation/{consolidation_key}:
     get:
       tags:
@@ -836,9 +835,8 @@ paths:
           content:
             application/json:
               schema:
-                type: array
                 items:
-                  $ref: "#/components/schemas/NftOwner"
+                  $ref: "#/components/schemas/NftOwnerPage"
   /nfts:
     get:
       tags:
@@ -1157,7 +1155,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/OwnerBalance"
+                  $ref: "#/components/schemas/OwnerBalancePage"
   /owners-balances/consolidation/{consolidation_key}:
     get:
       tags:
@@ -1823,7 +1821,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Transaction"
+                  $ref: "#/components/schemas/TransactionPage"
   /wave-media/prep:
     post:
       tags:
@@ -2399,79 +2397,14 @@ components:
     AggregatedActivityPage:
       type: object
       required:
-        - consolidation_key
-        - primary_purchases_count
-        - primary_purchases_value
-        - secondary_purchases_count
-        - secondary_purchases_value
-        - sales_count
-        - sales_value
-        - transfers_in
-        - transfers_out
-        - airdrops
-        - burns
-        - handle
-        - pfp_url
-        - rep_score
-        - cic_score
-        - primary_wallet
-        - consolidation_display
-        - boosted_tdh
-        - level
+        - data
+      allOf:
+        - $ref: "#/components/schemas/PageWithNextUriBase"
       properties:
-        consolidation_key:
-          type: string
-        primary_purchases_count:
-          type: integer
-          format: int64
-        primary_purchases_value:
-          type: integer
-          format: int64
-        secondary_purchases_count:
-          type: integer
-          format: int64
-        secondary_purchases_value:
-          type: integer
-          format: int64
-        sales_count:
-          type: integer
-          format: int64
-        sales_value:
-          type: integer
-          format: int64
-        transfers_in:
-          type: integer
-          format: int64
-        transfers_out:
-          type: integer
-          format: int64
-        airdrops:
-          type: integer
-          format: int64
-        burns:
-          type: integer
-          format: int64
-        handle:
-          type: string
-        pfp_url:
-          type: string
-          nullable: true
-        rep_score:
-          type: integer
-          format: int64
-        cic_score:
-          type: integer
-          format: int64
-        primary_wallet:
-          type: string
-        consolidation_display:
-          type: string
-        boosted_tdh:
-          type: integer
-          format: int64
-        level:
-          type: integer
-          format: int64
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AggregatedActivity"
     ArtistItem:
       type: object
       required:
@@ -3927,6 +3860,17 @@ components:
           format: int64
         consolidation_key:
           type: string
+    NftOwnerPage:
+      type: object
+      required:
+        - data
+      allOf:
+        - $ref: "#/components/schemas/PageWithNextUriBase"
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/NftOwner"
     NftsPage:
       type: object
       required:
@@ -4177,6 +4121,17 @@ components:
         rank:
           type: integer
           format: int64
+    OwnerBalancePage:
+      type: object
+      required:
+        - data
+      allOf:
+        - $ref: "#/components/schemas/PageWithNextUriBase"
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/OwnerBalance"
     PageBase:
       type: object
       required:
@@ -4563,6 +4518,17 @@ components:
           nullable: true
         to_display:
           type: string
+    TransactionPage:
+      type: object
+      required:
+        - data
+      allOf:
+        - $ref: "#/components/schemas/PageWithNextUriBase"
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Transaction"
     UpdateDropRequest:
       type: object
       allOf:
