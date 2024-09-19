@@ -12,7 +12,7 @@ const sortObjectFirstLevel = (
   obj: Record<string, any>
 ): Record<string, any> => {
   return Object.keys(obj)
-    .sort()
+    .sort((a, b) => a.localeCompare(b)) // Use localeCompare for reliable sorting
     .reduce((acc, key) => {
       acc[key] = obj[key]; // Keep the value as is
       return acc;
@@ -48,7 +48,7 @@ if (data.paths) {
 }
 
 // Sort components/schemas by their keys (first level)
-if (data.components && data.components.schemas) {
+if (data.components?.schemas) {
   data.components.schemas = sortObjectFirstLevel(data.components.schemas);
 }
 
