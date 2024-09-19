@@ -3339,6 +3339,17 @@ components:
         name:
           type: string
           maxLength: 500
+    DropsPage:
+      type: object
+      required:
+        - data
+      allOf:
+        - $ref: "#/components/schemas/PageBase"
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Drop"
     DropSubscriptionActions:
       type: object
       required:
@@ -3463,17 +3474,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/DropSubscriptionTargetAction"
-    DropsPage:
-      type: object
-      required:
-        - data
-      allOf:
-        - $ref: "#/components/schemas/PageBase"
-      properties:
-        data:
-          type: array
-          items:
-            $ref: "#/components/schemas/Drop"
     FeedItem:
       type: object
       required:
@@ -4424,14 +4424,6 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RatingWithProfileInfoAndLevel"
-    RepRating:
-      type: object
-      required:
-        - rating
-      properties:
-        rating:
-          type: number
-          format: int64
     ReplyToDrop:
       type: object
       required:
@@ -4459,6 +4451,14 @@ components:
           type: boolean
         drop:
           $ref: "#/components/schemas/DropWithoutWave"
+    RepRating:
+      type: object
+      required:
+        - rating
+      properties:
+        rating:
+          type: number
+          format: int64
     SeizeSettings:
       type: object
       required:
@@ -4940,6 +4940,13 @@ components:
           anyOf:
             - type: "null"
             - $ref: "#/components/schemas/Group"
+    WavesOverviewType:
+      type: string
+      enum:
+        - LATEST
+        - MOST_SUBSCRIBED
+        - HIGH_LEVEL_AUTHOR
+        - AUTHOR_YOU_HAVE_REPPED
     WaveSubscriptionActions:
       type: object
       required:
@@ -5002,12 +5009,5 @@ components:
           $ref: "#/components/schemas/IntRange"
         authenticated_user_eligible:
           type: boolean
-    WavesOverviewType:
-      type: string
-      enum:
-        - LATEST
-        - MOST_SUBSCRIBED
-        - HIGH_LEVEL_AUTHOR
-        - AUTHOR_YOU_HAVE_REPPED
 security:
   - bearerAuth: []
