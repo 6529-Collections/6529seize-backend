@@ -19,10 +19,12 @@ export function cacheKey(req: Request) {
   return `__SEIZE_CACHE_${process.env.NODE_ENV}__` + req.originalUrl || req.url;
 }
 
-function fullUrl(req: Request, next: string | null | boolean) {
+function fullUrl(req: Request, next: string | null) {
   let url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
 
-  if (!next) {
+  const hasNext = next === 'true';
+
+  if (!hasNext) {
     return null;
   }
 

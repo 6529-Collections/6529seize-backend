@@ -63,6 +63,8 @@ import { TDHBlock } from './entities/ITDH';
 import { Upload } from './entities/IUpload';
 import { Artist } from './entities/IArtist';
 import { NFT } from './entities/INFT';
+import { TransactionPage } from './api-serverless/src/generated/models/TransactionPage';
+import { Transaction } from './api-serverless/src/generated/models/Transaction';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -308,7 +310,7 @@ export async function fetchPaginated<T = any>(
   return {
     count,
     page,
-    next: count > pageSize * page,
+    next: count > pageSize * page ? 'true' : null,
     data
   };
 }
@@ -864,7 +866,7 @@ export async function fetchTransactions(
   contracts: string,
   nfts: string,
   type_filter: string
-) {
+): Promise<TransactionPage> {
   const filters = await getTransactionFilters(wallets, nfts, type_filter);
   if (!filters) {
     return returnEmpty();
@@ -898,7 +900,7 @@ async function fetchPaginatedTransactions(
   const fields = `${TRANSACTIONS_TABLE}.*,ens1.display as from_display, ens2.display as to_display`;
   const joins = `LEFT JOIN ${ENS_TABLE} ens1 ON ${TRANSACTIONS_TABLE}.from_address=ens1.wallet LEFT JOIN ${ENS_TABLE} ens2 ON ${TRANSACTIONS_TABLE}.to_address=ens2.wallet`;
 
-  return fetchPaginated(
+  return fetchPaginated<Transaction>(
     TRANSACTIONS_TABLE,
     filters.params,
     'transaction_date desc',

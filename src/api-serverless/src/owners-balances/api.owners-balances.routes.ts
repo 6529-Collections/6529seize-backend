@@ -1,4 +1,4 @@
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { asyncRouter } from '../async.router';
 
 import {
@@ -15,6 +15,10 @@ import {
 } from './api.owners-balances.db';
 import { NotFoundException } from '../../../exceptions';
 import { DEFAULT_PAGE_SIZE } from '../page-request';
+import { ApiResponse } from '../api-response';
+import { OwnerBalancePage } from '../generated/models/OwnerBalancePage';
+import { OwnerBalance } from '../generated/models/OwnerBalance';
+import { OwnerBalanceMemes } from '../generated/models/OwnerBalanceMemes';
 
 const router = asyncRouter();
 
@@ -33,7 +37,7 @@ router.get(
         page_size?: number;
       }
     >,
-    res: any
+    res: Response<ApiResponse<OwnerBalancePage>>
   ) {
     const page = req.query.page ?? 1;
     const pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
@@ -54,7 +58,7 @@ router.get(
       any,
       {}
     >,
-    res: any
+    res: Response<ApiResponse<OwnerBalance>>
   ) {
     const consolidationKey = req.params.consolidation_key;
 
@@ -81,7 +85,7 @@ router.get(
       any,
       {}
     >,
-    res: any
+    res: Response<ApiResponse<OwnerBalanceMemes>>
   ) {
     const consolidationKey = req.params.consolidation_key;
 

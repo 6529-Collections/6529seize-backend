@@ -31,7 +31,7 @@ export const corsOptions = {
 export interface PaginatedResponse<T> {
   count: number;
   page: number;
-  next: string | null | boolean;
+  next: string | null;
   data: T[];
 }
 
