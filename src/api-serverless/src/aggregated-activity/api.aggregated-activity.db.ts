@@ -289,9 +289,11 @@ export async function fetchMemesAggregatedActivityForWallet(wallet: string) {
 }
 
 async function fetchSingleAggregatedActivity(
-  key: string,
+  key: 'wallet' | 'consolidation_key',
   value: string,
-  table: string
+  table:
+    | typeof CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE
+    | typeof AGGREGATED_ACTIVITY_TABLE
 ): Promise<AggregatedActivity | null> {
   const sql = `
     SELECT * from ${table} where ${key} = :value
@@ -304,9 +306,11 @@ async function fetchSingleAggregatedActivity(
 }
 
 async function fetchMemesAggregatedActivity(
-  key: string,
+  key: 'wallet' | 'consolidation_key',
   value: string,
-  table: string
+  table:
+    | typeof CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE
+    | typeof AGGREGATED_ACTIVITY_MEMES_TABLE
 ): Promise<AggregatedActivityMemes | null> {
   const sql = `
     SELECT * from ${table} where ${key} = :value
