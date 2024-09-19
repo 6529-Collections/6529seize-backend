@@ -255,7 +255,7 @@ export const fetchAggregatedActivity = async (
 export const fetchAggregatedActivityForConsolidationKey = async (
   key: string
 ): Promise<AggregatedActivity | null> => {
-  return fetchSingleAggregatedActivity(
+  return fetchSingleAggregatedActivity<AggregatedActivity>(
     'consolidation_key',
     key,
     CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE
@@ -265,7 +265,7 @@ export const fetchAggregatedActivityForConsolidationKey = async (
 export const fetchMemesAggregatedActivityForConsolidationKey = async (
   key: string
 ): Promise<AggregatedActivityMemes | null> => {
-  return fetchMemesAggregatedActivity(
+  return fetchSingleAggregatedActivity<AggregatedActivityMemes>(
     'consolidation_key',
     key,
     CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE
@@ -273,7 +273,7 @@ export const fetchMemesAggregatedActivityForConsolidationKey = async (
 };
 
 export async function fetchAggregatedActivityForWallet(wallet: string) {
-  return fetchSingleAggregatedActivity(
+  return fetchSingleAggregatedActivity<AggregatedActivity>(
     'wallet',
     wallet,
     AGGREGATED_ACTIVITY_TABLE
@@ -281,37 +281,18 @@ export async function fetchAggregatedActivityForWallet(wallet: string) {
 }
 
 export async function fetchMemesAggregatedActivityForWallet(wallet: string) {
-  return fetchMemesAggregatedActivity(
+  return fetchSingleAggregatedActivity<AggregatedActivityMemes>(
     'wallet',
     wallet,
     AGGREGATED_ACTIVITY_MEMES_TABLE
   );
 }
 
-async function fetchSingleAggregatedActivity(
+async function fetchSingleAggregatedActivity<T>(
   key: 'wallet' | 'consolidation_key',
   value: string,
-  table:
-    | typeof CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE
-    | typeof AGGREGATED_ACTIVITY_TABLE
-): Promise<AggregatedActivity | null> {
-  const sql = `
-    SELECT * from ${table} where ${key} = :value
-    `;
-  const result = await sqlExecutor.execute(sql, { value });
-  if (result.length !== 1) {
-    return null;
-  }
-  return result[0];
-}
-
-async function fetchMemesAggregatedActivity(
-  key: 'wallet' | 'consolidation_key',
-  value: string,
-  table:
-    | typeof CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE
-    | typeof AGGREGATED_ACTIVITY_MEMES_TABLE
-): Promise<AggregatedActivityMemes | null> {
+  table: string
+): Promise<T | null> {
   const sql = `
     SELECT * from ${table} where ${key} = :value
     `;
