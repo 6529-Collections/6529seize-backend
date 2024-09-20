@@ -51,7 +51,7 @@ export class DropsApiService {
       await this.userGroupsService.getGroupsUserIsEligibleFor(contextProfileId);
     const dropEntity = await (skipEligibilityCheck
       ? this.dropsDb.findDropByIdWithoutEligibilityCheck(dropId, ctx.connection)
-      : this.dropsDb.findDropById(
+      : this.dropsDb.findDropByIdWithEligibilityCheck(
           dropId,
           group_ids_user_is_eligible_for,
           ctx.connection
@@ -378,7 +378,7 @@ export class DropsApiService {
         group_ids_user_is_eligible_for.includes(wave.participation_group_id)
     };
     if (drop_id) {
-      const dropEntity = await this.dropsDb.findDropById(
+      const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
         drop_id,
         group_ids_user_is_eligible_for,
         ctx.connection

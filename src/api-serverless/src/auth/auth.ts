@@ -1,7 +1,10 @@
 import * as passport from 'passport';
 import { Request } from 'express';
 import { profilesService } from '../../../profiles/profiles.service';
-import { profileProxyApiService } from '../proxies/proxy.api.service';
+import {
+  isProxyActionActive,
+  profileProxyApiService
+} from '../proxies/proxy.api.service';
 import {
   AuthenticatedProxyAction,
   AuthenticationContext
@@ -9,7 +12,6 @@ import {
 import { resolveEnum } from '../../../helpers';
 import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { Time, Timer } from '../../../time';
-import { ProfileProxyAction } from '../generated/models/ProfileProxyAction';
 import * as mcache from 'memory-cache';
 
 export function getJwtSecret() {
@@ -112,17 +114,6 @@ export async function getAuthenticationContext(
   });
   mcache.put(cacheKey, authenticationContext, Time.minutes(1).toMillis());
   return authenticationContext;
-}
-
-function isProxyActionActive(action: ProfileProxyAction): boolean {
-  const now = Time.now();
-  return (
-    !action.end_time ||
-    (Time.millis(action.end_time).gte(now) &&
-      (!action.start_time || Time.millis(action.start_time).lte(now)) &&
-      (!action.rejected_at || Time.millis(action.rejected_at).gte(now)) &&
-      (!action.revoked_at || Time.millis(action.revoked_at).gte(now)))
-  );
 }
 
 export function getWalletOrThrow(

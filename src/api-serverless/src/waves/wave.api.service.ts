@@ -18,7 +18,6 @@ import {
 } from '../../../exceptions';
 import { wavesMappers, WavesMappers } from './waves.mappers';
 import { randomUUID } from 'crypto';
-import { dropCreationService } from '../drops/drop-creation.api.service';
 import { AuthenticationContext } from '../../../auth-context';
 import { WaveType } from '../generated/models/WaveType';
 import { WaveOutcomeType } from '../generated/models/WaveOutcomeType';
@@ -46,6 +45,11 @@ import { WaveEntity } from '../../../entities/IWave';
 import { RequestContext } from '../../../request.context';
 import { UpdateWaveRequest } from '../generated/models/UpdateWaveRequest';
 import { Time } from '../../../time';
+import {
+  createOrUpdateDrop,
+  CreateOrUpdateDropUseCase
+} from '../../../drops/create-or-update-drop.use-case';
+import { dropsMappers, DropsMappers } from '../drops/drops.mappers';
 
 export class WaveApiService {
   constructor(
@@ -54,7 +58,9 @@ export class WaveApiService {
     private readonly userGroupsService: UserGroupsService,
     private readonly waveMappers: WavesMappers,
     private readonly activityRecorder: ActivityRecorder,
-    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
+    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
+    private readonly createOrUpdateDrop: CreateOrUpdateDropUseCase,
+    private readonly dropsMappers: DropsMappers
   ) {}
 
   public async createWave(
@@ -69,13 +75,6 @@ export class WaveApiService {
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
         const id = randomUUID();
-        const descriptionDropId = await dropCreationService
-          .createWaveDrop(
-            id,
-            createWaveRequest.description_drop,
-            ctxWithConnection
-          )
-          .then((drop) => drop.id);
         const newEntity = this.waveMappers.createWaveToNewWaveEntity(
           id,
           null,
@@ -83,9 +82,28 @@ export class WaveApiService {
           null,
           createWaveRequest,
           authenticationContext.getActingAsId()!,
-          descriptionDropId
+          randomUUID()
         );
         await this.wavesApiDb.insertWave(newEntity, ctxWithConnection);
+        const authorId = authenticationContext.getActingAsId()!;
+        const descriptionDropModel =
+          this.dropsMappers.createDropApiToUseCaseModel({
+            request: { ...createWaveRequest.description_drop, wave_id: id },
+            authorId
+          });
+        const descriptionDropId = await this.createOrUpdateDrop
+          .execute(descriptionDropModel, {
+            timer: ctxWithConnection.timer!,
+            connection: ctxWithConnection.connection
+          })
+          .then((resp) => resp.drop_id);
+        await this.wavesApiDb.updateDescriptionDropId(
+          {
+            waveId: id,
+            newDescriptionDropId: descriptionDropId
+          },
+          connection
+        );
         await this.identitySubscriptionsDb.addIdentitySubscription(
           {
             subscriber_id: newEntity.created_by,
@@ -754,5 +772,7 @@ export const waveApiService = new WaveApiService(
   userGroupsService,
   wavesMappers,
   activityRecorder,
-  identitySubscriptionsDb
+  identitySubscriptionsDb,
+  createOrUpdateDrop,
+  dropsMappers
 );

@@ -26,7 +26,7 @@ class DropRaterService {
   }) {
     await this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
       const dropId = param.drop_id;
-      const dropEntity = await this.dropsDb.findDropById(
+      const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
         dropId,
         param.groupIdsUserIsEligibleFor,
         connection
