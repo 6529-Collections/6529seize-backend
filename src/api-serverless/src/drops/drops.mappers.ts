@@ -40,6 +40,12 @@ import { RequestContext } from '../../../request.context';
 import { AuthenticationContext } from '../../../auth-context';
 import { WaveMin } from '../generated/models/WaveMin';
 import { DeletedDropEntity } from '../../../entities/IDeletedDrop';
+import { CreateDropRequest } from '../generated/models/CreateDropRequest';
+import { UpdateDropRequest } from '../generated/models/UpdateDropRequest';
+import {
+  CreateOrUpdateDropModel,
+  DropPartIdentifierModel
+} from '../../../drops/create-or-update-drop.model';
 
 export class DropsMappers {
   constructor(
@@ -49,6 +55,76 @@ export class DropsMappers {
     private readonly wavesApiDb: WavesApiDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
   ) {}
+
+  public createDropApiToUseCaseModel({
+    request,
+    authorId,
+    proxyId
+  }: {
+    request: CreateDropRequest;
+    authorId: string;
+    proxyId?: string;
+  }): CreateOrUpdateDropModel {
+    return this.updateDropApiToUseCaseModel({
+      request,
+      authorId,
+      proxyId,
+      replyTo: request.reply_to ?? null,
+      waveId: request.wave_id
+    });
+  }
+
+  public updateDropApiToUseCaseModel({
+    request,
+    authorId,
+    proxyId,
+    replyTo,
+    waveId,
+    dropId
+  }: {
+    request: UpdateDropRequest;
+    waveId: string;
+    replyTo: DropPartIdentifierModel | null;
+    authorId: string;
+    proxyId?: string;
+    dropId?: string;
+  }): CreateOrUpdateDropModel {
+    return {
+      author_identity: authorId,
+      author_id: authorId,
+      proxy_identity: proxyId,
+      proxy_id: proxyId,
+      drop_id: dropId ?? null,
+      wave_id: waveId,
+      reply_to: replyTo,
+      title: request.title ?? null,
+      parts: request.parts.map((it) => ({
+        content: it.content ?? null,
+        media: it.media.map((media) => ({
+          url: media.url,
+          mime_type: media.mime_type
+        })),
+        quoted_drop: it.quoted_drop
+          ? {
+              drop_id: it.quoted_drop.drop_id,
+              drop_part_id: it.quoted_drop.drop_part_id
+            }
+          : null
+      })),
+      referenced_nfts: request.referenced_nfts.map((it) => ({
+        contract: it.contract,
+        token: it.token,
+        name: it.name
+      })),
+      mentioned_users: request.mentioned_users.map((it) => ({
+        handle: it.handle_in_content
+      })),
+      metadata: request.metadata.map((it) => ({
+        data_key: it.data_key,
+        data_value: it.data_value
+      }))
+    };
+  }
 
   public async convertToDropFulls(
     {

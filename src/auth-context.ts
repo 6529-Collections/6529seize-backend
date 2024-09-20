@@ -71,6 +71,12 @@ export class AuthenticationContext {
       activeProxyActions: []
     });
   }
+
+  public getLoggedInUsersProfileId(): string | null {
+    return this.isAuthenticatedAsProxy()
+      ? this.authenticatedProfileId
+      : this.roleProfileId ?? this.authenticatedProfileId ?? null;
+  }
 }
 
 export interface AuthenticatedProxyAction {

@@ -157,8 +157,13 @@ router.post(
       reply_to: newDrop.reply_to
     };
     const createdDrop = await dropCreationService.createDrop(
-      createDropRequest,
-      authenticationContext,
+      {
+        createDropRequest,
+        authorId: authorProfileId,
+        representativeId: authenticationContext.isAuthenticatedAsProxy()
+          ? authenticationContext.roleProfileId!
+          : authorProfileId
+      },
       timer
     );
     res.send(createdDrop);
@@ -174,20 +179,23 @@ router.post(
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
+    if (!authenticationContext.isUserFullyAuthenticated()) {
+      throw new ForbiddenException(`Create a profile before updating a drop`);
+    }
     const apiRequest = req.body;
     const updateRequest: UpdateDropRequest = getValidatedByJoiOrThrow(
       apiRequest,
       UpdateDropSchema
     );
+    const authorId = authenticationContext.getActingAsId()!;
     const updatedDrop = await dropCreationService.updateDrop(
       {
         dropId: req.params.drop_id,
-        request: updateRequest
+        request: updateRequest,
+        authorId: authorId,
+        representativeId: authenticationContext.getLoggedInUsersProfileId()!
       },
-      {
-        timer,
-        authenticationContext
-      }
+      timer
     );
     res.send(updatedDrop);
   }

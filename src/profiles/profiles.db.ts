@@ -191,6 +191,28 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     return result.at(0) ?? null;
   }
 
+  public async getIdsByHandles(
+    handles: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<string, string>> {
+    if (!handles.length) {
+      return {};
+    }
+    const opts = connection ? { wrappedConnection: connection } : undefined;
+    return this.db
+      .execute<{ profile_id: string; handle: string }>(
+        `select profile_id, handle from ${IDENTITIES_TABLE} where normalised_handle in (:handles)`,
+        { handles: handles.map((it) => it.toLowerCase()) },
+        opts
+      )
+      .then((result) =>
+        result.reduce((acc, it) => {
+          acc[it.handle] = it.profile_id;
+          return acc;
+        }, {} as Record<string, string>)
+      );
+  }
+
   private async insertProfileArchiveRecord(
     param: Profile,
     connection: ConnectionWrapper<any>

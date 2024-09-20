@@ -263,6 +263,24 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async findDropById(
     id: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropEntity | null> {
+    const opts = connection ? { wrappedConnection: connection } : {};
+    return this.db
+      .execute(
+        `
+        select d.* from ${DROPS_TABLE} d where d.id = :id
+        `,
+        {
+          id
+        },
+        opts
+      )
+      .then((it) => it[0] || null);
+  }
+
+  async findDropByIdWithEligibilityCheck(
+    id: string,
     group_ids_user_is_eligible_for: string[],
     connection?: ConnectionWrapper<any>
   ): Promise<DropEntity | null> {

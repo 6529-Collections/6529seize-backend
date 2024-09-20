@@ -260,6 +260,17 @@ export class ProfilesService {
     return this.profilesDb.getProfilesByWallets(wallets, connection);
   }
 
+  public async resolveIdentityIdOrThrowNotFound(
+    identity: string
+  ): Promise<string> {
+    const resolveResponse = await this.resolveIdentityOrThrowNotFound(identity);
+    const identityId = resolveResponse.profile_id;
+    if (!identityId) {
+      throw new NotFoundException(`Identity ${identity} not found`);
+    }
+    return identityId;
+  }
+
   public async resolveIdentityOrThrowNotFound(identity: string): Promise<{
     wallet: string;
     profile_id: string | null;
