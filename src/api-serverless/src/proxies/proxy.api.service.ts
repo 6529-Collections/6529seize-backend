@@ -31,6 +31,7 @@ import {
   ProfileActivityLogsDb
 } from '../../../profileActivityLogs/profile-activity-logs.db';
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
+import { ProfileProxyAction } from '../generated/models/ProfileProxyAction';
 
 const ACTION_MAP: Record<ProfileProxyActionType, ApiProfileProxyActionType> = {
   [ProfileProxyActionType.AllocateRep]: ApiProfileProxyActionType.ALLOCATE_REP,
@@ -290,6 +291,24 @@ export class ProfileProxyApiService {
         actions
       })
       .then((it) => it[0] ?? null);
+  }
+
+  async hasActiveProxyAction({
+    granted_by_profile_id,
+    granted_to_profile_id,
+    action
+  }: {
+    readonly granted_by_profile_id: string;
+    readonly granted_to_profile_id: string;
+    readonly action: ApiProfileProxyActionType;
+  }): Promise<boolean> {
+    const proxy = await this.getProxyByGrantedByAndGrantedTo({
+      granted_by_profile_id,
+      granted_to_profile_id
+    });
+    return !!proxy?.actions
+      ?.filter(isProxyActionActive)
+      ?.find((it) => it.action_type === action.toString());
   }
 
   private async isActionExists({
@@ -795,6 +814,17 @@ export class ProfileProxyApiService {
       }
     );
   }
+}
+
+export function isProxyActionActive(action: ProfileProxyAction): boolean {
+  const now = Time.now();
+  return (
+    !action.end_time ||
+    (Time.millis(action.end_time).gte(now) &&
+      (!action.start_time || Time.millis(action.start_time).lte(now)) &&
+      (!action.rejected_at || Time.millis(action.rejected_at).gte(now)) &&
+      (!action.revoked_at || Time.millis(action.revoked_at).gte(now)))
+  );
 }
 
 export const profileProxyApiService = new ProfileProxyApiService(
