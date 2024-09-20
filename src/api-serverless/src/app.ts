@@ -88,6 +88,7 @@ import { NftsPage } from './generated/models/NftsPage';
 import { NFT } from '../../entities/INFT';
 import { Nft } from './generated/models/Nft';
 import { ArtistNameItem } from './generated/models/ArtistNameItem';
+import { TransactionPage } from './generated/models/TransactionPage';
 
 const YAML = require('yamljs');
 
@@ -639,27 +640,35 @@ loadApi().then(() => {
     });
   });
 
-  apiRouter.get(`/transactions`, function (req: any, res: any) {
-    const pageSize: number =
-      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
-        ? parseInt(req.query.page_size)
-        : DEFAULT_PAGE_SIZE;
-    const page: number = req.query.page ? parseInt(req.query.page) : 1;
+  apiRouter.get(
+    `/transactions`,
+    function (req: any, res: Response<ApiResponse<TransactionPage>>) {
+      const pageSize: number =
+        req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
+          ? parseInt(req.query.page_size)
+          : DEFAULT_PAGE_SIZE;
+      const page: number = req.query.page ? parseInt(req.query.page) : 1;
 
-    const wallets = req.query.wallet;
-    const contracts = req.query.contract;
-    const nfts = req.query.id;
+      const wallets = req.query.wallet;
+      const contracts = req.query.contract;
+      const nfts = req.query.id;
 
-    const filter =
-      req.query.filter && TRANSACTION_FILTERS.includes(req.query.filter)
-        ? req.query.filter
-        : null;
-    db.fetchTransactions(pageSize, page, wallets, contracts, nfts, filter).then(
-      (result) => {
+      const filter =
+        req.query.filter && TRANSACTION_FILTERS.includes(req.query.filter)
+          ? req.query.filter
+          : null;
+      db.fetchTransactions(
+        pageSize,
+        page,
+        wallets,
+        contracts,
+        nfts,
+        filter
+      ).then((result) => {
         returnPaginatedResult(result, req, res);
-      }
-    );
-  });
+      });
+    }
+  );
 
   apiRouter.get(`/transactions/:hash`, function (req: any, res: any) {
     const hash = req.params.hash;

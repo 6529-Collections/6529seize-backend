@@ -14,6 +14,9 @@ import { fetchPaginated } from '../../../db-api';
 import { calculateLevel } from '../../../profiles/profile-level';
 import { MetricsCollector, MetricsContent } from '../tdh/api.tdh.db';
 import { sqlExecutor } from '../../../sql-executor';
+import { AggregatedActivity } from '../generated/models/AggregatedActivity';
+import { AggregatedActivityMemes } from '../generated/models/AggregatedActivityMemes';
+import { AggregatedActivityPage } from '../generated/models/AggregatedActivityPage';
 
 function getSearchFilters(search: string) {
   let walletFilters = '';
@@ -99,7 +102,7 @@ export const fetchAggregatedActivity = async (
     collector: MetricsCollector | undefined;
     season: number | undefined;
   }
-) => {
+): Promise<AggregatedActivityPage> => {
   let filters = constructFilters(
     '',
     `${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key != :manifold`
@@ -228,7 +231,7 @@ export const fetchAggregatedActivity = async (
     joins += ` LEFT JOIN ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE} ON ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key = ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE}.consolidation_key and ${CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE}.season = ${query.season}`;
   }
 
-  const results = await fetchPaginated(
+  const results = await fetchPaginated<AggregatedActivity>(
     CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE,
     params,
     `${sort} ${sortDir}, ${CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE}.consolidation_key ${sortDir}`,
@@ -251,8 +254,8 @@ export const fetchAggregatedActivity = async (
 
 export const fetchAggregatedActivityForConsolidationKey = async (
   key: string
-) => {
-  return fetchSingleAggregatedActivity(
+): Promise<AggregatedActivity | null> => {
+  return fetchSingleAggregatedActivity<AggregatedActivity>(
     'consolidation_key',
     key,
     CONSOLIDATED_AGGREGATED_ACTIVITY_TABLE
@@ -261,8 +264,8 @@ export const fetchAggregatedActivityForConsolidationKey = async (
 
 export const fetchMemesAggregatedActivityForConsolidationKey = async (
   key: string
-) => {
-  return fetchMemesAggregatedActivity(
+): Promise<AggregatedActivityMemes | null> => {
+  return fetchSingleAggregatedActivity<AggregatedActivityMemes>(
     'consolidation_key',
     key,
     CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE
@@ -270,7 +273,7 @@ export const fetchMemesAggregatedActivityForConsolidationKey = async (
 };
 
 export async function fetchAggregatedActivityForWallet(wallet: string) {
-  return fetchSingleAggregatedActivity(
+  return fetchSingleAggregatedActivity<AggregatedActivity>(
     'wallet',
     wallet,
     AGGREGATED_ACTIVITY_TABLE
@@ -278,18 +281,18 @@ export async function fetchAggregatedActivityForWallet(wallet: string) {
 }
 
 export async function fetchMemesAggregatedActivityForWallet(wallet: string) {
-  return fetchMemesAggregatedActivity(
+  return fetchSingleAggregatedActivity<AggregatedActivityMemes>(
     'wallet',
     wallet,
     AGGREGATED_ACTIVITY_MEMES_TABLE
   );
 }
 
-async function fetchSingleAggregatedActivity(
-  key: string,
+async function fetchSingleAggregatedActivity<T>(
+  key: 'wallet' | 'consolidation_key',
   value: string,
   table: string
-) {
+): Promise<T | null> {
   const sql = `
     SELECT * from ${table} where ${key} = :value
     `;
@@ -298,15 +301,4 @@ async function fetchSingleAggregatedActivity(
     return null;
   }
   return result[0];
-}
-
-async function fetchMemesAggregatedActivity(
-  key: string,
-  value: string,
-  table: string
-) {
-  const sql = `
-    SELECT * from ${table} where ${key} = :value
-    `;
-  return await sqlExecutor.execute(sql, { value });
 }

@@ -76,6 +76,8 @@ export * from '../models/IntRange';
 export * from '../models/LoginRequest';
 export * from '../models/LoginResponse';
 export * from '../models/Nft';
+export * from '../models/NftOwner';
+export * from '../models/NftOwnerPage';
 export * from '../models/NftsPage';
 export * from '../models/NonceResponse';
 export * from '../models/Notification';
@@ -84,6 +86,7 @@ export * from '../models/NotificationsResponse';
 export * from '../models/OutgoingIdentitySubscriptionsPage';
 export * from '../models/OwnerBalance';
 export * from '../models/OwnerBalanceMemes';
+export * from '../models/OwnerBalancePage';
 export * from '../models/PageBase';
 export * from '../models/PageWithNextUriBase';
 export * from '../models/ProfileMin';
@@ -100,6 +103,8 @@ export * from '../models/ReplyToDrop';
 export * from '../models/ReplyToDropResponse';
 export * from '../models/SeizeSettings';
 export * from '../models/TargetAndSubscriptionActions';
+export * from '../models/Transaction';
+export * from '../models/TransactionPage';
 export * from '../models/UpdateDropRequest';
 export * from '../models/UpdateProxyActionRequest';
 export * from '../models/UpdateWaveRequest';
@@ -207,6 +212,8 @@ import { IntRange } from '../models/IntRange';
 import { LoginRequest } from '../models/LoginRequest';
 import { LoginResponse } from '../models/LoginResponse';
 import { Nft      , NftTokenTypeEnum                               } from '../models/Nft';
+import { NftOwner } from '../models/NftOwner';
+import { NftOwnerPage } from '../models/NftOwnerPage';
 import { NftsPage } from '../models/NftsPage';
 import { NonceResponse } from '../models/NonceResponse';
 import { Notification        } from '../models/Notification';
@@ -215,6 +222,7 @@ import { NotificationsResponse } from '../models/NotificationsResponse';
 import { OutgoingIdentitySubscriptionsPage } from '../models/OutgoingIdentitySubscriptionsPage';
 import { OwnerBalance } from '../models/OwnerBalance';
 import { OwnerBalanceMemes } from '../models/OwnerBalanceMemes';
+import { OwnerBalancePage } from '../models/OwnerBalancePage';
 import { PageBase } from '../models/PageBase';
 import { PageWithNextUriBase } from '../models/PageWithNextUriBase';
 import { ProfileMin } from '../models/ProfileMin';
@@ -231,6 +239,8 @@ import { ReplyToDrop } from '../models/ReplyToDrop';
 import { ReplyToDropResponse } from '../models/ReplyToDropResponse';
 import { SeizeSettings } from '../models/SeizeSettings';
 import { TargetAndSubscriptionActions } from '../models/TargetAndSubscriptionActions';
+import { Transaction } from '../models/Transaction';
+import { TransactionPage } from '../models/TransactionPage';
 import { UpdateDropRequest } from '../models/UpdateDropRequest';
 import { UpdateProxyActionRequest } from '../models/UpdateProxyActionRequest';
 import { UpdateWaveRequest } from '../models/UpdateWaveRequest';
@@ -370,6 +380,8 @@ let typeMap: {[index: string]: any} = {
     "LoginRequest": LoginRequest,
     "LoginResponse": LoginResponse,
     "Nft": Nft,
+    "NftOwner": NftOwner,
+    "NftOwnerPage": NftOwnerPage,
     "NftsPage": NftsPage,
     "NonceResponse": NonceResponse,
     "Notification": Notification,
@@ -377,6 +389,7 @@ let typeMap: {[index: string]: any} = {
     "OutgoingIdentitySubscriptionsPage": OutgoingIdentitySubscriptionsPage,
     "OwnerBalance": OwnerBalance,
     "OwnerBalanceMemes": OwnerBalanceMemes,
+    "OwnerBalancePage": OwnerBalancePage,
     "PageBase": PageBase,
     "PageWithNextUriBase": PageWithNextUriBase,
     "ProfileMin": ProfileMin,
@@ -391,6 +404,8 @@ let typeMap: {[index: string]: any} = {
     "ReplyToDropResponse": ReplyToDropResponse,
     "SeizeSettings": SeizeSettings,
     "TargetAndSubscriptionActions": TargetAndSubscriptionActions,
+    "Transaction": Transaction,
+    "TransactionPage": TransactionPage,
     "UpdateDropRequest": UpdateDropRequest,
     "UpdateProxyActionRequest": UpdateProxyActionRequest,
     "UpdateWaveRequest": UpdateWaveRequest,
