@@ -31,7 +31,12 @@ import {
   parseNumberOrNull
 } from '../helpers';
 import { randomUUID } from 'crypto';
-import { DropMediaEntity, DropPartEntity, DropType } from '../entities/IDrop';
+import {
+  DropMediaEntity,
+  DropMentionEntity,
+  DropPartEntity,
+  DropType
+} from '../entities/IDrop';
 import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
@@ -633,7 +638,9 @@ export class CreateOrUpdateDropUseCase {
     );
     const dropId = model.drop_id!;
     const waveId = model.wave_id;
-    const mentionEntities = mentionedHandledWithIds.map(([id, handle]) => ({
+    const mentionEntities = mentionedHandledWithIds.map<
+      Omit<DropMentionEntity, 'id'>
+    >(([handle, id]) => ({
       drop_id: dropId,
       mentioned_profile_id: id,
       handle_in_content: handle,
