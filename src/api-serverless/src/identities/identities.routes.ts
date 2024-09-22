@@ -96,7 +96,9 @@ router.delete(
       await identitiesService.removeIdentitySubscriptionActions({
         identityAddress: identityAddress,
         subscriber: authenticatedProfileId,
-        actions: request.actions
+        actions: request.actions.filter(
+          (it) => it !== IdentitySubscriptionTargetAction.DropVoted
+        )
       });
     res.send({
       actions: activeActions
