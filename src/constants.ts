@@ -30,6 +30,7 @@ export const USER_GROUPS_TABLE = 'community_groups';
 export const PROFILE_GROUPS_TABLE = 'profile_groups';
 export const PROFILES_TABLE = 'profiles';
 export const PROFILES_ACTIVITY_LOGS_TABLE = 'profile_activity_logs';
+export const PROFILE_LATEST_LOG_TABLE = 'profile_latest_logs';
 export const PROFILES_ARCHIVE_TABLE = 'profiles_archive';
 export const IDENTITIES_TABLE = 'identities';
 export const ADDRESS_CONSOLIDATION_KEY = 'address_consolidation_keys';

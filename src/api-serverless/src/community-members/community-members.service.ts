@@ -38,7 +38,8 @@ export class CommunityMembersService {
         );
         const lastActivities =
           await this.communityMembersDb.getCommunityMembersLastActivitiesByConsolidationKeys(
-            consolidationKeys
+            consolidationKeys,
+            ctx
           );
         return members.map((member) => ({
           display: member.display,

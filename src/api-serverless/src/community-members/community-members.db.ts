@@ -45,8 +45,7 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
     if (sort === 'level') {
       sort = 'level_raw';
     }
-    return this.db.execute(
-      `
+    const sql = `
       ${viewResult.sql} 
       select
         ifnull(cm.handle, cm.primary_address) as display,
@@ -59,9 +58,12 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
         cm.pfp as pfp,
         cm.consolidation_key as consolidation_key
       from ${UserGroupsService.GENERATED_VIEW} cm order by cm.${sort} ${query.sort_direction} limit ${query.page_size} offset ${offset}
-    `,
-      viewResult.params
-    );
+    `;
+    const params = viewResult.params;
+    ctx.timer?.start(`${this.constructor.name}->getCommunityMembers`);
+    const result = await this.db.execute<CommunityMemberFromDb>(sql, params);
+    ctx?.timer?.stop(`${this.constructor.name}->getCommunityMembers`);
+    return result;
   }
 
   async countCommunityMembers(
@@ -87,47 +89,51 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
   }
 
   async getCommunityMembersLastActivitiesByConsolidationKeys(
-    consolidationKeys: string[]
+    consolidationKeys: string[],
+    ctx: RequestContext
   ): Promise<Record<string, number>> {
     const chunkSize = 20;
     const promises: Promise<
       { consolidation_key: string; last_activity: string }[]
     >[] = [];
+    ctx.timer?.start(
+      `${this.constructor.name}->getCommunityMembersLastActivitiesByConsolidationKeys`
+    );
     for (let i = 0; i < consolidationKeys.length; i += chunkSize) {
       const chunk = consolidationKeys.slice(i, i + chunkSize);
       if (chunk.length) {
-        promises.push(
-          this.db.execute(
-            `
-        with trx_max_dates as (select a.consolidation_key as consolidation_key, max(t.transaction_date) as last_activity
-                               from ${ADDRESS_CONSOLIDATION_KEY} a
-                                        join ${TRANSACTIONS_TABLE} t
-                                             on a.address is not null and t.from_address = a.address or t.to_address = a.address
-                               where a.consolidation_key in (:consolidationKeys)
-                               group by 1),
-             prof_max_dates as (select i.consolidation_key as consolidation_key, max(l.created_at) as last_activity
-                                from ${IDENTITIES_TABLE} i
-                                         join ${PROFILES_ACTIVITY_LOGS_TABLE} l
-                                              on l.profile_id = i.profile_id
-                                where i.consolidation_key in (:consolidationKeys)
-                                group by 1),
-             last_activities_by_consolidation_key as (select t.consolidation_key,
-                                                             t.last_activity
-                                                      from trx_max_dates t
-                                                      union all
-                                                      select p.consolidation_key,
-                                                             p.last_activity
-                                                      from prof_max_dates p)
-        select l.consolidation_key, max(l.last_activity) as last_activity
-        from last_activities_by_consolidation_key l
-        group by 1
-      `,
-            { consolidationKeys: chunk }
-          )
-        );
+        const params = { consolidationKeys: chunk };
+        const sql = `
+            with trx_max_dates as (select a.consolidation_key as consolidation_key, max(t.transaction_date) as last_activity
+                                   from ${ADDRESS_CONSOLIDATION_KEY} a
+                                            join ${TRANSACTIONS_TABLE} t
+                                                 on a.address is not null and t.from_address = a.address or t.to_address = a.address
+                                   where a.consolidation_key in (:consolidationKeys)
+                                   group by 1),
+                 prof_max_dates as (select i.consolidation_key as consolidation_key, max(l.created_at) as last_activity
+                                    from ${IDENTITIES_TABLE} i
+                                             join ${PROFILES_ACTIVITY_LOGS_TABLE} l
+                                                  on l.profile_id = i.profile_id
+                                    where i.consolidation_key in (:consolidationKeys)
+                                    group by 1),
+                 last_activities_by_consolidation_key as (select t.consolidation_key,
+                                                                 t.last_activity
+                                                          from trx_max_dates t
+                                                          union all
+                                                          select p.consolidation_key,
+                                                                 p.last_activity
+                                                          from prof_max_dates p)
+            select l.consolidation_key, max(l.last_activity) as last_activity
+            from last_activities_by_consolidation_key l
+            group by 1
+        `;
+        promises.push(this.db.execute(sql, params));
       }
     }
     const dbResults = (await Promise.all(promises)).flat();
+    ctx.timer?.stop(
+      `${this.constructor.name}->getCommunityMembersLastActivitiesByConsolidationKeys`
+    );
     return dbResults.reduce((acc, row) => {
       acc[row.consolidation_key] = new Date(row.last_activity).getTime();
       return acc;
