@@ -1789,7 +1789,7 @@ paths:
           required: false
           schema:
             type: string
-        - name: contracts
+        - name: contract
           in: query
           description: Filter by contract address
           required: false
