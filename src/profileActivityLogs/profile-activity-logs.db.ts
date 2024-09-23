@@ -10,14 +10,17 @@ import {
   ProfileActivityLogType
 } from '../entities/IProfileActivityLog';
 import { uniqueShortId } from '../helpers';
-import { PROFILES_ACTIVITY_LOGS_TABLE } from '../constants';
+import {
+  PROFILE_LATEST_LOG_TABLE,
+  PROFILES_ACTIVITY_LOGS_TABLE
+} from '../constants';
 import { PageRequest } from '../api-serverless/src/page-request';
 import { RateMatter } from '../entities/IRating';
 import {
   UserGroupsService,
   userGroupsService
 } from '../api-serverless/src/community-members/user-groups.service';
-import { Timer } from '../time';
+import { Time, Timer } from '../time';
 import { RequestContext } from '../request.context';
 
 export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
@@ -58,17 +61,26 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     timer?: Timer
   ) {
     timer?.start('ProfileActivityLogsDb->insert');
-    await this.db.execute(
-      `
+    const currentTime = Time.now().toDate();
+    await Promise.all([
+      this.db.execute(
+        `
     insert into ${PROFILES_ACTIVITY_LOGS_TABLE} (id, profile_id, target_id, contents, type, proxy_id, created_at)
-    values (:id, :profile_id, :target_id, :contents, :type, :proxy_id, now())
+    values (:id, :profile_id, :target_id, :contents, :type, :proxy_id, :currentTime)
     `,
-      {
-        ...log,
-        id: uniqueShortId()
-      },
-      { wrappedConnection: connectionHolder }
-    );
+        {
+          ...log,
+          currentTime,
+          id: uniqueShortId()
+        },
+        { wrappedConnection: connectionHolder }
+      ),
+      this.db.execute(
+        `insert into ${PROFILE_LATEST_LOG_TABLE} (profile_id, latest_activity) values (:profileId, :currentTime) on duplicate key update latest_activity = :currentTime`,
+        { profileId: log.profile_id, currentTime },
+        { wrappedConnection: connectionHolder.connection }
+      )
+    ]);
     timer?.stop('ProfileActivityLogsDb->insert');
   }
 
@@ -144,6 +156,13 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     await this.db.execute(
       `
       update ${PROFILES_ACTIVITY_LOGS_TABLE} set profile_id = :newSourceId where profile_id = :oldSourceId
+      `,
+      param,
+      { wrappedConnection: connectionHolder.connection }
+    );
+    await this.db.execute(
+      `
+      update ${PROFILE_LATEST_LOG_TABLE} set profile_id = :newSourceId where profile_id = :oldSourceId
       `,
       param,
       { wrappedConnection: connectionHolder.connection }

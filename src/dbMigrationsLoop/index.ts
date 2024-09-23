@@ -32,6 +32,7 @@ import { IdentityEntity } from '../entities/IIdentity';
 import { ProfileGroupEntity } from '../entities/IProfileGroup';
 import { CookiesConsent } from '../entities/ICookieConsent';
 import { Prenode } from '../entities/IPrenode';
+import { ProfileLatestLogEntity } from '../entities/IProfileLatestLog';
 
 const DBMigrate = require('db-migrate');
 
@@ -64,6 +65,7 @@ const MANAGED_ENTITIES = [
   ProfileGroupEntity,
   ProfileProxyActionEntity,
   ProfileProxyEntity,
+  ProfileLatestLogEntity,
   Rating,
   RatingsSnapshot,
   UserGroupEntity,
