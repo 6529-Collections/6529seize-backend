@@ -10,7 +10,7 @@ import {
 import {
   ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
-  PROFILES_ACTIVITY_LOGS_TABLE,
+  PROFILE_LATEST_LOG_TABLE,
   TRANSACTIONS_TABLE
 } from '../../../constants';
 import { UserGroupsService, userGroupsService } from './user-groups.service';
@@ -110,12 +110,11 @@ export class CommunityMembersDb extends LazyDbAccessCompatibleService {
                                                  on a.address is not null and t.from_address = a.address or t.to_address = a.address
                                    where a.consolidation_key in (:consolidationKeys)
                                    group by 1),
-                 prof_max_dates as (select i.consolidation_key as consolidation_key, max(l.created_at) as last_activity
+                 prof_max_dates as (select i.consolidation_key as consolidation_key, l.latest_activity as last_activity
                                     from ${IDENTITIES_TABLE} i
-                                             join ${PROFILES_ACTIVITY_LOGS_TABLE} l
+                                             join ${PROFILE_LATEST_LOG_TABLE} l
                                                   on l.profile_id = i.profile_id
-                                    where i.consolidation_key in (:consolidationKeys)
-                                    group by 1),
+                                    where i.consolidation_key in (:consolidationKeys)),
                  last_activities_by_consolidation_key as (select t.consolidation_key,
                                                                  t.last_activity
                                                           from trx_max_dates t
