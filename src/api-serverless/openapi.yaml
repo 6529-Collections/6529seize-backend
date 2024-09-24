@@ -1621,6 +1621,26 @@ paths:
           description: Invalid request
         "404":
           description: Proxy or action not found
+  /bulk-rep:
+    post:
+      tags:
+        - Ratings
+      summary: >-
+        Change REP rating of multiple targets and categories in one go. Targets 
+        final REP value will be the value you supply here. If you supply multiple 
+        addresses for one consolidation group then those amounts will be summed together.
+      operationId: bulkRep
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkRepRequest"
+      responses:
+        "201":
+          description: successful operation
+        "400":
+          description: Invalid request
   /ratings:
     post:
       tags:
@@ -2580,6 +2600,33 @@ components:
           type: string
         reason:
           type: string
+    BulkRepRequest:
+      type: object
+      required:
+        - targets
+      properties:
+        targets:
+          type: array
+          maxLength: 200
+          items:
+            $ref: "#/components/schemas/BulkRepTarget"
+    BulkRepTarget:
+      type: object
+      required:
+        - address
+        - category
+        - amount
+      properties:
+        address:
+          type: string
+          pattern: 0x[a-fA-F0-9]{40}
+        category:
+          type: string
+          maxLength: 100
+          pattern: ^[a-zA-Z0-9?!,.'() ]{1,100}$
+        amount:
+          type: integer
+          format: int64
     ChangeGroupVisibility:
       type: object
       required:
