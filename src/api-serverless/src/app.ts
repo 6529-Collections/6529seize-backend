@@ -14,6 +14,7 @@ import royaltiesRoutes from './royalties/royalties.routes';
 import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
 import ratingsRoutes from './ratings/ratings.routes';
+import bulkRepRoutes from './ratings/bulk-rep.routes';
 import gasRoutes from './gas/gas.routes';
 import tdhRoutes from './tdh/api.tdh.routes';
 import oracleRoutes from './oracle/api.oracle.routes';
@@ -972,6 +973,7 @@ loadApi().then(() => {
   apiRouter.use(`/aggregated-activity`, aggregatedActivityRoutes);
   apiRouter.use(`/owners-balances`, ownersBalancesRoutes);
   apiRouter.use(`/ratings`, ratingsRoutes);
+  apiRouter.use(`/bulk-rep`, bulkRepRoutes);
   apiRouter.use(`/proxies`, proxiesRoutes);
   apiRouter.use(`/subscriptions`, subscriptionsRoutes);
   apiRouter.use(`/drops`, dropsRoutes);

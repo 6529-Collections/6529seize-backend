@@ -43,12 +43,17 @@ import {
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
 import { BulkRateRequest } from '../api-serverless/src/generated/models/BulkRateRequest';
-import { resolveEnum } from '../helpers';
+import { distinct, resolveEnum } from '../helpers';
 import { AvailableRatingCredit } from '../api-serverless/src/generated/models/AvailableRatingCredit';
 import { RatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/RatingWithProfileInfoAndLevel';
 import { RatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/RatingWithProfileInfoAndLevelPage';
-import { identitiesDb } from '../identities/identities.db';
+import { IdentitiesDb, identitiesDb } from '../identities/identities.db';
 import { RequestContext } from '../request.context';
+import { BulkRepRequest } from '../api-serverless/src/generated/models/BulkRepRequest';
+import {
+  abusivenessCheckService,
+  AbusivenessCheckService
+} from '../profiles/abusiveness-check.service';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -60,7 +65,9 @@ export class RatingsService {
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly eventScheduler: EventScheduler,
     private readonly arweaveFileUploader: ArweaveFileUploader,
-    private readonly profileProxiesDb: ProfileProxiesDb
+    private readonly profileProxiesDb: ProfileProxiesDb,
+    private readonly abusivenessCheckService: AbusivenessCheckService,
+    private readonly identitiesDb: IdentitiesDb
   ) {}
 
   public async getAggregatedRatingOnMatter(
@@ -810,7 +817,7 @@ export class RatingsService {
           it.toLowerCase()
         );
         let allIdentitiesByAddresses =
-          await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+          await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
             wallets,
             connection
           );
@@ -818,7 +825,7 @@ export class RatingsService {
           wallets
             .filter((wallet) => !allIdentitiesByAddresses[wallet])
             .map((address) =>
-              identitiesDb.insertIdentity(
+              this.identitiesDb.insertIdentity(
                 {
                   consolidation_key: address,
                   primary_address: address,
@@ -840,7 +847,7 @@ export class RatingsService {
             )
         );
         allIdentitiesByAddresses =
-          await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+          await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
             wallets,
             connection
           );
@@ -868,7 +875,7 @@ export class RatingsService {
           )
         );
         allIdentitiesByAddresses =
-          await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+          await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
             wallets,
             connection
           );
@@ -1010,6 +1017,111 @@ export class RatingsService {
   ) {
     return await this.ratingsDb.deleteRatingsForMatter(param, ctx);
   }
+
+  async bulkRep({ targets }: BulkRepRequest, ctx: RequestContext) {
+    const proposedCategories = distinct(
+      targets.map((target) => target.category)
+    );
+    await this.abusivenessCheckService.bulkCheckRepPhrases(
+      proposedCategories,
+      ctx
+    );
+    const targetAddresses = distinct(targets.map((it) => it.address));
+    await this.identitiesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const targetIdentitiesByAddress =
+          await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+            targetAddresses,
+            connection
+          );
+        const targetAddressWithoutIdentities = targetAddresses.filter(
+          (it) => !targetIdentitiesByAddress[it]
+        );
+        ctx.timer?.start(`${this.constructor.name}->bulkRep->insertIdentities`);
+        await this.identitiesDb.insertIdentitiesOnAddressesOnly(
+          targetAddressWithoutIdentities,
+          connection
+        );
+        ctx.timer?.stop(`${this.constructor.name}->bulkRep->insertIdentities`);
+        const targetAddressesInNeedOfProfile = distinct([
+          ...targetAddressWithoutIdentities,
+          ...Object.values(targetIdentitiesByAddress)
+            .filter((it) => !it.profile)
+            .map((it) => it.identity.primary_address)
+        ]);
+        ctx.timer?.start(`${this.constructor.name}->bulkRep->createProfiles`);
+        await Promise.all(
+          targetAddressesInNeedOfProfile.map((address) =>
+            profilesService.createOrUpdateProfileWithGivenTransaction(
+              {
+                handle: `id-${address}`,
+                classification: ProfileClassification.PSEUDONYM,
+                sub_classification: null,
+                creator_or_updater_wallet: address
+              },
+              connection
+            )
+          )
+        );
+        ctx.timer?.stop(`${this.constructor.name}->bulkRep->createProfiles`);
+        const profileIdsByTargetAddresses = await this.identitiesDb
+          .getEverythingRelatedToIdentitiesByAddresses(
+            targetAddresses,
+            connection
+          )
+          .then((result) =>
+            Object.entries(result).reduce((acc, [address, { identity }]) => {
+              acc[address] = identity.profile_id!;
+              return acc;
+            }, {} as Record<string, string>)
+          );
+        const allChanges = Object.entries(
+          targets.reduce((acc, red) => {
+            const profileId = profileIdsByTargetAddresses[red.address]!;
+            if (profileId === ctx.authenticationContext?.getActingAsId()) {
+              throw new ForbiddenException(`User can't rate themselves`);
+            }
+            if (!acc[profileId]) {
+              acc[profileId] = {};
+            }
+            if (!acc[profileId][red.category]) {
+              acc[profileId][red.category] = 0;
+            }
+            acc[profileId][red.category] += red.amount;
+            return acc;
+          }, {} as Record<string, Record<string, number>>)
+        )
+          .map(([profileId, categoryAmounts]) =>
+            Object.entries(categoryAmounts).map<UpdateRatingViaApiRequest>(
+              ([category, amount]) => ({
+                matter: RateMatter.REP,
+                matter_category: category,
+                matter_target_id: profileId,
+                rater_profile_id: ctx.authenticationContext!.getActingAsId()!,
+                rating: amount,
+                authenticationContext: ctx.authenticationContext!
+              })
+            )
+          )
+          .flat();
+        for (const change of allChanges) {
+          try {
+            await this.updateRatingInternal(change, connection);
+          } catch (e: any) {
+            if (
+              e.message.startsWith(
+                `Not enough TDH left to spend on this matter`
+              )
+            ) {
+              throw new BadRequestException(
+                `Not enough TDH to go through with this bulk rating`
+              );
+            }
+          }
+        }
+      }
+    );
+  }
 }
 
 export type GetProfileRatingsRequest = Request<
@@ -1063,5 +1175,7 @@ export const ratingsService: RatingsService = new RatingsService(
   profileActivityLogsDb,
   eventScheduler,
   arweaveFileUploader,
-  profileProxiesDb
+  profileProxiesDb,
+  abusivenessCheckService,
+  identitiesDb
 );
