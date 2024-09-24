@@ -102,8 +102,8 @@ const processBatch = async (
   for (const nft of batch) {
     const nftListings = filterListingsForNft(listings, nft.id);
     const nftOffers = filterOffersForNft(offers, contract, nft.id);
-    const lowestListing = getLowestListing(nftListings);
-    const highestOffer = getHighestOffer(nftOffers);
+    const lowestListing = getLowestListing(nft.id, contract, nftListings);
+    const highestOffer = getHighestOffer(nft.id, contract, nftOffers);
 
     const volumes = await findVolume(nft.id, contract);
     updateNftVolumeStats(nft, volumes);
@@ -137,23 +137,52 @@ const filterOffersForNft = (
   );
 };
 
-const getLowestListing = (nftListings: any[]): any => {
+const getLowestListing = (
+  id: string,
+  contract: string,
+  nftListings: any[]
+): any => {
   return (
-    [...nftListings].sort(
-      (a, d) =>
-        a.current_price / a.remaining_quantity -
-        d.current_price / d.remaining_quantity
-    )?.[0] ?? null
+    [...nftListings].sort((a, d) => {
+      const aOffer = a.protocol_data.parameters.offer.find(
+        (o: any) =>
+          areEqualAddresses(o.token, contract) &&
+          o.identifierOrCriteria === id.toString()
+      );
+      const dOffer = d.protocol_data.parameters.offer.find(
+        (o: any) =>
+          areEqualAddresses(o.token, contract) &&
+          o.identifierOrCriteria === id.toString()
+      );
+      return (
+        a.current_price / aOffer.endAmount - d.current_price / dOffer.endAmount
+      );
+    })?.[0] ?? null
   );
 };
 
-const getHighestOffer = (nftOffers: any[]): any => {
+const getHighestOffer = (
+  id: string,
+  contract: string,
+  nftOffers: any[]
+): any => {
   return (
-    [...nftOffers].sort(
-      (a, d) =>
-        d.current_price / d.remaining_quantity -
-        a.current_price / a.remaining_quantity
-    )?.[0] ?? null
+    [...nftOffers].sort((a, d) => {
+      const aConsideration = a.protocol_data.parameters.consideration.find(
+        (c: any) =>
+          areEqualAddresses(c.token, contract) &&
+          c.identifierOrCriteria === id.toString()
+      );
+      const dConsideration = d.protocol_data.parameters.consideration.find(
+        (c: any) =>
+          areEqualAddresses(c.token, contract) &&
+          c.identifierOrCriteria === id.toString()
+      );
+      return (
+        d.current_price / dConsideration.endAmount -
+        a.current_price / aConsideration.endAmount
+      );
+    })?.[0] ?? null
   );
 };
 
