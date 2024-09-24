@@ -14,6 +14,8 @@ export * from '../models/BlocksPage';
 export * from '../models/BulkRateRequest';
 export * from '../models/BulkRateResponse';
 export * from '../models/BulkRateSkippedIdentity';
+export * from '../models/BulkRepRequest';
+export * from '../models/BulkRepTarget';
 export * from '../models/ChangeGroupVisibility';
 export * from '../models/ChangeProfileCicRating';
 export * from '../models/ChangeProfileCicRatingResponse';
@@ -150,6 +152,8 @@ import { BlocksPage } from '../models/BlocksPage';
 import { BulkRateRequest     } from '../models/BulkRateRequest';
 import { BulkRateResponse } from '../models/BulkRateResponse';
 import { BulkRateSkippedIdentity } from '../models/BulkRateSkippedIdentity';
+import { BulkRepRequest } from '../models/BulkRepRequest';
+import { BulkRepTarget } from '../models/BulkRepTarget';
 import { ChangeGroupVisibility } from '../models/ChangeGroupVisibility';
 import { ChangeProfileCicRating } from '../models/ChangeProfileCicRating';
 import { ChangeProfileCicRatingResponse } from '../models/ChangeProfileCicRatingResponse';
@@ -323,6 +327,8 @@ let typeMap: {[index: string]: any} = {
     "BulkRateRequest": BulkRateRequest,
     "BulkRateResponse": BulkRateResponse,
     "BulkRateSkippedIdentity": BulkRateSkippedIdentity,
+    "BulkRepRequest": BulkRepRequest,
+    "BulkRepTarget": BulkRepTarget,
     "ChangeGroupVisibility": ChangeGroupVisibility,
     "ChangeProfileCicRating": ChangeProfileCicRating,
     "ChangeProfileCicRatingResponse": ChangeProfileCicRatingResponse,

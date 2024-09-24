@@ -143,18 +143,20 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
               )}, ${mysql.escape(address)}, 0, 0, 0, 0)`
           )
           .join(',')}`;
-    await this.db.execute(identitiesSql, undefined, {
-      wrappedConnection: connection
-    });
     const paramsSql = `insert into ${ADDRESS_CONSOLIDATION_KEY} (address, consolidation_key)
         values ${addresses
           .map(
             (address) => `(${mysql.escape(address)}, ${mysql.escape(address)})`
           )
           .join(',')}`;
-    await this.db.execute(paramsSql, undefined, {
-      wrappedConnection: connection
-    });
+    await Promise.all([
+      this.db.execute(identitiesSql, undefined, {
+        wrappedConnection: connection
+      }),
+      this.db.execute(paramsSql, undefined, {
+        wrappedConnection: connection
+      })
+    ]);
   }
 
   async updateIdentityProfile(

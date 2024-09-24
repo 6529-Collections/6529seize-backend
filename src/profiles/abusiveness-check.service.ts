@@ -10,6 +10,7 @@ import {
 } from '../entities/IAbusivenessDetectionResult';
 import { discord, Discord, DiscordChannel } from '../discord';
 import { Logger } from '../logging';
+import { RequestContext } from '../request.context';
 
 export class AbusivenessCheckService {
   private logger = Logger.get(AbusivenessCheckService.name);
@@ -19,6 +20,50 @@ export class AbusivenessCheckService {
     private readonly abusivenessCheckDb: AbusivenessCheckDb,
     private readonly discord: Discord
   ) {}
+
+  async bulkCheckRepPhrases(phrases: string[], ctx: RequestContext) {
+    const trimmedPhrases = phrases.map((p) => p.trim());
+    const invalidPhrase = trimmedPhrases.find(
+      (txt) =>
+        txt.length === 0 || txt.length > 100 || !REP_CATEGORY_PATTERN.exec(txt)
+    );
+    if (invalidPhrase) {
+      throw new BadRequestException(
+        `REP Category "${invalidPhrase}" doesn't match condition of being 1-100 characters or containing only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes.`
+      );
+    }
+    const existingResults = await this.abusivenessCheckDb.findResults(
+      phrases,
+      ctx
+    );
+    const nonAllowedPhrase = existingResults.find(
+      (r) => r.status !== 'ALLOWED'
+    )?.text;
+    if (nonAllowedPhrase) {
+      throw new BadRequestException(
+        `REP phrase "${nonAllowedPhrase}" is not allowed.`
+      );
+    }
+    const uncheckedPhrases = phrases.filter(
+      (p) => !existingResults.find((r) => r.text === p)
+    );
+    ctx.timer?.start(`${this.constructor.name}->bulkCheckRepPhrasesExternal`);
+    await Promise.all(
+      uncheckedPhrases.map((txt) =>
+        this.aiBasedAbusivenessDetector
+          .checkRepPhraseText(txt)
+          .then(async (aiResult) => {
+            await this.abusivenessCheckDb.saveResult(aiResult);
+            if (aiResult.status !== 'ALLOWED') {
+              throw new BadRequestException(
+                `REP phrase "${aiResult.text}" is not allowed.`
+              );
+            }
+          })
+      )
+    );
+    ctx.timer?.stop(`${this.constructor.name}->bulkCheckRepPhrasesExternal`);
+  }
 
   async checkRepPhrase(text: string): Promise<AbusivenessDetectionResult> {
     const txt = text.trim();
@@ -38,19 +83,7 @@ export class AbusivenessCheckService {
       const result = await this.aiBasedAbusivenessDetector.checkRepPhraseText(
         txt
       );
-      try {
-        await this.abusivenessCheckDb.saveResult(result);
-      } catch (e) {
-        const dbError = e as { code?: string };
-        if (dbError.code === 'ER_DUP_ENTRY') {
-          const existingResult = await this.abusivenessCheckDb.findResult(txt);
-          if (existingResult) {
-            return existingResult;
-          }
-        }
-        // If it's not a duplicate entry error or we couldn't find the existing result, rethrow:
-        throw e;
-      }
+      await this.abusivenessCheckDb.saveResult(result);
       return result;
     } catch (e) {
       this.logger.error('AI abusiveness check threw an error');
