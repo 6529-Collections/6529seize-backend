@@ -20,7 +20,7 @@ import { CreateNewWaveParticipationConfig } from '../generated/models/CreateNewW
 import { WaveRequiredMetadata } from '../generated/models/WaveRequiredMetadata';
 import { WaveConfig } from '../generated/models/WaveConfig';
 import { WaveType } from '../generated/models/WaveType';
-import { parseIntOrNull } from '../../../helpers';
+import { parseIntOrNull, resolveEnum } from '../../../helpers';
 import { WaveOutcome } from '../generated/models/WaveOutcome';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { waveApiService } from './wave.api.service';
@@ -42,6 +42,7 @@ import { UpdateWaveRequest } from '../generated/models/UpdateWaveRequest';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { dropsService } from '../drops/drops.api.service';
 import { WaveDropsFeed } from '../generated/models/WaveDropsFeed';
+import { DropSearchStrategy } from '../generated/models/DropSearchStrategy';
 
 const router = asyncRouter();
 
@@ -250,7 +251,13 @@ router.get(
       { id: string },
       any,
       any,
-      { drop_id?: string; limit?: string; serial_no_less_than?: string },
+      {
+        drop_id?: string;
+        limit?: string;
+        serial_no_less_than?: string;
+        serial_no_limit?: string;
+        search_strategy?: string;
+      },
       any
     >,
     res: Response<ApiResponse<WaveDropsFeed>>
@@ -261,12 +268,20 @@ router.get(
     const dropId = req.query.drop_id ?? null;
     const amount = parseIntOrNull(req.query.limit) ?? 20;
     const serialNoLessThan = parseIntOrNull(req.query.serial_no_less_than);
+    const serialNoLimit =
+      serialNoLessThan ?? parseIntOrNull(req.query.serial_no_limit);
+    const searchStrategy =
+      serialNoLessThan === null
+        ? resolveEnum(DropSearchStrategy, req.query.search_strategy) ??
+          DropSearchStrategy.Older
+        : DropSearchStrategy.Older;
     const result = await dropsService.findWaveDropsFeed(
       {
         wave_id: id,
         drop_id: dropId,
         amount: amount >= 50 || amount < 1 ? 50 : amount,
-        serial_no_less_than: serialNoLessThan
+        serial_no_limit: serialNoLimit,
+        search_strategy: searchStrategy
       },
       { authenticationContext, timer }
     );
