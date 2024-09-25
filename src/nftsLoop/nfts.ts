@@ -96,12 +96,12 @@ const calculateMintPrice = async (firstMintTransaction: Transaction | null) => {
 const getAnimationPaths = (tokenId: number, animationDetails: any) => {
   let animation, compressedAnimation;
   if (animationDetails) {
-    const basePath = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/${tokenId}`;
     switch (animationDetails.format) {
       case 'MP4':
       case 'MOV':
-        animation = `${basePath}.${animationDetails.format}`;
-        compressedAnimation = `${basePath}/scaledx750.${animationDetails.format}`;
+        const basePath = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}`;
+        animation = `${basePath}/${tokenId}.${animationDetails.format}`;
+        compressedAnimation = `${basePath}/scaledx750/${tokenId}.${animationDetails.format}`;
         break;
       case 'HTML':
         animation = `${NFT_HTML_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
@@ -378,6 +378,12 @@ export const discoverNFTs = async (
       return true;
     }
     if (m.uri != n.uri) {
+      return true;
+    }
+    if (
+      m.animation != n.animation ||
+      m.compressed_animation != n.compressed_animation
+    ) {
       return true;
     }
     if (new Date(m?.mint_date).getTime() != new Date(n.mint_date).getTime()) {
