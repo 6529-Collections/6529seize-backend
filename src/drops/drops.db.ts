@@ -44,6 +44,7 @@ import { RequestContext } from '../request.context';
 import { ActivityEventTargetType } from '../entities/IActivityEvent';
 import { DeletedDropEntity } from '../entities/IDeletedDrop';
 import { DropRelationEntity } from '../entities/IDropRelation';
+import { DropSearchStrategy } from '../api-serverless/src/generated/models/DropSearchStrategy';
 
 const mysql = require('mysql');
 
@@ -414,24 +415,41 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async findLatestDropsSimple(
     {
       amount,
-      serial_no_less_than,
+      serial_no_limit,
+      search_strategy,
       wave_id
     }: {
-      serial_no_less_than: number | null;
+      serial_no_limit: number | null;
+      search_strategy: string;
       amount: number;
       wave_id: string;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start('dropsDb->findLatestDropsSimple');
-    const results = await this.db.execute<DropEntity>(
-      `select d.* from ${DROPS_TABLE} d where d.wave_id = :wave_id and serial_no < :serial_no_less_than order by d.serial_no desc limit ${amount}`,
-      {
-        serial_no_less_than: serial_no_less_than ?? Number.MAX_SAFE_INTEGER,
-        wave_id
-      },
-      { wrappedConnection: ctx.connection }
-    );
+    const sqlForOlder = `(select d.* from ${DROPS_TABLE} d where d.wave_id = :wave_id and d.serial_no < :serial_no_limit order by d.serial_no desc limit ${amount})`;
+    const sqlForNewer = `(select d.* from ${DROPS_TABLE} d where d.wave_id = :wave_id and d.serial_no > :serial_no_limit order by d.serial_no asc limit ${amount})`;
+    const sqlForThis = `(select d.* from ${DROPS_TABLE} d where d.wave_id = :wave_id and d.serial_no = :serial_no_limit)`;
+    const sql = `with dr_results as (${[
+      search_strategy === DropSearchStrategy.Newer ||
+      search_strategy === DropSearchStrategy.Both
+        ? sqlForNewer
+        : undefined,
+      search_strategy === DropSearchStrategy.Both ? sqlForThis : undefined,
+      search_strategy === DropSearchStrategy.Older ||
+      search_strategy === DropSearchStrategy.Both
+        ? sqlForOlder
+        : undefined
+    ]
+      .filter((it) => !!it)
+      .join(' union all ')}) select * from dr_results order by serial_no desc`;
+    const params = {
+      wave_id,
+      serial_no_limit: serial_no_limit ?? Number.MAX_SAFE_INTEGER
+    };
+    const results = await this.db.execute<DropEntity>(sql, params, {
+      wrappedConnection: ctx.connection
+    });
     ctx.timer?.stop('dropsDb->findLatestDropsSimple');
     return results;
   }
@@ -439,26 +457,41 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async findLatestDropRepliesSimple(
     {
       amount,
-      serial_no_less_than,
-      drop_id
+      drop_id,
+      serial_no_limit,
+      search_strategy
     }: {
-      serial_no_less_than: number | null;
       amount: number;
       drop_id: string;
+      serial_no_limit: number | null;
+      search_strategy: string;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start('dropsDb->findLatestDropRepliesSimple');
-    const results = await this.db.execute<DropEntity>(
-      `select d.* from ${DROPS_TABLE} d
-      join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id
-      where r.parent_id = :drop_id and serial_no < :serial_no_less_than order by d.serial_no desc limit ${amount}`,
-      {
-        serial_no_less_than: serial_no_less_than ?? Number.MAX_SAFE_INTEGER,
-        drop_id
-      },
-      { wrappedConnection: ctx.connection }
-    );
+    const sqlForOlder = `(select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where r.parent_id = :drop_id and serial_no < :serial_no_limit order by d.serial_no desc limit ${amount})`;
+    const sqlForNewer = `(select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where r.parent_id = :drop_id and serial_no > :serial_no_limit order by d.serial_no asc limit ${amount})`;
+    const sqlForThis = `select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where r.parent_id = :drop_id and serial_no = :serial_no_limit`;
+    const sql = `with dr_results as (${[
+      search_strategy === DropSearchStrategy.Newer ||
+      search_strategy === DropSearchStrategy.Both
+        ? sqlForNewer
+        : undefined,
+      search_strategy === DropSearchStrategy.Both ? sqlForThis : undefined,
+      search_strategy === DropSearchStrategy.Older ||
+      search_strategy === DropSearchStrategy.Both
+        ? sqlForOlder
+        : undefined
+    ]
+      .filter((it) => !!it)
+      .join(' union all ')}) select * from dr_results order by serial_no desc`;
+    const params = {
+      drop_id,
+      serial_no_limit: serial_no_limit ?? Number.MAX_SAFE_INTEGER
+    };
+    const results = await this.db.execute<DropEntity>(sql, params, {
+      wrappedConnection: ctx.connection
+    });
     ctx.timer?.stop('dropsDb->findLatestDropRepliesSimple');
     return results;
   }

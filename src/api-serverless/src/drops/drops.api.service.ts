@@ -25,6 +25,7 @@ import { wavesApiDb } from '../waves/waves.api.db';
 import { WaveMin } from '../generated/models/WaveMin';
 import { WaveDropsFeed } from '../generated/models/WaveDropsFeed';
 import { DropTraceItem } from '../generated/models/DropTraceItem';
+import { DropSearchStrategy } from '../generated/models/DropSearchStrategy';
 
 export class DropsApiService {
   constructor(
@@ -332,13 +333,15 @@ export class DropsApiService {
     {
       drop_id,
       wave_id,
-      serial_no_less_than,
-      amount
+      serial_no_limit,
+      amount,
+      search_strategy
     }: {
       drop_id: string | null;
-      serial_no_less_than: number | null;
+      serial_no_limit: number | null;
       wave_id: string;
       amount: number;
+      search_strategy: DropSearchStrategy;
     },
     ctx: RequestContext
   ): Promise<WaveDropsFeed> {
@@ -391,7 +394,8 @@ export class DropsApiService {
         {
           drop_id: drop_id,
           amount,
-          serial_no_less_than
+          serial_no_limit,
+          search_strategy
         },
         ctx
       );
@@ -418,7 +422,8 @@ export class DropsApiService {
         {
           wave_id: wave.id,
           amount,
-          serial_no_less_than
+          serial_no_limit,
+          search_strategy
         },
         ctx
       );
