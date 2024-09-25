@@ -99,9 +99,8 @@ const getAnimationPaths = (tokenId: number, animationDetails: any) => {
     switch (animationDetails.format) {
       case 'MP4':
       case 'MOV':
-        const basePath = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}`;
-        animation = `${basePath}/${tokenId}.${animationDetails.format}`;
-        compressedAnimation = `${basePath}/scaledx750/${tokenId}.${animationDetails.format}`;
+        animation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
+        compressedAnimation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/scaledx750/${tokenId}.${animationDetails.format}`;
         break;
       case 'HTML':
         animation = `${NFT_HTML_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
