@@ -52,6 +52,7 @@ export * from '../models/DropPartContextProfileContext';
 export * from '../models/DropRater';
 export * from '../models/DropRatingRequest';
 export * from '../models/DropReferencedNFT';
+export * from '../models/DropSearchStrategy';
 export * from '../models/DropSubscriptionActions';
 export * from '../models/DropSubscriptionTargetAction';
 export * from '../models/DropTraceItem';
@@ -190,6 +191,7 @@ import { DropPartContextProfileContext } from '../models/DropPartContextProfileC
 import { DropRater } from '../models/DropRater';
 import { DropRatingRequest } from '../models/DropRatingRequest';
 import { DropReferencedNFT } from '../models/DropReferencedNFT';
+import { DropSearchStrategy } from '../models/DropSearchStrategy';
 import { DropSubscriptionActions } from '../models/DropSubscriptionActions';
 import { DropSubscriptionTargetAction } from '../models/DropSubscriptionTargetAction';
 import { DropTraceItem } from '../models/DropTraceItem';
@@ -288,6 +290,7 @@ let primitives = [
 
 let enumsMap: Set<string> = new Set<string>([
     "AcceptActionRequestActionEnum",
+    "DropSearchStrategy",
     "DropSubscriptionTargetAction",
     "FeedItemType",
     "GroupFilterDirection",

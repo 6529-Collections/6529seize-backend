@@ -1627,8 +1627,9 @@ paths:
         - Ratings
       summary: >-
         Change REP rating of multiple targets and categories in one go. Targets 
-        final REP value will be the value you supply here. If you supply multiple 
-        addresses for one consolidation group then those amounts will be summed together.
+        final REP value will be the value you supply here. If you supply
+        multiple  addresses for one consolidation group then those amounts will
+        be summed together.
       operationId: bulkRep
       requestBody:
         required: true
@@ -2068,9 +2069,29 @@ paths:
             minimum: 1
             maximum: 50
             default: 20
+        - name: serial_no_limit
+          in: query
+          required: false
+          description: >-
+            Use instead of serial_no_less_than. If you use serial_no_less_than
+            and this then serial_no_less_than is preferred (until future when
+            it"s deleted)
+          schema:
+            type: integer
+            format: int64
+        - name: search_strategy
+          in: query
+          required: false
+          description: >-
+            Use in combination with serial_no_limit. If this not set then
+            FIND_OLDER is used. If serial_no_less_than is set then this is
+            ignored.
+          schema:
+            $ref: "#/components/schemas/DropSearchStrategy"
         - name: serial_no_less_than
           in: query
           required: false
+          deprecated: true
           schema:
             type: integer
             format: int64
@@ -2623,7 +2644,7 @@ components:
         category:
           type: string
           maxLength: 100
-          pattern: ^[a-zA-Z0-9?!,.'() ]{1,100}$
+          pattern: ^[a-zA-Z0-9?!,."() ]{1,100}$
         amount:
           type: integer
           format: int64
@@ -3319,6 +3340,12 @@ components:
         name:
           type: string
           maxLength: 500
+    DropSearchStrategy:
+      type: string
+      enum:
+        - FIND_OLDER
+        - FIND_NEWER
+        - FIND_BOTH
     DropsPage:
       type: object
       required:
