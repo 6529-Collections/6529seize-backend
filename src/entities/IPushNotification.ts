@@ -17,10 +17,10 @@ export class PushNotificationDevice {
   token!: string;
 
   @Column({ type: 'text', nullable: true })
-  profile_id!: string;
+  profile_id?: string;
 
   @Column({ type: 'text', nullable: true })
-  platform!: string;
+  platform?: string;
 
   @CreateDateColumn()
   created_at?: Time;
