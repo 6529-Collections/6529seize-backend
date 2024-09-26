@@ -55,11 +55,11 @@
     "typescript": "^5.0.4"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.535.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.621.0",
     "@aws-sdk/client-cloudfront": "^3.481.0",
     "@aws-sdk/client-s3": "^3.481.0",
-    "@aws-sdk/client-secrets-manager": "^3.454.0",
-    "@aws-sdk/client-sns": "^3.481.0",
+    "@aws-sdk/client-secrets-manager": "^3.529.0",
+    "@aws-sdk/client-sns": "^3.529.0",
     "@aws-sdk/s3-request-presigner": "^3.552.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@sentry/serverless": "^7.91.0",
