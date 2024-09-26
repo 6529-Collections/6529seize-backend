@@ -5,7 +5,7 @@ import { asyncRouter } from '../async.router';
 import * as Joi from 'joi';
 import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
 import { UnauthorisedException } from '../../../exceptions';
-import { RegisterPushNotificationTokenRequest } from 'src/generated/models/RegisterPushNotificationTokenRequest';
+import { RegisterPushNotificationTokenRequest } from '../generated/models/RegisterPushNotificationTokenRequest';
 import { PushNotificationDevice } from '../../../entities/IPushNotification';
 import { savePushNotificationDevice } from './push-notifications.db';
 
