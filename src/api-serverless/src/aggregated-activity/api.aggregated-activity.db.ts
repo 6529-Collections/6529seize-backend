@@ -264,8 +264,8 @@ export const fetchAggregatedActivityForConsolidationKey = async (
 
 export const fetchMemesAggregatedActivityForConsolidationKey = async (
   key: string
-): Promise<AggregatedActivityMemes | null> => {
-  return fetchSingleAggregatedActivity<AggregatedActivityMemes>(
+): Promise<AggregatedActivityMemes[]> => {
+  return fetchMemesAggregatedActivity<AggregatedActivityMemes>(
     'consolidation_key',
     key,
     CONSOLIDATED_AGGREGATED_ACTIVITY_MEMES_TABLE
@@ -281,7 +281,7 @@ export async function fetchAggregatedActivityForWallet(wallet: string) {
 }
 
 export async function fetchMemesAggregatedActivityForWallet(wallet: string) {
-  return fetchSingleAggregatedActivity<AggregatedActivityMemes>(
+  return fetchMemesAggregatedActivity<AggregatedActivityMemes>(
     'wallet',
     wallet,
     AGGREGATED_ACTIVITY_MEMES_TABLE
@@ -301,4 +301,15 @@ async function fetchSingleAggregatedActivity<T>(
     return null;
   }
   return result[0];
+}
+
+async function fetchMemesAggregatedActivity<T>(
+  key: string,
+  value: string,
+  table: string
+) {
+  const sql = `
+    SELECT * from ${table} where ${key} = :value
+    `;
+  return await sqlExecutor.execute(sql, { value });
 }
