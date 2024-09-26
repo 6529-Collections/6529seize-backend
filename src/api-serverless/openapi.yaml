@@ -4475,16 +4475,19 @@ components:
     RegisterPushNotificationTokenRequest:
       type: object
       required:
-        - token
         - device_id
+        - token
       properties:
-        token:
-          type: string
         device_id:
+          type: string
+        token:
           type: string
         profile_id:
           type: string
           description: Optional profile_id
+        platform:
+          type: string
+          description: Optional platform (ios, android, web)
     ReplyToDrop:
       type: object
       required:

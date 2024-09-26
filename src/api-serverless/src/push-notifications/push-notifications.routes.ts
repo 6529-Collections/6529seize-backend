@@ -6,12 +6,15 @@ import * as Joi from 'joi';
 import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
 import { UnauthorisedException } from '../../../exceptions';
 import { RegisterPushNotificationTokenRequest } from 'src/generated/models/RegisterPushNotificationTokenRequest';
+import { PushNotificationDevice } from '../../../entities/IPushNotification';
+import { savePushNotificationDevice } from './push-notifications.db';
 
 const registerPushNotificationTokenRequestSchema: Joi.ObjectSchema<RegisterPushNotificationTokenRequest> =
   Joi.object({
-    token: Joi.string().required(),
     device_id: Joi.string().required(),
-    profile_id: Joi.string().optional()
+    token: Joi.string().required(),
+    profile_id: Joi.string().optional(),
+    platform: Joi.string().optional()
   });
 
 const router = asyncRouter();
@@ -32,16 +35,30 @@ router.post(
       registerPushNotificationTokenRequestSchema
     );
 
-    const { token, device_id, profile_id } = validatedRequest;
+    const { token, device_id, profile_id, platform } = validatedRequest;
 
     if (profile_id) {
       const authenticationContext = await getAuthenticationContext(req);
       if (authenticationContext.authenticatedProfileId !== profile_id) {
+        console.log(
+          'authenticatedProfileId',
+          authenticationContext.authenticatedProfileId
+        );
+        console.log('profile_id', profile_id);
         throw new UnauthorisedException(
           'Profile ID does not match authenticated profile'
         );
       }
     }
+
+    const pushNotificationDevice: PushNotificationDevice = {
+      device_id,
+      token,
+      platform,
+      profile_id
+    };
+
+    await savePushNotificationDevice(pushNotificationDevice);
 
     res.status(201).send({
       success: true

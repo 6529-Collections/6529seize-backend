@@ -33,6 +33,7 @@ import { ProfileGroupEntity } from '../entities/IProfileGroup';
 import { CookiesConsent } from '../entities/ICookieConsent';
 import { Prenode } from '../entities/IPrenode';
 import { ProfileLatestLogEntity } from '../entities/IProfileLatestLog';
+import { PushNotificationDevice } from '../entities/IPushNotification';
 
 const DBMigrate = require('db-migrate');
 
@@ -70,7 +71,8 @@ const MANAGED_ENTITIES = [
   RatingsSnapshot,
   UserGroupEntity,
   WaveEntity,
-  WaveMetricEntity
+  WaveMetricEntity,
+  PushNotificationDevice
 ];
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {

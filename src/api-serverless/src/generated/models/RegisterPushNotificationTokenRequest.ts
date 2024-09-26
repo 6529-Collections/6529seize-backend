@@ -13,22 +13,20 @@
 import { HttpFile } from '../http/http';
 
 export class RegisterPushNotificationTokenRequest {
-    'token': string;
     'device_id': string;
+    'token': string;
     /**
     * Optional profile_id
     */
     'profile_id'?: string;
+    /**
+    * Optional platform (ios, android, web)
+    */
+    'platform'?: string;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
-        {
-            "name": "token",
-            "baseName": "token",
-            "type": "string",
-            "format": ""
-        },
         {
             "name": "device_id",
             "baseName": "device_id",
@@ -36,8 +34,20 @@ export class RegisterPushNotificationTokenRequest {
             "format": ""
         },
         {
+            "name": "token",
+            "baseName": "token",
+            "type": "string",
+            "format": ""
+        },
+        {
             "name": "profile_id",
             "baseName": "profile_id",
+            "type": "string",
+            "format": ""
+        },
+        {
+            "name": "platform",
+            "baseName": "platform",
             "type": "string",
             "format": ""
         }    ];

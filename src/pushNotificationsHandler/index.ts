@@ -50,10 +50,10 @@ async function sendMessage() {
   const message: NotificationPayload = {
     notification: {
       title: 'Local Test',
-      body: 'This should take you to /6529-gradient'
+      body: 'This should take you to /prxt0'
     },
     data: {
-      redirectUrl: '/6529-gradient'
+      redirectUrl: '/prxt0'
     },
     token:
       'fEMuW-umr0mfghPULbN_eF:APA91bHPOaWUuX0Tw0jhhuvKTTFOhQVZHj-S-hXtJ0xTZOsE-wowCwXCht4rGA0oO73QcpxK3uxr3_0HhaMAhLuEmKCvkiwK2832Usf4ZAPhbGprALgsO2NScysLXqjLKOvPkkGxXi6n'
