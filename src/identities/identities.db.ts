@@ -61,7 +61,10 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         const consolidationKey = consolidationKeys[0].consolidation_key;
         const identity = identities.find(
           (i) => i.consolidation_key === consolidationKey
-        )!;
+        );
+        if (!identity) {
+          return acc;
+        }
         const profile =
           profiles.find((p) => p.external_id === identity.profile_id) ?? null;
         acc[address] = { consolidations: consolidationKeys, identity, profile };
