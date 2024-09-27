@@ -1029,51 +1029,12 @@ export class RatingsService {
     const targetAddresses = distinct(targets.map((it) => it.address));
     await this.identitiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        const targetIdentitiesByAddress =
-          await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
-            targetAddresses,
-            connection
-          );
-        const targetAddressWithoutIdentities = targetAddresses.filter(
-          (it) => !targetIdentitiesByAddress[it]
-        );
-        ctx.timer?.start(`${this.constructor.name}->bulkRep->insertIdentities`);
-        await this.identitiesDb.insertIdentitiesOnAddressesOnly(
-          targetAddressWithoutIdentities,
-          connection
-        );
-        ctx.timer?.stop(`${this.constructor.name}->bulkRep->insertIdentities`);
-        const targetAddressesInNeedOfProfile = distinct([
-          ...targetAddressWithoutIdentities,
-          ...Object.values(targetIdentitiesByAddress)
-            .filter((it) => !it.profile)
-            .map((it) => it.identity.primary_address)
-        ]);
-        ctx.timer?.start(`${this.constructor.name}->bulkRep->createProfiles`);
-        await Promise.all(
-          targetAddressesInNeedOfProfile.map((address) =>
-            profilesService.createOrUpdateProfileWithGivenTransaction(
-              {
-                handle: `id-${address}`,
-                classification: ProfileClassification.PSEUDONYM,
-                sub_classification: null,
-                creator_or_updater_wallet: address
-              },
-              connection
-            )
-          )
-        );
+        const ctxWithConnection = { ...ctx, connection };
         ctx.timer?.stop(`${this.constructor.name}->bulkRep->createProfiles`);
-        const profileIdsByTargetAddresses = await this.identitiesDb
-          .getEverythingRelatedToIdentitiesByAddresses(
+        const profileIdsByTargetAddresses =
+          await profilesService.makeSureProfilesAreCreatedAndGetProfileIdsByAddresses(
             targetAddresses,
-            connection
-          )
-          .then((result) =>
-            Object.entries(result).reduce((acc, [address, { identity }]) => {
-              acc[address] = identity.profile_id!;
-              return acc;
-            }, {} as Record<string, string>)
+            ctxWithConnection
           );
         const allChanges = Object.entries(
           targets.reduce((acc, red) => {

@@ -7,7 +7,7 @@ import {
   ProfileAndConsolidations
 } from './profile.types';
 import { calculateLevel } from './profile-level';
-import { Profile } from '../entities/IProfile';
+import { Profile, ProfileClassification } from '../entities/IProfile';
 import * as tdh_consolidation from '../tdhLoop/tdh_consolidation';
 import * as tdhs from '../tdhLoop/tdh';
 import { BadRequestException, NotFoundException } from '../exceptions';
@@ -20,7 +20,10 @@ import {
   profileActivityLogsDb,
   ProfileActivityLogsDb
 } from '../profileActivityLogs/profile-activity-logs.db';
-import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
+import {
+  ProfileActivityLog,
+  ProfileActivityLogType
+} from '../entities/IProfileActivityLog';
 import { ratingsService, RatingsService } from '../rates/ratings.service';
 import { RateMatter } from '../entities/IRating';
 import { cicService, CicService } from '../cic/cic.service';
@@ -35,7 +38,8 @@ import {
   distinct,
   getWalletFromEns,
   isWallet,
-  replaceEmojisWithHex
+  replaceEmojisWithHex,
+  uniqueShortId
 } from '../helpers';
 import {
   getDelegationPrimaryAddressForConsolidation,
@@ -51,6 +55,8 @@ import {
   identityNotificationsDb,
   IdentityNotificationsDb
 } from '../notifications/identity-notifications.db';
+import { RequestContext } from '../request.context';
+import { IdentityEntity } from '../entities/IIdentity';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -406,6 +412,139 @@ export class ProfilesService {
           connection
         );
       }
+    );
+  }
+
+  public async makeSureProfilesAreCreatedAndGetProfileIdsByAddresses(
+    addresses: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, string>> {
+    if (!addresses.length) {
+      return {};
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->createProfilesAndIdentitiesForThoseWhoAreMissingAndGetProfileIdsByAddresses`
+    );
+    let allIdentitiesAndProfiles =
+      await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+        addresses,
+        ctx.connection!
+      );
+    const addressesMissingIdentities = addresses.filter(
+      (it) => !allIdentitiesAndProfiles[it]
+    );
+    const newIdentities = addressesMissingIdentities.map<IdentityEntity>(
+      (address) => ({
+        primary_address: address,
+        profile_id: randomUUID(),
+        consolidation_key: address,
+        handle: null,
+        normalised_handle: null,
+        tdh: 0,
+        rep: 0,
+        cic: 0,
+        level_raw: 0,
+        pfp: null,
+        banner1: null,
+        banner2: null,
+        classification: null,
+        sub_classification: null
+      })
+    );
+    if (newIdentities.length) {
+      await this.identitiesDb.bulkInsertIdentities(
+        newIdentities,
+        ctx.connection!
+      );
+      allIdentitiesAndProfiles =
+        await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+          addresses,
+          ctx.connection!
+        );
+    }
+    const identitiesMissingProfiles = Object.entries(
+      Object.values(allIdentitiesAndProfiles)
+        .filter((it) => !it.profile)
+        .reduce((acc, it) => {
+          acc[it.identity.primary_address] = it.identity.profile_id!;
+          return acc;
+        }, {} as Record<string, string>)
+    ).map(([address, profileId]) => ({ address, profileId }));
+    const authenticationContext = ctx.authenticationContext;
+    if (!authenticationContext?.authenticatedWallet) {
+      throw new BadRequestException(
+        'Not authenticated. Can not create profiles'
+      );
+    }
+    const now = Time.now().toDate();
+    const authenticatedWallet = authenticationContext.authenticatedWallet!;
+    const newProfileEntities = identitiesMissingProfiles.map<Profile>(
+      ({ address, profileId }) => ({
+        external_id: profileId,
+        handle: `id-${address}`,
+        normalised_handle: `id-${address}`,
+        primary_wallet: address,
+        created_by_wallet: authenticatedWallet,
+        classification: ProfileClassification.PSEUDONYM,
+        created_at: now
+      })
+    );
+    const newProfileCreationLogs = newProfileEntities
+      .map<ProfileActivityLog[]>((profile) => [
+        {
+          id: uniqueShortId(),
+          profile_id: profile.external_id,
+          target_id: null,
+          type: ProfileActivityLogType.HANDLE_EDIT,
+          contents: JSON.stringify({
+            authenticated_wallet: authenticatedWallet,
+            new_value: profile.handle
+          }),
+          proxy_id: null,
+          created_at: now
+        },
+        {
+          id: uniqueShortId(),
+          profile_id: profile.external_id,
+          target_id: null,
+          type: ProfileActivityLogType.CLASSIFICATION_EDIT,
+          contents: JSON.stringify({
+            authenticated_wallet: authenticatedWallet,
+            new_value: profile.classification
+          }),
+          proxy_id: null,
+          created_at: now
+        }
+      ])
+      .flat();
+    if (newProfileEntities.length) {
+      await Promise.all([
+        this.profilesDb.bulkInsertProfiles(newProfileEntities, ctx),
+        this.profileActivityLogsDb.bulkInsertProfileCreationLogs(
+          newProfileCreationLogs,
+          ctx
+        )
+      ]);
+      await this.identitiesDb.updateIdentityProfilesOfIds(
+        newProfileEntities.map((it) => it.external_id),
+        ctx
+      );
+      allIdentitiesAndProfiles =
+        await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+          addresses,
+          ctx.connection!
+        );
+    }
+
+    ctx.timer?.stop(
+      `${this.constructor.name}->createProfilesAndIdentitiesForThoseWhoAreMissingAndGetProfileIdsByAddresses`
+    );
+    return Object.entries(allIdentitiesAndProfiles).reduce(
+      (acc, [address, { identity }]) => {
+        acc[address] = identity.profile_id!;
+        return acc;
+      },
+      {} as Record<string, string>
     );
   }
 

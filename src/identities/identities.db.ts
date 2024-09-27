@@ -12,6 +12,7 @@ import {
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
 import { randomUUID } from 'crypto';
+import { RequestContext } from '../request.context';
 
 const mysql = require('mysql');
 
@@ -308,6 +309,24 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       undefined,
       { wrappedConnection: connection }
     );
+  }
+
+  async updateIdentityProfilesOfIds(profileIds: string[], ctx: RequestContext) {
+    if (!profileIds.length) {
+      return;
+    }
+    ctx.timer?.start(`${this.constructor.name}->updateIdentityProfilesOfIds`);
+    await this.db.execute(
+      `update identities inner join profiles on identities.profile_id = profiles.external_id
+                           set 
+                               identities.handle = profiles.handle,
+                               identities.normalised_handle = profiles.classification,
+                               identities.classification = profiles.normalised_handle
+                           where identities.profile_id in (:profileIds)`,
+      { profileIds },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->updateIdentityProfilesOfIds`);
   }
 }
 
