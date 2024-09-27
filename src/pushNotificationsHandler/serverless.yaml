@@ -20,10 +20,21 @@ functions:
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
     reservedConcurrency: 1
     events:
-      - schedule: rate(2 minutes)
+      - sqs:
+          arn:
+            Fn::GetAtt: [FirebasePushNotificationsQueue, Arn]
+          batchSize: 10
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'pushNotificationsHandler_${opt:stage, self:provider.stage}'
+
+resources:
+  Resources:
+    FirebasePushNotificationsQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: firebase-push-notifications
+        VisibilityTimeout: 1000

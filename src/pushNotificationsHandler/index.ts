@@ -2,6 +2,11 @@ import { doInDbContext } from '../secrets';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import * as admin from 'firebase-admin';
+import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
+import { DropPartEntity } from '../entities/IDrop';
+import { PushNotificationDevice } from '../entities/IPushNotification';
+import { SQSHandler } from 'aws-lambda';
+import { sendIdentityNotification } from './identityPushNotifications';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER');
 
@@ -25,45 +30,33 @@ function init() {
   }
 }
 
-interface NotificationPayload {
-  token: string;
-  notification: {
-    title: string;
-    body: string;
-  };
-  data?: {
-    redirectUrl: string;
-  };
-}
-
-export const handler = sentryContext.wrapLambdaHandler(async () => {
+const sqsHandler: SQSHandler = async (event) => {
   await doInDbContext(
     async () => {
       init();
-      await sendMessage();
+      await Promise.all(
+        event.Records.map(async (record) => {
+          const messageBody = record.body;
+          await processNotification(messageBody);
+        })
+      );
     },
-    { logger, entities: [] }
+    {
+      logger,
+      entities: [
+        IdentityNotificationEntity,
+        PushNotificationDevice,
+        DropPartEntity
+      ]
+    }
   );
-});
+};
 
-async function sendMessage() {
-  const message: NotificationPayload = {
-    notification: {
-      title: 'Local Test',
-      body: 'This should take you to /prxt0'
-    },
-    data: {
-      redirectUrl: '/prxt0'
-    },
-    token:
-      'fEMuW-umr0mfghPULbN_eF:APA91bHPOaWUuX0Tw0jhhuvKTTFOhQVZHj-S-hXtJ0xTZOsE-wowCwXCht4rGA0oO73QcpxK3uxr3_0HhaMAhLuEmKCvkiwK2832Usf4ZAPhbGprALgsO2NScysLXqjLKOvPkkGxXi6n'
-  };
-
-  try {
-    const response = await admin.messaging().send(message);
-    logger.info('Successfully sent notification:', response);
-  } catch (error: any) {
-    logger.error('Error sending notification:', error);
-    throw new Error(`Failed to send notification: ${error.message}`);
+const processNotification = async (messageBody: string) => {
+  const notification = JSON.parse(messageBody);
+  if (notification.identity_id) {
+    await sendIdentityNotification(notification.identity_id);
   }
-}
+};
+
+export const handler = sentryContext.wrapLambdaHandler(sqsHandler);

@@ -7,6 +7,7 @@ import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
 import { IDENTITY_NOTIFICATIONS_TABLE } from '../constants';
 import { Time } from '../time';
 import { parseIntOrNull } from '../helpers';
+import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
 
 export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   private isNotifierActivated() {
@@ -18,7 +19,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     connection?: ConnectionWrapper<any>
   ) {
     if (this.isNotifierActivated()) {
-      await this.db.execute(
+      const result = await this.db.execute(
         `
         insert into ${IDENTITY_NOTIFICATIONS_TABLE} (
           identity_id, 
@@ -53,6 +54,12 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         },
         connection ? { wrappedConnection: connection } : undefined
       );
+
+      const notificationId: number = result?.[2] ?? null;
+
+      if (notificationId) {
+        await sendIdentityPushNotification(notificationId);
+      }
     }
   }
 
