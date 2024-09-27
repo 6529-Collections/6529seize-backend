@@ -520,7 +520,7 @@ export class ProfilesService {
     if (newProfileEntities.length) {
       await Promise.all([
         this.profilesDb.bulkInsertProfiles(newProfileEntities, ctx),
-        this.profileActivityLogsDb.bulkInsertProfileCreationLogs(
+        this.profileActivityLogsDb.bulkInsertProfileActivityLogs(
           newProfileCreationLogs,
           ctx
         )

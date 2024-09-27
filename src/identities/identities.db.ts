@@ -328,6 +328,21 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     );
     ctx.timer?.stop(`${this.constructor.name}->updateIdentityProfilesOfIds`);
   }
+
+  async bulkUpdateReps(
+    repBulkUpdates: { profileId: string; newRep: number }[],
+    ctx: RequestContext
+  ) {
+    await Promise.all(
+      repBulkUpdates.map((update) =>
+        this.db.execute(
+          `update ${IDENTITIES_TABLE} set rep = rep + :newRep, level_raw = level_raw + :newRep where profile_id = :profileId`,
+          update,
+          { wrappedConnection: ctx.connection }
+        )
+      )
+    );
+  }
 }
 
 export const identitiesDb = new IdentitiesDb(dbSupplier);

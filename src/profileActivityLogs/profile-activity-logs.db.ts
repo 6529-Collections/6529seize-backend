@@ -192,7 +192,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async bulkInsertProfileCreationLogs(
+  async bulkInsertProfileActivityLogs(
     logs: ProfileActivityLog[],
     ctx: RequestContext
   ) {

@@ -15,6 +15,8 @@ import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
 import { RatingsSnapshotsPageRequest } from './ratings.service';
 import { RequestContext } from '../request.context';
 
+const mysql = require('mysql');
+
 export class RatingsDb extends LazyDbAccessCompatibleService {
   async getAggregatedRatingOnMatter(
     {
@@ -174,6 +176,22 @@ from general_stats
         total_tdh_spent_on_matter?.total_tdh_spent_on_matter ?? 0,
       ...searchedMatter!
     };
+  }
+
+  async getTotalTdhSpent(
+    matter: RateMatter,
+    rater_profile_id: string,
+    ctx: RequestContext
+  ): Promise<number> {
+    return this.db
+      .oneOrNull<{ total_tdh_spent: number }>(
+        `select sum(rating) as total_tdh_spent_on_matter from ${RATINGS_TABLE}
+          where rater_profile_id = :rater_profile_id
+            and matter = :matter`,
+        { matter, rater_profile_id },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((result) => result?.total_tdh_spent ?? 0);
   }
 
   async updateRating(
@@ -667,6 +685,75 @@ from grouped_rates r
       param
     );
     ctx?.timer?.stop('ratingsDb->deleteRatingsForMatter');
+  }
+
+  async getAllRepRatingsForTargetsAndCategories(
+    param: {
+      categories: string[];
+      targets: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Rating[]> {
+    if (!param.categories.length || !param.targets.length) {
+      return [];
+    }
+    ctx?.timer?.start(
+      `${this.constructor.name}->getAllRepRatingsForTargetsAndCategories`
+    );
+    const results = await this.db.execute(
+      `select * from ${RATINGS_TABLE} where matter = 'REP' and matter_target_id in (:targets) and matter_category in (:categories)`,
+      param
+    );
+    ctx?.timer?.stop(
+      `${this.constructor.name}->getAllRepRatingsForTargetsAndCategories`
+    );
+    return results;
+  }
+
+  async getTdh(profleId: string, ctx: RequestContext): Promise<number> {
+    return this.db
+      .oneOrNull<{ tdh: number }>(
+        `select tdh from ${IDENTITIES_TABLE} where profile_id = :profileId`,
+        { profileId: profleId },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((result) => result?.tdh ?? 0);
+  }
+
+  async bulkUpsertRatings(ratings: Rating[], ctx: RequestContext) {
+    if (!ratings.length) {
+      return;
+    }
+    ctx.timer?.start(`${this.constructor.name}->bulkUpsertRatings`);
+    const sql = `
+        insert into ${RATINGS_TABLE} (
+          rater_profile_id,
+          matter_target_id,
+          matter,
+          matter_category,
+          rating,
+          last_modified
+        ) values ${ratings
+          .map(
+            (rating) =>
+              `(${[
+                rating.rater_profile_id,
+                rating.matter_target_id,
+                rating.matter,
+                rating.matter_category,
+                rating.rating,
+                rating.last_modified
+              ]
+                .map(mysql.escape)
+                .join(', ')})`
+          )
+          .join(', ')} ON DUPLICATE KEY UPDATE
+            rating = rating + VALUES(rating);
+    `;
+    await this.db.execute(sql, undefined, {
+      wrappedConnection: ctx.connection
+    });
+    ctx.timer?.stop(`${this.constructor.name}->bulkUpsertRatings`);
   }
 }
 
