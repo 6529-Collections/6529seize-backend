@@ -1,4 +1,3 @@
-import { logger } from 'ethers';
 import { Like } from 'typeorm';
 import { getDataSource } from '../db';
 import { DropPartEntity } from '../entities/IDrop';
@@ -9,8 +8,13 @@ import {
 import { PushNotificationDevice } from '../entities/IPushNotification';
 import { profilesService } from '../profiles/profiles.service';
 import { sendMessage } from './sendPushNotifications';
+import { Logger } from '../logging';
+
+const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 
 export async function sendIdentityNotification(id: number) {
+  logger.info(`Sending identity notification: ${id}`);
+
   const notification = await getDataSource()
     .getRepository(IdentityNotificationEntity)
     .findOneBy({ id });
