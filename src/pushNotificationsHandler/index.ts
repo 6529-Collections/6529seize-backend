@@ -2,16 +2,9 @@ import { doInDbContext } from '../secrets';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import * as admin from 'firebase-admin';
-import { Message } from 'firebase-admin/lib/messaging/messaging-api';
-import { getDataSource } from '../db';
-import {
-  IdentityNotificationCause,
-  IdentityNotificationEntity
-} from '../entities/IIdentityNotification';
-import { profilesService } from '../profiles/profiles.service';
+import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
 import { DropPartEntity } from '../entities/IDrop';
 import { PushNotificationDevice } from '../entities/IPushNotification';
-import { Like } from 'typeorm';
 import { SQSHandler } from 'aws-lambda';
 import { sendIdentityNotification } from './identityPushNotifications';
 
