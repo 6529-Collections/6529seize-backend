@@ -12,7 +12,13 @@ logger.info(`i am region: ${region}`);
 
 const sqs = new SQSClient({ region });
 
+const isActivated = process.env.PUSH_NOTIFICATIONS_ACTIVATED === 'true';
+
 export const sendIdentityPushNotification = async (notificationId: number) => {
+  if (!isActivated) {
+    logger.info('Push notifications are not activated');
+    return;
+  }
   try {
     const message = {
       identity_id: notificationId
