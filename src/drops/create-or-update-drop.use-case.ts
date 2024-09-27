@@ -576,7 +576,7 @@ export class CreateOrUpdateDropUseCase {
         quoteNotificationDatas.push({
           quote_drop_id: model.drop_id!,
           quote_drop_part: idx,
-          quote_drop_author_id: quotedEntity.author_id,
+          quote_drop_author_id: model.author_id!,
           quoted_drop_id: quotedDrop.drop_id,
           quoted_drop_part: quotedDrop.drop_part_id,
           quoted_drop_author_id: quotedEntity.author_id,
