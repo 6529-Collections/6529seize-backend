@@ -33,6 +33,8 @@ export async function sendMessage(
   redirect_path?: string
 ) {
   init();
+  title = title.replace(/@\[(.+?)\]/, '@$1');
+  body = body.replace(/@\[(.+?)\]/, '@$1');
   const message: Message = {
     notification: {
       title,

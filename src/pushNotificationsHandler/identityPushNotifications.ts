@@ -44,74 +44,87 @@ export async function sendIdentityNotification(id: number) {
 async function generateNotificationData(
   notification: IdentityNotificationEntity
 ) {
-  let title: string | undefined;
-  let body: string | undefined;
-  let imageUrl: string | undefined;
-  let redirectType: string | undefined;
-  let redirectPath: string | undefined;
-
   const additionalEntity = await getAdditionalIdOrThrow(notification);
 
   switch (notification.cause) {
     case IdentityNotificationCause.IDENTITY_SUBSCRIBED:
-      title = 'New Follower';
-      body = `User ${additionalEntity.handle} is now following you`;
-      redirectType = 'profile';
-      redirectPath = additionalEntity.normalised_handle;
-      break;
-
+      return handleIdentitySubscribed(additionalEntity);
     case IdentityNotificationCause.IDENTITY_MENTIONED:
-      const dropPartMention = await getDropPart(
-        notification,
-        additionalEntity.normalised_handle
-      );
-      title = `${additionalEntity.handle} mentioned you`;
-      body = dropPartMention?.content ?? '';
-      redirectType = 'waves';
-      redirectPath = `${notification.wave_id}?drop=${notification.related_drop_id}`;
-      break;
-
+      return handleIdentityMentioned(notification, additionalEntity);
     case IdentityNotificationCause.DROP_QUOTED:
-      title = `${additionalEntity.handle} quoted you`;
-      body = (await getDropPart(notification))?.content ?? '';
-      redirectType = 'waves';
-      redirectPath = `${notification.wave_id}?drop=${notification.related_drop_id}`;
-      break;
-
+      return handleDropQuoted(notification, additionalEntity);
     case IdentityNotificationCause.DROP_REPLIED:
-      title = `${additionalEntity.handle} replied to your drop`;
-      body = (await getDropPart(notification))?.content ?? '';
-      redirectType = 'waves';
-      redirectPath = `${notification.wave_id}?drop=${notification.related_drop_id}`;
-      break;
-
+      return handleDropReplied(notification, additionalEntity);
     case IdentityNotificationCause.DROP_VOTED:
-      const vote = (notification.additional_data as any).vote;
-      if (!vote) {
-        throw new Error(
-          `[ID ${notification.id}] Vote additional data not found`
-        );
-      }
-      title = `${additionalEntity.handle} rated your drop: ${
-        vote > 0 ? '+' : '-'
-      }${Math.abs(vote)}`;
-      body = (await getDropPart(notification))?.content ?? '';
-      redirectType = 'waves';
-      redirectPath = `${notification.wave_id}?drop=${notification.related_drop_id}`;
-      break;
+      return handleDropVoted(notification, additionalEntity);
+    default:
+      return null;
   }
+}
 
-  if (title && body) {
-    return {
-      title: title.replace(/@\[(.+?)\]/, '@$1'),
-      body: body.replace(/@\[(.+?)\]/, '@$1'),
-      imageUrl,
-      redirectType,
-      redirectPath
-    };
+async function handleIdentitySubscribed(additionalEntity: any) {
+  const title = `${additionalEntity.handle} is now following you`;
+  const body = 'View profile';
+  const redirectType = 'profile';
+  const redirectPath = additionalEntity.normalised_handle;
+  return { title, body, imageUrl: undefined, redirectType, redirectPath };
+}
+
+async function handleIdentityMentioned(
+  notification: IdentityNotificationEntity,
+  additionalEntity: any
+) {
+  const dropPartMention = await getDropPart(
+    notification,
+    additionalEntity.normalised_handle
+  );
+  const title = `${additionalEntity.handle} mentioned you`;
+  const body = dropPartMention?.content ?? 'View drop';
+  const redirectType = 'waves';
+  const redirectPath = `${notification.wave_id}?drop=${notification.related_drop_id}`;
+  return { title, body, imageUrl: undefined, redirectType, redirectPath };
+}
+
+async function handleDropQuoted(
+  notification: IdentityNotificationEntity,
+  additionalEntity: any
+) {
+  const dropPart = await getDropPart(notification);
+  const title = `${additionalEntity.handle} quoted you`;
+  const body = dropPart?.content ?? 'View drop';
+  const redirectType = 'waves';
+  const redirectPath = `${notification.wave_id}?drop=${notification.related_drop_id}`;
+  return { title, body, imageUrl: undefined, redirectType, redirectPath };
+}
+
+async function handleDropReplied(
+  notification: IdentityNotificationEntity,
+  additionalEntity: any
+) {
+  const dropPart = await getDropPart(notification);
+  const title = `${additionalEntity.handle} replied to your drop`;
+  const body = dropPart?.content ?? 'View drop';
+  const redirectType = 'waves';
+  const redirectPath = `${notification.wave_id}?drop=${notification.related_drop_id}`;
+  return { title, body, imageUrl: undefined, redirectType, redirectPath };
+}
+
+async function handleDropVoted(
+  notification: IdentityNotificationEntity,
+  additionalEntity: any
+) {
+  const vote = (notification.additional_data as any).vote;
+  if (!vote) {
+    throw new Error(`[ID ${notification.id}] Vote additional data not found`);
   }
-
-  return null;
+  const title = `${additionalEntity.handle} rated your drop: ${
+    vote > 0 ? '+' : '-'
+  }${Math.abs(vote)}`;
+  const dropPart = await getDropPart(notification);
+  const body = dropPart?.content ?? 'View drop';
+  const redirectType = 'waves';
+  const redirectPath = `${notification.wave_id}?drop=${notification.related_drop_id}`;
+  return { title, body, imageUrl: undefined, redirectType, redirectPath };
 }
 
 async function getAdditionalIdOrThrow(
