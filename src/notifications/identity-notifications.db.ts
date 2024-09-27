@@ -56,9 +56,22 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       );
 
       const notificationId: number = result?.[2] ?? null;
+      const lastInsertId = await this.getLastInsertId({
+        connection: connection?.connection
+      });
+
+      if (lastInsertId) {
+        console.log('lastInsertId', lastInsertId);
+      }
+
+      console.log('notificationId', notificationId);
+
+      console.log('result', result);
 
       if (notificationId) {
         await sendIdentityPushNotification(notificationId);
+      } else {
+        console.error('No notification id returned from insert');
       }
     }
   }
