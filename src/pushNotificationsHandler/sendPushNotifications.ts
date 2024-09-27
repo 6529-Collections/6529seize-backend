@@ -50,8 +50,6 @@ export async function sendMessage(
   };
   message.data = data;
 
-  console.log('now sending message', message);
-
   const response = await admin.messaging().send(message);
   logger.info(`Successfully sent notification: ${response}`);
 }

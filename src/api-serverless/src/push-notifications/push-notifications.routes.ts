@@ -40,11 +40,6 @@ router.post(
     if (profile_id) {
       const authenticationContext = await getAuthenticationContext(req);
       if (authenticationContext.authenticatedProfileId !== profile_id) {
-        console.log(
-          'authenticatedProfileId',
-          authenticationContext.authenticatedProfileId
-        );
-        console.log('profile_id', profile_id);
         throw new UnauthorisedException(
           'Profile ID does not match authenticated profile'
         );
