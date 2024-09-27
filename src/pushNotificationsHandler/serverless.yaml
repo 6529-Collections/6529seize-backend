@@ -37,3 +37,4 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: firebase-push-notifications
+        VisibilityTimeout: 1000
