@@ -39,5 +39,5 @@ export const sendMessageToSQS = async (messageBody: string) => {
 
   const command = new SendMessageCommand(params);
   const response = await sqs.send(command);
-  logger.info('Message sent:', response.MessageId);
+  logger.info(`Message sent: ${response.MessageId}`);
 };
