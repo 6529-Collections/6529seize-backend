@@ -9,6 +9,7 @@ import { PushNotificationDevice } from '../entities/IPushNotification';
 import { profilesService } from '../profiles/profiles.service';
 import { sendMessage } from './sendPushNotifications';
 import { Logger } from '../logging';
+import { Profile } from '../entities/IProfile';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 
@@ -76,8 +77,10 @@ async function handleIdentitySubscribed(additionalEntity: any) {
 
 async function handleIdentityMentioned(
   notification: IdentityNotificationEntity,
-  additionalEntity: any
+  additionalEntity: Profile
 ) {
+  console.log('additionalEntity', additionalEntity);
+  console.log('additionalEntity handle', additionalEntity.handle);
   const dropPartMention = await getDropPart(
     notification,
     additionalEntity.handle
@@ -134,15 +137,15 @@ async function handleDropVoted(
 async function getAdditionalIdOrThrow(
   notification: IdentityNotificationEntity
 ) {
-  const mentionedById = notification.additional_identity_id;
-  if (!mentionedById) {
-    throw new Error(`[ID ${notification.id}] Mentioned by id not found`);
+  const additionalId = notification.additional_identity_id;
+  if (!additionalId) {
+    throw new Error(`[ID ${notification.id}] Additional id not found`);
   }
-  const mentionedBy = await profilesService.getProfileById(mentionedById);
-  if (!mentionedBy) {
-    throw new Error(`[ID ${notification.id}] Mentioned by not found`);
+  const additionalProfile = await profilesService.getProfileById(additionalId);
+  if (!additionalProfile) {
+    throw new Error(`[ID ${notification.id}] Additional profile not found`);
   }
-  return mentionedBy;
+  return additionalProfile;
 }
 
 function getDropPart(
