@@ -28,9 +28,9 @@ export async function sendMessage(
   title: string,
   body: string,
   token: string,
-  imageUrl?: string,
-  redirect_type?: string,
-  redirect_path?: string
+  notification_id: number,
+  extra_data: any,
+  imageUrl?: string
 ) {
   init();
   title = title.replace(/@\[(.+?)\]/, '@$1');
@@ -44,13 +44,10 @@ export async function sendMessage(
     token
   };
 
-  const data: any = {};
-  if (redirect_type) {
-    data.redirect_type = redirect_type;
-  }
-  if (redirect_path) {
-    data.redirect_path = redirect_path;
-  }
+  const data: any = {
+    notification_id,
+    ...extra_data
+  };
   message.data = data;
 
   console.log('now sending message', message);
