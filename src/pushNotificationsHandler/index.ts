@@ -163,6 +163,12 @@ async function sendIdentityNotification(id: number) {
     case IdentityNotificationCause.DROP_QUOTED:
       const quotedBy = await getAdditionalIdOrThrow(notification);
       title = `${quotedBy.handle} quoted you`;
+      const dropPartQuote = await getDropPart(notification);
+      if (dropPartQuote) {
+        body = dropPartQuote.content ?? '';
+      }
+      redirect_type = 'waves';
+      redirect_path = `${notification.wave_id}?drop=${notification.related_drop_id}`;
       break;
     case IdentityNotificationCause.DROP_REPLIED:
       const repliedBy = await getAdditionalIdOrThrow(notification);
