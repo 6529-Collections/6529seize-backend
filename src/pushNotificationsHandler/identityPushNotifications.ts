@@ -79,12 +79,13 @@ async function handleIdentityMentioned(
   notification: IdentityNotificationEntity,
   additionalEntity: Profile
 ) {
-  console.log('additionalEntity', additionalEntity);
-  console.log('additionalEntity handle', additionalEntity.handle);
-  const dropPartMention = await getDropPart(
-    notification,
-    additionalEntity.handle
+  const userProfile = await profilesService.getProfileById(
+    notification.identity_id
   );
+  if (!userProfile) {
+    throw new Error(`[ID ${notification.id}] User profile not found`);
+  }
+  const dropPartMention = await getDropPart(notification, userProfile.handle);
   const title = `${additionalEntity.handle} mentioned you`;
   const body = dropPartMention?.content ?? 'View drop';
   const redirectType = 'waves';
