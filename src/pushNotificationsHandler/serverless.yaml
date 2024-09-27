@@ -30,10 +30,3 @@ functions:
     environment:
       SENTRY_DSN: ${env:SENTRY_DSN}
       SENTRY_ENVIRONMENT: 'pushNotificationsHandler_${opt:stage, self:provider.stage}'
-
-resources:
-  Resources:
-    FirebasePushNotificationsQueue:
-      Type: AWS::SQS::Queue
-      Properties:
-        QueueName: firebase-push-notifications
