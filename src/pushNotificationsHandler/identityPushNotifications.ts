@@ -80,7 +80,7 @@ async function handleIdentityMentioned(
 ) {
   const dropPartMention = await getDropPart(
     notification,
-    additionalEntity.normalised_handle
+    additionalEntity.handle
   );
   const title = `${additionalEntity.handle} mentioned you`;
   const body = dropPartMention?.content ?? 'View drop';
