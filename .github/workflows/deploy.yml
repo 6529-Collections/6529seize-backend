@@ -39,6 +39,7 @@ on:
           - nftsLoop
           - overRatesRevocationLoop
           - ownersBalancesLoop
+          - pushNotificationsHandler
           - rateEventProcessingLoop
           - refreshEnsLoop
           - rememesLoop
