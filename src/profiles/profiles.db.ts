@@ -22,6 +22,9 @@ import { Profile } from '../entities/IProfile';
 import { CreateOrUpdateProfileCommand } from './profile.types';
 import { distinct } from '../helpers';
 import { getLevelFromScore } from './profile-level';
+import { RequestContext } from '../request.context';
+
+const mysql = require('mysql');
 
 export class ProfilesDb extends LazyDbAccessCompatibleService {
   public async getConsolidationInfoForWallet(
@@ -631,6 +634,51 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       { profileToBeMerged, target },
       { wrappedConnection: connectionHolder }
     );
+  }
+
+  async bulkInsertProfiles(profiles: Profile[], ctx: RequestContext) {
+    if (!profiles.length) {
+      return;
+    }
+    ctx.timer?.start(`${this.constructor.name}->bulkInsertProfiles`);
+    const sql = `
+        insert into ${PROFILES_TABLE} (
+            external_id,
+            handle,
+            normalised_handle,
+            primary_wallet,
+            created_at,
+            created_by_wallet,
+            banner_1,
+            banner_2,
+            website,
+            classification,
+            sub_classification
+        ) values ${profiles
+          .map(
+            (profile) =>
+              `(${[
+                profile.external_id,
+                profile.handle,
+                profile.normalised_handle,
+                profile.primary_wallet,
+                profile.created_at,
+                profile.created_by_wallet,
+                profile.banner_1,
+                profile.banner_2,
+                profile.website,
+                profile.classification,
+                profile.sub_classification
+              ]
+                .map((it) => mysql.escape(it))
+                .join(', ')})`
+          )
+          .join(', ')}
+    `;
+    await this.db.execute(sql, undefined, {
+      wrappedConnection: ctx.connection
+    });
+    ctx.timer?.stop(`${this.constructor.name}->bulkInsertProfiles`);
   }
 }
 

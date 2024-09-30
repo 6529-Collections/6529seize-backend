@@ -10,7 +10,10 @@ import {
 } from './ratings.db';
 import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
 import { BadRequestException, ForbiddenException } from '../exceptions';
-import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
+import {
+  ProfileActivityLog,
+  ProfileActivityLogType
+} from '../entities/IProfileActivityLog';
 import {
   profileActivityLogsDb,
   ProfileActivityLogsDb
@@ -43,7 +46,7 @@ import {
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
 import { BulkRateRequest } from '../api-serverless/src/generated/models/BulkRateRequest';
-import { distinct, resolveEnum } from '../helpers';
+import { distinct, resolveEnum, uniqueShortId } from '../helpers';
 import { AvailableRatingCredit } from '../api-serverless/src/generated/models/AvailableRatingCredit';
 import { RatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/RatingWithProfileInfoAndLevel';
 import { RatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/RatingWithProfileInfoAndLevelPage';
@@ -54,6 +57,7 @@ import {
   abusivenessCheckService,
   AbusivenessCheckService
 } from '../profiles/abusiveness-check.service';
+import { ProfileRepRatedEventData } from '../events/datatypes/profile-rep-rated.event-data';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -1019,6 +1023,7 @@ export class RatingsService {
   }
 
   async bulkRep({ targets }: BulkRepRequest, ctx: RequestContext) {
+    const authenticationContext = ctx.authenticationContext!;
     const proposedCategories = distinct(
       targets.map((target) => target.category)
     );
@@ -1029,97 +1034,216 @@ export class RatingsService {
     const targetAddresses = distinct(targets.map((it) => it.address));
     await this.identitiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
-        const targetIdentitiesByAddress =
-          await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
-            targetAddresses,
-            connection
-          );
-        const targetAddressWithoutIdentities = targetAddresses.filter(
-          (it) => !targetIdentitiesByAddress[it]
-        );
-        ctx.timer?.start(`${this.constructor.name}->bulkRep->insertIdentities`);
-        await this.identitiesDb.insertIdentitiesOnAddressesOnly(
-          targetAddressWithoutIdentities,
-          connection
-        );
-        ctx.timer?.stop(`${this.constructor.name}->bulkRep->insertIdentities`);
-        const targetAddressesInNeedOfProfile = distinct([
-          ...targetAddressWithoutIdentities,
-          ...Object.values(targetIdentitiesByAddress)
-            .filter((it) => !it.profile)
-            .map((it) => it.identity.primary_address)
-        ]);
-        ctx.timer?.start(`${this.constructor.name}->bulkRep->createProfiles`);
-        await Promise.all(
-          targetAddressesInNeedOfProfile.map((address) =>
-            profilesService.createOrUpdateProfileWithGivenTransaction(
-              {
-                handle: `id-${address}`,
-                classification: ProfileClassification.PSEUDONYM,
-                sub_classification: null,
-                creator_or_updater_wallet: address
-              },
-              connection
-            )
-          )
-        );
+        const ctxWithConnection = { ...ctx, connection };
         ctx.timer?.stop(`${this.constructor.name}->bulkRep->createProfiles`);
-        const profileIdsByTargetAddresses = await this.identitiesDb
-          .getEverythingRelatedToIdentitiesByAddresses(
+        const profileIdsByTargetAddresses =
+          await profilesService.makeSureProfilesAreCreatedAndGetProfileIdsByAddresses(
             targetAddresses,
-            connection
-          )
-          .then((result) =>
-            Object.entries(result).reduce((acc, [address, { identity }]) => {
-              acc[address] = identity.profile_id!;
-              return acc;
-            }, {} as Record<string, string>)
+            ctxWithConnection
           );
-        const allChanges = Object.entries(
-          targets.reduce((acc, red) => {
-            const profileId = profileIdsByTargetAddresses[red.address]!;
-            if (profileId === ctx.authenticationContext?.getActingAsId()) {
-              throw new ForbiddenException(`User can't rate themselves`);
+        const isRatingItself = Object.values(profileIdsByTargetAddresses).find(
+          (it) => it === authenticationContext.getActingAsId()
+        );
+        if (isRatingItself) {
+          throw new BadRequestException(`User can't rate themselves`);
+        }
+        const newRatingsByCategoryAndProfile = targets.reduce((acc, target) => {
+          const targetAddress = target.address;
+          const targetProfileId = profileIdsByTargetAddresses[targetAddress];
+          if (targetProfileId) {
+            if (!acc[targetProfileId]) {
+              acc[targetProfileId] = {};
             }
-            if (!acc[profileId]) {
-              acc[profileId] = {};
-            }
-            if (!acc[profileId][red.category]) {
-              acc[profileId][red.category] = 0;
-            }
-            acc[profileId][red.category] += red.amount;
-            return acc;
-          }, {} as Record<string, Record<string, number>>)
-        )
-          .map(([profileId, categoryAmounts]) =>
-            Object.entries(categoryAmounts).map<UpdateRatingViaApiRequest>(
-              ([category, amount]) => ({
-                matter: RateMatter.REP,
-                matter_category: category,
-                matter_target_id: profileId,
-                rater_profile_id: ctx.authenticationContext!.getActingAsId()!,
-                rating: amount,
-                authenticationContext: ctx.authenticationContext!
+            acc[targetProfileId][target.category] =
+              target.amount + (acc[targetProfileId][target.category] ?? 0);
+          }
+          return acc;
+        }, {} as Record<string, Record<string, number>>);
+        const ratingChanges = await this.getRatingChanges(
+          { newRatingsByCategoryAndProfile, proposedCategories },
+          ctxWithConnection
+        );
+        const tdhWastedDuringThisBulkRating = ratingChanges.reduce(
+          (acc, { changes }) =>
+            acc +
+            changes.reduce(
+              (cAcc, red) =>
+                cAcc + (Math.abs(red.newRating) - Math.abs(red.oldRating)),
+              0
+            ),
+          0
+        );
+        const [totalTdh, historicallyWastedTdh] = await Promise.all([
+          this.ratingsDb.getTdh(authenticationContext.getActingAsId()!, ctx),
+          this.ratingsDb.getTotalTdhSpent(
+            RateMatter.REP,
+            authenticationContext.getActingAsId()!,
+            ctxWithConnection
+          )
+        ]);
+        const tdhLeft = totalTdh - historicallyWastedTdh;
+        if (tdhLeft < tdhWastedDuringThisBulkRating) {
+          throw new BadRequestException(
+            `Not enough TDH left to go through with this bulk rating`
+          );
+        }
+        if (authenticationContext.isAuthenticatedAsProxy()) {
+          const repAction =
+            authenticationContext.activeProxyActions[
+              ApiProfileProxyActionType.ALLOCATE_REP
+            ];
+          if (!repAction) {
+            throw new ForbiddenException(
+              `Proxy is not allowed to give REP ratings`
+            );
+          }
+          const creditLeft =
+            (repAction.credit_amount ?? 0) - (repAction.credit_spent ?? 0);
+          if (creditLeft < tdhWastedDuringThisBulkRating) {
+            throw new BadRequestException(
+              `Not enough proxy credit left to rate. Needed ${tdhWastedDuringThisBulkRating}, left ${creditLeft}`
+            );
+          }
+          const creditSpentInThisBulk = ratingChanges.reduce(
+            (acc, { changes }) =>
+              acc +
+              changes.reduce(
+                (cAcc, red) => cAcc + Math.abs(red.newRating - red.oldRating),
+                0
+              ),
+            0
+          );
+          await this.profileProxiesDb.updateCreditSpentForAction(
+            {
+              id: repAction.id,
+              credit_spent:
+                (repAction.credit_spent ?? 0) + creditSpentInThisBulk
+            },
+            connection
+          );
+        }
+        const now = Time.now().toDate();
+        const raterId = ctx.authenticationContext!.getActingAsId()!;
+        const newRatingEntities = ratingChanges
+          .map<Rating[]>((profileChange) =>
+            profileChange.changes.map<Rating>((ratingChange) => ({
+              matter: RateMatter.REP,
+              matter_category: ratingChange.category,
+              matter_target_id: profileChange.profileId,
+              rater_profile_id: raterId,
+              rating: ratingChange.newRating,
+              authenticationContext: ctx.authenticationContext!,
+              last_modified: now
+            }))
+          )
+          .flat();
+        const logs = ratingChanges
+          .map<ProfileActivityLog[]>((profileChange) =>
+            profileChange.changes.map<ProfileActivityLog>((ratingChange) => ({
+              id: uniqueShortId(),
+              created_at: now,
+              profile_id: raterId,
+              target_id: profileChange.profileId,
+              type: ProfileActivityLogType.RATING_EDIT,
+              contents: JSON.stringify({
+                old_rating: ratingChange.oldRating,
+                new_rating: ratingChange.newRating,
+                rating_matter: RateMatter.REP,
+                rating_category: ratingChange.category,
+                change_reason: 'USER_EDIT'
+              }),
+              proxy_id: authenticationContext.isAuthenticatedAsProxy()
+                ? authenticationContext.getLoggedInUsersProfileId()
+                : null
+            }))
+          )
+          .flat();
+        const events = ratingChanges
+          .map<ProfileRepRatedEventData[]>((profileChange) =>
+            profileChange.changes.map<ProfileRepRatedEventData>(
+              (ratingChange) => ({
+                rater_profile_id: raterId,
+                target_profile_id: profileChange.profileId,
+                category: ratingChange.category,
+                old_score: ratingChange.oldRating,
+                new_score: ratingChange.newRating
               })
             )
           )
           .flat();
-        for (const change of allChanges) {
-          try {
-            await this.updateRatingInternal(change, connection);
-          } catch (e: any) {
-            if (
-              e.message.startsWith(
-                `Not enough TDH left to spend on this matter`
-              )
-            ) {
-              throw new BadRequestException(
-                `Not enough TDH to go through with this bulk rating`
-              );
-            }
-          }
-        }
+        const repBulkUpdates = ratingChanges.map((profileChange) => ({
+          profileId: profileChange.profileId,
+          newRep: profileChange.changes.reduce(
+            (acc, red) => acc - red.oldRating + red.newRating,
+            0
+          )
+        }));
+        await Promise.all([
+          this.identitiesDb.bulkUpdateReps(repBulkUpdates, ctxWithConnection),
+          this.eventScheduler.scheduleBulkRepRatingChangedEvents(
+            events,
+            connection
+          ),
+          this.profileActivityLogsDb.bulkInsertProfileActivityLogs(
+            logs,
+            ctxWithConnection
+          ),
+          this.ratingsDb.bulkUpsertRatings(newRatingEntities, ctxWithConnection)
+        ]);
       }
+    );
+  }
+
+  private async getRatingChanges(
+    {
+      newRatingsByCategoryAndProfile,
+      proposedCategories
+    }: {
+      newRatingsByCategoryAndProfile: Record<string, Record<string, number>>;
+      proposedCategories: string[];
+    },
+    ctxWithConnection: RequestContext
+  ) {
+    const ratingEntities =
+      await this.ratingsDb.getAllRepRatingsForTargetsAndCategories(
+        {
+          targets: Object.keys(newRatingsByCategoryAndProfile),
+          categories: proposedCategories
+        },
+        ctxWithConnection
+      );
+    const categoryRatingsByProfiles = Object.entries(
+      newRatingsByCategoryAndProfile
+    ).reduce((acc, [profileId, categoryRatings]) => {
+      acc[profileId] = Object.entries(categoryRatings).reduce(
+        (accInner, [category, amount]) => {
+          const oldRating =
+            ratingEntities.find(
+              (it) =>
+                it.matter_target_id === profileId &&
+                it.matter_category === category
+            )?.rating ?? 0;
+          accInner[category] = {
+            oldRating,
+            newRating: amount
+          };
+          return accInner;
+        },
+        {} as Record<string, { oldRating: number; newRating: number }>
+      );
+      return acc;
+    }, {} as Record<string, Record<string, { oldRating: number; newRating: number }>>);
+    return Object.entries(categoryRatingsByProfiles).map(
+      ([profileId, changes]) => ({
+        profileId,
+        changes: Object.entries(changes)
+          .filter(([_, it]) => it.oldRating !== it.newRating)
+          .map(([category, { oldRating, newRating }]) => ({
+            category,
+            oldRating,
+            newRating
+          }))
+      })
     );
   }
 }
