@@ -69,7 +69,7 @@ async function generateNotificationData(
 async function handleIdentitySubscribed(additionalEntity: Profile) {
   const title = `${additionalEntity.handle} is now following you`;
   const body = 'View profile';
-  const imageUrl = additionalEntity.pfp_url;
+  const imageUrl = undefined;
   const data = {
     redirect: 'profile',
     handle: additionalEntity.normalised_handle
@@ -90,7 +90,7 @@ async function handleIdentityMentioned(
   const dropPartMention = await getDropPart(notification, userProfile.handle);
   const title = `${additionalEntity.handle} mentioned you`;
   const body = dropPartMention?.content ?? 'View drop';
-  const imageUrl = additionalEntity.pfp_url;
+  const imageUrl = undefined;
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
@@ -105,7 +105,7 @@ async function handleDropQuoted(
 ) {
   const dropPart = await getDropPart(notification);
   const title = `${additionalEntity.handle} quoted you`;
-  const imageUrl = additionalEntity.pfp_url;
+  const imageUrl = undefined;
   const body = dropPart?.content ?? 'View drop';
   const data = {
     redirect: 'waves',
@@ -122,7 +122,7 @@ async function handleDropReplied(
   const dropPart = await getDropPart(notification);
   const title = `${additionalEntity.handle} replied to your drop`;
   const body = dropPart?.content ?? 'View drop';
-  const imageUrl = additionalEntity.pfp_url;
+  const imageUrl = undefined;
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
@@ -142,7 +142,7 @@ async function handleDropVoted(
   const title = `${additionalEntity.handle} rated your drop: ${
     vote > 0 ? '+' : '-'
   }${Math.abs(vote)}`;
-  const imageUrl = additionalEntity.pfp_url;
+  const imageUrl = undefined;
   const dropPart = await getDropPart(notification);
   const body = dropPart?.content ?? 'View drop';
   const data = {
@@ -167,7 +167,7 @@ async function getAdditionalIdOrThrow(
   return additionalProfile;
 }
 
-function getDropPart(
+async function getDropPart(
   notification: IdentityNotificationEntity,
   handle?: string
 ) {
