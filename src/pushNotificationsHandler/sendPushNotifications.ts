@@ -44,12 +44,7 @@ export async function sendMessage(
       body,
       imageUrl
     },
-    token,
-    android: {
-      notification: {
-        icon: 'ic_launcher'
-      }
-    }
+    token
   };
 
   const data: any = {
