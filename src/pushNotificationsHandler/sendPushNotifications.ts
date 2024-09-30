@@ -33,8 +33,8 @@ export async function sendMessage(
   imageUrl?: string
 ) {
   init();
-  title = title.replace(/@\[(.+?)\]/, '@$1');
-  body = body.replace(/@\[(.+?)\]/, '@$1');
+  title = title.replace(/@\[(.+?)\]/g, '@$1');
+  body = body.replace(/@\[(.+?)\]/g, '@$1');
 
   logger.info(`Sending notification with imageUrl: ${imageUrl}`);
 
