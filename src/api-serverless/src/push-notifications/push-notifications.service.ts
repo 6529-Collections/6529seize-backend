@@ -31,7 +31,7 @@ export const sendIdentityPushNotification = async (notificationId: number) => {
   }
 };
 
-export const sendMessageToSQS = async (messageBody: string) => {
+const sendMessageToSQS = async (messageBody: string) => {
   const params: SendMessageCommandInput = {
     QueueUrl: `https://sqs.${region}.amazonaws.com/987989283142/firebase-push-notifications`,
     MessageBody: messageBody

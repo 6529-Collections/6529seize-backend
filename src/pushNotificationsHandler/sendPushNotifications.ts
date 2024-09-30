@@ -35,6 +35,9 @@ export async function sendMessage(
   init();
   title = title.replace(/@\[(.+?)\]/, '@$1');
   body = body.replace(/@\[(.+?)\]/, '@$1');
+
+  logger.info(`Sending notification with imageUrl: ${imageUrl}`);
+
   const message: Message = {
     notification: {
       title,
@@ -49,8 +52,6 @@ export async function sendMessage(
     ...extra_data
   };
   message.data = data;
-
-  console.log('now sending message', message);
 
   const response = await admin.messaging().send(message);
   logger.info(`Successfully sent notification: ${response}`);

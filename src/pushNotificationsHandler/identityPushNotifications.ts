@@ -40,8 +40,8 @@ export async function sendIdentityNotification(id: number) {
 
   const notificationData = await generateNotificationData(notification);
   if (notificationData) {
-    const { title, body, data } = notificationData;
-    await sendMessage(title, body, token, notification.id, data);
+    const { title, body, data, imageUrl } = notificationData;
+    await sendMessage(title, body, token, notification.id, data, imageUrl);
   }
 }
 
@@ -66,14 +66,15 @@ async function generateNotificationData(
   }
 }
 
-async function handleIdentitySubscribed(additionalEntity: any) {
+async function handleIdentitySubscribed(additionalEntity: Profile) {
   const title = `${additionalEntity.handle} is now following you`;
   const body = 'View profile';
+  const imageUrl = additionalEntity.pfp_url;
   const data = {
     redirect: 'profile',
     handle: additionalEntity.normalised_handle
   };
-  return { title, body, data };
+  return { title, body, data, imageUrl };
 }
 
 async function handleIdentityMentioned(
@@ -89,47 +90,50 @@ async function handleIdentityMentioned(
   const dropPartMention = await getDropPart(notification, userProfile.handle);
   const title = `${additionalEntity.handle} mentioned you`;
   const body = dropPartMention?.content ?? 'View drop';
+  const imageUrl = additionalEntity.pfp_url;
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
     drop_id: notification.related_drop_id
   };
-  return { title, body, data };
+  return { title, body, data, imageUrl };
 }
 
 async function handleDropQuoted(
   notification: IdentityNotificationEntity,
-  additionalEntity: any
+  additionalEntity: Profile
 ) {
   const dropPart = await getDropPart(notification);
   const title = `${additionalEntity.handle} quoted you`;
+  const imageUrl = additionalEntity.pfp_url;
   const body = dropPart?.content ?? 'View drop';
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
     drop_id: notification.related_drop_id
   };
-  return { title, body, data };
+  return { title, body, data, imageUrl };
 }
 
 async function handleDropReplied(
   notification: IdentityNotificationEntity,
-  additionalEntity: any
+  additionalEntity: Profile
 ) {
   const dropPart = await getDropPart(notification);
   const title = `${additionalEntity.handle} replied to your drop`;
   const body = dropPart?.content ?? 'View drop';
+  const imageUrl = additionalEntity.pfp_url;
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
     drop_id: notification.related_drop_id
   };
-  return { title, body, data };
+  return { title, body, data, imageUrl };
 }
 
 async function handleDropVoted(
   notification: IdentityNotificationEntity,
-  additionalEntity: any
+  additionalEntity: Profile
 ) {
   const vote = (notification.additional_data as any).vote;
   if (!vote) {
@@ -138,6 +142,7 @@ async function handleDropVoted(
   const title = `${additionalEntity.handle} rated your drop: ${
     vote > 0 ? '+' : '-'
   }${Math.abs(vote)}`;
+  const imageUrl = additionalEntity.pfp_url;
   const dropPart = await getDropPart(notification);
   const body = dropPart?.content ?? 'View drop';
   const data = {
@@ -145,7 +150,7 @@ async function handleDropVoted(
     wave_id: notification.wave_id,
     drop_id: notification.related_drop_id
   };
-  return { title, body, data };
+  return { title, body, data, imageUrl };
 }
 
 async function getAdditionalIdOrThrow(
