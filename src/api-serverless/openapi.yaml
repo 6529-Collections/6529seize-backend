@@ -4850,11 +4850,15 @@ components:
       required:
         - subscribers_count
         - drops_count
+        - latest_drop_timestamp
       properties:
         subscribers_count:
           type: number
           format: int64
         drops_count:
+          type: number
+          format: int64
+        latest_drop_timestamp:
           type: number
           format: int64
     WaveMin:

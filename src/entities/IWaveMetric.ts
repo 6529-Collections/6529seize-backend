@@ -9,4 +9,6 @@ export class WaveMetricEntity {
   readonly drops_count!: number;
   @Column({ type: 'bigint', nullable: false, default: 0 })
   readonly subscribers_count!: number;
+  @Column({ type: 'bigint', nullable: false, default: 0 })
+  readonly latest_drop_timestamp!: number;
 }

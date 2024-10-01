@@ -304,7 +304,8 @@ export class WavesMappers {
 
     const apiWaveMetrics: WaveMetrics = {
       drops_count: waveMetrics.drops_count,
-      subscribers_count: waveMetrics.subscribers_count
+      subscribers_count: waveMetrics.subscribers_count,
+      latest_drop_timestamp: waveMetrics.latest_drop_timestamp
     };
     return {
       id: waveEntity.id,

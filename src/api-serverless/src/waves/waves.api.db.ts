@@ -571,7 +571,8 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
           acc[waveId] = results.find((it) => it.wave_id === waveId) ?? {
             wave_id: waveId,
             subscribers_count: 0,
-            drops_count: 0
+            drops_count: 0,
+            latest_drop_timestamp: 0
           };
           return acc;
         }, {} as Record<string, WaveMetricEntity>)
