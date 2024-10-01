@@ -7,6 +7,8 @@ import { EventStatus, EventType, ProcessableEvent } from '../entities/IEvent';
 import { EVENTS_TABLE, LISTENER_PROCESSED_EVENTS_TABLE } from '../constants';
 import { Time } from '../time';
 
+const mysql = require('mysql');
+
 export class EventsDb extends LazyDbAccessCompatibleService {
   async getListenerKeysAlreadyProcessedByEventIds(
     eventIds: number[],
@@ -90,11 +92,32 @@ export class EventsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: connection }
     );
   }
+
+  async insertBulk(events: NewBulkEvent[], connection: ConnectionWrapper<any>) {
+    const sql = `
+        insert into ${EVENTS_TABLE} (
+            type,
+            data,
+            status,
+            created_at
+        ) values ${events
+          .map(
+            (event) =>
+              `(${[event.type, event.data, event.status, event.created_at]
+                .map(mysql.escape)
+                .join(', ')})`
+          )
+          .join(', ')}
+    `;
+    await this.db.execute(sql, undefined, { wrappedConnection: connection });
+  }
 }
 
 export type NewEvent = Omit<
   ProcessableEvent,
   'id' | 'status' | 'processed_at' | 'created_at'
 >;
+
+export type NewBulkEvent = Omit<ProcessableEvent, 'id'>;
 
 export const eventsDb = new EventsDb(dbSupplier);

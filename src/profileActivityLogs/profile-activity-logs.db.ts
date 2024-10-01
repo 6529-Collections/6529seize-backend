@@ -23,6 +23,8 @@ import {
 import { Time, Timer } from '../time';
 import { RequestContext } from '../request.context';
 
+const mysql = require('mysql');
+
 export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
   constructor(
     dbSupplier: () => SqlExecutor,
@@ -188,6 +190,46 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       },
       { wrappedConnection: connectionHolder.connection }
     );
+  }
+
+  async bulkInsertProfileActivityLogs(
+    logs: ProfileActivityLog[],
+    ctx: RequestContext
+  ) {
+    if (!logs.length) {
+      return;
+    }
+    ctx.timer?.start(`${this.constructor.name}->bulkInsertProfileCreationLogs`);
+    const sql = `
+        insert into ${PROFILES_ACTIVITY_LOGS_TABLE} (
+           id, 
+           profile_id, 
+           target_id, 
+           contents, 
+           type,
+           proxy_id, 
+           created_at
+        ) values ${logs
+          .map(
+            (log) =>
+              `(${[
+                log.id,
+                log.profile_id,
+                log.target_id,
+                log.contents,
+                log.type,
+                log.proxy_id,
+                log.created_at
+              ]
+                .map((it) => mysql.escape(it))
+                .join(', ')})`
+          )
+          .join(', ')}
+    `;
+    await this.db.execute(sql, undefined, {
+      wrappedConnection: ctx.connection
+    });
+    ctx.timer?.stop(`${this.constructor.name}->bulkInsertProfileCreationLogs`);
   }
 }
 
