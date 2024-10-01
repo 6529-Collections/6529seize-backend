@@ -1,16 +1,11 @@
-import {
-  BadRequestException,
-  ForbiddenException,
-  NotFoundException
-} from '../../../exceptions';
+import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { DropsApiService, dropsService } from './drops.api.service';
 import { CreateDropRequest } from '../generated/models/CreateDropRequest';
 import { Drop } from '../generated/models/Drop';
 import { AuthenticationContext } from '../../../auth-context';
-import { Time, Timer } from '../../../time';
+import { Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
-import { dropRaterService } from './drop-rater.service';
 import { UpdateDropRequest } from '../generated/models/UpdateDropRequest';
 import {
   createOrUpdateDrop,
@@ -22,13 +17,18 @@ import {
 } from '../../../drops/create-or-update-drop.model';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { dropsMappers, DropsMappers } from './drops.mappers';
+import {
+  deleteDrop,
+  DeleteDropUseCase
+} from '../../../drops/delete-drop.use-case';
 
 export class DropCreationApiService {
   constructor(
     private readonly dropsService: DropsApiService,
     private readonly dropsDb: DropsDb,
     private readonly dropsMappers: DropsMappers,
-    private readonly createOrUpdateDrop: CreateOrUpdateDropUseCase
+    private readonly createOrUpdateDrop: CreateOrUpdateDropUseCase,
+    private readonly deleteDrop: DeleteDropUseCase
   ) {}
 
   public async createDrop(
@@ -89,7 +89,7 @@ export class DropCreationApiService {
     );
   }
 
-  public async deleteDrop(
+  public async deleteDropById(
     { id }: { id: string },
     { timer, authenticationContext }: RequestContext
   ) {
@@ -102,37 +102,14 @@ export class DropCreationApiService {
       throw new ForbiddenException(`Proxy is not allowed to delete drops`);
     }
     await this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
-      const ctxWithConnection = { timer, connection, authenticationContext };
-      const dropEntity = await this.dropsDb.findDropByIdAndAuthor(
-        { id, author_id: authenticatedProfileId },
-        ctxWithConnection
-      );
-      if (!dropEntity) {
-        throw new NotFoundException(
-          `Drop ${id} not found or you are not the author`
-        );
-      }
-      const waveId = dropEntity.wave_id;
-      const wave = await this.dropsDb.findWaveByIdOrThrow(
-        waveId,
-        ctxWithConnection.connection
-      );
-      if (id === wave.description_drop_id) {
-        throw new BadRequestException(
-          `Cannot delete the description drop of a wave`
-        );
-      }
-      await this.deleteAllDropComponentsById({ id, waveId }, ctxWithConnection);
-      await this.dropsDb.markDropDeletedInRelations(id, ctxWithConnection);
-      await this.dropsDb.insertDeletedDrop(
+      await this.deleteDrop.execute(
         {
-          id,
-          wave_id: waveId,
-          author_id: dropEntity.author_id,
-          created_at: dropEntity.created_at,
-          deleted_at: Time.currentMillis()
+          drop_id: id,
+          deleter_identity: authenticatedProfileId,
+          deleter_id: authenticatedProfileId,
+          deletion_purpose: 'DELETE'
         },
-        ctxWithConnection
+        { timer: timer!, connection }
       );
     });
     timer?.stop('dropCreationApiService->deleteDrop');
@@ -196,30 +173,12 @@ export class DropCreationApiService {
       }
     );
   }
-
-  private async deleteAllDropComponentsById(
-    { id, waveId }: { id: string; waveId: string },
-    ctxWithConnection: RequestContext
-  ) {
-    await Promise.all([
-      this.dropsDb.deleteDropParts(id, ctxWithConnection),
-      this.dropsDb.deleteDropMentions(id, ctxWithConnection),
-      this.dropsDb.deleteDropMedia(id, ctxWithConnection),
-      this.dropsDb.deleteDropReferencedNfts(id, ctxWithConnection),
-      this.dropsDb.deleteDropMetadata(id, ctxWithConnection),
-      this.dropsDb.deleteDropEntity(id, ctxWithConnection),
-      this.dropsDb.updateWaveDropCounters(waveId, ctxWithConnection),
-      dropRaterService.deleteDropVotes(id, ctxWithConnection),
-      this.dropsDb.deleteDropFeedItems(id, ctxWithConnection),
-      this.dropsDb.deleteDropNotifications(id, ctxWithConnection),
-      this.dropsDb.deleteDropSubscriptions(id, ctxWithConnection)
-    ]);
-  }
 }
 
 export const dropCreationService = new DropCreationApiService(
   dropsService,
   dropsDb,
   dropsMappers,
-  createOrUpdateDrop
+  createOrUpdateDrop,
+  deleteDrop
 );

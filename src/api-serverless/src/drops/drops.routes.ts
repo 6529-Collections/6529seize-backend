@@ -210,7 +210,7 @@ router.delete(
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    await dropCreationService.deleteDrop(
+    await dropCreationService.deleteDropById(
       {
         id: req.params.drop_id
       },

@@ -1666,10 +1666,12 @@ paths:
       tags:
         - Ratings
       summary: >-
+        This is deprecated. Use bulk-rep instead.
         Bulk rate. Supplied amount will be added to all target identities. If
         same identity is supplied multiple times, all the additions will be
         summed up. Targets must be represented as Ethereum wallet addresses. ENS
         names and profile handles are not supported.
+      deprecated: true
       operationId: bulkRate
       requestBody:
         required: true

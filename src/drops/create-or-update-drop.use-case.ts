@@ -63,7 +63,7 @@ import {
 import { ApiProfileProxyActionType } from '../entities/IProfileProxyAction';
 import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
 import process from 'node:process';
-import { dropRaterService } from '../api-serverless/src/drops/drop-rater.service';
+import { deleteDrop, DeleteDropUseCase } from './delete-drop.use-case';
 
 export class CreateOrUpdateDropUseCase {
   public constructor(
@@ -76,7 +76,8 @@ export class CreateOrUpdateDropUseCase {
     private readonly activityRecorder: ActivityRecorder,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb,
-    private readonly proxyService: ProfileProxyApiService
+    private readonly proxyService: ProfileProxyApiService,
+    private readonly deleteDropUseCase: DeleteDropUseCase
   ) {}
 
   public async execute(
@@ -157,7 +158,15 @@ export class CreateOrUpdateDropUseCase {
           `Drop can't be edited after ${maximumTimeAllowedForEdit}`
         );
       }
-      await this.deleteAllDropComponentsById(model, { connection, timer });
+      await this.deleteDropUseCase.execute(
+        {
+          drop_id: dropId,
+          deleter_identity: model.author_identity,
+          deleter_id: model.author_id,
+          deletion_purpose: 'UPDATE'
+        },
+        { timer, connection }
+      );
       await this.insertAllDropComponents(
         {
           model: { ...model, drop_id: dropId },
@@ -687,27 +696,6 @@ export class CreateOrUpdateDropUseCase {
       timer
     );
   }
-
-  private async deleteAllDropComponentsById(
-    model: CreateOrUpdateDropModel,
-    { timer, connection }: { connection: ConnectionWrapper<any>; timer: Timer }
-  ) {
-    const id = model.drop_id!;
-    const waveId = model.wave_id;
-    await Promise.all([
-      this.dropsDb.deleteDropParts(id, { timer, connection }),
-      this.dropsDb.deleteDropMentions(id, { timer, connection }),
-      this.dropsDb.deleteDropMedia(id, { timer, connection }),
-      this.dropsDb.deleteDropReferencedNfts(id, { timer, connection }),
-      this.dropsDb.deleteDropMetadata(id, { timer, connection }),
-      this.dropsDb.deleteDropEntity(id, { timer, connection }),
-      this.dropsDb.updateWaveDropCounters(waveId, { timer, connection }),
-      dropRaterService.deleteDropVotes(id, { timer, connection }),
-      this.dropsDb.deleteDropFeedItems(id, { timer, connection }),
-      this.dropsDb.deleteDropNotifications(id, { timer, connection }),
-      this.dropsDb.deleteDropSubscriptions(id, { timer, connection })
-    ]);
-  }
 }
 
 export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
@@ -720,5 +708,6 @@ export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   activityRecorder,
   identitySubscriptionsDb,
   profileActivityLogsDb,
-  profileProxyApiService
+  profileProxyApiService,
+  deleteDrop
 );

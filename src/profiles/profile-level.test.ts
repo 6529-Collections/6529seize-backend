@@ -1,5 +1,25 @@
 import { calculateLevel } from './profile-level';
 
+function generateRandomAddress() {
+  const hexCharacters = '0123456789abcdef';
+  let hexCode = '';
+
+  for (let i = 0; i < 40; i++) {
+    const randomIndex = Math.floor(Math.random() * hexCharacters.length);
+    hexCode += hexCharacters[randomIndex];
+  }
+
+  return `0x${hexCode}`;
+}
+
+function createRandomWallets(numberOfWallets: number): string[] {
+  const wallets = [];
+  for (let i = 0; i < numberOfWallets; i++) {
+    wallets.push(generateRandomAddress());
+  }
+  return wallets;
+}
+
 describe('Profile Level', () => {
   it('resolves when tdh is negative', () => {
     expect(calculateLevel({ tdh: -1, rep: 0 })).toBe(0);
@@ -31,5 +51,19 @@ describe('Profile Level', () => {
 
   it('negative rep is subtracted from TDH', () => {
     expect(calculateLevel({ tdh: 10000, rep: -9900 })).toBe(3);
+  });
+
+  it.skip('generates random wallets', () => {
+    console.log(
+      JSON.stringify(
+        createRandomWallets(200).map((address) => ({
+          address,
+          amount: 2,
+          category: 'love'
+        })),
+        null,
+        2
+      )
+    );
   });
 });
