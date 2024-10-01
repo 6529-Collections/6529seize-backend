@@ -147,8 +147,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         parent_id: replyToDropId,
         child_id: dropId,
         child_serial_no: serialNo,
-        wave_id: waveId,
-        parent_deleted: false
+        wave_id: waveId
       });
       await this.db.execute(
         `delete from ${DROP_RELATIONS_TABLE} where child_id = :id`,
@@ -160,8 +159,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
             parent_id,
             child_id,
             child_serial_no,
-            wave_id,
-            parent_deleted
+            wave_id
         ) values ${newRelations
           .map(
             (relation) =>
@@ -169,7 +167,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                 relation.child_id
               )}, ${mysql.escape(relation.child_serial_no)}, ${mysql.escape(
                 relation.wave_id
-              )}, ${mysql.escape(relation.parent_deleted)})`
+              )})`
           )
           .join(', ')}
         `;
@@ -957,18 +955,23 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     id: string,
     connection: ConnectionWrapper<any>
   ): Promise<WaveEntity> {
-    return this.db
-      .oneOrNull<WaveEntity>(
-        `select * from ${WAVES_TABLE} where id = :id`,
-        { id },
-        connection ? { wrappedConnection: connection } : undefined
-      )
-      .then((it) => {
-        if (!it) {
-          throw new NotFoundException(`Wave with id ${id} not found`);
-        }
-        return it;
-      });
+    return this.findWaveByIdOrNull(id, connection).then((it) => {
+      if (!it) {
+        throw new NotFoundException(`Wave with id ${id} not found`);
+      }
+      return it;
+    });
+  }
+
+  async findWaveByIdOrNull(
+    id: string,
+    connection: ConnectionWrapper<any>
+  ): Promise<WaveEntity | null> {
+    return this.db.oneOrNull<WaveEntity>(
+      `select * from ${WAVES_TABLE} where id = :id`,
+      { id },
+      connection ? { wrappedConnection: connection } : undefined
+    );
   }
 
   async countAuthorDropsInWave(param: {
@@ -1122,16 +1125,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           return acc;
         }, {} as Record<string, DeletedDropEntity>)
       );
-  }
-
-  async markDropDeletedInRelations(id: string, ctx: RequestContext) {
-    ctx.timer?.start('dropsDb->markDropDeletedInRelations');
-    await this.db.execute(
-      `update ${DROP_RELATIONS_TABLE} set parent_deleted = true where parent_id = :id`,
-      { id },
-      { wrappedConnection: ctx.connection }
-    );
-    ctx.timer?.stop('dropsDb->markDropDeletedInRelations');
   }
 
   async getTraceForDrop(
