@@ -17,5 +17,6 @@ export enum WavesOverviewType {
     MostSubscribed = 'MOST_SUBSCRIBED',
     HighLevelAuthor = 'HIGH_LEVEL_AUTHOR',
     AuthorYouHaveRepped = 'AUTHOR_YOU_HAVE_REPPED',
-    MostDropped = 'MOST_DROPPED'
+    MostDropped = 'MOST_DROPPED',
+    RecentlyDroppedTo = 'RECENTLY_DROPPED_TO'
 }

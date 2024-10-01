@@ -5029,6 +5029,7 @@ components:
         - HIGH_LEVEL_AUTHOR
         - AUTHOR_YOU_HAVE_REPPED
         - MOST_DROPPED
+        - RECENTLY_DROPPED_TO
     WaveSubscriptionActions:
       type: object
       required:
