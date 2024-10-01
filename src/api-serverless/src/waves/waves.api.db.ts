@@ -843,6 +843,41 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
         }))
       );
   }
+
+  async findRecentlyDroppedToWaves(param: {
+    offset: number;
+    limit: number;
+    eligibleGroups: string[];
+  }): Promise<WaveEntity[]> {
+    return this.db
+      .execute<
+        Omit<
+          WaveEntity,
+          'participation_required_media' | 'participation_required_metadata'
+        > & {
+          participation_required_media: string;
+          participation_required_metadata: string;
+        }
+      >(
+        `select w.* from ${WAVES_TABLE} w join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id where (w.visibility_group_id is null ${
+          param.eligibleGroups.length
+            ? `or w.visibility_group_id in (:eligibleGroups)`
+            : ``
+        }) order by wm.latest_drop_timestamp desc limit :limit offset :offset`,
+        param
+      )
+      .then((res) =>
+        res.map((it) => ({
+          ...it,
+          participation_required_media: JSON.parse(
+            it.participation_required_media
+          ),
+          participation_required_metadata: JSON.parse(
+            it.participation_required_metadata
+          )
+        }))
+      );
+  }
 }
 
 export interface InsertWaveEntity extends Omit<WaveEntity, 'serial_no'> {

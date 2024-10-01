@@ -596,6 +596,12 @@ export class WaveApiService {
           limit,
           offset
         });
+      case WavesOverviewType.RecentlyDroppedTo:
+        return await this.wavesApiDb.findRecentlyDroppedToWaves({
+          eligibleGroups,
+          limit,
+          offset
+        });
       default:
         assertUnreachable(type);
     }
