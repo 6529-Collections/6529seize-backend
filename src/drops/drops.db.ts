@@ -27,6 +27,7 @@ import {
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   RATINGS_TABLE,
+  WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
   WAVES_TABLE
 } from '../constants';
@@ -81,18 +82,29 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const replyToDropId = newDropEntity.reply_to_drop_id;
     const newDropSerialNo = newDropEntity.serial_no;
     const now = Time.currentMillis();
-    await this.db.execute(
-      `
+    await Promise.all([
+      this.db.execute(
+        `
         insert into ${WAVE_METRICS_TABLE} 
             (wave_id, drops_count, subscribers_count, latest_drop_timestamp) 
         values (:waveId, 1, 0, :now) 
-        on duplicate key update drops_count = (drops_count + 1), latest_drop_timestamp = :now;
+        on duplicate key update drops_count = (drops_count + 1), latest_drop_timestamp = :now
       `,
-      { waveId, now },
-      { wrappedConnection: connection }
-    );
-    await this.db.execute(
-      `insert into ${DROPS_TABLE} (
+        { waveId, now },
+        { wrappedConnection: connection }
+      ),
+      this.db.execute(
+        `
+            insert into ${WAVE_DROPPER_METRICS_TABLE}
+                (wave_id, dropper_id, drops_count, latest_drop_timestamp)
+            values (:waveId, :dropperId, 1, :now)
+            on duplicate key update drops_count = (drops_count + 1), latest_drop_timestamp = :now
+        `,
+        { waveId, dropperId: newDropEntity.author_id, now },
+        { wrappedConnection: connection }
+      ),
+      this.db.execute(
+        `insert into ${DROPS_TABLE} (
                             id,
                             author_id, 
                             wave_id,
@@ -117,9 +129,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
               ${newDropSerialNo !== null ? `, :serial_no` : ``}
              )`,
 
-      { ...newDropEntity },
-      { wrappedConnection: connection }
-    );
+        { ...newDropEntity },
+        { wrappedConnection: connection }
+      )
+    ]);
     if (replyToDropId) {
       const serialNo = await this.db
         .oneOrNull<{ serial_no: number }>(
