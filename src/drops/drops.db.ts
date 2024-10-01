@@ -80,14 +80,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const waveId = newDropEntity.wave_id;
     const replyToDropId = newDropEntity.reply_to_drop_id;
     const newDropSerialNo = newDropEntity.serial_no;
+    const now = Time.currentMillis();
     await this.db.execute(
       `
         insert into ${WAVE_METRICS_TABLE} 
-            (wave_id, drops_count, subscribers_count) 
-        values (:waveId, 1, 0) 
-        on duplicate key update drops_count = (drops_count + 1);
+            (wave_id, drops_count, subscribers_count, latest_drop_timestamp) 
+        values (:waveId, 1, 0, :now) 
+        on duplicate key update drops_count = (drops_count + 1), latest_drop_timestamp = :now;
       `,
-      { waveId },
+      { waveId, now },
       { wrappedConnection: connection }
     );
     await this.db.execute(
