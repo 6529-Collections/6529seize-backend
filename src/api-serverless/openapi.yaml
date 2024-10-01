@@ -4861,6 +4861,12 @@ components:
         latest_drop_timestamp:
           type: number
           format: int64
+        your_drops_count:
+          type: number
+          format: int64
+        your_latest_drop_timestamp:
+          type: number
+          format: int64
     WaveMin:
       required:
         - id
@@ -4994,7 +5000,9 @@ components:
         - HIGH_LEVEL_AUTHOR
         - AUTHOR_YOU_HAVE_REPPED
         - MOST_DROPPED
+        - MOST_DROPPED_BY_YOU
         - RECENTLY_DROPPED_TO
+        - RECENTLY_DROPPED_TO_BY_YOU
     WaveSubscriptionActions:
       type: object
       required:
