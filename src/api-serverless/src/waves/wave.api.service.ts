@@ -501,9 +501,9 @@ export class WaveApiService {
     const authenticatedProfileId =
       authenticationContext?.getActingAsId() ?? null;
     if (!authenticatedProfileId) {
-      if (type === WavesOverviewType.AuthorYouHaveRepped) {
+      if ([WavesOverviewType.AuthorYouHaveRepped].includes(type)) {
         throw new BadRequestException(
-          `You can't see waves you have repped without having a profile or being authenticated`
+          `You can't see waves organised by your behaviour unless you're authenticated`
         );
       }
     }
@@ -590,6 +590,12 @@ export class WaveApiService {
           limit,
           offset
         );
+      case WavesOverviewType.MostDropped:
+        return await this.wavesApiDb.findMostDroppedWaves({
+          eligibleGroups,
+          limit,
+          offset
+        });
       default:
         assertUnreachable(type);
     }
