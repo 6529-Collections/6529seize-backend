@@ -184,5 +184,6 @@ async function getDropPart(
     `SELECT * FROM drop_parts ${filter} ORDER BY created_at DESC LIMIT 1`,
     params
   );
+  console.log('i am drop part', result);
   return result?.[0];
 }
