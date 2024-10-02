@@ -22,7 +22,7 @@ export const sendIdentityPushNotification = async (notificationId: number) => {
     const message = {
       identity_id: notificationId
     };
-    await sendMessageToSQS(JSON.stringify(message));
+    await sendMessageToSQS(JSON.stringify(message), 'identity');
   } catch (error) {
     logger.error(
       `[ID ${notificationId}] Error sending push notification: ${error}`
@@ -30,11 +30,18 @@ export const sendIdentityPushNotification = async (notificationId: number) => {
   }
 };
 
-const sendMessageToSQS = async (messageBody: string) => {
+const sendMessageToSQS = async (
+  messageBody: string,
+  messageGroupId?: string
+) => {
   const params: SendMessageCommandInput = {
     QueueUrl: `https://sqs.${region}.amazonaws.com/987989283142/firebase-push-notifications`,
     MessageBody: messageBody
   };
+
+  if (messageGroupId) {
+    params.MessageGroupId = messageGroupId;
+  }
 
   const command = new SendMessageCommand(params);
   const response = await sqs.send(command);
