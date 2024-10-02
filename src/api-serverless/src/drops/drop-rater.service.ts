@@ -10,7 +10,7 @@ import {
 } from '../../../notifications/user.notifier';
 import { RequestContext } from '../../../request.context';
 
-class DropRaterService {
+export class DropRaterService {
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly ratingsService: RatingsService,

@@ -1666,10 +1666,12 @@ paths:
       tags:
         - Ratings
       summary: >-
+        This is deprecated. Use bulk-rep instead.
         Bulk rate. Supplied amount will be added to all target identities. If
         same identity is supplied multiple times, all the additions will be
         summed up. Targets must be represented as Ethereum wallet addresses. ENS
         names and profile handles are not supported.
+      deprecated: true
       operationId: bulkRate
       requestBody:
         required: true
@@ -4883,11 +4885,21 @@ components:
       required:
         - subscribers_count
         - drops_count
+        - latest_drop_timestamp
       properties:
         subscribers_count:
           type: number
           format: int64
         drops_count:
+          type: number
+          format: int64
+        latest_drop_timestamp:
+          type: number
+          format: int64
+        your_drops_count:
+          type: number
+          format: int64
+        your_latest_drop_timestamp:
           type: number
           format: int64
     WaveMin:
@@ -5022,6 +5034,10 @@ components:
         - MOST_SUBSCRIBED
         - HIGH_LEVEL_AUTHOR
         - AUTHOR_YOU_HAVE_REPPED
+        - MOST_DROPPED
+        - MOST_DROPPED_BY_YOU
+        - RECENTLY_DROPPED_TO
+        - RECENTLY_DROPPED_TO_BY_YOU
     WaveSubscriptionActions:
       type: object
       required:

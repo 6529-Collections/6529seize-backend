@@ -33,6 +33,7 @@ import { ProfileGroupEntity } from '../entities/IProfileGroup';
 import { CookiesConsent } from '../entities/ICookieConsent';
 import { Prenode } from '../entities/IPrenode';
 import { ProfileLatestLogEntity } from '../entities/IProfileLatestLog';
+import { WaveDropperMetricEntity } from '../entities/IWaveDropperMetric';
 import { PushNotificationDevice } from '../entities/IPushNotification';
 
 const DBMigrate = require('db-migrate');
@@ -72,6 +73,7 @@ const MANAGED_ENTITIES = [
   UserGroupEntity,
   WaveEntity,
   WaveMetricEntity,
+  WaveDropperMetricEntity,
   PushNotificationDevice
 ];
 

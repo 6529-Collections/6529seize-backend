@@ -19,6 +19,7 @@ import {
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   RATINGS_TABLE,
+  WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
   WAVES_TABLE
 } from '../../../constants';
@@ -31,6 +32,7 @@ import { RateMatter } from '../../../entities/IRating';
 import { WaveMetricEntity } from '../../../entities/IWaveMetric';
 import { RequestContext } from '../../../request.context';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
+import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -571,12 +573,42 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
           acc[waveId] = results.find((it) => it.wave_id === waveId) ?? {
             wave_id: waveId,
             subscribers_count: 0,
-            drops_count: 0
+            drops_count: 0,
+            latest_drop_timestamp: 0
           };
           return acc;
         }, {} as Record<string, WaveMetricEntity>)
       );
     timer?.stop('wavesApiDb->findWavesMetricsByWaveIds');
+    return result;
+  }
+
+  async findWaveDropperMetricsByWaveIds(
+    params: { dropperId: string; waveIds: string[] },
+    { connection, timer }: RequestContext
+  ): Promise<Record<string, WaveDropperMetricEntity>> {
+    if (!params.waveIds.length) {
+      return {};
+    }
+    timer?.start('wavesApiDb->findWaveDropperMetricsByWaveIds');
+    const result = await this.db
+      .execute<WaveDropperMetricEntity>(
+        `select * from ${WAVE_DROPPER_METRICS_TABLE} where wave_id in (:waveIds) and dropper_id = :dropperId`,
+        params,
+        { wrappedConnection: connection }
+      )
+      .then((results) =>
+        params.waveIds.reduce((acc, waveId) => {
+          acc[waveId] = results.find((it) => it.wave_id === waveId) ?? {
+            wave_id: waveId,
+            dropper_id: params.dropperId,
+            drops_count: 0,
+            latest_drop_timestamp: 0
+          };
+          return acc;
+        }, {} as Record<string, WaveDropperMetricEntity>)
+      );
+    timer?.stop('wavesApiDb->findWaveDropperMetricsByWaveIds');
     return result;
   }
 
@@ -802,6 +834,152 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
       param,
       { wrappedConnection: connection }
     );
+  }
+
+  async findMostDroppedWaves({
+    eligibleGroups,
+    limit,
+    offset
+  }: {
+    eligibleGroups: string[];
+    limit: number;
+    offset: number;
+  }): Promise<WaveEntity[]> {
+    return this.db
+      .execute<
+        Omit<
+          WaveEntity,
+          'participation_required_media' | 'participation_required_metadata'
+        > & {
+          participation_required_media: string;
+          participation_required_metadata: string;
+        }
+      >(
+        `select w.* from ${WAVES_TABLE} w join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id where (w.visibility_group_id is null ${
+          eligibleGroups.length
+            ? `or w.visibility_group_id in (:eligibleGroups)`
+            : ``
+        }) order by wm.drops_count desc limit :limit offset :offset`,
+        { limit, eligibleGroups, offset }
+      )
+      .then((res) =>
+        res.map((it) => ({
+          ...it,
+          participation_required_media: JSON.parse(
+            it.participation_required_media
+          ),
+          participation_required_metadata: JSON.parse(
+            it.participation_required_metadata
+          )
+        }))
+      );
+  }
+
+  async findRecentlyDroppedToWaves(param: {
+    offset: number;
+    limit: number;
+    eligibleGroups: string[];
+  }): Promise<WaveEntity[]> {
+    return this.db
+      .execute<
+        Omit<
+          WaveEntity,
+          'participation_required_media' | 'participation_required_metadata'
+        > & {
+          participation_required_media: string;
+          participation_required_metadata: string;
+        }
+      >(
+        `select w.* from ${WAVES_TABLE} w join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id where (w.visibility_group_id is null ${
+          param.eligibleGroups.length
+            ? `or w.visibility_group_id in (:eligibleGroups)`
+            : ``
+        }) order by wm.latest_drop_timestamp desc limit :limit offset :offset`,
+        param
+      )
+      .then((res) =>
+        res.map((it) => ({
+          ...it,
+          participation_required_media: JSON.parse(
+            it.participation_required_media
+          ),
+          participation_required_metadata: JSON.parse(
+            it.participation_required_metadata
+          )
+        }))
+      );
+  }
+
+  async findRecentlyDroppedToWavesByYou(param: {
+    dropperId: string;
+    offset: number;
+    limit: number;
+    eligibleGroups: string[];
+  }): Promise<WaveEntity[]> {
+    return this.db
+      .execute<
+        Omit<
+          WaveEntity,
+          'participation_required_media' | 'participation_required_metadata'
+        > & {
+          participation_required_media: string;
+          participation_required_metadata: string;
+        }
+      >(
+        `select w.* from ${WAVES_TABLE} w join ${WAVE_DROPPER_METRICS_TABLE} wm on wm.wave_id = w.id where wm.dropper_id = :dropperId and (w.visibility_group_id is null ${
+          param.eligibleGroups.length
+            ? `or w.visibility_group_id in (:eligibleGroups)`
+            : ``
+        }) order by wm.latest_drop_timestamp desc limit :limit offset :offset`,
+        param
+      )
+      .then((res) =>
+        res.map((it) => ({
+          ...it,
+          participation_required_media: JSON.parse(
+            it.participation_required_media
+          ),
+          participation_required_metadata: JSON.parse(
+            it.participation_required_metadata
+          )
+        }))
+      );
+  }
+
+  async findMostDroppedWavesByYou(param: {
+    dropperId: string;
+    offset: number;
+    limit: number;
+    eligibleGroups: string[];
+  }): Promise<WaveEntity[]> {
+    return this.db
+      .execute<
+        Omit<
+          WaveEntity,
+          'participation_required_media' | 'participation_required_metadata'
+        > & {
+          participation_required_media: string;
+          participation_required_metadata: string;
+        }
+      >(
+        `select w.* from ${WAVES_TABLE} w join ${WAVE_DROPPER_METRICS_TABLE} wm on wm.wave_id = w.id where wm.dropper_id = :dropperId and (w.visibility_group_id is null ${
+          param.eligibleGroups.length
+            ? `or w.visibility_group_id in (:eligibleGroups)`
+            : ``
+        }) order by wm.drops_count desc limit :limit offset :offset`,
+        param
+      )
+      .then((res) =>
+        res.map((it) => ({
+          ...it,
+          participation_required_media: JSON.parse(
+            it.participation_required_media
+          ),
+          participation_required_metadata: JSON.parse(
+            it.participation_required_metadata
+          )
+        }))
+      );
   }
 }
 

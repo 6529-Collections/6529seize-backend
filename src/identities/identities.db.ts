@@ -12,6 +12,7 @@ import {
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
 import { randomUUID } from 'crypto';
+import { RequestContext } from '../request.context';
 
 const mysql = require('mysql');
 
@@ -307,6 +308,39 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
                            where profiles.primary_wallet != identities.primary_address`,
       undefined,
       { wrappedConnection: connection }
+    );
+  }
+
+  async updateIdentityProfilesOfIds(profileIds: string[], ctx: RequestContext) {
+    if (!profileIds.length) {
+      return;
+    }
+    ctx.timer?.start(`${this.constructor.name}->updateIdentityProfilesOfIds`);
+    await this.db.execute(
+      `update identities inner join profiles on identities.profile_id = profiles.external_id
+                           set 
+                               identities.handle = profiles.handle,
+                               identities.normalised_handle = profiles.classification,
+                               identities.classification = profiles.normalised_handle
+                           where identities.profile_id in (:profileIds)`,
+      { profileIds },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->updateIdentityProfilesOfIds`);
+  }
+
+  async bulkUpdateReps(
+    repBulkUpdates: { profileId: string; newRep: number }[],
+    ctx: RequestContext
+  ) {
+    await Promise.all(
+      repBulkUpdates.map((update) =>
+        this.db.execute(
+          `update ${IDENTITIES_TABLE} set rep = rep + :newRep, level_raw = level_raw + :newRep where profile_id = :profileId`,
+          update,
+          { wrappedConnection: ctx.connection }
+        )
+      )
     );
   }
 }
