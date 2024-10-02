@@ -101,6 +101,7 @@ export * from '../models/QuotedDropResponse';
 export * from '../models/RateMatter';
 export * from '../models/RatingWithProfileInfoAndLevel';
 export * from '../models/RatingWithProfileInfoAndLevelPage';
+export * from '../models/RegisterPushNotificationTokenRequest';
 export * from '../models/RepRating';
 export * from '../models/ReplyToDrop';
 export * from '../models/ReplyToDropResponse';
@@ -240,6 +241,7 @@ import { QuotedDropResponse } from '../models/QuotedDropResponse';
 import { RateMatter } from '../models/RateMatter';
 import { RatingWithProfileInfoAndLevel } from '../models/RatingWithProfileInfoAndLevel';
 import { RatingWithProfileInfoAndLevelPage } from '../models/RatingWithProfileInfoAndLevelPage';
+import { RegisterPushNotificationTokenRequest } from '../models/RegisterPushNotificationTokenRequest';
 import { RepRating } from '../models/RepRating';
 import { ReplyToDrop } from '../models/ReplyToDrop';
 import { ReplyToDropResponse } from '../models/ReplyToDropResponse';
@@ -408,6 +410,7 @@ let typeMap: {[index: string]: any} = {
     "QuotedDropResponse": QuotedDropResponse,
     "RatingWithProfileInfoAndLevel": RatingWithProfileInfoAndLevel,
     "RatingWithProfileInfoAndLevelPage": RatingWithProfileInfoAndLevelPage,
+    "RegisterPushNotificationTokenRequest": RegisterPushNotificationTokenRequest,
     "RepRating": RepRating,
     "ReplyToDrop": ReplyToDrop,
     "ReplyToDropResponse": ReplyToDropResponse,

@@ -34,6 +34,8 @@ import notificationsRoutes from './notifications/notifications.routes';
 import waveMediaRoutes from './waves/wave-media.routes';
 import wavesOverviewRoutes from './waves/waves-overview.routes';
 import identitySubscriptionsRoutes from './identity-subscriptions/identity-subscriptions.routes';
+import pushNotificationsRoutes from './push-notifications/push-notifications.routes';
+
 import * as passport from 'passport';
 import {
   ExtractJwt,
@@ -985,6 +987,8 @@ loadApi().then(() => {
   apiRouter.use(`/waves`, wavesRoutes);
   apiRouter.use(`/public/waves`, publicWavesRoutes);
   apiRouter.use(`/policies`, policiesRoutes);
+  apiRouter.use(`/push-notifications`, pushNotificationsRoutes);
+
   rootRouter.use(BASE_PATH, apiRouter);
   rootRouter.use(`/oracle`, oracleRoutes);
   app.use(rootRouter);

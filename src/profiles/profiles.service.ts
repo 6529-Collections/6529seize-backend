@@ -74,6 +74,13 @@ export class ProfilesService {
     private readonly supplyAlchemy: () => Alchemy
   ) {}
 
+  public async getProfileById(
+    id: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<Profile | null> {
+    return this.profilesDb.getProfileById(id, connection);
+  }
+
   private async getProfileAndConsolidationsById(
     id: string,
     connection?: ConnectionWrapper<any>

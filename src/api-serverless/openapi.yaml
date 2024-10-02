@@ -1621,6 +1621,25 @@ paths:
           description: Invalid request
         "404":
           description: Proxy or action not found
+  /push-notifications/register:
+    post:
+      tags:
+        - Push Notifications
+      summary: Register a push notification token
+      operationId: registerPushNotificationToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterPushNotificationTokenRequest"
+      responses:
+        "201":
+          description: Push notification token registered successfully
+        "400":
+          description: Invalid request
+        "401":
+          description: Unauthorized
   /bulk-rep:
     post:
       tags:
@@ -4455,6 +4474,22 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/RatingWithProfileInfoAndLevel"
+    RegisterPushNotificationTokenRequest:
+      type: object
+      required:
+        - device_id
+        - token
+      properties:
+        device_id:
+          type: string
+        token:
+          type: string
+        profile_id:
+          type: string
+          description: Optional profile_id
+        platform:
+          type: string
+          description: Optional platform (ios, android, web)
     ReplyToDrop:
       type: object
       required:
