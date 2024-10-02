@@ -266,7 +266,7 @@ router.get(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req);
     const dropId = req.query.drop_id ?? null;
-    const amount = parseIntOrNull(req.query.limit) ?? 20;
+    const amount = parseIntOrNull(req.query.limit) ?? 200;
     const serialNoLessThan = parseIntOrNull(req.query.serial_no_less_than);
     const serialNoLimit =
       serialNoLessThan ?? parseIntOrNull(req.query.serial_no_limit);
@@ -279,7 +279,7 @@ router.get(
       {
         wave_id: id,
         drop_id: dropId,
-        amount: amount >= 50 || amount < 1 ? 50 : amount,
+        amount: amount >= 200 || amount < 1 ? 50 : amount,
         serial_no_limit: serialNoLimit,
         search_strategy: searchStrategy
       },
