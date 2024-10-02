@@ -182,7 +182,7 @@ async function getDropPart(
     params.handle = `%@[${handle}]%`;
   }
   const result = await sqlExecutor.execute(
-    `SELECT * FROM ${DROPS_PARTS_TABLE} ${filter} ORDER BY created_at DESC LIMIT 1`,
+    `SELECT * FROM ${DROPS_PARTS_TABLE} ${filter} LIMIT 1`,
     params
   );
   console.log('i am drop part', result);
