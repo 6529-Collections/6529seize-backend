@@ -1,4 +1,6 @@
+import { Like } from 'typeorm';
 import { getDataSource } from '../db';
+import { DropPartEntity } from '../entities/IDrop';
 import {
   IdentityNotificationEntity,
   IdentityNotificationCause
@@ -8,8 +10,6 @@ import { profilesService } from '../profiles/profiles.service';
 import { sendMessage } from './sendPushNotifications';
 import { Logger } from '../logging';
 import { Profile } from '../entities/IProfile';
-import { sqlExecutor } from '../sql-executor';
-import { DROPS_PARTS_TABLE } from '../constants';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 
@@ -175,16 +175,9 @@ async function getDropPart(
   if (!dropId) {
     throw new Error(`[ID ${notification.id}] Drop id not found`);
   }
-  let filter = `WHERE drop_id = :dropId`;
-  let params: any = { dropId };
+  const query: any = { drop_id: dropId };
   if (handle) {
-    filter += ` AND content LIKE :handle`;
-    params.handle = `%@[${handle}]%`;
+    query['content'] = Like(`%@[${handle}]%`);
   }
-  const result = await sqlExecutor.execute(
-    `SELECT * FROM ${DROPS_PARTS_TABLE} ${filter} LIMIT 1`,
-    params
-  );
-  console.log('i am drop part', result);
-  return result?.[0];
+  return getDataSource().getRepository(DropPartEntity).findOneBy(query);
 }
