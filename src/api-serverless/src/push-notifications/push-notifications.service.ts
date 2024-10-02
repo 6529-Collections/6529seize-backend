@@ -6,9 +6,8 @@ import {
 import { Logger } from '../../../logging';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS');
-logger.info(`i am process.env.AWS_REGION: ${process.env.AWS_REGION}`);
-const region = process.env.AWS_REGION || 'eu-west-1';
-logger.info(`i am region: ${region}`);
+const region = process.env.AWS_REGION;
+logger.info(`REGION: ${region}`);
 
 const sqs = new SQSClient({ region });
 
