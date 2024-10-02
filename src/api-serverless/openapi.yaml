@@ -2088,7 +2088,7 @@ paths:
             type: integer
             format: int64
             minimum: 1
-            maximum: 50
+            maximum: 200
             default: 20
         - name: serial_no_limit
           in: query
