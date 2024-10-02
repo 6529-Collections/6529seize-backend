@@ -97,7 +97,8 @@ export async function connect(entities: any[] = []) {
     database: process.env.DB_NAME,
     entities: entities,
     synchronize: true,
-    logging: false
+    logging: false,
+    charset: 'utf8mb4'
   });
 
   await AppDataSource.initialize().catch((error) => logger.error(error));
