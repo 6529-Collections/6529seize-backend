@@ -9,6 +9,7 @@ import { sendMessage } from './sendPushNotifications';
 import { Logger } from '../logging';
 import { Profile } from '../entities/IProfile';
 import { sqlExecutor } from '../sql-executor';
+import { DROPS_PARTS_TABLE } from '../constants';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 
@@ -181,7 +182,7 @@ async function getDropPart(
     params.handle = `%@[${handle}]%`;
   }
   const result = await sqlExecutor.execute(
-    `SELECT * FROM drop_parts ${filter} ORDER BY created_at DESC LIMIT 1`,
+    `SELECT * FROM ${DROPS_PARTS_TABLE} ${filter} ORDER BY created_at DESC LIMIT 1`,
     params
   );
   console.log('i am drop part', result);
