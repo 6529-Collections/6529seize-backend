@@ -38,3 +38,12 @@ resources:
       Properties:
         QueueName: firebase-push-notifications
         VisibilityTimeout: 1000
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt: [FirebasePushNotificationsDLQ, Arn]
+          maxReceiveCount: 5
+
+    FirebasePushNotificationsDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: firebase-push-notifications-dlq
