@@ -31,19 +31,13 @@ const sqsHandler: SQSHandler = async (event) => {
 };
 
 const processNotification = async (messageBody: string) => {
-  try {
-    const notification = JSON.parse(messageBody);
-    if (notification.identity_id) {
-      await sendIdentityNotification(notification.identity_id);
-      return;
-    }
-
-    logger.warn(`Unknown notification type: ${JSON.stringify(notification)}`);
-  } catch (error) {
-    logger.error(
-      `Failed to process notification: ${messageBody}, error: ${error.message}`
-    );
+  const notification = JSON.parse(messageBody);
+  if (notification.identity_id) {
+    await sendIdentityNotification(notification.identity_id);
+    return;
   }
+
+  logger.warn(`Unknown notification type: ${messageBody}`);
 };
 
 export const handler = sentryContext.wrapLambdaHandler(sqsHandler);
