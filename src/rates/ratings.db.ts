@@ -14,6 +14,8 @@ import { Page } from '../api-serverless/src/page-request';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
 import { RatingsSnapshotsPageRequest } from './ratings.service';
 import { RequestContext } from '../request.context';
+import { redisCached } from '../redis';
+import { Time } from '../time';
 
 const mysql = require('mysql');
 
@@ -711,13 +713,15 @@ from grouped_rates r
   }
 
   async getTdh(profleId: string, ctx: RequestContext): Promise<number> {
-    return this.db
-      .oneOrNull<{ tdh: number }>(
-        `select tdh from ${IDENTITIES_TABLE} where profile_id = :profileId`,
-        { profileId: profleId },
-        { wrappedConnection: ctx.connection }
-      )
-      .then((result) => result?.tdh ?? 0);
+    return await redisCached(`tdh-${profleId}`, Time.minutes(10), async () => {
+      return this.db
+        .oneOrNull<{ tdh: number }>(
+          `select tdh from ${IDENTITIES_TABLE} where profile_id = :profileId`,
+          { profileId: profleId },
+          { wrappedConnection: ctx.connection }
+        )
+        .then((result) => result?.tdh ?? 0);
+    });
   }
 
   async bulkUpsertRatings(ratings: Rating[], ctx: RequestContext) {

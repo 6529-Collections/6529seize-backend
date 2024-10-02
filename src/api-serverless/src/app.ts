@@ -92,6 +92,8 @@ import { NFT } from '../../entities/INFT';
 import { Nft } from './generated/models/Nft';
 import { ArtistNameItem } from './generated/models/ArtistNameItem';
 import { TransactionPage } from './generated/models/TransactionPage';
+import { disconnectRedis, initRedis } from '../../redis';
+import { ratingsDb } from '../../rates/ratings.db';
 
 const YAML = require('yamljs');
 
@@ -168,6 +170,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 
 const app = express();
+
 const rootRouter = asyncRouter();
 
 const multer = require('multer');
@@ -182,6 +185,7 @@ async function loadApiSecrets() {
 
 async function loadApi() {
   await loadLocalConfig();
+  await initRedis();
   await db.connect();
 }
 
@@ -943,6 +947,14 @@ loadApi().then(() => {
     );
   });
 
+  apiRouter.get(`/my-tdh`, async function (req: any, res: any) {
+    const tdh = await ratingsDb.getTdh(
+      '0f831714-87b4-11ee-9d82-029a0e4b6159',
+      {}
+    );
+    res.send({ tdh });
+  });
+
   rootRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
     returnJsonResult(
@@ -1014,11 +1026,15 @@ loadApi().then(() => {
     app.use(sentryFlusherMiddleware());
   }
 
-  app.listen(API_PORT, function () {
+  const server = app.listen(API_PORT, function () {
     logger.info(
       `[CONFIG ${process.env.NODE_ENV}] [SERVER RUNNING ON PORT ${API_PORT}]`
     );
   });
+  server.on('close', async () => {
+    await disconnectRedis();
+  });
+  process.on('SIGTERM', () => server.close());
 });
 
 export { app };
