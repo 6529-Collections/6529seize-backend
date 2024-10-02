@@ -9,8 +9,8 @@ plugins:
 provider:
   name: aws
   runtime: nodejs18.x
-  memorySize: 2048
-  timeout: 900
+  memorySize: 1024
+  timeout: 60
 
 functions:
   pushNotificationsHandler:
@@ -18,12 +18,12 @@ functions:
     name: pushNotificationsHandler
     description: ${env:VERSION_DESCRIPTION}
     role: arn:aws:iam::987989283142:role/lambda-vpc-role
-    reservedConcurrency: 1
+    reservedConcurrency: 20
     events:
       - sqs:
           arn:
             Fn::GetAtt: [FirebasePushNotificationsQueue, Arn]
-          batchSize: 10
+          batchSize: 1
     vpc:
       securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
       subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
