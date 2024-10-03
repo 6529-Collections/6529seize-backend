@@ -37,7 +37,10 @@ const WavesOverviewParamsSchema = Joi.object<WavesOverviewParams>({
   offset: Joi.number().integer().optional().min(0).default(0),
   type: Joi.string()
     .required()
-    .allow(...Object.values(WavesOverviewType))
+    .allow(...Object.values(WavesOverviewType)),
+  only_waves_followed_by_authenticated_user: Joi.boolean()
+    .optional()
+    .default(false)
 });
 
 export default router;
