@@ -182,38 +182,19 @@ async function processNFTs(
           a.value.toUpperCase() != 'NONE'
         ) {
           const ref = a.value;
-          if (ref.toUpperCase() == 'ALL') {
-            memeReferences.push(...[...memeNFTs].map((m) => m.id));
-          } else if (ref.toUpperCase() == 'ALL SZN1') {
-            memeReferences.push(
-              ...[...memeNFTs].filter((m) => m.season == 1).map((m) => m.id)
-            );
-          } else if (ref.toUpperCase() == 'ALL SZN2') {
-            memeReferences.push(
-              ...[...memeNFTs].filter((m) => m.season == 2).map((m) => m.id)
-            );
-          } else if (ref.toUpperCase() == 'ALL SZN3') {
-            memeReferences.push(
-              ...[...memeNFTs].filter((m) => m.season == 3).map((m) => m.id)
-            );
-          } else if (ref.toUpperCase() == 'ALL SZN4') {
-            memeReferences.push(
-              ...[...memeNFTs].filter((m) => m.season == 4).map((m) => m.id)
-            );
-          } else if (ref.toUpperCase() == 'ALL SZN5') {
-            memeReferences.push(
-              ...[...memeNFTs].filter((m) => m.season == 5).map((m) => m.id)
-            );
-          } else if (ref.toUpperCase() == 'ALL SZN6') {
-            memeReferences.push(
-              ...[...memeNFTs].filter((m) => m.season == 6).map((m) => m.id)
-            );
-          } else if (ref.toUpperCase() == 'ALL SZN7') {
-            memeReferences.push(
-              ...[...memeNFTs].filter((m) => m.season == 7).map((m) => m.id)
-            );
+          const upperRef = ref.toUpperCase();
+
+          if (upperRef === 'ALL') {
+            memeReferences.push(...memeNFTs.map((m) => m.id));
+          } else if (upperRef.startsWith('ALL SZN')) {
+            const season = parseInt(upperRef.split('SZN')[1], 10);
+            if (!isNaN(season)) {
+              memeReferences.push(
+                ...memeNFTs.filter((m) => m.season === season).map((m) => m.id)
+              );
+            }
           } else {
-            const memeRef = memeNFTs.find((m) => m.name == ref);
+            const memeRef = memeNFTs.find((m) => m.name === ref);
             if (memeRef) {
               memeReferences.push(memeRef.id);
             }
