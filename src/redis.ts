@@ -40,6 +40,8 @@ export async function evictAllKeysMatchingPatternFromRedisCache(
   await Promise.all(keys.map((it) => redis.del(it)));
 }
 
+const logger = Logger.get('REDIS_CLIENT');
+
 export async function initRedis() {
   const url = process.env.REDIS_URL;
   if (!url) {
@@ -52,6 +54,9 @@ export async function initRedis() {
     );
   }
   const password = process.env.REDIS_PASSWORD;
+  logger.info(
+    `Creating reddis client with url: ${url}, port: ${port} and password: ${password}`
+  );
   redis = createClient({
     socket: {
       host: url,
@@ -59,18 +64,16 @@ export async function initRedis() {
     },
     password: password
   });
-  redis.on('error', (error) =>
-    Logger.get('REDIS_CLIENT').error('Error: ' + error)
-  );
-  redis.on('connect', () => Logger.get('REDIS_CLIENT').info('Connected!'));
-  console.log('starting to connect');
+  redis.on('error', (error) => logger.error('Error: ' + error));
+  redis.on('connect', () => logger.info('Connected!'));
+  logger.info('starting to connect');
   await redis.connect();
-  console.log('finished connecting');
+  logger.info('finished connecting');
 }
 
 export async function disconnectRedis() {
   if (redis) {
     await redis.disconnect();
-    Logger.get('REDIS_CLIENT').info('Disconnected!');
+    logger.info('Disconnected!');
   }
 }
