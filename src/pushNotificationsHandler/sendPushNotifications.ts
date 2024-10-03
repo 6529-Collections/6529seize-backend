@@ -36,7 +36,9 @@ export async function sendMessage(
   title = title.replace(/@\[(.+?)\]/g, '@$1');
   body = body.replace(/@\[(.+?)\]/g, '@$1');
 
-  logger.info(`Sending notification with imageUrl: ${imageUrl}`);
+  logger.info(
+    `Sending notification with extra_data: ${JSON.stringify(extra_data)}`
+  );
 
   const message: Message = {
     notification: {
