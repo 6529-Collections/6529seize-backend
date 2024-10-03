@@ -1,5 +1,8 @@
 import * as admin from 'firebase-admin';
-import { Message } from 'firebase-admin/lib/messaging/messaging-api';
+import {
+  Message,
+  Notification
+} from 'firebase-admin/lib/messaging/messaging-api';
 import { Logger } from '../logging';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_SEND');
@@ -36,24 +39,24 @@ export async function sendMessage(
   title = title.replace(/@\[(.+?)\]/g, '@$1');
   body = body.replace(/@\[(.+?)\]/g, '@$1');
 
-  logger.info(
-    `Sending notification with extra_data: ${JSON.stringify(extra_data)}`
-  );
-
-  const message: Message = {
-    notification: {
-      title,
-      body,
-      imageUrl
-    },
-    token
+  const notification: Notification = {
+    title,
+    body
   };
+  if (imageUrl) {
+    notification.imageUrl = imageUrl;
+  }
 
   const data: any = {
     notification_id,
     ...extra_data
   };
-  message.data = data;
+
+  const message: Message = {
+    notification,
+    token,
+    data
+  };
 
   const response = await admin.messaging().send(message);
   logger.info(`Successfully sent notification: ${response}`);
