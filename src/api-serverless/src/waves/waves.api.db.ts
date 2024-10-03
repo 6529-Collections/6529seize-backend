@@ -372,11 +372,19 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
       .then((it) => it?.visibility_group_id ?? null);
   }
 
-  async findLatestWaves(
-    eligibleGroups: string[],
-    limit: number,
-    offset: number
-  ): Promise<WaveEntity[]> {
+  async findLatestWaves({
+    only_waves_followed_by_authenticated_user,
+    authenticated_user_id,
+    eligibleGroups,
+    limit,
+    offset
+  }: {
+    authenticated_user_id: string | null;
+    only_waves_followed_by_authenticated_user: boolean;
+    eligibleGroups: string[];
+    limit: number;
+    offset: number;
+  }): Promise<WaveEntity[]> {
     return this.db
       .execute<
         Omit<
@@ -388,13 +396,22 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
         }
       >(
         `
-      select * from ${WAVES_TABLE} where (visibility_group_id is null ${
-          eligibleGroups.length
-            ? `or visibility_group_id in (:eligibleGroups)`
+      select w.* from ${WAVES_TABLE} w
+       ${
+         only_waves_followed_by_authenticated_user
+           ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
+           : ``
+       } where ${
+          only_waves_followed_by_authenticated_user
+            ? `f.subscriber_id = :authenticated_user_id and`
             : ``
-        }) order by serial_no desc, id limit :limit offset :offset
+        } (w.visibility_group_id is null ${
+          eligibleGroups.length
+            ? `or w.visibility_group_id in (:eligibleGroups)`
+            : ``
+        }) order by w.serial_no desc, w.id limit :limit offset :offset
     `,
-        { limit, eligibleGroups, offset }
+        { limit, eligibleGroups, offset, authenticated_user_id }
       )
       .then((res) =>
         res.map((it) => ({
@@ -409,11 +426,19 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
       );
   }
 
-  async findHighLevelAuthorWaves(
-    eligibleGroups: string[],
-    limit: number,
-    offset: number
-  ): Promise<WaveEntity[]> {
+  async findHighLevelAuthorWaves({
+    only_waves_followed_by_authenticated_user,
+    authenticated_user_id,
+    eligibleGroups,
+    limit,
+    offset
+  }: {
+    only_waves_followed_by_authenticated_user: boolean;
+    authenticated_user_id: string | null;
+    eligibleGroups: string[];
+    limit: number;
+    offset: number;
+  }): Promise<WaveEntity[]> {
     return this.db
       .execute<
         Omit<
@@ -426,17 +451,29 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
       >(
         `
       select w.* from ${WAVES_TABLE} w 
-      join ${IDENTITIES_TABLE} i on w.created_by = i.profile_id
-      where i.level_raw > :level and (w.visibility_group_id is null ${
-        eligibleGroups.length
-          ? `or w.visibility_group_id in (:eligibleGroups)`
+      ${
+        only_waves_followed_by_authenticated_user
+          ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
           : ``
-      }) order by w.serial_no desc, w.id limit :limit offset :offset
+      }
+      join ${IDENTITIES_TABLE} i on w.created_by = i.profile_id
+      where
+        ${
+          only_waves_followed_by_authenticated_user
+            ? `f.subscriber_id = :authenticated_user_id and`
+            : ``
+        } 
+       i.level_raw > :level and (w.visibility_group_id is null ${
+         eligibleGroups.length
+           ? `or w.visibility_group_id in (:eligibleGroups)`
+           : ``
+       }) order by w.serial_no desc, w.id limit :limit offset :offset
     `,
         {
           limit,
           eligibleGroups,
           offset,
+          authenticated_user_id,
           level: getLevelComponentsBorderByLevel(50)
         }
       )
@@ -453,12 +490,19 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
       );
   }
 
-  async findWavesByAuthorsYouHaveRepped(
-    eligibleGroups: string[],
-    authenticatedUserId: string,
-    limit: number,
-    offset: number
-  ): Promise<WaveEntity[]> {
+  async findWavesByAuthorsYouHaveRepped({
+    eligibleGroups,
+    authenticatedUserId,
+    only_waves_followed_by_authenticated_user,
+    limit,
+    offset
+  }: {
+    eligibleGroups: string[];
+    authenticatedUserId: string;
+    only_waves_followed_by_authenticated_user: boolean;
+    limit: number;
+    offset: number;
+  }): Promise<WaveEntity[]> {
     return this.db
       .execute<
         Omit<
@@ -482,7 +526,18 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
           : ``
       }) order by w.serial_no desc, w.id limit :limit offset :offset
   )
-      select wa.* from ${WAVES_TABLE} wa where wa.id in (select id from wids) order by wa.serial_no desc, wa.id
+      select wa.* from ${WAVES_TABLE} wa
+      ${
+        only_waves_followed_by_authenticated_user
+          ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = wa.id`
+          : ``
+      }
+  where
+      ${
+        only_waves_followed_by_authenticated_user
+          ? `f.subscriber_id = :authenticatedUserId and`
+          : ``
+      } wa.id in (select id from wids) order by wa.serial_no desc, wa.id
 `,
         {
           limit,
@@ -504,11 +559,19 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
       );
   }
 
-  async findMostSubscribedWaves(
-    eligibleGroups: string[],
-    limit: number,
-    offset: number
-  ): Promise<WaveEntity[]> {
+  async findMostSubscribedWaves({
+    only_waves_followed_by_authenticated_user,
+    authenticated_user_id,
+    eligibleGroups,
+    limit,
+    offset
+  }: {
+    only_waves_followed_by_authenticated_user: boolean;
+    authenticated_user_id: string | null;
+    eligibleGroups: string[];
+    limit: number;
+    offset: number;
+  }): Promise<WaveEntity[]> {
     return this.db
       .execute<
         Omit<
@@ -526,19 +589,30 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
                                        group by target_id)
           select w.*
           from ${WAVES_TABLE} w
+              ${
+                only_waves_followed_by_authenticated_user
+                  ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
+                  : ``
+              }
                    join subscription_counts sc on sc.wave_id = w.id
-          where (w.visibility_group_id is null ${
-            eligibleGroups.length
-              ? `or w.visibility_group_id in (:eligibleGroups)`
-              : ``
-          })
+          where
+              ${
+                only_waves_followed_by_authenticated_user
+                  ? `f.subscriber_id = :authenticated_user_id and`
+                  : ``
+              }  (w.visibility_group_id is null ${
+          eligibleGroups.length
+            ? `or w.visibility_group_id in (:eligibleGroups)`
+            : ``
+        })
           order by sc.count desc, w.id desc
           limit :limit offset :offset
       `,
         {
           limit,
           offset,
-          eligibleGroups
+          eligibleGroups,
+          authenticated_user_id
         }
       )
       .then((res) =>
@@ -838,11 +912,15 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
 
   async findMostDroppedWaves({
     eligibleGroups,
+    authenticated_user_id,
+    only_waves_followed_by_authenticated_user,
     limit,
     offset
   }: {
     eligibleGroups: string[];
+    authenticated_user_id: string | null;
     limit: number;
+    only_waves_followed_by_authenticated_user: boolean;
     offset: number;
   }): Promise<WaveEntity[]> {
     return this.db
@@ -855,12 +933,25 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
           participation_required_metadata: string;
         }
       >(
-        `select w.* from ${WAVES_TABLE} w join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id where (w.visibility_group_id is null ${
-          eligibleGroups.length
-            ? `or w.visibility_group_id in (:eligibleGroups)`
+        `select w.* from ${WAVES_TABLE} w
+         ${
+           only_waves_followed_by_authenticated_user
+             ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
+             : ``
+         }
+         join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id 
+          where
+        ${
+          only_waves_followed_by_authenticated_user
+            ? `f.subscriber_id = :authenticated_user_id and`
             : ``
-        }) order by wm.drops_count desc limit :limit offset :offset`,
-        { limit, eligibleGroups, offset }
+        }  
+           (w.visibility_group_id is null ${
+             eligibleGroups.length
+               ? `or w.visibility_group_id in (:eligibleGroups)`
+               : ``
+           }) order by wm.drops_count desc limit :limit offset :offset`,
+        { limit, eligibleGroups, offset, authenticated_user_id }
       )
       .then((res) =>
         res.map((it) => ({
@@ -876,6 +967,8 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
   }
 
   async findRecentlyDroppedToWaves(param: {
+    authenticated_user_id: string | null;
+    only_waves_followed_by_authenticated_user: boolean;
     offset: number;
     limit: number;
     eligibleGroups: string[];
@@ -890,11 +983,24 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
           participation_required_metadata: string;
         }
       >(
-        `select w.* from ${WAVES_TABLE} w join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id where (w.visibility_group_id is null ${
-          param.eligibleGroups.length
-            ? `or w.visibility_group_id in (:eligibleGroups)`
+        `select w.* from ${WAVES_TABLE} w 
+        ${
+          param.only_waves_followed_by_authenticated_user
+            ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
             : ``
-        }) order by wm.latest_drop_timestamp desc limit :limit offset :offset`,
+        }
+        join ${WAVE_METRICS_TABLE} wm on wm.wave_id = w.id 
+         where
+        ${
+          param.only_waves_followed_by_authenticated_user
+            ? `f.subscriber_id = :authenticated_user_id and`
+            : ``
+        }
+         (w.visibility_group_id is null ${
+           param.eligibleGroups.length
+             ? `or w.visibility_group_id in (:eligibleGroups)`
+             : ``
+         }) order by wm.latest_drop_timestamp desc limit :limit offset :offset`,
         param
       )
       .then((res) =>
@@ -911,6 +1017,8 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
   }
 
   async findRecentlyDroppedToWavesByYou(param: {
+    only_waves_followed_by_authenticated_user: boolean;
+    authenticated_user_id: string | null;
     dropperId: string;
     offset: number;
     limit: number;
@@ -926,11 +1034,24 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
           participation_required_metadata: string;
         }
       >(
-        `select w.* from ${WAVES_TABLE} w join ${WAVE_DROPPER_METRICS_TABLE} wm on wm.wave_id = w.id where wm.dropper_id = :dropperId and (w.visibility_group_id is null ${
-          param.eligibleGroups.length
-            ? `or w.visibility_group_id in (:eligibleGroups)`
+        `select w.* from ${WAVES_TABLE} w
+         ${
+           param.only_waves_followed_by_authenticated_user
+             ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
+             : ``
+         }
+         join ${WAVE_DROPPER_METRICS_TABLE} wm on wm.wave_id = w.id 
+          where
+        ${
+          param.only_waves_followed_by_authenticated_user
+            ? `f.subscriber_id = :authenticated_user_id and`
             : ``
-        }) order by wm.latest_drop_timestamp desc limit :limit offset :offset`,
+        }
+          wm.dropper_id = :dropperId and (w.visibility_group_id is null ${
+            param.eligibleGroups.length
+              ? `or w.visibility_group_id in (:eligibleGroups)`
+              : ``
+          }) order by wm.latest_drop_timestamp desc limit :limit offset :offset`,
         param
       )
       .then((res) =>
@@ -948,6 +1069,8 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
 
   async findMostDroppedWavesByYou(param: {
     dropperId: string;
+    authenticated_user_id: string | null;
+    only_waves_followed_by_authenticated_user: boolean;
     offset: number;
     limit: number;
     eligibleGroups: string[];
@@ -962,11 +1085,24 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
           participation_required_metadata: string;
         }
       >(
-        `select w.* from ${WAVES_TABLE} w join ${WAVE_DROPPER_METRICS_TABLE} wm on wm.wave_id = w.id where wm.dropper_id = :dropperId and (w.visibility_group_id is null ${
-          param.eligibleGroups.length
-            ? `or w.visibility_group_id in (:eligibleGroups)`
+        `select w.* from ${WAVES_TABLE} w
+         ${
+           param.only_waves_followed_by_authenticated_user
+             ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
+             : ``
+         }
+         join ${WAVE_DROPPER_METRICS_TABLE} wm on wm.wave_id = w.id 
+          where
+        ${
+          param.only_waves_followed_by_authenticated_user
+            ? `f.subscriber_id = :authenticated_user_id and`
             : ``
-        }) order by wm.drops_count desc limit :limit offset :offset`,
+        }
+          wm.dropper_id = :dropperId and (w.visibility_group_id is null ${
+            param.eligibleGroups.length
+              ? `or w.visibility_group_id in (:eligibleGroups)`
+              : ``
+          }) order by wm.drops_count desc limit :limit offset :offset`,
         param
       )
       .then((res) =>
