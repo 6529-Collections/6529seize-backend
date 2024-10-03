@@ -1,4 +1,6 @@
+import { Like } from 'typeorm';
 import { getDataSource } from '../db';
+import { DropEntity, DropPartEntity } from '../entities/IDrop';
 import {
   IdentityNotificationEntity,
   IdentityNotificationCause
@@ -8,8 +10,6 @@ import { profilesService } from '../profiles/profiles.service';
 import { sendMessage } from './sendPushNotifications';
 import { Logger } from '../logging';
 import { Profile } from '../entities/IProfile';
-import { sqlExecutor } from '../sql-executor';
-import { DROPS_PARTS_TABLE } from '../constants';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 
@@ -88,13 +88,14 @@ async function handleIdentityMentioned(
     throw new Error(`[ID ${notification.id}] User profile not found`);
   }
   const dropPartMention = await getDropPart(notification, userProfile.handle);
+  const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const title = `${additionalEntity.handle} mentioned you`;
   const body = dropPartMention?.content ?? 'View drop';
   const imageUrl = additionalEntity.pfp_url;
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
-    drop_id: notification.related_drop_id
+    drop_id: dropSerialNo
   };
   return { title, body, data, imageUrl };
 }
@@ -104,13 +105,14 @@ async function handleDropQuoted(
   additionalEntity: Profile
 ) {
   const dropPart = await getDropPart(notification);
+  const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const title = `${additionalEntity.handle} quoted you`;
   const imageUrl = additionalEntity.pfp_url;
   const body = dropPart?.content ?? 'View drop';
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
-    drop_id: notification.related_drop_id
+    drop_id: dropSerialNo
   };
   return { title, body, data, imageUrl };
 }
@@ -120,13 +122,14 @@ async function handleDropReplied(
   additionalEntity: Profile
 ) {
   const dropPart = await getDropPart(notification);
+  const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const title = `${additionalEntity.handle} replied to your drop`;
   const body = dropPart?.content ?? 'View drop';
   const imageUrl = additionalEntity.pfp_url;
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
-    drop_id: notification.related_drop_id
+    drop_id: dropSerialNo
   };
   return { title, body, data, imageUrl };
 }
@@ -144,11 +147,12 @@ async function handleDropVoted(
   }${Math.abs(vote)}`;
   const imageUrl = additionalEntity.pfp_url;
   const dropPart = await getDropPart(notification);
+  const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const body = dropPart?.content ?? 'View drop';
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
-    drop_id: notification.related_drop_id
+    drop_id: dropSerialNo
   };
   return { title, body, data, imageUrl };
 }
@@ -175,16 +179,19 @@ async function getDropPart(
   if (!dropId) {
     throw new Error(`[ID ${notification.id}] Drop id not found`);
   }
-  let filter = `WHERE drop_id = :dropId`;
-  let params: any = { dropId };
+  const query: any = { drop_id: dropId };
   if (handle) {
-    filter += ` AND content LIKE :handle`;
-    params.handle = `%@[${handle}]%`;
+    query['content'] = Like(`%@[${handle}]%`);
   }
-  const result = await sqlExecutor.execute(
-    `SELECT * FROM ${DROPS_PARTS_TABLE} ${filter} LIMIT 1`,
-    params
-  );
-  console.log('i am drop part', result);
-  return result?.[0];
+  return getDataSource().getRepository(DropPartEntity).findOneBy(query);
+}
+
+async function getDropSerialNo(dropId: string | null) {
+  if (!dropId) {
+    return null;
+  }
+  const drop = await getDataSource().getRepository(DropEntity).findOneBy({
+    id: dropId
+  });
+  return drop?.serial_no ?? null;
 }

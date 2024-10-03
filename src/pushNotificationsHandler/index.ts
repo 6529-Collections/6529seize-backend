@@ -2,6 +2,7 @@ import { doInDbContext } from '../secrets';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { IdentityNotificationEntity } from '../entities/IIdentityNotification';
+import { DropEntity, DropPartEntity } from '../entities/IDrop';
 import { PushNotificationDevice } from '../entities/IPushNotification';
 import { SQSHandler } from 'aws-lambda';
 import { sendIdentityNotification } from './identityPushNotifications';
@@ -20,7 +21,12 @@ const sqsHandler: SQSHandler = async (event) => {
     },
     {
       logger,
-      entities: [IdentityNotificationEntity, PushNotificationDevice]
+      entities: [
+        IdentityNotificationEntity,
+        PushNotificationDevice,
+        DropEntity,
+        DropPartEntity
+      ]
     }
   );
 };
