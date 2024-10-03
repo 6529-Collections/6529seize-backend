@@ -426,19 +426,20 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
 
   async getProfileHandlesByIds(
     profileIds: string[],
-    connection?: ConnectionWrapper<any>
+    ctx: RequestContext
   ): Promise<Record<string, string>> {
+    ctx.timer?.start(`${this.constructor.name}->getProfileHandlesByIds`);
     const distinctProfileIds = distinct(profileIds);
     if (!distinctProfileIds.length) {
       return {};
     }
-    return this.db
+    const result = await this.db
       .execute(
         `select external_id, handle from ${PROFILES_TABLE} where external_id in (:profileIds)`,
         {
           profileIds: distinctProfileIds
         },
-        connection ? { wrappedConnection: connection } : undefined
+        { wrappedConnection: ctx.connection }
       )
       .then((result) =>
         result.reduce(
@@ -452,6 +453,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
           {}
         )
       );
+    ctx.timer?.stop(`${this.constructor.name}->getProfileHandlesByIds`);
+    return result;
   }
 
   async searchCommunityMembersWhereEnsLike({

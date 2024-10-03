@@ -487,6 +487,7 @@ export class UserGroupsService {
     id: string,
     ctx: RequestContext
   ): Promise<GroupFull> {
+    ctx.timer?.start(`${this.constructor.name}->getByIdOrThrow`);
     const authenticatedUserId =
       ctx.authenticationContext?.getActingAsId() ?? null;
     const eligibleGroupIds = await this.getGroupsUserIsEligibleFor(
@@ -502,6 +503,7 @@ export class UserGroupsService {
     if (!group) {
       throw new NotFoundException(`Group with id ${id} not found`);
     }
+    ctx.timer?.stop(`${this.constructor.name}->getByIdOrThrow`);
     return (await this.mapForApi([group], ctx)).at(0)!;
   }
 
@@ -540,11 +542,12 @@ export class UserGroupsService {
           identity_group_id: null,
           excluded_identity_group_id: null
         },
-        null
+        null,
+        ctx
       );
     } else {
       const group = await this.getByIdOrThrow(groupId, ctx);
-      return await this.getSqlAndParams(group.group, groupId);
+      return await this.getSqlAndParams(group.group, groupId, ctx);
     }
   }
 
@@ -554,11 +557,13 @@ export class UserGroupsService {
       | 'identity_group_identities_count'
       | 'excluded_identity_group_identities_count'
     >,
-    group_id: string | null
+    group_id: string | null,
+    ctx: RequestContext
   ): Promise<{
     sql: string;
     params: Record<string, any>;
   } | null> {
+    ctx.timer?.start(`${this.constructor.name}->getSqlAndParams`);
     const filterUsers = [
       group.cic.user_identity,
       group.rep.user_identity
@@ -614,6 +619,7 @@ export class UserGroupsService {
     const sql = `with ${repPart ?? ''} ${cicPart ?? ''} ${
       nftsPart ?? ''
     } ${cmPart} ${inclusionExclusionPart} `;
+    ctx.timer?.stop(`${this.constructor.name}->getSqlAndParams`);
     return {
       sql,
       params
