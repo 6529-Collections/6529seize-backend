@@ -529,10 +529,9 @@ export class RatingsService {
   ) {
     let page = 1;
     const { sourceProfileHandle, targetProfileHandle } = await profilesDb
-      .getProfileHandlesByIds(
-        [sourceProfileId, targetProfileId],
-        connectionHolder
-      )
+      .getProfileHandlesByIds([sourceProfileId, targetProfileId], {
+        connection: connectionHolder
+      })
       .then((results) => {
         return {
           sourceProfileHandle: results[sourceProfileId],
