@@ -38,7 +38,6 @@ export async function sendMessage(
   init();
   title = title.replace(/@\[(.+?)\]/g, '@$1');
   body = body.replace(/@\[(.+?)\]/g, '@$1');
-  imageUrl = imageUrl ?? '';
 
   const notification: Notification = {
     title,
