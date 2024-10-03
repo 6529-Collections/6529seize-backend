@@ -90,6 +90,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     params: ProfileLogSearchParams,
     ctx: RequestContext
   ): Promise<ProfileActivityLog[]> {
+    ctx.timer?.start(`${this.constructor.name}->searchLogs`);
     let sql: string;
     const page = params.pageRequest.page;
     const page_size =
@@ -140,12 +141,19 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     sql += ` order by pa_logs.created_at ${
       params.order.toLowerCase() === 'asc' ? 'asc' : 'desc'
     } limit :limit offset :offset`;
-    return await this.db.execute(sql, sqlParams).then((rows) =>
-      rows.map((r: ProfileActivityLog) => ({
-        ...r,
-        created_at: new Date(r.created_at)
-      }))
-    );
+    const result = await this.db
+      .execute<Omit<ProfileActivityLog, 'created_at'> & { created_at: string }>(
+        sql,
+        sqlParams
+      )
+      .then((rows) =>
+        rows.map((r) => ({
+          ...r,
+          created_at: new Date(r.created_at)
+        }))
+      );
+    ctx.timer?.stop(`${this.constructor.name}->searchLogs`);
+    return result;
   }
 
   async changeSourceProfileIdInLogs(
