@@ -60,7 +60,8 @@ export async function initRedis() {
   redis = createClient({
     socket: {
       host: url,
-      port: port
+      port: port,
+      tls: true
     },
     password: password
   });
