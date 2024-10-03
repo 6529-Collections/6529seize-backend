@@ -38,6 +38,7 @@ resources:
       Properties:
         QueueName: firebase-push-notifications
         VisibilityTimeout: 120
+        DelaySeconds: 2
         RedrivePolicy:
           deadLetterTargetArn:
             Fn::GetAtt: [FirebasePushNotificationsDLQ, Arn]
