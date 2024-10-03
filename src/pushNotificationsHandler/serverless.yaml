@@ -37,11 +37,12 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: firebase-push-notifications
-        VisibilityTimeout: 120
+        VisibilityTimeout: 60
+        DelaySeconds: 3
         RedrivePolicy:
           deadLetterTargetArn:
             Fn::GetAtt: [FirebasePushNotificationsDLQ, Arn]
-          maxReceiveCount: 5
+          maxReceiveCount: 10
 
     FirebasePushNotificationsDLQ:
       Type: AWS::SQS::Queue

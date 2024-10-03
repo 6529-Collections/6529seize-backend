@@ -23,6 +23,13 @@ export async function sendIdentityNotification(id: number) {
     throw new Error(`Notification not found: ${id}`);
   }
 
+  if (notification.read_at) {
+    logger.info(
+      `[ID ${notification.id}] Notification already read at ${notification.read_at}`
+    );
+    return;
+  }
+
   const userDevice = await getDataSource()
     .getRepository(PushNotificationDevice)
     .findOneBy({
