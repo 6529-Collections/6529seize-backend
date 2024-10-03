@@ -92,7 +92,6 @@ import { NFT } from '../../entities/INFT';
 import { Nft } from './generated/models/Nft';
 import { ArtistNameItem } from './generated/models/ArtistNameItem';
 import { TransactionPage } from './generated/models/TransactionPage';
-import { disconnectRedis, initRedis } from '../../redis';
 import { ratingsDb } from '../../rates/ratings.db';
 
 const YAML = require('yamljs');
@@ -185,7 +184,6 @@ async function loadApiSecrets() {
 
 async function loadApi() {
   await loadLocalConfig();
-  await initRedis();
   await db.connect();
 }
 
@@ -1026,15 +1024,11 @@ loadApi().then(() => {
     app.use(sentryFlusherMiddleware());
   }
 
-  const server = app.listen(API_PORT, function () {
+  app.listen(API_PORT, function () {
     logger.info(
       `[CONFIG ${process.env.NODE_ENV}] [SERVER RUNNING ON PORT ${API_PORT}]`
     );
   });
-  server.on('close', async () => {
-    await disconnectRedis();
-  });
-  process.on('SIGTERM', () => server.close());
 });
 
 export { app };

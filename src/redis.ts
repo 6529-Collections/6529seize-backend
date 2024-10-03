@@ -63,8 +63,9 @@ export async function initRedis() {
     Logger.get('REDIS_CLIENT').error('Error: ' + error)
   );
   redis.on('connect', () => Logger.get('REDIS_CLIENT').info('Connected!'));
-
+  console.log('starting to connect');
   await redis.connect();
+  console.log('finished connecting');
 }
 
 export async function disconnectRedis() {

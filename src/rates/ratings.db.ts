@@ -14,7 +14,7 @@ import { Page } from '../api-serverless/src/page-request';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
 import { RatingsSnapshotsPageRequest } from './ratings.service';
 import { RequestContext } from '../request.context';
-import { redisCached } from '../redis';
+import { initRedis, redisCached } from '../redis';
 import { Time } from '../time';
 
 const mysql = require('mysql');
@@ -713,6 +713,7 @@ from grouped_rates r
   }
 
   async getTdh(profleId: string, ctx: RequestContext): Promise<number> {
+    await initRedis();
     return await redisCached(`tdh-${profleId}`, Time.minutes(10), async () => {
       return this.db
         .oneOrNull<{ tdh: number }>(
