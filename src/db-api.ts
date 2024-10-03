@@ -234,7 +234,16 @@ async function execSQLWithParams<T>(
       if (!values) return query;
       return prepareStatemant(query, values);
     };
+    const timer = Time.now();
     connection.query({ sql, values: params }, (err: any, result: T[]) => {
+      const queryTook = timer.diffFromNow();
+      if (queryTook.gt(Time.seconds(1))) {
+        logger.warn(
+          `SQL query took ${queryTook.toMillis()} ms to execute: ${sql}${
+            params ? ` with params ${JSON.stringify(params)}` : ''
+          }`
+        );
+      }
       if (!externallyGivenConnection) {
         connection?.release();
       }
