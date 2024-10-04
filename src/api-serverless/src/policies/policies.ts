@@ -1,7 +1,9 @@
-import { Request, Response, NextFunction } from 'express';
+import { NextFunction, Request, Response } from 'express';
 import { Logger } from '../../../logging';
 import { fetchRandomImage } from '../../../db-api';
 import axios from 'axios';
+import * as mcache from 'memory-cache';
+import { Time } from '../../../time';
 
 const logger = Logger.get('API_POLICIES');
 
@@ -54,7 +56,7 @@ export const checkPolicies = async (
     return next();
   }
 
-  let ip = getIp(req);
+  const ip = getIp(req);
 
   if (!ip) {
     const image = await fetchRandomImage();
@@ -93,14 +95,21 @@ export async function getIpInfo(ip: string): Promise<{
   country: string;
 } | null> {
   try {
+    const key = 'ipInfo_' + ip;
+    const cacheHit = mcache.get(key);
+    if (cacheHit) {
+      return JSON.parse(cacheHit);
+    }
     const url = `https://api.findip.net/${ip}/?token=${process.env.FINDIP_API_TOKEN}`;
     const response = await axios.get(url, { timeout: 3000 });
     const data = response.data;
-    return {
+    const resp = {
       city_name: data?.city?.names?.en,
       country_name: data?.country?.names?.en,
       country: data?.country?.iso_code
     };
+    mcache.put(key, JSON.stringify(data), Time.days(1).toMillis());
+    return resp;
   } catch (error) {
     console.error('Failed to fetch client IP:', error);
     return null;
