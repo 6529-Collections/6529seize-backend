@@ -155,7 +155,9 @@ export class ProfileProxyApiService {
             }),
             target_id: createProfileProxyRequest.target_id,
             type: ProfileActivityLogType.PROXY_CREATED,
-            proxy_id: null
+            proxy_id: null,
+            additional_data_1: null,
+            additional_data_2: null
           },
           connection
         );
@@ -374,7 +376,9 @@ export class ProfileProxyApiService {
             }),
             target_id: proxy.granted_to.id,
             type: ProfileActivityLogType.PROXY_ACTION_CREATED,
-            proxy_id: null
+            proxy_id: null,
+            additional_data_1: null,
+            additional_data_2: null
           },
           connection
         );
@@ -587,7 +591,9 @@ export class ProfileProxyApiService {
             }),
             target_id: proxy.created_by.id,
             type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
-            proxy_id: null
+            proxy_id: null,
+            additional_data_1: null,
+            additional_data_2: null
           },
           connection
         );
@@ -628,7 +634,9 @@ export class ProfileProxyApiService {
             }),
             target_id: proxy.created_by.id,
             type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
-            proxy_id: null
+            proxy_id: null,
+            additional_data_1: null,
+            additional_data_2: null
           },
           connection
         );
@@ -669,7 +677,9 @@ export class ProfileProxyApiService {
             }),
             target_id: proxy.granted_to.id,
             type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
-            proxy_id: null
+            proxy_id: null,
+            additional_data_1: null,
+            additional_data_2: null
           },
           connection
         );
@@ -712,7 +722,9 @@ export class ProfileProxyApiService {
             }),
             target_id: proxy.granted_to.id,
             type: ProfileActivityLogType.PROXY_ACTION_STATE_CHANGED,
-            proxy_id: null
+            proxy_id: null,
+            additional_data_1: null,
+            additional_data_2: null
           },
           connection
         );
@@ -803,7 +815,9 @@ export class ProfileProxyApiService {
             }),
             target_id: profileProxy.granted_to.id,
             type: ProfileActivityLogType.PROXY_ACTION_CHANGED,
-            proxy_id: null
+            proxy_id: null,
+            additional_data_1: null,
+            additional_data_2: null
           },
           connection
         );

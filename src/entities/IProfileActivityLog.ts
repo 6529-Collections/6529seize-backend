@@ -20,8 +20,17 @@ export class ProfileActivityLog {
   @Column({ type: 'json' })
   readonly contents!: string;
 
+  @Index()
   @Column({ type: 'varchar', length: 256 })
   readonly type!: ProfileActivityLogType;
+
+  @Index()
+  @Column({ type: 'varchar', length: 256, nullable: true, default: null })
+  readonly additional_data_1!: string | null;
+
+  @Index()
+  @Column({ type: 'varchar', length: 256, nullable: true, default: null })
+  readonly additional_data_2!: string | null;
 
   @Index()
   @Column({ type: 'datetime', nullable: true, default: null })
