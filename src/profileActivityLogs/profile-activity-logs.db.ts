@@ -131,7 +131,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       sqlParams.profile_id = params.profile_id;
     }
     if (params.rating_matter) {
-      sql += ` and JSON_UNQUOTE(JSON_EXTRACT(pa_logs.contents, '$.rating_matter')) = :rating_matter`;
+      sql += ` and additional_data_1 = :rating_matter`;
       sqlParams.rating_matter = params.rating_matter;
     }
     if (params.category) {
