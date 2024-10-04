@@ -494,7 +494,12 @@ export class WaveApiService {
   }
 
   public async getWavesOverview(
-    { type, limit, offset }: WavesOverviewParams,
+    {
+      type,
+      limit,
+      offset,
+      only_waves_followed_by_authenticated_user
+    }: WavesOverviewParams,
     ctx: RequestContext
   ) {
     const authenticationContext = ctx?.authenticationContext;
@@ -502,6 +507,7 @@ export class WaveApiService {
       authenticationContext?.getActingAsId() ?? null;
     if (!authenticatedProfileId) {
       if (
+        only_waves_followed_by_authenticated_user ||
         [
           WavesOverviewType.AuthorYouHaveRepped,
           WavesOverviewType.MostDroppedByYou,
@@ -530,6 +536,7 @@ export class WaveApiService {
       limit,
       authenticatedUserId: authenticatedProfileId ?? null,
       eligibleGroups,
+      only_waves_followed_by_authenticated_user,
       offset
     });
     const noRightToVote =
@@ -562,61 +569,78 @@ export class WaveApiService {
     type,
     authenticatedUserId,
     limit,
+    only_waves_followed_by_authenticated_user,
     offset
   }: {
     eligibleGroups: string[];
     type: WavesOverviewType;
     limit: number;
     offset: number;
+    only_waves_followed_by_authenticated_user: boolean;
     authenticatedUserId: string | null;
   }): Promise<WaveEntity[]> {
     switch (type) {
       case WavesOverviewType.Latest:
-        return await this.wavesApiDb.findLatestWaves(
+        return await this.wavesApiDb.findLatestWaves({
+          only_waves_followed_by_authenticated_user,
+          authenticated_user_id: authenticatedUserId,
           eligibleGroups,
           limit,
           offset
-        );
+        });
       case WavesOverviewType.MostSubscribed:
-        return await this.wavesApiDb.findMostSubscribedWaves(
+        return await this.wavesApiDb.findMostSubscribedWaves({
+          only_waves_followed_by_authenticated_user,
+          authenticated_user_id: authenticatedUserId,
           eligibleGroups,
           limit,
           offset
-        );
+        });
       case WavesOverviewType.HighLevelAuthor:
-        return await this.wavesApiDb.findHighLevelAuthorWaves(
+        return await this.wavesApiDb.findHighLevelAuthorWaves({
+          only_waves_followed_by_authenticated_user,
+          authenticated_user_id: authenticatedUserId,
           eligibleGroups,
           limit,
           offset
-        );
+        });
       case WavesOverviewType.AuthorYouHaveRepped:
-        return await this.wavesApiDb.findWavesByAuthorsYouHaveRepped(
+        return await this.wavesApiDb.findWavesByAuthorsYouHaveRepped({
           eligibleGroups,
-          authenticatedUserId!,
+          authenticatedUserId: authenticatedUserId!,
+          only_waves_followed_by_authenticated_user,
           limit,
           offset
-        );
+        });
       case WavesOverviewType.MostDropped:
         return await this.wavesApiDb.findMostDroppedWaves({
           eligibleGroups,
+          authenticated_user_id: authenticatedUserId,
+          only_waves_followed_by_authenticated_user,
           limit,
           offset
         });
       case WavesOverviewType.MostDroppedByYou:
         return await this.wavesApiDb.findMostDroppedWavesByYou({
           eligibleGroups,
+          only_waves_followed_by_authenticated_user,
           dropperId: authenticatedUserId!,
+          authenticated_user_id: authenticatedUserId,
           limit,
           offset
         });
       case WavesOverviewType.RecentlyDroppedTo:
         return await this.wavesApiDb.findRecentlyDroppedToWaves({
           eligibleGroups,
+          only_waves_followed_by_authenticated_user,
+          authenticated_user_id: authenticatedUserId,
           limit,
           offset
         });
       case WavesOverviewType.RecentlyDroppedToByYou:
         return await this.wavesApiDb.findRecentlyDroppedToWavesByYou({
+          only_waves_followed_by_authenticated_user,
+          authenticated_user_id: authenticatedUserId,
           eligibleGroups,
           dropperId: authenticatedUserId!,
           limit,
@@ -796,6 +820,7 @@ export interface WavesOverviewParams {
   limit: number;
   offset: number;
   type: WavesOverviewType;
+  only_waves_followed_by_authenticated_user: boolean;
 }
 
 export const waveApiService = new WaveApiService(

@@ -45,6 +45,9 @@ export class ProfileActivityLogsApiService {
     }: ProfileActivityLogsSearchRequest,
     ctx: RequestContext
   ): Promise<CountlessPage<ApiProfileActivityLog>> {
+    ctx.timer?.start(
+      `${this.constructor.name}->getProfileActivityLogsFiltered`
+    );
     const params: ProfileLogSearchParams = {
       order,
       pageRequest,
@@ -86,7 +89,8 @@ export class ProfileActivityLogsApiService {
       return acc;
     }, [] as string[]);
     const profilesHandlesByIds = await this.profilesDb.getProfileHandlesByIds(
-      profileIdsInLogs
+      profileIdsInLogs,
+      ctx
     );
     const convertedData = foundLogs.map((log) => {
       const logContents = JSON.parse(log.contents);
@@ -103,6 +107,7 @@ export class ProfileActivityLogsApiService {
           : null
       };
     });
+    ctx.timer?.stop(`${this.constructor.name}->getProfileActivityLogsFiltered`);
     return {
       page: pageRequest.page,
       next: pageRequest.page_size < convertedData.length,
