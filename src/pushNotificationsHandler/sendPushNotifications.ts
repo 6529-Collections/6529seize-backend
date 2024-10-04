@@ -55,7 +55,19 @@ export async function sendMessage(
   const message: Message = {
     notification,
     token,
-    data
+    data,
+    android: {
+      notification: {
+        sound: 'default'
+      }
+    },
+    apns: {
+      payload: {
+        aps: {
+          sound: 'default'
+        }
+      }
+    }
   };
 
   const response = await admin.messaging().send(message);
