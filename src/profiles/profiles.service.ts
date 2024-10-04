@@ -508,7 +508,9 @@ export class ProfilesService {
             new_value: profile.handle
           }),
           proxy_id: null,
-          created_at: now
+          created_at: now,
+          additional_data_1: null,
+          additional_data_2: null
         },
         {
           id: uniqueShortId(),
@@ -520,7 +522,9 @@ export class ProfilesService {
             new_value: profile.classification
           }),
           proxy_id: null,
-          created_at: now
+          created_at: now,
+          additional_data_1: null,
+          additional_data_2: null
         }
       ])
       .flat();
@@ -773,7 +777,9 @@ export class ProfilesService {
               handle: sourceProfile.handle,
               reason: 'CONFLICTING_CONSOLIDATION'
             }),
-            proxy_id: null
+            proxy_id: null,
+            additional_data_1: null,
+            additional_data_2: null
           },
           connectionHolder
         );
@@ -824,7 +830,9 @@ export class ProfilesService {
           old_value: profileBeforeChange?.handle ?? null,
           new_value: newHandle
         }),
-        proxy_id: null
+        proxy_id: null,
+        additional_data_1: null,
+        additional_data_2: null
       });
     }
     this.addEventToArrayIfChanged(
@@ -880,7 +888,9 @@ export class ProfilesService {
           old_value: oldValue,
           new_value: newValue
         }),
-        proxy_id: null
+        proxy_id: null,
+        additional_data_1: null,
+        additional_data_2: null
       });
     }
   }
@@ -937,7 +947,9 @@ export class ProfilesService {
                 old_value: profile.pfp_url ?? null,
                 new_value: thumbnailUri
               }),
-              proxy_id: null
+              proxy_id: null,
+              additional_data_1: null,
+              additional_data_2: null
             },
             connection
           );

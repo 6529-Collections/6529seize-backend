@@ -52,9 +52,17 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     logs: NewProfileActivityLog[],
     connectionHolder: ConnectionWrapper<any>
   ) {
-    for (const log of logs) {
-      await this.insert(log, connectionHolder);
-    }
+    const currentTime = Time.now().toDate();
+    await this.bulkInsertProfileActivityLogs(
+      logs.map((it) => ({
+        ...it,
+        created_at: currentTime,
+        id: uniqueShortId()
+      })),
+      {
+        connection: connectionHolder
+      }
+    );
   }
 
   public async insert(
@@ -67,8 +75,8 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     await Promise.all([
       this.db.execute(
         `
-    insert into ${PROFILES_ACTIVITY_LOGS_TABLE} (id, profile_id, target_id, contents, type, proxy_id, created_at)
-    values (:id, :profile_id, :target_id, :contents, :type, :proxy_id, :currentTime)
+    insert into ${PROFILES_ACTIVITY_LOGS_TABLE} (id, profile_id, target_id, contents, type, proxy_id, created_at, additional_data_1, additional_data_2)
+    values (:id, :profile_id, :target_id, :contents, :type, :proxy_id, :currentTime, :additional_data_1, :additional_data_2)
     `,
         {
           ...log,
@@ -216,7 +224,9 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
            contents, 
            type,
            proxy_id, 
-           created_at
+           created_at,
+           additional_data_1,
+           additional_data_2
         ) values ${logs
           .map(
             (log) =>
@@ -227,7 +237,9 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
                 log.contents,
                 log.type,
                 log.proxy_id,
-                log.created_at
+                log.created_at,
+                log.additional_data_1,
+                log.additional_data_2
               ]
                 .map((it) => mysql.escape(it))
                 .join(', ')})`
@@ -235,6 +247,26 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
           .join(', ')}
     `;
     await this.db.execute(sql, undefined, {
+      wrappedConnection: ctx.connection
+    });
+    const profileIds = logs.reduce((acc, log) => {
+      acc.add(log.profile_id);
+      return acc;
+    }, new Set<string>());
+    const currentTime = Time.now().toDate();
+    const latestLogsSql = `
+        insert into ${PROFILE_LATEST_LOG_TABLE} (profile_id, latest_activity) values ${Array.from(
+      profileIds
+    )
+      .map(
+        (profileId) =>
+          `(${[profileId, currentTime]
+            .map((it) => mysql.escape(it))
+            .join(', ')})`
+      )
+      .join(', ')}
+    `;
+    await this.db.execute(latestLogsSql, undefined, {
       wrappedConnection: ctx.connection
     });
     ctx.timer?.stop(`${this.constructor.name}->bulkInsertProfileCreationLogs`);
