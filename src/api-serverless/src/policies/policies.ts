@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { Logger } from '../../../logging';
 import { fetchRandomImage } from '../../../db-api';
-import fetch from 'node-fetch';
+import axios from 'axios';
 
 const logger = Logger.get('API_POLICIES');
 
@@ -94,8 +94,8 @@ export async function getIpInfo(ip: string): Promise<{
 } | null> {
   try {
     const url = `https://api.findip.net/${ip}/?token=${process.env.FINDIP_API_TOKEN}`;
-    const response = await fetch(url);
-    const data = await response.json();
+    const response = await axios.get(url, { timeout: 3000 });
+    const data = response.data;
     return {
       city_name: data?.city?.names?.en,
       country_name: data?.country?.names?.en,
