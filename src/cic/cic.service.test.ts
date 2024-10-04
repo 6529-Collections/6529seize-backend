@@ -2072,7 +2072,9 @@ describe('CicService', () => {
           target_id: null,
           type: ProfileActivityLogType.SOCIALS_EDIT,
           contents: JSON.stringify({ action: 'ADD', statement: cicStatement }),
-          proxy_id: null
+          proxy_id: null,
+          additional_data_1: null,
+          additional_data_2: null
         },
         mockConnection
       );

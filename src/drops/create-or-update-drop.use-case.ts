@@ -503,7 +503,9 @@ export class CreateOrUpdateDropUseCase {
             proxy_id: model.proxy_id
           }),
           type: ProfileActivityLogType.DROP_CREATED,
-          proxy_id: model.proxy_id ?? null
+          proxy_id: model.proxy_id ?? null,
+          additional_data_1: null,
+          additional_data_2: null
         },
         connection,
         timer

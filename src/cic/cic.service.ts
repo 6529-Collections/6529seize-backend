@@ -286,7 +286,9 @@ export class CicService {
             cicStatement.statement_group
           ],
           contents: JSON.stringify({ action: 'ADD', statement: cicStatement }),
-          proxy_id: null
+          proxy_id: null,
+          additional_data_1: null,
+          additional_data_2: null
         },
         connection
       );
@@ -324,7 +326,9 @@ export class CicService {
             action: 'DELETE',
             statement: cicStatement
           }),
-          proxy_id: null
+          proxy_id: null,
+          additional_data_1: null,
+          additional_data_2: null
         },
         connection
       );

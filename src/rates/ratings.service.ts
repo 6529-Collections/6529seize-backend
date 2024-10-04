@@ -261,7 +261,9 @@ export class RatingsService {
           rating_category: request.matter_category,
           change_reason: changeReason
         }),
-        proxy_id: proxyContext?.authenticatedProfileId ?? null
+        proxy_id: proxyContext?.authenticatedProfileId ?? null,
+        additional_data_1: request.matter,
+        additional_data_2: request.matter_category
       },
       connection
     );
@@ -484,7 +486,9 @@ export class RatingsService {
           rating_category: oldRating.matter_category,
           change_reason: 'LOST_TDH'
         }),
-        proxy_id: null
+        proxy_id: null,
+        additional_data_1: oldRating.matter,
+        additional_data_2: oldRating.matter_category
       },
       connection
     );
@@ -1153,7 +1157,9 @@ export class RatingsService {
               }),
               proxy_id: authenticationContext.isAuthenticatedAsProxy()
                 ? authenticationContext.getLoggedInUsersProfileId()
-                : null
+                : null,
+              additional_data_1: RateMatter.REP,
+              additional_data_2: ratingChange.category
             }))
           )
           .flat();
