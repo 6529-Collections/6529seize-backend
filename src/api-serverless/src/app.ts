@@ -74,7 +74,6 @@ import { parseTdhResultsFromDB } from '../../sql_helpers';
 import { loadLocalConfig, loadSecrets } from '../../env';
 import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
 import * as SwaggerUI from 'swagger-ui-express';
-import { checkPolicies } from './policies/policies';
 import { DEFAULT_MAX_SIZE } from './page-request';
 import { ApiResponse } from './api-response';
 import { BlockItem } from './generated/models/BlockItem';
@@ -295,7 +294,6 @@ loadApi().then(() => {
   const BASE_PATH = '/api';
   const apiRouter = asyncRouter();
 
-  app.all(`*`, checkPolicies);
   app.all(`${BASE_PATH}*`, requireLogin);
   app.all(`${BASE_PATH}*`, checkCache);
 
