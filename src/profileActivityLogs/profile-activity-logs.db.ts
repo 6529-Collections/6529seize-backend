@@ -264,7 +264,9 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
             .map((it) => mysql.escape(it))
             .join(', ')})`
       )
-      .join(', ')}
+      .join(
+        ', '
+      )} ON DUPLICATE KEY UPDATE latest_activity = VALUES(latest_activity)
     `;
     await this.db.execute(latestLogsSql, undefined, {
       wrappedConnection: ctx.connection
