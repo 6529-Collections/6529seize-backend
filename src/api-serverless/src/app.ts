@@ -91,6 +91,7 @@ import { NFT } from '../../entities/INFT';
 import { Nft } from './generated/models/Nft';
 import { ArtistNameItem } from './generated/models/ArtistNameItem';
 import { TransactionPage } from './generated/models/TransactionPage';
+import { initRedis, redisCached } from '../../redis';
 
 const YAML = require('yamljs');
 
@@ -939,6 +940,20 @@ loadApi().then(() => {
       req,
       res
     );
+  });
+
+  apiRouter.get(`/redis-test`, async function (_: any, res: any) {
+    await initRedis();
+    const result = await redisCached(
+      `redis-rest`,
+      Time.minutes(10),
+      async () => {
+        return {
+          message: `Testing Redis. Message composed ${Time.now().toIsoDateTimeString()}`
+        };
+      }
+    );
+    res.send(result);
   });
 
   rootRouter.get(``, async function (req: any, res: any) {
