@@ -8,7 +8,7 @@ const router = asyncRouter();
 export default router;
 
 router.get(`/country-check`, function (req: Request, res: any) {
-  let ip: string = getIp(req);
+  const ip: string = getIp(req);
 
   if (!ip) {
     return res.status(400).send({
@@ -35,7 +35,7 @@ router.get(`/country-check`, function (req: Request, res: any) {
 });
 
 router.post(`/cookies-consent`, function (req: Request, res: any) {
-  let ip = getIp(req);
+  const ip = getIp(req);
 
   if (!ip) {
     return res.status(400).send({
@@ -51,7 +51,7 @@ router.post(`/cookies-consent`, function (req: Request, res: any) {
 });
 
 router.delete(`/cookies-consent`, function (req: Request, res: any) {
-  let ip = getIp(req);
+  const ip = getIp(req);
 
   if (!ip) {
     return res.status(400).send({

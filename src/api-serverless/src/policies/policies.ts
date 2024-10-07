@@ -1,18 +1,10 @@
-import { NextFunction, Request, Response } from 'express';
+import { Request } from 'express';
 import { Logger } from '../../../logging';
-import { fetchRandomImage } from '../../../db-api';
 import axios from 'axios';
 import * as mcache from 'memory-cache';
 import { Time } from '../../../time';
 
 const logger = Logger.get('API_POLICIES');
-
-export const BLOCKED_COUNTRIES = [
-  'KP', // North Korea
-  'CU', // Cuba
-  'IR', // Iran
-  'SY' // Syria
-];
 
 const EU_EEA_COUNTRIES = [
   'AT', // Austria
@@ -47,44 +39,6 @@ const EU_EEA_COUNTRIES = [
   'NO' // Norway
 ];
 
-export const checkPolicies = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
-  if (req.method === 'OPTIONS') {
-    return next();
-  }
-
-  const ip = getIp(req);
-
-  if (!ip) {
-    const image = await fetchRandomImage();
-    return res.status(403).send({
-      message: 'Failed to get IP address',
-      image: image[0].scaled ? image[0].scaled : image[0].image
-    });
-  }
-
-  if (isLocalhost(ip)) {
-    return next();
-  }
-
-  const ipInfo = await getIpInfo(ip);
-  const country = ipInfo?.country;
-
-  if (country && isBlockedCountry(country)) {
-    logger.info(`[REQUEST FROM BLOCKED COUNTRY] : [${country} : ${ip}]`);
-    const image = await fetchRandomImage();
-    return res.status(403).send({
-      country: country,
-      image: image[0].scaled ? image[0].scaled : image[0].image
-    });
-  }
-
-  return next();
-};
-
 export const isLocalhost = (ip: string) => {
   return ip === '127.0.0.1' || ip === '::1';
 };
@@ -111,7 +65,7 @@ export async function getIpInfo(ip: string): Promise<{
     mcache.put(key, JSON.stringify(data), Time.days(1).toMillis());
     return resp;
   } catch (error) {
-    console.error('Failed to fetch client IP:', error);
+    logger.error(error);
     return null;
   }
 }
@@ -122,10 +76,6 @@ export const getIp = (req: Request): string => {
     ip = ip.substring(7);
   }
   return ip ?? '';
-};
-
-export const isBlockedCountry = (country: string) => {
-  return BLOCKED_COUNTRIES.includes(country);
 };
 
 export const isEUCountry = (country: string) => {
