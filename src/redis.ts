@@ -47,12 +47,9 @@ export async function initRedis() {
     logger.info('Redis client already initialized');
     return;
   }
-  const url = process.env.REDIS_URL;
-  if (!url) {
-    throw new Error('REDIS_URL env is not set');
-  }
-  const port = parseIntOrNull(process.env.REDIS_PORT);
-  if (port === null || port < 0 || port > 65535) {
+  const url = process.env.REDIS_URL ?? 'localhost';
+  const port = parseIntOrNull(process.env.REDIS_PORT) ?? 6379;
+  if (port < 0 || port > 65535) {
     throw new Error(
       'REDIS_PORT env is not set or is not set to an integer between 0 and 65535'
     );
@@ -65,7 +62,7 @@ export async function initRedis() {
     socket: {
       host: url,
       port: port,
-      tls: true
+      tls: process.env.REDIS_TLS === 'true'
     },
     password: password
   });
@@ -74,11 +71,4 @@ export async function initRedis() {
   logger.info('starting to connect');
   await redis.connect();
   logger.info('finished connecting');
-}
-
-export async function disconnectRedis() {
-  if (redis) {
-    await redis.disconnect();
-    logger.info('Disconnected!');
-  }
 }
