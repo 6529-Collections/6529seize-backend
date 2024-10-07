@@ -182,6 +182,7 @@ async function loadApiSecrets() {
 
 async function loadApi() {
   await loadLocalConfig();
+  await initRedis();
   await db.connect();
 }
 
@@ -943,7 +944,6 @@ loadApi().then(() => {
   });
 
   apiRouter.get(`/redis-test`, async function (_: any, res: any) {
-    await initRedis();
     const result = await redisCached(
       `redis-rest`,
       Time.minutes(10),
