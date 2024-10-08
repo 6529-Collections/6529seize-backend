@@ -101,7 +101,9 @@ export async function connect(entities: any[] = []) {
     charset: 'utf8mb4'
   });
 
-  await AppDataSource.initialize().catch((error) => logger.error(error));
+  await AppDataSource.initialize().catch((error) =>
+    logger.error(`DB INIT ERROR: ${error}`)
+  );
 
   setSqlExecutor({
     execute: (

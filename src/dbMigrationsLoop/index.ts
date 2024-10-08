@@ -92,7 +92,9 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     logging: false
   });
   try {
-    await ormDs.initialize().catch((error) => logger.error(error));
+    await ormDs
+      .initialize()
+      .catch((error) => logger.error(`DB INIT ERROR: ${error}`));
 
     const dbmigrate = await DBMigrate.getInstance(true, {
       config: './database.json',
