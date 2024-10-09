@@ -648,6 +648,7 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
             wave_id: waveId,
             subscribers_count: 0,
             drops_count: 0,
+            participatory_drops_count: 0,
             latest_drop_timestamp: 0
           };
           return acc;
@@ -677,6 +678,7 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
             wave_id: waveId,
             dropper_id: params.dropperId,
             drops_count: 0,
+            participatory_drops_count: 0,
             latest_drop_timestamp: 0
           };
           return acc;

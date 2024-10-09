@@ -4,7 +4,8 @@ import {
   DropMentionEntity,
   DropMetadataEntity,
   DropPartEntity,
-  DropReferencedNftEntity
+  DropReferencedNftEntity,
+  DropType
 } from '../../../entities/IDrop';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { Drop } from '../generated/models/Drop';
@@ -46,6 +47,7 @@ import {
   CreateOrUpdateDropModel,
   DropPartIdentifierModel
 } from '../../../drops/create-or-update-drop.model';
+import { DropType as ApiDropType } from '../generated/models/DropType';
 
 export class DropsMappers {
   constructor(
@@ -82,7 +84,7 @@ export class DropsMappers {
     waveId,
     dropId
   }: {
-    request: UpdateDropRequest;
+    request: UpdateDropRequest & { drop_type?: ApiDropType };
     waveId: string;
     replyTo: DropPartIdentifierModel | null;
     authorId: string;
@@ -95,6 +97,9 @@ export class DropsMappers {
       proxy_identity: proxyId,
       proxy_id: proxyId,
       drop_id: dropId ?? null,
+      drop_type: request.drop_type
+        ? resolveEnumOrThrow(DropType, request.drop_type)
+        : DropType.CHAT,
       wave_id: waveId,
       reply_to: replyTo,
       title: request.title ?? null,
@@ -425,6 +430,7 @@ export class DropsMappers {
     return {
       id: dropEntity.id,
       serial_no: dropEntity.serial_no,
+      drop_type: resolveEnumOrThrow(ApiDropType, dropEntity.drop_type),
       reply_to: replyToDropId
         ? {
             is_deleted: !!deletedDrops[replyToDropId],

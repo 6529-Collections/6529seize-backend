@@ -10,7 +10,8 @@ import {
   DropMentionEntity,
   DropMetadataEntity,
   DropPartEntity,
-  DropReferencedNftEntity
+  DropReferencedNftEntity,
+  DropType
 } from '../entities/IDrop';
 import {
   ACTIVITY_EVENTS_TABLE,
@@ -86,9 +87,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       this.db.execute(
         `
         insert into ${WAVE_METRICS_TABLE} 
-            (wave_id, drops_count, subscribers_count, latest_drop_timestamp) 
-        values (:waveId, 1, 0, :now) 
-        on duplicate key update drops_count = (drops_count + 1), latest_drop_timestamp = :now
+            (wave_id, drops_count, subscribers_count, participatory_drops_count, latest_drop_timestamp) 
+        values (:waveId, ${
+          newDropEntity.drop_type === DropType.CHAT ? 1 : 0
+        }, 0, ${
+          newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
+        }, :now) 
+        on duplicate key update drops_count = (drops_count + ${
+          newDropEntity.drop_type === DropType.CHAT ? 1 : 0
+        }), participatory_drops_count = (participatory_drops_count + ${
+          newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
+        }), latest_drop_timestamp = :now
       `,
         { waveId, now },
         { wrappedConnection: connection }
@@ -96,9 +105,17 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       this.db.execute(
         `
             insert into ${WAVE_DROPPER_METRICS_TABLE}
-                (wave_id, dropper_id, drops_count, latest_drop_timestamp)
-            values (:waveId, :dropperId, 1, :now)
-            on duplicate key update drops_count = (drops_count + 1), latest_drop_timestamp = :now
+                (wave_id, dropper_id, drops_count, participatory_drops_count, latest_drop_timestamp)
+            values (:waveId, :dropperId, ${
+              newDropEntity.drop_type === DropType.CHAT ? 1 : 0
+            }, ${
+          newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
+        }, :now)
+            on duplicate key update drops_count = (drops_count + ${
+              newDropEntity.drop_type === DropType.CHAT ? 1 : 0
+            }), participatory_drops_count = (participatory_drops_count + ${
+          newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
+        }), latest_drop_timestamp = :now
         `,
         { waveId, dropperId: newDropEntity.author_id, now },
         { wrappedConnection: connection }
@@ -106,7 +123,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       this.db.execute(
         `insert into ${DROPS_TABLE} (
                             id,
-                            author_id, 
+                            author_id,
+                            drop_type,
                             wave_id,
                             created_at, 
                             updated_at,
@@ -119,6 +137,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ) values (
               :id,
               :author_id,
+              :drop_type,
               :wave_id,
               :created_at,
               :updated_at,

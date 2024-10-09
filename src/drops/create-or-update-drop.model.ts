@@ -1,3 +1,5 @@
+import { DropType } from '../entities/IDrop';
+
 export interface CreateOrUpdateDropModel {
   readonly drop_id: string | null;
   readonly wave_id: string;
@@ -11,6 +13,7 @@ export interface CreateOrUpdateDropModel {
   readonly author_id?: string;
   readonly proxy_identity?: string;
   readonly proxy_id?: string;
+  readonly drop_type: DropType;
 }
 
 export interface CreateOrUpdateDropPartModel {
