@@ -517,8 +517,8 @@ from grouped_rates r
        target_profile.handle as target_profile,
        r.rating as rating
       from ${RATINGS_TABLE} r
-               join profiles rater_profile on rater_profile.external_id = r.rater_profile_id
-               join profiles target_profile on target_profile.external_id = r.matter_target_id
+               join ${PROFILES_TABLE} rater_profile on rater_profile.external_id = r.rater_profile_id
+               join ${PROFILES_TABLE} target_profile on target_profile.external_id = r.matter_target_id
       where r.matter = :matter
         and r.rating <> 0
       order by 2
