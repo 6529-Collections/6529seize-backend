@@ -2755,6 +2755,7 @@ components:
       type: object
       required:
         - wave_id
+        - type
       allOf:
         - $ref: "#/components/schemas/CreateWaveDropRequest"
       properties:
@@ -2762,6 +2763,8 @@ components:
           type: string
         reply_to:
           $ref: "#/components/schemas/ReplyToDrop"
+        drop_type:
+          $ref: "#/components/schemas/DropType"
     CreateGroup:
       type: object
       required:
@@ -3428,6 +3431,7 @@ components:
       required:
         - id
         - serial_no
+        - drop_type
         - author
         - created_at
         - updated_at
@@ -3449,6 +3453,8 @@ components:
           description: Sequence number of the drop in Seize
           type: number
           format: int64
+        drop_type:
+          $ref: "#/components/schemas/DropType"
         reply_to:
           $ref: "#/components/schemas/ReplyToDropResponse"
         author:
@@ -5057,6 +5063,11 @@ components:
       type: string
       enum:
         - DROP_CREATED
+    DropType:
+      type: string
+      enum:
+        - CHAT
+        - PARTICIPATORY
     WaveType:
       type: string
       enum:

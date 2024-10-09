@@ -10,5 +10,7 @@ export class WaveDropperMetricEntity {
   @Column({ type: 'bigint', nullable: false, default: 0 })
   readonly drops_count!: number;
   @Column({ type: 'bigint', nullable: false, default: 0 })
+  readonly participatory_drops_count!: number;
+  @Column({ type: 'bigint', nullable: false, default: 0 })
   readonly latest_drop_timestamp!: number;
 }
