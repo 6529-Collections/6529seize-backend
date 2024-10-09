@@ -24,23 +24,28 @@ export class ProfilesApiService {
     connection?: ConnectionWrapper<any>
   ): Promise<Record<string, ProfileMin>> {
     timer?.start('profilesApiService->getProfileMinsByIds');
-    timer?.start(
-      'profilesApiService->getProfileMinsByIds->getProfileOverviewsByIds'
-    );
-    const profileOverviews = await profilesService.getProfileOverviewsByIds(
-      ids,
-      connection
-    );
-    timer?.stop(
-      'profilesApiService->getProfileMinsByIds->getProfileOverviewsByIds'
-    );
-    timer?.start(
-      'profilesApiService->getProfileMinsByIds->findIdentitySubscriptionActionsOfTargets'
-    );
-    const subscribedActions: Record<
-      string,
-      IdentitySubscriptionTargetAction[]
-    > = authenticatedProfileId
+    const [profileOverviews, subscribedActions] = await Promise.all([
+      profilesService.getProfileOverviewsByIds(ids, connection),
+      this.getSubscribedActions({ authenticatedProfileId, ids }, connection)
+    ]);
+    timer?.stop('profilesApiService->getProfileMinsByIds');
+    return Object.values(profileOverviews).reduce((acc, profile) => {
+      acc[profile.id] = {
+        ...profile,
+        subscribed_actions: subscribedActions[profile.id] || []
+      };
+      return acc;
+    }, {} as Record<string, ProfileMin>);
+  }
+
+  private async getSubscribedActions(
+    {
+      authenticatedProfileId,
+      ids
+    }: { authenticatedProfileId?: string | null; ids: string[] },
+    connection?: ConnectionWrapper<any>
+  ) {
+    return authenticatedProfileId
       ? await this.identitySubscriptionsDb
           .findIdentitySubscriptionActionsOfTargets(
             {
@@ -59,17 +64,6 @@ export class ProfilesApiService {
             }, {} as Record<string, IdentitySubscriptionTargetAction[]>)
           )
       : {};
-    timer?.stop(
-      'profilesApiService->getProfileMinsByIds->findIdentitySubscriptionActionsOfTargets'
-    );
-    timer?.stop('profilesApiService->getProfileMinsByIds');
-    return Object.values(profileOverviews).reduce((acc, profile) => {
-      acc[profile.id] = {
-        ...profile,
-        subscribed_actions: subscribedActions[profile.id] || []
-      };
-      return acc;
-    }, {} as Record<string, ProfileMin>);
   }
 }
 

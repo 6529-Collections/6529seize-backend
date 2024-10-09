@@ -293,7 +293,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     connectionHolder: ConnectionWrapper<any>
   ) {
     return await this.db.oneOrNull<IdentityEntity>(
-      `select * from identities where profile_id = :targetProfileId`,
+      `select * from ${IDENTITIES_TABLE} where profile_id = :targetProfileId`,
       { targetProfileId },
       { wrappedConnection: connectionHolder }
     );
@@ -303,9 +303,9 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     connection: ConnectionWrapper<any>
   ) {
     await this.db.execute(
-      `update profiles join identities on identities.profile_id = profiles.external_id
-                           set profiles.primary_wallet = identities.primary_address
-                           where profiles.primary_wallet != identities.primary_address`,
+      `update ${PROFILES_TABLE} join ${IDENTITIES_TABLE} on ${IDENTITIES_TABLE}.profile_id = ${PROFILES_TABLE}.external_id
+                           set ${PROFILES_TABLE}.primary_wallet = ${IDENTITIES_TABLE}.primary_address
+                           where ${PROFILES_TABLE}.primary_wallet != ${IDENTITIES_TABLE}.primary_address`,
       undefined,
       { wrappedConnection: connection }
     );
@@ -317,12 +317,12 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     }
     ctx.timer?.start(`${this.constructor.name}->updateIdentityProfilesOfIds`);
     await this.db.execute(
-      `update identities inner join profiles on identities.profile_id = profiles.external_id
-                           set 
-                               identities.handle = profiles.handle,
-                               identities.normalised_handle = profiles.classification,
-                               identities.classification = profiles.normalised_handle
-                           where identities.profile_id in (:profileIds)`,
+      `update ${IDENTITIES_TABLE} inner join ${PROFILES_TABLE} on ${IDENTITIES_TABLE}.profile_id = ${PROFILES_TABLE}.external_id
+                           set
+                               ${IDENTITIES_TABLE}.handle = ${PROFILES_TABLE}.handle,
+                               ${IDENTITIES_TABLE}.normalised_handle = ${PROFILES_TABLE}.classification,
+                               ${IDENTITIES_TABLE}.classification = ${PROFILES_TABLE}.normalised_handle
+                           where ${IDENTITIES_TABLE}.profile_id in (:profileIds)`,
       { profileIds },
       { wrappedConnection: ctx.connection }
     );
