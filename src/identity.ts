@@ -8,6 +8,7 @@ import { Logger } from './logging';
 import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   IDENTITIES_TABLE,
+  PROFILES_TABLE,
   RATINGS_TABLE
 } from './constants';
 import { randomUUID } from 'crypto';
@@ -36,10 +37,10 @@ export async function syncIdentitiesPrimaryWallets(
   const db = dbSupplier();
   await db.execute<{ consolidation_key: string; tdh: number }>(
     `
-    update identities
-    inner join profiles on profiles.external_id = identities.profile_id
-    set identities.primary_address = profiles.primary_wallet
-    where identities.primary_address <> profiles.primary_wallet
+    update ${IDENTITIES_TABLE}
+    inner join ${PROFILES_TABLE} on ${PROFILES_TABLE}.external_id = ${IDENTITIES_TABLE}.profile_id
+    set ${IDENTITIES_TABLE}.primary_address = ${PROFILES_TABLE}.primary_wallet
+    where ${IDENTITIES_TABLE}.primary_address <> ${PROFILES_TABLE}.primary_wallet
   `,
     undefined,
     { wrappedConnection: connection }

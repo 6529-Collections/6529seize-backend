@@ -5,6 +5,48 @@ import { Time } from './time';
 
 let redis: Redis;
 
+export async function redisGet<T>(key: string): Promise<T | null> {
+  if (!redis) {
+    throw new Error('Redis client is not initialized');
+  }
+  const valueFromRedisRaw = await redis.get(key);
+  return valueFromRedisRaw ? JSON.parse(valueFromRedisRaw) : null;
+}
+
+export async function redisGetManyByIds<T>({
+  prefix,
+  ids
+}: {
+  prefix: string;
+  ids: string[];
+}): Promise<Record<string, T>> {
+  const keys = ids.map((id) => `${prefix}:${id}`);
+  const cachedValuesByKeys = await redisGetMany<T>(keys);
+  return Object.entries(cachedValuesByKeys).reduce((acc, [key, value]) => {
+    const id = key.replace(`${prefix}:`, '');
+    acc[id] = value;
+    return acc;
+  }, {} as Record<string, T>);
+}
+
+export async function redisGetMany<T>(
+  keys: string[]
+): Promise<Record<string, T>> {
+  if (!redis) {
+    throw new Error('Redis client is not initialized');
+  }
+  if (keys.length === 0) {
+    return {};
+  }
+  const valuesFromRedisRaw = await redis.mGet(keys);
+  return valuesFromRedisRaw.reduce((acc, value, index) => {
+    if (value) {
+      acc[keys[index]] = JSON.parse(value);
+    }
+    return acc;
+  }, {} as Record<string, T>);
+}
+
 export async function redisCached<T>(
   key: string,
   ttl: Time,
