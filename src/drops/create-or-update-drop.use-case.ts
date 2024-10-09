@@ -23,7 +23,8 @@ import {
 import {
   ParticipationRequiredMedia,
   WaveEntity,
-  WaveRequiredMetadataItemType
+  WaveRequiredMetadataItemType,
+  WaveType
 } from '../entities/IWave';
 import {
   assertUnreachable,
@@ -129,6 +130,9 @@ export class CreateOrUpdateDropUseCase {
     await this.validateReferences(model, { timer, connection });
     const preExistingDropId = model.drop_id;
     const wave = (await this.wavesApiDb.findById(model.wave_id, connection))!;
+    if (wave.type === WaveType.CHAT && model.drop_type !== DropType.CHAT) {
+      throw new BadRequestException('Chat waves only allow chat drops');
+    }
     let dropId: string;
     if (preExistingDropId) {
       dropId = preExistingDropId;
@@ -141,6 +145,9 @@ export class CreateOrUpdateDropUseCase {
       }
       if (dropBeforeUpdate.wave_id !== model.wave_id) {
         throw new BadRequestException("Can't change wave of a drop");
+      }
+      if (dropBeforeUpdate.drop_type !== model.drop_type) {
+        throw new BadRequestException("Can't change type of a drop");
       }
       if (dropBeforeUpdate.author_id !== model.author_id) {
         throw new ForbiddenException(
@@ -477,7 +484,7 @@ export class CreateOrUpdateDropUseCase {
           created_at: createdAt,
           updated_at: updatedAt,
           serial_no: serialNo,
-          drop_type: DropType.CHAT
+          drop_type: model.drop_type
         },
         connection
       ),

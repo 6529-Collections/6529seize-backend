@@ -6,26 +6,10 @@ import { DropMetadataEntity } from '../../../entities/IDrop';
 import { QuotedDrop } from '../generated/models/QuotedDrop';
 import { CreateDropPart } from '../generated/models/CreateDropPart';
 import { CreateDropRequest } from '../generated/models/CreateDropRequest';
-import {
-  DEFAULT_MAX_SIZE,
-  DEFAULT_PAGE_SIZE,
-  FullPageRequest,
-  PageSortDirection
-} from '../page-request';
-import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { CreateWaveDropRequest } from '../generated/models/CreateWaveDropRequest';
 import { ReplyToDrop } from '../generated/models/ReplyToDrop';
 import { UpdateDropRequest } from '../generated/models/UpdateDropRequest';
-
-export interface DropActivityLogsQuery
-  extends FullPageRequest<DropActivityLogsQuerySortOption> {
-  readonly drop_id: string;
-  readonly log_type?: ProfileActivityLogType;
-}
-
-export enum DropActivityLogsQuerySortOption {
-  CREATED_AT = 'created_at'
-}
+import { DropType } from '../generated/models/DropType';
 
 export interface ApiAddRatingToDropRequest {
   readonly rating: number;
@@ -100,7 +84,11 @@ export const NewDropSchema: Joi.ObjectSchema<CreateDropRequest> = Joi.object({
   })
     .optional()
     .allow(null),
-  wave_id: Joi.string().required()
+  wave_id: Joi.string().required(),
+  drop_type: Joi.string()
+    .optional()
+    .default(DropType.Chat)
+    .valid(...Object.values(DropType))
 });
 
 export const UpdateDropSchema: Joi.ObjectSchema<UpdateDropRequest> =
@@ -108,36 +96,3 @@ export const UpdateDropSchema: Joi.ObjectSchema<UpdateDropRequest> =
 
 export const NewWaveDropSchema: Joi.ObjectSchema<CreateWaveDropRequest> =
   Joi.object({ ...baseDropFieldsValidators });
-
-export const DropDiscussionCommentsQuerySchema: Joi.ObjectSchema<DropActivityLogsQuery> =
-  Joi.object({
-    sort_direction: Joi.string()
-      .optional()
-      .default(PageSortDirection.DESC)
-      .valid(...Object.values(PageSortDirection))
-      .allow(null),
-    sort: Joi.string()
-      .optional()
-      .default(DropActivityLogsQuerySortOption.CREATED_AT)
-      .valid(...Object.values(DropActivityLogsQuerySortOption))
-      .allow(null),
-    page: Joi.number().integer().min(1).optional().allow(null).default(1),
-    page_size: Joi.number()
-      .integer()
-      .min(1)
-      .max(DEFAULT_MAX_SIZE)
-      .optional()
-      .allow(null)
-      .default(DEFAULT_PAGE_SIZE),
-    drop_id: Joi.string().required(),
-    log_type: Joi.string()
-      .optional()
-      .default(null)
-      .valid(
-        ...[
-          ProfileActivityLogType.DROP_COMMENT,
-          ProfileActivityLogType.DROP_RATING_EDIT,
-          ProfileActivityLogType.DROP_CREATED
-        ]
-      )
-  });

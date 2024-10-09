@@ -50,6 +50,7 @@ import {
   CreateOrUpdateDropUseCase
 } from '../../../drops/create-or-update-drop.use-case';
 import { dropsMappers, DropsMappers } from '../drops/drops.mappers';
+import { DropType } from '../generated/models/DropType';
 
 export class WaveApiService {
   constructor(
@@ -88,7 +89,11 @@ export class WaveApiService {
         const authorId = authenticationContext.getActingAsId()!;
         const descriptionDropModel =
           this.dropsMappers.createDropApiToUseCaseModel({
-            request: { ...createWaveRequest.description_drop, wave_id: id },
+            request: {
+              ...createWaveRequest.description_drop,
+              wave_id: id,
+              drop_type: DropType.Chat
+            },
             authorId
           });
         const descriptionDropId = await this.createOrUpdateDrop
