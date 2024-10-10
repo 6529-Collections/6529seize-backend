@@ -399,7 +399,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       group_id,
       wave_id,
       author_id,
-      include_replies
+      include_replies,
+      drop_type
     }: {
       group_id: string | null;
       group_ids_user_is_eligible_for: string[];
@@ -408,6 +409,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       wave_id: string | null;
       author_id: string | null;
       include_replies: boolean;
+      drop_type: DropType | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
@@ -428,9 +430,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
         : ``
     } w.visibility_group_id is null) ${wave_id ? `and w.id = :wave_id` : ``}
-         where d.serial_no < :serialNoLessThan ${
-           !include_replies ? `and reply_to_drop_id is null` : ``
-         } ${
+         where ${
+           drop_type ? ` d.drop_type = :drop_type and ` : ``
+         } d.serial_no < :serialNoLessThan ${
+      !include_replies ? `and reply_to_drop_id is null` : ``
+    } ${
       author_id ? ` and d.author_id = :author_id ` : ``
     } order by d.serial_no desc limit ${amount}`;
     const params: Record<string, any> = {
@@ -438,7 +442,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       serialNoLessThan,
       groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
       author_id,
-      wave_id
+      wave_id,
+      drop_type
     };
     return this.db.execute(sql, params);
   }
@@ -448,19 +453,27 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       amount,
       serial_no_limit,
       search_strategy,
-      wave_id
+      wave_id,
+      drop_type
     }: {
       serial_no_limit: number | null;
       search_strategy: string;
       amount: number;
       wave_id: string;
+      drop_type: DropType | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start('dropsDb->findLatestDropsSimple');
-    const sqlForOlder = `(select d.* from ${DROPS_TABLE} d where d.wave_id = :wave_id and d.serial_no < :serial_no_limit order by d.serial_no desc limit ${amount})`;
-    const sqlForNewer = `(select d.* from ${DROPS_TABLE} d where d.wave_id = :wave_id and d.serial_no > :serial_no_limit order by d.serial_no asc limit ${amount})`;
-    const sqlForThis = `(select d.* from ${DROPS_TABLE} d where d.wave_id = :wave_id and d.serial_no = :serial_no_limit)`;
+    const sqlForOlder = `(select d.* from ${DROPS_TABLE} d where ${
+      drop_type ? ` drop_type = :drop_type and ` : ``
+    } d.wave_id = :wave_id and d.serial_no < :serial_no_limit order by d.serial_no desc limit ${amount})`;
+    const sqlForNewer = `(select d.* from ${DROPS_TABLE} d where ${
+      drop_type ? ` drop_type = :drop_type and ` : ``
+    } d.wave_id = :wave_id and d.serial_no > :serial_no_limit order by d.serial_no asc limit ${amount})`;
+    const sqlForThis = `(select d.* from ${DROPS_TABLE} d where ${
+      drop_type ? ` drop_type = :drop_type and ` : ``
+    } d.wave_id = :wave_id and d.serial_no = :serial_no_limit)`;
     const sql = `with dr_results as (${[
       search_strategy === DropSearchStrategy.Newer ||
       search_strategy === DropSearchStrategy.Both
@@ -476,6 +489,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .join(' union all ')}) select * from dr_results order by serial_no desc`;
     const params = {
       wave_id,
+      drop_type,
       serial_no_limit: serial_no_limit ?? Number.MAX_SAFE_INTEGER
     };
     const results = await this.db.execute<DropEntity>(sql, params, {
@@ -490,19 +504,27 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       amount,
       drop_id,
       serial_no_limit,
-      search_strategy
+      search_strategy,
+      drop_type
     }: {
       amount: number;
       drop_id: string;
       serial_no_limit: number | null;
       search_strategy: string;
+      drop_type: DropType | null;
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start('dropsDb->findLatestDropRepliesSimple');
-    const sqlForOlder = `(select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where r.parent_id = :drop_id and serial_no < :serial_no_limit order by d.serial_no desc limit ${amount})`;
-    const sqlForNewer = `(select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where r.parent_id = :drop_id and serial_no > :serial_no_limit order by d.serial_no asc limit ${amount})`;
-    const sqlForThis = `select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where r.parent_id = :drop_id and serial_no = :serial_no_limit`;
+    const sqlForOlder = `(select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where ${
+      drop_type ? ` drop_type = :drop_type and ` : ``
+    } r.parent_id = :drop_id and serial_no < :serial_no_limit order by d.serial_no desc limit ${amount})`;
+    const sqlForNewer = `(select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where ${
+      drop_type ? ` drop_type = :drop_type and ` : ``
+    } r.parent_id = :drop_id and serial_no > :serial_no_limit order by d.serial_no asc limit ${amount})`;
+    const sqlForThis = `select d.* from ${DROPS_TABLE} d join ${DROP_RELATIONS_TABLE} r on d.id = r.child_id where ${
+      drop_type ? ` drop_type = :drop_type and ` : ``
+    } r.parent_id = :drop_id and serial_no = :serial_no_limit`;
     const sql = `with dr_results as (${[
       search_strategy === DropSearchStrategy.Newer ||
       search_strategy === DropSearchStrategy.Both
@@ -773,8 +795,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async countRepliesByDropIds(
     {
       dropIds,
+      drop_type,
       context_profile_id
-    }: { dropIds: string[]; context_profile_id?: string | null },
+    }: {
+      dropIds: string[];
+      context_profile_id?: string | null;
+      drop_type: DropType | null;
+    },
     connection?: ConnectionWrapper<any>
   ): Promise<
     Record<
@@ -792,13 +819,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         : ``
     }
     from drops
-    where drops.reply_to_drop_id in (:dropIds)
+    where ${
+      drop_type ? ` drop_type = :drop_type and ` : ``
+    } drops.reply_to_drop_id in (:dropIds)
     group by 1, 2`;
     return this.db
       .execute(
         sql,
         {
           dropIds,
+          drop_type,
           context_profile_id
         },
         connection ? { wrappedConnection: connection } : undefined
@@ -968,6 +998,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async findRepliesByDropId(param: {
     sort_direction: PageSortDirection;
+    drop_type: DropType | null;
     drop_id: string;
     drop_part_id: number;
     sort: string;
@@ -979,7 +1010,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const sort = param.sort;
     const direction = param.sort_direction;
     return this.db.execute<DropEntity>(
-      `select * from ${DROPS_TABLE} where reply_to_drop_id = :drop_id and reply_to_part_id = :drop_part_id order by ${sort} ${direction} limit ${limit} offset ${offset}`,
+      `select * from ${DROPS_TABLE} where ${
+        param.drop_type ? ` drop_type = :drop_type and ` : ``
+      } reply_to_drop_id = :drop_id and reply_to_part_id = :drop_part_id order by ${sort} ${direction} limit ${limit} offset ${offset}`,
       param
     );
   }

@@ -43,6 +43,7 @@ import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { dropsService } from '../drops/drops.api.service';
 import { WaveDropsFeed } from '../generated/models/WaveDropsFeed';
 import { DropSearchStrategy } from '../generated/models/DropSearchStrategy';
+import { DropType } from '../generated/models/DropType';
 
 const router = asyncRouter();
 
@@ -257,6 +258,7 @@ router.get(
         serial_no_less_than?: string;
         serial_no_limit?: string;
         search_strategy?: string;
+        drop_type?: DropType;
       },
       any
     >,
@@ -275,13 +277,18 @@ router.get(
         ? resolveEnum(DropSearchStrategy, req.query.search_strategy) ??
           DropSearchStrategy.Older
         : DropSearchStrategy.Older;
+    const drop_type_str = req.query.drop_type as string | undefined;
+    const drop_type = drop_type_str
+      ? resolveEnum(DropType, drop_type_str) ?? null
+      : null;
     const result = await dropsService.findWaveDropsFeed(
       {
         wave_id: id,
         drop_id: dropId,
         amount: amount >= 200 || amount < 1 ? 50 : amount,
         serial_no_limit: serialNoLimit,
-        search_strategy: searchStrategy
+        search_strategy: searchStrategy,
+        drop_type
       },
       { authenticationContext, timer }
     );
