@@ -517,6 +517,14 @@ loadApi().then(() => {
     });
   });
 
+  apiRouter.get(`/nfts/:contract/media`, function (req: any, res: any) {
+    const contract = req.params.contract;
+
+    db.fetchNFTMedia(contract).then((result) => {
+      returnJsonResult(result, req, res);
+    });
+  });
+
   apiRouter.get(`/nfts_memelab`, function (req: any, res: any) {
     const pageSize: number =
       req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
