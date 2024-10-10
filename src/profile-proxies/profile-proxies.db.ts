@@ -5,8 +5,8 @@ import {
 } from '../constants';
 import { ProfileProxyEntity } from '../entities/IProfileProxy';
 import {
-  ApiProfileProxyActionType,
-  ProfileProxyActionEntity
+  ProfileProxyActionEntity,
+  ProfileProxyActionType
 } from '../entities/IProfileProxyAction';
 import {
   ConnectionWrapper,
@@ -170,7 +170,7 @@ export class ProfileProxiesDb extends LazyDbAccessCompatibleService {
     connection
   }: {
     readonly proxy_id: string;
-    readonly action_type: ApiProfileProxyActionType;
+    readonly action_type: ProfileProxyActionType;
     readonly connection?: ConnectionWrapper<any>;
   }): Promise<ProfileProxyActionEntity[]> {
     const opts = connection ? { wrappedConnection: connection } : {};

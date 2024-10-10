@@ -6,7 +6,7 @@ import {
   fetchAllNftOwners,
   fetchNftOwnersForConsolidation
 } from './api.nft-owners.db';
-import { NftOwnerPage } from '../generated/models/NftOwnerPage';
+import { ApiNftOwnerPage } from '../generated/models/ApiNftOwnerPage';
 import { ApiResponse } from '../api-response';
 
 const router = asyncRouter();
@@ -28,7 +28,7 @@ router.get(
         page_size?: number;
       }
     >,
-    res: Response<ApiResponse<NftOwnerPage>>
+    res: Response<ApiResponse<ApiNftOwnerPage>>
   ) {
     const contract = req.query.contract;
     const tokenId = req.query.token_id;
@@ -62,7 +62,7 @@ router.get(
         page_size?: number;
       }
     >,
-    res: Response<ApiResponse<NftOwnerPage>>
+    res: Response<ApiResponse<ApiNftOwnerPage>>
   ) {
     const consolidationKey = req.params.consolidation_key;
     const contract = req.query.contract;

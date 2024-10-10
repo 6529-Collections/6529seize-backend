@@ -1,8 +1,8 @@
 import { constructFilters } from '../api-helpers';
 import { NFT_OWNERS_CONSOLIDATION_TABLE } from '../../../constants';
 import { fetchPaginated } from '../../../db-api';
-import { NftOwnerPage } from '../generated/models/NftOwnerPage';
-import { NftOwner } from '../generated/models/NftOwner';
+import { ApiNftOwnerPage } from '../generated/models/ApiNftOwnerPage';
+import { ApiNftOwner } from '../generated/models/ApiNftOwner';
 
 export async function fetchAllNftOwners(
   contract: string | undefined,
@@ -10,9 +10,9 @@ export async function fetchAllNftOwners(
   page: number,
   pageSize: number,
   sortDir: string
-): Promise<NftOwnerPage> {
+): Promise<ApiNftOwnerPage> {
   let filters = '';
-  let params: any = {};
+  const params: any = {};
   if (contract) {
     filters = constructFilters(filters, `contract = :contract`);
     params.contract = contract;
@@ -23,7 +23,7 @@ export async function fetchAllNftOwners(
     params.tokenIds = tokenId.split(',').map((id) => parseInt(id));
   }
 
-  return await fetchPaginated<NftOwner>(
+  return await fetchPaginated<ApiNftOwner>(
     NFT_OWNERS_CONSOLIDATION_TABLE,
     params,
     `contract ${sortDir}, token_id ${sortDir}`,
@@ -39,7 +39,7 @@ export async function fetchNftOwnersForConsolidation(
   tokenId: string | undefined,
   page: number,
   pageSize: number
-): Promise<NftOwnerPage> {
+): Promise<ApiNftOwnerPage> {
   let filters = constructFilters('', `consolidation_key = :consolidationKey`);
   const params: any = { consolidationKey };
 
@@ -52,7 +52,7 @@ export async function fetchNftOwnersForConsolidation(
     params.tokenIds = tokenId.split(',').map((id) => parseInt(id));
   }
 
-  return await fetchPaginated<NftOwner>(
+  return await fetchPaginated<ApiNftOwner>(
     NFT_OWNERS_CONSOLIDATION_TABLE,
     params,
     'contract asc, token_id asc',

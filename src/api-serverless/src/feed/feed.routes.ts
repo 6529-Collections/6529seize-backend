@@ -2,7 +2,7 @@ import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
 import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 import { ApiResponse } from '../api-response';
-import { FeedItem } from '../generated/models/FeedItem';
+import { ApiFeedItem } from '../generated/models/ApiFeedItem';
 import { feedApiService } from './feed.api.service';
 import { parseIntOrNull } from '../../../helpers';
 
@@ -21,7 +21,7 @@ router.get(
       },
       any
     >,
-    res: Response<ApiResponse<FeedItem[]>>
+    res: Response<ApiResponse<ApiFeedItem[]>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     const feed = await feedApiService.getFeed(

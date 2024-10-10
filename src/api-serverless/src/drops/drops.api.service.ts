@@ -3,14 +3,14 @@ import { ConnectionWrapper } from '../../../sql-executor';
 import { NotFoundException } from '../../../exceptions';
 import { resolveEnumOrThrow } from '../../../helpers';
 import { Page, PageSortDirection } from '../page-request';
-import { Drop } from '../generated/models/Drop';
+import { ApiDrop } from '../generated/models/ApiDrop';
 import {
   UserGroupsService,
   userGroupsService
 } from '../community-members/user-groups.service';
 import { AuthenticationContext } from '../../../auth-context';
-import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
-import { DropSubscriptionTargetAction } from '../generated/models/DropSubscriptionTargetAction';
+import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
 import {
   ActivityEventAction,
   ActivityEventTargetType
@@ -22,12 +22,12 @@ import {
 import { dropsMappers, DropsMappers } from './drops.mappers';
 import { RequestContext } from '../../../request.context';
 import { wavesApiDb } from '../waves/waves.api.db';
-import { WaveMin } from '../generated/models/WaveMin';
-import { WaveDropsFeed } from '../generated/models/WaveDropsFeed';
-import { DropTraceItem } from '../generated/models/DropTraceItem';
-import { DropSearchStrategy } from '../generated/models/DropSearchStrategy';
-import { DropType } from '../generated/models/DropType';
-import { DropType as DbDropType } from '../../../entities/IDrop';
+import { ApiWaveMin } from '../generated/models/ApiWaveMin';
+import { ApiDropTraceItem } from '../generated/models/ApiDropTraceItem';
+import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
+import { ApiDropType } from '../generated/models/ApiDropType';
+import { DropType } from '../../../entities/IDrop';
+import { ApiWaveDropsFeed } from '../generated/models/ApiWaveDropsFeed';
 
 export class DropsApiService {
   constructor(
@@ -46,7 +46,7 @@ export class DropsApiService {
       skipEligibilityCheck?: boolean;
     },
     ctx: RequestContext
-  ): Promise<Drop> {
+  ): Promise<ApiDrop> {
     const contextProfileId = this.getDropsReadContextProfileId(
       ctx.authenticationContext
     );
@@ -93,10 +93,10 @@ export class DropsApiService {
       amount: number;
       author_id: string | null;
       include_replies: boolean;
-      drop_type: DropType | null;
+      drop_type: ApiDropType | null;
     },
     ctx: RequestContext
-  ): Promise<Drop[]> {
+  ): Promise<ApiDrop[]> {
     const authenticationContext = ctx.authenticationContext;
     const context_profile_id = this.getDropsReadContextProfileId(
       authenticationContext
@@ -117,7 +117,7 @@ export class DropsApiService {
         wave_id,
         author_id,
         include_replies,
-        drop_type: drop_type ? resolveEnumOrThrow(DbDropType, drop_type) : null
+        drop_type: drop_type ? resolveEnumOrThrow(DropType, drop_type) : null
       },
       ctx
     );
@@ -136,7 +136,7 @@ export class DropsApiService {
     const context_profile_id = authenticationContext.getActingAsId()!;
     if (
       authenticationContext.isAuthenticatedAsProxy() &&
-      !authenticationContext.hasProxyAction(ApiProfileProxyActionType.READ_WAVE)
+      !authenticationContext.hasProxyAction(ProfileProxyActionType.READ_WAVE)
     ) {
       return null;
     }
@@ -157,15 +157,15 @@ export class DropsApiService {
       sort_direction: PageSortDirection;
       drop_id: string;
       drop_part_id: number;
-      drop_type: DropType | null;
+      drop_type: ApiDropType | null;
       sort: string;
       page: number;
       page_size: number;
     },
     ctx: RequestContext
-  ): Promise<Page<Drop>> {
+  ): Promise<Page<ApiDrop>> {
     const drop_type = param.drop_type
-      ? resolveEnumOrThrow(DbDropType, param.drop_type)
+      ? resolveEnumOrThrow(DropType, param.drop_type)
       : null;
     const count = await this.dropsDb
       .countRepliesByDropIds({
@@ -195,7 +195,7 @@ export class DropsApiService {
     dropIds: string[],
     authenticationContext: AuthenticationContext | undefined,
     connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, Drop>> {
+  ): Promise<Record<string, ApiDrop>> {
     const result = await this.findDropsByIds(
       dropIds,
       authenticationContext,
@@ -217,7 +217,7 @@ export class DropsApiService {
     dropIds: string[],
     authenticationContext: AuthenticationContext | undefined,
     connection?: ConnectionWrapper<any>
-  ) {
+  ): Promise<Record<string, ApiDrop>> {
     const dropEntities = await this.dropsDb.getDropsByIds(dropIds, connection);
     return await this.dropsMappers
       .convertToDropFulls({
@@ -228,7 +228,7 @@ export class DropsApiService {
         drops.reduce((acc, drop) => {
           acc[drop.id] = drop;
           return acc;
-        }, {} as Record<string, Drop>)
+        }, {} as Record<string, ApiDrop>)
       );
   }
 
@@ -240,9 +240,9 @@ export class DropsApiService {
   }: {
     subscriber: string;
     dropId: string;
-    actions: DropSubscriptionTargetAction[];
+    actions: ApiDropSubscriptionTargetAction[];
     authenticationContext: AuthenticationContext;
-  }): Promise<DropSubscriptionTargetAction[]> {
+  }): Promise<ApiDropSubscriptionTargetAction[]> {
     const waveId = await this.findDropByIdOrThrow(
       {
         dropId
@@ -289,7 +289,7 @@ export class DropsApiService {
           )
           .then((result) =>
             result.map((it) =>
-              resolveEnumOrThrow(DropSubscriptionTargetAction, it)
+              resolveEnumOrThrow(ApiDropSubscriptionTargetAction, it)
             )
           );
       }
@@ -305,8 +305,8 @@ export class DropsApiService {
     subscriber: string;
     dropId: string;
     authenticationContext: AuthenticationContext;
-    actions: DropSubscriptionTargetAction[];
-  }): Promise<DropSubscriptionTargetAction[]> {
+    actions: ApiDropSubscriptionTargetAction[];
+  }): Promise<ApiDropSubscriptionTargetAction[]> {
     await this.findDropByIdOrThrow(
       {
         dropId
@@ -337,7 +337,7 @@ export class DropsApiService {
           )
           .then((result) =>
             result.map((it) =>
-              resolveEnumOrThrow(DropSubscriptionTargetAction, it)
+              resolveEnumOrThrow(ApiDropSubscriptionTargetAction, it)
             )
           );
       }
@@ -357,11 +357,11 @@ export class DropsApiService {
       serial_no_limit: number | null;
       wave_id: string;
       amount: number;
-      search_strategy: DropSearchStrategy;
-      drop_type: DropType | null;
+      search_strategy: ApiDropSearchStrategy;
+      drop_type: ApiDropType | null;
     },
     ctx: RequestContext
-  ): Promise<WaveDropsFeed> {
+  ): Promise<ApiWaveDropsFeed> {
     ctx.timer?.start('dropsApiService->findWaveDropsFeed');
     const authenticationContext = ctx.authenticationContext!;
     const context_profile_id = this.getDropsReadContextProfileId(
@@ -370,9 +370,7 @@ export class DropsApiService {
     const group_ids_user_is_eligible_for =
       !authenticationContext.isUserFullyAuthenticated() ||
       (authenticationContext.isAuthenticatedAsProxy() &&
-        !authenticationContext.hasProxyAction(
-          ApiProfileProxyActionType.READ_WAVE
-        ))
+        !authenticationContext.hasProxyAction(ProfileProxyActionType.READ_WAVE))
         ? []
         : await this.userGroupsService.getGroupsUserIsEligibleFor(
             context_profile_id
@@ -385,7 +383,7 @@ export class DropsApiService {
     ) {
       throw new NotFoundException(`Wave ${wave_id} not found`);
     }
-    const waveMin: WaveMin = {
+    const waveMin: ApiWaveMin = {
       id: wave.id,
       name: wave.name,
       picture: wave.picture!,
@@ -413,9 +411,7 @@ export class DropsApiService {
           amount,
           serial_no_limit,
           search_strategy,
-          drop_type: drop_type
-            ? resolveEnumOrThrow(DbDropType, drop_type)
-            : null
+          drop_type: drop_type ? resolveEnumOrThrow(DropType, drop_type) : null
         },
         ctx
       );
@@ -426,10 +422,10 @@ export class DropsApiService {
       const rootDrop = await this.dropsMappers
         .convertToDropsWithoutWaves([dropEntity], ctx)
         .then((it) => it[0]!);
-      const resp: WaveDropsFeed = {
+      const resp: ApiWaveDropsFeed = {
         drops,
         wave: waveMin,
-        trace: trace.map<DropTraceItem>((it) => ({
+        trace: trace.map<ApiDropTraceItem>((it) => ({
           drop_id: it.drop_id,
           is_deleted: it.is_deleted
         })),
@@ -444,9 +440,7 @@ export class DropsApiService {
           amount,
           serial_no_limit,
           search_strategy,
-          drop_type: drop_type
-            ? resolveEnumOrThrow(DbDropType, drop_type)
-            : null
+          drop_type: drop_type ? resolveEnumOrThrow(DropType, drop_type) : null
         },
         ctx
       );
@@ -454,7 +448,7 @@ export class DropsApiService {
         dropEntities,
         ctx
       );
-      const resp: WaveDropsFeed = {
+      const resp: ApiWaveDropsFeed = {
         drops,
         wave: waveMin
       };

@@ -12,12 +12,12 @@ import {
   IncomingIdentitySubscriptionsParams,
   OutgoingIdentitySubscriptionsParams
 } from './identity-subscriptions.routes';
-import { OutgoingIdentitySubscriptionsPage } from '../generated/models/OutgoingIdentitySubscriptionsPage';
-import { IncomingIdentitySubscriptionsPage } from '../generated/models/IncomingIdentitySubscriptionsPage';
-import { IdentityAndSubscriptionActions } from '../generated/models/IdentityAndSubscriptionActions';
+import { ApiOutgoingIdentitySubscriptionsPage } from '../generated/models/ApiOutgoingIdentitySubscriptionsPage';
+import { ApiIncomingIdentitySubscriptionsPage } from '../generated/models/ApiIncomingIdentitySubscriptionsPage';
+import { ApiIdentityAndSubscriptionActions } from '../generated/models/ApiIdentityAndSubscriptionActions';
 import { assertUnreachable, resolveEnumOrThrow } from '../../../helpers';
-import { IdentitySubscriptionTargetAction } from '../generated/models/IdentitySubscriptionTargetAction';
-import { TargetAndSubscriptionActions } from '../generated/models/TargetAndSubscriptionActions';
+import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
+import { ApiTargetAndSubscriptionActions } from '../generated/models/ApiTargetAndSubscriptionActions';
 import {
   userGroupsService,
   UserGroupsService
@@ -37,7 +37,7 @@ export class IdentitySubscriptionsApiService {
   public async findOutgoingSubscriptionsOfType(
     params: OutgoingIdentitySubscriptionsParams,
     authenticationContext: AuthenticationContext
-  ): Promise<OutgoingIdentitySubscriptionsPage> {
+  ): Promise<ApiOutgoingIdentitySubscriptionsPage> {
     const eligibleGroupIds =
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         params.subscriber_id
@@ -53,7 +53,7 @@ export class IdentitySubscriptionsApiService {
         eligibleGroupIds
       );
     const entityIds = Object.keys(idsAndActions);
-    const entities: TargetAndSubscriptionActions[] = [];
+    const entities: ApiTargetAndSubscriptionActions[] = [];
     const targetType = params.target_type;
     switch (targetType) {
       case ActivityEventTargetType.WAVE: {
@@ -67,7 +67,7 @@ export class IdentitySubscriptionsApiService {
             .map(([id, actions]) => ({
               target: waves[id],
               actions: actions.map((it) =>
-                resolveEnumOrThrow(IdentitySubscriptionTargetAction, it)
+                resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
               )
             }))
             .sort((a, d) => d.target.id.localeCompare(a.target.id))
@@ -84,7 +84,7 @@ export class IdentitySubscriptionsApiService {
             .map(([id, actions]) => ({
               target: drops[id],
               actions: actions.map((it) =>
-                resolveEnumOrThrow(IdentitySubscriptionTargetAction, it)
+                resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
               )
             }))
             .sort((a, d) => d.target.id.localeCompare(a.target.id))
@@ -101,7 +101,7 @@ export class IdentitySubscriptionsApiService {
             .map(([id, actions]) => ({
               target: profiles[id],
               actions: actions.map((it) =>
-                resolveEnumOrThrow(IdentitySubscriptionTargetAction, it)
+                resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
               )
             }))
             .sort((a, d) => d.target.id.localeCompare(a.target.id))
@@ -122,7 +122,7 @@ export class IdentitySubscriptionsApiService {
 
   async findIncomingSubscriptionsOfType(
     params: IncomingIdentitySubscriptionsParams
-  ): Promise<IncomingIdentitySubscriptionsPage> {
+  ): Promise<ApiIncomingIdentitySubscriptionsPage> {
     const identityIdsAndActions =
       await this.identitySubscriptionsDb.findSubscriberIdsAndActionsForTarget(
         params
@@ -135,13 +135,13 @@ export class IdentitySubscriptionsApiService {
       await this.identitySubscriptionsDb.countDistinctSubscriberIdsForTarget(
         params
       );
-    const data: IdentityAndSubscriptionActions[] = Object.entries(
+    const data: ApiIdentityAndSubscriptionActions[] = Object.entries(
       identityIdsAndActions
     )
       .map(([id, actions]) => ({
         identity: profiles[id],
         actions: actions.map((it) =>
-          resolveEnumOrThrow(IdentitySubscriptionTargetAction, it)
+          resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
         )
       }))
       .sort((a, d) => d.identity.level - a.identity.level);

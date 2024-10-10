@@ -23,10 +23,10 @@ import {
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
 import { dropRaterService } from './drop-rater.service';
 import { FullPageRequest, Page, PageSortDirection } from '../page-request';
-import { Drop } from '../generated/models/Drop';
-import { CreateDropRequest } from '../generated/models/CreateDropRequest';
+import { ApiDrop } from '../generated/models/ApiDrop';
+import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
 import { userGroupsService } from '../community-members/user-groups.service';
-import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import {
   ApiAddRatingToDropRequest,
   ApiAddRatingToDropRequestSchema,
@@ -34,12 +34,12 @@ import {
   UpdateDropSchema
 } from './drop.validator';
 import { profilesService } from '../../../profiles/profiles.service';
-import { DropSubscriptionActions } from '../generated/models/DropSubscriptionActions';
-import { DropSubscriptionTargetAction } from '../generated/models/DropSubscriptionTargetAction';
+import { ApiDropSubscriptionActions } from '../generated/models/ApiDropSubscriptionActions';
+import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
 import { Timer } from '../../../time';
-import { UpdateDropRequest } from '../generated/models/UpdateDropRequest';
+import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import { RequestContext } from '../../../request.context';
-import { DropType } from '../generated/models/DropType';
+import { ApiDropType } from '../generated/models/ApiDropType';
 
 const router = asyncRouter();
 
@@ -58,11 +58,11 @@ router.get(
         author?: string;
         wave_id?: string;
         include_replies?: string;
-        drop_type?: DropType;
+        drop_type?: ApiDropType;
       },
       any
     >,
-    res: Response<ApiResponse<Drop[]>>
+    res: Response<ApiResponse<ApiDrop[]>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -89,7 +89,7 @@ router.get(
   maybeAuthenticatedUser(),
   async (
     req: Request<{ drop_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<Drop>>
+    res: Response<ApiResponse<ApiDrop>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -108,8 +108,8 @@ router.post(
   '/',
   needsAuthenticatedUser(),
   async (
-    req: Request<any, any, CreateDropRequest, any, any>,
-    res: Response<ApiResponse<Drop>>
+    req: Request<any, any, ApiCreateDropRequest, any, any>,
+    res: Response<ApiResponse<ApiDrop>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -122,7 +122,7 @@ router.post(
     if (
       authenticationContext.isAuthenticatedAsProxy() &&
       !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+        ProfileProxyActionType.CREATE_DROP_TO_WAVE
       ]
     ) {
       throw new ForbiddenException(
@@ -130,7 +130,7 @@ router.post(
       );
     }
     const apiRequest = req.body;
-    const newDrop: CreateDropRequest = getValidatedByJoiOrThrow(
+    const newDrop: ApiCreateDropRequest = getValidatedByJoiOrThrow(
       apiRequest,
       NewDropSchema
     );
@@ -151,7 +151,7 @@ router.post(
         'Total content length of all parts must be less than 32768 characters'
       );
     }
-    const createDropRequest: CreateDropRequest & {
+    const createDropRequest: ApiCreateDropRequest & {
       author: { external_id: string };
     } = {
       author: { external_id: authorProfileId },
@@ -181,8 +181,8 @@ router.post(
   '/:drop_id',
   needsAuthenticatedUser(),
   async (
-    req: Request<{ drop_id: string }, any, UpdateDropRequest, any, any>,
-    res: Response<ApiResponse<Drop>>
+    req: Request<{ drop_id: string }, any, ApiUpdateDropRequest, any, any>,
+    res: Response<ApiResponse<ApiDrop>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -190,7 +190,7 @@ router.post(
       throw new ForbiddenException(`Create a profile before updating a drop`);
     }
     const apiRequest = req.body;
-    const updateRequest: UpdateDropRequest = getValidatedByJoiOrThrow(
+    const updateRequest: ApiUpdateDropRequest = getValidatedByJoiOrThrow(
       apiRequest,
       UpdateDropSchema
     );
@@ -235,7 +235,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<{ drop_id: string }, any, ApiAddRatingToDropRequest, any, any>,
-    res: Response<ApiResponse<Drop>>
+    res: Response<ApiResponse<ApiDrop>>
   ) => {
     const { rating, category } = getValidatedByJoiOrThrow(
       req.body,
@@ -264,7 +264,7 @@ router.post(
     if (
       authenticationContext.isAuthenticatedAsProxy() &&
       !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.RATE_WAVE_DROP
+        ProfileProxyActionType.RATE_WAVE_DROP
       ]
     ) {
       throw new ForbiddenException(
@@ -295,13 +295,13 @@ router.get(
   maybeAuthenticatedUser(),
   async (
     req: Request<
-      { drop_id: string; drop_part_id: string; drop_type?: DropType },
+      { drop_id: string; drop_part_id: string; drop_type?: ApiDropType },
       any,
       any,
       FullPageRequest<'created_at'>,
       any
     >,
-    res: Response<Page<Drop>>
+    res: Response<Page<ApiDrop>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -330,8 +330,14 @@ router.post(
   '/:drop_id/subscriptions',
   needsAuthenticatedUser(),
   async (
-    req: Request<{ drop_id: string }, any, DropSubscriptionActions, any, any>,
-    res: Response<ApiResponse<DropSubscriptionActions>>
+    req: Request<
+      { drop_id: string },
+      any,
+      ApiDropSubscriptionActions,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ApiDropSubscriptionActions>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     const authenticatedProfileId = authenticationContext.getActingAsId();
@@ -341,7 +347,7 @@ router.post(
     if (
       authenticationContext.isAuthenticatedAsProxy() &&
       !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.READ_WAVE
+        ProfileProxyActionType.READ_WAVE
       ]
     ) {
       throw new ForbiddenException(
@@ -356,7 +362,7 @@ router.post(
       dropId: req.params.drop_id,
       subscriber: authenticatedProfileId,
       actions: request.actions.filter(
-        (it) => it !== DropSubscriptionTargetAction.Voted
+        (it) => it !== ApiDropSubscriptionTargetAction.Voted
       ),
       authenticationContext
     });
@@ -370,8 +376,14 @@ router.delete(
   '/:drop_id/subscriptions',
   needsAuthenticatedUser(),
   async (
-    req: Request<{ drop_id: string }, any, DropSubscriptionActions, any, any>,
-    res: Response<ApiResponse<DropSubscriptionActions>>
+    req: Request<
+      { drop_id: string },
+      any,
+      ApiDropSubscriptionActions,
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ApiDropSubscriptionActions>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     const authenticatedProfileId = authenticationContext.getActingAsId();
@@ -381,7 +393,7 @@ router.delete(
     if (
       authenticationContext.isAuthenticatedAsProxy() &&
       !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.READ_WAVE
+        ProfileProxyActionType.READ_WAVE
       ]
     ) {
       throw new ForbiddenException(
@@ -396,7 +408,7 @@ router.delete(
       dropId: req.params.drop_id,
       subscriber: authenticatedProfileId,
       actions: request.actions.filter(
-        (it) => it !== DropSubscriptionTargetAction.Voted
+        (it) => it !== ApiDropSubscriptionTargetAction.Voted
       ),
       authenticationContext
     });
@@ -418,7 +430,7 @@ export async function prepLatestDropsSearchQuery(
       author?: string;
       wave_id?: string;
       include_replies?: string;
-      drop_type?: DropType;
+      drop_type?: ApiDropType;
     },
     any
   >
@@ -428,7 +440,7 @@ export async function prepLatestDropsSearchQuery(
   const group_id = req.query.group_id ?? null;
   const include_replies = req.query.include_replies === 'true';
   const drop_type_str = (req.query.drop_type as string) ?? null;
-  const drop_type_enum = resolveEnum(DropType, drop_type_str) ?? null;
+  const drop_type_enum = resolveEnum(ApiDropType, drop_type_str) ?? null;
   const author_id = req.query.author
     ? await profilesService
         .resolveIdentityOrThrowNotFound(req.query.author)
@@ -455,7 +467,7 @@ export async function prepDropPartQuery(
     {
       drop_id: string;
       drop_part_id: string;
-      drop_type?: DropType;
+      drop_type?: ApiDropType;
     },
     any,
     any,
@@ -465,7 +477,7 @@ export async function prepDropPartQuery(
   ctx: RequestContext
 ) {
   const drop_type_str = (req.params.drop_type as string) ?? null;
-  const drop_type_enum = resolveEnum(DropType, drop_type_str) ?? null;
+  const drop_type_enum = resolveEnum(ApiDropType, drop_type_str) ?? null;
   const drop_part_id = parseIntOrNull(req.params.drop_part_id);
   const drop_id = req.params.drop_id;
   if (drop_part_id === null) {
@@ -489,7 +501,7 @@ export async function prepDropPartQuery(
     });
   const query = getValidatedByJoiOrThrow(
     req.query,
-    Joi.object<FullPageRequest<'created_at'> & { drop_type?: DropType }>({
+    Joi.object<FullPageRequest<'created_at'> & { drop_type?: ApiDropType }>({
       sort_direction: Joi.string()
         .optional()
         .default(PageSortDirection.DESC)
@@ -503,9 +515,11 @@ export async function prepDropPartQuery(
   return { drop_part_id, drop_id, query, drop_type: drop_type_enum };
 }
 
-const DropSubscriptionActionsSchema = Joi.object<DropSubscriptionActions>({
+const DropSubscriptionActionsSchema = Joi.object<ApiDropSubscriptionActions>({
   actions: Joi.array()
-    .items(Joi.string().valid(...Object.values(DropSubscriptionTargetAction)))
+    .items(
+      Joi.string().valid(...Object.values(ApiDropSubscriptionTargetAction))
+    )
     .required()
 });
 

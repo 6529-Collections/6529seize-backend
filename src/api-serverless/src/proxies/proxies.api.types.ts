@@ -1,12 +1,12 @@
-import { CreateNewProfileProxyAllocateCicAction } from '../generated/models/CreateNewProfileProxyAllocateCicAction';
-import { CreateNewProfileProxyAllocateRepAction } from '../generated/models/CreateNewProfileProxyAllocateRepAction';
-import { CreateNewProfileProxyCreateWaveParticipationDropAction } from '../generated/models/CreateNewProfileProxyCreateWaveParticipationDropAction';
-import { CreateNewProfileProxyCreateWaveAction } from '../generated/models/CreateNewProfileProxyCreateWaveAction';
-import { CreateNewProfileProxyReadWaveAction } from '../generated/models/CreateNewProfileProxyReadWaveAction';
+import { ApiCreateNewProfileProxyAllocateCicAction } from '../generated/models/ApiCreateNewProfileProxyAllocateCicAction';
+import { ApiCreateNewProfileProxyAllocateRepAction } from '../generated/models/ApiCreateNewProfileProxyAllocateRepAction';
+import { ApiCreateNewProfileProxyCreateWaveParticipationDropAction } from '../generated/models/ApiCreateNewProfileProxyCreateWaveParticipationDropAction';
+import { ApiCreateNewProfileProxyCreateWaveAction } from '../generated/models/ApiCreateNewProfileProxyCreateWaveAction';
+import { ApiCreateNewProfileProxyReadWaveAction } from '../generated/models/ApiCreateNewProfileProxyReadWaveAction';
 
 export type ProxyApiRequestAction =
-  | CreateNewProfileProxyAllocateRepAction
-  | CreateNewProfileProxyAllocateCicAction
-  | CreateNewProfileProxyCreateWaveAction
-  | CreateNewProfileProxyReadWaveAction
-  | CreateNewProfileProxyCreateWaveParticipationDropAction;
+  | ApiCreateNewProfileProxyAllocateRepAction
+  | ApiCreateNewProfileProxyAllocateCicAction
+  | ApiCreateNewProfileProxyCreateWaveAction
+  | ApiCreateNewProfileProxyReadWaveAction
+  | ApiCreateNewProfileProxyCreateWaveParticipationDropAction;

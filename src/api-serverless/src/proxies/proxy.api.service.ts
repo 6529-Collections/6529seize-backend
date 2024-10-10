@@ -5,7 +5,7 @@ import {
   ProfilesService
 } from '../../../profiles/profiles.service';
 import { Time } from '../../../time';
-import { CreateNewProfileProxy } from '../generated/models/CreateNewProfileProxy';
+import { ApiCreateNewProfileProxy } from '../generated/models/ApiCreateNewProfileProxy';
 import { ProfileProxyEntity } from '../../../entities/IProfileProxy';
 import { randomUUID } from 'crypto';
 import {
@@ -18,12 +18,11 @@ import { ProfileAndConsolidations } from '../../../profiles/profile.types';
 
 import { ProxyApiRequestAction } from './proxies.api.types';
 import {
-  ApiProfileProxyActionType,
-  ProfileProxyActionEntity
+  ProfileProxyActionEntity,
+  ProfileProxyActionType
 } from '../../../entities/IProfileProxyAction';
 import { assertUnreachable } from '../../../helpers';
-import { ProfileProxyActionType } from '../generated/models/ProfileProxyActionType';
-import { ProfileProxy } from '../generated/models/ProfileProxy';
+import { ApiProfileProxy } from '../generated/models/ApiProfileProxy';
 import { profileProxiesMapper, ProfileProxiesMapper } from './proxies.mapper';
 import { AcceptActionRequestActionEnum } from '../generated/models/AcceptActionRequest';
 import {
@@ -31,26 +30,27 @@ import {
   ProfileActivityLogsDb
 } from '../../../profileActivityLogs/profile-activity-logs.db';
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
-import { ProfileProxyAction } from '../generated/models/ProfileProxyAction';
+import { ApiProfileProxyActionType } from '../generated/models/ApiProfileProxyActionType';
+import { ApiProfileProxyAction } from '../generated/models/ApiProfileProxyAction';
 
-const ACTION_MAP: Record<ProfileProxyActionType, ApiProfileProxyActionType> = {
-  [ProfileProxyActionType.AllocateRep]: ApiProfileProxyActionType.ALLOCATE_REP,
-  [ProfileProxyActionType.AllocateCic]: ApiProfileProxyActionType.ALLOCATE_CIC,
-  [ProfileProxyActionType.CreateWave]: ApiProfileProxyActionType.CREATE_WAVE,
-  [ProfileProxyActionType.ReadWave]: ApiProfileProxyActionType.READ_WAVE,
-  [ProfileProxyActionType.CreateDropToWave]:
-    ApiProfileProxyActionType.CREATE_DROP_TO_WAVE,
-  [ProfileProxyActionType.RateWaveDrop]:
-    ApiProfileProxyActionType.RATE_WAVE_DROP
+const ACTION_MAP: Record<ApiProfileProxyActionType, ProfileProxyActionType> = {
+  [ApiProfileProxyActionType.AllocateRep]: ProfileProxyActionType.ALLOCATE_REP,
+  [ApiProfileProxyActionType.AllocateCic]: ProfileProxyActionType.ALLOCATE_CIC,
+  [ApiProfileProxyActionType.CreateWave]: ProfileProxyActionType.CREATE_WAVE,
+  [ApiProfileProxyActionType.ReadWave]: ProfileProxyActionType.READ_WAVE,
+  [ApiProfileProxyActionType.CreateDropToWave]:
+    ProfileProxyActionType.CREATE_DROP_TO_WAVE,
+  [ApiProfileProxyActionType.RateWaveDrop]:
+    ProfileProxyActionType.RATE_WAVE_DROP
 };
 
-const ACTION_HAVE_CREDIT: Record<ApiProfileProxyActionType, boolean> = {
-  [ApiProfileProxyActionType.ALLOCATE_REP]: true,
-  [ApiProfileProxyActionType.ALLOCATE_CIC]: true,
-  [ApiProfileProxyActionType.CREATE_WAVE]: false,
-  [ApiProfileProxyActionType.READ_WAVE]: false,
-  [ApiProfileProxyActionType.CREATE_DROP_TO_WAVE]: false,
-  [ApiProfileProxyActionType.RATE_WAVE_DROP]: false
+const ACTION_HAVE_CREDIT: Record<ProfileProxyActionType, boolean> = {
+  [ProfileProxyActionType.ALLOCATE_REP]: true,
+  [ProfileProxyActionType.ALLOCATE_CIC]: true,
+  [ProfileProxyActionType.CREATE_WAVE]: false,
+  [ProfileProxyActionType.READ_WAVE]: false,
+  [ProfileProxyActionType.CREATE_DROP_TO_WAVE]: false,
+  [ProfileProxyActionType.RATE_WAVE_DROP]: false
 };
 
 interface CanDoAcceptancePayload {
@@ -113,7 +113,7 @@ export class ProfileProxyApiService {
   }: {
     readonly id: string;
     readonly connection?: ConnectionWrapper<any>;
-  }): Promise<ProfileProxy> {
+  }): Promise<ApiProfileProxy> {
     const profileProxy = await this.profileProxiesDb.findProfileProxyById({
       id,
       connection
@@ -140,7 +140,7 @@ export class ProfileProxyApiService {
     createProfileProxyRequest
   }: {
     readonly createProfileProxyRequest: ProfileProxyEntity;
-  }): Promise<ProfileProxy> {
+  }): Promise<ApiProfileProxy> {
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         await this.profileProxiesDb.insertProfileProxy({
@@ -173,9 +173,9 @@ export class ProfileProxyApiService {
     params: { target_id },
     grantorProfile: { external_id: created_by_profile_id }
   }: {
-    readonly params: CreateNewProfileProxy;
+    readonly params: ApiCreateNewProfileProxy;
     readonly grantorProfile: Profile;
-  }): Promise<ProfileProxy> {
+  }): Promise<ApiProfileProxy> {
     const target = await this.getTargetOrThrow({
       target_id
     });
@@ -205,7 +205,7 @@ export class ProfileProxyApiService {
     proxy_id
   }: {
     readonly proxy_id: string;
-  }): Promise<ProfileProxy> {
+  }): Promise<ApiProfileProxy> {
     return await this.findProfileProxyByIdOrThrow({
       id: proxy_id
     });
@@ -215,7 +215,7 @@ export class ProfileProxyApiService {
     target_id
   }: {
     readonly target_id: string;
-  }): Promise<ProfileProxy[]> {
+  }): Promise<ApiProfileProxy[]> {
     const actions =
       await this.profileProxiesDb.findProfileProxyReceivedActionsByProfileId({
         target_id
@@ -237,7 +237,7 @@ export class ProfileProxyApiService {
     created_by
   }: {
     readonly created_by: string;
-  }): Promise<ProfileProxy[]> {
+  }): Promise<ApiProfileProxy[]> {
     const actions =
       await this.profileProxiesDb.findProfileProxyGrantedActionsByProfileId({
         created_by
@@ -258,7 +258,7 @@ export class ProfileProxyApiService {
     profile_id
   }: {
     readonly profile_id: string;
-  }): Promise<ProfileProxy[]> {
+  }): Promise<ApiProfileProxy[]> {
     const [receivedProxies, grantedProxies] = await Promise.all([
       this.getProfileReceivedProfileProxies({ target_id: profile_id }),
       this.getProfileGrantedProfileProxies({ created_by: profile_id })
@@ -274,7 +274,7 @@ export class ProfileProxyApiService {
   }: {
     readonly granted_by_profile_id: string;
     readonly granted_to_profile_id: string;
-  }): Promise<ProfileProxy | null> {
+  }): Promise<ApiProfileProxy | null> {
     const actions =
       await this.profileProxiesDb.findProfileProxyGrantedActionsByGrantorAndGrantee(
         {
@@ -302,7 +302,7 @@ export class ProfileProxyApiService {
   }: {
     readonly granted_by_profile_id: string;
     readonly granted_to_profile_id: string;
-    readonly action: ApiProfileProxyActionType;
+    readonly action: ProfileProxyActionType;
   }): Promise<boolean> {
     const proxy = await this.getProxyByGrantedByAndGrantedTo({
       granted_by_profile_id,
@@ -357,7 +357,7 @@ export class ProfileProxyApiService {
     }: {
       readonly profileProxyAction: NewProfileProxyAction;
     },
-    proxy: ProfileProxy
+    proxy: ApiProfileProxy
   ): Promise<ProfileProxyActionEntity> {
     return await this.profileProxiesDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -394,7 +394,7 @@ export class ProfileProxyApiService {
     proxy,
     action
   }: {
-    readonly proxy: ProfileProxy;
+    readonly proxy: ApiProfileProxy;
     readonly action: ProxyApiRequestAction;
   }): Promise<ProfileProxyActionEntity> {
     const action_exists = await this.isActionExists({
@@ -431,7 +431,7 @@ export class ProfileProxyApiService {
     action_id: string;
     proxy_id: string;
   }): Promise<{
-    profileProxy: ProfileProxy;
+    profileProxy: ApiProfileProxy;
     profileProxyAction: ProfileProxyActionEntity;
   }> {
     const [profileProxy, profileProxyAction] = await Promise.all([
@@ -830,7 +830,7 @@ export class ProfileProxyApiService {
   }
 }
 
-export function isProxyActionActive(action: ProfileProxyAction): boolean {
+export function isProxyActionActive(action: ApiProfileProxyAction): boolean {
   const now = Time.now();
   return (
     !action.end_time ||

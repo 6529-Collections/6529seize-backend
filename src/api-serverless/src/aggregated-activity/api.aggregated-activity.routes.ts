@@ -8,7 +8,7 @@ import {
   returnJsonResult,
   returnPaginatedResult
 } from '../api-helpers';
-import { MetricsContent, MetricsCollector } from '../tdh/api.tdh.db';
+import { MetricsCollector, MetricsContent } from '../tdh/api.tdh.db';
 import { resolveEnum } from '../../../helpers';
 import {
   fetchAggregatedActivity,
@@ -19,9 +19,9 @@ import {
 } from './api.aggregated-activity.db';
 import { NotFoundException } from '../../../exceptions';
 import { ApiResponse } from '../api-response';
-import { AggregatedActivityPage } from '../generated/models/AggregatedActivityPage';
-import { AggregatedActivity } from '../generated/models/AggregatedActivity';
-import { AggregatedActivityMemes } from '../generated/models/AggregatedActivityMemes';
+import { ApiAggregatedActivityPage } from '../generated/models/ApiAggregatedActivityPage';
+import { ApiAggregatedActivity } from '../generated/models/ApiAggregatedActivity';
+import { ApiAggregatedActivityMemes } from '../generated/models/ApiAggregatedActivityMemes';
 
 const router = asyncRouter();
 
@@ -60,7 +60,7 @@ router.get(
         download_all?: boolean;
       }
     >,
-    res: Response<ApiResponse<AggregatedActivityPage>>
+    res: Response<ApiResponse<ApiAggregatedActivityPage>>
   ) {
     let page = req.query.page ?? 1;
     let pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
@@ -108,7 +108,7 @@ router.get(
       any,
       {}
     >,
-    res: Response<ApiResponse<AggregatedActivity>>
+    res: Response<ApiResponse<ApiAggregatedActivity>>
   ) {
     const consolidationKey = req.params.consolidation_key;
 
@@ -135,7 +135,7 @@ router.get(
       any,
       {}
     >,
-    res: Response<ApiResponse<AggregatedActivityMemes>>
+    res: Response<ApiResponse<ApiAggregatedActivityMemes>>
   ) {
     const consolidationKey = req.params.consolidation_key;
     const result = await fetchMemesAggregatedActivityForConsolidationKey(

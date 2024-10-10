@@ -4,8 +4,8 @@ import {
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { ConnectionWrapper } from '../../../sql-executor';
-import { ProfileMin } from '../generated/models/ProfileMin';
-import { IdentitySubscriptionTargetAction } from '../generated/models/IdentitySubscriptionTargetAction';
+import { ApiProfileMin } from '../generated/models/ApiProfileMin';
+import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 import { resolveEnumOrThrow } from '../../../helpers';
 import { Timer } from '../../../time';
@@ -22,7 +22,7 @@ export class ProfilesApiService {
       timer
     }: { ids: string[]; authenticatedProfileId?: string | null; timer?: Timer },
     connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, ProfileMin>> {
+  ): Promise<Record<string, ApiProfileMin>> {
     timer?.start('profilesApiService->getProfileMinsByIds');
     const [profileOverviews, subscribedActions] = await Promise.all([
       profilesService.getProfileOverviewsByIds(ids, connection),
@@ -35,7 +35,7 @@ export class ProfilesApiService {
         subscribed_actions: subscribedActions[profile.id] || []
       };
       return acc;
-    }, {} as Record<string, ProfileMin>);
+    }, {} as Record<string, ApiProfileMin>);
   }
 
   private async getSubscribedActions(
@@ -58,10 +58,10 @@ export class ProfilesApiService {
           .then((result) =>
             Object.entries(result).reduce((acc, [profileId, actions]) => {
               acc[profileId] = actions.map((it) =>
-                resolveEnumOrThrow(IdentitySubscriptionTargetAction, it)
+                resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
               );
               return acc;
-            }, {} as Record<string, IdentitySubscriptionTargetAction[]>)
+            }, {} as Record<string, ApiIdentitySubscriptionTargetAction[]>)
           )
       : {};
   }

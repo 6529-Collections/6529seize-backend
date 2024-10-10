@@ -1,5 +1,5 @@
 import { feedDb, FeedDb } from './feed.db';
-import { FeedItem } from '../generated/models/FeedItem';
+import { ApiFeedItem } from '../generated/models/ApiFeedItem';
 import {
   userGroupsService,
   UserGroupsService
@@ -10,13 +10,13 @@ import {
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
 import { assertUnreachable, distinct } from '../../../helpers';
-import { Drop } from '../generated/models/Drop';
-import { Wave } from '../generated/models/Wave';
+import { ApiDrop } from '../generated/models/ApiDrop';
+import { ApiWave } from '../generated/models/ApiWave';
 import { dropsService } from '../drops/drops.api.service';
 import { AuthenticationContext } from '../../../auth-context';
 import { waveApiService } from '../waves/wave.api.service';
 import { ForbiddenException } from '../../../exceptions';
-import { FeedItemType } from '../generated/models/FeedItemType';
+import { ApiFeedItemType } from '../generated/models/ApiFeedItemType';
 
 export class FeedApiService {
   constructor(
@@ -27,7 +27,7 @@ export class FeedApiService {
   async getFeed(
     request: FeedApiRequest,
     authenticationContext: AuthenticationContext
-  ): Promise<FeedItem[]> {
+  ): Promise<ApiFeedItem[]> {
     const authenticatedUserId = authenticationContext.getActingAsId();
     if (!authenticatedUserId) {
       throw new ForbiddenException(`Create a profile before accessing feed`);
@@ -111,7 +111,7 @@ export class FeedApiService {
     activityEvents: ActivityEventEntity[],
     authenticationContext: AuthenticationContext,
     groupIdsUserIsEligibleFor: string[]
-  ): Promise<FeedItem[]> {
+  ): Promise<ApiFeedItem[]> {
     const dropsIdsNeeded: string[] = activityEvents
       .filter((it) => {
         const action = it.action;
@@ -150,17 +150,17 @@ export class FeedApiService {
       authenticationContext
     });
     const feedItems = activityEvents
-      .map<FeedItem | null>((it) => {
+      .map<ApiFeedItem | null>((it) => {
         return this.activityEventToFeedItem({
           activityEvent: it,
           waves,
           drops
         });
       })
-      .filter((it) => !!it) as FeedItem[];
+      .filter((it) => !!it) as ApiFeedItem[];
     const seenReplyPairs = new Set<string>();
     return feedItems.reduce((acc, it) => {
-      if (it.type === FeedItemType.DropReplied) {
+      if (it.type === ApiFeedItemType.DropReplied) {
         if (!it.item.drop?.id || !it.item.reply?.id) {
           return acc;
         }
@@ -172,7 +172,7 @@ export class FeedApiService {
       }
       acc.push(it);
       return acc;
-    }, [] as FeedItem[]);
+    }, [] as ApiFeedItem[]);
   }
 
   private activityEventToFeedItem({
@@ -181,9 +181,9 @@ export class FeedApiService {
     drops
   }: {
     activityEvent: ActivityEventEntity;
-    waves: Record<string, Wave>;
-    drops: Record<string, Drop>;
-  }): FeedItem | null {
+    waves: Record<string, ApiWave>;
+    drops: Record<string, ApiDrop>;
+  }): ApiFeedItem | null {
     const action = activityEvent.action;
     const eventId = parseInt(`${activityEvent.id}`);
     switch (action) {
@@ -192,7 +192,7 @@ export class FeedApiService {
         return {
           item: waves[waveId],
           serial_no: eventId,
-          type: FeedItemType.WaveCreated
+          type: ApiFeedItemType.WaveCreated
         };
       }
       case ActivityEventAction.DROP_CREATED: {
@@ -209,13 +209,13 @@ export class FeedApiService {
               drop: drops[drop.reply_to.drop_id]
             },
             serial_no: eventId,
-            type: FeedItemType.DropReplied
+            type: ApiFeedItemType.DropReplied
           };
         }
         return {
           item: drop,
           serial_no: eventId,
-          type: FeedItemType.DropCreated
+          type: ApiFeedItemType.DropCreated
         };
       }
       case ActivityEventAction.DROP_REPLIED: {
@@ -228,7 +228,7 @@ export class FeedApiService {
             reply: drops[replyId]
           },
           serial_no: eventId,
-          type: FeedItemType.DropReplied
+          type: ApiFeedItemType.DropReplied
         };
       }
       default: {
@@ -250,8 +250,8 @@ export class FeedApiService {
     replyDropsNeeded: string[];
     authenticationContext: AuthenticationContext;
   }): Promise<{
-    drops: Record<string, Drop>;
-    waves: Record<string, Wave>;
+    drops: Record<string, ApiDrop>;
+    waves: Record<string, ApiWave>;
   }> {
     const [drops, waves] = await Promise.all([
       dropsService

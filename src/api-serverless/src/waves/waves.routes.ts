@@ -6,44 +6,44 @@ import {
 } from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
-import { Wave } from '../generated/models/Wave';
-import { CreateNewWave } from '../generated/models/CreateNewWave';
+import { ApiWave } from '../generated/models/ApiWave';
+import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import * as Joi from 'joi';
-import { CreateNewWaveScope } from '../generated/models/CreateNewWaveScope';
-import { CreateNewWaveVisibilityConfig } from '../generated/models/CreateNewWaveVisibilityConfig';
-import { CreateNewWaveVotingConfig } from '../generated/models/CreateNewWaveVotingConfig';
-import { WaveCreditType } from '../generated/models/WaveCreditType';
-import { WaveCreditScope } from '../generated/models/WaveCreditScope';
-import { IntRange } from '../generated/models/IntRange';
-import { CreateNewWaveParticipationConfig } from '../generated/models/CreateNewWaveParticipationConfig';
-import { WaveRequiredMetadata } from '../generated/models/WaveRequiredMetadata';
-import { WaveConfig } from '../generated/models/WaveConfig';
-import { WaveType } from '../generated/models/WaveType';
+import { ApiCreateNewWaveScope } from '../generated/models/ApiCreateNewWaveScope';
+import { ApiCreateNewWaveVisibilityConfig } from '../generated/models/ApiCreateNewWaveVisibilityConfig';
+import { ApiCreateNewWaveVotingConfig } from '../generated/models/ApiCreateNewWaveVotingConfig';
+import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
+import { ApiWaveCreditScope } from '../generated/models/ApiWaveCreditScope';
+import { ApiIntRange } from '../generated/models/ApiIntRange';
+import { ApiCreateNewWaveParticipationConfig } from '../generated/models/ApiCreateNewWaveParticipationConfig';
+import { ApiWaveRequiredMetadata } from '../generated/models/ApiWaveRequiredMetadata';
+import { ApiWaveConfig } from '../generated/models/ApiWaveConfig';
+import { ApiWaveType } from '../generated/models/ApiWaveType';
 import { parseIntOrNull, resolveEnum } from '../../../helpers';
-import { WaveOutcome } from '../generated/models/WaveOutcome';
+import { ApiWaveOutcome } from '../generated/models/ApiWaveOutcome';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { waveApiService } from './wave.api.service';
 import { SearchWavesParams } from './waves.api.db';
-import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { userGroupsService } from '../community-members/user-groups.service';
 import { NewWaveDropSchema } from '../drops/drop.validator';
-import { WaveParticipationRequirement } from '../generated/models/WaveParticipationRequirement';
-import { WaveOutcomeType } from '../generated/models/WaveOutcomeType';
-import { WaveOutcomeSubType } from '../generated/models/WaveOutcomeSubType';
-import { WaveOutcomeCredit } from '../generated/models/WaveOutcomeCredit';
+import { ApiWaveParticipationRequirement } from '../generated/models/ApiWaveParticipationRequirement';
+import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
+import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType';
+import { ApiWaveOutcomeCredit } from '../generated/models/ApiWaveOutcomeCredit';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
-import { WaveSubscriptionActions } from '../generated/models/WaveSubscriptionActions';
-import { WaveSubscriptionTargetAction } from '../generated/models/WaveSubscriptionTargetAction';
+import { ApiWaveSubscriptionActions } from '../generated/models/ApiWaveSubscriptionActions';
+import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
 import { profilesService } from '../../../profiles/profiles.service';
 import { Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
-import { UpdateWaveRequest } from '../generated/models/UpdateWaveRequest';
+import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { dropsService } from '../drops/drops.api.service';
-import { WaveDropsFeed } from '../generated/models/WaveDropsFeed';
-import { DropSearchStrategy } from '../generated/models/DropSearchStrategy';
-import { DropType } from '../generated/models/DropType';
+import { ApiWaveDropsFeed } from '../generated/models/ApiWaveDropsFeed';
+import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
+import { ApiDropType } from '../generated/models/ApiDropType';
 
 const router = asyncRouter();
 
@@ -51,8 +51,8 @@ router.post(
   '/',
   needsAuthenticatedUser(),
   async (
-    req: Request<any, any, CreateNewWave, any, any>,
-    res: Response<ApiResponse<Wave>>
+    req: Request<any, any, ApiCreateNewWave, any, any>,
+    res: Response<ApiResponse<ApiWave>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -64,7 +64,7 @@ router.post(
     if (
       authenticationContext.isAuthenticatedAsProxy() &&
       !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.CREATE_WAVE
+        ProfileProxyActionType.CREATE_WAVE
       ]
     ) {
       throw new ForbiddenException(`Proxy is not allowed to create waves`);
@@ -79,8 +79,8 @@ router.post(
   '/:id',
   needsAuthenticatedUser(),
   async (
-    req: Request<{ id: string }, any, UpdateWaveRequest, any, any>,
-    res: Response<ApiResponse<Wave>>
+    req: Request<{ id: string }, any, ApiUpdateWaveRequest, any, any>,
+    res: Response<ApiResponse<ApiWave>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -101,7 +101,7 @@ router.get(
   maybeAuthenticatedUser(),
   async (
     req: Request<any, any, any, SearchWavesParams, any>,
-    res: Response<ApiResponse<Wave[]>>
+    res: Response<ApiResponse<ApiWave[]>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -119,7 +119,7 @@ router.get(
   maybeAuthenticatedUser(),
   async (
     req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<Wave>>
+    res: Response<ApiResponse<ApiWave>>
   ) => {
     const { id } = req.params;
     const timer = Timer.getFromRequest(req);
@@ -129,7 +129,7 @@ router.get(
       !profileId ||
       (authenticationContext.isAuthenticatedAsProxy() &&
         !authenticationContext.activeProxyActions[
-          ApiProfileProxyActionType.READ_WAVE
+          ProfileProxyActionType.READ_WAVE
         ])
         ? []
         : await userGroupsService.getGroupsUserIsEligibleFor(profileId);
@@ -174,8 +174,8 @@ router.post(
   '/:id/subscriptions',
   needsAuthenticatedUser(),
   async (
-    req: Request<{ id: string }, any, WaveSubscriptionActions, any, any>,
-    res: Response<ApiResponse<WaveSubscriptionActions>>
+    req: Request<{ id: string }, any, ApiWaveSubscriptionActions, any, any>,
+    res: Response<ApiResponse<ApiWaveSubscriptionActions>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     const authenticatedProfileId = authenticationContext.getActingAsId();
@@ -185,7 +185,7 @@ router.post(
     if (
       authenticationContext.isAuthenticatedAsProxy() &&
       !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.READ_WAVE
+        ProfileProxyActionType.READ_WAVE
       ]
     ) {
       throw new ForbiddenException(
@@ -211,8 +211,8 @@ router.delete(
   '/:id/subscriptions',
   needsAuthenticatedUser(),
   async (
-    req: Request<{ id: string }, any, WaveSubscriptionActions, any, any>,
-    res: Response<ApiResponse<WaveSubscriptionActions>>
+    req: Request<{ id: string }, any, ApiWaveSubscriptionActions, any, any>,
+    res: Response<ApiResponse<ApiWaveSubscriptionActions>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     const authenticatedProfileId = authenticationContext.getActingAsId();
@@ -222,7 +222,7 @@ router.delete(
     if (
       authenticationContext.isAuthenticatedAsProxy() &&
       !authenticationContext.activeProxyActions[
-        ApiProfileProxyActionType.READ_WAVE
+        ProfileProxyActionType.READ_WAVE
       ]
     ) {
       throw new ForbiddenException(
@@ -258,11 +258,11 @@ router.get(
         serial_no_less_than?: string;
         serial_no_limit?: string;
         search_strategy?: string;
-        drop_type?: DropType;
+        drop_type?: ApiDropType;
       },
       any
     >,
-    res: Response<ApiResponse<WaveDropsFeed>>
+    res: Response<ApiResponse<ApiWaveDropsFeed>>
   ) => {
     const { id } = req.params;
     const timer = Timer.getFromRequest(req);
@@ -274,12 +274,12 @@ router.get(
       serialNoLessThan ?? parseIntOrNull(req.query.serial_no_limit);
     const searchStrategy =
       serialNoLessThan === null
-        ? resolveEnum(DropSearchStrategy, req.query.search_strategy) ??
-          DropSearchStrategy.Older
-        : DropSearchStrategy.Older;
+        ? resolveEnum(ApiDropSearchStrategy, req.query.search_strategy) ??
+          ApiDropSearchStrategy.Older
+        : ApiDropSearchStrategy.Older;
     const drop_type_str = req.query.drop_type as string | undefined;
     const drop_type = drop_type_str
-      ? resolveEnum(DropType, drop_type_str) ?? null
+      ? resolveEnum(ApiDropType, drop_type_str) ?? null
       : null;
     const result = await dropsService.findWaveDropsFeed(
       {
@@ -296,7 +296,7 @@ router.get(
   }
 );
 
-const IntRangeSchema = Joi.object<IntRange>({
+const IntRangeSchema = Joi.object<ApiIntRange>({
   min: Joi.number().integer().required().allow(null),
   max: Joi.number().integer().required().allow(null)
 })
@@ -312,29 +312,29 @@ const IntRangeSchema = Joi.object<IntRange>({
     'min.max.flip': `There's a range in request where max is less than min. This is not allowed.`
   });
 
-const WaveScopeSchema = Joi.object<CreateNewWaveScope>({
+const WaveScopeSchema = Joi.object<ApiCreateNewWaveScope>({
   group_id: Joi.string().required().allow(null)
 });
 
-const WaveVisibilitySchema = Joi.object<CreateNewWaveVisibilityConfig>({
+const WaveVisibilitySchema = Joi.object<ApiCreateNewWaveVisibilityConfig>({
   scope: WaveScopeSchema.required()
 });
 
-const WaveVotingSchema = Joi.object<CreateNewWaveVotingConfig>({
+const WaveVotingSchema = Joi.object<ApiCreateNewWaveVotingConfig>({
   scope: WaveScopeSchema.required(),
   credit_type: Joi.string()
-    .allow(...Object.values(WaveCreditType))
+    .allow(...Object.values(ApiWaveCreditType))
     .required(),
   credit_scope: Joi.string()
-    .allow(...Object.values(WaveCreditScope))
+    .allow(...Object.values(ApiWaveCreditScope))
     .required(),
   credit_category: Joi.when('credit_type', {
-    is: Joi.string().valid(WaveCreditType.Rep),
+    is: Joi.string().valid(ApiWaveCreditType.Rep),
     then: Joi.string().required().allow(null).max(100),
     otherwise: Joi.valid(null)
   }),
   creditor_id: Joi.when('credit_type', {
-    is: Joi.string().valid(WaveCreditType.Rep),
+    is: Joi.string().valid(ApiWaveCreditType.Rep),
     then: Joi.string().required().allow(null),
     otherwise: Joi.valid(null)
   }),
@@ -342,41 +342,43 @@ const WaveVotingSchema = Joi.object<CreateNewWaveVotingConfig>({
   period: IntRangeSchema.required().allow(null)
 });
 
-const WaveRequiredMetadataSchema = Joi.object<WaveRequiredMetadata>({
+const WaveRequiredMetadataSchema = Joi.object<ApiWaveRequiredMetadata>({
   name: Joi.string().required().max(250).min(1),
   type: Joi.string()
     .required()
-    .allow(...Object.values(WaveParticipationRequirement))
+    .allow(...Object.values(ApiWaveParticipationRequirement))
 });
 
-const WaveParticipationSchema = Joi.object<CreateNewWaveParticipationConfig>({
-  scope: WaveScopeSchema.required(),
-  no_of_applications_allowed_per_participant: Joi.number()
-    .integer()
-    .required()
-    .allow(null),
-  required_metadata: Joi.array()
-    .required()
-    .min(0)
-    .items(WaveRequiredMetadataSchema),
-  required_media: Joi.array().items(
-    Joi.string().valid(...Object.values(WaveParticipationRequirement))
-  ),
-  signature_required: Joi.boolean().required(),
-  period: IntRangeSchema.required().allow(null)
-});
+const WaveParticipationSchema = Joi.object<ApiCreateNewWaveParticipationConfig>(
+  {
+    scope: WaveScopeSchema.required(),
+    no_of_applications_allowed_per_participant: Joi.number()
+      .integer()
+      .required()
+      .allow(null),
+    required_metadata: Joi.array()
+      .required()
+      .min(0)
+      .items(WaveRequiredMetadataSchema),
+    required_media: Joi.array().items(
+      Joi.string().valid(...Object.values(ApiWaveParticipationRequirement))
+    ),
+    signature_required: Joi.boolean().required(),
+    period: IntRangeSchema.required().allow(null)
+  }
+);
 
-const WaveConfigSchema = Joi.object<WaveConfig>({
+const WaveConfigSchema = Joi.object<ApiWaveConfig>({
   type: Joi.string()
     .required()
-    .allow(...Object.values(WaveType)),
+    .allow(...Object.values(ApiWaveType)),
   winning_thresholds: Joi.when('type', {
-    is: Joi.string().valid(WaveType.Approve),
+    is: Joi.string().valid(ApiWaveType.Approve),
     then: IntRangeSchema.required().or('min', 'max'),
     otherwise: Joi.valid(null)
   }),
   max_winners: Joi.when('type', {
-    is: Joi.string().valid(WaveType.Rank),
+    is: Joi.string().valid(ApiWaveType.Rank),
     then: Joi.number().integer().required().allow(null).min(1),
     otherwise: Joi.valid(null)
   }),
@@ -385,27 +387,27 @@ const WaveConfigSchema = Joi.object<WaveConfig>({
   admin_group: WaveScopeSchema.required()
 });
 
-const WaveOutcomeSchema = Joi.object<WaveOutcome>({
+const WaveOutcomeSchema = Joi.object<ApiWaveOutcome>({
   type: Joi.string()
     .required()
-    .valid(...Object.values(WaveOutcomeType)),
+    .valid(...Object.values(ApiWaveOutcomeType)),
   subtype: Joi.when('type', {
-    is: WaveOutcomeType.Automatic,
+    is: ApiWaveOutcomeType.Automatic,
     then: Joi.string()
       .required()
-      .valid(...Object.values(WaveOutcomeSubType)),
+      .valid(...Object.values(ApiWaveOutcomeSubType)),
     otherwise: Joi.optional().valid(null)
   }),
   description: Joi.string().required().max(250).min(1),
   credit: Joi.when('subtype', {
-    is: WaveOutcomeSubType.CreditDistribution,
+    is: ApiWaveOutcomeSubType.CreditDistribution,
     then: Joi.string()
       .required()
-      .valid(...Object.values(WaveOutcomeCredit)),
+      .valid(...Object.values(ApiWaveOutcomeCredit)),
     otherwise: Joi.optional().valid(null)
   }),
   rep_category: Joi.when('credit', {
-    is: WaveOutcomeCredit.Rep,
+    is: ApiWaveOutcomeCredit.Rep,
     then: Joi.string()
       .required()
       .min(3)
@@ -417,12 +419,12 @@ const WaveOutcomeSchema = Joi.object<WaveOutcome>({
     otherwise: Joi.optional().valid(null)
   }),
   amount: Joi.when('subtype', {
-    is: WaveOutcomeSubType.CreditDistribution,
+    is: ApiWaveOutcomeSubType.CreditDistribution,
     then: Joi.number().integer().required().min(1),
     otherwise: Joi.optional().valid(null)
   }),
   distribution: Joi.when('subtype', {
-    is: WaveOutcomeSubType.CreditDistribution,
+    is: ApiWaveOutcomeSubType.CreditDistribution,
     then: Joi.array()
       .optional()
       .items(Joi.number().integer().required().min(0)),
@@ -443,18 +445,20 @@ const waveSchemaBaseValidations = {
   outcomes: Joi.array().required().min(0).items(WaveOutcomeSchema)
 };
 
-const WaveSchema = Joi.object<CreateNewWave>({
+const WaveSchema = Joi.object<ApiCreateNewWave>({
   ...waveSchemaBaseValidations,
   description_drop: NewWaveDropSchema.required()
 });
 
-const UpdateWaveSchema = Joi.object<UpdateWaveRequest>({
+const UpdateWaveSchema = Joi.object<ApiUpdateWaveRequest>({
   ...waveSchemaBaseValidations
 });
 
-const WaveSubscriptionActionsSchema = Joi.object<WaveSubscriptionActions>({
+const WaveSubscriptionActionsSchema = Joi.object<ApiWaveSubscriptionActions>({
   actions: Joi.array()
-    .items(Joi.string().valid(...Object.values(WaveSubscriptionTargetAction)))
+    .items(
+      Joi.string().valid(...Object.values(ApiWaveSubscriptionTargetAction))
+    )
     .required()
 });
 

@@ -1,15 +1,15 @@
 import * as Joi from 'joi';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
-import { DropReferencedNFT } from '../generated/models/DropReferencedNFT';
+import { ApiDropReferencedNFT } from '../generated/models/ApiDropReferencedNFT';
 import { WALLET_REGEX } from '../../../constants';
 import { DropMetadataEntity } from '../../../entities/IDrop';
-import { QuotedDrop } from '../generated/models/QuotedDrop';
-import { CreateDropPart } from '../generated/models/CreateDropPart';
-import { CreateDropRequest } from '../generated/models/CreateDropRequest';
-import { CreateWaveDropRequest } from '../generated/models/CreateWaveDropRequest';
-import { ReplyToDrop } from '../generated/models/ReplyToDrop';
-import { UpdateDropRequest } from '../generated/models/UpdateDropRequest';
-import { DropType } from '../generated/models/DropType';
+import { ApiQuotedDrop } from '../generated/models/ApiQuotedDrop';
+import { ApiCreateDropPart } from '../generated/models/ApiCreateDropPart';
+import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
+import { ApiCreateWaveDropRequest } from '../generated/models/ApiCreateWaveDropRequest';
+import { ApiReplyToDrop } from '../generated/models/ApiReplyToDrop';
+import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
+import { ApiDropType } from '../generated/models/ApiDropType';
 
 export interface ApiAddRatingToDropRequest {
   readonly rating: number;
@@ -24,13 +24,13 @@ export const ApiAddRatingToDropRequestSchema: Joi.ObjectSchema<ApiAddRatingToDro
     })
   });
 
-const NftSchema: Joi.ObjectSchema<DropReferencedNFT> = Joi.object({
+const NftSchema: Joi.ObjectSchema<ApiDropReferencedNFT> = Joi.object({
   contract: Joi.string().regex(WALLET_REGEX).lowercase(),
   token: Joi.string().regex(/^\d+$/),
   name: Joi.string().min(1)
 });
 
-const MentionedUserSchema: Joi.ObjectSchema<DropReferencedNFT> = Joi.object({
+const MentionedUserSchema: Joi.ObjectSchema<ApiDropReferencedNFT> = Joi.object({
   mentioned_profile_id: Joi.string().min(1).max(100).required(),
   handle_in_content: Joi.string().min(1).max(100).required()
 });
@@ -40,12 +40,12 @@ const MetadataSchema: Joi.ObjectSchema<DropMetadataEntity> = Joi.object({
   data_value: Joi.string().min(1).max(500).required()
 });
 
-const QuotedDropSchema: Joi.ObjectSchema<QuotedDrop> = Joi.object({
+const QuotedDropSchema: Joi.ObjectSchema<ApiQuotedDrop> = Joi.object({
   drop_id: Joi.string().required(),
   drop_part_id: Joi.number().integer().min(1).required()
 });
 
-const NewDropPartSchema: Joi.ObjectSchema<CreateDropPart> = Joi.object({
+const NewDropPartSchema: Joi.ObjectSchema<ApiCreateDropPart> = Joi.object({
   content: Joi.string().optional().default(null).allow(null),
   quoted_drop: QuotedDropSchema.optional().default(null).allow(null),
   media: Joi.array()
@@ -76,23 +76,25 @@ const baseDropFieldsValidators = {
   metadata: Joi.array().optional().items(MetadataSchema).default([])
 };
 
-export const NewDropSchema: Joi.ObjectSchema<CreateDropRequest> = Joi.object({
-  ...baseDropFieldsValidators,
-  reply_to: Joi.object<ReplyToDrop>({
-    drop_id: Joi.string().required(),
-    drop_part_id: Joi.number().integer().min(0)
-  })
-    .optional()
-    .allow(null),
-  wave_id: Joi.string().required(),
-  drop_type: Joi.string()
-    .optional()
-    .default(DropType.Chat)
-    .valid(...Object.values(DropType))
-});
+export const NewDropSchema: Joi.ObjectSchema<ApiCreateDropRequest> = Joi.object(
+  {
+    ...baseDropFieldsValidators,
+    reply_to: Joi.object<ApiReplyToDrop>({
+      drop_id: Joi.string().required(),
+      drop_part_id: Joi.number().integer().min(0)
+    })
+      .optional()
+      .allow(null),
+    wave_id: Joi.string().required(),
+    drop_type: Joi.string()
+      .optional()
+      .default(ApiDropType.Chat)
+      .valid(...Object.values(ApiDropType))
+  }
+);
 
-export const UpdateDropSchema: Joi.ObjectSchema<UpdateDropRequest> =
-  Joi.object<UpdateDropRequest>({ ...baseDropFieldsValidators });
+export const UpdateDropSchema: Joi.ObjectSchema<ApiUpdateDropRequest> =
+  Joi.object<ApiUpdateDropRequest>({ ...baseDropFieldsValidators });
 
-export const NewWaveDropSchema: Joi.ObjectSchema<CreateWaveDropRequest> =
+export const NewWaveDropSchema: Joi.ObjectSchema<ApiCreateWaveDropRequest> =
   Joi.object({ ...baseDropFieldsValidators });

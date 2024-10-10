@@ -7,18 +7,18 @@ import {
   returnPaginatedResult
 } from '../api-helpers';
 import {
+  fetchAllOwnerBalances,
   fetchMemesOwnerBalancesForConsolidationKey,
   fetchMemesOwnerBalancesForWallet,
   fetchOwnerBalancesForConsolidationKey,
-  fetchOwnerBalancesForWallet,
-  fetchAllOwnerBalances
+  fetchOwnerBalancesForWallet
 } from './api.owners-balances.db';
 import { NotFoundException } from '../../../exceptions';
 import { DEFAULT_PAGE_SIZE } from '../page-request';
 import { ApiResponse } from '../api-response';
-import { OwnerBalancePage } from '../generated/models/OwnerBalancePage';
-import { OwnerBalance } from '../generated/models/OwnerBalance';
-import { OwnerBalanceMemes } from '../generated/models/OwnerBalanceMemes';
+import { ApiOwnerBalancePage } from '../generated/models/ApiOwnerBalancePage';
+import { ApiOwnerBalance } from '../generated/models/ApiOwnerBalance';
+import { ApiOwnerBalanceMemes } from '../generated/models/ApiOwnerBalanceMemes';
 
 const router = asyncRouter();
 
@@ -37,7 +37,7 @@ router.get(
         page_size?: number;
       }
     >,
-    res: Response<ApiResponse<OwnerBalancePage>>
+    res: Response<ApiResponse<ApiOwnerBalancePage>>
   ) {
     const page = req.query.page ?? 1;
     const pageSize = req.query.page_size ?? DEFAULT_PAGE_SIZE;
@@ -56,9 +56,9 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
-    res: Response<ApiResponse<OwnerBalance>>
+    res: Response<ApiResponse<ApiOwnerBalance>>
   ) {
     const consolidationKey = req.params.consolidation_key;
 
@@ -83,9 +83,9 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
-    res: Response<ApiResponse<OwnerBalanceMemes>>
+    res: Response<ApiResponse<ApiOwnerBalanceMemes>>
   ) {
     const consolidationKey = req.params.consolidation_key;
 
@@ -110,7 +110,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {
@@ -132,7 +132,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {

@@ -61,7 +61,7 @@ import {
   profileProxyApiService,
   ProfileProxyApiService
 } from '../api-serverless/src/proxies/proxy.api.service';
-import { ApiProfileProxyActionType } from '../entities/IProfileProxyAction';
+import { ProfileProxyActionType } from '../entities/IProfileProxyAction';
 import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
 import process from 'node:process';
 import { deleteDrop, DeleteDropUseCase } from './delete-drop.use-case';
@@ -108,7 +108,7 @@ export class CreateOrUpdateDropUseCase {
         await this.proxyService.hasActiveProxyAction({
           granted_by_profile_id: authorId,
           granted_to_profile_id: resolvedProxyId,
-          action: ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+          action: ProfileProxyActionType.CREATE_DROP_TO_WAVE
         });
       if (!hasRequiredProxyAction) {
         throw new BadRequestException(

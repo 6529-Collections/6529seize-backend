@@ -2,7 +2,7 @@ import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
 import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 import { ApiResponse } from '../api-response';
-import { NotificationsResponse } from '../generated/models/NotificationsResponse';
+import { ApiNotificationsResponse } from '../generated/models/ApiNotificationsResponse';
 import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
@@ -26,7 +26,7 @@ router.get(
       },
       any
     >,
-    res: Response<ApiResponse<NotificationsResponse>>
+    res: Response<ApiResponse<ApiNotificationsResponse>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     if (!authenticationContext.getActingAsId()) {
