@@ -2,11 +2,11 @@ import { asyncRouter } from '../async.router';
 import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
-import { Wave } from '../generated/models/Wave';
+import { ApiWave } from '../generated/models/ApiWave';
 import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { waveApiService, WavesOverviewParams } from './wave.api.service';
-import { WavesOverviewType } from '../generated/models/WavesOverviewType';
+import { ApiWavesOverviewType } from '../generated/models/ApiWavesOverviewType';
 import { Timer } from '../../../time';
 
 const router = asyncRouter();
@@ -16,7 +16,7 @@ router.get(
   maybeAuthenticatedUser(),
   async (
     req: Request<any, any, any, WavesOverviewParams, any>,
-    res: Response<ApiResponse<Wave[]>>
+    res: Response<ApiResponse<ApiWave[]>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -37,7 +37,7 @@ const WavesOverviewParamsSchema = Joi.object<WavesOverviewParams>({
   offset: Joi.number().integer().optional().min(0).default(0),
   type: Joi.string()
     .required()
-    .allow(...Object.values(WavesOverviewType)),
+    .allow(...Object.values(ApiWavesOverviewType)),
   only_waves_followed_by_authenticated_user: Joi.boolean()
     .optional()
     .default(false)

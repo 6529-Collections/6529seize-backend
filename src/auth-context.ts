@@ -1,4 +1,4 @@
-import { ApiProfileProxyActionType } from './entities/IProfileProxyAction';
+import { ProfileProxyActionType } from './entities/IProfileProxyAction';
 import { resolveEnum } from './helpers';
 
 export class AuthenticationContext {
@@ -6,7 +6,7 @@ export class AuthenticationContext {
   readonly authenticatedProfileId: string | null;
   readonly roleProfileId: string | null;
   readonly activeProxyActions: Partial<
-    Record<ApiProfileProxyActionType, AuthenticatedProxyAction>
+    Record<ProfileProxyActionType, AuthenticatedProxyAction>
   >;
 
   public static notAuthenticated(): AuthenticationContext {
@@ -33,12 +33,12 @@ export class AuthenticationContext {
     this.authenticatedProfileId = authenticatedProfileId;
     this.roleProfileId = roleProfileId;
     this.activeProxyActions = activeProxyActions.reduce((acc, action) => {
-      const type = resolveEnum(ApiProfileProxyActionType, action.type);
+      const type = resolveEnum(ProfileProxyActionType, action.type);
       if (type) {
         acc[type] = action;
       }
       return acc;
-    }, {} as Record<ApiProfileProxyActionType, AuthenticatedProxyAction>);
+    }, {} as Record<ProfileProxyActionType, AuthenticatedProxyAction>);
   }
 
   public isUserFullyAuthenticated(): boolean {
@@ -59,7 +59,7 @@ export class AuthenticationContext {
       : this.authenticatedProfileId ?? null;
   }
 
-  public hasProxyAction(type: ApiProfileProxyActionType): boolean {
+  public hasProxyAction(type: ProfileProxyActionType): boolean {
     return !!this.activeProxyActions[type];
   }
 
@@ -81,7 +81,7 @@ export class AuthenticationContext {
 
 export interface AuthenticatedProxyAction {
   readonly id: string;
-  readonly type: ApiProfileProxyActionType;
+  readonly type: ProfileProxyActionType;
   readonly credit_amount: number | null;
   readonly credit_spent: number | null;
 }

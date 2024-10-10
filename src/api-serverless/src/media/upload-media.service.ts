@@ -3,8 +3,8 @@ import { getS3 } from '../../../s3.client';
 import { randomUUID } from 'crypto';
 import { Logger } from '../../../logging';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { CreateMediaUploadUrlRequest } from '../generated/models/CreateMediaUploadUrlRequest';
-import { CreateMediaUrlResponse } from '../generated/models/CreateMediaUrlResponse';
+import { ApiCreateMediaUploadUrlRequest } from '../generated/models/ApiCreateMediaUploadUrlRequest';
+import { ApiCreateMediaUrlResponse } from '../generated/models/ApiCreateMediaUrlResponse';
 
 export class UploadMediaService {
   private readonly logger = Logger.get(UploadMediaService.name);
@@ -16,9 +16,9 @@ export class UploadMediaService {
     file_name,
     author,
     file_size
-  }: CreateMediaUploadUrlRequest & {
+  }: ApiCreateMediaUploadUrlRequest & {
     author: string;
-  }): Promise<CreateMediaUrlResponse> {
+  }): Promise<ApiCreateMediaUrlResponse> {
     const fileExtension = this.getFileExtension(file_name);
     const mediaPath = `drops/author_${author}/${randomUUID()}${fileExtension}`;
     return await this.createSignedMediaUrl(mediaPath, content_type, file_size);
@@ -37,9 +37,9 @@ export class UploadMediaService {
     file_name,
     author,
     file_size
-  }: CreateMediaUploadUrlRequest & {
+  }: ApiCreateMediaUploadUrlRequest & {
     author: string;
-  }): Promise<CreateMediaUrlResponse> {
+  }): Promise<ApiCreateMediaUrlResponse> {
     const fileExtension = this.getFileExtension(file_name);
     const mediaPath = `waves/author_${author}/${randomUUID()}${fileExtension}`;
     return await this.createSignedMediaUrl(mediaPath, content_type, file_size);

@@ -16,11 +16,11 @@ import { getRaterInfoFromRequest, RateProfileRequest } from './rating.helper';
 import { profilesService } from '../../../profiles/profiles.service';
 import { RatingStats } from '../../../rates/ratings.db';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
-import { ChangeProfileRepRating } from '../generated/models/ChangeProfileRepRating';
-import { ChangeProfileRepRatingResponse } from '../generated/models/ChangeProfileRepRatingResponse';
-import { RepRating } from '../generated/models/RepRating';
-import { RatingWithProfileInfoAndLevel } from '../generated/models/RatingWithProfileInfoAndLevel';
-import { RatingWithProfileInfoAndLevelPage } from '../generated/models/RatingWithProfileInfoAndLevelPage';
+import { ApiChangeProfileRepRating } from '../generated/models/ApiChangeProfileRepRating';
+import { ApiChangeProfileRepRatingResponse } from '../generated/models/ApiChangeProfileRepRatingResponse';
+import { ApiRepRating } from '../generated/models/ApiRepRating';
+import { ApiRatingWithProfileInfoAndLevel } from '../generated/models/ApiRatingWithProfileInfoAndLevel';
+import { ApiRatingWithProfileInfoAndLevelPage } from '../generated/models/ApiRatingWithProfileInfoAndLevelPage';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -68,7 +68,7 @@ router.get(
   `/ratings/by-rater`,
   async function (
     req: GetProfileRatingsRequest,
-    res: Response<ApiResponse<RatingWithProfileInfoAndLevelPage>>
+    res: Response<ApiResponse<ApiRatingWithProfileInfoAndLevelPage>>
   ) {
     const result = await ratingsService.getRatingsByRatersForMatter({
       queryParams: req.query,
@@ -125,7 +125,7 @@ router.get(
       },
       any
     >,
-    res: Response<ApiResponse<RatingWithProfileInfoAndLevel[]>>
+    res: Response<ApiResponse<ApiRatingWithProfileInfoAndLevel[]>>
   ) {
     const targetIdendity = req.params.identity.toLowerCase();
     const category = req.query.category;
@@ -135,7 +135,7 @@ router.get(
 
     const resolvedTargetIdentity =
       await profilesService.resolveIdentityOrThrowNotFound(targetIdendity);
-    const response: RatingWithProfileInfoAndLevel[] =
+    const response: ApiRatingWithProfileInfoAndLevel[] =
       resolvedTargetIdentity.profile_id
         ? await ratingsService.getRatingsForMatterAndCategoryOnProfileWithRatersInfo(
             {
@@ -153,8 +153,8 @@ router.post(
   `/rating`,
   needsAuthenticatedUser(),
   async function (
-    req: RateProfileRequest<ChangeProfileRepRating>,
-    res: Response<ApiResponse<ChangeProfileRepRatingResponse>>
+    req: RateProfileRequest<ApiChangeProfileRepRating>,
+    res: Response<ApiResponse<ApiChangeProfileRepRatingResponse>>
   ) {
     const { amount, category } = getValidatedByJoiOrThrow(
       req.body,
@@ -198,7 +198,7 @@ router.get(
       { readonly from_identity?: string; readonly category: string },
       any
     >,
-    res: Response<ApiResponse<RepRating>>
+    res: Response<ApiResponse<ApiRepRating>>
   ) {
     const identity = req.params.identity;
     const { category, from_identity } = req.query;
@@ -226,7 +226,7 @@ router.get(
   }
 );
 
-const ChangeProfileRepRatingSchema: Joi.ObjectSchema<ChangeProfileRepRating> =
+const ChangeProfileRepRatingSchema: Joi.ObjectSchema<ApiChangeProfileRepRating> =
   Joi.object({
     amount: Joi.number().integer().required(),
     category: Joi.string().max(100).regex(REP_CATEGORY_PATTERN).messages({

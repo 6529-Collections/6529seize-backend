@@ -10,7 +10,7 @@ export class ProfileProxyActionEntity {
   readonly proxy_id!: string;
 
   @Column({ type: 'varchar', length: 100 })
-  readonly action_type!: ApiProfileProxyActionType;
+  readonly action_type!: ProfileProxyActionType;
 
   @Column({ type: 'bigint', nullable: true, default: null })
   readonly credit_amount!: number | null;
@@ -40,7 +40,7 @@ export class ProfileProxyActionEntity {
   readonly is_active!: boolean;
 }
 
-export enum ApiProfileProxyActionType {
+export enum ProfileProxyActionType {
   ALLOCATE_REP = 'ALLOCATE_REP',
   ALLOCATE_CIC = 'ALLOCATE_CIC',
   CREATE_WAVE = 'CREATE_WAVE',

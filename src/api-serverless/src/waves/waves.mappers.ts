@@ -1,4 +1,4 @@
-import { CreateNewWave } from '../generated/models/CreateNewWave';
+import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
 import { InsertWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { distinct, resolveEnumOrThrow } from '../../../helpers';
 import {
@@ -9,29 +9,29 @@ import {
   WaveRequiredMetadataItemType,
   WaveType
 } from '../../../entities/IWave';
-import { Wave } from '../generated/models/Wave';
-import { ProfileMin } from '../generated/models/ProfileMin';
-import { WaveCreditType as WaveCreditTypeApi } from '../generated/models/WaveCreditType';
-import { WaveCreditScope as WaveCreditScopeApi } from '../generated/models/WaveCreditScope';
-import { WaveType as WaveTypeApi } from '../generated/models/WaveType';
+import { ApiWave } from '../generated/models/ApiWave';
+import { ApiProfileMin } from '../generated/models/ApiProfileMin';
+import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
+import { ApiWaveCreditScope as WaveCreditScopeApi } from '../generated/models/ApiWaveCreditScope';
+import { ApiWaveType as WaveTypeApi } from '../generated/models/ApiWaveType';
 import {
   userGroupsService,
   UserGroupsService
 } from '../community-members/user-groups.service';
-import { Group } from '../generated/models/Group';
-import { WaveParticipationRequirement } from '../generated/models/WaveParticipationRequirement';
-import { Drop } from '../generated/models/Drop';
-import { WaveVotingConfig } from '../generated/models/WaveVotingConfig';
-import { WaveScope } from '../generated/models/WaveScope';
-import { WaveContributorOverview } from '../generated/models/WaveContributorOverview';
-import { WaveVisibilityConfig } from '../generated/models/WaveVisibilityConfig';
-import { WaveParticipationConfig } from '../generated/models/WaveParticipationConfig';
-import { WaveConfig } from '../generated/models/WaveConfig';
+import { ApiGroup } from '../generated/models/ApiGroup';
+import { ApiWaveParticipationRequirement } from '../generated/models/ApiWaveParticipationRequirement';
+import { ApiDrop } from '../generated/models/ApiDrop';
+import { ApiWaveVotingConfig } from '../generated/models/ApiWaveVotingConfig';
+import { ApiWaveScope } from '../generated/models/ApiWaveScope';
+import { ApiWaveContributorOverview } from '../generated/models/ApiWaveContributorOverview';
+import { ApiWaveVisibilityConfig } from '../generated/models/ApiWaveVisibilityConfig';
+import { ApiWaveParticipationConfig } from '../generated/models/ApiWaveParticipationConfig';
+import { ApiWaveConfig } from '../generated/models/ApiWaveConfig';
 import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
-import { WaveSubscriptionTargetAction } from '../generated/models/WaveSubscriptionTargetAction';
+import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
 import {
   ActivityEventAction,
   ActivityEventTargetType
@@ -41,11 +41,11 @@ import {
   ProfilesApiService
 } from '../profiles/profiles.api.service';
 import { WaveMetricEntity } from '../../../entities/IWaveMetric';
-import { WaveMetrics } from '../generated/models/WaveMetrics';
+import { ApiWaveMetrics } from '../generated/models/ApiWaveMetrics';
 import { RequestContext } from '../../../request.context';
 import { dropsService } from '../drops/drops.api.service';
-import { UpdateWaveRequest } from '../generated/models/UpdateWaveRequest';
-import { WaveMetadataType } from '../generated/models/WaveMetadataType';
+import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
+import { ApiWaveMetadataType } from '../generated/models/ApiWaveMetadataType';
 import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
 
 export class WavesMappers {
@@ -61,7 +61,7 @@ export class WavesMappers {
     serial_no: number | null,
     created_at: number,
     updated_at: number | null,
-    createWaveRequest: CreateNewWave | UpdateWaveRequest,
+    createWaveRequest: ApiCreateNewWave | ApiUpdateWaveRequest,
     created_by: string,
     descriptionDropId: string
   ): InsertWaveEntity {
@@ -136,7 +136,7 @@ export class WavesMappers {
       noRightToParticipate: boolean;
     },
     ctx: RequestContext
-  ): Promise<Wave> {
+  ): Promise<ApiWave> {
     return this.waveEntitiesToApiWaves(
       {
         waveEntities: [waveEntity],
@@ -161,7 +161,7 @@ export class WavesMappers {
       noRightToParticipate: boolean;
     },
     ctx: RequestContext
-  ): Promise<Wave[]> {
+  ): Promise<ApiWave[]> {
     const {
       contributors,
       profiles,
@@ -171,7 +171,7 @@ export class WavesMappers {
       metrics,
       authenticatedUserMetrics
     } = await this.getRelatedData(waveEntities, groupIdsUserIsEligibleFor, ctx);
-    return waveEntities.map<Wave>((waveEntity) =>
+    return waveEntities.map<ApiWave>((waveEntity) =>
       this.mapWaveEntityToApiWave({
         waveEntity,
         profiles,
@@ -202,7 +202,7 @@ export class WavesMappers {
     authenticatedUserMetrics
   }: {
     waveEntity: WaveEntity;
-    profiles: Record<string, ProfileMin>;
+    profiles: Record<string, ApiProfileMin>;
     contributors: Record<
       string,
       {
@@ -210,31 +210,31 @@ export class WavesMappers {
         contributor_pfp: string;
       }[]
     >;
-    creationDrops: Record<string, Drop>;
-    curations: Record<string, Group>;
-    subscribedActions: Record<string, WaveSubscriptionTargetAction[]>;
+    creationDrops: Record<string, ApiDrop>;
+    curations: Record<string, ApiGroup>;
+    subscribedActions: Record<string, ApiWaveSubscriptionTargetAction[]>;
     noRightToVote: boolean;
     groupIdsUserIsEligibleFor: string[];
     noRightToParticipate: boolean;
     metrics: Record<string, WaveMetricEntity>;
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
   }) {
-    const contributorsOverview: WaveContributorOverview[] =
+    const contributorsOverview: ApiWaveContributorOverview[] =
       contributors[waveEntity.id]?.map((it) => ({
         contributor_identity: it.contributor_identity,
         contributor_pfp: it.contributor_pfp
       })) ?? [];
-    const creationDrop: Drop = creationDrops[waveEntity.description_drop_id];
-    const votingScope: WaveScope = {
+    const creationDrop: ApiDrop = creationDrops[waveEntity.description_drop_id];
+    const votingScope: ApiWaveScope = {
       group: curations[waveEntity.voting_group_id!] ?? null
     };
-    const voteCreditor: ProfileMin | null =
+    const voteCreditor: ApiProfileMin | null =
       profiles[waveEntity.voting_credit_creditor!] ?? null;
     const authenticatedUserEligibleToVote =
       !noRightToVote &&
       (!waveEntity.voting_group_id ||
         groupIdsUserIsEligibleFor.includes(waveEntity.voting_group_id));
-    const voting: WaveVotingConfig = {
+    const voting: ApiWaveVotingConfig = {
       scope: votingScope,
       credit_type: resolveEnumOrThrow(
         WaveCreditTypeApi,
@@ -253,7 +253,7 @@ export class WavesMappers {
       },
       authenticated_user_eligible: authenticatedUserEligibleToVote
     };
-    const visibility: WaveVisibilityConfig = {
+    const visibility: ApiWaveVisibilityConfig = {
       scope: {
         group: curations[waveEntity.visibility_group_id!] ?? null
       }
@@ -262,7 +262,7 @@ export class WavesMappers {
       !noRightToParticipate &&
       (!waveEntity.participation_group_id ||
         groupIdsUserIsEligibleFor.includes(waveEntity.participation_group_id));
-    const participation: WaveParticipationConfig = {
+    const participation: ApiWaveParticipationConfig = {
       scope: {
         group: curations[waveEntity.participation_group_id!] ?? null
       },
@@ -271,11 +271,11 @@ export class WavesMappers {
       required_metadata: waveEntity.participation_required_metadata.map(
         (it) => ({
           name: it.name,
-          type: resolveEnumOrThrow(WaveMetadataType, it.type)
+          type: resolveEnumOrThrow(ApiWaveMetadataType, it.type)
         })
       ),
       required_media: waveEntity.participation_required_media.map((it) =>
-        resolveEnumOrThrow(WaveParticipationRequirement, it)
+        resolveEnumOrThrow(ApiWaveParticipationRequirement, it)
       ),
       signature_required: waveEntity.voting_signature_required,
       period: {
@@ -288,7 +288,7 @@ export class WavesMappers {
       waveEntity.admin_group_id &&
       groupIdsUserIsEligibleFor.includes(waveEntity.admin_group_id)
     );
-    const waveConf: WaveConfig = {
+    const waveConf: ApiWaveConfig = {
       type: resolveEnumOrThrow(WaveTypeApi, waveEntity.type),
       winning_thresholds: {
         min: waveEntity.winning_min_threshold,
@@ -309,7 +309,7 @@ export class WavesMappers {
     const waveAuthenticatedUserMetrics =
       authenticatedUserMetrics[waveEntity.id];
 
-    const apiWaveMetrics: WaveMetrics = {
+    const apiWaveMetrics: ApiWaveMetrics = {
       drops_count: waveMetrics.drops_count,
       subscribers_count: waveMetrics.subscribers_count,
       latest_drop_timestamp: waveMetrics.latest_drop_timestamp,
@@ -345,10 +345,10 @@ export class WavesMappers {
       string,
       { contributor_identity: string; contributor_pfp: string }[]
     >;
-    profiles: Record<string, ProfileMin>;
-    curations: Record<string, Group>;
-    creationDrops: Record<string, Drop>;
-    subscribedActions: Record<string, WaveSubscriptionTargetAction[]>;
+    profiles: Record<string, ApiProfileMin>;
+    curations: Record<string, ApiGroup>;
+    creationDrops: Record<string, ApiDrop>;
+    subscribedActions: Record<string, ApiWaveSubscriptionTargetAction[]>;
     metrics: Record<string, WaveMetricEntity>;
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
   }> {
@@ -429,7 +429,7 @@ export class WavesMappers {
         .flat(),
       ...curationEntities.map((curationEntity) => curationEntity.created_by)
     ]);
-    const profileMins: Record<string, ProfileMin> =
+    const profileMins: Record<string, ApiProfileMin> =
       await this.profilesApiService.getProfileMinsByIds(
         {
           ids: profileIds,
@@ -438,7 +438,7 @@ export class WavesMappers {
         },
         ctx.connection
       );
-    const curations: Record<string, Group> = curationEntities.reduce(
+    const curations: Record<string, ApiGroup> = curationEntities.reduce(
       (acc, curationEntity) => {
         const isHidden =
           curationEntity.is_private &&
@@ -459,7 +459,7 @@ export class WavesMappers {
         }
         return acc;
       },
-      {} as Record<string, Group>
+      {} as Record<string, ApiGroup>
     );
     ctx.timer?.stop('wavesMappers->getRelatedData');
     return {
@@ -470,11 +470,11 @@ export class WavesMappers {
       subscribedActions: Object.entries(subscribedActions).reduce(
         (acc, [id, actions]) => {
           acc[id] = actions.map((it) =>
-            resolveEnumOrThrow(WaveSubscriptionTargetAction, it)
+            resolveEnumOrThrow(ApiWaveSubscriptionTargetAction, it)
           );
           return acc;
         },
-        {} as Record<string, WaveSubscriptionTargetAction[]>
+        {} as Record<string, ApiWaveSubscriptionTargetAction[]>
       ),
       metrics,
       authenticatedUserMetrics

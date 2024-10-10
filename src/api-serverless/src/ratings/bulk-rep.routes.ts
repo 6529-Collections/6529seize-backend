@@ -7,9 +7,9 @@ import { ratingsService } from '../../../rates/ratings.service';
 import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { WALLET_REGEX } from '../../../constants';
-import { BulkRepRequest } from '../generated/models/BulkRepRequest';
+import { ApiBulkRepRequest } from '../generated/models/ApiBulkRepRequest';
 import { Timer } from '../../../time';
-import { BulkRepTarget } from '../generated/models/BulkRepTarget';
+import { ApiBulkRepTarget } from '../generated/models/ApiBulkRepTarget';
 
 const router = asyncRouter();
 
@@ -17,7 +17,7 @@ router.post(
   `/`,
   needsAuthenticatedUser(),
   async function (
-    req: Request<any, any, BulkRepRequest, any, any>,
+    req: Request<any, any, ApiBulkRepRequest, any, any>,
     res: Response<ApiResponse<void>>
   ) {
     const timer = Timer.getFromRequest(req);
@@ -28,8 +28,8 @@ router.post(
   }
 );
 
-const BulkRepTargetSchema: Joi.ObjectSchema<BulkRepTarget> =
-  Joi.object<BulkRepTarget>({
+const BulkRepTargetSchema: Joi.ObjectSchema<ApiBulkRepTarget> =
+  Joi.object<ApiBulkRepTarget>({
     address: Joi.string()
       .required()
       .regex(WALLET_REGEX)
@@ -48,8 +48,8 @@ const BulkRepTargetSchema: Joi.ObjectSchema<BulkRepTarget> =
     amount: Joi.number().integer().required()
   });
 
-const BulkRepRequestSchema: Joi.ObjectSchema<BulkRepRequest> =
-  Joi.object<BulkRepRequest>({
+const BulkRepRequestSchema: Joi.ObjectSchema<ApiBulkRepRequest> =
+  Joi.object<ApiBulkRepRequest>({
     targets: Joi.array().items(BulkRepTargetSchema).required()
   });
 

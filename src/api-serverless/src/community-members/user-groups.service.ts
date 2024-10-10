@@ -24,14 +24,14 @@ import {
   AbusivenessCheckService
 } from '../../../profiles/abusiveness-check.service';
 import { RateMatter } from '../../../entities/IRating';
-import { ChangeGroupVisibility } from '../generated/models/ChangeGroupVisibility';
-import { GroupFull } from '../generated/models/GroupFull';
-import { GroupFilterDirection } from '../generated/models/GroupFilterDirection';
-import { GroupDescription } from '../generated/models/GroupDescription';
+import { ApiChangeGroupVisibility } from '../generated/models/ApiChangeGroupVisibility';
+import { ApiGroupFull } from '../generated/models/ApiGroupFull';
+import { ApiGroupFilterDirection } from '../generated/models/ApiGroupFilterDirection';
+import { ApiGroupDescription } from '../generated/models/ApiGroupDescription';
 import {
-  GroupOwnsNft,
-  GroupOwnsNftNameEnum
-} from '../generated/models/GroupOwnsNft';
+  ApiGroupOwnsNft,
+  ApiGroupOwnsNftNameEnum
+} from '../generated/models/ApiGroupOwnsNft';
 import { profilesApiService } from '../profiles/profiles.api.service';
 import { Time, Timer } from '../../../time';
 import * as mcache from 'memory-cache';
@@ -62,7 +62,7 @@ export class UserGroupsService {
     },
     createdBy: string,
     ctx: RequestContext
-  ): Promise<GroupFull> {
+  ): Promise<ApiGroupFull> {
     const savedEntity =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -266,12 +266,14 @@ export class UserGroupsService {
             .filter((rating) => {
               const side1 =
                 !group.cic_direction ||
-                group.cic_direction.toString() === GroupFilterDirection.Received
+                group.cic_direction.toString() ===
+                  ApiGroupFilterDirection.Received
                   ? rating.matter_target_id
                   : rating.rater_profile_id;
               const side2 =
                 !group.cic_direction ||
-                group.cic_direction.toString() === GroupFilterDirection.Received
+                group.cic_direction.toString() ===
+                  ApiGroupFilterDirection.Received
                   ? rating.rater_profile_id
                   : rating.matter_target_id;
               return (
@@ -294,12 +296,14 @@ export class UserGroupsService {
             .filter((rating) => {
               const side1 =
                 !group.rep_direction ||
-                group.rep_direction.toString() === GroupFilterDirection.Received
+                group.rep_direction.toString() ===
+                  ApiGroupFilterDirection.Received
                   ? rating.matter_target_id
                   : rating.rater_profile_id;
               const side2 =
                 !group.rep_direction ||
-                group.rep_direction.toString() === GroupFilterDirection.Received
+                group.rep_direction.toString() ===
+                  ApiGroupFilterDirection.Received
                   ? rating.rater_profile_id
                   : rating.matter_target_id;
               return (
@@ -322,12 +326,14 @@ export class UserGroupsService {
             .filter((rating) => {
               const side1 =
                 !group.rep_direction ||
-                group.rep_direction.toString() === GroupFilterDirection.Received
+                group.rep_direction.toString() ===
+                  ApiGroupFilterDirection.Received
                   ? rating.matter_target_id
                   : rating.rater_profile_id;
               const side2 =
                 !group.rep_direction ||
-                group.rep_direction.toString() === GroupFilterDirection.Received
+                group.rep_direction.toString() ===
+                  ApiGroupFilterDirection.Received
                   ? rating.rater_profile_id
                   : rating.matter_target_id;
               return (
@@ -351,7 +357,8 @@ export class UserGroupsService {
             .filter((rating) => {
               const side1 =
                 !group.rep_direction ||
-                group.rep_direction.toString() === GroupFilterDirection.Received
+                group.rep_direction.toString() ===
+                  ApiGroupFilterDirection.Received
                   ? rating.matter_target_id
                   : rating.rater_profile_id;
               return (
@@ -408,12 +415,12 @@ export class UserGroupsService {
       old_version_id,
       visible,
       profile_id
-    }: ChangeGroupVisibility & {
+    }: ApiChangeGroupVisibility & {
       group_id: string;
       profile_id: string;
     },
     ctx: RequestContext
-  ): Promise<GroupFull> {
+  ): Promise<ApiGroupFull> {
     const updatedGroupEntity =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
         async (connection) => {
@@ -470,7 +477,7 @@ export class UserGroupsService {
     return updatedGroupEntity;
   }
 
-  private async doNameAbusivenessCheck(groupEntity: GroupFull) {
+  private async doNameAbusivenessCheck(groupEntity: ApiGroupFull) {
     const abusivenessDetectionResult =
       await this.abusivenessCheckService.checkFilterName({
         text: groupEntity.name,
@@ -486,7 +493,7 @@ export class UserGroupsService {
   public async getByIdOrThrow(
     id: string,
     ctx: RequestContext
-  ): Promise<GroupFull> {
+  ): Promise<ApiGroupFull> {
     ctx.timer?.start(`${this.constructor.name}->getByIdOrThrow`);
     const authenticatedUserId =
       ctx.authenticationContext?.getActingAsId() ?? null;
@@ -553,7 +560,7 @@ export class UserGroupsService {
 
   private async getSqlAndParams(
     group: Omit<
-      GroupDescription,
+      ApiGroupDescription,
       | 'identity_group_identities_count'
       | 'excluded_identity_group_identities_count'
     >,
@@ -628,7 +635,7 @@ export class UserGroupsService {
 
   private getInclusionExclusionPart(
     group: Omit<
-      GroupDescription,
+      ApiGroupDescription,
       | 'identity_group_identities_count'
       | 'excluded_identity_group_identities_count'
     >,
@@ -685,7 +692,7 @@ export class UserGroupsService {
   }: {
     viewName: string;
     comGroupFieldName: string;
-    tokenOwnerships: GroupOwnsNft[];
+    tokenOwnerships: ApiGroupOwnsNft[];
     contract: string;
   }): string | null {
     let nftPart: string | null = null;
@@ -729,7 +736,7 @@ export class UserGroupsService {
 
   private getNftsPart(
     group: Omit<
-      GroupDescription,
+      ApiGroupDescription,
       | 'identity_group_identities_count'
       | 'excluded_identity_group_identities_count'
     >,
@@ -742,7 +749,7 @@ export class UserGroupsService {
       viewName: 'meme_owners_of_group',
       comGroupFieldName: 'owns_meme_tokens',
       tokenOwnerships: group.owns_nfts.filter(
-        (it) => it.name === GroupOwnsNftNameEnum.Memes
+        (it) => it.name === ApiGroupOwnsNftNameEnum.Memes
       ),
       contract: MEMES_CONTRACT
     });
@@ -750,7 +757,7 @@ export class UserGroupsService {
       viewName: 'labs_owners_of_group',
       comGroupFieldName: 'owns_lab_tokens',
       tokenOwnerships: group.owns_nfts.filter(
-        (it) => it.name === GroupOwnsNftNameEnum.Memelab
+        (it) => it.name === ApiGroupOwnsNftNameEnum.Memelab
       ),
       contract: MEMELAB_CONTRACT
     });
@@ -758,7 +765,7 @@ export class UserGroupsService {
       viewName: 'gradients_owners_of_group',
       comGroupFieldName: 'owns_gradient_tokens',
       tokenOwnerships: group.owns_nfts.filter(
-        (it) => it.name === GroupOwnsNftNameEnum.Gradients
+        (it) => it.name === ApiGroupOwnsNftNameEnum.Gradients
       ),
       contract: GRADIENT_CONTRACT
     });
@@ -766,7 +773,7 @@ export class UserGroupsService {
       viewName: 'nextgens_owners_of_group',
       comGroupFieldName: 'owns_nextgen_tokens',
       tokenOwnerships: group.owns_nfts.filter(
-        (it) => it.name === GroupOwnsNftNameEnum.Nextgen
+        (it) => it.name === ApiGroupOwnsNftNameEnum.Nextgen
       ),
       contract: NEXTGEN_CORE_CONTRACT[Network.ETH_MAINNET]
     });
@@ -787,7 +794,7 @@ export class UserGroupsService {
     cicPart: string | null,
     nftsPart: string | null,
     group: Omit<
-      GroupDescription,
+      ApiGroupDescription,
       | 'identity_group_identities_count'
       | 'excluded_identity_group_identities_count'
     >,
@@ -808,13 +815,13 @@ export class UserGroupsService {
       joinGradientOwnerships
     } = group.owns_nfts.reduce(
       (acc, it) => {
-        if (it.name === GroupOwnsNftNameEnum.Memes) {
+        if (it.name === ApiGroupOwnsNftNameEnum.Memes) {
           acc.joinMemeOwnerships = true;
-        } else if (it.name === GroupOwnsNftNameEnum.Memelab) {
+        } else if (it.name === ApiGroupOwnsNftNameEnum.Memelab) {
           acc.joinLabOwnerships = true;
-        } else if (it.name === GroupOwnsNftNameEnum.Gradients) {
+        } else if (it.name === ApiGroupOwnsNftNameEnum.Gradients) {
           acc.joinGradientOwnerships = true;
-        } else if (it.name === GroupOwnsNftNameEnum.Nextgen) {
+        } else if (it.name === ApiGroupOwnsNftNameEnum.Nextgen) {
           acc.joinNextgenOwnerships = true;
         }
         return acc;
@@ -861,7 +868,7 @@ export class UserGroupsService {
 
   private getCicPart(
     group: Omit<
-      GroupDescription,
+      ApiGroupDescription,
       | 'identity_group_identities_count'
       | 'excluded_identity_group_identities_count'
     >,
@@ -872,26 +879,26 @@ export class UserGroupsService {
     let cicPart = null;
     if (cicGroup.user_identity || cicGroup.min || cicGroup.max) {
       const direction = cicGroup.user_identity
-        ? cicGroup.direction ?? GroupFilterDirection.Received
-        : GroupFilterDirection.Received;
+        ? cicGroup.direction ?? ApiGroupFilterDirection.Received
+        : ApiGroupFilterDirection.Received;
       if (cicGroup.user_identity) {
         params.cic_user = cicGroup.user_identity;
       }
       let groupedCicQuery;
       if (cicGroup.user_identity !== null) {
         groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${
-          direction === GroupFilterDirection.Received
+          direction === ApiGroupFilterDirection.Received
             ? 'matter_target_id'
             : 'rater_profile_id'
         } as profile_id, rating from ${RATINGS_TABLE} where matter = 'CIC' and rating <> 0 and ${
-          direction === GroupFilterDirection.Received
+          direction === ApiGroupFilterDirection.Received
             ? 'rater_profile_id'
             : 'matter_target_id'
         } = :cic_user)`;
         params.cic_user = cicGroup.user_identity;
       } else {
         groupedCicQuery = `${repPart ? ', ' : ' '}grouped_cics as (select ${
-          direction === GroupFilterDirection.Received
+          direction === ApiGroupFilterDirection.Received
             ? 'matter_target_id'
             : 'rater_profile_id'
         } as profile_id, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'CIC' and rating <> 0 group by 1)`;
@@ -912,7 +919,7 @@ export class UserGroupsService {
 
   private getRepPart(
     group: Omit<
-      GroupDescription,
+      ApiGroupDescription,
       | 'identity_group_identities_count'
       | 'excluded_identity_group_identities_count'
     >,
@@ -926,18 +933,18 @@ export class UserGroupsService {
       repGroup.max ||
       repGroup.min
     ) {
-      const direction = repGroup.direction ?? GroupFilterDirection.Received;
+      const direction = repGroup.direction ?? ApiGroupFilterDirection.Received;
       if (repGroup.user_identity) {
         params.rep_user = repGroup.user_identity;
       }
       let groupedRepQuery: string;
       if (repGroup.user_identity !== null && repGroup.category !== null) {
         groupedRepQuery = `grouped_reps as (select ${
-          direction === GroupFilterDirection.Received
+          direction === ApiGroupFilterDirection.Received
             ? 'matter_target_id'
             : 'rater_profile_id'
         } as profile_id, matter_category, rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 and ${
-          direction === GroupFilterDirection.Received
+          direction === ApiGroupFilterDirection.Received
             ? 'rater_profile_id'
             : 'matter_target_id'
         } = :rep_user)`;
@@ -946,11 +953,11 @@ export class UserGroupsService {
         repGroup.category === null
       ) {
         groupedRepQuery = `grouped_reps as (select ${
-          direction === GroupFilterDirection.Received
+          direction === ApiGroupFilterDirection.Received
             ? 'matter_target_id'
             : 'rater_profile_id'
         } as profile_id, matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 and ${
-          direction === GroupFilterDirection.Received
+          direction === ApiGroupFilterDirection.Received
             ? 'rater_profile_id'
             : 'matter_target_id'
         } = :rep_user group by 1, 2)`;
@@ -959,13 +966,13 @@ export class UserGroupsService {
         repGroup.category !== null
       ) {
         groupedRepQuery = `grouped_reps as (select ${
-          direction === GroupFilterDirection.Received
+          direction === ApiGroupFilterDirection.Received
             ? 'matter_target_id'
             : 'rater_profile_id'
         } as profile_id, matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 group by 1, 2)`;
       } else {
         groupedRepQuery = `grouped_reps as (select ${
-          direction === GroupFilterDirection.Received
+          direction === ApiGroupFilterDirection.Received
             ? 'matter_target_id'
             : 'rater_profile_id'
         } as profile_id, null as matter_category, sum(rating) as rating from ${RATINGS_TABLE} where matter = 'REP' and rating <> 0 group by 1, 2)`;
@@ -994,7 +1001,7 @@ export class UserGroupsService {
     authorId: string | null,
     createdAtLessThan: number | null,
     ctx: RequestContext
-  ): Promise<GroupFull[]> {
+  ): Promise<ApiGroupFull[]> {
     ctx.timer?.start('userGroupsService->searchByNameOrAuthor');
     const authenticatedUserId =
       ctx.authenticationContext?.getActingAsId() ?? null;
@@ -1034,7 +1041,7 @@ export class UserGroupsService {
   private async mapForApi(
     groups: UserGroupEntity[],
     ctx: RequestContext
-  ): Promise<GroupFull[]> {
+  ): Promise<ApiGroupFull[]> {
     ctx.timer?.start('userGroupsService->mapForApi');
     const relatedProfiles = await profilesApiService.getProfileMinsByIds(
       {
@@ -1067,7 +1074,7 @@ export class UserGroupsService {
         groups.map((it) => it.id),
         ctx
       );
-    const result = groups.map<GroupFull>((it) => ({
+    const result = groups.map<ApiGroupFull>((it) => ({
       id: it.id,
       name: it.name,
       visible: it.visible,
@@ -1078,7 +1085,7 @@ export class UserGroupsService {
           min: it.cic_min,
           max: it.cic_max,
           direction: it.cic_direction
-            ? resolveEnum(GroupFilterDirection, it.cic_direction)!
+            ? resolveEnum(ApiGroupFilterDirection, it.cic_direction)!
             : null,
           user_identity: it.cic_user
             ? relatedProfiles[it.cic_user]?.handle ?? it.cic_user
@@ -1088,7 +1095,7 @@ export class UserGroupsService {
           min: it.rep_min,
           max: it.rep_max,
           direction: it.rep_direction
-            ? resolveEnum(GroupFilterDirection, it.rep_direction)!
+            ? resolveEnum(ApiGroupFilterDirection, it.rep_direction)!
             : null,
           user_identity: it.rep_user
             ? relatedProfiles[it.rep_user]?.handle ?? it.rep_user
@@ -1106,7 +1113,7 @@ export class UserGroupsService {
         owns_nfts: [
           it.owns_meme
             ? {
-                name: GroupOwnsNftNameEnum.Memes,
+                name: ApiGroupOwnsNftNameEnum.Memes,
                 tokens: it.owns_meme_tokens
                   ? JSON.parse(it.owns_meme_tokens)
                   : []
@@ -1114,7 +1121,7 @@ export class UserGroupsService {
             : null,
           it.owns_gradient
             ? {
-                name: GroupOwnsNftNameEnum.Gradients,
+                name: ApiGroupOwnsNftNameEnum.Gradients,
                 tokens: it.owns_gradient_tokens
                   ? JSON.parse(it.owns_gradient_tokens)
                   : []
@@ -1122,7 +1129,7 @@ export class UserGroupsService {
             : null,
           it.owns_nextgen
             ? {
-                name: GroupOwnsNftNameEnum.Nextgen,
+                name: ApiGroupOwnsNftNameEnum.Nextgen,
                 tokens: it.owns_nextgen_tokens
                   ? JSON.parse(it.owns_nextgen_tokens)
                   : []
@@ -1130,11 +1137,11 @@ export class UserGroupsService {
             : null,
           it.owns_lab
             ? {
-                name: GroupOwnsNftNameEnum.Memelab,
+                name: ApiGroupOwnsNftNameEnum.Memelab,
                 tokens: it.owns_lab_tokens ? JSON.parse(it.owns_lab_tokens) : []
               }
             : null
-        ].filter((it) => !!it) as GroupOwnsNft[],
+        ].filter((it) => !!it) as ApiGroupOwnsNft[],
         identity_group_id:
           groupsIdentityGroupsIdsAndIdentityCounts[it.id]?.identity_group_id ??
           null,

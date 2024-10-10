@@ -15,16 +15,16 @@ import {
 } from '../page-request';
 import { RatingsSnapshot } from '../../../entities/IRatingsSnapshots';
 import { RateMatter } from '../../../entities/IRating';
-import { RateMatter as ApiRateMatter } from '../generated/models/RateMatter';
-import { BulkRateRequest } from '../generated/models/BulkRateRequest';
+import { ApiRateMatter } from '../generated/models/ApiRateMatter';
 import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { WALLET_REGEX } from '../../../constants';
-import { BulkRateResponse } from '../generated/models/BulkRateResponse';
-import { AvailableRatingCredit } from '../generated/models/AvailableRatingCredit';
 import { profilesService } from '../../../profiles/profiles.service';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
 import { BadRequestException } from '../../../exceptions';
+import { ApiBulkRateResponse } from '../generated/models/ApiBulkRateResponse';
+import { ApiBulkRateRequest } from '../generated/models/ApiBulkRateRequest';
+import { ApiAvailableRatingCredit } from '../generated/models/ApiAvailableRatingCredit';
 
 const router = asyncRouter();
 
@@ -32,8 +32,8 @@ router.post(
   `/`,
   needsAuthenticatedUser(),
   async function (
-    req: Request<any, any, BulkRateRequest, any, any>,
-    res: Response<ApiResponse<BulkRateResponse>>
+    req: Request<any, any, ApiBulkRateRequest, any, any>,
+    res: Response<ApiResponse<ApiBulkRateResponse>>
   ) {
     let apiRequest = getValidatedByJoiOrThrow(req.body, BulkRateRequestSchema);
     const authContext = await getAuthenticationContext(req);
@@ -86,7 +86,7 @@ router.get(
       { rater: string; rater_representative: string | null },
       any
     >,
-    res: Response<ApiResponse<AvailableRatingCredit>>
+    res: Response<ApiResponse<ApiAvailableRatingCredit>>
   ) {
     const request = getValidatedByJoiOrThrow(
       req.query,
@@ -152,8 +152,8 @@ const SnapshotsRequestSchema: Joi.ObjectSchema<RatingsSnapshotsPageRequest> =
       .default(null)
   });
 
-const BulkRateRequestSchema: Joi.ObjectSchema<BulkRateRequest> =
-  Joi.object<BulkRateRequest>({
+const BulkRateRequestSchema: Joi.ObjectSchema<ApiBulkRateRequest> =
+  Joi.object<ApiBulkRateRequest>({
     amount_to_add: Joi.number().integer().not(0).required(),
     matter: Joi.string()
       .valid(...Object.values(ApiRateMatter))

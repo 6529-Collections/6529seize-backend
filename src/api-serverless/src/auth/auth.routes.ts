@@ -11,8 +11,8 @@ import {
   BadRequestException,
   UnauthorisedException
 } from '../../../exceptions';
-import { NonceResponse } from '../generated/models/NonceResponse';
-import { LoginRequest } from '../generated/models/LoginRequest';
+import { ApiNonceResponse } from '../generated/models/ApiNonceResponse';
+import { ApiLoginRequest } from '../generated/models/ApiLoginRequest';
 import { profilesService } from '../../../profiles/profiles.service';
 import { profileProxyApiService } from '../proxies/proxy.api.service';
 
@@ -28,7 +28,7 @@ router.get(
       { signer_address: string; short_nonce?: string },
       any
     >,
-    res: Response<ApiResponse<NonceResponse>>
+    res: Response<ApiResponse<ApiNonceResponse>>
   ) {
     const shortNonce = req.query.short_nonce?.toLowerCase() === 'true';
     const signerAddress = req.query.signer_address?.toLocaleLowerCase();
@@ -64,7 +64,7 @@ ${randomUUID()}`;
 router.post(
   `/login`,
   async function (
-    req: Request<any, any, LoginRequest, any, any>,
+    req: Request<any, any, ApiLoginRequest, any, any>,
     res: Response<ApiResponse<ApiLoginResponse>>
   ) {
     const loginRequest = getValidatedByJoiOrThrow(req.body, LoginRequestSchema);
@@ -141,8 +141,8 @@ function verifyClientSignature(nonce: string, clientSignature: string): string {
   return signingAddress;
 }
 
-const LoginRequestSchema: Joi.ObjectSchema<LoginRequest> =
-  Joi.object<LoginRequest>({
+const LoginRequestSchema: Joi.ObjectSchema<ApiLoginRequest> =
+  Joi.object<ApiLoginRequest>({
     server_signature: Joi.string().required(),
     client_signature: Joi.string().required(),
     role: Joi.string().optional()

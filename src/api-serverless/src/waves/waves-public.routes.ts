@@ -1,7 +1,7 @@
 import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
-import { Wave } from '../generated/models/Wave';
+import { ApiWave } from '../generated/models/ApiWave';
 import { NotFoundException } from '../../../exceptions';
 import { waveApiService } from './wave.api.service';
 import { SearchWavesParams } from './waves.api.db';
@@ -17,7 +17,7 @@ router.get(
   '/',
   async (
     req: Request<any, any, any, SearchWavesParams, any>,
-    res: Response<ApiResponse<Wave[]>>
+    res: Response<ApiResponse<ApiWave[]>>
   ) => {
     const params = await validateWavesSearchParams(req);
     const waves = await waveApiService.searchWaves(params, {
@@ -34,7 +34,7 @@ router.get(
   '/:id',
   async (
     req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<Wave>>
+    res: Response<ApiResponse<ApiWave>>
   ) => {
     const { id } = req.params;
     const wave = await waveApiService.findWaveByIdOrThrow(id, [], {});

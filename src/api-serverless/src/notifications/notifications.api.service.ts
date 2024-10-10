@@ -19,11 +19,11 @@ import {
 } from '../profiles/profiles.api.service';
 import { DropsApiService, dropsService } from '../drops/drops.api.service';
 import { AuthenticationContext } from '../../../auth-context';
-import { Drop } from '../generated/models/Drop';
-import { ProfileMin } from '../generated/models/ProfileMin';
-import { NotificationsResponse } from '../generated/models/NotificationsResponse';
-import { Notification } from '../generated/models/Notification';
-import { NotificationCause } from '../generated/models/NotificationCause';
+import { ApiDrop } from '../generated/models/ApiDrop';
+import { ApiProfileMin } from '../generated/models/ApiProfileMin';
+import { ApiNotificationsResponse } from '../generated/models/ApiNotificationsResponse';
+import { ApiNotification } from '../generated/models/ApiNotification';
+import { ApiNotificationCause } from '../generated/models/ApiNotificationCause';
 import {
   identityNotificationsDb,
   IdentityNotificationsDb
@@ -55,7 +55,7 @@ export class NotificationsApiService {
       limit: number;
     },
     authenticationContext: AuthenticationContext
-  ): Promise<NotificationsResponse> {
+  ): Promise<ApiNotificationsResponse> {
     const eligible_group_ids =
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         authenticationContext.getActingAsId()
@@ -79,7 +79,7 @@ export class NotificationsApiService {
   private async mapToApiNotifications(
     notifications: UserNotification[],
     authenticationContext: AuthenticationContext
-  ): Promise<Notification[]> {
+  ): Promise<ApiNotification[]> {
     const { profileIds, dropIds } = this.getAllRelatedIds(notifications);
     const [drops, profiles] = await Promise.all([
       this.dropsService.findDropsByIdsOrThrow(dropIds, authenticationContext),
@@ -147,9 +147,9 @@ export class NotificationsApiService {
     profiles
   }: {
     notification: UserNotification;
-    drops: Record<string, Drop>;
-    profiles: Record<string, ProfileMin>;
-  }): Notification {
+    drops: Record<string, ApiDrop>;
+    profiles: Record<string, ApiProfileMin>;
+  }): ApiNotification {
     const notificationCause = notification.cause;
     switch (notificationCause) {
       case IdentityNotificationCause.IDENTITY_SUBSCRIBED: {
@@ -158,7 +158,7 @@ export class NotificationsApiService {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
-          cause: resolveEnumOrThrow(NotificationCause, notificationCause),
+          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.subscriber_id],
           related_drops: [],
           additional_context: {}
@@ -170,7 +170,7 @@ export class NotificationsApiService {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
-          cause: resolveEnumOrThrow(NotificationCause, notificationCause),
+          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.mentioner_identity_id],
           related_drops: [drops[data.drop_id]],
           additional_context: {}
@@ -182,7 +182,7 @@ export class NotificationsApiService {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
-          cause: resolveEnumOrThrow(NotificationCause, notificationCause),
+          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.voter_id],
           related_drops: [drops[data.drop_id]],
           additional_context: {
@@ -196,7 +196,7 @@ export class NotificationsApiService {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
-          cause: resolveEnumOrThrow(NotificationCause, notificationCause),
+          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.quote_drop_author_id],
           related_drops: [
             drops[data.quote_drop_id],
@@ -216,7 +216,7 @@ export class NotificationsApiService {
           id: notification.id,
           created_at: notification.created_at,
           read_at: notification.read_at,
-          cause: resolveEnumOrThrow(NotificationCause, notificationCause),
+          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
           related_identity: profiles[data.reply_drop_author_id],
           related_drops: [
             drops[data.replied_drop_id],

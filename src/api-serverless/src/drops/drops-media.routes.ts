@@ -9,8 +9,8 @@ import { ForbiddenException } from '../../../exceptions';
 import { uploadMediaService } from '../media/upload-media.service';
 import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
-import { CreateMediaUrlResponse } from '../generated/models/CreateMediaUrlResponse';
-import { CreateMediaUploadUrlRequest } from '../generated/models/CreateMediaUploadUrlRequest';
+import { ApiCreateMediaUrlResponse } from '../generated/models/ApiCreateMediaUrlResponse';
+import { ApiCreateMediaUploadUrlRequest } from '../generated/models/ApiCreateMediaUploadUrlRequest';
 
 const router = asyncRouter();
 
@@ -18,14 +18,14 @@ router.post(
   '/prep',
   needsAuthenticatedUser(),
   async (
-    req: Request<any, any, CreateMediaUploadUrlRequest, any, any>,
-    res: Response<ApiResponse<CreateMediaUrlResponse>>
+    req: Request<any, any, ApiCreateMediaUploadUrlRequest, any, any>,
+    res: Response<ApiResponse<ApiCreateMediaUrlResponse>>
   ) => {
     const authenticatedProfileId = await getAuthenticatedProfileIdOrNull(req);
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
     }
-    const createMediaUploadUrlRequest: CreateMediaUploadUrlRequest & {
+    const createMediaUploadUrlRequest: ApiCreateMediaUploadUrlRequest & {
       author: string;
     } = getValidatedByJoiOrThrow(
       {
@@ -42,7 +42,7 @@ router.post(
 );
 
 const MediaPrepRequestSchema: Joi.ObjectSchema<
-  CreateMediaUploadUrlRequest & { author: string }
+  ApiCreateMediaUploadUrlRequest & { author: string }
 > = Joi.object({
   author: Joi.string().required(),
   content_type: Joi.string()

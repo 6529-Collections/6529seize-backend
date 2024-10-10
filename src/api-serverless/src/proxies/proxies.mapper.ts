@@ -1,26 +1,26 @@
 import { ProfileProxyEntity } from '../../../entities/IProfileProxy';
 import {
-  ApiProfileProxyActionType,
-  ProfileProxyActionEntity
+  ProfileProxyActionEntity,
+  ProfileProxyActionType
 } from '../../../entities/IProfileProxyAction';
 import { distinct } from '../../../helpers';
-import { ProfileProxyActionType } from '../generated/models/ProfileProxyActionType';
-import { ProfileMin } from '../generated/models/ProfileMin';
-import { ProfileProxy } from '../generated/models/ProfileProxy';
+import { ApiProfileProxyActionType } from '../generated/models/ApiProfileProxyActionType';
+import { ApiProfileMin } from '../generated/models/ApiProfileMin';
+import { ApiProfileProxy } from '../generated/models/ApiProfileProxy';
 import {
   profilesApiService,
   ProfilesApiService
 } from '../profiles/profiles.api.service';
 
-const ACTION_MAP: Record<ApiProfileProxyActionType, ProfileProxyActionType> = {
-  [ApiProfileProxyActionType.ALLOCATE_REP]: ProfileProxyActionType.AllocateRep,
-  [ApiProfileProxyActionType.ALLOCATE_CIC]: ProfileProxyActionType.AllocateCic,
-  [ApiProfileProxyActionType.CREATE_WAVE]: ProfileProxyActionType.CreateWave,
-  [ApiProfileProxyActionType.READ_WAVE]: ProfileProxyActionType.ReadWave,
-  [ApiProfileProxyActionType.CREATE_DROP_TO_WAVE]:
-    ProfileProxyActionType.CreateDropToWave,
-  [ApiProfileProxyActionType.RATE_WAVE_DROP]:
-    ProfileProxyActionType.RateWaveDrop
+const ACTION_MAP: Record<ProfileProxyActionType, ApiProfileProxyActionType> = {
+  [ProfileProxyActionType.ALLOCATE_REP]: ApiProfileProxyActionType.AllocateRep,
+  [ProfileProxyActionType.ALLOCATE_CIC]: ApiProfileProxyActionType.AllocateCic,
+  [ProfileProxyActionType.CREATE_WAVE]: ApiProfileProxyActionType.CreateWave,
+  [ProfileProxyActionType.READ_WAVE]: ApiProfileProxyActionType.ReadWave,
+  [ProfileProxyActionType.CREATE_DROP_TO_WAVE]:
+    ApiProfileProxyActionType.CreateDropToWave,
+  [ProfileProxyActionType.RATE_WAVE_DROP]:
+    ApiProfileProxyActionType.RateWaveDrop
 };
 
 export class ProfileProxiesMapper {
@@ -35,20 +35,20 @@ export class ProfileProxiesMapper {
       readonly actions: ProfileProxyActionEntity[];
     },
     authenticatedProfileId?: string
-  ): Promise<ProfileProxy[]> {
+  ): Promise<ApiProfileProxy[]> {
     const profileIds = distinct(
       profileProxyEntities.flatMap((entity) => [
         entity.target_id,
         entity.created_by
       ])
     );
-    const profileMins: Record<string, ProfileMin> =
+    const profileMins: Record<string, ApiProfileMin> =
       await this.profilesService.getProfileMinsByIds({
         ids: profileIds,
         authenticatedProfileId
       });
 
-    return profileProxyEntities.map<ProfileProxy>((entity) => ({
+    return profileProxyEntities.map<ApiProfileProxy>((entity) => ({
       id: entity.id,
       granted_to: profileMins[entity.target_id],
       created_by: profileMins[entity.created_by],

@@ -11,21 +11,21 @@ import {
 import { profilesService } from '../../../profiles/profiles.service';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { NewUserGroupEntity, userGroupsService } from './user-groups.service';
-import { ChangeGroupVisibility } from '../generated/models/ChangeGroupVisibility';
-import { GroupFull } from '../generated/models/GroupFull';
-import { CreateGroup } from '../generated/models/CreateGroup';
-import { GroupCicFilter } from '../generated/models/GroupCicFilter';
-import { GroupFilterDirection } from '../generated/models/GroupFilterDirection';
-import { GroupRepFilter } from '../generated/models/GroupRepFilter';
-import { GroupLevelFilter } from '../generated/models/GroupLevelFilter';
-import { GroupTdhFilter } from '../generated/models/GroupTdhFilter';
+import { ApiChangeGroupVisibility } from '../generated/models/ApiChangeGroupVisibility';
+import { ApiGroupFull } from '../generated/models/ApiGroupFull';
+import { ApiCreateGroup } from '../generated/models/ApiCreateGroup';
+import { ApiGroupCicFilter } from '../generated/models/ApiGroupCicFilter';
+import { ApiGroupFilterDirection } from '../generated/models/ApiGroupFilterDirection';
+import { ApiGroupRepFilter } from '../generated/models/ApiGroupRepFilter';
+import { ApiGroupLevelFilter } from '../generated/models/ApiGroupLevelFilter';
+import { ApiGroupTdhFilter } from '../generated/models/ApiGroupTdhFilter';
 import { distinct, parseIntOrNull, resolveEnum } from '../../../helpers';
 import { FilterDirection } from '../../../entities/IUserGroup';
 import {
-  GroupOwnsNft,
-  GroupOwnsNftNameEnum
-} from '../generated/models/GroupOwnsNft';
-import { CreateGroupDescription } from '../generated/models/CreateGroupDescription';
+  ApiGroupOwnsNft,
+  ApiGroupOwnsNftNameEnum
+} from '../generated/models/ApiGroupOwnsNft';
+import { ApiCreateGroupDescription } from '../generated/models/ApiCreateGroupDescription';
 import { Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
 
@@ -46,7 +46,7 @@ router.get(
       any,
       any
     >,
-    res: Response<ApiResponse<GroupFull[]>>
+    res: Response<ApiResponse<ApiGroupFull[]>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -77,7 +77,7 @@ router.get(
   maybeAuthenticatedUser(),
   async (
     req: Request<{ group_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<GroupFull>>
+    res: Response<ApiResponse<ApiGroupFull>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -131,8 +131,8 @@ router.post(
   '/',
   needsAuthenticatedUser(),
   async (
-    req: Request<any, any, CreateGroup, any, any>,
-    res: Response<ApiResponse<GroupFull>>
+    req: Request<any, any, ApiCreateGroup, any, any>,
+    res: Response<ApiResponse<ApiGroupFull>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -163,16 +163,16 @@ router.post(
       })
     );
     const ownsMemes = apiUserGroup.group.owns_nfts.find(
-      (it) => it.name === GroupOwnsNftNameEnum.Memes
+      (it) => it.name === ApiGroupOwnsNftNameEnum.Memes
     );
     const ownsGradient = apiUserGroup.group.owns_nfts.find(
-      (it) => it.name === GroupOwnsNftNameEnum.Gradients
+      (it) => it.name === ApiGroupOwnsNftNameEnum.Gradients
     );
     const ownsLab = apiUserGroup.group.owns_nfts.find(
-      (it) => it.name === GroupOwnsNftNameEnum.Memelab
+      (it) => it.name === ApiGroupOwnsNftNameEnum.Memelab
     );
     const ownsNextgen = apiUserGroup.group.owns_nfts.find(
-      (it) => it.name === GroupOwnsNftNameEnum.Nextgen
+      (it) => it.name === ApiGroupOwnsNftNameEnum.Nextgen
     );
     const isPrivate = apiUserGroup.is_private ?? false;
     const userGroup: Omit<
@@ -239,8 +239,8 @@ router.post(
   '/:group_id/visible',
   needsAuthenticatedUser(),
   async (
-    req: Request<any, any, ChangeGroupVisibility, any, any>,
-    res: Response<ApiResponse<GroupFull>>
+    req: Request<any, any, ApiChangeGroupVisibility, any, any>,
+    res: Response<ApiResponse<ApiGroupFull>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -267,7 +267,7 @@ router.post(
 );
 
 const GroupFilterDirectionSchema: Joi.StringSchema = Joi.string()
-  .valid(...Object.values(GroupFilterDirection))
+  .valid(...Object.values(ApiGroupFilterDirection))
   .optional()
   .allow(null)
   .default(null);
@@ -290,20 +290,20 @@ const NullableStringSchema: Joi.StringSchema = Joi.string()
   .allow(null)
   .default(null);
 
-const GroupTdhFilterSchema: Joi.ObjectSchema<GroupTdhFilter> =
-  Joi.object<GroupTdhFilter>({
+const GroupTdhFilterSchema: Joi.ObjectSchema<ApiGroupTdhFilter> =
+  Joi.object<ApiGroupTdhFilter>({
     min: NullablePositiveIntegerSchema,
     max: NullablePositiveIntegerSchema
   });
 
-const GroupLevelFilterSchema: Joi.ObjectSchema<GroupLevelFilter> =
-  Joi.object<GroupLevelFilter>({
+const GroupLevelFilterSchema: Joi.ObjectSchema<ApiGroupLevelFilter> =
+  Joi.object<ApiGroupLevelFilter>({
     min: NullableIntegerSchema.min(-100).max(100),
     max: NullableIntegerSchema.min(-100).max(100)
   });
 
-const GroupRepFilterSchema: Joi.ObjectSchema<GroupRepFilter> =
-  Joi.object<GroupRepFilter>({
+const GroupRepFilterSchema: Joi.ObjectSchema<ApiGroupRepFilter> =
+  Joi.object<ApiGroupRepFilter>({
     min: NullableIntegerSchema,
     max: NullableIntegerSchema,
     direction: GroupFilterDirectionSchema,
@@ -311,24 +311,24 @@ const GroupRepFilterSchema: Joi.ObjectSchema<GroupRepFilter> =
     category: NullableStringSchema
   });
 
-const GroupCicFilterSchema: Joi.ObjectSchema<GroupCicFilter> =
-  Joi.object<GroupCicFilter>({
+const GroupCicFilterSchema: Joi.ObjectSchema<ApiGroupCicFilter> =
+  Joi.object<ApiGroupCicFilter>({
     min: NullableIntegerSchema,
     max: NullableIntegerSchema,
     direction: GroupFilterDirectionSchema,
     user_identity: NullableStringSchema
   });
 
-const GroupOwnsNftSchema: Joi.ObjectSchema<GroupOwnsNft> =
-  Joi.object<GroupOwnsNft>({
+const GroupOwnsNftSchema: Joi.ObjectSchema<ApiGroupOwnsNft> =
+  Joi.object<ApiGroupOwnsNft>({
     name: Joi.string()
-      .valid(...Object.values(GroupOwnsNftNameEnum))
+      .valid(...Object.values(ApiGroupOwnsNftNameEnum))
       .required(),
     tokens: Joi.array().required().items(Joi.string()).allow(null)
   });
 
-const GroupDescriptionSchema: Joi.ObjectSchema<CreateGroupDescription> =
-  Joi.object<CreateGroupDescription>({
+const GroupDescriptionSchema: Joi.ObjectSchema<ApiCreateGroupDescription> =
+  Joi.object<ApiCreateGroupDescription>({
     tdh: GroupTdhFilterSchema,
     rep: GroupRepFilterSchema,
     cic: GroupCicFilterSchema,
@@ -347,7 +347,7 @@ const GroupDescriptionSchema: Joi.ObjectSchema<CreateGroupDescription> =
       .max(20000)
   });
 
-const NewUserGroupSchema = Joi.object<CreateGroup>({
+const NewUserGroupSchema = Joi.object<ApiCreateGroup>({
   name: Joi.string()
     .max(100)
     .regex(/^[a-zA-Z0-9?!,.'() ]{1,100}$/)
@@ -359,9 +359,9 @@ const NewUserGroupSchema = Joi.object<CreateGroup>({
 });
 
 const ChangeUserGroupVisibilitySchema: Joi.ObjectSchema<
-  ChangeGroupVisibility & { group_id: string; profile_id: string }
+  ApiChangeGroupVisibility & { group_id: string; profile_id: string }
 > = Joi.object<
-  ChangeGroupVisibility & { group_id: string; profile_id: string }
+  ApiChangeGroupVisibility & { group_id: string; profile_id: string }
 >({
   visible: Joi.boolean().required(),
   group_id: Joi.string().required(),

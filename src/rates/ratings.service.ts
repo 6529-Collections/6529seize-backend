@@ -40,19 +40,19 @@ import converter from 'json-2-csv';
 import { arweaveFileUploader, ArweaveFileUploader } from '../arweave';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
 import { AuthenticationContext } from '../auth-context';
-import { ApiProfileProxyActionType } from '../entities/IProfileProxyAction';
+import { ProfileProxyActionType } from '../entities/IProfileProxyAction';
 import {
   profileProxiesDb,
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
-import { BulkRateRequest } from '../api-serverless/src/generated/models/BulkRateRequest';
+import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBulkRateRequest';
 import { distinct, resolveEnum, uniqueShortId } from '../helpers';
-import { AvailableRatingCredit } from '../api-serverless/src/generated/models/AvailableRatingCredit';
-import { RatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/RatingWithProfileInfoAndLevel';
-import { RatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/RatingWithProfileInfoAndLevelPage';
+import { ApiAvailableRatingCredit } from '../api-serverless/src/generated/models/ApiAvailableRatingCredit';
+import { ApiRatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevel';
+import { ApiRatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevelPage';
 import { IdentitiesDb, identitiesDb } from '../identities/identities.db';
 import { RequestContext } from '../request.context';
-import { BulkRepRequest } from '../api-serverless/src/generated/models/BulkRepRequest';
+import { ApiBulkRepRequest } from '../api-serverless/src/generated/models/ApiBulkRepRequest';
 import {
   abusivenessCheckService,
   AbusivenessCheckService
@@ -147,10 +147,10 @@ export class RatingsService {
       const action =
         request.matter === RateMatter.REP
           ? request.authenticationContext.activeProxyActions[
-              ApiProfileProxyActionType.ALLOCATE_REP
+              ProfileProxyActionType.ALLOCATE_REP
             ]
           : request.authenticationContext.activeProxyActions[
-              ApiProfileProxyActionType.ALLOCATE_CIC
+              ProfileProxyActionType.ALLOCATE_CIC
             ];
       if (!action) {
         throw new ForbiddenException(
@@ -689,7 +689,7 @@ export class RatingsService {
     matter_target_id: string;
     matter_category: string;
     matter: RateMatter;
-  }): Promise<RatingWithProfileInfoAndLevel[]> {
+  }): Promise<ApiRatingWithProfileInfoAndLevel[]> {
     const result =
       await this.ratingsDb.getRatingsForMatterAndCategoryOnProfileWithRatersInfo(
         param
@@ -720,7 +720,7 @@ export class RatingsService {
     queryParams: GetProfileRatingsRequest['query'];
     identity: string;
     matter: RateMatter;
-  }): Promise<RatingWithProfileInfoAndLevelPage> {
+  }): Promise<ApiRatingWithProfileInfoAndLevelPage> {
     const params = await this.getRatingsSearchParamsFromRequest({
       queryParams,
       identity,
@@ -741,7 +741,7 @@ export class RatingsService {
         const profileReps = await this.repService.getRepForProfiles(profileIds);
         return {
           ...page,
-          data: page.data.map<RatingWithProfileInfoAndLevel>((result) => ({
+          data: page.data.map<ApiRatingWithProfileInfoAndLevel>((result) => ({
             ...result,
             level: calculateLevel({
               tdh: result.tdh,
@@ -811,7 +811,7 @@ export class RatingsService {
 
   async bulkRateProfiles(
     authContext: AuthenticationContext,
-    apiRequest: BulkRateRequest
+    apiRequest: ApiBulkRateRequest
   ): Promise<{ skipped: { identity: string; reason: string }[] }> {
     const errors = await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -972,7 +972,7 @@ export class RatingsService {
   }: {
     rater_id: string;
     rater_representative_id: string | null;
-  }): Promise<AvailableRatingCredit> {
+  }): Promise<ApiAvailableRatingCredit> {
     const currentTdh = await this.profilesDb.getProfileTdh(rater_id);
     const [repSpent, cicSpent] = await Promise.all([
       this.ratingsDb.getRatesSpentOnMatterByProfile({
@@ -998,12 +998,10 @@ export class RatingsService {
           proxy_ids: proxyIds
         });
       const repAction = proxyActions.find(
-        (action) =>
-          action.action_type === ApiProfileProxyActionType.ALLOCATE_REP
+        (action) => action.action_type === ProfileProxyActionType.ALLOCATE_REP
       );
       const cicAction = proxyActions.find(
-        (action) =>
-          action.action_type === ApiProfileProxyActionType.ALLOCATE_CIC
+        (action) => action.action_type === ProfileProxyActionType.ALLOCATE_CIC
       );
       const proxyRepLeft =
         (repAction?.credit_amount ?? 0) - (repAction?.credit_spent ?? 0);
@@ -1025,7 +1023,7 @@ export class RatingsService {
     return await this.ratingsDb.deleteRatingsForMatter(param, ctx);
   }
 
-  async bulkRep({ targets }: BulkRepRequest, ctx: RequestContext) {
+  async bulkRep({ targets }: ApiBulkRepRequest, ctx: RequestContext) {
     const authenticationContext = ctx.authenticationContext!;
     const proposedCategories = distinct(
       targets.map((target) => target.category)
@@ -1093,7 +1091,7 @@ export class RatingsService {
         if (authenticationContext.isAuthenticatedAsProxy()) {
           const repAction =
             authenticationContext.activeProxyActions[
-              ApiProfileProxyActionType.ALLOCATE_REP
+              ProfileProxyActionType.ALLOCATE_REP
             ];
           if (!repAction) {
             throw new ForbiddenException(

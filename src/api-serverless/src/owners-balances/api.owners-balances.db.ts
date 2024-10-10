@@ -11,16 +11,16 @@ import {
 } from '../../../constants';
 import { fetchLatestTDHBlockNumber, fetchPaginated } from '../../../db-api';
 import { sqlExecutor } from '../../../sql-executor';
-import { OwnerBalancePage } from '../generated/models/OwnerBalancePage';
-import { OwnerBalance } from '../generated/models/OwnerBalance';
-import { OwnerBalanceMemes } from '../generated/models/OwnerBalanceMemes';
+import { ApiOwnerBalancePage } from '../generated/models/ApiOwnerBalancePage';
+import { ApiOwnerBalance } from '../generated/models/ApiOwnerBalance';
+import { ApiOwnerBalanceMemes } from '../generated/models/ApiOwnerBalanceMemes';
 
 export const fetchAllOwnerBalances = async (
   page: number,
   pageSize: number,
   sortDir: string
-): Promise<OwnerBalancePage> => {
-  return fetchPaginated<OwnerBalance>(
+): Promise<ApiOwnerBalancePage> => {
+  return fetchPaginated<ApiOwnerBalance>(
     CONSOLIDATED_OWNERS_BALANCES_TABLE,
     {},
     `total_balance ${sortDir}`,
@@ -32,12 +32,12 @@ export const fetchAllOwnerBalances = async (
 
 export const fetchOwnerBalancesForConsolidationKey = async (
   consolidationKey: string
-): Promise<OwnerBalance | null> => {
-  let filters = constructFilters(
+): Promise<ApiOwnerBalance | null> => {
+  const filters = constructFilters(
     '',
     `${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key = :consolidation_key`
   );
-  let fields = `
+  const fields = `
     ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.*,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boost,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh,
@@ -45,7 +45,7 @@ export const fetchOwnerBalancesForConsolidationKey = async (
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_gradients_tdh,
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_nextgen_tdh`;
 
-  let joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
+  const joins = ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
 
   const r = await fetchPaginated(
     CONSOLIDATED_OWNERS_BALANCES_TABLE,
@@ -130,12 +130,12 @@ export const fetchOwnerBalancesForConsolidationKey = async (
 
 export const fetchOwnerBalancesForWallet = async (wallet: string) => {
   const tdhBlock = await fetchLatestTDHBlockNumber();
-  let filters = constructFilters(
+  const filters = constructFilters(
     '',
     `${OWNERS_BALANCES_TABLE}.wallet = :wallet`
   );
 
-  let fields = `
+  const fields = `
     ${OWNERS_BALANCES_TABLE}.*,
     ${WALLETS_TDH_TABLE}.boost,
     ${WALLETS_TDH_TABLE}.boosted_tdh,
@@ -143,7 +143,7 @@ export const fetchOwnerBalancesForWallet = async (wallet: string) => {
     ${WALLETS_TDH_TABLE}.boosted_gradients_tdh,
     ${WALLETS_TDH_TABLE}.boosted_nextgen_tdh`;
 
-  let joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${OWNERS_BALANCES_TABLE}.wallet = ${WALLETS_TDH_TABLE}.wallet AND tdh.block = :tdhBlock`;
+  const joins = ` LEFT JOIN ${WALLETS_TDH_TABLE} ON ${OWNERS_BALANCES_TABLE}.wallet = ${WALLETS_TDH_TABLE}.wallet AND tdh.block = :tdhBlock`;
 
   const r = await fetchPaginated(
     OWNERS_BALANCES_TABLE,
@@ -229,7 +229,7 @@ export const fetchOwnerBalancesForWallet = async (wallet: string) => {
 
 export async function fetchMemesOwnerBalancesForConsolidationKey(
   consolidationKey: string
-): Promise<OwnerBalanceMemes[]> {
+): Promise<ApiOwnerBalanceMemes[]> {
   const sql = `
     SELECT 
       ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.*,
@@ -241,9 +241,12 @@ export async function fetchMemesOwnerBalancesForConsolidationKey(
       AND ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.season = ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.season 
     WHERE ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.consolidation_key = :consolidation_key 
   `;
-  const balancesResult: OwnerBalanceMemes[] = await sqlExecutor.execute(sql, {
-    consolidation_key: consolidationKey
-  });
+  const balancesResult: ApiOwnerBalanceMemes[] = await sqlExecutor.execute(
+    sql,
+    {
+      consolidation_key: consolidationKey
+    }
+  );
 
   for (const balance of balancesResult) {
     const rankSql = `
