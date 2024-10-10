@@ -26,6 +26,8 @@ import { WaveMin } from '../generated/models/WaveMin';
 import { WaveDropsFeed } from '../generated/models/WaveDropsFeed';
 import { DropTraceItem } from '../generated/models/DropTraceItem';
 import { DropSearchStrategy } from '../generated/models/DropSearchStrategy';
+import { DropType } from '../generated/models/DropType';
+import { DropType as DbDropType } from '../../../entities/IDrop';
 
 export class DropsApiService {
   constructor(
@@ -82,7 +84,8 @@ export class DropsApiService {
       wave_id,
       serial_no_less_than,
       author_id,
-      include_replies
+      include_replies,
+      drop_type
     }: {
       group_id: string | null;
       serial_no_less_than: number | null;
@@ -90,6 +93,7 @@ export class DropsApiService {
       amount: number;
       author_id: string | null;
       include_replies: boolean;
+      drop_type: DropType | null;
     },
     ctx: RequestContext
   ): Promise<Drop[]> {
@@ -112,7 +116,8 @@ export class DropsApiService {
         group_ids_user_is_eligible_for,
         wave_id,
         author_id,
-        include_replies
+        include_replies,
+        drop_type: drop_type ? resolveEnumOrThrow(DbDropType, drop_type) : null
       },
       ctx
     );
@@ -152,18 +157,28 @@ export class DropsApiService {
       sort_direction: PageSortDirection;
       drop_id: string;
       drop_part_id: number;
+      drop_type: DropType | null;
       sort: string;
       page: number;
       page_size: number;
     },
     ctx: RequestContext
   ): Promise<Page<Drop>> {
+    const drop_type = param.drop_type
+      ? resolveEnumOrThrow(DbDropType, param.drop_type)
+      : null;
     const count = await this.dropsDb
-      .countRepliesByDropIds({ dropIds: [param.drop_id] })
+      .countRepliesByDropIds({
+        dropIds: [param.drop_id],
+        drop_type
+      })
       .then(
         (result) => result[param.drop_id]?.[param.drop_part_id]?.count ?? 0
       );
-    const replies = await this.dropsDb.findRepliesByDropId(param);
+    const replies = await this.dropsDb.findRepliesByDropId({
+      ...param,
+      drop_type
+    });
     const drops = await this.dropsMappers.convertToDropFulls({
       dropEntities: replies,
       contextProfileId: ctx.authenticationContext?.getActingAsId()
@@ -335,13 +350,15 @@ export class DropsApiService {
       wave_id,
       serial_no_limit,
       amount,
-      search_strategy
+      search_strategy,
+      drop_type
     }: {
       drop_id: string | null;
       serial_no_limit: number | null;
       wave_id: string;
       amount: number;
       search_strategy: DropSearchStrategy;
+      drop_type: DropType | null;
     },
     ctx: RequestContext
   ): Promise<WaveDropsFeed> {
@@ -395,7 +412,10 @@ export class DropsApiService {
           drop_id: drop_id,
           amount,
           serial_no_limit,
-          search_strategy
+          search_strategy,
+          drop_type: drop_type
+            ? resolveEnumOrThrow(DbDropType, drop_type)
+            : null
         },
         ctx
       );
@@ -423,7 +443,10 @@ export class DropsApiService {
           wave_id: wave.id,
           amount,
           serial_no_limit,
-          search_strategy
+          search_strategy,
+          drop_type: drop_type
+            ? resolveEnumOrThrow(DbDropType, drop_type)
+            : null
         },
         ctx
       );

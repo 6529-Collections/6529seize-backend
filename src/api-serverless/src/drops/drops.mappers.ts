@@ -232,7 +232,7 @@ export class DropsMappers {
       this.dropsDb.getDropMedia(dropIds, connection),
       this.dropsDb.getDropsParts(dropIds, connection),
       this.dropsDb.countRepliesByDropIds(
-        { dropIds, context_profile_id: contextProfileId },
+        { dropIds, context_profile_id: contextProfileId, drop_type: null },
         connection
       ),
       !contextProfileId
