@@ -28,6 +28,7 @@ export async function getOpenseaResponse(url: string): Promise<any[]> {
   while (pageToken !== null) {
     try {
       const res = await getOpenseaResponseForPage(url, pageToken);
+      logger.info(`[OPENSEA RESPONSE] ${res}`);
       const data: any = await res.json();
       response.push(...data.orders);
       pageToken = data.next;
