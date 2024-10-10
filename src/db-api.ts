@@ -65,6 +65,7 @@ import { Artist } from './entities/IArtist';
 import { NFT } from './entities/INFT';
 import { TransactionPage } from './api-serverless/src/generated/models/TransactionPage';
 import { Transaction } from './api-serverless/src/generated/models/Transaction';
+import { NftMedia } from './api-serverless/src/generated/models/NftMedia';
 
 let read_pool: mysql.Pool;
 let write_pool: mysql.Pool;
@@ -1536,3 +1537,30 @@ export async function fetchRoyaltiesUploads(pageSize: number, page: number) {
     ''
   );
 }
+
+export const fetchNFTMedia = async (contract: string): Promise<NftMedia[]> => {
+  if (
+    areEqualAddresses(contract, MEMES_CONTRACT) ||
+    areEqualAddresses(contract, GRADIENT_CONTRACT)
+  ) {
+    const sql = `SELECT id, image, animation FROM ${NFTS_TABLE} WHERE contract=:contract ORDER BY RAND()`;
+    return await sqlExecutor.execute(sql, { contract: contract });
+  }
+
+  if (areEqualAddresses(contract, 'rememes')) {
+    const sql = `SELECT id, image, animation FROM ${REMEMES_TABLE} ORDER BY RAND() LIMIT 100`;
+    return await sqlExecutor.execute(sql, { contract: contract });
+  }
+
+  if (areEqualAddresses(contract, MEMELAB_CONTRACT)) {
+    const sql = `SELECT id, image, animation FROM ${NFTS_MEME_LAB_TABLE} ORDER BY RAND()`;
+    return await sqlExecutor.execute(sql, { contract: contract });
+  }
+
+  if (areEqualAddresses(contract, 'nextgen')) {
+    const sql = `SELECT image_url as image, animation_url as animation FROM ${NEXTGEN_TOKENS_TABLE} ORDER BY RAND()`;
+    return await sqlExecutor.execute(sql, { contract: contract });
+  }
+
+  return [];
+};

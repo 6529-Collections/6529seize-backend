@@ -80,6 +80,7 @@ export * from '../models/IntRange';
 export * from '../models/LoginRequest';
 export * from '../models/LoginResponse';
 export * from '../models/Nft';
+export * from '../models/NftMedia';
 export * from '../models/NftOwner';
 export * from '../models/NftOwnerPage';
 export * from '../models/NftsPage';
@@ -221,6 +222,7 @@ import { IntRange } from '../models/IntRange';
 import { LoginRequest } from '../models/LoginRequest';
 import { LoginResponse } from '../models/LoginResponse';
 import { Nft      , NftTokenTypeEnum                               } from '../models/Nft';
+import { NftMedia } from '../models/NftMedia';
 import { NftOwner } from '../models/NftOwner';
 import { NftOwnerPage } from '../models/NftOwnerPage';
 import { NftsPage } from '../models/NftsPage';
@@ -394,6 +396,7 @@ let typeMap: {[index: string]: any} = {
     "LoginRequest": LoginRequest,
     "LoginResponse": LoginResponse,
     "Nft": Nft,
+    "NftMedia": NftMedia,
     "NftOwner": NftOwner,
     "NftOwnerPage": NftOwnerPage,
     "NftsPage": NftsPage,
