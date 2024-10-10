@@ -23,9 +23,9 @@ import {
   RateProfileRequest
 } from './rating.helper';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
-import { ChangeProfileCicRating } from '../generated/models/ChangeProfileCicRating';
-import { ChangeProfileCicRatingResponse } from '../generated/models/ChangeProfileCicRatingResponse';
-import { RatingWithProfileInfoAndLevelPage } from '../generated/models/RatingWithProfileInfoAndLevelPage';
+import { ApiChangeProfileCicRating } from '../generated/models/ApiChangeProfileCicRating';
+import { ApiChangeProfileCicRatingResponse } from '../generated/models/ApiChangeProfileCicRatingResponse';
+import { ApiRatingWithProfileInfoAndLevelPage } from '../generated/models/ApiRatingWithProfileInfoAndLevelPage';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -83,7 +83,7 @@ router.get(
   `/ratings/by-rater`,
   async function (
     req: GetProfileRatingsRequest,
-    res: Response<ApiResponse<RatingWithProfileInfoAndLevelPage>>
+    res: Response<ApiResponse<ApiRatingWithProfileInfoAndLevelPage>>
   ) {
     const result = await ratingsService.getRatingsByRatersForMatter({
       queryParams: req.query,
@@ -98,8 +98,8 @@ router.post(
   `/rating`,
   needsAuthenticatedUser(),
   async function (
-    req: RateProfileRequest<ChangeProfileCicRating>,
-    res: Response<ApiResponse<ChangeProfileCicRatingResponse>>
+    req: RateProfileRequest<ApiChangeProfileCicRating>,
+    res: Response<ApiResponse<ApiChangeProfileCicRatingResponse>>
   ) {
     const { amount } = getValidatedByJoiOrThrow(
       req.body,
@@ -263,7 +263,7 @@ router.post(
   }
 );
 
-const ChangeProfileCicRatingSchema: Joi.ObjectSchema<ChangeProfileCicRating> =
+const ChangeProfileCicRatingSchema: Joi.ObjectSchema<ApiChangeProfileCicRating> =
   Joi.object({
     amount: Joi.number().integer().required()
   });

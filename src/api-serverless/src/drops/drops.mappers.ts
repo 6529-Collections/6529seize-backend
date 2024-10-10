@@ -8,20 +8,20 @@ import {
   DropType
 } from '../../../entities/IDrop';
 import { ConnectionWrapper } from '../../../sql-executor';
-import { Drop } from '../generated/models/Drop';
+import { ApiDrop } from '../generated/models/ApiDrop';
 import { distinct, parseIntOrNull, resolveEnumOrThrow } from '../../../helpers';
-import { ProfileMin } from '../generated/models/ProfileMin';
-import { DropPart } from '../generated/models/DropPart';
-import { DropMedia } from '../generated/models/DropMedia';
-import { DropReferencedNFT } from '../generated/models/DropReferencedNFT';
-import { DropMentionedUser } from '../generated/models/DropMentionedUser';
-import { DropMetadata } from '../generated/models/DropMetadata';
-import { DropRater } from '../generated/models/DropRater';
+import { ApiProfileMin } from '../generated/models/ApiProfileMin';
+import { ApiDropPart } from '../generated/models/ApiDropPart';
+import { ApiDropMedia } from '../generated/models/ApiDropMedia';
+import { ApiDropReferencedNFT } from '../generated/models/ApiDropReferencedNFT';
+import { ApiDropMentionedUser } from '../generated/models/ApiDropMentionedUser';
+import { ApiDropMetadata } from '../generated/models/ApiDropMetadata';
+import { ApiDropRater } from '../generated/models/ApiDropRater';
 import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
-import { DropSubscriptionTargetAction } from '../generated/models/DropSubscriptionTargetAction';
+import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
 import {
   userGroupsService,
   UserGroupsService
@@ -36,18 +36,18 @@ import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
-import { DropWithoutWave } from '../generated/models/DropWithoutWave';
+import { ApiDropWithoutWave } from '../generated/models/ApiDropWithoutWave';
 import { RequestContext } from '../../../request.context';
 import { AuthenticationContext } from '../../../auth-context';
-import { WaveMin } from '../generated/models/WaveMin';
+import { ApiWaveMin } from '../generated/models/ApiWaveMin';
 import { DeletedDropEntity } from '../../../entities/IDeletedDrop';
-import { CreateDropRequest } from '../generated/models/CreateDropRequest';
-import { UpdateDropRequest } from '../generated/models/UpdateDropRequest';
+import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
+import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import {
   CreateOrUpdateDropModel,
   DropPartIdentifierModel
 } from '../../../drops/create-or-update-drop.model';
-import { DropType as ApiDropType } from '../generated/models/DropType';
+import { ApiDropType } from '../generated/models/ApiDropType';
 
 export class DropsMappers {
   constructor(
@@ -63,7 +63,7 @@ export class DropsMappers {
     authorId,
     proxyId
   }: {
-    request: CreateDropRequest;
+    request: ApiCreateDropRequest;
     authorId: string;
     proxyId?: string;
   }): CreateOrUpdateDropModel {
@@ -84,7 +84,7 @@ export class DropsMappers {
     waveId,
     dropId
   }: {
-    request: UpdateDropRequest & { drop_type?: ApiDropType };
+    request: ApiUpdateDropRequest & { drop_type?: ApiDropType };
     waveId: string;
     replyTo: DropPartIdentifierModel | null;
     authorId: string;
@@ -140,7 +140,7 @@ export class DropsMappers {
       contextProfileId?: string | null;
     },
     connection?: ConnectionWrapper<any>
-  ): Promise<Drop[]> {
+  ): Promise<ApiDrop[]> {
     const dWoW = await this.convertToDropsWithoutWaves(dropEntities, {
       connection,
       authenticationContext: contextProfileId
@@ -155,9 +155,9 @@ export class DropsMappers {
       await this.userGroupsService.getGroupsUserIsEligibleFor(
         contextProfileId ?? null
       );
-    return dWoW.map<Drop>((d) => {
+    return dWoW.map<ApiDrop>((d) => {
       const wave = waveOverviews[d.id];
-      const waveMin: WaveMin | null = wave
+      const waveMin: ApiWaveMin | null = wave
         ? {
             id: wave.id,
             name: wave.name,
@@ -275,11 +275,11 @@ export class DropsMappers {
       subscribedActions: Object.entries(subscribedActions).reduce(
         (acc, [id, actions]) => {
           acc[id] = actions.map((it) =>
-            resolveEnumOrThrow(DropSubscriptionTargetAction, it)
+            resolveEnumOrThrow(ApiDropSubscriptionTargetAction, it)
           );
           return acc;
         },
-        {} as Record<string, DropSubscriptionTargetAction[]>
+        {} as Record<string, ApiDropSubscriptionTargetAction[]>
       ),
       deletedDrops,
       allEntities
@@ -304,7 +304,7 @@ export class DropsMappers {
   async convertToDropsWithoutWaves(
     entities: DropEntity[],
     ctx: RequestContext
-  ): Promise<DropWithoutWave[]> {
+  ): Promise<ApiDropWithoutWave[]> {
     const contextProfileId = ctx.authenticationContext?.getActingAsId() ?? null;
     const {
       mentions,
@@ -340,7 +340,7 @@ export class DropsMappers {
       ids: allProfileIds,
       authenticatedProfileId: contextProfileId
     });
-    const UNKNOWN_PROFILE: ProfileMin = {
+    const UNKNOWN_PROFILE: ApiProfileMin = {
       id: 'an-unknown-profile',
       handle: 'An unknown profile',
       banner1_color: null,
@@ -356,8 +356,8 @@ export class DropsMappers {
     const profilesByIds = allProfileIds.reduce((acc, profileId) => {
       acc[profileId] = profileMins[profileId] ?? UNKNOWN_PROFILE;
       return acc;
-    }, {} as Record<string, ProfileMin>);
-    return entities.map<DropWithoutWave>((dropEntity) => {
+    }, {} as Record<string, ApiProfileMin>);
+    return entities.map<ApiDropWithoutWave>((dropEntity) => {
       return this.toDrop({
         dropEntity,
         deletedDrops,
@@ -402,7 +402,7 @@ export class DropsMappers {
   }: {
     dropEntity: DropEntity;
     deletedDrops: Record<string, DeletedDropEntity>;
-    profilesByIds: Record<string, ProfileMin>;
+    profilesByIds: Record<string, ApiProfileMin>;
     dropsParts: Record<string, DropPartEntity[]>;
     dropMedia: Record<string, DropMediaEntity[]>;
     dropsRepliesCounts: Record<
@@ -423,9 +423,9 @@ export class DropsMappers {
       { rating: number; rater_profile_id: string }[]
     >;
     dropsRatingsByContextProfile: Record<string, number>;
-    subscribedActions: Record<string, DropSubscriptionTargetAction[]>;
+    subscribedActions: Record<string, ApiDropSubscriptionTargetAction[]>;
     allEntities: Record<string, DropEntity>;
-  }): DropWithoutWave {
+  }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
     return {
       id: dropEntity.id,
@@ -461,7 +461,7 @@ export class DropsMappers {
       author: profilesByIds[dropEntity.author_id],
       title: dropEntity.title,
       parts:
-        dropsParts[dropEntity.id]?.map<DropPart>((it) => {
+        dropsParts[dropEntity.id]?.map<ApiDropPart>((it) => {
           const quotedDropId = it.quoted_drop_id;
           return {
             content: it.content,
@@ -497,7 +497,7 @@ export class DropsMappers {
             media:
               (dropMedia[dropEntity.id] ?? [])
                 .filter((m) => m.drop_part_id === it.drop_part_id)
-                .map<DropMedia>((it) => ({
+                .map<ApiDropMedia>((it) => ({
                   url: it.url,
                   mime_type: it.mime_type
                 })) ?? [],
@@ -522,28 +522,28 @@ export class DropsMappers {
       updated_at: parseIntOrNull(dropEntity.updated_at),
       referenced_nfts: referencedNfts
         .filter((it) => it.drop_id === dropEntity.id)
-        .map<DropReferencedNFT>((it) => ({
+        .map<ApiDropReferencedNFT>((it) => ({
           contract: it.contract,
           token: it.token,
           name: it.name
         })),
       mentioned_users: mentions
         .filter((it) => it.drop_id === dropEntity.id)
-        .map<DropMentionedUser>((it) => ({
+        .map<ApiDropMentionedUser>((it) => ({
           mentioned_profile_id: it.mentioned_profile_id,
           handle_in_content: it.handle_in_content,
           current_handle: profilesByIds[it.mentioned_profile_id]?.handle ?? null
         })),
       metadata: metadata
         .filter((it) => it.drop_id === dropEntity.id)
-        .map<DropMetadata>((it) => ({
+        .map<ApiDropMetadata>((it) => ({
           data_key: it.data_key,
           data_value: it.data_value
         })),
       rating: dropsRatings[dropEntity.id]?.rating ?? 0,
       raters_count: dropsRatings[dropEntity.id]?.distinct_raters ?? 0,
       top_raters: (dropsTopRaters[dropEntity.id] ?? [])
-        .map<DropRater>((rater) => ({
+        .map<ApiDropRater>((rater) => ({
           rating: rater.rating,
           profile: profilesByIds[rater.rater_profile_id]
         }))

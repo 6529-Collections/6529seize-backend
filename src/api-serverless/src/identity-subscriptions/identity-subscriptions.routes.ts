@@ -5,10 +5,10 @@ import { ApiResponse } from '../api-response';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 import * as Joi from 'joi';
-import { OutgoingIdentitySubscriptionsPage } from '../generated/models/OutgoingIdentitySubscriptionsPage';
+import { ApiOutgoingIdentitySubscriptionsPage } from '../generated/models/ApiOutgoingIdentitySubscriptionsPage';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { identitySubscriptionsApiService } from './identity-subscriptions.api.service';
-import { IncomingIdentitySubscriptionsPage } from '../generated/models/IncomingIdentitySubscriptionsPage';
+import { ApiIncomingIdentitySubscriptionsPage } from '../generated/models/ApiIncomingIdentitySubscriptionsPage';
 import { profilesService } from '../../../profiles/profiles.service';
 
 const router = asyncRouter();
@@ -24,7 +24,7 @@ router.get(
       { page: number; page_size: number },
       any
     >,
-    res: Response<ApiResponse<OutgoingIdentitySubscriptionsPage>>
+    res: Response<ApiResponse<ApiOutgoingIdentitySubscriptionsPage>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     const authenticatedUsedId = authenticationContext.getActingAsId();
@@ -56,7 +56,7 @@ router.get(
       { page: number; page_size: number },
       any
     >,
-    res: Response<ApiResponse<IncomingIdentitySubscriptionsPage>>
+    res: Response<ApiResponse<ApiIncomingIdentitySubscriptionsPage>>
   ) => {
     let targetId: string | null = req.params.target_id;
     if (req.params.target_type === ActivityEventTargetType.IDENTITY) {

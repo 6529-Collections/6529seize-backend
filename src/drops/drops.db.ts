@@ -46,7 +46,7 @@ import { RequestContext } from '../request.context';
 import { ActivityEventTargetType } from '../entities/IActivityEvent';
 import { DeletedDropEntity } from '../entities/IDeletedDrop';
 import { DropRelationEntity } from '../entities/IDropRelation';
-import { DropSearchStrategy } from '../api-serverless/src/generated/models/DropSearchStrategy';
+import { ApiDropSearchStrategy } from '../api-serverless/src/generated/models/ApiDropSearchStrategy';
 
 const mysql = require('mysql');
 
@@ -475,13 +475,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       drop_type ? ` drop_type = :drop_type and ` : ``
     } d.wave_id = :wave_id and d.serial_no = :serial_no_limit)`;
     const sql = `with dr_results as (${[
-      search_strategy === DropSearchStrategy.Newer ||
-      search_strategy === DropSearchStrategy.Both
+      search_strategy === ApiDropSearchStrategy.Newer ||
+      search_strategy === ApiDropSearchStrategy.Both
         ? sqlForNewer
         : undefined,
-      search_strategy === DropSearchStrategy.Both ? sqlForThis : undefined,
-      search_strategy === DropSearchStrategy.Older ||
-      search_strategy === DropSearchStrategy.Both
+      search_strategy === ApiDropSearchStrategy.Both ? sqlForThis : undefined,
+      search_strategy === ApiDropSearchStrategy.Older ||
+      search_strategy === ApiDropSearchStrategy.Both
         ? sqlForOlder
         : undefined
     ]
@@ -526,13 +526,13 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       drop_type ? ` drop_type = :drop_type and ` : ``
     } r.parent_id = :drop_id and serial_no = :serial_no_limit`;
     const sql = `with dr_results as (${[
-      search_strategy === DropSearchStrategy.Newer ||
-      search_strategy === DropSearchStrategy.Both
+      search_strategy === ApiDropSearchStrategy.Newer ||
+      search_strategy === ApiDropSearchStrategy.Both
         ? sqlForNewer
         : undefined,
-      search_strategy === DropSearchStrategy.Both ? sqlForThis : undefined,
-      search_strategy === DropSearchStrategy.Older ||
-      search_strategy === DropSearchStrategy.Both
+      search_strategy === ApiDropSearchStrategy.Both ? sqlForThis : undefined,
+      search_strategy === ApiDropSearchStrategy.Older ||
+      search_strategy === ApiDropSearchStrategy.Both
         ? sqlForOlder
         : undefined
     ]

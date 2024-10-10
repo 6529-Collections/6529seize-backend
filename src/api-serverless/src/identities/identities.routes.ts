@@ -4,9 +4,9 @@ import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import { ForbiddenException } from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
-import { IdentitySubscriptionActions } from '../generated/models/IdentitySubscriptionActions';
+import { ApiIdentitySubscriptionActions } from '../generated/models/ApiIdentitySubscriptionActions';
 import * as Joi from 'joi';
-import { IdentitySubscriptionTargetAction } from '../generated/models/IdentitySubscriptionTargetAction';
+import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
 import { identitiesService } from './identities.service';
 import { profilesService } from '../../../profiles/profiles.service';
 import { profilesApiService } from '../profiles/profiles.api.service';
@@ -18,7 +18,7 @@ router.get(
   needsAuthenticatedUser(),
   async (
     req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<IdentitySubscriptionActions>>
+    res: Response<ApiResponse<ApiIdentitySubscriptionActions>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     const authenticatedProfileId = authenticationContext.getActingAsId();
@@ -46,8 +46,8 @@ router.post(
   '/:id/subscriptions',
   needsAuthenticatedUser(),
   async (
-    req: Request<{ id: string }, any, IdentitySubscriptionActions, any, any>,
-    res: Response<ApiResponse<IdentitySubscriptionActions>>
+    req: Request<{ id: string }, any, ApiIdentitySubscriptionActions, any, any>,
+    res: Response<ApiResponse<ApiIdentitySubscriptionActions>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     const authenticatedProfileId = authenticationContext.getActingAsId();
@@ -77,8 +77,8 @@ router.delete(
   '/:id/subscriptions',
   needsAuthenticatedUser(),
   async (
-    req: Request<{ id: string }, any, IdentitySubscriptionActions, any, any>,
-    res: Response<ApiResponse<IdentitySubscriptionActions>>
+    req: Request<{ id: string }, any, ApiIdentitySubscriptionActions, any, any>,
+    res: Response<ApiResponse<ApiIdentitySubscriptionActions>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     const authenticatedProfileId = authenticationContext.getActingAsId();
@@ -97,7 +97,7 @@ router.delete(
         identityAddress: identityAddress,
         subscriber: authenticatedProfileId,
         actions: request.actions.filter(
-          (it) => it !== IdentitySubscriptionTargetAction.DropVoted
+          (it) => it !== ApiIdentitySubscriptionTargetAction.DropVoted
         )
       });
     res.send({
@@ -107,10 +107,12 @@ router.delete(
 );
 
 const IdentintitySubscriptionActionsSchema =
-  Joi.object<IdentitySubscriptionActions>({
+  Joi.object<ApiIdentitySubscriptionActions>({
     actions: Joi.array()
       .items(
-        Joi.string().valid(...Object.values(IdentitySubscriptionTargetAction))
+        Joi.string().valid(
+          ...Object.values(ApiIdentitySubscriptionTargetAction)
+        )
       )
       .required()
   });

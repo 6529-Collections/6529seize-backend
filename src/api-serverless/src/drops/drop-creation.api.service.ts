@@ -1,12 +1,12 @@
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { DropsApiService, dropsService } from './drops.api.service';
-import { CreateDropRequest } from '../generated/models/CreateDropRequest';
-import { Drop } from '../generated/models/Drop';
+import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
+import { ApiDrop } from '../generated/models/ApiDrop';
 import { AuthenticationContext } from '../../../auth-context';
 import { Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
-import { UpdateDropRequest } from '../generated/models/UpdateDropRequest';
+import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import {
   createOrUpdateDrop,
   CreateOrUpdateDropUseCase
@@ -37,12 +37,12 @@ export class DropCreationApiService {
       authorId,
       representativeId
     }: {
-      createDropRequest: CreateDropRequest;
+      createDropRequest: ApiCreateDropRequest;
       authorId: string;
       representativeId: string;
     },
     timer: Timer
-  ): Promise<Drop> {
+  ): Promise<ApiDrop> {
     return this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         return await this.createDropWithGivenConnection(
@@ -59,12 +59,12 @@ export class DropCreationApiService {
       authorId,
       representativeId
     }: {
-      createDropRequest: CreateDropRequest;
+      createDropRequest: ApiCreateDropRequest;
       authorId: string;
       representativeId: string;
     },
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
-  ): Promise<Drop> {
+  ): Promise<ApiDrop> {
     const proxyId =
       authorId === representativeId ? undefined : representativeId;
     const model = this.dropsMappers.createDropApiToUseCaseModel({
@@ -123,12 +123,12 @@ export class DropCreationApiService {
       representativeId
     }: {
       dropId: string;
-      request: UpdateDropRequest;
+      request: ApiUpdateDropRequest;
       authorId: string;
       representativeId: string;
     },
     timer: Timer
-  ): Promise<Drop> {
+  ): Promise<ApiDrop> {
     const drop = await this.dropsDb.findDropById(dropId);
     if (!drop) {
       throw new NotFoundException(`Drop ${dropId} not found`);

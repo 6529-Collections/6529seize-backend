@@ -2,27 +2,27 @@ import { Request, Response } from 'express';
 import { asyncRouter } from '../async.router';
 import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { ApiResponse } from '../api-response';
-import { CreateNewProfileProxy } from '../generated/models/CreateNewProfileProxy';
+import { ApiCreateNewProfileProxy } from '../generated/models/ApiCreateNewProfileProxy';
 import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { profilesService } from '../../../profiles/profiles.service';
 import { profileProxyApiService } from './proxy.api.service';
 import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { ProxyApiRequestAction } from './proxies.api.types';
-import { CreateNewProfileProxyAllocateRepAction } from '../generated/models/CreateNewProfileProxyAllocateRepAction';
-import { CreateNewProfileProxyAllocateCicAction } from '../generated/models/CreateNewProfileProxyAllocateCicAction';
-import { CreateNewProfileProxyCreateWaveAction } from '../generated/models/CreateNewProfileProxyCreateWaveAction';
-import { CreateNewProfileProxyReadWaveAction } from '../generated/models/CreateNewProfileProxyReadWaveAction';
-import { ProfileProxyActionType } from '../generated/models/ProfileProxyActionType';
-import { CreateNewProfileProxyRateWaveDropAction } from '../generated/models/CreateNewProfileProxyRateWaveDropAction';
+import { ApiCreateNewProfileProxyAllocateRepAction } from '../generated/models/ApiCreateNewProfileProxyAllocateRepAction';
+import { ApiCreateNewProfileProxyAllocateCicAction } from '../generated/models/ApiCreateNewProfileProxyAllocateCicAction';
+import { ApiCreateNewProfileProxyCreateWaveAction } from '../generated/models/ApiCreateNewProfileProxyCreateWaveAction';
+import { ApiCreateNewProfileProxyReadWaveAction } from '../generated/models/ApiCreateNewProfileProxyReadWaveAction';
+import { ApiProfileProxyActionType } from '../generated/models/ApiProfileProxyActionType';
+import { ApiCreateNewProfileProxyRateWaveDropAction } from '../generated/models/ApiCreateNewProfileProxyRateWaveDropAction';
 import { assertUnreachable } from '../../../helpers';
-import { ProfileProxy } from '../generated/models/ProfileProxy';
+import { ApiProfileProxy } from '../generated/models/ApiProfileProxy';
 import {
   AcceptActionRequest,
   AcceptActionRequestActionEnum
 } from '../generated/models/AcceptActionRequest';
 import { ProfileProxyActionEntity } from '../../../entities/IProfileProxyAction';
-import { UpdateProxyActionRequest } from '../generated/models/UpdateProxyActionRequest';
+import { ApiUpdateProxyActionRequest } from '../generated/models/ApiUpdateProxyActionRequest';
 
 const router = asyncRouter();
 
@@ -30,8 +30,8 @@ router.post(
   '/',
   needsAuthenticatedUser(),
   async (
-    req: Request<any, any, CreateNewProfileProxy, any, any>,
-    res: Response<ApiResponse<ProfileProxy>>
+    req: Request<any, any, ApiCreateNewProfileProxy, any, any>,
+    res: Response<ApiResponse<ApiProfileProxy>>
   ) => {
     const { body } = req;
     const newProxy = getValidatedByJoiOrThrow(body, NewProfileProxySchema);
@@ -64,7 +64,7 @@ router.get(
   '/:proxy_id',
   async (
     req: Request<{ proxy_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<ProfileProxy>>
+    res: Response<ApiResponse<ApiProfileProxy>>
   ) => {
     const { proxy_id } = req.params;
     const profileProxy =
@@ -105,34 +105,34 @@ router.post(
     }
     const type = req.body.action_type;
     switch (type) {
-      case ProfileProxyActionType.AllocateRep:
+      case ApiProfileProxyActionType.AllocateRep:
         getValidatedByJoiOrThrow(
           req.body,
           NewProfileProxyAllocateRepActionSchema
         );
         break;
-      case ProfileProxyActionType.AllocateCic:
+      case ApiProfileProxyActionType.AllocateCic:
         getValidatedByJoiOrThrow(
           req.body,
           NewProfileProxyAllocateCicActionSchema
         );
         break;
-      case ProfileProxyActionType.CreateWave:
+      case ApiProfileProxyActionType.CreateWave:
         getValidatedByJoiOrThrow(
           req.body,
           NewProfileProxyCreateWaveActionSchema
         );
         break;
-      case ProfileProxyActionType.ReadWave:
+      case ApiProfileProxyActionType.ReadWave:
         getValidatedByJoiOrThrow(req.body, NewProfileProxyReadWaveActionSchema);
         break;
-      case ProfileProxyActionType.CreateDropToWave:
+      case ApiProfileProxyActionType.CreateDropToWave:
         getValidatedByJoiOrThrow(
           req.body,
           NewProfileProxyCreateDropToWaveActionSchema
         );
         break;
-      case ProfileProxyActionType.RateWaveDrop:
+      case ApiProfileProxyActionType.RateWaveDrop:
         getValidatedByJoiOrThrow(
           req.body,
           NewProfileProxyRateWaveDropActionSchema
@@ -196,7 +196,7 @@ router.put(
     req: Request<
       { proxy_id: string; action_id: string },
       any,
-      UpdateProxyActionRequest,
+      ApiUpdateProxyActionRequest,
       any,
       any
     >,
@@ -227,54 +227,56 @@ router.put(
   }
 );
 
-const NewProfileProxySchema = Joi.object<CreateNewProfileProxy>({
+const NewProfileProxySchema = Joi.object<ApiCreateNewProfileProxy>({
   target_id: Joi.string().required()
 });
 
 const NewProfileProxyAllocateRepActionSchema =
-  Joi.object<CreateNewProfileProxyAllocateRepAction>({
+  Joi.object<ApiCreateNewProfileProxyAllocateRepAction>({
     action_type: Joi.string()
-      .valid(ProfileProxyActionType.AllocateRep)
+      .valid(ApiProfileProxyActionType.AllocateRep)
       .required(),
     end_time: Joi.number().optional().allow(null),
     credit_amount: Joi.number().min(1).required()
   });
 
 const NewProfileProxyAllocateCicActionSchema =
-  Joi.object<CreateNewProfileProxyAllocateCicAction>({
+  Joi.object<ApiCreateNewProfileProxyAllocateCicAction>({
     action_type: Joi.string()
-      .valid(ProfileProxyActionType.AllocateCic)
+      .valid(ApiProfileProxyActionType.AllocateCic)
       .required(),
     end_time: Joi.number().optional().allow(null),
     credit_amount: Joi.number().min(1).required()
   });
 
 const NewProfileProxyCreateWaveActionSchema =
-  Joi.object<CreateNewProfileProxyCreateWaveAction>({
+  Joi.object<ApiCreateNewProfileProxyCreateWaveAction>({
     action_type: Joi.string()
-      .valid(ProfileProxyActionType.CreateWave)
+      .valid(ApiProfileProxyActionType.CreateWave)
       .required(),
     end_time: Joi.number().optional().allow(null)
   });
 
 const NewProfileProxyReadWaveActionSchema =
-  Joi.object<CreateNewProfileProxyReadWaveAction>({
-    action_type: Joi.string().valid(ProfileProxyActionType.ReadWave).required(),
+  Joi.object<ApiCreateNewProfileProxyReadWaveAction>({
+    action_type: Joi.string()
+      .valid(ApiProfileProxyActionType.ReadWave)
+      .required(),
     end_time: Joi.number().optional().allow(null)
   });
 
 const NewProfileProxyCreateDropToWaveActionSchema =
-  Joi.object<CreateNewProfileProxyCreateWaveAction>({
+  Joi.object<ApiCreateNewProfileProxyCreateWaveAction>({
     action_type: Joi.string()
-      .valid(ProfileProxyActionType.CreateDropToWave)
+      .valid(ApiProfileProxyActionType.CreateDropToWave)
       .required(),
     end_time: Joi.number().optional().allow(null)
   });
 
 const NewProfileProxyRateWaveDropActionSchema =
-  Joi.object<CreateNewProfileProxyRateWaveDropAction>({
+  Joi.object<ApiCreateNewProfileProxyRateWaveDropAction>({
     action_type: Joi.string()
-      .valid(ProfileProxyActionType.RateWaveDrop)
+      .valid(ApiProfileProxyActionType.RateWaveDrop)
       .required(),
     end_time: Joi.number().optional().allow(null)
   });
@@ -285,7 +287,7 @@ const AcceptActionRequestSchema = Joi.object<AcceptActionRequest>({
     .allow(...Object.values(AcceptActionRequestActionEnum))
 });
 
-const UpdateActionRequestSchema = Joi.object<UpdateProxyActionRequest>({
+const UpdateActionRequestSchema = Joi.object<ApiUpdateProxyActionRequest>({
   end_time: Joi.number().optional().allow(null),
   credit_amount: Joi.number().optional()
 });

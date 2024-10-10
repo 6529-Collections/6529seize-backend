@@ -1,6 +1,6 @@
 import { SearchWavesParams, wavesApiDb, WavesApiDb } from './waves.api.db';
-import { CreateNewWave } from '../generated/models/CreateNewWave';
-import { Wave } from '../generated/models/Wave';
+import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
+import { ApiWave } from '../generated/models/ApiWave';
 import {
   assertUnreachable,
   distinct,
@@ -19,15 +19,11 @@ import {
 import { wavesMappers, WavesMappers } from './waves.mappers';
 import { randomUUID } from 'crypto';
 import { AuthenticationContext } from '../../../auth-context';
-import { WaveType } from '../generated/models/WaveType';
-import { WaveOutcomeType } from '../generated/models/WaveOutcomeType';
-import { WaveOutcomeSubType } from '../generated/models/WaveOutcomeSubType';
-import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import {
   activityRecorder,
   ActivityRecorder
 } from '../../../activity/activity.recorder';
-import { WaveSubscriptionTargetAction } from '../generated/models/WaveSubscriptionTargetAction';
 import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
@@ -40,17 +36,21 @@ import {
   profilesApiService,
   ProfilesApiService
 } from '../profiles/profiles.api.service';
-import { WavesOverviewType } from '../generated/models/WavesOverviewType';
 import { WaveEntity } from '../../../entities/IWave';
 import { RequestContext } from '../../../request.context';
-import { UpdateWaveRequest } from '../generated/models/UpdateWaveRequest';
+import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { Time } from '../../../time';
 import {
   createOrUpdateDrop,
   CreateOrUpdateDropUseCase
 } from '../../../drops/create-or-update-drop.use-case';
 import { dropsMappers, DropsMappers } from '../drops/drops.mappers';
-import { DropType } from '../generated/models/DropType';
+import { ApiDropType } from '../generated/models/ApiDropType';
+import { ApiWaveType } from '../generated/models/ApiWaveType';
+import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
+import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType';
+import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
+import { ApiWavesOverviewType } from '../generated/models/ApiWavesOverviewType';
 
 export class WaveApiService {
   constructor(
@@ -65,9 +65,9 @@ export class WaveApiService {
   ) {}
 
   public async createWave(
-    createWaveRequest: CreateNewWave,
+    createWaveRequest: ApiCreateNewWave,
     ctx: RequestContext
-  ): Promise<Wave> {
+  ): Promise<ApiWave> {
     const timer = ctx.timer!;
     const authenticationContext = ctx.authenticationContext!;
     timer.start('waveApiService->createWave');
@@ -92,7 +92,7 @@ export class WaveApiService {
             request: {
               ...createWaveRequest.description_drop,
               wave_id: id,
-              drop_type: DropType.Chat
+              drop_type: ApiDropType.Chat
             },
             authorId
           });
@@ -143,12 +143,12 @@ export class WaveApiService {
         const noRightToVote =
           authenticationContext.isAuthenticatedAsProxy() &&
           !authenticationContext.activeProxyActions[
-            ApiProfileProxyActionType.RATE_WAVE_DROP
+            ProfileProxyActionType.RATE_WAVE_DROP
           ];
         const noRightToParticipate =
           authenticationContext.isAuthenticatedAsProxy() &&
           !authenticationContext.activeProxyActions[
-            ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+            ProfileProxyActionType.CREATE_DROP_TO_WAVE
           ];
         return await this.waveMappers.waveEntityToApiWave(
           {
@@ -167,7 +167,7 @@ export class WaveApiService {
   }
 
   private async validateWaveRelations(
-    createWave: CreateNewWave | UpdateWaveRequest,
+    createWave: ApiCreateNewWave | ApiUpdateWaveRequest,
     ctx: RequestContext
   ) {
     const authenticatedProfileId = ctx.authenticationContext!.getActingAsId()!;
@@ -216,29 +216,31 @@ export class WaveApiService {
     }
   }
 
-  private validateOutcomes(createWave: CreateNewWave | UpdateWaveRequest) {
+  private validateOutcomes(
+    createWave: ApiCreateNewWave | ApiUpdateWaveRequest
+  ) {
     const waveType = createWave.wave.type;
     switch (waveType) {
-      case WaveType.Approve: {
+      case ApiWaveType.Approve: {
         if (createWave.outcomes.find((it) => it.distribution?.length)) {
           throw new BadRequestException(
-            `Waves of type ${WaveType.Approve} can't have distribution in outcomes`
+            `Waves of type ${ApiWaveType.Approve} can't have distribution in outcomes`
           );
         }
         break;
       }
-      case WaveType.Rank: {
+      case ApiWaveType.Rank: {
         const creditDistributionOutcomes = createWave.outcomes.filter(
           (it) =>
-            it.type == WaveOutcomeType.Automatic &&
-            it.subtype === WaveOutcomeSubType.CreditDistribution
+            it.type == ApiWaveOutcomeType.Automatic &&
+            it.subtype === ApiWaveOutcomeSubType.CreditDistribution
         );
         if (
           creditDistributionOutcomes.length &&
           !creditDistributionOutcomes.find((it) => it.distribution?.length)
         ) {
           throw new BadRequestException(
-            `Credit distribution outcomes for waves of type ${WaveType.Rank} need to have distribution described`
+            `Credit distribution outcomes for waves of type ${ApiWaveType.Rank} need to have distribution described`
           );
         }
         const non100PercentDistributions = creditDistributionOutcomes.filter(
@@ -252,10 +254,10 @@ export class WaveApiService {
         }
         break;
       }
-      case WaveType.Chat: {
+      case ApiWaveType.Chat: {
         if (createWave.outcomes.length) {
           throw new BadRequestException(
-            `Waves of type ${WaveType.Chat} can't have outcomes`
+            `Waves of type ${ApiWaveType.Chat} can't have outcomes`
           );
         }
         break;
@@ -269,7 +271,7 @@ export class WaveApiService {
   async searchWaves(
     params: SearchWavesParams,
     ctx: RequestContext
-  ): Promise<Wave[]> {
+  ): Promise<ApiWave[]> {
     const authenticationContext = ctx.authenticationContext;
     let groupsUserIsEligibleFor: string[];
     if (!authenticationContext?.isUserFullyAuthenticated()) {
@@ -279,7 +281,7 @@ export class WaveApiService {
       if (
         authenticationContext.isAuthenticatedAsProxy() &&
         !authenticationContext.activeProxyActions[
-          ApiProfileProxyActionType.READ_WAVE
+          ProfileProxyActionType.READ_WAVE
         ]
       ) {
         groupsUserIsEligibleFor = [];
@@ -299,13 +301,13 @@ export class WaveApiService {
       !authenticationContext ||
       (authenticationContext.isAuthenticatedAsProxy() &&
         !authenticationContext.activeProxyActions[
-          ApiProfileProxyActionType.RATE_WAVE_DROP
+          ProfileProxyActionType.RATE_WAVE_DROP
         ]);
     const noRightToParticipate =
       !authenticationContext ||
       (authenticationContext.isAuthenticatedAsProxy() &&
         !authenticationContext.activeProxyActions[
-          ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+          ProfileProxyActionType.CREATE_DROP_TO_WAVE
         ]);
     return await this.waveMappers.waveEntitiesToApiWaves(
       {
@@ -322,7 +324,7 @@ export class WaveApiService {
     ids: string[],
     groupIdsUserIsEligibleFor: string[],
     authenticationContext?: AuthenticationContext
-  ): Promise<Record<string, Wave>> {
+  ): Promise<Record<string, ApiWave>> {
     const entities = await this.wavesApiDb.findWavesByIds(
       ids,
       groupIdsUserIsEligibleFor
@@ -337,13 +339,13 @@ export class WaveApiService {
       !authenticationContext ||
       (authenticationContext.isAuthenticatedAsProxy() &&
         !authenticationContext.activeProxyActions[
-          ApiProfileProxyActionType.RATE_WAVE_DROP
+          ProfileProxyActionType.RATE_WAVE_DROP
         ]);
     const noRightToParticipate =
       !authenticationContext ||
       (authenticationContext.isAuthenticatedAsProxy() &&
         !authenticationContext.activeProxyActions[
-          ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+          ProfileProxyActionType.CREATE_DROP_TO_WAVE
         ]);
     return await this.waveMappers
       .waveEntitiesToApiWaves(
@@ -359,7 +361,7 @@ export class WaveApiService {
         res.reduce((acc, it) => {
           acc[it.id] = it;
           return acc;
-        }, {} as Record<string, Wave>)
+        }, {} as Record<string, ApiWave>)
       );
   }
 
@@ -367,7 +369,7 @@ export class WaveApiService {
     id: string,
     groupIdsUserIsEligibleFor: string[],
     ctx: RequestContext
-  ): Promise<Wave> {
+  ): Promise<ApiWave> {
     const authenticationContext = ctx.authenticationContext;
     const entity = await this.wavesApiDb.findWaveById(id);
     if (!entity) {
@@ -377,13 +379,13 @@ export class WaveApiService {
       !authenticationContext?.isUserFullyAuthenticated() ||
       (authenticationContext?.isAuthenticatedAsProxy() &&
         !authenticationContext?.hasProxyAction(
-          ApiProfileProxyActionType.RATE_WAVE_DROP
+          ProfileProxyActionType.RATE_WAVE_DROP
         ));
     const noRightToParticipate =
       !authenticationContext?.isUserFullyAuthenticated() ||
       (authenticationContext?.isAuthenticatedAsProxy() &&
         !authenticationContext?.hasProxyAction(
-          ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+          ProfileProxyActionType.CREATE_DROP_TO_WAVE
         ));
     return await this.waveMappers.waveEntityToApiWave(
       {
@@ -403,8 +405,8 @@ export class WaveApiService {
   }: {
     subscriber: string;
     waveId: string;
-    actions: WaveSubscriptionTargetAction[];
-  }): Promise<WaveSubscriptionTargetAction[]> {
+    actions: ApiWaveSubscriptionTargetAction[];
+  }): Promise<ApiWaveSubscriptionTargetAction[]> {
     const groupsUserIsEligibleFor =
       await this.userGroupsService.getGroupsUserIsEligibleFor(subscriber);
     await this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor, {});
@@ -448,7 +450,7 @@ export class WaveApiService {
           )
           .then((result) =>
             result.map((it) =>
-              resolveEnumOrThrow(WaveSubscriptionTargetAction, it)
+              resolveEnumOrThrow(ApiWaveSubscriptionTargetAction, it)
             )
           );
       }
@@ -462,8 +464,8 @@ export class WaveApiService {
   }: {
     subscriber: string;
     waveId: string;
-    actions: WaveSubscriptionTargetAction[];
-  }): Promise<WaveSubscriptionTargetAction[]> {
+    actions: ApiWaveSubscriptionTargetAction[];
+  }): Promise<ApiWaveSubscriptionTargetAction[]> {
     const groupsUserIsEligibleFor =
       await this.userGroupsService.getGroupsUserIsEligibleFor(subscriber);
     await this.findWaveByIdOrThrow(waveId, groupsUserIsEligibleFor, {});
@@ -491,7 +493,7 @@ export class WaveApiService {
           )
           .then((result) =>
             result.map((it) =>
-              resolveEnumOrThrow(WaveSubscriptionTargetAction, it)
+              resolveEnumOrThrow(ApiWaveSubscriptionTargetAction, it)
             )
           );
       }
@@ -514,9 +516,9 @@ export class WaveApiService {
       if (
         only_waves_followed_by_authenticated_user ||
         [
-          WavesOverviewType.AuthorYouHaveRepped,
-          WavesOverviewType.MostDroppedByYou,
-          WavesOverviewType.RecentlyDroppedToByYou
+          ApiWavesOverviewType.AuthorYouHaveRepped,
+          ApiWavesOverviewType.MostDroppedByYou,
+          ApiWavesOverviewType.RecentlyDroppedToByYou
         ].includes(type)
       ) {
         throw new BadRequestException(
@@ -529,7 +531,7 @@ export class WaveApiService {
       !authenticatedProfileId ||
       (authenticationContext.isAuthenticatedAsProxy() &&
         !authenticationContext.activeProxyActions[
-          ApiProfileProxyActionType.READ_WAVE
+          ProfileProxyActionType.READ_WAVE
         ])
         ? []
         : await this.userGroupsService.getGroupsUserIsEligibleFor(
@@ -549,14 +551,14 @@ export class WaveApiService {
       !authenticatedProfileId ||
       (authenticationContext.isAuthenticatedAsProxy() &&
         !authenticationContext.activeProxyActions[
-          ApiProfileProxyActionType.RATE_WAVE_DROP
+          ProfileProxyActionType.RATE_WAVE_DROP
         ]);
     const noRightToParticipate =
       !authenticationContext ||
       !authenticatedProfileId ||
       (authenticationContext.isAuthenticatedAsProxy() &&
         !authenticationContext.activeProxyActions[
-          ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+          ProfileProxyActionType.CREATE_DROP_TO_WAVE
         ]);
     return this.waveMappers.waveEntitiesToApiWaves(
       {
@@ -578,14 +580,14 @@ export class WaveApiService {
     offset
   }: {
     eligibleGroups: string[];
-    type: WavesOverviewType;
+    type: ApiWavesOverviewType;
     limit: number;
     offset: number;
     only_waves_followed_by_authenticated_user: boolean;
     authenticatedUserId: string | null;
   }): Promise<WaveEntity[]> {
     switch (type) {
-      case WavesOverviewType.Latest:
+      case ApiWavesOverviewType.Latest:
         return await this.wavesApiDb.findLatestWaves({
           only_waves_followed_by_authenticated_user,
           authenticated_user_id: authenticatedUserId,
@@ -593,7 +595,7 @@ export class WaveApiService {
           limit,
           offset
         });
-      case WavesOverviewType.MostSubscribed:
+      case ApiWavesOverviewType.MostSubscribed:
         return await this.wavesApiDb.findMostSubscribedWaves({
           only_waves_followed_by_authenticated_user,
           authenticated_user_id: authenticatedUserId,
@@ -601,7 +603,7 @@ export class WaveApiService {
           limit,
           offset
         });
-      case WavesOverviewType.HighLevelAuthor:
+      case ApiWavesOverviewType.HighLevelAuthor:
         return await this.wavesApiDb.findHighLevelAuthorWaves({
           only_waves_followed_by_authenticated_user,
           authenticated_user_id: authenticatedUserId,
@@ -609,7 +611,7 @@ export class WaveApiService {
           limit,
           offset
         });
-      case WavesOverviewType.AuthorYouHaveRepped:
+      case ApiWavesOverviewType.AuthorYouHaveRepped:
         return await this.wavesApiDb.findWavesByAuthorsYouHaveRepped({
           eligibleGroups,
           authenticatedUserId: authenticatedUserId!,
@@ -617,7 +619,7 @@ export class WaveApiService {
           limit,
           offset
         });
-      case WavesOverviewType.MostDropped:
+      case ApiWavesOverviewType.MostDropped:
         return await this.wavesApiDb.findMostDroppedWaves({
           eligibleGroups,
           authenticated_user_id: authenticatedUserId,
@@ -625,7 +627,7 @@ export class WaveApiService {
           limit,
           offset
         });
-      case WavesOverviewType.MostDroppedByYou:
+      case ApiWavesOverviewType.MostDroppedByYou:
         return await this.wavesApiDb.findMostDroppedWavesByYou({
           eligibleGroups,
           only_waves_followed_by_authenticated_user,
@@ -634,7 +636,7 @@ export class WaveApiService {
           limit,
           offset
         });
-      case WavesOverviewType.RecentlyDroppedTo:
+      case ApiWavesOverviewType.RecentlyDroppedTo:
         return await this.wavesApiDb.findRecentlyDroppedToWaves({
           eligibleGroups,
           only_waves_followed_by_authenticated_user,
@@ -642,7 +644,7 @@ export class WaveApiService {
           limit,
           offset
         });
-      case WavesOverviewType.RecentlyDroppedToByYou:
+      case ApiWavesOverviewType.RecentlyDroppedToByYou:
         return await this.wavesApiDb.findRecentlyDroppedToWavesByYou({
           only_waves_followed_by_authenticated_user,
           authenticated_user_id: authenticatedUserId,
@@ -730,9 +732,9 @@ export class WaveApiService {
 
   async updateWave(
     waveId: string,
-    request: UpdateWaveRequest,
+    request: ApiUpdateWaveRequest,
     ctx: RequestContext
-  ): Promise<Wave> {
+  ): Promise<ApiWave> {
     const authenticationContext = ctx.authenticationContext!;
     const authenticatedProfileId = authenticationContext.authenticatedProfileId;
     if (!authenticatedProfileId) {
@@ -796,12 +798,12 @@ export class WaveApiService {
         const noRightToVote =
           authenticationContext.isAuthenticatedAsProxy() &&
           !authenticationContext.activeProxyActions[
-            ApiProfileProxyActionType.RATE_WAVE_DROP
+            ProfileProxyActionType.RATE_WAVE_DROP
           ];
         const noRightToParticipate =
           authenticationContext.isAuthenticatedAsProxy() &&
           !authenticationContext.activeProxyActions[
-            ApiProfileProxyActionType.CREATE_DROP_TO_WAVE
+            ProfileProxyActionType.CREATE_DROP_TO_WAVE
           ];
         const waveEntity = await this.wavesApiDb.findWaveById(
           waveId,
@@ -824,7 +826,7 @@ export class WaveApiService {
 export interface WavesOverviewParams {
   limit: number;
   offset: number;
-  type: WavesOverviewType;
+  type: ApiWavesOverviewType;
   only_waves_followed_by_authenticated_user: boolean;
 }
 

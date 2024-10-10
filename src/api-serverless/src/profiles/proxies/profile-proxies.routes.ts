@@ -4,7 +4,7 @@ import { ApiResponse } from '../../api-response';
 import { profileProxyApiService } from '../../proxies/proxy.api.service';
 import { profilesService } from '../../../../profiles/profiles.service';
 import { NotFoundException } from '../../../../exceptions';
-import { ProfileProxy } from '../../generated/models/ProfileProxy';
+import { ApiProfileProxy } from '../../generated/models/ApiProfileProxy';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -12,7 +12,7 @@ router.get(
   '/',
   async (
     req: Request<{ identity: string }, any, any, any, any>,
-    res: Response<ApiResponse<ProfileProxy[]>>
+    res: Response<ApiResponse<ApiProfileProxy[]>>
   ) => {
     const targetProfile =
       await profilesService.getProfileAndConsolidationsByIdentity(
@@ -36,7 +36,7 @@ router.get(
   '/received',
   async (
     req: Request<{ identity: string }, any, any, any, any>,
-    res: Response<ApiResponse<ProfileProxy[]>>
+    res: Response<ApiResponse<ApiProfileProxy[]>>
   ) => {
     const targetProfile =
       await profilesService.getProfileAndConsolidationsByIdentity(
@@ -60,7 +60,7 @@ router.get(
   '/granted',
   async (
     req: Request<{ identity: string }, any, any, any, any>,
-    res: Response<ApiResponse<ProfileProxy[]>>
+    res: Response<ApiResponse<ApiProfileProxy[]>>
   ) => {
     const targetProfile =
       await profilesService.getProfileAndConsolidationsByIdentity(

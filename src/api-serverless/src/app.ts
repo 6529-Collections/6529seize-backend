@@ -76,21 +76,21 @@ import subscriptionsRoutes from './subscriptions/api.subscriptions.routes';
 import * as SwaggerUI from 'swagger-ui-express';
 import { DEFAULT_MAX_SIZE } from './page-request';
 import { ApiResponse } from './api-response';
-import { BlockItem } from './generated/models/BlockItem';
+import { ApiBlockItem } from './generated/models/ApiBlockItem';
 import { TDHBlock } from '../../entities/ITDH';
-import { BlocksPage } from './generated/models/BlocksPage';
-import { SeizeSettings } from './generated/models/SeizeSettings';
-import { UploadsPage } from './generated/models/UploadsPage';
+import { ApiBlocksPage } from './generated/models/ApiBlocksPage';
+import { ApiSeizeSettings } from './generated/models/ApiSeizeSettings';
+import { ApiUploadsPage } from './generated/models/ApiUploadsPage';
 import { Upload } from '../../entities/IUpload';
-import { UploadItem } from './generated/models/UploadItem';
-import { ArtistsPage } from './generated/models/ArtistsPage';
+import { ApiUploadItem } from './generated/models/ApiUploadItem';
+import { ApiArtistsPage } from './generated/models/ApiArtistsPage';
 import { Artist } from '../../entities/IArtist';
-import { ArtistItem } from './generated/models/ArtistItem';
-import { NftsPage } from './generated/models/NftsPage';
+import { ApiArtistItem } from './generated/models/ApiArtistItem';
+import { ApiNftsPage } from './generated/models/ApiNftsPage';
 import { NFT } from '../../entities/INFT';
-import { Nft } from './generated/models/Nft';
-import { ArtistNameItem } from './generated/models/ArtistNameItem';
-import { TransactionPage } from './generated/models/TransactionPage';
+import { ApiNft } from './generated/models/ApiNft';
+import { ApiArtistNameItem } from './generated/models/ApiArtistNameItem';
+import { ApiTransactionPage } from './generated/models/ApiTransactionPage';
 import { initRedis, redisCached } from '../../redis';
 
 const YAML = require('yamljs');
@@ -301,7 +301,7 @@ loadApi().then(() => {
 
   apiRouter.get(
     `/blocks`,
-    function (req: any, res: Response<ApiResponse<BlocksPage>>) {
+    function (req: any, res: Response<ApiResponse<ApiBlocksPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
           ? parseInt(req.query.page_size)
@@ -310,7 +310,7 @@ loadApi().then(() => {
       db.fetchBlocks(pageSize, page).then((result) => {
         returnPaginatedResult(
           transformPaginatedResponse(
-            (orig: TDHBlock): BlockItem => ({
+            (orig: TDHBlock): ApiBlockItem => ({
               block_number: orig.block_number,
               timestamp: orig.timestamp,
               created_at: orig.created_at!
@@ -326,8 +326,8 @@ loadApi().then(() => {
 
   apiRouter.get(
     `/settings`,
-    function (req: any, res: Response<ApiResponse<SeizeSettings>>) {
-      const settingsResp: SeizeSettings = {
+    function (req: any, res: Response<ApiResponse<ApiSeizeSettings>>) {
+      const settingsResp: ApiSeizeSettings = {
         rememes_submission_tdh_threshold:
           SEIZE_SETTINGS.rememes_submission_tdh_threshold
       };
@@ -337,7 +337,7 @@ loadApi().then(() => {
 
   apiRouter.get(
     `/uploads`,
-    function (req: any, res: Response<ApiResponse<UploadsPage>>) {
+    function (req: any, res: Response<ApiResponse<ApiUploadsPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
           ? parseInt(req.query.page_size)
@@ -348,7 +348,7 @@ loadApi().then(() => {
       db.fetchUploads(pageSize, page, block, date).then((result) => {
         returnPaginatedResult(
           transformPaginatedResponse(
-            (orig: Upload): UploadItem => ({
+            (orig: Upload): ApiUploadItem => ({
               date: orig.date,
               block: orig.block,
               url: orig.tdh
@@ -364,7 +364,7 @@ loadApi().then(() => {
 
   apiRouter.get(
     `/consolidated_uploads`,
-    function (req: any, res: Response<ApiResponse<UploadsPage>>) {
+    function (req: any, res: Response<ApiResponse<ApiUploadsPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
           ? parseInt(req.query.page_size)
@@ -376,7 +376,7 @@ loadApi().then(() => {
         (result) => {
           returnPaginatedResult(
             transformPaginatedResponse(
-              (orig: Upload): UploadItem => ({
+              (orig: Upload): ApiUploadItem => ({
                 date: orig.date,
                 block: orig.block,
                 url: orig.tdh
@@ -393,7 +393,7 @@ loadApi().then(() => {
 
   apiRouter.get(
     `/artists`,
-    function (req: any, res: Response<ApiResponse<ArtistsPage>>) {
+    function (req: any, res: Response<ApiResponse<ApiArtistsPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
           ? parseInt(req.query.page_size)
@@ -405,7 +405,7 @@ loadApi().then(() => {
       db.fetchArtists(pageSize, page, meme_nfts).then((result) => {
         returnPaginatedResult(
           transformPaginatedResponse(
-            (orig: Artist): ArtistItem => ({
+            (orig: Artist): ApiArtistItem => ({
               name: orig.name,
               bio: orig.bio ?? null,
               pfp: orig.pfp ?? null,
@@ -426,7 +426,7 @@ loadApi().then(() => {
 
   apiRouter.get(
     `/memes/artists_names`,
-    function (req: any, res: Response<ApiResponse<ArtistNameItem[]>>) {
+    function (req: any, res: Response<ApiResponse<ApiArtistNameItem[]>>) {
       db.fetchArtistsNamesMemes().then((result) => {
         return returnJsonResult(result, req, res);
       });
@@ -435,14 +435,14 @@ loadApi().then(() => {
 
   apiRouter.get(
     `/memelab/artists_names`,
-    function (req: any, res: Response<ApiResponse<ArtistNameItem[]>>) {
+    function (req: any, res: Response<ApiResponse<ApiArtistNameItem[]>>) {
       db.fetchArtistsNamesMemeLab().then((result) => {
         return returnJsonResult(result, req, res);
       });
     }
   );
 
-  apiRouter.get(`/nfts`, function (req: any, res: Response<NftsPage>) {
+  apiRouter.get(`/nfts`, function (req: any, res: Response<ApiNftsPage>) {
     const pageSize: number =
       req.query.page_size && req.query.page_size <= NFTS_PAGE_SIZE
         ? parseInt(req.query.page_size)
@@ -460,7 +460,7 @@ loadApi().then(() => {
     db.fetchNFTs(pageSize, page, contracts, nfts, sortDir).then((result) => {
       returnPaginatedResult(
         transformPaginatedResponse(
-          (orig: NFT & { has_distribution: boolean }): Nft => {
+          (orig: NFT & { has_distribution: boolean }): ApiNft => {
             const metadata = JSON.parse(orig.metadata!);
             return {
               ...orig,
@@ -653,7 +653,7 @@ loadApi().then(() => {
 
   apiRouter.get(
     `/transactions`,
-    function (req: any, res: Response<ApiResponse<TransactionPage>>) {
+    function (req: any, res: Response<ApiResponse<ApiTransactionPage>>) {
       const pageSize: number =
         req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
           ? parseInt(req.query.page_size)

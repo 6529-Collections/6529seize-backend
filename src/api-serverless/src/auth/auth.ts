@@ -10,7 +10,7 @@ import {
   AuthenticationContext
 } from '../../../auth-context';
 import { resolveEnum } from '../../../helpers';
-import { ApiProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { Time, Timer } from '../../../time';
 import * as mcache from 'memory-cache';
 
@@ -96,10 +96,7 @@ export async function getAuthenticationContext(
               .filter(isProxyActionActive)
               .map<AuthenticatedProxyAction>((action) => ({
                 id: action.id,
-                type: resolveEnum(
-                  ApiProfileProxyActionType,
-                  action.action_type
-                )!,
+                type: resolveEnum(ProfileProxyActionType, action.action_type)!,
                 credit_spent: action.credit_spent,
                 credit_amount: action.credit_amount
               }))

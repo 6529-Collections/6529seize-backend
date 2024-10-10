@@ -8,7 +8,7 @@ import {
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
 import { identitiesDb, IdentitiesDb } from '../../../identities/identities.db';
-import { IdentitySubscriptionTargetAction } from '../generated/models/IdentitySubscriptionTargetAction';
+import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
 import { NotFoundException } from '../../../exceptions';
 import {
   userNotifier,
@@ -29,10 +29,10 @@ export class IdentitiesService {
   }: {
     subscriber: string;
     identityAddress: string;
-    actions: IdentitySubscriptionTargetAction[];
-  }): Promise<IdentitySubscriptionTargetAction[]> {
+    actions: ApiIdentitySubscriptionTargetAction[];
+  }): Promise<ApiIdentitySubscriptionTargetAction[]> {
     const acceptedActions = actions.filter(
-      (it) => it !== IdentitySubscriptionTargetAction.DropVoted
+      (it) => it !== ApiIdentitySubscriptionTargetAction.DropVoted
     );
     return await this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -93,7 +93,7 @@ export class IdentitiesService {
           )
           .then((result) =>
             result.map((it) =>
-              resolveEnumOrThrow(IdentitySubscriptionTargetAction, it)
+              resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
             )
           );
       }
@@ -107,8 +107,8 @@ export class IdentitiesService {
   }: {
     subscriber: string;
     identityAddress: string;
-    actions: IdentitySubscriptionTargetAction[];
-  }): Promise<IdentitySubscriptionTargetAction[]> {
+    actions: ApiIdentitySubscriptionTargetAction[];
+  }): Promise<ApiIdentitySubscriptionTargetAction[]> {
     return this.identitySubscriptionsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const identityId = await this.identitiesDb
@@ -142,7 +142,7 @@ export class IdentitiesService {
           )
           .then((result) =>
             result.map((it) =>
-              resolveEnumOrThrow(IdentitySubscriptionTargetAction, it)
+              resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
             )
           );
       }

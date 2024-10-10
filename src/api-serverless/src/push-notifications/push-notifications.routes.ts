@@ -5,11 +5,11 @@ import { asyncRouter } from '../async.router';
 import * as Joi from 'joi';
 import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
 import { UnauthorisedException } from '../../../exceptions';
-import { RegisterPushNotificationTokenRequest } from '../generated/models/RegisterPushNotificationTokenRequest';
+import { ApiRegisterPushNotificationTokenRequest } from '../generated/models/ApiRegisterPushNotificationTokenRequest';
 import { PushNotificationDevice } from '../../../entities/IPushNotification';
 import { savePushNotificationDevice } from './push-notifications.db';
 
-const registerPushNotificationTokenRequestSchema: Joi.ObjectSchema<RegisterPushNotificationTokenRequest> =
+const registerPushNotificationTokenRequestSchema: Joi.ObjectSchema<ApiRegisterPushNotificationTokenRequest> =
   Joi.object({
     device_id: Joi.string().required(),
     token: Joi.string().required(),
@@ -23,7 +23,7 @@ router.post(
   `/register`,
   maybeAuthenticatedUser(),
   async function (
-    req: Request<any, any, RegisterPushNotificationTokenRequest, any, any>,
+    req: Request<any, any, ApiRegisterPushNotificationTokenRequest, any, any>,
     res: Response<
       ApiResponse<{
         success: boolean;
