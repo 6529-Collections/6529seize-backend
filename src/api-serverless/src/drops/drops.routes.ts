@@ -15,7 +15,11 @@ import {
 } from '../../../exceptions';
 import { dropCreationService } from './drop-creation.api.service';
 import { dropsService } from './drops.api.service';
-import { parseIntOrNull, parseNumberOrNull } from '../../../helpers';
+import {
+  parseIntOrNull,
+  parseNumberOrNull,
+  resolveEnum
+} from '../../../helpers';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
 import { dropRaterService } from './drop-rater.service';
 import { FullPageRequest, Page, PageSortDirection } from '../page-request';
@@ -35,6 +39,7 @@ import { DropSubscriptionTargetAction } from '../generated/models/DropSubscripti
 import { Timer } from '../../../time';
 import { UpdateDropRequest } from '../generated/models/UpdateDropRequest';
 import { RequestContext } from '../../../request.context';
+import { DropType } from '../generated/models/DropType';
 
 const router = asyncRouter();
 
@@ -53,6 +58,7 @@ router.get(
         author?: string;
         wave_id?: string;
         include_replies?: string;
+        drop_type?: DropType;
       },
       any
     >,
@@ -60,7 +66,7 @@ router.get(
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
-    const { limit, wave_id, group_id, author_id, include_replies } =
+    const { limit, wave_id, group_id, author_id, include_replies, drop_type } =
       await prepLatestDropsSearchQuery(req);
     const latestDrops = await dropsService.findLatestDrops(
       {
@@ -69,7 +75,8 @@ router.get(
         serial_no_less_than: parseNumberOrNull(req.query.serial_no_less_than),
         wave_id,
         author_id,
-        include_replies
+        include_replies,
+        drop_type
       },
       { timer, authenticationContext }
     );
@@ -288,7 +295,7 @@ router.get(
   maybeAuthenticatedUser(),
   async (
     req: Request<
-      { drop_id: string; drop_part_id: string },
+      { drop_id: string; drop_part_id: string; drop_type?: DropType },
       any,
       any,
       FullPageRequest<'created_at'>,
@@ -302,12 +309,16 @@ router.get(
       authenticationContext,
       timer
     };
-    const { drop_part_id, drop_id, query } = await prepDropPartQuery(req, ctx);
+    const { drop_part_id, drop_id, query, drop_type } = await prepDropPartQuery(
+      req,
+      ctx
+    );
     const replies = await dropsService.findDropReplies(
       {
         ...query,
         drop_part_id,
-        drop_id
+        drop_id,
+        drop_type
       },
       ctx
     );
@@ -407,6 +418,7 @@ export async function prepLatestDropsSearchQuery(
       author?: string;
       wave_id?: string;
       include_replies?: string;
+      drop_type?: DropType;
     },
     any
   >
@@ -415,6 +427,8 @@ export async function prepLatestDropsSearchQuery(
   const wave_id = req.query.wave_id ?? null;
   const group_id = req.query.group_id ?? null;
   const include_replies = req.query.include_replies === 'true';
+  const drop_type_str = (req.query.drop_type as string) ?? null;
+  const drop_type_enum = resolveEnum(DropType, drop_type_str) ?? null;
   const author_id = req.query.author
     ? await profilesService
         .resolveIdentityOrThrowNotFound(req.query.author)
@@ -431,7 +445,8 @@ export async function prepLatestDropsSearchQuery(
     wave_id,
     group_id,
     author_id,
-    include_replies
+    include_replies,
+    drop_type: drop_type_enum
   };
 }
 
@@ -440,6 +455,7 @@ export async function prepDropPartQuery(
     {
       drop_id: string;
       drop_part_id: string;
+      drop_type?: DropType;
     },
     any,
     any,
@@ -448,6 +464,8 @@ export async function prepDropPartQuery(
   >,
   ctx: RequestContext
 ) {
+  const drop_type_str = (req.params.drop_type as string) ?? null;
+  const drop_type_enum = resolveEnum(DropType, drop_type_str) ?? null;
   const drop_part_id = parseIntOrNull(req.params.drop_part_id);
   const drop_id = req.params.drop_id;
   if (drop_part_id === null) {
@@ -471,17 +489,18 @@ export async function prepDropPartQuery(
     });
   const query = getValidatedByJoiOrThrow(
     req.query,
-    Joi.object<FullPageRequest<'created_at'>>({
+    Joi.object<FullPageRequest<'created_at'> & { drop_type?: DropType }>({
       sort_direction: Joi.string()
         .optional()
         .default(PageSortDirection.DESC)
         .valid(...Object.values(PageSortDirection)),
       sort: Joi.string().optional().default('created_at').valid('created_at'),
       page: Joi.number().integer().min(1).optional().default(1),
-      page_size: Joi.number().integer().min(1).max(50).optional().default(20)
+      page_size: Joi.number().integer().min(1).max(50).optional().default(20),
+      drop_type: Joi.string().optional()
     })
   );
-  return { drop_part_id, drop_id, query };
+  return { drop_part_id, drop_id, query, drop_type: drop_type_enum };
 }
 
 const DropSubscriptionActionsSchema = Joi.object<DropSubscriptionActions>({
