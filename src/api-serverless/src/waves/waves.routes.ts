@@ -44,6 +44,7 @@ import { dropsService } from '../drops/drops.api.service';
 import { ApiWaveDropsFeed } from '../generated/models/ApiWaveDropsFeed';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
 import { ApiDropType } from '../generated/models/ApiDropType';
+import { ApiCreateNewWaveChatConfig } from '../generated/models/ApiCreateNewWaveChatConfig';
 
 const router = asyncRouter();
 
@@ -69,7 +70,18 @@ router.post(
     ) {
       throw new ForbiddenException(`Proxy is not allowed to create waves`);
     }
-    const request = getValidatedByJoiOrThrow(req.body, WaveSchema);
+    let request = getValidatedByJoiOrThrow(req.body, WaveSchema);
+    // Temporary hack to make sure old FE's work with new API's
+    if (
+      request.chat.scope.group_id === null &&
+      request.participation.scope.group_id !== null &&
+      request.wave.type === ApiWaveType.Chat
+    ) {
+      request = {
+        ...request,
+        chat: { scope: { group_id: request.participation.scope.group_id } }
+      };
+    }
     const wave = await waveApiService.createWave(request, requestContext);
     res.send(wave);
   }
@@ -85,7 +97,18 @@ router.post(
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     const requestContext: RequestContext = { authenticationContext, timer };
-    const request = getValidatedByJoiOrThrow(req.body, UpdateWaveSchema);
+    let request = getValidatedByJoiOrThrow(req.body, UpdateWaveSchema);
+    // Temporary hack to make sure old FE's work with new API's
+    if (
+      request.chat.scope.group_id === null &&
+      request.participation.scope.group_id !== null &&
+      request.wave.type === ApiWaveType.Chat
+    ) {
+      request = {
+        ...request,
+        chat: { scope: { group_id: request.participation.scope.group_id } }
+      };
+    }
     const wave = await waveApiService.updateWave(
       req.params.id,
       request,
@@ -368,6 +391,10 @@ const WaveParticipationSchema = Joi.object<ApiCreateNewWaveParticipationConfig>(
   }
 );
 
+const WaveChatSchema = Joi.object<ApiCreateNewWaveChatConfig>({
+  scope: WaveScopeSchema.required()
+});
+
 const WaveConfigSchema = Joi.object<ApiWaveConfig>({
   type: Joi.string()
     .required()
@@ -441,6 +468,7 @@ const waveSchemaBaseValidations = {
   voting: WaveVotingSchema.required(),
   visibility: WaveVisibilitySchema.required(),
   participation: WaveParticipationSchema.required(),
+  chat: WaveChatSchema.optional().default({ scope: { group_id: null } }),
   wave: WaveConfigSchema.required(),
   outcomes: Joi.array().required().min(0).items(WaveOutcomeSchema)
 };
