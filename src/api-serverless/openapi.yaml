@@ -3030,9 +3030,12 @@ components:
       type: object
       required:
         - scope
+        - enabled
       properties:
         scope:
           $ref: "#/components/schemas/ApiCreateNewWaveScope"
+        enabled:
+          type: boolean
     ApiCreateNewWaveParticipationConfig:
       type: object
       required:
@@ -4875,9 +4878,12 @@ components:
       type: object
       required:
         - scope
+        - enabled
       properties:
         scope:
           $ref: "#/components/schemas/ApiWaveScope"
+        enabled:
+          type: boolean
     ApiWaveConfig:
       type: object
       required:

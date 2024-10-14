@@ -79,7 +79,10 @@ router.post(
     ) {
       request = {
         ...request,
-        chat: { scope: { group_id: request.participation.scope.group_id } }
+        chat: {
+          scope: { group_id: request.participation.scope.group_id },
+          enabled: request.chat.enabled
+        }
       };
     }
     const wave = await waveApiService.createWave(request, requestContext);
@@ -106,7 +109,10 @@ router.post(
     ) {
       request = {
         ...request,
-        chat: { scope: { group_id: request.participation.scope.group_id } }
+        chat: {
+          scope: { group_id: request.participation.scope.group_id },
+          enabled: request.chat.enabled
+        }
       };
     }
     const wave = await waveApiService.updateWave(
@@ -392,7 +398,8 @@ const WaveParticipationSchema = Joi.object<ApiCreateNewWaveParticipationConfig>(
 );
 
 const WaveChatSchema = Joi.object<ApiCreateNewWaveChatConfig>({
-  scope: WaveScopeSchema.required()
+  scope: WaveScopeSchema.required(),
+  enabled: Joi.boolean().optional().default(true)
 });
 
 const WaveConfigSchema = Joi.object<ApiWaveConfig>({
