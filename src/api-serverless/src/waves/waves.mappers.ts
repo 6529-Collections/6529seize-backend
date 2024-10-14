@@ -47,6 +47,7 @@ import { dropsService } from '../drops/drops.api.service';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { ApiWaveMetadataType } from '../generated/models/ApiWaveMetadataType';
 import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
+import { ApiWaveChatConfig } from '../generated/models/ApiWaveChatConfig';
 
 export class WavesMappers {
   constructor(
@@ -91,6 +92,7 @@ export class WavesMappers {
       voting_period_end: createWaveRequest.voting.period?.max ?? null,
       visibility_group_id: createWaveRequest.visibility.scope.group_id,
       participation_group_id: createWaveRequest.participation.scope.group_id,
+      chat_group_id: createWaveRequest.chat.scope.group_id,
       participation_max_applications_per_participant:
         createWaveRequest.participation
           .no_of_applications_allowed_per_participant,
@@ -218,7 +220,7 @@ export class WavesMappers {
     noRightToParticipate: boolean;
     metrics: Record<string, WaveMetricEntity>;
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
-  }) {
+  }): ApiWave {
     const contributorsOverview: ApiWaveContributorOverview[] =
       contributors[waveEntity.id]?.map((it) => ({
         contributor_identity: it.contributor_identity,
@@ -284,6 +286,11 @@ export class WavesMappers {
       },
       authenticated_user_eligible: authenticatedUserEligibleToParticipate
     };
+    const chat: ApiWaveChatConfig = {
+      scope: {
+        group: curations[waveEntity.chat_group_id!] ?? null
+      }
+    };
     const authenticatedUserEligibleForAdmin = !!(
       waveEntity.admin_group_id &&
       groupIdsUserIsEligibleFor.includes(waveEntity.admin_group_id)
@@ -329,6 +336,7 @@ export class WavesMappers {
       voting: voting,
       visibility: visibility,
       participation: participation,
+      chat: chat,
       wave: waveConf,
       outcomes: JSON.parse(waveEntity.outcomes),
       subscribed_actions: subscribedActions[waveEntity.id] ?? [],
@@ -375,7 +383,8 @@ export class WavesMappers {
                 waveEntity.visibility_group_id,
                 waveEntity.participation_group_id,
                 waveEntity.voting_group_id,
-                waveEntity.admin_group_id
+                waveEntity.admin_group_id,
+                waveEntity.chat_group_id
               ].filter((id) => id !== null) as string[]
           )
           .flat(),
