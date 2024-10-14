@@ -60,6 +60,9 @@ export class WaveEntity {
   @Column({ type: 'varchar', length: 100, nullable: true })
   readonly participation_group_id!: string | null;
 
+  @Column({ type: 'boolean', nullable: false, default: true })
+  readonly chat_enabled!: boolean;
+
   @Column({ type: 'varchar', length: 100, nullable: true })
   readonly chat_group_id!: string | null;
 

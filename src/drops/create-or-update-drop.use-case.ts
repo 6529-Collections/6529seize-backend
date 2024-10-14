@@ -277,9 +277,23 @@ export class CreateOrUpdateDropUseCase {
     timer.start(
       `${CreateOrUpdateDropUseCase.name}->verifyParticipatoryLimitations`
     );
+    if (
+      wave.type === WaveType.CHAT &&
+      model.drop_type === DropType.PARTICIPATORY
+    ) {
+      throw new ForbiddenException(
+        `Participatory drops are not allowed in chat waves`
+      );
+    }
+    if (!wave.chat_enabled && model.drop_type === DropType.CHAT) {
+      throw new ForbiddenException(`Chat drops are not allowed in this wave`);
+    }
     const noOfApplicationsAllowedPerParticipantInWave =
       wave.participation_max_applications_per_participant;
-    if (noOfApplicationsAllowedPerParticipantInWave !== null) {
+    if (
+      model.drop_type === DropType.PARTICIPATORY &&
+      noOfApplicationsAllowedPerParticipantInWave !== null
+    ) {
       const countOfDropsByAuthorInWave =
         await this.dropsDb.countAuthorDropsInWave({
           wave_id: wave.id,
@@ -315,7 +329,7 @@ export class CreateOrUpdateDropUseCase {
   ) {
     timer.start(`${CreateOrUpdateDropUseCase.name}->verifyMedia`);
     const requiredMedias = wave.participation_required_media;
-    if (requiredMedias.length) {
+    if (model.drop_type === DropType.PARTICIPATORY && requiredMedias.length) {
       const mimeTypes = model.parts
         .map((it) => it.media.map((media) => media.mime_type))
         .flat()
@@ -356,21 +370,25 @@ export class CreateOrUpdateDropUseCase {
     { timer }: { timer: Timer; connection: ConnectionWrapper<any> }
   ) {
     timer.start(`${CreateOrUpdateDropUseCase.name}->verifyMetadata`);
-    const requiredMetadatas = wave.participation_required_metadata;
-    for (const requiredMetadata of requiredMetadatas) {
-      const metadata = model.metadata.filter(
-        (it) => it.data_key === requiredMetadata.name
-      );
-      if (!metadata.length) {
-        throw new BadRequestException(
-          `Wave requires metadata ${requiredMetadata.name}`
+    if (model.drop_type === DropType.PARTICIPATORY) {
+      const requiredMetadatas = wave.participation_required_metadata;
+      for (const requiredMetadata of requiredMetadatas) {
+        const metadata = model.metadata.filter(
+          (it) => it.data_key === requiredMetadata.name
         );
-      }
-      if (requiredMetadata.type === WaveRequiredMetadataItemType.NUMBER) {
-        if (!metadata.some((it) => parseNumberOrNull(it.data_value) !== null)) {
+        if (!metadata.length) {
           throw new BadRequestException(
-            `Wave requires metadata ${requiredMetadata.name} to be a number`
+            `Wave requires metadata ${requiredMetadata.name}`
           );
+        }
+        if (requiredMetadata.type === WaveRequiredMetadataItemType.NUMBER) {
+          if (
+            !metadata.some((it) => parseNumberOrNull(it.data_value) !== null)
+          ) {
+            throw new BadRequestException(
+              `Wave requires metadata ${requiredMetadata.name} to be a number`
+            );
+          }
         }
       }
     }
@@ -393,23 +411,30 @@ export class CreateOrUpdateDropUseCase {
         (it) => it !== undefined && it !== null
       ) as DropPartIdentifierModel[];
     if (quotedDrops.length) {
-      const dropIds = quotedDrops.map((it) => it.drop_id);
-      const entities = await this.dropsDb.getDropsByIds(dropIds);
-      const invalidQuotedDrops = quotedDrops.filter(
-        (quotedDrop) =>
-          !entities.find((it) => {
-            return (
-              it.id === quotedDrop.drop_id &&
-              quotedDrop.drop_part_id <= it.parts_count
-            );
-          })
-      );
-      if (invalidQuotedDrops.length) {
+      if (model.drop_type === DropType.PARTICIPATORY) {
         throw new BadRequestException(
-          `Invalid quoted drops: ${invalidQuotedDrops
-            .map((it) => `${it.drop_id}/${it.drop_part_id}`)
-            .join(', ')}`
+          `Participatory drops can't be quote drops`
         );
+      }
+      if (model.drop_type === DropType.CHAT) {
+        const dropIds = quotedDrops.map((it) => it.drop_id);
+        const entities = await this.dropsDb.getDropsByIds(dropIds);
+        const invalidQuotedDrops = quotedDrops.filter(
+          (quotedDrop) =>
+            !entities.find((it) => {
+              return (
+                it.id === quotedDrop.drop_id &&
+                quotedDrop.drop_part_id <= it.parts_count
+              );
+            })
+        );
+        if (invalidQuotedDrops.length) {
+          throw new BadRequestException(
+            `Invalid quoted drops: ${invalidQuotedDrops
+              .map((it) => `${it.drop_id}/${it.drop_part_id}`)
+              .join(', ')}`
+          );
+        }
       }
     }
     timer.stop(`${CreateOrUpdateDropUseCase.name}->verifyQuotedDrops`);
@@ -427,6 +452,11 @@ export class CreateOrUpdateDropUseCase {
     const replyTo = model.reply_to;
     timer.start(`${CreateOrUpdateDropUseCase.name}->verifyReplyDrop`);
     if (replyTo) {
+      if (model.drop_type === DropType.PARTICIPATORY) {
+        throw new BadRequestException(
+          `Participatory drops can't be reply drops`
+        );
+      }
       const dropId = replyTo.drop_id;
       const dropPartId = replyTo.drop_part_id;
       const replyToEntity = await this.dropsDb

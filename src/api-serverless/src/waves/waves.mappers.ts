@@ -71,6 +71,7 @@ export class WavesMappers {
       serial_no,
       created_at,
       updated_at,
+      chat_enabled: createWaveRequest.chat.enabled,
       name: createWaveRequest.name,
       description_drop_id: descriptionDropId,
       picture: createWaveRequest.picture,
@@ -289,7 +290,8 @@ export class WavesMappers {
     const chat: ApiWaveChatConfig = {
       scope: {
         group: curations[waveEntity.chat_group_id!] ?? null
-      }
+      },
+      enabled: waveEntity.chat_enabled
     };
     const authenticatedUserEligibleForAdmin = !!(
       waveEntity.admin_group_id &&
