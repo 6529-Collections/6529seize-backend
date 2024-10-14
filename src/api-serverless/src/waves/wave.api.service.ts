@@ -173,6 +173,9 @@ export class WaveApiService {
     const authenticatedProfileId = ctx.authenticationContext!.getActingAsId()!;
     const timer = ctx.timer;
     timer?.start(`waveApiService->validateWaveRelations`);
+    if (createWave.wave.type === ApiWaveType.Chat && !createWave.chat.enabled) {
+      throw new BadRequestException(`Chat waves need to have chat enabled`);
+    }
     this.validateOutcomes(createWave);
     const referencedGroupIds = distinct(
       [
