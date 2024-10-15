@@ -41,6 +41,7 @@ import { getConsolidationsSql } from './sql_helpers';
 import { ConnectionWrapper, setSqlExecutor, sqlExecutor } from './sql-executor';
 
 import * as mysql from 'mysql';
+import { TypeCast } from 'mysql';
 import { Time } from './time';
 import { DbPoolName, DbQueryOptions } from './db-query.options';
 import { Logger } from './logging';
@@ -74,6 +75,27 @@ const WRITE_OPERATIONS = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE'];
 
 const logger = Logger.get('DB_API');
 
+const tinyIntToBooleanCaster: TypeCast = function castField(
+  field,
+  useDefaultTypeCasting
+) {
+  if (field.type === 'TINY') {
+    const value = field.string();
+    if (value !== null) {
+      const res = Number(value);
+      return !!res;
+    }
+
+    const bytes = field.buffer();
+    if (!bytes || bytes.length === 0) {
+      return null;
+    }
+    return !!bytes.readUInt8(0);
+  }
+
+  return useDefaultTypeCasting();
+};
+
 export async function connect() {
   if (
     !process.env.DB_HOST ||
@@ -104,7 +126,8 @@ export async function connect() {
     user: process.env.DB_USER,
     password: process.env.DB_PASS,
     charset: 'utf8mb4',
-    database: process.env.DB_NAME
+    database: process.env.DB_NAME,
+    typeCast: tinyIntToBooleanCaster
   });
   read_pool = mysql.createPool({
     connectionLimit: 10,
@@ -116,7 +139,8 @@ export async function connect() {
     user: process.env.DB_USER_READ,
     password: process.env.DB_PASS_READ,
     charset: 'utf8mb4',
-    database: process.env.DB_NAME
+    database: process.env.DB_NAME,
+    typeCast: tinyIntToBooleanCaster
   });
   setSqlExecutor({
     execute: (
