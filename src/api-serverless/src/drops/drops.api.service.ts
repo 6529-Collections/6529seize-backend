@@ -393,7 +393,11 @@ export class DropsApiService {
         group_ids_user_is_eligible_for.includes(wave.voting_group_id),
       authenticated_user_eligible_to_participate:
         wave.participation_group_id === null ||
-        group_ids_user_is_eligible_for.includes(wave.participation_group_id)
+        group_ids_user_is_eligible_for.includes(wave.participation_group_id),
+      authenticated_user_eligible_to_chat:
+        wave.chat_enabled &&
+        (wave.chat_group_id === null ||
+          group_ids_user_is_eligible_for.includes(wave.chat_group_id))
     };
     if (drop_id) {
       const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(

@@ -291,7 +291,11 @@ export class WavesMappers {
       scope: {
         group: curations[waveEntity.chat_group_id!] ?? null
       },
-      enabled: waveEntity.chat_enabled
+      enabled: waveEntity.chat_enabled,
+      authenticated_user_eligible:
+        (waveEntity.chat_group_id === null ||
+          groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id)) &&
+        waveEntity.chat_enabled
     };
     const authenticatedUserEligibleForAdmin = !!(
       waveEntity.admin_group_id &&
