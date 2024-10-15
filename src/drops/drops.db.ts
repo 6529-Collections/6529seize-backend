@@ -1201,7 +1201,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const dbResult = await this.db.execute<{
       drop_id: string;
       created_at: number;
-      is_deleted: 1 | 0;
+      is_deleted: boolean;
     }>(
       `
       select 
@@ -1220,7 +1220,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const trace: { drop_id: string; is_deleted: boolean }[] = dbResult.map(
       (entity) => ({
         drop_id: entity.drop_id,
-        is_deleted: entity.is_deleted === 1
+        is_deleted: entity.is_deleted
       })
     );
     trace.push({ drop_id: dropId, is_deleted: false });
