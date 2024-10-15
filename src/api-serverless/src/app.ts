@@ -94,6 +94,11 @@ import { ApiTransactionPage } from './generated/models/ApiTransactionPage';
 import { initRedis, redisCached } from '../../redis';
 
 const YAML = require('yamljs');
+const compression = require('compression');
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const multer = require('multer');
 
 const requestLogger = Logger.get('API_REQUEST');
 const logger = Logger.get('API');
@@ -162,17 +167,11 @@ function sentryFlusherMiddleware() {
   };
 }
 
-const compression = require('compression');
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-
 const app = express();
 const rootRouter = asyncRouter();
 
-const multer = require('multer');
 const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
+multer({ storage: storage });
 
 async function loadApiSecrets() {
   if (process.env.API_LOAD_SECRETS === 'true') {
