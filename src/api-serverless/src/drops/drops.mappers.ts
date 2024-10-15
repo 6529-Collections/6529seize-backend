@@ -163,6 +163,10 @@ export class DropsMappers {
             name: wave.name,
             picture: wave.picture,
             description_drop_id: wave.description_drop_id,
+            authenticated_user_eligible_to_chat:
+              wave.chat_enabled &&
+              (wave.chat_group_id === null ||
+                group_ids_user_is_eligible_for.includes(wave.chat_group_id)),
             authenticated_user_eligible_to_vote:
               wave.voting_group_id === null ||
               group_ids_user_is_eligible_for.includes(wave.voting_group_id),
