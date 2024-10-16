@@ -15,6 +15,10 @@ import {
   ProfileActivityLogsDb
 } from '../../../profileActivityLogs/profile-activity-logs.db';
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
+import {
+  userNotifier,
+  UserNotifier
+} from '../../../notifications/user.notifier';
 
 export class ClappingService {
   constructor(
@@ -23,6 +27,7 @@ export class ClappingService {
     private readonly wavesDb: WavesApiDb,
     private readonly dropsDb: DropsDb,
     private readonly userGroupsService: UserGroupsService,
+    private readonly userNotifier: UserNotifier,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb
   ) {}
 
@@ -150,8 +155,37 @@ export class ClappingService {
         },
         ctx.connection,
         ctx.timer
+      ),
+      this.userNotifier.notifyOfDropVote(
+        {
+          voter_id: clapper_id,
+          drop_id: drop_id,
+          drop_author_id: drop.author_id,
+          vote: claps,
+          wave_id: wave_id
+        },
+        wave.visibility_group_id,
+        ctx.connection
       )
     ]);
+  }
+
+  async findCreditLeftForClapping(profileId: string): Promise<number> {
+    const now = Time.now();
+    const [creditSpent, tdh] = await Promise.all([
+      this.clappingDb.getCreditSpentInTimespan(
+        {
+          timeSpanStart: now.minusDays(30),
+          timeSpanEnd: now,
+          clapperId: profileId
+        },
+        {}
+      ),
+      this.identitiesDb
+        .getIdentityByProfileId(profileId)
+        ?.then((identity) => identity?.tdh ?? 0)
+    ]);
+    return tdh - creditSpent;
   }
 }
 
@@ -161,5 +195,6 @@ export const clappingService = new ClappingService(
   wavesApiDb,
   dropsDb,
   userGroupsService,
+  userNotifier,
   profileActivityLogsDb
 );

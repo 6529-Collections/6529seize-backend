@@ -16,8 +16,8 @@ export class ClappingDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(`${this.constructor.name}->upsertState`);
     await this.db.execute(
       `
-      update ${DROP_CLAPPER_STATE_TABLE} set claps = :claps
-      where clapper_id = :clapper_id and drop_id = :drop_id
+      insert into ${DROP_CLAPPER_STATE_TABLE} (clapper_id, drop_id, claps, wave_id) 
+      values (:clapper_id, :drop_id, :claps, :wave_id)
       on duplicate key update claps = :claps
     `,
       state,
@@ -35,7 +35,7 @@ export class ClappingDb extends LazyDbAccessCompatibleService {
       .oneOrNull<{ claps: number }>(
         `
       select claps from ${DROP_CLAPPER_STATE_TABLE}
-      where claps = :clapperId and drop_id = :dropId
+      where clapper_id = :clapperId and drop_id = :drop_id
       for update
     `,
         param,
@@ -133,6 +133,77 @@ export class ClappingDb extends LazyDbAccessCompatibleService {
       )
     ]);
     ctx.timer?.stop(`${this.constructor.name}->mergeOnProfileIdChange`);
+  }
+
+  public async getClapsForDrops(
+    { dropIds, clapperId }: { dropIds: string[]; clapperId: string | null },
+    ctx: RequestContext
+  ): Promise<
+    Record<string, { total_claps: number; claps_by_clapper: number }>
+  > {
+    if (dropIds.length === 0) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->getClapsForDrops`);
+    const sql = `
+  select drop_id, sum(claps) as total_claps ${
+    clapperId !== null
+      ? `, sum(case when clapper_id = :clapperId then 1 else 0 end) as claps_by_clapper`
+      : ` `
+  } from ${DROP_CLAPPER_STATE_TABLE}
+  where drop_id in (:dropIds)
+  group by 1
+`;
+    const result = await this.db
+      .execute<{
+        drop_id: string;
+        total_claps: number;
+        claps_by_clapper: number;
+      }>(sql, { dropIds, clapperId }, { wrappedConnection: ctx.connection })
+      .then((it) =>
+        it.reduce(
+          (acc, { drop_id, total_claps, claps_by_clapper }) => ({
+            ...acc,
+            [drop_id]: { total_claps, claps_by_clapper: claps_by_clapper ?? 0 }
+          }),
+          {} as Record<
+            string,
+            { total_claps: number; claps_by_clapper: number }
+          >
+        )
+      );
+    ctx.timer?.stop(`${this.constructor.name}->getClapsForDrops`);
+    return result;
+  }
+
+  async findDropsTopClappers(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, { claps: number; clapper_id: string }[]>> {
+    if (dropIds.length === 0) {
+      return {};
+    }
+    return await this.db
+      .execute<{
+        drop_id: string;
+        clapper_id: string;
+        claps: number;
+      }>(
+        `
+      select drop_id, clapper_id, claps from ${DROP_CLAPPER_STATE_TABLE} where drop_id in (:dropIds) and claps <> 0
+    `,
+        { dropIds },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((res) => {
+        return res.reduce(
+          (acc, { drop_id, clapper_id, claps }) => ({
+            ...acc,
+            [drop_id]: [...(acc[drop_id] ?? []), { clapper_id, claps }]
+          }),
+          {} as Record<string, { claps: number; clapper_id: string }[]>
+        );
+      });
   }
 }
 

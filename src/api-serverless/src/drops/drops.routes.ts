@@ -271,15 +271,19 @@ router.post(
         `Proxy doesn't have permission to rate drops`
       );
     }
+    const ctx = { timer, authenticationContext };
     const group_ids_user_is_eligible_for =
       await userGroupsService.getGroupsUserIsEligibleFor(raterProfileId, timer);
-    await dropRaterService.updateRating({
-      rater_profile_id: raterProfileId,
-      groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
-      category: proposedCategory,
-      drop_id: dropId,
-      rating: rating
-    });
+    await dropRaterService.updateRating(
+      {
+        rater_profile_id: raterProfileId,
+        groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
+        category: proposedCategory,
+        drop_id: dropId,
+        rating: rating
+      },
+      ctx
+    );
     const drop = await dropsService.findDropByIdOrThrow(
       {
         dropId
