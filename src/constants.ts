@@ -52,6 +52,7 @@ export const REMEMES_UPLOADS = 'uploads_rememes';
 export const RATINGS_TABLE = 'ratings';
 export const DROPS_VOTES_CREDIT_SPENDINGS_TABLE =
   'drops_votes_credit_spendings';
+export const CLAP_CREDIT_SPENDINGS_TABLE = 'clap_credit_spendings';
 export const ROYALTIES_UPLOADS_TABLE = 'royalties_upload';
 export const EVENTS_TABLE = 'events';
 export const LISTENER_PROCESSED_EVENTS_TABLE = 'listener_processed_events';
