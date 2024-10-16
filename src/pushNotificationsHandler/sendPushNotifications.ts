@@ -7,6 +7,9 @@ import { Logger } from '../logging';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_SEND');
 
+const MAX_TITLE_LENGTH = 50;
+const MAX_BODY_LENGTH = 250;
+
 function init() {
   if (!admin.apps.length) {
     const projectId = process.env.FIREBASE_PROJECT_ID;
@@ -38,6 +41,14 @@ export async function sendMessage(
   init();
   title = title.replace(/@\[(.+?)\]/g, '@$1');
   body = body.replace(/@\[(.+?)\]/g, '@$1');
+
+  if (title.length > MAX_TITLE_LENGTH) {
+    title = title.substring(0, MAX_TITLE_LENGTH) + '...';
+  }
+
+  if (body.length > MAX_BODY_LENGTH) {
+    body = body.substring(0, MAX_BODY_LENGTH) + '...';
+  }
 
   const notification: Notification = {
     title,
