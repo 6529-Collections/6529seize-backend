@@ -35,6 +35,7 @@ import { Prenode } from '../entities/IPrenode';
 import { ProfileLatestLogEntity } from '../entities/IProfileLatestLog';
 import { WaveDropperMetricEntity } from '../entities/IWaveDropperMetric';
 import { PushNotificationDevice } from '../entities/IPushNotification';
+import { ClapCreditSpendingEntity } from '../entities/IClapCreditSpending';
 
 const DBMigrate = require('db-migrate');
 
@@ -55,6 +56,7 @@ const MANAGED_ENTITIES = [
   DropReferencedNftEntity,
   DropRelationEntity,
   DropVoteCreditSpending,
+  ClapCreditSpendingEntity,
   IdentityEntity,
   IdentityNotificationEntity,
   IdentitySubscriptionEntity,
