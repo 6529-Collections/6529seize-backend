@@ -36,6 +36,7 @@ import { ProfileLatestLogEntity } from '../entities/IProfileLatestLog';
 import { WaveDropperMetricEntity } from '../entities/IWaveDropperMetric';
 import { PushNotificationDevice } from '../entities/IPushNotification';
 import { ClapCreditSpendingEntity } from '../entities/IClapCreditSpending';
+import { DropClapperStateEntity } from '../entities/IDropClapperState';
 
 const DBMigrate = require('db-migrate');
 
@@ -76,7 +77,8 @@ const MANAGED_ENTITIES = [
   WaveEntity,
   WaveMetricEntity,
   WaveDropperMetricEntity,
-  PushNotificationDevice
+  PushNotificationDevice,
+  DropClapperStateEntity
 ];
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
