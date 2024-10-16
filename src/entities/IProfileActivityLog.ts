@@ -56,7 +56,8 @@ export enum ProfileActivityLogType {
   PROXY_ACTION_CHANGED = 'PROXY_ACTION_CHANGED',
   DROP_COMMENT = 'DROP_COMMENT',
   DROP_RATING_EDIT = 'DROP_RATING_EDIT',
-  DROP_CREATED = 'DROP_CREATED'
+  DROP_CREATED = 'DROP_CREATED',
+  DROP_CLAPPED = 'DROP_CLAPPED'
 }
 
 export function isTargetOfTypeDrop(type: ProfileActivityLogType): boolean {
