@@ -57,6 +57,10 @@ import {
 } from '../notifications/identity-notifications.db';
 import { RequestContext } from '../request.context';
 import { IdentityEntity } from '../entities/IIdentity';
+import {
+  clappingDb,
+  ClappingDb
+} from '../api-serverless/src/drops/clapping.db';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -71,6 +75,7 @@ export class ProfilesService {
     private readonly userGroupsDb: UserGroupsDb,
     private readonly identitiesDb: IdentitiesDb,
     private readonly notificationsDb: IdentityNotificationsDb,
+    private readonly clappingDb: ClappingDb,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
 
@@ -738,6 +743,7 @@ export class ProfilesService {
         await this.mergeWaves(sourceIdentity, target, connectionHolder);
         await this.mergeDrops(sourceIdentity, target, connectionHolder);
         await this.mergeNotifications(sourceIdentity, target, connectionHolder);
+        await this.mergeClappingStuff(sourceIdentity, target, connectionHolder);
         const targetProfile = await this.profilesDb.getProfileById(
           target,
           connectionHolder
@@ -1444,6 +1450,17 @@ export class ProfilesService {
       connectionHolder
     );
   }
+
+  private async mergeClappingStuff(
+    sourceIdentity: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.clappingDb.mergeOnProfileIdChange(
+      { previous_id: sourceIdentity, new_id: target },
+      { connection: connectionHolder }
+    );
+  }
 }
 
 export interface CommunityMemberMinimal {
@@ -1469,5 +1486,6 @@ export const profilesService = new ProfilesService(
   userGroupsDb,
   identitiesDb,
   identityNotificationsDb,
+  clappingDb,
   getAlchemyInstance
 );

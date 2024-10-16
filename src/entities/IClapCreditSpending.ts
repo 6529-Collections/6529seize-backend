@@ -6,7 +6,7 @@ export class ClapCreditSpendingEntity {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   readonly id!: number;
   @Column({ type: 'varchar', length: 100 })
-  readonly rater_id!: string;
+  readonly clapper_id!: string;
   @Column({ type: 'varchar', length: 100 })
   readonly drop_id!: string;
   @Column({ type: 'bigint' })
