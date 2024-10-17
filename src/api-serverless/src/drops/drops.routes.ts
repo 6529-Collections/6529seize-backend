@@ -21,7 +21,7 @@ import {
   resolveEnum
 } from '../../../helpers';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
-import { dropRaterService } from './drop-rater.service';
+import { dropRaterService } from './drop-voting.service';
 import { FullPageRequest, Page, PageSortDirection } from '../page-request';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
@@ -274,7 +274,7 @@ router.post(
     const ctx = { timer, authenticationContext };
     const group_ids_user_is_eligible_for =
       await userGroupsService.getGroupsUserIsEligibleFor(raterProfileId, timer);
-    await dropRaterService.updateRating(
+    await dropRaterService.updateVote(
       {
         rater_profile_id: raterProfileId,
         groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,

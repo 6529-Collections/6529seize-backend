@@ -5,14 +5,14 @@ import { DeleteDropModel } from './delete-drop.model';
 import { profilesService, ProfilesService } from '../profiles/profiles.service';
 import {
   dropRaterService,
-  DropRaterService
-} from '../api-serverless/src/drops/drop-rater.service';
+  DropVotingService
+} from '../api-serverless/src/drops/drop-voting.service';
 import { BadRequestException } from '../exceptions';
 
 export class DeleteDropUseCase {
   public constructor(
     private readonly profileService: ProfilesService,
-    private readonly dropRaterService: DropRaterService,
+    private readonly dropRaterService: DropVotingService,
     private readonly dropsDb: DropsDb
   ) {}
 
