@@ -205,6 +205,22 @@ export class ClappingDb extends LazyDbAccessCompatibleService {
         );
       });
   }
+
+  async deleteClaps(dropId: string, ctx: RequestContext) {
+    await this.db.execute(
+      `delete from ${DROP_CLAPPER_STATE_TABLE} where drop_id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async deleteCreditSpendings(dropId: string, ctx: RequestContext) {
+    await this.db.execute(
+      `delete from ${CLAP_CREDIT_SPENDINGS_TABLE} where drop_id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+  }
 }
 
 export type NewClapCreditSpending = Omit<ClapCreditSpendingEntity, 'id'>;

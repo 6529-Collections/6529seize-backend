@@ -12,7 +12,7 @@ import { RequestContext } from '../../../request.context';
 import { DropType } from '../../../entities/IDrop';
 import { clappingService, ClappingService } from './clapping.service';
 
-export class DropRaterService {
+export class DropVotingService {
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly ratingsService: RatingsService,
@@ -20,7 +20,7 @@ export class DropRaterService {
     private readonly clappingService: ClappingService
   ) {}
 
-  async updateRating(
+  async updateVote(
     param: {
       drop_id: string;
       rater_profile_id: string;
@@ -158,13 +158,14 @@ export class DropRaterService {
         },
         ctx
       ),
+      this.clappingService.deleteClaps(dropId, ctx),
       this.dropsDb.deleteDropsCreditSpendings(dropId, ctx)
     ]);
     ctx.timer?.stop('dropRaterService->deleteDropVotes');
   }
 }
 
-export const dropRaterService = new DropRaterService(
+export const dropRaterService = new DropVotingService(
   dropsDb,
   ratingsService,
   userNotifier,

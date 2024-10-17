@@ -187,6 +187,13 @@ export class ClappingService {
     ]);
     return tdh - creditSpent;
   }
+
+  public async deleteClaps(dropId: string, ctx: RequestContext) {
+    await Promise.all([
+      this.clappingDb.deleteClaps(dropId, ctx),
+      this.clappingDb.deleteCreditSpendings(dropId, ctx)
+    ]);
+  }
 }
 
 export const clappingService = new ClappingService(
