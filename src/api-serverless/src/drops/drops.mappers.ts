@@ -49,6 +49,7 @@ import {
 } from '../../../drops/create-or-update-drop.model';
 import { ApiDropType } from '../generated/models/ApiDropType';
 import { clappingDb, ClappingDb } from './clapping.db';
+import { clappingService } from './clapping.service';
 
 export class DropsMappers {
   constructor(
@@ -217,6 +218,7 @@ export class DropsMappers {
       metadata,
       dropsTopRaters,
       dropsTopClappers,
+      clapsLeftForContextProfile,
       dropsRatings,
       dropsRatingsByContextProfile,
       dropsClapCounts,
@@ -231,6 +233,9 @@ export class DropsMappers {
       this.dropsDb.findMetadataByDropIds(dropIds, connection),
       this.dropsDb.findDropsTopRaters(dropIds, connection),
       this.clappingDb.findDropsTopClappers(dropIds, { connection }),
+      contextProfileId
+        ? clappingService.findCreditLeftForClapping(contextProfileId)
+        : Promise.resolve(0),
       this.dropsDb.findDropsTotalRatingsStats(dropIds, connection),
       this.findContextProfilesTotalRatingsForDrops(
         contextProfileId,
@@ -286,6 +291,7 @@ export class DropsMappers {
       dropsQuoteCounts,
       dropMedia,
       dropsParts,
+      clapsLeftForContextProfile,
       dropsRepliesCounts,
       subscribedActions: Object.entries(subscribedActions).reduce(
         (acc, [id, actions]) => {
@@ -336,6 +342,7 @@ export class DropsMappers {
       dropsRepliesCounts,
       subscribedActions,
       deletedDrops,
+      clapsLeftForContextProfile,
       allEntities
     } = await this.getAllDropsRelatedData(
       {
@@ -388,6 +395,7 @@ export class DropsMappers {
         dropsRepliesCounts,
         dropsQuoteCounts,
         contextProfileId,
+        clapsLeftForContextProfile,
         referencedNfts,
         mentions,
         metadata,
@@ -413,6 +421,7 @@ export class DropsMappers {
     dropMedia,
     dropsRepliesCounts,
     dropsQuoteCounts,
+    clapsLeftForContextProfile,
     contextProfileId,
     referencedNfts,
     mentions,
@@ -430,6 +439,7 @@ export class DropsMappers {
     profilesByIds: Record<string, ApiProfileMin>;
     dropsParts: Record<string, DropPartEntity[]>;
     dropMedia: Record<string, DropMediaEntity[]>;
+    clapsLeftForContextProfile: number;
     dropsRepliesCounts: Record<
       string,
       Record<number, { count: number; context_profile_count: number }>
@@ -473,6 +483,7 @@ export class DropsMappers {
                   profilesByIds,
                   dropsParts,
                   dropMedia,
+                  clapsLeftForContextProfile,
                   dropsRepliesCounts,
                   dropsQuoteCounts,
                   contextProfileId,
@@ -512,6 +523,7 @@ export class DropsMappers {
                           dropMedia,
                           dropsRepliesCounts,
                           dropsQuoteCounts,
+                          clapsLeftForContextProfile,
                           contextProfileId,
                           referencedNfts,
                           mentions,
@@ -601,7 +613,17 @@ export class DropsMappers {
             rating:
               dropEntity.drop_type === DropType.CHAT
                 ? dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0
-                : dropsRatings[dropEntity.id]?.rating ?? 0
+                : dropsRatings[dropEntity.id]?.rating ?? 0,
+            min_rating:
+              dropEntity.drop_type === DropType.CHAT
+                ? (dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0) -
+                  clapsLeftForContextProfile
+                : 0,
+            max_rating:
+              dropEntity.drop_type === DropType.CHAT
+                ? (dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0) +
+                  clapsLeftForContextProfile
+                : 0
           }
         : null,
       subscribed_actions: subscribedActions[dropEntity.id] ?? []
