@@ -98,7 +98,8 @@ export async function connect(entities: any[] = []) {
     entities: entities,
     synchronize: true,
     logging: false,
-    charset: 'utf8mb4'
+    charset: 'utf8mb4',
+    timezone: 'Etc/UTC'
   });
 
   await AppDataSource.initialize().catch((error) =>
