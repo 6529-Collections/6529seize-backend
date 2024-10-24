@@ -719,18 +719,31 @@ function getTokenDatesFromConsolidation(
     return removeDates;
   }
 
-  const sortedTransactions = consolidationTransactions
+  consolidationTransactions
     .map((c) => {
       c.transaction_date = parseUTCDateString(c.transaction_date);
       c.from_address = c.from_address.toLowerCase();
       c.to_address = c.to_address.toLowerCase();
       return c;
     })
-    .sort(
-      (a, b) => a.transaction_date.getTime() - b.transaction_date.getTime()
-    );
+    .sort((a, b) => {
+      const dateComparison =
+        a.transaction_date.getTime() - b.transaction_date.getTime();
 
-  for (const transaction of sortedTransactions) {
+      if (dateComparison !== 0) {
+        return dateComparison;
+      }
+
+      const aInConsolidations = consolidations.some((c) =>
+        areEqualAddresses(c, a.from_address)
+      );
+      const bInConsolidations = consolidations.some((c) =>
+        areEqualAddresses(c, b.from_address)
+      );
+      return Number(bInConsolidations) - Number(aInConsolidations);
+    });
+
+  for (const transaction of consolidationTransactions) {
     const { from_address, to_address, token_count, transaction_date } =
       transaction;
 
