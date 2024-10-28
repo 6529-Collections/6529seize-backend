@@ -3,16 +3,16 @@ import { Time, Timer } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
 import { DeleteDropModel } from './delete-drop.model';
 import { profilesService, ProfilesService } from '../profiles/profiles.service';
-import {
-  dropRaterService,
-  DropVotingService
-} from '../api-serverless/src/drops/drop-voting.service';
 import { BadRequestException } from '../exceptions';
+import {
+  clappingService,
+  ClappingService
+} from '../api-serverless/src/drops/clapping.service';
 
 export class DeleteDropUseCase {
   public constructor(
     private readonly profileService: ProfilesService,
-    private readonly dropRaterService: DropVotingService,
+    private readonly clapsService: ClappingService,
     private readonly dropsDb: DropsDb
   ) {}
 
@@ -57,7 +57,7 @@ export class DeleteDropUseCase {
           timer,
           connection
         }),
-        this.dropRaterService.deleteDropVotes(dropId, { timer, connection }),
+        this.clapsService.deleteClaps(dropId, { timer, connection }),
         this.dropsDb.deleteDropFeedItems(dropId, { timer, connection }),
         this.dropsDb.deleteDropNotifications(dropId, { timer, connection }),
         this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection })
@@ -80,6 +80,6 @@ export class DeleteDropUseCase {
 
 export const deleteDrop = new DeleteDropUseCase(
   profilesService,
-  dropRaterService,
+  clappingService,
   dropsDb
 );

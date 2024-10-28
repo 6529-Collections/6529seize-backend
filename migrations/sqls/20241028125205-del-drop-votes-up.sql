@@ -1,0 +1,1 @@
+delete from ratings where matter = 'DROP_RATING';

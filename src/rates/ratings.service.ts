@@ -81,18 +81,6 @@ export class RatingsService {
     return this.ratingsDb.getAggregatedRatingOnMatter(request, connection);
   }
 
-  public async getRatesSpentToTargetOnMatterForProfile(
-    param: {
-      matter: RateMatter;
-      profile_id: string;
-      matter_target_id: string;
-      matter_category: string;
-    },
-    connection?: ConnectionWrapper<any>
-  ): Promise<number> {
-    return this.ratingsDb.getCurrentRatingOnMatterForProfile(param, connection);
-  }
-
   public async getRatesLeftOnMatterForProfile({
     profile_id,
     matter
@@ -250,10 +238,7 @@ export class RatingsService {
       {
         profile_id: request.rater_profile_id,
         target_id: request.matter_target_id,
-        type:
-          request.matter === RateMatter.DROP_RATING
-            ? ProfileActivityLogType.DROP_RATING_EDIT
-            : ProfileActivityLogType.RATING_EDIT,
+        type: ProfileActivityLogType.RATING_EDIT,
         contents: JSON.stringify({
           old_rating: currentRating.rating,
           new_rating: request.rating,
@@ -1014,13 +999,6 @@ export class RatingsService {
       rep_credit: repLeft,
       cic_credit: cicLeft
     };
-  }
-
-  async deleteRatingsForMatter(
-    param: { matter_target_id: string; matter: RateMatter },
-    ctx: RequestContext
-  ) {
-    return await this.ratingsDb.deleteRatingsForMatter(param, ctx);
   }
 
   async bulkRep({ targets }: ApiBulkRepRequest, ctx: RequestContext) {

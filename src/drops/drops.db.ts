@@ -23,11 +23,8 @@ import {
   DROPS_MENTIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
-  DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
-  IDENTITIES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
-  RATINGS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
   WAVES_TABLE
@@ -37,8 +34,6 @@ import {
   UserGroupsService
 } from '../api-serverless/src/community-members/user-groups.service';
 import { Time, Timer } from '../time';
-import { DropVoteCreditSpending } from '../entities/IDropVoteCreditSpending';
-import { RateMatter } from '../entities/IRating';
 import { PageSortDirection } from '../api-serverless/src/page-request';
 import { WaveEntity } from '../entities/IWave';
 import { NotFoundException } from '../exceptions';
@@ -337,41 +332,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .then((it) => it[0] || null);
   }
 
-  async findDropByIdAndAuthor(
-    {
-      id,
-      author_id,
-      eligible_groups
-    }: { id: string; author_id: string; eligible_groups?: string[] },
-    { connection, timer }: RequestContext
-  ): Promise<DropEntity | null> {
-    timer?.start(`dropsDb->findDropByIdAndAuthor`);
-    const opts = connection ? { wrappedConnection: connection } : {};
-    const result = await this.db.oneOrNull<DropEntity>(
-      `
-        select d.* from ${DROPS_TABLE} d
-         ${
-           eligible_groups === undefined
-             ? ``
-             : `join waves w on d.wave_id = w.id and (${
-                 eligible_groups.length
-                   ? `w.visibility_group_id in (:group_ids_user_is_eligible_for) or w.admin_group_id in (:group_ids_user_is_eligible_for) or`
-                   : ``
-               } w.visibility_group_id is null)`
-         }
-         where d.id = :id and d.author_id = :author_id
-        `,
-      {
-        id,
-        eligible_groups,
-        author_id
-      },
-      opts
-    );
-    timer?.stop(`dropsDb->findDropByIdAndAuthor`);
-    return result;
-  }
-
   async findDropByIdWithoutEligibilityCheck(
     id: string,
     connection?: ConnectionWrapper<any>
@@ -589,207 +549,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { dropIds },
       connection ? { wrappedConnection: connection } : undefined
     );
-  }
-
-  async findCreditLeftForDropsForProfile(
-    {
-      profileId
-    }: {
-      profileId: string;
-    },
-    connection?: ConnectionWrapper<any>
-  ): Promise<number> {
-    return this.db
-      .execute(
-        `
-          select i.tdh - ifnull(x.credit_spent, 0) as credit_left
-          from ${IDENTITIES_TABLE} i
-                   left join (select t.rater_id,
-                                     ifnull(sum(t.credit_spent), 0) as credit_spent
-                              from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} t
-                              where t.rater_id = :raterId
-                                and t.timestamp >= :reservationStartTime
-                              group by t.rater_id) x on x.rater_id = i.profile_id
-          where i.profile_id = :raterId
-        `,
-        {
-          raterId: profileId,
-          reservationStartTime: Time.todayUtcMidnight().minusDays(30).toDate()
-        },
-        connection ? { wrappedConnection: connection } : undefined
-      )
-      .then((it) => it[0]?.credit_left ?? 0);
-  }
-
-  async findOverspentRateCredits(
-    {
-      reservationStartTime
-    }: {
-      reservationStartTime: Time;
-    },
-    connection: ConnectionWrapper<any>
-  ): Promise<
-    (DropVoteCreditSpending & {
-      whole_credit: number;
-      total_credit_spent: number;
-    })[]
-  > {
-    return this.db.execute(
-      `
-          with spent_credits as (select rater_id, sum(credit_spent) spent_credit
-                              from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE}
-                              where timestamp >= :reservationStartTime
-                              group by 1),
-               overspenders as (select rater_id, ifnull(i.tdh, 0) as profile_credit, s.spent_credit as spent_credit
-                                from spent_credits s
-                                         left join ${IDENTITIES_TABLE} i on i.profile_id = s.rater_id
-                                where ifnull(i.tdh, 0) - s.spent_credit < 0)
-          select t.*, o.profile_credit as whole_credit, o.spent_credit as total_credit_spent
-          from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} t
-                   join overspenders o on o.rater_id = t.rater_id
-          where t.timestamp >= :reservationStartTime;
-      `,
-      {
-        reservationStartTime: reservationStartTime.toDate()
-      },
-      { wrappedConnection: connection }
-    );
-  }
-
-  async updateCreditSpentOnDropRates(
-    param: { credit_spent: number; reservationId: number },
-    connection: ConnectionWrapper<any>
-  ) {
-    await this.db.execute(
-      `update ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} set credit_spent = :credit_spent where id = :reservationId`,
-      param,
-      { wrappedConnection: connection }
-    );
-  }
-
-  async insertCreditSpentOnDropRates(
-    param: {
-      rater_id: string;
-      credit_spent: number;
-      drop_id: string;
-      wave_id: string;
-    },
-    connection: ConnectionWrapper<any>
-  ) {
-    await this.db.execute(
-      `insert into ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} (rater_id, drop_id, credit_spent, timestamp, wave_id) values (:rater_id, :drop_id, :credit_spent, NOW(), :wave_id)`,
-      param,
-      { wrappedConnection: connection }
-    );
-  }
-
-  async deleteCreditSpentOnDropRates(
-    id: number,
-    connection: ConnectionWrapper<any>
-  ) {
-    await this.db.execute(
-      `delete from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} where id = :id`,
-      { id },
-      { wrappedConnection: connection }
-    );
-  }
-
-  async findDropsTotalRatingsStats(
-    dropIds: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, { rating: number; distinct_raters: number }>> {
-    return !dropIds.length
-      ? {}
-      : await this.db
-          .execute(
-            `
-      select matter_target_id                 as drop_id,
-             sum(rating)                      as rating,
-             count(distinct rater_profile_id) as distinct_raters
-      from ${RATINGS_TABLE}
-      where matter = '${RateMatter.DROP_RATING}'
-        and matter_target_id in (:dropIds)
-        and rating <> 0
-      group by 1
-    `,
-            { dropIds },
-            {
-              wrappedConnection: connection
-            }
-          )
-          .then((dbResult: any[]) =>
-            dbResult.reduce((acc, it) => {
-              acc[it.drop_id] = {
-                rating: it.rating,
-                distinct_raters: it.distinct_raters
-              };
-              return acc;
-            }, {} as Record<string, { rating: number; distinct_raters: number }>)
-          );
-  }
-
-  async findDropsTopRaters(
-    dropIds: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, { rating: number; rater_profile_id: string }[]>> {
-    return !dropIds.length
-      ? {}
-      : await this.db
-          .execute(
-            `
-    select rater_profile_id, matter_target_id as drop_id, sum(rating) as rating
-    from ${RATINGS_TABLE}
-    where matter = '${RateMatter.DROP_RATING}'
-      and rating <> 0
-      and matter_target_id in (:dropIds)
-    group by 1, 2
-    order by abs(sum(rating)) desc limit 5
-    `,
-            { dropIds },
-            {
-              wrappedConnection: connection
-            }
-          )
-          .then((dbResult: any[]) =>
-            dropIds.reduce((acc, it) => {
-              const f = dbResult.filter((r) => r.drop_id === it);
-              if (f) {
-                acc[it] = f.map((s) => ({
-                  rating: s.rating,
-                  rater_profile_id: s.rater_profile_id
-                }));
-              }
-              return acc;
-            }, {} as Record<string, { rating: number; rater_profile_id: string }[]>)
-          );
-  }
-
-  async findDropsTotalRatingsByProfile(
-    dropIds: string[],
-    raterId: string,
-    connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, number>> {
-    return !dropIds.length
-      ? {}
-      : await this.db
-          .execute(
-            `
-    select matter_target_id as drop_id, sum(rating) as rating
-    from ${RATINGS_TABLE}
-    where matter = '${RateMatter.DROP_RATING}' and matter_target_id in (:dropIds) and rating <> 0 and rater_profile_id = :raterId
-    group by 1
-    `,
-            { dropIds, raterId },
-            {
-              wrappedConnection: connection
-            }
-          )
-          .then((dbResult: any[]) =>
-            dbResult.reduce((acc, it) => {
-              acc[it.drop_id] = it.rating;
-              return acc;
-            }, {} as Record<string, number>)
-          );
   }
 
   async countRepliesByDropIds(
@@ -1140,16 +899,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop('dropsDb->updateWaveDropCounters');
-  }
-
-  public async deleteDropsCreditSpendings(dropId: string, ctx: RequestContext) {
-    ctx.timer?.start('dropsDb->deleteDropsCreditSpendings');
-    await this.db.execute(
-      `delete from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} where drop_id = :dropId`,
-      { dropId },
-      { wrappedConnection: ctx.connection }
-    );
-    ctx.timer?.stop('dropsDb->deleteDropsCreditSpendings');
   }
 
   public async deleteDropSubscriptions(dropId: string, ctx: RequestContext) {
