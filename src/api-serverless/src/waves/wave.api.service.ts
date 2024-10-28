@@ -707,11 +707,11 @@ export class WaveApiService {
             ctxWithConnection
           ),
           this.wavesApiDb.deleteDropMetadataByWaveId(waveId, ctxWithConnection),
-          this.wavesApiDb.deleteDropsCreditSpendingsByWaveId(
+          this.wavesApiDb.deleteClapCreditSpendingsByWaveId(
             waveId,
             ctxWithConnection
           ),
-          this.wavesApiDb.deleteDropRatingsByWaveId(waveId, ctxWithConnection),
+          this.wavesApiDb.deleteDropClapsByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteDropFeedItemsByWaveId(
             waveId,
             ctxWithConnection

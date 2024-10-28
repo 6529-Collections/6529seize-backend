@@ -7,6 +7,8 @@ import {
 import { WaveEntity } from '../../../entities/IWave';
 import {
   ACTIVITY_EVENTS_TABLE,
+  CLAP_CREDIT_SPENDINGS_TABLE,
+  DROP_CLAPPER_STATE_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
@@ -14,7 +16,6 @@ import {
   DROPS_MENTIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
-  DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
   IDENTITIES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
@@ -840,27 +841,24 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
     ctx.timer?.stop('wavesApiDb->deleteDropEntitiesByWaveId');
   }
 
-  async deleteDropRatingsByWaveId(waveId: string, ctx: RequestContext) {
-    ctx.timer?.start('wavesApiDb->deleteDropRatingsByWaveId');
+  async deleteDropClapsByWaveId(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->deleteDropClapsByWaveId');
     await this.db.execute(
-      `delete from ${RATINGS_TABLE} where matter_target_id in (select id from ${DROPS_TABLE} where wave_id = :waveId) and matter = :matter`,
-      { waveId, matter: RateMatter.DROP_RATING },
-      { wrappedConnection: ctx.connection }
-    );
-    ctx.timer?.stop('wavesApiDb->deleteDropRatingsByWaveId');
-  }
-
-  async deleteDropsCreditSpendingsByWaveId(
-    waveId: string,
-    ctx: RequestContext
-  ) {
-    ctx.timer?.start('wavesApiDb->deleteDropsCreditSpendingsByWaveId');
-    await this.db.execute(
-      `delete from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} where wave_id = :waveId`,
+      `delete from ${DROP_CLAPPER_STATE_TABLE} where wave_id = :waveId`,
       { waveId },
       { wrappedConnection: ctx.connection }
     );
-    ctx.timer?.stop('wavesApiDb->deleteDropsCreditSpendingsByWaveId');
+    ctx.timer?.stop('wavesApiDb->deleteDropClapsByWaveId');
+  }
+
+  async deleteClapCreditSpendingsByWaveId(waveId: string, ctx: RequestContext) {
+    ctx.timer?.start('wavesApiDb->deleteClapCreditSpendingsByWaveId');
+    await this.db.execute(
+      `delete from ${CLAP_CREDIT_SPENDINGS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('wavesApiDb->deleteClapCreditSpendingsByWaveId');
   }
 
   async updateVisibilityInFeedEntities(
