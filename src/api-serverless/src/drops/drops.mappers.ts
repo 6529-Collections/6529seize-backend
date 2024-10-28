@@ -216,11 +216,8 @@ export class DropsMappers {
       mentions,
       referencedNfts,
       metadata,
-      dropsTopRaters,
       dropsTopClappers,
       clapsLeftForContextProfile,
-      dropsRatings,
-      dropsRatingsByContextProfile,
       dropsClapCounts,
       dropsQuoteCounts,
       dropMedia,
@@ -231,17 +228,10 @@ export class DropsMappers {
       this.dropsDb.findMentionsByDropIds(dropIds, connection),
       this.dropsDb.findReferencedNftsByDropIds(dropIds, connection),
       this.dropsDb.findMetadataByDropIds(dropIds, connection),
-      this.dropsDb.findDropsTopRaters(dropIds, connection),
       this.clappingDb.findDropsTopClappers(dropIds, { connection }),
       contextProfileId
         ? clappingService.findCreditLeftForClapping(contextProfileId)
         : Promise.resolve(0),
-      this.dropsDb.findDropsTotalRatingsStats(dropIds, connection),
-      this.findContextProfilesTotalRatingsForDrops(
-        contextProfileId,
-        dropIds,
-        connection
-      ),
       this.clappingDb.getClapsForDrops(
         { dropIds, clapperId: contextProfileId ?? null },
         { connection }
@@ -283,10 +273,7 @@ export class DropsMappers {
       mentions,
       referencedNfts,
       metadata,
-      dropsTopRaters,
       dropsTopClappers,
-      dropsRatings,
-      dropsRatingsByContextProfile,
       dropsClapCounts,
       dropsQuoteCounts,
       dropMedia,
@@ -307,21 +294,6 @@ export class DropsMappers {
     };
   }
 
-  private async findContextProfilesTotalRatingsForDrops(
-    contextProfileId: string | undefined | null,
-    dropIds: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, number>> {
-    if (!contextProfileId) {
-      return {};
-    }
-    return this.dropsDb.findDropsTotalRatingsByProfile(
-      dropIds,
-      contextProfileId,
-      connection
-    );
-  }
-
   async convertToDropsWithoutWaves(
     entities: DropEntity[],
     ctx: RequestContext
@@ -331,10 +303,7 @@ export class DropsMappers {
       mentions,
       referencedNfts,
       metadata,
-      dropsTopRaters,
       dropsTopClappers,
-      dropsRatings,
-      dropsRatingsByContextProfile,
       dropsClapCounts,
       dropsQuoteCounts,
       dropMedia,
@@ -351,16 +320,12 @@ export class DropsMappers {
       },
       ctx.connection
     );
-    const raterProfileIds = Object.values(dropsTopRaters)
-      .map((it) => it.map((r) => r.rater_profile_id))
-      .flat();
     const clapperProfileIds = Object.values(dropsTopClappers)
       .map((it) => it.map((r) => r.clapper_id))
       .flat();
     const allProfileIds = distinct([
       ...allEntities.map((it) => it.author_id),
       ...mentions.map((it) => it.mentioned_profile_id),
-      ...raterProfileIds,
       ...clapperProfileIds,
       ...Object.values(deletedDrops).map((it) => it.author_id)
     ]);
@@ -399,10 +364,7 @@ export class DropsMappers {
         referencedNfts,
         mentions,
         metadata,
-        dropsRatings,
-        dropsTopRaters,
         dropsTopClappers,
-        dropsRatingsByContextProfile,
         subscribedActions,
         dropsClapCounts,
         allEntities: allEntities.reduce((acc, it) => {
@@ -426,10 +388,7 @@ export class DropsMappers {
     referencedNfts,
     mentions,
     metadata,
-    dropsRatings,
-    dropsTopRaters,
     dropsTopClappers,
-    dropsRatingsByContextProfile,
     subscribedActions,
     dropsClapCounts,
     allEntities
@@ -452,13 +411,7 @@ export class DropsMappers {
     referencedNfts: DropReferencedNftEntity[];
     mentions: DropMentionEntity[];
     metadata: DropMetadataEntity[];
-    dropsRatings: Record<string, { rating: number; distinct_raters: number }>;
     dropsTopClappers: Record<string, { claps: number; clapper_id: string }[]>;
-    dropsTopRaters: Record<
-      string,
-      { rating: number; rater_profile_id: string }[]
-    >;
-    dropsRatingsByContextProfile: Record<string, number>;
     subscribedActions: Record<string, ApiDropSubscriptionTargetAction[]>;
     dropsClapCounts: Record<
       string,
@@ -490,10 +443,7 @@ export class DropsMappers {
                   referencedNfts,
                   mentions,
                   metadata,
-                  dropsRatings,
-                  dropsTopRaters,
                   dropsTopClappers,
-                  dropsRatingsByContextProfile,
                   subscribedActions,
                   dropsClapCounts,
                   allEntities
@@ -528,10 +478,7 @@ export class DropsMappers {
                           referencedNfts,
                           mentions,
                           metadata,
-                          dropsRatings,
-                          dropsTopRaters,
                           dropsTopClappers,
-                          dropsRatingsByContextProfile,
                           subscribedActions,
                           dropsClapCounts,
                           allEntities
@@ -589,11 +536,11 @@ export class DropsMappers {
       rating:
         dropEntity.drop_type === DropType.CHAT
           ? dropsClapCounts[dropEntity.id]?.total_claps ?? 0
-          : dropsRatings[dropEntity.id]?.rating ?? 0,
+          : 0,
       raters_count:
         dropEntity.drop_type === DropType.CHAT
           ? dropsTopClappers[dropEntity.id]?.length ?? 0
-          : dropsRatings[dropEntity.id]?.distinct_raters ?? 0,
+          : 0,
       top_raters:
         dropEntity.drop_type === DropType.CHAT
           ? (dropsTopClappers[dropEntity.id] ?? [])
@@ -602,18 +549,13 @@ export class DropsMappers {
                 profile: profilesByIds[rater.clapper_id]
               }))
               .sort((a, b) => b.rating - a.rating)
-          : (dropsTopRaters[dropEntity.id] ?? [])
-              .map<ApiDropRater>((rater) => ({
-                rating: rater.rating,
-                profile: profilesByIds[rater.rater_profile_id]
-              }))
-              .sort((a, b) => b.rating - a.rating),
+          : [],
       context_profile_context: contextProfileId
         ? {
             rating:
               dropEntity.drop_type === DropType.CHAT
                 ? dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0
-                : dropsRatings[dropEntity.id]?.rating ?? 0,
+                : 0,
             min_rating:
               dropEntity.drop_type === DropType.CHAT
                 ? (dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0) -

@@ -1,0 +1,1 @@
+delete from drops_votes_credit_spendings where true;
