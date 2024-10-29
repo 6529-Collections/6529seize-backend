@@ -28,7 +28,6 @@ import { Time } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
 import { FullPageRequest, Page } from '../api-serverless/src/page-request';
 import { calculateLevel } from '../profiles/profile-level';
-import { ProfileClassification } from '../entities/IProfile';
 import {
   repService,
   RepService
@@ -45,8 +44,7 @@ import {
   profileProxiesDb,
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
-import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBulkRateRequest';
-import { distinct, resolveEnum, uniqueShortId } from '../helpers';
+import { distinct, uniqueShortId } from '../helpers';
 import { ApiAvailableRatingCredit } from '../api-serverless/src/generated/models/ApiAvailableRatingCredit';
 import { ApiRatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevelPage';
@@ -792,163 +790,6 @@ export class RatingsService {
     category: string | null;
   }): Promise<number> {
     return this.ratingsDb.getRepRating(param);
-  }
-
-  async bulkRateProfiles(
-    authContext: AuthenticationContext,
-    apiRequest: ApiBulkRateRequest
-  ): Promise<{ skipped: { identity: string; reason: string }[] }> {
-    const errors = await this.ratingsDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const actingAsId = authContext.getActingAsId();
-        if (!actingAsId) {
-          throw new ForbiddenException(`Create a profile before you rate`);
-        }
-        const matter = resolveEnum(RateMatter, apiRequest.matter)!;
-        const wallets = apiRequest.target_wallet_addresses.map((it) =>
-          it.toLowerCase()
-        );
-        let allIdentitiesByAddresses =
-          await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
-            wallets,
-            connection
-          );
-        await Promise.all(
-          wallets
-            .filter((wallet) => !allIdentitiesByAddresses[wallet])
-            .map((address) =>
-              this.identitiesDb.insertIdentity(
-                {
-                  consolidation_key: address,
-                  primary_address: address,
-                  profile_id: null,
-                  handle: null,
-                  normalised_handle: null,
-                  banner1: null,
-                  banner2: null,
-                  pfp: null,
-                  classification: null,
-                  sub_classification: null,
-                  cic: 0,
-                  rep: 0,
-                  tdh: 0,
-                  level_raw: 0
-                },
-                connection
-              )
-            )
-        );
-        allIdentitiesByAddresses =
-          await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
-            wallets,
-            connection
-          );
-
-        const identitiesWithoutProfile = Object.values(
-          allIdentitiesByAddresses
-        ).filter(({ profile }) => !profile);
-        const addressesThatNeedNewProfiles = Array.from(
-          identitiesWithoutProfile.reduce((acc, { identity }) => {
-            acc.add(identity.primary_address);
-            return acc;
-          }, new Set<string>())
-        );
-        await Promise.all(
-          addressesThatNeedNewProfiles.map((address) =>
-            profilesService.createOrUpdateProfileWithGivenTransaction(
-              {
-                handle: `id-${address}`,
-                classification: ProfileClassification.PSEUDONYM,
-                sub_classification: null,
-                creator_or_updater_wallet: address
-              },
-              connection
-            )
-          )
-        );
-        allIdentitiesByAddresses =
-          await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
-            wallets,
-            connection
-          );
-        const profileIdsByWallets = Object.entries(
-          allIdentitiesByAddresses
-        ).reduce((acc, [wallet, { profile }]) => {
-          acc[wallet] = profile!.external_id;
-          return acc;
-        }, {} as Record<string, string>);
-        const raterRatingsByTargetProfileId = await this.ratingsDb
-          .getRatingsOnMatter(
-            {
-              rater_profile_id: actingAsId,
-              matter
-            },
-            connection
-          )
-          .then((result) =>
-            result.reduce((acc, it) => {
-              if (
-                !apiRequest.category ||
-                it.matter_category == apiRequest.category
-              ) {
-                acc[it.matter_target_id] = it.rating;
-              }
-              return acc;
-            }, {} as Record<string, number>)
-          );
-        const skipped: { identity: string; reason: string }[] = [];
-        const ratingChangesByProfileId = Object.entries(
-          profileIdsByWallets
-        ).reduce((acc, [wallet, profileId]) => {
-          if (profileId === authContext.getActingAsId()!) {
-            skipped.push({
-              identity: wallet,
-              reason: `User can't rate themselves`
-            });
-          } else {
-            acc[profileId] = (acc[profileId] ?? 0) + apiRequest.amount_to_add;
-          }
-          return acc;
-        }, {} as Record<string, number>);
-        const newRatingsByProfileId = Object.entries(
-          ratingChangesByProfileId
-        ).reduce((acc, [profileId, ratingChange]) => {
-          acc[profileId] =
-            (raterRatingsByTargetProfileId[profileId] ?? 0) + ratingChange;
-          return acc;
-        }, {} as Record<string, number>);
-        for (const [profileId, newRating] of Object.entries(
-          newRatingsByProfileId
-        )) {
-          try {
-            await this.updateRatingInternal(
-              {
-                matter,
-                matter_category:
-                  matter === RateMatter.CIC ? 'CIC' : apiRequest.category!,
-                matter_target_id: profileId,
-                rater_profile_id: actingAsId,
-                rating: newRating,
-                authenticationContext: authContext
-              },
-              connection
-            );
-          } catch (e: any) {
-            if (
-              e.message.startsWith(
-                `Not enough TDH left to spend on this matter`
-              )
-            ) {
-              throw new BadRequestException(
-                `Not enough TDH to go through with this bulk rating`
-              );
-            }
-          }
-        }
-        return skipped;
-      }
-    );
-    return { skipped: errors };
   }
 
   async getCreditLeft({
