@@ -70,8 +70,14 @@ export class DropsMappers {
     authorId: string;
     proxyId?: string;
   }): CreateOrUpdateDropModel {
+    const dropType = request.drop_type
+      ? resolveEnumOrThrow(ApiDropType, request.drop_type)
+      : ApiDropType.Chat;
     return this.updateDropApiToUseCaseModel({
-      request,
+      request: {
+        ...request,
+        drop_type: dropType
+      },
       authorId,
       proxyId,
       replyTo: request.reply_to ?? null,
@@ -87,7 +93,7 @@ export class DropsMappers {
     waveId,
     dropId
   }: {
-    request: ApiUpdateDropRequest & { drop_type?: ApiDropType };
+    request: ApiUpdateDropRequest & { drop_type: ApiDropType };
     waveId: string;
     replyTo: DropPartIdentifierModel | null;
     authorId: string;
@@ -100,9 +106,7 @@ export class DropsMappers {
       proxy_identity: proxyId,
       proxy_id: proxyId,
       drop_id: dropId ?? null,
-      drop_type: request.drop_type
-        ? resolveEnumOrThrow(DropType, request.drop_type)
-        : DropType.CHAT,
+      drop_type: resolveEnumOrThrow(DropType, request.drop_type),
       wave_id: waveId,
       reply_to: replyTo,
       title: request.title ?? null,

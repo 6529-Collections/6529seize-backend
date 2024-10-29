@@ -161,7 +161,8 @@ router.post(
       mentioned_users: newDrop.mentioned_users,
       metadata: newDrop.metadata,
       wave_id: newDrop.wave_id,
-      reply_to: newDrop.reply_to
+      reply_to: newDrop.reply_to,
+      drop_type: newDrop.drop_type
     };
     const createdDrop = await dropCreationService.createDrop(
       {

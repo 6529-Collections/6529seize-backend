@@ -21,6 +21,8 @@ import {
   deleteDrop,
   DeleteDropUseCase
 } from '../../../drops/delete-drop.use-case';
+import { resolveEnumOrThrow } from '../../../helpers';
+import { ApiDropType } from '../generated/models/ApiDropType';
 
 export class DropCreationApiService {
   constructor(
@@ -145,9 +147,15 @@ export class DropCreationApiService {
             : null;
         const proxyId =
           authorId === representativeId ? undefined : representativeId;
+        const dropType = drop.drop_type
+          ? resolveEnumOrThrow(ApiDropType, drop.drop_type)
+          : ApiDropType.Chat;
         const model: CreateOrUpdateDropModel =
           this.dropsMappers.updateDropApiToUseCaseModel({
-            request,
+            request: {
+              ...request,
+              drop_type: dropType
+            },
             authorId,
             proxyId,
             replyTo,
