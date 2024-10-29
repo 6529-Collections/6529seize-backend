@@ -4,7 +4,12 @@ import * as jwt from 'jsonwebtoken';
 import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
 import { ethers } from 'ethers';
-import { getJwtExpiry, getJwtSecret } from './auth';
+import {
+  getAuthenticationContext,
+  getJwtExpiry,
+  getJwtSecret,
+  needsAuthenticatedUser
+} from './auth';
 import { asyncRouter } from '../async.router';
 import { getValidatedByJoiOrThrow } from '../validation';
 import {
@@ -103,7 +108,7 @@ router.post(
         }
         chosenRole = roleId;
       }
-      const token = jwt.sign(
+      const accessToken = jwt.sign(
         {
           id: randomUUID(),
           sub: signingAddress.toLowerCase(),
@@ -114,12 +119,31 @@ router.post(
           expiresIn: getJwtExpiry()
         }
       );
+      const refreshToken = await profilesService.retrieveOrGenerateRefreshToken(
+        signingProfile
+      );
       res.status(201).send({
-        token
+        token: accessToken,
+        refresh_token: refreshToken
       });
     } catch (err: any) {
       throw new UnauthorisedException(`Authentication failed: ${err.message}`);
     }
+  }
+);
+
+router.post(
+  '/generate-refresh-token',
+  needsAuthenticatedUser(),
+  async (req: Request, res: Response) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    const authorProfileId = authenticationContext.getActingAsId();
+    const refreshToken = await profilesService.retrieveOrGenerateRefreshToken(
+      authorProfileId
+    );
+    res.status(201).send({
+      refresh_token: refreshToken
+    });
   }
 );
 
@@ -150,6 +174,7 @@ const LoginRequestSchema: Joi.ObjectSchema<ApiLoginRequest> =
 
 interface ApiLoginResponse {
   readonly token: string;
+  readonly refresh_token: string;
 }
 
 export default router;

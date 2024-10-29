@@ -12,17 +12,19 @@ import {
   MEMES_CONTRACT,
   NFTS_TABLE,
   PROFILES_ARCHIVE_TABLE,
+  PROFILES_REFRESH_TOKENS_TABLE,
   PROFILES_TABLE,
   TDH_BLOCKS_TABLE,
   WALLETS_TDH_TABLE,
   WAVES_TABLE
 } from '../constants';
 import { Wallet } from '../entities/IWallet';
-import { Profile } from '../entities/IProfile';
+import { Profile, ProfileRefreshToken } from '../entities/IProfile';
 import { CreateOrUpdateProfileCommand } from './profile.types';
 import { distinct } from '../helpers';
 import { getLevelFromScore } from './profile-level';
 import { RequestContext } from '../request.context';
+import { randomBytes } from 'crypto';
 
 const mysql = require('mysql');
 
@@ -682,6 +684,24 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       wrappedConnection: ctx.connection
     });
     ctx.timer?.stop(`${this.constructor.name}->bulkInsertProfiles`);
+  }
+
+  async retrieveOrGenerateRefreshToken(param: {
+    profileId: string;
+  }): Promise<string> {
+    const existingToken = await this.db.oneOrNull<ProfileRefreshToken>(
+      `select refresh_token from ${PROFILES_REFRESH_TOKENS_TABLE} where profile_id = :profileId`,
+      { profileId: param.profileId }
+    );
+    if (existingToken) {
+      return existingToken.refresh_token;
+    }
+    const refreshToken = randomBytes(64).toString('hex');
+    await this.db.execute(
+      `insert into ${PROFILES_REFRESH_TOKENS_TABLE} (profile_id, refresh_token) values (:profileId, :refreshToken)`,
+      { profileId: param.profileId, refreshToken }
+    );
+    return refreshToken;
   }
 }
 

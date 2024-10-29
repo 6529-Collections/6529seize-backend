@@ -18,7 +18,11 @@ import {
 import { DropVoteCreditSpending } from '../entities/IDropVoteCreditSpending';
 import { DeletedDropEntity } from '../entities/IDeletedDrop';
 import { WaveEntity } from '../entities/IWave';
-import { Profile, ProfileArchived } from '../entities/IProfile';
+import {
+  Profile,
+  ProfileArchived,
+  ProfileRefreshToken
+} from '../entities/IProfile';
 import { CicStatement } from '../entities/ICICStatement';
 import { Rating } from '../entities/IRating';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
@@ -78,7 +82,8 @@ const MANAGED_ENTITIES = [
   WaveMetricEntity,
   WaveDropperMetricEntity,
   PushNotificationDevice,
-  DropClapperStateEntity
+  DropClapperStateEntity,
+  ProfileRefreshToken
 ];
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
