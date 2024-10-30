@@ -124,11 +124,15 @@ router.post(
 
 router.post('/redeem-refresh-token', async (req: Request, res: Response) => {
   const refreshToken = req.body.token;
+  const role = req.body.role;
+  if (!refreshToken) {
+    throw new BadRequestException('Refresh token is required');
+  }
   const address = await profilesService.redeemRefreshToken(refreshToken);
   if (address === null) {
     throw new BadRequestException('Invalid refresh token');
   }
-  const accessToken = getAccessToken(address, address);
+  const accessToken = getAccessToken(address, role);
   res.status(201).send({
     address,
     token: accessToken
