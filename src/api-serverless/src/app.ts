@@ -289,12 +289,8 @@ loadApi().then(() => {
           req: Request,
           res: Response
         ) => {
-          const requestBodies = [];
-          if (Array.isArray(req.body)) {
-            requestBodies.push(...req.body);
-          } else {
-            requestBodies.push(req.body);
-          }
+          const requestBodies = Array.isArray(req.body) ? req.body : [req.body];
+          const isBatchRequest = Array.isArray(req.body);
 
           if (requestBodies.length > 0) {
             const responses = [];
@@ -334,7 +330,7 @@ loadApi().then(() => {
 
             res.setHeader('Content-Type', 'application/json');
             res.setHeader('Access-Control-Allow-Origin', '*');
-            res.status(200).json(responses);
+            res.status(200).json(isBatchRequest ? responses : responses[0]);
           }
         },
         proxyRes: (proxyRes: IncomingMessage, req: Request, res: Response) => {
