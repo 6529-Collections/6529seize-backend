@@ -270,7 +270,7 @@ loadApi().then(() => {
       const command = new GetNodeCommand(params);
       const nodeInfo = await managedBlockchainClient.send(command);
       res.json(nodeInfo);
-    } catch (error) {
+    } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
@@ -312,11 +312,14 @@ loadApi().then(() => {
               aws4.sign(opts);
 
               const response = await new Promise((resolve, reject) => {
-                const individualReq = https.request(opts, (individualRes) => {
-                  let data = '';
-                  individualRes.on('data', (chunk) => (data += chunk));
-                  individualRes.on('end', () => resolve(JSON.parse(data)));
-                });
+                const individualReq = https.request(
+                  opts,
+                  (individualRes: IncomingMessage) => {
+                    let data = '';
+                    individualRes.on('data', (chunk: any) => (data += chunk));
+                    individualRes.on('end', () => resolve(JSON.parse(data)));
+                  }
+                );
                 individualReq.on('error', reject);
                 individualReq.write(individualBody);
                 individualReq.end();
@@ -344,12 +347,12 @@ loadApi().then(() => {
             res.end(responseBody);
           });
         },
-        error: (err: any, req: Request, res: Response) => {
+        error: (err: any, req: any, res: any) => {
           logger.error('Proxy error:', err);
           res.writeHead(500, {
             'Content-Type': 'text/plain'
           });
-          res.end('Something went wrong with the proxy.');
+          res.end('Something went wrong with the RPC proxy.');
         }
       }
     })
