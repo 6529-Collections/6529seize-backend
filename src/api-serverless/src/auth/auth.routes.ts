@@ -108,19 +108,9 @@ router.post(
         }
         chosenRole = roleId;
       }
-      const accessToken = jwt.sign(
-        {
-          id: randomUUID(),
-          sub: signingAddress.toLowerCase(),
-          role: chosenRole
-        },
-        getJwtSecret(),
-        {
-          expiresIn: getJwtExpiry()
-        }
-      );
+      const accessToken = getAccessToken(signingAddress, chosenRole);
       const refreshToken = await profilesService.retrieveOrGenerateRefreshToken(
-        signingProfile
+        signingAddress
       );
       res.status(201).send({
         token: accessToken,
@@ -137,15 +127,41 @@ router.post(
   needsAuthenticatedUser(),
   async (req: Request, res: Response) => {
     const authenticationContext = await getAuthenticationContext(req);
-    const authorProfileId = authenticationContext.getActingAsId();
     const refreshToken = await profilesService.retrieveOrGenerateRefreshToken(
-      authorProfileId
+      authenticationContext.authenticatedWallet
     );
     res.status(201).send({
       refresh_token: refreshToken
     });
   }
 );
+
+router.post('/redeem-refresh-token', async (req: Request, res: Response) => {
+  const refreshToken = req.body.token;
+  const address = await profilesService.redeemRefreshToken(refreshToken);
+  if (address === null) {
+    throw new BadRequestException('Invalid refresh token');
+  }
+  const accessToken = getAccessToken(address, address);
+  res.status(201).send({
+    address,
+    token: accessToken
+  });
+});
+
+function getAccessToken(address: string, role: string) {
+  return jwt.sign(
+    {
+      id: randomUUID(),
+      sub: address.toLowerCase(),
+      role
+    },
+    getJwtSecret(),
+    {
+      expiresIn: getJwtExpiry()
+    }
+  );
+}
 
 function verifyServerSignature(serverSignature: string): string {
   const nonce = jwt.verify(serverSignature, getJwtSecret());

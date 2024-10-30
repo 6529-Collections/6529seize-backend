@@ -1462,10 +1462,13 @@ export class ProfilesService {
     );
   }
 
-  public async retrieveOrGenerateRefreshToken(profileAddress: string) {
-    return this.profilesDb.retrieveOrGenerateRefreshToken({
-      profileId: profileAddress
-    });
+  public async retrieveOrGenerateRefreshToken(address: string) {
+    return this.profilesDb.retrieveOrGenerateRefreshToken(address);
+  }
+
+  public async redeemRefreshToken(refreshToken: string) {
+    const address = await this.profilesDb.redeemRefreshToken(refreshToken);
+    return address;
   }
 }
 

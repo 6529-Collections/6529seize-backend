@@ -12,19 +12,20 @@ import {
   MEMES_CONTRACT,
   NFTS_TABLE,
   PROFILES_ARCHIVE_TABLE,
-  PROFILES_REFRESH_TOKENS_TABLE,
+  REFRESH_TOKENS_TABLE,
   PROFILES_TABLE,
   TDH_BLOCKS_TABLE,
   WALLETS_TDH_TABLE,
   WAVES_TABLE
 } from '../constants';
 import { Wallet } from '../entities/IWallet';
-import { Profile, ProfileRefreshToken } from '../entities/IProfile';
+import { Profile } from '../entities/IProfile';
 import { CreateOrUpdateProfileCommand } from './profile.types';
 import { distinct } from '../helpers';
 import { getLevelFromScore } from './profile-level';
 import { RequestContext } from '../request.context';
 import { randomBytes } from 'crypto';
+import { RefreshToken } from '../entities/IRefreshToken';
 
 const mysql = require('mysql');
 
@@ -686,22 +687,28 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->bulkInsertProfiles`);
   }
 
-  async retrieveOrGenerateRefreshToken(param: {
-    profileId: string;
-  }): Promise<string> {
-    const existingToken = await this.db.oneOrNull<ProfileRefreshToken>(
-      `select refresh_token from ${PROFILES_REFRESH_TOKENS_TABLE} where profile_id = :profileId`,
-      { profileId: param.profileId }
+  async retrieveOrGenerateRefreshToken(address: string): Promise<string> {
+    const existingToken = await this.db.oneOrNull<RefreshToken>(
+      `select refresh_token from ${REFRESH_TOKENS_TABLE} where address = :address`,
+      { address }
     );
     if (existingToken) {
       return existingToken.refresh_token;
     }
     const refreshToken = randomBytes(64).toString('hex');
     await this.db.execute(
-      `insert into ${PROFILES_REFRESH_TOKENS_TABLE} (profile_id, refresh_token) values (:profileId, :refreshToken)`,
-      { profileId: param.profileId, refreshToken }
+      `insert into ${REFRESH_TOKENS_TABLE} (address, refresh_token) values (:address, :refreshToken)`,
+      { address, refreshToken }
     );
     return refreshToken;
+  }
+
+  async redeemRefreshToken(refreshToken: string): Promise<string | null> {
+    const result = await this.db.oneOrNull<RefreshToken>(
+      `select address from ${REFRESH_TOKENS_TABLE} where refresh_token = :refreshToken`,
+      { refreshToken }
+    );
+    return result?.address ?? null;
   }
 }
 

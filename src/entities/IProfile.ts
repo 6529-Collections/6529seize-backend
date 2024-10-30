@@ -1,9 +1,5 @@
 import { Column, Entity, PrimaryColumn, PrimaryGeneratedColumn } from 'typeorm';
-import {
-  PROFILES_ARCHIVE_TABLE,
-  PROFILES_REFRESH_TOKENS_TABLE,
-  PROFILES_TABLE
-} from '../constants';
+import { PROFILES_ARCHIVE_TABLE, PROFILES_TABLE } from '../constants';
 
 export interface ProfileType {
   external_id: string;
@@ -86,13 +82,4 @@ export enum ProfileClassification {
   BOT = 'BOT',
   PARODY = 'PARODY',
   COLLECTION = 'COLLECTION'
-}
-
-@Entity(PROFILES_REFRESH_TOKENS_TABLE)
-export class ProfileRefreshToken {
-  @PrimaryColumn({ type: 'varchar', length: 100 })
-  profile_id!: string;
-
-  @Column({ type: 'text' })
-  refresh_token!: string;
 }

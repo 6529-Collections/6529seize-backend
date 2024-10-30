@@ -18,11 +18,7 @@ import {
 import { DropVoteCreditSpending } from '../entities/IDropVoteCreditSpending';
 import { DeletedDropEntity } from '../entities/IDeletedDrop';
 import { WaveEntity } from '../entities/IWave';
-import {
-  Profile,
-  ProfileArchived,
-  ProfileRefreshToken
-} from '../entities/IProfile';
+import { Profile, ProfileArchived } from '../entities/IProfile';
 import { CicStatement } from '../entities/ICICStatement';
 import { Rating } from '../entities/IRating';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
@@ -41,6 +37,7 @@ import { WaveDropperMetricEntity } from '../entities/IWaveDropperMetric';
 import { PushNotificationDevice } from '../entities/IPushNotification';
 import { ClapCreditSpendingEntity } from '../entities/IClapCreditSpending';
 import { DropClapperStateEntity } from '../entities/IDropClapperState';
+import { RefreshToken } from '../entities/IRefreshToken';
 
 const DBMigrate = require('db-migrate');
 
@@ -83,7 +80,7 @@ const MANAGED_ENTITIES = [
   WaveDropperMetricEntity,
   PushNotificationDevice,
   DropClapperStateEntity,
-  ProfileRefreshToken
+  RefreshToken
 ];
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
