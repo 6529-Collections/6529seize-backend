@@ -87,7 +87,7 @@ router.post(
             `You need to create a profile before you can choose a role`
           );
         }
-      } else if (!role) {
+      } else if (!chosenRole) {
         chosenRole = signingProfile;
       } else {
         const roleId = await profilesService
