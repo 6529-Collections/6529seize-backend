@@ -26,11 +26,11 @@ export class ClappingDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->upsertState`);
   }
 
-  public async getCurrentClaps(
+  public async getCurrentState(
     param: { clapperId: string; drop_id: string },
     ctx: RequestContext
   ): Promise<number> {
-    ctx.timer?.start(`${this.constructor.name}->upsertState`);
+    ctx.timer?.start(`${this.constructor.name}->getCurrentState`);
     const claps = await this.db
       .oneOrNull<{ claps: number }>(
         `
@@ -42,7 +42,7 @@ export class ClappingDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       )
       .then((result) => result?.claps ?? 0);
-    ctx.timer?.stop(`${this.constructor.name}->upsertState`);
+    ctx.timer?.stop(`${this.constructor.name}->getCurrentState`);
     return claps;
   }
 
@@ -135,7 +135,7 @@ export class ClappingDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->mergeOnProfileIdChange`);
   }
 
-  public async getClapsForDrops(
+  public async getTallyForDrops(
     { dropIds, clapperId }: { dropIds: string[]; clapperId: string | null },
     ctx: RequestContext
   ): Promise<
@@ -144,7 +144,7 @@ export class ClappingDb extends LazyDbAccessCompatibleService {
     if (dropIds.length === 0) {
       return {};
     }
-    ctx.timer?.start(`${this.constructor.name}->getClapsForDrops`);
+    ctx.timer?.start(`${this.constructor.name}->getTallyForDrops`);
     const sql = `
   select drop_id, sum(claps) as total_claps ${
     clapperId !== null
@@ -172,11 +172,11 @@ export class ClappingDb extends LazyDbAccessCompatibleService {
           >
         )
       );
-    ctx.timer?.stop(`${this.constructor.name}->getClapsForDrops`);
+    ctx.timer?.stop(`${this.constructor.name}->getTallyForDrops`);
     return result;
   }
 
-  async findDropsTopClappers(
+  async findDropsTopContributors(
     dropIds: string[],
     ctx: RequestContext
   ): Promise<Record<string, { claps: number; clapper_id: string }[]>> {
@@ -206,7 +206,7 @@ export class ClappingDb extends LazyDbAccessCompatibleService {
       });
   }
 
-  async deleteClaps(dropId: string, ctx: RequestContext) {
+  async deleteForDrop(dropId: string, ctx: RequestContext) {
     await this.db.execute(
       `delete from ${DROP_CLAPPER_STATE_TABLE} where drop_id = :dropId`,
       { dropId },

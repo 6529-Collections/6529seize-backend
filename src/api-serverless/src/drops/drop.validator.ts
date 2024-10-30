@@ -1,5 +1,4 @@
 import * as Joi from 'joi';
-import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { ApiDropReferencedNFT } from '../generated/models/ApiDropReferencedNFT';
 import { WALLET_REGEX } from '../../../constants';
 import { DropMetadataEntity } from '../../../entities/IDrop';
@@ -13,15 +12,12 @@ import { ApiDropType } from '../generated/models/ApiDropType';
 
 export interface ApiAddRatingToDropRequest {
   readonly rating: number;
-  readonly category: string;
 }
 
 export const ApiAddRatingToDropRequestSchema: Joi.ObjectSchema<ApiAddRatingToDropRequest> =
   Joi.object({
     rating: Joi.number().integer().required(),
-    category: Joi.string().max(100).regex(REP_CATEGORY_PATTERN).messages({
-      'string.pattern.base': `Invalid category. Category can't be longer than 100 characters. It can only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes.`
-    })
+    category: Joi.string().optional().allow(null) // for legacy reasons
   });
 
 const NftSchema: Joi.ObjectSchema<ApiDropReferencedNFT> = Joi.object({

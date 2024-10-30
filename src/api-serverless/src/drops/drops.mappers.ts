@@ -50,6 +50,8 @@ import {
 import { ApiDropType } from '../generated/models/ApiDropType';
 import { clappingDb, ClappingDb } from './clapping.db';
 import { clappingService } from './clapping.service';
+import { dropVotingService, DropVotingService } from './drop-voting.service';
+import { dropVotingDb, DropVotingDb } from './drop-voting.db';
 
 export class DropsMappers {
   constructor(
@@ -58,7 +60,9 @@ export class DropsMappers {
     private readonly dropsDb: DropsDb,
     private readonly wavesApiDb: WavesApiDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
-    private readonly clappingDb: ClappingDb
+    private readonly clappingDb: ClappingDb,
+    private readonly dropVotingDb: DropVotingDb,
+    private readonly dropVotingService: DropVotingService
   ) {}
 
   public createDropApiToUseCaseModel({
@@ -217,11 +221,14 @@ export class DropsMappers {
       .map((it) => it.reply_to_drop_id)
       .filter((it) => it !== null) as string[];
     const [
+      submissionDropsVotingRanges,
       mentions,
       referencedNfts,
       metadata,
       dropsTopClappers,
+      dropsTopVoters,
       clapsLeftForContextProfile,
+      dropsVoteCounts,
       dropsClapCounts,
       dropsQuoteCounts,
       dropMedia,
@@ -229,14 +236,21 @@ export class DropsMappers {
       dropsRepliesCounts,
       subscribedActions
     ] = await Promise.all([
+      this.dropVotingService.findCreditLeftForVotingForDrops(
+        contextProfileId,
+        dropEntities,
+        connection
+      ),
       this.dropsDb.findMentionsByDropIds(dropIds, connection),
       this.dropsDb.findReferencedNftsByDropIds(dropIds, connection),
       this.dropsDb.findMetadataByDropIds(dropIds, connection),
-      this.clappingDb.findDropsTopClappers(dropIds, { connection }),
+      this.clappingDb.findDropsTopContributors(dropIds, { connection }),
+      this.dropVotingDb.findDropsTopContributors(dropIds, { connection }),
       contextProfileId
         ? clappingService.findCreditLeftForClapping(contextProfileId)
         : Promise.resolve(0),
-      this.clappingDb.getClapsForDrops(
+      this.dropVotingDb.getTallyForDrops({ dropIds }, { connection }),
+      this.clappingDb.getTallyForDrops(
         { dropIds, clapperId: contextProfileId ?? null },
         { connection }
       ),
@@ -274,10 +288,13 @@ export class DropsMappers {
       connection
     );
     return {
+      submissionDropsVotingRanges,
       mentions,
       referencedNfts,
       metadata,
       dropsTopClappers,
+      dropsVoteCounts,
+      dropsTopVoters,
       dropsClapCounts,
       dropsQuoteCounts,
       dropMedia,
@@ -304,10 +321,12 @@ export class DropsMappers {
   ): Promise<ApiDropWithoutWave[]> {
     const contextProfileId = ctx.authenticationContext?.getActingAsId() ?? null;
     const {
+      submissionDropsVotingRanges,
       mentions,
       referencedNfts,
       metadata,
       dropsTopClappers,
+      dropsTopVoters,
       dropsClapCounts,
       dropsQuoteCounts,
       dropMedia,
@@ -316,6 +335,7 @@ export class DropsMappers {
       subscribedActions,
       deletedDrops,
       clapsLeftForContextProfile,
+      dropsVoteCounts,
       allEntities
     } = await this.getAllDropsRelatedData(
       {
@@ -327,10 +347,14 @@ export class DropsMappers {
     const clapperProfileIds = Object.values(dropsTopClappers)
       .map((it) => it.map((r) => r.clapper_id))
       .flat();
+    const voterProfileIds = Object.values(dropsTopVoters)
+      .map((it) => it.map((r) => r.voter_id))
+      .flat();
     const allProfileIds = distinct([
       ...allEntities.map((it) => it.author_id),
       ...mentions.map((it) => it.mentioned_profile_id),
       ...clapperProfileIds,
+      ...voterProfileIds,
       ...Object.values(deletedDrops).map((it) => it.author_id)
     ]);
     const profileMins = await this.profilesService.getProfileMinsByIds({
@@ -369,7 +393,10 @@ export class DropsMappers {
         mentions,
         metadata,
         dropsTopClappers,
+        dropsVoteCounts,
+        dropsTopVoters,
         subscribedActions,
+        submissionDropsVotingRanges,
         dropsClapCounts,
         allEntities: allEntities.reduce((acc, it) => {
           acc[it.id] = it;
@@ -393,8 +420,11 @@ export class DropsMappers {
     mentions,
     metadata,
     dropsTopClappers,
+    dropsTopVoters,
     subscribedActions,
+    submissionDropsVotingRanges,
     dropsClapCounts,
+    dropsVoteCounts,
     allEntities
   }: {
     dropEntity: DropEntity;
@@ -416,7 +446,16 @@ export class DropsMappers {
     mentions: DropMentionEntity[];
     metadata: DropMetadataEntity[];
     dropsTopClappers: Record<string, { claps: number; clapper_id: string }[]>;
+    dropsTopVoters: Record<string, { votes: number; voter_id: string }[]>;
+    dropsVoteCounts: Record<
+      string,
+      { tally: number; total_number_of_voters: number }
+    >;
     subscribedActions: Record<string, ApiDropSubscriptionTargetAction[]>;
+    submissionDropsVotingRanges: Record<
+      string,
+      { min: number; max: number; current: number }
+    >;
     dropsClapCounts: Record<
       string,
       { total_claps: number; claps_by_clapper: number }
@@ -448,7 +487,10 @@ export class DropsMappers {
                   mentions,
                   metadata,
                   dropsTopClappers,
+                  dropsTopVoters,
+                  dropsVoteCounts,
                   subscribedActions,
+                  submissionDropsVotingRanges,
                   dropsClapCounts,
                   allEntities
                 })
@@ -483,7 +525,10 @@ export class DropsMappers {
                           mentions,
                           metadata,
                           dropsTopClappers,
+                          dropsVoteCounts,
+                          dropsTopVoters,
                           subscribedActions,
+                          submissionDropsVotingRanges,
                           dropsClapCounts,
                           allEntities
                         })
@@ -540,11 +585,11 @@ export class DropsMappers {
       rating:
         dropEntity.drop_type === DropType.CHAT
           ? dropsClapCounts[dropEntity.id]?.total_claps ?? 0
-          : 0,
+          : dropsVoteCounts[dropEntity.id]?.tally ?? 0,
       raters_count:
         dropEntity.drop_type === DropType.CHAT
           ? dropsTopClappers[dropEntity.id]?.length ?? 0
-          : 0,
+          : dropsVoteCounts[dropEntity.id]?.total_number_of_voters ?? 0,
       top_raters:
         dropEntity.drop_type === DropType.CHAT
           ? (dropsTopClappers[dropEntity.id] ?? [])
@@ -553,23 +598,28 @@ export class DropsMappers {
                 profile: profilesByIds[rater.clapper_id]
               }))
               .sort((a, b) => b.rating - a.rating)
-          : [],
+          : (dropsTopVoters[dropEntity.id] ?? [])
+              .map<ApiDropRater>((voter) => ({
+                rating: voter.votes,
+                profile: profilesByIds[voter.voter_id]
+              }))
+              .sort((a, b) => b.rating - a.rating),
       context_profile_context: contextProfileId
         ? {
             rating:
               dropEntity.drop_type === DropType.CHAT
                 ? dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0
-                : 0,
+                : submissionDropsVotingRanges[dropEntity.id]?.current ?? 0,
             min_rating:
               dropEntity.drop_type === DropType.CHAT
                 ? (dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0) -
                   clapsLeftForContextProfile
-                : 0,
+                : submissionDropsVotingRanges[dropEntity.id]?.min ?? 0,
             max_rating:
               dropEntity.drop_type === DropType.CHAT
                 ? (dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0) +
                   clapsLeftForContextProfile
-                : 0
+                : submissionDropsVotingRanges[dropEntity.id]?.max ?? 0
           }
         : null,
       subscribed_actions: subscribedActions[dropEntity.id] ?? []
@@ -583,5 +633,7 @@ export const dropsMappers = new DropsMappers(
   dropsDb,
   wavesApiDb,
   identitySubscriptionsDb,
-  clappingDb
+  clappingDb,
+  dropVotingDb,
+  dropVotingService
 );
