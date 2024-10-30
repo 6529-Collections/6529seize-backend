@@ -15,10 +15,51 @@ import {
 } from '../page-request';
 import { RatingsSnapshot } from '../../../entities/IRatingsSnapshots';
 import { RateMatter } from '../../../entities/IRating';
+import { ApiRateMatter } from '../generated/models/ApiRateMatter';
+import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
+import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
+import { WALLET_REGEX } from '../../../constants';
 import { profilesService } from '../../../profiles/profiles.service';
+import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
+import { BadRequestException } from '../../../exceptions';
+import { ApiBulkRateResponse } from '../generated/models/ApiBulkRateResponse';
+import { ApiBulkRateRequest } from '../generated/models/ApiBulkRateRequest';
 import { ApiAvailableRatingCredit } from '../generated/models/ApiAvailableRatingCredit';
 
 const router = asyncRouter();
+
+router.post(
+  `/`,
+  needsAuthenticatedUser(),
+  async function (
+    req: Request<any, any, ApiBulkRateRequest, any, any>,
+    res: Response<ApiResponse<ApiBulkRateResponse>>
+  ) {
+    let apiRequest = getValidatedByJoiOrThrow(req.body, BulkRateRequestSchema);
+    const authContext = await getAuthenticationContext(req);
+    if (apiRequest.matter === ApiRateMatter.Rep) {
+      const proposedCategory = apiRequest.category?.trim() ?? '';
+      if (proposedCategory !== '') {
+        const abusivenessDetectionResult =
+          await abusivenessCheckService.checkRepPhrase(proposedCategory);
+        if (abusivenessDetectionResult.status === 'DISALLOWED') {
+          throw new BadRequestException(
+            abusivenessDetectionResult.explanation ??
+              'Given category is not allowed'
+          );
+        }
+        apiRequest = { ...apiRequest, category: proposedCategory };
+      } else {
+        throw new BadRequestException('Category is required');
+      }
+    }
+    const response = await ratingsService.bulkRateProfiles(
+      authContext,
+      apiRequest
+    );
+    res.send(response);
+  }
+);
 
 router.get(
   `/snapshots`,
@@ -109,6 +150,31 @@ const SnapshotsRequestSchema: Joi.ObjectSchema<RatingsSnapshotsPageRequest> =
       .optional()
       .valid(...Object.values(RateMatter))
       .default(null)
+  });
+
+const BulkRateRequestSchema: Joi.ObjectSchema<ApiBulkRateRequest> =
+  Joi.object<ApiBulkRateRequest>({
+    amount_to_add: Joi.number().integer().not(0).required(),
+    matter: Joi.string()
+      .valid(...Object.values(ApiRateMatter))
+      .required(),
+    category: Joi.when('matter', {
+      is: RateMatter.REP,
+      then: Joi.string()
+        .required()
+        .min(1)
+        .max(100)
+        .regex(REP_CATEGORY_PATTERN)
+        .messages({
+          'string.pattern.base': `Invalid category. Category can't be longer than 100 characters. It can only alphanumeric characters, spaces, commas, punctuation, parentheses and single quotes.`
+        }),
+      otherwise: Joi.allow(null).optional().default(null)
+    }),
+    target_wallet_addresses: Joi.array()
+      .items(Joi.string().regex(WALLET_REGEX).required())
+      .min(1)
+      .max(100)
+      .required()
   });
 
 const CreditLeftRequestSchema = Joi.object<{
