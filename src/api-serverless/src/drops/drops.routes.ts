@@ -20,8 +20,7 @@ import {
   parseNumberOrNull,
   resolveEnum
 } from '../../../helpers';
-import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
-import { dropRaterService } from './drop-voting.service';
+import { dropCheeringService } from './drop-cheering.service';
 import { FullPageRequest, Page, PageSortDirection } from '../page-request';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
@@ -238,11 +237,10 @@ router.post(
     req: Request<{ drop_id: string }, any, ApiAddRatingToDropRequest, any, any>,
     res: Response<ApiResponse<ApiDrop>>
   ) => {
-    const { rating, category } = getValidatedByJoiOrThrow(
+    const { rating } = getValidatedByJoiOrThrow(
       req.body,
       ApiAddRatingToDropRequestSchema
     );
-    const proposedCategory = category?.trim() ?? '';
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     if (!authenticationContext.getActingAsId()) {
@@ -251,16 +249,6 @@ router.post(
       );
     }
     const dropId = req.params.drop_id;
-    if (proposedCategory !== '') {
-      const abusivenessDetectionResult =
-        await abusivenessCheckService.checkRepPhrase(category);
-      if (abusivenessDetectionResult.status === 'DISALLOWED') {
-        throw new BadRequestException(
-          abusivenessDetectionResult.explanation ??
-            'Given category is not allowed'
-        );
-      }
-    }
     const raterProfileId = authenticationContext.getActingAsId()!;
     if (
       authenticationContext.isAuthenticatedAsProxy() &&
@@ -275,13 +263,12 @@ router.post(
     const ctx = { timer, authenticationContext };
     const group_ids_user_is_eligible_for =
       await userGroupsService.getGroupsUserIsEligibleFor(raterProfileId, timer);
-    await dropRaterService.updateVote(
+    await dropCheeringService.updateCheers(
       {
         rater_profile_id: raterProfileId,
         groupIdsUserIsEligibleFor: group_ids_user_is_eligible_for,
-        category: proposedCategory,
         drop_id: dropId,
-        rating: rating
+        cheersChange: rating
       },
       ctx
     );

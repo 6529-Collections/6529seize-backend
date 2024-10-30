@@ -1,89 +1,312 @@
-import { dropsDb, DropsDb } from '../../../drops/drops.db';
-import { BadRequestException, NotFoundException } from '../../../exceptions';
-import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
-import { Time } from '../../../time';
 import { RequestContext } from '../../../request.context';
-import { DropType } from '../../../entities/IDrop';
-import { clappingService, ClappingService } from './clapping.service';
-import * as process from 'node:process';
+import { Time } from '../../../time';
+import { identitiesDb, IdentitiesDb } from '../../../identities/identities.db';
+import { BadRequestException, ForbiddenException } from '../../../exceptions';
+import { wavesApiDb, WavesApiDb } from '../waves/waves.api.db';
+import {
+  userGroupsService,
+  UserGroupsService
+} from '../community-members/user-groups.service';
+import { dropsDb, DropsDb } from '../../../drops/drops.db';
+import { DropEntity, DropType } from '../../../entities/IDrop';
+import {
+  profileActivityLogsDb,
+  ProfileActivityLogsDb
+} from '../../../profileActivityLogs/profile-activity-logs.db';
+import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
+import {
+  userNotifier,
+  UserNotifier
+} from '../../../notifications/user.notifier';
+import { DropVotingDb, dropVotingDb } from './drop-voting.db';
+import {
+  WaveCreditScopeType,
+  WaveCreditType,
+  WaveType
+} from '../../../entities/IWave';
+import { ConnectionWrapper } from '../../../sql-executor';
+import { distinct } from '../../../helpers';
 
 export class DropVotingService {
   constructor(
+    private readonly votingDb: DropVotingDb,
+    private readonly identitiesDb: IdentitiesDb,
+    private readonly wavesDb: WavesApiDb,
     private readonly dropsDb: DropsDb,
-    private readonly clappingService: ClappingService
+    private readonly userGroupsService: UserGroupsService,
+    private readonly userNotifier: UserNotifier,
+    private readonly profileActivityLogsDb: ProfileActivityLogsDb
   ) {}
 
-  async updateVote(
-    param: {
+  public async vote(
+    {
+      voter_id,
+      drop_id,
+      wave_id,
+      votes,
+      proxy_id
+    }: {
+      voter_id: string;
       drop_id: string;
-      rater_profile_id: string;
-      groupIdsUserIsEligibleFor: string[];
-      rating: number;
-      category: string;
+      wave_id: string;
+      votes: number;
+      proxy_id: string | null;
     },
     ctx: RequestContext
   ) {
-    await this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
-      const dropId = param.drop_id;
-      const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
-        dropId,
-        param.groupIdsUserIsEligibleFor,
-        connection
+    if (!ctx.connection) {
+      await this.votingDb.executeNativeQueriesInTransaction(
+        async (connection) => {
+          await this.vote(
+            { voter_id, drop_id, wave_id, votes, proxy_id },
+            { ...ctx, connection }
+          );
+        }
       );
-      const ctxWithConnection = { ...ctx, connection };
-      if (!dropEntity) {
-        throw new NotFoundException(`Drop ${dropId} not found`);
-      }
-      if (dropEntity.drop_type === DropType.CHAT) {
-        await this.clappingService.clap(
+      return;
+    }
+    const now = Time.now();
+    const [
+      drop,
+      groupsVoterIsEligibleFor,
+      wave,
+      currentVote,
+      creditSpentBeforeThisVote,
+      voterTotalCredit
+    ] = await Promise.all([
+      this.dropsDb.findDropById(drop_id, ctx.connection),
+      this.userGroupsService.getGroupsUserIsEligibleFor(voter_id, ctx.timer),
+      this.wavesDb.findById(wave_id, ctx.connection),
+      this.votingDb.getCurrentState(
+        { voterId: voter_id, drop_id: drop_id },
+        ctx
+      ),
+      this.votingDb
+        .getCreditSpentInWaves(
           {
-            drop_id: dropId,
-            clapper_id: param.rater_profile_id,
-            claps: param.rating,
-            wave_id: dropEntity.wave_id,
-            proxy_id: null
+            waveIds: [wave_id],
+            voterId: voter_id
           },
-          ctxWithConnection
+          ctx
+        )
+        .then((it) => it[wave_id] ?? 0),
+      this.identitiesDb
+        .getIdentityByProfileId(voter_id, ctx.connection)
+        ?.then((identity) => identity?.tdh ?? 0)
+    ]);
+
+    if (!drop || drop.wave_id !== wave?.id) {
+      throw new BadRequestException('Drop not found');
+    }
+    if (!wave) {
+      throw new BadRequestException('Wave not found');
+    }
+    if (
+      wave.voting_period_start !== null &&
+      wave.voting_period_start > Time.currentMillis()
+    ) {
+      throw new BadRequestException(
+        `Voting period for this drop hasn't started`
+      );
+    }
+    if (
+      wave.voting_period_end !== null &&
+      wave.voting_period_end < Time.currentMillis()
+    ) {
+      throw new BadRequestException(`Voting period for this drop has ended`);
+    }
+    if (drop.drop_type === DropType.CHAT) {
+      throw new BadRequestException(`You can't vote on a chat drop`);
+    }
+    if (drop.author_id === voter_id) {
+      throw new BadRequestException(`You can't vote on your own drop`);
+    }
+    if (
+      wave.voting_group_id !== null &&
+      !groupsVoterIsEligibleFor.includes(wave.voting_group_id)
+    ) {
+      throw new ForbiddenException(
+        'Voter is not eligible to vote in this wave'
+      );
+    }
+    if (wave.type === WaveType.CHAT) {
+      throw new ForbiddenException('Voting is not allowed in chat waves');
+    }
+    const creditSpentWithCurrentVotes = Math.abs(votes - currentVote);
+
+    if (
+      creditSpentWithCurrentVotes + creditSpentBeforeThisVote >
+      voterTotalCredit
+    ) {
+      throw new BadRequestException('Not enough credit to vote');
+    }
+
+    if (wave.voting_credit_type !== WaveCreditType.TDH) {
+      throw new BadRequestException(
+        `Voting in waves with credit type ${wave.voting_credit_type} not yet supported`
+      );
+    }
+    if (wave.time_lock_ms !== null && wave.time_lock_ms > 0) {
+      throw new BadRequestException(
+        `Voting in time locked waves not yet supported`
+      );
+    }
+    if (wave.voting_credit_scope_type !== WaveCreditScopeType.WAVE) {
+      throw new BadRequestException(
+        `Voting im waves with credit scope type ${wave.voting_credit_scope_type} not yet supported`
+      );
+    }
+
+    await Promise.all([
+      this.votingDb.upsertState(
+        {
+          voter_id,
+          drop_id,
+          votes,
+          wave_id
+        },
+        ctx
+      ),
+      this.votingDb.insertCreditSpending(
+        {
+          voter_id,
+          drop_id,
+          credit_spent: creditSpentWithCurrentVotes,
+          created_at: now.toMillis(),
+          wave_id: wave_id
+        },
+        ctx
+      ),
+      this.profileActivityLogsDb.insert(
+        {
+          profile_id: voter_id,
+          type: ProfileActivityLogType.DROP_VOTE_EDIT,
+          target_id: drop_id,
+          contents: JSON.stringify({
+            oldVote: currentVote,
+            newVote: votes
+          }),
+          additional_data_1: null,
+          additional_data_2: null,
+          proxy_id: proxy_id
+        },
+        ctx.connection,
+        ctx.timer
+      ),
+      this.userNotifier.notifyOfDropVote(
+        {
+          voter_id,
+          drop_id: drop_id,
+          drop_author_id: drop.author_id,
+          vote: votes,
+          wave_id: wave_id
+        },
+        wave.visibility_group_id,
+        ctx.connection
+      )
+    ]);
+  }
+
+  async findCreditLeftForVotingForDrops(
+    profileId: string | null | undefined,
+    dropEntities: DropEntity[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<string, { min: number; max: number; current: number }>> {
+    if (!profileId) {
+      return {};
+    }
+    const groupIdsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(profileId);
+    const participationDrops = dropEntities.filter(
+      (drop) => drop.drop_type === DropType.PARTICIPATORY
+    );
+    const relevantWaveIds = distinct(
+      participationDrops.map((drop) => drop.wave_id)
+    );
+    const relevantWaves = await this.wavesDb.findWavesByIds(
+      relevantWaveIds,
+      groupIdsUserIsEligibleFor,
+      connection
+    );
+    const wavesIdsWhereVotingIsImplemented = relevantWaves
+      .filter((it) => {
+        return (
+          it.voting_credit_type === WaveCreditType.TDH &&
+          it.voting_credit_scope_type === WaveCreditScopeType.WAVE &&
+          it.time_lock_ms === null
         );
-      } else {
-        if (process.env.NON_CHAT_DROP_VOTING_ENABLED !== 'true') {
-          throw new Error(`Voting not implemented`);
-        }
-        if (dropEntity.author_id === param.rater_profile_id) {
-          throw new BadRequestException(`You can't rate your own drop`);
-        }
-        const wave = await this.dropsDb.findWaveByIdOrThrow(
-          dropEntity.wave_id,
-          connection
-        );
-        if (
-          wave.voting_period_start !== null &&
-          wave.voting_period_start > Time.currentMillis()
-        ) {
-          throw new BadRequestException(
-            `Voting period for this drop hasn't started`
-          );
-        }
-        if (
-          wave.voting_period_end !== null &&
-          wave.voting_period_end < Time.currentMillis()
-        ) {
-          throw new BadRequestException(
-            `Voting period for this drop has ended`
-          );
-        }
-        if (
-          wave.voting_group_id !== null &&
-          !param.groupIdsUserIsEligibleFor.includes(wave.voting_group_id)
-        ) {
-          throw new BadRequestException(
-            `User is not eligible to vote in this wave`
-          );
+      })
+      .map((it) => it.id);
+    const relevantParticipationDrops = participationDrops.filter((drop) =>
+      wavesIdsWhereVotingIsImplemented.includes(drop.wave_id)
+    );
+    const relevantParticipationDropIds = relevantParticipationDrops.map(
+      (it) => it.id
+    );
+    const [activeVotes, totalVotesInRelevantWaves, tdh] = await Promise.all([
+      this.votingDb.getVotersActiveVoteForDrops(
+        {
+          dropIds: relevantParticipationDropIds,
+          voterId: profileId
+        },
+        {}
+      ),
+      this.votingDb.getVotersTotalVotesInWaves(
+        { waveIds: wavesIdsWhereVotingIsImplemented, voterId: profileId },
+        { connection }
+      ),
+      this.identitiesDb
+        .getIdentityByProfileId(profileId)
+        ?.then((identity) => identity?.tdh ?? 0)
+    ]);
+    return relevantParticipationDropIds.reduce((acc, dropId) => {
+      const waveId = relevantParticipationDrops.find(
+        (it) => it.id === dropId
+      )?.wave_id;
+      if (waveId) {
+        const totalVotesInWave = totalVotesInRelevantWaves[waveId];
+        const activeVote = activeVotes[dropId];
+        if (totalVotesInWave !== undefined && activeVote !== undefined) {
+          const creditLeft = Math.max(0, tdh - totalVotesInWave);
+          if (activeVote < 0) {
+            acc[dropId] = {
+              min: activeVote - creditLeft,
+              current: activeVote,
+              max: -activeVote + creditLeft
+            };
+          } else if (activeVote > 0) {
+            acc[dropId] = {
+              min: -activeVote - creditLeft,
+              current: activeVote,
+              max: activeVote + creditLeft
+            };
+          } else {
+            acc[dropId] = {
+              min: creditLeft,
+              current: activeVote,
+              max: -creditLeft
+            };
+          }
         }
       }
-    });
-    await giveReadReplicaTimeToCatchUp();
+      return acc;
+    }, {} as Record<string, { min: number; current: number; max: number }>);
+  }
+
+  public async deleteVotes(dropId: string, ctx: RequestContext) {
+    await Promise.all([
+      this.votingDb.deleteForDrop(dropId, ctx),
+      this.votingDb.deleteCreditSpendings(dropId, ctx)
+    ]);
   }
 }
 
-export const dropRaterService = new DropVotingService(dropsDb, clappingService);
+export const dropVotingService = new DropVotingService(
+  dropVotingDb,
+  identitiesDb,
+  wavesApiDb,
+  dropsDb,
+  userGroupsService,
+  userNotifier,
+  profileActivityLogsDb
+);
