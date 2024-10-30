@@ -1461,6 +1461,15 @@ export class ProfilesService {
       { connection: connectionHolder }
     );
   }
+
+  public async retrieveOrGenerateRefreshToken(address: string) {
+    return this.profilesDb.retrieveOrGenerateRefreshToken(address);
+  }
+
+  public async redeemRefreshToken(refreshToken: string) {
+    const address = await this.profilesDb.redeemRefreshToken(refreshToken);
+    return address;
+  }
 }
 
 export interface CommunityMemberMinimal {

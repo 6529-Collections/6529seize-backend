@@ -4,7 +4,12 @@ import * as jwt from 'jsonwebtoken';
 import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
 import { ethers } from 'ethers';
-import { getJwtExpiry, getJwtSecret } from './auth';
+import {
+  getAuthenticationContext,
+  getJwtExpiry,
+  getJwtSecret,
+  needsAuthenticatedUser
+} from './auth';
 import { asyncRouter } from '../async.router';
 import { getValidatedByJoiOrThrow } from '../validation';
 import {
@@ -103,25 +108,60 @@ router.post(
         }
         chosenRole = roleId;
       }
-      const token = jwt.sign(
-        {
-          id: randomUUID(),
-          sub: signingAddress.toLowerCase(),
-          role: chosenRole
-        },
-        getJwtSecret(),
-        {
-          expiresIn: getJwtExpiry()
-        }
+      const accessToken = getAccessToken(signingAddress, chosenRole);
+      const refreshToken = await profilesService.retrieveOrGenerateRefreshToken(
+        signingAddress
       );
       res.status(201).send({
-        token
+        token: accessToken,
+        refresh_token: refreshToken
       });
     } catch (err: any) {
       throw new UnauthorisedException(`Authentication failed: ${err.message}`);
     }
   }
 );
+
+router.post(
+  '/generate-refresh-token',
+  needsAuthenticatedUser(),
+  async (req: Request, res: Response) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    const refreshToken = await profilesService.retrieveOrGenerateRefreshToken(
+      authenticationContext.authenticatedWallet
+    );
+    res.status(201).send({
+      refresh_token: refreshToken
+    });
+  }
+);
+
+router.post('/redeem-refresh-token', async (req: Request, res: Response) => {
+  const refreshToken = req.body.token;
+  const address = await profilesService.redeemRefreshToken(refreshToken);
+  if (address === null) {
+    throw new BadRequestException('Invalid refresh token');
+  }
+  const accessToken = getAccessToken(address, address);
+  res.status(201).send({
+    address,
+    token: accessToken
+  });
+});
+
+function getAccessToken(address: string, role: string) {
+  return jwt.sign(
+    {
+      id: randomUUID(),
+      sub: address.toLowerCase(),
+      role
+    },
+    getJwtSecret(),
+    {
+      expiresIn: getJwtExpiry()
+    }
+  );
+}
 
 function verifyServerSignature(serverSignature: string): string {
   const nonce = jwt.verify(serverSignature, getJwtSecret());
@@ -150,6 +190,7 @@ const LoginRequestSchema: Joi.ObjectSchema<ApiLoginRequest> =
 
 interface ApiLoginResponse {
   readonly token: string;
+  readonly refresh_token: string;
 }
 
 export default router;
