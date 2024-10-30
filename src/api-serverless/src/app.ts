@@ -309,10 +309,7 @@ loadApi().then(() => {
                 },
                 body: individualBody
               };
-              aws4.sign(opts, {
-                accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-                secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!
-              });
+              aws4.sign(opts);
 
               const response = await new Promise((resolve, reject) => {
                 const individualReq = https.request(opts, (individualRes) => {
