@@ -87,7 +87,7 @@ router.post(
             `You need to create a profile before you can choose a role`
           );
         }
-      } else if (!chosenRole) {
+      } else if (!role) {
         chosenRole = signingProfile;
       } else {
         const roleId = await profilesService
@@ -135,7 +135,7 @@ router.post('/redeem-refresh-token', async (req: Request, res: Response) => {
   });
 });
 
-function getAccessToken(address: string, role: string) {
+function getAccessToken(address: string, role?: string) {
   return jwt.sign(
     {
       id: randomUUID(),
