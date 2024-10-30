@@ -70,7 +70,7 @@ export class ClappingService {
       this.dropsDb.findDropById(drop_id, ctx.connection),
       this.userGroupsService.getGroupsUserIsEligibleFor(clapper_id, ctx.timer),
       this.wavesDb.findById(wave_id, ctx.connection),
-      this.clappingDb.getCurrentClaps(
+      this.clappingDb.getCurrentState(
         { clapperId: clapper_id, drop_id: drop_id },
         ctx
       ),
@@ -190,7 +190,7 @@ export class ClappingService {
 
   public async deleteClaps(dropId: string, ctx: RequestContext) {
     await Promise.all([
-      this.clappingDb.deleteClaps(dropId, ctx),
+      this.clappingDb.deleteForDrop(dropId, ctx),
       this.clappingDb.deleteCreditSpendings(dropId, ctx)
     ]);
   }
