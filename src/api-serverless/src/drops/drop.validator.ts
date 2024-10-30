@@ -58,6 +58,7 @@ const NewDropPartSchema: Joi.ObjectSchema<ApiCreateDropPart> = Joi.object({
           .regex(/^https:\/\/d3lqz0a4bldqgf.cloudfront.net\//)
       })
     )
+    .default([])
 });
 
 const baseDropFieldsValidators = {

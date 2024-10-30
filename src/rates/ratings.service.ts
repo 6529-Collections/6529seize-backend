@@ -28,7 +28,6 @@ import { Time } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
 import { FullPageRequest, Page } from '../api-serverless/src/page-request';
 import { calculateLevel } from '../profiles/profile-level';
-import { ProfileClassification } from '../entities/IProfile';
 import {
   repService,
   RepService
@@ -58,6 +57,7 @@ import {
   AbusivenessCheckService
 } from '../profiles/abusiveness-check.service';
 import { ProfileRepRatedEventData } from '../events/datatypes/profile-rep-rated.event-data';
+import { ProfileClassification } from '../entities/IProfile';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -79,6 +79,18 @@ export class RatingsService {
     connection?: ConnectionWrapper<any>
   ): Promise<AggregatedRating> {
     return this.ratingsDb.getAggregatedRatingOnMatter(request, connection);
+  }
+
+  public async getRatesSpentToTargetOnMatterForProfile(
+    param: {
+      matter: RateMatter;
+      profile_id: string;
+      matter_target_id: string;
+      matter_category: string;
+    },
+    connection?: ConnectionWrapper<any>
+  ): Promise<number> {
+    return this.ratingsDb.getCurrentRatingOnMatterForProfile(param, connection);
   }
 
   public async getRatesLeftOnMatterForProfile({
