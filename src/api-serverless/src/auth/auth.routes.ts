@@ -122,20 +122,6 @@ router.post(
   }
 );
 
-router.post(
-  '/generate-refresh-token',
-  needsAuthenticatedUser(),
-  async (req: Request, res: Response) => {
-    const authenticationContext = await getAuthenticationContext(req);
-    const refreshToken = await profilesService.retrieveOrGenerateRefreshToken(
-      authenticationContext.authenticatedWallet
-    );
-    res.status(201).send({
-      refresh_token: refreshToken
-    });
-  }
-);
-
 router.post('/redeem-refresh-token', async (req: Request, res: Response) => {
   const refreshToken = req.body.token;
   const address = await profilesService.redeemRefreshToken(refreshToken);
