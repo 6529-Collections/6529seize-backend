@@ -125,7 +125,7 @@ router.post(
     req: Request<any, any, ApiRedeemRefreshTokenRequest, any, any>,
     res: Response<ApiResponse<ApiRedeemRefreshTokenResponse>>
   ) {
-    const tokenAddress = req.body.address.toLowerCase();
+    const tokenAddress = req.body.address?.toLowerCase();
     const refreshToken = req.body.token;
     const role = req.body.role;
     if (!refreshToken) {

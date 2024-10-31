@@ -21,7 +21,7 @@ import {
 import { Wallet } from '../entities/IWallet';
 import { Profile } from '../entities/IProfile';
 import { CreateOrUpdateProfileCommand } from './profile.types';
-import { distinct } from '../helpers';
+import { areEqualAddresses, distinct } from '../helpers';
 import { getLevelFromScore } from './profile-level';
 import { RequestContext } from '../request.context';
 import { randomBytes } from 'crypto';
@@ -711,7 +711,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       `select address from ${REFRESH_TOKENS_TABLE} where refresh_token = :refreshToken`,
       { refreshToken }
     );
-    return address === result?.address;
+    return result?.address ? areEqualAddresses(address, result.address) : false;
   }
 }
 
