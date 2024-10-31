@@ -4,12 +4,7 @@ import * as jwt from 'jsonwebtoken';
 import { ApiResponse } from '../api-response';
 import * as Joi from 'joi';
 import { ethers } from 'ethers';
-import {
-  getAuthenticationContext,
-  getJwtExpiry,
-  getJwtSecret,
-  needsAuthenticatedUser
-} from './auth';
+import { getJwtExpiry, getJwtSecret } from './auth';
 import { asyncRouter } from '../async.router';
 import { getValidatedByJoiOrThrow } from '../validation';
 import {
