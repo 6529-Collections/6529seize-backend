@@ -188,7 +188,7 @@ import { ApiCreateNewWaveVisibilityConfig } from '../models/ApiCreateNewWaveVisi
 import { ApiCreateNewWaveVotingConfig        } from '../models/ApiCreateNewWaveVotingConfig';
 import { ApiCreateWaveConfig       } from '../models/ApiCreateWaveConfig';
 import { ApiCreateWaveDropRequest } from '../models/ApiCreateWaveDropRequest';
-import { ApiDrop                    } from '../models/ApiDrop';
+import { ApiDrop                     } from '../models/ApiDrop';
 import { ApiDropAndDropVote } from '../models/ApiDropAndDropVote';
 import { ApiDropContextProfileContext   , ApiDropContextProfileContextRatingCurrencyEnum   } from '../models/ApiDropContextProfileContext';
 import { ApiDropMedia } from '../models/ApiDropMedia';
@@ -205,7 +205,7 @@ import { ApiDropSubscriptionTargetAction } from '../models/ApiDropSubscriptionTa
 import { ApiDropTraceItem } from '../models/ApiDropTraceItem';
 import { ApiDropType } from '../models/ApiDropType';
 import { ApiDropVote } from '../models/ApiDropVote';
-import { ApiDropWithoutWave                   } from '../models/ApiDropWithoutWave';
+import { ApiDropWithoutWave                    } from '../models/ApiDropWithoutWave';
 import { ApiDropsPage } from '../models/ApiDropsPage';
 import { ApiFeedItem    } from '../models/ApiFeedItem';
 import { ApiFeedItemType } from '../models/ApiFeedItemType';

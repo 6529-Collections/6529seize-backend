@@ -39,6 +39,7 @@ import { ClapCreditSpendingEntity } from '../entities/IClapCreditSpending';
 import { DropClapperStateEntity } from '../entities/IDropClapperState';
 import { DropVoterStateEntity } from '../entities/IDropVoterState';
 import { RefreshToken } from '../entities/IRefreshToken';
+import { DropRankEntity } from '../entities/IDropRank';
 
 const DBMigrate = require('db-migrate');
 
@@ -82,6 +83,8 @@ const MANAGED_ENTITIES = [
   PushNotificationDevice,
   RefreshToken,
   DropClapperStateEntity,
+  DropVoterStateEntity,
+  DropRankEntity,
   DropVoterStateEntity,
   RefreshToken
 ];

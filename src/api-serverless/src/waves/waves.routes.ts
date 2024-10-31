@@ -389,9 +389,12 @@ const WaveParticipationSchema = Joi.object<ApiCreateNewWaveParticipationConfig>(
       .required()
       .min(0)
       .items(WaveRequiredMetadataSchema),
-    required_media: Joi.array().items(
-      Joi.string().valid(...Object.values(ApiWaveParticipationRequirement))
-    ),
+    required_media: Joi.array()
+      .items(
+        Joi.string().valid(...Object.values(ApiWaveParticipationRequirement))
+      )
+      .optional()
+      .default([]),
     signature_required: Joi.boolean().required(),
     period: IntRangeSchema.required().allow(null)
   }

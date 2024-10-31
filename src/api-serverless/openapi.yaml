@@ -3237,6 +3237,7 @@ components:
         - title
         - context_profile_context
         - subscribed_actions
+        - rank
       properties:
         id:
           type: string
@@ -3246,6 +3247,10 @@ components:
           format: int64
         drop_type:
           $ref: "#/components/schemas/ApiDropType"
+        rank:
+          type: number
+          format: int64
+          nullable: true
         wave:
           $ref: "#/components/schemas/ApiWaveMin"
         reply_to:
@@ -3545,6 +3550,7 @@ components:
         - title
         - subscribed_actions
         - context_profile_context
+        - rank
       properties:
         id:
           type: string
@@ -3554,6 +3560,10 @@ components:
           format: int64
         drop_type:
           $ref: "#/components/schemas/ApiDropType"
+        rank:
+          type: number
+          format: int64
+          nullable: true
         reply_to:
           $ref: "#/components/schemas/ApiReplyToDropResponse"
         author:

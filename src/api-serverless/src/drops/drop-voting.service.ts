@@ -65,6 +65,7 @@ export class DropVotingService {
       );
       return;
     }
+    await this.votingDb.lockAggregateDropRank(drop_id, ctx.connection);
     const now = Time.now();
     const [
       drop,
@@ -156,8 +157,17 @@ export class DropVotingService {
         `Voting im waves with credit scope type ${wave.voting_credit_scope_type} not yet supported`
       );
     }
+    const change = votes - currentVote;
 
     await Promise.all([
+      this.votingDb.upsertAggregateDropRank(
+        {
+          drop_id,
+          wave_id,
+          change
+        },
+        ctx
+      ),
       this.votingDb.upsertState(
         {
           voter_id,
@@ -296,7 +306,16 @@ export class DropVotingService {
   public async deleteVotes(dropId: string, ctx: RequestContext) {
     await Promise.all([
       this.votingDb.deleteForDrop(dropId, ctx),
-      this.votingDb.deleteCreditSpendings(dropId, ctx)
+      this.votingDb.deleteCreditSpendings(dropId, ctx),
+      this.votingDb.deleteDropRanks(dropId, ctx)
+    ]);
+  }
+
+  public async deleteVoteByWave(waveId: string, ctx: RequestContext) {
+    await Promise.all([
+      this.votingDb.deleteForWave(waveId, ctx),
+      this.votingDb.deleteCreditSpendingsForWave(waveId, ctx),
+      this.votingDb.deleteDropRanksForWave(waveId, ctx)
     ]);
   }
 }
