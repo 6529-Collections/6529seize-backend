@@ -8,11 +8,16 @@ import {
   clappingService,
   ClappingService
 } from '../api-serverless/src/drops/clapping.service';
+import {
+  dropVotingService,
+  DropVotingService
+} from '../api-serverless/src/drops/drop-voting.service';
 
 export class DeleteDropUseCase {
   public constructor(
     private readonly profileService: ProfilesService,
     private readonly clapsService: ClappingService,
+    private readonly dropVotingService: DropVotingService,
     private readonly dropsDb: DropsDb
   ) {}
 
@@ -58,6 +63,7 @@ export class DeleteDropUseCase {
           connection
         }),
         this.clapsService.deleteClaps(dropId, { timer, connection }),
+        this.dropVotingService.deleteVotes(dropId, { timer, connection }),
         this.dropsDb.deleteDropFeedItems(dropId, { timer, connection }),
         this.dropsDb.deleteDropNotifications(dropId, { timer, connection }),
         this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection })
@@ -81,5 +87,6 @@ export class DeleteDropUseCase {
 export const deleteDrop = new DeleteDropUseCase(
   profilesService,
   clappingService,
+  dropVotingService,
   dropsDb
 );

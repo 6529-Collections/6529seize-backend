@@ -61,6 +61,10 @@ import {
   clappingDb,
   ClappingDb
 } from '../api-serverless/src/drops/clapping.db';
+import {
+  dropVotingDb,
+  DropVotingDb
+} from '../api-serverless/src/drops/drop-voting.db';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -76,6 +80,7 @@ export class ProfilesService {
     private readonly identitiesDb: IdentitiesDb,
     private readonly notificationsDb: IdentityNotificationsDb,
     private readonly clappingDb: ClappingDb,
+    private readonly dropVotingDb: DropVotingDb,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
 
@@ -744,6 +749,7 @@ export class ProfilesService {
         await this.mergeDrops(sourceIdentity, target, connectionHolder);
         await this.mergeNotifications(sourceIdentity, target, connectionHolder);
         await this.mergeClappingStuff(sourceIdentity, target, connectionHolder);
+        await this.mergeVotingStuff(sourceIdentity, target, connectionHolder);
         const targetProfile = await this.profilesDb.getProfileById(
           target,
           connectionHolder
@@ -1461,6 +1467,17 @@ export class ProfilesService {
       { connection: connectionHolder }
     );
   }
+
+  private async mergeVotingStuff(
+    sourceIdentity: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.dropVotingDb.mergeOnProfileIdChange(
+      { previous_id: sourceIdentity, new_id: target },
+      { connection: connectionHolder }
+    );
+  }
 }
 
 export interface CommunityMemberMinimal {
@@ -1487,5 +1504,6 @@ export const profilesService = new ProfilesService(
   identitiesDb,
   identityNotificationsDb,
   clappingDb,
+  dropVotingDb,
   getAlchemyInstance
 );
