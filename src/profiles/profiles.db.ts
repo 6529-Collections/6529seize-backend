@@ -711,7 +711,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       `select address from ${REFRESH_TOKENS_TABLE} where refresh_token = :refreshToken`,
       { refreshToken }
     );
-    return result?.address ? areEqualAddresses(address, result.address) : false;
+    return !!result?.address && areEqualAddresses(address, result.address);
   }
 }
 
