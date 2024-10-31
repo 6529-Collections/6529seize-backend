@@ -125,18 +125,22 @@ router.post(
     req: Request<any, any, ApiRedeemRefreshTokenRequest, any, any>,
     res: Response<ApiResponse<ApiRedeemRefreshTokenResponse>>
   ) {
+    const tokenAddress = req.body.address.toLowerCase();
     const refreshToken = req.body.token;
     const role = req.body.role;
     if (!refreshToken) {
       throw new BadRequestException('Refresh token is required');
     }
-    const address = await profilesService.redeemRefreshToken(refreshToken);
-    if (address === null) {
+    const redeemed = await profilesService.redeemRefreshToken(
+      tokenAddress,
+      refreshToken
+    );
+    if (!redeemed) {
       throw new BadRequestException('Invalid refresh token');
     }
-    const accessToken = getAccessToken(address, role);
+    const accessToken = getAccessToken(tokenAddress, role);
     res.status(201).send({
-      address,
+      address: tokenAddress,
       token: accessToken
     });
   }

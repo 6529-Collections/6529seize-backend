@@ -703,12 +703,15 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     return refreshToken;
   }
 
-  async redeemRefreshToken(refreshToken: string): Promise<string | null> {
+  async redeemRefreshToken(
+    address: string,
+    refreshToken: string
+  ): Promise<boolean> {
     const result = await this.db.oneOrNull<RefreshToken>(
       `select address from ${REFRESH_TOKENS_TABLE} where refresh_token = :refreshToken`,
       { refreshToken }
     );
-    return result?.address ?? null;
+    return address === result?.address;
   }
 }
 
