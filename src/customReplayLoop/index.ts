@@ -40,6 +40,9 @@ async function replay() {
       logger.info(
         `[CUSTOM REPLAY] [${sub.id}] Found updated airdrop address ${airdropAddress.airdrop_address} for consolidation key ${sub.consolidation_key}`
       );
+      await finalSubsRepo.update(sub.id!, {
+        airdrop_address: airdropAddress.airdrop_address
+      });
     }
   }
 }
