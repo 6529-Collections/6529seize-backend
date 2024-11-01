@@ -5,6 +5,7 @@ import { NFTFinalSubscription } from '../entities/ISubscription';
 import { getDataSource } from '../db';
 import { IsNull } from 'typeorm';
 import { fetchAirdropAddressForConsolidationKey } from '../delegationsLoop/db.delegations';
+import { areEqualAddresses } from '../helpers';
 
 const logger = Logger.get('CUSTOM_REPLAY_LOOP');
 
@@ -21,7 +22,9 @@ async function replay() {
   // logger.info(`[CUSTOM REPLAY NOT IMPLEMENTED]`);
   const finalSubsRepo = getDataSource().getRepository(NFTFinalSubscription);
   const finalSubscriptionsWithMissingAirdrops = await finalSubsRepo.find({
-    where: [{ airdrop_address: IsNull() }, { airdrop_address: '' }]
+    where: {
+      token_id: 292
+    }
   });
   logger.info(
     `[CUSTOM REPLAY] Found ${finalSubscriptionsWithMissingAirdrops.length} final subscriptions with missing airdrops`
@@ -31,8 +34,12 @@ async function replay() {
     const airdropAddress = await fetchAirdropAddressForConsolidationKey(
       sub.consolidation_key
     );
-    logger.info(
-      `[CUSTOM REPLAY] [${sub.id}] Found airdrop address ${airdropAddress.airdrop_address} for consolidation key ${sub.consolidation_key}`
-    );
+    if (
+      !areEqualAddresses(airdropAddress.airdrop_address, sub.airdrop_address)
+    ) {
+      logger.info(
+        `[CUSTOM REPLAY] [${sub.id}] Found updated airdrop address ${airdropAddress.airdrop_address} for consolidation key ${sub.consolidation_key}`
+      );
+    }
   }
 }
