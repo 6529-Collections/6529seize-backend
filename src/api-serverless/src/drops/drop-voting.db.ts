@@ -392,7 +392,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
                    vote,
                    last_increased,
                    RANK() OVER (PARTITION BY wave_id ORDER BY vote DESC, last_increased desc) AS rnk
-            FROM drop_total_votes) drop_ranks
+            FROM ${DROP_RANK_TABLE}) drop_ranks
       WHERE drop_id in (:dropIds)
     `,
       { dropIds },
