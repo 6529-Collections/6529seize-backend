@@ -178,13 +178,31 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       param,
       { wrappedConnection: connectionHolder.connection }
     );
-    await this.db.execute(
-      `
+    try {
+      await this.db.execute(
+        `
       update ${PROFILE_LATEST_LOG_TABLE} set profile_id = :newSourceId where profile_id = :oldSourceId
       `,
-      param,
-      { wrappedConnection: connectionHolder.connection }
-    );
+        param,
+        { wrappedConnection: connectionHolder.connection }
+      );
+    } catch (e) {
+      const dbError = e as { code?: string };
+      if (dbError.code === 'ER_DUP_ENTRY') {
+        await this.db.execute(
+          `delete from ${PROFILE_LATEST_LOG_TABLE} where profile_id = :oldSourceId`,
+          param,
+          { wrappedConnection: connectionHolder.connection }
+        );
+        await this.db.execute(
+          `update ${PROFILE_LATEST_LOG_TABLE} set latest_activity = NOW() where profile_id = :new_profile_id`,
+          param,
+          { wrappedConnection: connectionHolder.connection }
+        );
+      } else {
+        throw e;
+      }
+    }
   }
 
   async changeTargetProfileIdInLogs(
