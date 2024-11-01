@@ -60,6 +60,7 @@ export * from '../models/ApiDropTraceItem';
 export * from '../models/ApiDropType';
 export * from '../models/ApiDropVote';
 export * from '../models/ApiDropWithoutWave';
+export * from '../models/ApiDropsLeaderboardPage';
 export * from '../models/ApiDropsPage';
 export * from '../models/ApiFeedItem';
 export * from '../models/ApiFeedItemType';
@@ -206,6 +207,7 @@ import { ApiDropTraceItem } from '../models/ApiDropTraceItem';
 import { ApiDropType } from '../models/ApiDropType';
 import { ApiDropVote } from '../models/ApiDropVote';
 import { ApiDropWithoutWave                    } from '../models/ApiDropWithoutWave';
+import { ApiDropsLeaderboardPage } from '../models/ApiDropsLeaderboardPage';
 import { ApiDropsPage } from '../models/ApiDropsPage';
 import { ApiFeedItem    } from '../models/ApiFeedItem';
 import { ApiFeedItemType } from '../models/ApiFeedItemType';
@@ -389,6 +391,7 @@ let typeMap: {[index: string]: any} = {
     "ApiDropTraceItem": ApiDropTraceItem,
     "ApiDropVote": ApiDropVote,
     "ApiDropWithoutWave": ApiDropWithoutWave,
+    "ApiDropsLeaderboardPage": ApiDropsLeaderboardPage,
     "ApiDropsPage": ApiDropsPage,
     "ApiFeedItem": ApiFeedItem,
     "ApiGroup": ApiGroup,

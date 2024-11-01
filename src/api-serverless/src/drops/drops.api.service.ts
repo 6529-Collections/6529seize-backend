@@ -1,6 +1,10 @@
-import { dropsDb, DropsDb } from '../../../drops/drops.db';
+import { dropsDb, DropsDb, LeaderboardParams } from '../../../drops/drops.db';
 import { ConnectionWrapper } from '../../../sql-executor';
-import { NotFoundException } from '../../../exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '../../../exceptions';
 import { resolveEnumOrThrow } from '../../../helpers';
 import { Page, PageSortDirection } from '../page-request';
 import { ApiDrop } from '../generated/models/ApiDrop';
@@ -29,6 +33,9 @@ import { ApiDropType } from '../generated/models/ApiDropType';
 import { DropType } from '../../../entities/IDrop';
 import { ApiWaveDropsFeed } from '../generated/models/ApiWaveDropsFeed';
 import { clappingService, ClappingService } from './clapping.service';
+import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
+import { WaveType } from '../../../entities/IWave';
+import { wavesMappers } from '../waves/waves.mappers';
 
 export class DropsApiService {
   constructor(
@@ -461,6 +468,80 @@ export class DropsApiService {
       ctx.timer?.stop('dropsApiService->findWaveDropsFeed');
       return resp;
     }
+  }
+
+  async findLeaderboard(
+    params: LeaderboardParams,
+    ctx: RequestContext
+  ): Promise<ApiDropsLeaderboardPage> {
+    const authContext = ctx.authenticationContext!;
+    let authenticatedProfileId: string | null = null;
+    if (authContext) {
+      if (authContext.isUserFullyAuthenticated()) {
+        if (
+          !authContext.isAuthenticatedAsProxy() ||
+          authContext.hasProxyAction(ProfileProxyActionType.READ_WAVE)
+        ) {
+          authenticatedProfileId = authContext.getActingAsId();
+        }
+      }
+    }
+    if (
+      authContext.isAuthenticatedAsProxy() &&
+      !authContext.hasProxyAction(ProfileProxyActionType.READ_WAVE)
+    ) {
+      throw new ForbiddenException(
+        `User is authenticated as proxy but doesn't have persmission to read waves`
+      );
+    }
+    const groupIdsUserIsEligibleFor =
+      await this.userGroupsService.getGroupsUserIsEligibleFor(
+        authenticatedProfileId
+      );
+    const waveEntity = await wavesApiDb.findWaveById(params.wave_id);
+    if (
+      !waveEntity ||
+      (waveEntity.visibility_group_id !== null &&
+        !groupIdsUserIsEligibleFor.includes(waveEntity.visibility_group_id))
+    ) {
+      throw new ForbiddenException(`Wave ${params.wave_id} not found`);
+    }
+    if (waveEntity.type === WaveType.CHAT) {
+      throw new BadRequestException(`CHAT waves don't have a leaderboard`);
+    }
+    const noRightToVote =
+      authContext.isAuthenticatedAsProxy() &&
+      !authContext.activeProxyActions[ProfileProxyActionType.RATE_WAVE_DROP];
+    const noRightToParticipate =
+      authContext.isAuthenticatedAsProxy() &&
+      !authContext.activeProxyActions[
+        ProfileProxyActionType.CREATE_DROP_TO_WAVE
+      ];
+    const [drops, count, apiWave] = await Promise.all([
+      this.dropsDb
+        .findLeaderboardDrops(params, ctx)
+        .then(
+          async (drops) =>
+            await this.dropsMappers.convertToDropsWithoutWaves(drops, ctx)
+        ),
+      this.dropsDb.countParticipatoryDrops(params, ctx),
+      wavesMappers.waveEntityToApiWave(
+        {
+          waveEntity,
+          noRightToVote,
+          noRightToParticipate,
+          groupIdsUserIsEligibleFor
+        },
+        ctx
+      )
+    ]);
+    return {
+      wave: apiWave,
+      drops: drops,
+      count: count,
+      page: params.page,
+      next: count > params.page_size * params.page
+    };
   }
 }
 
