@@ -30,6 +30,8 @@ async function replay() {
     `[CUSTOM REPLAY] Found ${finalSubscriptionsWithMissingAirdrops.length} final subscriptions with missing airdrops`
   );
 
+  const updatedSubs = [];
+
   for (const sub of finalSubscriptionsWithMissingAirdrops) {
     const airdropAddress = await fetchAirdropAddressForConsolidationKey(
       sub.consolidation_key
@@ -43,6 +45,13 @@ async function replay() {
       await finalSubsRepo.update(sub.id!, {
         airdrop_address: airdropAddress.airdrop_address
       });
+      logger.info(
+        `[CUSTOM REPLAY] [${sub.id}] Updated airdrop address to ${airdropAddress.airdrop_address}`
+      );
+      updatedSubs.push(sub.id!);
     }
   }
+  logger.info(
+    `[CUSTOM REPLAY] Updated final subscriptions: ${updatedSubs.join(', ')}`
+  );
 }
