@@ -21,7 +21,7 @@ import {
 import { Wallet } from '../entities/IWallet';
 import { Profile } from '../entities/IProfile';
 import { CreateOrUpdateProfileCommand } from './profile.types';
-import { distinct } from '../helpers';
+import { areEqualAddresses, distinct } from '../helpers';
 import { getLevelFromScore } from './profile-level';
 import { RequestContext } from '../request.context';
 import { randomBytes } from 'crypto';
@@ -703,12 +703,15 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     return refreshToken;
   }
 
-  async redeemRefreshToken(refreshToken: string): Promise<string | null> {
+  async redeemRefreshToken(
+    address: string,
+    refreshToken: string
+  ): Promise<boolean> {
     const result = await this.db.oneOrNull<RefreshToken>(
       `select address from ${REFRESH_TOKENS_TABLE} where refresh_token = :refreshToken`,
       { refreshToken }
     );
-    return result?.address ?? null;
+    return !!result?.address && areEqualAddresses(address, result.address);
   }
 }
 
