@@ -32,7 +32,7 @@ async function replay() {
       sub.consolidation_key
     );
     logger.info(
-      `[CUSTOM REPLAY] Found airdrop address ${airdropAddress.airdrop_address} for consolidation key ${sub.consolidation_key}`
+      `[CUSTOM REPLAY] [${sub.id}] Found airdrop address ${airdropAddress.airdrop_address} for consolidation key ${sub.consolidation_key}`
     );
   }
 }
