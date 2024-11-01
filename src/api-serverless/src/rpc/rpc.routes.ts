@@ -1,5 +1,4 @@
-import { Response } from 'express';
-import { Request } from 'express';
+import { Response, Request } from 'express';
 import { asyncRouter } from '../async.router';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { ClientRequest, IncomingMessage } from 'http';
