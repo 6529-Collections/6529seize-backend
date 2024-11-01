@@ -221,6 +221,7 @@ export class DropsMappers {
       .map((it) => it.reply_to_drop_id)
       .filter((it) => it !== null) as string[];
     const [
+      dropsRanks,
       submissionDropsVotingRanges,
       mentions,
       referencedNfts,
@@ -236,6 +237,7 @@ export class DropsMappers {
       dropsRepliesCounts,
       subscribedActions
     ] = await Promise.all([
+      this.dropVotingDb.getDropsRanks(dropIds, { connection }),
       this.dropVotingService.findCreditLeftForVotingForDrops(
         contextProfileId,
         dropEntities,
@@ -288,6 +290,7 @@ export class DropsMappers {
       connection
     );
     return {
+      dropsRanks,
       submissionDropsVotingRanges,
       mentions,
       referencedNfts,
@@ -336,7 +339,8 @@ export class DropsMappers {
       deletedDrops,
       clapsLeftForContextProfile,
       dropsVoteCounts,
-      allEntities
+      allEntities,
+      dropsRanks
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
@@ -398,6 +402,7 @@ export class DropsMappers {
         subscribedActions,
         submissionDropsVotingRanges,
         dropsClapCounts,
+        dropsRanks,
         allEntities: allEntities.reduce((acc, it) => {
           acc[it.id] = it;
           return acc;
@@ -425,6 +430,7 @@ export class DropsMappers {
     submissionDropsVotingRanges,
     dropsClapCounts,
     dropsVoteCounts,
+    dropsRanks,
     allEntities
   }: {
     dropEntity: DropEntity;
@@ -460,6 +466,7 @@ export class DropsMappers {
       string,
       { total_claps: number; claps_by_clapper: number }
     >;
+    dropsRanks: Record<string, number>;
     allEntities: Record<string, DropEntity>;
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
@@ -467,6 +474,7 @@ export class DropsMappers {
       id: dropEntity.id,
       serial_no: dropEntity.serial_no,
       drop_type: resolveEnumOrThrow(ApiDropType, dropEntity.drop_type),
+      rank: dropsRanks[dropEntity.id] ?? null,
       reply_to: replyToDropId
         ? {
             is_deleted: !!deletedDrops[replyToDropId],
@@ -492,6 +500,7 @@ export class DropsMappers {
                   subscribedActions,
                   submissionDropsVotingRanges,
                   dropsClapCounts,
+                  dropsRanks,
                   allEntities
                 })
               : undefined
@@ -530,6 +539,7 @@ export class DropsMappers {
                           subscribedActions,
                           submissionDropsVotingRanges,
                           dropsClapCounts,
+                          dropsRanks,
                           allEntities
                         })
                       : undefined

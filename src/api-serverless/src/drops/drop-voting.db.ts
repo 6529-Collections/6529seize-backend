@@ -4,11 +4,13 @@ import {
 } from '../../../sql-executor';
 import { RequestContext } from '../../../request.context';
 import {
+  DROP_RANK_TABLE,
   DROP_VOTER_STATE_TABLE,
   DROPS_VOTES_CREDIT_SPENDINGS_TABLE
 } from '../../../constants';
 import { DropVoterStateEntity } from '../../../entities/IDropVoterState';
 import { DropVoteCreditSpending } from '../../../entities/IDropVoteCreditSpending';
+import { Time } from '../../../time';
 
 export class DropVotingDb extends LazyDbAccessCompatibleService {
   public async upsertState(state: NewDropVoterState, ctx: RequestContext) {
@@ -23,6 +25,44 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop(`${this.constructor.name}->upsertState`);
+  }
+
+  public async upsertAggregateDropRank(
+    {
+      drop_id,
+      change,
+      wave_id
+    }: { drop_id: string; change: number; wave_id: string },
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(`${this.constructor.name}->upsertAggregateDropRank`);
+    await this.db.execute(
+      `
+      insert into ${DROP_RANK_TABLE} (drop_id, last_increased, vote, wave_id) 
+      values (:drop_id, :last_increased, :change, :wave_id)
+      on duplicate key update vote = vote + :change ${
+        change > 0 ? `, last_increased = :last_increased` : ``
+      }
+    `,
+      {
+        drop_id,
+        last_increased: change > 0 ? Time.currentMillis() : 0,
+        wave_id,
+        change
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->upsertAggregateDropRank`);
+  }
+
+  public async lockAggregateDropRank(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start(`${this.constructor.name}->lockAggregateDropRank`);
+    await this.db.oneOrNull<{ vote: number }>(
+      `select vote from ${DROP_RANK_TABLE} where drop_id = :dropId for update`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->lockAggregateDropRank`);
   }
 
   public async getCurrentState(
@@ -85,7 +125,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       .execute<{ credit_spent: number; wave_id: string }>(
         `
       select wave_id, sum(credit_spent) as credit_spent from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE}
-      where voter_id = :voterId and wave_id in :waveIds
+      where voter_id = :voterId and wave_id in (:waveIds)
     `,
         {
           voterId,
@@ -303,6 +343,66 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       { dropId },
       { wrappedConnection: ctx.connection }
     );
+  }
+
+  async deleteDropRanks(dropId: string, ctx: RequestContext) {
+    await this.db.execute(
+      `delete from ${DROP_RANK_TABLE} where drop_id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async deleteForWave(waveId: string, ctx: RequestContext) {
+    await this.db.execute(
+      `delete from ${DROP_VOTER_STATE_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async deleteCreditSpendingsForWave(waveId: string, ctx: RequestContext) {
+    await this.db.execute(
+      `delete from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async deleteDropRanksForWave(waveId: string, ctx: RequestContext) {
+    await this.db.execute(
+      `delete from ${DROP_RANK_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async getDropsRanks(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->getDropsRanks`);
+    const results = await this.db.execute<{ drop_id: string; rnk: number }>(
+      `
+      SELECT drop_id, rnk
+      FROM (SELECT drop_id,
+                   vote,
+                   last_increased,
+                   RANK() OVER (PARTITION BY wave_id ORDER BY vote DESC, last_increased desc) AS rnk
+            FROM drop_total_votes) drop_ranks
+      WHERE drop_id in (:dropIds)
+    `,
+      { dropIds },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->getDropsRanks`);
+    return results.reduce((acc, red) => {
+      acc[red.drop_id] = red.rnk;
+      return acc;
+    }, {} as Record<string, number>);
   }
 }
 
