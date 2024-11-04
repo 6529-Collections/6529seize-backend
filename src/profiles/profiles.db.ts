@@ -12,6 +12,7 @@ import {
   MEMES_CONTRACT,
   NFTS_TABLE,
   PROFILES_ARCHIVE_TABLE,
+  REFRESH_TOKENS_TABLE,
   PROFILES_TABLE,
   TDH_BLOCKS_TABLE,
   WALLETS_TDH_TABLE,
@@ -20,9 +21,11 @@ import {
 import { Wallet } from '../entities/IWallet';
 import { Profile } from '../entities/IProfile';
 import { CreateOrUpdateProfileCommand } from './profile.types';
-import { distinct } from '../helpers';
+import { areEqualAddresses, distinct } from '../helpers';
 import { getLevelFromScore } from './profile-level';
 import { RequestContext } from '../request.context';
+import { randomBytes } from 'crypto';
+import { RefreshToken } from '../entities/IRefreshToken';
 
 const mysql = require('mysql');
 
@@ -682,6 +685,33 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       wrappedConnection: ctx.connection
     });
     ctx.timer?.stop(`${this.constructor.name}->bulkInsertProfiles`);
+  }
+
+  async retrieveOrGenerateRefreshToken(address: string): Promise<string> {
+    const existingToken = await this.db.oneOrNull<RefreshToken>(
+      `select refresh_token from ${REFRESH_TOKENS_TABLE} where address = :address`,
+      { address }
+    );
+    if (existingToken) {
+      return existingToken.refresh_token;
+    }
+    const refreshToken = randomBytes(64).toString('hex');
+    await this.db.execute(
+      `insert into ${REFRESH_TOKENS_TABLE} (address, refresh_token) values (:address, :refreshToken)`,
+      { address, refreshToken }
+    );
+    return refreshToken;
+  }
+
+  async redeemRefreshToken(
+    address: string,
+    refreshToken: string
+  ): Promise<boolean> {
+    const result = await this.db.oneOrNull<RefreshToken>(
+      `select address from ${REFRESH_TOKENS_TABLE} where refresh_token = :refreshToken`,
+      { refreshToken }
+    );
+    return !!result?.address && areEqualAddresses(address, result.address);
   }
 }
 

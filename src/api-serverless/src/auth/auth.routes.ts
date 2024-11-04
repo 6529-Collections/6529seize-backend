@@ -15,6 +15,8 @@ import { ApiNonceResponse } from '../generated/models/ApiNonceResponse';
 import { ApiLoginRequest } from '../generated/models/ApiLoginRequest';
 import { profilesService } from '../../../profiles/profiles.service';
 import { profileProxyApiService } from '../proxies/proxy.api.service';
+import { ApiRedeemRefreshTokenRequest } from '../generated/models/ApiRedeemRefreshTokenRequest';
+import { ApiRedeemRefreshTokenResponse } from '../generated/models/ApiRedeemRefreshTokenResponse';
 
 const router = asyncRouter();
 
@@ -103,25 +105,60 @@ router.post(
         }
         chosenRole = roleId;
       }
-      const token = jwt.sign(
-        {
-          id: randomUUID(),
-          sub: signingAddress.toLowerCase(),
-          role: chosenRole
-        },
-        getJwtSecret(),
-        {
-          expiresIn: getJwtExpiry()
-        }
+      const accessToken = getAccessToken(signingAddress, chosenRole);
+      const refreshToken = await profilesService.retrieveOrGenerateRefreshToken(
+        signingAddress
       );
       res.status(201).send({
-        token
+        token: accessToken,
+        refresh_token: refreshToken
       });
     } catch (err: any) {
       throw new UnauthorisedException(`Authentication failed: ${err.message}`);
     }
   }
 );
+
+router.post(
+  '/redeem-refresh-token',
+  async function (
+    req: Request<any, any, ApiRedeemRefreshTokenRequest, any, any>,
+    res: Response<ApiResponse<ApiRedeemRefreshTokenResponse>>
+  ) {
+    const tokenAddress = req.body.address?.toLowerCase();
+    const refreshToken = req.body.token;
+    const role = req.body.role;
+    if (!refreshToken) {
+      throw new BadRequestException('Refresh token is required');
+    }
+    const redeemed = await profilesService.redeemRefreshToken(
+      tokenAddress,
+      refreshToken
+    );
+    if (!redeemed) {
+      throw new BadRequestException('Invalid refresh token');
+    }
+    const accessToken = getAccessToken(tokenAddress, role);
+    res.status(201).send({
+      address: tokenAddress,
+      token: accessToken
+    });
+  }
+);
+
+function getAccessToken(address: string, role?: string) {
+  return jwt.sign(
+    {
+      id: randomUUID(),
+      sub: address.toLowerCase(),
+      role
+    },
+    getJwtSecret(),
+    {
+      expiresIn: getJwtExpiry()
+    }
+  );
+}
 
 function verifyServerSignature(serverSignature: string): string {
   const nonce = jwt.verify(serverSignature, getJwtSecret());
@@ -150,6 +187,7 @@ const LoginRequestSchema: Joi.ObjectSchema<ApiLoginRequest> =
 
 interface ApiLoginResponse {
   readonly token: string;
+  readonly refresh_token: string;
 }
 
 export default router;

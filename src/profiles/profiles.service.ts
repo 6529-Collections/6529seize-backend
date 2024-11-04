@@ -1478,6 +1478,14 @@ export class ProfilesService {
       { connection: connectionHolder }
     );
   }
+
+  public async retrieveOrGenerateRefreshToken(address: string) {
+    return this.profilesDb.retrieveOrGenerateRefreshToken(address);
+  }
+
+  public async redeemRefreshToken(address: string, refreshToken: string) {
+    return await this.profilesDb.redeemRefreshToken(address, refreshToken);
+  }
 }
 
 export interface CommunityMemberMinimal {

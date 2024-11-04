@@ -39,6 +39,7 @@ import { ClapCreditSpendingEntity } from '../entities/IClapCreditSpending';
 import { DropClapperStateEntity } from '../entities/IDropClapperState';
 import { DropVoterStateEntity } from '../entities/IDropVoterState';
 import { DropRankEntity } from '../entities/IDropRank';
+import { RefreshToken } from '../entities/IRefreshToken';
 
 const DBMigrate = require('db-migrate');
 
@@ -82,7 +83,8 @@ const MANAGED_ENTITIES = [
   PushNotificationDevice,
   DropClapperStateEntity,
   DropVoterStateEntity,
-  DropRankEntity
+  DropRankEntity,
+  RefreshToken
 ];
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
