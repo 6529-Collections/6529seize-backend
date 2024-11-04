@@ -1479,6 +1479,10 @@ export class ProfilesService {
     );
   }
 
+  public async retrieveOrGenerateRefreshToken(address: string) {
+    return this.profilesDb.retrieveOrGenerateRefreshToken(address);
+  }
+
   public async redeemRefreshToken(address: string, refreshToken: string) {
     return await this.profilesDb.redeemRefreshToken(address, refreshToken);
   }
