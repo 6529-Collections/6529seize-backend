@@ -21,9 +21,11 @@ import {
   DROP_RANK_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROP_RELATIONS_TABLE,
+  DROP_VOTER_STATE_TABLE,
   DROPS_MENTIONS_TABLE,
   DROPS_PARTS_TABLE,
   DROPS_TABLE,
+  IDENTITIES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
@@ -36,13 +38,18 @@ import {
 } from '../api-serverless/src/community-members/user-groups.service';
 import { Time, Timer } from '../time';
 import { PageSortDirection } from '../api-serverless/src/page-request';
-import { WaveEntity } from '../entities/IWave';
+import {
+  WaveCreditScopeType,
+  WaveCreditType,
+  WaveEntity
+} from '../entities/IWave';
 import { NotFoundException } from '../exceptions';
 import { RequestContext } from '../request.context';
 import { ActivityEventTargetType } from '../entities/IActivityEvent';
 import { DeletedDropEntity } from '../entities/IDeletedDrop';
 import { DropRelationEntity } from '../entities/IDropRelation';
 import { ApiDropSearchStrategy } from '../api-serverless/src/generated/models/ApiDropSearchStrategy';
+import { DropVoterStateEntity } from '../entities/IDropVoterState';
 
 const mysql = require('mysql');
 
@@ -82,26 +89,31 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     await Promise.all([
       this.db.execute(
         `
-        insert into ${WAVE_METRICS_TABLE} 
-            (wave_id, drops_count, subscribers_count, participatory_drops_count, latest_drop_timestamp) 
-        values (:waveId, ${
-          newDropEntity.drop_type === DropType.CHAT ? 1 : 0
-        }, 0, ${
+            insert into ${WAVE_METRICS_TABLE}
+            (wave_id, drops_count, subscribers_count, participatory_drops_count, latest_drop_timestamp)
+            values (:waveId, ${
+              newDropEntity.drop_type === DropType.CHAT ? 1 : 0
+            }, 0, ${
           newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
-        }, :now) 
-        on duplicate key update drops_count = (drops_count + ${
-          newDropEntity.drop_type === DropType.CHAT ? 1 : 0
-        }), participatory_drops_count = (participatory_drops_count + ${
-          newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
-        }), latest_drop_timestamp = :now
-      `,
+        }, :now)
+            on duplicate key update drops_count = (drops_count + ${
+              newDropEntity.drop_type === DropType.CHAT ? 1 : 0
+            }),
+                                    participatory_drops_count = (participatory_drops_count + ${
+                                      newDropEntity.drop_type ===
+                                      DropType.PARTICIPATORY
+                                        ? 1
+                                        : 0
+                                    }),
+                                    latest_drop_timestamp     = :now
+        `,
         { waveId, now },
         { wrappedConnection: connection }
       ),
       this.db.execute(
         `
             insert into ${WAVE_DROPPER_METRICS_TABLE}
-                (wave_id, dropper_id, drops_count, participatory_drops_count, latest_drop_timestamp)
+            (wave_id, dropper_id, drops_count, participatory_drops_count, latest_drop_timestamp)
             values (:waveId, :dropperId, ${
               newDropEntity.drop_type === DropType.CHAT ? 1 : 0
             }, ${
@@ -109,40 +121,44 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         }, :now)
             on duplicate key update drops_count = (drops_count + ${
               newDropEntity.drop_type === DropType.CHAT ? 1 : 0
-            }), participatory_drops_count = (participatory_drops_count + ${
-          newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
-        }), latest_drop_timestamp = :now
+            }),
+                                    participatory_drops_count = (participatory_drops_count + ${
+                                      newDropEntity.drop_type ===
+                                      DropType.PARTICIPATORY
+                                        ? 1
+                                        : 0
+                                    }),
+                                    latest_drop_timestamp     = :now
         `,
         { waveId, dropperId: newDropEntity.author_id, now },
         { wrappedConnection: connection }
       ),
       this.db.execute(
-        `insert into ${DROPS_TABLE} (
-                            id,
-                            author_id,
-                            drop_type,
-                            wave_id,
-                            created_at, 
-                            updated_at,
-                            title,
-                            parts_count,
-                            reply_to_drop_id,
-                            reply_to_part_id${
-                              newDropSerialNo !== null ? `, serial_no` : ``
-                            }
-    ) values (
-              :id,
-              :author_id,
-              :drop_type,
-              :wave_id,
-              :created_at,
-              :updated_at,
-              :title,
-              :parts_count,
-              :reply_to_drop_id,
-              :reply_to_part_id
-              ${newDropSerialNo !== null ? `, :serial_no` : ``}
-             )`,
+        `insert into ${DROPS_TABLE} (id,
+                                     author_id,
+                                     drop_type,
+                                     wave_id,
+                                     created_at,
+                                     updated_at,
+                                     title,
+                                     parts_count,
+                                     reply_to_drop_id,
+                                     reply_to_part_id${
+                                       newDropSerialNo !== null
+                                         ? `, serial_no`
+                                         : ``
+                                     })
+         values (:id,
+                 :author_id,
+                 :drop_type,
+                 :wave_id,
+                 :created_at,
+                 :updated_at,
+                 :title,
+                 :parts_count,
+                 :reply_to_drop_id,
+                 :reply_to_part_id
+              ${newDropSerialNo !== null ? `, :serial_no` : ``})`,
 
         { ...newDropEntity },
         { wrappedConnection: connection }
@@ -184,22 +200,21 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: connection }
       );
       const insertRelationsSql = `
-        insert into ${DROP_RELATIONS_TABLE} (
-            parent_id,
-            child_id,
-            child_serial_no,
-            wave_id
-        ) values ${newRelations
-          .map(
-            (relation) =>
-              `(${mysql.escape(relation.parent_id)}, ${mysql.escape(
-                relation.child_id
-              )}, ${mysql.escape(relation.child_serial_no)}, ${mysql.escape(
-                relation.wave_id
-              )})`
-          )
-          .join(', ')}
-        `;
+          insert into ${DROP_RELATIONS_TABLE} (parent_id,
+                                               child_id,
+                                               child_serial_no,
+                                               wave_id)
+          values ${newRelations
+            .map(
+              (relation) =>
+                `(${mysql.escape(relation.parent_id)}, ${mysql.escape(
+                  relation.child_id
+                )}, ${mysql.escape(relation.child_serial_no)}, ${mysql.escape(
+                  relation.wave_id
+                )})`
+            )
+            .join(', ')}
+      `;
       await this.db.execute(
         insertRelationsSql,
         {},
@@ -214,17 +229,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   ) {
     for (const mention of mentions) {
       await this.db.execute(
-        `insert into ${DROPS_MENTIONS_TABLE} (
-                            drop_id, 
-                            mentioned_profile_id,
-                            handle_in_content,
-                            wave_id
-    ) values (
-              :drop_id, 
-              :mentioned_profile_id,
-              :handle_in_content,
-              :wave_id
-   )`,
+        `insert into ${DROPS_MENTIONS_TABLE} (drop_id,
+                                              mentioned_profile_id,
+                                              handle_in_content,
+                                              wave_id)
+         values (:drop_id,
+                 :mentioned_profile_id,
+                 :handle_in_content,
+                 :wave_id)`,
         mention,
         { wrappedConnection: connection }
       );
@@ -240,19 +252,16 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     await Promise.all(
       references.map((reference) =>
         this.db.execute(
-          `insert into ${DROP_REFERENCED_NFTS_TABLE} (
-                            drop_id, 
-                            contract,
-                            token,
-                            name,
-                            wave_id
-    ) values (
-              :drop_id, 
-              :contract,
-              :token,
-              :name,
-              :wave_id
-             )`,
+          `insert into ${DROP_REFERENCED_NFTS_TABLE} (drop_id,
+                                                      contract,
+                                                      token,
+                                                      name,
+                                                      wave_id)
+           values (:drop_id,
+                   :contract,
+                   :token,
+                   :name,
+                   :wave_id)`,
           reference,
           { wrappedConnection: connection }
         )
@@ -270,17 +279,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     await Promise.all(
       metadatas.map((metadata) =>
         this.db.execute(
-          `insert into ${DROP_METADATA_TABLE} (
-                            drop_id, 
-                            data_key,
-                            data_value,
-                            wave_id
-    ) values (
-              :drop_id, 
-              :data_key,
-              :data_value,
-              :wave_id
-             )`,
+          `insert into ${DROP_METADATA_TABLE} (drop_id,
+                                               data_key,
+                                               data_value,
+                                               wave_id)
+           values (:drop_id,
+                   :data_key,
+                   :data_value,
+                   :wave_id)`,
           metadata,
           { wrappedConnection: connection }
         )
@@ -447,7 +453,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         : undefined
     ]
       .filter((it) => !!it)
-      .join(' union all ')}) select * from dr_results order by serial_no desc`;
+      .join(' union all ')})
+                 select *
+                 from dr_results
+                 order by serial_no desc`;
     const params = {
       wave_id,
       drop_type,
@@ -498,7 +507,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         : undefined
     ]
       .filter((it) => !!it)
-      .join(' union all ')}) select * from dr_results order by serial_no desc`;
+      .join(' union all ')})
+                 select *
+                 from dr_results
+                 order by serial_no desc`;
     const params = {
       drop_id,
       serial_no_limit: serial_no_limit ?? Number.MAX_SAFE_INTEGER
@@ -685,7 +697,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       media.map((medium) =>
         this.db.execute(
           `insert into ${DROP_MEDIA_TABLE} (drop_id, drop_part_id, url, mime_type, wave_id)
-         values (:drop_id, :drop_part_id, :url, :mime_type, :wave_id)`,
+           values (:drop_id, :drop_part_id, :url, :mime_type, :wave_id)`,
           medium,
           { wrappedConnection: connection }
         )
@@ -747,7 +759,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     await Promise.all(
       parts.map((part) =>
         this.db.execute(
-          `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content, quoted_drop_id, quoted_drop_part_id, wave_id) values (:drop_id, :drop_part_id, :content, :quoted_drop_id, :quoted_drop_part_id, :wave_id)`,
+          `insert into ${DROPS_PARTS_TABLE} (drop_id, drop_part_id, content, quoted_drop_id, quoted_drop_part_id,
+                                             wave_id)
+           values (:drop_id, :drop_part_id, :content, :quoted_drop_id, :quoted_drop_part_id, :wave_id)`,
           part,
           { wrappedConnection: connection }
         )
@@ -895,7 +909,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   public async updateWaveDropCounters(waveId: string, ctx: RequestContext) {
     ctx.timer?.start('dropsDb->updateWaveDropCounters');
     await this.db.execute(
-      `update ${WAVE_METRICS_TABLE} set drops_count = drops_count - 1 where wave_id = :waveId`,
+      `update ${WAVE_METRICS_TABLE}
+       set drops_count = drops_count - 1
+       where wave_id = :waveId`,
       { waveId },
       { wrappedConnection: ctx.connection }
     );
@@ -915,7 +931,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   async insertDeletedDrop(param: DeletedDropEntity, ctx: RequestContext) {
     ctx.timer?.start('dropsDb->insertDeletedDrop');
     await this.db.execute(
-      `insert into ${DELETED_DROPS_TABLE} (id, wave_id, author_id, created_at, deleted_at) values (:id, :wave_id, :author_id, :created_at, :deleted_at)`,
+      `insert into ${DELETED_DROPS_TABLE} (id, wave_id, author_id, created_at, deleted_at)
+       values (:id, :wave_id, :author_id, :created_at, :deleted_at)`,
       param,
       { wrappedConnection: ctx.connection }
     );
@@ -985,20 +1002,24 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(`${this.constructor.name}->findLeaderboardDrops`);
     const results = await this.db.execute<DropEntity>(
       `
-        with dranks as (
-            SELECT drop_id, rnk
-            FROM (SELECT drop_id,
-                         vote,
-                         last_increased,
-                         wave_id,
-                         RANK() OVER (PARTITION BY wave_id ORDER BY vote DESC, last_increased desc) AS rnk
-                  FROM ${DROP_RANK_TABLE}) drop_ranks
-            WHERE wave_id = :wave_id
-        )
-        select d.* from ${DROPS_TABLE} d right join dranks dr on dr.drop_id = d.id where d.wave_id = :wave_id and d.drop_type = :drop_type order by ${
-        params.sort === LeaderboardSort.RANK ? `dr.rnk` : `d.created_at`
-      } ${params.sort_direction} limit :page_size offset :offset
-        `,
+          with dranks as (SELECT drop_id, rnk
+                          FROM (SELECT drop_id,
+                                       vote,
+                                       last_increased,
+                                       wave_id,
+                                       RANK() OVER (PARTITION BY wave_id ORDER BY vote DESC, last_increased desc) AS rnk
+                                FROM ${DROP_RANK_TABLE}) drop_ranks
+                          WHERE wave_id = :wave_id)
+          select d.*
+          from ${DROPS_TABLE} d
+                   right join dranks dr on dr.drop_id = d.id
+          where d.wave_id = :wave_id
+            and d.drop_type = :drop_type
+          order by ${
+            params.sort === LeaderboardSort.RANK ? `dr.rnk` : `d.created_at`
+          } ${params.sort_direction}
+          limit :page_size offset :offset
+      `,
       {
         wave_id: params.wave_id,
         drop_type: DropType.PARTICIPATORY,
@@ -1026,6 +1047,92 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->countParticipatoryDrops`);
     return count;
   }
+
+  async findWaveScopeTdhBasedSubmissionDropOvervotersWithOvervoteAmounts(
+    ctx: RequestContext
+  ): Promise<ProfileOverVoteAmountInWave[]> {
+    ctx.timer?.start(
+      `${this.constructor.name}->findWaveScopeTdhBasedSubmissionDropOvervotersWithOvervoteAmounts`
+    );
+    const results = await this.db.execute<ProfileOverVoteAmountInWave>(
+      `
+          with given_tdh_votes as (select voter_id, wave_id, sum(abs(votes)) as total_given_votes
+                                   from ${DROP_VOTER_STATE_TABLE}
+                                   group by 1, 2)
+          select v.voter_id as voter_id, wave_id, i.tdh as tdh, v.total_given_votes as total_given_votes
+                               from given_tdh_votes v
+                                        join ${IDENTITIES_TABLE} i on v.voter_id = i.profile_id
+                                        join ${WAVES_TABLE} w on v.wave_id = w.id
+                               where w.voting_credit_type = '${WaveCreditType.TDH}'
+                                 and w.voting_credit_scope_type = '${WaveCreditScopeType.WAVE}'
+                                 and v.total_given_votes > i.tdh
+      `,
+      {},
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->findWaveScopeTdhBasedSubmissionDropOvervotersWithOvervoteAmounts`
+    );
+    return results;
+  }
+
+  async findDropVotesForWaves(
+    params: { profile_id: string; wave_id: string },
+    ctx: RequestContext
+  ): Promise<
+    (DropVoterStateEntity & {
+      author_id: string;
+      visibility_group_id: string | null;
+    })[]
+  > {
+    ctx.timer?.start(`${this.constructor.name}->findDropVotesForWaves`);
+    const results = await this.db.execute<
+      DropVoterStateEntity & {
+        author_id: string;
+        visibility_group_id: string | null;
+      }
+    >(
+      `
+        select v.*, d.author_id as author_id, w.visibility_group_id as visibility_group_id from ${DROP_VOTER_STATE_TABLE} v
+         join drops d on d.id = v.drop_id
+         join waves w on w.id = d.wave_id
+         where v.wave_id = :wave_id and v.voter_id = :profile_id and votes <> 0
+      `,
+      params,
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.start(`${this.constructor.name}->findDropVotesForWaves`);
+    return results;
+  }
+
+  async updateDropVoterState(
+    param: { drop_id: string; profile_id: string; votes: number },
+    ctx: RequestContext
+  ) {
+    await this.db.execute(
+      `update ${DROP_VOTER_STATE_TABLE} set votes = :votes where drop_id = :drop_id and voter_id = :profile_id`,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async updateDropRank(
+    param: { drop_id: string; profile_id: string; change: number },
+    ctx: RequestContext
+  ) {
+    await this.db.execute(
+      `update ${DROP_RANK_TABLE} set vote = vote + :change where drop_id = :drop_id`,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+  }
+}
+
+export interface ProfileOverVoteAmountInWave {
+  profile_id: string;
+  wave_id: string;
+  tdh: number;
+  total_given_votes: number;
 }
 
 export type NewDropEntity = Omit<DropEntity, 'serial_no'> & {

@@ -57,6 +57,7 @@ import {
   syncIdentitiesWithTdhConsolidations
 } from '../identity';
 import { doInDbContext } from '../secrets';
+import { revokeParticipationDropsOverVotes } from '../drops/participation-drops-over-vote-revocation';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -130,6 +131,7 @@ async function handleDelegations(startBlock: number | undefined) {
     await syncIdentitiesWithTdhConsolidations(connection);
     await syncIdentitiesPrimaryWallets(connection);
     await syncIdentitiesMetrics(connection);
+    await revokeParticipationDropsOverVotes();
   });
 
   return delegationsResponse;
