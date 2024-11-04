@@ -51,6 +51,11 @@ import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
 import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType';
 import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
 import { ApiWavesOverviewType } from '../generated/models/ApiWavesOverviewType';
+import {
+  dropVotingService,
+  DropVotingService
+} from '../drops/drop-voting.service';
+import { clappingService, ClappingService } from '../drops/clapping.service';
 
 export class WaveApiService {
   constructor(
@@ -61,7 +66,9 @@ export class WaveApiService {
     private readonly activityRecorder: ActivityRecorder,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly createOrUpdateDrop: CreateOrUpdateDropUseCase,
-    private readonly dropsMappers: DropsMappers
+    private readonly dropsMappers: DropsMappers,
+    private readonly dropVotingService: DropVotingService,
+    private readonly clappingService: ClappingService
   ) {}
 
   public async createWave(
@@ -724,6 +731,8 @@ export class WaveApiService {
             waveId,
             ctxWithConnection
           ),
+          this.dropVotingService.deleteVoteByWave(waveId, ctxWithConnection),
+          this.clappingService.deleteClapsByWave(waveId, ctxWithConnection),
           this.wavesApiDb.deleteDropEntitiesByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteWaveMetrics(waveId, ctxWithConnection),
           this.wavesApiDb.deleteWave(waveId, ctxWithConnection),
@@ -841,5 +850,7 @@ export const waveApiService = new WaveApiService(
   activityRecorder,
   identitySubscriptionsDb,
   createOrUpdateDrop,
-  dropsMappers
+  dropsMappers,
+  dropVotingService,
+  clappingService
 );

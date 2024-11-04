@@ -18,6 +18,7 @@ import {
   DELETED_DROPS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
+  DROP_RANK_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROP_RELATIONS_TABLE,
   DROPS_MENTIONS_TABLE,
@@ -976,10 +977,72 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop('dropsDb->getTraceForDrop');
     return trace;
   }
+
+  async findLeaderboardDrops(
+    params: LeaderboardParams,
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    ctx.timer?.start(`${this.constructor.name}->findLeaderboardDrops`);
+    const results = await this.db.execute<DropEntity>(
+      `
+        with dranks as (
+            SELECT drop_id, rnk
+            FROM (SELECT drop_id,
+                         vote,
+                         last_increased,
+                         wave_id,
+                         RANK() OVER (PARTITION BY wave_id ORDER BY vote DESC, last_increased desc) AS rnk
+                  FROM ${DROP_RANK_TABLE}) drop_ranks
+            WHERE wave_id = :wave_id
+        )
+        select d.* from ${DROPS_TABLE} d right join dranks dr on dr.drop_id = d.id where d.wave_id = :wave_id and d.drop_type = :drop_type order by ${
+        params.sort === LeaderboardSort.RANK ? `dr.rnk` : `d.created_at`
+      } ${params.sort_direction} limit :page_size offset :offset
+        `,
+      {
+        wave_id: params.wave_id,
+        drop_type: DropType.PARTICIPATORY,
+        page_size: params.page_size,
+        offset: params.page_size * (params.page - 1)
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->findLeaderboardDrops`);
+    return results;
+  }
+
+  async countParticipatoryDrops(
+    params: LeaderboardParams,
+    ctx: RequestContext
+  ): Promise<number> {
+    ctx.timer?.start(`${this.constructor.name}->countParticipatoryDrops`);
+    const count = await this.db
+      .oneOrNull<{ cnt: number }>(
+        `select count(*) as cnt from ${DROPS_TABLE} where wave_id = :wave_id and drop_type = :drop_type`,
+        { wave_id: params.wave_id, drop_type: DropType.PARTICIPATORY },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((it) => it?.cnt ?? 0);
+    ctx.timer?.stop(`${this.constructor.name}->countParticipatoryDrops`);
+    return count;
+  }
 }
 
 export type NewDropEntity = Omit<DropEntity, 'serial_no'> & {
   serial_no: number | null;
 };
+
+export enum LeaderboardSort {
+  RANK = 'RANK',
+  CREATION_TIME = 'CREATION_TIME'
+}
+
+export interface LeaderboardParams {
+  readonly wave_id: string;
+  readonly page_size: number;
+  readonly page: number;
+  readonly sort_direction: PageSortDirection;
+  readonly sort: LeaderboardSort;
+}
 
 export const dropsDb = new DropsDb(dbSupplier, userGroupsService);

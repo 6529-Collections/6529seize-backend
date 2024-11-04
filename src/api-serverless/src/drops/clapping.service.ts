@@ -194,6 +194,13 @@ export class ClappingService {
       this.clappingDb.deleteCreditSpendings(dropId, ctx)
     ]);
   }
+
+  async deleteClapsByWave(waveId: string, ctx: RequestContext) {
+    await Promise.all([
+      this.clappingDb.deleteForWave(waveId, ctx),
+      this.clappingDb.deleteCreditSpendingsForWave(waveId, ctx)
+    ]);
+  }
 }
 
 export const clappingService = new ClappingService(

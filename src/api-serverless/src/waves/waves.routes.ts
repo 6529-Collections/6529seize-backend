@@ -45,6 +45,9 @@ import { ApiWaveDropsFeed } from '../generated/models/ApiWaveDropsFeed';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
 import { ApiDropType } from '../generated/models/ApiDropType';
 import { ApiCreateNewWaveChatConfig } from '../generated/models/ApiCreateNewWaveChatConfig';
+import { PageSortDirection } from '../page-request';
+import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
+import { LeaderboardParams, LeaderboardSort } from '../../../drops/drops.db';
 
 const router = asyncRouter();
 
@@ -325,6 +328,46 @@ router.get(
   }
 );
 
+router.get(
+  '/:id/leaderboard',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { id: string },
+      any,
+      any,
+      Omit<LeaderboardParams, 'wave_id'>,
+      any
+    >,
+    res: Response<ApiResponse<ApiDropsLeaderboardPage>>
+  ) => {
+    const { id } = req.params;
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req);
+    const params: LeaderboardParams = {
+      wave_id: id,
+      ...getValidatedByJoiOrThrow(
+        req.query,
+        Joi.object<LeaderboardParams>({
+          page_size: Joi.number().integer().min(1).max(100).default(50),
+          page: Joi.number().integer().min(1).default(1),
+          sort_direction: Joi.string()
+            .valid(...Object.values(PageSortDirection))
+            .default(PageSortDirection.DESC),
+          sort: Joi.string()
+            .valid(...Object.values(LeaderboardSort))
+            .default(LeaderboardSort.RANK)
+        })
+      )
+    };
+    const result = await dropsService.findLeaderboard(params, {
+      authenticationContext,
+      timer
+    });
+    res.send(result);
+  }
+);
+
 const IntRangeSchema = Joi.object<ApiIntRange>({
   min: Joi.number().integer().required().allow(null),
   max: Joi.number().integer().required().allow(null)
@@ -389,9 +432,12 @@ const WaveParticipationSchema = Joi.object<ApiCreateNewWaveParticipationConfig>(
       .required()
       .min(0)
       .items(WaveRequiredMetadataSchema),
-    required_media: Joi.array().items(
-      Joi.string().valid(...Object.values(ApiWaveParticipationRequirement))
-    ),
+    required_media: Joi.array()
+      .items(
+        Joi.string().valid(...Object.values(ApiWaveParticipationRequirement))
+      )
+      .optional()
+      .default([]),
     signature_required: Joi.boolean().required(),
     period: IntRangeSchema.required().allow(null)
   }
