@@ -1,5 +1,5 @@
 import { Logger } from './logging';
-import * as dbMigrationsLoop from './dbMigrationsLoop';
+import * as dbMigrationsLoop from './overRatesRevocationLoop';
 import { prepEnvironment } from './env';
 import { DataSource } from 'typeorm';
 
