@@ -398,8 +398,9 @@ const WaveVotingSchema = Joi.object<ApiCreateNewWaveVotingConfig>({
     .allow(...Object.values(ApiWaveCreditType))
     .required(),
   credit_scope: Joi.string()
+    .optional()
     .allow(...Object.values(ApiWaveCreditScope))
-    .required(),
+    .default(ApiWaveCreditScope.Wave),
   credit_category: Joi.when('credit_type', {
     is: Joi.string().valid(ApiWaveCreditType.Rep),
     then: Joi.string().required().allow(null).max(100),

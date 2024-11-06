@@ -19,11 +19,7 @@ import {
   UserNotifier
 } from '../../../notifications/user.notifier';
 import { DropVotingDb, dropVotingDb } from './drop-voting.db';
-import {
-  WaveCreditScopeType,
-  WaveCreditType,
-  WaveType
-} from '../../../entities/IWave';
+import { WaveCreditType, WaveType } from '../../../entities/IWave';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { distinct } from '../../../helpers';
 
@@ -152,11 +148,6 @@ export class DropVotingService {
         `Voting in time locked waves not yet supported`
       );
     }
-    if (wave.voting_credit_scope_type !== WaveCreditScopeType.WAVE) {
-      throw new BadRequestException(
-        `Voting im waves with credit scope type ${wave.voting_credit_scope_type} not yet supported`
-      );
-    }
     const change = votes - currentVote;
 
     await Promise.all([
@@ -242,7 +233,6 @@ export class DropVotingService {
       .filter((it) => {
         return (
           it.voting_credit_type === WaveCreditType.TDH &&
-          it.voting_credit_scope_type === WaveCreditScopeType.WAVE &&
           it.time_lock_ms === null
         );
       })

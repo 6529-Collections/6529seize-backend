@@ -36,9 +36,6 @@ export class WaveEntity {
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly voting_credit_type!: WaveCreditType;
 
-  @Column({ type: 'varchar', length: 100, nullable: false })
-  readonly voting_credit_scope_type!: WaveCreditScopeType;
-
   @Column({ type: 'varchar', length: 100, nullable: true })
   readonly voting_credit_category!: string | null;
 
@@ -108,14 +105,7 @@ export class WaveEntity {
 
 export enum WaveCreditType {
   TDH = 'TDH',
-  REP = 'REP',
-  UNIQUE = 'UNIQUE'
-}
-
-export enum WaveCreditScopeType {
-  WAVE = 'WAVE',
-  DROP = 'DROP',
-  PARTICIPANT = 'PARTICIPANT'
+  REP = 'REP'
 }
 
 export enum WaveType {

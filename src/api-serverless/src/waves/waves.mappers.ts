@@ -3,7 +3,6 @@ import { InsertWaveEntity, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { distinct, resolveEnumOrThrow } from '../../../helpers';
 import {
   ParticipationRequiredMedia,
-  WaveCreditScopeType,
   WaveCreditType,
   WaveEntity,
   WaveRequiredMetadataItemType,
@@ -12,7 +11,6 @@ import {
 import { ApiWave } from '../generated/models/ApiWave';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
-import { ApiWaveCreditScope as WaveCreditScopeApi } from '../generated/models/ApiWaveCreditScope';
 import { ApiWaveType as WaveTypeApi } from '../generated/models/ApiWaveType';
 import {
   userGroupsService,
@@ -81,10 +79,6 @@ export class WavesMappers {
       voting_credit_type: resolveEnumOrThrow(
         WaveCreditType,
         createWaveRequest.voting.credit_type
-      ),
-      voting_credit_scope_type: resolveEnumOrThrow(
-        WaveCreditScopeType,
-        createWaveRequest.voting.credit_scope
       ),
       voting_credit_category: createWaveRequest.voting.credit_category,
       voting_credit_creditor: createWaveRequest.voting.creditor_id,
@@ -242,10 +236,6 @@ export class WavesMappers {
       credit_type: resolveEnumOrThrow(
         WaveCreditTypeApi,
         waveEntity.voting_credit_type
-      ),
-      credit_scope: resolveEnumOrThrow(
-        WaveCreditScopeApi,
-        waveEntity.voting_credit_scope_type
       ),
       credit_category: waveEntity.voting_credit_category,
       creditor: voteCreditor,
