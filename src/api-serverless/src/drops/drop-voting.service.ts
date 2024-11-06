@@ -22,6 +22,8 @@ import { DropVotingDb, dropVotingDb } from './drop-voting.db';
 import { WaveCreditType, WaveType } from '../../../entities/IWave';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { distinct } from '../../../helpers';
+import { ratingsDb, RatingsDb } from '../../../rates/ratings.db';
+import { Rating } from '../../../entities/IRating';
 
 export class DropVotingService {
   constructor(
@@ -29,6 +31,7 @@ export class DropVotingService {
     private readonly identitiesDb: IdentitiesDb,
     private readonly wavesDb: WavesApiDb,
     private readonly dropsDb: DropsDb,
+    private readonly ratingsDb: RatingsDb,
     private readonly userGroupsService: UserGroupsService,
     private readonly userNotifier: UserNotifier,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb
@@ -231,10 +234,7 @@ export class DropVotingService {
     );
     const wavesIdsWhereVotingIsImplemented = relevantWaves
       .filter((it) => {
-        return (
-          it.voting_credit_type === WaveCreditType.TDH &&
-          it.time_lock_ms === null
-        );
+        return it.time_lock_ms === null || it.time_lock_ms === 0;
       })
       .map((it) => it.id);
     const relevantParticipationDrops = participationDrops.filter((drop) =>
@@ -243,31 +243,70 @@ export class DropVotingService {
     const relevantParticipationDropIds = relevantParticipationDrops.map(
       (it) => it.id
     );
-    const [activeVotes, totalVotesInRelevantWaves, tdh] = await Promise.all([
-      this.votingDb.getVotersActiveVoteForDrops(
-        {
-          dropIds: relevantParticipationDropIds,
-          voterId: profileId
-        },
-        {}
-      ),
-      this.votingDb.getVotersTotalVotesInWaves(
-        { waveIds: wavesIdsWhereVotingIsImplemented, voterId: profileId },
-        { connection }
-      ),
-      this.identitiesDb
-        .getIdentityByProfileId(profileId)
-        ?.then((identity) => identity?.tdh ?? 0)
-    ]);
+    const repWaves = relevantWaves.filter(
+      (it) => it.voting_credit_type === WaveCreditType.REP
+    );
+    const repWaveConditions = repWaves
+      .map((it) => ({
+        category: it.voting_credit_category,
+        rater_id: it.voting_credit_creditor
+      }))
+      .filter((it) => it.rater_id !== null || it.category !== null);
+    const hasOnlyOneRestriction =
+      distinct(repWaveConditions.map((it) => `${it.category}-${it.rater_id}`))
+        .length === 1;
+    const [activeVotes, totalVotesInRelevantWaves, tdh, repRatings] =
+      await Promise.all([
+        this.votingDb.getVotersActiveVoteForDrops(
+          {
+            dropIds: relevantParticipationDropIds,
+            voterId: profileId
+          },
+          {}
+        ),
+        this.votingDb.getVotersTotalVotesInWaves(
+          { waveIds: wavesIdsWhereVotingIsImplemented, voterId: profileId },
+          { connection }
+        ),
+        this.identitiesDb
+          .getIdentityByProfileId(profileId)
+          ?.then((identity) => identity?.tdh ?? 0),
+        repWaves.length > 0
+          ? this.ratingsDb.getAllProfilesRepRatings(
+              profileId,
+              hasOnlyOneRestriction
+                ? {
+                    category: repWaveConditions[0].category ?? undefined,
+                    rater_id: repWaveConditions[0].rater_id ?? undefined
+                  }
+                : {},
+              connection
+            )
+          : Promise.resolve([] as Rating[])
+      ]);
     return relevantParticipationDropIds.reduce((acc, dropId) => {
       const waveId = relevantParticipationDrops.find(
         (it) => it.id === dropId
       )?.wave_id;
       if (waveId) {
+        const wave = relevantWaves.find((it) => it.id === waveId)!;
+        const waveVotingCreditType = wave.voting_credit_type;
+        const totalCredit =
+          waveVotingCreditType === WaveCreditType.TDH
+            ? tdh
+            : repRatings
+                .filter(
+                  (it) =>
+                    (wave.voting_credit_creditor === null ||
+                      wave.voting_credit_creditor === it.rater_profile_id) &&
+                    (wave.voting_credit_category === null ||
+                      wave.voting_credit_category === it.matter_category)
+                )
+                .reduce((acc, it) => acc + it.rating, 0);
         const totalVotesInWave = totalVotesInRelevantWaves[waveId];
         const activeVote = activeVotes[dropId];
         if (totalVotesInWave !== undefined && activeVote !== undefined) {
-          const creditLeft = Math.max(0, tdh - totalVotesInWave);
+          const creditLeft = Math.max(0, totalCredit - totalVotesInWave);
           if (activeVote < 0) {
             acc[dropId] = {
               min: activeVote - creditLeft,
@@ -315,6 +354,7 @@ export const dropVotingService = new DropVotingService(
   identitiesDb,
   wavesApiDb,
   dropsDb,
+  ratingsDb,
   userGroupsService,
   userNotifier,
   profileActivityLogsDb
