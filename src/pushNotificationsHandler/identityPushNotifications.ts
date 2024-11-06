@@ -30,25 +30,28 @@ export async function sendIdentityNotification(id: number) {
     return;
   }
 
-  const userDevice = await getDataSource()
+  const userDevices = await getDataSource()
     .getRepository(PushNotificationDevice)
-    .findOneBy({
+    .findBy({
       profile_id: notification.identity_id
     });
 
-  if (!userDevice?.token) {
+  if (userDevices.length === 0) {
     logger.info(
       `[ID ${notification.id}] No device token found for user ${notification.identity_id}`
     );
     return;
   }
 
-  const token = userDevice.token;
-
   const notificationData = await generateNotificationData(notification);
   if (notificationData) {
     const { title, body, data, imageUrl } = notificationData;
-    await sendMessage(title, body, token, notification.id, data, imageUrl);
+
+    await Promise.all(
+      userDevices.map((device) =>
+        sendMessage(title, body, device.token, notification.id, data, imageUrl)
+      )
+    );
   }
 }
 
