@@ -3541,7 +3541,7 @@ components:
           items:
             $ref: "#/components/schemas/ApiDropWithoutWave"
         wave:
-          $ref: "#/components/schemas/ApiWave"
+          $ref: "#/components/schemas/ApiWaveMin"
     ApiDropsPage:
       type: object
       required:
