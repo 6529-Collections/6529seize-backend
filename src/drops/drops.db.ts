@@ -1002,12 +1002,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                           WHERE wave_id = :wave_id)
           select d.*
           from ${DROPS_TABLE} d
-                   right join dranks dr on dr.drop_id = d.id
+                   left join dranks dr on dr.drop_id = d.id
           where d.wave_id = :wave_id
             and d.drop_type = :drop_type
           order by ${
-            params.sort === LeaderboardSort.RANK ? `dr.rnk` : `d.created_at`
-          } ${params.sort_direction}
+            params.sort === LeaderboardSort.RANK
+              ? `ifnull(dr.rnk, 0) ${params.sort_direction}, d.created_at ${params.sort_direction}`
+              : `d.created_at ${params.sort_direction}`
+          }
           limit :page_size offset :offset
       `,
       {
