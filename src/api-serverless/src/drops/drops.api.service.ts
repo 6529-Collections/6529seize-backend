@@ -35,7 +35,6 @@ import { ApiWaveDropsFeed } from '../generated/models/ApiWaveDropsFeed';
 import { clappingService, ClappingService } from './clapping.service';
 import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
 import { WaveType } from '../../../entities/IWave';
-import { wavesMappers } from '../waves/waves.mappers';
 
 export class DropsApiService {
   constructor(
@@ -509,34 +508,33 @@ export class DropsApiService {
     if (waveEntity.type === WaveType.CHAT) {
       throw new BadRequestException(`CHAT waves don't have a leaderboard`);
     }
-    const noRightToVote =
-      authContext.isAuthenticatedAsProxy() &&
-      !authContext.activeProxyActions[ProfileProxyActionType.RATE_WAVE_DROP];
-    const noRightToParticipate =
-      authContext.isAuthenticatedAsProxy() &&
-      !authContext.activeProxyActions[
-        ProfileProxyActionType.CREATE_DROP_TO_WAVE
-      ];
-    const [drops, count, apiWave] = await Promise.all([
+    const waveMin: ApiWaveMin = {
+      id: waveEntity.id,
+      name: waveEntity.name,
+      picture: waveEntity.picture!,
+      description_drop_id: waveEntity.description_drop_id,
+      authenticated_user_eligible_to_vote:
+        waveEntity.voting_group_id === null ||
+        groupIdsUserIsEligibleFor.includes(waveEntity.voting_group_id),
+      authenticated_user_eligible_to_participate:
+        waveEntity.participation_group_id === null ||
+        groupIdsUserIsEligibleFor.includes(waveEntity.participation_group_id),
+      authenticated_user_eligible_to_chat:
+        waveEntity.chat_enabled &&
+        (waveEntity.chat_group_id === null ||
+          groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id))
+    };
+    const [drops, count] = await Promise.all([
       this.dropsDb
         .findLeaderboardDrops(params, ctx)
         .then(
           async (drops) =>
             await this.dropsMappers.convertToDropsWithoutWaves(drops, ctx)
         ),
-      this.dropsDb.countParticipatoryDrops(params, ctx),
-      wavesMappers.waveEntityToApiWave(
-        {
-          waveEntity,
-          noRightToVote,
-          noRightToParticipate,
-          groupIdsUserIsEligibleFor
-        },
-        ctx
-      )
+      this.dropsDb.countParticipatoryDrops(params, ctx)
     ]);
     return {
-      wave: apiWave,
+      wave: waveMin,
       drops: drops,
       count: count,
       page: params.page,
