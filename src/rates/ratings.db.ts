@@ -755,6 +755,26 @@ from grouped_rates r
     });
     ctx.timer?.stop(`${this.constructor.name}->bulkUpsertRatings`);
   }
+
+  async getAllProfilesRepRatings(
+    contextProfileId: string,
+    restrictions: { rater_id?: string; category?: string },
+    connection?: ConnectionWrapper<any>
+  ): Promise<Rating[]> {
+    return await this.db.execute<Rating>(
+      `
+      select * from ${RATINGS_TABLE} where matter_target_id = :contextProfileId and matter = 'REP' and rating <> 0 ${
+        restrictions.rater_id ? ` and rater_profile_id = :rater_id ` : ``
+      } ${restrictions.category ? ` and matter_category = :category ` : ``}
+    `,
+      {
+        contextProfileId,
+        rater_id: restrictions.rater_id,
+        category: restrictions.category
+      },
+      { wrappedConnection: connection }
+    );
+  }
 }
 
 export type UpdateRatingRequest = Omit<Rating, 'last_modified'>;
