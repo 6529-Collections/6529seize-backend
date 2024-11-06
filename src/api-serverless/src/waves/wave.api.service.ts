@@ -77,7 +77,7 @@ export class WaveApiService {
   ): Promise<ApiWave> {
     const timer = ctx.timer!;
     const authenticationContext = ctx.authenticationContext!;
-    timer.start('waveApiService->createWave');
+    timer.start(`${this.constructor.name}->createWave`);
     await this.validateWaveRelations(createWaveRequest, ctx);
     const createdWave = await this.wavesApiDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -127,9 +127,9 @@ export class WaveApiService {
           connection,
           timer
         );
-        timer.start(`waveApiService->findWaveById`);
+        timer.start(`${this.constructor.name}->findWaveById`);
         const waveEntity = await this.wavesApiDb.findWaveById(id, connection);
-        timer.stop(`waveApiService->findWaveById`);
+        timer.stop(`${this.constructor.name}->findWaveById`);
 
         if (!waveEntity) {
           throw new Error(`Something went wrong while creating wave ${id}`);
@@ -169,7 +169,7 @@ export class WaveApiService {
       }
     );
     await giveReadReplicaTimeToCatchUp();
-    timer.stop('waveApiService->createWave');
+    timer.stop(`${this.constructor.name}->createWave`);
     return createdWave;
   }
 
@@ -179,9 +179,27 @@ export class WaveApiService {
   ) {
     const authenticatedProfileId = ctx.authenticationContext!.getActingAsId()!;
     const timer = ctx.timer;
-    timer?.start(`waveApiService->validateWaveRelations`);
+    timer?.start(`${this.constructor.name}->validateWaveRelations`);
     if (createWave.wave.type === ApiWaveType.Chat && !createWave.chat.enabled) {
       throw new BadRequestException(`Chat waves need to have chat enabled`);
+    }
+    if (
+      createWave.wave.time_lock_ms !== null &&
+      createWave.wave.time_lock_ms > 0
+    ) {
+      throw new BadRequestException(
+        `Creating a wave with time locked voting is not yet supported`
+      );
+    }
+    if (createWave.voting.signature_required) {
+      throw new BadRequestException(
+        `Creating a wave with signed votes requirement is not yet supported`
+      );
+    }
+    if (createWave.participation.signature_required) {
+      throw new BadRequestException(
+        `Creating a wave with signed drops requirement is not yet supported`
+      );
     }
     this.validateOutcomes(createWave);
     const referencedGroupIds = distinct(
@@ -191,17 +209,17 @@ export class WaveApiService {
         createWave.voting.scope.group_id
       ].filter((id) => id !== null) as string[]
     );
-    timer?.start(`waveApiService->userGroupsService->getByIds`);
+    timer?.start(`${this.constructor.name}->userGroupsService->getByIds`);
     const groupEntities = await this.userGroupsService.getByIds(
       referencedGroupIds,
       ctx
     );
-    timer?.stop(`waveApiService->userGroupsService->getByIds`);
+    timer?.stop(`${this.constructor.name}->userGroupsService->getByIds`);
     const missingGroupIds = referencedGroupIds.filter(
       (it) => !groupEntities.find((e) => e.id === it)
     );
     if (missingGroupIds.length) {
-      timer?.stop(`waveApiService->validateWaveRelations`);
+      timer?.stop(`${this.constructor.name}->validateWaveRelations`);
       throw new BadRequestException(
         `Group(s) not found: ${missingGroupIds.join(', ')}`
       );
@@ -215,14 +233,14 @@ export class WaveApiService {
           timer
         })
       )[referencedCreditorId];
-      timer?.stop(`waveApiService->validateWaveRelations`);
+      timer?.stop(`${this.constructor.name}->validateWaveRelations`);
       if (!creditorProfile) {
         throw new BadRequestException(
           `Creditor not found: ${referencedCreditorId}`
         );
       }
     } else {
-      timer?.stop(`waveApiService->validateWaveRelations`);
+      timer?.stop(`${this.constructor.name}->validateWaveRelations`);
     }
   }
 

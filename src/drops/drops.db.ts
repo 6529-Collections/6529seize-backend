@@ -38,11 +38,7 @@ import {
 } from '../api-serverless/src/community-members/user-groups.service';
 import { Time, Timer } from '../time';
 import { PageSortDirection } from '../api-serverless/src/page-request';
-import {
-  WaveCreditScopeType,
-  WaveCreditType,
-  WaveEntity
-} from '../entities/IWave';
+import { WaveCreditType, WaveEntity } from '../entities/IWave';
 import { NotFoundException } from '../exceptions';
 import { RequestContext } from '../request.context';
 import { ActivityEventTargetType } from '../entities/IActivityEvent';
@@ -453,10 +449,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         : undefined
     ]
       .filter((it) => !!it)
-      .join(' union all ')})
-                 select *
-                 from dr_results
-                 order by serial_no desc`;
+      .join(' union all ')}) select * from dr_results order by serial_no desc`;
     const params = {
       wave_id,
       drop_type,
@@ -507,10 +500,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         : undefined
     ]
       .filter((it) => !!it)
-      .join(' union all ')})
-                 select *
-                 from dr_results
-                 order by serial_no desc`;
+      .join(' union all ')}) select * from dr_results order by serial_no desc`;
     const params = {
       drop_id,
       serial_no_limit: serial_no_limit ?? Number.MAX_SAFE_INTEGER
@@ -1064,7 +1054,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                         join ${IDENTITIES_TABLE} i on v.voter_id = i.profile_id
                                         join ${WAVES_TABLE} w on v.wave_id = w.id
                                where w.voting_credit_type = '${WaveCreditType.TDH}'
-                                 and w.voting_credit_scope_type = '${WaveCreditScopeType.WAVE}'
                                  and v.total_given_votes > i.tdh
       `,
       {},
