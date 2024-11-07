@@ -158,7 +158,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     const timer = ctx.timer!;
     timer.start('waveApiDb->insertWave');
     const params = {
-      ...wave
+      ...wave,
+      participation_required_media: JSON.stringify(
+        wave.participation_required_media
+      ),
+      participation_required_metadata: JSON.stringify(
+        wave.participation_required_metadata
+      )
     };
     await this.db.execute(
       `
@@ -206,7 +212,6 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             :created_at,
             :updated_at,
             :created_by,
-            :chat_enabled,
             :voting_group_id,
             :admin_group_id,
             :voting_credit_type,
@@ -217,6 +222,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             :voting_period_end,
             :visibility_group_id,
             :chat_group_id,
+            :chat_enabled,
             :participation_group_id,
             :participation_max_applications_per_participant,
             :participation_required_metadata,
@@ -233,15 +239,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             :outcomes${wave.serial_no !== null ? ', :serial_no' : ''}
         )
     `,
-      {
-        ...params,
-        participation_required_media: JSON.stringify(
-          params.participation_required_media
-        ),
-        participation_required_metadata: JSON.stringify(
-          params.participation_required_metadata
-        )
-      },
+      params,
       { wrappedConnection: ctx.connection }
     );
     timer.stop('waveApiDb->insertWave');
