@@ -74,7 +74,7 @@ export class DropCreationApiService {
       authorId,
       proxyId
     });
-    const { drop_id } = await this.createOrUpdateDrop.execute(model, {
+    const { drop_id } = await this.createOrUpdateDrop.execute(model, false, {
       timer,
       connection
     });
@@ -162,10 +162,14 @@ export class DropCreationApiService {
             waveId,
             dropId
           });
-        const { drop_id } = await this.createOrUpdateDrop.execute(model, {
-          timer,
-          connection
-        });
+        const { drop_id } = await this.createOrUpdateDrop.execute(
+          model,
+          false,
+          {
+            timer,
+            connection
+          }
+        );
         return await this.dropsService.findDropByIdOrThrow(
           {
             dropId: drop_id,
