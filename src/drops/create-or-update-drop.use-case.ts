@@ -234,7 +234,10 @@ export class CreateOrUpdateDropUseCase {
     if (!wave) {
       throw new BadRequestException(`Wave ${waveId} not found`);
     }
-    const groupId = wave.participation_group_id;
+    const groupId =
+      model.drop_type === DropType.PARTICIPATORY
+        ? wave.participation_group_id
+        : wave.chat_group_id;
     if (groupId && !groupIdsUserIsEligibleFor.includes(groupId)) {
       throw new ForbiddenException(`User is not eligible for this wave`);
     }
@@ -284,6 +287,27 @@ export class CreateOrUpdateDropUseCase {
       throw new ForbiddenException(
         `Participatory drops are not allowed in chat waves`
       );
+    }
+    const now = Time.now();
+    if (model.drop_type === DropType.PARTICIPATORY) {
+      const participationPeriodStart = Time.millis(
+        wave.participation_period_start ?? 0
+      );
+      const participationPeriodEnd = Time.millis(
+        wave.participation_period_end ?? Time.now().plusWeeks(1).toMillis()
+      );
+      if (now.lt(participationPeriodStart) || now.gt(participationPeriodEnd)) {
+        throw new ForbiddenException(
+          `Participation to this wave is locked for now`
+        );
+      }
+    }
+    const wavePeriodStart = Time.millis(wave.wave_period_start ?? 0);
+    const wavePeriodEnd = Time.millis(
+      wave.wave_period_end ?? Time.now().plusWeeks(1).toMillis()
+    );
+    if (now.lt(wavePeriodStart) || now.gt(wavePeriodEnd)) {
+      throw new ForbiddenException(`This wave is closed for now`);
     }
     if (!wave.chat_enabled && model.drop_type === DropType.CHAT) {
       throw new ForbiddenException(`Chat drops are not allowed in this wave`);
