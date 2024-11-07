@@ -990,36 +990,33 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start(`${this.constructor.name}->findLeaderboardDrops`);
-    const results = await this.db.execute<DropEntity>(
-      `
-          with dranks as (SELECT drop_id, rnk
-                          FROM (SELECT drop_id,
-                                       vote,
-                                       last_increased,
-                                       wave_id,
-                                       RANK() OVER (PARTITION BY wave_id ORDER BY vote DESC, last_increased desc) AS rnk
-                                FROM ${DROP_RANK_TABLE}) drop_ranks
-                          WHERE wave_id = :wave_id)
-          select d.*
-          from ${DROPS_TABLE} d
-                   left join dranks dr on dr.drop_id = d.id
-          where d.wave_id = :wave_id
-            and d.drop_type = :drop_type
-          order by ${
-            params.sort === LeaderboardSort.RANK
-              ? `ifnull(dr.rnk, 0) ${params.sort_direction}, d.created_at ${params.sort_direction}`
-              : `d.created_at ${params.sort_direction}`
-          }
-          limit :page_size offset :offset
-      `,
-      {
-        wave_id: params.wave_id,
-        drop_type: DropType.PARTICIPATORY,
-        page_size: params.page_size,
-        offset: params.page_size * (params.page - 1)
-      },
-      { wrappedConnection: ctx.connection }
-    );
+    const sql = `
+    with ddata as (select d.id                                   as drop_id,
+                      ifnull(r.vote, 0)                      as vote,
+                      ifnull(r.last_increased, d.created_at) as timestamp
+               from drops d
+                        left join drop_ranks r ON r.drop_id = d.id
+               where d.wave_id = :wave_id
+                 and d.drop_type = '${DropType.PARTICIPATORY}'),
+      dranks as (
+            select drop_id, rnk, vote from (select drop_id,
+                                                 vote,
+                                                 timestamp,
+                                                 RANK() OVER (ORDER BY vote DESC, timestamp desc) AS rnk
+                                          from ddata) drop_ranks
+          )
+      select d.* from dranks r join drops d on d.id = r.drop_id order by ${
+        params.sort === LeaderboardSort.RANK ? `r.rnk` : 'd.created_at'
+      } ${params.sort_direction} limit :page_size offset :offset
+    `;
+    const sqlParams = {
+      wave_id: params.wave_id,
+      page_size: params.page_size,
+      offset: params.page_size * (params.page - 1)
+    };
+    const results = await this.db.execute<DropEntity>(sql, sqlParams, {
+      wrappedConnection: ctx.connection
+    });
     ctx.timer?.stop(`${this.constructor.name}->findLeaderboardDrops`);
     return results;
   }
