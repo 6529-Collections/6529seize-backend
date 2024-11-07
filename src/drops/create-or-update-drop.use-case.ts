@@ -83,6 +83,7 @@ export class CreateOrUpdateDropUseCase {
 
   public async execute(
     model: CreateOrUpdateDropModel,
+    isDescriptionDrop: boolean,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
   ): Promise<{ drop_id: string }> {
     timer.start(`${CreateOrUpdateDropUseCase.name}->execute`);
@@ -96,6 +97,7 @@ export class CreateOrUpdateDropUseCase {
         );
       return this.execute(
         { ...model, author_id: resolvedAuthorId },
+        isDescriptionDrop,
         { timer, connection }
       );
     } else if (proxyIdNecessary) {
@@ -117,17 +119,25 @@ export class CreateOrUpdateDropUseCase {
       }
       return this.execute(
         { ...model, proxy_id: resolvedProxyId },
+        isDescriptionDrop,
         { timer, connection }
       );
     }
-    return await this.createOrUpdateDrop(model, { timer, connection });
+    return await this.createOrUpdateDrop(model, isDescriptionDrop, {
+      timer,
+      connection
+    });
   }
 
   private async createOrUpdateDrop(
     model: CreateOrUpdateDropModel,
+    isDescriptionDrop: boolean,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
   ) {
-    await this.validateReferences(model, { timer, connection });
+    await this.validateReferences(model, isDescriptionDrop, {
+      timer,
+      connection
+    });
     const preExistingDropId = model.drop_id;
     const wave = (await this.wavesApiDb.findById(model.wave_id, connection))!;
     if (wave.type === WaveType.CHAT && model.drop_type !== DropType.CHAT) {
@@ -203,6 +213,7 @@ export class CreateOrUpdateDropUseCase {
 
   private async validateReferences(
     model: CreateOrUpdateDropModel,
+    isDescriptionDrop: boolean,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
   ) {
     timer.start(`${CreateOrUpdateDropUseCase.name}->validateReferences`);
@@ -212,7 +223,7 @@ export class CreateOrUpdateDropUseCase {
 
     await Promise.all([
       this.verifyWaveLimitations(
-        { model, groupIdsUserIsEligibleFor },
+        { model, groupIdsUserIsEligibleFor, isDescriptionDrop },
         { timer, connection }
       ),
       this.verifyQuotedDrops(model, { timer, connection }),
@@ -223,9 +234,14 @@ export class CreateOrUpdateDropUseCase {
 
   private async verifyWaveLimitations(
     {
+      isDescriptionDrop,
       model,
       groupIdsUserIsEligibleFor
-    }: { model: CreateOrUpdateDropModel; groupIdsUserIsEligibleFor: string[] },
+    }: {
+      isDescriptionDrop: boolean;
+      model: CreateOrUpdateDropModel;
+      groupIdsUserIsEligibleFor: string[];
+    },
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
   ) {
     timer.start(`${CreateOrUpdateDropUseCase.name}->verifyWaveLimitations`);
@@ -244,6 +260,7 @@ export class CreateOrUpdateDropUseCase {
     await Promise.all([
       this.verifyParticipatoryLimitations(
         {
+          isDescriptionDrop,
           wave,
           model
         },
@@ -269,9 +286,11 @@ export class CreateOrUpdateDropUseCase {
 
   private async verifyParticipatoryLimitations(
     {
+      isDescriptionDrop,
       wave,
       model
     }: {
+      isDescriptionDrop: boolean;
       wave: WaveEntity;
       model: CreateOrUpdateDropModel;
     },
@@ -309,7 +328,11 @@ export class CreateOrUpdateDropUseCase {
     if (now.lt(wavePeriodStart) || now.gt(wavePeriodEnd)) {
       throw new ForbiddenException(`This wave is closed for now`);
     }
-    if (!wave.chat_enabled && model.drop_type === DropType.CHAT) {
+    if (
+      !isDescriptionDrop &&
+      !wave.chat_enabled &&
+      model.drop_type === DropType.CHAT
+    ) {
       throw new ForbiddenException(`Chat drops are not allowed in this wave`);
     }
     const noOfApplicationsAllowedPerParticipantInWave =
