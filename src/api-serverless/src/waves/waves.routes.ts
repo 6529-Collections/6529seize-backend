@@ -411,7 +411,7 @@ const WaveVotingSchema = Joi.object<ApiCreateNewWaveVotingConfig>({
     then: Joi.string().required().allow(null),
     otherwise: Joi.valid(null)
   }),
-  signature_required: Joi.boolean().required(),
+  signature_required: Joi.boolean().optional().default(false),
   period: IntRangeSchema.required().allow(null)
 });
 
@@ -439,7 +439,7 @@ const WaveParticipationSchema = Joi.object<ApiCreateNewWaveParticipationConfig>(
       )
       .optional()
       .default([]),
-    signature_required: Joi.boolean().required(),
+    signature_required: Joi.boolean().optional().default(false),
     period: IntRangeSchema.required().allow(null)
   }
 );
