@@ -104,7 +104,7 @@ export class WaveApiService {
             authorId
           });
         const descriptionDropId = await this.createOrUpdateDrop
-          .execute(descriptionDropModel, {
+          .execute(descriptionDropModel, true, {
             timer: ctxWithConnection.timer!,
             connection: ctxWithConnection.connection
           })
