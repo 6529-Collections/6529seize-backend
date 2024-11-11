@@ -661,11 +661,14 @@ from grouped_rates r
     };
   }
 
-  async getRepRating(param: {
-    rater_profile_id: string | null;
-    target_profile_id: string;
-    category: string | null;
-  }): Promise<number> {
+  async getRepRating(
+    param: {
+      rater_profile_id: string | null;
+      target_profile_id: string;
+      category: string | null;
+    },
+    ctx: RequestContext
+  ): Promise<number> {
     const sqlParam: Record<string, any> = {
       target_profile_id: param.target_profile_id
     };
@@ -679,7 +682,7 @@ from grouped_rates r
       sql += ` and matter_category = :category`;
     }
     return this.db
-      .execute(sql, sqlParam)
+      .execute(sql, sqlParam, { wrappedConnection: ctx.connection })
       .then((results) => results[0]?.rating ?? 0);
   }
 
