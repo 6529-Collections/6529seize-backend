@@ -14,6 +14,7 @@ import { Page } from '../api-serverless/src/page-request';
 import { RatingsSnapshot } from '../entities/IRatingsSnapshots';
 import { RatingsSnapshotsPageRequest } from './ratings.service';
 import { RequestContext } from '../request.context';
+import { revokeRepBasedDropOverVotes } from '../drops/participation-drops-over-vote-revocation';
 
 const mysql = require('mysql');
 
@@ -230,6 +231,16 @@ from general_stats
         },
         { wrappedConnection: connection }
       );
+      if (amountChanged < 0) {
+        await revokeRepBasedDropOverVotes(
+          {
+            rep_recipient_id: ratingUpdate.matter_target_id,
+            rep_giver_id: ratingUpdate.rater_profile_id,
+            credit_category: ratingUpdate.matter_category
+          },
+          connection
+        );
+      }
     }
   }
 

@@ -28,6 +28,7 @@ import {
   IDENTITIES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
+  RATINGS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
   WAVES_TABLE
@@ -1037,7 +1038,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return count;
   }
 
-  async findWaveScopeTdhBasedSubmissionDropOvervotersWithOvervoteAmounts(
+  async findTdhBasedSubmissionDropOvervotersWithOvervoteAmounts(
     ctx: RequestContext
   ): Promise<ProfileOverVoteAmountInWave[]> {
     ctx.timer?.start(
@@ -1060,6 +1061,84 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     );
     ctx.timer?.stop(
       `${this.constructor.name}->findWaveScopeTdhBasedSubmissionDropOvervotersWithOvervoteAmounts`
+    );
+    return results;
+  }
+
+  async hasProfileVotedInAnyOpenRepBasedWave(
+    profileId: string,
+    ctx: RequestContext
+  ): Promise<boolean> {
+    ctx.timer?.start(
+      `${this.constructor.name}->hasProfileVotedInAnyOpenRepBasedWave`
+    );
+    const now = Time.currentMillis();
+    const result = await this.db
+      .oneOrNull<{ cnt: number }>(
+        `
+          with open_rep_waves as (select *
+                        from ${WAVES_TABLE}
+                        where voting_credit_type = 'REP'
+                          and (voting_period_start is null or voting_period_start < :now)
+                          and (voting_period_end is null or voting_period_end > :now)
+                          and (wave_period_start is null or wave_period_start < :now)
+                          and (wave_period_end is null or wave_period_end > :now))
+          select count(*) as cnt from open_rep_waves w
+          join ${DROP_VOTER_STATE_TABLE} dvs on dvs.wave_id = w.id
+          where dvs.voter_id = :profileId
+        `,
+        { profileId, now },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((it) => it!.cnt > 0);
+    ctx.timer?.stop(
+      `${this.constructor.name}->hasProfileVotedInAnyOpenRepBasedWave`
+    );
+    return result;
+  }
+
+  async findRepBasedSubmissionDropOvervotedWavesWithOvervoteAmounts(
+    param: {
+      voter_id: string;
+      creditor_id: string | null;
+      credit_category: string | null;
+      credit_limit: number;
+    },
+    ctx: RequestContext
+  ): Promise<TotalGivenVotesInWave[]> {
+    ctx.timer?.start(
+      `${this.constructor.name}->findRepBasedSubmissionDropOvervotedWavesWithOvervoteAmounts`
+    );
+    const now = Time.currentMillis();
+    const results = await this.db.execute<TotalGivenVotesInWave>(
+      `
+          with given_rep_votes as (select wave_id, sum(abs(votes)) as total_given_votes
+                                   from ${DROP_VOTER_STATE_TABLE}
+                                   where voter_id = :voter_id
+                                   group by 1)
+          select t.wave_id as wave_id, t.total_given_votes as total_given_votes
+                               from given_rep_votes t
+                                        join ${WAVES_TABLE} w on t.wave_id = w.id
+                               where (w.voting_period_start is null or w.voting_period_start < :now) and (w.voting_period_end is null or w.voting_period_end > :now) and
+                                (w.wave_period_start is null or w.wave_period_start < :now) and (w.wave_period_start is null or w.wave_period_start > :now) and
+                                w.voting_credit_type = '${WaveCreditType.REP}'
+                                 and t.total_given_votes > :credit_limit
+                                    ${
+                                      param.creditor_id
+                                        ? ` and w.voting_credit_creditor = :creditor_id `
+                                        : ``
+                                    }
+                                    ${
+                                      param.credit_category
+                                        ? ` and w.voting_credit_category = :credit_category `
+                                        : ``
+                                    }
+      `,
+      { ...param, now },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->findRepBasedSubmissionDropOvervotedWavesWithOvervoteAmounts`
     );
     return results;
   }
@@ -1114,13 +1193,61 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
   }
+
+  async findRepAmountsForProfile(
+    param: {
+      rep_recipient_id: string;
+      rep_giver_id: string;
+      credit_category: string;
+    },
+    ctx: RequestContext
+  ): Promise<{
+    total_rep: number;
+    category_rep: number;
+    giver_rep: number;
+    category_giver_rep: number;
+  }> {
+    ctx.timer?.start(`${this.constructor.name}->findRepAmountsForProfile`);
+    const result = await this.db
+      .oneOrNull<{
+        total_rep: number;
+        category_rep: number;
+        giver_rep: number;
+        category_giver_rep: number;
+      }>(
+        `
+      select 
+       sum(rating) as total_rep,
+       sum(case when rater_profile_id = :rep_giver_id then rating else 0 end) as giver_rep,
+       sum(case when matter_category = :credit_category then rating else 0 end) as category_rep,
+       sum(case when rater_profile_id = :rep_giver_id and matter_category = :credit_category then rating else 0 end) as category_giver_rep
+       from ${RATINGS_TABLE} where matter = 'REP' and matter_target_id = :rep_recipient_id and rating <> 0
+    `,
+        param,
+        { wrappedConnection: ctx.connection }
+      )
+      .then(
+        (it) =>
+          it ?? {
+            total_rep: 0,
+            category_rep: 0,
+            giver_rep: 0,
+            category_giver_rep: 0
+          }
+      );
+    ctx.timer?.stop(`${this.constructor.name}->findRepAmountsForProfile`);
+    return result;
+  }
 }
 
-export interface ProfileOverVoteAmountInWave {
+export interface ProfileOverVoteAmountInWave extends TotalGivenVotesInWave {
   profile_id: string;
-  wave_id: string;
   tdh: number;
-  total_given_votes: number;
+}
+
+export interface TotalGivenVotesInWave {
+  readonly wave_id: string;
+  readonly total_given_votes: number;
 }
 
 export type NewDropEntity = Omit<DropEntity, 'serial_no'> & {
