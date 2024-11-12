@@ -78,7 +78,7 @@ import {
   syncIdentitiesMetrics,
   syncIdentitiesWithTdhConsolidations
 } from './identity';
-import { revokeParticipationDropsOverVotes } from './drops/participation-drops-over-vote-revocation';
+import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 
 const mysql = require('mysql');
 
@@ -813,7 +813,7 @@ export async function persistConsolidatedTDH(
 
     await syncIdentitiesWithTdhConsolidations(qrHolder);
     await syncIdentitiesMetrics(qrHolder);
-    await revokeParticipationDropsOverVotes();
+    await revokeTdhBasedDropWavesOverVotes(qrHolder);
   });
 
   logger.info(`[CONSOLIDATED TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
