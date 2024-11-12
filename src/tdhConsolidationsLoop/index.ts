@@ -78,8 +78,8 @@ async function consolidatedTdhLoop() {
   });
   const walletsArray = distinct(consolidationAddresses.map((it) => it.wallet));
 
-  await updateTDH(lastTDHCalc, walletsArray);
-  await consolidateTDH(lastTDHCalc, walletsArray);
+  const { block, timestamp } = await updateTDH(lastTDHCalc, walletsArray);
+  await consolidateTDH(lastTDHCalc, block, timestamp, walletsArray);
 
   await consolidateNftOwners(distinctWallets);
   await consolidateOwnerBalances(distinctWallets);

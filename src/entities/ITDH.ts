@@ -206,6 +206,9 @@ export class TDHBlock {
 
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
   timestamp!: Date;
+
+  @Column({ type: 'varchar', length: 200, nullable: true })
+  merkle_root!: string | null;
 }
 
 @Entity(TDH_GLOBAL_HISTORY_TABLE)

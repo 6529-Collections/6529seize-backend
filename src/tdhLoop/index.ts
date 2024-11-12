@@ -74,8 +74,8 @@ async function tdh(force?: boolean) {
   const lastTdhFromNow = lastTdhDB.diffFromNow();
 
   if (lastTdhFromNow.gt(Time.hours(24)) || force) {
-    await updateTDH(lastTDHCalc);
-    await consolidateTDH(lastTDHCalc);
+    const { block, timestamp } = await updateTDH(lastTDHCalc);
+    await consolidateTDH(lastTDHCalc, block, timestamp);
   } else {
     logger.info(
       `[TODAY'S TDH ALREADY CALCULATED ${lastTdhFromNow} ago] [SKIPPING...]`

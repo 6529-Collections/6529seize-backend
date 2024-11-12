@@ -9,6 +9,7 @@ import {
   fetchConsolidationDisplay,
   fetchLatestTDHBlockNumber,
   persistConsolidatedTDH,
+  persistTDHBlock,
   retrieveWalletConsolidations
 } from '../db';
 import { areEqualAddresses, buildConsolidationKey } from '../helpers';
@@ -282,6 +283,8 @@ export const consolidateMissingWallets = async (
 
 export const consolidateTDH = async (
   lastTDHCalc: Date,
+  block: number,
+  timestamp: Date,
   startingWallets?: string[]
 ) => {
   const tdh: TDHENS[] = await fetchAllTDH(startingWallets);
@@ -355,6 +358,7 @@ export const consolidateTDH = async (
 
   await persistConsolidatedTDH(rankedTdh, memesTdh, startingWallets);
   await updateNftTDH(rankedTdh, startingWallets);
+  await persistTDHBlock(block, timestamp);
   logger.info(`[FINAL ENTRIES ${rankedTdh.length}]`);
 };
 
