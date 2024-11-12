@@ -356,14 +356,27 @@ router.get(
             .default(PageSortDirection.DESC),
           sort: Joi.string()
             .valid(...Object.values(LeaderboardSort))
-            .default(LeaderboardSort.RANK)
+            .default(LeaderboardSort.RANK),
+          author_identity: Joi.string().optional().default(null)
         })
       )
     };
-    const result = await dropsService.findLeaderboard(params, {
-      authenticationContext,
-      timer
-    });
+    let author_identity = params.author_identity;
+    if (author_identity) {
+      author_identity = await profilesService
+        .resolveIdentityOrThrowNotFound(author_identity)
+        .then((it) => it.profile_id);
+    }
+    const result = await dropsService.findLeaderboard(
+      {
+        ...params,
+        author_identity
+      },
+      {
+        authenticationContext,
+        timer
+      }
+    );
     res.send(result);
   }
 );

@@ -1006,12 +1006,15 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                                  RANK() OVER (ORDER BY vote DESC, timestamp desc) AS rnk
                                           from ddata) drop_ranks
           )
-      select d.* from dranks r join drops d on d.id = r.drop_id order by ${
-        params.sort === LeaderboardSort.RANK ? `r.rnk` : 'd.created_at'
-      } ${params.sort_direction} limit :page_size offset :offset
+      select d.* from dranks r join drops d on d.id = r.drop_id ${
+        params.author_identity ? ` where d.author_id = :author_identity ` : ``
+      } order by ${
+      params.sort === LeaderboardSort.RANK ? `r.rnk` : 'd.created_at'
+    } ${params.sort_direction} limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
+      author_identity: params.author_identity,
       page_size: params.page_size,
       offset: params.page_size * (params.page - 1)
     };
@@ -1029,8 +1032,14 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(`${this.constructor.name}->countParticipatoryDrops`);
     const count = await this.db
       .oneOrNull<{ cnt: number }>(
-        `select count(*) as cnt from ${DROPS_TABLE} where wave_id = :wave_id and drop_type = :drop_type`,
-        { wave_id: params.wave_id, drop_type: DropType.PARTICIPATORY },
+        `select count(*) as cnt from ${DROPS_TABLE} where wave_id = :wave_id and drop_type = :drop_type ${
+          params.author_identity ? ` and author_id = :author_identity ` : ``
+        } `,
+        {
+          wave_id: params.wave_id,
+          author_identity: params.author_identity,
+          drop_type: DropType.PARTICIPATORY
+        },
         { wrappedConnection: ctx.connection }
       )
       .then((it) => it?.cnt ?? 0);
@@ -1265,6 +1274,7 @@ export interface LeaderboardParams {
   readonly page: number;
   readonly sort_direction: PageSortDirection;
   readonly sort: LeaderboardSort;
+  readonly author_identity: string | null;
 }
 
 export const dropsDb = new DropsDb(dbSupplier, userGroupsService);
