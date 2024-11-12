@@ -38,6 +38,7 @@ import {
   GlobalTDHHistory,
   NftTDH,
   TDH,
+  TDHBlock,
   TDHHistory,
   TDHMemes
 } from './entities/ITDH';
@@ -79,6 +80,7 @@ import {
   syncIdentitiesWithTdhConsolidations
 } from './identity';
 import { revokeParticipationDropsOverVotes } from './drops/participation-drops-over-vote-revocation';
+import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 
 const mysql = require('mysql');
 
@@ -715,7 +717,6 @@ async function persistTdhUploadByTable(
 
 export async function persistTDH(
   block: number,
-  timestamp: Date,
   tdh: TDH[],
   memesTdh: TDHMemes[],
   wallets?: string[]
@@ -758,14 +759,24 @@ export async function persistTDH(
       await insertWithoutUpdate(tdhRepo, tdh);
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
     }
-
-    await manager.query(
-      `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block_number=?, timestamp=?`,
-      [block, timestamp]
-    );
   });
 
   logger.info(`[TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+export async function persistTDHBlock(block: number, timestamp: Date) {
+  const merkleRoot = await computeMerkleRoot();
+
+  await AppDataSource.getRepository(TDHBlock).upsert(
+    [
+      {
+        block_number: block,
+        timestamp: timestamp,
+        merkle_root: merkleRoot
+      }
+    ],
+    ['block_number']
+  );
 }
 
 export async function persistConsolidatedTDH(

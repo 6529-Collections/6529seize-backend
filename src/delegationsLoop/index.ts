@@ -194,8 +194,8 @@ async function reconsolidateWallets(events: ConsolidationEvent[]) {
     const lastTDHCalc = getLastTDH();
     const walletsArray = Array.from(affectedWallets);
 
-    await updateTDH(lastTDHCalc, walletsArray);
-    await consolidateTDH(lastTDHCalc, walletsArray);
+    const { block, timestamp } = await updateTDH(lastTDHCalc, walletsArray);
+    await consolidateTDH(lastTDHCalc, block, timestamp, walletsArray);
 
     await consolidateNftOwners(affectedWallets);
     await consolidateOwnerBalances(affectedWallets);
