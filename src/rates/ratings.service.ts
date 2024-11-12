@@ -58,6 +58,7 @@ import {
 } from '../profiles/abusiveness-check.service';
 import { ProfileRepRatedEventData } from '../events/datatypes/profile-rep-rated.event-data';
 import { ProfileClassification } from '../entities/IProfile';
+import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -79,18 +80,6 @@ export class RatingsService {
     connection?: ConnectionWrapper<any>
   ): Promise<AggregatedRating> {
     return this.ratingsDb.getAggregatedRatingOnMatter(request, connection);
-  }
-
-  public async getRatesSpentToTargetOnMatterForProfile(
-    param: {
-      matter: RateMatter;
-      profile_id: string;
-      matter_target_id: string;
-      matter_category: string;
-    },
-    connection?: ConnectionWrapper<any>
-  ): Promise<number> {
-    return this.ratingsDb.getCurrentRatingOnMatterForProfile(param, connection);
   }
 
   public async getRatesLeftOnMatterForProfile({
@@ -415,6 +404,7 @@ export class RatingsService {
     );
     await this.ratingsDb.executeNativeQueriesInTransaction(
       async (connection) => {
+        await revokeTdhBasedDropWavesOverVotes(connection);
         await this.uploadRatesSnapshotsToArweave(connection);
       }
     );
