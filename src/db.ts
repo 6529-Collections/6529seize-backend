@@ -765,7 +765,11 @@ export async function persistTDH(
 }
 
 export async function persistTDHBlock(block: number, timestamp: Date) {
+  logger.info(`[TDH BLOCK] PERSISTING BLOCK [${block}]`);
+
   const merkleRoot = await computeMerkleRoot();
+
+  logger.info(`[TDH BLOCK] MERKLE ROOT [${merkleRoot}]`);
 
   await AppDataSource.getRepository(TDHBlock).upsert(
     [
