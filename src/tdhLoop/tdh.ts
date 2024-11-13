@@ -4,6 +4,7 @@ import {
   MEME_8_BURN_TRANSACTION,
   MEMES_CONTRACT,
   NULL_ADDRESS,
+  TRANSACTIONS_TABLE,
   WALLETS_TDH_TABLE
 } from '../constants';
 import { DefaultBoost, TDH, TDHMemes, TokenTDH } from '../entities/ITDH';
@@ -15,7 +16,6 @@ import {
   fetchAllConsolidationAddresses,
   fetchAllNFTs,
   fetchAllSeasons,
-  fetchLatestTDHTransactionsBlockNumber,
   fetchTDHForBlock,
   fetchWalletTransactions,
   persistTDH,
@@ -33,7 +33,8 @@ import {
 import { MemesSeason } from '../entities/ISeason';
 import { calculateMemesTdh } from './tdh_memes';
 import { Time } from '../time';
-import { getOwnersForContracts } from '../nftOwnersLoop/owners';
+import { extractMemesEditionSizes, extractNFTOwners } from './tdh_objects';
+import { ethers } from 'ethers';
 
 const logger = Logger.get('TDH');
 
@@ -202,13 +203,40 @@ export const updateTDH = async (
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const block = await fetchLatestTDHTransactionsBlockNumber(lastTDHCalc);
+  const provider = new ethers.providers.JsonRpcProvider(
+    `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
+  );
+  const beforeBlock = await findLatestBlockBeforeTimestamp(
+    provider,
+    lastTDHCalc.getTime() / 1000
+  );
+  const block = beforeBlock.number;
 
   const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
   const nextgenNetwork = getNextgenNetwork();
   const NEXTGEN_CONTRACT = NEXTGEN_CORE_CONTRACT[nextgenNetwork];
 
   const tdhContracts = [MEMES_CONTRACT, GRADIENT_CONTRACT, NEXTGEN_CONTRACT];
+
+  const transactions = await sqlExecutor.execute(
+    `select * from ${TRANSACTIONS_TABLE} where block <= :block and contract in (:contracts)`,
+    {
+      block,
+      contracts: tdhContracts
+    }
+  );
+
+  logger.info(`[TRANSACTIONS COUNT ${transactions.length}]`);
+
+  const owners = await extractNFTOwners(block, transactions);
+  logger.info(`[OWNERS COUNT ${owners.length}]`);
+
+  const memesEditionSizes = await extractMemesEditionSizes(transactions);
+  const MEMES_HODL_INDEX = Object.values(memesEditionSizes).reduce(
+    (acc, size) => Math.max(acc, size),
+    0
+  );
+  logger.info(`[MEMES HODL INDEX ${MEMES_HODL_INDEX}]`);
 
   const combinedAddresses = new Set<string>();
 
@@ -222,8 +250,7 @@ export const updateTDH = async (
       combinedAddresses.add(w.wallet.toLowerCase())
     );
 
-    const nftOwners = await getOwnersForContracts(tdhContracts, block);
-    nftOwners.forEach((w) => combinedAddresses.add(w.wallet.toLowerCase()));
+    owners.forEach((w) => combinedAddresses.add(w.wallet.toLowerCase()));
   }
 
   logger.info(`[UNIQUE WALLETS ${combinedAddresses.size}]`);
@@ -308,10 +335,14 @@ export const updateTDH = async (
             t.token_id == nft.id && areEqualAddresses(t.contract, nft.contract)
         );
 
+        const hodlRate = areEqualAddresses(nft.contract, MEMES_CONTRACT)
+          ? MEMES_HODL_INDEX / memesEditionSizes[nft.id]
+          : nft.hodl_rate;
+
         const tokenTDH = getTokenTdh(
           lastTDHCalc,
           nft.id,
-          nft.hodl_rate,
+          hodlRate,
           wallet,
           consolidations,
           tokenConsolidatedTransactions
@@ -469,7 +500,7 @@ export const updateTDH = async (
     ADJUSTED_SEASONS,
     rankedTdh
   )) as TDHMemes[];
-  await persistTDH(block, timestamp, rankedTdh, memesTdh, startingWallets);
+  await persistTDH(block, rankedTdh, memesTdh, startingWallets);
 
   return {
     block: block,
@@ -719,7 +750,7 @@ function getTokenDatesFromConsolidation(
     return removeDates;
   }
 
-  consolidationTransactions
+  consolidationTransactions = consolidationTransactions
     .map((c) => {
       c.transaction_date = parseUTCDateString(c.transaction_date);
       c.from_address = c.from_address.toLowerCase();
@@ -734,13 +765,34 @@ function getTokenDatesFromConsolidation(
         return dateComparison;
       }
 
-      const aInConsolidations = consolidations.some((c) =>
-        areEqualAddresses(c, a.from_address)
+      const aInConsolidations = Number(
+        consolidations.some(
+          (c) =>
+            !areEqualAddresses(c, currentWallet) &&
+            areEqualAddresses(c, a.from_address)
+        )
       );
-      const bInConsolidations = consolidations.some((c) =>
-        areEqualAddresses(c, b.from_address)
+
+      const bInConsolidations = Number(
+        consolidations.some(
+          (c) =>
+            !areEqualAddresses(c, currentWallet) &&
+            areEqualAddresses(c, b.from_address)
+        )
       );
-      return Number(bInConsolidations) - Number(aInConsolidations);
+
+      if (aInConsolidations || bInConsolidations) {
+        return bInConsolidations - aInConsolidations;
+      }
+
+      if (areEqualAddresses(a.to_address, currentWallet)) {
+        return -1;
+      }
+      if (areEqualAddresses(b.to_address, currentWallet)) {
+        return 1;
+      }
+
+      return 0;
     });
 
   for (const transaction of consolidationTransactions) {
@@ -1019,4 +1071,49 @@ export function getGenesisAndNaka(memes: TokenTDH[]) {
     genesis,
     naka
   };
+}
+
+export async function findLatestBlockBeforeTimestamp(
+  provider: ethers.providers.JsonRpcProvider,
+  targetTimestamp: number
+) {
+  logger.info(`FINDING LATEST BLOCK BEFORE TIMESTAMP [${targetTimestamp}]`);
+  const averageBlockTime = 12; // Approximate average block time in seconds
+  const latestBlock = await provider.getBlock('latest');
+  if (!latestBlock) {
+    throw new Error('Latest block not found');
+  }
+
+  let startBlock = Math.max(
+    0,
+    latestBlock.number -
+      Math.floor((latestBlock.timestamp - targetTimestamp) / averageBlockTime)
+  );
+  let endBlock = latestBlock.number;
+
+  // Perform a binary search
+  while (startBlock <= endBlock) {
+    const midBlockNumber = Math.floor((startBlock + endBlock) / 2);
+    const midBlock = await provider.getBlock(midBlockNumber);
+    if (!midBlock) {
+      throw new Error('Mid block not found');
+    }
+    if (midBlock.timestamp === targetTimestamp) {
+      // Exact match
+      return midBlock;
+    } else if (midBlock.timestamp < targetTimestamp) {
+      // Move search to more recent blocks
+      startBlock = midBlockNumber + 1;
+    } else {
+      // Move search to older blocks
+      endBlock = midBlockNumber - 1;
+    }
+  }
+
+  // `endBlock` is the latest block with a timestamp before the target
+  const blockBefore = await provider.getBlock(endBlock);
+  if (!blockBefore) {
+    throw new Error('Block before not found');
+  }
+  return blockBefore;
 }

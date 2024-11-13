@@ -38,6 +38,7 @@ import {
   GlobalTDHHistory,
   NftTDH,
   TDH,
+  TDHBlock,
   TDHHistory,
   TDHMemes
 } from './entities/ITDH';
@@ -79,6 +80,7 @@ import {
   syncIdentitiesWithTdhConsolidations
 } from './identity';
 import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
+import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 
 const mysql = require('mysql');
 
@@ -291,27 +293,18 @@ export async function persistNftDelegationBlock(
   await AppDataSource.getRepository(NFTDelegationBlock).save(block);
 }
 
-export async function fetchLatestTDHTransactionsBlockNumber(
-  beforeDate?: Date
-): Promise<number> {
-  let sql = `SELECT block FROM ${TRANSACTIONS_TABLE}`;
-  sql += ` WHERE contract != :memeLab`;
-  const params: any = {
-    memeLab: MEMELAB_CONTRACT
-  };
-  if (beforeDate) {
-    sql += ` AND UNIX_TIMESTAMP(transaction_date) <= :date`;
-    params.date = Math.floor(beforeDate.getTime() / 1000);
-  }
-  sql += ` ORDER BY block DESC LIMIT 1;`;
-  const r = await sqlExecutor.execute(sql, params);
-  return r.length > 0 ? r[0].block : 0;
-}
-
-export async function fetchLatestTDHBDate(): Promise<Time> {
+export async function fetchLatestTDHBDate(): Promise<{
+  block: number;
+  timestamp: Time;
+}> {
   const sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await sqlExecutor.execute(sql);
-  return r.length > 0 ? Time.fromString(r[0].timestamp) : Time.millis(0);
+  return r.length > 0
+    ? {
+        block: r[0].block_number,
+        timestamp: Time.fromString(r[0].timestamp)
+      }
+    : { block: 0, timestamp: Time.millis(0) };
 }
 
 export async function fetchLatestTDHBlockNumber(): Promise<number> {
@@ -378,13 +371,12 @@ export async function fetchAllNFTs() {
   return results;
 }
 
-export async function fetchAllTDH(wallets?: string[]) {
-  const tdhBlock = await fetchLatestTDHBlockNumber();
+export async function fetchAllTDH(block: number, wallets?: string[]) {
   let sql = `SELECT ${ENS_TABLE}.display as ens, ${WALLETS_TDH_TABLE}.* FROM ${WALLETS_TDH_TABLE} LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet WHERE block=:block `;
   if (wallets && wallets.length > 0) {
     sql += `AND ${WALLETS_TDH_TABLE}.wallet IN (:wallets)`;
   }
-  const results = await sqlExecutor.execute(sql, { block: tdhBlock, wallets });
+  const results = await sqlExecutor.execute(sql, { block, wallets });
   return results.map(parseTdhDataFromDB);
 }
 
@@ -715,7 +707,6 @@ async function persistTdhUploadByTable(
 
 export async function persistTDH(
   block: number,
-  timestamp: Date,
   tdh: TDH[],
   memesTdh: TDHMemes[],
   wallets?: string[]
@@ -758,14 +749,28 @@ export async function persistTDH(
       await insertWithoutUpdate(tdhRepo, tdh);
       await insertWithoutUpdate(tdhMemesRepo, memesTdh);
     }
-
-    await manager.query(
-      `REPLACE INTO ${TDH_BLOCKS_TABLE} SET block_number=?, timestamp=?`,
-      [block, timestamp]
-    );
   });
 
   logger.info(`[TDH] PERSISTED ALL WALLETS TDH [${tdh.length}]`);
+}
+
+export async function persistTDHBlock(block: number, timestamp: Date) {
+  logger.info(`[TDH BLOCK] PERSISTING BLOCK [${block}]`);
+
+  const merkleRoot = await computeMerkleRoot();
+
+  logger.info(`[TDH BLOCK] MERKLE ROOT [${merkleRoot}]`);
+
+  await AppDataSource.getRepository(TDHBlock).upsert(
+    [
+      {
+        block_number: block,
+        timestamp: timestamp,
+        merkle_root: merkleRoot
+      }
+    ],
+    ['block_number']
+  );
 }
 
 export async function persistConsolidatedTDH(

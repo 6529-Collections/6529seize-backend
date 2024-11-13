@@ -36,7 +36,11 @@ const myarweave = Arweave.init({
 
 type TDHUpload = (UploadFieldsWallet | UploadFieldsConsolidation)[];
 
-export async function uploadTDH(isConsolidation: boolean, force?: boolean) {
+export async function uploadTDH(
+  block: number,
+  isConsolidation: boolean,
+  force?: boolean
+) {
   let title;
   let lastUpload;
   let tdh: TDHENS[] | ConsolidatedTDH[];
@@ -49,11 +53,10 @@ export async function uploadTDH(isConsolidation: boolean, force?: boolean) {
   } else {
     title = 'WALLETS_TDH';
     lastUpload = await fetchLastUpload();
-    tdh = await fetchAllTDH();
+    tdh = await fetchAllTDH(block);
     ownerBalances = await fetchAllOwnerBalances();
   }
 
-  const block = tdh[0].block;
   const dateString = formatDateAsString(new Date());
 
   const exists = lastUpload && lastUpload.date == dateString;

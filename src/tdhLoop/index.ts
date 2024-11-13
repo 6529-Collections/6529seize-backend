@@ -60,10 +60,10 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 export async function tdhLoop(force?: boolean) {
-  await tdh(force);
+  const block = await tdh(force);
   await findNftTDH();
-  await uploadTDH(false, force);
-  await uploadTDH(true, force);
+  await uploadTDH(block, false, force);
+  await uploadTDH(block, true, force);
   await notifier.notifyTdhCalculationsDone();
 }
 
@@ -71,14 +71,16 @@ async function tdh(force?: boolean) {
   const lastTDHCalc = getLastTDH();
 
   const lastTdhDB = await fetchLatestTDHBDate();
-  const lastTdhFromNow = lastTdhDB.diffFromNow();
+  const lastTdhFromNow = lastTdhDB.timestamp.diffFromNow();
 
   if (lastTdhFromNow.gt(Time.hours(24)) || force) {
-    await updateTDH(lastTDHCalc);
-    await consolidateTDH(lastTDHCalc);
+    const { block, timestamp } = await updateTDH(lastTDHCalc);
+    await consolidateTDH(lastTDHCalc, block, timestamp);
+    return block;
   } else {
     logger.info(
       `[TODAY'S TDH ALREADY CALCULATED ${lastTdhFromNow} ago] [SKIPPING...]`
     );
+    return lastTdhDB.block;
   }
 }
