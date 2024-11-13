@@ -293,10 +293,18 @@ export async function persistNftDelegationBlock(
   await AppDataSource.getRepository(NFTDelegationBlock).save(block);
 }
 
-export async function fetchLatestTDHBDate(): Promise<Time> {
+export async function fetchLatestTDHBDate(): Promise<{
+  block: number;
+  timestamp: Time;
+}> {
   const sql = `SELECT timestamp FROM ${TDH_BLOCKS_TABLE} order by block_number desc limit 1;`;
   const r = await sqlExecutor.execute(sql);
-  return r.length > 0 ? Time.fromString(r[0].timestamp) : Time.millis(0);
+  return r.length > 0
+    ? {
+        block: r[0].block_number,
+        timestamp: Time.fromString(r[0].timestamp)
+      }
+    : { block: 0, timestamp: Time.millis(0) };
 }
 
 export async function fetchLatestTDHBlockNumber(): Promise<number> {
@@ -363,13 +371,12 @@ export async function fetchAllNFTs() {
   return results;
 }
 
-export async function fetchAllTDH(wallets?: string[]) {
-  const tdhBlock = await fetchLatestTDHBlockNumber();
+export async function fetchAllTDH(block: number, wallets?: string[]) {
   let sql = `SELECT ${ENS_TABLE}.display as ens, ${WALLETS_TDH_TABLE}.* FROM ${WALLETS_TDH_TABLE} LEFT JOIN ${ENS_TABLE} ON ${WALLETS_TDH_TABLE}.wallet=${ENS_TABLE}.wallet WHERE block=:block `;
   if (wallets && wallets.length > 0) {
     sql += `AND ${WALLETS_TDH_TABLE}.wallet IN (:wallets)`;
   }
-  const results = await sqlExecutor.execute(sql, { block: tdhBlock, wallets });
+  const results = await sqlExecutor.execute(sql, { block, wallets });
   return results.map(parseTdhDataFromDB);
 }
 
