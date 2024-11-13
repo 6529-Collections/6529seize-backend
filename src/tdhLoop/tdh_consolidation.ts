@@ -287,7 +287,7 @@ export const consolidateTDH = async (
   timestamp: Date,
   startingWallets?: string[]
 ) => {
-  const tdh: TDHENS[] = await fetchAllTDH(startingWallets);
+  const tdh: TDHENS[] = await fetchAllTDH(block, startingWallets);
   const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
 
   const { ADJUSTED_NFTS, MEMES_COUNT, ADJUSTED_SEASONS } =
