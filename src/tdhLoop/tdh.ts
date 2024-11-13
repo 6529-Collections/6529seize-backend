@@ -16,7 +16,6 @@ import {
   fetchAllConsolidationAddresses,
   fetchAllNFTs,
   fetchAllSeasons,
-  fetchLatestTDHTransactionsBlockNumber,
   fetchTDHForBlock,
   fetchWalletTransactions,
   persistTDH,
@@ -35,6 +34,7 @@ import { MemesSeason } from '../entities/ISeason';
 import { calculateMemesTdh } from './tdh_memes';
 import { Time } from '../time';
 import { extractMemesEditionSizes, extractNFTOwners } from './tdh_objects';
+import { ethers } from 'ethers';
 
 const logger = Logger.get('TDH');
 
@@ -203,7 +203,14 @@ export const updateTDH = async (
     apiKey: process.env.ALCHEMY_API_KEY
   });
 
-  const block = await fetchLatestTDHTransactionsBlockNumber(lastTDHCalc);
+  const provider = new ethers.providers.JsonRpcProvider(
+    `https://eth-mainnet.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`
+  );
+  const beforeBlock = await findLatestBlockBeforeTimestamp(
+    provider,
+    lastTDHCalc.getTime() / 1000
+  );
+  const block = beforeBlock.number;
 
   const NEXTGEN_NFTS: NextGenToken[] = await fetchNextgenTokens();
   const nextgenNetwork = getNextgenNetwork();
@@ -1064,4 +1071,49 @@ export function getGenesisAndNaka(memes: TokenTDH[]) {
     genesis,
     naka
   };
+}
+
+export async function findLatestBlockBeforeTimestamp(
+  provider: ethers.providers.JsonRpcProvider,
+  targetTimestamp: number
+) {
+  logger.info(`FINDING LATEST BLOCK BEFORE TIMESTAMP [${targetTimestamp}]`);
+  const averageBlockTime = 12; // Approximate average block time in seconds
+  const latestBlock = await provider.getBlock('latest');
+  if (!latestBlock) {
+    throw new Error('Latest block not found');
+  }
+
+  let startBlock = Math.max(
+    0,
+    latestBlock.number -
+      Math.floor((latestBlock.timestamp - targetTimestamp) / averageBlockTime)
+  );
+  let endBlock = latestBlock.number;
+
+  // Perform a binary search
+  while (startBlock <= endBlock) {
+    const midBlockNumber = Math.floor((startBlock + endBlock) / 2);
+    const midBlock = await provider.getBlock(midBlockNumber);
+    if (!midBlock) {
+      throw new Error('Mid block not found');
+    }
+    if (midBlock.timestamp === targetTimestamp) {
+      // Exact match
+      return midBlock;
+    } else if (midBlock.timestamp < targetTimestamp) {
+      // Move search to more recent blocks
+      startBlock = midBlockNumber + 1;
+    } else {
+      // Move search to older blocks
+      endBlock = midBlockNumber - 1;
+    }
+  }
+
+  // `endBlock` is the latest block with a timestamp before the target
+  const blockBefore = await provider.getBlock(endBlock);
+  if (!blockBefore) {
+    throw new Error('Block before not found');
+  }
+  return blockBefore;
 }
