@@ -5,13 +5,16 @@ import { RequestContext } from '../../../request.context';
 import { DropType } from '../../../entities/IDrop';
 import { clappingService, ClappingService } from './clapping.service';
 import * as process from 'node:process';
-import { dropVotingService, DropVotingService } from './drop-voting.service';
+import {
+  voteForDropUseCase,
+  VoteForDropUseCase
+} from '../../../drops/vote-for-drop.use-case';
 
 export class DropCheeringService {
   constructor(
     private readonly dropsDb: DropsDb,
     private readonly clappingService: ClappingService,
-    private readonly dropVotingService: DropVotingService
+    private readonly voteForDrop: VoteForDropUseCase
   ) {}
 
   async updateCheers(
@@ -49,7 +52,7 @@ export class DropCheeringService {
         if (process.env.NON_CHAT_DROP_VOTING_ENABLED !== 'true') {
           throw new Error(`Voting not implemented`);
         }
-        await this.dropVotingService.vote(
+        await this.voteForDrop.execute(
           {
             drop_id: dropId,
             voter_id: param.rater_profile_id,
@@ -68,5 +71,5 @@ export class DropCheeringService {
 export const dropCheeringService = new DropCheeringService(
   dropsDb,
   clappingService,
-  dropVotingService
+  voteForDropUseCase
 );
