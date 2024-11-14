@@ -254,7 +254,11 @@ export class CreateOrUpdateDropUseCase {
       model.drop_type === DropType.PARTICIPATORY
         ? wave.participation_group_id
         : wave.chat_group_id;
-    if (groupId && !groupIdsUserIsEligibleFor.includes(groupId)) {
+    if (
+      !isDescriptionDrop &&
+      groupId &&
+      !groupIdsUserIsEligibleFor.includes(groupId)
+    ) {
       throw new ForbiddenException(`User is not eligible for this wave`);
     }
     await Promise.all([
@@ -315,7 +319,10 @@ export class CreateOrUpdateDropUseCase {
       const participationPeriodEnd = Time.millis(
         wave.participation_period_end ?? Time.now().plusWeeks(1).toMillis()
       );
-      if (now.lt(participationPeriodStart) || now.gt(participationPeriodEnd)) {
+      if (
+        (!isDescriptionDrop && now.lt(participationPeriodStart)) ||
+        now.gt(participationPeriodEnd)
+      ) {
         throw new ForbiddenException(
           `Participation to this wave is locked for now`
         );
@@ -325,7 +332,10 @@ export class CreateOrUpdateDropUseCase {
     const wavePeriodEnd = Time.millis(
       wave.wave_period_end ?? Time.now().plusWeeks(1).toMillis()
     );
-    if (now.lt(wavePeriodStart) || now.gt(wavePeriodEnd)) {
+    if (
+      (!isDescriptionDrop && now.lt(wavePeriodStart)) ||
+      now.gt(wavePeriodEnd)
+    ) {
       throw new ForbiddenException(`This wave is closed for now`);
     }
     if (
