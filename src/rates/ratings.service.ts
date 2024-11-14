@@ -793,7 +793,7 @@ export class RatingsService {
     target_profile_id: string;
     category: string | null;
   }): Promise<number> {
-    return this.ratingsDb.getRepRating(param);
+    return this.ratingsDb.getRepRating(param, {});
   }
 
   async bulkRateProfiles(

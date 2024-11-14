@@ -66,17 +66,17 @@ export class DropVotingService {
     }
     await this.votingDb.lockAggregateDropRank(drop_id, ctx.connection);
     const now = Time.now();
+    const wave = await this.wavesDb.findById(wave_id, ctx.connection);
+    const isRepWave = wave?.voting_credit_type === WaveCreditType.REP;
     const [
       drop,
       groupsVoterIsEligibleFor,
-      wave,
       currentVote,
       creditSpentBeforeThisVote,
       voterTotalCredit
     ] = await Promise.all([
       this.dropsDb.findDropById(drop_id, ctx.connection),
       this.userGroupsService.getGroupsUserIsEligibleFor(voter_id, ctx.timer),
-      this.wavesDb.findById(wave_id, ctx.connection),
       this.votingDb.getCurrentState(
         { voterId: voter_id, drop_id: drop_id },
         ctx
@@ -90,9 +90,18 @@ export class DropVotingService {
           ctx
         )
         .then((it) => it[wave_id] ?? 0),
-      this.identitiesDb
-        .getIdentityByProfileId(voter_id, ctx.connection)
-        ?.then((identity) => identity?.tdh ?? 0)
+      isRepWave
+        ? this.ratingsDb.getRepRating(
+            {
+              target_profile_id: voter_id,
+              category: wave?.voting_credit_category ?? null,
+              rater_profile_id: wave?.voting_credit_creditor ?? null
+            },
+            ctx
+          )
+        : this.identitiesDb
+            .getIdentityByProfileId(voter_id, ctx.connection)
+            ?.then((identity) => identity?.tdh ?? 0)
     ]);
 
     if (!drop || drop.wave_id !== wave?.id) {
@@ -139,12 +148,6 @@ export class DropVotingService {
       voterTotalCredit
     ) {
       throw new BadRequestException('Not enough credit to vote');
-    }
-
-    if (wave.voting_credit_type !== WaveCreditType.TDH) {
-      throw new BadRequestException(
-        `Voting in waves with credit type ${wave.voting_credit_type} not yet supported`
-      );
     }
     if (wave.time_lock_ms !== null && wave.time_lock_ms > 0) {
       throw new BadRequestException(
