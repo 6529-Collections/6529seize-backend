@@ -400,7 +400,11 @@ export class WaveApiService {
   ): Promise<ApiWave> {
     const authenticationContext = ctx.authenticationContext;
     const entity = await this.wavesApiDb.findWaveById(id);
-    if (!entity) {
+    if (
+      !entity ||
+      (entity.visibility_group_id !== null &&
+        !groupIdsUserIsEligibleFor.includes(entity.visibility_group_id))
+    ) {
       throw new NotFoundException(`Wave ${id} not found`);
     }
     const noRightToVote =
