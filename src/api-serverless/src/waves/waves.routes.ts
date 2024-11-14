@@ -170,18 +170,6 @@ router.get(
       group_ids_user_is_eligible_for,
       { authenticationContext, timer }
     );
-    const groupId = wave.visibility.scope.group?.id;
-    if (groupId) {
-      if (!group_ids_user_is_eligible_for.includes(groupId)) {
-        const adminGroupId = wave.wave.admin_group.group?.id;
-        if (
-          !adminGroupId ||
-          !group_ids_user_is_eligible_for.includes(adminGroupId)
-        ) {
-          throw new ForbiddenException(`User is not eligible for this wave`);
-        }
-      }
-    }
 
     res.send(wave);
   }
