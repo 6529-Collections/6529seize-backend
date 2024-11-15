@@ -60,10 +60,13 @@ export enum ProfileActivityLogType {
   DROP_CLAPPED = 'DROP_CLAPPED'
 }
 
+export const DROP_LOG_TYPES = [
+  ProfileActivityLogType.DROP_CREATED,
+  ProfileActivityLogType.DROP_VOTE_EDIT,
+  ProfileActivityLogType.DROP_CLAPPED,
+  ProfileActivityLogType.DROP_COMMENT
+];
+
 export function isTargetOfTypeDrop(type: ProfileActivityLogType): boolean {
-  return [
-    ProfileActivityLogType.DROP_CREATED,
-    ProfileActivityLogType.DROP_VOTE_EDIT,
-    ProfileActivityLogType.DROP_COMMENT
-  ].includes(type);
+  return DROP_LOG_TYPES.includes(type);
 }

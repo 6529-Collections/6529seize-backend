@@ -28,6 +28,7 @@ import {
   IDENTITIES_TABLE,
   IDENTITY_NOTIFICATIONS_TABLE,
   IDENTITY_SUBSCRIPTIONS_TABLE,
+  PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
@@ -47,6 +48,7 @@ import { DeletedDropEntity } from '../entities/IDeletedDrop';
 import { DropRelationEntity } from '../entities/IDropRelation';
 import { ApiDropSearchStrategy } from '../api-serverless/src/generated/models/ApiDropSearchStrategy';
 import { DropVoterStateEntity } from '../entities/IDropVoterState';
+import { ProfileActivityLog } from '../entities/IProfileActivityLog';
 
 const mysql = require('mysql');
 
@@ -1247,6 +1249,26 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->findRepAmountsForProfile`);
     return result;
   }
+
+  async findDropLogEntities(
+    param: DropLogsQueryParams,
+    ctx: RequestContext
+  ): Promise<ProfileActivityLog[]> {
+    ctx.timer?.start(`${this.constructor.name}->findDropLogs`);
+    const results = await this.db.execute<ProfileActivityLog>(
+      `
+      select * from ${PROFILES_ACTIVITY_LOGS_TABLE} where additional_data_2 = :wave_id ${
+        param.drop_id ? ` and target_id = :drop_id ` : ``
+      } and type in (:log_types) order by created_at ${
+        param.sort_direction
+      } limit :limit offset :offset
+    `,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->findDropLogs`);
+    return results;
+  }
 }
 
 export interface ProfileOverVoteAmountInWave extends TotalGivenVotesInWave {
@@ -1275,6 +1297,15 @@ export interface LeaderboardParams {
   readonly sort_direction: PageSortDirection;
   readonly sort: LeaderboardSort;
   readonly author_identity: string | null;
+}
+
+export interface DropLogsQueryParams {
+  readonly wave_id: string;
+  readonly offset: number;
+  readonly limit: number;
+  readonly drop_id: string | null;
+  readonly log_types: string[];
+  readonly sort_direction: PageSortDirection;
 }
 
 export const dropsDb = new DropsDb(dbSupplier, userGroupsService);

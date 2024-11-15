@@ -8,7 +8,11 @@ import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
 import { ApiWave } from '../generated/models/ApiWave';
 import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
-import { ForbiddenException, NotFoundException } from '../../../exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '../../../exceptions';
 import * as Joi from 'joi';
 import { ApiCreateNewWaveScope } from '../generated/models/ApiCreateNewWaveScope';
 import { ApiCreateNewWaveVisibilityConfig } from '../generated/models/ApiCreateNewWaveVisibilityConfig';
@@ -47,7 +51,13 @@ import { ApiDropType } from '../generated/models/ApiDropType';
 import { ApiCreateNewWaveChatConfig } from '../generated/models/ApiCreateNewWaveChatConfig';
 import { PageSortDirection } from '../page-request';
 import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
-import { LeaderboardParams, LeaderboardSort } from '../../../drops/drops.db';
+import {
+  DropLogsQueryParams,
+  LeaderboardParams,
+  LeaderboardSort
+} from '../../../drops/drops.db';
+import { DROP_LOG_TYPES } from '../../../entities/IProfileActivityLog';
+import { ApiWaveLog } from '../generated/models/ApiWaveLog';
 
 const router = asyncRouter();
 
@@ -359,6 +369,72 @@ router.get(
       {
         ...params,
         author_identity
+      },
+      {
+        authenticationContext,
+        timer
+      }
+    );
+    res.send(result);
+  }
+);
+
+router.get(
+  '/:id/logs',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { id: string },
+      any,
+      any,
+      Omit<DropLogsQueryParams, 'log_types'> & { log_types: string | null },
+      any
+    >,
+    res: Response<ApiResponse<ApiWaveLog[]>>
+  ) => {
+    const { id } = req.params;
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req);
+    const params: Omit<DropLogsQueryParams, 'log_types' | 'wave_id'> & {
+      log_types: string | null;
+    } = getValidatedByJoiOrThrow(
+      req.query,
+      Joi.object<
+        Omit<DropLogsQueryParams, 'log_types' | 'wave_id'> & {
+          log_types: string | null;
+        }
+      >({
+        drop_id: Joi.string().optional().default(null),
+        offset: Joi.number().integer().optional().min(0).default(0),
+        limit: Joi.number().integer().optional().min(1).default(20).max(100),
+        sort_direction: Joi.string()
+          .valid(...Object.values(PageSortDirection))
+          .default(PageSortDirection.DESC),
+        log_types: Joi.string().optional().default(null)
+      })
+    );
+    let logTypes = params.log_types?.split(`,`) ?? [];
+    if (logTypes.length === 1 && logTypes[0] === '') {
+      logTypes = [];
+    }
+    const unknownLogType = logTypes.find(
+      (it) => !DROP_LOG_TYPES.includes(it as any)
+    );
+    if (unknownLogType) {
+      throw new BadRequestException(
+        `Unknown log type: ${unknownLogType}. Valid options are ${DROP_LOG_TYPES.join(
+          `, `
+        )}`
+      );
+    }
+    if (logTypes.length === 0) {
+      logTypes = [...DROP_LOG_TYPES];
+    }
+    const result = await dropsService.findWaveLogs(
+      {
+        ...params,
+        wave_id: id,
+        log_types: logTypes
       },
       {
         authenticationContext,

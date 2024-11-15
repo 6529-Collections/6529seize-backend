@@ -185,8 +185,8 @@ export class VoteForDropUseCase {
             oldVote: currentVote,
             newVote: votes
           }),
-          additional_data_1: null,
-          additional_data_2: null,
+          additional_data_1: drop.author_id,
+          additional_data_2: drop.wave_id,
           proxy_id: proxy_id
         },
         ctx.connection,
