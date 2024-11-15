@@ -203,6 +203,13 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
         throw e;
       }
     }
+    await this.db.execute(
+      `
+      update ${PROFILES_ACTIVITY_LOGS_TABLE} set additional_data_1 = :newSourceId where type in ('${ProfileActivityLogType.DROP_CLAPPED}', '${ProfileActivityLogType.DROP_VOTE_EDIT}') and additional_data_1 = :oldSourceId
+      `,
+      param,
+      { wrappedConnection: connectionHolder.connection }
+    );
   }
 
   async changeTargetProfileIdInLogs(

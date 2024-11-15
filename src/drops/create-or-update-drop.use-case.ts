@@ -598,8 +598,8 @@ export class CreateOrUpdateDropUseCase {
           }),
           type: ProfileActivityLogType.DROP_CREATED,
           proxy_id: model.proxy_id ?? null,
-          additional_data_1: null,
-          additional_data_2: null
+          additional_data_1: model.drop_type,
+          additional_data_2: wave.id
         },
         connection,
         timer
