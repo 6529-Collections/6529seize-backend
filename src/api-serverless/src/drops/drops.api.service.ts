@@ -1,4 +1,9 @@
-import { dropsDb, DropsDb, LeaderboardParams } from '../../../drops/drops.db';
+import {
+  DropLogsQueryParams,
+  dropsDb,
+  DropsDb,
+  LeaderboardParams
+} from '../../../drops/drops.db';
 import { ConnectionWrapper } from '../../../sql-executor';
 import {
   BadRequestException,
@@ -35,6 +40,16 @@ import { ApiWaveDropsFeed } from '../generated/models/ApiWaveDropsFeed';
 import { clappingService, ClappingService } from './clapping.service';
 import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
 import { WaveType } from '../../../entities/IWave';
+import { ApiWaveLog } from '../generated/models/ApiWaveLog';
+import {
+  ProfileActivityLog,
+  ProfileActivityLogType
+} from '../../../entities/IProfileActivityLog';
+import { ApiProfileMin } from '../generated/models/ApiProfileMin';
+import {
+  profilesApiService,
+  ProfilesApiService
+} from '../profiles/profiles.api.service';
 
 export class DropsApiService {
   constructor(
@@ -42,7 +57,8 @@ export class DropsApiService {
     private readonly dropsDb: DropsDb,
     private readonly userGroupsService: UserGroupsService,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
-    private readonly clappingService: ClappingService
+    private readonly clappingService: ClappingService,
+    private readonly profilesService: ProfilesApiService
   ) {}
 
   public async findDropByIdOrThrow(
@@ -541,6 +557,91 @@ export class DropsApiService {
       next: count > params.page_size * params.page
     };
   }
+
+  async findWaveLogs(
+    param: DropLogsQueryParams,
+    ctx: RequestContext
+  ): Promise<ApiWaveLog[]> {
+    await this.validateDropLogsViewingEligibility(param, ctx);
+    const logEntities = await this.dropsDb.findDropLogEntities(param, ctx);
+    const relatedProfiles = await this.findDropLogRelatedProfiles(
+      logEntities,
+      ctx
+    );
+    return logEntities.map<ApiWaveLog>((it) => ({
+      id: it.id,
+      action: it.type,
+      wave_id: it.additional_data_2!,
+      drop_id: it.target_id!,
+      drop_author: it.additional_data_1
+        ? relatedProfiles[it.additional_data_1]
+        : undefined,
+      invoker_proxy: it.proxy_id ? relatedProfiles[it.proxy_id] : undefined,
+      invoker: relatedProfiles[it.profile_id],
+      created_at: it.created_at,
+      contents: JSON.parse(it.contents)
+    }));
+  }
+
+  private async validateDropLogsViewingEligibility(
+    param: DropLogsQueryParams,
+    ctx: RequestContext
+  ) {
+    const waveId = param.wave_id;
+    const waveEntity = await wavesApiDb.findWaveById(waveId);
+    if (!waveEntity) {
+      throw new NotFoundException(`Wave not found`);
+    }
+    const authContext = ctx.authenticationContext;
+    const visibilityGroupId = waveEntity.visibility_group_id;
+    if (visibilityGroupId !== null) {
+      if (authContext) {
+        if (authContext.isUserFullyAuthenticated()) {
+          if (
+            !authContext.isAuthenticatedAsProxy() ||
+            authContext.hasProxyAction(ProfileProxyActionType.READ_WAVE)
+          ) {
+            const eligibleGroups =
+              await this.userGroupsService.getGroupsUserIsEligibleFor(
+                authContext.getActingAsId(),
+                ctx.timer
+              );
+            if (!eligibleGroups.includes(visibilityGroupId)) {
+              throw new NotFoundException(`Wave not found`);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private findDropLogRelatedProfiles(
+    logEntities: ProfileActivityLog[],
+    ctx: RequestContext
+  ): Promise<Record<string, ApiProfileMin>> {
+    const relatedProfileIds = logEntities
+      .map((it) => {
+        const ids = [it.profile_id];
+        if (it.proxy_id) {
+          ids.push(it.proxy_id);
+        }
+        if (
+          [
+            ProfileActivityLogType.DROP_CLAPPED,
+            ProfileActivityLogType.DROP_VOTE_EDIT
+          ].includes(it.type)
+        ) {
+          ids.push(it.additional_data_1!);
+        }
+        return ids;
+      })
+      .flat();
+    return this.profilesService.getProfileMinsByIds({
+      ids: relatedProfileIds,
+      authenticatedProfileId: ctx.authenticationContext?.getActingAsId(),
+      timer: ctx.timer
+    });
+  }
 }
 
 export const dropsService = new DropsApiService(
@@ -548,5 +649,6 @@ export const dropsService = new DropsApiService(
   dropsDb,
   userGroupsService,
   identitySubscriptionsDb,
-  clappingService
+  clappingService,
+  profilesApiService
 );
