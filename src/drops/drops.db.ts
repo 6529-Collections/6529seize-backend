@@ -49,6 +49,7 @@ import { DropRelationEntity } from '../entities/IDropRelation';
 import { ApiDropSearchStrategy } from '../api-serverless/src/generated/models/ApiDropSearchStrategy';
 import { DropVoterStateEntity } from '../entities/IDropVoterState';
 import { ProfileActivityLog } from '../entities/IProfileActivityLog';
+import { assertUnreachable } from '../helpers';
 
 const mysql = require('mysql');
 
@@ -1269,6 +1270,96 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->findDropLogs`);
     return results;
   }
+
+  async findVotersInfo(
+    params: DropVotersStatsParams,
+    ctx: RequestContext
+  ): Promise<DropVotersInfoFromDb[]> {
+    ctx.timer?.start(`${this.constructor.name}->findVotersInfo`);
+    let order_by = '';
+    switch (params.sort) {
+      case DropVotersStatsSort.ABSOLUTE: {
+        order_by = 'absolute_votes_summed';
+        break;
+      }
+      case DropVotersStatsSort.POSITIVE: {
+        order_by = 'positive_votes_summed';
+        break;
+      }
+      case DropVotersStatsSort.NEGATIVE:
+        order_by = 'negative_votes_summed';
+        break;
+      default: {
+        assertUnreachable(params.sort);
+      }
+    }
+    const sql = `
+    with voter_stats as (
+      select 
+          voter_id,
+          sum(votes) as votes_summed,
+          sum(case when votes > 0 then votes else 0 end) as positive_votes_summed,
+          sum(case when votes < 0 then votes else 0 end) as negative_votes_summed,
+          sum(abs(votes)) as absolute_votes_summed,
+          max(votes) as max_vote,
+          min(votes) as min_vote,
+          avg(votes) as average_vote,
+          count(*) as different_drops_voted
+      from ${DROP_VOTER_STATE_TABLE} where 
+        wave_id = :wave_id ${params.drop_id ? ` and drop_id = :drop_id ` : ``}
+        and votes <> 0
+        group by voter_id
+    ) select * from voter_stats 
+      order by ${order_by} ${
+      params.sort_direction
+    } limit :page_size offset :offset
+    `;
+    const sqlParams = {
+      ...params,
+      offset: params.page_size * (params.page - 1)
+    };
+    const result = await this.db.execute<DropVotersInfoFromDb>(sql, sqlParams, {
+      wrappedConnection: ctx.connection
+    });
+    ctx.timer?.stop(`${this.constructor.name}->findVotersInfo`);
+    return result;
+  }
+
+  async countVoters(
+    params: DropVotersStatsParams,
+    ctx: RequestContext
+  ): Promise<number> {
+    ctx.timer?.start(`${this.constructor.name}->findVotersInfo`);
+    const sql = `
+      select 
+          count(distinct voter_id) as cnt
+      from ${DROP_VOTER_STATE_TABLE} where 
+        wave_id = :wave_id ${params.drop_id ? ` and drop_id = :drop_id ` : ``}
+        and votes <> 0
+    `;
+    const sqlParams = {
+      ...params
+    };
+    const result = await this.db
+      .oneOrNull<{ cnt: number }>(sql, sqlParams, {
+        wrappedConnection: ctx.connection
+      })
+      .then((it) => it?.cnt ?? 0);
+    ctx.timer?.stop(`${this.constructor.name}->findVotersInfo`);
+    return result;
+  }
+}
+
+export interface DropVotersInfoFromDb {
+  readonly voter_id: string;
+  readonly votes_summed: number;
+  readonly positive_votes_summed: number;
+  readonly negative_votes_summed: number;
+  readonly absolute_votes_summed: number;
+  readonly max_vote: number;
+  readonly min_vote: number;
+  readonly average_vote: number;
+  readonly different_drops_voted: number;
 }
 
 export interface ProfileOverVoteAmountInWave extends TotalGivenVotesInWave {
@@ -1306,6 +1397,21 @@ export interface DropLogsQueryParams {
   readonly drop_id: string | null;
   readonly log_types: string[];
   readonly sort_direction: PageSortDirection;
+}
+
+export enum DropVotersStatsSort {
+  ABSOLUTE = 'ABSOLUTE',
+  POSITIVE = 'POSITIVE',
+  NEGATIVE = 'NEGATIVE'
+}
+
+export interface DropVotersStatsParams {
+  readonly wave_id: string;
+  readonly drop_id: string | null;
+  readonly page_size: number;
+  readonly page: number;
+  readonly sort_direction: PageSortDirection;
+  readonly sort: DropVotersStatsSort;
 }
 
 export const dropsDb = new DropsDb(dbSupplier, userGroupsService);

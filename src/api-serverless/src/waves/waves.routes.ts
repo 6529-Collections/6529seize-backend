@@ -53,11 +53,14 @@ import { PageSortDirection } from '../page-request';
 import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
 import {
   DropLogsQueryParams,
+  DropVotersStatsParams,
+  DropVotersStatsSort,
   LeaderboardParams,
   LeaderboardSort
 } from '../../../drops/drops.db';
 import { DROP_LOG_TYPES } from '../../../entities/IProfileActivityLog';
 import { ApiWaveLog } from '../generated/models/ApiWaveLog';
+import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
 
 const router = asyncRouter();
 
@@ -441,6 +444,47 @@ router.get(
         timer
       }
     );
+    res.send(result);
+  }
+);
+
+router.get(
+  '/:id/voters',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { id: string },
+      any,
+      any,
+      Omit<DropVotersStatsParams, 'wave_id'>,
+      any
+    >,
+    res: Response<ApiResponse<ApiWaveVotersPage>>
+  ) => {
+    const { id } = req.params;
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req);
+    const params: DropVotersStatsParams = {
+      wave_id: id,
+      ...getValidatedByJoiOrThrow(
+        req.query,
+        Joi.object<Omit<DropVotersStatsParams, 'wave_id'>>({
+          page_size: Joi.number().integer().min(1).max(100).default(50),
+          page: Joi.number().integer().min(1).default(1),
+          sort_direction: Joi.string()
+            .valid(...Object.values(PageSortDirection))
+            .default(PageSortDirection.DESC),
+          sort: Joi.string()
+            .valid(...Object.values(DropVotersStatsSort))
+            .default(DropVotersStatsSort.ABSOLUTE),
+          drop_id: Joi.string().optional().default(null)
+        })
+      )
+    };
+    const result = await dropsService.findVotersInfo(params, {
+      authenticationContext,
+      timer
+    });
     res.send(result);
   }
 );

@@ -2,6 +2,7 @@ import {
   DropLogsQueryParams,
   dropsDb,
   DropsDb,
+  DropVotersStatsParams,
   LeaderboardParams
 } from '../../../drops/drops.db';
 import { ConnectionWrapper } from '../../../sql-executor';
@@ -50,6 +51,8 @@ import {
   profilesApiService,
   ProfilesApiService
 } from '../profiles/profiles.api.service';
+import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
+import { ApiWaveVoter } from '../generated/models/ApiWaveVoter';
 
 export class DropsApiService {
   constructor(
@@ -562,7 +565,7 @@ export class DropsApiService {
     param: DropLogsQueryParams,
     ctx: RequestContext
   ): Promise<ApiWaveLog[]> {
-    await this.validateDropLogsViewingEligibility(param, ctx);
+    await this.assertViewingEligibilityForWave(param.wave_id, ctx);
     const logEntities = await this.dropsDb.findDropLogEntities(param, ctx);
     const relatedProfiles = await this.findDropLogRelatedProfiles(
       logEntities,
@@ -583,33 +586,25 @@ export class DropsApiService {
     }));
   }
 
-  private async validateDropLogsViewingEligibility(
-    param: DropLogsQueryParams,
+  private async assertViewingEligibilityForWave(
+    waveId: string,
     ctx: RequestContext
   ) {
-    const waveId = param.wave_id;
     const waveEntity = await wavesApiDb.findWaveById(waveId);
     if (!waveEntity) {
       throw new NotFoundException(`Wave not found`);
     }
-    const authContext = ctx.authenticationContext;
     const visibilityGroupId = waveEntity.visibility_group_id;
     if (visibilityGroupId !== null) {
-      if (authContext) {
-        if (authContext.isUserFullyAuthenticated()) {
-          if (
-            !authContext.isAuthenticatedAsProxy() ||
-            authContext.hasProxyAction(ProfileProxyActionType.READ_WAVE)
-          ) {
-            const eligibleGroups =
-              await this.userGroupsService.getGroupsUserIsEligibleFor(
-                authContext.getActingAsId(),
-                ctx.timer
-              );
-            if (!eligibleGroups.includes(visibilityGroupId)) {
-              throw new NotFoundException(`Wave not found`);
-            }
-          }
+      const authContext = ctx.authenticationContext;
+      if (authContext?.hasRightsTo(ProfileProxyActionType.READ_WAVE)) {
+        const eligibleGroups =
+          await this.userGroupsService.getGroupsUserIsEligibleFor(
+            authContext?.getActingAsId(),
+            ctx.timer
+          );
+        if (!eligibleGroups.includes(visibilityGroupId)) {
+          throw new NotFoundException(`Wave not found`);
         }
       }
     }
@@ -641,6 +636,39 @@ export class DropsApiService {
       authenticatedProfileId: ctx.authenticationContext?.getActingAsId(),
       timer: ctx.timer
     });
+  }
+
+  async findVotersInfo(
+    params: DropVotersStatsParams,
+    ctx: RequestContext
+  ): Promise<ApiWaveVotersPage> {
+    await this.assertViewingEligibilityForWave(params.wave_id, ctx);
+
+    const [data, totalCount] = await Promise.all([
+      this.dropsDb.findVotersInfo(params, ctx),
+      this.dropsDb.countVoters(params, ctx)
+    ]);
+    const voters = await this.profilesService.getProfileMinsByIds({
+      ids: data.map((it) => it.voter_id),
+      authenticatedProfileId: ctx.authenticationContext?.getActingAsId(),
+      timer: ctx.timer
+    });
+    return {
+      page: params.page,
+      count: totalCount,
+      next: totalCount > params.page_size * params.page,
+      data: data.map<ApiWaveVoter>((it) => ({
+        voter: voters[it.voter_id],
+        votes_summed: it.votes_summed,
+        positive_votes_summed: it.positive_votes_summed,
+        negative_votes_summed: it.negative_votes_summed,
+        absolute_votes_summed: it.absolute_votes_summed,
+        min_vote: it.min_vote,
+        max_vote: it.max_vote,
+        different_drops_voted: it.different_drops_voted,
+        average_vote: it.average_vote
+      }))
+    };
   }
 }
 

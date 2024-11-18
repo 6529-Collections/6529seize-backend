@@ -143,6 +143,8 @@ export * from '../models/ApiWaveSubscriptionActions';
 export * from '../models/ApiWaveSubscriptionTargetAction';
 export * from '../models/ApiWaveType';
 export * from '../models/ApiWaveVisibilityConfig';
+export * from '../models/ApiWaveVoter';
+export * from '../models/ApiWaveVotersPage';
 export * from '../models/ApiWaveVotingConfig';
 export * from '../models/ApiWavesOverviewType';
 
@@ -291,6 +293,8 @@ import { ApiWaveSubscriptionActions } from '../models/ApiWaveSubscriptionActions
 import { ApiWaveSubscriptionTargetAction } from '../models/ApiWaveSubscriptionTargetAction';
 import { ApiWaveType } from '../models/ApiWaveType';
 import { ApiWaveVisibilityConfig } from '../models/ApiWaveVisibilityConfig';
+import { ApiWaveVoter } from '../models/ApiWaveVoter';
+import { ApiWaveVotersPage } from '../models/ApiWaveVotersPage';
 import { ApiWaveVotingConfig        } from '../models/ApiWaveVotingConfig';
 import { ApiWavesOverviewType } from '../models/ApiWavesOverviewType';
 
@@ -460,6 +464,8 @@ let typeMap: {[index: string]: any} = {
     "ApiWaveScope": ApiWaveScope,
     "ApiWaveSubscriptionActions": ApiWaveSubscriptionActions,
     "ApiWaveVisibilityConfig": ApiWaveVisibilityConfig,
+    "ApiWaveVoter": ApiWaveVoter,
+    "ApiWaveVotersPage": ApiWaveVotersPage,
     "ApiWaveVotingConfig": ApiWaveVotingConfig,
 }
 
