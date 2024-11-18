@@ -1092,9 +1092,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                         from ${WAVES_TABLE}
                         where voting_credit_type = 'REP'
                           and (voting_period_start is null or voting_period_start < :now)
-                          and (voting_period_end is null or voting_period_end > :now)
-                          and (wave_period_start is null or wave_period_start < :now)
-                          and (wave_period_end is null or wave_period_end > :now))
+                          and (voting_period_end is null or voting_period_end > :now))
           select count(*) as cnt from open_rep_waves w
           join ${DROP_VOTER_STATE_TABLE} dvs on dvs.wave_id = w.id
           where dvs.voter_id = :profileId
@@ -1132,7 +1130,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                from given_rep_votes t
                                         join ${WAVES_TABLE} w on t.wave_id = w.id
                                where (w.voting_period_start is null or w.voting_period_start < :now) and (w.voting_period_end is null or w.voting_period_end > :now) and
-                                (w.wave_period_start is null or w.wave_period_start < :now) and (w.wave_period_start is null or w.wave_period_start > :now) and
                                 w.voting_credit_type = '${WaveCreditType.REP}'
                                  and t.total_given_votes > :credit_limit
                                     ${

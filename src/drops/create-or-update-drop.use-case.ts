@@ -328,16 +328,6 @@ export class CreateOrUpdateDropUseCase {
         );
       }
     }
-    const wavePeriodStart = Time.millis(wave.wave_period_start ?? 0);
-    const wavePeriodEnd = Time.millis(
-      wave.wave_period_end ?? Time.now().plusWeeks(1).toMillis()
-    );
-    if (
-      (!isDescriptionDrop && now.lt(wavePeriodStart)) ||
-      now.gt(wavePeriodEnd)
-    ) {
-      throw new ForbiddenException(`This wave is closed for now`);
-    }
     if (
       !isDescriptionDrop &&
       !wave.chat_enabled &&

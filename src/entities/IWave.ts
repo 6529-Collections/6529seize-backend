@@ -93,12 +93,6 @@ export class WaveEntity {
   @Column({ type: 'bigint', nullable: true })
   readonly time_lock_ms!: number | null;
 
-  @Column({ type: 'bigint', nullable: true })
-  readonly wave_period_start!: number | null;
-
-  @Column({ type: 'bigint', nullable: true })
-  readonly wave_period_end!: number | null;
-
   @Column({ type: 'json', nullable: false })
   readonly outcomes!: string;
 }
