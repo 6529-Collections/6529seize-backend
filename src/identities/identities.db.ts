@@ -6,6 +6,7 @@ import {
 import { IdentityEntity } from '../entities/IIdentity';
 import {
   ADDRESS_CONSOLIDATION_KEY,
+  CONSOLIDATED_WALLETS_TDH_TABLE,
   IDENTITIES_TABLE,
   PROFILES_TABLE
 } from '../constants';
@@ -13,6 +14,7 @@ import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
 import { randomUUID } from 'crypto';
 import { RequestContext } from '../request.context';
+import { UserGroupsService } from '../api-serverless/src/community-members/user-groups.service';
 
 const mysql = require('mysql');
 
@@ -342,6 +344,65 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         )
       )
     );
+  }
+
+  async searchIdentitiesWithDisplays(
+    param: { limit: number; handle: string },
+    base: {
+      sql: string;
+      params: Record<string, any>;
+    } | null,
+    ctx: RequestContext
+  ): Promise<(IdentityEntity & { display: string | null })[]> {
+    ctx.timer?.start(`${this.constructor.name}->searchIdentities`);
+    if (base === null) {
+      const results = await this.db.execute<
+        IdentityEntity & { display: string | null }
+      >(
+        `
+      select i.*, cwt.consolidation_display as display from ${IDENTITIES_TABLE} i
+       left join ${CONSOLIDATED_WALLETS_TDH_TABLE} cwt on i.consolidation_key = cwt.consolidation_key
+       where i.normalised_handle like :likeHandle
+       order by locate(:handle, i.normalised_handle) asc
+       limit :limit
+    `,
+        {
+          limit: param.limit,
+          likeHandle: `%${param.handle.toLowerCase()}%`,
+          handle: param.handle.toLowerCase()
+        },
+        {
+          wrappedConnection: ctx.connection
+        }
+      );
+      ctx.timer?.stop(`${this.constructor.name}->searchIdentities`);
+      return results;
+    } else {
+      const results = await this.db.execute<
+        IdentityEntity & { display: string | null }
+      >(
+        `
+      ${base.sql}
+      select i.*, cwt.consolidation_display as display from ${IDENTITIES_TABLE} i
+       join ${UserGroupsService.GENERATED_VIEW} ug on i.profile_id = ug.profile_id
+       left join ${CONSOLIDATED_WALLETS_TDH_TABLE} cwt on i.consolidation_key = cwt.consolidation_key
+       where i.normalised_handle like :likeHandle
+       order by locate(:handle, i.normalised_handle) asc
+       limit :limit
+    `,
+        {
+          ...base.params,
+          limit: param.limit,
+          likeHandle: `%${param.handle.toLowerCase()}%`,
+          handle: param.handle.toLowerCase()
+        },
+        {
+          wrappedConnection: ctx.connection
+        }
+      );
+      ctx.timer?.stop(`${this.constructor.name}->searchIdentities`);
+      return results;
+    }
   }
 }
 

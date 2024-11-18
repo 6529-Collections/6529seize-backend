@@ -6,7 +6,7 @@ import {
   CreateOrUpdateProfileCommand,
   ProfileAndConsolidations
 } from './profile.types';
-import { calculateLevel } from './profile-level';
+import { calculateLevel, getLevelFromScore } from './profile-level';
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import * as tdh_consolidation from '../tdhLoop/tdh_consolidation';
 import * as tdhs from '../tdhLoop/tdh';
@@ -65,6 +65,10 @@ import {
   dropVotingDb,
   DropVotingDb
 } from '../api-serverless/src/drops/drop-voting.db';
+import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
+import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
+import { wavesApiDb } from '../api-serverless/src/waves/waves.api.db';
+import { ProfileProxyActionType } from '../entities/IProfileProxyAction';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -1485,6 +1489,49 @@ export class ProfilesService {
 
   public async redeemRefreshToken(address: string, refreshToken: string) {
     return await this.profilesDb.redeemRefreshToken(address, refreshToken);
+  }
+
+  async searchIdentities(
+    param: { limit: number; handle: string; wave_id: string | null },
+    ctx: RequestContext
+  ): Promise<ApiIdentity[]> {
+    let context_group_id: string | null = null;
+    if (param.wave_id) {
+      const authenticationContext = ctx.authenticationContext;
+      const eligibleGroups = authenticationContext?.hasRightsTo(
+        ProfileProxyActionType.READ_WAVE
+      )
+        ? await userGroupsService.getGroupsUserIsEligibleFor(
+            authenticationContext?.authenticatedProfileId ?? null,
+            ctx.timer
+          )
+        : [];
+      const givenWave = await wavesApiDb
+        .findWavesByIds([param.wave_id], eligibleGroups, ctx.connection)
+        .then((it) => it.at(0) ?? null);
+      if (!givenWave) {
+        throw new NotFoundException(`Wave ${param.wave_id} not found`);
+      }
+      context_group_id = givenWave.visibility_group_id;
+    }
+    const base = await userGroupsService.getSqlAndParamsByGroupId(
+      context_group_id,
+      ctx
+    );
+    const identityEntities =
+      await this.identitiesDb.searchIdentitiesWithDisplays(param, base, ctx);
+    return identityEntities.map<ApiIdentity>((it) => ({
+      id: it.profile_id!,
+      handle: it.handle!,
+      normalised_handle: it.normalised_handle!,
+      pfp: it.pfp,
+      primary_wallet: it.primary_address,
+      rep: it.rep,
+      cic: it.cic,
+      level: getLevelFromScore(it.level_raw),
+      tdh: it.tdh,
+      display: it.display ?? it.primary_address
+    }));
   }
 }
 
