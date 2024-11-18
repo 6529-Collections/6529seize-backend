@@ -114,8 +114,6 @@ export class WavesMappers {
         createWaveRequest.wave.winning_thresholds?.max ?? null,
       max_winners: createWaveRequest.wave.max_winners ?? null,
       time_lock_ms: createWaveRequest.wave.time_lock_ms ?? null,
-      wave_period_start: createWaveRequest.wave.period?.min ?? null,
-      wave_period_end: createWaveRequest.wave.period?.max ?? null,
       outcomes: JSON.stringify(createWaveRequest.outcomes)
     };
   }
@@ -299,10 +297,6 @@ export class WavesMappers {
       },
       max_winners: waveEntity.max_winners,
       time_lock_ms: waveEntity.time_lock_ms,
-      period: {
-        min: waveEntity.wave_period_start,
-        max: waveEntity.wave_period_end
-      },
       admin_group: {
         group: curations[waveEntity.admin_group_id!] ?? null
       },

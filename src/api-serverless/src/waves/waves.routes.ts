@@ -570,7 +570,9 @@ const WaveChatSchema = Joi.object<ApiCreateNewWaveChatConfig>({
   enabled: Joi.boolean().optional().default(true)
 });
 
-const WaveConfigSchema = Joi.object<ApiWaveConfig>({
+const WaveConfigSchema = Joi.object<
+  ApiWaveConfig & { period?: ApiIntRange | null }
+>({
   type: Joi.string()
     .required()
     .allow(...Object.values(ApiWaveType)),
@@ -585,7 +587,7 @@ const WaveConfigSchema = Joi.object<ApiWaveConfig>({
     otherwise: Joi.valid(null)
   }),
   time_lock_ms: Joi.number().integer().required().allow(null).min(1),
-  period: IntRangeSchema.required().allow(null),
+  period: IntRangeSchema.optional(),
   admin_group: WaveScopeSchema.required()
 });
 

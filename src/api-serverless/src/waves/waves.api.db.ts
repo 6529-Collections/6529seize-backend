@@ -199,8 +199,6 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             winning_max_threshold,
             max_winners,
             time_lock_ms,
-            wave_period_start,
-            wave_period_end,
             outcomes${wave.serial_no !== null ? ', serial_no' : ''}
         )
     values
@@ -234,8 +232,6 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             :winning_max_threshold,
             :max_winners,
             :time_lock_ms,
-            :wave_period_start,
-            :wave_period_end,
             :outcomes${wave.serial_no !== null ? ', :serial_no' : ''}
         )
     `,
