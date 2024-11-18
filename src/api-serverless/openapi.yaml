@@ -2316,6 +2316,66 @@ paths:
                   $ref: "#/components/schemas/ApiWaveLog"
         "404":
           description: Wave not found
+  /waves/{id}/voters:
+    get:
+      tags:
+        - Waves
+      summary: Get info about waves voters (top voters etc)
+      operationId: getWaveVotersInfo
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: drop_id
+          in: query
+          description: If set then you"ll get stats for specific drop
+          required: false
+          schema:
+            type: string
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: number
+            format: int64
+            minimum: 0
+        - name: page_size
+          in: query
+          description: Default is 20
+          required: false
+          schema:
+            type: number
+            format: int64
+            minimum: 1
+            maximum: 100
+        - name: sort_direction
+          in: query
+          description: Default is ASC
+          required: false
+          schema:
+            type: string
+            enum:
+              - ASC
+              - DESC
+        - name: sort
+          in: query
+          description: Default is ABSOLUTE
+          required: false
+          schema:
+            type: string
+            enum:
+              - ABSOLUTE
+              - POSITIVE
+              - NEGATIVE
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiWaveVotersPage"
   /waves/{id}/subscriptions:
     post:
       tags:
@@ -5401,6 +5461,56 @@ components:
       properties:
         scope:
           $ref: "#/components/schemas/ApiWaveScope"
+    ApiWaveVoter:
+      type: object
+      required:
+        - voter
+        - votes_summed
+        - positive_votes_summed
+        - negative_votes_summed
+        - absolute_votes_summed
+        - min_vote
+        - max_vote
+        - different_drops_voted
+        - average_vote
+      properties:
+        voter:
+          $ref: "#/components/schemas/ApiProfileMin"
+        votes_summed:
+          type: integer
+          format: int64
+        positive_votes_summed:
+          type: integer
+          format: int64
+        negative_votes_summed:
+          type: number
+          format: int64
+        absolute_votes_summed:
+          type: number
+          format: int64
+        min_vote:
+          type: number
+          format: int64
+        max_vote:
+          type: number
+          format: int64
+        different_drops_voted:
+          type: number
+          format: int64
+        average_vote:
+          type: number
+          format: int64
+    ApiWaveVotersPage:
+      type: object
+      required:
+        - data
+      allOf:
+        - $ref: "#/components/schemas/ApiPageBase"
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiWaveVoter"
     ApiWaveVotingConfig:
       type: object
       required:

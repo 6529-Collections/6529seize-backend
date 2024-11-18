@@ -63,6 +63,13 @@ export class AuthenticationContext {
     return !!this.activeProxyActions[type];
   }
 
+  public hasRightsTo(type: ProfileProxyActionType): boolean {
+    return (
+      this.isUserFullyAuthenticated() &&
+      (!this.isAuthenticatedAsProxy() || !!this.activeProxyActions[type])
+    );
+  }
+
   static fromProfileId(contextProfileId: string) {
     return new AuthenticationContext({
       authenticatedWallet: null,
