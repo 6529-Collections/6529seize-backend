@@ -36,7 +36,7 @@ router.use('/:extraPath*?', async (req: Request, res: Response) => {
   }
 
   const isBatch = Array.isArray(req.body);
-  const requests = isBatch ? req.body : [req.body]; // Wrap single requests into an array for consistent processing
+  const requests: any = isBatch ? req.body : [req.body];
 
   const sendRequest = async (request: any) => {
     const body = JSON.stringify(request);
@@ -66,7 +66,7 @@ router.use('/:extraPath*?', async (req: Request, res: Response) => {
         data: body
       });
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
       console.error(
         'Error making request:',
         error.response?.data || error.message
@@ -78,7 +78,7 @@ router.use('/:extraPath*?', async (req: Request, res: Response) => {
   try {
     const results = await Promise.all(requests.map((req) => sendRequest(req)));
     res.status(200).json(isBatch ? results : results[0]);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error processing RPC request:', error.message);
     res.status(500).json({ error: 'Internal server error' });
   }
