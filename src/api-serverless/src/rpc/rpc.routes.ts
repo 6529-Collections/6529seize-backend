@@ -76,7 +76,9 @@ router.use('/:extraPath*?', async (req: Request, res: Response) => {
   };
 
   try {
-    const results = await Promise.all(requests.map((req) => sendRequest(req)));
+    const results = await Promise.all(
+      requests.map((req: any) => sendRequest(req))
+    );
     res.status(200).json(isBatch ? results : results[0]);
   } catch (error: any) {
     console.error('Error processing RPC request:', error.message);
