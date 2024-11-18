@@ -1,8 +1,12 @@
 import { asyncRouter } from '../async.router';
-import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
+import {
+  getAuthenticationContext,
+  maybeAuthenticatedUser,
+  needsAuthenticatedUser
+} from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
-import { ForbiddenException } from '../../../exceptions';
+import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { ApiIdentitySubscriptionActions } from '../generated/models/ApiIdentitySubscriptionActions';
 import * as Joi from 'joi';
@@ -10,8 +14,43 @@ import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIden
 import { identitiesService } from './identities.service';
 import { profilesService } from '../../../profiles/profiles.service';
 import { profilesApiService } from '../profiles/profiles.api.service';
+import { ApiIdentity } from '../generated/models/ApiIdentity';
+import { Timer } from '../../../time';
+import { parseIntOrNull } from '../../../helpers';
 
 const router = asyncRouter();
+
+router.get(
+  `/`,
+  maybeAuthenticatedUser(),
+  async function (
+    req: Request<
+      any,
+      any,
+      any,
+      { handle: string; limit?: string; wave_id?: string },
+      any
+    >,
+    res: Response<ApiResponse<ApiIdentity[]>>
+  ) {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req);
+    const handle = (req.query.handle ?? '').trim();
+    if (handle.length < 3) {
+      throw new BadRequestException(`Handle must be at least 3 characters.`);
+    }
+    const limit = parseIntOrNull(req.query.limit) ?? 20;
+    if (limit < 1 || limit > 100) {
+      throw new BadRequestException(`Limit must be between 1 and 100.`);
+    }
+    const wave_id = req.query.wave_id ?? null;
+    const profiles = await profilesService.searchIdentities(
+      { handle, limit, wave_id },
+      { authenticationContext, timer }
+    );
+    res.status(200).send(profiles);
+  }
+);
 
 router.get(
   '/:id/subscriptions',
