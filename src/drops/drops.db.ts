@@ -999,7 +999,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                       ifnull(r.vote, 0)                      as vote,
                       ifnull(r.last_increased, d.created_at) as timestamp
                from drops d
-                        left join drop_ranks r ON r.drop_id = d.id
+                        left join ${DROP_RANK_TABLE} r ON r.drop_id = d.id
                where d.wave_id = :wave_id
                  and d.drop_type = '${DropType.PARTICIPATORY}'),
       dranks as (
@@ -1011,13 +1011,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           )
       select d.* from dranks r join drops d on d.id = r.drop_id ${
         params.author_identity ? ` where d.author_id = :author_identity ` : ``
-      } order by ${
-      params.sort === LeaderboardSort.RANK ? `r.rnk` : 'd.created_at'
-    } ${params.sort_direction} limit :page_size offset :offset
+      } 
+      ${
+        params.voter_identity
+          ? ` join ${DROP_VOTER_STATE_TABLE} v on v.drop_id = d.id and v.voter_id = :voter_identity `
+          : ``
+      }
+    order by ${params.sort === LeaderboardSort.RANK ? `r.rnk` : 'd.created_at'}
+    ${params.sort_direction} limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
       author_identity: params.author_identity,
+      voter_identity: params.voter_identity,
       page_size: params.page_size,
       offset: params.page_size * (params.page - 1)
     };
@@ -1035,12 +1041,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(`${this.constructor.name}->countParticipatoryDrops`);
     const count = await this.db
       .oneOrNull<{ cnt: number }>(
-        `select count(*) as cnt from ${DROPS_TABLE} where wave_id = :wave_id and drop_type = :drop_type ${
-          params.author_identity ? ` and author_id = :author_identity ` : ``
-        } `,
+        `select count(*) as cnt from ${DROPS_TABLE} d
+         ${
+           params.voter_identity
+             ? ` join ${DROP_VOTER_STATE_TABLE} v on v.drop_id = d.id and v.voter_id = :voter_identity `
+             : ``
+         }
+         where d.wave_id = :wave_id and d.drop_type = :drop_type ${
+           params.author_identity ? ` and d.author_id = :author_identity ` : ``
+         } `,
         {
           wave_id: params.wave_id,
           author_identity: params.author_identity,
+          voter_identity: params.voter_identity,
           drop_type: DropType.PARTICIPATORY
         },
         { wrappedConnection: ctx.connection }
@@ -1385,6 +1398,7 @@ export interface LeaderboardParams {
   readonly sort_direction: PageSortDirection;
   readonly sort: LeaderboardSort;
   readonly author_identity: string | null;
+  readonly voter_identity: string | null;
 }
 
 export interface DropLogsQueryParams {
