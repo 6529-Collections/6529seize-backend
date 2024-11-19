@@ -6,6 +6,7 @@ import { RequestContext } from '../../../request.context';
 import {
   DROP_RANK_TABLE,
   DROP_VOTER_STATE_TABLE,
+  DROPS_TABLE,
   DROPS_VOTES_CREDIT_SPENDINGS_TABLE
 } from '../../../constants';
 import { DropVoterStateEntity } from '../../../entities/IDropVoterState';
@@ -388,11 +389,11 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     const results = await this.db.execute<{ drop_id: string; rnk: number }>(
       `
       SELECT drop_id, rnk
-      FROM (SELECT drop_id,
-                   vote,
-                   last_increased,
-                   RANK() OVER (PARTITION BY wave_id ORDER BY vote DESC, last_increased desc) AS rnk
-            FROM ${DROP_RANK_TABLE}) drop_ranks
+      FROM (select d.id as drop_id,
+                   rank() over (partition by d.wave_id order by ifnull(r.vote, 0) desc , ifnull(r.last_increased, d.created_at) desc) as rnk
+            from ${DROPS_TABLE} d
+                     left join ${DROP_RANK_TABLE} r on r.drop_id = d.id
+            where d.drop_type = 'PARTICIPATORY') drop_ranks
       WHERE drop_id in (:dropIds)
     `,
       { dropIds },

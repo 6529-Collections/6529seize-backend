@@ -395,21 +395,6 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
     return result;
   }
 
-  async findWaveVisibilityGroupByWaveId(
-    waveId: string,
-    connection: ConnectionWrapper<any>
-  ): Promise<string | null> {
-    return this.db
-      .oneOrNull<{
-        visibility_group_id: string;
-      }>(
-        `select w.visibility_group_id from ${WAVES_TABLE} w where w.id = :waveId`,
-        { waveId },
-        { wrappedConnection: connection }
-      )
-      .then((it) => it?.visibility_group_id ?? null);
-  }
-
   async findLatestWaves({
     only_waves_followed_by_authenticated_user,
     authenticated_user_id,
