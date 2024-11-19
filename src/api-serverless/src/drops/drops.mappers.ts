@@ -138,7 +138,8 @@ export class DropsMappers {
       metadata: request.metadata.map((it) => ({
         data_key: it.data_key,
         data_value: it.data_value
-      }))
+      })),
+      mentions_all: request.mentions_all ?? false
     };
   }
 

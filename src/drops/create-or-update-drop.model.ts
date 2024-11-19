@@ -14,6 +14,7 @@ export interface CreateOrUpdateDropModel {
   readonly proxy_identity?: string;
   readonly proxy_id?: string;
   readonly drop_type: DropType;
+  readonly mentions_all: boolean;
 }
 
 export interface CreateOrUpdateDropPartModel {

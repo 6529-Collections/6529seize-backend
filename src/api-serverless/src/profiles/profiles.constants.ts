@@ -108,6 +108,7 @@ export const RESERVED_HANDLES = [
   'minting',
   'tool',
   'tools',
+  'all',
   'allowlist',
   'allowlists',
   'about-us',

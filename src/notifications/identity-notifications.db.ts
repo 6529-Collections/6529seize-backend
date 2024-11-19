@@ -8,8 +8,11 @@ import { IDENTITY_NOTIFICATIONS_TABLE } from '../constants';
 import { Time } from '../time';
 import { parseIntOrNull } from '../helpers';
 import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
+import { Logger } from '../logging';
 
 export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
+  private readonly logger = Logger.get(IdentityNotificationsDb.name);
+
   private isNotifierActivated() {
     return process.env.USER_NOTIFIER_ACTIVATED === 'true';
   }
@@ -60,7 +63,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       if (notificationId) {
         await sendIdentityPushNotification(notificationId);
       } else {
-        console.error('No notification id returned from insert');
+        this.logger.error('No notification id returned from insert');
       }
     }
   }
