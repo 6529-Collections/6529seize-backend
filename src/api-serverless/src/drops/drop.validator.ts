@@ -70,7 +70,8 @@ const baseDropFieldsValidators = {
     .items(MentionedUserSchema)
     .default([])
     .allow(null),
-  metadata: Joi.array().optional().items(MetadataSchema).default([])
+  metadata: Joi.array().optional().items(MetadataSchema).default([]),
+  mentions_all: Joi.boolean().optional()
 };
 
 export const NewDropSchema: Joi.ObjectSchema<ApiCreateDropRequest> = Joi.object(

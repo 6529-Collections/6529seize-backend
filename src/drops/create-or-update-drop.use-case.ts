@@ -28,6 +28,7 @@ import {
 } from '../entities/IWave';
 import {
   assertUnreachable,
+  distinct,
   parseIntOrNull,
   parseNumberOrNull
 } from '../helpers';
@@ -727,13 +728,14 @@ export class CreateOrUpdateDropUseCase {
     { timer, connection }: { connection: ConnectionWrapper<any>; timer: Timer }
   ) {
     timer.start(`${CreateOrUpdateDropUseCase.name}->insertMentionsInDrop`);
+
     const mentionedHandles = model.mentioned_users.map((it) => it.handle);
-    const mentionedHandledWithIds = Object.entries(
+    const mentionedHandlesWithIds = Object.entries(
       await this.profilesDb.getIdsByHandles(mentionedHandles, connection)
     );
     const dropId = model.drop_id!;
     const waveId = model.wave_id;
-    const mentionEntities = mentionedHandledWithIds.map<
+    const mentionEntities = mentionedHandlesWithIds.map<
       Omit<DropMentionEntity, 'id'>
     >(([handle, id]) => ({
       drop_id: dropId,
@@ -741,11 +743,26 @@ export class CreateOrUpdateDropUseCase {
       handle_in_content: handle,
       wave_id: waveId
     }));
+    let mentionedUsersIds = mentionEntities.map(
+      (it) => it.mentioned_profile_id
+    );
+    if (model.mentions_all) {
+      const followerIds =
+        await this.identitySubscriptionsDb.findWaveSubscribers(
+          wave.id,
+          connection
+        );
+      mentionedUsersIds = distinct(
+        [...mentionedUsersIds, ...followerIds].filter(
+          (it) => it !== model.author_id
+        )
+      );
+    }
     await Promise.all([
-      ...mentionEntities.map((mentionEntity) =>
+      ...mentionedUsersIds.map((mentionedUserId) =>
         this.userNotifier.notifyOfIdentityMention(
           {
-            mentioned_identity_id: mentionEntity.mentioned_profile_id,
+            mentioned_identity_id: mentionedUserId,
             drop_id: dropId,
             mentioner_identity_id: model.author_identity,
             wave_id: waveId
