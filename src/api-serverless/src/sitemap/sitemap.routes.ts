@@ -1,4 +1,4 @@
-import { ApiResponse } from 'src/api-response';
+import { ApiResponse } from '../api-response';
 import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
 import {
