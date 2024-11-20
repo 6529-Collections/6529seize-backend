@@ -1,4 +1,4 @@
-import { ApiResponse } from 'src/api-response';
+import { ApiResponse } from '../api-response';
 import { asyncRouter } from '../async.router';
 import { Request, Response } from 'express';
 import {
@@ -9,7 +9,7 @@ import {
   NFTS_TABLE
 } from '../../../constants';
 import { fetchPaginated } from '../../../db-api';
-import { returnPaginatedResult } from 'src/api-helpers';
+import { returnPaginatedResult } from '../api-helpers';
 import {
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_TOKENS_TABLE
