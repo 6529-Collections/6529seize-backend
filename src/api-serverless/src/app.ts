@@ -93,6 +93,7 @@ import { ApiArtistNameItem } from './generated/models/ApiArtistNameItem';
 import { ApiTransactionPage } from './generated/models/ApiTransactionPage';
 import { initRedis, redisCached } from '../../redis';
 import rpcRoutes from './rpc/rpc.routes';
+import sitemapRoutes from './sitemap/sitemap.routes';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -1017,6 +1018,7 @@ loadApi().then(() => {
   rootRouter.use(BASE_PATH, apiRouter);
   rootRouter.use(`/oracle`, oracleRoutes);
   rootRouter.use(`/rpc`, rpcRoutes);
+  rootRouter.use(`/sitemap`, sitemapRoutes);
   app.use(rootRouter);
 
   app.use(customErrorMiddleware());
