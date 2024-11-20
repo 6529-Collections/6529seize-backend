@@ -9,7 +9,7 @@ import {
   NFTS_TABLE
 } from '../../../constants';
 import { fetchPaginated } from '../../../db-api';
-import { returnPaginatedResult } from 'src/api-helpers';
+import { returnPaginatedResult } from '../api-helpers';
 import {
   NEXTGEN_COLLECTIONS_TABLE,
   NEXTGEN_TOKENS_TABLE
