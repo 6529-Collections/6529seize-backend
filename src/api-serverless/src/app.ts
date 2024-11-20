@@ -619,6 +619,10 @@ loadApi().then(() => {
   apiRouter.get(`/memes_latest`, function (req: any, res: any) {
     db.fetchMemesLatest().then((result) => {
       result.metadata = JSON.parse(result.metadata);
+      result.metadata.animation_details =
+        typeof result.metadata.animation_details === 'string'
+          ? JSON.parse(result.metadata.animation_details)
+          : result.metadata.animation_details;
       return returnJsonResult(result, req, res);
     });
   });
