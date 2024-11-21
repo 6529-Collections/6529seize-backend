@@ -15,8 +15,8 @@ export const NEXTGEN_ALLOWLIST_COLLECTIONS_TABLE =
 export const NEXTGEN_BURN_COLLECTIONS_TABLE = 'nextgen_burn_collection';
 export const NEXTGEN_TOKENS_TDH_TABLE = 'nextgen_tokens_tdh';
 
-export const GENERATOR_BASE_PATH = 'https://generator.seize.io';
-export const NEXTGEN_BUCKET = 'media.generator.seize.io';
+export const GENERATOR_BASE_PATH = 'https://generator.6529.io';
+export const NEXTGEN_BUCKET = 'media.generator.6529.io';
 export const NEXTGEN_CF_BASE_PATH = `https://${NEXTGEN_BUCKET}`;
 export const NEXTGEN_BUCKET_AWS_REGION = 'us-east-1';
 export const CLOUDFRONT_DISTRIBUTION = 'E1RI37JRN0ZK6J';
