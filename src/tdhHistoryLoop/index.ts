@@ -66,7 +66,7 @@ async function fetchUploads(date: string): Promise<
   }[]
 > {
   const uploads = await fetch(
-    `https://api.seize.io/api/consolidated_uploads?date=${date}&page_size=5`
+    `https://api.6529.io/api/consolidated_uploads?date=${date}&page_size=5`
   );
   const json = await uploads.json();
   return json.data;
