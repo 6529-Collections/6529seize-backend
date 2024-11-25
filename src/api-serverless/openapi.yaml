@@ -2244,6 +2244,18 @@ paths:
           required: true
           schema:
             type: string
+        - name: voter_identity
+          in: query
+          description: Filter drops where given identity has voted
+          required: false
+          schema:
+            type: string
+        - name: author_identity
+          in: query
+          description: Filter drops by given author
+          required: false
+          schema:
+            type: string
         - name: page_size
           in: query
           description: Default is 50
@@ -2279,12 +2291,6 @@ paths:
             enum:
               - RANK
               - CREATION_TIME
-        - name: author_identity
-          in: query
-          description: Identity of author to filter by
-          required: false
-          schema:
-            type: string
       responses:
         "200":
           description: successful operation
