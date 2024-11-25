@@ -264,9 +264,10 @@ async function execSQLWithParams<T>(
       const queryTook = timer.diffFromNow();
       if (queryTook.gt(Time.seconds(1))) {
         logger.warn(
-          `SQL query took ${queryTook.toMillis()} ms to execute: ${sql}${
-            params ? ` with params ${JSON.stringify(params)}` : ''
-          }`
+          `SQL query took ${queryTook.toMillis()} ms to execute: ${sql.replace(
+            '\n',
+            ' '
+          )}${params ? ` with params ${JSON.stringify(params)}` : ''}`
         );
       }
       if (!externallyGivenConnection) {
@@ -274,7 +275,7 @@ async function execSQLWithParams<T>(
       }
       if (err) {
         logger.error(
-          `Error "${err}" executing SQL query ${sql}${
+          `Error "${err}" executing SQL query ${sql.replace('\n', ' ')}${
             params ? ` with params ${JSON.stringify(params)}` : ''
           }\n`
         );
