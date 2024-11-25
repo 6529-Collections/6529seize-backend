@@ -94,6 +94,9 @@ export class EventsDb extends LazyDbAccessCompatibleService {
   }
 
   async insertBulk(events: NewBulkEvent[], connection: ConnectionWrapper<any>) {
+    if (!events.length) {
+      return;
+    }
     const sql = `
         insert into ${EVENTS_TABLE} (
             type,
