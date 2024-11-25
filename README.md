@@ -118,7 +118,7 @@ The API is also configured to run as an AWS lambda and can be built and deployed
 
 ## 3. Admin Panel (Optional)
 
-Currently Seize.io uses an Admin Panel to manage:
+Currently 6529.io uses an Admin Panel to manage:
 
 - distribution lists and presentations
 - team members

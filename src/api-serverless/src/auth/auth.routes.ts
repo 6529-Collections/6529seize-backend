@@ -44,11 +44,11 @@ router.get(
       : `
 Are you ready to Seize The Memes of Production?
 
-Please sign to confirm ownership of this address to allow use of the social features of Seize.io.
+Please sign to confirm ownership of this address to allow use of the social features of 6529.io.
 
 The signature does not generate a blockchain transaction, cost gas, or give any token approvals. 
 
-Your use of the site is subject to the TOS (https://www.seize.io/tos) and Privacy (https://seize.io/privacy) policies.
+Your use of the site is subject to the TOS (https://www.6529.io/tos) and Privacy (https://6529.io/privacy) policies.
 
 Wallet Address That You Are Verifying
 ${signerAddress}
