@@ -195,7 +195,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
           { wrappedConnection: connectionHolder.connection }
         );
         await this.db.execute(
-          `update ${PROFILE_LATEST_LOG_TABLE} set latest_activity = NOW() where profile_id = :new_profile_id`,
+          `update ${PROFILE_LATEST_LOG_TABLE} set latest_activity = NOW() where profile_id = :newSourceId`,
           param,
           { wrappedConnection: connectionHolder.connection }
         );
