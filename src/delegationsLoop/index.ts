@@ -26,6 +26,7 @@ import {
   ConsolidatedTDHMemes,
   NftTDH,
   TDH,
+  TDHBlock,
   TDHMemes
 } from '../entities/ITDH';
 import { Profile } from '../entities/IProfile';
@@ -100,7 +101,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         ConsolidatedAggregatedActivity,
         AggregatedActivityMemes,
         ConsolidatedAggregatedActivityMemes,
-        NftTDH
+        NftTDH,
+        TDHBlock
       ]
     }
   );

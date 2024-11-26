@@ -40,7 +40,6 @@ import { DropClapperStateEntity } from '../entities/IDropClapperState';
 import { DropVoterStateEntity } from '../entities/IDropVoterState';
 import { DropRankEntity } from '../entities/IDropRank';
 import { RefreshToken } from '../entities/IRefreshToken';
-import { TDHBlock } from '../entities/ITDH';
 
 const DBMigrate = require('db-migrate');
 
@@ -86,8 +85,7 @@ const MANAGED_ENTITIES = [
   DropClapperStateEntity,
   DropVoterStateEntity,
   DropRankEntity,
-  RefreshToken,
-  TDHBlock
+  RefreshToken
 ];
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {

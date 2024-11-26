@@ -5,6 +5,7 @@ import {
   ConsolidatedTDHMemes,
   NftTDH,
   TDH,
+  TDHBlock,
   TDHMemes
 } from '../entities/ITDH';
 import { Logger } from '../logging';
@@ -61,7 +62,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         AggregatedActivityMemes,
         ConsolidatedAggregatedActivityMemes,
         NftTDH,
-        MemesSeason
+        MemesSeason,
+        TDHBlock
       ]
     }
   );
