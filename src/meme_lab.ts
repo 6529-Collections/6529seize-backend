@@ -387,7 +387,8 @@ export async function memeLabExtendedData() {
       museum_holdings_rank: -1,
       hodlers: tokenWallets.length,
       percent_unique: tokenWallets.length / edition_size,
-      percent_unique_cleaned: tokenWallets.length / edition_size_cleaned,
+      percent_unique_cleaned:
+        (tokenWallets.length - museum_holdings) / edition_size_cleaned,
       edition_size_rank: -1,
       edition_size_cleaned_rank: -1,
       hodlers_rank: -1,
