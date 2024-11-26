@@ -447,7 +447,7 @@ export class ProfilesService {
       `${this.constructor.name}->createProfilesAndIdentitiesForThoseWhoAreMissingAndGetProfileIdsByAddresses`
     );
     let allIdentitiesAndProfiles =
-      await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+      await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
         addresses,
         ctx.connection!
       );
@@ -473,12 +473,9 @@ export class ProfilesService {
       })
     );
     if (newIdentities.length) {
-      await this.identitiesDb.bulkInsertIdentities(
-        newIdentities,
-        ctx.connection!
-      );
+      await identitiesDb.bulkInsertIdentities(newIdentities, ctx.connection!);
       allIdentitiesAndProfiles =
-        await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+        await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
           addresses,
           ctx.connection!
         );
@@ -550,12 +547,12 @@ export class ProfilesService {
           ctx
         )
       ]);
-      await this.identitiesDb.updateIdentityProfilesOfIds(
+      await identitiesDb.updateIdentityProfilesOfIds(
         newProfileEntities.map((it) => it.external_id),
         ctx
       );
       allIdentitiesAndProfiles =
-        await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+        await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
           addresses,
           ctx.connection!
         );
@@ -586,7 +583,7 @@ export class ProfilesService {
     connection: ConnectionWrapper<any>
   ) {
     const identityResponse =
-      await this.identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
+      await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
         [creator_or_updater_wallet],
         connection
       );
@@ -594,7 +591,7 @@ export class ProfilesService {
       identityResponse[creator_or_updater_wallet];
     if (!creatorOrUpdatorIdentityResponse) {
       const id = randomUUID();
-      await this.identitiesDb.insertIdentity(
+      await identitiesDb.insertIdentity(
         {
           consolidation_key: creator_or_updater_wallet,
           primary_address: creator_or_updater_wallet,
@@ -613,7 +610,7 @@ export class ProfilesService {
         },
         connection
       );
-      creatorOrUpdatorIdentityResponse = await this.identitiesDb
+      creatorOrUpdatorIdentityResponse = await identitiesDb
         .getEverythingRelatedToIdentitiesByAddresses(
           [creator_or_updater_wallet],
           connection
@@ -694,7 +691,7 @@ export class ProfilesService {
         connectionHolder: connection
       });
     }
-    await this.identitiesDb.updateIdentityProfile(
+    await identitiesDb.updateIdentityProfile(
       creatorOrUpdatorIdentityResponse.identity.consolidation_key,
       {
         profile_id: identityId,
@@ -724,7 +721,7 @@ export class ProfilesService {
     },
     connectionHolder: ConnectionWrapper<any>
   ) {
-    const targetIdentity = await this.identitiesDb.getIdentityByProfileId(
+    const targetIdentity = await identitiesDb.getIdentityByProfileId(
       target,
       connectionHolder
     );
@@ -1518,8 +1515,11 @@ export class ProfilesService {
       context_group_id,
       ctx
     );
-    const identityEntities =
-      await this.identitiesDb.searchIdentitiesWithDisplays(param, base, ctx);
+    const identityEntities = await identitiesDb.searchIdentitiesWithDisplays(
+      param,
+      base,
+      ctx
+    );
     return identityEntities.map<ApiIdentity>((it) => ({
       id: it.profile_id!,
       handle: it.handle!,
