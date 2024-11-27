@@ -61,6 +61,7 @@ import {
 import { DROP_LOG_TYPES } from '../../../entities/IProfileActivityLog';
 import { ApiWaveLog } from '../generated/models/ApiWaveLog';
 import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
+import { ApiWaveOutcomeDistributionItem } from '../generated/models/ApiWaveOutcomeDistributionItem';
 
 const router = asyncRouter();
 
@@ -599,6 +600,12 @@ const WaveConfigSchema = Joi.object<
   admin_group: WaveScopeSchema.required()
 });
 
+const WaveOutcomeDistributionItemSchema =
+  Joi.object<ApiWaveOutcomeDistributionItem>({
+    amount: Joi.number().integer().optional().min(0).allow(null),
+    description: Joi.string().optional().min(1).max(500).allow(null)
+  });
+
 const WaveOutcomeSchema = Joi.object<ApiWaveOutcome>({
   type: Joi.string()
     .required()
@@ -635,13 +642,10 @@ const WaveOutcomeSchema = Joi.object<ApiWaveOutcome>({
     then: Joi.number().integer().required().min(1),
     otherwise: Joi.optional().valid(null)
   }),
-  distribution: Joi.when('subtype', {
-    is: ApiWaveOutcomeSubType.CreditDistribution,
-    then: Joi.array()
-      .optional()
-      .items(Joi.number().integer().required().min(0)),
-    otherwise: Joi.optional().valid(null)
-  })
+  distribution: Joi.array()
+    .items(WaveOutcomeDistributionItemSchema)
+    .optional()
+    .default([])
 });
 
 const waveSchemaBaseValidations = {

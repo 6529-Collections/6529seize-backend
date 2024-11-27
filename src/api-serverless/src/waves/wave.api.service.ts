@@ -273,13 +273,38 @@ export class WaveApiService {
         }
         const non100PercentDistributions = creditDistributionOutcomes.filter(
           (outcome) =>
-            outcome.distribution?.reduce((acc, it) => acc + it, 0) !== 100
+            outcome.distribution?.reduce(
+              (acc, it) => acc + (it.amount ?? 0),
+              0
+            ) !== outcome.amount ?? 0
         );
         if (non100PercentDistributions.length) {
           throw new BadRequestException(
-            `There are ${non100PercentDistributions.length} credit distribution outcomes where the distribution does not add up to 100%`
+            `There are ${non100PercentDistributions.length} credit distribution outcomes where the distribution does not add up to total amount`
           );
         }
+        const manualOutcomes = createWave.outcomes.filter(
+          (it) => it.type === ApiWaveOutcomeType.Manual
+        );
+        if (manualOutcomes.length) {
+          for (const manualOutcome of manualOutcomes) {
+            if (!manualOutcome.distribution?.length) {
+              throw new BadRequestException(
+                `Outcome "${manualOutcome.description}" is missing described distribution`
+              );
+            }
+            if (
+              manualOutcome.distribution?.find(
+                (it) => !it.description?.trim()?.length
+              )
+            ) {
+              throw new BadRequestException(
+                `Outcome "${manualOutcome.description}" has at least one distribution item with missing description`
+              );
+            }
+          }
+        }
+
         break;
       }
       case ApiWaveType.Chat: {
