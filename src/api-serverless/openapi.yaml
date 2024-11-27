@@ -5408,7 +5408,17 @@ components:
         distribution:
           type: array
           items:
-            type: number
+            $ref: "#/components/schemas/ApiWaveOutcomeDistributionItem"
+    ApiWaveOutcomeDistributionItem:
+      type: object
+      properties:
+        amount:
+          type: number
+          format: int64
+          nullable: true
+        description:
+          type: string
+          nullable: true
     ApiWaveOutcomeCredit:
       type: string
       enum:
