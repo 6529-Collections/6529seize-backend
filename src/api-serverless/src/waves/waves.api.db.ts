@@ -366,7 +366,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ranked_contributors as (select wave_id,
                                     contributor_pfp,
                                     primary_address,
-                                    row_number() over (partition by primary_address order by level_raw desc) as rn
+                                    row_number() over (partition by wave_id, primary_address order by level_raw desc) as rn
                             from contributors)
 select wave_id, contributor_pfp, primary_address as contributor_identity from ranked_contributors where rn <= 5`,
         {
