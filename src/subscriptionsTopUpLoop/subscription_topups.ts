@@ -38,7 +38,7 @@ export async function discoverTopUps(reset?: boolean) {
     `[NETWORK: ${network}] : [FROM BLOCK ${fromBlock}] : [TO BLOCK ${toBlock}]`
   );
 
-  const chunkSize = 250;
+  const chunkSize = 150;
   let currentFromBlock = fromBlock;
 
   while (currentFromBlock <= toBlock) {
