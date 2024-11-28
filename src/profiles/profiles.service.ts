@@ -69,6 +69,7 @@ import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity'
 import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
 import { wavesApiDb } from '../api-serverless/src/waves/waves.api.db';
 import { ProfileProxyActionType } from '../entities/IProfileProxyAction';
+import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -749,6 +750,11 @@ export class ProfilesService {
         await this.mergeWaves(sourceIdentity, target, connectionHolder);
         await this.mergeDrops(sourceIdentity, target, connectionHolder);
         await this.mergeNotifications(sourceIdentity, target, connectionHolder);
+        await this.mergeIdentitySubscriptions(
+          sourceIdentity,
+          target,
+          connectionHolder
+        );
         await this.mergeClappingStuff(sourceIdentity, target, connectionHolder);
         await this.mergeVotingStuff(sourceIdentity, target, connectionHolder);
         const targetProfile = await this.profilesDb.getProfileById(
@@ -1452,6 +1458,18 @@ export class ProfilesService {
     connectionHolder: ConnectionWrapper<any>
   ) {
     await this.notificationsDb.updateIdentityIdsInNotifications(
+      sourceIdentity,
+      target,
+      connectionHolder
+    );
+  }
+
+  private async mergeIdentitySubscriptions(
+    sourceIdentity: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await identitySubscriptionsDb.updateIdentityIdsInSubscriptions(
       sourceIdentity,
       target,
       connectionHolder
