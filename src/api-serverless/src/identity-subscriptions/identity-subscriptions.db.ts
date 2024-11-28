@@ -287,6 +287,27 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       )
       .then((it) => it.map((it) => it.subscriber_id));
   }
+
+  async updateIdentityIdsInSubscriptions(
+    sourceIdentity: string,
+    target: string,
+    connection: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `
+      update ${IDENTITY_SUBSCRIPTIONS_TABLE} set subscriber_id = :target where subscriber_id = :sourceIdentity
+    `,
+      { sourceIdentity, target },
+      { wrappedConnection: connection }
+    );
+    await this.db.execute(
+      `
+      update ${IDENTITY_SUBSCRIPTIONS_TABLE} set target_id = :target where target_id = :sourceIdentity and target_type = '${ActivityEventTargetType.IDENTITY}'
+    `,
+      { sourceIdentity, target },
+      { wrappedConnection: connection }
+    );
+  }
 }
 
 export const identitySubscriptionsDb = new IdentitySubscriptionsDb(dbSupplier);
