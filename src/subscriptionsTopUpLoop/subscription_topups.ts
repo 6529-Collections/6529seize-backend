@@ -38,15 +38,28 @@ export async function discoverTopUps(reset?: boolean) {
     `[NETWORK: ${network}] : [FROM BLOCK ${fromBlock}] : [TO BLOCK ${toBlock}]`
   );
 
-  const subscriptions = await getAllSubscriptionTopUps(
-    alchemy,
-    fromBlock,
-    toBlock
-  );
+  const chunkSize = 150;
+  let currentFromBlock = fromBlock;
 
-  logger.info(
-    `[FROM BLOCK ${fromBlock}] [FOUND ${subscriptions.length} NEW TOP UPS]`
-  );
+  while (currentFromBlock <= toBlock) {
+    const currentToBlock = Math.min(currentFromBlock + chunkSize - 1, toBlock);
 
-  await persistTopUps(subscriptions);
+    logger.info(
+      `[NETWORK: ${network}] : [FROM BLOCK ${currentFromBlock}] : [TO BLOCK ${currentToBlock}]`
+    );
+
+    const subscriptions = await getAllSubscriptionTopUps(
+      alchemy,
+      currentFromBlock,
+      currentToBlock
+    );
+
+    logger.info(
+      `[FROM BLOCK ${currentFromBlock} TO BLOCK ${currentToBlock}] [FOUND ${subscriptions.length} NEW TOP UPS]`
+    );
+
+    await persistTopUps(subscriptions);
+
+    currentFromBlock = currentToBlock + 1;
+  }
 }
