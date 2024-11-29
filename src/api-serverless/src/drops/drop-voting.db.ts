@@ -231,7 +231,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     }
     ctx.timer?.start(`${this.constructor.name}->getVotersTotalVotesInWaves`);
     const sql = `
-  select wave_id, sum(votes) as total_votes from ${DROP_VOTER_STATE_TABLE}
+  select wave_id, sum(abs(votes)) as total_votes from ${DROP_VOTER_STATE_TABLE}
   where wave_id in (:waveIds) and voter_id = :voterId
   group by 1
 `;

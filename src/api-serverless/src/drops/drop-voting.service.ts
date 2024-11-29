@@ -120,7 +120,7 @@ export class DropVotingService {
           const creditLeft = Math.max(0, totalCredit - totalVotesInWave);
           if (activeVote < 0) {
             acc[dropId] = {
-              min: activeVote - creditLeft,
+              min: -(creditLeft - activeVote),
               current: activeVote,
               max: -activeVote + creditLeft
             };
