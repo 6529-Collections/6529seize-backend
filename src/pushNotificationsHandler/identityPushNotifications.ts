@@ -49,7 +49,27 @@ export async function sendIdentityNotification(id: number) {
 
     await Promise.all(
       userDevices.map((device) =>
-        sendMessage(title, body, device.token, notification.id, data, imageUrl)
+        sendMessage(
+          title,
+          body,
+          device.token,
+          notification.id,
+          data,
+          imageUrl
+        ).catch(async (error) => {
+          if (error.code === 'messaging/registration-token-not-registered') {
+            logger.warn(`Token not registered: ${device.token}`);
+            await getDataSource()
+              .getRepository(PushNotificationDevice)
+              .delete({ device_id: device.device_id });
+            logger.info(`Deleted token: ${device.token}`);
+          } else {
+            logger.error(`Failed to send notification: ${error.message}`, {
+              error
+            });
+            throw error;
+          }
+        })
       )
     );
   }
