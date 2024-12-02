@@ -386,16 +386,17 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       return {};
     }
     ctx.timer?.start(`${this.constructor.name}->getDropsRanks`);
+    const sql = `
+    SELECT drop_id, rnk
+    FROM (select d.id as drop_id,
+                 rank() over (partition by d.wave_id order by cast(ifnull(r.vote, 0) as unsigned) desc , cast(ifnull(r.last_increased, d.created_at) as unsigned) desc) as rnk
+          from ${DROPS_TABLE} d
+                   left join ${DROP_RANK_TABLE} r on r.drop_id = d.id
+          where d.drop_type = 'PARTICIPATORY') drop_ranks
+    WHERE drop_id in (:dropIds)
+  `;
     const results = await this.db.execute<{ drop_id: string; rnk: number }>(
-      `
-      SELECT drop_id, rnk
-      FROM (select d.id as drop_id,
-                   rank() over (partition by d.wave_id order by ifnull(r.vote, 0) desc , ifnull(r.last_increased, d.created_at) desc) as rnk
-            from ${DROPS_TABLE} d
-                     left join ${DROP_RANK_TABLE} r on r.drop_id = d.id
-            where d.drop_type = 'PARTICIPATORY') drop_ranks
-      WHERE drop_id in (:dropIds)
-    `,
+      sql,
       { dropIds },
       { wrappedConnection: ctx.connection }
     );
