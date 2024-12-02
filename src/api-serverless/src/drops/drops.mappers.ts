@@ -217,10 +217,24 @@ export class DropsMappers {
       .map((it) => it.reply_to_drop_id)
       .filter((it) => it !== null) as string[];
     const dropIds = distinct([...rootDropIds, ...quoteIds, ...replyDropIds]);
-    const allEntities = await this.dropsDb.getDropsByIds(dropIds, connection);
+    const [allEntities, dropsParts] = await Promise.all([
+      this.dropsDb.getDropsByIds(dropIds, connection),
+      this.dropsDb.getDropsParts(dropIds, connection)
+    ]);
     const allReplyDropIds = allEntities
       .map((it) => it.reply_to_drop_id)
       .filter((it) => it !== null) as string[];
+    const quotedDropIds = distinct(
+      Object.values(dropsParts)
+        .flat()
+        .map((it) => it.quoted_drop_id)
+        .filter((it) => it !== null) as string[]
+    );
+    const allDropIds = distinct([
+      ...quotedDropIds,
+      ...allReplyDropIds,
+      ...dropIds
+    ]);
     const [
       dropsRanks,
       submissionDropsVotingRanges,
@@ -234,34 +248,43 @@ export class DropsMappers {
       dropsClapCounts,
       dropsQuoteCounts,
       dropMedia,
-      dropsParts,
       dropsRepliesCounts,
       subscribedActions
     ] = await Promise.all([
-      this.dropVotingDb.getDropsRanks(dropIds, { connection }),
+      this.dropVotingDb.getDropsRanks(allDropIds, { connection }),
       this.dropVotingService.findCreditLeftForVotingForDrops(
         contextProfileId,
-        dropEntities,
+        allEntities,
         connection
       ),
-      this.dropsDb.findMentionsByDropIds(dropIds, connection),
-      this.dropsDb.findReferencedNftsByDropIds(dropIds, connection),
-      this.dropsDb.findMetadataByDropIds(dropIds, connection),
-      this.clappingDb.findDropsTopContributors(dropIds, { connection }),
-      this.dropVotingDb.findDropsTopContributors(dropIds, { connection }),
+      this.dropsDb.findMentionsByDropIds(allDropIds, connection),
+      this.dropsDb.findReferencedNftsByDropIds(allDropIds, connection),
+      this.dropsDb.findMetadataByDropIds(allDropIds, connection),
+      this.clappingDb.findDropsTopContributors(allDropIds, { connection }),
+      this.dropVotingDb.findDropsTopContributors(allDropIds, { connection }),
       contextProfileId
         ? clappingService.findCreditLeftForClapping(contextProfileId)
         : Promise.resolve(0),
-      this.dropVotingDb.getTallyForDrops({ dropIds }, { connection }),
-      this.clappingDb.getTallyForDrops(
-        { dropIds, clapperId: contextProfileId ?? null },
+      this.dropVotingDb.getTallyForDrops(
+        { dropIds: allDropIds },
         { connection }
       ),
-      this.dropsDb.getDropsQuoteCounts(dropIds, contextProfileId, connection),
-      this.dropsDb.getDropMedia(dropIds, connection),
-      this.dropsDb.getDropsParts(dropIds, connection),
+      this.clappingDb.getTallyForDrops(
+        { dropIds: allDropIds, clapperId: contextProfileId ?? null },
+        { connection }
+      ),
+      this.dropsDb.getDropsQuoteCounts(
+        allDropIds,
+        contextProfileId,
+        connection
+      ),
+      this.dropsDb.getDropMedia(allDropIds, connection),
       this.dropsDb.countRepliesByDropIds(
-        { dropIds, context_profile_id: contextProfileId, drop_type: null },
+        {
+          dropIds: allDropIds,
+          context_profile_id: contextProfileId,
+          drop_type: null
+        },
         connection
       ),
       !contextProfileId
@@ -275,19 +298,8 @@ export class DropsMappers {
             connection
           )
     ]);
-    const quotedDropIds = distinct(
-      Object.values(dropsParts)
-        .flat()
-        .map((it) => it.quoted_drop_id)
-        .filter((it) => it !== null) as string[]
-    );
-    const relatedDropIds = distinct([
-      ...quotedDropIds,
-      ...allReplyDropIds,
-      ...dropIds
-    ]);
     const deletedDrops = await this.dropsDb.findDeletedDrops(
-      relatedDropIds,
+      allDropIds,
       connection
     );
     return {
