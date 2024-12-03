@@ -148,7 +148,7 @@ export class ClappingDb extends LazyDbAccessCompatibleService {
     const sql = `
   select drop_id, sum(claps) as total_claps ${
     clapperId !== null
-      ? `, sum(case when clapper_id = :clapperId then 1 else 0 end) as claps_by_clapper`
+      ? `, sum(case when clapper_id = :clapperId then claps else 0 end) as claps_by_clapper`
       : ` `
   } from ${DROP_CLAPPER_STATE_TABLE}
   where drop_id in (:dropIds)
