@@ -10,3 +10,4 @@ dist/
 .idea
 src/*/.serverless
 src/*/.serverless-offline
+*.zip

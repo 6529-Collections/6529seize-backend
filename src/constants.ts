@@ -105,7 +105,7 @@ export const DROP_METADATA_TABLE = 'drops_metadatas';
 export const DROP_MEDIA_TABLE = 'drop_medias';
 
 export const COOKIES_CONSENT_TABLE = 'cookies_consent';
-
+export const EULA_CONSENT_TABLE = 'eula_consent';
 export const ETH_PRICE_TABLE = 'eth_price';
 
 export const PRENODES_TABLE = 'prenodes';
