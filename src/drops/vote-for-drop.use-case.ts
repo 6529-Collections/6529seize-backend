@@ -73,15 +73,13 @@ export class VoteForDropUseCase {
         { voterId: voter_id, drop_id: drop_id },
         ctx
       ),
-      this.votingDb
-        .getCreditSpentInWaves(
-          {
-            waveIds: [wave_id],
-            voterId: voter_id
-          },
-          ctx
-        )
-        .then((it) => it[wave_id] ?? 0),
+      this.votingDb.getCreditSpentInWave(
+        {
+          waveId: wave_id,
+          voterId: voter_id
+        },
+        ctx
+      ),
       isRepWave
         ? this.ratingsDb.getRepRating(
             {
@@ -133,12 +131,11 @@ export class VoteForDropUseCase {
     if (wave.type === WaveType.CHAT) {
       throw new ForbiddenException('Voting is not allowed in chat waves');
     }
-    const creditSpentWithCurrentVotes = Math.abs(votes - currentVote);
+    const change = votes - currentVote;
+    const newVote = currentVote + change;
+    const diff = Math.abs(newVote) - Math.abs(currentVote);
 
-    if (
-      creditSpentWithCurrentVotes + creditSpentBeforeThisVote >
-      voterTotalCredit
-    ) {
+    if (diff + creditSpentBeforeThisVote > voterTotalCredit) {
       throw new BadRequestException('Not enough credit to vote');
     }
     if (wave.time_lock_ms !== null && wave.time_lock_ms > 0) {
@@ -146,8 +143,6 @@ export class VoteForDropUseCase {
         `Voting in time locked waves not yet supported`
       );
     }
-    const change = votes - currentVote;
-
     await Promise.all([
       this.votingDb.upsertAggregateDropRank(
         {
@@ -170,7 +165,7 @@ export class VoteForDropUseCase {
         {
           voter_id,
           drop_id,
-          credit_spent: creditSpentWithCurrentVotes,
+          credit_spent: diff,
           created_at: now.toMillis(),
           wave_id: wave_id
         },
