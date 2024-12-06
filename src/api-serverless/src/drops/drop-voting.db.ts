@@ -114,32 +114,24 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->insertCreditSpending`);
   }
 
-  public async getCreditSpentInWaves(
-    { voterId, waveIds }: { voterId: string; waveIds: string[] },
+  public async getCreditSpentInWave(
+    { voterId, waveId }: { voterId: string; waveId: string },
     ctx: RequestContext
-  ): Promise<Record<string, number>> {
-    if (waveIds.length === 0) {
-      return {};
-    }
+  ): Promise<number> {
     ctx.timer?.start(`${this.constructor.name}->getCreditSpentInWave`);
     const result = await this.db
       .execute<{ credit_spent: number; wave_id: string }>(
         `
-      select wave_id, sum(credit_spent) as credit_spent from ${DROPS_VOTES_CREDIT_SPENDINGS_TABLE}
-      where voter_id = :voterId and wave_id in (:waveIds)
+      select sum(abs(votes)) as credit_spent from ${DROP_VOTER_STATE_TABLE}
+      where voter_id = :voterId and wave_id = :waveId
     `,
         {
           voterId,
-          waveIds
+          waveId
         },
         { wrappedConnection: ctx.connection }
       )
-      .then((results) =>
-        results.reduce((acc, red) => {
-          acc[red.wave_id] = red.credit_spent;
-          return acc;
-        }, {} as Record<string, number>)
-      );
+      .then((results) => results[0]?.credit_spent);
     ctx.timer?.stop(`${this.constructor.name}->getCreditSpentInWave`);
     return result;
   }
