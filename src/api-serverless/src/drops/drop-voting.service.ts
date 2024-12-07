@@ -132,9 +132,9 @@ export class DropVotingService {
             };
           } else {
             acc[dropId] = {
-              min: creditLeft,
+              min: -creditLeft,
               current: activeVote,
-              max: -creditLeft
+              max: creditLeft
             };
           }
         }
