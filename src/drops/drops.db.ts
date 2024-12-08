@@ -996,8 +996,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(`${this.constructor.name}->findLeaderboardDrops`);
     const sql = `
     with ddata as (select d.id                                    as drop_id,
-                      cast(ifnull(r.vote, 0) as unsigned)         as vote,
-                      cast(ifnull(r.last_increased, d.created_at) as unsigned) as timestamp
+                      cast(ifnull(r.vote, 0) as signed)         as vote,
+                      cast(ifnull(r.last_increased, d.created_at) as signed) as timestamp
                from drops d
                         left join drop_ranks r ON r.drop_id = d.id
                where d.wave_id = :wave_id
