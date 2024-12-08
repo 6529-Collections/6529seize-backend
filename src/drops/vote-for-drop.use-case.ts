@@ -56,7 +56,7 @@ export class VoteForDropUseCase {
       );
       return;
     }
-    await this.votingDb.lockAggregateDropRank(drop_id, ctx.connection);
+    await this.votingDb.lockAggregateDropRank(drop_id, ctx);
     const now = Time.now();
     const wave = await this.wavesDb.findById(wave_id, ctx.connection);
     const isRepWave = wave?.voting_credit_type === WaveCreditType.REP;
