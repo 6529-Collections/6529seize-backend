@@ -1006,7 +1006,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
             select drop_id, rnk, vote from (select drop_id,
                                                  vote,
                                                  timestamp,
-                                                 RANK() OVER (ORDER BY vote DESC, timestamp desc) AS rnk
+                                                 RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
                                           from ddata) drop_ranks
           )
       select d.* from dranks r join drops d on d.id = r.drop_id ${
