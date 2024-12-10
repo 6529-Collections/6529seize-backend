@@ -34,6 +34,7 @@ import { WaveMetricEntity } from '../../../entities/IWaveMetric';
 import { RequestContext } from '../../../request.context';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
+import { DropType } from '../../../entities/IDrop';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -1138,6 +1139,34 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
           )
         }))
       );
+  }
+
+  async findIdentityParticipationDropsCountByWaveId(
+    param: {
+      identityId: string;
+      waveIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!param.waveIds.length) {
+      return {};
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->findIdentityParticipationDropsCountByWaveId`
+    );
+    const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
+      `select d.wave_id as wave_id, count(d.id) as cnt from ${DROPS_TABLE} d where d.wave_id in (:waveIds) and d.author_id = :identityId and d.drop_type = '${DropType.PARTICIPATORY}' group by 1`,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+    const result = dbresult.reduce(
+      (acc, red) => ({ ...acc, [red.wave_id]: red.cnt }),
+      {} as Record<string, number>
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->findIdentityParticipationDropsCountByWaveId`
+    );
+    return result;
   }
 }
 
