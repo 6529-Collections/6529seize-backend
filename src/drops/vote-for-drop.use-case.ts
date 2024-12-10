@@ -117,9 +117,6 @@ export class VoteForDropUseCase {
     if (drop.drop_type === DropType.CHAT) {
       throw new BadRequestException(`You can't vote on a chat drop`);
     }
-    if (drop.author_id === voter_id) {
-      throw new BadRequestException(`You can't vote on your own drop`);
-    }
     if (
       wave.voting_group_id !== null &&
       !groupsVoterIsEligibleFor.includes(wave.voting_group_id)
@@ -187,17 +184,20 @@ export class VoteForDropUseCase {
         ctx.connection,
         ctx.timer
       ),
-      this.userNotifier.notifyOfDropVote(
-        {
-          voter_id,
-          drop_id: drop_id,
-          drop_author_id: drop.author_id,
-          vote: votes,
-          wave_id: wave_id
-        },
-        wave.visibility_group_id,
-        ctx.connection
-      )
+      (() =>
+        drop.author_id === voter_id
+          ? Promise.resolve()
+          : this.userNotifier.notifyOfDropVote(
+              {
+                voter_id,
+                drop_id: drop_id,
+                drop_author_id: drop.author_id,
+                vote: votes,
+                wave_id: wave_id
+              },
+              wave.visibility_group_id,
+              ctx.connection
+            ))()
     ]);
   }
 }
