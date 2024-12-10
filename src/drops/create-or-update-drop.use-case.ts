@@ -299,7 +299,7 @@ export class CreateOrUpdateDropUseCase {
       wave: WaveEntity;
       model: CreateOrUpdateDropModel;
     },
-    { timer }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
   ) {
     timer.start(
       `${CreateOrUpdateDropUseCase.name}->verifyParticipatoryLimitations`
@@ -340,13 +340,18 @@ export class CreateOrUpdateDropUseCase {
       wave.participation_max_applications_per_participant;
     if (
       model.drop_type === DropType.PARTICIPATORY &&
-      noOfApplicationsAllowedPerParticipantInWave !== null
+      noOfApplicationsAllowedPerParticipantInWave !== null &&
+      model.drop_id === null
     ) {
-      const countOfDropsByAuthorInWave =
-        await this.dropsDb.countAuthorDropsInWave({
-          wave_id: wave.id,
-          author_id: model.author_id!
-        });
+      const countOfDropsByAuthorInWave = await this.wavesApiDb
+        .findIdentityParticipationDropsCountByWaveId(
+          {
+            identityId: model.author_identity,
+            waveIds: [model.wave_id]
+          },
+          { timer, connection }
+        )
+        .then((it) => it[model.wave_id] ?? 0);
       timer.stop(
         `${CreateOrUpdateDropUseCase.name}->verifyParticipatoryLimitations`
       );
