@@ -96,9 +96,6 @@ export class ClappingService {
     if (drop.drop_type !== DropType.CHAT) {
       throw new BadRequestException(`You can't clap on a non chat drop`);
     }
-    if (drop.author_id === clapper_id) {
-      throw new BadRequestException(`You can't clap on your own drop`);
-    }
     if (
       wave.chat_group_id !== null &&
       !groupsClapperIsEligibleFor.includes(wave.chat_group_id)
@@ -156,17 +153,20 @@ export class ClappingService {
         ctx.connection,
         ctx.timer
       ),
-      this.userNotifier.notifyOfDropVote(
-        {
-          voter_id: clapper_id,
-          drop_id: drop_id,
-          drop_author_id: drop.author_id,
-          vote: claps,
-          wave_id: wave_id
-        },
-        wave.visibility_group_id,
-        ctx.connection
-      )
+      (() =>
+        drop.author_id === clapper_id
+          ? Promise.resolve()
+          : this.userNotifier.notifyOfDropVote(
+              {
+                voter_id: clapper_id,
+                drop_id: drop_id,
+                drop_author_id: drop.author_id,
+                vote: claps,
+                wave_id: wave_id
+              },
+              wave.visibility_group_id,
+              ctx.connection
+            ))()
     ]);
   }
 
