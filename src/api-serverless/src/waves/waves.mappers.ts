@@ -46,6 +46,7 @@ import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { ApiWaveMetadataType } from '../generated/models/ApiWaveMetadataType';
 import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
 import { ApiWaveChatConfig } from '../generated/models/ApiWaveChatConfig';
+import { profilesService } from '../../../profiles/profiles.service';
 
 export class WavesMappers {
   constructor(
@@ -55,7 +56,7 @@ export class WavesMappers {
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
   ) {}
 
-  public createWaveToNewWaveEntity(
+  public async createWaveToNewWaveEntity(
     id: string,
     serial_no: number | null,
     created_at: number,
@@ -63,7 +64,13 @@ export class WavesMappers {
     createWaveRequest: ApiCreateNewWave | ApiUpdateWaveRequest,
     created_by: string,
     descriptionDropId: string
-  ): InsertWaveEntity {
+  ): Promise<InsertWaveEntity> {
+    let creditorId = createWaveRequest.voting.creditor_id;
+    if (creditorId) {
+      creditorId = await profilesService.resolveIdentityIdOrThrowNotFound(
+        creditorId
+      );
+    }
     return {
       id,
       serial_no,
@@ -81,7 +88,7 @@ export class WavesMappers {
         createWaveRequest.voting.credit_type
       ),
       voting_credit_category: createWaveRequest.voting.credit_category,
-      voting_credit_creditor: createWaveRequest.voting.creditor_id,
+      voting_credit_creditor: creditorId,
       voting_signature_required: createWaveRequest.voting.signature_required,
       voting_period_start: createWaveRequest.voting.period?.min ?? null,
       voting_period_end: createWaveRequest.voting.period?.max ?? null,
