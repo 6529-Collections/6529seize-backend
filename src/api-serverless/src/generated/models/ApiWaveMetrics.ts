@@ -17,7 +17,7 @@ export class ApiWaveMetrics {
     'drops_count': number;
     'latest_drop_timestamp': number;
     'your_drops_count'?: number;
-    'your_participation_drops_count'?: number;
+    'your_participation_drops_count': number;
     'your_latest_drop_timestamp'?: number;
 
     static readonly discriminator: string | undefined = undefined;

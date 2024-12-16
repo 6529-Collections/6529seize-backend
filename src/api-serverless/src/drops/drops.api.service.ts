@@ -53,6 +53,7 @@ import {
 } from '../profiles/profiles.api.service';
 import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
 import { ApiWaveVoter } from '../generated/models/ApiWaveVoter';
+import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
 
 export class DropsApiService {
   constructor(
@@ -424,7 +425,11 @@ export class DropsApiService {
       authenticated_user_eligible_to_chat:
         wave.chat_enabled &&
         (wave.chat_group_id === null ||
-          group_ids_user_is_eligible_for.includes(wave.chat_group_id))
+          group_ids_user_is_eligible_for.includes(wave.chat_group_id)),
+      voting_credit_type: resolveEnumOrThrow(
+        WaveCreditTypeApi,
+        wave.voting_credit_type
+      )
     };
     if (drop_id) {
       const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
@@ -541,7 +546,11 @@ export class DropsApiService {
       authenticated_user_eligible_to_chat:
         waveEntity.chat_enabled &&
         (waveEntity.chat_group_id === null ||
-          groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id))
+          groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id)),
+      voting_credit_type: resolveEnumOrThrow(
+        WaveCreditTypeApi,
+        waveEntity.voting_credit_type
+      )
     };
     const [drops, count] = await Promise.all([
       this.dropsDb
