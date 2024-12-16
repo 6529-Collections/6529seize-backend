@@ -31,57 +31,21 @@ export async function revokeRepBasedDropOverVotes(
   logger.info(
     `Revoking REP-based drops overvotes for voter ${param.rep_recipient_id}`
   );
-  const { total_rep, category_rep, giver_rep, category_giver_rep } =
-    await dropsDb.findRepAmountsForProfile(param, ctx);
-  const overratedWaves = await Promise.all([
-    dropsDb
-      .findRepBasedSubmissionDropOvervotedWavesWithOvervoteAmounts(
-        {
-          voter_id: param.rep_recipient_id,
-          creditor_id: null,
-          credit_category: null,
-          credit_limit: total_rep
-        },
-        ctx
-      )
-      .then((res) => res.map((it) => ({ ...it, credit_limit: total_rep }))),
-    dropsDb
-      .findRepBasedSubmissionDropOvervotedWavesWithOvervoteAmounts(
-        {
-          voter_id: param.rep_recipient_id,
-          creditor_id: param.rep_giver_id,
-          credit_category: null,
-          credit_limit: giver_rep
-        },
-        ctx
-      )
-      .then((res) => res.map((it) => ({ ...it, credit_limit: giver_rep }))),
-    dropsDb
-      .findRepBasedSubmissionDropOvervotedWavesWithOvervoteAmounts(
-        {
-          voter_id: param.rep_recipient_id,
-          creditor_id: null,
-          credit_category: param.credit_category,
-          credit_limit: category_rep
-        },
-        ctx
-      )
-      .then((res) => res.map((it) => ({ ...it, credit_limit: category_rep }))),
-    dropsDb
-      .findRepBasedSubmissionDropOvervotedWavesWithOvervoteAmounts(
-        {
-          voter_id: param.rep_recipient_id,
-          creditor_id: param.rep_giver_id,
-          credit_category: param.credit_category,
-          credit_limit: category_giver_rep
-        },
-        ctx
-      )
-      .then((res) =>
-        res.map((it) => ({ ...it, credit_limit: category_giver_rep }))
-      )
-  ]).then(([r1, r2, r3, r4]) => [...r1, ...r2, ...r3, ...r4]);
-
+  const category_giver_rep =
+    await dropsDb.findCategoryRepAmountFromProfileForProfile(param, ctx);
+  const overratedWaves = await dropsDb
+    .findRepBasedSubmissionDropOvervotedWavesWithOvervoteAmounts(
+      {
+        voter_id: param.rep_recipient_id,
+        creditor_id: param.rep_giver_id,
+        credit_category: param.credit_category,
+        credit_limit: category_giver_rep
+      },
+      ctx
+    )
+    .then((res) =>
+      res.map((it) => ({ ...it, credit_limit: category_giver_rep }))
+    );
   for (const overratedWave of overratedWaves) {
     const profile_id = param.rep_recipient_id;
     const { wave_id, credit_limit, total_given_votes } = overratedWave;
