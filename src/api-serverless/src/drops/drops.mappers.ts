@@ -52,6 +52,7 @@ import { clappingDb, ClappingDb } from './clapping.db';
 import { clappingService } from './clapping.service';
 import { dropVotingService, DropVotingService } from './drop-voting.service';
 import { dropVotingDb, DropVotingDb } from './drop-voting.db';
+import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
 
 export class DropsMappers {
   constructor(
@@ -186,7 +187,11 @@ export class DropsMappers {
               wave.participation_group_id === null ||
               group_ids_user_is_eligible_for.includes(
                 wave.participation_group_id
-              )
+              ),
+            voting_credit_type: resolveEnumOrThrow(
+              WaveCreditTypeApi,
+              wave.voting_credit_type
+            )
           }
         : null;
       return {
