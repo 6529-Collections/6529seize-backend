@@ -1203,47 +1203,28 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async findRepAmountsForProfile(
+  async findCategoryRepAmountFromProfileForProfile(
     param: {
       rep_recipient_id: string;
       rep_giver_id: string;
       credit_category: string;
     },
     ctx: RequestContext
-  ): Promise<{
-    total_rep: number;
-    category_rep: number;
-    giver_rep: number;
-    category_giver_rep: number;
-  }> {
+  ): Promise<number> {
     ctx.timer?.start(`${this.constructor.name}->findRepAmountsForProfile`);
     const result = await this.db
       .oneOrNull<{
         total_rep: number;
-        category_rep: number;
-        giver_rep: number;
-        category_giver_rep: number;
       }>(
         `
       select 
-       sum(rating) as total_rep,
-       sum(case when rater_profile_id = :rep_giver_id then rating else 0 end) as giver_rep,
-       sum(case when matter_category = :credit_category then rating else 0 end) as category_rep,
-       sum(case when rater_profile_id = :rep_giver_id and matter_category = :credit_category then rating else 0 end) as category_giver_rep
-       from ${RATINGS_TABLE} where matter = 'REP' and matter_target_id = :rep_recipient_id and rating <> 0
+       sum(rating) as total_rep
+       from ${RATINGS_TABLE} where matter = 'REP' and matter_target_id = :rep_recipient_id and matter_category = :credit_category and rater_profile_id = :rep_giver_id and rating <> 0
     `,
         param,
         { wrappedConnection: ctx.connection }
       )
-      .then(
-        (it) =>
-          it ?? {
-            total_rep: 0,
-            category_rep: 0,
-            giver_rep: 0,
-            category_giver_rep: 0
-          }
-      );
+      .then((it) => it?.total_rep ?? 0);
     ctx.timer?.stop(`${this.constructor.name}->findRepAmountsForProfile`);
     return result;
   }
