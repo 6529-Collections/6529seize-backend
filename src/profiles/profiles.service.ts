@@ -417,7 +417,8 @@ export class ProfilesService {
     website,
     creator_or_updater_wallet,
     classification,
-    sub_classification
+    sub_classification,
+    pfp_url
   }: CreateOrUpdateProfileCommand): Promise<ProfileAndConsolidations> {
     return await this.profilesDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -429,7 +430,8 @@ export class ProfilesService {
             banner_2,
             website,
             classification,
-            sub_classification
+            sub_classification,
+            pfp_url
           },
           connection
         );
@@ -579,7 +581,8 @@ export class ProfilesService {
       website,
       creator_or_updater_wallet,
       classification,
-      sub_classification
+      sub_classification,
+      pfp_url
     }: CreateOrUpdateProfileCommand,
     connection: ConnectionWrapper<any>
   ) {
@@ -603,7 +606,7 @@ export class ProfilesService {
           rep: 0,
           cic: 0,
           level_raw: 0,
-          pfp: null,
+          pfp: pfp_url,
           banner1: null,
           banner2: null,
           classification: null,
@@ -642,7 +645,8 @@ export class ProfilesService {
       website,
       creator_or_updater_wallet,
       classification,
-      sub_classification
+      sub_classification,
+      pfp_url
     };
     if (!creatorOrUpdatorProfile) {
       await this.profilesDb.insertProfileRecord(
@@ -661,7 +665,8 @@ export class ProfilesService {
         authenticatedWallet: creator_or_updater_wallet,
         newClassification: classification,
         connectionHolder: connection,
-        newSubClassification: sub_classification
+        newSubClassification: sub_classification,
+        newPfpUrl: pfp_url
       });
     } else {
       const identityId = creatorOrUpdatorIdentityResponse.identity.profile_id!;
@@ -675,7 +680,8 @@ export class ProfilesService {
             website,
             creator_or_updater_wallet,
             classification,
-            sub_classification
+            sub_classification,
+            pfp_url
           }
         },
         connection
@@ -689,6 +695,7 @@ export class ProfilesService {
         newSubClassification: sub_classification,
         authenticatedWallet: creator_or_updater_wallet,
         newClassification: classification,
+        newPfpUrl: pfp_url,
         connectionHolder: connection
       });
     }
@@ -701,7 +708,8 @@ export class ProfilesService {
         banner1: createProfileCommand.banner_1 ?? null,
         banner2: createProfileCommand.banner_2 ?? null,
         classification: createProfileCommand.classification,
-        sub_classification: createProfileCommand.sub_classification
+        sub_classification: createProfileCommand.sub_classification,
+        pfp: pfp_url
       },
       connection
     );
@@ -826,7 +834,8 @@ export class ProfilesService {
     newBanner2,
     authenticatedWallet,
     connectionHolder,
-    newSubClassification
+    newSubClassification,
+    newPfpUrl
   }: {
     profileId: string;
     profileBeforeChange: Profile | null;
@@ -836,6 +845,7 @@ export class ProfilesService {
     newBanner2?: string;
     authenticatedWallet: string;
     newSubClassification: string | null;
+    newPfpUrl: string | null;
     connectionHolder: ConnectionWrapper<any>;
   }) {
     const logEvents: NewProfileActivityLog[] = [];
@@ -886,6 +896,16 @@ export class ProfilesService {
       ProfileActivityLogType.BANNER_2_EDIT,
       authenticatedWallet
     );
+    if (newPfpUrl !== null) {
+      this.addEventToArrayIfChanged(
+        profileBeforeChange?.pfp_url ?? null,
+        newPfpUrl ?? null,
+        logEvents,
+        profileId,
+        ProfileActivityLogType.PFP_EDIT,
+        authenticatedWallet
+      );
+    }
     await this.profileActivityLogsDb.insertMany(logEvents, connectionHolder);
   }
 

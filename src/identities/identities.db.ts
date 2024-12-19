@@ -175,6 +175,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       sub_classification: string | null;
       banner1: string | null;
       banner2: string | null;
+      pfp: string | null;
     },
     connection: ConnectionWrapper<any>
   ) {
@@ -187,7 +188,8 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
           classification = :classification,
           normalised_handle = :normalised_handle,
           sub_classification = :sub_classification,
-          banner1 = :banner1
+          banner1 = :banner1,
+          pfp = :pfp
       where consolidation_key = :consolidationKey
     `,
       { consolidationKey, ...profile },

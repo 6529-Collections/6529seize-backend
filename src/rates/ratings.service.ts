@@ -862,7 +862,8 @@ export class RatingsService {
                 handle: `id-${address}`,
                 classification: ProfileClassification.PSEUDONYM,
                 sub_classification: null,
-                creator_or_updater_wallet: address
+                creator_or_updater_wallet: address,
+                pfp_url: null
               },
               connection
             )
