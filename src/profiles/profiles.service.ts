@@ -418,7 +418,7 @@ export class ProfilesService {
     creator_or_updater_wallet,
     classification,
     sub_classification,
-    pfp_uri
+    pfp_url
   }: CreateOrUpdateProfileCommand): Promise<ProfileAndConsolidations> {
     return await this.profilesDb.executeNativeQueriesInTransaction(
       async (connection) => {
@@ -431,7 +431,7 @@ export class ProfilesService {
             website,
             classification,
             sub_classification,
-            pfp_uri
+            pfp_url
           },
           connection
         );
@@ -582,7 +582,7 @@ export class ProfilesService {
       creator_or_updater_wallet,
       classification,
       sub_classification,
-      pfp_uri
+      pfp_url
     }: CreateOrUpdateProfileCommand,
     connection: ConnectionWrapper<any>
   ) {
@@ -606,7 +606,7 @@ export class ProfilesService {
           rep: 0,
           cic: 0,
           level_raw: 0,
-          pfp: pfp_uri,
+          pfp: pfp_url,
           banner1: null,
           banner2: null,
           classification: null,
@@ -646,7 +646,7 @@ export class ProfilesService {
       creator_or_updater_wallet,
       classification,
       sub_classification,
-      pfp_uri
+      pfp_url
     };
     if (!creatorOrUpdatorProfile) {
       await this.profilesDb.insertProfileRecord(
@@ -666,7 +666,7 @@ export class ProfilesService {
         newClassification: classification,
         connectionHolder: connection,
         newSubClassification: sub_classification,
-        newPfpUrl: pfp_uri
+        newPfpUrl: pfp_url
       });
     } else {
       const identityId = creatorOrUpdatorIdentityResponse.identity.profile_id!;
@@ -681,7 +681,7 @@ export class ProfilesService {
             creator_or_updater_wallet,
             classification,
             sub_classification,
-            pfp_uri
+            pfp_url
           }
         },
         connection
@@ -695,7 +695,7 @@ export class ProfilesService {
         newSubClassification: sub_classification,
         authenticatedWallet: creator_or_updater_wallet,
         newClassification: classification,
-        newPfpUrl: pfp_uri,
+        newPfpUrl: pfp_url,
         connectionHolder: connection
       });
     }
@@ -709,7 +709,7 @@ export class ProfilesService {
         banner2: createProfileCommand.banner_2 ?? null,
         classification: createProfileCommand.classification,
         sub_classification: createProfileCommand.sub_classification,
-        pfp: pfp_uri
+        pfp: pfp_url
       },
       connection
     );

@@ -10,7 +10,7 @@ export interface CreateOrUpdateProfileCommand {
   creator_or_updater_wallet: string;
   classification: ProfileClassification;
   sub_classification: string | null;
-  pfp_uri: string | null;
+  pfp_url: string | null;
 }
 
 export interface ProfileAndConsolidations {

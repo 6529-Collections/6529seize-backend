@@ -863,7 +863,7 @@ export class RatingsService {
                 classification: ProfileClassification.PSEUDONYM,
                 sub_classification: null,
                 creator_or_updater_wallet: address,
-                pfp_uri: null
+                pfp_url: null
               },
               connection
             )
