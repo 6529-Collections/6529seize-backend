@@ -12,8 +12,8 @@ import {
   MEMES_CONTRACT,
   NFTS_TABLE,
   PROFILES_ARCHIVE_TABLE,
-  REFRESH_TOKENS_TABLE,
   PROFILES_TABLE,
+  REFRESH_TOKENS_TABLE,
   TDH_BLOCKS_TABLE,
   WALLETS_TDH_TABLE,
   WAVES_TABLE
@@ -237,7 +237,9 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         updated_at,
         updated_by_wallet,
         external_id,
-        sub_classification)
+        sub_classification,
+        pfp_url
+       )
        values (:handle,
                :normalisedHandle,
                :primaryWallet,
@@ -250,7 +252,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
                :updatedAt,
                :updatedByWallet,
                :externalId,
-               :subClassification)`,
+               :subClassification,
+               :pfp_uri)`,
       {
         handle: param.handle,
         normalisedHandle: param.normalised_handle,
@@ -264,7 +267,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         website: param.website ?? null,
         classification: param.classification,
         externalId: param.external_id,
-        subClassification: param.sub_classification ?? null
+        subClassification: param.sub_classification ?? null,
+        pfp_uri: param.pfp_url ?? null
       },
       { wrappedConnection: connection?.connection }
     );
@@ -290,6 +294,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
            banner_2          = :banner2,
            website           = :website,
            classification    = :classification
+           ${command.pfp_uri ? ',pfp_url = :pfp_uri' : ''}
        where normalised_handle = :oldHandle`,
       {
         oldHandle,
@@ -299,7 +304,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         banner1: command.banner_1 ?? null,
         banner2: command.banner_2 ?? null,
         website: command.website ?? null,
-        classification: command.classification
+        classification: command.classification,
+        pfp_uri: command.pfp_uri
       },
       { wrappedConnection: connection }
     );
@@ -331,7 +337,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         website,
         classification,
         external_id,
-        sub_classification)
+        sub_classification,
+        pfp_url)
        values (:handle,
                :normalisedHandle,
                :primaryWallet,
@@ -353,7 +360,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         website: command.website ?? null,
         classification: command.classification,
         externalId: id,
-        subClassification: command.sub_classification
+        subClassification: command.sub_classification,
+        pfp_url: command.pfp_uri
       },
       { wrappedConnection: connection }
     );
