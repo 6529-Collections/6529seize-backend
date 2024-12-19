@@ -253,7 +253,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
                :updatedByWallet,
                :externalId,
                :subClassification,
-               :pfp_uri)`,
+               :pfp_url)`,
       {
         handle: param.handle,
         normalisedHandle: param.normalised_handle,
@@ -268,7 +268,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         classification: param.classification,
         externalId: param.external_id,
         subClassification: param.sub_classification ?? null,
-        pfp_uri: param.pfp_url ?? null
+        pfp_url: param.pfp_url ?? null
       },
       { wrappedConnection: connection?.connection }
     );
@@ -294,7 +294,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
            banner_2          = :banner2,
            website           = :website,
            classification    = :classification
-           ${command.pfp_uri ? ',pfp_url = :pfp_uri' : ''}
+           ${command.pfp_url ? ',pfp_url = :pfp_url' : ''}
        where normalised_handle = :oldHandle`,
       {
         oldHandle,
@@ -305,7 +305,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         banner2: command.banner_2 ?? null,
         website: command.website ?? null,
         classification: command.classification,
-        pfp_uri: command.pfp_uri
+        pfp_url: command.pfp_url
       },
       { wrappedConnection: connection }
     );
@@ -349,7 +349,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
                :website,
                :classification,
                :externalId,
-               :subClassification)`,
+               :subClassification,
+               :pfp_url)`,
       {
         handle: command.handle,
         normalisedHandle: command.handle.toLowerCase(),
@@ -361,7 +362,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         classification: command.classification,
         externalId: id,
         subClassification: command.sub_classification,
-        pfp_url: command.pfp_uri
+        pfp_url: command.pfp_url
       },
       { wrappedConnection: connection }
     );

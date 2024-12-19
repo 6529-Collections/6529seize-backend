@@ -129,7 +129,7 @@ router.post(
       website,
       classification,
       sub_classification,
-      pfp_uri
+      pfp_url
     } = getValidatedByJoiOrThrow(
       req.body,
       ApiCreateOrUpdateProfileRequestSchema
@@ -150,7 +150,7 @@ router.post(
       creator_or_updater_wallet: getWalletOrThrow(req),
       classification,
       sub_classification: subClassification,
-      pfp_uri
+      pfp_url
     };
     const profile = await profilesService.createOrUpdateProfile(
       createProfileCommand
@@ -200,7 +200,7 @@ interface ApiCreateOrUpdateProfileRequest {
   readonly website?: string;
   readonly classification: ProfileClassification;
   readonly sub_classification: string | null;
-  readonly pfp_uri: string | null;
+  readonly pfp_url: string | null;
 }
 
 const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateProfileRequest> =
@@ -233,7 +233,7 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
       .valid(...Object.values(ProfileClassification))
       .required(),
     sub_classification: Joi.string().optional().allow(null).default(null),
-    pfp_uri: Joi.string()
+    pfp_url: Joi.string()
       .optional()
       .regex(/^(?:ipfs:\/\/|https:\/\/d3lqz0a4bldqgf).+$/)
       .allow(null)
