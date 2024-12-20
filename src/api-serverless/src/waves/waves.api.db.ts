@@ -4,7 +4,7 @@ import {
   LazyDbAccessCompatibleService,
   SqlExecutor
 } from '../../../sql-executor';
-import { WaveEntity } from '../../../entities/IWave';
+import { WaveCreditType, WaveEntity } from '../../../entities/IWave';
 import {
   ACTIVITY_EVENTS_TABLE,
   CLAP_CREDIT_SPENDINGS_TABLE,
@@ -34,6 +34,7 @@ import { WaveMetricEntity } from '../../../entities/IWaveMetric';
 import { RequestContext } from '../../../request.context';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
+import { DropType } from '../../../entities/IDrop';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -314,7 +315,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     return this.db
       .execute<WaveOverview & { drop_id: string }>(
         `select 
-    d.id as drop_id, w.id, w.name, w.picture, w.picture, w.description_drop_id, w.voting_group_id, w.participation_group_id, w.chat_group_id, w.chat_enabled
+    d.id as drop_id, w.id, w.name, w.picture, w.picture, w.description_drop_id, w.voting_group_id, w.participation_group_id, w.chat_group_id, w.chat_enabled, w.voting_credit_type
     from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)`,
         {
           dropIds
@@ -331,7 +332,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             voting_group_id: wave.voting_group_id,
             participation_group_id: wave.participation_group_id,
             chat_group_id: wave.chat_group_id,
-            chat_enabled: wave.chat_enabled
+            chat_enabled: wave.chat_enabled,
+            voting_credit_type: wave.voting_credit_type
           };
           return acc;
         }, {} as Record<string, WaveOverview>)
@@ -1139,6 +1141,34 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
         }))
       );
   }
+
+  async findIdentityParticipationDropsCountByWaveId(
+    param: {
+      identityId: string;
+      waveIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!param.waveIds.length) {
+      return {};
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->findIdentityParticipationDropsCountByWaveId`
+    );
+    const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
+      `select d.wave_id as wave_id, count(d.id) as cnt from ${DROPS_TABLE} d where d.wave_id in (:waveIds) and d.author_id = :identityId and d.drop_type = '${DropType.PARTICIPATORY}' group by 1`,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+    const result = dbresult.reduce(
+      (acc, red) => ({ ...acc, [red.wave_id]: red.cnt }),
+      {} as Record<string, number>
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->findIdentityParticipationDropsCountByWaveId`
+    );
+    return result;
+  }
 }
 
 export interface InsertWaveEntity extends Omit<WaveEntity, 'serial_no'> {
@@ -1162,6 +1192,7 @@ export interface WaveOverview {
   readonly participation_group_id: string | null;
   readonly chat_group_id: string | null;
   readonly chat_enabled: boolean;
+  readonly voting_credit_type: WaveCreditType;
 }
 
 export const wavesApiDb = new WavesApiDb(dbSupplier, userGroupsService);

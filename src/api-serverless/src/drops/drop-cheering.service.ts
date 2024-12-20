@@ -4,7 +4,6 @@ import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { RequestContext } from '../../../request.context';
 import { DropType } from '../../../entities/IDrop';
 import { clappingService, ClappingService } from './clapping.service';
-import * as process from 'node:process';
 import {
   voteForDropUseCase,
   VoteForDropUseCase
@@ -49,9 +48,6 @@ export class DropCheeringService {
           ctxWithConnection
         );
       } else {
-        if (process.env.NON_CHAT_DROP_VOTING_ENABLED !== 'true') {
-          throw new Error(`Voting not implemented`);
-        }
         await this.voteForDrop.execute(
           {
             drop_id: dropId,

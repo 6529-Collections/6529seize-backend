@@ -56,6 +56,7 @@ import {
   DropVotingService
 } from '../drops/drop-voting.service';
 import { clappingService, ClappingService } from '../drops/clapping.service';
+import { profilesService } from '../../../profiles/profiles.service';
 
 export class WaveApiService {
   constructor(
@@ -83,7 +84,7 @@ export class WaveApiService {
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
         const id = randomUUID();
-        const newEntity = this.waveMappers.createWaveToNewWaveEntity(
+        const newEntity = await this.waveMappers.createWaveToNewWaveEntity(
           id,
           null,
           Time.currentMillis(),
@@ -177,7 +178,6 @@ export class WaveApiService {
     createWave: ApiCreateNewWave | ApiUpdateWaveRequest,
     ctx: RequestContext
   ) {
-    const authenticatedProfileId = ctx.authenticationContext!.getActingAsId()!;
     const timer = ctx.timer;
     timer?.start(`${this.constructor.name}->validateWaveRelations`);
     if (createWave.wave.type === ApiWaveType.Chat && !createWave.chat.enabled) {
@@ -224,24 +224,13 @@ export class WaveApiService {
         `Group(s) not found: ${missingGroupIds.join(', ')}`
       );
     }
-    const referencedCreditorId = createWave.voting.creditor_id;
-    if (referencedCreditorId) {
-      const creditorProfile = (
-        await this.profilesService.getProfileMinsByIds({
-          ids: [referencedCreditorId],
-          authenticatedProfileId,
-          timer
-        })
-      )[referencedCreditorId];
-      timer?.stop(`${this.constructor.name}->validateWaveRelations`);
-      if (!creditorProfile) {
-        throw new BadRequestException(
-          `Creditor not found: ${referencedCreditorId}`
-        );
-      }
-    } else {
-      timer?.stop(`${this.constructor.name}->validateWaveRelations`);
+    const referencedCreditorIdentity = createWave.voting.creditor_id;
+    if (referencedCreditorIdentity) {
+      await profilesService.resolveIdentityIdOrThrowNotFound(
+        referencedCreditorIdentity
+      );
     }
+    timer?.stop(`${this.constructor.name}->validateWaveRelations`);
   }
 
   private validateOutcomes(
@@ -830,7 +819,7 @@ export class WaveApiService {
           }
         }
         await this.wavesApiDb.deleteWave(waveId, ctxWithConnection);
-        const updatedEntity = this.waveMappers.createWaveToNewWaveEntity(
+        const updatedEntity = await this.waveMappers.createWaveToNewWaveEntity(
           waveId,
           waveBeforeUpdate.serial_no,
           waveBeforeUpdate.created_at,

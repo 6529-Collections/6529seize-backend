@@ -46,6 +46,7 @@ import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { ApiWaveMetadataType } from '../generated/models/ApiWaveMetadataType';
 import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
 import { ApiWaveChatConfig } from '../generated/models/ApiWaveChatConfig';
+import { profilesService } from '../../../profiles/profiles.service';
 
 export class WavesMappers {
   constructor(
@@ -55,7 +56,7 @@ export class WavesMappers {
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
   ) {}
 
-  public createWaveToNewWaveEntity(
+  public async createWaveToNewWaveEntity(
     id: string,
     serial_no: number | null,
     created_at: number,
@@ -63,7 +64,13 @@ export class WavesMappers {
     createWaveRequest: ApiCreateNewWave | ApiUpdateWaveRequest,
     created_by: string,
     descriptionDropId: string
-  ): InsertWaveEntity {
+  ): Promise<InsertWaveEntity> {
+    let creditorId = createWaveRequest.voting.creditor_id;
+    if (creditorId) {
+      creditorId = await profilesService.resolveIdentityIdOrThrowNotFound(
+        creditorId
+      );
+    }
     return {
       id,
       serial_no,
@@ -81,7 +88,7 @@ export class WavesMappers {
         createWaveRequest.voting.credit_type
       ),
       voting_credit_category: createWaveRequest.voting.credit_category,
-      voting_credit_creditor: createWaveRequest.voting.creditor_id,
+      voting_credit_creditor: creditorId,
       voting_signature_required: createWaveRequest.voting.signature_required,
       voting_period_start: createWaveRequest.voting.period?.min ?? null,
       voting_period_end: createWaveRequest.voting.period?.max ?? null,
@@ -164,7 +171,8 @@ export class WavesMappers {
       creationDrops,
       subscribedActions,
       metrics,
-      authenticatedUserMetrics
+      authenticatedUserMetrics,
+      yourParticipationDropsCountByWaveId
     } = await this.getRelatedData(waveEntities, groupIdsUserIsEligibleFor, ctx);
     return waveEntities.map<ApiWave>((waveEntity) =>
       this.mapWaveEntityToApiWave({
@@ -178,7 +186,8 @@ export class WavesMappers {
         groupIdsUserIsEligibleFor,
         noRightToParticipate,
         metrics,
-        authenticatedUserMetrics
+        authenticatedUserMetrics,
+        yourParticipationDropsCountByWaveId
       })
     );
   }
@@ -194,7 +203,8 @@ export class WavesMappers {
     groupIdsUserIsEligibleFor,
     noRightToParticipate,
     metrics,
-    authenticatedUserMetrics
+    authenticatedUserMetrics,
+    yourParticipationDropsCountByWaveId
   }: {
     waveEntity: WaveEntity;
     profiles: Record<string, ApiProfileMin>;
@@ -213,6 +223,7 @@ export class WavesMappers {
     noRightToParticipate: boolean;
     metrics: Record<string, WaveMetricEntity>;
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
+    yourParticipationDropsCountByWaveId: Record<string, number>;
   }): ApiWave {
     const contributorsOverview: ApiWaveContributorOverview[] =
       contributors[waveEntity.id]?.map((it) => ({
@@ -312,7 +323,9 @@ export class WavesMappers {
       latest_drop_timestamp: waveMetrics.latest_drop_timestamp,
       your_drops_count: waveAuthenticatedUserMetrics?.drops_count,
       your_latest_drop_timestamp:
-        waveAuthenticatedUserMetrics?.latest_drop_timestamp
+        waveAuthenticatedUserMetrics?.latest_drop_timestamp,
+      your_participation_drops_count:
+        yourParticipationDropsCountByWaveId[waveEntity.id] ?? 0
     };
     return {
       id: waveEntity.id,
@@ -349,6 +362,7 @@ export class WavesMappers {
     subscribedActions: Record<string, ApiWaveSubscriptionTargetAction[]>;
     metrics: Record<string, WaveMetricEntity>;
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
+    yourParticipationDropsCountByWaveId: Record<string, number>;
   }> {
     ctx.timer?.start('wavesMappers->getRelatedData');
     const waveIds = waveEntities.map((it) => it.id);
@@ -363,7 +377,8 @@ export class WavesMappers {
       authenticatedUserMetrics,
       contributorsOverViews,
       creationDropsByDropId,
-      subscribedActions
+      subscribedActions,
+      yourParticipationDropsCountByWaveId
     ] = await Promise.all([
       this.userGroupsService.getByIds(
         waveEntities
@@ -415,7 +430,16 @@ export class WavesMappers {
               );
               return result;
             })
-        : Promise.resolve({} as Record<string, ActivityEventAction[]>)
+        : Promise.resolve({} as Record<string, ActivityEventAction[]>),
+      authenticatedUserId
+        ? this.wavesApiDb.findIdentityParticipationDropsCountByWaveId(
+            {
+              identityId: authenticatedUserId,
+              waveIds
+            },
+            ctx
+          )
+        : Promise.resolve({} as Record<string, number>)
     ]);
     const profileIds = distinct([
       ...waveEntities
@@ -476,7 +500,8 @@ export class WavesMappers {
         {} as Record<string, ApiWaveSubscriptionTargetAction[]>
       ),
       metrics,
-      authenticatedUserMetrics
+      authenticatedUserMetrics,
+      yourParticipationDropsCountByWaveId
     };
   }
 }

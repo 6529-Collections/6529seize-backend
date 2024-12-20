@@ -996,8 +996,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(`${this.constructor.name}->findLeaderboardDrops`);
     const sql = `
     with ddata as (select d.id                                    as drop_id,
-                      cast(ifnull(r.vote, 0) as unsigned)         as vote,
-                      cast(ifnull(r.last_increased, d.created_at) as unsigned) as timestamp
+                      cast(ifnull(r.vote, 0) as signed)         as vote,
+                      cast(ifnull(r.last_increased, d.created_at) as signed) as timestamp
                from drops d
                         left join drop_ranks r ON r.drop_id = d.id
                where d.wave_id = :wave_id
@@ -1006,7 +1006,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
             select drop_id, rnk, vote from (select drop_id,
                                                  vote,
                                                  timestamp,
-                                                 RANK() OVER (ORDER BY vote DESC, timestamp desc) AS rnk
+                                                 RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
                                           from ddata) drop_ranks
           )
       select d.* from dranks r join drops d on d.id = r.drop_id ${
@@ -1203,47 +1203,28 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async findRepAmountsForProfile(
+  async findCategoryRepAmountFromProfileForProfile(
     param: {
       rep_recipient_id: string;
       rep_giver_id: string;
       credit_category: string;
     },
     ctx: RequestContext
-  ): Promise<{
-    total_rep: number;
-    category_rep: number;
-    giver_rep: number;
-    category_giver_rep: number;
-  }> {
+  ): Promise<number> {
     ctx.timer?.start(`${this.constructor.name}->findRepAmountsForProfile`);
     const result = await this.db
       .oneOrNull<{
         total_rep: number;
-        category_rep: number;
-        giver_rep: number;
-        category_giver_rep: number;
       }>(
         `
       select 
-       sum(rating) as total_rep,
-       sum(case when rater_profile_id = :rep_giver_id then rating else 0 end) as giver_rep,
-       sum(case when matter_category = :credit_category then rating else 0 end) as category_rep,
-       sum(case when rater_profile_id = :rep_giver_id and matter_category = :credit_category then rating else 0 end) as category_giver_rep
-       from ${RATINGS_TABLE} where matter = 'REP' and matter_target_id = :rep_recipient_id and rating <> 0
+       sum(rating) as total_rep
+       from ${RATINGS_TABLE} where matter = 'REP' and matter_target_id = :rep_recipient_id and matter_category = :credit_category and rater_profile_id = :rep_giver_id and rating <> 0
     `,
         param,
         { wrappedConnection: ctx.connection }
       )
-      .then(
-        (it) =>
-          it ?? {
-            total_rep: 0,
-            category_rep: 0,
-            giver_rep: 0,
-            category_giver_rep: 0
-          }
-      );
+      .then((it) => it?.total_rep ?? 0);
     ctx.timer?.stop(`${this.constructor.name}->findRepAmountsForProfile`);
     return result;
   }
