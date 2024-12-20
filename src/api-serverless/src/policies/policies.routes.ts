@@ -1,7 +1,13 @@
 import { Request } from 'express';
 import { asyncRouter } from '../async.router';
 import { getIp, getIpInfo, isEUCountry, isLocalhost } from './policies';
-import { deleteCookiesConsent, saveCookiesConsent } from './policies.db';
+import {
+  deleteCookiesConsent,
+  saveCookiesConsent,
+  deleteEULAConsent,
+  saveEULAConsent,
+  fetchEULAConsent
+} from './policies.db';
 
 const router = asyncRouter();
 
@@ -63,5 +69,44 @@ router.delete(`/cookies-consent`, function (req: Request, res: any) {
     return res.status(200).send({
       message: 'Cookies consent deleted'
     });
+  });
+});
+
+router.post(`/eula-consent`, function (req: Request, res: any) {
+  const deviceId = req.body.device_id;
+  const platform = req.body.platform;
+  if (!deviceId || !platform) {
+    return res.status(400).send({
+      message: 'EULA consent: Failed to get device id or platform'
+    });
+  }
+
+  saveEULAConsent(deviceId, platform).then(() => {
+    return res.status(200).send({
+      message: 'EULA consent saved'
+    });
+  });
+});
+
+router.delete(`/eula-consent`, function (req: Request, res: any) {
+  const deviceId = req.body.device_id;
+
+  if (!deviceId) {
+    return res.status(400).send({
+      message: 'EULA consent: Failed to get device id'
+    });
+  }
+
+  deleteEULAConsent(deviceId).then(() => {
+    return res.status(200).send({
+      message: 'EULA consent deleted'
+    });
+  });
+});
+
+router.get(`/eula-consent/:deviceId`, function (req: Request, res: any) {
+  const deviceId = req.params.deviceId;
+  fetchEULAConsent(deviceId).then((consent) => {
+    return res.status(200).send(consent ?? {});
   });
 });
