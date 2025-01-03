@@ -43,9 +43,9 @@ let alchemy: Alchemy;
 export function getDefaultBoost(): DefaultBoost {
   return {
     memes_card_sets: {
-      available: 0.44,
+      available: 0.49,
       available_info: [
-        '0.40 for Full Collection Set',
+        '0.45 for Full Collection Set',
         '0.02 for each additional set up to 2'
       ],
       acquired: 0,
@@ -96,6 +96,12 @@ export function getDefaultBoost(): DefaultBoost {
     memes_szn8: {
       available: 0.05,
       available_info: ['0.05 for Season 8 Set'],
+      acquired: 0,
+      acquired_info: []
+    },
+    memes_szn9: {
+      available: 0.05,
+      available_info: ['0.05 for Season 9 Set'],
       acquired: 0,
       acquired_info: []
     },
@@ -529,14 +535,14 @@ function calculateMemesBoostsCardSets(cardSets: number) {
   let boost = 1;
   const breakdown = getDefaultBoost();
 
-  let cardSetBreakdown = 0.4;
+  let cardSetBreakdown = 0.45;
   const additionalCardSets = cardSets - 1;
   // additional full sets up to 2
   cardSetBreakdown += Math.min(additionalCardSets * 0.02, 0.04);
   boost += cardSetBreakdown;
   breakdown.memes_card_sets.acquired = cardSetBreakdown;
 
-  const acquiredInfo = ['0.40 for Full Collection Set'];
+  const acquiredInfo = ['0.45 for Full Collection Set'];
   if (additionalCardSets === 1) {
     acquiredInfo.push(`0.02 for 1 additional set`);
   } else if (additionalCardSets > 1) {
@@ -569,6 +575,7 @@ function calculateMemesBoostsSeasons(
   const cardSetS6 = hasSeasonSet(6, seasons, memes);
   const cardSetS7 = hasSeasonSet(7, seasons, memes);
   const cardSetS8 = hasSeasonSet(8, seasons, memes);
+  const cardSetS9 = hasSeasonSet(9, seasons, memes);
 
   if (cardSetS1) {
     boost += 0.05;
@@ -624,6 +631,11 @@ function calculateMemesBoostsSeasons(
     boost += 0.05;
     breakdown.memes_szn8.acquired = 0.05;
     breakdown.memes_szn8.acquired_info = ['0.05 for holding Season 8 Set'];
+  }
+  if (cardSetS9) {
+    boost += 0.05;
+    breakdown.memes_szn9.acquired = 0.05;
+    breakdown.memes_szn9.acquired_info = ['0.05 for holding Season 9 Set'];
   }
 
   return {
