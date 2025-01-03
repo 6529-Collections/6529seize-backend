@@ -28,7 +28,8 @@ export async function getRaterInfoFromRequest(
       handle: `id-${wallet}`,
       creator_or_updater_wallet: wallet,
       classification: ProfileClassification.PSEUDONYM,
-      sub_classification: null
+      sub_classification: null,
+      pfp_url: null
     });
     await giveReadReplicaTimeToCatchUp(Time.seconds(2).toMillis());
   }
