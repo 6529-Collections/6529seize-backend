@@ -1,4 +1,4 @@
-import { Repository } from 'typeorm';
+import { LessThan, Repository } from 'typeorm';
 import { OWNERS_BALANCES_TABLE } from '../constants';
 import { getDataSource } from '../db';
 import {
@@ -189,4 +189,14 @@ export async function persistConsolidatedOwnerBalances(
       });
     });
   }
+}
+
+export async function fetchRefreshOutdatedBalances(
+  blockReference: number
+): Promise<OwnerBalances[]> {
+  return await getDataSource()
+    .getRepository(OwnerBalances)
+    .find({
+      where: { block_reference: LessThan(blockReference) }
+    });
 }

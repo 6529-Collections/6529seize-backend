@@ -10,7 +10,8 @@ import {
   fetchAllOwnerBalances,
   persistOwnerBalances,
   persistConsolidatedOwnerBalances,
-  getMaxOwnerBalancesBlockReference
+  getMaxOwnerBalancesBlockReference,
+  fetchRefreshOutdatedBalances
 } from './db.owners_balances';
 import {
   fetchAllSeasons,
@@ -36,6 +37,9 @@ import {
 } from '../nftOwnersLoop/db.nft_owners';
 
 const logger = Logger.get('OWNER_BALANCES');
+
+const REFRESH_INTERVAL_BLOCKS = 7500;
+const REFRESH_ADDRESSES_LIMIT = 250;
 
 const validateNftOwners = (
   owners: NFTOwner[],
@@ -110,6 +114,17 @@ export const updateOwnerBalances = async (reset?: boolean) => {
       addresses.add(wallet.from_address.toLowerCase());
       addresses.add(wallet.to_address.toLowerCase());
     });
+    const refreshOutdatedBalances = await fetchRefreshOutdatedBalances(
+      blockReference - REFRESH_INTERVAL_BLOCKS
+    );
+    logger.info(
+      `[FOUND ${refreshOutdatedBalances.length.toLocaleString()} ADDRESSES TO REFRESH] [LIMIT ${REFRESH_ADDRESSES_LIMIT}]`
+    );
+    refreshOutdatedBalances
+      .slice(0, REFRESH_ADDRESSES_LIMIT)
+      .map((o) => o.wallet)
+      .forEach((wallet) => addresses.add(wallet));
+
     if (!addresses.size) {
       logger.info(`[NO WALLETS TO PROCESS]`);
       return;
