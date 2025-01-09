@@ -187,27 +187,26 @@ async function loadApi() {
   await db.connect();
 }
 
-loadApi().then(() => {
+loadApi().then(async () => {
   logger.info(
     `[DB HOST ${process.env.DB_HOST_READ}] [API PASSWORD ACTIVE ${process.env.ACTIVATE_API_PASSWORD}] [LOAD SECRETS ENABLED ${process.env.API_LOAD_SECRETS}]`
   );
 
-  loadApiSecrets().then(() => {
-    passport.use(
-      new JwtStrategy(
-        {
-          jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
-          secretOrKey: getJwtSecret()
-        },
-        function (
-          { sub: wallet, role }: { sub: string; role?: string },
-          cb: VerifiedCallback
-        ) {
-          return cb(null, { wallet: wallet, role });
-        }
-      )
-    );
-  });
+  await loadApiSecrets();
+  passport.use(
+    new JwtStrategy(
+      {
+        jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+        secretOrKey: getJwtSecret()
+      },
+      function (
+        { sub: wallet, role }: { sub: string; role?: string },
+        cb: VerifiedCallback
+      ) {
+        return cb(null, { wallet: wallet, role });
+      }
+    )
+  );
   passport.use(new AnonymousStrategy());
   if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
     // Only enabled in AWS Lambda
