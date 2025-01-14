@@ -41,6 +41,9 @@ const TRANSFER_EVENT =
 const MINT_FROM_ADDRESS =
   '0x0000000000000000000000000000000000000000000000000000000000000000';
 
+const BLUR_EVENT =
+  '0x7dc5c0699ac8dd5250cbe368a2fc3b4a2daadb120ad07f6cccea29f83482686e';
+
 let alchemy: Alchemy;
 let SEAPORT_IFACE: any = undefined;
 
@@ -163,7 +166,21 @@ async function resolveValue(t: Transaction) {
             t.value = parsedLog.totalAmount;
             seaportEvent = true;
           } else {
-            if (
+            if (isBlurEvent(log)) {
+              const royaltiesResponse = await parseBlurLog(log);
+              if (
+                royaltiesResponse &&
+                areEqualAddresses(
+                  royaltiesResponse.feeRecipient,
+                  royaltiesAddress
+                )
+              ) {
+                const parsedRate = Number(royaltiesResponse.feeRate);
+                const parsedRatePercentage = parsedRate / 100;
+                const royaltiesAmount = t.value * (parsedRatePercentage / 100);
+                t.royalties = royaltiesAmount;
+              }
+            } else if (
               areEqualAddresses(log.topics[0], TRANSFER_EVENT) &&
               !seaportEvent
             ) {
@@ -324,6 +341,36 @@ const parseSeaportLog = async (
       royaltiesAmount,
       totalAmount
     };
+  }
+};
+
+const isBlurEvent = (log: ethers.providers.Log) => {
+  return areEqualAddresses(log.topics[0], BLUR_EVENT);
+};
+
+const parseBlurLog = async (log: { data: string }) => {
+  try {
+    const data = log.data;
+    const dataWithoutPrefix = data.startsWith('0x') ? data.slice(2) : data;
+    const packedFeeHex = '0x' + dataWithoutPrefix.slice(-64);
+
+    const value = BigInt(packedFeeHex);
+
+    // Use bit shift to calculate 2^160
+    const twoTo160 = BigInt(1) << BigInt(160);
+    const recipientMask = twoTo160 - BigInt(1);
+
+    const feeRate = value / twoTo160;
+    const feeRecipientBN = value & recipientMask;
+
+    let feeRecipient = feeRecipientBN.toString(16);
+    feeRecipient = feeRecipient.padStart(40, '0');
+    feeRecipient = '0x' + feeRecipient;
+
+    return { feeRate, feeRecipient };
+  } catch (error) {
+    console.error('Error unpacking fee:', error);
+    return null;
   }
 };
 
