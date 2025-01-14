@@ -21,7 +21,7 @@ import {
 } from './constants';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
-import { ethers, BigNumber } from 'ethers';
+import { ethers } from 'ethers';
 import { findTransactionsByHash } from './db';
 import { Logger } from './logging';
 import {
@@ -175,7 +175,7 @@ async function resolveValue(t: Transaction) {
                   royaltiesAddress
                 )
               ) {
-                const parsedRate = royaltiesResponse.feeRate.toNumber();
+                const parsedRate = Number(royaltiesResponse.feeRate);
                 const parsedRatePercentage = parsedRate / 100;
                 const royaltiesAmount = t.value * (parsedRatePercentage / 100);
                 t.royalties = royaltiesAmount;
@@ -348,30 +348,28 @@ const isBlurEvent = (log: ethers.providers.Log) => {
   return areEqualAddresses(log.topics[0], BLUR_EVENT);
 };
 
-const parseBlurLog = async (log: ethers.providers.Log) => {
+const parseBlurLog = async (log: { data: string }) => {
   try {
     const data = log.data;
     const dataWithoutPrefix = data.startsWith('0x') ? data.slice(2) : data;
     const packedFeeHex = '0x' + dataWithoutPrefix.slice(-64);
 
-    const value = BigNumber.from(packedFeeHex);
+    const value = BigInt(packedFeeHex);
 
-    const twoTo160 = BigNumber.from(2).pow(160);
-    const recipientMask = twoTo160.sub(1);
-    const feeRate = value.div(twoTo160);
+    // Use bit shift to calculate 2^160
+    const twoTo160 = BigInt(1) << BigInt(160);
+    const recipientMask = twoTo160 - BigInt(1);
 
-    const feeRecipientBN = value.and(recipientMask);
+    const feeRate = value / twoTo160;
+    const feeRecipientBN = value & recipientMask;
 
-    let feeRecipient = feeRecipientBN.toHexString();
-    feeRecipient = feeRecipient.startsWith('0x')
-      ? feeRecipient.slice(2)
-      : feeRecipient;
+    let feeRecipient = feeRecipientBN.toString(16);
     feeRecipient = feeRecipient.padStart(40, '0');
     feeRecipient = '0x' + feeRecipient;
 
     return { feeRate, feeRecipient };
   } catch (error) {
-    logger.error('Error unpacking fee:', error);
+    console.error('Error unpacking fee:', error);
     return null;
   }
 };
