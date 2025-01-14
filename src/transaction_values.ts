@@ -21,7 +21,7 @@ import {
 } from './constants';
 import { Transaction } from './entities/ITransaction';
 import { areEqualAddresses } from './helpers';
-import { ethers } from 'ethers';
+import { ethers, BigNumber } from 'ethers';
 import { findTransactionsByHash } from './db';
 import { Logger } from './logging';
 import {
@@ -30,7 +30,6 @@ import {
   NEXTGEN_ROYALTIES_ADDRESS
 } from './nextgen/nextgen_constants';
 import { getClosestEthUsdPrice } from './ethPriceLoop/db.eth_price';
-import { BigNumber } from 'ethers';
 
 const logger = Logger.get('TRANSACTION_VALUES');
 
