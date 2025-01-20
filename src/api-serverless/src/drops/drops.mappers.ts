@@ -191,7 +191,9 @@ export class DropsMappers {
             voting_credit_type: resolveEnumOrThrow(
               WaveCreditTypeApi,
               wave.voting_credit_type
-            )
+            ),
+            voting_period_start: wave.voting_period_start,
+            voting_period_end: wave.voting_period_end
           }
         : null;
       return {

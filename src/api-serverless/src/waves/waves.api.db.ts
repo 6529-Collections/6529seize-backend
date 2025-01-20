@@ -169,73 +169,68 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     };
     await this.db.execute(
       `
-    insert into ${WAVES_TABLE} 
-        (
-            id,
-            name,
-            picture,
-            description_drop_id,
-            created_at,
-            updated_at,
-            created_by,
-            voting_group_id,
-            admin_group_id,
-            voting_credit_type,
-            voting_credit_category,
-            voting_credit_creditor,
-            voting_signature_required,
-            voting_period_start,
-            voting_period_end,
-            visibility_group_id,
-            chat_group_id,
-            chat_enabled,
-            participation_group_id,
-            participation_max_applications_per_participant,
-            participation_required_metadata,
-            participation_required_media,
-            participation_period_start,
-            participation_period_end,
-            type,
-            winning_min_threshold,
-            winning_max_threshold,
-            max_winners,
-            time_lock_ms,
-            outcomes${wave.serial_no !== null ? ', serial_no' : ''}
-        )
-    values
-        (
-            :id,
-            :name,
-            :picture,
-            :description_drop_id,
-            :created_at,
-            :updated_at,
-            :created_by,
-            :voting_group_id,
-            :admin_group_id,
-            :voting_credit_type,
-            :voting_credit_category,
-            :voting_credit_creditor,
-            :voting_signature_required,
-            :voting_period_start,
-            :voting_period_end,
-            :visibility_group_id,
-            :chat_group_id,
-            :chat_enabled,
-            :participation_group_id,
-            :participation_max_applications_per_participant,
-            :participation_required_metadata,
-            :participation_required_media,
-            :participation_period_start,
-            :participation_period_end,
-            :type,
-            :winning_min_threshold,
-            :winning_max_threshold,
-            :max_winners,
-            :time_lock_ms,
-            :outcomes${wave.serial_no !== null ? ', :serial_no' : ''}
-        )
-    `,
+          insert into ${WAVES_TABLE}
+          (id,
+           name,
+           picture,
+           description_drop_id,
+           created_at,
+           updated_at,
+           created_by,
+           voting_group_id,
+           admin_group_id,
+           voting_credit_type,
+           voting_credit_category,
+           voting_credit_creditor,
+           voting_signature_required,
+           voting_period_start,
+           voting_period_end,
+           visibility_group_id,
+           chat_group_id,
+           chat_enabled,
+           participation_group_id,
+           participation_max_applications_per_participant,
+           participation_required_metadata,
+           participation_required_media,
+           participation_period_start,
+           participation_period_end,
+           type,
+           winning_min_threshold,
+           winning_max_threshold,
+           max_winners,
+           time_lock_ms,
+           outcomes${wave.serial_no !== null ? ', serial_no' : ''})
+          values (:id,
+                  :name,
+                  :picture,
+                  :description_drop_id,
+                  :created_at,
+                  :updated_at,
+                  :created_by,
+                  :voting_group_id,
+                  :admin_group_id,
+                  :voting_credit_type,
+                  :voting_credit_category,
+                  :voting_credit_creditor,
+                  :voting_signature_required,
+                  :voting_period_start,
+                  :voting_period_end,
+                  :visibility_group_id,
+                  :chat_group_id,
+                  :chat_enabled,
+                  :participation_group_id,
+                  :participation_max_applications_per_participant,
+                  :participation_required_metadata,
+                  :participation_required_media,
+                  :participation_period_start,
+                  :participation_period_end,
+                  :type,
+                  :winning_min_threshold,
+                  :winning_max_threshold,
+                  :max_winners,
+                  :time_lock_ms,
+                  :outcomes${wave.serial_no !== null ? ', :serial_no' : ''})
+      `,
       params,
       { wrappedConnection: ctx.connection }
     );
@@ -314,9 +309,23 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     }
     return this.db
       .execute<WaveOverview & { drop_id: string }>(
-        `select 
-    d.id as drop_id, w.id, w.name, w.picture, w.picture, w.description_drop_id, w.voting_group_id, w.participation_group_id, w.chat_group_id, w.chat_enabled, w.voting_credit_type
-    from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)`,
+        `
+        select 
+          d.id as drop_id, 
+          w.id, 
+          w.name, 
+          w.picture, 
+          w.picture, 
+          w.description_drop_id, 
+          w.voting_group_id, 
+          w.participation_group_id, 
+          w.chat_group_id, 
+          w.chat_enabled, 
+          w.voting_credit_type, 
+          w.voting_period_start, 
+          w.voting_period_end
+        from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)
+        `,
         {
           dropIds
         },
@@ -333,7 +342,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             participation_group_id: wave.participation_group_id,
             chat_group_id: wave.chat_group_id,
             chat_enabled: wave.chat_enabled,
-            voting_credit_type: wave.voting_credit_type
+            voting_credit_type: wave.voting_credit_type,
+            voting_period_start: wave.voting_period_start,
+            voting_period_end: wave.voting_period_end
           };
           return acc;
         }, {} as Record<string, WaveOverview>)
@@ -357,20 +368,22 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         contributor_pfp: string;
       }>(
         `with contributors as (select distinct d.wave_id,
-                                      i.pfp as contributor_pfp,
-                                      i.primary_address,
-                                      i.level_raw
-                      from ${DROPS_TABLE} d
-                               join ${IDENTITIES_TABLE} i on d.author_id = i.profile_id
-                      where i.pfp is not null
-                        and d.wave_id in (:waveIds)
-                      order by 4 desc),
-    ranked_contributors as (select wave_id,
-                                    contributor_pfp,
-                                    primary_address,
-                                    row_number() over (partition by wave_id, primary_address order by level_raw desc) as rn
-                            from contributors)
-select wave_id, contributor_pfp, primary_address as contributor_identity from ranked_contributors where rn <= 5`,
+                                               i.pfp as contributor_pfp,
+                                               i.primary_address,
+                                               i.level_raw
+                               from ${DROPS_TABLE} d
+                                        join ${IDENTITIES_TABLE} i on d.author_id = i.profile_id
+                               where i.pfp is not null
+                                 and d.wave_id in (:waveIds)
+                               order by 4 desc),
+              ranked_contributors as (select wave_id,
+                                             contributor_pfp,
+                                             primary_address,
+                                             row_number() over (partition by wave_id, primary_address order by level_raw desc) as rn
+                                      from contributors)
+         select wave_id, contributor_pfp, primary_address as contributor_identity
+         from ranked_contributors
+         where rn <= 5`,
         {
           waveIds
         },
@@ -539,31 +552,35 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
         }
       >(
         `
-  with reps as (select matter_target_id as profile_id from ${RATINGS_TABLE} where rater_profile_id = :authenticatedUserId and matter = '${
-          RateMatter.REP
-        }' and rating <> 0),
-  wids as (
-      select distinct w.id from ${WAVES_TABLE} w
-                                    join reps r on w.created_by = r.profile_id
-      where (w.visibility_group_id is null ${
-        eligibleGroups.length
-          ? `or w.visibility_group_id in (:eligibleGroups)`
-          : ``
-      }) order by w.serial_no desc, w.id limit :limit offset :offset
-  )
-      select wa.* from ${WAVES_TABLE} wa
-      ${
-        only_waves_followed_by_authenticated_user
-          ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = wa.id`
-          : ``
-      }
-  where
-      ${
-        only_waves_followed_by_authenticated_user
-          ? `f.subscriber_id = :authenticatedUserId and`
-          : ``
-      } wa.id in (select id from wids) order by wa.serial_no desc, wa.id
-`,
+            with reps as (select matter_target_id as profile_id
+                          from ${RATINGS_TABLE}
+                          where rater_profile_id = :authenticatedUserId
+                            and matter = '${RateMatter.REP}'
+                            and rating <> 0),
+                 wids as (select distinct w.id
+                          from ${WAVES_TABLE} w
+                                   join reps r on w.created_by = r.profile_id
+                          where (w.visibility_group_id is null ${
+                            eligibleGroups.length
+                              ? `or w.visibility_group_id in (:eligibleGroups)`
+                              : ``
+                          })
+                          order by w.serial_no desc, w.id
+                          limit :limit offset :offset)
+            select wa.*
+            from ${WAVES_TABLE} wa
+                ${
+                  only_waves_followed_by_authenticated_user
+                    ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = wa.id`
+                    : ``
+                }
+            where ${
+              only_waves_followed_by_authenticated_user
+                ? `f.subscriber_id = :authenticatedUserId and`
+                : ``
+            } wa.id in (select id from wids)
+            order by wa.serial_no desc, wa.id
+        `,
         {
           limit,
           eligibleGroups,
@@ -608,31 +625,31 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
         }
       >(
         `
-          with subscription_counts as (select target_id as wave_id, count(*) as count
-                                       from ${IDENTITY_SUBSCRIPTIONS_TABLE}
-                                       where target_type = 'WAVE'
-                                       group by target_id)
-          select w.*
-          from ${WAVES_TABLE} w
-              ${
-                only_waves_followed_by_authenticated_user
-                  ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
-                  : ``
-              }
-                   join subscription_counts sc on sc.wave_id = w.id
-          where
-              ${
-                only_waves_followed_by_authenticated_user
-                  ? `f.subscriber_id = :authenticated_user_id and`
-                  : ``
-              }  (w.visibility_group_id is null ${
+            with subscription_counts as (select target_id as wave_id, count(*) as count
+                                         from ${IDENTITY_SUBSCRIPTIONS_TABLE}
+                                         where target_type = 'WAVE'
+                                         group by target_id)
+            select w.*
+            from ${WAVES_TABLE} w ${
+          only_waves_followed_by_authenticated_user
+            ? `join ${IDENTITY_SUBSCRIPTIONS_TABLE} f on f.target_type = 'WAVE' and f.target_action = 'DROP_CREATED' and f.target_id = w.id`
+            : ``
+        }
+                   join subscription_counts sc
+            on sc.wave_id = w.id
+            where ${
+              only_waves_followed_by_authenticated_user
+                ? `f.subscriber_id = :authenticated_user_id and`
+                : ``
+            } (w.visibility_group_id is null ${
           eligibleGroups.length
             ? `or w.visibility_group_id in (:eligibleGroups)`
             : ``
         })
-          order by sc.count desc, w.id desc
-          limit :limit offset :offset
-      `,
+            order by sc.count
+            desc, w.id desc
+                limit : limit offset : offset
+        `,
         {
           limit,
           offset,
@@ -890,7 +907,9 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
   ) {
     ctx.timer?.start('wavesApiDb->updateVisibilityInFeedEntities');
     await this.db.execute(
-      `update ${ACTIVITY_EVENTS_TABLE} set visibility_group_id = :newVisibilityGroupId where wave_id = :waveId`,
+      `update ${ACTIVITY_EVENTS_TABLE}
+       set visibility_group_id = :newVisibilityGroupId
+       where wave_id = :waveId`,
       param,
       { wrappedConnection: ctx.connection }
     );
@@ -903,7 +922,9 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
   ) {
     ctx.timer?.start('wavesApiDb->updateVisibilityInNotifications');
     await this.db.execute(
-      `update ${IDENTITY_NOTIFICATIONS_TABLE} set visibility_group_id = :newVisibilityGroupId where wave_id = :waveId`,
+      `update ${IDENTITY_NOTIFICATIONS_TABLE}
+       set visibility_group_id = :newVisibilityGroupId
+       where wave_id = :waveId`,
       param,
       { wrappedConnection: ctx.connection }
     );
@@ -928,7 +949,9 @@ select wave_id, contributor_pfp, primary_address as contributor_identity from ra
     connection: ConnectionWrapper<any>
   ) {
     await this.db.execute(
-      `update ${WAVES_TABLE} set description_drop_id = :newDescriptionDropId where id = :waveId`,
+      `update ${WAVES_TABLE}
+       set description_drop_id = :newDescriptionDropId
+       where id = :waveId`,
       param,
       { wrappedConnection: connection }
     );
@@ -1193,6 +1216,8 @@ export interface WaveOverview {
   readonly chat_group_id: string | null;
   readonly chat_enabled: boolean;
   readonly voting_credit_type: WaveCreditType;
+  readonly voting_period_start: number | null;
+  readonly voting_period_end: number | null;
 }
 
 export const wavesApiDb = new WavesApiDb(dbSupplier, userGroupsService);
