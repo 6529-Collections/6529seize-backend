@@ -426,6 +426,8 @@ export class DropsApiService {
         wave.chat_enabled &&
         (wave.chat_group_id === null ||
           group_ids_user_is_eligible_for.includes(wave.chat_group_id)),
+      voting_period_start: wave.voting_period_start,
+      voting_period_end: wave.voting_period_end,
       voting_credit_type: resolveEnumOrThrow(
         WaveCreditTypeApi,
         wave.voting_credit_type
@@ -547,6 +549,8 @@ export class DropsApiService {
         waveEntity.chat_enabled &&
         (waveEntity.chat_group_id === null ||
           groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id)),
+      voting_period_start: waveEntity.voting_period_start,
+      voting_period_end: waveEntity.voting_period_end,
       voting_credit_type: resolveEnumOrThrow(
         WaveCreditTypeApi,
         waveEntity.voting_credit_type
