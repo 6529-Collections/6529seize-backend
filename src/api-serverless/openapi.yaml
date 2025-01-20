@@ -5375,6 +5375,8 @@ components:
         - authenticated_user_eligible_to_vote
         - authenticated_user_eligible_to_participate
         - authenticated_user_eligible_to_chat
+        - voting_period_start
+        - voting_period_end
         - voting_credit_type
       properties:
         id:
@@ -5391,6 +5393,14 @@ components:
           type: boolean
         authenticated_user_eligible_to_chat:
           type: boolean
+        voting_period_start:
+          type: number
+          format: int64
+          nullable: true
+        voting_period_end:
+          type: number
+          format: int64
+          nullable: true
         voting_credit_type:
           $ref: '#/components/schemas/ApiWaveCreditType'
     ApiWaveOutcome:
