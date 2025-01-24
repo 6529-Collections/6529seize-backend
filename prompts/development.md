@@ -343,7 +343,8 @@ transaction_values.ts
 * Each table maps to a TypeScript class (an “entity”) annotated with TypeORM decorators.
 * Synchronization: Each “Loop” Lambda (background process) loads TypeORM with synchronize=true, so schema updates can happen automatically at startup. Exercise caution—modifying or removing an entity can disrupt production data.
 * API Lambda: Does not use TypeORM. It relies solely on native SQL queries.
-* Naming Conventions:
+
+Naming Conventions:
 * Table names are singular.
 * The entity’s file name begins with I and uses PascalCase (e.g., IEthPrice.ts).
 * The entity class itself is also singular and typically matches the table name.
