@@ -1566,27 +1566,18 @@ export async function fetchRoyaltiesUploads(pageSize: number, page: number) {
 export const fetchNFTMedia = async (
   contract: string
 ): Promise<ApiNftMedia[]> => {
-  if (
-    areEqualAddresses(contract, MEMES_CONTRACT) ||
-    areEqualAddresses(contract, GRADIENT_CONTRACT)
-  ) {
-    const sql = `SELECT id, image, animation FROM ${NFTS_TABLE} WHERE contract=:contract ORDER BY RAND()`;
-    return await sqlExecutor.execute(sql, { contract: contract });
-  }
+  const queries = {
+    [MEMES_CONTRACT]: `SELECT id, image, scaled as image_compact, animation, compressed_animation as animation_compact FROM ${NFTS_TABLE} WHERE contract=:contract ORDER BY RAND()`,
+    [GRADIENT_CONTRACT]: `SELECT id, image, scaled as image_compact, animation, compressed_animation as animation_compact FROM ${NFTS_TABLE} WHERE contract=:contract ORDER BY RAND()`,
+    rememes: `SELECT id, image, s3_image_scaled as image_compact, NULLIF(animation, '') as animation FROM ${REMEMES_TABLE} ORDER BY RAND() LIMIT 100`,
+    [MEMELAB_CONTRACT]: `SELECT id, image, scaled as image_compact, animation, compressed_animation as animation_compact FROM ${NFTS_MEME_LAB_TABLE} ORDER BY RAND() LIMIT 100`,
+    nextgen: `SELECT image_url as image, REPLACE(image_url, '/png/', '/png1k/') as image_compact, animation_url as animation FROM ${NEXTGEN_TOKENS_TABLE} ORDER BY RAND() LIMIT 100`
+  };
 
-  if (areEqualAddresses(contract, 'rememes')) {
-    const sql = `SELECT id, image, animation FROM ${REMEMES_TABLE} ORDER BY RAND() LIMIT 100`;
-    return await sqlExecutor.execute(sql, { contract: contract });
-  }
-
-  if (areEqualAddresses(contract, MEMELAB_CONTRACT)) {
-    const sql = `SELECT id, image, animation FROM ${NFTS_MEME_LAB_TABLE} ORDER BY RAND()`;
-    return await sqlExecutor.execute(sql, { contract: contract });
-  }
-
-  if (areEqualAddresses(contract, 'nextgen')) {
-    const sql = `SELECT image_url as image, animation_url as animation FROM ${NEXTGEN_TOKENS_TABLE} ORDER BY RAND()`;
-    return await sqlExecutor.execute(sql, { contract: contract });
+  for (const [key, sql] of Object.entries(queries)) {
+    if (areEqualAddresses(contract, key)) {
+      return await sqlExecutor.execute(sql, { contract });
+    }
   }
 
   return [];
