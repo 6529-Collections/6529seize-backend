@@ -87,6 +87,7 @@ export async function sendMessage(
   } catch (error: any) {
     // if the error is invalid payload and we have imageUrl, try to resend without it
     if (imageUrl && error.code === 'messaging/invalid-payload') {
+      logger.info('Invalid payload, trying to resend without imageUrl');
       return sendMessage(title, body, token, notification_id, extra_data);
     }
 
