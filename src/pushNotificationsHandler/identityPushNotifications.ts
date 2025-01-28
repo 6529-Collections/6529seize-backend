@@ -57,7 +57,10 @@ export async function sendIdentityNotification(id: number) {
           data,
           imageUrl
         ).catch(async (error) => {
-          if (error.code === 'messaging/registration-token-not-registered') {
+          if (
+            error.code === 'messaging/registration-token-not-registered' ||
+            error.code === 'messaging/invalid-registration-token'
+          ) {
             logger.warn(`Token not registered: ${device.token}`);
             await getDataSource()
               .getRepository(PushNotificationDevice)

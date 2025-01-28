@@ -81,6 +81,15 @@ export async function sendMessage(
     }
   };
 
-  const response = await admin.messaging().send(message);
-  logger.info(`Successfully sent notification: ${response}`);
+  try {
+    const response = await admin.messaging().send(message);
+    logger.info(`Successfully sent notification: ${response}`);
+  } catch (error: any) {
+    // if the error is invalid payload and we have imageUrl, try to resend without it
+    if (imageUrl && error.code === 'messaging/invalid-payload') {
+      return sendMessage(title, body, token, notification_id, extra_data);
+    }
+
+    throw error;
+  }
 }
