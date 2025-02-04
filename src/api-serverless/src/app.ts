@@ -91,7 +91,6 @@ import { NFT } from '../../entities/INFT';
 import { ApiNft } from './generated/models/ApiNft';
 import { ApiArtistNameItem } from './generated/models/ApiArtistNameItem';
 import { ApiTransactionPage } from './generated/models/ApiTransactionPage';
-import { initRedis, redisCached } from '../../redis';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
 
@@ -183,7 +182,6 @@ async function loadApiSecrets() {
 
 async function loadApi() {
   await loadLocalConfig();
-  await initRedis();
   await db.connect();
 }
 
@@ -953,19 +951,6 @@ loadApi().then(async () => {
       req,
       res
     );
-  });
-
-  apiRouter.get(`/redis-test`, async function (_: any, res: any) {
-    const result = await redisCached(
-      `redis-rest`,
-      Time.minutes(10),
-      async () => {
-        return {
-          message: `Testing Redis. Message composed ${Time.now().toIsoDateTimeString()}`
-        };
-      }
-    );
-    res.send(result);
   });
 
   rootRouter.get(``, async function (req: any, res: any) {
