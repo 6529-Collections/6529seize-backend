@@ -127,6 +127,7 @@ export * from '../models/ApiWaveConfig';
 export * from '../models/ApiWaveContributorOverview';
 export * from '../models/ApiWaveCreditScope';
 export * from '../models/ApiWaveCreditType';
+export * from '../models/ApiWaveDecisionsStrategy';
 export * from '../models/ApiWaveDropsFeed';
 export * from '../models/ApiWaveLog';
 export * from '../models/ApiWaveMetadataType';
@@ -192,7 +193,7 @@ import { ApiCreateNewWaveParticipationConfig } from '../models/ApiCreateNewWaveP
 import { ApiCreateNewWaveScope } from '../models/ApiCreateNewWaveScope';
 import { ApiCreateNewWaveVisibilityConfig } from '../models/ApiCreateNewWaveVisibilityConfig';
 import { ApiCreateNewWaveVotingConfig        } from '../models/ApiCreateNewWaveVotingConfig';
-import { ApiCreateWaveConfig      } from '../models/ApiCreateWaveConfig';
+import { ApiCreateWaveConfig       } from '../models/ApiCreateWaveConfig';
 import { ApiCreateWaveDropRequest } from '../models/ApiCreateWaveDropRequest';
 import { ApiDrop                     } from '../models/ApiDrop';
 import { ApiDropAndDropVote } from '../models/ApiDropAndDropVote';
@@ -275,10 +276,11 @@ import { ApiUploadItem } from '../models/ApiUploadItem';
 import { ApiUploadsPage } from '../models/ApiUploadsPage';
 import { ApiWave } from '../models/ApiWave';
 import { ApiWaveChatConfig } from '../models/ApiWaveChatConfig';
-import { ApiWaveConfig       } from '../models/ApiWaveConfig';
+import { ApiWaveConfig        } from '../models/ApiWaveConfig';
 import { ApiWaveContributorOverview } from '../models/ApiWaveContributorOverview';
 import { ApiWaveCreditScope } from '../models/ApiWaveCreditScope';
 import { ApiWaveCreditType } from '../models/ApiWaveCreditType';
+import { ApiWaveDecisionsStrategy } from '../models/ApiWaveDecisionsStrategy';
 import { ApiWaveDropsFeed } from '../models/ApiWaveDropsFeed';
 import { ApiWaveLog } from '../models/ApiWaveLog';
 import { ApiWaveMetadataType } from '../models/ApiWaveMetadataType';
@@ -459,6 +461,7 @@ let typeMap: {[index: string]: any} = {
     "ApiWaveChatConfig": ApiWaveChatConfig,
     "ApiWaveConfig": ApiWaveConfig,
     "ApiWaveContributorOverview": ApiWaveContributorOverview,
+    "ApiWaveDecisionsStrategy": ApiWaveDecisionsStrategy,
     "ApiWaveDropsFeed": ApiWaveDropsFeed,
     "ApiWaveLog": ApiWaveLog,
     "ApiWaveMetrics": ApiWaveMetrics,

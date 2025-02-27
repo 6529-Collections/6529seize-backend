@@ -17,7 +17,7 @@ import {
 } from '../entities/IDrop';
 import { DropVoteCreditSpending } from '../entities/IDropVoteCreditSpending';
 import { DeletedDropEntity } from '../entities/IDeletedDrop';
-import { WaveEntity } from '../entities/IWave';
+import { WaveArchiveEntity, WaveEntity } from '../entities/IWave';
 import { Profile, ProfileArchived } from '../entities/IProfile';
 import { CicStatement } from '../entities/ICICStatement';
 import { Rating } from '../entities/IRating';
@@ -79,6 +79,7 @@ const MANAGED_ENTITIES = [
   RatingsSnapshot,
   UserGroupEntity,
   WaveEntity,
+  WaveArchiveEntity,
   WaveMetricEntity,
   WaveDropperMetricEntity,
   PushNotificationDevice,

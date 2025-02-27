@@ -121,7 +121,8 @@ export class WavesMappers {
         createWaveRequest.wave.winning_thresholds?.max ?? null,
       max_winners: createWaveRequest.wave.max_winners ?? null,
       time_lock_ms: createWaveRequest.wave.time_lock_ms ?? null,
-      outcomes: JSON.stringify(createWaveRequest.outcomes)
+      outcomes: JSON.stringify(createWaveRequest.outcomes),
+      decisions_strategy: createWaveRequest.wave.decisions_strategy ?? null
     };
   }
 
@@ -311,7 +312,8 @@ export class WavesMappers {
       admin_group: {
         group: curations[waveEntity.admin_group_id!] ?? null
       },
-      authenticated_user_eligible_for_admin: authenticatedUserEligibleForAdmin
+      authenticated_user_eligible_for_admin: authenticatedUserEligibleForAdmin,
+      decisions_strategy: waveEntity.decisions_strategy
     };
     const waveMetrics = metrics[waveEntity.id];
     const waveAuthenticatedUserMetrics =

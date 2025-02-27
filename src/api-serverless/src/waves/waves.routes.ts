@@ -62,6 +62,7 @@ import { DROP_LOG_TYPES } from '../../../entities/IProfileActivityLog';
 import { ApiWaveLog } from '../generated/models/ApiWaveLog';
 import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
 import { ApiWaveOutcomeDistributionItem } from '../generated/models/ApiWaveOutcomeDistributionItem';
+import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
 
 const router = asyncRouter();
 
@@ -579,6 +580,14 @@ const WaveChatSchema = Joi.object<ApiCreateNewWaveChatConfig>({
   enabled: Joi.boolean().optional().default(true)
 });
 
+const WaveDecisionsStrategySchema = Joi.object<ApiWaveDecisionsStrategy>({
+  first_decision_time: Joi.number().integer().min(1).required(),
+  subsequent_decisions: Joi.array()
+    .required()
+    .items(Joi.number().integer().min(1)),
+  is_rolling: Joi.boolean().required()
+});
+
 const WaveConfigSchema = Joi.object<
   ApiWaveConfig & { period?: ApiIntRange | null }
 >({
@@ -597,7 +606,8 @@ const WaveConfigSchema = Joi.object<
   }),
   time_lock_ms: Joi.number().integer().required().allow(null).min(1),
   period: IntRangeSchema.optional(),
-  admin_group: WaveScopeSchema.required()
+  admin_group: WaveScopeSchema.required(),
+  decisions_strategy: WaveDecisionsStrategySchema.optional().allow(null)
 });
 
 const WaveOutcomeDistributionItemSchema =

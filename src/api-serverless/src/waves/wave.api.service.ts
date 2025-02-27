@@ -32,10 +32,6 @@ import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
-import {
-  profilesApiService,
-  ProfilesApiService
-} from '../profiles/profiles.api.service';
 import { WaveEntity } from '../../../entities/IWave';
 import { RequestContext } from '../../../request.context';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
@@ -61,7 +57,6 @@ import { profilesService } from '../../../profiles/profiles.service';
 export class WaveApiService {
   constructor(
     private readonly wavesApiDb: WavesApiDb,
-    private readonly profilesService: ProfilesApiService,
     private readonly userGroupsService: UserGroupsService,
     private readonly waveMappers: WavesMappers,
     private readonly activityRecorder: ActivityRecorder,
@@ -880,7 +875,6 @@ export interface WavesOverviewParams {
 
 export const waveApiService = new WaveApiService(
   wavesApiDb,
-  profilesApiService,
   userGroupsService,
   wavesMappers,
   activityRecorder,
