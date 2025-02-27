@@ -22,6 +22,7 @@ import {
   RATINGS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
+  WAVES_ARCHIVE_TABLE,
   WAVES_TABLE
 } from '../../../constants';
 import {
@@ -35,6 +36,7 @@ import { RequestContext } from '../../../request.context';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
 import { DropType } from '../../../entities/IDrop';
+import { Time } from '../../../time';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
   constructor(
@@ -52,10 +54,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .oneOrNull<
         Omit<
           WaveEntity,
-          'participation_required_media' | 'participation_required_metadata'
+          | 'participation_required_media'
+          | 'participation_required_metadata'
+          | 'decisions_strategy'
         > & {
           participation_required_media: string;
           participation_required_metadata: string;
+          decisions_strategy: string;
         }
       >(
         `SELECT * FROM ${WAVES_TABLE} WHERE id = :id`,
@@ -71,7 +76,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               ),
               participation_required_metadata: JSON.parse(
                 it.participation_required_metadata
-              )
+              ),
+              decisions_strategy: it.decisions_strategy
+                ? JSON.parse(it.decisions_strategy)
+                : null
             }
           : null
       );
@@ -89,10 +97,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .execute<
         Omit<
           WaveEntity,
-          'participation_required_media' | 'participation_required_metadata'
+          | 'participation_required_media'
+          | 'participation_required_metadata'
+          | 'decisions_strategy'
         > & {
           participation_required_media: string;
           participation_required_metadata: string;
+          decisions_strategy: string;
         }
       >(
         `SELECT * FROM ${WAVES_TABLE} WHERE id in (:ids) and (visibility_group_id is null ${
@@ -111,47 +122,11 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ),
           participation_required_metadata: JSON.parse(
             it.participation_required_metadata
-          )
+          ),
+          decisions_strategy: it.decisions_strategy
+            ? JSON.parse(it.decisions_strategy)
+            : null
         }))
-      );
-  }
-
-  public async findWavesByIdsWithoutEligibilityCheck(
-    ids: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, WaveEntity>> {
-    if (!ids.length) {
-      return {};
-    }
-    return this.db
-      .execute<
-        Omit<
-          WaveEntity,
-          'participation_required_media' | 'participation_required_metadata'
-        > & {
-          participation_required_media: string;
-          participation_required_metadata: string;
-        }
-      >(
-        `SELECT * FROM ${WAVES_TABLE} WHERE id in (:ids)`,
-        { ids },
-        connection ? { wrappedConnection: connection } : undefined
-      )
-      .then((res) =>
-        res
-          .map((it) => ({
-            ...it,
-            participation_required_media: JSON.parse(
-              it.participation_required_media
-            ),
-            participation_required_metadata: JSON.parse(
-              it.participation_required_metadata
-            )
-          }))
-          .reduce((acc, wave) => {
-            acc[wave.id] = wave;
-            return acc;
-          }, {} as Record<string, WaveEntity>)
       );
   }
 
@@ -165,10 +140,14 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       ),
       participation_required_metadata: JSON.stringify(
         wave.participation_required_metadata
-      )
+      ),
+      decision_strategy: wave.decisions_strategy
+        ? JSON.stringify(wave.decisions_strategy)
+        : null
     };
-    await this.db.execute(
-      `
+    const serial = await this.db
+      .execute(
+        `
           insert into ${WAVES_TABLE}
           (id,
            name,
@@ -199,6 +178,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            winning_max_threshold,
            max_winners,
            time_lock_ms,
+           decisions_strategy,
            outcomes${wave.serial_no !== null ? ', serial_no' : ''})
           values (:id,
                   :name,
@@ -229,9 +209,88 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   :winning_max_threshold,
                   :max_winners,
                   :time_lock_ms,
-                  :outcomes${wave.serial_no !== null ? ', :serial_no' : ''})
-      `,
-      params,
+                  :decisions_strategy,
+                  :outcomes${wave.serial_no !== null ? ', :serial_no' : ''})`,
+        params,
+        { wrappedConnection: ctx.connection }
+      )
+      .then(
+        async () =>
+          wave.serial_no ?? (await this.getLastInsertId(ctx.connection!))
+      );
+    await this.db.execute(
+      `insert into ${WAVES_ARCHIVE_TABLE}
+                           (
+                            archival_entry_created_at,
+                            id,
+                            name,
+                            picture,
+                            description_drop_id,
+                            created_at,
+                            updated_at,
+                            created_by,
+                            voting_group_id,
+                            admin_group_id,
+                            voting_credit_type,
+                            voting_credit_category,
+                            voting_credit_creditor,
+                            voting_signature_required,
+                            voting_period_start,
+                            voting_period_end,
+                            visibility_group_id,
+                            chat_group_id,
+                            chat_enabled,
+                            participation_group_id,
+                            participation_max_applications_per_participant,
+                            participation_required_metadata,
+                            participation_required_media,
+                            participation_period_start,
+                            participation_period_end,
+                            type,
+                            winning_min_threshold,
+                            winning_max_threshold,
+                            max_winners,
+                            time_lock_ms,
+                            decisions_strategy,
+                            outcomes, 
+                            serial_no
+                           )
+                           values (
+                                   :now,
+                                   :id,
+                                   :name,
+                                   :picture,
+                                   :description_drop_id,
+                                   :created_at,
+                                   :updated_at,
+                                   :created_by,
+                                   :voting_group_id,
+                                   :admin_group_id,
+                                   :voting_credit_type,
+                                   :voting_credit_category,
+                                   :voting_credit_creditor,
+                                   :voting_signature_required,
+                                   :voting_period_start,
+                                   :voting_period_end,
+                                   :visibility_group_id,
+                                   :chat_group_id,
+                                   :chat_enabled,
+                                   :participation_group_id,
+                                   :participation_max_applications_per_participant,
+                                   :participation_required_metadata,
+                                   :participation_required_media,
+                                   :participation_period_start,
+                                   :participation_period_end,
+                                   :type,
+                                   :winning_min_threshold,
+                                   :winning_max_threshold,
+                                   :max_winners,
+                                   :time_lock_ms,
+                                   :decisions_strategy,
+                                   :outcomes,
+                                   :serial_no
+                           )`,
+      { ...params, serial_no: serial, now: Time.currentMillis() },
       { wrappedConnection: ctx.connection }
     );
     timer.stop('waveApiDb->insertWave');
@@ -281,10 +340,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .execute<
         Omit<
           WaveEntity,
-          'participation_required_media' | 'participation_required_metadata'
+          | 'participation_required_media'
+          | 'participation_required_metadata'
+          | 'decisions_strategy'
         > & {
           participation_required_media: string;
           participation_required_metadata: string;
+          decisions_strategy: string;
         }
       >(sql, params)
       .then((it) =>
@@ -295,7 +357,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ),
           participation_required_metadata: JSON.parse(
             wave.participation_required_metadata
-          )
+          ),
+          decisions_strategy: wave.decisions_strategy
+            ? JSON.parse(wave.decisions_strategy)
+            : null
         }))
       );
   }
@@ -427,10 +492,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .execute<
         Omit<
           WaveEntity,
-          'participation_required_media' | 'participation_required_metadata'
+          | 'participation_required_media'
+          | 'participation_required_metadata'
+          | 'decisions_strategy'
         > & {
           participation_required_media: string;
           participation_required_metadata: string;
+          decisions_strategy: string;
         }
       >(
         `
@@ -459,7 +527,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ),
           participation_required_metadata: JSON.parse(
             it.participation_required_metadata
-          )
+          ),
+          decisions_strategy: it.decisions_strategy
+            ? JSON.parse(it.decisions_strategy)
+            : null
         }))
       );
   }
@@ -481,10 +552,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .execute<
         Omit<
           WaveEntity,
-          'participation_required_media' | 'participation_required_metadata'
+          | 'participation_required_media'
+          | 'participation_required_metadata'
+          | 'decisions_strategy'
         > & {
           participation_required_media: string;
           participation_required_metadata: string;
+          decisions_strategy: string;
         }
       >(
         `
@@ -523,7 +597,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ),
           participation_required_metadata: JSON.parse(
             it.participation_required_metadata
-          )
+          ),
+          decisions_strategy: it.decisions_strategy
+            ? JSON.parse(it.decisions_strategy)
+            : null
         }))
       );
   }
@@ -545,10 +622,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .execute<
         Omit<
           WaveEntity,
-          'participation_required_media' | 'participation_required_metadata'
+          | 'participation_required_media'
+          | 'participation_required_metadata'
+          | 'decisions_strategy'
         > & {
           participation_required_media: string;
           participation_required_metadata: string;
+          decisions_strategy: string;
         }
       >(
         `
@@ -596,7 +676,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ),
           participation_required_metadata: JSON.parse(
             it.participation_required_metadata
-          )
+          ),
+          decisions_strategy: it.decisions_strategy
+            ? JSON.parse(it.decisions_strategy)
+            : null
         }))
       );
   }
@@ -618,10 +701,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .execute<
         Omit<
           WaveEntity,
-          'participation_required_media' | 'participation_required_metadata'
+          | 'participation_required_media'
+          | 'participation_required_metadata'
+          | 'decisions_strategy'
         > & {
           participation_required_media: string;
           participation_required_metadata: string;
+          decisions_strategy: string;
         }
       >(
         `
@@ -665,7 +751,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ),
           participation_required_metadata: JSON.parse(
             it.participation_required_metadata
-          )
+          ),
+          decisions_strategy: it.decisions_strategy
+            ? JSON.parse(it.decisions_strategy)
+            : null
         }))
       );
   }
@@ -750,7 +839,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
               ),
               participation_required_metadata: JSON.parse(
                 it.participation_required_metadata as any
-              )
+              ),
+              decisions_strategy: it.decisions_strategy
+                ? JSON.parse(it.decisions_strategy as any)
+                : null
             }
           : null
       );
@@ -974,10 +1066,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .execute<
         Omit<
           WaveEntity,
-          'participation_required_media' | 'participation_required_metadata'
+          | 'participation_required_media'
+          | 'participation_required_metadata'
+          | 'decisions_strategy'
         > & {
           participation_required_media: string;
           participation_required_metadata: string;
+          decisions_strategy: string;
         }
       >(
         `select w.* from ${WAVES_TABLE} w
@@ -1008,7 +1103,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ),
           participation_required_metadata: JSON.parse(
             it.participation_required_metadata
-          )
+          ),
+          decisions_strategy: it.decisions_strategy
+            ? JSON.parse(it.decisions_strategy)
+            : null
         }))
       );
   }
@@ -1024,10 +1122,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .execute<
         Omit<
           WaveEntity,
-          'participation_required_media' | 'participation_required_metadata'
+          | 'participation_required_media'
+          | 'participation_required_metadata'
+          | 'decisions_strategy'
         > & {
           participation_required_media: string;
           participation_required_metadata: string;
+          decisions_strategy: string;
         }
       >(
         `select w.* from ${WAVES_TABLE} w 
@@ -1058,7 +1159,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ),
           participation_required_metadata: JSON.parse(
             it.participation_required_metadata
-          )
+          ),
+          decisions_strategy: it.decisions_strategy
+            ? JSON.parse(it.decisions_strategy)
+            : null
         }))
       );
   }
@@ -1075,10 +1179,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .execute<
         Omit<
           WaveEntity,
-          'participation_required_media' | 'participation_required_metadata'
+          | 'participation_required_media'
+          | 'participation_required_metadata'
+          | 'decisions_strategy'
         > & {
           participation_required_media: string;
           participation_required_metadata: string;
+          decisions_strategy: string;
         }
       >(
         `select w.* from ${WAVES_TABLE} w
@@ -1109,7 +1216,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ),
           participation_required_metadata: JSON.parse(
             it.participation_required_metadata
-          )
+          ),
+          decisions_strategy: it.decisions_strategy
+            ? JSON.parse(it.decisions_strategy)
+            : null
         }))
       );
   }
@@ -1126,10 +1236,13 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       .execute<
         Omit<
           WaveEntity,
-          'participation_required_media' | 'participation_required_metadata'
+          | 'participation_required_media'
+          | 'participation_required_metadata'
+          | 'decisions_strategy'
         > & {
           participation_required_media: string;
           participation_required_metadata: string;
+          decisions_strategy: string;
         }
       >(
         `select w.* from ${WAVES_TABLE} w
@@ -1160,7 +1273,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           ),
           participation_required_metadata: JSON.parse(
             it.participation_required_metadata
-          )
+          ),
+          decisions_strategy: it.decisions_strategy
+            ? JSON.parse(it.decisions_strategy)
+            : null
         }))
       );
   }

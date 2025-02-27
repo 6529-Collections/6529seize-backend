@@ -3241,6 +3241,7 @@ components:
         - chat
         - wave
         - outcomes
+        - decisions_strategy
       properties:
         name:
           description: The name of the wave
@@ -3367,6 +3368,7 @@ components:
         - winning_thresholds
         - max_winners
         - admin_group
+        - decisions_strategy
       properties:
         type:
           $ref: "#/components/schemas/ApiWaveType"
@@ -3398,6 +3400,10 @@ components:
           oneOf:
             - type: "null"
             - $ref: "#/components/schemas/ApiCreateNewWaveScope"
+        decisions_strategy:
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ApiWaveDecisionsStrategy"
     ApiCreateWaveDropRequest:
       type: object
       required:
@@ -5148,6 +5154,27 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiUploadItem"
+    ApiWaveDecisionsStrategy:
+      type: object
+      required:
+        - first_decision_time
+        - subsequent_decisions
+        - is_rolling
+      properties:
+        first_decision_time:
+          type: number
+          format: int64
+          description: "When the first decision will be made. All subsequent decision times will be calculated based on this."
+        subsequent_decisions:
+          type: array
+          items:
+            type: number
+            format: int64
+            minimum: 1
+          description: "Each element in this array represents the milliseconds passed from previous decision when new decision is made. When is_rolling=true then after last decision, the next decision will be made again first-element-of-the-array milliseconds later than the previous one. And it will continue like this forever."
+        is_rolling:
+          type: boolean
+          description: "If false then there will be length(subsequent_decisions) + 1 decisions in total. If true then there will be infinite number of decisions (see description of subsequent_decisions). Also if true then there needs to be at least one element in subsequent_decisions array."
     ApiWave:
       type: object
       required:
@@ -5214,6 +5241,7 @@ components:
             $ref: "#/components/schemas/ApiWaveSubscriptionTargetAction"
         metrics:
           $ref: "#/components/schemas/ApiWaveMetrics"
+
     ApiWaveChatConfig:
       type: object
       required:
@@ -5236,6 +5264,7 @@ components:
         - max_winners
         - admin_group
         - authenticated_user_eligible_for_admin
+        - decisions_strategy
       properties:
         type:
           $ref: "#/components/schemas/ApiWaveType"
@@ -5267,6 +5296,10 @@ components:
           $ref: "#/components/schemas/ApiWaveScope"
         authenticated_user_eligible_for_admin:
           type: boolean
+        decisions_strategy:
+          anyOf:
+            - type: "null"
+            - $ref: "#/components/schemas/ApiWaveDecisionsStrategy"
     ApiWaveContributorOverview:
       required:
         - contributor_identity

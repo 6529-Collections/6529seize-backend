@@ -97,6 +97,7 @@ export const DROPS_PARTS_TABLE = 'drops_parts';
 export const PROFILE_PROXIES_TABLE = 'profile_proxies';
 export const PROFILE_PROXY_ACTIONS_TABLE = 'profile_proxy_actions';
 export const WAVES_TABLE = 'waves';
+export const WAVES_ARCHIVE_TABLE = 'waves_archive';
 export const WAVE_METRICS_TABLE = 'wave_metrics';
 export const WAVE_DROPPER_METRICS_TABLE = 'wave_dropper_metrics';
 export const DROPS_MENTIONS_TABLE = 'drops_mentions';
