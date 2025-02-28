@@ -63,6 +63,12 @@ import { ApiWaveLog } from '../generated/models/ApiWaveLog';
 import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
 import { ApiWaveOutcomeDistributionItem } from '../generated/models/ApiWaveOutcomeDistributionItem';
 import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
+import { ApiWaveDecisionsPage } from '../generated/models/ApiWaveDecisionsPage';
+import {
+  WaveDecisionsQuery,
+  WaveDecisionsQuerySort,
+  waveDecisionsService
+} from './wave-decisions.service';
 
 const router = asyncRouter();
 
@@ -487,6 +493,50 @@ router.get(
       authenticationContext,
       timer
     });
+    res.send(result);
+  }
+);
+
+router.get(
+  '/:id/decisions',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { id: string },
+      any,
+      any,
+      Omit<WaveDecisionsQuery, 'wave_id'>,
+      any
+    >,
+    res: Response<ApiResponse<ApiWaveDecisionsPage>>
+  ) => {
+    const { id } = req.params;
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+
+    const params: WaveDecisionsQuery = {
+      wave_id: id,
+      ...getValidatedByJoiOrThrow(
+        req.query,
+        Joi.object<Omit<WaveDecisionsQuery, 'wave_id'>>({
+          page_size: Joi.number().integer().min(1).max(2000).default(100),
+          page: Joi.number().integer().min(1).default(1),
+          sort_direction: Joi.string()
+            .valid(...Object.values(PageSortDirection))
+            .default(PageSortDirection.DESC),
+          sort: Joi.string()
+            .valid(...Object.values(WaveDecisionsQuerySort))
+            .default(WaveDecisionsQuerySort.decision_time)
+        })
+      )
+    };
+    const result = await waveDecisionsService.searchConcludedWaveDecisions(
+      params,
+      {
+        authenticationContext,
+        timer
+      }
+    );
     res.send(result);
   }
 );
