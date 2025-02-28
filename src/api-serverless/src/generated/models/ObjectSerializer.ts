@@ -127,6 +127,10 @@ export * from '../models/ApiWaveConfig';
 export * from '../models/ApiWaveContributorOverview';
 export * from '../models/ApiWaveCreditScope';
 export * from '../models/ApiWaveCreditType';
+export * from '../models/ApiWaveDecision';
+export * from '../models/ApiWaveDecisionAward';
+export * from '../models/ApiWaveDecisionWinner';
+export * from '../models/ApiWaveDecisionsPage';
 export * from '../models/ApiWaveDecisionsStrategy';
 export * from '../models/ApiWaveDropsFeed';
 export * from '../models/ApiWaveLog';
@@ -280,6 +284,10 @@ import { ApiWaveConfig        } from '../models/ApiWaveConfig';
 import { ApiWaveContributorOverview } from '../models/ApiWaveContributorOverview';
 import { ApiWaveCreditScope } from '../models/ApiWaveCreditScope';
 import { ApiWaveCreditType } from '../models/ApiWaveCreditType';
+import { ApiWaveDecision } from '../models/ApiWaveDecision';
+import { ApiWaveDecisionAward       } from '../models/ApiWaveDecisionAward';
+import { ApiWaveDecisionWinner } from '../models/ApiWaveDecisionWinner';
+import { ApiWaveDecisionsPage } from '../models/ApiWaveDecisionsPage';
 import { ApiWaveDecisionsStrategy } from '../models/ApiWaveDecisionsStrategy';
 import { ApiWaveDropsFeed } from '../models/ApiWaveDropsFeed';
 import { ApiWaveLog } from '../models/ApiWaveLog';
@@ -461,6 +469,10 @@ let typeMap: {[index: string]: any} = {
     "ApiWaveChatConfig": ApiWaveChatConfig,
     "ApiWaveConfig": ApiWaveConfig,
     "ApiWaveContributorOverview": ApiWaveContributorOverview,
+    "ApiWaveDecision": ApiWaveDecision,
+    "ApiWaveDecisionAward": ApiWaveDecisionAward,
+    "ApiWaveDecisionWinner": ApiWaveDecisionWinner,
+    "ApiWaveDecisionsPage": ApiWaveDecisionsPage,
     "ApiWaveDecisionsStrategy": ApiWaveDecisionsStrategy,
     "ApiWaveDropsFeed": ApiWaveDropsFeed,
     "ApiWaveLog": ApiWaveLog,
