@@ -1,5 +1,5 @@
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
-import { NotFoundException } from '../../../exceptions';
+import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { RequestContext } from '../../../request.context';
 import { DropType } from '../../../entities/IDrop';
@@ -8,6 +8,7 @@ import {
   voteForDropUseCase,
   VoteForDropUseCase
 } from '../../../drops/vote-for-drop.use-case';
+import { assertUnreachable } from '../../../helpers';
 
 export class DropCheeringService {
   constructor(
@@ -36,28 +37,41 @@ export class DropCheeringService {
       if (!dropEntity) {
         throw new NotFoundException(`Drop ${dropId} not found`);
       }
-      if (dropEntity.drop_type === DropType.CHAT) {
-        await this.clappingService.clap(
-          {
-            drop_id: dropId,
-            clapper_id: param.rater_profile_id,
-            claps: param.cheersChange,
-            wave_id: dropEntity.wave_id,
-            proxy_id: null
-          },
-          ctxWithConnection
-        );
-      } else {
-        await this.voteForDrop.execute(
-          {
-            drop_id: dropId,
-            voter_id: param.rater_profile_id,
-            votes: param.cheersChange,
-            wave_id: dropEntity.wave_id,
-            proxy_id: null
-          },
-          ctxWithConnection
-        );
+      const dropType = dropEntity.drop_type;
+      switch (dropType) {
+        case DropType.CHAT: {
+          await this.clappingService.clap(
+            {
+              drop_id: dropId,
+              clapper_id: param.rater_profile_id,
+              claps: param.cheersChange,
+              wave_id: dropEntity.wave_id,
+              proxy_id: null
+            },
+            ctxWithConnection
+          );
+          break;
+        }
+        case DropType.PARTICIPATORY: {
+          await this.voteForDrop.execute(
+            {
+              drop_id: dropId,
+              voter_id: param.rater_profile_id,
+              votes: param.cheersChange,
+              wave_id: dropEntity.wave_id,
+              proxy_id: null
+            },
+            ctxWithConnection
+          );
+          break;
+        }
+        case DropType.WINNER: {
+          throw new BadRequestException(
+            `This drop has already been declared as winner and doesn't accept new votes`
+          );
+        }
+        default:
+          assertUnreachable(dropType);
       }
     });
     await giveReadReplicaTimeToCatchUp();
