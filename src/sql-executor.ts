@@ -61,6 +61,6 @@ export abstract class LazyDbAccessCompatibleService {
     if (!id) {
       throw new Error('Failed to get last insert id');
     }
-    return id;
+    return +id;
   }
 }

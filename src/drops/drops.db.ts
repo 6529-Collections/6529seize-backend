@@ -31,7 +31,9 @@ import {
   PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
+  WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVE_METRICS_TABLE,
+  WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_TABLE
 } from '../constants';
 import {
@@ -50,6 +52,7 @@ import { ApiDropSearchStrategy } from '../api-serverless/src/generated/models/Ap
 import { DropVoterStateEntity } from '../entities/IDropVoterState';
 import { ProfileActivityLog } from '../entities/IProfileActivityLog';
 import { assertUnreachable } from '../helpers';
+import { WaveDecisionWinnerDropEntity } from '../entities/IWaveDecision';
 
 const mysql = require('mysql');
 
@@ -142,6 +145,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                      updated_at,
                                      title,
                                      parts_count,
+                                     signature,
                                      reply_to_drop_id,
                                      reply_to_part_id${
                                        newDropSerialNo !== null
@@ -156,6 +160,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                  :updated_at,
                  :title,
                  :parts_count,
+                 :signature,
                  :reply_to_drop_id,
                  :reply_to_part_id
               ${newDropSerialNo !== null ? `, :serial_no` : ``})`,
@@ -584,7 +589,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         ? `, sum(case when author_id = :context_profile_id then 1 else 0 end) as context_profile_count`
         : ``
     }
-    from drops
+    from ${DROPS_TABLE}
     where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
     } drops.reply_to_drop_id in (:dropIds)
@@ -989,29 +994,31 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return trace;
   }
 
-  async findLeaderboardDrops(
+  async findWeightedLeaderboardDrops(
     params: LeaderboardParams,
     ctx: RequestContext
   ): Promise<DropEntity[]> {
-    ctx.timer?.start(`${this.constructor.name}->findLeaderboardDrops`);
+    ctx.timer?.start(`${this.constructor.name}->findWeightedLeaderboardDrops`);
     const sql = `
-    with ddata as (select d.id                                    as drop_id,
-                      cast(ifnull(r.vote, 0) as signed)         as vote,
-                      cast(ifnull(r.last_increased, d.created_at) as signed) as timestamp
-               from drops d
-                        left join drop_ranks r ON r.drop_id = d.id
-               where d.wave_id = :wave_id
-                 and d.drop_type = '${DropType.PARTICIPATORY}'),
-      dranks as (
-            select drop_id, rnk, vote from (select drop_id,
-                                                 vote,
-                                                 timestamp,
-                                                 RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
-                                          from ddata) drop_ranks
-          )
-      select d.* from dranks r join drops d on d.id = r.drop_id ${
-        params.author_identity ? ` where d.author_id = :author_identity ` : ``
-      } order by ${
+        with ddata as (
+            select
+                we.drop_id as drop_id,
+                cast(ifnull(we.vote, 0) as signed) as vote,
+                cast(ifnull(we.timestamp, d.created_at) as signed) as timestamp from ${DROPS_TABLE} d
+                                                                                         left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} we on d.id = we.drop_id
+            where we.wave_id = :wave_id
+              and d.drop_type = 'PARTICIPATORY'
+        ),
+             dranks as (
+                 select drop_id, rnk, vote from (select drop_id,
+                                                        vote,
+                                                        timestamp,
+                                                        RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
+                                                 from ddata) drop_ranks
+             )
+        select d.* from dranks r join drops d on d.id = r.drop_id ${
+          params.author_identity ? ` where d.author_id = :author_identity ` : ``
+        } order by ${
       params.sort === LeaderboardSort.RANK ? `r.rnk` : 'd.created_at'
     } ${params.sort_direction} limit :page_size offset :offset
     `;
@@ -1024,6 +1031,40 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     const results = await this.db.execute<DropEntity>(sql, sqlParams, {
       wrappedConnection: ctx.connection
     });
+    ctx.timer?.stop(`${this.constructor.name}->findWeightedLeaderboardDrops`);
+    return results;
+  }
+
+  async findRealtimeLeaderboardDrops(
+    params: { offset: number; limit: number; wave_id: string },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    ctx.timer?.start(`${this.constructor.name}->findLeaderboardDrops`);
+    const sql = `
+    with ddata as (select d.id                                    as drop_id,
+                      cast(ifnull(r.vote, 0) as signed)         as vote,
+                      cast(ifnull(r.last_increased, d.created_at) as signed) as timestamp
+               from ${DROPS_TABLE} d
+                        left join drop_ranks r ON r.drop_id = d.id
+               where d.wave_id = :wave_id
+                 and d.drop_type = '${DropType.PARTICIPATORY}'),
+      dranks as (
+            select drop_id, rnk, vote from (select drop_id,
+                                                 vote,
+                                                 timestamp,
+                                                 RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
+                                          from ddata) drop_ranks
+          )
+      select d.*, r.rnk, r.vote from dranks r join drops d on d.id = r.drop_id order by r.rnk limit :limit offset :offset
+    `;
+    const sqlParams = {
+      wave_id: params.wave_id,
+      limit: params.limit,
+      offset: params.offset
+    };
+    const results = await this.db.execute<DropEntity>(sql, sqlParams, {
+      wrappedConnection: ctx.connection
+    });
     ctx.timer?.stop(`${this.constructor.name}->findLeaderboardDrops`);
     return results;
   }
@@ -1032,7 +1073,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     params: LeaderboardParams,
     ctx: RequestContext
   ): Promise<number> {
-    ctx.timer?.start(`${this.constructor.name}->countParticipatoryDrops`);
+    ctx.timer?.start(`${this.constructor.name}->countLeaderboardDrops`);
     const count = await this.db
       .oneOrNull<{ cnt: number }>(
         `select count(*) as cnt from ${DROPS_TABLE} where wave_id = :wave_id and drop_type = :drop_type ${
@@ -1046,7 +1087,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       )
       .then((it) => it?.cnt ?? 0);
-    ctx.timer?.stop(`${this.constructor.name}->countParticipatoryDrops`);
+    ctx.timer?.stop(`${this.constructor.name}->countLeaderboardDrops`);
     return count;
   }
 
@@ -1325,6 +1366,96 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .then((it) => it?.cnt ?? 0);
     ctx.timer?.stop(`${this.constructor.name}->findVotersInfo`);
     return result;
+  }
+
+  async getWinDecisionsForDrops(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, WaveDecisionWinnerDropEntity>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->getWinDecisionsForDrops`);
+    const entities = await this.db.execute<
+      Omit<WaveDecisionWinnerDropEntity, 'prizes'> & { prizes: string }
+    >(
+      `select * from ${WAVES_DECISION_WINNER_DROPS_TABLE} where drop_id in (:dropIds)`,
+      { dropIds },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->getWinDecisionsForDrops`);
+    return entities.reduce((acc, it) => {
+      acc[it.drop_id] = { ...it, prizes: JSON.parse(it.prizes) };
+      return acc;
+    }, {} as Record<string, WaveDecisionWinnerDropEntity>);
+  }
+
+  async findWaveIdByDropId(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<string | null> {
+    return await this.db
+      .oneOrNull<{ wave_id: string }>(
+        `select wave_id from ${DROPS_TABLE} where id = :dropId`,
+        { dropId },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((it) => it?.wave_id ?? null);
+  }
+
+  async findWinnerDrops(params: LeaderboardParams, ctx: RequestContext) {
+    return this.db.execute<DropEntity>(
+      `select d.* from ${WAVES_DECISION_WINNER_DROPS_TABLE} wd 
+    join ${DROPS_TABLE} d on d.id = wd.drop_id
+    where wd.wave_id = :wave_id
+    order by wd.ranking asc limit :limit offset :offset
+    `,
+      {
+        wave_id: params.wave_id,
+        limit: params.page_size,
+        offset: (params.page - 1) * params.page_size
+      },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async countWinningDrops(
+    params: LeaderboardParams,
+    ctx: RequestContext
+  ): Promise<number> {
+    return this.db
+      .oneOrNull<{ cnt: number }>(
+        `select count(*) as cnt from ${WAVES_DECISION_WINNER_DROPS_TABLE} wd where wd.wave_id = :wave_id`,
+        params,
+        { wrappedConnection: ctx.connection }
+      )
+      .then((it) => it?.cnt ?? 0);
+  }
+
+  async getWaveEndingTimesByDropIds(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    const dbResult = await this.db.execute<{
+      drop_id: string;
+      wave_ending_time: number | null;
+    }>(
+      `
+      select d.id as drop_id, w.voting_period_end as wave_ending_time from ${DROPS_TABLE} d
+      join ${WAVES_TABLE} w on d.wave_id = w.id where d.id in (:dropIds)
+      `,
+      { dropIds },
+      { wrappedConnection: ctx.connection }
+    );
+    return dbResult.reduce((acc, it) => {
+      if (it.wave_ending_time) {
+        acc[it.drop_id] = it.wave_ending_time;
+      }
+      return acc;
+    }, {} as Record<string, number>);
   }
 }
 

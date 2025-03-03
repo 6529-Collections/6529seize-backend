@@ -23,6 +23,10 @@ import {
 } from '../../../drops/delete-drop.use-case';
 import { resolveEnumOrThrow } from '../../../helpers';
 import { ApiDropType } from '../generated/models/ApiDropType';
+import {
+  wsListenersNotifier,
+  WsListenersNotifier
+} from '../ws/ws-listeners-notifier';
 
 export class DropCreationApiService {
   constructor(
@@ -30,7 +34,8 @@ export class DropCreationApiService {
     private readonly dropsDb: DropsDb,
     private readonly dropsMappers: DropsMappers,
     private readonly createOrUpdateDrop: CreateOrUpdateDropUseCase,
-    private readonly deleteDrop: DeleteDropUseCase
+    private readonly deleteDrop: DeleteDropUseCase,
+    private readonly wsListenersNotifier: WsListenersNotifier
   ) {}
 
   public async createDrop(
@@ -43,16 +48,18 @@ export class DropCreationApiService {
       authorId: string;
       representativeId: string;
     },
-    timer: Timer
+    ctx: RequestContext
   ): Promise<ApiDrop> {
-    return this.dropsDb.executeNativeQueriesInTransaction(
+    const drop = await this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         return await this.createDropWithGivenConnection(
           { createDropRequest, authorId, representativeId },
-          { timer, connection }
+          { timer: ctx.timer!, connection }
         );
       }
     );
+    await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx);
+    return drop;
   }
 
   private async createDropWithGivenConnection(
@@ -78,7 +85,7 @@ export class DropCreationApiService {
       timer,
       connection
     });
-    return await this.dropsService.findDropByIdOrThrow(
+    return this.dropsService.findDropByIdOrThrow(
       {
         dropId: drop_id,
         skipEligibilityCheck: true
@@ -103,17 +110,30 @@ export class DropCreationApiService {
     if (authenticationContext?.isAuthenticatedAsProxy()) {
       throw new ForbiddenException(`Proxy is not allowed to delete drops`);
     }
-    await this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
-      await this.deleteDrop.execute(
+    const deleteResponse = await this.dropsDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        return await this.deleteDrop.execute(
+          {
+            drop_id: id,
+            deleter_identity: authenticatedProfileId,
+            deleter_id: authenticatedProfileId,
+            deletion_purpose: 'DELETE'
+          },
+          { timer: timer!, connection }
+        );
+      }
+    );
+    if (deleteResponse) {
+      await this.wsListenersNotifier.notifyAboutDropDelete(
         {
-          drop_id: id,
-          deleter_identity: authenticatedProfileId,
-          deleter_id: authenticatedProfileId,
-          deletion_purpose: 'DELETE'
+          drop_id: deleteResponse.id,
+          drop_serial: deleteResponse.serial_no,
+          wave_id: deleteResponse.wave_id
         },
-        { timer: timer!, connection }
+        deleteResponse.visibility_group_id,
+        { timer, authenticationContext }
       );
-    });
+    }
     timer?.stop('dropCreationApiService->deleteDrop');
   }
 
@@ -129,14 +149,14 @@ export class DropCreationApiService {
       authorId: string;
       representativeId: string;
     },
-    timer: Timer
+    ctx: RequestContext
   ): Promise<ApiDrop> {
     const drop = await this.dropsDb.findDropById(dropId);
     if (!drop) {
       throw new NotFoundException(`Drop ${dropId} not found`);
     }
     const waveId = drop.wave_id;
-    return this.dropsDb.executeNativeQueriesInTransaction(
+    const apiDrop = await this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const replyTo: DropPartIdentifierModel | null =
           drop.reply_to_drop_id !== null
@@ -166,7 +186,7 @@ export class DropCreationApiService {
           model,
           false,
           {
-            timer,
+            timer: ctx.timer!,
             connection
           }
         );
@@ -176,14 +196,14 @@ export class DropCreationApiService {
             skipEligibilityCheck: true
           },
           {
-            connection,
-            authenticationContext:
-              AuthenticationContext.fromProfileId(authorId),
-            timer
+            ...ctx,
+            connection
           }
         );
       }
     );
+    await this.wsListenersNotifier.notifyAboutDropUpdate(apiDrop, ctx);
+    return apiDrop;
   }
 }
 
@@ -192,5 +212,6 @@ export const dropCreationService = new DropCreationApiService(
   dropsDb,
   dropsMappers,
   createOrUpdateDrop,
-  deleteDrop
+  deleteDrop,
+  wsListenersNotifier
 );
