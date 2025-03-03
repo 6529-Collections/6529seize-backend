@@ -1028,11 +1028,11 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return results;
   }
 
-  async countParticipatoryDrops(
+  async countLeaderboardDrops(
     params: LeaderboardParams,
     ctx: RequestContext
   ): Promise<number> {
-    ctx.timer?.start(`${this.constructor.name}->countParticipatoryDrops`);
+    ctx.timer?.start(`${this.constructor.name}->countLeaderboardDrops`);
     const count = await this.db
       .oneOrNull<{ cnt: number }>(
         `select count(*) as cnt from ${DROPS_TABLE} where wave_id = :wave_id and drop_type = :drop_type ${
@@ -1046,7 +1046,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       )
       .then((it) => it?.cnt ?? 0);
-    ctx.timer?.stop(`${this.constructor.name}->countParticipatoryDrops`);
+    ctx.timer?.stop(`${this.constructor.name}->countLeaderboardDrops`);
     return count;
   }
 

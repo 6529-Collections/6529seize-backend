@@ -53,6 +53,7 @@ import {
 } from '../drops/drop-voting.service';
 import { clappingService, ClappingService } from '../drops/clapping.service';
 import { profilesService } from '../../../profiles/profiles.service';
+import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
 
 export class WaveApiService {
   constructor(
@@ -79,14 +80,19 @@ export class WaveApiService {
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
         const id = randomUUID();
+        const waveCreationTime = Time.currentMillis();
         const newEntity = await this.waveMappers.createWaveToNewWaveEntity(
           id,
           null,
-          Time.currentMillis(),
+          waveCreationTime,
           null,
           createWaveRequest,
           authenticationContext.getActingAsId()!,
-          randomUUID()
+          randomUUID(),
+          this.calculateNextDecisionTimeRelativeToNow(
+            waveCreationTime,
+            createWaveRequest.wave.decisions_strategy
+          )
         );
         await this.wavesApiDb.insertWave(newEntity, ctxWithConnection);
         const authorId = authenticationContext.getActingAsId()!;
@@ -736,6 +742,15 @@ export class WaveApiService {
           }
         }
 
+        if (
+          waveEntity.next_decision_time !== null &&
+          waveEntity.next_decision_time < Time.currentMillis()
+        ) {
+          throw new ForbiddenException(
+            `Wave has unresolved decisions and can't be edited at the moment. Try again later`
+          );
+        }
+
         await Promise.all([
           this.wavesApiDb.deleteDropPartsByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteDropMentionsByWaveId(waveId, ctxWithConnection),
@@ -803,6 +818,14 @@ export class WaveApiService {
         if (!waveBeforeUpdate) {
           throw new NotFoundException(`Wave ${waveId} not found`);
         }
+        if (
+          waveBeforeUpdate.next_decision_time !== null &&
+          waveBeforeUpdate.next_decision_time < Time.currentMillis()
+        ) {
+          throw new ForbiddenException(
+            `Wave has unresolved decisions and can't be edited at the moment. Try again later`
+          );
+        }
         if (waveBeforeUpdate.created_by !== authenticatedProfileId) {
           if (
             waveBeforeUpdate.admin_group_id === null ||
@@ -814,14 +837,19 @@ export class WaveApiService {
           }
         }
         await this.wavesApiDb.deleteWave(waveId, ctxWithConnection);
+        const waveUpdateTime = Time.currentMillis();
         const updatedEntity = await this.waveMappers.createWaveToNewWaveEntity(
           waveId,
           waveBeforeUpdate.serial_no,
           waveBeforeUpdate.created_at,
-          Time.currentMillis(),
+          waveUpdateTime,
           request,
           waveBeforeUpdate.created_by,
-          waveBeforeUpdate.description_drop_id
+          waveBeforeUpdate.description_drop_id,
+          this.calculateNextDecisionTimeRelativeToNow(
+            waveUpdateTime,
+            request.wave.decisions_strategy
+          )
         );
         await this.wavesApiDb.insertWave(updatedEntity, ctxWithConnection);
         const newVisibilityGroupId = request.visibility.scope.group_id;
@@ -863,6 +891,42 @@ export class WaveApiService {
         );
       }
     );
+  }
+
+  private calculateNextDecisionTimeRelativeToNow(
+    currentMillis: number,
+    decisionStrategy: ApiWaveDecisionsStrategy | null
+  ): number | null {
+    if (!decisionStrategy) {
+      return null;
+    }
+    let decisionTime: number | null = decisionStrategy.first_decision_time;
+    const subsequentDecisions = decisionStrategy.subsequent_decisions;
+    const isRolling = decisionStrategy.is_rolling;
+    let subsequentDecisionPointer = 0;
+    while (decisionTime !== null && decisionTime < currentMillis) {
+      if (!subsequentDecisions.length) {
+        subsequentDecisionPointer = -1;
+      } else if (isRolling) {
+        if (subsequentDecisionPointer === subsequentDecisions.length - 1) {
+          subsequentDecisionPointer = 0;
+        } else {
+          subsequentDecisionPointer++;
+        }
+      } else {
+        if (subsequentDecisionPointer === subsequentDecisions.length - 1) {
+          subsequentDecisionPointer = -1;
+        } else {
+          subsequentDecisionPointer++;
+        }
+      }
+      if (subsequentDecisionPointer === -1) {
+        decisionTime = null;
+      } else {
+        decisionTime += subsequentDecisions[subsequentDecisionPointer];
+      }
+    }
+    return decisionTime;
   }
 }
 

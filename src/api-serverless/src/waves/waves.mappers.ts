@@ -63,7 +63,8 @@ export class WavesMappers {
     updated_at: number | null,
     createWaveRequest: ApiCreateNewWave | ApiUpdateWaveRequest,
     created_by: string,
-    descriptionDropId: string
+    descriptionDropId: string,
+    nextDecisionTime: number | null
   ): Promise<InsertWaveEntity> {
     let creditorId = createWaveRequest.voting.creditor_id;
     if (creditorId) {
@@ -122,7 +123,8 @@ export class WavesMappers {
       max_winners: createWaveRequest.wave.max_winners ?? null,
       time_lock_ms: createWaveRequest.wave.time_lock_ms ?? null,
       outcomes: JSON.stringify(createWaveRequest.outcomes),
-      decisions_strategy: createWaveRequest.wave.decisions_strategy ?? null
+      decisions_strategy: createWaveRequest.wave.decisions_strategy ?? null,
+      next_decision_time: nextDecisionTime
     };
   }
 
@@ -313,7 +315,8 @@ export class WavesMappers {
         group: curations[waveEntity.admin_group_id!] ?? null
       },
       authenticated_user_eligible_for_admin: authenticatedUserEligibleForAdmin,
-      decisions_strategy: waveEntity.decisions_strategy
+      decisions_strategy: waveEntity.decisions_strategy,
+      next_decision_time: waveEntity.next_decision_time
     };
     const waveMetrics = metrics[waveEntity.id];
     const waveAuthenticatedUserMetrics =

@@ -65,10 +65,10 @@ import { ApiWaveOutcomeDistributionItem } from '../generated/models/ApiWaveOutco
 import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
 import { ApiWaveDecisionsPage } from '../generated/models/ApiWaveDecisionsPage';
 import {
+  waveDecisionsApiService,
   WaveDecisionsQuery,
-  WaveDecisionsQuerySort,
-  waveDecisionsService
-} from './wave-decisions.service';
+  WaveDecisionsQuerySort
+} from './wave-decisions-api.service';
 
 const router = asyncRouter();
 
@@ -530,7 +530,7 @@ router.get(
         })
       )
     };
-    const result = await waveDecisionsService.searchConcludedWaveDecisions(
+    const result = await waveDecisionsApiService.searchConcludedWaveDecisions(
       params,
       {
         authenticationContext,

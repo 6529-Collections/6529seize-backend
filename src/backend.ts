@@ -1,5 +1,6 @@
 import { Logger } from './logging';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
+import * as overratesRevocationLoop from './overRatesRevocationLoop';
 import { prepEnvironment } from './env';
 import { DataSource } from 'typeorm';
 
@@ -29,6 +30,11 @@ async function start() {
   await syncAllEntities();
 
   await dbMigrationsLoop.handler(
+    undefined as any,
+    undefined as any,
+    undefined as any
+  );
+  await overratesRevocationLoop.handler(
     undefined as any,
     undefined as any,
     undefined as any

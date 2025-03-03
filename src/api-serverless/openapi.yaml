@@ -3801,6 +3801,7 @@ components:
       enum:
         - CHAT
         - PARTICIPATORY
+        - WINNER
     ApiDropVote:
       type: object
       required:
@@ -5298,6 +5299,7 @@ components:
         - admin_group
         - authenticated_user_eligible_for_admin
         - decisions_strategy
+        - next_decision_time
       properties:
         type:
           $ref: "#/components/schemas/ApiWaveType"
@@ -5333,6 +5335,10 @@ components:
           anyOf:
             - type: "null"
             - $ref: "#/components/schemas/ApiWaveDecisionsStrategy"
+        next_decision_time:
+          type: number
+          format: int64
+          nullable: true
     ApiWaveContributorOverview:
       required:
         - contributor_identity
@@ -5435,14 +5441,18 @@ components:
       type: object
       required:
         - place
-        - award
+        - awards
         - drop
       properties:
         place:
           type: integer
           format: int64
-        award:
-          $ref: "#/components/schemas/ApiWaveDecisionAward"
+        awards:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiWaveDecisionAward"
+        drop:
+          $ref: "#/components/schemas/ApiDrop"
     ApiWaveDropsFeed:
       type: object
       required:
