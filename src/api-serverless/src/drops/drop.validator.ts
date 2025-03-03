@@ -71,7 +71,8 @@ const baseDropFieldsValidators = {
     .default([])
     .allow(null),
   metadata: Joi.array().optional().items(MetadataSchema).default([]),
-  mentions_all: Joi.boolean().optional()
+  mentions_all: Joi.boolean().optional(),
+  signature: Joi.string().optional().allow(null).default(null)
 };
 
 export const NewDropSchema: Joi.ObjectSchema<ApiCreateDropRequest> = Joi.object(
@@ -87,7 +88,7 @@ export const NewDropSchema: Joi.ObjectSchema<ApiCreateDropRequest> = Joi.object(
     drop_type: Joi.string()
       .optional()
       .default(ApiDropType.Chat)
-      .valid(...Object.values(ApiDropType))
+      .valid(...[ApiDropType.Chat, ApiDropType.Participatory])
   }
 );
 
