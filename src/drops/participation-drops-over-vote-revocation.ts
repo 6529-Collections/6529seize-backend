@@ -184,6 +184,16 @@ async function reduceVotesForDrops(
       )
     ]);
     await dropVotingDb.snapShotDropsCurrentVote(drop_id, now, ctx);
+    await dropVotingDb.snapshotDropVotersVoteCurrentState(
+      {
+        voter_id: profile_id,
+        drop_id,
+        wave_id,
+        vote: votes,
+        timestamp: now
+      },
+      ctx
+    );
     if (votes_still_given <= credit_limit) {
       break;
     }

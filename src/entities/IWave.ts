@@ -14,6 +14,7 @@ export interface WaveBaseType {
   readonly voting_credit_category: string | null;
   readonly voting_credit_creditor: string | null;
   readonly voting_signature_required: boolean;
+  readonly participation_signature_required: boolean;
   readonly voting_period_start: number | null;
   readonly voting_period_end: number | null;
   readonly visibility_group_id: string | null;
@@ -32,6 +33,7 @@ export interface WaveBaseType {
   readonly time_lock_ms: number | null;
   readonly outcomes: string;
   readonly decisions_strategy: WaveDecisionStrategy | null;
+  readonly participation_terms: string | null;
 }
 
 export class WaveBase implements WaveBaseType {
@@ -104,6 +106,9 @@ export class WaveBase implements WaveBaseType {
   @Column({ type: 'bigint', nullable: true })
   readonly participation_period_end!: number | null;
 
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly participation_signature_required!: boolean;
+
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly type!: WaveType;
 
@@ -124,6 +129,9 @@ export class WaveBase implements WaveBaseType {
 
   @Column({ type: 'json', nullable: true })
   readonly decisions_strategy!: WaveDecisionStrategy | null;
+
+  @Column({ type: 'text', nullable: true, default: null })
+  readonly participation_terms!: string | null;
 }
 
 @Entity(WAVES_TABLE)
@@ -133,6 +141,9 @@ export class WaveEntity extends WaveBase {
 
   @PrimaryGeneratedColumn({ type: 'bigint' })
   readonly serial_no!: number;
+
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly next_decision_time!: number | null;
 }
 
 @Entity(WAVES_ARCHIVE_TABLE)
@@ -181,4 +192,31 @@ export interface WaveRequiredMetadataItem {
 export enum WaveRequiredMetadataItemType {
   STRING = 'STRING',
   NUMBER = 'NUMBER'
+}
+
+export enum WaveOutcomeType {
+  MANUAL = 'MANUAL',
+  AUTOMATIC = 'AUTOMATIC'
+}
+export enum WaveOutcomeSubType {
+  CREDIT_DISTRIBUTION = 'CREDIT_DISTRIBUTION'
+}
+export enum WaveOutcomeCredit {
+  REP = 'REP',
+  CIC = 'CIC'
+}
+
+export interface WaveOutcome {
+  type: WaveOutcomeType;
+  subtype?: WaveOutcomeSubType;
+  description: string;
+  credit?: WaveOutcomeCredit;
+  rep_category?: string;
+  amount?: number;
+  distribution?: Array<WaveOutcomeDistributionItem>;
+}
+
+export interface WaveOutcomeDistributionItem {
+  amount?: number | null;
+  description?: string | null;
 }
