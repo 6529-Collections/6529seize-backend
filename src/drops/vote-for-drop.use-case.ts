@@ -59,6 +59,15 @@ export class VoteForDropUseCase {
     await this.votingDb.lockDropsCurrentRealVote(drop_id, ctx);
     const now = Time.now();
     const wave = await this.wavesDb.findById(wave_id, ctx.connection);
+    if (
+      wave &&
+      wave.next_decision_time !== null &&
+      wave.next_decision_time < Time.currentMillis()
+    ) {
+      throw new ForbiddenException(
+        `Wave has unresolved decisions and votes can't be edited at the moment. Try again later`
+      );
+    }
     const isRepWave = wave?.voting_credit_type === WaveCreditType.REP;
     const [
       drop,
@@ -69,11 +78,11 @@ export class VoteForDropUseCase {
     ] = await Promise.all([
       this.dropsDb.findDropById(drop_id, ctx.connection),
       this.userGroupsService.getGroupsUserIsEligibleFor(voter_id, ctx.timer),
-      this.votingDb.getCurrentState(
+      this.votingDb.getDropVoterStateForDrop(
         { voterId: voter_id, drop_id: drop_id },
         ctx
       ),
-      this.votingDb.getCreditSpentInWave(
+      this.votingDb.getVotingCreditLockedInWaveForVoter(
         {
           waveId: wave_id,
           voterId: voter_id
@@ -114,8 +123,8 @@ export class VoteForDropUseCase {
     ) {
       throw new BadRequestException(`Voting period for this drop has ended`);
     }
-    if (drop.drop_type === DropType.CHAT) {
-      throw new BadRequestException(`You can't vote on a chat drop`);
+    if (drop.drop_type !== DropType.PARTICIPATORY) {
+      throw new BadRequestException(`You can't vote on this drop`);
     }
     if (
       wave.voting_group_id !== null &&
@@ -135,11 +144,6 @@ export class VoteForDropUseCase {
     if (diff + creditSpentBeforeThisVote > voterTotalCredit) {
       throw new BadRequestException('Not enough credit to vote');
     }
-    if (wave.time_lock_ms !== null && wave.time_lock_ms > 0) {
-      throw new BadRequestException(
-        `Voting in time locked waves not yet supported`
-      );
-    }
     await Promise.all([
       this.votingDb.upsertAggregateDropRank(
         {
@@ -155,6 +159,16 @@ export class VoteForDropUseCase {
           drop_id,
           votes,
           wave_id
+        },
+        ctx
+      ),
+      this.votingDb.snapshotDropVotersVoteCurrentState(
+        {
+          voter_id,
+          drop_id,
+          wave_id,
+          vote: votes,
+          timestamp: now.toMillis()
         },
         ctx
       ),
@@ -183,23 +197,22 @@ export class VoteForDropUseCase {
         },
         ctx.connection,
         ctx.timer
-      ),
-      (() =>
-        drop.author_id === voter_id
-          ? Promise.resolve()
-          : this.userNotifier.notifyOfDropVote(
-              {
-                voter_id,
-                drop_id: drop_id,
-                drop_author_id: drop.author_id,
-                vote: votes,
-                wave_id: wave_id
-              },
-              wave.visibility_group_id,
-              ctx.connection
-            ))()
+      )
     ]);
     await this.votingDb.snapShotDropsCurrentVote(drop_id, now.toMillis(), ctx);
+    if (drop.author_id !== voter_id) {
+      await this.userNotifier.notifyOfDropVote(
+        {
+          voter_id,
+          drop_id: drop_id,
+          drop_author_id: drop.author_id,
+          vote: votes,
+          wave_id: wave_id
+        },
+        wave.visibility_group_id,
+        ctx.connection
+      );
+    }
   }
 }
 

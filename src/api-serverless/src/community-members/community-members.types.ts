@@ -23,4 +23,5 @@ export enum CommunityMembersSortOption {
 export interface CommunityMembersQuery
   extends FullPageRequest<CommunityMembersSortOption> {
   readonly group_id: string | null;
+  readonly joinWithOnlineWebsocketListeners?: boolean;
 }
