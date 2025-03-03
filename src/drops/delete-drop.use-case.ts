@@ -24,7 +24,12 @@ export class DeleteDropUseCase {
   public async execute(
     model: DeleteDropModel,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
-  ): Promise<void> {
+  ): Promise<{
+    id: string;
+    visibility_group_id: string | null;
+    serial_no: number;
+    wave_id: string;
+  } | null> {
     const deleterId = model.deleter_id;
     if (!deleterId) {
       const deleterIdentity = model.deleter_identity;
@@ -80,7 +85,14 @@ export class DeleteDropUseCase {
           { timer, connection }
         );
       }
+      return {
+        id: dropId,
+        serial_no: drop.serial_no,
+        visibility_group_id: wave?.visibility_group_id ?? null,
+        wave_id: drop.wave_id
+      };
     }
+    return null;
   }
 }
 
