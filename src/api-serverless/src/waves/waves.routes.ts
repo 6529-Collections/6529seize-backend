@@ -40,7 +40,7 @@ import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionRes
 import { ApiWaveSubscriptionActions } from '../generated/models/ApiWaveSubscriptionActions';
 import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
 import { profilesService } from '../../../profiles/profiles.service';
-import { Timer } from '../../../time';
+import { Time, Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
@@ -65,10 +65,10 @@ import { ApiWaveOutcomeDistributionItem } from '../generated/models/ApiWaveOutco
 import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
 import { ApiWaveDecisionsPage } from '../generated/models/ApiWaveDecisionsPage';
 import {
+  waveDecisionsApiService,
   WaveDecisionsQuery,
-  WaveDecisionsQuerySort,
-  waveDecisionsService
-} from './wave-decisions.service';
+  WaveDecisionsQuerySort
+} from './wave-decisions-api.service';
 
 const router = asyncRouter();
 
@@ -530,7 +530,7 @@ router.get(
         })
       )
     };
-    const result = await waveDecisionsService.searchConcludedWaveDecisions(
+    const result = await waveDecisionsApiService.searchConcludedWaveDecisions(
       params,
       {
         authenticationContext,
@@ -623,10 +623,14 @@ const WaveChatSchema = Joi.object<ApiCreateNewWaveChatConfig>({
 });
 
 const WaveDecisionsStrategySchema = Joi.object<ApiWaveDecisionsStrategy>({
-  first_decision_time: Joi.number().integer().min(1).required(),
+  first_decision_time: Joi.number()
+    .integer()
+    .required()
+    .min(Time.currentMillis())
+    .message('first_decision_time must be in the future'),
   subsequent_decisions: Joi.array()
     .required()
-    .items(Joi.number().integer().min(1)),
+    .items(Joi.number().integer().min(Time.hours(1).toMillis())),
   is_rolling: Joi.boolean().required()
 });
 

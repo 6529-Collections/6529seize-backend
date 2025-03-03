@@ -53,6 +53,7 @@ import {
 } from '../drops/drop-voting.service';
 import { clappingService, ClappingService } from '../drops/clapping.service';
 import { profilesService } from '../../../profiles/profiles.service';
+import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
 import {
   userNotifier,
   UserNotifier
@@ -84,15 +85,20 @@ export class WaveApiService {
       async (connection) => {
         const ctxWithConnection = { ...ctx, connection };
         const id = randomUUID();
-        const newEntity = await this.waveMappers.createWaveToNewWaveEntity(
+        const waveCreationTime = Time.currentMillis();
+        const newEntity = await this.waveMappers.createWaveToNewWaveEntity({
           id,
-          null,
-          Time.currentMillis(),
-          null,
-          createWaveRequest,
-          authenticationContext.getActingAsId()!,
-          randomUUID()
-        );
+          serial_no: null,
+          created_at: waveCreationTime,
+          updated_at: null,
+          request: createWaveRequest,
+          created_by: authenticationContext.getActingAsId()!,
+          descriptionDropId: randomUUID(),
+          nextDecisionTime: this.calculateNextDecisionTimeRelativeToNow(
+            waveCreationTime,
+            createWaveRequest.wave.decisions_strategy
+          )
+        });
         await this.wavesApiDb.insertWave(newEntity, ctxWithConnection);
         const authorId = authenticationContext.getActingAsId()!;
         const descriptionDropModel =
@@ -201,38 +207,50 @@ export class WaveApiService {
   }
 
   private async validateWaveRelations(
-    createWave: ApiCreateNewWave | ApiUpdateWaveRequest,
+    request: ApiCreateNewWave | ApiUpdateWaveRequest,
     ctx: RequestContext
   ) {
     const timer = ctx.timer;
     timer?.start(`${this.constructor.name}->validateWaveRelations`);
-    if (createWave.wave.type === ApiWaveType.Chat && !createWave.chat.enabled) {
+    if (request.wave.type === ApiWaveType.Chat && !request.chat.enabled) {
       throw new BadRequestException(`Chat waves need to have chat enabled`);
     }
-    if (
-      createWave.wave.time_lock_ms !== null &&
-      createWave.wave.time_lock_ms > 0
-    ) {
+    if (request.wave.time_lock_ms !== null && request.wave.time_lock_ms > 0) {
       throw new BadRequestException(
         `Creating a wave with time locked voting is not yet supported`
       );
     }
-    if (createWave.voting.signature_required) {
+    if (request.voting.signature_required) {
       throw new BadRequestException(
         `Creating a wave with signed votes requirement is not yet supported`
       );
     }
-    if (createWave.participation.signature_required) {
+    if (request.participation.signature_required) {
       throw new BadRequestException(
         `Creating a wave with signed drops requirement is not yet supported`
       );
     }
-    this.validateOutcomes(createWave);
+    if (request.wave.decisions_strategy !== null) {
+      if (request.wave.type !== ApiWaveType.Rank) {
+        throw new BadRequestException(
+          `Only waves of type RANK support a decision strategy.`
+        );
+      }
+      if (
+        request.wave.decisions_strategy.is_rolling &&
+        !request.wave.decisions_strategy.subsequent_decisions.length
+      ) {
+        throw new BadRequestException(
+          `On rolling decision strategy subsequent decisions is mandatory`
+        );
+      }
+    }
+    this.validateOutcomes(request);
     const referencedGroupIds = distinct(
       [
-        createWave.visibility.scope.group_id,
-        createWave.participation.scope.group_id,
-        createWave.voting.scope.group_id
+        request.visibility.scope.group_id,
+        request.participation.scope.group_id,
+        request.voting.scope.group_id
       ].filter((id) => id !== null) as string[]
     );
     timer?.start(`${this.constructor.name}->userGroupsService->getByIds`);
@@ -250,7 +268,7 @@ export class WaveApiService {
         `Group(s) not found: ${missingGroupIds.join(', ')}`
       );
     }
-    const referencedCreditorIdentity = createWave.voting.creditor_id;
+    const referencedCreditorIdentity = request.voting.creditor_id;
     if (referencedCreditorIdentity) {
       await profilesService.resolveIdentityIdOrThrowNotFound(
         referencedCreditorIdentity
@@ -768,6 +786,15 @@ export class WaveApiService {
           }
         }
 
+        if (
+          waveEntity.next_decision_time !== null &&
+          waveEntity.next_decision_time < Time.currentMillis()
+        ) {
+          throw new ForbiddenException(
+            `Wave has unresolved decisions and can't be edited at the moment. Try again later`
+          );
+        }
+
         await Promise.all([
           this.wavesApiDb.deleteDropPartsByWaveId(waveId, ctxWithConnection),
           this.wavesApiDb.deleteDropMentionsByWaveId(waveId, ctxWithConnection),
@@ -835,6 +862,14 @@ export class WaveApiService {
         if (!waveBeforeUpdate) {
           throw new NotFoundException(`Wave ${waveId} not found`);
         }
+        if (
+          waveBeforeUpdate.next_decision_time !== null &&
+          waveBeforeUpdate.next_decision_time < Time.currentMillis()
+        ) {
+          throw new ForbiddenException(
+            `Wave has unresolved decisions and can't be edited at the moment. Try again later`
+          );
+        }
         if (waveBeforeUpdate.created_by !== authenticatedProfileId) {
           if (
             waveBeforeUpdate.admin_group_id === null ||
@@ -846,15 +881,21 @@ export class WaveApiService {
           }
         }
         await this.wavesApiDb.deleteWave(waveId, ctxWithConnection);
-        const updatedEntity = await this.waveMappers.createWaveToNewWaveEntity(
-          waveId,
-          waveBeforeUpdate.serial_no,
-          waveBeforeUpdate.created_at,
-          Time.currentMillis(),
+        const waveUpdateTime = Time.currentMillis();
+        const updatedEntity = await this.waveMappers.createWaveToNewWaveEntity({
+          id: waveId,
+          serial_no: waveBeforeUpdate.serial_no,
+          created_at: waveBeforeUpdate.created_at,
+          updated_at: waveUpdateTime,
           request,
-          waveBeforeUpdate.created_by,
-          waveBeforeUpdate.description_drop_id
-        );
+          created_by: waveBeforeUpdate.created_by,
+          descriptionDropId: waveBeforeUpdate.description_drop_id,
+          nextDecisionTime: this.calculateNextDecisionTimeRelativeToNow(
+            waveUpdateTime,
+            request.wave.decisions_strategy
+          )
+        });
+
         await this.wavesApiDb.insertWave(updatedEntity, ctxWithConnection);
         const newVisibilityGroupId = request.visibility.scope.group_id;
         const oldVisibilityGroupId = waveBeforeUpdate.visibility_group_id;
@@ -895,6 +936,52 @@ export class WaveApiService {
         );
       }
     );
+  }
+
+  private calculateNextDecisionTimeRelativeToNow(
+    currentMillis: number,
+    decisionStrategy: ApiWaveDecisionsStrategy | null
+  ): number | null {
+    if (!decisionStrategy) {
+      return null;
+    }
+    let decisionTime: number | null = decisionStrategy.first_decision_time;
+    const subsequentDecisions = decisionStrategy.subsequent_decisions;
+    const isRolling = decisionStrategy.is_rolling;
+    let subsequentDecisionPointer = 0;
+    while (decisionTime !== null && decisionTime < currentMillis) {
+      subsequentDecisionPointer = this.getNextDecisionPointer(
+        subsequentDecisions,
+        subsequentDecisionPointer,
+        isRolling
+      );
+      if (subsequentDecisionPointer === -1) {
+        decisionTime = null;
+      } else {
+        decisionTime += subsequentDecisions[subsequentDecisionPointer];
+      }
+    }
+    return decisionTime;
+  }
+
+  private getNextDecisionPointer(
+    subsequentDecisions: number[],
+    subsequentDecisionPointer: number,
+    isRolling: boolean
+  ): number {
+    if (!subsequentDecisions.length) {
+      return -1;
+    }
+    if (isRolling) {
+      if (subsequentDecisionPointer === subsequentDecisions.length - 1) {
+        return 0;
+      }
+      return subsequentDecisionPointer + 1;
+    }
+    if (subsequentDecisionPointer === subsequentDecisions.length - 1) {
+      return -1;
+    }
+    return subsequentDecisionPointer + 1;
   }
 }
 

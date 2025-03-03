@@ -75,7 +75,7 @@ export class DropVotingService {
           },
           {}
         ),
-        this.votingDb.getVotersTotalVotesInWaves(
+        this.votingDb.getVotersTotalLockedCreditInWaves(
           { waveIds: wavesIdsWhereVotingIsImplemented, voterId: profileId },
           { connection }
         ),

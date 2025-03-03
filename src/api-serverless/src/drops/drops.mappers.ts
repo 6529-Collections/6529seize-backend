@@ -9,7 +9,12 @@ import {
 } from '../../../entities/IDrop';
 import { ConnectionWrapper } from '../../../sql-executor';
 import { ApiDrop } from '../generated/models/ApiDrop';
-import { distinct, parseIntOrNull, resolveEnumOrThrow } from '../../../helpers';
+import {
+  distinct,
+  parseIntOrNull,
+  resolveEnum,
+  resolveEnumOrThrow
+} from '../../../helpers';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiDropPart } from '../generated/models/ApiDropPart';
 import { ApiDropMedia } from '../generated/models/ApiDropMedia';
@@ -53,6 +58,11 @@ import { clappingService } from './clapping.service';
 import { dropVotingService, DropVotingService } from './drop-voting.service';
 import { dropVotingDb, DropVotingDb } from './drop-voting.db';
 import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
+import { WaveDecisionWinnerDropEntity } from '../../../entities/IWaveDecision';
+import { ApiDropWinningContext } from '../generated/models/ApiDropWinningContext';
+import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
+import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType';
+import { ApiWaveOutcomeCredit } from '../generated/models/ApiWaveOutcomeCredit';
 
 export class DropsMappers {
   constructor(
@@ -193,7 +203,12 @@ export class DropsMappers {
               wave.voting_credit_type
             ),
             voting_period_start: wave.voting_period_start,
-            voting_period_end: wave.voting_period_end
+            voting_period_end: wave.voting_period_end,
+            visibility_group_id: wave.visibility_group_id,
+            chat_group_id: wave.chat_group_id,
+            admin_group_id: wave.admin_group_id,
+            participation_group_id: wave.participation_group_id,
+            voting_group_id: wave.voting_group_id
           }
         : null;
       return {
@@ -256,7 +271,8 @@ export class DropsMappers {
       dropsQuoteCounts,
       dropMedia,
       dropsRepliesCounts,
-      subscribedActions
+      subscribedActions,
+      winDecisions
     ] = await Promise.all([
       this.dropVotingDb.getDropsRanks(allDropIds, { connection }),
       this.dropVotingService.findCreditLeftForVotingForDrops(
@@ -303,7 +319,8 @@ export class DropsMappers {
               target_type: ActivityEventTargetType.DROP
             },
             connection
-          )
+          ),
+      this.dropsDb.getWinDecisionsForDrops(dropIds, { connection })
     ]);
     const deletedDrops = await this.dropsDb.findDeletedDrops(
       allDropIds,
@@ -324,6 +341,7 @@ export class DropsMappers {
       dropsParts,
       clapsLeftForContextProfile,
       dropsRepliesCounts,
+      winDecisions,
       subscribedActions: Object.entries(subscribedActions).reduce(
         (acc, [id, actions]) => {
           acc[id] = actions.map((it) =>
@@ -360,7 +378,8 @@ export class DropsMappers {
       clapsLeftForContextProfile,
       dropsVoteCounts,
       allEntities,
-      dropsRanks
+      dropsRanks,
+      winDecisions
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
@@ -423,6 +442,7 @@ export class DropsMappers {
         submissionDropsVotingRanges,
         dropsClapCounts,
         dropsRanks,
+        winDecisions,
         allEntities: allEntities.reduce((acc, it) => {
           acc[it.id] = it;
           return acc;
@@ -451,6 +471,7 @@ export class DropsMappers {
     dropsClapCounts,
     dropsVoteCounts,
     dropsRanks,
+    winDecisions,
     allEntities
   }: {
     dropEntity: DropEntity;
@@ -487,9 +508,33 @@ export class DropsMappers {
       { total_claps: number; claps_by_clapper: number }
     >;
     dropsRanks: Record<string, number>;
+    winDecisions: Record<string, WaveDecisionWinnerDropEntity>;
     allEntities: Record<string, DropEntity>;
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
+    const dropWinDecision = winDecisions[dropEntity.id];
+    const winningContext: ApiDropWinningContext | undefined = dropWinDecision
+      ? {
+          place: dropWinDecision.ranking,
+          decision_time: dropWinDecision.decision_time,
+          awards: dropWinDecision.prizes.map((prize) => ({
+            type: resolveEnumOrThrow(ApiWaveOutcomeType, prize.type),
+            subtype:
+              resolveEnum(
+                ApiWaveOutcomeSubType,
+                prize.subtype as string | undefined
+              ) ?? undefined,
+            description: prize.description,
+            credit:
+              resolveEnum(
+                ApiWaveOutcomeCredit,
+                prize.credit as string | undefined
+              ) ?? undefined,
+            rep_category: prize.rep_category ?? undefined,
+            amount: prize.amount ?? undefined
+          }))
+        }
+      : undefined;
     return {
       id: dropEntity.id,
       serial_no: dropEntity.serial_no,
@@ -521,7 +566,8 @@ export class DropsMappers {
                   submissionDropsVotingRanges,
                   dropsClapCounts,
                   dropsRanks,
-                  allEntities
+                  allEntities,
+                  winDecisions
                 })
               : undefined
           }
@@ -560,7 +606,8 @@ export class DropsMappers {
                           submissionDropsVotingRanges,
                           dropsClapCounts,
                           dropsRanks,
-                          allEntities
+                          allEntities,
+                          winDecisions
                         })
                       : undefined
                   }
@@ -652,7 +699,8 @@ export class DropsMappers {
                 : submissionDropsVotingRanges[dropEntity.id]?.max ?? 0
           }
         : null,
-      subscribed_actions: subscribedActions[dropEntity.id] ?? []
+      subscribed_actions: subscribedActions[dropEntity.id] ?? [],
+      winning_context: winningContext
     };
   }
 }
