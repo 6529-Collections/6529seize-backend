@@ -39,6 +39,9 @@ import { Timer } from '../../../time';
 import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
 import { RequestContext } from '../../../request.context';
 import { ApiDropType } from '../generated/models/ApiDropType';
+import { wavesApiDb } from '../waves/waves.api.db';
+import { dropSignatureVerifier } from './drop-signature-verifier';
+import { dropsDb } from '../../../drops/drops.db';
 
 const router = asyncRouter();
 
@@ -150,6 +153,7 @@ router.post(
         'Total content length of all parts must be less than 32768 characters'
       );
     }
+    await assertDropIsCorrectlySigned(newDrop, authorProfileId);
     const createDropRequest: ApiCreateDropRequest & {
       author: { external_id: string };
     } = {
@@ -162,7 +166,8 @@ router.post(
       wave_id: newDrop.wave_id,
       reply_to: newDrop.reply_to,
       drop_type: newDrop.drop_type,
-      mentions_all: newDrop.mentions_all
+      mentions_all: newDrop.mentions_all,
+      signature: newDrop.signature
     };
     const createdDrop = await dropCreationService.createDrop(
       {
@@ -172,7 +177,7 @@ router.post(
           ? authenticationContext.roleProfileId!
           : authorProfileId
       },
-      timer
+      { timer, authenticationContext }
     );
     res.send(createdDrop);
   }
@@ -190,20 +195,32 @@ router.post(
     if (!authenticationContext.isUserFullyAuthenticated()) {
       throw new ForbiddenException(`Create a profile before updating a drop`);
     }
+    const dropId = req.params.drop_id;
     const apiRequest = req.body;
     const updateRequest: ApiUpdateDropRequest = getValidatedByJoiOrThrow(
       apiRequest,
       UpdateDropSchema
     );
     const authorId = authenticationContext.getActingAsId()!;
+    const waveId = await dropsDb.findWaveIdByDropId(dropId, { timer });
+    if (!waveId) {
+      throw new NotFoundException(`Could not find drop ${dropId}'s wave`);
+    }
+    await assertDropIsCorrectlySigned(
+      {
+        ...updateRequest,
+        wave_id: waveId
+      },
+      authorId
+    );
     const updatedDrop = await dropCreationService.updateDrop(
       {
-        dropId: req.params.drop_id,
+        dropId: dropId,
         request: updateRequest,
         authorId: authorId,
         representativeId: authenticationContext.getLoggedInUsersProfileId()!
       },
-      timer
+      { timer, authenticationContext }
     );
     res.send(updatedDrop);
   }
@@ -515,5 +532,36 @@ const DropSubscriptionActionsSchema = Joi.object<ApiDropSubscriptionActions>({
     )
     .required()
 });
+
+async function assertDropIsCorrectlySigned(
+  drop: ApiCreateDropRequest,
+  authorProfileId: string
+) {
+  if (drop.drop_type === ApiDropType.Participatory) {
+    const waveEntity = await wavesApiDb.findWaveById(drop.wave_id);
+    if (!waveEntity) {
+      throw new NotFoundException(`Wave ${drop.wave_id} does not exist`);
+    }
+    const isSignatureRequired = waveEntity.participation_signature_required;
+    if (isSignatureRequired) {
+      const signature = drop.signature;
+      if (!signature) {
+        throw new BadRequestException(`Drop is missing a signature`);
+      }
+      const wallets = await profilesService.getAllWalletsByProfileId(
+        authorProfileId
+      );
+      const isDropCorrectlySigned =
+        dropSignatureVerifier.isDropSignedByAnyOfGivenWallets({
+          wallets,
+          drop: drop,
+          termsOfService: waveEntity.participation_terms
+        });
+      if (!isDropCorrectlySigned) {
+        throw new BadRequestException(`Invalid drop signature`);
+      }
+    }
+  }
+}
 
 export default router;
