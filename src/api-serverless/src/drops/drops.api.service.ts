@@ -563,7 +563,7 @@ export class DropsApiService {
           async (drops) =>
             await this.dropsMappers.convertToDropsWithoutWaves(drops, ctx)
         ),
-      this.dropsDb.countParticipatoryDrops(params, ctx)
+      this.dropsDb.countLeaderboardDrops(params, ctx)
     ]);
     return {
       wave: waveMin,

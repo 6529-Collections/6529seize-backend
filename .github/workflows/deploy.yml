@@ -53,6 +53,7 @@ on:
           - teamLoop
           - transactionsLoop
           - transactionsProcessingLoop
+          - waveDecisionExecutionLoop
 
 env:
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}

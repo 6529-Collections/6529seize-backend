@@ -41,6 +41,10 @@ import { DropVoterStateEntity } from '../entities/IDropVoterState';
 import { DropRankEntity } from '../entities/IDropRank';
 import { RefreshToken } from '../entities/IRefreshToken';
 import { EULAConsent } from '../entities/IEULAPolicy';
+import {
+  WaveDecisionEntity,
+  WaveDecisionWinnerDropEntity
+} from '../entities/IWaveDecision';
 
 const DBMigrate = require('db-migrate');
 
@@ -82,6 +86,8 @@ const MANAGED_ENTITIES = [
   WaveArchiveEntity,
   WaveMetricEntity,
   WaveDropperMetricEntity,
+  WaveDecisionEntity,
+  WaveDecisionWinnerDropEntity,
   PushNotificationDevice,
   DropClapperStateEntity,
   DropVoterStateEntity,

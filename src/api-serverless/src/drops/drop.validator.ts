@@ -87,7 +87,7 @@ export const NewDropSchema: Joi.ObjectSchema<ApiCreateDropRequest> = Joi.object(
     drop_type: Joi.string()
       .optional()
       .default(ApiDropType.Chat)
-      .valid(...Object.values(ApiDropType))
+      .valid(...[ApiDropType.Chat, ApiDropType.Participatory])
   }
 );
 
