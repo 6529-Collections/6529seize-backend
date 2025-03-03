@@ -75,7 +75,7 @@ export class DropVotingService {
           },
           {}
         ),
-        this.votingDb.getVotersTotalVotesInWaves(
+        this.votingDb.getVotersTotalLockedCreditInWaves(
           { waveIds: wavesIdsWhereVotingIsImplemented, voterId: profileId },
           { connection }
         ),
@@ -148,7 +148,9 @@ export class DropVotingService {
       this.votingDb.deleteForDrop(dropId, ctx),
       this.votingDb.deleteCreditSpendings(dropId, ctx),
       this.votingDb.deleteDropRanks(dropId, ctx),
-      this.votingDb.deleteDropRealVoteInTimes(dropId, ctx)
+      this.votingDb.deleteDropRealVoteInTimes(dropId, ctx),
+      this.votingDb.deleteDropRealVoterVoteInTimes(dropId, ctx),
+      this.votingDb.deleteDropsLeaderboardEntry(dropId, ctx)
     ]);
   }
 
@@ -157,7 +159,9 @@ export class DropVotingService {
       this.votingDb.deleteForWave(waveId, ctx),
       this.votingDb.deleteCreditSpendingsForWave(waveId, ctx),
       this.votingDb.deleteDropRanksForWave(waveId, ctx),
-      this.votingDb.deleteDropRealVoteInTimesForWave(waveId, ctx)
+      this.votingDb.deleteDropRealVoteInTimesForWave(waveId, ctx),
+      this.votingDb.deleteWavesLeaderboardEntries(waveId, ctx),
+      this.votingDb.deleteDropRealVoterVoteInTimesForWave(waveId, ctx)
     ]);
   }
 }
