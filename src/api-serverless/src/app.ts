@@ -22,6 +22,7 @@ import aggregatedActivityRoutes from './aggregated-activity/api.aggregated-activ
 import ownersBalancesRoutes from './owners-balances/api.owners-balances.routes';
 import communityMembersRoutes from './community-members/community-members.routes';
 import userGroupsRoutes from './community-members/user-groups.routes';
+import userGroupsImEligibleForRoutes from './community-members/user-groups-im-elgigible-for.routes';
 import dropsRoutes from './drops/drops.routes';
 import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
 import dropsMediaRoutes from './drops/drops-media.routes';
@@ -990,6 +991,7 @@ loadApi().then(async () => {
   apiRouter.use(`/analytics`, analyticsRoutes);
   apiRouter.use(`/community-members`, communityMembersRoutes);
   apiRouter.use(`/groups`, userGroupsRoutes);
+  apiRouter.use(`/groups_im_eligible_for`, userGroupsImEligibleForRoutes);
   apiRouter.use(`/auth`, authRoutes);
   apiRouter.use(`/rememes`, rememesRoutes);
   apiRouter.use(`/nextgen`, nextgenRoutes);

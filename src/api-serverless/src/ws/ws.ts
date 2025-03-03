@@ -209,7 +209,7 @@ export class AppWebSockets {
   }
 }
 
-const ANON_USER_ID = '$ANONONYMOUS_USER$';
+export const ANON_USER_ID = '$ANONONYMOUS_USER$';
 
 export async function authenticateWebSocketJwt(
   event: APIGatewayEvent
