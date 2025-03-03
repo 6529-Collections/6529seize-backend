@@ -1571,6 +1571,10 @@ export class ProfilesService {
       display: it.display ?? it.primary_address
     }));
   }
+
+  async getAllWalletsByProfileId(profileId: string): Promise<string[]> {
+    return this.profilesDb.getAllWalletsByProfileId(profileId);
+  }
 }
 
 export interface CommunityMemberMinimal {
