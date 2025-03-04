@@ -133,6 +133,9 @@ export class WaveEntity extends WaveBase {
 
   @PrimaryGeneratedColumn({ type: 'bigint' })
   readonly serial_no!: number;
+
+  @Column({ type: 'bigint', nullable: true, default: null })
+  readonly next_decision_time!: number | null;
 }
 
 @Entity(WAVES_ARCHIVE_TABLE)
@@ -181,4 +184,31 @@ export interface WaveRequiredMetadataItem {
 export enum WaveRequiredMetadataItemType {
   STRING = 'STRING',
   NUMBER = 'NUMBER'
+}
+
+export enum WaveOutcomeType {
+  MANUAL = 'MANUAL',
+  AUTOMATIC = 'AUTOMATIC'
+}
+export enum WaveOutcomeSubType {
+  CREDIT_DISTRIBUTION = 'CREDIT_DISTRIBUTION'
+}
+export enum WaveOutcomeCredit {
+  REP = 'REP',
+  CIC = 'CIC'
+}
+
+export interface WaveOutcome {
+  type: WaveOutcomeType;
+  subtype?: WaveOutcomeSubType;
+  description: string;
+  credit?: WaveOutcomeCredit;
+  rep_category?: string;
+  amount?: number;
+  distribution?: Array<WaveOutcomeDistributionItem>;
+}
+
+export interface WaveOutcomeDistributionItem {
+  amount?: number | null;
+  description?: string | null;
 }

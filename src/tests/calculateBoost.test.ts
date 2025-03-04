@@ -1,5 +1,6 @@
 import { MemesSeason } from '../entities/ISeason';
 import { TokenTDH } from '../entities/ITDH';
+import { Time } from '../time';
 
 const calculateBoost = require('../tdhLoop/tdh').calculateBoost;
 
@@ -77,6 +78,10 @@ const seasons: MemesSeason[] = [
     display: 'SZN9'
   }
 ];
+
+test('smth should calculate the boost correctly', () => {
+  console.log(Time.days(365).toMillis());
+});
 
 test('calculateBoost should calculate the boost correctly', () => {
   //s1 set

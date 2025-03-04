@@ -12,6 +12,7 @@ import {
 import { DropVoterStateEntity } from '../../../entities/IDropVoterState';
 import { DropVoteCreditSpending } from '../../../entities/IDropVoteCreditSpending';
 import { Time } from '../../../time';
+import { DropType } from '../../../entities/IDrop';
 
 export class DropVotingDb extends LazyDbAccessCompatibleService {
   public async upsertState(state: NewDropVoterState, ctx: RequestContext) {
@@ -66,7 +67,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->lockAggregateDropRank`);
   }
 
-  public async getCurrentState(
+  public async lockDropVoterStateForDrop(
     param: { voterId: string; drop_id: string },
     ctx: RequestContext
   ): Promise<number> {
@@ -114,16 +115,20 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->insertCreditSpending`);
   }
 
-  public async getCreditSpentInWave(
+  public async getVotingCreditLockedInWaveForVoter(
     { voterId, waveId }: { voterId: string; waveId: string },
     ctx: RequestContext
   ): Promise<number> {
-    ctx.timer?.start(`${this.constructor.name}->getCreditSpentInWave`);
+    ctx.timer?.start(
+      `${this.constructor.name}->getVotingCreditLockedInWaveForVoter`
+    );
     const result = await this.db
       .execute<{ credit_spent: number; wave_id: string }>(
         `
-      select sum(abs(votes)) as credit_spent from ${DROP_VOTER_STATE_TABLE}
-      where voter_id = :voterId and wave_id = :waveId
+      select 
+      sum(abs(s.votes)) as credit_spent from ${DROP_VOTER_STATE_TABLE} s
+      join ${DROPS_TABLE} d on d.id = s.drop_id and d.drop_type = '${DropType.PARTICIPATORY}'
+      where s.voter_id = :voterId and s.wave_id = :waveId
     `,
         {
           voterId,
@@ -132,7 +137,9 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       )
       .then((results) => results[0]?.credit_spent);
-    ctx.timer?.stop(`${this.constructor.name}->getCreditSpentInWave`);
+    ctx.timer?.stop(
+      `${this.constructor.name}->getVotingCreditLockedInWaveForVoter`
+    );
     return result;
   }
 
@@ -214,17 +221,20 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
-  public async getVotersTotalVotesInWaves(
+  public async getVotersTotalLockedCreditInWaves(
     { waveIds, voterId }: { waveIds: string[]; voterId: string },
     ctx: RequestContext
   ): Promise<Record<string, number>> {
     if (waveIds.length === 0) {
       return {};
     }
-    ctx.timer?.start(`${this.constructor.name}->getVotersTotalVotesInWaves`);
+    ctx.timer?.start(
+      `${this.constructor.name}->getVotersTotalLockedCreditInWaves`
+    );
     const sql = `
-  select wave_id, sum(abs(votes)) as total_votes from ${DROP_VOTER_STATE_TABLE}
-  where wave_id in (:waveIds) and voter_id = :voterId
+  select s.wave_id, sum(abs(s.votes)) as total_votes from ${DROP_VOTER_STATE_TABLE} s
+  join ${DROPS_TABLE} d on d.id = s.drop_id and d.drop_type = '${DropType.PARTICIPATORY}'
+  where s.wave_id in (:waveIds) and s.voter_id = :voterId
   group by 1
 `;
     const result = await this.db
@@ -242,7 +252,9 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
           {} as Record<string, number>
         )
       );
-    ctx.timer?.stop(`${this.constructor.name}->getVotersTotalVotesInWaves`);
+    ctx.timer?.stop(
+      `${this.constructor.name}->getVotersTotalLockedCreditInWaves`
+    );
     return result;
   }
 
@@ -384,7 +396,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
                  rank() over (partition by d.wave_id order by cast(ifnull(r.vote, 0) as signed) desc , cast(ifnull(r.last_increased, d.created_at) as signed) asc) as rnk
           from ${DROPS_TABLE} d
                    left join ${DROP_RANK_TABLE} r on r.drop_id = d.id
-          where d.drop_type = 'PARTICIPATORY') drop_ranks
+          where d.drop_type = '${DropType.PARTICIPATORY}') drop_ranks
     WHERE drop_id in (:dropIds)
   `;
     const results = await this.db.execute<{ drop_id: string; rnk: number }>(

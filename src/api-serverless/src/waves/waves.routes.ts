@@ -40,7 +40,7 @@ import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionRes
 import { ApiWaveSubscriptionActions } from '../generated/models/ApiWaveSubscriptionActions';
 import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
 import { profilesService } from '../../../profiles/profiles.service';
-import { Timer } from '../../../time';
+import { Time, Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
@@ -63,6 +63,12 @@ import { ApiWaveLog } from '../generated/models/ApiWaveLog';
 import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
 import { ApiWaveOutcomeDistributionItem } from '../generated/models/ApiWaveOutcomeDistributionItem';
 import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
+import { ApiWaveDecisionsPage } from '../generated/models/ApiWaveDecisionsPage';
+import {
+  waveDecisionsApiService,
+  WaveDecisionsQuery,
+  WaveDecisionsQuerySort
+} from './wave-decisions-api.service';
 
 const router = asyncRouter();
 
@@ -499,6 +505,50 @@ router.get(
   }
 );
 
+router.get(
+  '/:id/decisions',
+  maybeAuthenticatedUser(),
+  async (
+    req: Request<
+      { id: string },
+      any,
+      any,
+      Omit<WaveDecisionsQuery, 'wave_id'>,
+      any
+    >,
+    res: Response<ApiResponse<ApiWaveDecisionsPage>>
+  ) => {
+    const { id } = req.params;
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+
+    const params: WaveDecisionsQuery = {
+      wave_id: id,
+      ...getValidatedByJoiOrThrow(
+        req.query,
+        Joi.object<Omit<WaveDecisionsQuery, 'wave_id'>>({
+          page_size: Joi.number().integer().min(1).max(2000).default(100),
+          page: Joi.number().integer().min(1).default(1),
+          sort_direction: Joi.string()
+            .valid(...Object.values(PageSortDirection))
+            .default(PageSortDirection.DESC),
+          sort: Joi.string()
+            .valid(...Object.values(WaveDecisionsQuerySort))
+            .default(WaveDecisionsQuerySort.decision_time)
+        })
+      )
+    };
+    const result = await waveDecisionsApiService.searchConcludedWaveDecisions(
+      params,
+      {
+        authenticationContext,
+        timer
+      }
+    );
+    res.send(result);
+  }
+);
+
 const IntRangeSchema = Joi.object<ApiIntRange>({
   min: Joi.number().integer().required().allow(null),
   max: Joi.number().integer().required().allow(null)
@@ -581,10 +631,14 @@ const WaveChatSchema = Joi.object<ApiCreateNewWaveChatConfig>({
 });
 
 const WaveDecisionsStrategySchema = Joi.object<ApiWaveDecisionsStrategy>({
-  first_decision_time: Joi.number().integer().min(1).required(),
+  first_decision_time: Joi.number()
+    .integer()
+    .required()
+    .min(Time.currentMillis())
+    .message('first_decision_time must be in the future'),
   subsequent_decisions: Joi.array()
     .required()
-    .items(Joi.number().integer().min(1)),
+    .items(Joi.number().integer().min(Time.hours(1).toMillis())),
   is_rolling: Joi.boolean().required()
 });
 

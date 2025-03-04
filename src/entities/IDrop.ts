@@ -16,7 +16,8 @@ import {
 
 export enum DropType {
   CHAT = 'CHAT',
-  PARTICIPATORY = 'PARTICIPATORY'
+  PARTICIPATORY = 'PARTICIPATORY',
+  WINNER = 'WINNER'
 }
 
 @Entity(DROPS_TABLE)
