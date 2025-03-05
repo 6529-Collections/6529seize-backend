@@ -328,7 +328,8 @@ loadApi().then(async () => {
       const settingsResp: ApiSeizeSettings = {
         rememes_submission_tdh_threshold:
           SEIZE_SETTINGS.rememes_submission_tdh_threshold,
-        max_wave_subscribers_count: SEIZE_SETTINGS.max_wave_subscribers_count
+        all_drops_notifications_subscribers_limit:
+          SEIZE_SETTINGS.all_drops_notifications_subscribers_limit
       };
       returnJsonResult(settingsResp, req, res);
     }

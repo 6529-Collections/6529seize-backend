@@ -142,9 +142,12 @@ router.post(
     if (waveMembersCount === 0) {
       throw new BadRequestException(`Wave has no subscribers`);
     }
-    if (waveMembersCount >= SEIZE_SETTINGS.max_wave_subscribers_count) {
+    if (
+      waveMembersCount >=
+      SEIZE_SETTINGS.all_drops_notifications_subscribers_limit
+    ) {
       throw new BadRequestException(
-        `Wave has too many subscribers (${waveMembersCount}). Max is ${SEIZE_SETTINGS.max_wave_subscribers_count}.`
+        `Wave has too many subscribers (${waveMembersCount}). Max is ${SEIZE_SETTINGS.all_drops_notifications_subscribers_limit}.`
       );
     }
     await notificationsApiService.subscribeToAllWaveDrops(
