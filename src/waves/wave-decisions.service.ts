@@ -170,6 +170,9 @@ export class WaveDecisionsService {
             };
           } else {
             const outcomePart = outcome.distribution[place - 1];
+            if (!outcomePart) {
+              return null;
+            }
             let amount: number | null = null;
             if (outcome.amount) {
               const partAmount = outcomePart.amount ?? 0;
