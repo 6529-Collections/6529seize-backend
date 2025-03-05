@@ -33,8 +33,8 @@ const sqsHandler: SQSHandler = async (event) => {
 
 const processNotification = async (messageBody: string) => {
   const notification = JSON.parse(messageBody);
-  if (notification.identity_id) {
-    await sendIdentityNotification(notification.identity_id);
+  if (notification.notification_id) {
+    await sendIdentityNotification(notification.notification_id);
     return;
   }
 

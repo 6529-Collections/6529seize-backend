@@ -308,6 +308,42 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: connection }
     );
   }
+
+  async getWaveSubscription(
+    identityId: string,
+    waveId: string
+  ): Promise<boolean> {
+    return this.db
+      .oneOrNull<{ subscribed_to_all_drops: boolean }>(
+        `select subscribed_to_all_drops from ${IDENTITY_SUBSCRIPTIONS_TABLE} where subscriber_id = :identityId and target_id = :waveId and target_type = :target_type`,
+        { identityId, waveId, target_type: ActivityEventTargetType.WAVE }
+      )
+      .then((it) => it?.subscribed_to_all_drops ?? false);
+  }
+
+  async subscribeToAllDrops(
+    identityId: string,
+    waveId: string,
+    connection?: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update ${IDENTITY_SUBSCRIPTIONS_TABLE} set subscribed_to_all_drops = true where subscriber_id = :identityId and target_id = :waveId and target_type = :target_type`,
+      { identityId, waveId, target_type: ActivityEventTargetType.WAVE },
+      { wrappedConnection: connection }
+    );
+  }
+
+  async unsubscribeFromAllDrops(
+    identityId: string,
+    waveId: string,
+    connection?: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update ${IDENTITY_SUBSCRIPTIONS_TABLE} set subscribed_to_all_drops = false where subscriber_id = :identityId and target_id = :waveId and target_type = :target_type`,
+      { identityId, waveId, target_type: ActivityEventTargetType.WAVE },
+      { wrappedConnection: connection }
+    );
+  }
 }
 
 export const identitySubscriptionsDb = new IdentitySubscriptionsDb(dbSupplier);

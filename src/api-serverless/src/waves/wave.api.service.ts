@@ -118,7 +118,8 @@ export class WaveApiService {
             target_id: id,
             target_type: ActivityEventTargetType.WAVE,
             target_action: ActivityEventAction.DROP_CREATED,
-            wave_id: id
+            wave_id: id,
+            subscribed_to_all_drops: false
           },
           connection,
           timer
@@ -475,7 +476,8 @@ export class WaveApiService {
               target_id: waveId,
               target_type: ActivityEventTargetType.WAVE,
               target_action: action,
-              wave_id: waveId
+              wave_id: waveId,
+              subscribed_to_all_drops: false
             },
             connection
           );

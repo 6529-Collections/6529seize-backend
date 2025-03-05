@@ -28,6 +28,11 @@ import {
   identityNotificationsDb,
   IdentityNotificationsDb
 } from '../../../notifications/identity-notifications.db';
+import {
+  identitySubscriptionsDb,
+  IdentitySubscriptionsDb
+} from 'src/identity-subscriptions/identity-subscriptions.db';
+import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 
 export class NotificationsApiService {
   constructor(
@@ -35,7 +40,8 @@ export class NotificationsApiService {
     private readonly userGroupsService: UserGroupsService,
     private readonly profilesApiService: ProfilesApiService,
     private readonly dropsService: DropsApiService,
-    private readonly identityNotificationsDb: IdentityNotificationsDb
+    private readonly identityNotificationsDb: IdentityNotificationsDb,
+    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
   ) {}
 
   public async markNotificationAsRead(param: {
@@ -234,6 +240,28 @@ export class NotificationsApiService {
       }
     }
   }
+
+  public async countWaveSubscribers(waveId: string) {
+    return this.identitySubscriptionsDb.countDistinctSubscriberIdsForTarget({
+      target_id: waveId,
+      target_type: ActivityEventTargetType.WAVE
+    });
+  }
+
+  public async getWaveSubscription(identityId: string, waveId: string) {
+    return this.identitySubscriptionsDb.getWaveSubscription(identityId, waveId);
+  }
+
+  public async subscribeToAllWaveDrops(identityId: string, waveId: string) {
+    await this.identitySubscriptionsDb.subscribeToAllDrops(identityId, waveId);
+  }
+
+  public async unsubscribeFromAllWaveDrops(identityId: string, waveId: string) {
+    await this.identitySubscriptionsDb.unsubscribeFromAllDrops(
+      identityId,
+      waveId
+    );
+  }
 }
 
 export const notificationsApiService = new NotificationsApiService(
@@ -241,5 +269,6 @@ export const notificationsApiService = new NotificationsApiService(
   userGroupsService,
   profilesApiService,
   dropsService,
-  identityNotificationsDb
+  identityNotificationsDb,
+  identitySubscriptionsDb
 );

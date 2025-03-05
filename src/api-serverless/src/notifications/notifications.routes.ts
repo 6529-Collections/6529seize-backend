@@ -9,6 +9,7 @@ import * as Joi from 'joi';
 import { notificationsApiService } from './notifications.api.service';
 import { parseIntOrNull } from '../../../helpers';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { SEIZE_SETTINGS } from '../api-constants';
 
 const router = asyncRouter();
 
@@ -88,6 +89,100 @@ router.post(
     }
     await giveReadReplicaTimeToCatchUp();
     res.send();
+  }
+);
+
+router.get(
+  '/subscribe-to-all-drops/:wave_id',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ wave_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<{ subscribed_to_all_drops: boolean }>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    if (!authenticationContext.getActingAsId()) {
+      throw new ForbiddenException(
+        `You need to create a profile before you can access notifications`
+      );
+    }
+    const waveId = req.params.wave_id;
+    if (!waveId) {
+      throw new BadRequestException(`Wave ID is required`);
+    }
+    const waveSubscription = await notificationsApiService.getWaveSubscription(
+      authenticationContext.getActingAsId()!,
+      waveId
+    );
+    res.send({
+      subscribed_to_all_drops: waveSubscription
+    });
+  }
+);
+
+router.post(
+  '/subscribe-to-all-drops/:wave_id',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ wave_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<{ subscribed_to_all_drops: boolean }>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    if (!authenticationContext.getActingAsId()) {
+      throw new ForbiddenException(
+        `You need to create a profile before you can access notifications`
+      );
+    }
+    const waveId = req.params.wave_id;
+    if (!waveId) {
+      throw new BadRequestException(`Wave ID is required`);
+    }
+    const waveMembersCount = await notificationsApiService.countWaveSubscribers(
+      waveId
+    );
+    if (waveMembersCount === 0) {
+      throw new BadRequestException(`Wave has no subscribers`);
+    }
+    if (waveMembersCount >= SEIZE_SETTINGS.max_wave_subscribers_count) {
+      throw new BadRequestException(
+        `Wave has too many subscribers (${waveMembersCount}). Max is ${SEIZE_SETTINGS.max_wave_subscribers_count}.`
+      );
+    }
+    await notificationsApiService.subscribeToAllWaveDrops(
+      authenticationContext.getActingAsId()!,
+      waveId
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send({
+      subscribed_to_all_drops: true
+    });
+  }
+);
+
+router.delete(
+  '/subscribe-to-all-drops/:wave_id',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ wave_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<{ subscribed_to_all_drops: boolean }>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    if (!authenticationContext.getActingAsId()) {
+      throw new ForbiddenException(
+        `You need to create a profile before you can access notifications`
+      );
+    }
+    const waveId = req.params.wave_id;
+    if (!waveId) {
+      throw new BadRequestException(`Wave ID is required`);
+    }
+    await notificationsApiService.unsubscribeFromAllWaveDrops(
+      authenticationContext.getActingAsId()!,
+      waveId
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send({
+      subscribed_to_all_drops: false
+    });
   }
 );
 

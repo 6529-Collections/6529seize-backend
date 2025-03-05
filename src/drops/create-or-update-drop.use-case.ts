@@ -578,7 +578,8 @@ export class CreateOrUpdateDropUseCase {
           target_id: dropId.toString(),
           target_type: ActivityEventTargetType.DROP,
           target_action: ActivityEventAction.DROP_REPLIED,
-          wave_id: wave.id
+          wave_id: wave.id,
+          subscribed_to_all_drops: false
         },
         connection,
         timer

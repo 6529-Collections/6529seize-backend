@@ -14,6 +14,7 @@ import { HttpFile } from '../http/http';
 
 export class ApiSeizeSettings {
     'rememes_submission_tdh_threshold': number;
+    'max_wave_subscribers_count': number;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -21,6 +22,12 @@ export class ApiSeizeSettings {
         {
             "name": "rememes_submission_tdh_threshold",
             "baseName": "rememes_submission_tdh_threshold",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "max_wave_subscribers_count",
+            "baseName": "max_wave_subscribers_count",
             "type": "number",
             "format": "int64"
         }    ];

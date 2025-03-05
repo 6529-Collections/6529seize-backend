@@ -327,7 +327,8 @@ loadApi().then(async () => {
     function (req: any, res: Response<ApiResponse<ApiSeizeSettings>>) {
       const settingsResp: ApiSeizeSettings = {
         rememes_submission_tdh_threshold:
-          SEIZE_SETTINGS.rememes_submission_tdh_threshold
+          SEIZE_SETTINGS.rememes_submission_tdh_threshold,
+        max_wave_subscribers_count: SEIZE_SETTINGS.max_wave_subscribers_count
       };
       returnJsonResult(settingsResp, req, res);
     }

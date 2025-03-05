@@ -5018,8 +5018,12 @@ components:
       type: object
       required:
         - rememes_submission_tdh_threshold
+        - max_wave_subscribers_count
       properties:
         rememes_submission_tdh_threshold:
+          type: integer
+          format: int64
+        max_wave_subscribers_count:
           type: integer
           format: int64
     ApiTargetAndSubscriptionActions:

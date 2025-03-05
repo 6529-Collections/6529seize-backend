@@ -19,12 +19,29 @@ export const sendIdentityPushNotification = async (notificationId: number) => {
   }
   try {
     const message = {
-      identity_id: notificationId
+      notification_id: notificationId
     };
     await sendMessageToSQS(JSON.stringify(message));
   } catch (error) {
     logger.error(
-      `[ID ${notificationId}] Error sending push notification: ${error}`
+      `[NOTIFICATION ID ${notificationId}] Error sending push notification: ${error}`
+    );
+  }
+};
+
+export const sendNewDropPushNotification = async (dropId: number) => {
+  if (!isActivated) {
+    logger.info('Push notifications are not activated');
+    return;
+  }
+  try {
+    const message = {
+      drop_id: dropId
+    };
+    await sendMessageToSQS(JSON.stringify(message));
+  } catch (error) {
+    logger.error(
+      `[DROP ID ${dropId}] Error sending push notification: ${error}`
     );
   }
 };
