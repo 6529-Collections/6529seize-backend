@@ -32,6 +32,7 @@ import {
   RATINGS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
   WAVE_METRICS_TABLE,
+  WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_TABLE
 } from '../constants';
 import {
@@ -50,6 +51,7 @@ import { ApiDropSearchStrategy } from '../api-serverless/src/generated/models/Ap
 import { DropVoterStateEntity } from '../entities/IDropVoterState';
 import { ProfileActivityLog } from '../entities/IProfileActivityLog';
 import { assertUnreachable } from '../helpers';
+import { WaveDecisionWinnerDropEntity } from '../entities/IWaveDecision';
 
 const mysql = require('mysql');
 
@@ -1325,6 +1327,28 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .then((it) => it?.cnt ?? 0);
     ctx.timer?.stop(`${this.constructor.name}->findVotersInfo`);
     return result;
+  }
+
+  async getWinDecisionsForDrops(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, WaveDecisionWinnerDropEntity>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->getWinDecisionsForDrops`);
+    const entities = await this.db.execute<
+      Omit<WaveDecisionWinnerDropEntity, 'prizes'> & { prizes: string }
+    >(
+      `select * from ${WAVES_DECISION_WINNER_DROPS_TABLE} where drop_id in (:dropIds)`,
+      { dropIds },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->getWinDecisionsForDrops`);
+    return entities.reduce((acc, it) => {
+      acc[it.drop_id] = { ...it, prizes: JSON.parse(it.prizes) };
+      return acc;
+    }, {} as Record<string, WaveDecisionWinnerDropEntity>);
   }
 }
 
