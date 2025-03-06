@@ -150,7 +150,7 @@ export class WaveDecisionsService {
       .map((it) => it.distribution?.length ?? 1)
       .reduce((previous, cur) => (cur > previous ? cur : previous), 0);
     const winnerDropIdsOrderByPlaces =
-      await this.waveDecisionsDb.getTopNDropIdsForWave(waveId, n, ctx);
+      await this.waveDecisionsDb.getTopNDropIdsForWave({ waveId, n }, ctx);
     const decisionWinners: Omit<WaveDecisionWinnerDropEntity, 'id'>[] = [];
     let place = 1;
     for (const dropId of winnerDropIdsOrderByPlaces) {

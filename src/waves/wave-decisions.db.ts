@@ -113,19 +113,20 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
   }
 
   async getTopNDropIdsForWave(
-    waveId: string,
-    n: number,
+    { waveId, n }: { waveId: string; n: number },
     ctx: RequestContext
   ): Promise<string[]> {
     const sql = `
-    SELECT drop_id
-    FROM (select d.id as drop_id,
+    select drop_id
+    from (select d.id                                                                                                                                              as drop_id,
                  rank() over (partition by d.wave_id order by cast(ifnull(r.vote, 0) as signed) desc , cast(ifnull(r.last_increased, d.created_at) as signed) asc) as rnk
           from ${DROPS_TABLE} d
-                   left join ${DROP_RANK_TABLE} r on r.drop_id = d.id and d.wave_id = :waveId
-          where d.drop_type = '${DropType.PARTICIPATORY}') drop_ranks 
-    order by rnk desc limit :n
-  `;
+                   left join ${DROP_RANK_TABLE} r on r.drop_id = d.id
+          where d.drop_type = '${DropType.PARTICIPATORY}'
+            and d.wave_id = :waveId) rks
+    order by rnk
+    limit :n
+    `;
     return await this.db
       .execute<{ drop_id: string }>(
         sql,
