@@ -278,7 +278,7 @@ export class WaveApiService {
             outcome.distribution?.reduce(
               (acc, it) => acc + (it.amount ?? 0),
               0
-            ) !== outcome.amount ?? 0
+            ) !== (outcome.amount ?? 0)
         );
         if (non100PercentDistributions.length) {
           throw new BadRequestException(
