@@ -3528,6 +3528,8 @@ components:
           type: number
           format: int64
           nullable: true
+        winning_context:
+          $ref: "#/components/schemas/ApiDropWinningContext"
         wave:
           $ref: "#/components/schemas/ApiWaveMin"
         reply_to:
@@ -3856,6 +3858,8 @@ components:
           type: number
           format: int64
           nullable: true
+        winning_context:
+          $ref: "#/components/schemas/ApiDropWinningContext"
         reply_to:
           $ref: "#/components/schemas/ApiReplyToDropResponse"
         author:
@@ -5442,6 +5446,23 @@ components:
             decisions (see description of subsequent_decisions). Also if true
             then there needs to be at least one element in subsequent_decisions
             array.
+    ApiDropWinningContext:
+      type: object
+      required:
+        - place
+        - awards
+        - decision_time
+      properties:
+        place:
+          type: integer
+          format: int64
+        awards:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiWaveDecisionAward"
+        decision_time:
+          type: integer
+          format: int64
     ApiWaveDecisionWinner:
       type: object
       required:
