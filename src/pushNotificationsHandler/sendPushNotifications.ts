@@ -36,6 +36,7 @@ export async function sendMessage(
   token: string,
   notification_id: number,
   extra_data: any,
+  badge?: number,
   imageUrl?: string
 ) {
   init();
@@ -75,6 +76,7 @@ export async function sendMessage(
     apns: {
       payload: {
         aps: {
+          badge: badge ?? 1,
           sound: 'default'
         }
       }

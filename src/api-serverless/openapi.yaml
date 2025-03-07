@@ -4493,6 +4493,8 @@ components:
         - DROP_QUOTED
         - DROP_REPLIED
         - DROP_VOTED
+        - WAVE_CREATED
+        - ALL_DROPS
     ApiNotificationsResponse:
       type: object
       required:

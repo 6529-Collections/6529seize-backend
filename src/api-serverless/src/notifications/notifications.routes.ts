@@ -73,7 +73,16 @@ router.post(
       throw new ForbiddenException(`Proxies cannot access notifications`);
     }
     const id = req.params.id;
-    if (parseIntOrNull(id) !== null) {
+    if (id.toLowerCase().startsWith('wave:')) {
+      const waveId = id.split(':')[1];
+      if (!waveId) {
+        throw new BadRequestException(`Wave ID is malformed`);
+      }
+      await notificationsApiService.markWaveNotificationsAsRead(
+        waveId,
+        authenticationContext.getActingAsId()!
+      );
+    } else if (parseIntOrNull(id) !== null) {
       await notificationsApiService.markNotificationAsRead({
         id: parseInt(id),
         identity_id: authenticationContext.getActingAsId()!

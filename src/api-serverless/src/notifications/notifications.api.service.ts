@@ -55,6 +55,13 @@ export class NotificationsApiService {
     await this.identityNotificationsDb.markAllNotificationsAsRead(identityId);
   }
 
+  public async markWaveNotificationsAsRead(waveId: string, identityId: string) {
+    await this.identityNotificationsDb.markWaveNotificationsAsRead(
+      waveId,
+      identityId
+    );
+  }
+
   public async getNotifications(
     param: {
       id_less_than: number | null;
@@ -137,6 +144,17 @@ export class NotificationsApiService {
           profileIds.push(data.reply_drop_author_id);
           dropIds.push(data.replied_drop_id);
           dropIds.push(data.reply_drop_id);
+          break;
+        }
+        case IdentityNotificationCause.WAVE_CREATED: {
+          const data = notification.data;
+          profileIds.push(data.created_by);
+          break;
+        }
+        case IdentityNotificationCause.ALL_DROPS: {
+          const data = notification.data;
+          profileIds.push(data.additional_identity_id);
+          dropIds.push(data.drop_id);
           break;
         }
         default: {
@@ -232,6 +250,34 @@ export class NotificationsApiService {
             reply_drop_id: data.reply_drop_id,
             replied_drop_id: data.replied_drop_id,
             replied_drop_part: data.replied_drop_part
+          }
+        };
+      }
+      case IdentityNotificationCause.WAVE_CREATED: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.created_by],
+          related_drops: [],
+          additional_context: {
+            wave_id: data.wave_id
+          }
+        };
+      }
+      case IdentityNotificationCause.ALL_DROPS: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.additional_identity_id],
+          related_drops: [drops[data.drop_id]],
+          additional_context: {
+            vote: data.vote
           }
         };
       }

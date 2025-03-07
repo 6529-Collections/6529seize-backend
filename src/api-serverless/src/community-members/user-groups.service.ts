@@ -1159,6 +1159,18 @@ export class UserGroupsService {
     ctx.timer?.stop('userGroupsService->mapForApi');
     return result;
   }
+
+  async findFollowersOfUserInGroups(
+    userId: string,
+    groups: string[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    return await this.userGroupsDb.findFollowersOfUserInGroups(
+      userId,
+      groups,
+      ctx
+    );
+  }
 }
 
 export const userGroupsService = new UserGroupsService(

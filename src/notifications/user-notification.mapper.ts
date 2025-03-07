@@ -1,11 +1,13 @@
 import { IdentityNotificationCause } from '../entities/IIdentityNotification';
 import {
+  AllDropsNotification,
   DropQuoteNotification,
   DropReplyNotification,
   DropVoteNotification,
   IdentityMentionNotification,
   IdentitySubscriptionNotification,
-  UserNotification
+  UserNotification,
+  WaveCreatedNotification
 } from './user-notification.types';
 import { IdentityNotificationDeserialized } from './identity-notifications.db';
 import { assertUnreachable, parseIntOrNull } from '../helpers';
@@ -32,6 +34,10 @@ export class UserNotificationMapper {
         return this.mapDropReplyNotification(entity);
       case IdentityNotificationCause.DROP_QUOTED:
         return this.mapDropQuoteNotification(entity);
+      case IdentityNotificationCause.WAVE_CREATED:
+        return this.mapWaveCreatedNotification(entity);
+      case IdentityNotificationCause.ALL_DROPS:
+        return this.mapAllDropsNotification(entity);
       default: {
         return assertUnreachable(cause);
       }
@@ -123,6 +129,37 @@ export class UserNotificationMapper {
         quoted_drop_id: entity.related_drop_2_id!,
         quoted_drop_part: entity.related_drop_2_part_no!,
         wave_id: entity.wave_id!
+      }
+    };
+  }
+
+  private mapWaveCreatedNotification(
+    entity: IdentityNotificationDeserialized
+  ): WaveCreatedNotification {
+    return {
+      id: entity.id,
+      created_at: entity.created_at,
+      read_at: entity.read_at,
+      cause: IdentityNotificationCause.WAVE_CREATED,
+      data: {
+        wave_id: entity.wave_id!,
+        created_by: entity.additional_identity_id!
+      }
+    };
+  }
+
+  private mapAllDropsNotification(
+    entity: IdentityNotificationDeserialized
+  ): AllDropsNotification {
+    return {
+      id: entity.id,
+      created_at: entity.created_at,
+      read_at: entity.read_at,
+      cause: IdentityNotificationCause.ALL_DROPS,
+      data: {
+        additional_identity_id: entity.additional_identity_id!,
+        drop_id: entity.related_drop_id!,
+        vote: parseIntOrNull(entity.additional_data.vote)!
       }
     };
   }

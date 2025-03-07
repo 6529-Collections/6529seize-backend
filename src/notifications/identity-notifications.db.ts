@@ -76,7 +76,10 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       `
         update ${IDENTITY_NOTIFICATIONS_TABLE}
         set read_at = :read_at
-        where id = :id and identity_id = :identity_id
+        where 
+          id = :id 
+          and identity_id = :identity_id
+          and read_at is null
       `,
       {
         id,
@@ -95,10 +98,35 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       `
         update ${IDENTITY_NOTIFICATIONS_TABLE}
         set read_at = :read_at
-        where identity_id = :identity_id
+        where 
+          identity_id = :identity_id
+          and read_at is null
       `,
       {
         identity_id,
+        read_at: Time.currentMillis()
+      },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+  }
+
+  async markWaveNotificationsAsRead(
+    waveId: string,
+    identityId: string,
+    connection?: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `
+        update ${IDENTITY_NOTIFICATIONS_TABLE}
+        set read_at = :read_at
+        where 
+          wave_id = :wave_id 
+          and identity_id = :identity_id 
+          and read_at is null
+      `,
+      {
+        wave_id: waveId,
+        identity_id: identityId,
         read_at: Time.currentMillis()
       },
       connection ? { wrappedConnection: connection } : undefined
@@ -186,6 +214,20 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       { sourceIdentity, target },
       { wrappedConnection: connectionHolder }
     );
+  }
+
+  async findIdentitiesNotification(
+    waveId: string,
+    dropId: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<string[]> {
+    return this.db
+      .execute<{ identity_id: string }>(
+        `select identity_id from ${IDENTITY_NOTIFICATIONS_TABLE} where wave_id = :waveId and (related_drop_id = :dropId or related_drop_2_id = :dropId)`,
+        { waveId, dropId },
+        { wrappedConnection: connection }
+      )
+      .then((it) => it.map((it) => it.identity_id));
   }
 }
 
