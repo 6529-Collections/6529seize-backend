@@ -61,6 +61,7 @@ export async function sendIdentityNotification(id: number) {
         notification.identity_id,
         eligibleGroupIds
       );
+    logger.info(`[ID ${notification.id}] Badge: ${badge}`);
 
     await Promise.all(
       userDevices.map((device) =>
