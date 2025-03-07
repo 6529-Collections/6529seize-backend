@@ -224,7 +224,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   }
 
   async countDistinctSubscriberIdsForTarget(
-    params: IncomingIdentitySubscriptionsParams
+    params: Omit<IncomingIdentitySubscriptionsParams, 'page' | 'page_size'>
   ): Promise<number> {
     return this.db
       .oneOrNull<{

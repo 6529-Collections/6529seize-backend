@@ -20,11 +20,11 @@ import {
   UserNotifier
 } from '../../../notifications/user.notifier';
 import { ConnectionWrapper } from '../../../sql-executor';
-import { SEIZE_SETTINGS } from 'src/api-constants';
+import { SEIZE_SETTINGS } from '../api-constants';
 import {
   IdentitySubscriptionsDb,
   identitySubscriptionsDb
-} from 'src/identity-subscriptions/identity-subscriptions.db';
+} from '../identity-subscriptions/identity-subscriptions.db';
 
 export class ClappingService {
   constructor(
@@ -179,8 +179,10 @@ export class ClappingService {
           waveId: wave_id,
           dropId: drop_id,
           clapperId: clapper_id,
-          ignoreProfileIds: [drop.author_id],
-          vote: claps
+          vote: {
+            rating: claps,
+            drop_author_id: drop.author_id
+          }
         },
         { timer: ctx.timer, connection: ctx.connection }
       )
@@ -224,16 +226,17 @@ export class ClappingService {
       waveId,
       dropId,
       clapperId,
-      ignoreProfileIds,
       vote
     }: {
       waveId: string;
       dropId: string;
       clapperId: string;
-      ignoreProfileIds?: string[];
-      vote?: number;
+      vote: {
+        rating: number;
+        drop_author_id: string;
+      };
     },
-    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
     const subscriberIds =
       await this.identitySubscriptionsDb.findWaveSubscribedAllSubscribers(
@@ -252,7 +255,6 @@ export class ClappingService {
         dropId,
         relatedIdentityId: clapperId,
         subscriberIds,
-        ignoreProfileIds,
         vote
       },
       { timer, connection }
