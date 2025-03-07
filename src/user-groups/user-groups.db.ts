@@ -7,6 +7,7 @@ import { UserGroupEntity } from '../entities/IUserGroup';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
+  IDENTITY_SUBSCRIPTIONS_TABLE,
   NFT_OWNERS_TABLE,
   PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
@@ -18,6 +19,11 @@ import { distinct } from '../helpers';
 import { identitiesDb } from '../identities/identities.db';
 import { calculateLevel } from '../profiles/profile-level';
 import { RequestContext } from '../request.context';
+import {
+  ActivityEventAction,
+  ActivityEventTargetType
+} from '../entities/IActivityEvent';
+import { ApiDropSubscriptionTargetAction } from '../api-serverless/src/generated/models/ApiDropSubscriptionTargetAction';
 
 const mysql = require('mysql');
 
@@ -632,6 +638,40 @@ where ((cg.cic_direction = 'RECEIVED' and (
       'userGroupsDb->getAllProfileOwnedTokensByProfileIdGroupedByContract'
     );
     return result;
+  }
+
+  private async findProfileGroupsForGroupIds(
+    groupIds: string[],
+    ctx: RequestContext
+  ) {
+    return await this.db
+      .execute<{ profile_group_id: string }>(
+        `select distinct profile_group_id from ${USER_GROUPS_TABLE} where id in (:groupIds)`,
+        { groupIds },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((res) => res.map((it) => it.profile_group_id));
+  }
+
+  async findFollowersOfUserInGroups(
+    userId: string,
+    groups: string[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    const profileGroupIds = await this.findProfileGroupsForGroupIds(
+      groups,
+      ctx
+    );
+
+    return await this.db
+      .execute<{ subscriber_id: string }>(
+        `select distinct isub.subscriber_id from ${IDENTITY_SUBSCRIPTIONS_TABLE} isub
+        join ${PROFILE_GROUPS_TABLE} pg on isub.subscriber_id = pg.profile_id
+        where isub.target_id = :userId and pg.profile_group_id in (:profileGroupIds)`,
+        { userId, profileGroupIds },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((res) => res.map((it) => it.subscriber_id));
   }
 }
 

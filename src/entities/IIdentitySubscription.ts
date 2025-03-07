@@ -29,4 +29,8 @@ export class IdentitySubscriptionEntity {
   @Index()
   @Column({ type: 'varchar', length: 100, nullable: true, default: null })
   readonly wave_id!: string | null;
+
+  @Index()
+  @Column({ type: 'boolean', default: false })
+  subscribed_to_all_drops!: boolean;
 }

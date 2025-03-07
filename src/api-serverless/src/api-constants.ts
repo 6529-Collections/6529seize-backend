@@ -2,7 +2,8 @@ import { Time } from '../../time';
 import { PageSortDirection } from './page-request';
 
 export const SEIZE_SETTINGS = {
-  rememes_submission_tdh_threshold: 6942
+  rememes_submission_tdh_threshold: 6942,
+  all_drops_notifications_subscribers_limit: 15
 };
 
 export const ACCESS_CONTROL_ALLOW_ORIGIN_HEADER =

@@ -84,8 +84,8 @@ router.get(
 );
 
 export interface IncomingIdentitySubscriptionsParams {
-  readonly page: number;
-  readonly page_size: number;
+  readonly page?: number;
+  readonly page_size?: number;
   readonly target_id: string;
   readonly target_type: ActivityEventTargetType;
 }

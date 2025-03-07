@@ -66,6 +66,7 @@ import { ProfileProxyActionType } from '../entities/IProfileProxyAction';
 import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
 import process from 'node:process';
 import { deleteDrop, DeleteDropUseCase } from './delete-drop.use-case';
+import { SEIZE_SETTINGS } from '../api-serverless/src/api-constants';
 
 export class CreateOrUpdateDropUseCase {
   public constructor(
@@ -597,7 +598,8 @@ export class CreateOrUpdateDropUseCase {
           target_id: dropId.toString(),
           target_type: ActivityEventTargetType.DROP,
           target_action: ActivityEventAction.DROP_REPLIED,
-          wave_id: wave.id
+          wave_id: wave.id,
+          subscribed_to_all_drops: false
         },
         connection,
         timer
@@ -675,7 +677,11 @@ export class CreateOrUpdateDropUseCase {
         connection,
         timer
       ),
-      this.recordQuoteNotifications({ model, wave }, { timer, connection })
+      this.recordQuoteNotifications({ model, wave }, { timer, connection }),
+      this.recordAllNotificationsSubscribers(
+        { model, wave },
+        { timer, connection }
+      )
     ]);
     timer.stop(`${CreateOrUpdateDropUseCase.name}->insertAllDropComponents`);
   }
@@ -821,6 +827,32 @@ export class CreateOrUpdateDropUseCase {
       },
       connection,
       timer
+    );
+  }
+
+  private async recordAllNotificationsSubscribers(
+    { model, wave }: { model: CreateOrUpdateDropModel; wave: WaveEntity },
+    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+  ) {
+    const subscriberIds =
+      await this.identitySubscriptionsDb.findWaveSubscribedAllSubscribers(
+        wave.id,
+        connection
+      );
+    if (
+      subscriberIds.length >
+      SEIZE_SETTINGS.all_drops_notifications_subscribers_limit
+    ) {
+      return;
+    }
+    this.userNotifier.notifyAllNotificationsSubscribers(
+      {
+        waveId: wave.id,
+        dropId: model.drop_id!,
+        relatedIdentityId: model.author_id!,
+        subscriberIds
+      },
+      { timer, connection }
     );
   }
 }

@@ -12,6 +12,7 @@ import {
   IdentitySubscriptionNotificationData
 } from './user-notification.types';
 import { Timer } from '../time';
+import { RequestContext } from '../request.context';
 
 export class UserNotifier {
   constructor(
@@ -166,6 +167,99 @@ export class UserNotifier {
       );
     }
     timer.stop('userNotifier->notifyOfDropQuote');
+  }
+
+  public async notifyOfWaveCreated(
+    waveId: string,
+    createdBy: string,
+    identityIds: string[],
+    ctx: RequestContext,
+    timer: Timer
+  ) {
+    await Promise.all(
+      identityIds.map((identityId) =>
+        this.identityNotificationsDb.insertNotification(
+          {
+            identity_id: identityId,
+            additional_identity_id: createdBy,
+            related_drop_id: null,
+            related_drop_part_no: null,
+            related_drop_2_id: null,
+            related_drop_2_part_no: null,
+            cause: IdentityNotificationCause.WAVE_CREATED,
+            additional_data: {},
+            wave_id: waveId,
+            visibility_group_id: null
+          },
+          ctx.connection
+        )
+      )
+    );
+    timer.stop('userNotifier->notifyOfWaveCreated');
+  }
+
+  public async notifyAllNotificationsSubscribers(
+    {
+      waveId,
+      dropId,
+      relatedIdentityId,
+      subscriberIds,
+      ignoreProfileIds,
+      vote
+    }: {
+      waveId: string;
+      dropId: string;
+      relatedIdentityId: string;
+      subscriberIds: string[];
+      ignoreProfileIds?: string[];
+      vote?: number;
+    },
+    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+  ) {
+    timer.start('userNotifier->notifyAllNotificationsSubscribers');
+    console.log('i am waveId', waveId);
+    console.log('i am dropId', dropId);
+    console.log('i am relatedIdentityId', relatedIdentityId);
+    console.log('i am subscriberIds', subscriberIds);
+
+    if (!ignoreProfileIds?.length) {
+      const existingNotificationIdentities =
+        await this.identityNotificationsDb.findIdentitiesNotification(
+          waveId,
+          dropId,
+          connection
+        );
+      console.log(
+        'i am existingNotificationIdentities',
+        existingNotificationIdentities
+      );
+      ignoreProfileIds = existingNotificationIdentities;
+    }
+
+    const subscriberIdsToNotify = subscriberIds.filter(
+      (it) => !ignoreProfileIds.includes(it) && it !== relatedIdentityId
+    );
+    console.log('i am subscriberIdsToNotify', subscriberIdsToNotify);
+    await Promise.all(
+      subscriberIdsToNotify.map(async (it) => {
+        await this.identityNotificationsDb.insertNotification(
+          {
+            identity_id: it,
+            additional_identity_id: relatedIdentityId,
+            related_drop_id: dropId,
+            related_drop_part_no: null,
+            related_drop_2_id: null,
+            related_drop_2_part_no: null,
+            wave_id: waveId,
+            cause: IdentityNotificationCause.ALL_DROPS,
+            additional_data: { vote },
+            visibility_group_id: null
+          },
+          connection
+        );
+      })
+    );
+    timer.stop('userNotifier->notifyAllNotificationsSubscribers');
   }
 }
 
