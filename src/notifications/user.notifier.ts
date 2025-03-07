@@ -216,9 +216,9 @@ export class UserNotifier {
         drop_author_id: string;
       };
     },
-    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
-    timer.start('userNotifier->notifyAllNotificationsSubscribers');
+    timer?.start('userNotifier->notifyAllNotificationsSubscribers');
 
     let ignoreProfileIds: string[] = [];
     let additionalData: any = {};
@@ -258,7 +258,7 @@ export class UserNotifier {
         );
       })
     );
-    timer.stop('userNotifier->notifyAllNotificationsSubscribers');
+    timer?.stop('userNotifier->notifyAllNotificationsSubscribers');
   }
 }
 

@@ -133,18 +133,21 @@ export class WaveApiService {
         const waveEntity = await this.wavesApiDb.findWaveById(id, connection);
         timer.stop(`${this.constructor.name}->findWaveById`);
 
-        const waveGroups = Array.from(
-          new Set<string>([
-            waveEntity.visibility_group_id,
-            waveEntity.participation_group_id,
-            waveEntity.chat_group_id,
-            waveEntity.admin_group_id
-          ])
-        ).filter((it) => it !== null);
-
         if (!waveEntity) {
           throw new Error(`Something went wrong while creating wave ${id}`);
         }
+
+        const waveGroups = Array.from(
+          new Set<string>(
+            [
+              waveEntity.visibility_group_id,
+              waveEntity.participation_group_id,
+              waveEntity.chat_group_id,
+              waveEntity.admin_group_id
+            ].filter((it): it is string => it !== null)
+          )
+        );
+
         await this.activityRecorder.recordWaveCreated(
           {
             creator_id: waveEntity.created_by,

@@ -31,7 +31,7 @@ import {
 import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
-} from 'src/identity-subscriptions/identity-subscriptions.db';
+} from '../identity-subscriptions/identity-subscriptions.db';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 
 export class NotificationsApiService {

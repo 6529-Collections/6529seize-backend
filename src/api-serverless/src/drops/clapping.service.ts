@@ -20,11 +20,11 @@ import {
   UserNotifier
 } from '../../../notifications/user.notifier';
 import { ConnectionWrapper } from '../../../sql-executor';
-import { SEIZE_SETTINGS } from 'src/api-constants';
+import { SEIZE_SETTINGS } from '../api-constants';
 import {
   IdentitySubscriptionsDb,
   identitySubscriptionsDb
-} from 'src/identity-subscriptions/identity-subscriptions.db';
+} from '../identity-subscriptions/identity-subscriptions.db';
 
 export class ClappingService {
   constructor(
@@ -236,7 +236,7 @@ export class ClappingService {
         drop_author_id: string;
       };
     },
-    { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
   ) {
     const subscriberIds =
       await this.identitySubscriptionsDb.findWaveSubscribedAllSubscribers(
