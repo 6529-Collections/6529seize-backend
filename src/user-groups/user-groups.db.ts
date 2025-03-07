@@ -19,11 +19,6 @@ import { distinct } from '../helpers';
 import { identitiesDb } from '../identities/identities.db';
 import { calculateLevel } from '../profiles/profile-level';
 import { RequestContext } from '../request.context';
-import {
-  ActivityEventAction,
-  ActivityEventTargetType
-} from '../entities/IActivityEvent';
-import { ApiDropSubscriptionTargetAction } from '../api-serverless/src/generated/models/ApiDropSubscriptionTargetAction';
 
 const mysql = require('mysql');
 

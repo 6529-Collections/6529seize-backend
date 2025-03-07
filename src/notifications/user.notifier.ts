@@ -204,7 +204,6 @@ export class UserNotifier {
       dropId,
       relatedIdentityId,
       subscriberIds,
-      ignoreProfileIds,
       vote
     }: {
       waveId: string;
@@ -212,34 +211,34 @@ export class UserNotifier {
       relatedIdentityId: string;
       subscriberIds: string[];
       ignoreProfileIds?: string[];
-      vote?: number;
+      vote?: {
+        rating: number;
+        drop_author_id: string;
+      };
     },
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
   ) {
     timer.start('userNotifier->notifyAllNotificationsSubscribers');
-    console.log('i am waveId', waveId);
-    console.log('i am dropId', dropId);
-    console.log('i am relatedIdentityId', relatedIdentityId);
-    console.log('i am subscriberIds', subscriberIds);
 
-    if (!ignoreProfileIds?.length) {
+    let ignoreProfileIds: string[] = [];
+    let additionalData: any = {};
+    if (!vote) {
       const existingNotificationIdentities =
         await this.identityNotificationsDb.findIdentitiesNotification(
           waveId,
           dropId,
           connection
         );
-      console.log(
-        'i am existingNotificationIdentities',
-        existingNotificationIdentities
-      );
-      ignoreProfileIds = existingNotificationIdentities;
+      ignoreProfileIds = existingNotificationIdentities ?? [];
+    } else {
+      ignoreProfileIds = [vote.drop_author_id];
+      additionalData = { vote: vote.rating };
     }
 
     const subscriberIdsToNotify = subscriberIds.filter(
       (it) => !ignoreProfileIds.includes(it) && it !== relatedIdentityId
     );
-    console.log('i am subscriberIdsToNotify', subscriberIdsToNotify);
+
     await Promise.all(
       subscriberIdsToNotify.map(async (it) => {
         await this.identityNotificationsDb.insertNotification(
@@ -252,7 +251,7 @@ export class UserNotifier {
             related_drop_2_part_no: null,
             wave_id: waveId,
             cause: IdentityNotificationCause.ALL_DROPS,
-            additional_data: { vote },
+            additional_data: additionalData,
             visibility_group_id: null
           },
           connection
