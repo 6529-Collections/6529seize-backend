@@ -302,8 +302,10 @@ async function handleAllDrops(
       vote > 0 ? '+' : '-'
     }${Math.abs(vote)}`;
   } else {
-    title = `${additionalEntity.handle} in ${wave.name}`;
+    title = `${additionalEntity.handle}`;
   }
+
+  title += ` in ${wave.name}`;
 
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
