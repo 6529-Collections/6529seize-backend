@@ -298,12 +298,14 @@ async function handleAllDrops(
   let title = '';
   if (isRating) {
     const vote = (notification.additional_data as any).vote;
-    title = `${additionalEntity.handle} rated your drop: ${
+    title = `${additionalEntity.handle} rated a drop: ${
       vote > 0 ? '+' : '-'
     }${Math.abs(vote)}`;
   } else {
-    title = `${additionalEntity.handle} in ${wave.name}`;
+    title = `${additionalEntity.handle}`;
   }
+
+  title += ` in ${wave.name}`;
 
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
