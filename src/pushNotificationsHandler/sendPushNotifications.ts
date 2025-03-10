@@ -4,7 +4,6 @@ import {
   Notification
 } from 'firebase-admin/lib/messaging/messaging-api';
 import { Logger } from '../logging';
-import { isNumber } from '../helpers';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_SEND');
 
