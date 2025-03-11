@@ -20,7 +20,7 @@ import {
   UserNotifier
 } from '../../../notifications/user.notifier';
 import { ConnectionWrapper } from '../../../sql-executor';
-import { SEIZE_SETTINGS } from '../api-constants';
+import { seizeSettings } from '../api-constants';
 import {
   IdentitySubscriptionsDb,
   identitySubscriptionsDb
@@ -245,7 +245,7 @@ export class ClappingService {
       );
     if (
       subscriberIds.length >
-      SEIZE_SETTINGS.all_drops_notifications_subscribers_limit
+      seizeSettings().all_drops_notifications_subscribers_limit
     ) {
       return;
     }

@@ -1013,6 +1013,15 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiNotificationsResponse"
+  /notifications/read:
+    post:
+      tags:
+        - Notifications
+      summary: Mark all notifications as read
+      operationId: markAllNotificationsAsRead
+      responses:
+        "200":
+          description: successful operation
   /notifications/{id}/read:
     post:
       tags:
@@ -1029,6 +1038,85 @@ paths:
       responses:
         "201":
           description: successful operation
+  /notifications/wave/{wave_id}/read:
+    post:
+      tags:
+        - Notifications
+      summary: Mark wave notifications as read
+      operationId: markWaveNotificationsAsRead
+      parameters:
+        - name: wave_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+  /notifications/wave-subscription/{wave_id}:
+    get:
+      tags:
+        - Notifications
+      summary: Get wave subscription
+      operationId: getWaveSubscription
+      parameters:
+        - name: wave_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscribed:
+                    type: boolean
+    post:
+      tags:
+        - Notifications
+      summary: Subscribe to wave notifications
+      operationId: subscribeToWaveNotifications
+      parameters:
+        - name: wave_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscribed:
+                    type: boolean
+    delete:
+      tags:
+        - Notifications
+      summary: Unsubscribe from wave notifications
+      operationId: unsubscribeFromWaveNotifications
+      parameters:
+        - name: wave_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  subscribed:
+                    type: boolean
   /blocks:
     get:
       tags:

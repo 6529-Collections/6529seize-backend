@@ -33,6 +33,8 @@ import {
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
+import { BadRequestException } from '../../../exceptions';
+import { seizeSettings } from '../api-constants';
 
 export class NotificationsApiService {
   constructor(
@@ -299,6 +301,17 @@ export class NotificationsApiService {
   }
 
   public async subscribeToAllWaveDrops(identityId: string, waveId: string) {
+    const waveMembersCount = await notificationsApiService.countWaveSubscribers(
+      waveId
+    );
+
+    const subscribersLimit =
+      seizeSettings().all_drops_notifications_subscribers_limit;
+    if (waveMembersCount >= subscribersLimit) {
+      throw new BadRequestException(
+        `Wave has too many subscribers (${waveMembersCount}). Max is ${subscribersLimit}.`
+      );
+    }
     await this.identitySubscriptionsDb.subscribeToAllDrops(identityId, waveId);
   }
 

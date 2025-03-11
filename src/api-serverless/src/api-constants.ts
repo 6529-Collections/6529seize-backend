@@ -1,9 +1,19 @@
 import { Time } from '../../time';
+import { ApiSeizeSettings } from './generated/models/ApiSeizeSettings';
 import { PageSortDirection } from './page-request';
 
-export const SEIZE_SETTINGS = {
-  rememes_submission_tdh_threshold: 6942,
-  all_drops_notifications_subscribers_limit: 15
+export const seizeSettings = (): ApiSeizeSettings => {
+  const rememes_submission_tdh_threshold = parseInt(
+    process.env.REMEMED_SUBMISSION_TDH_THRESHOLD ?? '6942'
+  );
+  const all_drops_notifications_subscribers_limit = parseInt(
+    process.env.ALL_DROPS_NOTIFICATIONS_SUBSCRIBERS_LIMIT ?? '15'
+  );
+
+  return {
+    rememes_submission_tdh_threshold,
+    all_drops_notifications_subscribers_limit
+  };
 };
 
 export const ACCESS_CONTROL_ALLOW_ORIGIN_HEADER =

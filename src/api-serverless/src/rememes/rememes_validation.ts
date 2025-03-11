@@ -5,7 +5,7 @@ import { areEqualAddresses } from '../../../helpers';
 import { ALCHEMY_SETTINGS } from '../../../constants';
 import { Alchemy, Nft, NftContract } from 'alchemy-sdk';
 import { getTdhForAddress, rememeExists } from '../../../db-api';
-import { SEIZE_SETTINGS } from '../api-constants';
+import { seizeSettings } from '../api-constants';
 
 const rememeSchema = Joi.object({
   contract: Joi.string().required(),
@@ -173,5 +173,5 @@ async function validateTDH(
   }
 
   const tdh = await getTdhForAddress(address);
-  return tdh >= SEIZE_SETTINGS.rememes_submission_tdh_threshold;
+  return tdh >= seizeSettings().rememes_submission_tdh_threshold;
 }

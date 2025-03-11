@@ -635,35 +635,23 @@ where ((cg.cic_direction = 'RECEIVED' and (
     return result;
   }
 
-  private async findProfileGroupsForGroupIds(
-    groupIds: string[],
-    ctx: RequestContext
-  ) {
-    return await this.db
-      .execute<{ profile_group_id: string }>(
-        `select distinct profile_group_id from ${USER_GROUPS_TABLE} where id in (:groupIds)`,
-        { groupIds },
-        { wrappedConnection: ctx.connection }
-      )
-      .then((res) => res.map((it) => it.profile_group_id));
-  }
-
   async findFollowersOfUserInGroups(
     userId: string,
-    groups: string[],
+    groupIds: string[],
     ctx: RequestContext
   ): Promise<string[]> {
-    const profileGroupIds = await this.findProfileGroupsForGroupIds(
-      groups,
-      ctx
-    );
+    if (!groupIds.length) {
+      return [];
+    }
 
     return await this.db
       .execute<{ subscriber_id: string }>(
         `select distinct isub.subscriber_id from ${IDENTITY_SUBSCRIPTIONS_TABLE} isub
-        join ${PROFILE_GROUPS_TABLE} pg on isub.subscriber_id = pg.profile_id
-        where isub.target_id = :userId and pg.profile_group_id in (:profileGroupIds)`,
-        { userId, profileGroupIds },
+          join ${PROFILE_GROUPS_TABLE} pg on isub.subscriber_id = pg.profile_id
+          join ${USER_GROUPS_TABLE} ug on pg.profile_group_id = ug.profile_group_id
+          where isub.target_id = :userId
+          and ug.id in (:groupIds)`,
+        { userId, groupIds },
         { wrappedConnection: ctx.connection }
       )
       .then((res) => res.map((it) => it.subscriber_id));

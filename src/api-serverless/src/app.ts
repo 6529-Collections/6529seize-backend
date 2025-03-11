@@ -66,7 +66,7 @@ import {
   DEFAULT_PAGE_SIZE,
   DISTRIBUTION_PAGE_SIZE,
   NFTS_PAGE_SIZE,
-  SEIZE_SETTINGS,
+  seizeSettings,
   SORT_DIRECTIONS
 } from './api-constants';
 import { MEMES_EXTENDED_SORT, TRANSACTION_FILTERS } from './api-filters';
@@ -325,13 +325,7 @@ loadApi().then(async () => {
   apiRouter.get(
     `/settings`,
     function (req: any, res: Response<ApiResponse<ApiSeizeSettings>>) {
-      const settingsResp: ApiSeizeSettings = {
-        rememes_submission_tdh_threshold:
-          SEIZE_SETTINGS.rememes_submission_tdh_threshold,
-        all_drops_notifications_subscribers_limit:
-          SEIZE_SETTINGS.all_drops_notifications_subscribers_limit
-      };
-      returnJsonResult(settingsResp, req, res);
+      returnJsonResult(seizeSettings(), req, res);
     }
   );
 
