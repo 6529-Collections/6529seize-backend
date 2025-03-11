@@ -309,7 +309,7 @@ async function handleAllDrops(
 
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const imageUrl = additionalEntity.pfp_url;
+  const imageUrl = wave.picture ?? additionalEntity.pfp_url;
   const body = dropPart?.content ?? 'View drop';
   const data = {
     redirect: 'waves',
