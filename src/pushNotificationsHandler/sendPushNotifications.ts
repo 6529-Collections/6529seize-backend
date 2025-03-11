@@ -62,7 +62,7 @@ export async function sendMessage(
   }
 
   const data: any = {
-    notification_id,
+    notification_id: notification_id.toString(),
     ...extra_data
   };
 
