@@ -66,7 +66,7 @@ import { ProfileProxyActionType } from '../entities/IProfileProxyAction';
 import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
 import process from 'node:process';
 import { deleteDrop, DeleteDropUseCase } from './delete-drop.use-case';
-import { SEIZE_SETTINGS } from '../api-serverless/src/api-constants';
+import { seizeSettings } from '../api-serverless/src/api-constants';
 
 export class CreateOrUpdateDropUseCase {
   public constructor(
@@ -822,7 +822,7 @@ export class CreateOrUpdateDropUseCase {
       );
     if (
       subscriberIds.length >
-      SEIZE_SETTINGS.all_drops_notifications_subscribers_limit
+      seizeSettings().all_drops_notifications_subscribers_limit
     ) {
       return;
     }
