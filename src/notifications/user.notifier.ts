@@ -173,9 +173,9 @@ export class UserNotifier {
     waveId: string,
     createdBy: string,
     identityIds: string[],
-    ctx: RequestContext,
-    timer: Timer
+    ctx: RequestContext
   ) {
+    ctx.timer?.start('userNotifier->notifyOfWaveCreated');
     await Promise.all(
       identityIds.map((identityId) =>
         this.identityNotificationsDb.insertNotification(
@@ -195,7 +195,7 @@ export class UserNotifier {
         )
       )
     );
-    timer.stop('userNotifier->notifyOfWaveCreated');
+    ctx.timer?.stop('userNotifier->notifyOfWaveCreated');
   }
 
   public async notifyAllNotificationsSubscribers(

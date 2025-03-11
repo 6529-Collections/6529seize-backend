@@ -172,8 +172,7 @@ export class WaveApiService {
           waveEntity.id,
           waveEntity.created_by,
           followersInGroups,
-          ctxWithConnection,
-          timer
+          ctxWithConnection
         );
 
         const groupIdsUserIsEligibleFor =
