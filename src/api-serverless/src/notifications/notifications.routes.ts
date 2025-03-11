@@ -149,7 +149,7 @@ router.post(
       waveId
     );
     if (waveMembersCount === 0) {
-      throw new BadRequestException(`Wave has no subscribers`);
+      throw new BadRequestException(`Wave has no members`);
     }
     if (
       waveMembersCount >=
