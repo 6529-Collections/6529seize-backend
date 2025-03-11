@@ -9,7 +9,6 @@ import * as Joi from 'joi';
 import { notificationsApiService } from './notifications.api.service';
 import { parseIntOrNull } from '../../../helpers';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
-import { SEIZE_SETTINGS } from '../api-constants';
 
 const router = asyncRouter();
 
@@ -57,6 +56,30 @@ router.get(
 );
 
 router.post(
+  '/read',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<any, any, any, any, any>,
+    res: Response<ApiResponse<void>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    if (!authenticationContext.getActingAsId()) {
+      throw new ForbiddenException(
+        `You need to create a profile before you can access notifications`
+      );
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(`Proxies cannot access notifications`);
+    }
+    await notificationsApiService.markAllNotificationsAsRead(
+      authenticationContext.getActingAsId()!
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send();
+  }
+);
+
+router.post(
   '/:id/read',
   needsAuthenticatedUser(),
   async (
@@ -73,24 +96,11 @@ router.post(
       throw new ForbiddenException(`Proxies cannot access notifications`);
     }
     const id = req.params.id;
-    if (id.toLowerCase().startsWith('wave:')) {
-      const waveId = id.split(':')[1];
-      if (!waveId) {
-        throw new BadRequestException(`Wave ID is malformed`);
-      }
-      await notificationsApiService.markWaveNotificationsAsRead(
-        waveId,
-        authenticationContext.getActingAsId()!
-      );
-    } else if (parseIntOrNull(id) !== null) {
+    if (parseIntOrNull(id) !== null) {
       await notificationsApiService.markNotificationAsRead({
         id: parseInt(id),
         identity_id: authenticationContext.getActingAsId()!
       });
-    } else if (id?.toLowerCase() === 'all') {
-      await notificationsApiService.markAllNotificationsAsRead(
-        authenticationContext.getActingAsId()!
-      );
     } else {
       throw new BadRequestException(
         `Invalid notification id: ${id}. Supply a correct one or 'all' to mark all as read.`
@@ -101,12 +111,38 @@ router.post(
   }
 );
 
-router.get(
-  '/subscribe-to-all-drops/:wave_id',
+router.post(
+  '/wave/:wave_id/read',
   needsAuthenticatedUser(),
   async (
     req: Request<{ wave_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<{ subscribed_to_all_drops: boolean }>>
+    res: Response<ApiResponse<void>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    if (!authenticationContext.getActingAsId()) {
+      throw new ForbiddenException(
+        `You need to create a profile before you can access notifications`
+      );
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(`Proxies cannot access notifications`);
+    }
+    const waveId = req.params.wave_id;
+    await notificationsApiService.markWaveNotificationsAsRead(
+      waveId,
+      authenticationContext.getActingAsId()!
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send();
+  }
+);
+
+router.get(
+  '/wave-subscription/:wave_id',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ wave_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<{ subscribed: boolean }>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     if (!authenticationContext.getActingAsId()) {
@@ -123,17 +159,17 @@ router.get(
       waveId
     );
     res.send({
-      subscribed_to_all_drops: waveSubscription
+      subscribed: waveSubscription
     });
   }
 );
 
 router.post(
-  '/subscribe-to-all-drops/:wave_id',
+  '/wave-subscription/:wave_id',
   needsAuthenticatedUser(),
   async (
     req: Request<{ wave_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<{ subscribed_to_all_drops: boolean }>>
+    res: Response<ApiResponse<{ subscribed: boolean }>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     if (!authenticationContext.getActingAsId()) {
@@ -145,37 +181,23 @@ router.post(
     if (!waveId) {
       throw new BadRequestException(`Wave ID is required`);
     }
-    const waveMembersCount = await notificationsApiService.countWaveSubscribers(
-      waveId
-    );
-    if (waveMembersCount === 0) {
-      throw new BadRequestException(`Wave has no members`);
-    }
-    if (
-      waveMembersCount >=
-      SEIZE_SETTINGS.all_drops_notifications_subscribers_limit
-    ) {
-      throw new BadRequestException(
-        `Wave has too many subscribers (${waveMembersCount}). Max is ${SEIZE_SETTINGS.all_drops_notifications_subscribers_limit}.`
-      );
-    }
     await notificationsApiService.subscribeToAllWaveDrops(
       authenticationContext.getActingAsId()!,
       waveId
     );
     await giveReadReplicaTimeToCatchUp();
     res.send({
-      subscribed_to_all_drops: true
+      subscribed: true
     });
   }
 );
 
 router.delete(
-  '/subscribe-to-all-drops/:wave_id',
+  '/wave-subscription/:wave_id',
   needsAuthenticatedUser(),
   async (
     req: Request<{ wave_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<{ subscribed_to_all_drops: boolean }>>
+    res: Response<ApiResponse<{ subscribed: boolean }>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     if (!authenticationContext.getActingAsId()) {
@@ -193,7 +215,7 @@ router.delete(
     );
     await giveReadReplicaTimeToCatchUp();
     res.send({
-      subscribed_to_all_drops: false
+      subscribed: false
     });
   }
 );
