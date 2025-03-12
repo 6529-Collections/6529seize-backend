@@ -7,6 +7,7 @@ import { UserGroupEntity } from '../entities/IUserGroup';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   IDENTITIES_TABLE,
+  IDENTITY_SUBSCRIPTIONS_TABLE,
   NFT_OWNERS_TABLE,
   PROFILE_GROUPS_TABLE,
   RATINGS_TABLE,
@@ -632,6 +633,28 @@ where ((cg.cic_direction = 'RECEIVED' and (
       'userGroupsDb->getAllProfileOwnedTokensByProfileIdGroupedByContract'
     );
     return result;
+  }
+
+  async findFollowersOfUserInGroups(
+    userId: string,
+    groupIds: string[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    if (!groupIds.length) {
+      return [];
+    }
+
+    return await this.db
+      .execute<{ subscriber_id: string }>(
+        `select distinct isub.subscriber_id from ${IDENTITY_SUBSCRIPTIONS_TABLE} isub
+          join ${PROFILE_GROUPS_TABLE} pg on isub.subscriber_id = pg.profile_id
+          join ${USER_GROUPS_TABLE} ug on pg.profile_group_id = ug.profile_group_id
+          where isub.target_id = :userId
+          and ug.id in (:groupIds)`,
+        { userId, groupIds },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((res) => res.map((it) => it.subscriber_id));
   }
 }
 

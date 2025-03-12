@@ -301,7 +301,8 @@ export class DropsApiService {
               target_id: dropId,
               target_type: ActivityEventTargetType.DROP,
               target_action: action,
-              wave_id: waveId
+              wave_id: waveId,
+              subscribed_to_all_drops: false
             },
             connection
           );

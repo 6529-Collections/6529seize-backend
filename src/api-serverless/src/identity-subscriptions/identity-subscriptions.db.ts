@@ -224,7 +224,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
   }
 
   async countDistinctSubscriberIdsForTarget(
-    params: IncomingIdentitySubscriptionsParams
+    params: Omit<IncomingIdentitySubscriptionsParams, 'page' | 'page_size'>
   ): Promise<number> {
     return this.db
       .oneOrNull<{
@@ -288,6 +288,21 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       .then((it) => it.map((it) => it.subscriber_id));
   }
 
+  async findWaveSubscribedAllSubscribers(
+    waveId: string,
+    connection: ConnectionWrapper<any>
+  ) {
+    return this.db
+      .execute<{
+        subscriber_id: string;
+      }>(
+        `select subscriber_id from ${IDENTITY_SUBSCRIPTIONS_TABLE} where target_id = :waveId and target_type = :target_type and subscribed_to_all_drops = true`,
+        { waveId, target_type: ActivityEventTargetType.WAVE },
+        { wrappedConnection: connection }
+      )
+      .then((it) => it.map((it) => it.subscriber_id));
+  }
+
   async updateIdentityIdsInSubscriptions(
     sourceIdentity: string,
     target: string,
@@ -305,6 +320,42 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       update ${IDENTITY_SUBSCRIPTIONS_TABLE} set target_id = :target where target_id = :sourceIdentity and target_type = '${ActivityEventTargetType.IDENTITY}'
     `,
       { sourceIdentity, target },
+      { wrappedConnection: connection }
+    );
+  }
+
+  async getWaveSubscription(
+    identityId: string,
+    waveId: string
+  ): Promise<boolean> {
+    return this.db
+      .oneOrNull<{ subscribed_to_all_drops: boolean }>(
+        `select subscribed_to_all_drops from ${IDENTITY_SUBSCRIPTIONS_TABLE} where subscriber_id = :identityId and target_id = :waveId and target_type = :target_type`,
+        { identityId, waveId, target_type: ActivityEventTargetType.WAVE }
+      )
+      .then((it) => it?.subscribed_to_all_drops ?? false);
+  }
+
+  async subscribeToAllDrops(
+    identityId: string,
+    waveId: string,
+    connection?: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update ${IDENTITY_SUBSCRIPTIONS_TABLE} set subscribed_to_all_drops = true where subscriber_id = :identityId and target_id = :waveId and target_type = :target_type`,
+      { identityId, waveId, target_type: ActivityEventTargetType.WAVE },
+      { wrappedConnection: connection }
+    );
+  }
+
+  async unsubscribeFromAllDrops(
+    identityId: string,
+    waveId: string,
+    connection?: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update ${IDENTITY_SUBSCRIPTIONS_TABLE} set subscribed_to_all_drops = false where subscriber_id = :identityId and target_id = :waveId and target_type = :target_type`,
+      { identityId, waveId, target_type: ActivityEventTargetType.WAVE },
       { wrappedConnection: connection }
     );
   }

@@ -53,6 +53,10 @@ import {
 } from '../drops/drop-voting.service';
 import { clappingService, ClappingService } from '../drops/clapping.service';
 import { profilesService } from '../../../profiles/profiles.service';
+import {
+  userNotifier,
+  UserNotifier
+} from '../../../notifications/user.notifier';
 
 export class WaveApiService {
   constructor(
@@ -64,7 +68,8 @@ export class WaveApiService {
     private readonly createOrUpdateDrop: CreateOrUpdateDropUseCase,
     private readonly dropsMappers: DropsMappers,
     private readonly dropVotingService: DropVotingService,
-    private readonly clappingService: ClappingService
+    private readonly clappingService: ClappingService,
+    private readonly userNotifier: UserNotifier
   ) {}
 
   public async createWave(
@@ -118,7 +123,8 @@ export class WaveApiService {
             target_id: id,
             target_type: ActivityEventTargetType.WAVE,
             target_action: ActivityEventAction.DROP_CREATED,
-            wave_id: id
+            wave_id: id,
+            subscribed_to_all_drops: false
           },
           connection,
           timer
@@ -130,6 +136,18 @@ export class WaveApiService {
         if (!waveEntity) {
           throw new Error(`Something went wrong while creating wave ${id}`);
         }
+
+        const waveGroups = Array.from(
+          new Set<string>(
+            [
+              waveEntity.visibility_group_id,
+              waveEntity.participation_group_id,
+              waveEntity.chat_group_id,
+              waveEntity.admin_group_id
+            ].filter((it): it is string => it !== null)
+          )
+        );
+
         await this.activityRecorder.recordWaveCreated(
           {
             creator_id: waveEntity.created_by,
@@ -138,6 +156,19 @@ export class WaveApiService {
           },
           ctxWithConnection
         );
+        const followersInGroups =
+          await this.userGroupsService.findFollowersOfUserInGroups(
+            waveEntity.created_by,
+            waveGroups,
+            ctxWithConnection
+          );
+        await this.userNotifier.notifyOfWaveCreated(
+          waveEntity.id,
+          waveEntity.created_by,
+          followersInGroups,
+          ctxWithConnection
+        );
+
         const groupIdsUserIsEligibleFor =
           await this.userGroupsService.getGroupsUserIsEligibleFor(
             authenticationContext.getActingAsId(),
@@ -260,7 +291,7 @@ export class WaveApiService {
             outcome.distribution?.reduce(
               (acc, it) => acc + (it.amount ?? 0),
               0
-            ) !== outcome.amount ?? 0
+            ) !== (outcome.amount ?? 0)
         );
         if (non100PercentDistributions.length) {
           throw new BadRequestException(
@@ -475,7 +506,8 @@ export class WaveApiService {
               target_id: waveId,
               target_type: ActivityEventTargetType.WAVE,
               target_action: action,
-              wave_id: waveId
+              wave_id: waveId,
+              subscribed_to_all_drops: false
             },
             connection
           );
@@ -882,5 +914,6 @@ export const waveApiService = new WaveApiService(
   createOrUpdateDrop,
   dropsMappers,
   dropVotingService,
-  clappingService
+  clappingService,
+  userNotifier
 );

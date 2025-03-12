@@ -28,6 +28,13 @@ import {
   identityNotificationsDb,
   IdentityNotificationsDb
 } from '../../../notifications/identity-notifications.db';
+import {
+  identitySubscriptionsDb,
+  IdentitySubscriptionsDb
+} from '../identity-subscriptions/identity-subscriptions.db';
+import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
+import { BadRequestException } from '../../../exceptions';
+import { seizeSettings } from '../api-constants';
 
 export class NotificationsApiService {
   constructor(
@@ -35,7 +42,8 @@ export class NotificationsApiService {
     private readonly userGroupsService: UserGroupsService,
     private readonly profilesApiService: ProfilesApiService,
     private readonly dropsService: DropsApiService,
-    private readonly identityNotificationsDb: IdentityNotificationsDb
+    private readonly identityNotificationsDb: IdentityNotificationsDb,
+    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
   ) {}
 
   public async markNotificationAsRead(param: {
@@ -47,6 +55,13 @@ export class NotificationsApiService {
 
   public async markAllNotificationsAsRead(identityId: string) {
     await this.identityNotificationsDb.markAllNotificationsAsRead(identityId);
+  }
+
+  public async markWaveNotificationsAsRead(waveId: string, identityId: string) {
+    await this.identityNotificationsDb.markWaveNotificationsAsRead(
+      waveId,
+      identityId
+    );
   }
 
   public async getNotifications(
@@ -131,6 +146,17 @@ export class NotificationsApiService {
           profileIds.push(data.reply_drop_author_id);
           dropIds.push(data.replied_drop_id);
           dropIds.push(data.reply_drop_id);
+          break;
+        }
+        case IdentityNotificationCause.WAVE_CREATED: {
+          const data = notification.data;
+          profileIds.push(data.created_by);
+          break;
+        }
+        case IdentityNotificationCause.ALL_DROPS: {
+          const data = notification.data;
+          profileIds.push(data.additional_identity_id);
+          dropIds.push(data.drop_id);
           break;
         }
         default: {
@@ -229,10 +255,71 @@ export class NotificationsApiService {
           }
         };
       }
+      case IdentityNotificationCause.WAVE_CREATED: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.created_by],
+          related_drops: [],
+          additional_context: {
+            wave_id: data.wave_id
+          }
+        };
+      }
+      case IdentityNotificationCause.ALL_DROPS: {
+        const data = notification.data;
+        return {
+          id: notification.id,
+          created_at: notification.created_at,
+          read_at: notification.read_at,
+          cause: resolveEnumOrThrow(ApiNotificationCause, notificationCause),
+          related_identity: profiles[data.additional_identity_id],
+          related_drops: [drops[data.drop_id]],
+          additional_context: {
+            vote: data.vote
+          }
+        };
+      }
       default: {
         return assertUnreachable(notificationCause);
       }
     }
+  }
+
+  public async countWaveSubscribers(waveId: string) {
+    return this.identitySubscriptionsDb.countDistinctSubscriberIdsForTarget({
+      target_id: waveId,
+      target_type: ActivityEventTargetType.WAVE
+    });
+  }
+
+  public async getWaveSubscription(identityId: string, waveId: string) {
+    return this.identitySubscriptionsDb.getWaveSubscription(identityId, waveId);
+  }
+
+  public async subscribeToAllWaveDrops(identityId: string, waveId: string) {
+    const waveMembersCount = await notificationsApiService.countWaveSubscribers(
+      waveId
+    );
+
+    const subscribersLimit =
+      seizeSettings().all_drops_notifications_subscribers_limit;
+    if (waveMembersCount >= subscribersLimit) {
+      throw new BadRequestException(
+        `Wave has too many subscribers (${waveMembersCount}). Max is ${subscribersLimit}.`
+      );
+    }
+    await this.identitySubscriptionsDb.subscribeToAllDrops(identityId, waveId);
+  }
+
+  public async unsubscribeFromAllWaveDrops(identityId: string, waveId: string) {
+    await this.identitySubscriptionsDb.unsubscribeFromAllDrops(
+      identityId,
+      waveId
+    );
   }
 }
 
@@ -241,5 +328,6 @@ export const notificationsApiService = new NotificationsApiService(
   userGroupsService,
   profilesApiService,
   dropsService,
-  identityNotificationsDb
+  identityNotificationsDb,
+  identitySubscriptionsDb
 );

@@ -10,8 +10,14 @@ import { profilesService } from '../profiles/profiles.service';
 import { sendMessage } from './sendPushNotifications';
 import { Logger } from '../logging';
 import { Profile } from '../entities/IProfile';
+import { IdentityNotificationsDb } from '../notifications/identity-notifications.db';
+import { dbSupplier } from '../sql-executor';
+import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
+import { WaveEntity } from '../entities/IWave';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
+
+const identityNotificationsDb = new IdentityNotificationsDb(dbSupplier);
 
 export async function sendIdentityNotification(id: number) {
   logger.info(`Sending identity notification: ${id}`);
@@ -47,6 +53,15 @@ export async function sendIdentityNotification(id: number) {
   if (notificationData) {
     const { title, body, data, imageUrl } = notificationData;
 
+    const eligibleGroupIds = await userGroupsService.getGroupsUserIsEligibleFor(
+      notification.identity_id
+    );
+    const badge =
+      await identityNotificationsDb.countUnreadNotificationsForIdentity(
+        notification.identity_id,
+        eligibleGroupIds
+      );
+
     await Promise.all(
       userDevices.map((device) =>
         sendMessage(
@@ -55,6 +70,7 @@ export async function sendIdentityNotification(id: number) {
           device.token,
           notification.id,
           data,
+          badge,
           imageUrl
         ).catch(async (error) => {
           if (
@@ -94,6 +110,10 @@ async function generateNotificationData(
       return handleDropReplied(notification, additionalEntity);
     case IdentityNotificationCause.DROP_VOTED:
       return handleDropVoted(notification, additionalEntity);
+    case IdentityNotificationCause.WAVE_CREATED:
+      return handleWaveCreated(notification, additionalEntity);
+    case IdentityNotificationCause.ALL_DROPS:
+      return handleAllDrops(notification, additionalEntity);
     default:
       return null;
   }
@@ -227,4 +247,74 @@ async function getDropSerialNo(dropId: string | null) {
     id: dropId
   });
   return drop?.serial_no ?? null;
+}
+
+async function handleWaveCreated(
+  notification: IdentityNotificationEntity,
+  additionalEntity: Profile
+) {
+  const wave = await getWaveEntityOrThrow(
+    notification.id,
+    notification.wave_id
+  );
+
+  const title = `${additionalEntity.handle} invited you to a wave: ${wave.name}`;
+  const body = 'View wave';
+  const imageUrl = wave.picture ?? undefined;
+  const data = {
+    redirect: 'waves',
+    wave_id: notification.wave_id
+  };
+  return { title, body, data, imageUrl };
+}
+
+async function getWaveEntityOrThrow(
+  notificationId: number,
+  waveId?: string | null
+) {
+  if (!waveId) {
+    throw new Error(`[ID ${notificationId}] Wave id missing`);
+  }
+  const wave = await getDataSource()
+    .getRepository(WaveEntity)
+    .findOneBy({ id: waveId });
+  if (!wave) {
+    throw new Error(`[ID ${notificationId}] Wave with id ${waveId} not found`);
+  }
+  return wave;
+}
+
+async function handleAllDrops(
+  notification: IdentityNotificationEntity,
+  additionalEntity: Profile
+) {
+  const wave = await getWaveEntityOrThrow(
+    notification.id,
+    notification.wave_id
+  );
+  const isRating =
+    typeof (notification.additional_data as any).vote === 'number';
+
+  let title = '';
+  if (isRating) {
+    const vote = (notification.additional_data as any).vote;
+    title = `${additionalEntity.handle} rated a drop: ${
+      vote > 0 ? '+' : '-'
+    }${Math.abs(vote)}`;
+  } else {
+    title = `${additionalEntity.handle}`;
+  }
+
+  title += ` in ${wave.name}`;
+
+  const dropPart = await getDropPart(notification);
+  const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
+  const imageUrl = wave.picture ?? additionalEntity.pfp_url;
+  const body = dropPart?.content ?? 'View drop';
+  const data = {
+    redirect: 'waves',
+    wave_id: notification.wave_id,
+    drop_id: dropSerialNo
+  };
+  return { title, body, data, imageUrl };
 }

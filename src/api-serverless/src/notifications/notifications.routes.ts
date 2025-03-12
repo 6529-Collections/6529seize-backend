@@ -56,6 +56,30 @@ router.get(
 );
 
 router.post(
+  '/read',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<any, any, any, any, any>,
+    res: Response<ApiResponse<void>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    if (!authenticationContext.getActingAsId()) {
+      throw new ForbiddenException(
+        `You need to create a profile before you can access notifications`
+      );
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(`Proxies cannot access notifications`);
+    }
+    await notificationsApiService.markAllNotificationsAsRead(
+      authenticationContext.getActingAsId()!
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send();
+  }
+);
+
+router.post(
   '/:id/read',
   needsAuthenticatedUser(),
   async (
@@ -77,10 +101,6 @@ router.post(
         id: parseInt(id),
         identity_id: authenticationContext.getActingAsId()!
       });
-    } else if (id?.toLowerCase() === 'all') {
-      await notificationsApiService.markAllNotificationsAsRead(
-        authenticationContext.getActingAsId()!
-      );
     } else {
       throw new BadRequestException(
         `Invalid notification id: ${id}. Supply a correct one or 'all' to mark all as read.`
@@ -88,6 +108,115 @@ router.post(
     }
     await giveReadReplicaTimeToCatchUp();
     res.send();
+  }
+);
+
+router.post(
+  '/wave/:wave_id/read',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ wave_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<void>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    if (!authenticationContext.getActingAsId()) {
+      throw new ForbiddenException(
+        `You need to create a profile before you can access notifications`
+      );
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(`Proxies cannot access notifications`);
+    }
+    const waveId = req.params.wave_id;
+    await notificationsApiService.markWaveNotificationsAsRead(
+      waveId,
+      authenticationContext.getActingAsId()!
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send();
+  }
+);
+
+router.get(
+  '/wave-subscription/:wave_id',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ wave_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<{ subscribed: boolean }>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    if (!authenticationContext.getActingAsId()) {
+      throw new ForbiddenException(
+        `You need to create a profile before you can access notifications`
+      );
+    }
+    const waveId = req.params.wave_id;
+    if (!waveId) {
+      throw new BadRequestException(`Wave ID is required`);
+    }
+    const waveSubscription = await notificationsApiService.getWaveSubscription(
+      authenticationContext.getActingAsId()!,
+      waveId
+    );
+    res.send({
+      subscribed: waveSubscription
+    });
+  }
+);
+
+router.post(
+  '/wave-subscription/:wave_id',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ wave_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<{ subscribed: boolean }>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    if (!authenticationContext.getActingAsId()) {
+      throw new ForbiddenException(
+        `You need to create a profile before you can access notifications`
+      );
+    }
+    const waveId = req.params.wave_id;
+    if (!waveId) {
+      throw new BadRequestException(`Wave ID is required`);
+    }
+    await notificationsApiService.subscribeToAllWaveDrops(
+      authenticationContext.getActingAsId()!,
+      waveId
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send({
+      subscribed: true
+    });
+  }
+);
+
+router.delete(
+  '/wave-subscription/:wave_id',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ wave_id: string }, any, any, any, any>,
+    res: Response<ApiResponse<{ subscribed: boolean }>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    if (!authenticationContext.getActingAsId()) {
+      throw new ForbiddenException(
+        `You need to create a profile before you can access notifications`
+      );
+    }
+    const waveId = req.params.wave_id;
+    if (!waveId) {
+      throw new BadRequestException(`Wave ID is required`);
+    }
+    await notificationsApiService.unsubscribeFromAllWaveDrops(
+      authenticationContext.getActingAsId()!,
+      waveId
+    );
+    await giveReadReplicaTimeToCatchUp();
+    res.send({
+      subscribed: false
+    });
   }
 );
 

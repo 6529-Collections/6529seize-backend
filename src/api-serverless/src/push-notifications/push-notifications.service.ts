@@ -12,19 +12,19 @@ const sqs = new SQSClient({ region });
 
 const isActivated = process.env.PUSH_NOTIFICATIONS_ACTIVATED === 'true';
 
-export const sendIdentityPushNotification = async (notificationId: number) => {
+export const sendIdentityPushNotification = async (id: number) => {
   if (!isActivated) {
     logger.info('Push notifications are not activated');
     return;
   }
   try {
     const message = {
-      identity_id: notificationId
+      identity_notification_id: id
     };
     await sendMessageToSQS(JSON.stringify(message));
   } catch (error) {
     logger.error(
-      `[ID ${notificationId}] Error sending push notification: ${error}`
+      `[IDENTITY NOTIFICATION ID ${id}] Error sending push notification: ${error}`
     );
   }
 };

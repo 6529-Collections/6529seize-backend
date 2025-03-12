@@ -1,6 +1,6 @@
 import { RequestContext } from '../../../request.context';
 import { clappingDb, ClappingDb } from './clapping.db';
-import { Time } from '../../../time';
+import { Time, Timer } from '../../../time';
 import { identitiesDb, IdentitiesDb } from '../../../identities/identities.db';
 import { BadRequestException, ForbiddenException } from '../../../exceptions';
 import { wavesApiDb, WavesApiDb } from '../waves/waves.api.db';
@@ -19,6 +19,12 @@ import {
   userNotifier,
   UserNotifier
 } from '../../../notifications/user.notifier';
+import { ConnectionWrapper } from '../../../sql-executor';
+import { seizeSettings } from '../api-constants';
+import {
+  IdentitySubscriptionsDb,
+  identitySubscriptionsDb
+} from '../identity-subscriptions/identity-subscriptions.db';
 
 export class ClappingService {
   constructor(
@@ -28,7 +34,8 @@ export class ClappingService {
     private readonly dropsDb: DropsDb,
     private readonly userGroupsService: UserGroupsService,
     private readonly userNotifier: UserNotifier,
-    private readonly profileActivityLogsDb: ProfileActivityLogsDb
+    private readonly profileActivityLogsDb: ProfileActivityLogsDb,
+    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
   ) {}
 
   public async clap(
@@ -166,7 +173,19 @@ export class ClappingService {
               },
               wave.visibility_group_id,
               ctx.connection
-            ))()
+            ))(),
+      this.recordAllNotificationsSubscribers(
+        {
+          waveId: wave_id,
+          dropId: drop_id,
+          clapperId: clapper_id,
+          vote: {
+            rating: claps,
+            drop_author_id: drop.author_id
+          }
+        },
+        { timer: ctx.timer, connection: ctx.connection }
+      )
     ]);
   }
 
@@ -201,6 +220,46 @@ export class ClappingService {
       this.clappingDb.deleteCreditSpendingsForWave(waveId, ctx)
     ]);
   }
+
+  private async recordAllNotificationsSubscribers(
+    {
+      waveId,
+      dropId,
+      clapperId,
+      vote
+    }: {
+      waveId: string;
+      dropId: string;
+      clapperId: string;
+      vote: {
+        rating: number;
+        drop_author_id: string;
+      };
+    },
+    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+  ) {
+    const subscriberIds =
+      await this.identitySubscriptionsDb.findWaveSubscribedAllSubscribers(
+        waveId,
+        connection
+      );
+    if (
+      subscriberIds.length >
+      seizeSettings().all_drops_notifications_subscribers_limit
+    ) {
+      return;
+    }
+    this.userNotifier.notifyAllNotificationsSubscribers(
+      {
+        waveId,
+        dropId,
+        relatedIdentityId: clapperId,
+        subscriberIds,
+        vote
+      },
+      { timer, connection }
+    );
+  }
 }
 
 export const clappingService = new ClappingService(
@@ -210,5 +269,6 @@ export const clappingService = new ClappingService(
   dropsDb,
   userGroupsService,
   userNotifier,
-  profileActivityLogsDb
+  profileActivityLogsDb,
+  identitySubscriptionsDb
 );

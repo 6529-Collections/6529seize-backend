@@ -4,6 +4,7 @@ import {
   Notification
 } from 'firebase-admin/lib/messaging/messaging-api';
 import { Logger } from '../logging';
+import { parseIntOrNull } from '../helpers';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_SEND');
 
@@ -36,11 +37,14 @@ export async function sendMessage(
   token: string,
   notification_id: number,
   extra_data: any,
+  badge?: number,
   imageUrl?: string
 ) {
   init();
   title = title.replace(/@\[(.+?)\]/g, '@$1');
   body = body.replace(/@\[(.+?)\]/g, '@$1');
+
+  const badgeNumber = parseIntOrNull(badge) ?? 1;
 
   if (title.length > MAX_TITLE_LENGTH) {
     title = title.substring(0, MAX_TITLE_LENGTH) + '...';
@@ -59,7 +63,7 @@ export async function sendMessage(
   }
 
   const data: any = {
-    notification_id,
+    notification_id: notification_id.toString(),
     ...extra_data
   };
 
@@ -75,6 +79,7 @@ export async function sendMessage(
     apns: {
       payload: {
         aps: {
+          badge: badgeNumber,
           sound: 'default'
         }
       }

@@ -39,6 +39,17 @@ export interface DropQuoteNotificationData {
   wave_id: string;
 }
 
+export interface WaveCreatedNotificationData {
+  wave_id: string;
+  created_by: string;
+}
+
+export interface AllDropsNotificationData {
+  additional_identity_id: string;
+  drop_id: string;
+  vote: number;
+}
+
 export interface UserNotificationBase {
   id: number;
   created_at: number;
@@ -70,12 +81,24 @@ export interface DropQuoteNotification extends UserNotificationBase {
   data: DropQuoteNotificationData;
 }
 
+export interface WaveCreatedNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.WAVE_CREATED;
+  data: WaveCreatedNotificationData;
+}
+
+export interface AllDropsNotification extends UserNotificationBase {
+  cause: IdentityNotificationCause.ALL_DROPS;
+  data: AllDropsNotificationData;
+}
+
 export type UserNotification =
   | IdentitySubscriptionNotification
   | IdentityMentionNotification
   | DropVoteNotification
   | DropReplyNotification
-  | DropQuoteNotification;
+  | DropQuoteNotification
+  | WaveCreatedNotification
+  | AllDropsNotification;
 
 export interface UserNotificationsResponse {
   readonly notifications: UserNotification[];

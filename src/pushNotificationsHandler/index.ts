@@ -6,6 +6,7 @@ import { DropEntity, DropPartEntity } from '../entities/IDrop';
 import { PushNotificationDevice } from '../entities/IPushNotification';
 import { SQSHandler } from 'aws-lambda';
 import { sendIdentityNotification } from './identityPushNotifications';
+import { WaveEntity } from '../entities/IWave';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER');
 
@@ -24,6 +25,7 @@ const sqsHandler: SQSHandler = async (event) => {
       entities: [
         IdentityNotificationEntity,
         PushNotificationDevice,
+        WaveEntity,
         DropEntity,
         DropPartEntity
       ]
@@ -33,8 +35,8 @@ const sqsHandler: SQSHandler = async (event) => {
 
 const processNotification = async (messageBody: string) => {
   const notification = JSON.parse(messageBody);
-  if (notification.identity_id) {
-    await sendIdentityNotification(notification.identity_id);
+  if (notification.identity_notification_id) {
+    await sendIdentityNotification(notification.identity_notification_id);
     return;
   }
 
