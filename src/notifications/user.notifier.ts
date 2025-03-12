@@ -177,23 +177,25 @@ export class UserNotifier {
   ) {
     ctx.timer?.start('userNotifier->notifyOfWaveCreated');
     await Promise.all(
-      identityIds.map((identityId) =>
-        this.identityNotificationsDb.insertNotification(
-          {
-            identity_id: identityId,
-            additional_identity_id: createdBy,
-            related_drop_id: null,
-            related_drop_part_no: null,
-            related_drop_2_id: null,
-            related_drop_2_part_no: null,
-            cause: IdentityNotificationCause.WAVE_CREATED,
-            additional_data: {},
-            wave_id: waveId,
-            visibility_group_id: null
-          },
-          ctx.connection
+      identityIds
+        .filter((it) => it !== createdBy)
+        .map((identityId) =>
+          this.identityNotificationsDb.insertNotification(
+            {
+              identity_id: identityId,
+              additional_identity_id: createdBy,
+              related_drop_id: null,
+              related_drop_part_no: null,
+              related_drop_2_id: null,
+              related_drop_2_part_no: null,
+              cause: IdentityNotificationCause.WAVE_CREATED,
+              additional_data: {},
+              wave_id: waveId,
+              visibility_group_id: null
+            },
+            ctx.connection
+          )
         )
-      )
     );
     ctx.timer?.stop('userNotifier->notifyOfWaveCreated');
   }
