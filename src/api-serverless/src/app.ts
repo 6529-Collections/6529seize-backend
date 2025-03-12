@@ -35,6 +35,8 @@ import waveMediaRoutes from './waves/wave-media.routes';
 import wavesOverviewRoutes from './waves/waves-overview.routes';
 import identitySubscriptionsRoutes from './identity-subscriptions/identity-subscriptions.routes';
 import pushNotificationsRoutes from './push-notifications/push-notifications.routes';
+import * as http from 'http';
+import WebSocket, { WebSocketServer } from 'ws';
 
 import * as passport from 'passport';
 import {
@@ -93,6 +95,12 @@ import { ApiArtistNameItem } from './generated/models/ApiArtistNameItem';
 import { ApiTransactionPage } from './generated/models/ApiTransactionPage';
 import rpcRoutes from './rpc/rpc.routes';
 import sitemapRoutes from './sitemap/sitemap.routes';
+import { randomUUID } from 'crypto';
+import {
+  appWebSockets,
+  authenticateWebSocketJwt,
+  mapHttpRequestToGatewayEvent
+} from './ws/ws';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -198,10 +206,14 @@ loadApi().then(async () => {
         secretOrKey: getJwtSecret()
       },
       function (
-        { sub: wallet, role }: { sub: string; role?: string },
+        {
+          sub: wallet,
+          role,
+          exp
+        }: { sub: string; role?: string; exp?: number },
         cb: VerifiedCallback
       ) {
-        return cb(null, { wallet: wallet, role });
+        return cb(null, { wallet: wallet, role, exp });
       }
     )
   );
@@ -608,6 +620,14 @@ loadApi().then(async () => {
     db.fetchMemesLite(sortDir).then((result) => {
       return returnPaginatedResult(result, req, res);
     });
+  });
+
+  apiRouter.get(`/test`, async function (req: any, res: any) {
+    await appWebSockets.send({
+      connectionId: req.query.p,
+      message: 'Hello from server'
+    });
+    res.send('HEllo');
   });
 
   apiRouter.get(`/memes_latest`, function (req: any, res: any) {
@@ -1022,11 +1042,56 @@ loadApi().then(async () => {
     app.use(sentryFlusherMiddleware());
   }
 
-  app.listen(API_PORT, function () {
-    logger.info(
-      `[CONFIG ${process.env.NODE_ENV}] [SERVER RUNNING ON PORT ${API_PORT}]`
-    );
-  });
+  if (process.env.NODE_ENV === 'local') {
+    const localWebSocketLogger = Logger.get('LocalWebSocket');
+    const httpServer = http.createServer(app);
+    const wss = new WebSocketServer({ server: httpServer });
+
+    wss.on('connection', async (socket: WebSocket, request) => {
+      const connectionId = randomUUID();
+      try {
+        const event = mapHttpRequestToGatewayEvent(
+          request,
+          connectionId,
+          '$connect'
+        );
+        const { identityId, jwtExpiry } = await authenticateWebSocketJwt(event);
+        await appWebSockets.register({
+          identityId,
+          connectionId,
+          jwtExpiry,
+          ws: socket
+        });
+
+        socket.send(JSON.stringify({ routeKey: '$connect', connected: true }));
+
+        socket.on('message', () => {
+          socket.send(
+            JSON.stringify({ error: "This websocket doesn't accept messages" })
+          );
+        });
+
+        socket.on('close', () => {
+          appWebSockets.deregister({ connectionId });
+        });
+      } catch (err) {
+        localWebSocketLogger.error(
+          `$connect FAILED (connId = ${connectionId}): ${err}`
+        );
+        socket.close();
+      }
+    });
+
+    httpServer.listen(API_PORT, () => {
+      logger.info(`[CONFIG local] [LOCAL DEV SERVER + WS on port ${API_PORT}]`);
+    });
+  } else {
+    app.listen(API_PORT, function () {
+      logger.info(
+        `[CONFIG ${process.env.NODE_ENV}] [SERVER RUNNING ON PORT ${API_PORT}] WARNING! Websockets are not set up in expressjs level. This is ok if they are set up in some other layer or if you don't care about websockets.`
+      );
+    });
+  }
 });
 
 export { app };
