@@ -56,7 +56,7 @@ router.get(
 );
 
 router.post(
-  '/read',
+  ['/read', '/all/read'],
   needsAuthenticatedUser(),
   async (
     req: Request<any, any, any, any, any>,
