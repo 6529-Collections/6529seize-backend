@@ -216,7 +216,7 @@ export class UserNotifier {
         drop_author_id: string;
       };
     },
-    { timer, connection }: { timer?: Timer; connection: ConnectionWrapper<any> }
+    { timer, connection }: RequestContext
   ) {
     timer?.start('userNotifier->notifyAllNotificationsSubscribers');
 
