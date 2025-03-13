@@ -41,7 +41,9 @@ async function wsHandler(
         return { statusCode: 200, body: 'Connected' };
       } catch (e) {
         wsHandlerLogger.error(
-          `Failed to connect to websocket (clientId: ${identityId})`,
+          `Failed to connect to websocket (clientId: ${identityId}) Error: ${JSON.stringify(
+            e
+          )}`,
           e
         );
         return { statusCode: 500, body: 'Failed to connect' };
