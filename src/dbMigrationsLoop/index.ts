@@ -45,6 +45,7 @@ import {
   WaveDecisionEntity,
   WaveDecisionWinnerDropEntity
 } from '../entities/IWaveDecision';
+import { WSConnectionEntity } from '../entities/IWSConnectionEntity';
 
 const DBMigrate = require('db-migrate');
 
@@ -94,7 +95,8 @@ const MANAGED_ENTITIES = [
   DropVoterStateEntity,
   DropRankEntity,
   RefreshToken,
-  EULAConsent
+  EULAConsent,
+  WSConnectionEntity
 ];
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {
