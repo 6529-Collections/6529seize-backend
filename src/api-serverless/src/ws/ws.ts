@@ -179,9 +179,12 @@ export class AppWebSockets {
     jwtExpiry: number;
     ws?: WebSocket;
   }) {
+<<<<<<< Updated upstream
     if (!ws) {
       throw new Error(`Register needs an actual WebSocket`);
     }
+=======
+>>>>>>> Stashed changes
     this.logger.info(
       `Registering socket for client ${identityId} (connectionId: ${connectionId})`
     );
