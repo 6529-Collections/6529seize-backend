@@ -116,8 +116,9 @@ class ApiGatewayClientConnections extends ClientConnections {
         throw new SocketNotAvailableException();
       } else {
         this.logger.error(
-          `Failed to post message to client ${connectionId}`,
-          err
+          `Failed to post message to client ${connectionId}: ${JSON.stringify(
+            err
+          )}`
         );
       }
     }
