@@ -135,7 +135,7 @@ export class CreateOrUpdateDropUseCase {
     model: CreateOrUpdateDropModel,
     isDescriptionDrop: boolean,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
-  ) {
+  ): Promise<{ drop_id: string }> {
     if (model.drop_type === DropType.WINNER) {
       throw new BadRequestException(`Can't modify a winner drop`);
     }
