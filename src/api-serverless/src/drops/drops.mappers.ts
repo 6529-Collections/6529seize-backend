@@ -193,7 +193,12 @@ export class DropsMappers {
               wave.voting_credit_type
             ),
             voting_period_start: wave.voting_period_start,
-            voting_period_end: wave.voting_period_end
+            voting_period_end: wave.voting_period_end,
+            visibility_group_id: wave.visibility_group_id,
+            chat_group_id: wave.chat_group_id,
+            admin_group_id: wave.admin_group_id,
+            participation_group_id: wave.participation_group_id,
+            voting_group_id: wave.voting_group_id
           }
         : null;
       return {

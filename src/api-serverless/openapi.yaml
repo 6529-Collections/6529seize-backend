@@ -5628,6 +5628,11 @@ components:
         - voting_period_start
         - voting_period_end
         - voting_credit_type
+        - visibility_group_id
+        - participation_group_id
+        - chat_group_id
+        - voting_group_id
+        - admin_group_id
       properties:
         id:
           type: string
@@ -5643,6 +5648,21 @@ components:
           type: boolean
         authenticated_user_eligible_to_chat:
           type: boolean
+        visibility_group_id:
+          type: string
+          nullable: true
+        participation_group_id:
+          type: string
+          nullable: true
+        chat_group_id:
+          type: string
+          nullable: true
+        voting_group_id:
+          type: string
+          nullable: true
+        admin_group_id:
+          type: string
+          nullable: true
         voting_period_start:
           type: number
           format: int64
