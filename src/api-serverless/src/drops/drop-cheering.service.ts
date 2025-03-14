@@ -33,52 +33,6 @@ export class DropCheeringService {
     },
     ctx: RequestContext
   ) {
-    await this.dropsDb.executeNativeQueriesInTransaction(async (connection) => {
-      const dropId = param.drop_id;
-      const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
-        dropId,
-        param.groupIdsUserIsEligibleFor,
-        connection
-      );
-      const ctxWithConnection = { ...ctx, connection };
-      if (!dropEntity) {
-        throw new NotFoundException(`Drop ${dropId} not found`);
-      }
-      const dropType = dropEntity.drop_type;
-      switch (dropType) {
-        case DropType.CHAT: {
-          await this.clappingService.clap(
-            {
-              drop_id: dropId,
-              clapper_id: param.rater_profile_id,
-              claps: param.cheersChange,
-              wave_id: dropEntity.wave_id,
-              proxy_id: null
-            },
-            ctxWithConnection
-          );
-          break;
-        }
-        case DropType.PARTICIPATORY: {
-          await this.voteForDrop.execute(
-            {
-              drop_id: dropId,
-              voter_id: param.rater_profile_id,
-              votes: param.cheersChange,
-              wave_id: dropEntity.wave_id,
-              proxy_id: null
-            },
-            ctxWithConnection
-          );
-          break;
-        }
-        case DropType.WINNER: {
-          throw new BadRequestException(
-            `This drop has already been declared as winner and doesn't accept new votes`
-          );
-        }
-        default:
-          assertUnreachable(dropType);
     const drop = await this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         const dropId = param.drop_id;
@@ -91,28 +45,41 @@ export class DropCheeringService {
         if (!dropEntity) {
           throw new NotFoundException(`Drop ${dropId} not found`);
         }
-        if (dropEntity.drop_type === DropType.CHAT) {
-          await this.clappingService.clap(
-            {
-              drop_id: dropId,
-              clapper_id: param.rater_profile_id,
-              claps: param.cheersChange,
-              wave_id: dropEntity.wave_id,
-              proxy_id: null
-            },
-            ctxWithConnection
-          );
-        } else {
-          await this.voteForDrop.execute(
-            {
-              drop_id: dropId,
-              voter_id: param.rater_profile_id,
-              votes: param.cheersChange,
-              wave_id: dropEntity.wave_id,
-              proxy_id: null
-            },
-            ctxWithConnection
-          );
+        const dropType = dropEntity.drop_type;
+        switch (dropType) {
+          case DropType.CHAT: {
+            await this.clappingService.clap(
+              {
+                drop_id: dropId,
+                clapper_id: param.rater_profile_id,
+                claps: param.cheersChange,
+                wave_id: dropEntity.wave_id,
+                proxy_id: null
+              },
+              ctxWithConnection
+            );
+            break;
+          }
+          case DropType.PARTICIPATORY: {
+            await this.voteForDrop.execute(
+              {
+                drop_id: dropId,
+                voter_id: param.rater_profile_id,
+                votes: param.cheersChange,
+                wave_id: dropEntity.wave_id,
+                proxy_id: null
+              },
+              ctxWithConnection
+            );
+            break;
+          }
+          case DropType.WINNER: {
+            throw new BadRequestException(
+              `This drop has already been declared as winner and doesn't accept new votes`
+            );
+          }
+          default:
+            assertUnreachable(dropType);
         }
         return this.dropsService.findDropByIdOrThrow(
           {
