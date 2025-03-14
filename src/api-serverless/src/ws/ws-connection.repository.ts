@@ -138,7 +138,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
             group by 1)
         select i.profile_id as profile_id, i.tdh - ifnull(v.credit_spent, 0) as credit_left from ${IDENTITIES_TABLE} i 
              left join given_votes v on v.profile_id = i.profile_id
-             where i.profile_id in (:profile_ids)
+             where i.profile_id in (:profileIds)
     `,
       { waveId, profileIds }
     );
@@ -181,7 +181,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         rep_category ? ` and matter_category = :rep_category ` : ``
       } group by 1) select i.profile_id as profile_id, i.rep - ifnull(v.credit_spent, 0) as credit_left from total_reps i 
              left join given_votes v on v.profile_id = i.profile_id
-             where i.profile_id in (:profile_ids)
+             where i.profile_id in (:profileIds)
     `,
       { waveId, profileIds, rep_giver, rep_category }
     );
