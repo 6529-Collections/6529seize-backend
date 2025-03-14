@@ -388,7 +388,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           w.chat_enabled, 
           w.voting_credit_type, 
           w.voting_period_start, 
-          w.voting_period_end
+          w.voting_period_end,
+          w.visibility_group_id,
+          w.admin_group_id
         from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)
         `,
         {
@@ -409,7 +411,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             chat_enabled: wave.chat_enabled,
             voting_credit_type: wave.voting_credit_type,
             voting_period_start: wave.voting_period_start,
-            voting_period_end: wave.voting_period_end
+            voting_period_end: wave.voting_period_end,
+            visibility_group_id: wave.visibility_group_id,
+            admin_group_id: wave.admin_group_id
           };
           return acc;
         }, {} as Record<string, WaveOverview>)
@@ -1330,6 +1334,8 @@ export interface WaveOverview {
   readonly voting_group_id: string | null;
   readonly participation_group_id: string | null;
   readonly chat_group_id: string | null;
+  readonly visibility_group_id: string | null;
+  readonly admin_group_id: string | null;
   readonly chat_enabled: boolean;
   readonly voting_credit_type: WaveCreditType;
   readonly voting_period_start: number | null;

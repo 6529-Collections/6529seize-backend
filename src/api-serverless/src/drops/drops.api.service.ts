@@ -432,7 +432,12 @@ export class DropsApiService {
       voting_credit_type: resolveEnumOrThrow(
         WaveCreditTypeApi,
         wave.voting_credit_type
-      )
+      ),
+      visibility_group_id: wave.visibility_group_id,
+      participation_group_id: wave.participation_group_id,
+      admin_group_id: wave.admin_group_id,
+      chat_group_id: wave.chat_group_id,
+      voting_group_id: wave.voting_group_id
     };
     if (drop_id) {
       const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
@@ -555,7 +560,12 @@ export class DropsApiService {
       voting_credit_type: resolveEnumOrThrow(
         WaveCreditTypeApi,
         waveEntity.voting_credit_type
-      )
+      ),
+      visibility_group_id: waveEntity.visibility_group_id,
+      participation_group_id: waveEntity.participation_group_id,
+      admin_group_id: waveEntity.admin_group_id,
+      chat_group_id: waveEntity.chat_group_id,
+      voting_group_id: waveEntity.voting_group_id
     };
     const [drops, count] = await Promise.all([
       this.dropsDb

@@ -135,7 +135,7 @@ export class CreateOrUpdateDropUseCase {
     model: CreateOrUpdateDropModel,
     isDescriptionDrop: boolean,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
-  ) {
+  ): Promise<{ drop_id: string }> {
     await this.validateReferences(model, isDescriptionDrop, {
       timer,
       connection
