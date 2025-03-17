@@ -293,8 +293,8 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
            banner_1          = :banner1,
            banner_2          = :banner2,
            website           = :website,
-           classification    = :classification
-           ${command.pfp_url ? ',pfp_url = :pfp_url' : ''}
+           classification    = :classification,
+           pfp_url           = :pfp_url
        where normalised_handle = :oldHandle`,
       {
         oldHandle,
