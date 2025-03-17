@@ -637,7 +637,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                           where rater_profile_id = :authenticatedUserId
                             and matter = '${RateMatter.REP}'
                             and rating <> 0),
-                 wids as (select distinct w.id
+                 wids as (select w.id, max(w.serial_no) as serial_no
                           from ${WAVES_TABLE} w
                                    join reps r on w.created_by = r.profile_id
                           where (w.visibility_group_id is null ${
@@ -645,7 +645,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                               ? `or w.visibility_group_id in (:eligibleGroups)`
                               : ``
                           })
-                          order by w.serial_no desc, w.id
+                          group by 1
+                          order by 2 desc, 1
                           limit :limit offset :offset)
             select wa.*
             from ${WAVES_TABLE} wa
@@ -734,7 +735,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         })
             order by sc.count
             desc, w.id desc
-                limit : limit offset : offset
+                limit :limit offset :offset
         `,
         {
           limit,
