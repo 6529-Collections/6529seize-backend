@@ -270,7 +270,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         subClassification: param.sub_classification ?? null,
         pfp_url: param.pfp_url ?? null
       },
-      { wrappedConnection: connection?.connection }
+      { wrappedConnection: connection }
     );
   }
 
@@ -413,17 +413,13 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       },
       { wrappedConnection: connectionHolder }
     );
-    await this.getProfileByHandle(
-      profile.handle,
-      connectionHolder.connection
-    ).then(async (it) => {
-      if (it) {
-        await this.insertProfileArchiveRecord(
-          profile,
-          connectionHolder.connection
-        );
+    await this.getProfileByHandle(profile.handle, connectionHolder).then(
+      async (it) => {
+        if (it) {
+          await this.insertProfileArchiveRecord(profile, connectionHolder);
+        }
       }
-    });
+    );
   }
 
   async getProfileTdh(profileId: string): Promise<number> {

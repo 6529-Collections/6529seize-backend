@@ -88,7 +88,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       this.db.execute(
         `insert into ${PROFILE_LATEST_LOG_TABLE} (profile_id, latest_activity) values (:profileId, :currentTime) on duplicate key update latest_activity = :currentTime`,
         { profileId: log.profile_id, currentTime },
-        { wrappedConnection: connectionHolder.connection }
+        { wrappedConnection: connectionHolder }
       )
     ]);
     timer?.stop('ProfileActivityLogsDb->insert');
@@ -176,7 +176,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       update ${PROFILES_ACTIVITY_LOGS_TABLE} set profile_id = :newSourceId where profile_id = :oldSourceId
       `,
       param,
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
     try {
       await this.db.execute(
@@ -184,7 +184,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       update ${PROFILE_LATEST_LOG_TABLE} set profile_id = :newSourceId where profile_id = :oldSourceId
       `,
         param,
-        { wrappedConnection: connectionHolder.connection }
+        { wrappedConnection: connectionHolder }
       );
     } catch (e) {
       const dbError = e as { code?: string };
@@ -192,12 +192,12 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
         await this.db.execute(
           `delete from ${PROFILE_LATEST_LOG_TABLE} where profile_id = :oldSourceId`,
           param,
-          { wrappedConnection: connectionHolder.connection }
+          { wrappedConnection: connectionHolder }
         );
         await this.db.execute(
           `update ${PROFILE_LATEST_LOG_TABLE} set latest_activity = NOW() where profile_id = :newSourceId`,
           param,
-          { wrappedConnection: connectionHolder.connection }
+          { wrappedConnection: connectionHolder }
         );
       } else {
         throw e;
@@ -208,7 +208,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       update ${PROFILES_ACTIVITY_LOGS_TABLE} set additional_data_1 = :newSourceId where type in ('${ProfileActivityLogType.DROP_CLAPPED}', '${ProfileActivityLogType.DROP_VOTE_EDIT}') and additional_data_1 = :oldSourceId
       `,
       param,
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
   }
 
@@ -229,7 +229,7 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
           (t) => !isTargetOfTypeDrop(t)
         )
       },
-      { wrappedConnection: connectionHolder.connection }
+      { wrappedConnection: connectionHolder }
     );
   }
 
