@@ -43,15 +43,16 @@ export class TransactionsDiscoveryService {
     this.logger.info(
       `Discovering new transactions for contract ${contract}. Looking from block ${startingBlock} to block ${endBlock}.`
     );
-    for await (const transactions of this.getTransactionsFullBlocks(
+    for await (const transactionsFullBlock of this.getTransactionsFullBlocks(
       contract,
       startingBlock,
       endBlock
     )) {
-      if (transactions.length) {
+      if (transactionsFullBlock.length) {
         const start = Time.now();
-        const minBlock = transactions.at(0)?.block;
-        const maxBlock = transactions.at(-1)?.block;
+        const minBlock = transactionsFullBlock.at(0)?.block;
+        const maxBlock = transactionsFullBlock.at(-1)?.block;
+        const transactions = this.mergeTransactions(transactionsFullBlock);
         await this.transactionsDb.batchUpsertTransactions(
           consolidateTransactions(transactions)
         );
@@ -221,6 +222,23 @@ export class TransactionsDiscoveryService {
       `Could not map transaction ${t.hash}. It was for neither ERC721 nor ERC1155.`
     );
     return [];
+  }
+
+  private mergeTransactions(transactions: Transaction[]): Transaction[] {
+    const transactionMap = new Map<string, Transaction>();
+
+    for (const tx of transactions) {
+      const key =
+        `${tx.transaction}-${tx.from_address}-${tx.to_address}-${tx.contract}-${tx.token_id}`.toLowerCase();
+
+      if (transactionMap.has(key)) {
+        transactionMap.get(key)!.token_count += tx.token_count;
+      } else {
+        transactionMap.set(key, { ...tx });
+      }
+    }
+
+    return Array.from(transactionMap.values());
   }
 
   private async enhanceTransactionsWithDetails(
