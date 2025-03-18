@@ -46,6 +46,7 @@ import {
   WaveDecisionWinnerDropEntity
 } from '../entities/IWaveDecision';
 import { WSConnectionEntity } from '../entities/IWSConnectionEntity';
+import { DropRealVoteInTimeEntity } from '../entities/IDropRealVoteInTime';
 
 const DBMigrate = require('db-migrate');
 
@@ -66,6 +67,7 @@ const MANAGED_ENTITIES = [
   DropReferencedNftEntity,
   DropRelationEntity,
   DropVoteCreditSpending,
+  DropRealVoteInTimeEntity,
   ClapCreditSpendingEntity,
   IdentityEntity,
   IdentityNotificationEntity,

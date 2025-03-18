@@ -57,6 +57,7 @@ export const CLAP_CREDIT_SPENDINGS_TABLE = 'clap_credit_spendings';
 export const DROP_CLAPPER_STATE_TABLE = 'drop_clapper_states';
 export const DROP_VOTER_STATE_TABLE = 'drop_voter_states';
 export const DROP_RANK_TABLE = 'drop_ranks';
+export const DROP_REAL_VOTE_IN_TIME_TABLE = 'drop_real_vote_in_time';
 export const ROYALTIES_UPLOADS_TABLE = 'royalties_upload';
 export const EVENTS_TABLE = 'events';
 export const LISTENER_PROCESSED_EVENTS_TABLE = 'listener_processed_events';

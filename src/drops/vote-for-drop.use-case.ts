@@ -56,7 +56,7 @@ export class VoteForDropUseCase {
       );
       return;
     }
-    await this.votingDb.lockAggregateDropRank(drop_id, ctx);
+    await this.votingDb.lockDropsCurrentRealVote(drop_id, ctx);
     const now = Time.now();
     const wave = await this.wavesDb.findById(wave_id, ctx.connection);
     if (
@@ -208,6 +208,7 @@ export class VoteForDropUseCase {
               ctx.connection
             ))()
     ]);
+    await this.votingDb.snapShotDropsCurrentVote(drop_id, now.toMillis(), ctx);
   }
 }
 

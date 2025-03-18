@@ -1,11 +1,12 @@
 import { ConnectionWrapper } from '../sql-executor';
 import { dropsDb } from './drops.db';
-import { Timer } from '../time';
+import { Time, Timer } from '../time';
 import { RequestContext } from '../request.context';
 import { userNotifier } from '../notifications/user.notifier';
 import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { Logger } from '../logging';
+import { dropVotingDb } from '../api-serverless/src/drops/drop-voting.db';
 
 const logger = Logger.get('PARTICIPATION_DROPS_OVER_VOTE_REVOCATION');
 
@@ -123,6 +124,8 @@ async function reduceVotesForDrops(
   let votes_still_given = total_given_votes;
   for (const drop of dropsForWaves) {
     const { drop_id, votes, author_id, visibility_group_id } = drop;
+    const now = Time.currentMillis();
+    await dropVotingDb.lockDropsCurrentRealVote(drop_id, ctx);
     const voteAfterRevocation = Math.floor(votes * reductionCoefficient);
     votes_still_given -= Math.abs(votes - voteAfterRevocation);
     logger.info(
@@ -180,6 +183,7 @@ async function reduceVotesForDrops(
         ctx.timer
       )
     ]);
+    await dropVotingDb.snapShotDropsCurrentVote(drop_id, now, ctx);
     if (votes_still_given <= credit_limit) {
       break;
     }
