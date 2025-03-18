@@ -147,7 +147,8 @@ export class DropVotingService {
     await Promise.all([
       this.votingDb.deleteForDrop(dropId, ctx),
       this.votingDb.deleteCreditSpendings(dropId, ctx),
-      this.votingDb.deleteDropRanks(dropId, ctx)
+      this.votingDb.deleteDropRanks(dropId, ctx),
+      this.votingDb.deleteDropRealVoteInTimes(dropId, ctx)
     ]);
   }
 
@@ -155,7 +156,8 @@ export class DropVotingService {
     await Promise.all([
       this.votingDb.deleteForWave(waveId, ctx),
       this.votingDb.deleteCreditSpendingsForWave(waveId, ctx),
-      this.votingDb.deleteDropRanksForWave(waveId, ctx)
+      this.votingDb.deleteDropRanksForWave(waveId, ctx),
+      this.votingDb.deleteDropRealVoteInTimesForWave(waveId, ctx)
     ]);
   }
 }
