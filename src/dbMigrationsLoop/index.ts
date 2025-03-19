@@ -47,6 +47,7 @@ import {
 } from '../entities/IWaveDecision';
 import { WSConnectionEntity } from '../entities/IWSConnectionEntity';
 import { DropRealVoteInTimeEntity } from '../entities/IDropRealVoteInTime';
+import { WaveLeaderboardEntryEntity } from '../entities/IWaveLeaderboardEntry';
 
 const DBMigrate = require('db-migrate');
 
@@ -89,6 +90,7 @@ const MANAGED_ENTITIES = [
   WaveArchiveEntity,
   WaveMetricEntity,
   WaveDropperMetricEntity,
+  WaveLeaderboardEntryEntity,
   WaveDecisionEntity,
   WaveDecisionWinnerDropEntity,
   PushNotificationDevice,

@@ -391,10 +391,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           w.voting_credit_type, 
           w.voting_period_start, 
           w.voting_period_end,
-          w.next_decision_time,
-          w.voting_period_end,
           w.visibility_group_id,
-          w.admin_group_id
+          w.admin_group_id,
+          w.next_decision_time
         from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)
         `,
         {
@@ -416,9 +415,9 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             voting_credit_type: wave.voting_credit_type,
             voting_period_start: wave.voting_period_start,
             voting_period_end: wave.voting_period_end,
-            next_decision_time: wave.next_decision_time,
             visibility_group_id: wave.visibility_group_id,
-            admin_group_id: wave.admin_group_id
+            admin_group_id: wave.admin_group_id,
+            next_decision_time: wave.next_decision_time
           };
           return acc;
         }, {} as Record<string, WaveOverview>)

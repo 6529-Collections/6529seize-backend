@@ -8,13 +8,17 @@ import {
   DROP_REAL_VOTE_IN_TIME_TABLE,
   DROP_VOTER_STATE_TABLE,
   DROPS_TABLE,
-  DROPS_VOTES_CREDIT_SPENDINGS_TABLE
+  DROPS_VOTES_CREDIT_SPENDINGS_TABLE,
+  WAVE_LEADERBOARD_ENTRIES_TABLE
 } from '../../../constants';
 import { DropVoterStateEntity } from '../../../entities/IDropVoterState';
 import { DropVoteCreditSpending } from '../../../entities/IDropVoteCreditSpending';
 import { Time } from '../../../time';
+import { DropRealVoteInTimeWithoutId } from '../../../entities/IDropRealVoteInTime';
+import { WaveLeaderboardEntryWithoutId } from '../../../entities/IWaveLeaderboardEntry';
 import { DropType } from '../../../entities/IDrop';
-import { NewDropRealVoteInTimeEntity } from '../../../entities/IDropRealVoteInTime';
+
+const mysql = require('mysql');
 
 export class DropVotingDb extends LazyDbAccessCompatibleService {
   public async upsertState(state: NewDropVoterState, ctx: RequestContext) {
@@ -430,7 +434,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
   }
 
   async saveDropRealVoteInTime(
-    entity: NewDropRealVoteInTimeEntity,
+    entity: DropRealVoteInTimeWithoutId,
     ctx: RequestContext
   ) {
     await this.db.execute(
@@ -474,6 +478,145 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       { dropId, time },
       { wrappedConnection: ctx.connection }
     );
+  }
+
+  async getDropsLastVoteIncreaseTimes(
+    waveId: string,
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    const result = await this.db.execute<{
+      drop_id: string;
+      last_increased: number;
+    }>(
+      `select d.id as drop_id, ifnull(dr.last_increased, d.created_at) as last_increased from ${DROPS_TABLE} d
+      left join ${DROP_RANK_TABLE} dr.drop_id = d.id
+      where d.wave_id = :wave_id`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    return result.reduce((acc, it) => {
+      acc[it.drop_id] = it.last_increased;
+      return acc;
+    }, {} as Record<string, number>);
+  }
+
+  async getDropsVoteStatesInTimespan(
+    params: {
+      fromTime: number;
+      toTime: number;
+      waveId: string;
+    },
+    ctx: RequestContext
+  ): Promise<DropRealVoteInTimeWithoutId[]> {
+    ctx.timer?.start(`${this.constructor.name}->getDropsVoteStates`);
+    const states = await this.db.execute<DropRealVoteInTimeWithoutId>(
+      `
+      select drop_id, wave_id, timestamp, vote
+      from ${DROP_REAL_VOTE_IN_TIME_TABLE}
+      where wave_id = :waveId
+        and timestamp > :fromTime
+        and timestamp < :toTime
+      union all
+      select drop_id, wave_id, :fromTime as timestamp, vote
+      from ${DROP_REAL_VOTE_IN_TIME_TABLE}
+      where id in (select max(id) as id
+                   from drop_real_vote_in_time
+                   where wave_id = :waveId
+                     and timestamp <= :fromTime
+                   group by drop_id)
+      order by timestamp desc
+      `,
+      params,
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->getDropsVoteStates`);
+    return states;
+  }
+
+  async getWavesPastLeaderboardCalculationTime(
+    now: Time,
+    ctx: RequestContext
+  ): Promise<
+    {
+      wave_id: string;
+      time_lock_ms: number;
+      latest_leaderboard_calculation: number | null;
+      latest_vote_change: number | null;
+    }[]
+  > {
+    ctx.timer?.start(`${this.constructor.name}->getWavesPastLeaderboardTime`);
+    const overdueTime = now.minusMinutes(5).toMillis();
+    const results = await this.db.execute<{
+      wave_id: string;
+      time_lock_ms: number;
+      latest_leaderboard_calculation: number | null;
+      latest_vote_change: number | null;
+    }>(
+      `
+      select w.id as wave_id, w.time_lock_ms, lb.timestamp as latest_leaderboard_calculation, dv.timestamp as latest_vote_change from waves w
+      left join (select wave_id, max(timestamp) as timestamp from ${WAVE_LEADERBOARD_ENTRIES_TABLE} group by 1) lb on w.id = lb.wave_id
+      left join (select wave_id, max(timestamp) as timestamp from ${DROP_REAL_VOTE_IN_TIME_TABLE} where timestamp <= :now group by 1) dv on w.id = dv.wave_id
+      where w.time_lock_ms is not null and (lb.timestamp is null or lb.timestamp < :overdueTime)
+      `,
+      { overdueTime, now },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->getWavesPastLeaderboardTime`);
+    return results;
+  }
+
+  async updateLeaderboardTimesForAllWavesDrops(
+    waveIds: string[],
+    time: number,
+    ctx: RequestContext
+  ) {
+    if (waveIds.length === 0) {
+      return;
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->updateLeaderboardTimesForAllWavesDrops`
+    );
+    await this.db.execute(
+      `
+      update ${WAVE_LEADERBOARD_ENTRIES_TABLE} set timestamp = :time where wave_id in (:waveIds)
+      `,
+      { waveIds, time },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->updateLeaderboardTimesForAllWavesDrops`
+    );
+  }
+
+  async reinsertWaveLeaderboardData(
+    entries: WaveLeaderboardEntryWithoutId[],
+    waveId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(`${this.constructor.name}->reinsertWaveLeaderboardData`);
+    await this.db.execute(
+      `delete from ${WAVE_LEADERBOARD_ENTRIES_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+    if (!entries.length) {
+      ctx.timer?.stop(`${this.constructor.name}->reinsertWaveLeaderboardData`);
+      return;
+    }
+    const sql = `insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id, wave_id, timestamp, vote, rank) values ${entries
+      .map(
+        (entry) =>
+          `(${mysql.escape(entry.drop_id)}, ${mysql.escape(
+            entry.wave_id
+          )}, ${mysql.escape(entry.timestamp)}, ${mysql.escape(
+            entry.vote
+          )}, ${mysql.escape(entry.rank)})`
+      )
+      .join(', ')}`;
+    await this.db.execute(sql, undefined, {
+      wrappedConnection: ctx.connection
+    });
+    ctx.timer?.stop(`${this.constructor.name}->reinsertWaveLeaderboardData`);
   }
 }
 
