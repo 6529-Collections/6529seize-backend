@@ -20,7 +20,7 @@ import * as sentryContext from '../sentry.context';
 import { UploadFieldsConsolidation } from '../entities/IUpload';
 import { doInDbContext } from '../secrets';
 
-import csvParser from 'csv-parser';
+const csvParser = require('csv-parser');
 
 const logger = Logger.get('TDH_HISTORY_LOOP');
 

@@ -12,7 +12,8 @@
   },
   "author": "",
   "license": "ISC",
-  "dependencies": {
-    "node-fetch": "^3.3.0"
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.110",
+    "esbuild": "^0.17.5"
   }
 }
