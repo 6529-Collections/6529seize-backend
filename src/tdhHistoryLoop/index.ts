@@ -20,7 +20,7 @@ import * as sentryContext from '../sentry.context';
 import { UploadFieldsConsolidation } from '../entities/IUpload';
 import { doInDbContext } from '../secrets';
 
-const csvParser = require('csv-parser');
+import csvParser from 'csv-parser';
 
 const logger = Logger.get('TDH_HISTORY_LOOP');
 
@@ -239,7 +239,7 @@ async function tdhHistory(date: Date) {
       consolidation_display: d.consolidation_display,
       consolidation_key: d.consolidation_key,
       wallets: d.wallets,
-      block: d.block,
+      block: today.block,
       boosted_tdh: d.boosted_tdh,
       tdh: d.tdh,
       tdh__raw: d.tdh__raw,
@@ -277,7 +277,7 @@ async function tdhHistory(date: Date) {
         consolidation_display: yd.consolidation_display,
         consolidation_key: yd.consolidation_key,
         wallets: yd.wallets,
-        block: yd.block,
+        block: today.block,
         boosted_tdh: 0,
         tdh: 0,
         tdh__raw: 0,
