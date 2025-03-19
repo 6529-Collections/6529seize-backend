@@ -1,6 +1,12 @@
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { persistGlobalTDHHistory, persistTDHHistory } from '../db';
-import { GlobalTDHHistory, TDHHistory, TokenTDH } from '../entities/ITDH';
+import {
+  GlobalTDHHistory,
+  LatestGlobalTDHHistory,
+  TDHHistory,
+  LatestTDHHistory
+} from '../entities/ITDHHistory';
+import { TokenTDH } from '../entities/ITDH';
 import {
   areEqualAddresses,
   buildConsolidationKey,
@@ -30,7 +36,12 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     },
     {
       logger,
-      entities: [TDHHistory, GlobalTDHHistory]
+      entities: [
+        TDHHistory,
+        GlobalTDHHistory,
+        LatestTDHHistory,
+        LatestGlobalTDHHistory
+      ]
     }
   );
 });
@@ -228,7 +239,7 @@ async function tdhHistory(date: Date) {
       consolidation_display: d.consolidation_display,
       consolidation_key: d.consolidation_key,
       wallets: d.wallets,
-      block: d.block,
+      block: today.block,
       boosted_tdh: d.boosted_tdh,
       tdh: d.tdh,
       tdh__raw: d.tdh__raw,
@@ -266,7 +277,7 @@ async function tdhHistory(date: Date) {
         consolidation_display: yd.consolidation_display,
         consolidation_key: yd.consolidation_key,
         wallets: yd.wallets,
-        block: yd.block,
+        block: today.block,
         boosted_tdh: 0,
         tdh: 0,
         tdh__raw: 0,
