@@ -1,6 +1,12 @@
 import { RequestInfo, RequestInit } from 'node-fetch';
 import { persistGlobalTDHHistory, persistTDHHistory } from '../db';
-import { GlobalTDHHistory, TDHHistory, TokenTDH } from '../entities/ITDH';
+import {
+  GlobalTDHHistory,
+  LatestGlobalTDHHistory,
+  TDHHistory,
+  LatestTDHHistory
+} from '../entities/ITDHHistory';
+import { TokenTDH } from '../entities/ITDH';
 import {
   areEqualAddresses,
   buildConsolidationKey,
@@ -30,7 +36,12 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
     },
     {
       logger,
-      entities: [TDHHistory, GlobalTDHHistory]
+      entities: [
+        TDHHistory,
+        GlobalTDHHistory,
+        LatestTDHHistory,
+        LatestGlobalTDHHistory
+      ]
     }
   );
 });

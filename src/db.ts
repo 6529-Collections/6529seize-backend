@@ -35,11 +35,9 @@ import {
 import {
   ConsolidatedTDH,
   ConsolidatedTDHMemes,
-  GlobalTDHHistory,
   NftTDH,
   TDH,
   TDHBlock,
-  TDHHistory,
   TDHMemes
 } from './entities/ITDH';
 import { Team } from './entities/ITeam';
@@ -74,13 +72,19 @@ import { Logger } from './logging';
 import { DbQueryOptions } from './db-query.options';
 import { Time } from './time';
 import { MemesSeason } from './entities/ISeason';
-import { insertWithoutUpdate } from './orm_helpers';
+import { insertWithoutUpdate, resetRepository } from './orm_helpers';
 import {
   syncIdentitiesMetrics,
   syncIdentitiesWithTdhConsolidations
 } from './identity';
 import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
+import {
+  TDHHistory,
+  GlobalTDHHistory,
+  LatestGlobalTDHHistory,
+  LatestTDHHistory
+} from './entities/ITDHHistory';
 
 const mysql = require('mysql');
 
@@ -1242,18 +1246,30 @@ export async function fetchMissingS3Rememes() {
 }
 
 export async function persistTDHHistory(tdhHistory: TDHHistory[]) {
-  await AppDataSource.getRepository(TDHHistory).upsert(tdhHistory, [
-    'date',
-    'consolidation_key',
-    'block'
-  ]);
+  await AppDataSource.transaction(async (transactionalEntityManager) => {
+    await transactionalEntityManager
+      .getRepository(TDHHistory)
+      .upsert(tdhHistory, ['date', 'consolidation_key', 'block']);
+
+    await resetRepository(
+      transactionalEntityManager.getRepository(LatestTDHHistory),
+      tdhHistory
+    );
+  });
 }
 
 export async function persistGlobalTDHHistory(globalHistory: GlobalTDHHistory) {
-  const globalHistoryRepo = AppDataSource.getRepository(GlobalTDHHistory);
-  await globalHistoryRepo.upsert(globalHistory, ['date', 'block']);
-}
+  await AppDataSource.transaction(async (transactionalEntityManager) => {
+    await transactionalEntityManager
+      .getRepository(GlobalTDHHistory)
+      .upsert(globalHistory, ['date', 'block']);
 
+    await resetRepository(
+      transactionalEntityManager.getRepository(LatestGlobalTDHHistory),
+      [globalHistory]
+    );
+  });
+}
 export async function persistMemesSeasons(seasons: MemesSeason[]) {
   await AppDataSource.getRepository(MemesSeason).save(seasons);
 }
