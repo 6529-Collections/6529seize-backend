@@ -21,6 +21,7 @@ import { DropRealVoteInTimeWithoutId } from '../../../entities/IDropRealVoteInTi
 import { WaveLeaderboardEntryEntity } from '../../../entities/IWaveLeaderboardEntry';
 import { DropType } from '../../../entities/IDrop';
 import { DropRealVoterVoteInTimeEntityWithoutId } from '../../../entities/IDropRealVoterVoteInTime';
+import { DbPoolName } from '../../../db-query.options';
 
 export class DropVotingDb extends LazyDbAccessCompatibleService {
   public async upsertState(state: NewDropVoterState, ctx: RequestContext) {
@@ -634,7 +635,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       join ${WAVE_LEADERBOARD_ENTRIES_TABLE} lb on lb.drop_id = d.id
       where d.drop_type <> '${DropType.PARTICIPATORY}' or w.time_lock_ms is null or w.time_lock_ms = 0`,
         undefined,
-        { wrappedConnection: ctx.connection }
+        { wrappedConnection: ctx.connection, forcePool: DbPoolName.WRITE }
       )
       .then((res) => res.map((it) => it.drop_id));
     if (staleLeaderboardEntriesDropIds.length) {
