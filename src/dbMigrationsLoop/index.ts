@@ -48,6 +48,8 @@ import {
 import { WSConnectionEntity } from '../entities/IWSConnectionEntity';
 import { DropRealVoteInTimeEntity } from '../entities/IDropRealVoteInTime';
 import { WaveLeaderboardEntryEntity } from '../entities/IWaveLeaderboardEntry';
+import { WinnerDropVoterVoteEntity } from '../entities/IWinnerDropVoterVote';
+import { DropRealVoterVoteInTimeEntity } from '../entities/IDropRealVoterVoteInTime';
 
 const DBMigrate = require('db-migrate');
 
@@ -69,6 +71,7 @@ const MANAGED_ENTITIES = [
   DropRelationEntity,
   DropVoteCreditSpending,
   DropRealVoteInTimeEntity,
+  DropRealVoterVoteInTimeEntity,
   ClapCreditSpendingEntity,
   IdentityEntity,
   IdentityNotificationEntity,
@@ -100,7 +103,8 @@ const MANAGED_ENTITIES = [
   DropRankEntity,
   RefreshToken,
   EULAConsent,
-  WSConnectionEntity
+  WSConnectionEntity,
+  WinnerDropVoterVoteEntity
 ];
 
 export const handler = sentryContext.wrapLambdaHandler(async () => {

@@ -1,0 +1,34 @@
+service: waveLeaderboardSnapshotterLoop
+
+package:
+  artifact: dist/index.zip
+
+plugins:
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  memorySize: 5120
+  timeout: 900
+
+custom:
+  chainIDs:
+    staging: 1
+    prod: 1
+
+functions:
+  waveLeaderboardSnapshotterLoop:
+    handler: index.handler
+    name: waveLeaderboardSnapshotterLoop
+    description: ${env:VERSION_DESCRIPTION}
+    role: arn:aws:iam::987989283142:role/lambda-vpc-role
+    reservedConcurrency: 1
+    events:
+      - schedule: rate(5 minutes)
+    vpc:
+      securityGroupIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):security}
+      subnetIds: ${file(../../serverless-config/${opt:stage, self:provider.stage}/vpc.js):subnets}
+    environment:
+      SENTRY_DSN: ${env:SENTRY_DSN}
+      SENTRY_ENVIRONMENT: 'waveLeaderboardSnapshotterLoop_${opt:stage, self:provider.stage}'

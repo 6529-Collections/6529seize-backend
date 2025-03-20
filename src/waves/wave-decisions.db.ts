@@ -7,6 +7,7 @@ import {
 import { RequestContext } from '../request.context';
 import {
   DROP_RANK_TABLE,
+  DROP_REAL_VOTE_IN_TIME_TABLE,
   DROPS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_DECISIONS_TABLE,
@@ -56,7 +57,8 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
                                                             ranking,
                                                             decision_time,
                                                             prizes,
-                                                            wave_id)
+                                                            wave_id,
+                                                            final_vote)
           values ${decisionWinners
             .map(
               (winner) =>
@@ -64,7 +66,9 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
                   winner.ranking
                 )}, ${mysql.escape(winner.decision_time)}, ${mysql.escape(
                   JSON.stringify(winner.prizes)
-                )}, ${mysql.escape(winner.wave_id)})`
+                )}, ${mysql.escape(winner.wave_id)}, ${mysql.escape(
+                  winner.final_vote
+                )})`
             )
             .join(', ')}
       `;
@@ -84,6 +88,7 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
       latest_decision_time: number | null;
       decisions_strategy: WaveDecisionStrategy;
       outcomes: WaveOutcome[];
+      time_lock_ms: number | null;
     }[]
   > {
     ctx.timer?.start(`${this.constructor.name}->getWavesLatestDecisionTimes`);
@@ -92,10 +97,11 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
         wave_id: string;
         latest_decision_time: number | null;
         decisions_strategy: string;
+        time_lock_ms: number | null;
         outcomes: string;
       }>(
         `
-      select w.id as wave_id, w.decisions_strategy, w.outcomes as outcomes, max(d.decision_time) as latest_decision_time from ${WAVES_TABLE} w
+      select w.id as wave_id, w.time_lock_ms as time_lock_ms, w.decisions_strategy, w.outcomes as outcomes, max(d.decision_time) as latest_decision_time from ${WAVES_TABLE} w
       left join ${WAVES_DECISIONS_TABLE} d on d.wave_id = w.id where w.next_decision_time is not null and w.next_decision_time < :givenTime group by 1, 2, 3
     `,
         { givenTime },
@@ -112,28 +118,25 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
-  async getTopNDropIdsForWave(
+  async getTopNDropIdsForWaveWithVotes(
     { waveId, n }: { waveId: string; n: number },
     ctx: RequestContext
-  ): Promise<string[]> {
+  ): Promise<{ drop_id: string; vote: number; rank: number }[]> {
     const sql = `
-    select drop_id
-    from (select d.id                                                                                                                                              as drop_id,
-                 rank() over (partition by d.wave_id order by cast(ifnull(r.vote, 0) as signed) desc , cast(ifnull(r.last_increased, d.created_at) as signed) asc) as rnk
-          from ${DROPS_TABLE} d
-                   left join ${DROP_RANK_TABLE} r on r.drop_id = d.id
-          where d.drop_type = '${DropType.PARTICIPATORY}'
-            and d.wave_id = :waveId) rks
-    order by rnk
-    limit :n
+      with x1 as (
+        select drv.drop_id, max(drv.timestamp) as timestamp from ${DROP_REAL_VOTE_IN_TIME_TABLE} drv
+                                                    join ${DROPS_TABLE} d on d.id = drv.drop_id
+                                                    where drv.wave_id = :wave_id and d.drop_type = '${DropType.PARTICIPATORY}' group by 1
+      )
+      select dit.drop_id as drop_id, dit.vote as vote from ${DROP_REAL_VOTE_IN_TIME_TABLE} dit join x1 on x1.drop_id = dit.drop_id and x1.timestamp = dit.timestamp order by dit.vote desc, dit.timestamp desc limit :n
     `;
     return await this.db
-      .execute<{ drop_id: string }>(
+      .execute<{ drop_id: string; vote: number }>(
         sql,
         { waveId, n },
         { wrappedConnection: ctx.connection }
       )
-      .then((it) => it.map((d) => d.drop_id));
+      .then((res) => res.map((it, idx) => ({ ...it, rank: idx + 1 })));
   }
 
   async updateDropsToWinners(dropIds: string[], ctx: RequestContext) {
@@ -189,7 +192,7 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(`${this.constructor.name}->searchForDecisions`);
     const result = await this.db.execute<WaveDecisionEntity>(
       `
-      select * from wave_decisions where wave_id = :wave_id order by ${param.sort} ${param.sort_direction} limit :limit offset :offset`,
+      select * from ${WAVES_DECISIONS_TABLE} where wave_id = :wave_id order by ${param.sort} ${param.sort_direction} limit :limit offset :offset`,
       param,
       {
         wrappedConnection: ctx.connection
@@ -204,7 +207,7 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
     const result = await this.db
       .oneOrNull<{ cnt: number }>(
         `
-      select count(*) as cnt from wave_decisions where wave_id = :waveId`,
+      select count(*) as cnt from ${WAVES_DECISIONS_TABLE} where wave_id = :waveId`,
         { waveId },
         {
           wrappedConnection: ctx.connection

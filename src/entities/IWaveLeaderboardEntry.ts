@@ -1,12 +1,9 @@
-import { Column, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import { WAVE_LEADERBOARD_ENTRIES_TABLE } from '../constants';
 
 @Entity(WAVE_LEADERBOARD_ENTRIES_TABLE)
 export class WaveLeaderboardEntryEntity {
-  @PrimaryGeneratedColumn('increment')
-  readonly id!: number;
-  @Index('wave_leaderboard_entries_drop_id_idx')
-  @Column({ type: 'varchar', length: 100, nullable: false })
+  @PrimaryColumn({ type: 'varchar', length: 100, nullable: false })
   readonly drop_id!: string;
   @Index('wave_leaderboard_entries_wave_id_idx')
   @Column({ type: 'varchar', length: 100, nullable: false })
@@ -15,11 +12,4 @@ export class WaveLeaderboardEntryEntity {
   readonly timestamp!: number;
   @Column({ type: 'bigint', nullable: false })
   readonly vote!: number;
-  @Column({ type: 'bigint', nullable: false })
-  readonly rank!: number;
 }
-
-export type WaveLeaderboardEntryWithoutId = Omit<
-  WaveLeaderboardEntryEntity,
-  'id'
->;

@@ -58,6 +58,9 @@ export const DROPS_VOTES_CREDIT_SPENDINGS_TABLE =
 export const CLAP_CREDIT_SPENDINGS_TABLE = 'clap_credit_spendings';
 export const DROP_CLAPPER_STATE_TABLE = 'drop_clapper_states';
 export const DROP_VOTER_STATE_TABLE = 'drop_voter_states';
+export const DROP_REAL_VOTER_VOTE_IN_TIME_TABLE =
+  'drop_real_voter_vote_in_time';
+export const WINNER_DROP_VOTER_VOTES_TABLE = 'winner_drop_voter_votes';
 export const DROP_RANK_TABLE = 'drop_ranks';
 export const DROP_REAL_VOTE_IN_TIME_TABLE = 'drop_real_vote_in_time';
 export const WAVE_LEADERBOARD_ENTRIES_TABLE = 'wave_leaderboard_entries';

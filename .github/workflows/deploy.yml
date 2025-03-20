@@ -54,6 +54,7 @@ on:
           - transactionsLoop
           - transactionsProcessingLoop
           - waveDecisionExecutionLoop
+          - waveLeaderboardSnapshotterLoop
 
 env:
   SENTRY_DSN: ${{ secrets.SENTRY_DSN }}

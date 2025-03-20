@@ -658,7 +658,11 @@ const WaveConfigSchema = Joi.object<
     then: Joi.number().integer().required().allow(null).min(1),
     otherwise: Joi.valid(null)
   }),
-  time_lock_ms: Joi.number().integer().required().allow(null).min(1),
+  time_lock_ms: Joi.number()
+    .integer()
+    .required()
+    .allow(null)
+    .min(Time.minutes(5).toMillis()),
   period: IntRangeSchema.optional(),
   admin_group: WaveScopeSchema.required(),
   decisions_strategy: WaveDecisionsStrategySchema.optional().allow(null)

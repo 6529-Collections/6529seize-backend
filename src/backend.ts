@@ -2,6 +2,7 @@ import { Logger } from './logging';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
 import * as overratesRevocationLoop from './overRatesRevocationLoop';
 import * as waveDecisionExecutionLoop from './waveDecisionExecutionLoop';
+import * as waveLeaderboardSnapshotterLoop from './waveLeaderboardSnapshotterLoop';
 import { prepEnvironment } from './env';
 import { DataSource } from 'typeorm';
 
@@ -41,6 +42,11 @@ async function start() {
     undefined as any
   );
   await waveDecisionExecutionLoop.handler(
+    undefined as any,
+    undefined as any,
+    undefined as any
+  );
+  await waveLeaderboardSnapshotterLoop.handler(
     undefined as any,
     undefined as any,
     undefined as any

@@ -215,11 +215,6 @@ export class WaveApiService {
     if (request.wave.type === ApiWaveType.Chat && !request.chat.enabled) {
       throw new BadRequestException(`Chat waves need to have chat enabled`);
     }
-    if (request.wave.time_lock_ms !== null && request.wave.time_lock_ms > 0) {
-      throw new BadRequestException(
-        `Creating a wave with time locked voting is not yet supported`
-      );
-    }
     if (request.voting.signature_required) {
       throw new BadRequestException(
         `Creating a wave with signed votes requirement is not yet supported`

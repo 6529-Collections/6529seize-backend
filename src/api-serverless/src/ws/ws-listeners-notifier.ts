@@ -104,14 +104,14 @@ export class WsListenersNotifier {
     }
     for (const part of modifiedDrop.parts) {
       delete part.context_profile_context;
-      if (part.quoted_drop && part.quoted_drop.drop) {
+      if (part.quoted_drop?.drop) {
         part.quoted_drop.drop = this.removeDropsAuthRequestContext(
           part.quoted_drop.drop,
           creditLeft
         );
       }
     }
-    if (modifiedDrop.reply_to && modifiedDrop.reply_to.drop) {
+    if (modifiedDrop.reply_to?.drop) {
       modifiedDrop.reply_to.drop = this.removeDropsAuthRequestContext(
         modifiedDrop.reply_to.drop,
         creditLeft

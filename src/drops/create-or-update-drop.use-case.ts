@@ -655,6 +655,15 @@ export class CreateOrUpdateDropUseCase {
         connection,
         timer
       ),
+      this.dropVotingDb.upsertWaveLeaderboardEntry(
+        {
+          drop_id: dropId,
+          wave_id: wave.id,
+          vote: 0,
+          timestamp: createdAt
+        },
+        { connection, timer }
+      ),
       this.dropsDb.insertDropMedia(
         parts
           .map(
