@@ -10,7 +10,7 @@ import {
   MEMES_SEASONS_TABLE,
   NFT_OWNERS_CONSOLIDATION_TABLE,
   NULL_ADDRESS,
-  TDH_HISTORY_TABLE,
+  LATEST_TDH_HISTORY_TABLE,
   TDH_NFT_TABLE
 } from '../../../constants';
 import { NftTDH } from '../../../entities/ITDH';
@@ -289,11 +289,11 @@ export const fetchConsolidatedMetrics = async (
     ${CONSOLIDATED_WALLETS_TDH_TABLE}.boosted_tdh as total_tdh,
     ${tdhField},
     ${IDENTITIES_TABLE}.level_raw as level,
-    COALESCE(${TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change`;
+    COALESCE(${LATEST_TDH_HISTORY_TABLE}.net_boosted_tdh, 0) as day_change`;
 
   let joins = ` LEFT JOIN ${IDENTITIES_TABLE} on ${IDENTITIES_TABLE}.consolidation_key = ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key`;
   joins += ` LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_TABLE} ON ${CONSOLIDATED_OWNERS_BALANCES_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key`;
-  joins += ` LEFT JOIN ${TDH_HISTORY_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${TDH_HISTORY_TABLE}.consolidation_key and ${CONSOLIDATED_WALLETS_TDH_TABLE}.block=${TDH_HISTORY_TABLE}.block`;
+  joins += ` LEFT JOIN ${LATEST_TDH_HISTORY_TABLE} ON ${CONSOLIDATED_WALLETS_TDH_TABLE}.consolidation_key=${LATEST_TDH_HISTORY_TABLE}.consolidation_key`;
 
   const isMemesSeason =
     (query.content == MetricsContent.MEMES ||

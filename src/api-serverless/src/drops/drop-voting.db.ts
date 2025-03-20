@@ -5,6 +5,7 @@ import {
 import { RequestContext } from '../../../request.context';
 import {
   DROP_RANK_TABLE,
+  DROP_REAL_VOTE_IN_TIME_TABLE,
   DROP_VOTER_STATE_TABLE,
   DROPS_TABLE,
   DROPS_VOTES_CREDIT_SPENDINGS_TABLE
@@ -12,6 +13,7 @@ import {
 import { DropVoterStateEntity } from '../../../entities/IDropVoterState';
 import { DropVoteCreditSpending } from '../../../entities/IDropVoteCreditSpending';
 import { Time } from '../../../time';
+import { NewDropRealVoteInTimeEntity } from '../../../entities/IDropRealVoteInTime';
 
 export class DropVotingDb extends LazyDbAccessCompatibleService {
   public async upsertState(state: NewDropVoterState, ctx: RequestContext) {
@@ -56,14 +58,14 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->upsertAggregateDropRank`);
   }
 
-  public async lockAggregateDropRank(dropId: string, ctx: RequestContext) {
-    ctx.timer?.start(`${this.constructor.name}->lockAggregateDropRank`);
+  public async lockDropsCurrentRealVote(dropId: string, ctx: RequestContext) {
+    ctx.timer?.start(`${this.constructor.name}->lockDropsCurrentTealVote`);
     await this.db.oneOrNull<{ vote: number }>(
-      `select vote from ${DROP_RANK_TABLE} where drop_id = :dropId for update`,
+      `select id from ${DROP_REAL_VOTE_IN_TIME_TABLE} where drop_id = :dropId order by timestamp desc limit 1 for update`,
       { dropId },
       { wrappedConnection: ctx.connection }
     );
-    ctx.timer?.stop(`${this.constructor.name}->lockAggregateDropRank`);
+    ctx.timer?.stop(`${this.constructor.name}->lockDropsCurrentTealVote`);
   }
 
   public async getCurrentState(
@@ -346,6 +348,22 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     );
   }
 
+  async deleteDropRealVoteInTimes(dropId: string, ctx: RequestContext) {
+    return await this.db.execute(
+      `delete from ${DROP_REAL_VOTE_IN_TIME_TABLE} where drop_id = :dropId`,
+      { dropId },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async deleteDropRealVoteInTimesForWave(waveId: string, ctx: RequestContext) {
+    return await this.db.execute(
+      `delete from ${DROP_REAL_VOTE_IN_TIME_TABLE} where wave_id = :waveId`,
+      { waveId },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
   async deleteForWave(waveId: string, ctx: RequestContext) {
     await this.db.execute(
       `delete from ${DROP_VOTER_STATE_TABLE} where wave_id = :waveId`,
@@ -397,6 +415,53 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       acc[red.drop_id] = red.rnk;
       return acc;
     }, {} as Record<string, number>);
+  }
+
+  async saveDropRealVoteInTime(
+    entity: NewDropRealVoteInTimeEntity,
+    ctx: RequestContext
+  ) {
+    await this.db.execute(
+      `
+      insert into ${DROP_REAL_VOTE_IN_TIME_TABLE} (
+        drop_id,
+        wave_id,
+        timestamp,
+        vote
+      ) values (
+        :drop_id,
+        :wave_id,
+        :timestamp,
+        :vote       
+      )
+      `,
+      entity,
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async snapShotDropsCurrentVote(
+    dropId: string,
+    time: number,
+    ctx: RequestContext
+  ) {
+    await this.db.execute(
+      `
+        insert into ${DROP_REAL_VOTE_IN_TIME_TABLE} (
+            drop_id,
+            wave_id,
+            timestamp,
+            vote
+        ) select 
+              drop_id,
+              wave_id,
+              :time,
+              vote
+        from ${DROP_RANK_TABLE} where drop_id = :dropId
+      `,
+      { dropId, time },
+      { wrappedConnection: ctx.connection }
+    );
   }
 }
 

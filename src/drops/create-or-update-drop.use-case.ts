@@ -67,10 +67,15 @@ import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
 import process from 'node:process';
 import { deleteDrop, DeleteDropUseCase } from './delete-drop.use-case';
 import { seizeSettings } from '../api-serverless/src/api-constants';
+import {
+  dropVotingDb,
+  DropVotingDb
+} from '../api-serverless/src/drops/drop-voting.db';
 
 export class CreateOrUpdateDropUseCase {
   public constructor(
     private readonly dropsDb: DropsDb,
+    private readonly dropVotingDb: DropVotingDb,
     private readonly userGroupsService: UserGroupsService,
     private readonly profileService: ProfilesService,
     private readonly profilesDb: ProfilesDb,
@@ -658,6 +663,15 @@ export class CreateOrUpdateDropUseCase {
         connection,
         timer
       ),
+      this.dropVotingDb.saveDropRealVoteInTime(
+        {
+          drop_id: dropId,
+          wave_id: wave.id,
+          timestamp: createdAt,
+          vote: 0
+        },
+        { timer, connection }
+      ),
       this.recordQuoteNotifications({ model, wave }, { timer, connection }),
       this.recordAllNotificationsSubscribers(
         { model, wave },
@@ -826,7 +840,7 @@ export class CreateOrUpdateDropUseCase {
     ) {
       return;
     }
-    this.userNotifier.notifyAllNotificationsSubscribers(
+    await this.userNotifier.notifyAllNotificationsSubscribers(
       {
         waveId: wave.id,
         dropId: model.drop_id!,
@@ -840,6 +854,7 @@ export class CreateOrUpdateDropUseCase {
 
 export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   dropsDb,
+  dropVotingDb,
   userGroupsService,
   profilesService,
   profilesDb,

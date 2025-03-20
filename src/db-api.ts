@@ -293,12 +293,6 @@ export async function fetchLatestTDHBlockNumber() {
   return r.length > 0 ? r[0].block_number : 0;
 }
 
-export async function fetchLatestTDHHistoryBlockNumber() {
-  const sql = `SELECT block FROM ${TDH_HISTORY_TABLE} order by block desc limit 1;`;
-  const r = await sqlExecutor.execute(sql);
-  return r.length > 0 ? r[0].block : 0;
-}
-
 async function getTeamWallets() {
   const sql = `SELECT wallet FROM ${TEAM_TABLE}`;
   let results = await sqlExecutor.execute(sql);
