@@ -29,7 +29,7 @@ export class WaveDecisionWinnerDropEntity {
   @Column({ type: 'int', nullable: false })
   readonly ranking!: number;
 
-  @Column({ type: 'bigint', nullable: false })
+  @Column({ type: 'bigint', nullable: false, default: 0 })
   readonly final_vote!: number;
 
   @Column({ type: 'json', nullable: false })
