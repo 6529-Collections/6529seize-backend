@@ -225,7 +225,8 @@ router.post(
         : [],
       excluded_addresses: apiUserGroup.group.excluded_identity_addresses ?? [],
       visible: false,
-      is_private: isPrivate
+      is_private: isPrivate,
+      is_direct_message: false
     };
     const response = await userGroupsService.save(userGroup, savingProfileId, {
       authenticationContext,
