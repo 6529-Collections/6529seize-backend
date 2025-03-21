@@ -63,6 +63,8 @@ import { ApiDropWinningContext } from '../generated/models/ApiDropWinningContext
 import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
 import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType';
 import { ApiWaveOutcomeCredit } from '../generated/models/ApiWaveOutcomeCredit';
+import { WinnerDropVoterVoteEntity } from '../../../entities/IWinnerDropVoterVote';
+import { ApiDropContextProfileContext } from '../generated/models/ApiDropContextProfileContext';
 
 export class DropsMappers {
   constructor(
@@ -257,6 +259,9 @@ export class DropsMappers {
       ...allReplyDropIds,
       ...dropIds
     ]);
+    const winningDropIds = allEntities
+      .filter((it) => it.drop_type === DropType.WINNER)
+      .map((it) => it.id);
     const [
       dropsRanks,
       submissionDropsVotingRanges,
@@ -272,9 +277,14 @@ export class DropsMappers {
       dropMedia,
       dropsRepliesCounts,
       subscribedActions,
-      winDecisions
+      winDecisions,
+      winningDropsTopRaters,
+      winningDropsRatersCounts,
+      winningDropsRatingsByVoter
     ] = await Promise.all([
-      this.dropVotingDb.getDropsRanks(allDropIds, { connection }),
+      this.dropVotingDb.getParticipationDropsRealtimeRanks(allDropIds, {
+        connection
+      }),
       this.dropVotingService.findCreditLeftForVotingForDrops(
         contextProfileId,
         allEntities,
@@ -320,7 +330,20 @@ export class DropsMappers {
             },
             connection
           ),
-      this.dropsDb.getWinDecisionsForDrops(dropIds, { connection })
+      this.dropsDb.getWinDecisionsForDrops(winningDropIds, { connection }),
+      this.dropVotingDb.getWinningDropsTopRaters(winningDropIds, {
+        connection
+      }),
+      this.dropVotingDb.getWinningDropsRatersCount(winningDropIds, {
+        connection
+      }),
+      !contextProfileId
+        ? Promise.resolve({} as Record<string, number>)
+        : this.dropVotingDb.getWinningDropsRatingsByVoter(
+            winningDropIds,
+            contextProfileId,
+            { connection }
+          )
     ]);
     const deletedDrops = await this.dropsDb.findDeletedDrops(
       allDropIds,
@@ -342,6 +365,9 @@ export class DropsMappers {
       clapsLeftForContextProfile,
       dropsRepliesCounts,
       winDecisions,
+      winningDropsTopRaters,
+      winningDropsRatersCounts,
+      winningDropsRatingsByVoter,
       subscribedActions: Object.entries(subscribedActions).reduce(
         (acc, [id, actions]) => {
           acc[id] = actions.map((it) =>
@@ -379,7 +405,10 @@ export class DropsMappers {
       dropsVoteCounts,
       allEntities,
       dropsRanks,
-      winDecisions
+      winDecisions,
+      winningDropsTopRaters,
+      winningDropsRatersCounts,
+      winningDropsRatingsByVoter
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
@@ -398,7 +427,10 @@ export class DropsMappers {
       ...mentions.map((it) => it.mentioned_profile_id),
       ...clapperProfileIds,
       ...voterProfileIds,
-      ...Object.values(deletedDrops).map((it) => it.author_id)
+      ...Object.values(deletedDrops).map((it) => it.author_id),
+      ...Object.values(winningDropsTopRaters)
+        .flat()
+        .map((it) => it.voter_id)
     ]);
     const profileMins = await this.profilesService.getProfileMinsByIds({
       ids: allProfileIds,
@@ -443,6 +475,9 @@ export class DropsMappers {
         dropsClapCounts,
         dropsRanks,
         winDecisions,
+        winningDropsTopRaters,
+        winningDropsRatersCounts,
+        winningDropsRatingsByVoter,
         allEntities: allEntities.reduce((acc, it) => {
           acc[it.id] = it;
           return acc;
@@ -472,6 +507,9 @@ export class DropsMappers {
     dropsVoteCounts,
     dropsRanks,
     winDecisions,
+    winningDropsTopRaters,
+    winningDropsRatersCounts,
+    winningDropsRatingsByVoter,
     allEntities
   }: {
     dropEntity: DropEntity;
@@ -509,6 +547,9 @@ export class DropsMappers {
     >;
     dropsRanks: Record<string, number>;
     winDecisions: Record<string, WaveDecisionWinnerDropEntity>;
+    winningDropsTopRaters: Record<string, WinnerDropVoterVoteEntity[]>;
+    winningDropsRatersCounts: Record<string, number>;
+    winningDropsRatingsByVoter: Record<string, number>;
     allEntities: Record<string, DropEntity>;
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
@@ -535,6 +576,61 @@ export class DropsMappers {
           }))
         }
       : undefined;
+    let raters_count = dropsTopClappers[dropEntity.id]?.length ?? 0;
+    let rating = dropsClapCounts[dropEntity.id]?.total_claps ?? 0;
+    let top_raters = (dropsTopClappers[dropEntity.id] ?? []).map<ApiDropRater>(
+      (rater) => ({
+        rating: rater.claps,
+        profile: profilesByIds[rater.clapper_id]
+      })
+    );
+    let context_profile_context: ApiDropContextProfileContext | null;
+    if (contextProfileId) {
+      context_profile_context = {
+        rating: dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0,
+        min_rating:
+          (dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0) -
+          clapsLeftForContextProfile,
+        max_rating:
+          (dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0) +
+          clapsLeftForContextProfile
+      };
+    }
+    if (dropEntity.drop_type === DropType.WINNER) {
+      rating = dropWinDecision.final_vote ?? 0;
+      raters_count = winningDropsRatersCounts[dropEntity.id] ?? 0;
+      top_raters = (
+        winningDropsTopRaters[dropEntity.id] ?? []
+      ).map<ApiDropRater>((voter) => ({
+        rating: voter.votes,
+        profile: profilesByIds[voter.voter_id]
+      }));
+      if (contextProfileId) {
+        context_profile_context = {
+          rating: winningDropsRatingsByVoter[dropEntity.id] ?? 0,
+          min_rating: winningDropsRatingsByVoter[dropEntity.id] ?? 0,
+          max_rating: winningDropsRatingsByVoter[dropEntity.id] ?? 0
+        };
+      }
+    } else if (dropEntity.drop_type === DropType.PARTICIPATORY) {
+      rating = dropsVoteCounts[dropEntity.id].tally ?? 0;
+      raters_count =
+        dropsVoteCounts[dropEntity.id]?.total_number_of_voters ?? 0;
+      top_raters = (dropsTopVoters[dropEntity.id] ?? []).map<ApiDropRater>(
+        (voter) => ({
+          rating: voter.votes,
+          profile: profilesByIds[voter.voter_id]
+        })
+      );
+      if (contextProfileId) {
+        context_profile_context = {
+          rating: submissionDropsVotingRanges[dropEntity.id]?.current ?? 0,
+          min_rating: submissionDropsVotingRanges[dropEntity.id]?.min ?? 0,
+          max_rating: submissionDropsVotingRanges[dropEntity.id]?.max ?? 0
+        };
+      }
+    }
+    top_raters.sort((a, b) => b.rating - a.rating);
     return {
       id: dropEntity.id,
       serial_no: dropEntity.serial_no,
@@ -567,7 +663,10 @@ export class DropsMappers {
                   dropsClapCounts,
                   dropsRanks,
                   allEntities,
-                  winDecisions
+                  winDecisions,
+                  winningDropsTopRaters,
+                  winningDropsRatersCounts,
+                  winningDropsRatingsByVoter
                 })
               : undefined
           }
@@ -607,7 +706,10 @@ export class DropsMappers {
                           dropsClapCounts,
                           dropsRanks,
                           allEntities,
-                          winDecisions
+                          winDecisions,
+                          winningDropsTopRaters,
+                          winningDropsRatersCounts,
+                          winningDropsRatingsByVoter
                         })
                       : undefined
                   }
@@ -659,46 +761,10 @@ export class DropsMappers {
           data_key: it.data_key,
           data_value: it.data_value
         })),
-      rating:
-        dropEntity.drop_type === DropType.CHAT
-          ? dropsClapCounts[dropEntity.id]?.total_claps ?? 0
-          : dropsVoteCounts[dropEntity.id]?.tally ?? 0,
-      raters_count:
-        dropEntity.drop_type === DropType.CHAT
-          ? dropsTopClappers[dropEntity.id]?.length ?? 0
-          : dropsVoteCounts[dropEntity.id]?.total_number_of_voters ?? 0,
-      top_raters:
-        dropEntity.drop_type === DropType.CHAT
-          ? (dropsTopClappers[dropEntity.id] ?? [])
-              .map<ApiDropRater>((rater) => ({
-                rating: rater.claps,
-                profile: profilesByIds[rater.clapper_id]
-              }))
-              .sort((a, b) => b.rating - a.rating)
-          : (dropsTopVoters[dropEntity.id] ?? [])
-              .map<ApiDropRater>((voter) => ({
-                rating: voter.votes,
-                profile: profilesByIds[voter.voter_id]
-              }))
-              .sort((a, b) => b.rating - a.rating),
-      context_profile_context: contextProfileId
-        ? {
-            rating:
-              dropEntity.drop_type === DropType.CHAT
-                ? dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0
-                : submissionDropsVotingRanges[dropEntity.id]?.current ?? 0,
-            min_rating:
-              dropEntity.drop_type === DropType.CHAT
-                ? (dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0) -
-                  clapsLeftForContextProfile
-                : submissionDropsVotingRanges[dropEntity.id]?.min ?? 0,
-            max_rating:
-              dropEntity.drop_type === DropType.CHAT
-                ? (dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0) +
-                  clapsLeftForContextProfile
-                : submissionDropsVotingRanges[dropEntity.id]?.max ?? 0
-          }
-        : null,
+      rating,
+      raters_count,
+      top_raters,
+      context_profile_context: context_profile_context,
       subscribed_actions: subscribedActions[dropEntity.id] ?? [],
       winning_context: winningContext
     };

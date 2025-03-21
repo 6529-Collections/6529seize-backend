@@ -331,8 +331,9 @@ export class WaveDecisionsService {
         .flat();
       await Promise.all(updatePromises);
     }
+    const dropIds = winnerDrops.map((it) => it.drop_id);
     await this.dropVotingDb.transferAllDropVoterStatesToWinnerDropsVotes(
-      { endTime: endTime, dropIds: winnerDrops.map((it) => it.drop_id) },
+      { dropIds: dropIds },
       ctx
     );
   }
