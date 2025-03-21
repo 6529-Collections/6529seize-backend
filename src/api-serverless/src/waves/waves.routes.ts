@@ -72,7 +72,6 @@ import {
   WaveDecisionsQuerySort,
   waveDecisionsService
 } from './wave-decisions.service';
-import { FilterDirection } from '../../../entities/IUserGroup';
 
 const router = asyncRouter();
 
@@ -137,11 +136,15 @@ router.post(
     const authenticationContext = await getAuthenticationContext(req, timer);
     const requestContext: RequestContext = { authenticationContext, timer };
     const authenticatedProfileId = authenticationContext.getActingAsId();
-    const creatorProfile = await profilesService.getProfileById(
-      authenticationContext.authenticatedProfileId
-    );
-    if (!authenticatedProfileId || !creatorProfile) {
+
+    if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
+    }
+    const creatorProfile = await profilesService.getProfileById(
+      authenticatedProfileId
+    );
+    if (!creatorProfile) {
+      throw new NotFoundException(`Profile not found`);
     }
     if (
       authenticationContext.isAuthenticatedAsProxy() &&
