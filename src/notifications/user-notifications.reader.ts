@@ -21,6 +21,7 @@ export class UserNotificationsReader {
       id_less_than: number | null;
       limit: number;
       eligible_group_ids: string[];
+      cause: string | null;
     },
     connection?: ConnectionWrapper<any>
   ): Promise<UserNotificationsResponse> {
