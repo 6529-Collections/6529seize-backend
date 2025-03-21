@@ -240,6 +240,37 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
+  public async getWeightedDropRates(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (dropIds.length === 0) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->getWeightedDropRates`);
+    const sql = `
+      select drop_id, vote
+      from ${WAVE_LEADERBOARD_ENTRIES_TABLE}
+      where drop_id in (:dropIds)
+    `;
+    const result = await this.db
+      .execute<{
+        drop_id: string;
+        vote: number;
+      }>(sql, { dropIds }, { wrappedConnection: ctx.connection })
+      .then((result) =>
+        result.reduce(
+          (acc, it) => ({
+            ...acc,
+            [it.drop_id]: it.vote
+          }),
+          {} as Record<string, number>
+        )
+      );
+    ctx.timer?.stop(`${this.constructor.name}->getWeightedDropRates`);
+    return result;
+  }
+
   public async getVotersTotalLockedCreditInWaves(
     { waveIds, voterId }: { waveIds: string[]; voterId: string },
     ctx: RequestContext
@@ -443,7 +474,9 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     if (!dropIds.length) {
       return {};
     }
-    ctx.timer?.start(`${this.constructor.name}->getDropsRanks`);
+    ctx.timer?.start(
+      `${this.constructor.name}->getParticipationDropsRealtimeRanks`
+    );
     const sql = `
     SELECT drop_id, rnk
     FROM (select d.id as drop_id,
@@ -458,7 +491,42 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       { dropIds },
       { wrappedConnection: ctx.connection }
     );
-    ctx.timer?.stop(`${this.constructor.name}->getDropsRanks`);
+    ctx.timer?.stop(
+      `${this.constructor.name}->getParticipationDropsRealtimeRanks`
+    );
+    return results.reduce((acc, red) => {
+      acc[red.drop_id] = red.rnk;
+      return acc;
+    }, {} as Record<string, number>);
+  }
+
+  async getTimeLockedDropsWeightedVotes(
+    dropIds: string[],
+    ctx: RequestContext
+  ) {
+    if (!dropIds.length) {
+      return {};
+    }
+    ctx.timer?.start(
+      `${this.constructor.name}->getTimeLockedDropsWeightedVotes`
+    );
+    const sql = `
+    SELECT drop_id, rnk
+    FROM (select d.id as drop_id,
+                 rank() over (partition by d.wave_id order by cast(ifnull(r.vote, 0) as signed) desc , cast(ifnull(r.timestamp, d.created_at) as signed) asc) as rnk
+          from ${DROPS_TABLE} d
+                   left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} r on r.drop_id = d.id
+          where d.drop_type = '${DropType.PARTICIPATORY}') drop_ranks
+    WHERE drop_id in (:dropIds)
+  `;
+    const results = await this.db.execute<{ drop_id: string; rnk: number }>(
+      sql,
+      { dropIds },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->getTimeLockedDropsWeightedVotes`
+    );
     return results.reduce((acc, red) => {
       acc[red.drop_id] = red.rnk;
       return acc;
