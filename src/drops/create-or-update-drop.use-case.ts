@@ -140,7 +140,10 @@ export class CreateOrUpdateDropUseCase {
     model: CreateOrUpdateDropModel,
     isDescriptionDrop: boolean,
     { timer, connection }: { timer: Timer; connection: ConnectionWrapper<any> }
-  ) {
+  ): Promise<{ drop_id: string }> {
+    if (model.drop_type === DropType.WINNER) {
+      throw new BadRequestException(`Can't modify a winner drop`);
+    }
     await this.validateReferences(model, isDescriptionDrop, {
       timer,
       connection
@@ -560,6 +563,22 @@ export class CreateOrUpdateDropUseCase {
     const dropId = model.drop_id!;
     const authorId = model.author_id!;
     const parts = model.parts;
+    if (model.drop_type === DropType.PARTICIPATORY) {
+      if (
+        wave &&
+        wave.next_decision_time !== null &&
+        wave.next_decision_time < Time.currentMillis()
+      ) {
+        throw new ForbiddenException(
+          `Wave has unresolved decisions and doesn't accept new drops or drop updates at the moment. Try again later`
+        );
+      }
+    }
+    if (model.drop_type === DropType.WINNER) {
+      throw new ForbiddenException(
+        `Drops which have already won a prize can not be edited`
+      );
+    }
     await Promise.all([
       this.dropsDb.insertDrop(
         {
@@ -635,6 +654,15 @@ export class CreateOrUpdateDropUseCase {
         })),
         connection,
         timer
+      ),
+      this.dropVotingDb.upsertWaveLeaderboardEntry(
+        {
+          drop_id: dropId,
+          wave_id: wave.id,
+          vote: 0,
+          timestamp: createdAt
+        },
+        { connection, timer }
       ),
       this.dropsDb.insertDropMedia(
         parts
