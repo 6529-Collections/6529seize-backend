@@ -219,13 +219,13 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       );
   }
 
-  public async getHandlesByIds(
-    ids: string[],
+  public async getHandlesByAddresses(
+    addresses: string[],
     connection?: ConnectionWrapper<any>
   ): Promise<string[]> {
     const result = await this.db.execute(
-      `select handle from ${PROFILES_TABLE} where external_id in (:ids)`,
-      { ids },
+      `select handle from ${PROFILES_TABLE} where primary_wallet in (:addresses)`,
+      { addresses },
       connection ? { wrappedConnection: connection } : undefined
     );
     return result.map((it) => it.handle);

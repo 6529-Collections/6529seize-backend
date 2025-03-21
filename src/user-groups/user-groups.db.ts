@@ -54,7 +54,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                                             visible,
                                             profile_group_id,
                                             excluded_profile_group_id,
-                                            is_private)
+                                            is_private,
+                                            is_direct_message)
           values (:id,
                   :name,
                   :cic_min,
@@ -83,7 +84,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                   :visible,
                   :profile_group_id,
                   :excluded_profile_group_id,
-                  :is_private)
+                  :is_private,
+                  :is_direct_message)
     `,
       { ...entity },
       { wrappedConnection: connection }
@@ -156,7 +158,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     const opts = connection ? { wrappedConnection: connection } : undefined;
     return this.db
       .execute<UserGroupEntity>(
-        `select * from ${USER_GROUPS_TABLE} where id = :id and !is_direct_message and (is_private is false or (created_by = :authenticatedUserId ${
+        `select * from ${USER_GROUPS_TABLE} where id = :id and (is_private is false or (created_by = :authenticatedUserId ${
           eligibleGroupIds.length ? ` or id in (:eligibleGroupIds)` : ``
         }))`,
         { id, authenticatedUserId, eligibleGroupIds },
@@ -239,7 +241,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start('userGroupsDb->getByIds');
     const result = await this.db.execute<UserGroupEntity>(
       `
-    select * from ${USER_GROUPS_TABLE} where !is_direct_message and visible is true and id in (:ids)
+    select * from ${USER_GROUPS_TABLE} where visible is true and id in (:ids)
     `,
       { ids },
       { wrappedConnection: ctx?.connection }
@@ -305,7 +307,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       .execute<{
         group_id: string;
       }>(
-        `select distinct ug.id as group_id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.profile_group_id = pg.profile_group_id where pg.profile_id = :profileId and !ug.is_direct_message and ug.visible`,
+        `select distinct ug.id as group_id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.profile_group_id = pg.profile_group_id where pg.profile_id = :profileId and ug.visible`,
         { profileId }
       )
       .then((res) => res.map((it) => it.group_id));
@@ -318,7 +320,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       .execute<{
         group_id: string;
       }>(
-        `select distinct ug.id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.excluded_profile_group_id = pg.profile_group_id where pg.profile_id = :profileId and !ug.is_direct_message`,
+        `select distinct ug.id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.excluded_profile_group_id = pg.profile_group_id where pg.profile_id = :profileId`,
         { profileId }
       )
       .then((res) => res.map((it) => it.group_id));
@@ -465,7 +467,7 @@ where ((cg.cic_direction = 'RECEIVED' and (
         identity_count: number;
       }>(
         `select g.id as group_id, pg.profile_group_id as identity_group_id, count(pg.profile_id) as identity_count from ${USER_GROUPS_TABLE} g 
-        join ${PROFILE_GROUPS_TABLE} pg on g.profile_group_id = pg.profile_group_id where !g.is_direct_message and g.id in (:groupIds) group by 1, 2`,
+        join ${PROFILE_GROUPS_TABLE} pg on g.profile_group_id = pg.profile_group_id where g.id in (:groupIds) group by 1, 2`,
         { groupIds },
         { wrappedConnection: ctx.connection }
       ),
@@ -475,7 +477,7 @@ where ((cg.cic_direction = 'RECEIVED' and (
         excluded_identity_count: number;
       }>(
         `select g.id as group_id, pg.profile_group_id as excluded_identity_group_id, count(pg.profile_id) as excluded_identity_count from ${USER_GROUPS_TABLE} g 
-        join ${PROFILE_GROUPS_TABLE} pg on g.excluded_profile_group_id = pg.profile_group_id where !g.is_direct_message and g.id in (:groupIds) group by 1, 2`,
+        join ${PROFILE_GROUPS_TABLE} pg on g.excluded_profile_group_id = pg.profile_group_id where g.id in (:groupIds) group by 1, 2`,
         { groupIds },
         { wrappedConnection: ctx.connection }
       )
@@ -651,11 +653,55 @@ where ((cg.cic_direction = 'RECEIVED' and (
           join ${USER_GROUPS_TABLE} ug on pg.profile_group_id = ug.profile_group_id
           where isub.target_id = :userId
           and ug.id in (:groupIds)
-          and !ug.is_direct_message`,
+        `,
         { userId, groupIds },
         { wrappedConnection: ctx.connection }
       )
       .then((res) => res.map((it) => it.subscriber_id));
+  }
+
+  public async findDirectMessageGroup(
+    addresses: string[],
+    ctx: RequestContext
+  ): Promise<UserGroupEntity | null> {
+    if (!addresses.length) return null;
+
+    const addressPlaceholders = addresses
+      .map((_, idx) => `:a${idx}`)
+      .join(', ');
+
+    const count = addresses.length;
+
+    const sql = `
+      SELECT cg.*
+        FROM ${USER_GROUPS_TABLE} cg
+      WHERE cg.is_private = TRUE
+        AND cg.is_direct_message = TRUE
+        AND cg.profile_group_id IN (
+          SELECT pg.profile_group_id
+          FROM ${PROFILE_GROUPS_TABLE} pg
+          JOIN ${IDENTITIES_TABLE} i ON i.profile_id = pg.profile_id
+          GROUP BY pg.profile_group_id
+          HAVING 
+            COUNT(*) = :count
+            AND COUNT(CASE WHEN i.primary_address IN (${addressPlaceholders}) THEN 1 END) = :count
+        )
+      LIMIT 1
+    `;
+
+    const params: Record<string, any> = {
+      count
+    };
+
+    addresses.forEach((id, idx) => {
+      params[`a${idx}`] = id;
+    });
+
+    const results = await this.db.execute<UserGroupEntity>(sql, params, {
+      wrappedConnection: ctx.connection
+    });
+
+    return results[0] ?? null;
   }
 }
 

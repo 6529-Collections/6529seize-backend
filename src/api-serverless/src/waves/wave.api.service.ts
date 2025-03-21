@@ -57,7 +57,10 @@ import {
   userNotifier,
   UserNotifier
 } from '../../../notifications/user.notifier';
-
+import { UserGroupEntity } from '../../../entities/IUserGroup';
+import { ApiGroupFull } from '../generated/models/ApiGroupFull';
+import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
+import { ApiWaveCreditScope } from '../generated/models/ApiWaveCreditScope';
 export class WaveApiService {
   constructor(
     private readonly wavesApiDb: WavesApiDb,
@@ -198,6 +201,87 @@ export class WaveApiService {
     await giveReadReplicaTimeToCatchUp();
     timer.stop(`${this.constructor.name}->createWave`);
     return createdWave;
+  }
+
+  public async findOrCreateDirectMessageWave(
+    userGroup: ApiGroupFull | UserGroupEntity,
+    ctx: RequestContext
+  ) {
+    const existingWave = await this.wavesApiDb.findWaveByGroupId(
+      userGroup.id,
+      ctx
+    );
+    if (existingWave) {
+      return this.findWaveByIdOrThrow(existingWave.id, [userGroup.id], ctx);
+    }
+    const waveRequest: ApiCreateNewWave = {
+      name: userGroup.name,
+      description_drop: {
+        title: null,
+        parts: [
+          {
+            content: 'gm! :gm:',
+            quoted_drop: null,
+            media: []
+          }
+        ],
+        referenced_nfts: [],
+        mentioned_users: [],
+        metadata: []
+      },
+      picture: null,
+      voting: {
+        scope: {
+          group_id: null
+        },
+        credit_type: ApiWaveCreditType.Tdh,
+        credit_scope: ApiWaveCreditScope.Wave,
+        credit_category: null,
+        creditor_id: null,
+        signature_required: false,
+        period: {
+          min: null,
+          max: null
+        }
+      },
+      visibility: {
+        scope: {
+          group_id: userGroup.id
+        }
+      },
+      participation: {
+        scope: {
+          group_id: userGroup.id
+        },
+        no_of_applications_allowed_per_participant: null,
+        required_media: [],
+        required_metadata: [],
+        signature_required: false,
+        period: {
+          min: null,
+          max: null
+        }
+      },
+      chat: {
+        scope: {
+          group_id: userGroup.id
+        },
+        enabled: true
+      },
+      wave: {
+        type: ApiWaveType.Chat,
+        winning_thresholds: null,
+        max_winners: null,
+        time_lock_ms: null,
+        admin_group: {
+          group_id: userGroup.id
+        },
+        decisions_strategy: null
+      },
+      outcomes: []
+    };
+
+    return await this.createWave(waveRequest, ctx);
   }
 
   private async validateWaveRelations(

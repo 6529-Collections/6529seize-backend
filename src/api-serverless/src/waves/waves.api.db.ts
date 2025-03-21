@@ -1309,6 +1309,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     );
     return result;
   }
+
+  public async findWaveByGroupId(groupId: string, ctx: RequestContext) {
+    const result = await this.db.execute<WaveEntity>(
+      `SELECT * FROM ${WAVES_TABLE} WHERE admin_group_id = :groupId OR chat_group_id = :groupId OR voting_group_id = :groupId OR participation_group_id = :groupId ORDER BY created_at DESC LIMIT 1`,
+      { groupId },
+      { wrappedConnection: ctx.connection }
+    );
+    return result.length ? result[0] : null;
+  }
 }
 
 export interface InsertWaveEntity extends Omit<WaveEntity, 'serial_no'> {
