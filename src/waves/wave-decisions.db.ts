@@ -126,7 +126,7 @@ export class WaveDecisionsDb extends LazyDbAccessCompatibleService {
       with x1 as (
         select drv.drop_id, max(drv.timestamp) as timestamp from ${DROP_REAL_VOTE_IN_TIME_TABLE} drv
                                                     join ${DROPS_TABLE} d on d.id = drv.drop_id
-                                                    where drv.wave_id = :wave_id and d.drop_type = '${DropType.PARTICIPATORY}' group by 1
+                                                    where drv.wave_id = :waveId and d.drop_type = '${DropType.PARTICIPATORY}' group by 1
       )
       select dit.drop_id as drop_id, dit.vote as vote from ${DROP_REAL_VOTE_IN_TIME_TABLE} dit join x1 on x1.drop_id = dit.drop_id and x1.timestamp = dit.timestamp order by dit.vote desc, dit.timestamp desc limit :n
     `;

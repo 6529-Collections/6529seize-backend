@@ -22,6 +22,7 @@ import { WaveLeaderboardEntryEntity } from '../../../entities/IWaveLeaderboardEn
 import { DropType } from '../../../entities/IDrop';
 import { DropRealVoterVoteInTimeEntityWithoutId } from '../../../entities/IDropRealVoterVoteInTime';
 import { DbPoolName } from '../../../db-query.options';
+import { WinnerDropVoterVoteEntity } from '../../../entities/IWinnerDropVoterVote';
 
 export class DropVotingDb extends LazyDbAccessCompatibleService {
   public async upsertState(state: NewDropVoterState, ctx: RequestContext) {
@@ -435,7 +436,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async getDropsRanks(
+  async getParticipationDropsRealtimeRanks(
     dropIds: string[],
     ctx: RequestContext
   ): Promise<Record<string, number>> {
@@ -460,6 +461,71 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->getDropsRanks`);
     return results.reduce((acc, red) => {
       acc[red.drop_id] = red.rnk;
+      return acc;
+    }, {} as Record<string, number>);
+  }
+
+  async getWinningDropsRatersCount(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->getWinningDropsRatersCount`);
+    const sql = `select drop_id, count(*) as raters_count from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id in (:dropIds) and votes <> 0 group by 1`;
+    const results = await this.db.execute<{
+      drop_id: string;
+      raters_count: number;
+    }>(sql, { dropIds }, { wrappedConnection: ctx.connection });
+    ctx.timer?.stop(`${this.constructor.name}->getWinningDropsRatersCount`);
+    return results.reduce((acc, red) => {
+      acc[red.drop_id] = red.raters_count;
+      return acc;
+    }, {} as Record<string, number>);
+  }
+
+  async getWinningDropsTopRaters(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, WinnerDropVoterVoteEntity[]>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->getWinningDropsTopRaters`);
+    const sql = `select * from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id in (:dropIds) and votes <> 0 order by votes desc limit 5`;
+    const results = await this.db.execute<WinnerDropVoterVoteEntity>(
+      sql,
+      { dropIds },
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(`${this.constructor.name}->getWinningDropsTopRaters`);
+    return results.reduce((acc, it) => {
+      if (!acc[it.drop_id]) {
+        acc[it.drop_id] = [];
+      }
+      acc[it.drop_id].push(it);
+      return acc;
+    }, {} as Record<string, WinnerDropVoterVoteEntity[]>);
+  }
+
+  async getWinningDropsRatingsByVoter(
+    dropIds: string[],
+    voterId: string,
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    ctx.timer?.start(`${this.constructor.name}->getWinningDropsRatersCount`);
+    const sql = `select drop_id, votes from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id in (:dropIds) and voter_id = :voterId and votes <> 0`;
+    const results = await this.db.execute<{
+      drop_id: string;
+      votes: number;
+    }>(sql, { dropIds, voterId }, { wrappedConnection: ctx.connection });
+    ctx.timer?.stop(`${this.constructor.name}->getWinningDropsRatersCount`);
+    return results.reduce((acc, red) => {
+      acc[red.drop_id] = red.votes;
       return acc;
     }, {} as Record<string, number>);
   }
@@ -697,7 +763,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
   }
 
   async transferAllDropVoterStatesToWinnerDropsVotes(
-    { dropIds, endTime }: { dropIds: string[]; endTime: Time },
+    { dropIds }: { dropIds: string[] },
     ctx: RequestContext
   ) {
     if (!dropIds.length) {
@@ -707,8 +773,8 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       .execute<{
         id: number;
       }>(
-        `select max(id) as id from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} where drop_ids in (:dropIds) group by drop_id and timestamp <= :endTime`,
-        { dropIds, endTime: endTime.toMillis() },
+        `select max(id) as id from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} where drop_id in (:dropIds) group by drop_id`,
+        { dropIds },
         { wrappedConnection: ctx.connection }
       )
       .then((res) => res.map((it) => it.id));
@@ -724,7 +790,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
     }
     await Promise.all([
       this.db.execute(
-        `delete from ${WINNER_DROP_VOTER_VOTES_TABLE} where drop_id in (:dropIds)`,
+        `delete from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} where drop_id in (:dropIds)`,
         { dropIds },
         { wrappedConnection: ctx.connection }
       ),
