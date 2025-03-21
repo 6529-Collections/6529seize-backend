@@ -68,6 +68,7 @@ export class NotificationsApiService {
     param: {
       id_less_than: number | null;
       limit: number;
+      cause: string | null;
     },
     authenticationContext: AuthenticationContext
   ): Promise<ApiNotificationsResponse> {

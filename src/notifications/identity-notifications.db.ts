@@ -139,6 +139,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       id_less_than: number | null;
       limit: number;
       eligible_group_ids: string[];
+      cause: string | null;
     },
     connection?: ConnectionWrapper<any>
   ): Promise<IdentityNotificationDeserialized[]> {
@@ -154,6 +155,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
             ? ` or visibility_group_id in (:eligible_group_ids) `
             : ``
         })
+        ${param.cause !== null ? `and cause = :cause` : ``}
         order by id desc limit :limit
       `,
         param,
