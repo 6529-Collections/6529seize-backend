@@ -54,7 +54,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                                             visible,
                                             profile_group_id,
                                             excluded_profile_group_id,
-                                            is_private)
+                                            is_private,
+                                            is_direct_message)
           values (:id,
                   :name,
                   :cic_min,
@@ -83,7 +84,8 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
                   :visible,
                   :profile_group_id,
                   :excluded_profile_group_id,
-                  :is_private)
+                  :is_private,
+                  :is_direct_message)
     `,
       { ...entity },
       { wrappedConnection: connection }
@@ -196,7 +198,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<UserGroupEntity[]> {
     ctx.timer?.start('userGroupsDb->searchByNameOrAuthor');
-    let sql = `select * from ${USER_GROUPS_TABLE} where visible is true and (is_private is false or (created_by = :authenticatedUserId ${
+    let sql = `select * from ${USER_GROUPS_TABLE} where !is_direct_message and visible is true and (is_private is false or (created_by = :authenticatedUserId ${
       eligibleGroupIds.length ? ` or id in (:eligibleGroupIds)` : ``
     })) `;
     const params: Record<string, any> = {
@@ -650,11 +652,56 @@ where ((cg.cic_direction = 'RECEIVED' and (
           join ${PROFILE_GROUPS_TABLE} pg on isub.subscriber_id = pg.profile_id
           join ${USER_GROUPS_TABLE} ug on pg.profile_group_id = ug.profile_group_id
           where isub.target_id = :userId
-          and ug.id in (:groupIds)`,
+          and ug.id in (:groupIds)
+        `,
         { userId, groupIds },
         { wrappedConnection: ctx.connection }
       )
       .then((res) => res.map((it) => it.subscriber_id));
+  }
+
+  public async findDirectMessageGroup(
+    addresses: string[],
+    ctx: RequestContext
+  ): Promise<UserGroupEntity | null> {
+    if (!addresses.length) return null;
+
+    const addressPlaceholders = addresses
+      .map((_, idx) => `:a${idx}`)
+      .join(', ');
+
+    const count = addresses.length;
+
+    const sql = `
+      SELECT cg.*
+        FROM ${USER_GROUPS_TABLE} cg
+      WHERE cg.is_private = TRUE
+        AND cg.is_direct_message = TRUE
+        AND cg.profile_group_id IN (
+          SELECT pg.profile_group_id
+          FROM ${PROFILE_GROUPS_TABLE} pg
+          JOIN ${IDENTITIES_TABLE} i ON i.profile_id = pg.profile_id
+          GROUP BY pg.profile_group_id
+          HAVING 
+            COUNT(*) = :count
+            AND COUNT(CASE WHEN i.primary_address IN (${addressPlaceholders}) THEN 1 END) = :count
+        )
+      LIMIT 1
+    `;
+
+    const params: Record<string, any> = {
+      count
+    };
+
+    addresses.forEach((id, idx) => {
+      params[`a${idx}`] = id;
+    });
+
+    const results = await this.db.execute<UserGroupEntity>(sql, params, {
+      wrappedConnection: ctx.connection
+    });
+
+    return results[0] ?? null;
   }
 }
 
