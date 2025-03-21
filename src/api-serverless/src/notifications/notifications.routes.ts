@@ -49,8 +49,21 @@ router.get(
         id_less_than: Joi.number().optional().integer().default(null),
         limit: Joi.number().optional().integer().default(10).min(1).max(100),
         cause: Joi.string()
-          .valid(...Object.values(IdentityNotificationCause))
           .optional()
+          .custom((value, helpers) => {
+            if (typeof value !== 'string') return null;
+
+            const values = value.split(',').map((v) => v.trim());
+
+            const validCauses = Object.values(IdentityNotificationCause);
+            for (const val of values) {
+              if (!validCauses.includes(val as IdentityNotificationCause)) {
+                return helpers.error('any.invalid');
+              }
+            }
+
+            return value;
+          }, 'Comma-separated IdentityNotificationCause validation')
           .default(null)
       })
     );
