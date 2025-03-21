@@ -43,13 +43,9 @@ export class DropVotingService {
       groupIdsUserIsEligibleFor,
       connection
     );
-    const wavesIdsWhereVotingIsImplemented = relevantWaves
-      .filter((it) => {
-        return it.time_lock_ms === null || it.time_lock_ms === 0;
-      })
-      .map((it) => it.id);
+    const waveIds = relevantWaves.map((it) => it.id);
     const relevantParticipationDrops = participationDrops.filter((drop) =>
-      wavesIdsWhereVotingIsImplemented.includes(drop.wave_id)
+      waveIds.includes(drop.wave_id)
     );
     const relevantParticipationDropIds = relevantParticipationDrops.map(
       (it) => it.id
@@ -76,7 +72,7 @@ export class DropVotingService {
           {}
         ),
         this.votingDb.getVotersTotalLockedCreditInWaves(
-          { waveIds: wavesIdsWhereVotingIsImplemented, voterId: profileId },
+          { waveIds: waveIds, voterId: profileId },
           { connection }
         ),
         this.identitiesDb
