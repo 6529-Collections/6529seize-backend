@@ -9,6 +9,7 @@ import * as Joi from 'joi';
 import { notificationsApiService } from './notifications.api.service';
 import { parseIntOrNull } from '../../../helpers';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
+import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
 
 const router = asyncRouter();
 
@@ -23,6 +24,7 @@ router.get(
       {
         id_less_than: number | null;
         limit: number;
+        cause: string | null;
       },
       any
     >,
@@ -42,9 +44,14 @@ router.get(
       Joi.object<{
         id_less_than: number | null;
         limit: number;
+        cause: string | null;
       }>({
         id_less_than: Joi.number().optional().integer().default(null),
-        limit: Joi.number().optional().integer().default(10).min(1).max(100)
+        limit: Joi.number().optional().integer().default(10).min(1).max(100),
+        cause: Joi.string()
+          .valid(...Object.values(IdentityNotificationCause))
+          .optional()
+          .default(null)
       })
     );
     const notifications = await notificationsApiService.getNotifications(
