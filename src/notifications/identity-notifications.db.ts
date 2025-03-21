@@ -143,6 +143,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     },
     connection?: ConnectionWrapper<any>
   ): Promise<IdentityNotificationDeserialized[]> {
+    const causes = param.cause?.split(',').map((it) => it.trim());
     return this.db
       .execute<IdentityNotificationEntity>(
         `
@@ -155,10 +156,10 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
             ? ` or visibility_group_id in (:eligible_group_ids) `
             : ``
         })
-        ${param.cause !== null ? `and cause = :cause` : ``}
+        ${causes ? `and cause in (:causes)` : ``}
         order by id desc limit :limit
       `,
-        param,
+        { ...param, causes },
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((results) =>
