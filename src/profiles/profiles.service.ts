@@ -96,6 +96,13 @@ export class ProfilesService {
     return this.profilesDb.getProfileById(id, connection);
   }
 
+  public async getProfileHandlesByIds(
+    ids: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<string[]> {
+    return this.profilesDb.getHandlesByIds(ids, connection);
+  }
+
   private async getProfileAndConsolidationsById(
     id: string,
     connection?: ConnectionWrapper<any>

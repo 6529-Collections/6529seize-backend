@@ -219,6 +219,17 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       );
   }
 
+  public async getHandlesByIds(
+    ids: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<string[]> {
+    return this.db.execute(
+      `select handle from ${PROFILES_TABLE} where external_id in (:ids)`,
+      { ids },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+  }
+
   private async insertProfileArchiveRecord(
     param: Profile,
     connection: ConnectionWrapper<any>

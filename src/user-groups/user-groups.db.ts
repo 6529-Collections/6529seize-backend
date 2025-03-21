@@ -156,7 +156,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     const opts = connection ? { wrappedConnection: connection } : undefined;
     return this.db
       .execute<UserGroupEntity>(
-        `select * from ${USER_GROUPS_TABLE} where id = :id and (is_private is false or (created_by = :authenticatedUserId ${
+        `select * from ${USER_GROUPS_TABLE} where id = :id and !is_direct_message and (is_private is false or (created_by = :authenticatedUserId ${
           eligibleGroupIds.length ? ` or id in (:eligibleGroupIds)` : ``
         }))`,
         { id, authenticatedUserId, eligibleGroupIds },
@@ -196,7 +196,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<UserGroupEntity[]> {
     ctx.timer?.start('userGroupsDb->searchByNameOrAuthor');
-    let sql = `select * from ${USER_GROUPS_TABLE} where visible is true and (is_private is false or (created_by = :authenticatedUserId ${
+    let sql = `select * from ${USER_GROUPS_TABLE} where !is_direct_message and visible is true and (is_private is false or (created_by = :authenticatedUserId ${
       eligibleGroupIds.length ? ` or id in (:eligibleGroupIds)` : ``
     })) `;
     const params: Record<string, any> = {
@@ -239,7 +239,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start('userGroupsDb->getByIds');
     const result = await this.db.execute<UserGroupEntity>(
       `
-    select * from ${USER_GROUPS_TABLE} where visible is true and id in (:ids)
+    select * from ${USER_GROUPS_TABLE} where !is_direct_message and visible is true and id in (:ids)
     `,
       { ids },
       { wrappedConnection: ctx?.connection }
@@ -305,7 +305,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       .execute<{
         group_id: string;
       }>(
-        `select distinct ug.id as group_id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.profile_group_id = pg.profile_group_id where pg.profile_id = :profileId and ug.visible`,
+        `select distinct ug.id as group_id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.profile_group_id = pg.profile_group_id where pg.profile_id = :profileId and !ug.is_direct_message and ug.visible`,
         { profileId }
       )
       .then((res) => res.map((it) => it.group_id));
@@ -318,7 +318,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       .execute<{
         group_id: string;
       }>(
-        `select distinct ug.id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.excluded_profile_group_id = pg.profile_group_id where pg.profile_id = :profileId`,
+        `select distinct ug.id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.excluded_profile_group_id = pg.profile_group_id where pg.profile_id = :profileId and !ug.is_direct_message`,
         { profileId }
       )
       .then((res) => res.map((it) => it.group_id));
@@ -465,7 +465,7 @@ where ((cg.cic_direction = 'RECEIVED' and (
         identity_count: number;
       }>(
         `select g.id as group_id, pg.profile_group_id as identity_group_id, count(pg.profile_id) as identity_count from ${USER_GROUPS_TABLE} g 
-        join ${PROFILE_GROUPS_TABLE} pg on g.profile_group_id = pg.profile_group_id where g.id in (:groupIds) group by 1, 2`,
+        join ${PROFILE_GROUPS_TABLE} pg on g.profile_group_id = pg.profile_group_id where !g.is_direct_message and g.id in (:groupIds) group by 1, 2`,
         { groupIds },
         { wrappedConnection: ctx.connection }
       ),
@@ -475,7 +475,7 @@ where ((cg.cic_direction = 'RECEIVED' and (
         excluded_identity_count: number;
       }>(
         `select g.id as group_id, pg.profile_group_id as excluded_identity_group_id, count(pg.profile_id) as excluded_identity_count from ${USER_GROUPS_TABLE} g 
-        join ${PROFILE_GROUPS_TABLE} pg on g.excluded_profile_group_id = pg.profile_group_id where g.id in (:groupIds) group by 1, 2`,
+        join ${PROFILE_GROUPS_TABLE} pg on g.excluded_profile_group_id = pg.profile_group_id where !g.is_direct_message and g.id in (:groupIds) group by 1, 2`,
         { groupIds },
         { wrappedConnection: ctx.connection }
       )
@@ -650,7 +650,8 @@ where ((cg.cic_direction = 'RECEIVED' and (
           join ${PROFILE_GROUPS_TABLE} pg on isub.subscriber_id = pg.profile_id
           join ${USER_GROUPS_TABLE} ug on pg.profile_group_id = ug.profile_group_id
           where isub.target_id = :userId
-          and ug.id in (:groupIds)`,
+          and ug.id in (:groupIds)
+          and !ug.is_direct_message`,
         { userId, groupIds },
         { wrappedConnection: ctx.connection }
       )

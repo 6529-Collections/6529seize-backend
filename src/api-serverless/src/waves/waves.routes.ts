@@ -30,7 +30,10 @@ import { getValidatedByJoiOrThrow } from '../validation';
 import { waveApiService } from './wave.api.service';
 import { SearchWavesParams } from './waves.api.db';
 import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
-import { userGroupsService } from '../community-members/user-groups.service';
+import {
+  NewUserGroupEntity,
+  userGroupsService
+} from '../community-members/user-groups.service';
 import { NewWaveDropSchema } from '../drops/drop.validator';
 import { ApiWaveParticipationRequirement } from '../generated/models/ApiWaveParticipationRequirement';
 import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
@@ -69,6 +72,7 @@ import {
   WaveDecisionsQuerySort,
   waveDecisionsService
 } from './wave-decisions.service';
+import { FilterDirection } from '../../../entities/IUserGroup';
 
 const router = asyncRouter();
 
@@ -111,6 +115,171 @@ router.post(
     }
     const wave = await waveApiService.createWave(request, requestContext);
     res.send(wave);
+  }
+);
+
+router.post(
+  '/create-direct-message',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<
+      any,
+      any,
+      {
+        identity_addresses: string[];
+      },
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ApiWave>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const requestContext: RequestContext = { authenticationContext, timer };
+    const authenticatedProfileId = authenticationContext.getActingAsId();
+    const creatorProfile = await profilesService.getProfileById(
+      authenticationContext.authenticatedProfileId
+    );
+    if (!authenticatedProfileId || !creatorProfile) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ProfileProxyActionType.CREATE_WAVE
+      ]
+    ) {
+      throw new ForbiddenException(`Proxy is not allowed to create waves`);
+    }
+    let request = getValidatedByJoiOrThrow(
+      req.body,
+      Joi.object<{
+        identity_addresses: string[];
+      }>({
+        identity_addresses: Joi.array().items(Joi.string()).min(1).required()
+      })
+    );
+
+    const handles = await profilesService.getProfileHandlesByIds(
+      request.identity_addresses
+    );
+    if (handles.length !== request.identity_addresses.length) {
+      throw new BadRequestException(`Invalid identity addresses.`);
+    }
+    const name = `DM - ${[creatorProfile.handle, ...handles].join(' / ')}`;
+    const userGroup: Omit<
+      NewUserGroupEntity,
+      'profile_group_id' | 'excluded_profile_group_id'
+    > & {
+      addresses: string[];
+      excluded_addresses: string[];
+    } = {
+      name,
+      cic_min: null,
+      cic_max: null,
+      cic_user: null,
+      cic_direction: null,
+      rep_min: null,
+      rep_max: null,
+      rep_user: null,
+      rep_direction: null,
+      rep_category: null,
+      tdh_min: null,
+      tdh_max: null,
+      level_min: null,
+      level_max: null,
+      owns_meme: false,
+      owns_gradient: false,
+      owns_lab: false,
+      owns_nextgen: false,
+      owns_meme_tokens: null,
+      owns_gradient_tokens: null,
+      owns_lab_tokens: null,
+      owns_nextgen_tokens: null,
+      addresses: request.identity_addresses,
+      excluded_addresses: [],
+      visible: false,
+      is_private: true,
+      is_direct_message: true
+    };
+    const groupResponse = await userGroupsService.save(
+      userGroup,
+      authenticatedProfileId,
+      requestContext
+    );
+
+    const waveRequest: ApiCreateNewWave = {
+      name,
+      description_drop: {
+        title: null,
+        parts: [
+          {
+            content: 'gm :firstgm:',
+            quoted_drop: null,
+            media: []
+          }
+        ],
+        referenced_nfts: [],
+        mentioned_users: [],
+        metadata: []
+      },
+      picture: null,
+      voting: {
+        scope: {
+          group_id: null
+        },
+        credit_type: ApiWaveCreditType.Tdh,
+        credit_scope: ApiWaveCreditScope.Wave,
+        credit_category: null,
+        creditor_id: null,
+        signature_required: false,
+        period: {
+          min: null,
+          max: null
+        }
+      },
+      visibility: {
+        scope: {
+          group_id: groupResponse.id
+        }
+      },
+      participation: {
+        scope: {
+          group_id: groupResponse.id
+        },
+        no_of_applications_allowed_per_participant: null,
+        required_media: [],
+        required_metadata: [],
+        signature_required: false,
+        period: {
+          min: null,
+          max: null
+        }
+      },
+      chat: {
+        scope: {
+          group_id: groupResponse.id
+        },
+        enabled: true
+      },
+      wave: {
+        type: ApiWaveType.Chat,
+        winning_thresholds: null,
+        max_winners: null,
+        time_lock_ms: null,
+        admin_group: {
+          group_id: groupResponse.id
+        },
+        decisions_strategy: null
+      },
+      outcomes: []
+    };
+
+    const waveResponse = await waveApiService.createWave(
+      waveRequest,
+      requestContext
+    );
+    res.send(waveResponse);
   }
 );
 
