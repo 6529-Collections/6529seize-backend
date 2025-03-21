@@ -350,9 +350,9 @@ const GroupDescriptionSchema: Joi.ObjectSchema<ApiCreateGroupDescription> =
 const NewUserGroupSchema = Joi.object<ApiCreateGroup>({
   name: Joi.string()
     .max(100)
-    .regex(/^[a-zA-Z0-9?!,.'() ]{1,100}$/)
+    .regex(/^[\x20-\x7E]{1,100}$/)
     .messages({
-      'string.pattern.base': `Invalid name. Name can't be longer than 100 characters. It can only alphanumeric characters and spaces`
+      'string.pattern.base': `Invalid name! Name must be 1-100 characters long and can only include standard letters, numbers, symbols, and spaces.`
     }),
   group: GroupDescriptionSchema,
   is_private: Joi.boolean().optional().default(false)
