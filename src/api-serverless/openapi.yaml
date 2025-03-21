@@ -3591,6 +3591,7 @@ components:
         - parts
         - parts_count
         - rating
+        - realtime_rating
         - top_raters
         - raters_count
         - title
@@ -3656,6 +3657,9 @@ components:
           items:
             $ref: "#/components/schemas/ApiDropMetadata"
         rating:
+          type: number
+          format: int64
+        realtime_rating:
           type: number
           format: int64
         top_raters:
@@ -3921,6 +3925,7 @@ components:
         - parts
         - parts_count
         - rating
+        - realtime_rating
         - top_raters
         - raters_count
         - title
@@ -3984,6 +3989,9 @@ components:
           items:
             $ref: "#/components/schemas/ApiDropMetadata"
         rating:
+          type: number
+          format: int64
+        realtime_rating:
           type: number
           format: int64
         top_raters:

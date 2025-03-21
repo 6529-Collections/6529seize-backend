@@ -262,6 +262,13 @@ export class DropsMappers {
     const winningDropIds = allEntities
       .filter((it) => it.drop_type === DropType.WINNER)
       .map((it) => it.id);
+    const participatoryDropEntities = allEntities.filter(
+      (it) => it.drop_type === DropType.PARTICIPATORY
+    );
+    const chatDropIds = allEntities
+      .filter((it) => it.drop_type === DropType.CHAT)
+      .map((it) => it.id);
+    const participatoryDropIds = participatoryDropEntities.map((it) => it.id);
     const [
       dropsRanks,
       submissionDropsVotingRanges,
@@ -280,30 +287,37 @@ export class DropsMappers {
       winDecisions,
       winningDropsTopRaters,
       winningDropsRatersCounts,
-      winningDropsRatingsByVoter
+      winningDropsRatingsByVoter,
+      weightedDropsRanks,
+      weightedDropsRates
     ] = await Promise.all([
-      this.dropVotingDb.getParticipationDropsRealtimeRanks(allDropIds, {
-        connection
-      }),
+      this.dropVotingDb.getParticipationDropsRealtimeRanks(
+        participatoryDropIds,
+        {
+          connection
+        }
+      ),
       this.dropVotingService.findCreditLeftForVotingForDrops(
         contextProfileId,
-        allEntities,
+        participatoryDropEntities,
         connection
       ),
       this.dropsDb.findMentionsByDropIds(allDropIds, connection),
       this.dropsDb.findReferencedNftsByDropIds(allDropIds, connection),
       this.dropsDb.findMetadataByDropIds(allDropIds, connection),
-      this.clappingDb.findDropsTopContributors(allDropIds, { connection }),
-      this.dropVotingDb.findDropsTopContributors(allDropIds, { connection }),
+      this.clappingDb.findDropsTopContributors(chatDropIds, { connection }),
+      this.dropVotingDb.findDropsTopContributors(participatoryDropIds, {
+        connection
+      }),
       contextProfileId
         ? clappingService.findCreditLeftForClapping(contextProfileId)
         : Promise.resolve(0),
       this.dropVotingDb.getTallyForDrops(
-        { dropIds: allDropIds },
+        { dropIds: participatoryDropIds },
         { connection }
       ),
       this.clappingDb.getTallyForDrops(
-        { dropIds: allDropIds, clapperId: contextProfileId ?? null },
+        { dropIds: chatDropIds, clapperId: contextProfileId ?? null },
         { connection }
       ),
       this.dropsDb.getDropsQuoteCounts(
@@ -343,7 +357,13 @@ export class DropsMappers {
             winningDropIds,
             contextProfileId,
             { connection }
-          )
+          ),
+      this.dropVotingDb.getTimeLockedDropsWeightedVotes(participatoryDropIds, {
+        connection
+      }),
+      this.dropVotingDb.getWeightedDropRates(participatoryDropIds, {
+        connection
+      })
     ]);
     const deletedDrops = await this.dropsDb.findDeletedDrops(
       allDropIds,
@@ -378,7 +398,9 @@ export class DropsMappers {
         {} as Record<string, ApiDropSubscriptionTargetAction[]>
       ),
       deletedDrops,
-      allEntities
+      allEntities,
+      weightedDropsRanks,
+      weightedDropsRates
     };
   }
 
@@ -408,7 +430,9 @@ export class DropsMappers {
       winDecisions,
       winningDropsTopRaters,
       winningDropsRatersCounts,
-      winningDropsRatingsByVoter
+      winningDropsRatingsByVoter,
+      weightedDropsRanks,
+      weightedDropsRates
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
@@ -481,7 +505,9 @@ export class DropsMappers {
         allEntities: allEntities.reduce((acc, it) => {
           acc[it.id] = it;
           return acc;
-        }, {} as Record<string, DropEntity>)
+        }, {} as Record<string, DropEntity>),
+        weightedDropsRanks,
+        weightedDropsRates
       });
     });
   }
@@ -510,7 +536,9 @@ export class DropsMappers {
     winningDropsTopRaters,
     winningDropsRatersCounts,
     winningDropsRatingsByVoter,
-    allEntities
+    allEntities,
+    weightedDropsRanks,
+    weightedDropsRates
   }: {
     dropEntity: DropEntity;
     deletedDrops: Record<string, DeletedDropEntity>;
@@ -551,6 +579,8 @@ export class DropsMappers {
     winningDropsRatersCounts: Record<string, number>;
     winningDropsRatingsByVoter: Record<string, number>;
     allEntities: Record<string, DropEntity>;
+    weightedDropsRanks: Record<string, number>;
+    weightedDropsRates: Record<string, number>;
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
     const dropWinDecision = winDecisions[dropEntity.id];
@@ -585,6 +615,7 @@ export class DropsMappers {
       })
     );
     let context_profile_context: ApiDropContextProfileContext | null;
+    let realtime_rating = rating;
     if (contextProfileId) {
       context_profile_context = {
         rating: dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0,
@@ -598,6 +629,7 @@ export class DropsMappers {
     }
     if (dropEntity.drop_type === DropType.WINNER) {
       rating = dropWinDecision.final_vote ?? 0;
+      realtime_rating = rating;
       raters_count = winningDropsRatersCounts[dropEntity.id] ?? 0;
       top_raters = (
         winningDropsTopRaters[dropEntity.id] ?? []
@@ -613,7 +645,8 @@ export class DropsMappers {
         };
       }
     } else if (dropEntity.drop_type === DropType.PARTICIPATORY) {
-      rating = dropsVoteCounts[dropEntity.id].tally ?? 0;
+      realtime_rating = dropsVoteCounts[dropEntity.id].tally ?? 0;
+      rating = weightedDropsRates[dropEntity.id] ?? realtime_rating;
       raters_count =
         dropsVoteCounts[dropEntity.id]?.total_number_of_voters ?? 0;
       top_raters = (dropsTopVoters[dropEntity.id] ?? []).map<ApiDropRater>(
@@ -635,7 +668,8 @@ export class DropsMappers {
       id: dropEntity.id,
       serial_no: dropEntity.serial_no,
       drop_type: resolveEnumOrThrow(ApiDropType, dropEntity.drop_type),
-      rank: dropsRanks[dropEntity.id] ?? null,
+      rank:
+        weightedDropsRanks[dropEntity.id] ?? dropsRanks[dropEntity.id] ?? null,
       reply_to: replyToDropId
         ? {
             is_deleted: !!deletedDrops[replyToDropId],
@@ -666,7 +700,9 @@ export class DropsMappers {
                   winDecisions,
                   winningDropsTopRaters,
                   winningDropsRatersCounts,
-                  winningDropsRatingsByVoter
+                  winningDropsRatingsByVoter,
+                  weightedDropsRanks,
+                  weightedDropsRates
                 })
               : undefined
           }
@@ -709,7 +745,9 @@ export class DropsMappers {
                           winDecisions,
                           winningDropsTopRaters,
                           winningDropsRatersCounts,
-                          winningDropsRatingsByVoter
+                          winningDropsRatingsByVoter,
+                          weightedDropsRanks,
+                          weightedDropsRates
                         })
                       : undefined
                   }
@@ -762,6 +800,7 @@ export class DropsMappers {
           data_value: it.data_value
         })),
       rating,
+      realtime_rating,
       raters_count,
       top_raters,
       context_profile_context: context_profile_context,

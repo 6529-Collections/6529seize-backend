@@ -31,6 +31,7 @@ import {
   PROFILES_ACTIVITY_LOGS_TABLE,
   RATINGS_TABLE,
   WAVE_DROPPER_METRICS_TABLE,
+  WAVE_LEADERBOARD_ENTRIES_TABLE,
   WAVE_METRICS_TABLE,
   WAVES_DECISION_WINNER_DROPS_TABLE,
   WAVES_TABLE
@@ -991,7 +992,48 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return trace;
   }
 
-  async findLeaderboardDrops(
+  async findWeightedLeaderboardDrops(
+    params: LeaderboardParams,
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    ctx.timer?.start(`${this.constructor.name}->findWeightedLeaderboardDrops`);
+    const sql = `
+        with ddata as (
+            select
+                we.drop_id as drop_id,
+                cast(ifnull(we.vote, 0) as signed) as vote,
+                cast(ifnull(we.timestamp, d.created_at) as signed) as timestamp from ${DROPS_TABLE} d
+                                                                                         left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} we on d.id = we.drop_id
+            where we.wave_id = :wave_id
+              and d.drop_type = 'PARTICIPATORY'
+        ),
+             dranks as (
+                 select drop_id, rnk, vote from (select drop_id,
+                                                        vote,
+                                                        timestamp,
+                                                        RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
+                                                 from ddata) drop_ranks
+             )
+        select d.* from dranks r join drops d on d.id = r.drop_id ${
+          params.author_identity ? ` where d.author_id = :author_identity ` : ``
+        } order by ${
+      params.sort === LeaderboardSort.RANK ? `r.rnk` : 'd.created_at'
+    } ${params.sort_direction} limit :page_size offset :offset
+    `;
+    const sqlParams = {
+      wave_id: params.wave_id,
+      author_identity: params.author_identity,
+      page_size: params.page_size,
+      offset: params.page_size * (params.page - 1)
+    };
+    const results = await this.db.execute<DropEntity>(sql, sqlParams, {
+      wrappedConnection: ctx.connection
+    });
+    ctx.timer?.stop(`${this.constructor.name}->findWeightedLeaderboardDrops`);
+    return results;
+  }
+
+  async findRealtimeLeaderboardDrops(
     params: LeaderboardParams,
     ctx: RequestContext
   ): Promise<DropEntity[]> {
@@ -1030,7 +1072,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return results;
   }
 
-  async countLeaderboardDrops(
+  async countParticipatoryDrops(
     params: LeaderboardParams,
     ctx: RequestContext
   ): Promise<number> {

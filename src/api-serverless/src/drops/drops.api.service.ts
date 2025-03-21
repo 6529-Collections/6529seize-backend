@@ -36,7 +36,7 @@ import { ApiWaveMin } from '../generated/models/ApiWaveMin';
 import { ApiDropTraceItem } from '../generated/models/ApiDropTraceItem';
 import { ApiDropSearchStrategy } from '../generated/models/ApiDropSearchStrategy';
 import { ApiDropType } from '../generated/models/ApiDropType';
-import { DropType } from '../../../entities/IDrop';
+import { DropEntity, DropType } from '../../../entities/IDrop';
 import { ApiWaveDropsFeed } from '../generated/models/ApiWaveDropsFeed';
 import { clappingService, ClappingService } from './clapping.service';
 import { ApiDropsLeaderboardPage } from '../generated/models/ApiDropsLeaderboardPage';
@@ -567,14 +567,14 @@ export class DropsApiService {
       chat_group_id: waveEntity.chat_group_id,
       voting_group_id: waveEntity.voting_group_id
     };
+    const isTimeLockedWave =
+      waveEntity.time_lock_ms !== null && waveEntity.time_lock_ms > 0;
     const [drops, count] = await Promise.all([
-      this.dropsDb
-        .findLeaderboardDrops(params, ctx)
-        .then(
-          async (drops) =>
-            await this.dropsMappers.convertToDropsWithoutWaves(drops, ctx)
-        ),
-      this.dropsDb.countLeaderboardDrops(params, ctx)
+      this.findLeaderboardDrops(params, isTimeLockedWave, ctx).then(
+        async (drops) =>
+          await this.dropsMappers.convertToDropsWithoutWaves(drops, ctx)
+      ),
+      this.dropsDb.countParticipatoryDrops(params, ctx)
     ]);
     return {
       wave: waveMin,
@@ -583,6 +583,17 @@ export class DropsApiService {
       page: params.page,
       next: count > params.page_size * params.page
     };
+  }
+
+  private findLeaderboardDrops(
+    params: LeaderboardParams,
+    isTimeLockedWave: boolean,
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    if (isTimeLockedWave) {
+      return this.dropsDb.findWeightedLeaderboardDrops(params, ctx);
+    }
+    return this.dropsDb.findRealtimeLeaderboardDrops(params, ctx);
   }
 
   async findWaveLogs(
