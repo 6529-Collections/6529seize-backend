@@ -61,7 +61,8 @@ export class UserGroupsService {
       excluded_addresses: string[];
     },
     createdBy: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    isVisible: boolean = false
   ): Promise<ApiGroupFull> {
     const savedEntity =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
@@ -93,7 +94,7 @@ export class UserGroupsService {
               id,
               created_at: new Date(),
               created_by: createdBy,
-              visible: false,
+              visible: isVisible,
               name: group.name,
               profile_group_id: inclusionGroups?.profile_group_id ?? null,
               excluded_profile_group_id:

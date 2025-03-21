@@ -159,6 +159,9 @@ router.post(
         identity_addresses: Joi.array().items(Joi.string()).min(1).required()
       })
     );
+    if (request.identity_addresses.includes(authenticatedProfileId)) {
+      throw new BadRequestException(`You cannot DM yourself.`);
+    }
 
     const handles = await profilesService.getProfileHandlesByIds(
       request.identity_addresses
@@ -198,15 +201,17 @@ router.post(
       owns_nextgen_tokens: null,
       addresses: request.identity_addresses,
       excluded_addresses: [],
-      visible: false,
+      visible: true,
       is_private: true,
       is_direct_message: true
     };
     const groupResponse = await userGroupsService.save(
       userGroup,
       authenticatedProfileId,
-      requestContext
+      requestContext,
+      true
     );
+    console.log('i am group response', groupResponse.id);
 
     const waveRequest: ApiCreateNewWave = {
       name,

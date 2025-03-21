@@ -223,11 +223,12 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     ids: string[],
     connection?: ConnectionWrapper<any>
   ): Promise<string[]> {
-    return this.db.execute(
+    const result = await this.db.execute(
       `select handle from ${PROFILES_TABLE} where external_id in (:ids)`,
       { ids },
       connection ? { wrappedConnection: connection } : undefined
     );
+    return result.map((it) => it.handle);
   }
 
   private async insertProfileArchiveRecord(
