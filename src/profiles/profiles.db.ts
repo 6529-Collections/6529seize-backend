@@ -219,7 +219,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       );
   }
 
-  public async getHandlesByAddresses(
+  public async getHandlesByPrimaryWallets(
     addresses: string[],
     connection?: ConnectionWrapper<any>
   ): Promise<string[]> {
