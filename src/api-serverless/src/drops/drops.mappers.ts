@@ -152,7 +152,8 @@ export class DropsMappers {
         data_key: it.data_key,
         data_value: it.data_value
       })),
-      mentions_all: request.mentions_all ?? false
+      mentions_all: request.mentions_all ?? false,
+      signature: request.signature
     };
   }
 
@@ -614,7 +615,7 @@ export class DropsMappers {
         profile: profilesByIds[rater.clapper_id]
       })
     );
-    let context_profile_context: ApiDropContextProfileContext | null;
+    let context_profile_context: ApiDropContextProfileContext | null = null;
     let realtime_rating = rating;
     if (contextProfileId) {
       context_profile_context = {
@@ -803,9 +804,10 @@ export class DropsMappers {
       realtime_rating,
       raters_count,
       top_raters,
-      context_profile_context: context_profile_context,
+      context_profile_context,
       subscribed_actions: subscribedActions[dropEntity.id] ?? [],
-      winning_context: winningContext
+      winning_context: winningContext,
+      is_signed: !!dropEntity.signature
     };
   }
 }

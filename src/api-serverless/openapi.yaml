@@ -3428,6 +3428,7 @@ components:
         - signature_required
         - no_of_applications_allowed_per_participant
         - required_media
+        - terms
       properties:
         scope:
           $ref: "#/components/schemas/ApiCreateNewWaveScope"
@@ -3453,6 +3454,10 @@ components:
         signature_required:
           description: If true then the votes must be signed by voters.
           type: boolean
+        terms:
+          description: If this is and the "signature_required" is set then this will be embedded as a signature input data component for each drop.
+          type: string
+          nullable: true
         period:
           $ref: "#/components/schemas/ApiIntRange"
     ApiCreateNewWaveScope:
@@ -3553,6 +3558,7 @@ components:
         - mentioned_users
         - metadata
         - parts
+        - signature
       properties:
         title:
           type: string
@@ -3575,6 +3581,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiDropMetadata"
+        signature:
+          description: 'If wave requires drop signatures then this needs to be set. Signature of a drop is ethSign(creatorWallet, sha256(oneLineJsonWithAlphabeticallySortedFieldsRecursive(ApiCreateDropRequest - signature (+ wave.participation.terms if it exists))))'
+          type: string
+          nullable: true
     ApiDrop:
       type: object
       required:
@@ -3598,6 +3608,7 @@ components:
         - context_profile_context
         - subscribed_actions
         - rank
+        - is_signed
       properties:
         id:
           type: string
@@ -3677,6 +3688,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiDropSubscriptionTargetAction"
+        is_signed:
+          type: boolean
     ApiDropAndDropVote:
       type: object
       required:
@@ -3932,6 +3945,7 @@ components:
         - subscribed_actions
         - context_profile_context
         - rank
+        - is_signed
       properties:
         id:
           type: string
@@ -4009,6 +4023,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiDropSubscriptionTargetAction"
+        is_signed:
+          type: boolean
     ApiFeedItem:
       type: object
       required:
@@ -5767,6 +5783,7 @@ components:
         - no_of_applications_allowed_per_participant
         - required_media
         - authenticated_user_eligible
+        - terms
       properties:
         scope:
           $ref: "#/components/schemas/ApiWaveScope"
@@ -5796,6 +5813,9 @@ components:
           $ref: "#/components/schemas/ApiIntRange"
         authenticated_user_eligible:
           type: boolean
+        terms:
+          type: string
+          nullable: true
     ApiWaveParticipationRequirement:
       type: string
       enum:

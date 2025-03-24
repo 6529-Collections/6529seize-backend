@@ -613,7 +613,8 @@ const WaveParticipationSchema = Joi.object<ApiCreateNewWaveParticipationConfig>(
       .optional()
       .default([]),
     signature_required: Joi.boolean().optional().default(false),
-    period: IntRangeSchema.required().allow(null)
+    period: IntRangeSchema.required().allow(null),
+    terms: Joi.string().optional().allow(null).default(null)
   }
 );
 

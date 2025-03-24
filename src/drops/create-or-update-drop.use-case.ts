@@ -372,6 +372,11 @@ export class CreateOrUpdateDropUseCase {
           `Wave allows ${noOfApplicationsAllowedPerParticipantInWave} drops per participant. User has dropped applied ${countOfDropsByAuthorInWave} times.`
         );
       }
+      if (model.signature === null && wave.participation_signature_required) {
+        throw new ForbiddenException(
+          `Wave doesn't allow unsigned participatory drops`
+        );
+      }
     } else {
       timer.stop(
         `${CreateOrUpdateDropUseCase.name}->verifyParticipatoryLimitations`
@@ -592,7 +597,8 @@ export class CreateOrUpdateDropUseCase {
           created_at: createdAt,
           updated_at: updatedAt,
           serial_no: serialNo,
-          drop_type: model.drop_type
+          drop_type: model.drop_type,
+          signature: model.signature
         },
         connection
       ),

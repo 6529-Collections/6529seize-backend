@@ -718,6 +718,14 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     );
     return !!result?.address && areEqualAddresses(address, result.address);
   }
+
+  async getAllWalletsByProfileId(profileId: string): Promise<string[]> {
+    return this.db
+      .execute<{ wallet: string }>(
+        `select ac.address as wallet from ${ADDRESS_CONSOLIDATION_KEY} ac join ${IDENTITIES_TABLE} i on i.consolidation_key = ac.consolidation_key where i.profile_id = :profileId`
+      )
+      .then((res) => res.map((it) => it.wallet));
+  }
 }
 
 export interface ProfileOverview {

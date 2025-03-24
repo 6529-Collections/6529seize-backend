@@ -57,6 +57,7 @@ export class ApiDropWithoutWave {
     'raters_count': number;
     'context_profile_context': ApiDropContextProfileContext | null;
     'subscribed_actions': Array<ApiDropSubscriptionTargetAction>;
+    'is_signed': boolean;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -185,6 +186,12 @@ export class ApiDropWithoutWave {
             "name": "subscribed_actions",
             "baseName": "subscribed_actions",
             "type": "Array<ApiDropSubscriptionTargetAction>",
+            "format": ""
+        },
+        {
+            "name": "is_signed",
+            "baseName": "is_signed",
+            "type": "boolean",
             "format": ""
         }    ];
 
