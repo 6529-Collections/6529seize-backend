@@ -306,11 +306,6 @@ export class WaveApiService {
         `Creating a wave with signed votes requirement is not yet supported`
       );
     }
-    if (request.participation.signature_required) {
-      throw new BadRequestException(
-        `Creating a wave with signed drops requirement is not yet supported`
-      );
-    }
     if (request.wave.decisions_strategy !== null) {
       if (request.wave.type !== ApiWaveType.Rank) {
         throw new BadRequestException(
