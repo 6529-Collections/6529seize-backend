@@ -479,7 +479,8 @@ export class WavesMappers {
             name: curationEntity.name,
             author: profileMins[curationEntity.created_by],
             created_at: new Date(curationEntity.created_at).getTime(),
-            is_hidden: false
+            is_hidden: false,
+            is_direct_message: curationEntity.is_direct_message
           };
         }
         return acc;
