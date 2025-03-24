@@ -717,7 +717,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       `
       select drv_1.drop_id as drop_id, drv_1.wave_id as wave_id, drv_1.timestamp as timestamp, drv_1.vote as vote
       from ${DROP_REAL_VOTE_IN_TIME_TABLE} drv_1
-      join ${DROPS_TABLE} d1 on d1.id = drv_1.id
+      join ${DROPS_TABLE} d1 on d1.id = drv_1.drop_id
       where d1.drop_type = '${DropType.PARTICIPATORY}' 
         and drv_1.wave_id = :waveId
         and drv_1.timestamp > :fromTime
@@ -728,7 +728,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       where drv_2.id in (
                      select max(drv_2_i.id) as id
                      from ${DROP_REAL_VOTE_IN_TIME_TABLE} drv_2_i
-                     join ${DROPS_TABLE} d2 on d2.id = drv_2_i.id
+                     join ${DROPS_TABLE} d2 on d2.id = drv_2_i.drop_id
                      where d2.drop_type = '${DropType.PARTICIPATORY}' 
                      and drv_2_i.wave_id = :waveId
                      and drv_2_i.timestamp <= :fromTime
