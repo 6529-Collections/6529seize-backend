@@ -62,6 +62,7 @@ import { UserGroupEntity } from '../../../entities/IUserGroup';
 import { ApiGroupFull } from '../generated/models/ApiGroupFull';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { ApiWaveCreditScope } from '../generated/models/ApiWaveCreditScope';
+
 export class WaveApiService {
   constructor(
     private readonly wavesApiDb: WavesApiDb,
@@ -234,7 +235,8 @@ export class WaveApiService {
         ],
         referenced_nfts: [],
         mentioned_users: [],
-        metadata: []
+        metadata: [],
+        signature: null
       },
       picture: null,
       voting: {

@@ -881,6 +881,9 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
     ctx.timer?.start(
       `${this.constructor.name}->getAllVoteChangeLogsForGivenDropsInTimeframe`
     );
+    if (!params.dropIds.length) {
+      return [];
+    }
     const states =
       await this.db.execute<DropRealVoterVoteInTimeEntityWithoutId>(
         `
