@@ -30,10 +30,7 @@ import { getValidatedByJoiOrThrow } from '../validation';
 import { waveApiService } from './wave.api.service';
 import { SearchWavesParams } from './waves.api.db';
 import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
-import {
-  NewUserGroupEntity,
-  userGroupsService
-} from '../community-members/user-groups.service';
+import { userGroupsService } from '../community-members/user-groups.service';
 import { NewWaveDropSchema } from '../drops/drop.validator';
 import { ApiWaveParticipationRequirement } from '../generated/models/ApiWaveParticipationRequirement';
 import { ApiWaveOutcomeType } from '../generated/models/ApiWaveOutcomeType';
