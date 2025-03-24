@@ -235,8 +235,7 @@ export class WaveApiService {
         ],
         referenced_nfts: [],
         mentioned_users: [],
-        metadata: [],
-        signature: null
+        metadata: []
       },
       picture: null,
       voting: {
