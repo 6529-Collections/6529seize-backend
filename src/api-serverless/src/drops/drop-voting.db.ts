@@ -283,7 +283,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     );
     const sql = `
       select s.wave_id, sum(abs(s.votes)) as total_votes from ${DROP_VOTER_STATE_TABLE} s
-  join ${DROPS_TABLE} d on d.id = s.drop_id and d.drop_type = '${DropType.PARTICIPATORY}'
+      join ${DROPS_TABLE} d on d.id = s.drop_id and d.drop_type = '${DropType.PARTICIPATORY}'
       where s.wave_id in (:waveIds) and s.voter_id = :voterId
       group by 1
     `;
@@ -945,16 +945,25 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
     ctx: RequestContext
   ) {
     ctx.timer?.start(`${this.constructor.name}->updateLatestVoteValue`);
-    await this.db.execute(
-      `update ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} set vote = :vote where drop_id = :dropId and voter_id = :voterId and timestamp = (
-                     select max(v.timestamp) as id
+    const timestamp = await this.db
+      .oneOrNull<{ timestamp: number }>(
+        `
+    select max(v.timestamp) as timestamp
                      from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} v
                      where v.drop_id = :dropId and v.voter_id = :voterId
                      and v.timestamp <= :endTime
-      )`,
-      { dropId, voterId, endTime: endTime.toMillis(), vote },
-      { wrappedConnection: ctx.connection }
-    );
+    `,
+        { dropId, voterId, endTime: endTime.toMillis() },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((it) => it?.timestamp ?? null);
+    if (timestamp) {
+      await this.db.execute(
+        `update ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} set vote = :vote where drop_id = :dropId and voter_id = :voterId and timestamp = :timestamp`,
+        { dropId, voterId, endTime: endTime.toMillis(), vote, timestamp },
+        { wrappedConnection: ctx.connection }
+      );
+    }
     ctx.timer?.stop(`${this.constructor.name}->updateLatestVoteValue`);
   }
 
