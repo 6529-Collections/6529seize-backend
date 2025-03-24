@@ -893,7 +893,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
         and drv_1.timestamp > :fromTime
         and drv_1.timestamp < :toTime
       union all
-      select drv_2.drop_id as drop_id, drv_2.wave_id as wave_id, drv_3.voter_id as voter_id, :fromTime as timestamp, drv_2.vote as vote
+      select drv_2.drop_id as drop_id, drv_2.wave_id as wave_id, drv_2.voter_id as voter_id, :fromTime as timestamp, drv_2.vote as vote
       from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} drv_2
       where drv_2.id in (
                      select max(drv_2_i.id) as id
