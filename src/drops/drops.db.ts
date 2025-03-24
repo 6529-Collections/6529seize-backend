@@ -1045,7 +1045,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                       cast(ifnull(r.vote, 0) as signed)         as vote,
                       cast(ifnull(r.last_increased, d.created_at) as signed) as timestamp
                from ${DROPS_TABLE} d
-                        left join ${DROP_RANK_TABLE} r ON r.drop_id = d.id
+                        left join drop_ranks r ON r.drop_id = d.id
                where d.wave_id = :wave_id
                  and d.drop_type = '${DropType.PARTICIPATORY}'),
       dranks as (

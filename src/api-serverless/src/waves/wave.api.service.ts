@@ -62,6 +62,7 @@ import { UserGroupEntity } from '../../../entities/IUserGroup';
 import { ApiGroupFull } from '../generated/models/ApiGroupFull';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { ApiWaveCreditScope } from '../generated/models/ApiWaveCreditScope';
+
 export class WaveApiService {
   constructor(
     private readonly wavesApiDb: WavesApiDb,
@@ -224,6 +225,7 @@ export class WaveApiService {
       name: userGroup.name,
       description_drop: {
         title: null,
+        signature: null,
         parts: [
           {
             content: 'gm! :gm:',
@@ -266,7 +268,8 @@ export class WaveApiService {
         period: {
           min: null,
           max: null
-        }
+        },
+        terms: null
       },
       chat: {
         scope: {
