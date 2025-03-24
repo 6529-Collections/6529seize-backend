@@ -115,7 +115,7 @@ router.post(
 );
 
 router.post(
-  '/create-direct-message',
+  '/direct-message/new',
   needsAuthenticatedUser(),
   async (
     req: Request<

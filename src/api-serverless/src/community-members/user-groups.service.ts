@@ -122,7 +122,7 @@ export class UserGroupsService {
     if (existingGroup) {
       return (await this.mapForApi([existingGroup], ctx))[0];
     }
-    const handles = await profilesService.getProfileHandlesByAddresses(
+    const handles = await profilesService.getProfileHandlesByPrimaryWallets(
       identityAddresses,
       ctx.connection
     );

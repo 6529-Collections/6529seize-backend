@@ -2245,7 +2245,7 @@ paths:
                 $ref: "#/components/schemas/ApiWave"
         "400":
           description: Invalid request
-  /waves/create-direct-message:
+  /waves/direct-message/new:
     post:
       tags:
         - Waves
