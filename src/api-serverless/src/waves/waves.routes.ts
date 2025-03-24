@@ -115,6 +115,69 @@ router.post(
 );
 
 router.post(
+  '/direct-message/new',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<
+      any,
+      any,
+      {
+        identity_addresses: string[];
+      },
+      any,
+      any
+    >,
+    res: Response<ApiResponse<ApiWave>>
+  ) => {
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
+    const requestContext: RequestContext = { authenticationContext, timer };
+    const authenticatedProfileId = authenticationContext.getActingAsId();
+
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    const creatorProfile = await profilesService.getProfileById(
+      authenticatedProfileId
+    );
+    if (!creatorProfile) {
+      throw new NotFoundException(`Profile not found`);
+    }
+    if (
+      authenticationContext.isAuthenticatedAsProxy() &&
+      !authenticationContext.activeProxyActions[
+        ProfileProxyActionType.CREATE_WAVE
+      ]
+    ) {
+      throw new ForbiddenException(`Proxy is not allowed to create waves`);
+    }
+    let request = getValidatedByJoiOrThrow(
+      req.body,
+      Joi.object<{
+        identity_addresses: string[];
+      }>({
+        identity_addresses: Joi.array().items(Joi.string()).min(1).required()
+      })
+    );
+    if (request.identity_addresses.includes(authenticatedProfileId)) {
+      throw new BadRequestException(`You cannot DM yourself.`);
+    }
+
+    const userGroup = await userGroupsService.findOrCreateDirectMessageGroup(
+      creatorProfile,
+      request.identity_addresses,
+      requestContext
+    );
+
+    const waveResponse = await waveApiService.findOrCreateDirectMessageWave(
+      userGroup,
+      requestContext
+    );
+    res.send(waveResponse);
+  }
+);
+
+router.post(
   '/:id',
   needsAuthenticatedUser(),
   async (

@@ -96,6 +96,13 @@ export class ProfilesService {
     return this.profilesDb.getProfileById(id, connection);
   }
 
+  public async getProfileHandlesByPrimaryWallets(
+    addresses: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<string[]> {
+    return this.profilesDb.getHandlesByPrimaryWallets(addresses, connection);
+  }
+
   private async getProfileAndConsolidationsById(
     id: string,
     connection?: ConnectionWrapper<any>

@@ -219,6 +219,18 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       );
   }
 
+  public async getHandlesByPrimaryWallets(
+    addresses: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<string[]> {
+    const result = await this.db.execute(
+      `select handle from ${PROFILES_TABLE} where primary_wallet in (:addresses)`,
+      { addresses },
+      connection ? { wrappedConnection: connection } : undefined
+    );
+    return result.map((it) => it.handle);
+  }
+
   private async insertProfileArchiveRecord(
     param: Profile,
     connection: ConnectionWrapper<any>

@@ -38,6 +38,7 @@ import * as mcache from 'memory-cache';
 import { RequestContext } from '../../../request.context';
 import { NEXTGEN_CORE_CONTRACT } from '../../../nextgen/nextgen_constants';
 import { Network } from 'alchemy-sdk';
+import { ApiProfile } from '../types/api.profile';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -61,7 +62,8 @@ export class UserGroupsService {
       excluded_addresses: string[];
     },
     createdBy: string,
-    ctx: RequestContext
+    ctx: RequestContext,
+    isVisible: boolean = false
   ): Promise<ApiGroupFull> {
     const savedEntity =
       await this.userGroupsDb.executeNativeQueriesInTransaction(
@@ -93,7 +95,7 @@ export class UserGroupsService {
               id,
               created_at: new Date(),
               created_by: createdBy,
-              visible: false,
+              visible: isVisible,
               name: group.name,
               profile_group_id: inclusionGroups?.profile_group_id ?? null,
               excluded_profile_group_id:
@@ -106,6 +108,65 @@ export class UserGroupsService {
       );
     await giveReadReplicaTimeToCatchUp();
     return savedEntity;
+  }
+
+  public async findOrCreateDirectMessageGroup(
+    creatorProfile: ApiProfile,
+    identityAddresses: string[],
+    ctx: RequestContext
+  ): Promise<ApiGroupFull> {
+    const existingGroup = await this.userGroupsDb.findDirectMessageGroup(
+      [creatorProfile.primary_wallet, ...identityAddresses],
+      ctx
+    );
+    if (existingGroup) {
+      return (await this.mapForApi([existingGroup], ctx))[0];
+    }
+    const handles = await profilesService.getProfileHandlesByPrimaryWallets(
+      identityAddresses,
+      ctx.connection
+    );
+    if (handles.length !== identityAddresses.length) {
+      throw new BadRequestException(`Invalid identity addresses.`);
+    }
+    const name = `DM - ${[creatorProfile.handle, ...handles].join(' / ')}`;
+    const userGroup: Omit<
+      NewUserGroupEntity,
+      'profile_group_id' | 'excluded_profile_group_id'
+    > & {
+      addresses: string[];
+      excluded_addresses: string[];
+    } = {
+      name,
+      cic_min: null,
+      cic_max: null,
+      cic_user: null,
+      cic_direction: null,
+      rep_min: null,
+      rep_max: null,
+      rep_user: null,
+      rep_direction: null,
+      rep_category: null,
+      tdh_min: null,
+      tdh_max: null,
+      level_min: null,
+      level_max: null,
+      owns_meme: false,
+      owns_gradient: false,
+      owns_lab: false,
+      owns_nextgen: false,
+      owns_meme_tokens: null,
+      owns_gradient_tokens: null,
+      owns_lab_tokens: null,
+      owns_nextgen_tokens: null,
+      addresses: [creatorProfile.primary_wallet, ...identityAddresses],
+      excluded_addresses: [],
+      visible: true,
+      is_private: true,
+      is_direct_message: true
+    };
+
+    return await this.save(userGroup, creatorProfile.external_id, ctx, true);
   }
 
   public async getGroupsUserIsEligibleFor(

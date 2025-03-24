@@ -62,6 +62,9 @@ export class UserGroupEntity {
   @Index('idx_user_group_is_private')
   @Column({ type: 'boolean', nullable: false, default: false })
   readonly is_private!: boolean;
+  @Index('idx_user_group_is_direct_message')
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly is_direct_message!: boolean;
 }
 
 export enum FilterDirection {
