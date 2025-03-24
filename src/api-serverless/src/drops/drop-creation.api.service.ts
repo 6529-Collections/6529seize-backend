@@ -85,7 +85,7 @@ export class DropCreationApiService {
       timer,
       connection
     });
-    const drop = await this.dropsService.findDropByIdOrThrow(
+    return this.dropsService.findDropByIdOrThrow(
       {
         dropId: drop_id,
         skipEligibilityCheck: true
@@ -96,7 +96,6 @@ export class DropCreationApiService {
         timer
       }
     );
-    return drop;
   }
 
   public async deleteDropById(

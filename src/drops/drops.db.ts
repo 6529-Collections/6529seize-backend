@@ -145,6 +145,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                      updated_at,
                                      title,
                                      parts_count,
+                                     signature,
                                      reply_to_drop_id,
                                      reply_to_part_id${
                                        newDropSerialNo !== null
@@ -159,6 +160,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                  :updated_at,
                  :title,
                  :parts_count,
+                 :signature,
                  :reply_to_drop_id,
                  :reply_to_part_id
               ${newDropSerialNo !== null ? `, :serial_no` : ``})`,
@@ -587,7 +589,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         ? `, sum(case when author_id = :context_profile_id then 1 else 0 end) as context_profile_count`
         : ``
     }
-    from drops
+    from ${DROPS_TABLE}
     where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
     } drops.reply_to_drop_id in (:dropIds)
@@ -1042,7 +1044,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     with ddata as (select d.id                                    as drop_id,
                       cast(ifnull(r.vote, 0) as signed)         as vote,
                       cast(ifnull(r.last_increased, d.created_at) as signed) as timestamp
-               from drops d
+               from ${DROPS_TABLE} d
                         left join ${DROP_RANK_TABLE} r ON r.drop_id = d.id
                where d.wave_id = :wave_id
                  and d.drop_type = '${DropType.PARTICIPATORY}'),
@@ -1404,6 +1406,19 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       acc[it.drop_id] = { ...it, prizes: JSON.parse(it.prizes) };
       return acc;
     }, {} as Record<string, WaveDecisionWinnerDropEntity>);
+  }
+
+  async findWaveIdByDropId(
+    dropId: string,
+    ctx: RequestContext
+  ): Promise<string | null> {
+    return await this.db
+      .oneOrNull<{ wave_id: string }>(
+        `select wave_id from ${DROPS_TABLE} where id = :dropId`,
+        { dropId },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((it) => it?.wave_id ?? null);
   }
 }
 

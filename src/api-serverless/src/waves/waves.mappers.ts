@@ -127,7 +127,10 @@ export class WavesMappers {
       time_lock_ms: request.wave.time_lock_ms ?? null,
       outcomes: JSON.stringify(request.outcomes),
       decisions_strategy: request.wave.decisions_strategy ?? null,
-      next_decision_time: nextDecisionTime
+      next_decision_time: nextDecisionTime,
+      participation_signature_required:
+        request.participation.signature_required,
+      participation_terms: request.participation.terms
     };
   }
 
@@ -290,7 +293,8 @@ export class WavesMappers {
         min: waveEntity.participation_period_start,
         max: waveEntity.participation_period_end
       },
-      authenticated_user_eligible: authenticatedUserEligibleToParticipate
+      authenticated_user_eligible: authenticatedUserEligibleToParticipate,
+      terms: waveEntity.participation_terms
     };
     const chat: ApiWaveChatConfig = {
       scope: {
