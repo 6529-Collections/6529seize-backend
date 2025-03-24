@@ -2245,6 +2245,32 @@ paths:
                 $ref: "#/components/schemas/ApiWave"
         "400":
           description: Invalid request
+  /waves/create-direct-message:
+    post:
+      tags:
+        - Waves
+      summary: Create a direct message wave
+      operationId: createDirectMessageWave
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                identity_addresses:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiWave"
+        "400":
+          description: Invalid request
   /waves/{id}:
     get:
       tags:
