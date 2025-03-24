@@ -1036,7 +1036,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   }
 
   async findRealtimeLeaderboardDrops(
-    params: LeaderboardParams,
+    params: { offset: number; limit: number; wave_id: string },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start(`${this.constructor.name}->findLeaderboardDrops`);
@@ -1055,17 +1055,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                                  RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
                                           from ddata) drop_ranks
           )
-      select d.* from dranks r join drops d on d.id = r.drop_id ${
-        params.author_identity ? ` where d.author_id = :author_identity ` : ``
-      } order by ${
-      params.sort === LeaderboardSort.RANK ? `r.rnk` : 'd.created_at'
-    } ${params.sort_direction} limit :page_size offset :offset
+      select d.* from dranks r join drops d on d.id = r.drop_id order by r.rnk DESC limit :limit offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
-      author_identity: params.author_identity,
-      page_size: params.page_size,
-      offset: params.page_size * (params.page - 1)
+      limit: params.limit,
+      offset: params.offset
     };
     const results = await this.db.execute<DropEntity>(sql, sqlParams, {
       wrappedConnection: ctx.connection
@@ -1406,6 +1401,35 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       )
       .then((it) => it?.wave_id ?? null);
+  }
+
+  async findWinnerDrops(params: LeaderboardParams, ctx: RequestContext) {
+    return this.db.execute<DropEntity>(
+      `select d.* from ${WAVES_DECISION_WINNER_DROPS_TABLE} wd 
+    join ${DROPS_TABLE} d on d.id = wd.drop_id
+    where wd.wave_id = :wave_id
+    order by wd.ranking desc limit :limit offset :offset
+    `,
+      {
+        wave_id: params.wave_id,
+        limit: params.page_size,
+        offset: (params.page - 1) * params.page_size
+      },
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
+  async countWinningDrops(
+    params: LeaderboardParams,
+    ctx: RequestContext
+  ): Promise<number> {
+    return this.db
+      .oneOrNull<{ cnt: number }>(
+        `select count(*) as cnt from ${WAVES_DECISION_WINNER_DROPS_TABLE} wd where wd.wave_id = :wave_id`,
+        params,
+        { wrappedConnection: ctx.connection }
+      )
+      .then((it) => it?.cnt ?? 0);
   }
 }
 
