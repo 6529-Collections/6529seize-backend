@@ -172,7 +172,7 @@ export class WaveLeaderboardCalculationService {
       return [];
     }
     const finalVotesByDropIds: { dropId: string; finalVote: number }[] = [
-      allFinalVotesByDropIds[1]
+      allFinalVotesByDropIds[0]
     ];
     const dropIdsInTie: string[] = [];
     for (let i = 1; i < allFinalVotesByDropIds.length; i++) {
