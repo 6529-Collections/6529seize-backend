@@ -54,6 +54,7 @@ import {
 import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
 import { ApiWaveVoter } from '../generated/models/ApiWaveVoter';
 import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
+import { Time } from '../../../time';
 
 export class DropsApiService {
   constructor(
@@ -505,6 +506,7 @@ export class DropsApiService {
     params: LeaderboardParams,
     ctx: RequestContext
   ): Promise<ApiDropsLeaderboardPage> {
+    params.page_size = 2000;
     const authContext = ctx.authenticationContext!;
     let authenticatedProfileId: string | null = null;
     if (authContext) {
@@ -540,6 +542,7 @@ export class DropsApiService {
     if (waveEntity.type === WaveType.CHAT) {
       throw new BadRequestException(`CHAT waves don't have a leaderboard`);
     }
+    const votingPeriodEnd = waveEntity.voting_period_end;
     const waveMin: ApiWaveMin = {
       id: waveEntity.id,
       name: waveEntity.name,
@@ -556,7 +559,7 @@ export class DropsApiService {
         (waveEntity.chat_group_id === null ||
           groupIdsUserIsEligibleFor.includes(waveEntity.chat_group_id)),
       voting_period_start: waveEntity.voting_period_start,
-      voting_period_end: waveEntity.voting_period_end,
+      voting_period_end: votingPeriodEnd,
       voting_credit_type: resolveEnumOrThrow(
         WaveCreditTypeApi,
         waveEntity.voting_credit_type
@@ -580,6 +583,8 @@ export class DropsApiService {
         await this.dropsMappers.convertToDropsWithoutWaves(drops, ctx)
     );
     const offset = (params.page - 1) * params.page_size;
+    const waveHasEnded =
+      votingPeriodEnd !== null && votingPeriodEnd < Time.currentMillis();
     const finalData = drops
       .map((it, idx) => {
         const res = {
@@ -590,7 +595,12 @@ export class DropsApiService {
         delete res.winning_context;
         return res;
       })
-      .sort((a, d) => (a.rank ?? 0) - (d.rank ?? 0));
+      .sort((a, d) => {
+        if (waveHasEnded) {
+          return (a.rank ?? 0) - (d.rank ?? 0);
+        }
+        return (d.rank ?? 0) - (a.rank ?? 0);
+      });
     return {
       wave: waveMin,
       drops: finalData,

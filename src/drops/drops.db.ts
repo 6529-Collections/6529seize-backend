@@ -1492,7 +1492,7 @@ export enum LeaderboardSort {
 
 export interface LeaderboardParams {
   readonly wave_id: string;
-  readonly page_size: number;
+  page_size: number;
   readonly page: number;
   readonly sort_direction: PageSortDirection;
   readonly sort: LeaderboardSort;
