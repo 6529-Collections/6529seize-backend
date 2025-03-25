@@ -1431,6 +1431,32 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       )
       .then((it) => it?.cnt ?? 0);
   }
+
+  async getWaveEndingTimesByDropIds(
+    dropIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!dropIds.length) {
+      return {};
+    }
+    const dbResult = await this.db.execute<{
+      drop_id: string;
+      wave_ending_time: number | null;
+    }>(
+      `
+      select d.id as drop_id, w.voting_period_end as wave_ending_time from ${DROPS_TABLE} d
+      join ${WAVES_TABLE} w on d.wave_id = w.id where d.id in (:dropIds)
+      `,
+      { dropIds },
+      { wrappedConnection: ctx.connection }
+    );
+    return dbResult.reduce((acc, it) => {
+      if (it.wave_ending_time) {
+        acc[it.drop_id] = it.wave_ending_time;
+      }
+      return acc;
+    }, {} as Record<string, number>);
+  }
 }
 
 export interface DropVotersInfoFromDb {

@@ -65,6 +65,7 @@ import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType
 import { ApiWaveOutcomeCredit } from '../generated/models/ApiWaveOutcomeCredit';
 import { WinnerDropVoterVoteEntity } from '../../../entities/IWinnerDropVoterVote';
 import { ApiDropContextProfileContext } from '../generated/models/ApiDropContextProfileContext';
+import { Time } from '../../../time';
 
 export class DropsMappers {
   constructor(
@@ -290,7 +291,8 @@ export class DropsMappers {
       winningDropsRatersCounts,
       winningDropsRatingsByVoter,
       weightedDropsRanks,
-      weightedDropsRates
+      weightedDropsRates,
+      waveEndingTimesByDropIds
     ] = await Promise.all([
       this.dropVotingDb.getParticipationDropsRealtimeRanks(
         participatoryDropIds,
@@ -364,7 +366,8 @@ export class DropsMappers {
       }),
       this.dropVotingDb.getWeightedDropRates(participatoryDropIds, {
         connection
-      })
+      }),
+      this.dropsDb.getWaveEndingTimesByDropIds(dropIds, { connection })
     ]);
     const deletedDrops = await this.dropsDb.findDeletedDrops(
       allDropIds,
@@ -401,7 +404,8 @@ export class DropsMappers {
       deletedDrops,
       allEntities,
       weightedDropsRanks,
-      weightedDropsRates
+      weightedDropsRates,
+      waveEndingTimesByDropIds
     };
   }
 
@@ -433,7 +437,8 @@ export class DropsMappers {
       winningDropsRatersCounts,
       winningDropsRatingsByVoter,
       weightedDropsRanks,
-      weightedDropsRates
+      weightedDropsRates,
+      waveEndingTimesByDropIds
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
@@ -508,7 +513,8 @@ export class DropsMappers {
           return acc;
         }, {} as Record<string, DropEntity>),
         weightedDropsRanks,
-        weightedDropsRates
+        weightedDropsRates,
+        waveEndingTimesByDropIds
       });
     });
   }
@@ -539,7 +545,8 @@ export class DropsMappers {
     winningDropsRatingsByVoter,
     allEntities,
     weightedDropsRanks,
-    weightedDropsRates
+    weightedDropsRates,
+    waveEndingTimesByDropIds
   }: {
     dropEntity: DropEntity;
     deletedDrops: Record<string, DeletedDropEntity>;
@@ -582,6 +589,7 @@ export class DropsMappers {
     allEntities: Record<string, DropEntity>;
     weightedDropsRanks: Record<string, number>;
     weightedDropsRates: Record<string, number>;
+    waveEndingTimesByDropIds: Record<string, number>;
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
     const dropWinDecision = winDecisions[dropEntity.id];
@@ -666,6 +674,18 @@ export class DropsMappers {
     }
     top_raters.sort((a, b) => b.rating - a.rating);
     let dropType = resolveEnumOrThrow(ApiDropType, dropEntity.drop_type);
+    let rank: number | null =
+      weightedDropsRanks[dropEntity.id] ?? dropsRanks[dropEntity.id] ?? null;
+    const waveEndingTime = waveEndingTimesByDropIds[dropEntity.id];
+    const waveHasEnded =
+      waveEndingTime && waveEndingTime > Time.currentMillis();
+    if (!waveHasEnded) {
+      if (dropType === ApiDropType.Participatory) {
+        rank = null;
+      } else if (dropType === ApiDropType.Winner) {
+        rank = winningContext?.place ?? null;
+      }
+    }
     if (dropType === ApiDropType.Winner) {
       dropType = ApiDropType.Participatory;
     }
@@ -673,8 +693,7 @@ export class DropsMappers {
       id: dropEntity.id,
       serial_no: dropEntity.serial_no,
       drop_type: dropType,
-      rank:
-        weightedDropsRanks[dropEntity.id] ?? dropsRanks[dropEntity.id] ?? null,
+      rank,
       reply_to: replyToDropId
         ? {
             is_deleted: !!deletedDrops[replyToDropId],
@@ -707,7 +726,8 @@ export class DropsMappers {
                   winningDropsRatersCounts,
                   winningDropsRatingsByVoter,
                   weightedDropsRanks,
-                  weightedDropsRates
+                  weightedDropsRates,
+                  waveEndingTimesByDropIds
                 })
               : undefined
           }
@@ -752,7 +772,8 @@ export class DropsMappers {
                           winningDropsRatersCounts,
                           winningDropsRatingsByVoter,
                           weightedDropsRanks,
-                          weightedDropsRates
+                          weightedDropsRates,
+                          waveEndingTimesByDropIds
                         })
                       : undefined
                   }
