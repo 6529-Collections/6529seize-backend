@@ -151,7 +151,7 @@ router.post(
     ) {
       throw new ForbiddenException(`Proxy is not allowed to create waves`);
     }
-    let request = getValidatedByJoiOrThrow(
+    const request = getValidatedByJoiOrThrow(
       req.body,
       Joi.object<{
         identity_addresses: string[];
