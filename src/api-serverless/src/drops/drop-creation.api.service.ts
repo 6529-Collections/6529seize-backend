@@ -48,17 +48,17 @@ export class DropCreationApiService {
       authorId: string;
       representativeId: string;
     },
-    timer: Timer
+    ctx: RequestContext
   ): Promise<ApiDrop> {
     const drop = await this.dropsDb.executeNativeQueriesInTransaction(
       async (connection) => {
         return await this.createDropWithGivenConnection(
           { createDropRequest, authorId, representativeId },
-          { timer, connection }
+          { timer: ctx.timer!, connection }
         );
       }
     );
-    await this.wsListenersNotifier.notifyAboutDropUpdate(drop, { timer });
+    await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx);
     return drop;
   }
 
@@ -131,7 +131,7 @@ export class DropCreationApiService {
           wave_id: deleteResponse.wave_id
         },
         deleteResponse.visibility_group_id,
-        { timer }
+        { timer, authenticationContext }
       );
     }
     timer?.stop('dropCreationApiService->deleteDrop');
@@ -149,7 +149,7 @@ export class DropCreationApiService {
       authorId: string;
       representativeId: string;
     },
-    timer: Timer
+    ctx: RequestContext
   ): Promise<ApiDrop> {
     const drop = await this.dropsDb.findDropById(dropId);
     if (!drop) {
@@ -186,7 +186,7 @@ export class DropCreationApiService {
           model,
           false,
           {
-            timer,
+            timer: ctx.timer!,
             connection
           }
         );
@@ -196,15 +196,13 @@ export class DropCreationApiService {
             skipEligibilityCheck: true
           },
           {
-            connection,
-            authenticationContext:
-              AuthenticationContext.fromProfileId(authorId),
-            timer
+            ...ctx,
+            connection
           }
         );
       }
     );
-    await this.wsListenersNotifier.notifyAboutDropUpdate(apiDrop, { timer });
+    await this.wsListenersNotifier.notifyAboutDropUpdate(apiDrop, ctx);
     return apiDrop;
   }
 }

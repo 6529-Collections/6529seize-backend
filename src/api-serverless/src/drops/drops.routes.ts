@@ -177,7 +177,7 @@ router.post(
           ? authenticationContext.roleProfileId!
           : authorProfileId
       },
-      timer
+      { timer, authenticationContext }
     );
     res.send(createdDrop);
   }
@@ -220,7 +220,7 @@ router.post(
         authorId: authorId,
         representativeId: authenticationContext.getLoggedInUsersProfileId()!
       },
-      timer
+      { timer, authenticationContext }
     );
     res.send(updatedDrop);
   }

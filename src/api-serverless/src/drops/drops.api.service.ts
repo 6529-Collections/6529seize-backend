@@ -585,7 +585,7 @@ export class DropsApiService {
         const res = {
           ...it,
           drop_type: ApiDropType.Participatory,
-          rank: idx + offset + 1
+          rank: drops.length - idx + offset
         };
         delete res.winning_context;
         return res;
