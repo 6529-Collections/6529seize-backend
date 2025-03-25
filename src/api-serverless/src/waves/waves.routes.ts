@@ -151,7 +151,7 @@ router.post(
     ) {
       throw new ForbiddenException(`Proxy is not allowed to create waves`);
     }
-    let request = getValidatedByJoiOrThrow(
+    const request = getValidatedByJoiOrThrow(
       req.body,
       Joi.object<{
         identity_addresses: string[];
@@ -429,8 +429,7 @@ router.get(
           sort: Joi.string()
             .valid(...Object.values(LeaderboardSort))
             .default(LeaderboardSort.RANK),
-          author_identity: Joi.string().optional().default(null),
-          voter_identity: Joi.string().optional().default(null)
+          author_identity: Joi.string().optional().default(null)
         })
       )
     };
@@ -440,17 +439,10 @@ router.get(
         .resolveIdentityOrThrowNotFound(author_identity)
         .then((it) => it.profile_id);
     }
-    let voter_identity = params.voter_identity;
-    if (voter_identity) {
-      voter_identity = await profilesService
-        .resolveIdentityOrThrowNotFound(voter_identity)
-        .then((it) => it.profile_id);
-    }
     const result = await dropsService.findLeaderboard(
       {
         ...params,
-        author_identity,
-        voter_identity
+        author_identity
       },
       {
         authenticationContext,
