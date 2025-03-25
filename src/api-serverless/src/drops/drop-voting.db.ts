@@ -515,8 +515,9 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     FROM (select d.id as drop_id,
                  rank() over (partition by d.wave_id order by cast(ifnull(r.vote, 0) as signed) desc , cast(ifnull(r.timestamp, d.created_at) as signed) asc) as rnk
           from ${DROPS_TABLE} d
+                   join ${WAVES_TABLE} w on w.id = d.wave_id
                    left join ${WAVE_LEADERBOARD_ENTRIES_TABLE} r on r.drop_id = d.id
-          where d.drop_type = '${DropType.PARTICIPATORY}') drop_ranks
+          where d.drop_type = '${DropType.PARTICIPATORY}' and w.time_lock_ms is not null and w.time_lock_ms > 0) drop_ranks
     WHERE drop_id in (:dropIds)
   `;
     const results = await this.db.execute<{ drop_id: string; rnk: number }>(
