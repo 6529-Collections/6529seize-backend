@@ -31,10 +31,12 @@ export class DropHasher {
     }
 
     const keys = Object.keys(obj).sort();
-    const keyValuePairs = keys.map((key) => {
-      const valueString = this.canonicalJSONStringify(obj[key]);
-      return `${JSON.stringify(key)}:${valueString}`;
-    });
+    const keyValuePairs = keys
+      .filter((it) => obj[it] !== undefined)
+      .map((key) => {
+        const valueString = this.canonicalJSONStringify(obj[key]);
+        return `${JSON.stringify(key)}:${valueString}`;
+      });
     return `{${keyValuePairs.join(',')}}`;
   }
 }

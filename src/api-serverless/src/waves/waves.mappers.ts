@@ -288,7 +288,7 @@ export class WavesMappers {
       required_media: waveEntity.participation_required_media.map((it) =>
         resolveEnumOrThrow(ApiWaveParticipationRequirement, it)
       ),
-      signature_required: waveEntity.voting_signature_required,
+      signature_required: waveEntity.participation_signature_required,
       period: {
         min: waveEntity.participation_period_start,
         max: waveEntity.participation_period_end
