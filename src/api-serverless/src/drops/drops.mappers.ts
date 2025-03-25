@@ -665,10 +665,14 @@ export class DropsMappers {
       }
     }
     top_raters.sort((a, b) => b.rating - a.rating);
+    let dropType = resolveEnumOrThrow(ApiDropType, dropEntity.drop_type);
+    if (dropType === ApiDropType.Winner) {
+      dropType = ApiDropType.Participatory;
+    }
     return {
       id: dropEntity.id,
       serial_no: dropEntity.serial_no,
-      drop_type: resolveEnumOrThrow(ApiDropType, dropEntity.drop_type),
+      drop_type: dropType,
       rank:
         weightedDropsRanks[dropEntity.id] ?? dropsRanks[dropEntity.id] ?? null,
       reply_to: replyToDropId
