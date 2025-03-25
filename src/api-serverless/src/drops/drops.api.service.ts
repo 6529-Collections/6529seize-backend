@@ -585,7 +585,7 @@ export class DropsApiService {
         const res = {
           ...it,
           drop_type: ApiDropType.Participatory,
-          rank: drops.length - idx + offset
+          rank: idx + offset + 1
         };
         delete res.winning_context;
         return res;
@@ -636,6 +636,7 @@ export class DropsApiService {
         },
         ctx
       );
+
     realtimeLeaderboardDrops.reverse();
     while (result.length <= limit && realtimeLeaderboardDrops.length > 0) {
       const n = realtimeLeaderboardDrops.pop();

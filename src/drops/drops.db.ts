@@ -1055,7 +1055,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                                  RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
                                           from ddata) drop_ranks
           )
-      select d.* from dranks r join drops d on d.id = r.drop_id order by r.rnk DESC limit :limit offset :offset
+      select d.*, r.rnk, r.vote from dranks r join drops d on d.id = r.drop_id order by r.rnk limit :limit offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
@@ -1076,19 +1076,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(`${this.constructor.name}->countLeaderboardDrops`);
     const count = await this.db
       .oneOrNull<{ cnt: number }>(
-        `select count(*) as cnt from ${DROPS_TABLE} d
-         ${
-           params.voter_identity
-             ? ` join ${DROP_VOTER_STATE_TABLE} v on v.drop_id = d.id and v.voter_id = :voter_identity `
-             : ``
-         }
-         where d.wave_id = :wave_id and d.drop_type = :drop_type ${
-           params.author_identity ? ` and d.author_id = :author_identity ` : ``
-         } `,
+        `select count(*) as cnt from ${DROPS_TABLE} where wave_id = :wave_id and drop_type = :drop_type ${
+          params.author_identity ? ` and author_id = :author_identity ` : ``
+        } `,
         {
           wave_id: params.wave_id,
           author_identity: params.author_identity,
-          voter_identity: params.voter_identity,
           drop_type: DropType.PARTICIPATORY
         },
         { wrappedConnection: ctx.connection }
@@ -1415,7 +1408,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       `select d.* from ${WAVES_DECISION_WINNER_DROPS_TABLE} wd 
     join ${DROPS_TABLE} d on d.id = wd.drop_id
     where wd.wave_id = :wave_id
-    order by wd.ranking desc limit :limit offset :offset
+    order by wd.ranking asc limit :limit offset :offset
     `,
       {
         wave_id: params.wave_id,
@@ -1478,7 +1471,6 @@ export interface LeaderboardParams {
   readonly sort_direction: PageSortDirection;
   readonly sort: LeaderboardSort;
   readonly author_identity: string | null;
-  readonly voter_identity: string | null;
 }
 
 export interface DropLogsQueryParams {
