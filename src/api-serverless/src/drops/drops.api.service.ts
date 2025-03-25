@@ -11,7 +11,7 @@ import {
   ForbiddenException,
   NotFoundException
 } from '../../../exceptions';
-import { resolveEnumOrThrow } from '../../../helpers';
+import { isExperimentalModeOn, resolveEnumOrThrow } from '../../../helpers';
 import { Page, PageSortDirection } from '../page-request';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import {
@@ -506,7 +506,9 @@ export class DropsApiService {
     params: LeaderboardParams,
     ctx: RequestContext
   ): Promise<ApiDropsLeaderboardPage> {
-    params.page_size = 2000;
+    if (!isExperimentalModeOn()) {
+      params.page_size = 2000;
+    }
     const authContext = ctx.authenticationContext!;
     let authenticatedProfileId: string | null = null;
     if (authContext) {
@@ -585,22 +587,24 @@ export class DropsApiService {
     const offset = (params.page - 1) * params.page_size;
     const waveHasEnded =
       votingPeriodEnd !== null && votingPeriodEnd < Time.currentMillis();
-    const finalData = drops
-      .map((it, idx) => {
-        const res = {
-          ...it,
-          drop_type: ApiDropType.Participatory,
-          rank: idx + offset + 1
-        };
-        delete res.winning_context;
-        return res;
-      })
-      .sort((a, d) => {
-        if (waveHasEnded) {
-          return (a.rank ?? 0) - (d.rank ?? 0);
-        }
-        return (d.rank ?? 0) - (a.rank ?? 0);
-      });
+    const finalData = isExperimentalModeOn()
+      ? drops
+      : drops
+          .map((it, idx) => {
+            const res = {
+              ...it,
+              drop_type: ApiDropType.Participatory,
+              rank: idx + offset + 1
+            };
+            delete res.winning_context;
+            return res;
+          })
+          .sort((a, d) => {
+            if (waveHasEnded) {
+              return (a.rank ?? 0) - (d.rank ?? 0);
+            }
+            return (d.rank ?? 0) - (a.rank ?? 0);
+          });
     return {
       wave: waveMin,
       drops: finalData,
@@ -615,7 +619,9 @@ export class DropsApiService {
     ctx: RequestContext
   ) {
     const cnt = await this.dropsDb.countParticipatoryDrops(params, ctx);
-    const wCnt = await this.dropsDb.countWinningDrops(params, ctx);
+    const wCnt = isExperimentalModeOn()
+      ? 0
+      : await this.dropsDb.countWinningDrops(params, ctx);
     return { cnt, wCnt };
   }
 
@@ -627,6 +633,16 @@ export class DropsApiService {
   ): Promise<DropEntity[]> {
     if (isTimeLockedWave) {
       return this.dropsDb.findWeightedLeaderboardDrops(params, ctx);
+    }
+    if (isExperimentalModeOn()) {
+      return this.dropsDb.findRealtimeLeaderboardDrops(
+        {
+          wave_id: params.wave_id,
+          limit: params.page_size,
+          offset: (params.page - 1) * params.page_size
+        },
+        ctx
+      );
     }
     const winnerDrops = await this.dropsDb.findWinnerDrops(params, ctx);
     if (winnerDrops.length > params.page_size) {
