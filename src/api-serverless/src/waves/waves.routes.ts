@@ -40,7 +40,7 @@ import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionRes
 import { ApiWaveSubscriptionActions } from '../generated/models/ApiWaveSubscriptionActions';
 import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
 import { profilesService } from '../../../profiles/profiles.service';
-import { Timer } from '../../../time';
+import { Time, Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
@@ -65,10 +65,10 @@ import { ApiWaveOutcomeDistributionItem } from '../generated/models/ApiWaveOutco
 import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
 import { ApiWaveDecisionsPage } from '../generated/models/ApiWaveDecisionsPage';
 import {
+  waveDecisionsApiService,
   WaveDecisionsQuery,
-  WaveDecisionsQuerySort,
-  waveDecisionsService
-} from './wave-decisions.service';
+  WaveDecisionsQuerySort
+} from './wave-decisions-api.service';
 
 const router = asyncRouter();
 
@@ -593,7 +593,7 @@ router.get(
         })
       )
     };
-    const result = await waveDecisionsService.searchConcludedWaveDecisions(
+    const result = await waveDecisionsApiService.searchConcludedWaveDecisions(
       params,
       {
         authenticationContext,
@@ -676,7 +676,8 @@ const WaveParticipationSchema = Joi.object<ApiCreateNewWaveParticipationConfig>(
       .optional()
       .default([]),
     signature_required: Joi.boolean().optional().default(false),
-    period: IntRangeSchema.required().allow(null)
+    period: IntRangeSchema.required().allow(null),
+    terms: Joi.string().optional().allow(null).default(null)
   }
 );
 
@@ -686,10 +687,14 @@ const WaveChatSchema = Joi.object<ApiCreateNewWaveChatConfig>({
 });
 
 const WaveDecisionsStrategySchema = Joi.object<ApiWaveDecisionsStrategy>({
-  first_decision_time: Joi.number().integer().min(1).required(),
+  first_decision_time: Joi.number()
+    .integer()
+    .required()
+    .min(Time.currentMillis())
+    .message('first_decision_time must be in the future'),
   subsequent_decisions: Joi.array()
     .required()
-    .items(Joi.number().integer().min(1)),
+    .items(Joi.number().integer().min(Time.hours(1).toMillis())),
   is_rolling: Joi.boolean().required()
 });
 
@@ -709,7 +714,11 @@ const WaveConfigSchema = Joi.object<
     then: Joi.number().integer().required().allow(null).min(1),
     otherwise: Joi.valid(null)
   }),
-  time_lock_ms: Joi.number().integer().required().allow(null).min(1),
+  time_lock_ms: Joi.number()
+    .integer()
+    .required()
+    .allow(null)
+    .min(Time.minutes(5).toMillis()),
   period: IntRangeSchema.optional(),
   admin_group: WaveScopeSchema.required(),
   decisions_strategy: WaveDecisionsStrategySchema.optional().allow(null)

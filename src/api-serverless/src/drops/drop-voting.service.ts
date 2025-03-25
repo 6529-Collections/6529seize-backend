@@ -43,13 +43,9 @@ export class DropVotingService {
       groupIdsUserIsEligibleFor,
       connection
     );
-    const wavesIdsWhereVotingIsImplemented = relevantWaves
-      .filter((it) => {
-        return it.time_lock_ms === null || it.time_lock_ms === 0;
-      })
-      .map((it) => it.id);
+    const waveIds = relevantWaves.map((it) => it.id);
     const relevantParticipationDrops = participationDrops.filter((drop) =>
-      wavesIdsWhereVotingIsImplemented.includes(drop.wave_id)
+      waveIds.includes(drop.wave_id)
     );
     const relevantParticipationDropIds = relevantParticipationDrops.map(
       (it) => it.id
@@ -75,8 +71,8 @@ export class DropVotingService {
           },
           {}
         ),
-        this.votingDb.getVotersTotalVotesInWaves(
-          { waveIds: wavesIdsWhereVotingIsImplemented, voterId: profileId },
+        this.votingDb.getVotersTotalLockedCreditInWaves(
+          { waveIds: waveIds, voterId: profileId },
           { connection }
         ),
         this.identitiesDb
@@ -148,7 +144,9 @@ export class DropVotingService {
       this.votingDb.deleteForDrop(dropId, ctx),
       this.votingDb.deleteCreditSpendings(dropId, ctx),
       this.votingDb.deleteDropRanks(dropId, ctx),
-      this.votingDb.deleteDropRealVoteInTimes(dropId, ctx)
+      this.votingDb.deleteDropRealVoteInTimes(dropId, ctx),
+      this.votingDb.deleteDropRealVoterVoteInTimes(dropId, ctx),
+      this.votingDb.deleteDropsLeaderboardEntry(dropId, ctx)
     ]);
   }
 
@@ -157,7 +155,9 @@ export class DropVotingService {
       this.votingDb.deleteForWave(waveId, ctx),
       this.votingDb.deleteCreditSpendingsForWave(waveId, ctx),
       this.votingDb.deleteDropRanksForWave(waveId, ctx),
-      this.votingDb.deleteDropRealVoteInTimesForWave(waveId, ctx)
+      this.votingDb.deleteDropRealVoteInTimesForWave(waveId, ctx),
+      this.votingDb.deleteWavesLeaderboardEntries(waveId, ctx),
+      this.votingDb.deleteDropRealVoterVoteInTimesForWave(waveId, ctx)
     ]);
   }
 }

@@ -16,7 +16,8 @@ import {
 
 export enum DropType {
   CHAT = 'CHAT',
-  PARTICIPATORY = 'PARTICIPATORY'
+  PARTICIPATORY = 'PARTICIPATORY',
+  WINNER = 'WINNER'
 }
 
 @Entity(DROPS_TABLE)
@@ -51,6 +52,8 @@ export class DropEntity {
     default: DropType.CHAT
   })
   readonly drop_type!: DropType;
+  @Column({ type: 'text', nullable: true, default: null })
+  readonly signature!: string | null;
 }
 
 @Entity(DROPS_PARTS_TABLE)

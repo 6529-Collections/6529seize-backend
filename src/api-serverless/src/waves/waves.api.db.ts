@@ -141,7 +141,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       participation_required_metadata: JSON.stringify(
         wave.participation_required_metadata
       ),
-      decision_strategy: wave.decisions_strategy
+      decisions_strategy: wave.decisions_strategy
         ? JSON.stringify(wave.decisions_strategy)
         : null
     };
@@ -173,12 +173,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            participation_required_media,
            participation_period_start,
            participation_period_end,
+           participation_signature_required,
+           participation_terms,
            type,
            winning_min_threshold,
            winning_max_threshold,
            max_winners,
            time_lock_ms,
            decisions_strategy,
+           next_decision_time,
            outcomes${wave.serial_no !== null ? ', serial_no' : ''})
           values (:id,
                   :name,
@@ -204,12 +207,15 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   :participation_required_media,
                   :participation_period_start,
                   :participation_period_end,
+                  :participation_signature_required,
+                  :participation_terms,
                   :type,
                   :winning_min_threshold,
                   :winning_max_threshold,
                   :max_winners,
                   :time_lock_ms,
                   :decisions_strategy,
+                  :next_decision_time,
                   :outcomes${wave.serial_no !== null ? ', :serial_no' : ''})`,
         params,
         { wrappedConnection: ctx.connection }
@@ -246,6 +252,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                             participation_required_media,
                             participation_period_start,
                             participation_period_end,
+                            participation_terms,
+                            participation_signature_required,
                             type,
                             winning_min_threshold,
                             winning_max_threshold,
@@ -281,6 +289,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                                    :participation_required_media,
                                    :participation_period_start,
                                    :participation_period_end,
+                                   :participation_terms,
+                                   :participation_signature_required,
                                    :type,
                                    :winning_min_threshold,
                                    :winning_max_threshold,
@@ -388,7 +398,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           w.chat_enabled, 
           w.voting_credit_type, 
           w.voting_period_start, 
-          w.voting_period_end
+          w.voting_period_end,
+          w.visibility_group_id,
+          w.admin_group_id,
+          w.next_decision_time
         from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)
         `,
         {
@@ -409,7 +422,10 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             chat_enabled: wave.chat_enabled,
             voting_credit_type: wave.voting_credit_type,
             voting_period_start: wave.voting_period_start,
-            voting_period_end: wave.voting_period_end
+            voting_period_end: wave.voting_period_end,
+            visibility_group_id: wave.visibility_group_id,
+            admin_group_id: wave.admin_group_id,
+            next_decision_time: wave.next_decision_time
           };
           return acc;
         }, {} as Record<string, WaveOverview>)
@@ -1296,7 +1312,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       `${this.constructor.name}->findIdentityParticipationDropsCountByWaveId`
     );
     const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
-      `select d.wave_id as wave_id, count(d.id) as cnt from ${DROPS_TABLE} d where d.wave_id in (:waveIds) and d.author_id = :identityId and d.drop_type = '${DropType.PARTICIPATORY}' group by 1`,
+      `select d.wave_id as wave_id, count(d.id) as cnt from ${DROPS_TABLE} d where d.wave_id in (:waveIds) and d.author_id = :identityId and d.drop_type in ('${DropType.PARTICIPATORY}', '${DropType.WINNER}') group by 1`,
       param,
       { wrappedConnection: ctx.connection }
     );
@@ -1340,10 +1356,13 @@ export interface WaveOverview {
   readonly voting_group_id: string | null;
   readonly participation_group_id: string | null;
   readonly chat_group_id: string | null;
+  readonly visibility_group_id: string | null;
+  readonly admin_group_id: string | null;
   readonly chat_enabled: boolean;
   readonly voting_credit_type: WaveCreditType;
   readonly voting_period_start: number | null;
   readonly voting_period_end: number | null;
+  readonly next_decision_time: number | null;
 }
 
 export const wavesApiDb = new WavesApiDb(dbSupplier, userGroupsService);

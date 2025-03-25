@@ -56,16 +56,26 @@ export class WavesMappers {
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
   ) {}
 
-  public async createWaveToNewWaveEntity(
-    id: string,
-    serial_no: number | null,
-    created_at: number,
-    updated_at: number | null,
-    createWaveRequest: ApiCreateNewWave | ApiUpdateWaveRequest,
-    created_by: string,
-    descriptionDropId: string
-  ): Promise<InsertWaveEntity> {
-    let creditorId = createWaveRequest.voting.creditor_id;
+  public async createWaveToNewWaveEntity({
+    id,
+    serial_no,
+    created_at,
+    updated_at,
+    request,
+    created_by,
+    descriptionDropId,
+    nextDecisionTime
+  }: {
+    id: string;
+    serial_no: number | null;
+    created_at: number;
+    updated_at: number | null;
+    request: ApiCreateNewWave | ApiUpdateWaveRequest;
+    created_by: string;
+    descriptionDropId: string;
+    nextDecisionTime: number | null;
+  }): Promise<InsertWaveEntity> {
+    let creditorId = request.voting.creditor_id;
     if (creditorId) {
       creditorId = await profilesService.resolveIdentityIdOrThrowNotFound(
         creditorId
@@ -76,53 +86,51 @@ export class WavesMappers {
       serial_no,
       created_at,
       updated_at,
-      chat_enabled: createWaveRequest.chat.enabled,
-      name: createWaveRequest.name,
+      chat_enabled: request.chat.enabled,
+      name: request.name,
       description_drop_id: descriptionDropId,
-      picture: createWaveRequest.picture,
+      picture: request.picture,
       created_by,
-      voting_group_id: createWaveRequest.voting.scope.group_id,
-      admin_group_id: createWaveRequest.wave.admin_group?.group_id ?? null,
+      voting_group_id: request.voting.scope.group_id,
+      admin_group_id: request.wave.admin_group?.group_id ?? null,
       voting_credit_type: resolveEnumOrThrow(
         WaveCreditType,
-        createWaveRequest.voting.credit_type
+        request.voting.credit_type
       ),
-      voting_credit_category: createWaveRequest.voting.credit_category,
+      voting_credit_category: request.voting.credit_category,
       voting_credit_creditor: creditorId,
-      voting_signature_required: createWaveRequest.voting.signature_required,
-      voting_period_start: createWaveRequest.voting.period?.min ?? null,
-      voting_period_end: createWaveRequest.voting.period?.max ?? null,
-      visibility_group_id: createWaveRequest.visibility.scope.group_id,
-      participation_group_id: createWaveRequest.participation.scope.group_id,
-      chat_group_id: createWaveRequest.chat.scope.group_id,
+      voting_signature_required: request.voting.signature_required,
+      voting_period_start: request.voting.period?.min ?? null,
+      voting_period_end: request.voting.period?.max ?? null,
+      visibility_group_id: request.visibility.scope.group_id,
+      participation_group_id: request.participation.scope.group_id,
+      chat_group_id: request.chat.scope.group_id,
       participation_max_applications_per_participant:
-        createWaveRequest.participation
-          .no_of_applications_allowed_per_participant,
+        request.participation.no_of_applications_allowed_per_participant,
       participation_required_metadata:
-        createWaveRequest.participation.required_metadata.map((md) => ({
+        request.participation.required_metadata.map((md) => ({
           name: md.name,
           type: resolveEnumOrThrow(
             WaveRequiredMetadataItemType,
             md.type.toString()
           )
         })),
-      participation_required_media:
-        createWaveRequest.participation.required_media.map((it) =>
-          resolveEnumOrThrow(ParticipationRequiredMedia, it)
-        ),
-      participation_period_start:
-        createWaveRequest.participation.period?.min ?? null,
-      participation_period_end:
-        createWaveRequest.participation.period?.max ?? null,
-      type: resolveEnumOrThrow(WaveType, createWaveRequest.wave.type),
-      winning_min_threshold:
-        createWaveRequest.wave.winning_thresholds?.min ?? null,
-      winning_max_threshold:
-        createWaveRequest.wave.winning_thresholds?.max ?? null,
-      max_winners: createWaveRequest.wave.max_winners ?? null,
-      time_lock_ms: createWaveRequest.wave.time_lock_ms ?? null,
-      outcomes: JSON.stringify(createWaveRequest.outcomes),
-      decisions_strategy: createWaveRequest.wave.decisions_strategy ?? null
+      participation_required_media: request.participation.required_media.map(
+        (it) => resolveEnumOrThrow(ParticipationRequiredMedia, it)
+      ),
+      participation_period_start: request.participation.period?.min ?? null,
+      participation_period_end: request.participation.period?.max ?? null,
+      type: resolveEnumOrThrow(WaveType, request.wave.type),
+      winning_min_threshold: request.wave.winning_thresholds?.min ?? null,
+      winning_max_threshold: request.wave.winning_thresholds?.max ?? null,
+      max_winners: request.wave.max_winners ?? null,
+      time_lock_ms: request.wave.time_lock_ms ?? null,
+      outcomes: JSON.stringify(request.outcomes),
+      decisions_strategy: request.wave.decisions_strategy ?? null,
+      next_decision_time: nextDecisionTime,
+      participation_signature_required:
+        request.participation.signature_required,
+      participation_terms: request.participation.terms
     };
   }
 
@@ -280,12 +288,13 @@ export class WavesMappers {
       required_media: waveEntity.participation_required_media.map((it) =>
         resolveEnumOrThrow(ApiWaveParticipationRequirement, it)
       ),
-      signature_required: waveEntity.voting_signature_required,
+      signature_required: waveEntity.participation_signature_required,
       period: {
         min: waveEntity.participation_period_start,
         max: waveEntity.participation_period_end
       },
-      authenticated_user_eligible: authenticatedUserEligibleToParticipate
+      authenticated_user_eligible: authenticatedUserEligibleToParticipate,
+      terms: waveEntity.participation_terms
     };
     const chat: ApiWaveChatConfig = {
       scope: {
@@ -313,7 +322,8 @@ export class WavesMappers {
         group: curations[waveEntity.admin_group_id!] ?? null
       },
       authenticated_user_eligible_for_admin: authenticatedUserEligibleForAdmin,
-      decisions_strategy: waveEntity.decisions_strategy
+      decisions_strategy: waveEntity.decisions_strategy,
+      next_decision_time: waveEntity.next_decision_time
     };
     const waveMetrics = metrics[waveEntity.id];
     const waveAuthenticatedUserMetrics =

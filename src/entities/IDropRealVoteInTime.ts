@@ -18,4 +18,4 @@ export class DropRealVoteInTimeEntity {
   readonly vote!: number;
 }
 
-export type NewDropRealVoteInTimeEntity = Omit<DropRealVoteInTimeEntity, 'id'>;
+export type DropRealVoteInTimeWithoutId = Omit<DropRealVoteInTimeEntity, 'id'>;
