@@ -285,7 +285,8 @@ export class WaveApiService {
         admin_group: {
           group_id: userGroup.id
         },
-        decisions_strategy: null
+        decisions_strategy: null,
+        admin_drop_deletion_enabled: false
       },
       outcomes: []
     };

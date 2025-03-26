@@ -175,6 +175,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            participation_period_end,
            participation_signature_required,
            participation_terms,
+           admin_drop_deletion_enabled,
            type,
            winning_min_threshold,
            winning_max_threshold,
@@ -209,6 +210,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   :participation_period_end,
                   :participation_signature_required,
                   :participation_terms,
+                  :admin_drop_deletion_enabled,
                   :type,
                   :winning_min_threshold,
                   :winning_max_threshold,
@@ -253,6 +255,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                             participation_period_start,
                             participation_period_end,
                             participation_terms,
+                            admin_drop_deletion_enabled,
                             participation_signature_required,
                             type,
                             winning_min_threshold,
@@ -290,6 +293,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                                    :participation_period_start,
                                    :participation_period_end,
                                    :participation_terms,
+                                   :admin_drop_deletion_enabled,
                                    :participation_signature_required,
                                    :type,
                                    :winning_min_threshold,
@@ -401,6 +405,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
           w.voting_period_end,
           w.visibility_group_id,
           w.admin_group_id,
+          w.admin_drop_deletion_enabled,
           w.next_decision_time
         from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)
         `,
@@ -425,7 +430,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             voting_period_end: wave.voting_period_end,
             visibility_group_id: wave.visibility_group_id,
             admin_group_id: wave.admin_group_id,
-            next_decision_time: wave.next_decision_time
+            next_decision_time: wave.next_decision_time,
+            admin_drop_deletion_enabled: wave.admin_drop_deletion_enabled
           };
           return acc;
         }, {} as Record<string, WaveOverview>)
@@ -1363,6 +1369,7 @@ export interface WaveOverview {
   readonly voting_period_start: number | null;
   readonly voting_period_end: number | null;
   readonly next_decision_time: number | null;
+  readonly admin_drop_deletion_enabled: boolean;
 }
 
 export const wavesApiDb = new WavesApiDb(dbSupplier, userGroupsService);

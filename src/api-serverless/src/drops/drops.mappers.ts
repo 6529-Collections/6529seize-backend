@@ -213,7 +213,8 @@ export class DropsMappers {
             chat_group_id: wave.chat_group_id,
             admin_group_id: wave.admin_group_id,
             participation_group_id: wave.participation_group_id,
-            voting_group_id: wave.voting_group_id
+            voting_group_id: wave.voting_group_id,
+            admin_drop_deletion_enabled: wave.admin_drop_deletion_enabled
           }
         : null;
       return {

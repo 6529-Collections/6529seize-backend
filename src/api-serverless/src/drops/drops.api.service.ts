@@ -438,7 +438,8 @@ export class DropsApiService {
       participation_group_id: wave.participation_group_id,
       admin_group_id: wave.admin_group_id,
       chat_group_id: wave.chat_group_id,
-      voting_group_id: wave.voting_group_id
+      voting_group_id: wave.voting_group_id,
+      admin_drop_deletion_enabled: wave.admin_drop_deletion_enabled
     };
     if (drop_id) {
       const dropEntity = await this.dropsDb.findDropByIdWithEligibilityCheck(
@@ -570,7 +571,8 @@ export class DropsApiService {
       participation_group_id: waveEntity.participation_group_id,
       admin_group_id: waveEntity.admin_group_id,
       chat_group_id: waveEntity.chat_group_id,
-      voting_group_id: waveEntity.voting_group_id
+      voting_group_id: waveEntity.voting_group_id,
+      admin_drop_deletion_enabled: waveEntity.admin_drop_deletion_enabled
     };
     const isTimeLockedWave =
       waveEntity.time_lock_ms !== null && waveEntity.time_lock_ms > 0;
