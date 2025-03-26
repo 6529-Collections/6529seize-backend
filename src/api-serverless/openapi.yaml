@@ -5733,6 +5733,7 @@ components:
         - authenticated_user_eligible_to_vote
         - authenticated_user_eligible_to_participate
         - authenticated_user_eligible_to_chat
+        - authenticated_user_admin
         - voting_period_start
         - voting_period_end
         - voting_credit_type
@@ -5756,6 +5757,8 @@ components:
         authenticated_user_eligible_to_participate:
           type: boolean
         authenticated_user_eligible_to_chat:
+          type: boolean
+        authenticated_user_admin:
           type: boolean
         visibility_group_id:
           type: string

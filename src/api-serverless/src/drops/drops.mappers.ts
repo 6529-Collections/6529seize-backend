@@ -203,6 +203,9 @@ export class DropsMappers {
               group_ids_user_is_eligible_for.includes(
                 wave.participation_group_id
               ),
+            authenticated_user_admin:
+              wave.admin_group_id !== null &&
+              group_ids_user_is_eligible_for.includes(wave.admin_group_id),
             voting_credit_type: resolveEnumOrThrow(
               WaveCreditTypeApi,
               wave.voting_credit_type
