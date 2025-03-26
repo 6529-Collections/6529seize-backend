@@ -132,6 +132,9 @@ export class WaveBase implements WaveBaseType {
 
   @Column({ type: 'text', nullable: true, default: null })
   readonly participation_terms!: string | null;
+
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly admin_drop_deletion_enabled!: boolean;
 }
 
 @Entity(WAVES_TABLE)

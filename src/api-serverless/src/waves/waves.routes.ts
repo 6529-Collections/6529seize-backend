@@ -721,7 +721,8 @@ const WaveConfigSchema = Joi.object<
     .min(Time.minutes(5).toMillis()),
   period: IntRangeSchema.optional(),
   admin_group: WaveScopeSchema.required(),
-  decisions_strategy: WaveDecisionsStrategySchema.optional().allow(null)
+  decisions_strategy: WaveDecisionsStrategySchema.optional().allow(null),
+  admin_drop_deletion_enabled: Joi.boolean().optional().default(false)
 });
 
 const WaveOutcomeDistributionItemSchema =

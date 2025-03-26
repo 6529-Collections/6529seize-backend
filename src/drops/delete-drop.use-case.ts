@@ -3,7 +3,7 @@ import { Time, Timer } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
 import { DeleteDropModel } from './delete-drop.model';
 import { profilesService, ProfilesService } from '../profiles/profiles.service';
-import { BadRequestException } from '../exceptions';
+import { BadRequestException, ForbiddenException } from '../exceptions';
 import {
   clappingService,
   ClappingService
@@ -12,6 +12,7 @@ import {
   dropVotingService,
   DropVotingService
 } from '../api-serverless/src/drops/drop-voting.service';
+import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
 
 export class DeleteDropUseCase {
   public constructor(
@@ -45,11 +46,26 @@ export class DeleteDropUseCase {
     const dropId = model.drop_id;
     const drop = await this.dropsDb.findDropById(dropId, connection);
     if (drop !== null) {
-      if (drop.author_id !== deleterId) {
-        throw new BadRequestException('Only the author can delete the drop');
-      }
       const waveId = drop.wave_id;
       const wave = await this.dropsDb.findWaveByIdOrNull(waveId, connection);
+      if (drop.author_id !== deleterId) {
+        const adminGroupId = wave?.admin_group_id;
+        const adminDropDeletionEnabled = !!(
+          wave?.admin_drop_deletion_enabled && adminGroupId
+        );
+        if (!adminDropDeletionEnabled || model.deletion_purpose !== 'DELETE') {
+          throw new ForbiddenException(
+            'User is not allowed to delete this drop'
+          );
+        }
+        const groupsUserIsEligibleIn =
+          await userGroupsService.getGroupsUserIsEligibleFor(deleterId, timer);
+        if (!groupsUserIsEligibleIn.includes(adminGroupId)) {
+          throw new ForbiddenException(
+            'User is not allowed to delete this drop'
+          );
+        }
+      }
       if (
         wave?.description_drop_id === dropId &&
         model.deletion_purpose === 'DELETE'
