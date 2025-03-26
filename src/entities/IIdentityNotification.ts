@@ -3,6 +3,12 @@ import { IDENTITY_NOTIFICATIONS_TABLE } from '../constants';
 
 @Entity(IDENTITY_NOTIFICATIONS_TABLE)
 @Index(['identity_id', 'created_at', 'read_at'])
+@Index('idx_identity_notifications_read_all', ['identity_id', 'read_at'])
+@Index('idx_identity_notifications_read_wave', [
+  'wave_id',
+  'identity_id',
+  'read_at'
+])
 export class IdentityNotificationEntity {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   readonly id!: number;
