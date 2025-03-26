@@ -2,6 +2,9 @@ import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import { PROFILES_ACTIVITY_LOGS_TABLE } from '../constants';
 
 @Entity(PROFILES_ACTIVITY_LOGS_TABLE)
+@Index(['profile_id', 'additional_data_1', 'type', 'created_at'])
+@Index(['proxy_id', 'additional_data_1', 'type', 'created_at'])
+@Index(['target_id', 'additional_data_1', 'type', 'created_at'])
 export class ProfileActivityLog {
   @PrimaryColumn({ type: 'varchar', length: 100 })
   readonly id!: string;
