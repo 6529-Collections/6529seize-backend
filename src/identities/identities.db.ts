@@ -15,6 +15,7 @@ import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
 import { randomUUID } from 'crypto';
 import { RequestContext } from '../request.context';
 import { UserGroupsService } from '../api-serverless/src/community-members/user-groups.service';
+import { Timer } from '../time';
 
 const mysql = require('mysql');
 
@@ -405,6 +406,25 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       ctx.timer?.stop(`${this.constructor.name}->searchIdentities`);
       return results;
     }
+  }
+
+  async getProfileIdByWallet(
+    wallet: string,
+    timer?: Timer
+  ): Promise<string | null> {
+    timer?.start(`${this.constructor.name}->getProfileIdByWallet`);
+    const profileId = await this.db
+      .oneOrNull<{ profile_id: string }>(
+        `
+      select i.profile_id as profile_id from ${IDENTITIES_TABLE} i
+      join ${ADDRESS_CONSOLIDATION_KEY} a on a.consolidation_key = i.consolidation_key
+      where a.address = :wallet
+      `,
+        { wallet }
+      )
+      .then((it) => it?.profile_id ?? null);
+    timer?.stop(`${this.constructor.name}->getProfileIdByWallet`);
+    return profileId;
   }
 }
 

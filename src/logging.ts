@@ -50,6 +50,9 @@ function getWinstonInstance(name: string): WinstonLogger {
   return winstonInstances.get(name)!;
 }
 
+const LEVELS = ['DEBUG', 'INFO', 'WARN', 'ERROR'];
+const DEFAULT_LEVEL = 'INFO';
+
 export class Logger {
   public static registerAwsRequestId(requestId?: string) {
     if (requestId) {
@@ -73,18 +76,36 @@ export class Logger {
   private constructor(private readonly name: string) {}
 
   info(arg1: any, ...rest: any) {
-    getWinstonInstance(this.name).info(arg1, rest);
+    if (this.isLevelEnabled('INFO')) {
+      getWinstonInstance(this.name).info(arg1, rest);
+    }
   }
 
   debug(arg1: any, ...rest: any) {
-    getWinstonInstance(this.name).debug(arg1, rest);
+    if (this.isLevelEnabled('DEBUG')) {
+      getWinstonInstance(this.name).debug(arg1, rest);
+    }
   }
 
   warn(arg1: any, ...rest: any) {
-    getWinstonInstance(this.name).warn(arg1, rest);
+    if (this.isLevelEnabled('WARN')) {
+      getWinstonInstance(this.name).warn(arg1, rest);
+    }
   }
 
   error(arg1: any, ...rest: any) {
-    getWinstonInstance(this.name).error(arg1, rest);
+    if (this.isLevelEnabled('ERROR')) {
+      getWinstonInstance(this.name).error(arg1, rest);
+    }
+  }
+
+  private isLevelEnabled(level: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR'): boolean {
+    const loggerLevel =
+      process.env[`LOG_LEVEL_${this.name}`]?.toUpperCase() ?? DEFAULT_LEVEL;
+    let loggerLevelIndex = LEVELS.indexOf(loggerLevel);
+    if (loggerLevelIndex < 0) {
+      loggerLevelIndex = 1; // INFO
+    }
+    return LEVELS.indexOf(level) >= loggerLevelIndex;
   }
 }

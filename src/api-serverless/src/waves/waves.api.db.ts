@@ -454,23 +454,34 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         contributor_identity: string;
         contributor_pfp: string;
       }>(
-        `with contributors as (select distinct d.wave_id,
-                                               i.pfp as contributor_pfp,
-                                               i.primary_address,
-                                               i.level_raw
-                               from ${DROPS_TABLE} d
-                                        join ${IDENTITIES_TABLE} i on d.author_id = i.profile_id
-                               where i.pfp is not null
-                                 and d.wave_id in (:waveIds)
-                               order by 4 desc),
-              ranked_contributors as (select wave_id,
-                                             contributor_pfp,
-                                             primary_address,
-                                             row_number() over (partition by wave_id, primary_address order by level_raw desc) as rn
-                                      from contributors)
-         select wave_id, contributor_pfp, primary_address as contributor_identity
-         from ranked_contributors
-         where rn <= 5`,
+        `WITH distinct_authors AS (
+            SELECT DISTINCT wave_id, author_id
+            FROM drops
+            WHERE wave_id IN (:waveIds)),
+              authors_with_levels AS (
+                  SELECT
+                      da.wave_id,
+                      i.profile_id,
+                      i.primary_address,
+                      i.pfp,
+                      i.level_raw
+                  FROM distinct_authors da
+                           JOIN identities i
+                                ON i.profile_id = da.author_id
+                  WHERE i.pfp IS NOT NULL
+              ),
+              ranked AS (
+                  SELECT
+                      wave_id,
+                      pfp                  AS contributor_pfp,
+                      primary_address      AS contributor_identity,
+                      ROW_NUMBER() OVER (PARTITION BY wave_id ORDER BY level_raw DESC) AS rn
+                  FROM authors_with_levels
+              )
+         SELECT wave_id, contributor_pfp, contributor_identity
+         FROM ranked
+         WHERE rn <= 5
+         ORDER BY wave_id, rn`,
         {
           waveIds
         },

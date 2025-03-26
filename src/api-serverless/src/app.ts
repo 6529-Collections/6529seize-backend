@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 import * as db from '../../db-api';
-import { isNumber, uniqueShortId } from '../../helpers';
+import { isNumber, parseIntOrNull, uniqueShortId } from '../../helpers';
 
 import feedRoutes from './feed/feed.routes';
 import identitiesRoutes from './identities/identities.routes';
@@ -126,20 +126,14 @@ function requestLogMiddleware() {
     (request as any).timer = timer;
     response.on('close', () => {
       const { statusCode } = response;
-      if (
-        timer.getTotalTimePassed().gt(Time.seconds(1)) &&
-        timer.hasStoppedTimers()
-      ) {
-        requestLogger.info(
-          `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${timer
-            .getTotalTimePassed()
-            .toMillis()}] [${timer.getReport()}]`
-        );
-      } else if (
-        process.env.LOG_LEVEL_API_REQUEST === 'debug' &&
-        timer.hasStoppedTimers()
-      ) {
-        requestLogger.debug(
+      const slowRequestThresholdEnv = parseIntOrNull(
+        process.env.SLOW_API_REQUEST_THRESHOLD
+      );
+      const slowRequestThreshold = slowRequestThresholdEnv
+        ? Time.millis(slowRequestThresholdEnv)
+        : Time.seconds(1);
+      if (timer.getTotalTimePassed().gt(slowRequestThreshold)) {
+        requestLogger.warn(
           `[METHOD ${method}] [PATH ${url}] [RESPONSE_STATUS ${statusCode}] [TOOK_MS ${timer
             .getTotalTimePassed()
             .toMillis()}] [${timer.getReport()}]`
