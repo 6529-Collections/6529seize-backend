@@ -130,7 +130,8 @@ export class WavesMappers {
       next_decision_time: nextDecisionTime,
       participation_signature_required:
         request.participation.signature_required,
-      participation_terms: request.participation.terms
+      participation_terms: request.participation.terms,
+      admin_drop_deletion_enabled: request.wave.admin_drop_deletion_enabled
     };
   }
 
@@ -323,7 +324,8 @@ export class WavesMappers {
       },
       authenticated_user_eligible_for_admin: authenticatedUserEligibleForAdmin,
       decisions_strategy: waveEntity.decisions_strategy,
-      next_decision_time: waveEntity.next_decision_time
+      next_decision_time: waveEntity.next_decision_time,
+      admin_drop_deletion_enabled: waveEntity.admin_drop_deletion_enabled
     };
     const waveMetrics = metrics[waveEntity.id];
     const waveAuthenticatedUserMetrics =
