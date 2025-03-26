@@ -249,16 +249,6 @@ export class ClappingService {
     ) {
       return;
     }
-    this.userNotifier.notifyAllNotificationsSubscribers(
-      {
-        waveId,
-        dropId,
-        relatedIdentityId: clapperId,
-        subscriberIds,
-        vote
-      },
-      { timer, connection }
-    );
   }
 }
 
