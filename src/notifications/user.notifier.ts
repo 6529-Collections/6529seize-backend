@@ -205,37 +205,24 @@ export class UserNotifier {
       waveId,
       dropId,
       relatedIdentityId,
-      subscriberIds,
-      vote
+      subscriberIds
     }: {
       waveId: string;
       dropId: string;
       relatedIdentityId: string;
       subscriberIds: string[];
-      ignoreProfileIds?: string[];
-      vote?: {
-        rating: number;
-        drop_author_id: string;
-      };
     },
     { timer, connection }: RequestContext
   ) {
     timer?.start('userNotifier->notifyAllNotificationsSubscribers');
 
-    let ignoreProfileIds: string[] = [];
-    let additionalData: any = {};
-    if (!vote) {
-      const existingNotificationIdentities =
-        await this.identityNotificationsDb.findIdentitiesNotification(
-          waveId,
-          dropId,
-          connection
-        );
-      ignoreProfileIds = existingNotificationIdentities ?? [];
-    } else {
-      ignoreProfileIds = [vote.drop_author_id];
-      additionalData = { vote: vote.rating };
-    }
+    const existingNotificationIdentities =
+      await this.identityNotificationsDb.findIdentitiesNotification(
+        waveId,
+        dropId,
+        connection
+      );
+    const ignoreProfileIds = existingNotificationIdentities ?? [];
 
     const subscriberIdsToNotify = subscriberIds.filter(
       (it) => !ignoreProfileIds.includes(it) && it !== relatedIdentityId
@@ -253,7 +240,7 @@ export class UserNotifier {
             related_drop_2_part_no: null,
             wave_id: waveId,
             cause: IdentityNotificationCause.ALL_DROPS,
-            additional_data: additionalData,
+            additional_data: {},
             visibility_group_id: null
           },
           connection

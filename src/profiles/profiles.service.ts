@@ -10,7 +10,11 @@ import { calculateLevel, getLevelFromScore } from './profile-level';
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import * as tdh_consolidation from '../tdhLoop/tdh_consolidation';
 import * as tdhs from '../tdhLoop/tdh';
-import { BadRequestException, NotFoundException } from '../exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '../exceptions';
 import * as path from 'path';
 import { ConnectionWrapper } from '../sql-executor';
 import { Logger } from '../logging';
@@ -1534,11 +1538,16 @@ export class ProfilesService {
   }
 
   async searchIdentities(
-    param: { limit: number; handle: string; wave_id: string | null },
+    param: {
+      limit: number;
+      handle: string;
+      wave_id: string | null;
+      group_id: string | null;
+    },
     ctx: RequestContext
   ): Promise<ApiIdentity[]> {
     let context_group_id: string | null = null;
-    if (param.wave_id) {
+    if (param.wave_id || param.group_id) {
       const authenticationContext = ctx.authenticationContext;
       const eligibleGroups = authenticationContext?.hasRightsTo(
         ProfileProxyActionType.READ_WAVE
@@ -1548,13 +1557,23 @@ export class ProfilesService {
             ctx.timer
           )
         : [];
-      const givenWave = await wavesApiDb
-        .findWavesByIds([param.wave_id], eligibleGroups, ctx.connection)
-        .then((it) => it.at(0) ?? null);
-      if (!givenWave) {
-        throw new NotFoundException(`Wave ${param.wave_id} not found`);
+      if (param.wave_id) {
+        const givenWave = await wavesApiDb
+          .findWavesByIds([param.wave_id], eligibleGroups, ctx.connection)
+          .then((it) => it.at(0) ?? null);
+        if (!givenWave) {
+          throw new NotFoundException(`Wave ${param.wave_id} not found`);
+        }
+        context_group_id = givenWave.visibility_group_id;
+      } else if (param.group_id) {
+        if (eligibleGroups.includes(param.group_id)) {
+          context_group_id = param.group_id;
+        } else {
+          throw new ForbiddenException(
+            `You are not eligible to access this group`
+          );
+        }
       }
-      context_group_id = givenWave.visibility_group_id;
     }
     const base = await userGroupsService.getSqlAndParamsByGroupId(
       context_group_id,

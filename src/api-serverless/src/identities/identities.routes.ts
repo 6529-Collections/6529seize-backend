@@ -28,7 +28,13 @@ router.get(
       any,
       any,
       any,
-      { handle: string; limit?: string; wave_id?: string },
+      {
+        handle: string;
+        limit?: string;
+        wave_id?: string;
+        group_id?: string;
+        ignore_authenticated_user?: boolean;
+      },
       any
     >,
     res: Response<ApiResponse<ApiIdentity[]>>
@@ -44,11 +50,23 @@ router.get(
       throw new BadRequestException(`Limit must be between 1 and 100.`);
     }
     const wave_id = req.query.wave_id ?? null;
+    const group_id = req.query.group_id ?? null;
     const profiles = await profilesService.searchIdentities(
-      { handle, limit, wave_id },
+      { handle, limit, wave_id, group_id },
       { authenticationContext, timer }
     );
-    res.status(200).send(profiles);
+
+    if (!req.query.ignore_authenticated_user) {
+      res.status(200).send(profiles);
+    } else {
+      res
+        .status(200)
+        .send(
+          profiles.filter(
+            (it) => it.id !== authenticationContext.authenticatedProfileId
+          )
+        );
+    }
   }
 );
 
