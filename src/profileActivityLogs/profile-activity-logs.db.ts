@@ -99,16 +99,22 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<ProfileActivityLog[]> {
     ctx.timer?.start(`${this.constructor.name}->searchLogs`);
-    let sql: string;
+
     const page = params.pageRequest.page;
     const page_size =
       params.pageRequest.page_size < 1 || params.pageRequest.page_size > 2000
         ? 2001
         : params.pageRequest.page_size;
-    let sqlParams: Record<string, any> = {
-      offset: (page - 1) * page_size,
-      limit: page_size + 1
-    };
+    const offsetVal = (page - 1) * page_size;
+    const limitVal = page_size + 1;
+
+    const subQuerySQLs: string[] = [];
+    const subQueryParams: Record<string, any>[] = [];
+
+    let groupSqlJoin = '';
+    let groupSqlWhere = '';
+    let groupParams: Record<string, any> = {};
+
     if (params.group_id) {
       const viewResult = await this.userGroupsService.getSqlAndParamsByGroupId(
         params.group_id,
@@ -117,49 +123,134 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
       if (viewResult === null) {
         return [];
       }
-      sql = `${viewResult.sql} select pa_logs.* from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs join ${UserGroupsService.GENERATED_VIEW} group_view on group_view.profile_id = pa_logs.profile_id where 1=1`;
-      sqlParams = { ...sqlParams, ...viewResult.params };
-    } else {
-      sql = `select * from ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs where 1=1 `;
+      groupSqlJoin = ` JOIN ${UserGroupsService.GENERATED_VIEW} group_view 
+                     ON group_view.profile_id = pa_logs.profile_id `;
+      groupSqlWhere = viewResult.sql || ''; // depends on how your code returns it
+      groupParams = { ...viewResult.params };
     }
-    if (params.profile_id) {
-      if (params.includeProfileIdToIncoming) {
-        sql += ` and (pa_logs.profile_id = :profile_id or pa_logs.proxy_id = :profile_id or pa_logs.target_id = :profile_id)`;
-      } else {
-        sql += ` and (pa_logs.profile_id = :profile_id or pa_logs.proxy_id = :profile_id)`;
+
+    const buildSubQuery = (matchColumn: string) => {
+      const subParams: Record<string, any> = {};
+
+      let subSql = groupSqlWhere ? `${groupSqlWhere} ` : '';
+      subSql += `SELECT pa_logs.* 
+               FROM ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs
+               ${groupSqlJoin}
+               WHERE 1=1`;
+
+      if (params.profile_id) {
+        subSql += ` AND pa_logs.${matchColumn} = :profile_id`;
+        subParams.profile_id = params.profile_id;
       }
-      sqlParams.profile_id = params.profile_id;
+
+      if (params.rating_matter) {
+        subSql += ` AND additional_data_1 = :rating_matter`;
+        subParams.rating_matter = params.rating_matter;
+      }
+      if (params.category) {
+        subSql += ` AND JSON_UNQUOTE(JSON_EXTRACT(pa_logs.contents, '$.rating_category')) = :rating_category`;
+        subParams.rating_category = params.category;
+      }
+      if (params.target_id) {
+        subSql += ` AND pa_logs.target_id = :target_id`;
+        subParams.target_id = params.target_id;
+      }
+      if (params.type?.length) {
+        subSql += ` AND pa_logs.type IN (:type)`;
+        subParams.type = params.type;
+      }
+      return { sql: subSql, params: subParams };
+    };
+
+    if (params.profile_id) {
+      const columnsToSearch: string[] = ['profile_id', 'proxy_id'];
+      if (params.includeProfileIdToIncoming) {
+        columnsToSearch.push('target_id');
+      }
+
+      for (const col of columnsToSearch) {
+        const sq = buildSubQuery(col);
+        subQuerySQLs.push(sq.sql);
+        subQueryParams.push({ ...groupParams, ...sq.params }); // merge group params + subquery params
+      }
+    } else {
+      let single =
+        groupSqlWhere +
+        ` SELECT pa_logs.* 
+        FROM ${PROFILES_ACTIVITY_LOGS_TABLE} pa_logs
+        ${groupSqlJoin}
+        WHERE 1=1`;
+      const singleParams: Record<string, any> = { ...groupParams };
+
+      if (params.rating_matter) {
+        single += ` AND additional_data_1 = :rating_matter`;
+        singleParams.rating_matter = params.rating_matter;
+      }
+      if (params.category) {
+        single += ` AND JSON_UNQUOTE(JSON_EXTRACT(pa_logs.contents, '$.rating_category')) = :rating_category`;
+        singleParams.rating_category = params.category;
+      }
+      if (params.target_id) {
+        single += ` AND pa_logs.target_id = :target_id`;
+        singleParams.target_id = params.target_id;
+      }
+      if (params.type?.length) {
+        single += ` AND pa_logs.type IN (:type)`;
+        singleParams.type = params.type;
+      }
+
+      subQuerySQLs.push(single);
+      subQueryParams.push(singleParams);
     }
-    if (params.rating_matter) {
-      sql += ` and additional_data_1 = :rating_matter`;
-      sqlParams.rating_matter = params.rating_matter;
+    let finalSql: string;
+    let finalParams: Record<string, any>;
+
+    if (subQuerySQLs.length === 1) {
+      finalSql = `${subQuerySQLs[0]}
+                ORDER BY pa_logs.created_at ${
+                  params.order?.toLowerCase() === 'asc' ? 'asc' : 'desc'
+                }
+                LIMIT :limit OFFSET :offset`;
+      finalParams = {
+        ...subQueryParams[0],
+        limit: limitVal,
+        offset: offsetVal
+      };
+    } else {
+      const unionParts = subQuerySQLs.map((sq) => `(${sq})`);
+      const unionSql = unionParts.join(`\nUNION ALL\n`);
+
+      finalSql = `
+      SELECT * FROM (
+         ${unionSql}
+      ) as unioned
+      ORDER BY unioned.created_at ${
+        params.order?.toLowerCase() === 'asc' ? 'asc' : 'desc'
+      }
+      LIMIT :limit OFFSET :offset
+    `;
+
+      const allParams: Record<string, any> = {
+        limit: limitVal,
+        offset: offsetVal
+      };
+      for (const pObj of subQueryParams) {
+        for (const [k, v] of Object.entries(pObj)) {
+          allParams[k] = v;
+        }
+      }
+      finalParams = allParams;
     }
-    if (params.category) {
-      sql += ` and JSON_UNQUOTE(JSON_EXTRACT(pa_logs.contents, '$.rating_category')) = :rating_category`;
-      sqlParams.rating_category = params.category;
-    }
-    if (params.target_id) {
-      sql += ` and pa_logs.target_id = :target_id`;
-      sqlParams.target_id = params.target_id;
-    }
-    if (params.type?.length) {
-      sql += ` and pa_logs.type in (:type)`;
-      sqlParams.type = params.type;
-    }
-    sql += ` order by pa_logs.created_at ${
-      params.order.toLowerCase() === 'asc' ? 'asc' : 'desc'
-    } limit :limit offset :offset`;
-    const result = await this.db
-      .execute<Omit<ProfileActivityLog, 'created_at'> & { created_at: string }>(
-        sql,
-        sqlParams
-      )
-      .then((rows) =>
-        rows.map((r) => ({
-          ...r,
-          created_at: new Date(r.created_at)
-        }))
-      );
+
+    const rows = await this.db.execute<
+      Omit<ProfileActivityLog, 'created_at'> & { created_at: string }
+    >(finalSql, finalParams);
+
+    const result = rows.map((r) => ({
+      ...r,
+      created_at: new Date(r.created_at)
+    }));
+
     ctx.timer?.stop(`${this.constructor.name}->searchLogs`);
     return result;
   }

@@ -1421,7 +1421,7 @@ paths:
                 $ref: "#/components/schemas/ApiChangeProfileCicRatingResponse"
         "400":
           description: Invalid request
-  /profiles/{identity}/repcic/ratings/by-rater:
+  /profiles/{identity}/cic/ratings/by-rater:
     get:
       tags:
         - ProfileCIC
