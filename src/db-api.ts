@@ -309,11 +309,12 @@ export async function fetchPaginated<T = any>(
   filters: string,
   fields?: string,
   joins?: string,
-  groups?: string
+  groups?: string,
+  opts?: { skipJoinsOnCountQuery?: boolean }
 ): Promise<PaginatedResponse<T>> {
   const groupPart = groups ? ` GROUP BY ${groups}` : '';
   const countSql = `SELECT COUNT(1) as count FROM (SELECT 1 FROM ${table} ${
-    joins ?? ''
+    !opts?.skipJoinsOnCountQuery ? joins ?? '' : ''
   } ${filters}${groupPart}) inner_q`;
 
   let resultsSql = `SELECT ${fields ? fields : '*'} FROM ${table} ${
@@ -937,7 +938,9 @@ async function fetchPaginatedTransactions(
     page,
     filters.filters,
     fields,
-    joins
+    joins,
+    undefined,
+    { skipJoinsOnCountQuery: true }
   );
 }
 
