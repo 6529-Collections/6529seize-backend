@@ -275,18 +275,16 @@ export class ProfileProxyApiService {
     readonly granted_by_profile_id: string;
     readonly granted_to_profile_id: string;
   }): Promise<ApiProfileProxy | null> {
-    const actions =
-      await this.profileProxiesDb.findProfileProxyGrantedActionsByGrantorAndGrantee(
-        {
-          grantor: granted_by_profile_id,
-          grantee: granted_to_profile_id
-        }
-      );
-    const profileProxies =
-      await this.profileProxiesDb.findProfileProxiesByGrantorAndGrantee({
+    const [actions, profileProxies] = await Promise.all([
+      this.profileProxiesDb.findProfileProxyGrantedActionsByGrantorAndGrantee({
         grantor: granted_by_profile_id,
         grantee: granted_to_profile_id
-      });
+      }),
+      this.profileProxiesDb.findProfileProxiesByGrantorAndGrantee({
+        grantor: granted_by_profile_id,
+        grantee: granted_to_profile_id
+      })
+    ]);
     return await this.profileProxiesMapper
       .profileProxyEntitiesToApiProfileProxies({
         profileProxyEntities: profileProxies,
