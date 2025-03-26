@@ -109,6 +109,7 @@ export class WsListenersNotifier {
       (modifiedWave as any).authenticated_user_eligible_to_participate =
         undefined;
       (modifiedWave as any).authenticated_user_eligible_to_chat = undefined;
+      (modifiedWave as any).authenticated_user_admin = undefined;
       (modifiedWave as any).credit_left = creditLeft;
       (modifiedDrop.wave as any) = modifiedWave;
       (modifiedDrop.author as any).subscribed_actions = undefined;
