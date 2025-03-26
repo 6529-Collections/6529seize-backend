@@ -672,22 +672,19 @@ where ((cg.cic_direction = 'RECEIVED' and (
 
     const count = addresses.length;
 
-    const sql = `
-      SELECT cg.*
+    const sql = `SELECT cg.*
         FROM ${USER_GROUPS_TABLE} cg
-      WHERE cg.is_private = TRUE
-        AND cg.is_direct_message = TRUE
-        AND cg.profile_group_id IN (
+        JOIN (
           SELECT pg.profile_group_id
           FROM ${PROFILE_GROUPS_TABLE} pg
           JOIN ${IDENTITIES_TABLE} i ON i.profile_id = pg.profile_id
+          WHERE i.primary_address IN (${addressPlaceholders})
           GROUP BY pg.profile_group_id
-          HAVING 
-            COUNT(*) = :count
-            AND COUNT(CASE WHEN i.primary_address IN (${addressPlaceholders}) THEN 1 END) = :count
-        )
-      LIMIT 1
-    `;
+          HAVING COUNT(DISTINCT i.primary_address) = :count
+        ) filtered_pg ON filtered_pg.profile_group_id = cg.profile_group_id
+        WHERE cg.is_private = TRUE
+          AND cg.is_direct_message = TRUE
+        LIMIT 1;`;
 
     const params: Record<string, any> = {
       count
