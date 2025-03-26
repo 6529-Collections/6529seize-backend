@@ -11,6 +11,7 @@ import { ConnectionWrapper } from '../../../sql-executor';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import {
   distinct,
+  isExperimentalModeOn,
   parseIntOrNull,
   resolveEnum,
   resolveEnumOrThrow
@@ -676,18 +677,20 @@ export class DropsMappers {
     let dropType = resolveEnumOrThrow(ApiDropType, dropEntity.drop_type);
     let rank: number | null =
       weightedDropsRanks[dropEntity.id] ?? dropsRanks[dropEntity.id] ?? null;
-    const waveEndingTime = waveEndingTimesByDropIds[dropEntity.id];
-    const waveHasEnded =
-      waveEndingTime && waveEndingTime > Time.currentMillis();
-    if (!waveHasEnded) {
-      if (dropType === ApiDropType.Participatory) {
-        rank = null;
-      } else if (dropType === ApiDropType.Winner) {
-        rank = winningContext?.place ?? null;
+    if (!isExperimentalModeOn()) {
+      const waveEndingTime = waveEndingTimesByDropIds[dropEntity.id];
+      const waveHasEnded =
+        waveEndingTime && waveEndingTime > Time.currentMillis();
+      if (!waveHasEnded) {
+        if (dropType === ApiDropType.Participatory) {
+          rank = null;
+        } else if (dropType === ApiDropType.Winner) {
+          rank = winningContext?.place ?? null;
+        }
       }
-    }
-    if (dropType === ApiDropType.Winner) {
-      dropType = ApiDropType.Participatory;
+      if (dropType === ApiDropType.Winner) {
+        dropType = ApiDropType.Participatory;
+      }
     }
     return {
       id: dropEntity.id,
