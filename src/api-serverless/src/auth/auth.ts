@@ -13,6 +13,7 @@ import { resolveEnum } from '../../../helpers';
 import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { Time, Timer } from '../../../time';
 import * as mcache from 'memory-cache';
+import { identitiesDb } from '../../../identities/identities.db';
 
 export function getJwtSecret() {
   const jwtsecret = process.env.JWT_SECRET;
@@ -79,29 +80,32 @@ export async function getAuthenticationContext(
     return cachedContext;
   }
   timer?.start('getAuthenticationContext');
-  const authenticatedProfileId = await profilesService
-    .getProfileByWallet(authenticatedWallet)
-    .then((profile) => profile?.profile?.external_id ?? null);
-  const activeProxyActions =
+  const authenticatedProfileId = await identitiesDb.getProfileIdByWallet(
+    authenticatedWallet,
+    timer
+  );
+  let activeProxyActions: AuthenticatedProxyAction[] = [];
+  const isAuthenticatedAsProxy =
     authenticatedProfileId &&
     roleProfileId &&
-    authenticatedProfileId !== roleProfileId
-      ? await profileProxyApiService
-          .getProxyByGrantedByAndGrantedTo({
-            granted_by_profile_id: roleProfileId,
-            granted_to_profile_id: authenticatedProfileId
-          })
-          ?.then((proxy) =>
-            (proxy?.actions ?? [])
-              .filter(isProxyActionActive)
-              .map<AuthenticatedProxyAction>((action) => ({
-                id: action.id,
-                type: resolveEnum(ProfileProxyActionType, action.action_type)!,
-                credit_spent: action.credit_spent,
-                credit_amount: action.credit_amount
-              }))
-          )
-      : [];
+    authenticatedProfileId !== roleProfileId;
+  if (isAuthenticatedAsProxy) {
+    activeProxyActions = await profileProxyApiService
+      .getProxyByGrantedByAndGrantedTo({
+        granted_by_profile_id: roleProfileId,
+        granted_to_profile_id: authenticatedProfileId
+      })
+      ?.then((proxy) =>
+        (proxy?.actions ?? [])
+          .filter(isProxyActionActive)
+          .map<AuthenticatedProxyAction>((action) => ({
+            id: action.id,
+            type: resolveEnum(ProfileProxyActionType, action.action_type)!,
+            credit_spent: action.credit_spent,
+            credit_amount: action.credit_amount
+          }))
+      );
+  }
   timer?.stop('getAuthenticationContext');
   const authenticationContext = new AuthenticationContext({
     authenticatedWallet,
