@@ -135,51 +135,21 @@ export class ClappingDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(`${this.constructor.name}->mergeOnProfileIdChange`);
   }
 
-  public async getTallyForDrops(
-    { dropIds, clapperId }: { dropIds: string[]; clapperId: string | null },
-    ctx: RequestContext
-  ): Promise<
-    Record<string, { total_claps: number; claps_by_clapper: number }>
-  > {
-    if (dropIds.length === 0) {
-      return {};
-    }
-    ctx.timer?.start(`${this.constructor.name}->getTallyForDrops`);
-    const sql = `
-  select drop_id, sum(claps) as total_claps ${
-    clapperId !== null
-      ? `, sum(case when clapper_id = :clapperId then claps else 0 end) as claps_by_clapper`
-      : ` `
-  } from ${DROP_CLAPPER_STATE_TABLE}
-  where drop_id in (:dropIds)
-  group by 1
-`;
-    const result = await this.db
-      .execute<{
-        drop_id: string;
-        total_claps: number;
-        claps_by_clapper: number;
-      }>(sql, { dropIds, clapperId }, { wrappedConnection: ctx.connection })
-      .then((it) =>
-        it.reduce(
-          (acc, { drop_id, total_claps, claps_by_clapper }) => ({
-            ...acc,
-            [drop_id]: { total_claps, claps_by_clapper: claps_by_clapper ?? 0 }
-          }),
-          {} as Record<
-            string,
-            { total_claps: number; claps_by_clapper: number }
-          >
-        )
-      );
-    ctx.timer?.stop(`${this.constructor.name}->getTallyForDrops`);
-    return result;
-  }
-
   async findDropsTopContributors(
     dropIds: string[],
+    clapperId: string | null | undefined,
     ctx: RequestContext
-  ): Promise<Record<string, { claps: number; clapper_id: string }[]>> {
+  ): Promise<
+    Record<
+      string,
+      {
+        claps: number;
+        clapper_id: string;
+        total_clappers: number;
+        total_claps: number;
+      }[]
+    >
+  > {
     if (dropIds.length === 0) {
       return {};
     }
@@ -188,20 +158,54 @@ export class ClappingDb extends LazyDbAccessCompatibleService {
         drop_id: string;
         clapper_id: string;
         claps: number;
+        total_clappers: number;
+        total_claps: number;
       }>(
         `
-      select drop_id, clapper_id, claps from ${DROP_CLAPPER_STATE_TABLE} where drop_id in (:dropIds) and claps <> 0
+            WITH ranked AS (
+                SELECT
+                    drop_id,
+                    clapper_id,
+                    claps,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY drop_id
+                        ORDER BY claps DESC
+                        ) AS rn,
+                    COUNT(*) OVER (PARTITION BY drop_id) AS total_clappers,
+                    SUM(claps) OVER (PARTITION BY drop_id) AS total_claps
+                FROM ${DROP_CLAPPER_STATE_TABLE}
+                WHERE drop_id IN (:dropIds)
+                  AND claps <> 0
+            )
+            SELECT drop_id, clapper_id, claps, total_clappers, total_claps
+            FROM ranked
+            WHERE rn <= 5 ${clapperId ? `OR clapper_id = :clapperId` : ``}
+            ORDER BY drop_id, claps DESC
     `,
-        { dropIds },
+        { dropIds, clapperId },
         { wrappedConnection: ctx.connection }
       )
       .then((res) => {
         return res.reduce(
-          (acc, { drop_id, clapper_id, claps }) => ({
+          (
+            acc,
+            { drop_id, clapper_id, claps, total_clappers, total_claps }
+          ) => ({
             ...acc,
-            [drop_id]: [...(acc[drop_id] ?? []), { clapper_id, claps }]
+            [drop_id]: [
+              ...(acc[drop_id] ?? []),
+              { clapper_id, claps, total_clappers, total_claps }
+            ]
           }),
-          {} as Record<string, { claps: number; clapper_id: string }[]>
+          {} as Record<
+            string,
+            {
+              claps: number;
+              clapper_id: string;
+              total_clappers: number;
+              total_claps: number;
+            }[]
+          >
         );
       });
   }
