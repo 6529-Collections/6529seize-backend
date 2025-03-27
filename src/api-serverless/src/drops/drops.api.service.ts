@@ -11,7 +11,7 @@ import {
   ForbiddenException,
   NotFoundException
 } from '../../../exceptions';
-import { isExperimentalModeOn, resolveEnumOrThrow } from '../../../helpers';
+import { resolveEnumOrThrow } from '../../../helpers';
 import { Page, PageSortDirection } from '../page-request';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import {
@@ -54,7 +54,6 @@ import {
 import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
 import { ApiWaveVoter } from '../generated/models/ApiWaveVoter';
 import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
-import { Time } from '../../../time';
 
 export class DropsApiService {
   constructor(
@@ -510,9 +509,6 @@ export class DropsApiService {
     params: LeaderboardParams,
     ctx: RequestContext
   ): Promise<ApiDropsLeaderboardPage> {
-    if (!isExperimentalModeOn()) {
-      params.page_size = 2000;
-    }
     const authContext = ctx.authenticationContext!;
     let authenticatedProfileId: string | null = null;
     if (authContext) {
@@ -582,104 +578,40 @@ export class DropsApiService {
     };
     const isTimeLockedWave =
       waveEntity.time_lock_ms !== null && waveEntity.time_lock_ms > 0;
-    const count = await this.countLeaderboardDrops(params, ctx);
+    const count = await this.dropsDb.countParticipatoryDrops(params, ctx);
     const drops = await this.findLeaderboardDrops(
       params,
       isTimeLockedWave,
-      count.wCnt,
       ctx
     ).then(
       async (drops) =>
         await this.dropsMappers.convertToDropsWithoutWaves(drops, ctx)
     );
-    const offset = (params.page - 1) * params.page_size;
-    const waveHasEnded =
-      votingPeriodEnd !== null && votingPeriodEnd < Time.currentMillis();
-    const finalData = isExperimentalModeOn()
-      ? drops
-      : drops
-          .map((it, idx) => {
-            const res = {
-              ...it,
-              drop_type: ApiDropType.Participatory,
-              rank: idx + offset + 1
-            };
-            delete res.winning_context;
-            return res;
-          })
-          .sort((a, d) => {
-            if (waveHasEnded) {
-              return (a.rank ?? 0) - (d.rank ?? 0);
-            }
-            return (d.rank ?? 0) - (a.rank ?? 0);
-          });
     return {
       wave: waveMin,
-      drops: finalData,
-      count: count.cnt + count.wCnt,
+      drops: drops,
+      count: count,
       page: params.page,
-      next: count.cnt + count.wCnt > params.page_size * params.page
+      next: count > params.page_size * params.page
     };
-  }
-
-  private async countLeaderboardDrops(
-    params: LeaderboardParams,
-    ctx: RequestContext
-  ) {
-    const cnt = await this.dropsDb.countParticipatoryDrops(params, ctx);
-    const wCnt = isExperimentalModeOn()
-      ? 0
-      : await this.dropsDb.countWinningDrops(params, ctx);
-    return { cnt, wCnt };
   }
 
   private async findLeaderboardDrops(
     params: LeaderboardParams,
     isTimeLockedWave: boolean,
-    totalNoOfWinnerDrops: number,
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     if (isTimeLockedWave) {
       return this.dropsDb.findWeightedLeaderboardDrops(params, ctx);
     }
-    if (isExperimentalModeOn()) {
-      return this.dropsDb.findRealtimeLeaderboardDrops(
-        {
-          wave_id: params.wave_id,
-          limit: params.page_size,
-          offset: (params.page - 1) * params.page_size
-        },
-        ctx
-      );
-    }
-    const winnerDrops = await this.dropsDb.findWinnerDrops(params, ctx);
-    if (winnerDrops.length > params.page_size) {
-      return winnerDrops.slice(0, params.page_size);
-    }
-    const noOfMissingDrops = params.page_size - winnerDrops.length;
-    const offset = (params.page - 1) * params.page_size;
-    const limit = params.page_size;
-    const result = winnerDrops.slice(0, limit);
-    const relativeOffset = Math.max(0, offset - totalNoOfWinnerDrops);
-    const realtimeLeaderboardDrops =
-      await this.dropsDb.findRealtimeLeaderboardDrops(
-        {
-          wave_id: params.wave_id,
-          limit: noOfMissingDrops,
-          offset: relativeOffset
-        },
-        ctx
-      );
-
-    realtimeLeaderboardDrops.reverse();
-    while (result.length <= limit && realtimeLeaderboardDrops.length > 0) {
-      const n = realtimeLeaderboardDrops.pop();
-      if (!n) {
-        break;
-      }
-      result.push(n);
-    }
-    return result;
+    return this.dropsDb.findRealtimeLeaderboardDrops(
+      {
+        wave_id: params.wave_id,
+        limit: params.page_size,
+        offset: (params.page - 1) * params.page_size
+      },
+      ctx
+    );
   }
 
   async findWaveLogs(

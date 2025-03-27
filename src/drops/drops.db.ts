@@ -1402,61 +1402,6 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       )
       .then((it) => it?.wave_id ?? null);
   }
-
-  async findWinnerDrops(params: LeaderboardParams, ctx: RequestContext) {
-    return this.db.execute<DropEntity>(
-      `select d.* from ${WAVES_DECISION_WINNER_DROPS_TABLE} wd 
-    join ${DROPS_TABLE} d on d.id = wd.drop_id
-    where wd.wave_id = :wave_id
-    order by wd.ranking asc limit :limit offset :offset
-    `,
-      {
-        wave_id: params.wave_id,
-        limit: params.page_size,
-        offset: (params.page - 1) * params.page_size
-      },
-      { wrappedConnection: ctx.connection }
-    );
-  }
-
-  async countWinningDrops(
-    params: LeaderboardParams,
-    ctx: RequestContext
-  ): Promise<number> {
-    return this.db
-      .oneOrNull<{ cnt: number }>(
-        `select count(*) as cnt from ${WAVES_DECISION_WINNER_DROPS_TABLE} wd where wd.wave_id = :wave_id`,
-        params,
-        { wrappedConnection: ctx.connection }
-      )
-      .then((it) => it?.cnt ?? 0);
-  }
-
-  async getWaveEndingTimesByDropIds(
-    dropIds: string[],
-    ctx: RequestContext
-  ): Promise<Record<string, number>> {
-    if (!dropIds.length) {
-      return {};
-    }
-    const dbResult = await this.db.execute<{
-      drop_id: string;
-      wave_ending_time: number | null;
-    }>(
-      `
-      select d.id as drop_id, w.voting_period_end as wave_ending_time from ${DROPS_TABLE} d
-      join ${WAVES_TABLE} w on d.wave_id = w.id where d.id in (:dropIds)
-      `,
-      { dropIds },
-      { wrappedConnection: ctx.connection }
-    );
-    return dbResult.reduce((acc, it) => {
-      if (it.wave_ending_time) {
-        acc[it.drop_id] = it.wave_ending_time;
-      }
-      return acc;
-    }, {} as Record<string, number>);
-  }
 }
 
 export interface DropVotersInfoFromDb {
