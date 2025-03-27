@@ -462,7 +462,3 @@ export function getUniqueValuesWithKeys<K, V>(map: Map<K, V>): Map<V, K[]> {
   });
   return valueToKeysMap;
 }
-
-export function isExperimentalModeOn() {
-  return process.env.EXPERIMENTAL_MODE_ON === 'true';
-}
