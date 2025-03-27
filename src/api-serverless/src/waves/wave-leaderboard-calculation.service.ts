@@ -175,10 +175,10 @@ export class WaveLeaderboardCalculationService {
       allFinalVotesByDropIds[0]
     ];
     const dropIdsInTie: string[] = [];
-    for (let i = 1; i < allFinalVotesByDropIds.length; i++) {
-      const current = finalVotesByDropIds[i];
+    for (let i = 1; i < allFinalVotesByDropIds.length - 1; i++) {
+      const current = allFinalVotesByDropIds[i];
       finalVotesByDropIds.push(current);
-      const previous = finalVotesByDropIds[i];
+      const previous = allFinalVotesByDropIds[i - 1];
       if (current.finalVote == previous.finalVote) {
         dropIdsInTie.push(current.dropId);
         dropIdsInTie.push(previous.dropId);
