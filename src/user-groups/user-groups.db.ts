@@ -672,19 +672,23 @@ where ((cg.cic_direction = 'RECEIVED' and (
 
     const count = addresses.length;
 
-    const sql = `SELECT cg.*
-        FROM ${USER_GROUPS_TABLE} cg
-        JOIN (
-          SELECT pg.profile_group_id
-          FROM ${PROFILE_GROUPS_TABLE} pg
-          JOIN ${IDENTITIES_TABLE} i ON i.profile_id = pg.profile_id
-          WHERE i.primary_address IN (${addressPlaceholders})
-          GROUP BY pg.profile_group_id
-          HAVING COUNT(DISTINCT i.primary_address) = :count
-        ) filtered_pg ON filtered_pg.profile_group_id = cg.profile_group_id
-        WHERE cg.is_private = TRUE
-          AND cg.is_direct_message = TRUE
-        LIMIT 1;`;
+    const sql = `
+      WITH filtered_groups AS (
+        SELECT
+          pg.profile_group_id,
+          COUNT(DISTINCT CASE WHEN i.primary_address IN (${addressPlaceholders}) THEN i.primary_address END) AS matched_count,
+          COUNT(DISTINCT i.primary_address) AS total_count
+        FROM ${PROFILE_GROUPS_TABLE} pg
+        JOIN ${IDENTITIES_TABLE} i ON i.profile_id = pg.profile_id
+        GROUP BY pg.profile_group_id
+        HAVING matched_count = :count AND total_count = :count
+      )
+      SELECT cg.*
+      FROM ${USER_GROUPS_TABLE} cg
+      JOIN filtered_groups fg ON fg.profile_group_id = cg.profile_group_id
+      WHERE cg.is_private = TRUE AND cg.is_direct_message = TRUE
+      LIMIT 1;
+    `;
 
     const params: Record<string, any> = {
       count
