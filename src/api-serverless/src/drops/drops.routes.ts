@@ -153,7 +153,7 @@ router.post(
         'Total content length of all parts must be less than 32768 characters'
       );
     }
-    await assertDropIsCorrectlySigned(newDrop, authorProfileId);
+    await assertDropIsCorrectlySigned(apiRequest, authorProfileId);
     const createDropRequest: ApiCreateDropRequest & {
       author: { external_id: string };
     } = {
@@ -208,7 +208,7 @@ router.post(
     }
     await assertDropIsCorrectlySigned(
       {
-        ...updateRequest,
+        ...apiRequest,
         wave_id: waveId
       },
       authorId
