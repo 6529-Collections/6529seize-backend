@@ -592,7 +592,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     from ${DROPS_TABLE}
     where ${
       drop_type ? ` drop_type = :drop_type and ` : ``
-    } drops.reply_to_drop_id in (:dropIds)
+    } ${DROPS_TABLE}.reply_to_drop_id in (:dropIds)
     group by 1, 2`;
     return this.db
       .execute(

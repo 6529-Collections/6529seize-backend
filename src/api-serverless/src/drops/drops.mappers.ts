@@ -286,7 +286,6 @@ export class DropsMappers {
       dropsTopVoters,
       clapsLeftForContextProfile,
       dropsVoteCounts,
-      dropsClapCounts,
       dropsQuoteCounts,
       dropMedia,
       dropsRepliesCounts,
@@ -313,7 +312,9 @@ export class DropsMappers {
       this.dropsDb.findMentionsByDropIds(allDropIds, connection),
       this.dropsDb.findReferencedNftsByDropIds(allDropIds, connection),
       this.dropsDb.findMetadataByDropIds(allDropIds, connection),
-      this.clappingDb.findDropsTopContributors(chatDropIds, { connection }),
+      this.clappingDb.findDropsTopContributors(chatDropIds, contextProfileId, {
+        connection
+      }),
       this.dropVotingDb.findDropsTopContributors(participatoryDropIds, {
         connection
       }),
@@ -322,10 +323,6 @@ export class DropsMappers {
         : Promise.resolve(0),
       this.dropVotingDb.getTallyForDrops(
         { dropIds: participatoryDropIds },
-        { connection }
-      ),
-      this.clappingDb.getTallyForDrops(
-        { dropIds: chatDropIds, clapperId: contextProfileId ?? null },
         { connection }
       ),
       this.dropsDb.getDropsQuoteCounts(
@@ -387,7 +384,6 @@ export class DropsMappers {
       dropsTopClappers,
       dropsVoteCounts,
       dropsTopVoters,
-      dropsClapCounts,
       dropsQuoteCounts,
       dropMedia,
       dropsParts,
@@ -426,7 +422,6 @@ export class DropsMappers {
       metadata,
       dropsTopClappers,
       dropsTopVoters,
-      dropsClapCounts,
       dropsQuoteCounts,
       dropMedia,
       dropsParts,
@@ -507,7 +502,6 @@ export class DropsMappers {
         dropsTopVoters,
         subscribedActions,
         submissionDropsVotingRanges,
-        dropsClapCounts,
         dropsRanks,
         winDecisions,
         winningDropsTopRaters,
@@ -541,7 +535,6 @@ export class DropsMappers {
     dropsTopVoters,
     subscribedActions,
     submissionDropsVotingRanges,
-    dropsClapCounts,
     dropsVoteCounts,
     dropsRanks,
     winDecisions,
@@ -571,7 +564,15 @@ export class DropsMappers {
     referencedNfts: DropReferencedNftEntity[];
     mentions: DropMentionEntity[];
     metadata: DropMetadataEntity[];
-    dropsTopClappers: Record<string, { claps: number; clapper_id: string }[]>;
+    dropsTopClappers: Record<
+      string,
+      {
+        claps: number;
+        clapper_id: string;
+        total_clappers: number;
+        total_claps: number;
+      }[]
+    >;
     dropsTopVoters: Record<string, { votes: number; voter_id: string }[]>;
     dropsVoteCounts: Record<
       string,
@@ -581,10 +582,6 @@ export class DropsMappers {
     submissionDropsVotingRanges: Record<
       string,
       { min: number; max: number; current: number }
-    >;
-    dropsClapCounts: Record<
-      string,
-      { total_claps: number; claps_by_clapper: number }
     >;
     dropsRanks: Record<string, number>;
     winDecisions: Record<string, WaveDecisionWinnerDropEntity>;
@@ -620,25 +617,23 @@ export class DropsMappers {
           }))
         }
       : undefined;
-    let raters_count = dropsTopClappers[dropEntity.id]?.length ?? 0;
-    let rating = dropsClapCounts[dropEntity.id]?.total_claps ?? 0;
-    let top_raters = (dropsTopClappers[dropEntity.id] ?? []).map<ApiDropRater>(
-      (rater) => ({
-        rating: rater.claps,
-        profile: profilesByIds[rater.clapper_id]
-      })
-    );
+    const dropTopClappers = dropsTopClappers[dropEntity.id];
+    let raters_count = dropTopClappers?.at(0)?.total_clappers ?? 0;
+    let rating = dropTopClappers?.at(0)?.total_claps ?? 0;
+    let top_raters = (dropTopClappers ?? []).map<ApiDropRater>((rater) => ({
+      rating: rater.claps,
+      profile: profilesByIds[rater.clapper_id]
+    }));
     let context_profile_context: ApiDropContextProfileContext | null = null;
     let realtime_rating = rating;
     if (contextProfileId) {
+      const clapsByClapper =
+        dropTopClappers?.find((cl) => cl.clapper_id === contextProfileId)
+          ?.claps ?? 0;
       context_profile_context = {
-        rating: dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0,
-        min_rating:
-          (dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0) -
-          clapsLeftForContextProfile,
-        max_rating:
-          (dropsClapCounts[dropEntity.id]?.claps_by_clapper ?? 0) +
-          clapsLeftForContextProfile
+        rating: clapsByClapper,
+        min_rating: clapsByClapper - clapsLeftForContextProfile,
+        max_rating: clapsByClapper + clapsLeftForContextProfile
       };
     }
     if (dropEntity.drop_type === DropType.WINNER) {
@@ -725,7 +720,6 @@ export class DropsMappers {
                   dropsVoteCounts,
                   subscribedActions,
                   submissionDropsVotingRanges,
-                  dropsClapCounts,
                   dropsRanks,
                   allEntities,
                   winDecisions,
@@ -771,7 +765,6 @@ export class DropsMappers {
                           dropsTopVoters,
                           subscribedActions,
                           submissionDropsVotingRanges,
-                          dropsClapCounts,
                           dropsRanks,
                           allEntities,
                           winDecisions,
