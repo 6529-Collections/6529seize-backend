@@ -10,9 +10,12 @@ export const seizeSettings = (): ApiSeizeSettings => {
     process.env.ALL_DROPS_NOTIFICATIONS_SUBSCRIBERS_LIMIT ?? '15'
   );
 
+  const memes_wave_id = process.env.MEMES_WAVE_ID ?? null;
+
   return {
     rememes_submission_tdh_threshold,
-    all_drops_notifications_subscribers_limit
+    all_drops_notifications_subscribers_limit,
+    memes_wave_id
   };
 };
 
