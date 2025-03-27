@@ -425,7 +425,7 @@ router.get(
           page: Joi.number().integer().min(1).default(1),
           sort_direction: Joi.string()
             .valid(...Object.values(PageSortDirection))
-            .default(PageSortDirection.DESC),
+            .default(PageSortDirection.ASC),
           sort: Joi.string()
             .valid(...Object.values(LeaderboardSort))
             .default(LeaderboardSort.RANK),
