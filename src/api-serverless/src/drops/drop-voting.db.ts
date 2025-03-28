@@ -750,6 +750,51 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
     return states;
   }
 
+  async getDropsParticipatoryDropsVoteStatesInTimespan(
+    params: {
+      fromTime: number;
+      toTime: number;
+      dropId: string;
+    },
+    ctx: RequestContext
+  ): Promise<DropRealVoteInTimeWithoutId[]> {
+    ctx.timer?.start(
+      `${this.constructor.name}->getDropsParticipatoryDropsVoteStatesInTimespan`
+    );
+    const states = await this.db
+      .execute<DropRealVoteInTimeWithoutId>(
+        `
+      select drv_1.drop_id as drop_id, drv_1.wave_id as wave_id, drv_1.timestamp as timestamp, drv_1.vote as vote
+      from ${DROP_REAL_VOTE_IN_TIME_TABLE} drv_1
+      join ${DROPS_TABLE} d1 on d1.id = drv_1.drop_id
+      where d1.drop_type = '${DropType.PARTICIPATORY}' 
+        and drv_1.drop_id = :dropId
+        and drv_1.timestamp > :fromTime
+        and drv_1.timestamp < :toTime
+      union all
+      select drv_2.drop_id as drop_id, drv_2.wave_id as wave_id, :fromTime as timestamp, drv_2.vote as vote
+      from ${DROP_REAL_VOTE_IN_TIME_TABLE} drv_2
+      where drv_2.id in (
+                     select max(drv_2_i.id) as id
+                     from ${DROP_REAL_VOTE_IN_TIME_TABLE} drv_2_i
+                     join ${DROPS_TABLE} d2 on d2.id = drv_2_i.drop_id
+                     where d2.drop_type = '${DropType.PARTICIPATORY}' 
+                     and drv_2_i.drop_id = :dropId
+                     and drv_2_i.timestamp <= :fromTime
+      )
+      `,
+        params,
+        { wrappedConnection: ctx.connection }
+      )
+      .then((res) =>
+        res.map((it) => ({ ...it, timestamp: +it.timestamp, vote: +it.vote }))
+      );
+    ctx.timer?.stop(
+      `${this.constructor.name}->getDropsParticipatoryDropsVoteStatesInTimespan`
+    );
+    return states;
+  }
+
   async upsertWaveLeaderboardEntry(
     entry: WaveLeaderboardEntryEntity,
     ctx: RequestContext
@@ -988,6 +1033,17 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop(`${this.constructor.name}->insertDropRealVoterVoteInTime`);
+  }
+
+  async findWavesTimelockByDropId(dropId: string): Promise<number | null> {
+    return this.db
+      .oneOrNull<{
+        time_lock_ms: number;
+      }>(
+        `select time_lock_ms from waves where id = (select wave_id from drops where id = :dropId)`,
+        { dropId }
+      )
+      .then((it) => it?.time_lock_ms ?? null);
   }
 }
 
