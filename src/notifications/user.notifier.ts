@@ -13,6 +13,8 @@ import {
 } from './user-notification.types';
 import { Timer } from '../time';
 import { RequestContext } from '../request.context';
+import { seizeSettings } from '../api-serverless/src/api-constants';
+import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 
 export class UserNotifier {
   constructor(
@@ -216,23 +218,35 @@ export class UserNotifier {
   ) {
     timer?.start('userNotifier->notifyAllNotificationsSubscribers');
 
+    const waveMembersCount = await identitySubscriptionsDb.countWaveSubscribers(
+      waveId
+    );
+    const subscribersLimit =
+      seizeSettings().all_drops_notifications_subscribers_limit;
+
+    if (waveMembersCount > subscribersLimit) {
+      timer?.stop('userNotifier->notifyAllNotificationsSubscribers');
+      return;
+    }
+
     const existingNotificationIdentities =
       await this.identityNotificationsDb.findIdentitiesNotification(
         waveId,
         dropId,
         connection
       );
+
     const ignoreProfileIds = existingNotificationIdentities ?? [];
 
     const subscriberIdsToNotify = subscriberIds.filter(
-      (it) => !ignoreProfileIds.includes(it) && it !== relatedIdentityId
+      (id) => !ignoreProfileIds.includes(id) && id !== relatedIdentityId
     );
 
     await Promise.all(
-      subscriberIdsToNotify.map(async (it) => {
-        await this.identityNotificationsDb.insertNotification(
+      subscriberIdsToNotify.map((id) =>
+        this.identityNotificationsDb.insertNotification(
           {
-            identity_id: it,
+            identity_id: id,
             additional_identity_id: relatedIdentityId,
             related_drop_id: dropId,
             related_drop_part_no: null,
@@ -244,9 +258,10 @@ export class UserNotifier {
             visibility_group_id: null
           },
           connection
-        );
-      })
+        )
+      )
     );
+
     timer?.stop('userNotifier->notifyAllNotificationsSubscribers');
   }
 }

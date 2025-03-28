@@ -236,6 +236,13 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       .then((it) => it?.cnt ?? 0);
   }
 
+  async countWaveSubscribers(waveId: string) {
+    return this.countDistinctSubscriberIdsForTarget({
+      target_id: waveId,
+      target_type: ActivityEventTargetType.WAVE
+    });
+  }
+
   async countTargetIdsAndActionsForTarget(
     params: OutgoingIdentitySubscriptionsParams,
     eligibleGroupIds: string[]
