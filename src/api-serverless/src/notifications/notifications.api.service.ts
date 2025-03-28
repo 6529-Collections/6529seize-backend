@@ -291,10 +291,7 @@ export class NotificationsApiService {
   }
 
   public async countWaveSubscribers(waveId: string) {
-    return this.identitySubscriptionsDb.countDistinctSubscriberIdsForTarget({
-      target_id: waveId,
-      target_type: ActivityEventTargetType.WAVE
-    });
+    return this.identitySubscriptionsDb.countWaveSubscribers(waveId);
   }
 
   public async getWaveSubscription(identityId: string, waveId: string) {
