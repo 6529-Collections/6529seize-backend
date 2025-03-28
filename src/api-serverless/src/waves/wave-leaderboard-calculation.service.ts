@@ -5,6 +5,7 @@ import { Logger } from '../../../logging';
 import { DropRealVoteInTimeWithoutId } from '../../../entities/IDropRealVoteInTime';
 import { distinct } from '../../../helpers';
 import { DropRealVoterVoteInTimeEntityWithoutId } from '../../../entities/IDropRealVoterVoteInTime';
+import { BadRequestException } from '../../../exceptions';
 
 export class WaveLeaderboardCalculationService {
   private readonly logger = Logger.get(WaveLeaderboardCalculationService.name);
@@ -110,24 +111,48 @@ export class WaveLeaderboardCalculationService {
   }) {
     voteStates.sort((a, d) => a.timestamp - d.timestamp);
     const fullTimeSpanInMs = endTime.minus(startTime).toMillis();
-    let timePointer = endTime.toMillis();
+    const endTimeInMillis = endTime.toMillis();
     const weightedDropVotes: number[] = [];
-    for (let i = voteStates.length - 1; i >= 0; i--) {
-      const voteChangeTimestamp = voteStates[i].timestamp;
-      const dropVote = voteStates[i].vote;
-      const voteActivityTimeMs = timePointer - voteChangeTimestamp;
-      if (fullTimeSpanInMs === 0) {
-        weightedDropVotes.push(dropVote);
-      } else {
-        weightedDropVotes.push(
-          dropVote * (voteActivityTimeMs / fullTimeSpanInMs)
-        );
-      }
-      timePointer = voteChangeTimestamp;
+    for (let i = 0; i < voteStates.length; i++) {
+      const weighted = voteStates[i];
+      const thisTimeStamp = weighted.timestamp;
+      const nextTimestamp =
+        i === voteStates.length - 1
+          ? endTimeInMillis
+          : voteStates[i + 1].timestamp;
+      const timeSpan = nextTimestamp - thisTimeStamp;
+      const weight = timeSpan / fullTimeSpanInMs;
+      const weightedVote = weight * voteStates[i].vote;
+      weightedDropVotes.push(weightedVote);
     }
     return Math.floor(
       weightedDropVotes.reduce((a, b) => a + b, 0) / weightedDropVotes.length
     );
+  }
+
+  public async calculateCurrentWeightedVoteForDrop({
+    dropId
+  }: {
+    dropId: string;
+  }) {
+    const timelock = await this.dropVotingDb.findWavesTimelockByDropId(dropId);
+    if (!timelock) {
+      throw new BadRequestException(
+        `Drop ${dropId} is not in a timelocked wave`
+      );
+    }
+    const endTime = Time.now();
+    const startTime = endTime.minus(Time.millis(timelock));
+    const voteStates =
+      await this.dropVotingDb.getDropsParticipatoryDropsVoteStatesInTimespan(
+        {
+          dropId,
+          toTime: endTime.toMillis(),
+          fromTime: startTime.toMillis()
+        },
+        {}
+      );
+    return this.calculateFinalVoteForDrop({ voteStates, endTime, startTime });
   }
 
   async calculateWaveLeaderBoardInTimeAndGetTopNDropsWithVotes(
