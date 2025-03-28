@@ -125,9 +125,7 @@ export class WaveLeaderboardCalculationService {
       const weightedVote = weight * voteStates[i].vote;
       weightedDropVotes.push(weightedVote);
     }
-    return Math.floor(
-      weightedDropVotes.reduce((a, b) => a + b, 0) / weightedDropVotes.length
-    );
+    return Math.floor(weightedDropVotes.reduce((a, b) => a + b, 0));
   }
 
   public async calculateCurrentWeightedVoteForDrop({
