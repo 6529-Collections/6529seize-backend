@@ -3,7 +3,8 @@ import {
   dropsDb,
   DropsDb,
   DropVotersStatsParams,
-  LeaderboardParams
+  LeaderboardParams,
+  LeaderboardSort
 } from '../../../drops/drops.db';
 import { ConnectionWrapper } from '../../../sql-executor';
 import {
@@ -583,10 +584,15 @@ export class DropsApiService {
       params,
       isTimeLockedWave,
       ctx
-    ).then(
-      async (drops) =>
-        await this.dropsMappers.convertToDropsWithoutWaves(drops, ctx)
-    );
+    ).then(async (drops) => {
+      ctx.timer?.start(`${this.constructor.name}->convertLeaderboardDrops`);
+      const results = await this.dropsMappers.convertToDropsWithoutWaves(
+        drops,
+        ctx
+      );
+      ctx.timer?.stop(`${this.constructor.name}->convertLeaderboardDrops`);
+      return results;
+    });
     return {
       wave: waveMin,
       drops: drops,
@@ -601,7 +607,7 @@ export class DropsApiService {
     isTimeLockedWave: boolean,
     ctx: RequestContext
   ): Promise<DropEntity[]> {
-    if (isTimeLockedWave) {
+    if (isTimeLockedWave && params.sort === LeaderboardSort.RANK) {
       return this.dropsDb.findWeightedLeaderboardDrops(params, ctx);
     }
     return this.dropsDb.findRealtimeLeaderboardDrops(

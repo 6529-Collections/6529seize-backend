@@ -1018,9 +1018,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
              )
         select d.* from dranks r join drops d on d.id = r.drop_id ${
           params.author_identity ? ` where d.author_id = :author_identity ` : ``
-        } order by ${
-      params.sort === LeaderboardSort.RANK ? `r.rnk` : 'd.created_at'
-    } ${params.sort_direction} limit :page_size offset :offset
+        } order by r.rnk ${
+      params.sort_direction
+    } limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
@@ -1432,12 +1432,12 @@ export type NewDropEntity = Omit<DropEntity, 'serial_no'> & {
 
 export enum LeaderboardSort {
   RANK = 'RANK',
-  CREATION_TIME = 'CREATION_TIME'
+  REALTIME_VOTE = 'REALTIME_VOTE'
 }
 
 export interface LeaderboardParams {
   readonly wave_id: string;
-  page_size: number;
+  readonly page_size: number;
   readonly page: number;
   readonly sort_direction: PageSortDirection;
   readonly sort: LeaderboardSort;
