@@ -32,7 +32,6 @@ import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
-import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 import { BadRequestException } from '../../../exceptions';
 import { seizeSettings } from '../api-constants';
 
