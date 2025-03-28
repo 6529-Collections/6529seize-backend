@@ -2459,7 +2459,7 @@ paths:
             type: string
             enum:
               - RANK
-              - CREATION_TIME
+              - REALTIME_VOTE
         - name: author_identity
           in: query
           description: Identity of author to filter by
