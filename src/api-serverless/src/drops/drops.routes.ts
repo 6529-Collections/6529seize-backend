@@ -21,7 +21,7 @@ import {
   resolveEnum
 } from '../../../helpers';
 import { dropCheeringService } from './drop-cheering.service';
-import { FullPageRequest, Page, PageSortDirection } from '../page-request';
+import { FullPageRequest, PageSortDirection } from '../page-request';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
 import { userGroupsService } from '../community-members/user-groups.service';
@@ -297,42 +297,6 @@ router.post(
       { authenticationContext, timer }
     );
     res.send(drop);
-  }
-);
-
-router.get(
-  `/:drop_id/parts/:drop_part_id/replies`,
-  maybeAuthenticatedUser(),
-  async (
-    req: Request<
-      { drop_id: string; drop_part_id: string; drop_type?: ApiDropType },
-      any,
-      any,
-      FullPageRequest<'created_at'>,
-      any
-    >,
-    res: Response<Page<ApiDrop>>
-  ) => {
-    const timer = Timer.getFromRequest(req);
-    const authenticationContext = await getAuthenticationContext(req, timer);
-    const ctx: RequestContext = {
-      authenticationContext,
-      timer
-    };
-    const { drop_part_id, drop_id, query, drop_type } = await prepDropPartQuery(
-      req,
-      ctx
-    );
-    const replies = await dropsService.findDropReplies(
-      {
-        ...query,
-        drop_part_id,
-        drop_id,
-        drop_type
-      },
-      ctx
-    );
-    res.send(replies);
   }
 );
 
