@@ -116,7 +116,6 @@ export class WsListenersNotifier {
       (modifiedDrop as any).context_profile_context = undefined;
     }
     for (const part of modifiedDrop.parts) {
-      delete part.context_profile_context;
       if (part.quoted_drop?.drop) {
         part.quoted_drop.drop = this.removeDropsAuthRequestContext(
           part.quoted_drop.drop,
