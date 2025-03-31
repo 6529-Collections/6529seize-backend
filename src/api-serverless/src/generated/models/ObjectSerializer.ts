@@ -49,7 +49,6 @@ export * from '../models/ApiDropMedia';
 export * from '../models/ApiDropMentionedUser';
 export * from '../models/ApiDropMetadata';
 export * from '../models/ApiDropPart';
-export * from '../models/ApiDropPartContextProfileContext';
 export * from '../models/ApiDropRater';
 export * from '../models/ApiDropRatingRequest';
 export * from '../models/ApiDropReferencedNFT';
@@ -209,7 +208,6 @@ import { ApiDropMedia } from '../models/ApiDropMedia';
 import { ApiDropMentionedUser } from '../models/ApiDropMentionedUser';
 import { ApiDropMetadata } from '../models/ApiDropMetadata';
 import { ApiDropPart } from '../models/ApiDropPart';
-import { ApiDropPartContextProfileContext } from '../models/ApiDropPartContextProfileContext';
 import { ApiDropRater } from '../models/ApiDropRater';
 import { ApiDropRatingRequest } from '../models/ApiDropRatingRequest';
 import { ApiDropReferencedNFT } from '../models/ApiDropReferencedNFT';
@@ -409,7 +407,6 @@ let typeMap: {[index: string]: any} = {
     "ApiDropMentionedUser": ApiDropMentionedUser,
     "ApiDropMetadata": ApiDropMetadata,
     "ApiDropPart": ApiDropPart,
-    "ApiDropPartContextProfileContext": ApiDropPartContextProfileContext,
     "ApiDropRater": ApiDropRater,
     "ApiDropRatingRequest": ApiDropRatingRequest,
     "ApiDropReferencedNFT": ApiDropReferencedNFT,

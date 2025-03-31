@@ -13,7 +13,6 @@ import {
   NotFoundException
 } from '../../../exceptions';
 import { resolveEnumOrThrow } from '../../../helpers';
-import { Page, PageSortDirection } from '../page-request';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import {
   UserGroupsService,
@@ -179,45 +178,6 @@ export class DropsApiService {
       profileId
     );
     return { available_credit_for_rating: creditLeft };
-  }
-
-  async findDropReplies(
-    param: {
-      sort_direction: PageSortDirection;
-      drop_id: string;
-      drop_part_id: number;
-      drop_type: ApiDropType | null;
-      sort: string;
-      page: number;
-      page_size: number;
-    },
-    ctx: RequestContext
-  ): Promise<Page<ApiDrop>> {
-    const drop_type = param.drop_type
-      ? resolveEnumOrThrow(DropType, param.drop_type)
-      : null;
-    const count = await this.dropsDb
-      .countRepliesByDropIds({
-        dropIds: [param.drop_id],
-        drop_type
-      })
-      .then(
-        (result) => result[param.drop_id]?.[param.drop_part_id]?.count ?? 0
-      );
-    const replies = await this.dropsDb.findRepliesByDropId({
-      ...param,
-      drop_type
-    });
-    const drops = await this.dropsMappers.convertToDropFulls({
-      dropEntities: replies,
-      contextProfileId: ctx.authenticationContext?.getActingAsId()
-    });
-    return {
-      count,
-      page: param.page,
-      next: count > param.page_size * param.page,
-      data: drops
-    };
   }
 
   async findDropsByIdsOrThrow(

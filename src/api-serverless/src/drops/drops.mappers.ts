@@ -236,12 +236,7 @@ export class DropsMappers {
     connection?: ConnectionWrapper<any>
   ) {
     const rootDropIds = dropEntities.map((it) => it.id);
-    const quoteIds = Object.values(
-      await this.dropsDb.getDropsParts(rootDropIds, connection)
-    )
-      .flat()
-      .map((it) => it.quoted_drop_id)
-      .filter((it) => it !== null) as string[];
+    const quoteIds = await this.dropsDb.getQuoteIds(rootDropIds, connection);
     const replyDropIds = dropEntities
       .map((it) => it.reply_to_drop_id)
       .filter((it) => it !== null) as string[];
@@ -284,16 +279,15 @@ export class DropsMappers {
       dropsTopVoters,
       clapsLeftForContextProfile,
       dropsVoteCounts,
-      dropsQuoteCounts,
       dropMedia,
-      dropsRepliesCounts,
       subscribedActions,
       winDecisions,
       winningDropsTopRaters,
       winningDropsRatersCounts,
       winningDropsRatingsByVoter,
       weightedDropsRanks,
-      weightedDropsRates
+      weightedDropsRates,
+      deletedDrops
     ] = await Promise.all([
       this.dropVotingDb.getParticipationDropsRealtimeRanks(
         participatoryDropIds,
@@ -322,20 +316,7 @@ export class DropsMappers {
         { dropIds: participatoryDropIds },
         { connection }
       ),
-      this.dropsDb.getDropsQuoteCounts(
-        allDropIds,
-        contextProfileId,
-        connection
-      ),
       this.dropsDb.getDropMedia(allDropIds, connection),
-      this.dropsDb.countRepliesByDropIds(
-        {
-          dropIds: allDropIds,
-          context_profile_id: contextProfileId,
-          drop_type: null
-        },
-        connection
-      ),
       !contextProfileId
         ? Promise.resolve({} as Record<string, ActivityEventAction[]>)
         : this.identitySubscriptionsDb.findIdentitySubscriptionActionsOfTargets(
@@ -365,12 +346,9 @@ export class DropsMappers {
       }),
       this.dropVotingDb.getWeightedDropRates(participatoryDropIds, {
         connection
-      })
+      }),
+      this.dropsDb.findDeletedDrops(allDropIds, connection)
     ]);
-    const deletedDrops = await this.dropsDb.findDeletedDrops(
-      allDropIds,
-      connection
-    );
     return {
       dropsRanks,
       submissionDropsVotingRanges,
@@ -380,11 +358,9 @@ export class DropsMappers {
       dropsTopClappers,
       dropsVoteCounts,
       dropsTopVoters,
-      dropsQuoteCounts,
       dropMedia,
       dropsParts,
       clapsLeftForContextProfile,
-      dropsRepliesCounts,
       winDecisions,
       winningDropsTopRaters,
       winningDropsRatersCounts,
@@ -417,10 +393,8 @@ export class DropsMappers {
       metadata,
       dropsTopClappers,
       dropsTopVoters,
-      dropsQuoteCounts,
       dropMedia,
       dropsParts,
-      dropsRepliesCounts,
       subscribedActions,
       deletedDrops,
       clapsLeftForContextProfile,
@@ -484,8 +458,6 @@ export class DropsMappers {
         profilesByIds,
         dropsParts,
         dropMedia,
-        dropsRepliesCounts,
-        dropsQuoteCounts,
         contextProfileId,
         clapsLeftForContextProfile,
         referencedNfts,
@@ -517,8 +489,6 @@ export class DropsMappers {
     profilesByIds,
     dropsParts,
     dropMedia,
-    dropsRepliesCounts,
-    dropsQuoteCounts,
     clapsLeftForContextProfile,
     contextProfileId,
     referencedNfts,
@@ -544,14 +514,6 @@ export class DropsMappers {
     dropsParts: Record<string, DropPartEntity[]>;
     dropMedia: Record<string, DropMediaEntity[]>;
     clapsLeftForContextProfile: number;
-    dropsRepliesCounts: Record<
-      string,
-      Record<number, { count: number; context_profile_count: number }>
-    >;
-    dropsQuoteCounts: Record<
-      string,
-      Record<number, { total: number; by_context_profile: number | null }>
-    >;
     contextProfileId: string | undefined | null;
     referencedNfts: DropReferencedNftEntity[];
     mentions: DropMentionEntity[];
@@ -685,8 +647,6 @@ export class DropsMappers {
                   dropsParts,
                   dropMedia,
                   clapsLeftForContextProfile,
-                  dropsRepliesCounts,
-                  dropsQuoteCounts,
                   contextProfileId,
                   referencedNfts,
                   mentions,
@@ -728,8 +688,6 @@ export class DropsMappers {
                           profilesByIds,
                           dropsParts,
                           dropMedia,
-                          dropsRepliesCounts,
-                          dropsQuoteCounts,
                           clapsLeftForContextProfile,
                           contextProfileId,
                           referencedNfts,
@@ -759,21 +717,7 @@ export class DropsMappers {
                 .map<ApiDropMedia>((it) => ({
                   url: it.url,
                   mime_type: it.mime_type
-                })) ?? [],
-            replies_count:
-              dropsRepliesCounts[it.drop_id]?.[it.drop_part_id]?.count ?? 0,
-            quotes_count:
-              dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]?.total ?? 0,
-            context_profile_context: contextProfileId
-              ? {
-                  replies_count:
-                    dropsRepliesCounts[it.drop_id]?.[it.drop_part_id]
-                      ?.context_profile_count ?? 0,
-                  quotes_count:
-                    dropsQuoteCounts[it.drop_id]?.[it.drop_part_id]
-                      ?.by_context_profile ?? 0
-                }
-              : null
+                })) ?? []
           };
         }) ?? [],
       parts_count: dropEntity.parts_count,
