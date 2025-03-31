@@ -330,6 +330,10 @@ export const updateTDH = async (
         );
       });
 
+      consolidationTransactions = consolidationTransactions.filter(
+        (t) => !areEqualAddresses(t.from_address, t.to_address)
+      );
+
       if (areEqualAddresses(wallet, NULL_ADDRESS)) {
         logger.info(
           `[WALLET ${wallet}] [SKIPPING MEME CARD 8 BURN TRANSACTION ${MEME_8_BURN_TRANSACTION}]`
