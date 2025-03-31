@@ -2460,12 +2460,7 @@ paths:
             enum:
               - RANK
               - REALTIME_VOTE
-        - name: author_identity
-          in: query
-          description: Identity of author to filter by
-          required: false
-          schema:
-            type: string
+              - MY_REALTIME_VOTE
       responses:
         "200":
           description: successful operation
