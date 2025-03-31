@@ -48,7 +48,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
         balance.balance = balanceAfter;
       }
       await balancesRepo.save(balance);
-      await topUpsRepo.insert(topUp);
+      await topUpsRepo.save(topUp);
 
       if (setToAutoSubscribe) {
         await updateSubscriptionMode(consolidationKey, true, qrHolder);
