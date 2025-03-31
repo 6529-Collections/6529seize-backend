@@ -428,21 +428,13 @@ router.get(
             .default(PageSortDirection.ASC),
           sort: Joi.string()
             .valid(...Object.values(LeaderboardSort))
-            .default(LeaderboardSort.RANK),
-          author_identity: Joi.string().optional().default(null)
+            .default(LeaderboardSort.RANK)
         })
       )
     };
-    let author_identity = params.author_identity;
-    if (author_identity) {
-      author_identity = await profilesService
-        .resolveIdentityOrThrowNotFound(author_identity)
-        .then((it) => it.profile_id);
-    }
     const result = await dropsService.findLeaderboard(
       {
-        ...params,
-        author_identity
+        ...params
       },
       {
         authenticationContext,

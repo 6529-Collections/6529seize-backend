@@ -19,6 +19,7 @@ import {
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
   DROP_RANK_TABLE,
+  DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROP_RELATIONS_TABLE,
   DROP_VOTER_STATE_TABLE,
@@ -1016,15 +1017,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                                         RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
                                                  from ddata) drop_ranks
              )
-        select d.* from dranks r join drops d on d.id = r.drop_id ${
-          params.author_identity ? ` where d.author_id = :author_identity ` : ``
-        } order by r.rnk ${
-      params.sort_direction
-    } limit :page_size offset :offset
+        select d.* from dranks r join drops d on d.id = r.drop_id order by r.rnk ${params.sort_direction} limit :page_size offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
-      author_identity: params.author_identity,
       page_size: params.page_size,
       offset: params.page_size * (params.page - 1)
     };
@@ -1036,7 +1032,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
   }
 
   async findRealtimeLeaderboardDrops(
-    params: { offset: number; limit: number; wave_id: string },
+    params: {
+      offset: number;
+      limit: number;
+      wave_id: string;
+      sort_order: PageSortDirection;
+    },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
     ctx.timer?.start(`${this.constructor.name}->findLeaderboardDrops`);
@@ -1055,7 +1056,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                                  RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
                                           from ddata) drop_ranks
           )
-      select d.* from dranks r join drops d on d.id = r.drop_id order by r.rnk limit :limit offset :offset
+      select d.* from dranks r join drops d on d.id = r.drop_id order by r.rnk ${params.sort_order} limit :limit offset :offset
     `;
     const sqlParams = {
       wave_id: params.wave_id,
@@ -1069,6 +1070,54 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return results;
   }
 
+  async findRealtimeLeaderboardDropsOrderedByUsersVotes(
+    params: {
+      offset: number;
+      limit: number;
+      wave_id: string;
+      voter_id: string;
+      sort_order: PageSortDirection;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    ctx.timer?.start(
+      `${this.constructor.name}->findRealtimeLeaderboardDropsOrderedByUsersVotes`
+    );
+    const sql = `
+    with 
+      v_vot_tim as (select drop_id, max(timestamp) as timestamp from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} where wave_id = :wave_id and voter_id = :voter_id group by 1),
+      v_vot_as as (select dv.* from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} dv join v_vot_tim on v_vot_tim.timestamp = dv.timestamp and v_vot_tim.drop_id = dv.drop_id where dv.voter_id = :voter_id),
+      ddata as (select d.id                                    as drop_id,
+                      cast(ifnull(r.vote, 0) as signed)         as vote,
+                      cast(ifnull(r.timestamp, d.created_at) as signed) as timestamp
+               from ${DROPS_TABLE} d
+                        left join v_vot_as r ON r.drop_id = d.id
+               where d.wave_id = :wave_id
+                 and d.drop_type = '${DropType.PARTICIPATORY}'),
+      dranks as (
+            select drop_id, rnk, vote from (select drop_id,
+                                                 vote,
+                                                 timestamp,
+                                                 RANK() OVER (ORDER BY vote DESC, timestamp ASC) AS rnk
+                                          from ddata) drop_ranks
+          )
+      select d.* from dranks r join drops d on d.id = r.drop_id order by r.rnk ${params.sort_order} limit :limit offset :offset
+    `;
+    const sqlParams = {
+      wave_id: params.wave_id,
+      voter_id: params.voter_id,
+      limit: params.limit,
+      offset: params.offset
+    };
+    const results = await this.db.execute<DropEntity>(sql, sqlParams, {
+      wrappedConnection: ctx.connection
+    });
+    ctx.timer?.stop(
+      `${this.constructor.name}->findRealtimeLeaderboardDropsOrderedByUsersVotes`
+    );
+    return results;
+  }
+
   async countParticipatoryDrops(
     params: LeaderboardParams,
     ctx: RequestContext
@@ -1076,12 +1125,9 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.start(`${this.constructor.name}->countLeaderboardDrops`);
     const count = await this.db
       .oneOrNull<{ cnt: number }>(
-        `select count(*) as cnt from ${DROPS_TABLE} where wave_id = :wave_id and drop_type = :drop_type ${
-          params.author_identity ? ` and author_id = :author_identity ` : ``
-        } `,
+        `select count(*) as cnt from ${DROPS_TABLE} where wave_id = :wave_id and drop_type = :drop_type`,
         {
           wave_id: params.wave_id,
-          author_identity: params.author_identity,
           drop_type: DropType.PARTICIPATORY
         },
         { wrappedConnection: ctx.connection }
@@ -1432,7 +1478,8 @@ export type NewDropEntity = Omit<DropEntity, 'serial_no'> & {
 
 export enum LeaderboardSort {
   RANK = 'RANK',
-  REALTIME_VOTE = 'REALTIME_VOTE'
+  REALTIME_VOTE = 'REALTIME_VOTE',
+  MY_REALTIME_VOTE = 'MY_REALTIME_VOTE'
 }
 
 export interface LeaderboardParams {
@@ -1441,7 +1488,6 @@ export interface LeaderboardParams {
   readonly page: number;
   readonly sort_direction: PageSortDirection;
   readonly sort: LeaderboardSort;
-  readonly author_identity: string | null;
 }
 
 export interface DropLogsQueryParams {

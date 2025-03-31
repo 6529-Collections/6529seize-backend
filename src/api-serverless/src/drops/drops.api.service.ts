@@ -610,11 +610,30 @@ export class DropsApiService {
     if (isTimeLockedWave && params.sort === LeaderboardSort.RANK) {
       return this.dropsDb.findWeightedLeaderboardDrops(params, ctx);
     }
+    if (params.sort === LeaderboardSort.MY_REALTIME_VOTE) {
+      const voterId = ctx.authenticationContext?.getActingAsId();
+      if (!voterId) {
+        throw new BadRequestException(
+          `Can't sort by voter votes as the user is not authenticated`
+        );
+      }
+      return this.dropsDb.findRealtimeLeaderboardDropsOrderedByUsersVotes(
+        {
+          voter_id: voterId,
+          wave_id: params.wave_id,
+          limit: params.page_size,
+          offset: (params.page - 1) * params.page_size,
+          sort_order: params.sort_direction
+        },
+        ctx
+      );
+    }
     return this.dropsDb.findRealtimeLeaderboardDrops(
       {
         wave_id: params.wave_id,
         limit: params.page_size,
-        offset: (params.page - 1) * params.page_size
+        offset: (params.page - 1) * params.page_size,
+        sort_order: params.sort_direction
       },
       ctx
     );
