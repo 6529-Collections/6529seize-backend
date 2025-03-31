@@ -315,17 +315,59 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
     target: string,
     connection: ConnectionWrapper<any>
   ) {
+    // Step 1: Delete conflicting rows before updating subscriber_id
     await this.db.execute(
       `
-      update ${IDENTITY_SUBSCRIPTIONS_TABLE} set subscriber_id = :target where subscriber_id = :sourceIdentity
-    `,
+      DELETE FROM ${IDENTITY_SUBSCRIPTIONS_TABLE}
+      WHERE subscriber_id = :target
+        AND identity_id IN (
+          SELECT identity_id FROM (
+            SELECT identity_id FROM ${IDENTITY_SUBSCRIPTIONS_TABLE}
+            WHERE subscriber_id = :sourceIdentity
+          ) AS temp_ids
+        )
+      `,
       { sourceIdentity, target },
       { wrappedConnection: connection }
     );
+
+    // Step 2: Update subscriber_id safely
     await this.db.execute(
       `
-      update ${IDENTITY_SUBSCRIPTIONS_TABLE} set target_id = :target where target_id = :sourceIdentity and target_type = '${ActivityEventTargetType.IDENTITY}'
-    `,
+      UPDATE ${IDENTITY_SUBSCRIPTIONS_TABLE}
+      SET subscriber_id = :target
+      WHERE subscriber_id = :sourceIdentity
+      `,
+      { sourceIdentity, target },
+      { wrappedConnection: connection }
+    );
+
+    // Step 3: Delete conflicting rows before updating target_id
+    await this.db.execute(
+      `
+      DELETE FROM ${IDENTITY_SUBSCRIPTIONS_TABLE}
+      WHERE target_id = :target
+        AND target_type = '${ActivityEventTargetType.IDENTITY}'
+        AND identity_id IN (
+          SELECT identity_id FROM (
+            SELECT identity_id FROM ${IDENTITY_SUBSCRIPTIONS_TABLE}
+            WHERE target_id = :sourceIdentity
+              AND target_type = '${ActivityEventTargetType.IDENTITY}'
+          ) AS temp_ids_2
+        )
+      `,
+      { sourceIdentity, target },
+      { wrappedConnection: connection }
+    );
+
+    // Step 4: Update target_id safely
+    await this.db.execute(
+      `
+      UPDATE ${IDENTITY_SUBSCRIPTIONS_TABLE}
+      SET target_id = :target
+      WHERE target_id = :sourceIdentity
+        AND target_type = '${ActivityEventTargetType.IDENTITY}'
+      `,
       { sourceIdentity, target },
       { wrappedConnection: connection }
     );
