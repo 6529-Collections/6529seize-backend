@@ -15,7 +15,6 @@ import {
   dropVotingDb,
   DropVotingDb
 } from '../api-serverless/src/drops/drop-voting.db';
-import { DropRealVoterVoteInTimeEntityWithoutId } from '../entities/IDropRealVoterVoteInTime';
 
 export class WaveDecisionsService {
   private readonly logger: Logger = Logger.get(this.constructor.name);
@@ -49,7 +48,7 @@ export class WaveDecisionsService {
     timer.stop(`${this.constructor.name}->createMissingDecisionsForAllWaves`);
   }
 
-  private async createDecisionsForWave(
+  async createDecisionsForWave(
     wavesLatestDecisionTimesWithStrategy: {
       wave_id: string;
       latest_decision_time: number | null;
@@ -286,7 +285,8 @@ export class WaveDecisionsService {
     },
     ctx: RequestContext
   ) {
-    const endTime = decision_time;
+    /*const endTime = decision_time;
+    let finalVotesSummed = 0;
     if (time_lock_ms !== null && time_lock_ms > 0) {
       const startTime = endTime.minusMillis(time_lock_ms);
       const voterVotes =
@@ -308,29 +308,29 @@ export class WaveDecisionsService {
         acc[it.drop_id][it.voter_id].push(it);
         return acc;
       }, {} as Record<string, Record<string, DropRealVoterVoteInTimeEntityWithoutId[]>>);
-      const updatePromises = Object.entries(votesByDropsAndVoters)
-        .map(([dropId, usersVotes]) => {
-          return Object.entries(usersVotes).map(([voterId, votes]) => {
-            const finalVote =
-              this.waveLeaderboardCalculationService.calculateFinalVoteForDrop({
-                voteStates: votes,
-                startTime,
-                endTime
-              });
-            return this.dropVotingDb.updateLatestVoteValue(
-              {
-                endTime,
-                voterId,
-                dropId,
-                vote: finalVote
-              },
-              ctx
-            );
-          });
-        })
-        .flat();
-      await Promise.all(updatePromises);
-    }
+      for (const [dropId, usersVotes] of Object.entries(
+        votesByDropsAndVoters
+      )) {
+        for (const [voterId, votes] of Object.entries(usersVotes)) {
+          const finalVote =
+            this.waveLeaderboardCalculationService.calculateFinalVoteForDrop({
+              voteStates: votes,
+              startTime,
+              endTime
+            });
+          finalVotesSummed += finalVote;
+          await this.dropVotingDb.updateLatestVoteValue(
+            {
+              endTime,
+              voterId,
+              dropId,
+              vote: finalVote
+            },
+            ctx
+          );
+        }
+      }
+    }*/
     const dropIds = winnerDrops.map((it) => it.drop_id);
     await this.dropVotingDb.transferAllDropVoterStatesToWinnerDropsVotes(
       { dropIds: dropIds },
