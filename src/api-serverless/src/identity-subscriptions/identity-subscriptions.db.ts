@@ -315,7 +315,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
     target: string,
     connection: ConnectionWrapper<any>
   ) {
-    // STEP 1: Delete potential duplicates before subscriber_id update
+    // Step 1: Delete any rows that would conflict after changing subscriber_id
     await this.db.execute(
       `
       DELETE FROM ${IDENTITY_SUBSCRIPTIONS_TABLE}
@@ -324,20 +324,14 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
           SELECT target_id FROM (
             SELECT target_id FROM ${IDENTITY_SUBSCRIPTIONS_TABLE}
             WHERE subscriber_id = :sourceIdentity
-          ) AS temp_target_ids
-        )
-        AND target_type IN (
-          SELECT target_type FROM (
-            SELECT target_type FROM ${IDENTITY_SUBSCRIPTIONS_TABLE}
-            WHERE subscriber_id = :sourceIdentity
-          ) AS temp_target_types
+          ) AS temp
         )
       `,
       { sourceIdentity, target },
       { wrappedConnection: connection }
     );
 
-    // STEP 2: Update subscriber_id from source → target
+    // Step 2: Update subscriber_id from sourceIdentity → target
     await this.db.execute(
       `
       UPDATE ${IDENTITY_SUBSCRIPTIONS_TABLE}
@@ -348,7 +342,7 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: connection }
     );
 
-    // STEP 3: Delete potential duplicates before target_id update
+    // Step 3: Delete any rows that would conflict after changing target_id (only where target_type = 'IDENTITY')
     await this.db.execute(
       `
       DELETE FROM ${IDENTITY_SUBSCRIPTIONS_TABLE}
@@ -359,14 +353,14 @@ export class IdentitySubscriptionsDb extends LazyDbAccessCompatibleService {
             SELECT subscriber_id FROM ${IDENTITY_SUBSCRIPTIONS_TABLE}
             WHERE target_id = :sourceIdentity
               AND target_type = '${ActivityEventTargetType.IDENTITY}'
-          ) AS temp_subscriber_ids
+          ) AS temp
         )
       `,
       { sourceIdentity, target },
       { wrappedConnection: connection }
     );
 
-    // STEP 4: Update target_id from source → target
+    // Step 4: Update target_id from sourceIdentity → target (only where target_type = 'IDENTITY')
     await this.db.execute(
       `
       UPDATE ${IDENTITY_SUBSCRIPTIONS_TABLE}
