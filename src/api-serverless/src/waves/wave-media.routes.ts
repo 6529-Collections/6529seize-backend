@@ -7,10 +7,19 @@ import {
 } from '../auth/auth';
 import { ForbiddenException } from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
-import * as Joi from 'joi';
 import { ApiCreateMediaUrlResponse } from '../generated/models/ApiCreateMediaUrlResponse';
 import { ApiCreateMediaUploadUrlRequest } from '../generated/models/ApiCreateMediaUploadUrlRequest';
 import { uploadMediaService } from '../media/upload-media.service';
+import { ApiStartMultipartMediaUploadResponse } from '../generated/models/ApiStartMultipartMediaUploadResponse';
+import { ApiUploadPartOfMultipartUploadRequest } from '../generated/models/ApiUploadPartOfMultipartUploadRequest';
+import { ApiUploadPartOfMultipartUploadResponse } from '../generated/models/ApiUploadPartOfMultipartUploadResponse';
+import { ApiCompleteMultipartUploadRequest } from '../generated/models/ApiCompleteMultipartUploadRequest';
+import { ApiCompleteMultipartUploadResponse } from '../generated/models/ApiCompleteMultipartUploadResponse';
+import {
+  ApiCompleteMultipartUploadRequestSchema,
+  ApiUploadPartOfMultipartUploadRequestSchema,
+  createMediaPrepRequestSchema
+} from '../media/media-uplodad.validators';
 
 const router = asyncRouter();
 
@@ -25,7 +34,37 @@ router.post(
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
     }
-    const createMediaUploadUrlRequest: ApiCreateMediaUploadUrlRequest & {
+    const validatedRequest: ApiCreateMediaUploadUrlRequest & {
+      author: string;
+    } = getValidatedByJoiOrThrow(
+      {
+        content_type: req.body.content_type,
+        file_name: req.body.file_name,
+        author: authenticatedProfileId
+      },
+      MediaPrepRequestSchema
+    );
+    const response = await uploadMediaService.createSingedWaveMediaUploadUrl({
+      content_type: validatedRequest.content_type,
+      file_name: validatedRequest.file_name,
+      author_id: validatedRequest.author
+    });
+    res.send(response);
+  }
+);
+
+router.post(
+  '/multipart-upload',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<any, any, ApiCreateMediaUploadUrlRequest, any, any>,
+    res: Response<ApiResponse<ApiStartMultipartMediaUploadResponse>>
+  ) => {
+    const authenticatedProfileId = await getAuthenticatedProfileIdOrNull(req);
+    if (!authenticatedProfileId) {
+      throw new ForbiddenException(`Please create a profile first`);
+    }
+    const validatedRequest: ApiCreateMediaUploadUrlRequest & {
       author: string;
     } = getValidatedByJoiOrThrow(
       {
@@ -34,22 +73,65 @@ router.post(
       },
       MediaPrepRequestSchema
     );
-    const response = await uploadMediaService.createSingedWaveMediaUploadUrl(
-      createMediaUploadUrlRequest
-    );
-    res.send(response);
+
+    const { key, upload_id } =
+      await uploadMediaService.getWaveMediaMultipartUploadKeyAndUploadId({
+        content_type: validatedRequest.content_type,
+        author_id: validatedRequest.author,
+        file_name: validatedRequest.file_name
+      });
+
+    res.send({
+      upload_id,
+      key
+    });
   }
 );
 
-const MediaPrepRequestSchema: Joi.ObjectSchema<
-  ApiCreateMediaUploadUrlRequest & { author: string }
-> = Joi.object({
-  author: Joi.string().required(),
-  content_type: Joi.string()
-    .required()
-    .allow(...['image/png', 'image/jpeg', 'image/gif']),
-  file_name: Joi.string().required(),
-  file_size: Joi.number().integer().required().min(1).max(500000000) // 500MB
+router.post(
+  '/multipart-upload/part',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<any, any, ApiUploadPartOfMultipartUploadRequest, any, any>,
+    res: Response<ApiResponse<ApiUploadPartOfMultipartUploadResponse>>
+  ) => {
+    const validatedRequest = getValidatedByJoiOrThrow(
+      req.body,
+      ApiUploadPartOfMultipartUploadRequestSchema
+    );
+
+    const url = await uploadMediaService.getSignedUrlForPartOfMultipartUpload(
+      validatedRequest
+    );
+
+    res.send({
+      upload_url: url
+    });
+  }
+);
+
+router.post(
+  '/multipart-upload/completion',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<any, any, ApiCompleteMultipartUploadRequest, any, any>,
+    res: Response<ApiResponse<ApiCompleteMultipartUploadResponse>>
+  ) => {
+    const validatedRequest = getValidatedByJoiOrThrow(
+      req.body,
+      ApiCompleteMultipartUploadRequestSchema
+    );
+    const url = await uploadMediaService.completeMultipartUpload(
+      validatedRequest
+    );
+    res.send({
+      media_url: url
+    });
+  }
+);
+
+const MediaPrepRequestSchema = createMediaPrepRequestSchema({
+  allowedMimeTypes: ['image/png', 'image/jpeg', 'image/gif']
 });
 
 export default router;

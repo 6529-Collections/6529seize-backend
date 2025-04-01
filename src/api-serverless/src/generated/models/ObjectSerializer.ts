@@ -21,6 +21,9 @@ export * from '../models/ApiChangeProfileCicRating';
 export * from '../models/ApiChangeProfileCicRatingResponse';
 export * from '../models/ApiChangeProfileRepRating';
 export * from '../models/ApiChangeProfileRepRatingResponse';
+export * from '../models/ApiCompleteMultipartUploadRequest';
+export * from '../models/ApiCompleteMultipartUploadRequestPart';
+export * from '../models/ApiCompleteMultipartUploadResponse';
 export * from '../models/ApiCreateDropPart';
 export * from '../models/ApiCreateDropRequest';
 export * from '../models/ApiCreateGroup';
@@ -113,6 +116,7 @@ export * from '../models/ApiRepRating';
 export * from '../models/ApiReplyToDrop';
 export * from '../models/ApiReplyToDropResponse';
 export * from '../models/ApiSeizeSettings';
+export * from '../models/ApiStartMultipartMediaUploadResponse';
 export * from '../models/ApiTargetAndSubscriptionActions';
 export * from '../models/ApiTransaction';
 export * from '../models/ApiTransactionPage';
@@ -120,6 +124,8 @@ export * from '../models/ApiUpdateDropRequest';
 export * from '../models/ApiUpdateProxyActionRequest';
 export * from '../models/ApiUpdateWaveRequest';
 export * from '../models/ApiUploadItem';
+export * from '../models/ApiUploadPartOfMultipartUploadRequest';
+export * from '../models/ApiUploadPartOfMultipartUploadResponse';
 export * from '../models/ApiUploadsPage';
 export * from '../models/ApiWave';
 export * from '../models/ApiWaveChatConfig';
@@ -180,6 +186,9 @@ import { ApiChangeProfileCicRating } from '../models/ApiChangeProfileCicRating';
 import { ApiChangeProfileCicRatingResponse } from '../models/ApiChangeProfileCicRatingResponse';
 import { ApiChangeProfileRepRating } from '../models/ApiChangeProfileRepRating';
 import { ApiChangeProfileRepRatingResponse } from '../models/ApiChangeProfileRepRatingResponse';
+import { ApiCompleteMultipartUploadRequest } from '../models/ApiCompleteMultipartUploadRequest';
+import { ApiCompleteMultipartUploadRequestPart } from '../models/ApiCompleteMultipartUploadRequestPart';
+import { ApiCompleteMultipartUploadResponse } from '../models/ApiCompleteMultipartUploadResponse';
 import { ApiCreateDropPart } from '../models/ApiCreateDropPart';
 import { ApiCreateDropRequest           } from '../models/ApiCreateDropRequest';
 import { ApiCreateGroup } from '../models/ApiCreateGroup';
@@ -272,6 +281,7 @@ import { ApiRepRating } from '../models/ApiRepRating';
 import { ApiReplyToDrop } from '../models/ApiReplyToDrop';
 import { ApiReplyToDropResponse } from '../models/ApiReplyToDropResponse';
 import { ApiSeizeSettings } from '../models/ApiSeizeSettings';
+import { ApiStartMultipartMediaUploadResponse } from '../models/ApiStartMultipartMediaUploadResponse';
 import { ApiTargetAndSubscriptionActions } from '../models/ApiTargetAndSubscriptionActions';
 import { ApiTransaction } from '../models/ApiTransaction';
 import { ApiTransactionPage } from '../models/ApiTransactionPage';
@@ -279,6 +289,8 @@ import { ApiUpdateDropRequest } from '../models/ApiUpdateDropRequest';
 import { ApiUpdateProxyActionRequest } from '../models/ApiUpdateProxyActionRequest';
 import { ApiUpdateWaveRequest } from '../models/ApiUpdateWaveRequest';
 import { ApiUploadItem } from '../models/ApiUploadItem';
+import { ApiUploadPartOfMultipartUploadRequest } from '../models/ApiUploadPartOfMultipartUploadRequest';
+import { ApiUploadPartOfMultipartUploadResponse } from '../models/ApiUploadPartOfMultipartUploadResponse';
 import { ApiUploadsPage } from '../models/ApiUploadsPage';
 import { ApiWave } from '../models/ApiWave';
 import { ApiWaveChatConfig } from '../models/ApiWaveChatConfig';
@@ -379,6 +391,9 @@ let typeMap: {[index: string]: any} = {
     "ApiChangeProfileCicRatingResponse": ApiChangeProfileCicRatingResponse,
     "ApiChangeProfileRepRating": ApiChangeProfileRepRating,
     "ApiChangeProfileRepRatingResponse": ApiChangeProfileRepRatingResponse,
+    "ApiCompleteMultipartUploadRequest": ApiCompleteMultipartUploadRequest,
+    "ApiCompleteMultipartUploadRequestPart": ApiCompleteMultipartUploadRequestPart,
+    "ApiCompleteMultipartUploadResponse": ApiCompleteMultipartUploadResponse,
     "ApiCreateDropPart": ApiCreateDropPart,
     "ApiCreateDropRequest": ApiCreateDropRequest,
     "ApiCreateGroup": ApiCreateGroup,
@@ -461,6 +476,7 @@ let typeMap: {[index: string]: any} = {
     "ApiReplyToDrop": ApiReplyToDrop,
     "ApiReplyToDropResponse": ApiReplyToDropResponse,
     "ApiSeizeSettings": ApiSeizeSettings,
+    "ApiStartMultipartMediaUploadResponse": ApiStartMultipartMediaUploadResponse,
     "ApiTargetAndSubscriptionActions": ApiTargetAndSubscriptionActions,
     "ApiTransaction": ApiTransaction,
     "ApiTransactionPage": ApiTransactionPage,
@@ -468,6 +484,8 @@ let typeMap: {[index: string]: any} = {
     "ApiUpdateProxyActionRequest": ApiUpdateProxyActionRequest,
     "ApiUpdateWaveRequest": ApiUpdateWaveRequest,
     "ApiUploadItem": ApiUploadItem,
+    "ApiUploadPartOfMultipartUploadRequest": ApiUploadPartOfMultipartUploadRequest,
+    "ApiUploadPartOfMultipartUploadResponse": ApiUploadPartOfMultipartUploadResponse,
     "ApiUploadsPage": ApiUploadsPage,
     "ApiWave": ApiWave,
     "ApiWaveChatConfig": ApiWaveChatConfig,
