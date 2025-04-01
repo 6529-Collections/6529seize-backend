@@ -10,30 +10,38 @@
  * Do not edit the class manually.
  */
 
+import { ApiCompleteMultipartUploadRequestPart } from '../models/ApiCompleteMultipartUploadRequestPart';
 import { HttpFile } from '../http/http';
 
-export class ApiCreateMediaUploadUrlRequest {
-    'content_type': string;
-    'file_name': string;
+export class ApiCompleteMultipartUploadRequest {
+    'upload_id': string;
+    'key': string;
+    'parts': Array<ApiCompleteMultipartUploadRequestPart>;
 
     static readonly discriminator: string | undefined = undefined;
 
     static readonly attributeTypeMap: Array<{name: string, baseName: string, type: string, format: string}> = [
         {
-            "name": "content_type",
-            "baseName": "content_type",
+            "name": "upload_id",
+            "baseName": "upload_id",
             "type": "string",
             "format": ""
         },
         {
-            "name": "file_name",
-            "baseName": "file_name",
+            "name": "key",
+            "baseName": "key",
             "type": "string",
+            "format": ""
+        },
+        {
+            "name": "parts",
+            "baseName": "parts",
+            "type": "Array<ApiCompleteMultipartUploadRequestPart>",
             "format": ""
         }    ];
 
     static getAttributeTypeMap() {
-        return ApiCreateMediaUploadUrlRequest.attributeTypeMap;
+        return ApiCompleteMultipartUploadRequest.attributeTypeMap;
     }
 
     public constructor() {
