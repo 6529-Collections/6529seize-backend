@@ -257,7 +257,7 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     cic: number;
     rep: number;
   }> {
-    return this.db
+    const res = await this.db
       .execute<{
         profile_id: string;
         tdh: number;
@@ -271,6 +271,13 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
         { profileId }
       )
       .then((res) => res[0] ?? null);
+    if (res) {
+      res.tdh = +res.tdh;
+      res.level = +res.level;
+      res.cic = +res.cic;
+      res.rep = +res.rep;
+    }
+    return res;
   }
 
   async getGivenCicAndRep(
@@ -300,28 +307,38 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       );
   }
 
-  async getGroupsUserIsEligibleByIdentity(
-    profileId: string
-  ): Promise<string[]> {
+  async getGroupsUserIsEligibleByIdentity({
+    profileId,
+    givenGroups
+  }: {
+    profileId: string;
+    givenGroups?: string[];
+  }): Promise<string[]> {
+    const sql = `select distinct ug.id as group_id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.profile_group_id = pg.profile_group_id where ${
+      givenGroups?.length ? `ug.id in (:givenGroups) and ` : ``
+    } pg.profile_id = :profileId and ug.visible`;
     return this.db
       .execute<{
         group_id: string;
-      }>(
-        `select distinct ug.id as group_id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.profile_group_id = pg.profile_group_id where pg.profile_id = :profileId and ug.visible`,
-        { profileId }
-      )
+      }>(sql, { profileId, givenGroups })
       .then((res) => res.map((it) => it.group_id));
   }
 
-  async getGroupsUserIsExcludedFromByIdentity(
-    profileId: string
-  ): Promise<string[]> {
+  async getGroupsUserIsExcludedFromByIdentity({
+    profileId,
+    givenGroups
+  }: {
+    profileId: string;
+    givenGroups?: string[];
+  }): Promise<string[]> {
     return this.db
       .execute<{
         group_id: string;
       }>(
-        `select distinct ug.id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.excluded_profile_group_id = pg.profile_group_id where pg.profile_id = :profileId`,
-        { profileId }
+        `select distinct ug.id from ${PROFILE_GROUPS_TABLE} pg join ${USER_GROUPS_TABLE} ug on ug.excluded_profile_group_id = pg.profile_group_id where ${
+          givenGroups?.length ? `ug.id in (:givenGroups) and ` : ``
+        } pg.profile_id = :profileId`,
+        { profileId, givenGroups }
       )
       .then((res) => res.map((it) => it.group_id));
   }
@@ -334,11 +351,14 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     tdh: number;
     receivedCic: number;
     receivedRep: number;
+    givenGroups?: string[];
   }): Promise<UserGroupEntity[]> {
     const sql = `
     select cg.*
 from ${USER_GROUPS_TABLE} cg
-where ((cg.cic_direction = 'RECEIVED' and (
+where
+    ${param.givenGroups ? `id in (:givenGroups) and ` : ``}
+    ((cg.cic_direction = 'RECEIVED' and (
     (cg.cic_min is null or :receivedCic >= cg.cic_min) and
     (cg.cic_max is null or :receivedCic >= cg.cic_max)
     )) or (cg.cic_direction = 'SENT' and (
@@ -627,7 +647,9 @@ where ((cg.cic_direction = 'RECEIVED' and (
       )
       .then((res) =>
         res.reduce((acc, it) => {
-          acc[it.contract.toLowerCase()] = it.token_ids.split(',');
+          acc[it.contract.toLowerCase()] = it.token_ids
+            .split(',')
+            .map((k) => k.toLowerCase());
           return acc;
         }, {} as Record<string, string[]>)
       );
@@ -635,6 +657,31 @@ where ((cg.cic_direction = 'RECEIVED' and (
       'userGroupsDb->getAllProfileOwnedTokensByProfileIdGroupedByContract'
     );
     return result;
+  }
+
+  async getAllWaveRelatedGroups(ctx: RequestContext): Promise<string[]> {
+    ctx.timer?.start('userGroupsDb->getAllWaveRelatedGroups');
+    const result = await this.db.execute<{
+      id: string;
+    }>(
+      `
+        select distinct id from (
+          select w.visibility_group_id as id from waves w
+          union all
+          select w.admin_group_id as id from waves w
+          union all
+          select w.chat_group_id as id from waves w
+          union all
+          select w.participation_group_id as id from waves w
+          union all
+          select w.voting_group_id as id from waves w
+        ) x where id is not null
+        `,
+      undefined,
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop('userGroupsDb->getAllWaveRelatedGroups');
+    return result.map((it) => it.id);
   }
 
   async findFollowersOfUserInGroups(
