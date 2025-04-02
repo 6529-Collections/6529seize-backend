@@ -894,7 +894,12 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
         drop_id: string;
         id: number;
       }>(
-        `select drop_id, max(id) as id from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} where drop_id in (:dropIds) group by 1`,
+        `
+        select max(id) as id
+        from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE}
+        where drop_id in (:dropIds)
+        group by drop_id, voter_id) and vote <> 0
+        `,
         { dropIds },
         { wrappedConnection: ctx.connection }
       )
