@@ -409,7 +409,7 @@ export function calculateLevel({
   tdh: number;
   rep: number;
 }): number {
-  return getLevelFromScore(tdh + rep);
+  return getLevelFromScore(+tdh + +rep);
 }
 
 export function getLevelFromScore(score: number): number {

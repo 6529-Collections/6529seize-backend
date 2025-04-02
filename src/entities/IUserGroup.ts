@@ -2,6 +2,7 @@ import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 import { USER_GROUPS_TABLE } from '../constants';
 
 @Entity(USER_GROUPS_TABLE)
+@Index(['id', 'visible'])
 export class UserGroupEntity {
   @PrimaryColumn({ type: 'varchar', length: 200, nullable: false })
   readonly id!: string;
@@ -38,6 +39,7 @@ export class UserGroupEntity {
   @Column({ type: 'varchar', length: 100, nullable: false })
   readonly created_by!: string;
   @Column({ type: 'boolean', nullable: false })
+  @Index()
   readonly visible!: boolean;
   @Column({ type: 'boolean' })
   readonly owns_meme!: boolean | null;

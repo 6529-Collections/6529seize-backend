@@ -245,6 +245,8 @@ export function uniqueShortId(): string {
   return short.generate();
 }
 
+export const sum = (ns: number[]) => ns.reduce((sum, n) => sum + n, 0);
+
 // The assertUnreachable function takes an input _x of type never and always throws
 // an error. This function is typically used in TypeScript to assert exhaustiveness in
 // switch-case or if-else constructs, ensuring that all possible cases are handled.
@@ -461,4 +463,8 @@ export function getUniqueValuesWithKeys<K, V>(map: Map<K, V>): Map<V, K[]> {
     }
   });
   return valueToKeysMap;
+}
+
+export function isExperimentalModeOn() {
+  return process.env.EXPERIMENTAL_MODE_ON === 'true';
 }
