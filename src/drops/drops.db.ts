@@ -877,6 +877,33 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return results;
   }
 
+  async findWaveParticipationDropsOrderedByCreatedAt(
+    params: {
+      offset: number;
+      wave_id: string;
+      limit: number;
+      sort_order: PageSortDirection;
+    },
+    ctx: RequestContext
+  ): Promise<DropEntity[]> {
+    ctx.timer?.start(
+      `${this.constructor.name}->findWaveParticipationDropsOrderedByCreatedAt`
+    );
+    const results = await this.db.execute<DropEntity>(
+      `
+      select d.* from ${DROPS_TABLE} d 
+      where d.wave_id = :wave_id and d.drop_type = '${DropType.PARTICIPATORY}'
+      order by d.created_at ${params.sort_order} limit :limit offset :offset
+      `,
+      params,
+      { wrappedConnection: ctx.connection }
+    );
+    ctx.timer?.stop(
+      `${this.constructor.name}->findWaveParticipationDropsOrderedByCreatedAt`
+    );
+    return results;
+  }
+
   async findRealtimeLeaderboardDrops(
     params: {
       offset: number;
@@ -916,7 +943,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return results;
   }
 
-  async findRealtimeLeaderboardDropsOrderedByUsersVotes(
+  async findRealtimeLeaderboardDropsOrderedByUsersVotesOrCreationTime(
     params: {
       offset: number;
       limit: number;
@@ -1325,7 +1352,8 @@ export type NewDropEntity = Omit<DropEntity, 'serial_no'> & {
 export enum LeaderboardSort {
   RANK = 'RANK',
   REALTIME_VOTE = 'REALTIME_VOTE',
-  MY_REALTIME_VOTE = 'MY_REALTIME_VOTE'
+  MY_REALTIME_VOTE = 'MY_REALTIME_VOTE',
+  CREATED_AT = 'CREATED_AT'
 }
 
 export interface LeaderboardParams {

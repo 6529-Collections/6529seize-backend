@@ -567,6 +567,17 @@ export class DropsApiService {
     isTimeLockedWave: boolean,
     ctx: RequestContext
   ): Promise<DropEntity[]> {
+    if (params.sort === LeaderboardSort.CREATED_AT) {
+      return this.dropsDb.findWaveParticipationDropsOrderedByCreatedAt(
+        {
+          wave_id: params.wave_id,
+          limit: params.page_size,
+          offset: (params.page - 1) * params.page_size,
+          sort_order: params.sort_direction
+        },
+        ctx
+      );
+    }
     if (isTimeLockedWave && params.sort === LeaderboardSort.RANK) {
       return this.dropsDb.findWeightedLeaderboardDrops(params, ctx);
     }
@@ -577,7 +588,7 @@ export class DropsApiService {
           `Can't sort by voter votes as the user is not authenticated`
         );
       }
-      return this.dropsDb.findRealtimeLeaderboardDropsOrderedByUsersVotes(
+      return this.dropsDb.findRealtimeLeaderboardDropsOrderedByUsersVotesOrCreationTime(
         {
           voter_id: voterId,
           wave_id: params.wave_id,
