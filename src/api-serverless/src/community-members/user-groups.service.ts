@@ -57,7 +57,8 @@ import {
   isGroupByTotalGivenCic,
   isGroupByTotalGivenRep,
   isGroupByTotalReceivedCic,
-  isGroupByTotalReceivedRep
+  isGroupByTotalReceivedRep,
+  realRatingInBounds
 } from './user-group-predicates';
 
 export type NewUserGroupEntity = Omit<
@@ -399,46 +400,28 @@ export class UserGroupsService {
   ): Promise<UserGroupEntity[]> {
     return groups.filter((entity) => {
       if (isGroupByTdh(entity)) {
-        const profileTdh = profile.tdh;
-        if (
-          !(
-            (entity.tdh_min === null || profileTdh >= entity.tdh_min) &&
-            (entity.tdh_max === null || profileTdh <= entity.tdh_max)
-          )
-        ) {
+        const tdh = profile.tdh;
+        if (!realRatingInBounds(entity.tdh_min, entity.tdh_max, tdh, true)) {
           return false;
         }
       }
       if (isGroupByLevel(entity)) {
-        const profileLevel = getLevelFromScore(profile.level);
+        const level = getLevelFromScore(profile.level);
         if (
-          !(
-            (entity.level_min === null || profileLevel >= entity.level_min) &&
-            (entity.level_max === null || profileLevel <= entity.level_max)
-          )
+          !realRatingInBounds(entity.level_min, entity.level_max, level, true)
         ) {
           return false;
         }
       }
       if (isGroupByTotalReceivedRep(entity)) {
         const rep = profile.rep;
-        if (
-          !(
-            (entity.rep_min === null || rep >= entity.rep_min) &&
-            (entity.rep_max === null || rep <= entity.rep_max)
-          )
-        ) {
+        if (!realRatingInBounds(entity.rep_min, entity.rep_max, rep, true)) {
           return false;
         }
       }
       if (isGroupByTotalReceivedCic(entity)) {
         const cic = profile.cic;
-        if (
-          !(
-            (entity.cic_min === null || cic >= entity.cic_min) &&
-            (entity.cic_max === null || cic <= entity.cic_max)
-          )
-        ) {
+        if (!realRatingInBounds(entity.cic_min, entity.cic_max, cic, true)) {
           return false;
         }
       }
