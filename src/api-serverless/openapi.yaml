@@ -2526,6 +2526,7 @@ paths:
               - RANK
               - REALTIME_VOTE
               - MY_REALTIME_VOTE
+              - CREATED_AT
       responses:
         "200":
           description: successful operation

@@ -894,7 +894,12 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
         drop_id: string;
         id: number;
       }>(
-        `select drop_id, max(id) as id from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} where drop_id in (:dropIds) group by 1`,
+        `
+        select max(id) as id
+        from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE}
+        where drop_id in (:dropIds)
+        group by drop_id, voter_id
+        `,
         { dropIds },
         { wrappedConnection: ctx.connection }
       )
@@ -903,7 +908,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       await this.db.execute(
         `
        insert into ${WINNER_DROP_VOTER_VOTES_TABLE} (voter_id, votes, drop_id, wave_id)
-       select voter_id, vote, drop_id, wave_id from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} where id in (:stateIds)`,
+       select voter_id, vote, drop_id, wave_id from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} where id in (:stateIds) and vote <> 0`,
         { stateIds },
         { wrappedConnection: ctx.connection }
       );
