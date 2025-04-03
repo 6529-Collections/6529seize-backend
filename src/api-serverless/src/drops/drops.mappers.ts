@@ -607,7 +607,7 @@ export class DropsMappers {
         };
       }
     } else if (dropEntity.drop_type === DropType.PARTICIPATORY) {
-      realtime_rating = dropsVoteCounts[dropEntity.id].tally ?? 0;
+      realtime_rating = dropsVoteCounts[dropEntity.id]?.tally ?? 0;
       rating = weightedDropsRates[dropEntity.id] ?? realtime_rating;
       raters_count =
         dropsVoteCounts[dropEntity.id]?.total_number_of_voters ?? 0;
