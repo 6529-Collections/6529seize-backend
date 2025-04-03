@@ -232,12 +232,18 @@ export const isGroupTotalCicByUserIncoming = (entity: UserGroupEntity) => {
 
 const sum = (ns: number[]) => ns.reduce((sum, n) => sum + n, 0);
 
-function realCicRepRatingInBounds(
+export function realRatingInBounds(
   requiredMin: number | null,
   requiredMax: number | null,
-  realRating: number
+  realRating: number,
+  nullDoesntMeanZeroNotAllowed?: boolean
 ) {
-  if (requiredMin === null && requiredMax === null && realRating === 0) {
+  if (
+    !nullDoesntMeanZeroNotAllowed &&
+    requiredMin === null &&
+    requiredMax === null &&
+    realRating === 0
+  ) {
     return false;
   }
   return (
@@ -270,7 +276,7 @@ export const allSpecificCicRepConditionsMatch = (
         )
         .map((it) => it.rating)
     );
-    if (!realCicRepRatingInBounds(entity.rep_min, entity.rep_max, realRating)) {
+    if (!realRatingInBounds(entity.rep_min, entity.rep_max, realRating)) {
       return false;
     }
   }
@@ -283,7 +289,7 @@ export const allSpecificCicRepConditionsMatch = (
         )
         .map((it) => it.rating)
     );
-    if (!realCicRepRatingInBounds(entity.rep_min, entity.rep_max, realRating)) {
+    if (!realRatingInBounds(entity.rep_min, entity.rep_max, realRating)) {
       return false;
     }
   }
@@ -298,7 +304,7 @@ export const allSpecificCicRepConditionsMatch = (
         )
         .map((it) => it.rating)
     );
-    if (!realCicRepRatingInBounds(entity.rep_min, entity.rep_max, realRating)) {
+    if (!realRatingInBounds(entity.rep_min, entity.rep_max, realRating)) {
       return false;
     }
   }
@@ -312,7 +318,7 @@ export const allSpecificCicRepConditionsMatch = (
         )
         .map((it) => it.rating)
     );
-    if (!realCicRepRatingInBounds(entity.rep_min, entity.rep_max, realRating)) {
+    if (!realRatingInBounds(entity.rep_min, entity.rep_max, realRating)) {
       return false;
     }
   }
@@ -328,7 +334,7 @@ export const allSpecificCicRepConditionsMatch = (
         )
         .map((it) => it.rating)
     );
-    if (!realCicRepRatingInBounds(entity.rep_min, entity.rep_max, realRating)) {
+    if (!realRatingInBounds(entity.rep_min, entity.rep_max, realRating)) {
       return false;
     }
   }
@@ -343,7 +349,7 @@ export const allSpecificCicRepConditionsMatch = (
         )
         .map((it) => it.rating)
     );
-    if (!realCicRepRatingInBounds(entity.rep_min, entity.rep_max, realRating)) {
+    if (!realRatingInBounds(entity.rep_min, entity.rep_max, realRating)) {
       return false;
     }
   }
@@ -357,7 +363,7 @@ export const allSpecificCicRepConditionsMatch = (
         )
         .map((it) => it.rating)
     );
-    if (!realCicRepRatingInBounds(entity.cic_min, entity.cic_max, realRating)) {
+    if (!realRatingInBounds(entity.cic_min, entity.cic_max, realRating)) {
       return false;
     }
   }
@@ -370,7 +376,7 @@ export const allSpecificCicRepConditionsMatch = (
         )
         .map((it) => it.rating)
     );
-    if (!realCicRepRatingInBounds(entity.cic_min, entity.cic_max, realRating)) {
+    if (!realRatingInBounds(entity.cic_min, entity.cic_max, realRating)) {
       return false;
     }
   }
