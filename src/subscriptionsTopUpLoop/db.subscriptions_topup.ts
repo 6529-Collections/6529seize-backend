@@ -51,7 +51,13 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
       await topUpsRepo.save(topUp);
 
       if (setToAutoSubscribe) {
-        await updateSubscriptionMode(consolidationKey, true, qrHolder);
+        try {
+          await updateSubscriptionMode(consolidationKey, true, qrHolder);
+        } catch (e) {
+          console.warn(
+            `Error setting subscription mode to auto-subscribe for ${consolidationKey}: ${e}`
+          );
+        }
       }
     }
   });
