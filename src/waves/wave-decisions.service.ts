@@ -71,7 +71,7 @@ export class WaveDecisionsService {
     const waveId = wavesLatestDecisionTimesWithStrategy.wave_id;
     const time_lock_ms = wavesLatestDecisionTimesWithStrategy.time_lock_ms;
     let decisionTime: number | null = strategy.first_decision_time;
-    let decisionPointer = 0;
+    let decisionPointer = -1;
     let decisionsExecuted = 0;
     while (decisionTime !== null && decisionTime < currentMillis) {
       if (latestDecisionTime < decisionTime) {
