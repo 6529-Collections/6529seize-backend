@@ -49,7 +49,8 @@ import {
   hasGroupGotAnyNonIdentityConditions,
   isAnyGroupByOwningsCriteria,
   isAnyGroupByTotalSentCicOrRepCriteria,
-  isGroupViolatingAnySpecificCicRepCriteria,
+  isGroupViolatingAnySpecificCicCriteria,
+  isGroupViolatingAnySpecificRepCriteria,
   isProfileViolatingGroupsProfileCicCriteria,
   isProfileViolatingGroupsProfileLevelCriteria,
   isProfileViolatingGroupsProfileRepCriteria,
@@ -252,10 +253,15 @@ export class UserGroupsService {
         );
       return groups.filter(
         (entity) =>
-          !isGroupViolatingAnySpecificCicRepCriteria(
+          !isGroupViolatingAnySpecificRepCriteria(
             entity,
-            outgoingRatings,
-            incomingRatings
+            incomingRatings,
+            outgoingRatings
+          ) &&
+          !isGroupViolatingAnySpecificCicCriteria(
+            entity,
+            incomingRatings,
+            outgoingRatings
           )
       );
     }

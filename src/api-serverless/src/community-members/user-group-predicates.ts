@@ -273,200 +273,159 @@ function isRatingOutOfBounds({
   return !inBounds;
 }
 
-export const isGroupViolatingAnySpecificCicRepCriteria = (
-  entity: UserGroupEntity,
-  outgoingRatings: {
+function isRealRatingOutOfBounds(
+  ratings: {
     other_side_id: string;
     matter: RateMatter;
     matter_category: string;
     rating: number;
   }[],
+  sumCriteria: (
+    rating: {
+      other_side_id: string;
+      matter: RateMatter;
+      matter_category: string;
+      rating: number;
+    },
+    group: UserGroupEntity
+  ) => boolean,
+  group: UserGroupEntity,
+  min: number | null,
+  max: number | null
+) {
+  const real = sum(
+    ratings.filter((it) => sumCriteria(it, group)).map((it) => it.rating)
+  );
+  return isRatingOutOfBounds({
+    min,
+    max,
+    real,
+    minMaxNullMeansNonZeroRequired: true
+  });
+}
+
+export function isGroupViolatingAnySpecificRepCriteria(
+  group: UserGroupEntity,
   incomingRatings: {
     other_side_id: string;
     matter: RateMatter;
     matter_category: string;
     rating: number;
+  }[],
+  outgoingRatings: {
+    other_side_id: string;
+    matter: RateMatter;
+    matter_category: string;
+    rating: number;
   }[]
-) => {
-  if (isGroupTotalRepByUserOutgoing(entity)) {
-    const real = sum(
-      outgoingRatings
-        .filter(
-          (it) =>
-            it.matter === RateMatter.REP && it.other_side_id === entity.rep_user
-        )
-        .map((it) => it.rating)
+) {
+  const violatingTotalRepByUserIncoming =
+    isGroupTotalRepByUserIncoming(group) &&
+    isRealRatingOutOfBounds(
+      incomingRatings,
+      (r, g) => r.matter === RateMatter.REP && r.other_side_id === g.rep_user,
+      group,
+      group.rep_min,
+      group.rep_max
     );
-    const min = entity.rep_min;
-    const max = entity.rep_max;
-    const ratingOutOfBounds = isRatingOutOfBounds({
-      min,
-      max,
-      real,
-      minMaxNullMeansNonZeroRequired: true
-    });
-    if (ratingOutOfBounds) {
-      return true;
-    }
-  }
-  if (isGroupTotalRepByUserIncoming(entity)) {
-    const real = sum(
-      incomingRatings
-        .filter(
-          (it) =>
-            it.matter === RateMatter.REP && it.other_side_id === entity.rep_user
-        )
-        .map((it) => it.rating)
+  const violatingTotalRepByUserOutgoing =
+    isGroupTotalRepByUserOutgoing(group) &&
+    isRealRatingOutOfBounds(
+      outgoingRatings,
+      (r, g) => r.matter === RateMatter.REP && r.other_side_id === g.rep_user,
+      group,
+      group.rep_min,
+      group.rep_max
     );
-    const min = entity.rep_min;
-    const max = entity.rep_max;
-    const ratingOutOfBounds = isRatingOutOfBounds({
-      min,
-      max,
-      real,
-      minMaxNullMeansNonZeroRequired: true
-    });
-    if (ratingOutOfBounds) {
-      return true;
-    }
-  }
+  const violatingTotalRepForCategoryIncoming =
+    isGroupTotalRepForCategoryIncoming(group) &&
+    isRealRatingOutOfBounds(
+      incomingRatings,
+      (r, g) =>
+        r.matter === RateMatter.REP && r.matter_category === g.rep_category,
+      group,
+      group.rep_min,
+      group.rep_max
+    );
+  const violatingTotalRepForCategoryOutgoing =
+    isGroupTotalRepForCategoryOutgoing(group) &&
+    isRealRatingOutOfBounds(
+      outgoingRatings,
+      (r, g) =>
+        r.matter === RateMatter.REP && r.matter_category === g.rep_category,
+      group,
+      group.rep_min,
+      group.rep_max
+    );
+  const violatingTotalRepByUserForCategoryIncoming =
+    isGroupTotalRepByUserForCategoryIncoming(group) &&
+    isRealRatingOutOfBounds(
+      incomingRatings,
+      (r, g) =>
+        r.matter === RateMatter.REP &&
+        r.matter_category === g.rep_category &&
+        r.other_side_id === g.rep_user,
+      group,
+      group.rep_min,
+      group.rep_max
+    );
+  const violatingTotalRepByUserForCategoryOutgoing =
+    isGroupTotalRepByUserForCategoryOutgoing(group) &&
+    isRealRatingOutOfBounds(
+      outgoingRatings,
+      (r, g) =>
+        r.matter === RateMatter.REP &&
+        r.matter_category === g.rep_category &&
+        r.other_side_id === g.rep_user,
+      group,
+      group.rep_min,
+      group.rep_max
+    );
+  return (
+    violatingTotalRepByUserIncoming ||
+    violatingTotalRepByUserOutgoing ||
+    violatingTotalRepForCategoryIncoming ||
+    violatingTotalRepForCategoryOutgoing ||
+    violatingTotalRepByUserForCategoryIncoming ||
+    violatingTotalRepByUserForCategoryOutgoing
+  );
+}
 
-  if (isGroupTotalRepForCategoryOutgoing(entity)) {
-    const real = sum(
-      outgoingRatings
-        .filter(
-          (it) =>
-            it.matter === RateMatter.REP &&
-            it.matter_category === entity.rep_category
-        )
-        .map((it) => it.rating)
+export function isGroupViolatingAnySpecificCicCriteria(
+  group: UserGroupEntity,
+  incomingRatings: {
+    other_side_id: string;
+    matter: RateMatter;
+    matter_category: string;
+    rating: number;
+  }[],
+  outgoingRatings: {
+    other_side_id: string;
+    matter: RateMatter;
+    matter_category: string;
+    rating: number;
+  }[]
+) {
+  const violatingTotalCicByUserIncoming =
+    isGroupTotalCicByUserIncoming(group) &&
+    isRealRatingOutOfBounds(
+      incomingRatings,
+      (r, g) => r.matter === RateMatter.CIC && r.other_side_id === g.cic_user,
+      group,
+      group.cic_min,
+      group.cic_max
     );
-    const min = entity.rep_min;
-    const max = entity.rep_max;
-    const ratingOutOfBounds = isRatingOutOfBounds({
-      min,
-      max,
-      real,
-      minMaxNullMeansNonZeroRequired: true
-    });
-    if (ratingOutOfBounds) {
-      return true;
-    }
-  }
-  if (isGroupTotalRepForCategoryIncoming(entity)) {
-    const real = sum(
-      incomingRatings
-        .filter(
-          (it) =>
-            it.matter === RateMatter.REP &&
-            it.matter_category === entity.rep_category
-        )
-        .map((it) => it.rating)
+  const violatingTotalCicByUserOutgoing =
+    isGroupTotalCicByUserOutgoing(group) &&
+    isRealRatingOutOfBounds(
+      outgoingRatings,
+      (r, g) => r.matter === RateMatter.CIC && r.other_side_id === g.cic_user,
+      group,
+      group.cic_min,
+      group.cic_max
     );
-    const min = entity.rep_min;
-    const max = entity.rep_max;
-    const ratingOutOfBounds = isRatingOutOfBounds({
-      min,
-      max,
-      real,
-      minMaxNullMeansNonZeroRequired: true
-    });
-    if (ratingOutOfBounds) {
-      return true;
-    }
-  }
-
-  if (isGroupTotalRepByUserForCategoryOutgoing(entity)) {
-    const real = sum(
-      outgoingRatings
-        .filter(
-          (it) =>
-            it.matter === RateMatter.REP &&
-            it.matter_category === entity.rep_category &&
-            it.other_side_id === entity.rep_user
-        )
-        .map((it) => it.rating)
-    );
-    const min = entity.rep_min;
-    const max = entity.rep_max;
-    const ratingOutOfBounds = isRatingOutOfBounds({
-      min,
-      max,
-      real,
-      minMaxNullMeansNonZeroRequired: true
-    });
-    if (ratingOutOfBounds) {
-      return true;
-    }
-  }
-  if (isGroupTotalRepByUserForCategoryIncoming(entity)) {
-    const real = sum(
-      incomingRatings
-        .filter(
-          (it) =>
-            it.matter === RateMatter.REP &&
-            it.matter_category === entity.rep_category &&
-            it.other_side_id === entity.rep_user
-        )
-        .map((it) => it.rating)
-    );
-    const min = entity.rep_min;
-    const max = entity.rep_max;
-    const ratingOutOfBounds = isRatingOutOfBounds({
-      min,
-      max,
-      real,
-      minMaxNullMeansNonZeroRequired: true
-    });
-    if (ratingOutOfBounds) {
-      return true;
-    }
-  }
-
-  if (isGroupTotalCicByUserOutgoing(entity)) {
-    const real = sum(
-      outgoingRatings
-        .filter(
-          (it) =>
-            it.matter === RateMatter.CIC && it.other_side_id === entity.cic_user
-        )
-        .map((it) => it.rating)
-    );
-    const min = entity.cic_min;
-    const max = entity.cic_max;
-    const ratingOutOfBounds = isRatingOutOfBounds({
-      min,
-      max,
-      real,
-      minMaxNullMeansNonZeroRequired: true
-    });
-    if (ratingOutOfBounds) {
-      return true;
-    }
-  }
-  if (isGroupTotalCicByUserIncoming(entity)) {
-    const real = sum(
-      incomingRatings
-        .filter(
-          (it) =>
-            it.matter === RateMatter.CIC && it.other_side_id === entity.cic_user
-        )
-        .map((it) => it.rating)
-    );
-    const min = entity.cic_min;
-    const max = entity.cic_max;
-    const ratingOutOfBounds = isRatingOutOfBounds({
-      min,
-      max,
-      real,
-      minMaxNullMeansNonZeroRequired: true
-    });
-    if (ratingOutOfBounds) {
-      return true;
-    }
-  }
-  return false;
-};
+  return violatingTotalCicByUserIncoming || violatingTotalCicByUserOutgoing;
+}
 
 export const hasGroupGotAnyNonIdentityConditions = (
   entity: UserGroupEntity
