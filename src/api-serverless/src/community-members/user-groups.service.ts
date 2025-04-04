@@ -9,12 +9,10 @@ import {
   RATINGS_TABLE
 } from '../../../constants';
 import { profilesService } from '../../../profiles/profiles.service';
-import {
-  getLevelComponentsBorderByLevel,
-  getLevelFromScore
-} from '../../../profiles/profile-level';
+import { getLevelComponentsBorderByLevel } from '../../../profiles/profile-level';
 import { UserGroupEntity } from '../../../entities/IUserGroup';
 import {
+  ProfileSimpleMetrics,
   userGroupsDb,
   UserGroupsDb
 } from '../../../user-groups/user-groups.db';
@@ -48,17 +46,17 @@ import { NEXTGEN_CORE_CONTRACT } from '../../../nextgen/nextgen_constants';
 import { Network } from 'alchemy-sdk';
 import { ApiProfile } from '../types/api.profile';
 import {
-  allOwningsPredicatesMatch,
-  allSpecificCicRepConditionsMatch,
-  anyNftOwningsConditions,
-  anyNonIdentityConditions,
-  isGroupByLevel,
-  isGroupByTdh,
-  isGroupByTotalGivenCic,
-  isGroupByTotalGivenRep,
-  isGroupByTotalReceivedCic,
-  isGroupByTotalReceivedRep,
-  realRatingInBounds
+  hasGroupGotAnyNonIdentityConditions,
+  isAnyGroupByOwningsCriteria,
+  isAnyGroupByTotalSentCicOrRepCriteria,
+  isGroupViolatingAnySpecificCicRepCriteria,
+  isProfileViolatingGroupsProfileCicCriteria,
+  isProfileViolatingGroupsProfileLevelCriteria,
+  isProfileViolatingGroupsProfileRepCriteria,
+  isProfileViolatingGroupsProfileTdhCriteria,
+  isProfileViolatingOwnsCriteria,
+  isProfileViolatingTotalSentCicCriteria,
+  isProfileViolatingTotalSentRepCriteria
 } from './user-group-predicates';
 
 export type NewUserGroupEntity = Omit<
@@ -222,7 +220,7 @@ export class UserGroupsService {
       );
 
     const groupEntitiesWhichPassedAllChecks =
-      await this.eliminateGroupsByStaticReceivedMetrics(
+      await this.eliminateGroupsBySimpleMetricsViolations(
         groupsInNeedOfAdditionalCheck,
         profile
       )
@@ -241,104 +239,117 @@ export class UserGroupsService {
 
   private async eliminateGroupsByGranularRatings(
     groups: UserGroupEntity[],
-    profile: {
-      profile_id: string;
-      tdh: number;
-      level: number;
-      cic: number;
-      rep: number;
-    }
+    profile: ProfileSimpleMetrics
   ) {
-    const { cic_rep_users, rep_categories } = groups.reduce(
-      (acc, entity) => {
-        if (entity.cic_user) {
-          acc.cic_rep_users.add(entity.cic_user);
-        }
-        if (entity.rep_user) {
-          acc.cic_rep_users.add(entity.rep_user);
-        }
-        if (entity.rep_category) {
-          acc.rep_categories.add(entity.rep_category);
-        }
-        return acc;
-      },
-      { cic_rep_users: new Set(), rep_categories: new Set() } as {
-        cic_rep_users: Set<string>;
-        rep_categories: Set<string>;
-      }
-    );
-    if (cic_rep_users.size !== 0 || rep_categories.size !== 0) {
-      const ratings = await this.userGroupsDb.getRatings(
-        profile.profile_id,
-        Array.from(cic_rep_users),
-        Array.from(rep_categories)
-      );
-      const { myOutgoingRatings, myIncomingRatings } = ratings.reduce(
-        (acc, rating) => {
-          if (rating.rater_profile_id === profile.profile_id) {
-            acc.myOutgoingRatings.push({
-              matter: rating.matter,
-              matter_category: rating.matter_category,
-              rating: rating.rating,
-              other_side_id: rating.matter_target_id
-            });
-          } else {
-            acc.myIncomingRatings.push({
-              matter: rating.matter,
-              matter_category: rating.matter_category,
-              rating: rating.rating,
-              other_side_id: rating.rater_profile_id
-            });
-          }
-          return acc;
-        },
-        { myOutgoingRatings: [], myIncomingRatings: [] } as {
-          myIncomingRatings: {
-            other_side_id: string;
-            matter: RateMatter;
-            matter_category: string;
-            rating: number;
-          }[];
-          myOutgoingRatings: {
-            other_side_id: string;
-            matter: RateMatter;
-            matter_category: string;
-            rating: number;
-          }[];
-        }
-      );
-      return groups.filter((entity) =>
-        allSpecificCicRepConditionsMatch(
-          entity,
-          myOutgoingRatings,
-          myIncomingRatings
-        )
+    const { users, categories } =
+      this.extractAllCicRepUsersAndCategoriesFromGroups(groups);
+    if (users.length !== 0 || categories.length !== 0) {
+      const { outgoingRatings, incomingRatings } =
+        await this.getIncomingOutgoingGroupedRatings(
+          profile,
+          users,
+          categories
+        );
+      return groups.filter(
+        (entity) =>
+          !isGroupViolatingAnySpecificCicRepCriteria(
+            entity,
+            outgoingRatings,
+            incomingRatings
+          )
       );
     }
     return groups;
   }
 
+  private async getIncomingOutgoingGroupedRatings(
+    profile: ProfileSimpleMetrics,
+    users: string[],
+    categories: string[]
+  ) {
+    const ratings = await this.userGroupsDb.getRatings(
+      profile.profile_id,
+      users,
+      categories
+    );
+    const { outgoingRatings, incomingRatings } = ratings.reduce(
+      (acc, rating) => {
+        if (rating.rater_profile_id === profile.profile_id) {
+          acc.outgoingRatings.push({
+            matter: rating.matter,
+            matter_category: rating.matter_category,
+            rating: rating.rating,
+            other_side_id: rating.matter_target_id
+          });
+        } else {
+          acc.incomingRatings.push({
+            matter: rating.matter,
+            matter_category: rating.matter_category,
+            rating: rating.rating,
+            other_side_id: rating.rater_profile_id
+          });
+        }
+        return acc;
+      },
+      { outgoingRatings: [], incomingRatings: [] } as {
+        incomingRatings: {
+          other_side_id: string;
+          matter: RateMatter;
+          matter_category: string;
+          rating: number;
+        }[];
+        outgoingRatings: {
+          other_side_id: string;
+          matter: RateMatter;
+          matter_category: string;
+          rating: number;
+        }[];
+      }
+    );
+    return {
+      outgoingRatings,
+      incomingRatings
+    };
+  }
+
+  private extractAllCicRepUsersAndCategoriesFromGroups(
+    groups: UserGroupEntity[]
+  ): { users: string[]; categories: string[] } {
+    const { usersSet, categoriesSet } = groups.reduce(
+      (acc, entity) => {
+        if (entity.cic_user) {
+          acc.usersSet.add(entity.cic_user);
+        }
+        if (entity.rep_user) {
+          acc.usersSet.add(entity.rep_user);
+        }
+        if (entity.rep_category) {
+          acc.categoriesSet.add(entity.rep_category);
+        }
+        return acc;
+      },
+      { usersSet: new Set(), categoriesSet: new Set() } as {
+        usersSet: Set<string>;
+        categoriesSet: Set<string>;
+      }
+    );
+    const users = Array.from(usersSet);
+    const categories = Array.from(categoriesSet);
+    return { users, categories };
+  }
+
   private async eliminateGroupsByOwnings(
     groups: UserGroupEntity[],
-    profile: {
-      profile_id: string;
-      tdh: number;
-      level: number;
-      cic: number;
-      rep: number;
-    }
+    profile: ProfileSimpleMetrics
   ): Promise<UserGroupEntity[]> {
-    const anyGroupsWithNftOwningsConditions = groups.find((it) =>
-      anyNftOwningsConditions(it)
-    );
-    if (anyGroupsWithNftOwningsConditions) {
+    if (isAnyGroupByOwningsCriteria(groups)) {
       const ownings =
         await this.userGroupsDb.getAllProfileOwnedTokensByProfileIdGroupedByContract(
           profile.profile_id,
           {}
         );
-      return groups.filter((entity) =>
-        allOwningsPredicatesMatch(entity, ownings)
+      return groups.filter(
+        (entity) => !isProfileViolatingOwnsCriteria(entity, ownings)
       );
     }
     return groups;
@@ -346,87 +357,32 @@ export class UserGroupsService {
 
   private async eliminateGroupsByFullOutgoingCicAndRep(
     groups: UserGroupEntity[],
-    profile: {
-      profile_id: string;
-      tdh: number;
-      level: number;
-      cic: number;
-      rep: number;
-    }
+    profile: ProfileSimpleMetrics
   ): Promise<UserGroupEntity[]> {
-    const isAnyGroupByTotalGivenCicOrRep = groups.find(
-      (it) => isGroupByTotalGivenCic(it) || isGroupByTotalGivenRep(it)
-    );
-    if (isAnyGroupByTotalGivenCicOrRep) {
+    if (isAnyGroupByTotalSentCicOrRepCriteria(groups)) {
       const { cic, rep } = await this.userGroupsDb.getGivenCicAndRep(
         profile.profile_id
       );
-      return groups.filter((entity) => {
-        if (isGroupByTotalGivenCic(entity)) {
-          if (
-            !(
-              (entity.cic_min === null || cic >= entity.cic_min) &&
-              (entity.cic_max === null || cic <= entity.cic_max)
-            )
-          ) {
-            return false;
-          }
-        }
-        if (isGroupByTotalGivenRep(entity)) {
-          if (
-            !(
-              (entity.rep_min === null || rep >= entity.rep_min) &&
-              (entity.rep_max === null || rep <= entity.rep_max)
-            )
-          ) {
-            return false;
-          }
-        }
-        return true;
-      });
+      return groups.filter(
+        (entity) =>
+          !isProfileViolatingTotalSentCicCriteria(cic, entity) &&
+          !isProfileViolatingTotalSentRepCriteria(rep, entity)
+      );
     }
     return groups;
   }
 
-  private async eliminateGroupsByStaticReceivedMetrics(
+  private async eliminateGroupsBySimpleMetricsViolations(
     groups: UserGroupEntity[],
-    profile: {
-      profile_id: string;
-      tdh: number;
-      level: number;
-      cic: number;
-      rep: number;
-    }
+    profile: ProfileSimpleMetrics
   ): Promise<UserGroupEntity[]> {
-    return groups.filter((entity) => {
-      if (isGroupByTdh(entity)) {
-        const tdh = profile.tdh;
-        if (!realRatingInBounds(entity.tdh_min, entity.tdh_max, tdh, true)) {
-          return false;
-        }
-      }
-      if (isGroupByLevel(entity)) {
-        const level = getLevelFromScore(profile.level);
-        if (
-          !realRatingInBounds(entity.level_min, entity.level_max, level, true)
-        ) {
-          return false;
-        }
-      }
-      if (isGroupByTotalReceivedRep(entity)) {
-        const rep = profile.rep;
-        if (!realRatingInBounds(entity.rep_min, entity.rep_max, rep, true)) {
-          return false;
-        }
-      }
-      if (isGroupByTotalReceivedCic(entity)) {
-        const cic = profile.cic;
-        if (!realRatingInBounds(entity.cic_min, entity.cic_max, cic, true)) {
-          return false;
-        }
-      }
-      return true;
-    });
+    return groups.filter(
+      (entity) =>
+        !isProfileViolatingGroupsProfileTdhCriteria(profile, entity) &&
+        !isProfileViolatingGroupsProfileLevelCriteria(profile, entity) &&
+        !isProfileViolatingGroupsProfileCicCriteria(profile, entity) &&
+        !isProfileViolatingGroupsProfileRepCriteria(profile, entity)
+    );
   }
 
   private async eliminateBannedGroupsAndGroupRestByInByIdentityAndNeedsAdditionalCheck(
@@ -464,7 +420,7 @@ export class UserGroupsService {
       groupsIdsUserIsEligibleByIdentity.includes(it.id)
     );
     const groupsInNeedOfAdditionalCheck = nonBannedGroups
-      .filter((it) => anyNonIdentityConditions(it))
+      .filter((it) => hasGroupGotAnyNonIdentityConditions(it))
       .filter((it) => !groupsIdsUserIsEligibleByIdentity.includes(it.id));
     return {
       groupsWhereUserIsInByIdentity: groupsWhereUserIsInByIdentity,

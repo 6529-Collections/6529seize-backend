@@ -17,7 +17,7 @@ import { RateMatter } from '../entities/IRating';
 import { randomUUID } from 'crypto';
 import { distinct } from '../helpers';
 import { identitiesDb } from '../identities/identities.db';
-import { calculateLevel } from '../profiles/profile-level';
+import { calculateLevel, getLevelFromScore } from '../profiles/profile-level';
 import { RequestContext } from '../request.context';
 
 const mysql = require('mysql');
@@ -250,34 +250,24 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
-  async getProfileOverviewByProfileId(profileId: string): Promise<{
-    profile_id: string;
-    tdh: number;
-    level: number;
-    cic: number;
-    rep: number;
-  }> {
+  async getProfileOverviewByProfileId(
+    profileId: string
+  ): Promise<ProfileSimpleMetrics> {
     const res = await this.db
-      .execute<{
-        profile_id: string;
-        tdh: number;
-        level: number;
-        cic: number;
-        rep: number;
-      }>(
+      .execute<ProfileSimpleMetrics>(
         `
       select profile_id, tdh, level_raw as level, cic, rep from ${IDENTITIES_TABLE} where profile_id = :profileId
     `,
         { profileId }
       )
       .then((res) => res[0] ?? null);
-    if (res) {
-      res.tdh = +res.tdh;
-      res.level = +res.level;
-      res.cic = +res.cic;
-      res.rep = +res.rep;
-    }
-    return res;
+    return {
+      profile_id: profileId,
+      level: getLevelFromScore(+res.level),
+      cic: +res.cic,
+      rep: +res.rep,
+      tdh: +res.tdh
+    };
   }
 
   async getGivenCicAndRep(
@@ -751,6 +741,14 @@ where
 
     return results[0] ?? null;
   }
+}
+
+export interface ProfileSimpleMetrics {
+  readonly profile_id: string;
+  readonly tdh: number;
+  readonly level: number;
+  readonly cic: number;
+  readonly rep: number;
 }
 
 export const userGroupsDb = new UserGroupsDb(dbSupplier);
