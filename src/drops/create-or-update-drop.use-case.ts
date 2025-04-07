@@ -666,6 +666,7 @@ export class CreateOrUpdateDropUseCase {
           drop_id: dropId,
           wave_id: wave.id,
           vote: 0,
+          vote_on_decision_time: 0,
           timestamp: createdAt
         },
         { connection, timer }
