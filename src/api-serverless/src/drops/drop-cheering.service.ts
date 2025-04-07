@@ -90,7 +90,7 @@ export class DropCheeringService {
         );
       }
     );
-    await this.wsListenersNotifier.notifyAboutDropUpdate(drop, ctx);
+    await this.wsListenersNotifier.notifyAboutDropRatingUpdate(drop, ctx);
     await giveReadReplicaTimeToCatchUp();
   }
 }
