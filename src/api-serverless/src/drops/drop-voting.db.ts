@@ -652,22 +652,28 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async getDropsInNeedOfLeaderboardUpdate(
-    ctx: RequestContext
-  ): Promise<{ drop_id: string; time_lock_ms: number; wave_id: string }[]> {
+  async getDropsInNeedOfLeaderboardUpdate(ctx: RequestContext): Promise<
+    {
+      drop_id: string;
+      time_lock_ms: number;
+      wave_id: string;
+      next_decision_time: number | null;
+    }[]
+  > {
     return this.db.execute<{
       drop_id: string;
       time_lock_ms: number;
       wave_id: string;
+      next_decision_time: number | null;
     }>(
-      `select lvc.drop_id as drop_id, lvc.time_lock_ms as time_lock_ms, lvc.wave_id as wave_id
-from (select d.drop_id, d.wave_id as wave_id, w.time_lock_ms as time_lock_ms, max(d.timestamp) as timestamp
+      `select lvc.drop_id as drop_id, lvc.time_lock_ms as time_lock_ms, lvc.wave_id as wave_id, lvc.next_decision_time as next_decision_time
+from (select d.drop_id, d.wave_id as wave_id, w.time_lock_ms as time_lock_ms, w.next_decision_time, max(d.timestamp) as timestamp
       from ${DROP_REAL_VOTE_IN_TIME_TABLE} d
                join ${WAVES_TABLE} w
                     on w.id = d.wave_id and w.time_lock_ms is not null and w.time_lock_ms > 0
                join ${DROPS_TABLE} dr on d.drop_id = dr.id
                where dr.drop_type = '${DropType.PARTICIPATORY}'
-      group by 1, 2, 3) lvc
+      group by 1, 2, 3, 4) lvc
          left join wave_leaderboard_entries lb
                    on lvc.drop_id = lb.drop_id and lvc.wave_id = lb.wave_id
 where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
@@ -801,9 +807,9 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
   ) {
     await this.db.execute(
       `
-          insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id, wave_id, timestamp, vote)
-          values (:drop_id, :wave_id, :timestamp, :vote)
-          on duplicate key update vote = :vote, timestamp = :timestamp
+          insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id, wave_id, timestamp, vote, vote_on_decision_time)
+          values (:drop_id, :wave_id, :timestamp, :vote, :vote_on_decision_time)
+          on duplicate key update vote = :vote, vote_on_decision_time = :vote_on_decision_time, timestamp = :timestamp
       `,
       entry,
       { wrappedConnection: ctx.connection }
