@@ -10,7 +10,7 @@ import { Logger } from '../logging';
 import {
   waveLeaderboardCalculationService,
   WaveLeaderboardCalculationService
-} from '../api-serverless/src/waves/wave-leaderboard-calculation.service';
+} from './wave-leaderboard-calculation.service';
 import {
   dropVotingDb,
   DropVotingDb

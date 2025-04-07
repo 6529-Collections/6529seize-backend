@@ -3,7 +3,7 @@ import { Transaction } from '../entities/ITransaction';
 import { Logger } from '../logging';
 import { doInDbContext } from '../secrets';
 import { Timer } from '../time';
-import { waveLeaderboardCalculationService } from '../api-serverless/src/waves/wave-leaderboard-calculation.service';
+import { waveLeaderboardCalculationService } from '../waves/wave-leaderboard-calculation.service';
 
 const logger = Logger.get('WAVE_LEADERBOARD_SNAPSHOTTER_KOOP');
 

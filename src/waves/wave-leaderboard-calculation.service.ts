@@ -1,11 +1,14 @@
-import { dropVotingDb, DropVotingDb } from '../drops/drop-voting.db';
-import { Time, Timer } from '../../../time';
-import { RequestContext } from '../../../request.context';
-import { Logger } from '../../../logging';
-import { DropRealVoteInTimeWithoutId } from '../../../entities/IDropRealVoteInTime';
-import { distinct } from '../../../helpers';
-import { DropRealVoterVoteInTimeEntityWithoutId } from '../../../entities/IDropRealVoterVoteInTime';
-import { BadRequestException } from '../../../exceptions';
+import {
+  dropVotingDb,
+  DropVotingDb
+} from '../api-serverless/src/drops/drop-voting.db';
+import { Time, Timer } from '../time';
+import { RequestContext } from '../request.context';
+import { Logger } from '../logging';
+import { DropRealVoteInTimeWithoutId } from '../entities/IDropRealVoteInTime';
+import { distinct } from '../helpers';
+import { DropRealVoterVoteInTimeEntityWithoutId } from '../entities/IDropRealVoterVoteInTime';
+import { BadRequestException } from '../exceptions';
 
 export class WaveLeaderboardCalculationService {
   private readonly logger = Logger.get(WaveLeaderboardCalculationService.name);
@@ -29,7 +32,10 @@ export class WaveLeaderboardCalculationService {
               dropId: it.drop_id,
               waveId: it.wave_id,
               startTime: now.minusMillis(it.time_lock_ms),
-              endTime: now
+              endTime: now,
+              nextDecisionTime: it.next_decision_time
+                ? Time.millis(it.next_decision_time)
+                : null
             },
             ctx
           );
@@ -59,12 +65,14 @@ export class WaveLeaderboardCalculationService {
       dropId,
       waveId,
       startTime,
-      endTime
+      endTime,
+      nextDecisionTime
     }: {
       dropId: string;
       waveId: string;
       startTime: Time;
       endTime: Time;
+      nextDecisionTime: Time | null;
     },
     ctx: RequestContext
   ) {
@@ -84,12 +92,20 @@ export class WaveLeaderboardCalculationService {
           endTime,
           startTime
         });
+        const finalVoteInDecisionTime = nextDecisionTime
+          ? this.calculateFinalVoteForDrop({
+              voteStates,
+              endTime: nextDecisionTime,
+              startTime: nextDecisionTime.minus(endTime.minus(startTime))
+            })
+          : finalVote;
         await this.dropVotingDb.upsertWaveLeaderboardEntry(
           {
             drop_id: dropId,
             wave_id: waveId,
             vote: finalVote,
-            timestamp: endTime.toMillis()
+            timestamp: endTime.toMillis(),
+            vote_on_decision_time: finalVoteInDecisionTime
           },
           ctxWithConnection
         );
@@ -109,29 +125,56 @@ export class WaveLeaderboardCalculationService {
     endTime: Time;
     startTime: Time;
   }) {
-    voteStates.sort((a, d) => a.timestamp - d.timestamp);
+    const startMillis = startTime.toMillis();
+    const endMillis = endTime.toMillis();
+    const voteStatesInTime = voteStates.filter(
+      (it) => +it.timestamp >= startMillis && +it.timestamp <= endMillis
+    );
+    const newestVoteStateBeforeTime = voteStates.reduce((acc, it) => {
+      if (
+        +it.timestamp < startMillis &&
+        (!acc || +it.timestamp > +acc.timestamp)
+      ) {
+        return it;
+      }
+      return acc;
+    }, null as DropRealVoteInTimeWithoutId | DropRealVoterVoteInTimeEntityWithoutId | null);
+    const finalVoteStates: (
+      | DropRealVoteInTimeWithoutId
+      | DropRealVoterVoteInTimeEntityWithoutId
+    )[] = [];
+    if (newestVoteStateBeforeTime) {
+      finalVoteStates.push({
+        ...newestVoteStateBeforeTime,
+        timestamp: startMillis
+      });
+    }
+    finalVoteStates.push(...voteStatesInTime);
+    finalVoteStates.sort((a, d) => a.timestamp - d.timestamp);
     const fullTimeSpanInMs = endTime.minus(startTime).toMillis();
     const endTimeInMillis = endTime.toMillis();
     const weightedDropVotes: number[] = [];
-    for (let i = 0; i < voteStates.length; i++) {
-      const weighted = voteStates[i];
+    for (let i = 0; i < finalVoteStates.length; i++) {
+      const weighted = finalVoteStates[i];
       const thisTimeStamp = weighted.timestamp;
       const nextTimestamp =
-        i === voteStates.length - 1
+        i === finalVoteStates.length - 1
           ? endTimeInMillis
-          : voteStates[i + 1].timestamp;
+          : finalVoteStates[i + 1].timestamp;
       const timeSpan = nextTimestamp - thisTimeStamp;
       const weight = timeSpan / fullTimeSpanInMs;
-      const weightedVote = weight * voteStates[i].vote;
+      const weightedVote = weight * finalVoteStates[i].vote;
       weightedDropVotes.push(weightedVote);
     }
     return Math.floor(weightedDropVotes.reduce((a, b) => a + b, 0));
   }
 
-  public async calculateCurrentWeightedVoteForDrop({
-    dropId
+  public async calculateWeightedVoteForDropAtTime({
+    dropId,
+    time
   }: {
     dropId: string;
+    time: Time;
   }) {
     const timelock = await this.dropVotingDb.findWavesTimelockByDropId(dropId);
     if (!timelock) {
@@ -139,7 +182,7 @@ export class WaveLeaderboardCalculationService {
         `Drop ${dropId} is not in a timelocked wave`
       );
     }
-    const endTime = Time.now();
+    const endTime = time;
     const startTime = endTime.minus(Time.millis(timelock));
     const voteStates =
       await this.dropVotingDb.getDropsParticipatoryDropsVoteStatesInTimespan(
