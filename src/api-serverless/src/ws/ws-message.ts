@@ -2,7 +2,8 @@ import { ApiDrop } from '../generated/models/ApiDrop';
 
 export enum WsMessageType {
   DROP_UPDATE = 'DROP_UPDATE',
-  DROP_DELETE = 'DROP_DELETE'
+  DROP_DELETE = 'DROP_DELETE',
+  DROP_RATING_UPDATE = 'DROP_RATING_UPDATE'
 }
 
 export interface WsMessage<MESSAGE_DATA> {
@@ -13,6 +14,13 @@ export interface WsMessage<MESSAGE_DATA> {
 export function dropUpdateMessage(data: ApiDrop): WsMessage<ApiDrop> {
   return {
     type: WsMessageType.DROP_UPDATE,
+    data
+  };
+}
+
+export function dropRatingUpdateMessage(data: ApiDrop): WsMessage<ApiDrop> {
+  return {
+    type: WsMessageType.DROP_RATING_UPDATE,
     data
   };
 }

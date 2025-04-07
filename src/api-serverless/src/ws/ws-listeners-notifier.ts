@@ -5,7 +5,11 @@ import {
   WsConnectionRepository
 } from './ws-connection.repository';
 import { RequestContext } from '../../../request.context';
-import { dropDeleteMessage, dropUpdateMessage } from './ws-message';
+import {
+  dropDeleteMessage,
+  dropRatingUpdateMessage,
+  dropUpdateMessage
+} from './ws-message';
 import { ApiDropWithoutWave } from '../generated/models/ApiDropWithoutWave';
 import { ApiDropType } from '../generated/models/ApiDropType';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
@@ -30,26 +34,10 @@ export class WsListenersNotifier {
           inputDrop.wave.visibility_group_id,
           ctx
         );
-      const profileIds = onlineProfiles
-        .map((p) => p.profileId)
-        .filter((it) => !!it) as string[];
-      let creditLefts: Record<string, number> = {};
-      if (inputDrop.drop_type === ApiDropType.Participatory) {
-        if (inputDrop.wave.voting_credit_type === ApiWaveCreditType.Rep) {
-          creditLefts =
-            await this.wsConnectionRepository.getCreditLeftForProfilesForRepBasedWave(
-              {
-                profileIds,
-                waveId: inputDrop.wave.id
-              }
-            );
-        } else {
-          creditLefts =
-            await this.wsConnectionRepository.getCreditLeftForProfilesForTdhBasedWave(
-              { waveId: inputDrop.wave.id, profileIds }
-            );
-        }
-      }
+      const creditLefts = await this.getCreditLeftsForOnlineProfiles(
+        onlineProfiles,
+        inputDrop
+      );
       await Promise.all(
         onlineProfiles.map(({ connectionId, profileId }) =>
           this.appWebSockets.send({
@@ -74,6 +62,74 @@ export class WsListenersNotifier {
     }
 
     ctx.timer?.stop(`${this.constructor.name}->notifyAboutDrop`);
+  }
+
+  async notifyAboutDropRatingUpdate(
+    inputDrop: ApiDrop,
+    ctx: RequestContext
+  ): Promise<void> {
+    ctx.timer?.start(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
+    try {
+      const onlineProfiles =
+        await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
+          inputDrop.wave.visibility_group_id,
+          ctx
+        );
+      const creditLefts = await this.getCreditLeftsForOnlineProfiles(
+        onlineProfiles,
+        inputDrop
+      );
+      await Promise.all(
+        onlineProfiles.map(({ connectionId, profileId }) =>
+          this.appWebSockets.send({
+            connectionId,
+            message: JSON.stringify(
+              dropRatingUpdateMessage(
+                this.removeDropsAuthRequestContext(
+                  inputDrop,
+                  profileId === null ? 0 : creditLefts[profileId] ?? 0
+                )
+              )
+            )
+          })
+        )
+      );
+    } catch (e) {
+      this.logger.error(
+        `Sending data to websockets failed. Params: ${JSON.stringify(
+          inputDrop
+        )}. Error: ${JSON.stringify(e)}`
+      );
+    }
+
+    ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
+  }
+
+  private async getCreditLeftsForOnlineProfiles(
+    onlineProfiles: { connectionId: string; profileId: string | null }[],
+    inputDrop: ApiDrop
+  ) {
+    const profileIds = onlineProfiles
+      .map((p) => p.profileId)
+      .filter((it) => !!it) as string[];
+    let creditLefts: Record<string, number> = {};
+    if (inputDrop.drop_type === ApiDropType.Participatory) {
+      if (inputDrop.wave.voting_credit_type === ApiWaveCreditType.Rep) {
+        creditLefts =
+          await this.wsConnectionRepository.getCreditLeftForProfilesForRepBasedWave(
+            {
+              profileIds,
+              waveId: inputDrop.wave.id
+            }
+          );
+      } else {
+        creditLefts =
+          await this.wsConnectionRepository.getCreditLeftForProfilesForTdhBasedWave(
+            { waveId: inputDrop.wave.id, profileIds }
+          );
+      }
+    }
+    return creditLefts;
   }
 
   async notifyAboutDropDelete(
