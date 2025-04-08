@@ -249,7 +249,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     }
     ctx.timer?.start(`${this.constructor.name}->getWeightedDropRates`);
     const sql = `
-      select drop_id, vote as current, vote_on_decision_time as prediction
+      select drop_id, vote as vote, vote_on_decision_time as prediction
       from ${WAVE_LEADERBOARD_ENTRIES_TABLE}
       where drop_id in (:dropIds)
     `;
