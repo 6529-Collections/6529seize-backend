@@ -318,6 +318,25 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       .then((it) => it[0] || null);
   }
 
+  async findDropsByIds(
+    ids: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<DropEntity[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+    const opts = connection ? { wrappedConnection: connection } : {};
+    return this.db.execute<DropEntity>(
+      `
+        select d.* from ${DROPS_TABLE} d where d.id in (:ids)
+        `,
+      {
+        ids
+      },
+      opts
+    );
+  }
+
   async findDropByIdWithEligibilityCheck(
     id: string,
     group_ids_user_is_eligible_for: string[],
@@ -752,15 +771,38 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop('dropsDb->deleteDropEntity');
   }
 
-  public async updateWaveDropCounters(waveId: string, ctx: RequestContext) {
+  public async decrementWaveDropCounters(
+    {
+      waveId,
+      dropType,
+      authorId
+    }: { waveId: string; dropType: DropType; authorId: string },
+    ctx: RequestContext
+  ) {
     ctx.timer?.start('dropsDb->updateWaveDropCounters');
-    await this.db.execute(
-      `update ${WAVE_METRICS_TABLE}
-       set drops_count = drops_count - 1
+    if (![DropType.CHAT, DropType.PARTICIPATORY].includes(dropType)) {
+      return;
+    }
+    const decrementPart =
+      dropType === DropType.CHAT
+        ? `drops_count = drops_count - 1`
+        : `participatory_drops_count = participatory_drops_count - 1`;
+    await Promise.all([
+      this.db.execute(
+        `update ${WAVE_METRICS_TABLE}
+       set ${decrementPart}
        where wave_id = :waveId`,
-      { waveId },
-      { wrappedConnection: ctx.connection }
-    );
+        { waveId },
+        { wrappedConnection: ctx.connection }
+      ),
+      this.db.execute(
+        `update ${WAVE_DROPPER_METRICS_TABLE}
+       set ${decrementPart}
+       where wave_id = :waveId and dropper_id = :authorId`,
+        { waveId, authorId },
+        { wrappedConnection: ctx.connection }
+      )
+    ]);
     ctx.timer?.stop('dropsDb->updateWaveDropCounters');
   }
 

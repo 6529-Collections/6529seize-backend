@@ -70,10 +70,6 @@ export class DeleteDropUseCase {
         this.dropsDb.deleteDropReferencedNfts(dropId, { timer, connection }),
         this.dropsDb.deleteDropMetadata(dropId, { timer, connection }),
         this.dropsDb.deleteDropEntity(dropId, { timer, connection }),
-        this.dropsDb.updateWaveDropCounters(waveId, {
-          timer,
-          connection
-        }),
         this.clapsService.deleteClaps(dropId, { timer, connection }),
         this.dropVotingService.deleteVotes(dropId, { timer, connection }),
         this.dropsDb.deleteDropFeedItems(dropId, { timer, connection }),
@@ -81,6 +77,17 @@ export class DeleteDropUseCase {
         this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection })
       ]);
       if (model.deletion_purpose === 'DELETE') {
+        await this.dropsDb.decrementWaveDropCounters(
+          {
+            waveId: drop.wave_id,
+            dropType: drop.drop_type,
+            authorId: drop.author_id
+          },
+          {
+            timer,
+            connection
+          }
+        );
         await this.dropsDb.insertDeletedDrop(
           {
             id: dropId,
