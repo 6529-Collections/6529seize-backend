@@ -578,8 +578,15 @@ export class DropsApiService {
         ctx
       );
     }
-    if (isTimeLockedWave && params.sort === LeaderboardSort.RANK) {
-      return this.dropsDb.findWeightedLeaderboardDrops(params, ctx);
+    if (isTimeLockedWave) {
+      if (params.sort === LeaderboardSort.RANK) {
+        return this.dropsDb.findWeightedLeaderboardDrops(params, ctx);
+      } else if (params.sort === LeaderboardSort.RATING_PREDICTION) {
+        return this.dropsDb.findWeightedLeaderboardDropsOrderedByPrediction(
+          params,
+          ctx
+        );
+      }
     }
     if (params.sort === LeaderboardSort.MY_REALTIME_VOTE) {
       const voterId = ctx.authenticationContext?.getActingAsId();

@@ -544,7 +544,7 @@ export class DropsMappers {
     winningDropsRatingsByVoter: Record<string, number>;
     allEntities: Record<string, DropEntity>;
     weightedDropsRanks: Record<string, number>;
-    weightedDropsRates: Record<string, number>;
+    weightedDropsRates: Record<string, { current: number; prediction: number }>;
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
     const dropWinDecision = winDecisions[dropEntity.id];
@@ -579,6 +579,7 @@ export class DropsMappers {
     }));
     let context_profile_context: ApiDropContextProfileContext | null = null;
     let realtime_rating = rating;
+    let rating_prediction = rating;
     if (contextProfileId) {
       const clapsByClapper =
         dropTopClappers?.find((cl) => cl.clapper_id === contextProfileId)
@@ -592,6 +593,7 @@ export class DropsMappers {
     if (dropEntity.drop_type === DropType.WINNER) {
       rating = dropWinDecision.final_vote ?? 0;
       realtime_rating = rating;
+      rating_prediction = rating;
       raters_count = winningDropsRatersCounts[dropEntity.id] ?? 0;
       top_raters = (
         winningDropsTopRaters[dropEntity.id] ?? []
@@ -608,7 +610,9 @@ export class DropsMappers {
       }
     } else if (dropEntity.drop_type === DropType.PARTICIPATORY) {
       realtime_rating = dropsVoteCounts[dropEntity.id]?.tally ?? 0;
-      rating = weightedDropsRates[dropEntity.id] ?? realtime_rating;
+      const weightedDropRate = weightedDropsRates[dropEntity.id];
+      rating = weightedDropRate?.current ?? realtime_rating;
+      rating_prediction = weightedDropRate?.prediction ?? realtime_rating;
       raters_count =
         dropsVoteCounts[dropEntity.id]?.total_number_of_voters ?? 0;
       top_raters = (dropsTopVoters[dropEntity.id] ?? []).map<ApiDropRater>(
@@ -745,6 +749,7 @@ export class DropsMappers {
         })),
       rating,
       realtime_rating,
+      rating_prediction,
       raters_count,
       top_raters,
       context_profile_context,
