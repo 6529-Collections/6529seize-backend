@@ -15,6 +15,7 @@ import {
   dropVotingDb,
   DropVotingDb
 } from '../api-serverless/src/drops/drop-voting.db';
+import { DropsDb, dropsDb } from '../drops/drops.db';
 
 export class WaveDecisionsService {
   private readonly logger: Logger = Logger.get(this.constructor.name);
@@ -22,7 +23,8 @@ export class WaveDecisionsService {
   constructor(
     private readonly waveDecisionsDb: WaveDecisionsDb,
     private readonly waveLeaderboardCalculationService: WaveLeaderboardCalculationService,
-    private readonly dropVotingDb: DropVotingDb
+    private readonly dropVotingDb: DropVotingDb,
+    private readonly dropsDb: DropsDb
   ) {}
 
   public async createMissingDecisionsForAllWaves(timer: Timer): Promise<void> {
@@ -332,8 +334,22 @@ export class WaveDecisionsService {
       }
     }*/
     const dropIds = winnerDrops.map((it) => it.drop_id);
+    const dropEntitiesOfWinnerDrops = await this.dropsDb.findDropsByIds(
+      dropIds,
+      ctx.connection
+    );
+    for (const drop of dropEntitiesOfWinnerDrops) {
+      await this.dropsDb.decrementWaveDropCounters(
+        {
+          waveId: drop.wave_id,
+          dropType: drop.drop_type,
+          authorId: drop.author_id
+        },
+        ctx
+      );
+    }
     await this.dropVotingDb.transferAllDropVoterStatesToWinnerDropsVotes(
-      { dropIds: dropIds },
+      { dropIds },
       ctx
     );
   }
@@ -342,5 +358,6 @@ export class WaveDecisionsService {
 export const waveDecisionsService = new WaveDecisionsService(
   waveDecisionsDb,
   waveLeaderboardCalculationService,
-  dropVotingDb
+  dropVotingDb,
+  dropsDb
 );
