@@ -12,4 +12,6 @@ export class WaveLeaderboardEntryEntity {
   readonly timestamp!: number;
   @Column({ type: 'bigint', nullable: false })
   readonly vote!: number;
+  @Column({ type: 'bigint', nullable: false, default: 0 })
+  readonly vote_on_decision_time!: number;
 }
