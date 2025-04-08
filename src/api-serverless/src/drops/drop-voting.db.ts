@@ -243,13 +243,13 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
   public async getWeightedDropRates(
     dropIds: string[],
     ctx: RequestContext
-  ): Promise<Record<string, number>> {
+  ): Promise<Record<string, { current: number; prediction: number }>> {
     if (dropIds.length === 0) {
       return {};
     }
     ctx.timer?.start(`${this.constructor.name}->getWeightedDropRates`);
     const sql = `
-      select drop_id, vote
+      select drop_id, vote as current, vote_on_decision_time as prediction
       from ${WAVE_LEADERBOARD_ENTRIES_TABLE}
       where drop_id in (:dropIds)
     `;
@@ -257,14 +257,15 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
       .execute<{
         drop_id: string;
         vote: number;
+        prediction: number;
       }>(sql, { dropIds }, { wrappedConnection: ctx.connection })
       .then((result) =>
         result.reduce(
           (acc, it) => ({
             ...acc,
-            [it.drop_id]: it.vote
+            [it.drop_id]: { current: it.vote, prediction: it.prediction }
           }),
-          {} as Record<string, number>
+          {} as Record<string, { current: number; prediction: number }>
         )
       );
     ctx.timer?.stop(`${this.constructor.name}->getWeightedDropRates`);
