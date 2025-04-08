@@ -809,7 +809,7 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
       `
           insert into ${WAVE_LEADERBOARD_ENTRIES_TABLE} (drop_id, wave_id, timestamp, vote, vote_on_decision_time)
           values (:drop_id, :wave_id, :timestamp, :vote, :vote_on_decision_time)
-          on duplicate key update vote = :vote, timestamp = :timestamp
+          on duplicate key update vote = :vote, vote_on_decision_time = :vote_on_decision_time, timestamp = :timestamp
       `,
       entry,
       { wrappedConnection: ctx.connection }
