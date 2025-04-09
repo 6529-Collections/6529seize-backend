@@ -144,6 +144,11 @@ export class VoteForDropUseCase {
     if (diff + creditSpentBeforeThisVote > voterTotalCredit) {
       throw new BadRequestException('Not enough credit to vote');
     }
+    if (wave.forbid_negative_votes && newVote < 0) {
+      throw new BadRequestException(
+        `Negative votes are not allowed in this wave`
+      );
+    }
     await Promise.all([
       this.votingDb.upsertAggregateDropRank(
         {

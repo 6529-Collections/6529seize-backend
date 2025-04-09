@@ -250,7 +250,8 @@ export class WaveApiService {
         period: {
           min: null,
           max: null
-        }
+        },
+        forbid_negative_votes: false
       },
       visibility: {
         scope: {
