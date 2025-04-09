@@ -4,7 +4,7 @@ import {
   LazyDbAccessCompatibleService,
   SqlExecutor
 } from '../../../sql-executor';
-import { WaveCreditType, WaveEntity } from '../../../entities/IWave';
+import { WaveEntity } from '../../../entities/IWave';
 import {
   ACTIVITY_EVENTS_TABLE,
   CLAP_CREDIT_SPENDINGS_TABLE,
@@ -183,6 +183,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
            time_lock_ms,
            decisions_strategy,
            next_decision_time,
+           forbid_negative_votes,
            outcomes${wave.serial_no !== null ? ', serial_no' : ''})
           values (:id,
                   :name,
@@ -218,6 +219,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                   :time_lock_ms,
                   :decisions_strategy,
                   :next_decision_time,
+                  :forbid_negative_votes,
                   :outcomes${wave.serial_no !== null ? ', :serial_no' : ''})`,
         params,
         { wrappedConnection: ctx.connection }
@@ -264,7 +266,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                             time_lock_ms,
                             decisions_strategy,
                             outcomes, 
-                            serial_no
+                            serial_no,
+                            forbid_negative_votes
                            )
                            values (
                                    :now,
@@ -302,7 +305,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
                                    :time_lock_ms,
                                    :decisions_strategy,
                                    :outcomes,
-                                   :serial_no
+                                   :serial_no,
+                                   :forbid_negative_votes
                            )`,
       { ...params, serial_no: serial, now: Time.currentMillis() },
       { wrappedConnection: ctx.connection }
@@ -379,34 +383,31 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
       );
   }
 
-  async getWaveOverviewsByDropIds(
+  async getWavesByDropIds(
     dropIds: string[],
     connection?: ConnectionWrapper<any>
-  ): Promise<Record<string, WaveOverview>> {
+  ): Promise<Record<string, WaveEntity>> {
     if (dropIds.length === 0) {
       return {};
     }
     return this.db
-      .execute<WaveOverview & { drop_id: string }>(
+      .execute<
+        Omit<
+          WaveEntity,
+          | 'participation_required_media'
+          | 'participation_required_metadata'
+          | 'decisions_strategy'
+        > & {
+          participation_required_media: string;
+          participation_required_metadata: string;
+          decisions_strategy: string;
+          drop_id: string;
+        }
+      >(
         `
         select 
           d.id as drop_id, 
-          w.id, 
-          w.name, 
-          w.picture, 
-          w.picture, 
-          w.description_drop_id, 
-          w.voting_group_id, 
-          w.participation_group_id, 
-          w.chat_group_id, 
-          w.chat_enabled, 
-          w.voting_credit_type, 
-          w.voting_period_start, 
-          w.voting_period_end,
-          w.visibility_group_id,
-          w.admin_group_id,
-          w.admin_drop_deletion_enabled,
-          w.next_decision_time
+          w.*
         from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where d.id in (:dropIds)
         `,
         {
@@ -415,26 +416,22 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
         connection ? { wrappedConnection: connection } : undefined
       )
       .then((it) =>
-        it.reduce<Record<string, WaveOverview>>((acc, wave) => {
+        it.reduce<Record<string, WaveEntity>>((acc, wave) => {
           acc[wave.drop_id] = {
-            id: wave.id,
-            name: wave.name,
-            picture: wave.picture,
-            description_drop_id: wave.description_drop_id,
-            voting_group_id: wave.voting_group_id,
-            participation_group_id: wave.participation_group_id,
-            chat_group_id: wave.chat_group_id,
-            chat_enabled: wave.chat_enabled,
-            voting_credit_type: wave.voting_credit_type,
-            voting_period_start: wave.voting_period_start,
-            voting_period_end: wave.voting_period_end,
-            visibility_group_id: wave.visibility_group_id,
-            admin_group_id: wave.admin_group_id,
-            next_decision_time: wave.next_decision_time,
-            admin_drop_deletion_enabled: wave.admin_drop_deletion_enabled
+            ...wave,
+            participation_required_media: JSON.parse(
+              wave.participation_required_media
+            ),
+            participation_required_metadata: JSON.parse(
+              wave.participation_required_metadata
+            ),
+            decisions_strategy: wave.decisions_strategy
+              ? JSON.parse(wave.decisions_strategy)
+              : null
           };
+          delete (acc[wave.drop_id] as any).drop_id;
           return acc;
-        }, {} as Record<string, WaveOverview>)
+        }, {} as Record<string, WaveEntity>)
       );
   }
 
@@ -1363,24 +1360,6 @@ export interface SearchWavesParams {
   readonly limit: number;
   readonly serial_no_less_than?: number;
   readonly group_id?: string;
-}
-
-export interface WaveOverview {
-  readonly id: string;
-  readonly name: string;
-  readonly picture: string;
-  readonly description_drop_id: string;
-  readonly voting_group_id: string | null;
-  readonly participation_group_id: string | null;
-  readonly chat_group_id: string | null;
-  readonly visibility_group_id: string | null;
-  readonly admin_group_id: string | null;
-  readonly chat_enabled: boolean;
-  readonly voting_credit_type: WaveCreditType;
-  readonly voting_period_start: number | null;
-  readonly voting_period_end: number | null;
-  readonly next_decision_time: number | null;
-  readonly admin_drop_deletion_enabled: boolean;
 }
 
 export const wavesApiDb = new WavesApiDb(dbSupplier, userGroupsService);

@@ -34,6 +34,8 @@ export interface WaveBaseType {
   readonly outcomes: string;
   readonly decisions_strategy: WaveDecisionStrategy | null;
   readonly participation_terms: string | null;
+  readonly admin_drop_deletion_enabled: boolean;
+  readonly forbid_negative_votes: boolean;
 }
 
 export class WaveBase implements WaveBaseType {
@@ -135,6 +137,9 @@ export class WaveBase implements WaveBaseType {
 
   @Column({ type: 'boolean', nullable: false, default: false })
   readonly admin_drop_deletion_enabled!: boolean;
+
+  @Column({ type: 'boolean', nullable: false, default: false })
+  readonly forbid_negative_votes!: boolean;
 }
 
 @Entity(WAVES_TABLE)
