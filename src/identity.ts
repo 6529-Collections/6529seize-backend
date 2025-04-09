@@ -12,6 +12,7 @@ import {
   RATINGS_TABLE
 } from './constants';
 import { randomUUID } from 'crypto';
+import { identitySubscriptionsDb } from './api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 
 const logger = Logger.get('IDENTITIES');
 
@@ -304,6 +305,9 @@ export async function syncIdentitiesWithTdhConsolidations(
         },
         connection
       );
+    }
+    if (identitiesToMerge.length > 0) {
+      await identitySubscriptionsDb.resyncWaveSubscriptionsMetrics(connection);
     }
     await identitiesDb.syncProfileAddressesFromIdentitiesToProfiles(connection);
   }
