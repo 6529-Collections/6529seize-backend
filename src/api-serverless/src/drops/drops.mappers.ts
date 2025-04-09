@@ -173,7 +173,7 @@ export class DropsMappers {
         ? AuthenticationContext.fromProfileId(contextProfileId)
         : AuthenticationContext.notAuthenticated()
     });
-    const waveOverviews = await this.wavesApiDb.getWaveOverviewsByDropIds(
+    const waveOverviews = await this.wavesApiDb.getWavesByDropIds(
       dropEntities.map((it) => it.id),
       connection
     );
@@ -215,7 +215,8 @@ export class DropsMappers {
             admin_group_id: wave.admin_group_id,
             participation_group_id: wave.participation_group_id,
             voting_group_id: wave.voting_group_id,
-            admin_drop_deletion_enabled: wave.admin_drop_deletion_enabled
+            admin_drop_deletion_enabled: wave.admin_drop_deletion_enabled,
+            forbid_negative_votes: wave.forbid_negative_votes
           }
         : null;
       return {
@@ -287,7 +288,8 @@ export class DropsMappers {
       winningDropsRatingsByVoter,
       weightedDropsRanks,
       weightedDropsRates,
-      deletedDrops
+      deletedDrops,
+      dropsInWavesWhereNegativeVotesAreNotAllowed
     ] = await Promise.all([
       this.dropVotingDb.getParticipationDropsRealtimeRanks(
         participatoryDropIds,
@@ -347,7 +349,11 @@ export class DropsMappers {
       this.dropVotingDb.getWeightedDropRates(participatoryDropIds, {
         connection
       }),
-      this.dropsDb.findDeletedDrops(allDropIds, connection)
+      this.dropsDb.findDeletedDrops(allDropIds, connection),
+      this.dropsDb.findDropIdsOfWavesWhereNegativeVotesAreNotAllowed(
+        allDropIds,
+        connection
+      )
     ]);
     return {
       dropsRanks,
@@ -377,7 +383,8 @@ export class DropsMappers {
       deletedDrops,
       allEntities,
       weightedDropsRanks,
-      weightedDropsRates
+      weightedDropsRates,
+      dropsInWavesWhereNegativeVotesAreNotAllowed
     };
   }
 
@@ -406,7 +413,8 @@ export class DropsMappers {
       winningDropsRatersCounts,
       winningDropsRatingsByVoter,
       weightedDropsRanks,
-      weightedDropsRates
+      weightedDropsRates,
+      dropsInWavesWhereNegativeVotesAreNotAllowed
     } = await this.getAllDropsRelatedData(
       {
         dropEntities: entities,
@@ -478,7 +486,8 @@ export class DropsMappers {
           return acc;
         }, {} as Record<string, DropEntity>),
         weightedDropsRanks,
-        weightedDropsRates
+        weightedDropsRates,
+        dropsInWavesWhereNegativeVotesAreNotAllowed
       });
     });
   }
@@ -506,7 +515,8 @@ export class DropsMappers {
     winningDropsRatingsByVoter,
     allEntities,
     weightedDropsRanks,
-    weightedDropsRates
+    weightedDropsRates,
+    dropsInWavesWhereNegativeVotesAreNotAllowed
   }: {
     dropEntity: DropEntity;
     deletedDrops: Record<string, DeletedDropEntity>;
@@ -545,6 +555,7 @@ export class DropsMappers {
     allEntities: Record<string, DropEntity>;
     weightedDropsRanks: Record<string, number>;
     weightedDropsRates: Record<string, { current: number; prediction: number }>;
+    dropsInWavesWhereNegativeVotesAreNotAllowed: string[];
   }): ApiDropWithoutWave {
     const replyToDropId = dropEntity.reply_to_drop_id;
     const dropWinDecision = winDecisions[dropEntity.id];
@@ -622,9 +633,16 @@ export class DropsMappers {
         })
       );
       if (contextProfileId) {
+        let minRating = submissionDropsVotingRanges[dropEntity.id]?.min ?? 0;
+        if (
+          minRating < 0 &&
+          dropsInWavesWhereNegativeVotesAreNotAllowed.includes(dropEntity.id)
+        ) {
+          minRating = 0;
+        }
         context_profile_context = {
           rating: submissionDropsVotingRanges[dropEntity.id]?.current ?? 0,
-          min_rating: submissionDropsVotingRanges[dropEntity.id]?.min ?? 0,
+          min_rating: minRating,
           max_rating: submissionDropsVotingRanges[dropEntity.id]?.max ?? 0
         };
       }
@@ -667,7 +685,8 @@ export class DropsMappers {
                   winningDropsRatersCounts,
                   winningDropsRatingsByVoter,
                   weightedDropsRanks,
-                  weightedDropsRates
+                  weightedDropsRates,
+                  dropsInWavesWhereNegativeVotesAreNotAllowed
                 })
               : undefined
           }
@@ -709,7 +728,8 @@ export class DropsMappers {
                           winningDropsRatersCounts,
                           winningDropsRatingsByVoter,
                           weightedDropsRanks,
-                          weightedDropsRates
+                          weightedDropsRates,
+                          dropsInWavesWhereNegativeVotesAreNotAllowed
                         })
                       : undefined
                   }

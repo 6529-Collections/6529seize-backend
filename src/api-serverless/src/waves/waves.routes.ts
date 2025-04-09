@@ -640,7 +640,8 @@ const WaveVotingSchema = Joi.object<ApiCreateNewWaveVotingConfig>({
     otherwise: Joi.valid(null)
   }),
   signature_required: Joi.boolean().optional().default(false),
-  period: IntRangeSchema.required().allow(null)
+  period: IntRangeSchema.required().allow(null),
+  forbid_negative_votes: Joi.boolean().optional().default(false)
 });
 
 const WaveRequiredMetadataSchema = Joi.object<ApiWaveRequiredMetadata>({

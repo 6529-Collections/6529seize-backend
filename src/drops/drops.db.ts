@@ -315,7 +315,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         },
         opts
       )
-      .then((it) => it[0] || null);
+      .then((it) => it[0] ?? null);
   }
 
   async findDropsByIds(
@@ -360,7 +360,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         },
         opts
       )
-      .then((it) => it[0] || null);
+      .then((it) => it[0] ?? null);
   }
 
   async findDropByIdWithoutEligibilityCheck(
@@ -379,7 +379,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         },
         opts
       )
-      .then((it) => it[0] || null);
+      .then((it) => it[0] ?? null);
   }
 
   async findLatestDrops(
@@ -1386,6 +1386,23 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         { wrappedConnection: ctx.connection }
       )
       .then((it) => it?.wave_id ?? null);
+  }
+
+  async findDropIdsOfWavesWhereNegativeVotesAreNotAllowed(
+    dropIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<string[]> {
+    if (!dropIds.length) {
+      return [];
+    }
+    const results = await this.db.execute<{ id: string }>(
+      `
+      select d.id from ${DROPS_TABLE} d join ${WAVES_TABLE} w on w.id = d.wave_id where w.forbid_negative_votes and d.id in (:dropIds)
+    `,
+      { dropIds },
+      { wrappedConnection: connection }
+    );
+    return results.map((it) => it.id);
   }
 }
 

@@ -131,7 +131,8 @@ export class WavesMappers {
       participation_signature_required:
         request.participation.signature_required,
       participation_terms: request.participation.terms,
-      admin_drop_deletion_enabled: request.wave.admin_drop_deletion_enabled
+      admin_drop_deletion_enabled: request.wave.admin_drop_deletion_enabled,
+      forbid_negative_votes: request.voting.forbid_negative_votes
     };
   }
 
@@ -263,7 +264,8 @@ export class WavesMappers {
         min: waveEntity.voting_period_start,
         max: waveEntity.voting_period_end
       },
-      authenticated_user_eligible: authenticatedUserEligibleToVote
+      authenticated_user_eligible: authenticatedUserEligibleToVote,
+      forbid_negative_votes: waveEntity.forbid_negative_votes
     };
     const visibility: ApiWaveVisibilityConfig = {
       scope: {
