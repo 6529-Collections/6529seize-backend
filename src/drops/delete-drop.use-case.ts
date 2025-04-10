@@ -77,12 +77,8 @@ export class DeleteDropUseCase {
         this.dropsDb.deleteDropSubscriptions(dropId, { timer, connection })
       ]);
       if (model.deletion_purpose === 'DELETE') {
-        await this.dropsDb.decrementWaveDropCounters(
-          {
-            waveId: drop.wave_id,
-            dropType: drop.drop_type,
-            authorId: drop.author_id
-          },
+        await this.dropsDb.resyncParticipatoryDropCountsForWaves(
+          [drop.wave_id],
           {
             timer,
             connection

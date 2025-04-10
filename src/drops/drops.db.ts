@@ -771,39 +771,46 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop('dropsDb->deleteDropEntity');
   }
 
-  public async decrementWaveDropCounters(
-    {
-      waveId,
-      dropType,
-      authorId
-    }: { waveId: string; dropType: DropType; authorId: string },
+  public async resyncParticipatoryDropCountsForWaves(
+    waveIds: string[],
     ctx: RequestContext
   ) {
-    ctx.timer?.start('dropsDb->updateWaveDropCounters');
-    if (![DropType.CHAT, DropType.PARTICIPATORY].includes(dropType)) {
+    if (!waveIds.length) {
       return;
     }
-    const decrementPart =
-      dropType === DropType.CHAT
-        ? `drops_count = drops_count - 1`
-        : `participatory_drops_count = participatory_drops_count - 1`;
+    ctx.timer?.start('dropsDb->resyncParticipatoryDropCountsForWaves');
     await Promise.all([
       this.db.execute(
-        `update ${WAVE_METRICS_TABLE}
-       set ${decrementPart}
-       where wave_id = :waveId`,
-        { waveId },
+        `
+            update ${WAVE_DROPPER_METRICS_TABLE}
+                left join (select wave_id, author_id, count(*) participatory_drops_count
+                           from ${DROPS_TABLE}
+                           where drop_type = 'PARTICIPATORY' and wave_id in (:waveIds)
+                           group by wave_id, author_id) actual on ${WAVE_DROPPER_METRICS_TABLE}.wave_id = actual.wave_id and
+                                                                  ${WAVE_DROPPER_METRICS_TABLE}.dropper_id = actual.author_id
+            set ${WAVE_DROPPER_METRICS_TABLE}.participatory_drops_count = ifnull(actual.participatory_drops_count, 0)
+            where ${WAVE_DROPPER_METRICS_TABLE}.wave_id in (:waveIds) 
+              and ${WAVE_DROPPER_METRICS_TABLE}.participatory_drops_count <> ifnull(actual.participatory_drops_count, 0)
+        `,
+        { waveIds },
         { wrappedConnection: ctx.connection }
       ),
       this.db.execute(
-        `update ${WAVE_DROPPER_METRICS_TABLE}
-       set ${decrementPart}
-       where wave_id = :waveId and dropper_id = :authorId`,
-        { waveId, authorId },
+        `
+        update ${WAVE_METRICS_TABLE}
+                left join (select wave_id, count(*) participatory_drops_count
+                           from ${DROPS_TABLE}
+                           where drop_type = 'PARTICIPATORY' and wave_id in (:waveIds)
+                           group by wave_id) actual on ${WAVE_METRICS_TABLE}.wave_id = actual.wave_id
+            set ${WAVE_METRICS_TABLE}.participatory_drops_count = ifnull(actual.participatory_drops_count, 0)
+            where ${WAVE_METRICS_TABLE}.wave_id in (:waveIds) 
+              and ${WAVE_METRICS_TABLE}.participatory_drops_count <> ifnull(actual.participatory_drops_count, 0)
+        `,
+        { waveIds },
         { wrappedConnection: ctx.connection }
       )
     ]);
-    ctx.timer?.stop('dropsDb->updateWaveDropCounters');
+    ctx.timer?.stop('dropsDb->resyncParticipatoryDropCountsForWaves');
   }
 
   public async deleteDropSubscriptions(dropId: string, ctx: RequestContext) {
