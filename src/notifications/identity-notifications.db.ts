@@ -69,8 +69,12 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     }
   }
 
-  async markNotificationAsRead(
-    { id, identity_id }: { id: number; identity_id: string },
+  async updateNotificationReadAt(
+    {
+      id,
+      identity_id,
+      readAt
+    }: { id: number; identity_id: string; readAt: number | null },
     connection?: ConnectionWrapper<any>
   ) {
     await this.db.execute(
@@ -80,12 +84,11 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         where 
           id = :id 
           and identity_id = :identity_id
-          and read_at is null
       `,
       {
         id,
         identity_id,
-        read_at: Time.currentMillis()
+        read_at: readAt
       },
       connection ? { wrappedConnection: connection } : undefined
     );
@@ -142,6 +145,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       limit: number;
       eligible_group_ids: string[];
       cause: string | null;
+      unread_only: boolean;
     },
     connection?: ConnectionWrapper<any>
   ): Promise<IdentityNotificationDeserialized[]> {
@@ -158,7 +162,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
             ? ` or visibility_group_id in (:eligible_group_ids) `
             : ``
         })
-        ${causes ? `and cause in (:causes)` : ``}
+        ${causes ? ` and cause in (:causes)` : ``}
+        ${param.unread_only ? ` and read_at is null` : ``}
         order by id desc limit :limit
       `,
         { ...param, causes },

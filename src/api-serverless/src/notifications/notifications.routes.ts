@@ -26,6 +26,7 @@ router.get(
         id_less_than: number | null;
         limit: number;
         cause: string | null;
+        unread_only: boolean;
       },
       any
     >,
@@ -46,6 +47,7 @@ router.get(
         id_less_than: number | null;
         limit: number;
         cause: string | null;
+        unread_only: boolean;
       }>({
         id_less_than: Joi.number().optional().integer().default(null),
         limit: Joi.number().optional().integer().default(10).min(1).max(100),
@@ -65,7 +67,8 @@ router.get(
 
             return value;
           }, 'Comma-separated IdentityNotificationCause validation')
-          .default(null)
+          .default(null),
+        unread_only: Joi.boolean().optional().default(false)
       })
     );
     const notifications = await notificationsApiService.getNotifications(
@@ -81,7 +84,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<any, any, any, any, any>,
-    res: Response<ApiResponse<void>>
+    res: Response<ApiResponse<{}>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -97,7 +100,7 @@ router.post(
       authenticationContext.getActingAsId()!,
       { timer }
     );
-    res.send();
+    res.send({});
   }
 );
 
@@ -106,7 +109,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<void>>
+    res: Response<ApiResponse<{}>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     if (!authenticationContext.getActingAsId()) {
@@ -128,7 +131,36 @@ router.post(
         `Invalid notification id: ${id}. Supply a correct one or 'all' to mark all as read.`
       );
     }
-    res.send();
+    res.send({});
+  }
+);
+
+router.post(
+  '/:id/unread',
+  needsAuthenticatedUser(),
+  async (
+    req: Request<{ id: string }, any, any, any, any>,
+    res: Response<ApiResponse<{}>>
+  ) => {
+    const authenticationContext = await getAuthenticationContext(req);
+    if (!authenticationContext.getActingAsId()) {
+      throw new ForbiddenException(
+        `You need to create a profile before you can access notifications`
+      );
+    }
+    if (authenticationContext.isAuthenticatedAsProxy()) {
+      throw new ForbiddenException(`Proxies cannot access notifications`);
+    }
+    const id = req.params.id;
+    if (parseIntOrNull(id) !== null) {
+      await notificationsApiService.markNotificationAsUnread({
+        id: parseInt(id),
+        identity_id: authenticationContext.getActingAsId()!
+      });
+    } else {
+      throw new BadRequestException(`Invalid notification id: ${id}.`);
+    }
+    res.send({});
   }
 );
 
@@ -137,7 +169,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<{ wave_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<void>>
+    res: Response<ApiResponse<{}>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -155,7 +187,7 @@ router.post(
       authenticationContext.getActingAsId()!,
       { timer }
     );
-    res.send();
+    res.send({});
   }
 );
 

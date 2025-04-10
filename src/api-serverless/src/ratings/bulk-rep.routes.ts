@@ -18,13 +18,13 @@ router.post(
   needsAuthenticatedUser(),
   async function (
     req: Request<any, any, ApiBulkRepRequest, any, any>,
-    res: Response<ApiResponse<void>>
+    res: Response<ApiResponse<{}>>
   ) {
     const timer = Timer.getFromRequest(req);
     const apiRequest = getValidatedByJoiOrThrow(req.body, BulkRepRequestSchema);
     const authenticationContext = await getAuthenticationContext(req, timer);
     await ratingsService.bulkRep(apiRequest, { timer, authenticationContext });
-    res.send().status(201);
+    res.send({}).status(201);
   }
 );
 
