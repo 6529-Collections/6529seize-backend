@@ -74,7 +74,7 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
       id,
       identity_id,
       readAt
-    }: { id: number; identity_id: string; readAt: number },
+    }: { id: number; identity_id: string; readAt: number | null },
     connection?: ConnectionWrapper<any>
   ) {
     await this.db.execute(
