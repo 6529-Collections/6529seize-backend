@@ -17,6 +17,7 @@ import { profilesApiService } from '../profiles/profiles.api.service';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { Timer } from '../../../time';
 import { parseIntOrNull } from '../../../helpers';
+import { WALLET_REGEX } from '../../../constants';
 
 const router = asyncRouter();
 
@@ -67,6 +68,21 @@ router.get(
           )
         );
     }
+  }
+);
+
+router.get(
+  `/by-wallet/:wallet`,
+  async function (
+    req: Request<{ wallet: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiIdentity>>
+  ) {
+    const wallet = req.params.wallet.toLowerCase();
+    if (!WALLET_REGEX.test(wallet)) {
+      throw new BadRequestException(`Invalid wallet ${wallet}`);
+    }
+    const identity = await profilesService.getIdentityByWalletOrThrow(wallet);
+    res.send(identity);
   }
 );
 

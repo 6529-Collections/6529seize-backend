@@ -736,6 +736,25 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ApiIdentity"
+  /identities/by-wallet/{wallet}:
+    get:
+      tags:
+        - Identities
+      summary: Get identity by wallet
+      operationId: getIdentityByWallet
+      parameters:
+        - name: wallet
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiIdentity"
   /identities/{id}/subscriptions:
     get:
       tags:
