@@ -34,6 +34,7 @@ import {
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { BadRequestException } from '../../../exceptions';
 import { seizeSettings } from '../api-constants';
+import { RequestContext } from '../../../request.context';
 
 export class NotificationsApiService {
   constructor(
@@ -52,15 +53,30 @@ export class NotificationsApiService {
     await this.identityNotificationsDb.markNotificationAsRead(param);
   }
 
-  public async markAllNotificationsAsRead(identityId: string) {
-    await this.identityNotificationsDb.markAllNotificationsAsRead(identityId);
+  public async markAllNotificationsAsRead(
+    identityId: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    ctx.timer?.start(`${this.constructor.name}->markAllNotificationsAsRead`);
+    await this.identityNotificationsDb.markAllNotificationsAsRead(
+      identityId,
+      ctx
+    );
+    ctx.timer?.stop(`${this.constructor.name}->markAllNotificationsAsRead`);
   }
 
-  public async markWaveNotificationsAsRead(waveId: string, identityId: string) {
+  public async markWaveNotificationsAsRead(
+    waveId: string,
+    identityId: string,
+    ctx: RequestContext
+  ) {
+    ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
     await this.identityNotificationsDb.markWaveNotificationsAsRead(
       waveId,
-      identityId
+      identityId,
+      ctx
     );
+    ctx.timer?.stop(`${this.constructor.name}->markWaveNotificationsAsRead`);
   }
 
   public async getNotifications(
