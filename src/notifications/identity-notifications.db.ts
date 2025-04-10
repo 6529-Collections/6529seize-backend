@@ -9,6 +9,7 @@ import { Time } from '../time';
 import { parseIntOrNull } from '../helpers';
 import { sendIdentityPushNotification } from '../api-serverless/src/push-notifications/push-notifications.service';
 import { Logger } from '../logging';
+import { RequestContext } from '../request.context';
 
 export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
   private readonly logger = Logger.get(IdentityNotificationsDb.name);
@@ -90,10 +91,8 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async markAllNotificationsAsRead(
-    identity_id: string,
-    connection?: ConnectionWrapper<any>
-  ) {
+  async markAllNotificationsAsRead(identity_id: string, ctx: RequestContext) {
+    ctx.timer?.start(`${this.constructor.name}->markAllNotificationsAsRead`);
     await this.db.execute(
       `
         update ${IDENTITY_NOTIFICATIONS_TABLE}
@@ -106,15 +105,17 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         identity_id,
         read_at: Time.currentMillis()
       },
-      connection ? { wrappedConnection: connection } : undefined
+      { wrappedConnection: ctx.connection }
     );
+    ctx.timer?.stop(`${this.constructor.name}->markAllNotificationsAsRead`);
   }
 
   async markWaveNotificationsAsRead(
     waveId: string,
     identityId: string,
-    connection?: ConnectionWrapper<any>
+    ctx: RequestContext
   ) {
+    ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
     await this.db.execute(
       `
         update ${IDENTITY_NOTIFICATIONS_TABLE}
@@ -129,8 +130,9 @@ export class IdentityNotificationsDb extends LazyDbAccessCompatibleService {
         identity_id: identityId,
         read_at: Time.currentMillis()
       },
-      connection ? { wrappedConnection: connection } : undefined
+      { wrappedConnection: ctx.connection }
     );
+    ctx.timer?.stop(`${this.constructor.name}->markWaveNotificationsAsRead`);
   }
 
   async findNotifications(

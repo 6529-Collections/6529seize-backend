@@ -10,6 +10,7 @@ import { notificationsApiService } from './notifications.api.service';
 import { parseIntOrNull } from '../../../helpers';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
+import { Timer } from '../../../time';
 
 const router = asyncRouter();
 
@@ -82,7 +83,8 @@ router.post(
     req: Request<any, any, any, any, any>,
     res: Response<ApiResponse<void>>
   ) => {
-    const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     if (!authenticationContext.getActingAsId()) {
       throw new ForbiddenException(
         `You need to create a profile before you can access notifications`
@@ -92,9 +94,9 @@ router.post(
       throw new ForbiddenException(`Proxies cannot access notifications`);
     }
     await notificationsApiService.markAllNotificationsAsRead(
-      authenticationContext.getActingAsId()!
+      authenticationContext.getActingAsId()!,
+      { timer }
     );
-    await giveReadReplicaTimeToCatchUp();
     res.send();
   }
 );
@@ -126,7 +128,6 @@ router.post(
         `Invalid notification id: ${id}. Supply a correct one or 'all' to mark all as read.`
       );
     }
-    await giveReadReplicaTimeToCatchUp();
     res.send();
   }
 );
@@ -138,7 +139,8 @@ router.post(
     req: Request<{ wave_id: string }, any, any, any, any>,
     res: Response<ApiResponse<void>>
   ) => {
-    const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
+    const authenticationContext = await getAuthenticationContext(req, timer);
     if (!authenticationContext.getActingAsId()) {
       throw new ForbiddenException(
         `You need to create a profile before you can access notifications`
@@ -150,9 +152,9 @@ router.post(
     const waveId = req.params.wave_id;
     await notificationsApiService.markWaveNotificationsAsRead(
       waveId,
-      authenticationContext.getActingAsId()!
+      authenticationContext.getActingAsId()!,
+      { timer }
     );
-    await giveReadReplicaTimeToCatchUp();
     res.send();
   }
 );
