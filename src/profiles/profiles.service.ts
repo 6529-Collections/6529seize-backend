@@ -1601,6 +1601,25 @@ export class ProfilesService {
   async getAllWalletsByProfileId(profileId: string): Promise<string[]> {
     return this.profilesDb.getAllWalletsByProfileId(profileId);
   }
+
+  async getIdentityByWalletOrThrow(wallet: string): Promise<ApiIdentity> {
+    const identity = await this.identitiesDb.getIdentityByWallet(wallet);
+    if (!identity) {
+      throw new NotFoundException(`Identity for wallet ${wallet} not found`);
+    }
+    return {
+      id: identity.profile_id!,
+      handle: identity.handle!,
+      normalised_handle: identity.normalised_handle!,
+      pfp: identity.pfp,
+      primary_wallet: identity.primary_address,
+      rep: identity.rep,
+      cic: identity.cic,
+      level: getLevelFromScore(identity.level_raw),
+      tdh: identity.tdh,
+      display: identity.primary_address
+    };
+  }
 }
 
 export interface CommunityMemberMinimal {

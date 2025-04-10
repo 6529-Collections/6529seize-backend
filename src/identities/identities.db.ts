@@ -426,6 +426,21 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     timer?.stop(`${this.constructor.name}->getProfileIdByWallet`);
     return profileId;
   }
+
+  async getIdentityByWallet(
+    wallet: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<IdentityEntity | null> {
+    return this.db.oneOrNull<IdentityEntity>(
+      `
+    select i.* from ${IDENTITIES_TABLE} i
+    join ${ADDRESS_CONSOLIDATION_KEY} a on a.consolidation_key = i.consolidation_key
+    where a.address = :wallet
+    `,
+      { wallet },
+      { wrappedConnection: connection }
+    );
+  }
 }
 
 export const identitiesDb = new IdentitiesDb(dbSupplier);
