@@ -231,7 +231,7 @@ router.delete(
   needsAuthenticatedUser(),
   async (
     req: Request<{ drop_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<void>>
+    res: Response<ApiResponse<{}>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -244,7 +244,7 @@ router.delete(
         authenticationContext
       }
     );
-    res.send();
+    res.send({});
   }
 );
 

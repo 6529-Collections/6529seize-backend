@@ -35,6 +35,7 @@ import {
 import { BadRequestException } from '../../../exceptions';
 import { seizeSettings } from '../api-constants';
 import { RequestContext } from '../../../request.context';
+import { Time } from '../../../time';
 
 export class NotificationsApiService {
   constructor(
@@ -50,7 +51,20 @@ export class NotificationsApiService {
     id: number;
     identity_id: string;
   }) {
-    await this.identityNotificationsDb.markNotificationAsRead(param);
+    await this.identityNotificationsDb.updateNotificationReadAt({
+      ...param,
+      readAt: Time.currentMillis()
+    });
+  }
+
+  public async markNotificationAsUnread(param: {
+    id: number;
+    identity_id: string;
+  }) {
+    await this.identityNotificationsDb.updateNotificationReadAt({
+      ...param,
+      readAt: null
+    });
   }
 
   public async markAllNotificationsAsRead(
@@ -84,6 +98,7 @@ export class NotificationsApiService {
       id_less_than: number | null;
       limit: number;
       cause: string | null;
+      unread_only: boolean;
     },
     authenticationContext: AuthenticationContext
   ): Promise<ApiNotificationsResponse> {
