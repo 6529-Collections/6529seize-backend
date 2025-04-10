@@ -155,7 +155,6 @@ router.post(
       authenticationContext.getActingAsId()!,
       { timer }
     );
-    await giveReadReplicaTimeToCatchUp();
     res.send();
   }
 );
