@@ -264,13 +264,13 @@ router.delete(
   needsAuthenticatedUser(),
   async (
     req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<void>>
+    res: Response<ApiResponse<{}>>
   ) => {
     const { id } = req.params;
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
     await waveApiService.deleteWave(id, { authenticationContext, timer });
-    res.send();
+    res.send({});
   }
 );
 
