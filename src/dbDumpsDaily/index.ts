@@ -1,6 +1,7 @@
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import {
+  ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATIONS_TABLE,
   DELEGATIONS_TABLE,
   IDENTITIES_TABLE,
@@ -30,6 +31,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 
       await dumpTable(IDENTITIES_TABLE);
       await dumpTable(PROFILES_TABLE);
+      await dumpTable(ADDRESS_CONSOLIDATION_KEY);
     },
     { logger }
   );
