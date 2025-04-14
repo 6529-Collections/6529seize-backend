@@ -341,7 +341,10 @@ export class WavesMappers {
       your_latest_drop_timestamp:
         waveAuthenticatedUserMetrics?.latest_drop_timestamp,
       your_participation_drops_count:
-        yourParticipationDropsCountByWaveId[waveEntity.id] ?? 0
+        yourParticipationDropsCountByWaveId[waveEntity.id] ?? 0,
+      you_have_unread_drops:
+        waveAuthenticatedUserMetrics?.latest_read_timestamp <
+        waveMetrics.latest_drop_timestamp
     };
     return {
       id: waveEntity.id,

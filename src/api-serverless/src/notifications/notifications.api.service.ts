@@ -36,7 +36,7 @@ import { BadRequestException } from '../../../exceptions';
 import { seizeSettings } from '../api-constants';
 import { RequestContext } from '../../../request.context';
 import { Time } from '../../../time';
-
+import { dropsDb, DropsDb } from '../../../drops/drops.db';
 export class NotificationsApiService {
   constructor(
     private readonly notificationsReader: UserNotificationsReader,
@@ -44,7 +44,8 @@ export class NotificationsApiService {
     private readonly profilesApiService: ProfilesApiService,
     private readonly dropsService: DropsApiService,
     private readonly identityNotificationsDb: IdentityNotificationsDb,
-    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
+    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
+    private readonly dropsDb: DropsDb
   ) {}
 
   public async markNotificationAsRead(param: {
@@ -86,6 +87,11 @@ export class NotificationsApiService {
   ) {
     ctx.timer?.start(`${this.constructor.name}->markWaveNotificationsAsRead`);
     await this.identityNotificationsDb.markWaveNotificationsAsRead(
+      waveId,
+      identityId,
+      ctx
+    );
+    await this.dropsDb.updateWaveDropperMetricLatestReadTimestamp(
       waveId,
       identityId,
       ctx
@@ -357,5 +363,6 @@ export const notificationsApiService = new NotificationsApiService(
   profilesApiService,
   dropsService,
   identityNotificationsDb,
-  identitySubscriptionsDb
+  identitySubscriptionsDb,
+  dropsDb
 );

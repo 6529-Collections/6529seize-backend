@@ -841,7 +841,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             dropper_id: params.dropperId,
             drops_count: 0,
             participatory_drops_count: 0,
-            latest_drop_timestamp: 0
+            latest_drop_timestamp: 0,
+            latest_read_timestamp: 0
           };
           return acc;
         }, {} as Record<string, WaveDropperMetricEntity>)

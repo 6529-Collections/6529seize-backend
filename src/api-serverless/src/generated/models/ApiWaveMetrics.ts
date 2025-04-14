@@ -18,7 +18,8 @@ export class ApiWaveMetrics {
     'latest_drop_timestamp': number;
     'your_drops_count'?: number;
     'your_participation_drops_count': number;
-    'your_latest_drop_timestamp'?: number;
+    'your_latest_drop_timestamp': number;
+    'you_have_unread_drops': boolean;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -58,6 +59,12 @@ export class ApiWaveMetrics {
             "baseName": "your_latest_drop_timestamp",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "you_have_unread_drops",
+            "baseName": "you_have_unread_drops",
+            "type": "boolean",
+            "format": ""
         }    ];
 
     static getAttributeTypeMap() {

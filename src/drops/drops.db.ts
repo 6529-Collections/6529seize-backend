@@ -116,12 +116,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       this.db.execute(
         `
             insert into ${WAVE_DROPPER_METRICS_TABLE}
-            (wave_id, dropper_id, drops_count, participatory_drops_count, latest_drop_timestamp)
+            (wave_id, dropper_id, drops_count, participatory_drops_count, latest_drop_timestamp, latest_read_timestamp)
             values (:waveId, :dropperId, ${
               newDropEntity.drop_type === DropType.CHAT ? 1 : 0
             }, ${
           newDropEntity.drop_type === DropType.PARTICIPATORY ? 1 : 0
-        }, :now)
+        }, :now, :now)
             on duplicate key update drops_count = (drops_count + ${
               newDropEntity.drop_type === DropType.CHAT ? 1 : 0
             }),
@@ -131,7 +131,8 @@ export class DropsDb extends LazyDbAccessCompatibleService {
                                         ? 1
                                         : 0
                                     }),
-                                    latest_drop_timestamp     = :now
+                                    latest_drop_timestamp     = :now,
+                                    latest_read_timestamp     = :now
         `,
         { waveId, dropperId: newDropEntity.author_id, now },
         { wrappedConnection: connection }
@@ -1410,6 +1411,20 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: connection }
     );
     return results.map((it) => it.id);
+  }
+
+  async updateWaveDropperMetricLatestReadTimestamp(
+    waveId: string,
+    dropperId: string,
+    ctx: RequestContext
+  ) {
+    console.log('updating latest read timestamp', waveId, dropperId);
+    await this.db.execute(
+      `update ${WAVE_DROPPER_METRICS_TABLE} set latest_read_timestamp = :now where wave_id = :waveId and dropper_id = :dropperId`,
+      { waveId, dropperId, now: Time.now().toMillis() },
+      { wrappedConnection: ctx.connection }
+    );
+    console.log('updated latest read timestamp', waveId, dropperId);
   }
 }
 
