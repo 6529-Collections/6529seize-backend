@@ -34,16 +34,15 @@ export class WsListenersNotifier {
   ): Promise<void> {
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDrop`);
     try {
-      const onlineProfiles = await this.wsConnectionRepository
-        .getCurrentlyOnlineCommunityMemberConnectionIds(
-          inputDrop.wave.visibility_group_id,
+      const onlineProfiles =
+        await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
+          {
+            groupId: inputDrop.wave.visibility_group_id,
+            waveId: inputDrop.wave.id
+          },
           ctx
-        )
-        .then((res) =>
-          res.filter(
-            (it) => it.wave_id === null || it.wave_id === inputDrop.wave.id
-          )
         );
+
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
         inputDrop
@@ -80,15 +79,13 @@ export class WsListenersNotifier {
   ): Promise<void> {
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
     try {
-      const onlineProfiles = await this.wsConnectionRepository
-        .getCurrentlyOnlineCommunityMemberConnectionIds(
-          inputDrop.wave.visibility_group_id,
+      const onlineProfiles =
+        await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
+          {
+            groupId: inputDrop.wave.visibility_group_id,
+            waveId: inputDrop.wave.id
+          },
           ctx
-        )
-        .then((res) =>
-          res.filter(
-            (it) => it.wave_id === null || it.wave_id === inputDrop.wave.id
-          )
         );
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
@@ -130,6 +127,9 @@ export class WsListenersNotifier {
     const connectionIds = await this.wsConnectionRepository
       .findAllByWaveId(waveId)
       .then((res) => res.map((it) => it.connection_id));
+    if (!connectionIds.length) {
+      return;
+    }
     const identityEntity = await identitiesDb.getIdentityByProfileId(
       identityId
     );
@@ -198,12 +198,13 @@ export class WsListenersNotifier {
     ctx: RequestContext
   ): Promise<void> {
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDropDelete`);
-    const onlineClients = await this.wsConnectionRepository
-      .getCurrentlyOnlineCommunityMemberConnectionIds(visibility_group_id, ctx)
-      .then((res) =>
-        res.filter(
-          (it) => it.wave_id === null || it.wave_id === dropInfo.wave_id
-        )
+    const onlineClients =
+      await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
+        {
+          groupId: visibility_group_id,
+          waveId: dropInfo.wave_id
+        },
+        ctx
       );
     const connectionIds = onlineClients.map((it) => it.connectionId);
     const message = JSON.stringify(dropDeleteMessage(dropInfo));

@@ -64,7 +64,7 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   async getCurrentlyOnlineCommunityMemberConnectionIds(
-    groupId: string | null,
+    { groupId, waveId }: { groupId: string | null; waveId: string },
     ctx: RequestContext
   ): Promise<
     { connectionId: string; profileId: string | null; wave_id: string | null }[]
@@ -83,7 +83,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         ws.connection_id as connection_id,
         ws.identity_id as profile_id,
         ws.wave_id as wave_id
-      from ${WS_CONNECTIONS_TABLE} ws `
+      from ${WS_CONNECTIONS_TABLE} ws where ws.wave_id = :waveId or ws.wave_id is null `,
+          { waveId }
         )
         .then((res) =>
           res.map((it) => ({
