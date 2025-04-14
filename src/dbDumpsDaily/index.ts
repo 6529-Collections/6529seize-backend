@@ -3,7 +3,9 @@ import * as sentryContext from '../sentry.context';
 import {
   CONSOLIDATIONS_TABLE,
   DELEGATIONS_TABLE,
+  IDENTITIES_TABLE,
   NFTDELEGATION_BLOCKS_TABLE,
+  PROFILES_TABLE,
   TRANSACTIONS_TABLE
 } from '../constants';
 import { sqlExecutor } from '../sql-executor';
@@ -25,6 +27,9 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         `SELECT * FROM ${NFTDELEGATION_BLOCKS_TABLE} ORDER BY block DESC LIMIT 1`
       );
       await dumpData(NFTDELEGATION_BLOCKS_TABLE, nftDelData);
+
+      await dumpTable(IDENTITIES_TABLE);
+      await dumpTable(PROFILES_TABLE);
     },
     { logger }
   );
