@@ -10,6 +10,7 @@ import { Logger } from '../../logging';
 import { WsMessageType } from './ws/ws-message';
 import { isValidUuid } from '../../helpers';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
+import { logger } from 'ethers';
 
 const serverlessHttp = require('serverless-http');
 
@@ -56,7 +57,9 @@ async function wsHandler(
     case '$default':
       try {
         const message = JSON.parse(event.body || '{}');
-
+        logger.info(
+          `WS $default. Identity: ${identityId}. Message: ${message}`
+        );
         switch (message.type) {
           case WsMessageType.SUBSCRIBE_TO_WAVE: {
             const waveId = message.wave_id?.toString() ?? null;
