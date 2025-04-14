@@ -15,6 +15,7 @@ import {
   DeleteConnectionCommand,
   PostToConnectionCommand
 } from '@aws-sdk/client-apigatewaymanagementapi';
+import { RequestContext } from '../../../request.context';
 
 export class SocketNotAvailableException extends Error {
   constructor() {
@@ -196,7 +197,8 @@ export class AppWebSockets {
       {
         identity_id: identityId,
         jwt_expiry: jwtExpiry,
-        connection_id: connectionId
+        connection_id: connectionId,
+        wave_id: null
       },
       {}
     );
@@ -206,6 +208,25 @@ export class AppWebSockets {
     this.logger.info(`Deregistering socket for connection ${connectionId}`);
     await ClientConnections.Get().closeClient(connectionId);
     await this.wsConnectionRepository.deleteByConnectionId(connectionId, {});
+  }
+
+  async updateActiveWaveForConnection(
+    {
+      connectionId,
+      activeWaveId
+    }: {
+      connectionId: string;
+      activeWaveId: string | null;
+    },
+    ctx: RequestContext
+  ) {
+    await this.wsConnectionRepository.updateWaveId(
+      {
+        connectionId,
+        waveId: activeWaveId
+      },
+      ctx
+    );
   }
 }
 

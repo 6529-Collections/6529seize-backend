@@ -8,12 +8,17 @@ import { RequestContext } from '../../../request.context';
 import {
   dropDeleteMessage,
   dropRatingUpdateMessage,
-  dropUpdateMessage
+  dropUpdateMessage,
+  userIsTypingMessage
 } from './ws-message';
 import { ApiDropWithoutWave } from '../generated/models/ApiDropWithoutWave';
 import { ApiDropType } from '../generated/models/ApiDropType';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { Logger } from '../../../logging';
+import { Time } from '../../../time';
+import { identitiesDb } from '../../../identities/identities.db';
+import { getLevelFromScore } from '../../../profiles/profile-level';
+import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 
 export class WsListenersNotifier {
   private readonly logger: Logger = Logger.get(this.constructor.name);
@@ -29,10 +34,15 @@ export class WsListenersNotifier {
   ): Promise<void> {
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDrop`);
     try {
-      const onlineProfiles =
-        await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
+      const onlineProfiles = await this.wsConnectionRepository
+        .getCurrentlyOnlineCommunityMemberConnectionIds(
           inputDrop.wave.visibility_group_id,
           ctx
+        )
+        .then((res) =>
+          res.filter(
+            (it) => it.wave_id === null || it.wave_id === inputDrop.wave.id
+          )
         );
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
@@ -70,10 +80,15 @@ export class WsListenersNotifier {
   ): Promise<void> {
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
     try {
-      const onlineProfiles =
-        await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
+      const onlineProfiles = await this.wsConnectionRepository
+        .getCurrentlyOnlineCommunityMemberConnectionIds(
           inputDrop.wave.visibility_group_id,
           ctx
+        )
+        .then((res) =>
+          res.filter(
+            (it) => it.wave_id === null || it.wave_id === inputDrop.wave.id
+          )
         );
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
@@ -103,6 +118,51 @@ export class WsListenersNotifier {
     }
 
     ctx.timer?.stop(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
+  }
+
+  async notifyAboutUserIsTyping({
+    identityId,
+    waveId
+  }: {
+    identityId: string;
+    waveId: string;
+  }) {
+    const connectionIds = await this.wsConnectionRepository
+      .findAllByWaveId(waveId)
+      .then((res) => res.map((it) => it.connection_id));
+    const identityEntity = await identitiesDb.getIdentityByProfileId(
+      identityId
+    );
+    if (!identityEntity) {
+      return;
+    }
+    const profile: Omit<ApiProfileMin, 'subscribed_actions'> = {
+      id: identityId,
+      handle: identityEntity.handle!,
+      pfp: identityEntity.pfp,
+      banner1_color: identityEntity.banner1,
+      banner2_color: identityEntity.banner2,
+      cic: identityEntity.cic,
+      rep: identityEntity.rep,
+      tdh: identityEntity.tdh,
+      level: getLevelFromScore(identityEntity.level_raw),
+      archived: false
+    };
+    const now = Time.currentMillis();
+    await Promise.all(
+      connectionIds.map((connectionId: string) =>
+        this.appWebSockets.send({
+          connectionId,
+          message: JSON.stringify(
+            userIsTypingMessage({
+              wave_id: waveId,
+              timestamp: now,
+              profile: profile
+            })
+          )
+        })
+      )
+    );
   }
 
   private async getCreditLeftsForOnlineProfiles(
@@ -138,10 +198,12 @@ export class WsListenersNotifier {
     ctx: RequestContext
   ): Promise<void> {
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDropDelete`);
-    const onlineClients =
-      await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
-        visibility_group_id,
-        ctx
+    const onlineClients = await this.wsConnectionRepository
+      .getCurrentlyOnlineCommunityMemberConnectionIds(visibility_group_id, ctx)
+      .then((res) =>
+        res.filter(
+          (it) => it.wave_id === null || it.wave_id === dropInfo.wave_id
+        )
       );
     const connectionIds = onlineClients.map((it) => it.connectionId);
     const message = JSON.stringify(dropDeleteMessage(dropInfo));

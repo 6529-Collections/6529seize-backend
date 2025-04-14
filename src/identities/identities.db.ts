@@ -294,12 +294,12 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
   }
 
   async getIdentityByProfileId(
-    targetProfileId: string,
+    id: string,
     connectionHolder?: ConnectionWrapper<any>
   ) {
     return await this.db.oneOrNull<IdentityEntity>(
-      `select * from ${IDENTITIES_TABLE} where profile_id = :targetProfileId`,
-      { targetProfileId },
+      `select * from ${IDENTITIES_TABLE} where profile_id = :id`,
+      { id },
       { wrappedConnection: connectionHolder }
     );
   }
