@@ -1394,7 +1394,8 @@ export class ProfilesService {
           tdh: 0,
           level: 0,
           pfp: null,
-          archived: true
+          archived: true,
+          primary_address: null
         }))
       );
     return [...activeProfiles, ...archivedProfiles];

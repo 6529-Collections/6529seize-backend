@@ -575,7 +575,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     }
     return this.db
       .execute(
-        `select profile_id as id, handle, pfp, cic, rep, tdh, banner1 as banner1_color, banner2 as banner2_color, level_raw as level from ${IDENTITIES_TABLE} where profile_id in (:ids)`,
+        `select profile_id as id, handle, pfp, cic, rep, tdh, banner1 as banner1_color, banner2 as banner2_color, level_raw as level, primary_address from ${IDENTITIES_TABLE} where profile_id in (:ids)`,
         { ids },
         connection ? { wrappedConnection: connection } : undefined
       )
@@ -752,6 +752,7 @@ export interface ProfileOverview {
   banner1_color: string | null;
   banner2_color: string | null;
   archived: boolean;
+  primary_address: string | null;
 }
 
 export const profilesDb = new ProfilesDb(dbSupplier);
