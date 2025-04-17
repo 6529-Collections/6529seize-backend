@@ -1,6 +1,11 @@
 import fetch from 'node-fetch';
 import * as db from '../../db-api';
-import { isNumber, parseIntOrNull, uniqueShortId } from '../../helpers';
+import {
+  isNumber,
+  isValidUuid,
+  parseIntOrNull,
+  uniqueShortId
+} from '../../helpers';
 
 import feedRoutes from './feed/feed.routes';
 import identitiesRoutes from './identities/identities.routes';
@@ -102,6 +107,8 @@ import {
   authenticateWebSocketJwt,
   mapHttpRequestToGatewayEvent
 } from './ws/ws';
+import { WsMessageType } from './ws/ws-message';
+import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 
 const YAML = require('yamljs');
 const compression = require('compression');
@@ -1061,10 +1068,58 @@ loadApi().then(async () => {
 
         socket.send(JSON.stringify({ routeKey: '$connect', connected: true }));
 
-        socket.on('message', () => {
-          socket.send(
-            JSON.stringify({ error: "This websocket doesn't accept messages" })
-          );
+        socket.on('message', async (rawData) => {
+          try {
+            const message = JSON.parse(rawData.toString());
+
+            switch (message.type) {
+              case WsMessageType.SUBSCRIBE_TO_WAVE: {
+                const waveId = message.wave_id?.toString() ?? null;
+                if (waveId && !isValidUuid(waveId)) {
+                  socket.send(
+                    JSON.stringify({
+                      error: 'Invalid waveId'
+                    })
+                  );
+                  return;
+                }
+                await appWebSockets.updateActiveWaveForConnection(
+                  { connectionId, activeWaveId: waveId },
+                  {}
+                );
+                socket.send(JSON.stringify({ message: 'OK' }));
+                break;
+              }
+              case WsMessageType.USER_IS_TYPING: {
+                const waveId = message.wave_id?.toString();
+                if (!waveId || !isValidUuid(waveId)) {
+                  socket.send(
+                    JSON.stringify({
+                      error: 'Invalid wave id'
+                    })
+                  );
+                } else {
+                  await wsListenersNotifier.notifyAboutUserIsTyping({
+                    identityId,
+                    waveId
+                  });
+                }
+                break;
+              }
+              default:
+                socket.send(
+                  JSON.stringify({
+                    error: 'Unrecognized action'
+                  })
+                );
+            }
+          } catch (err) {
+            socket.send(
+              JSON.stringify({
+                error: 'Failed to process message'
+              })
+            );
+          }
         });
 
         socket.on('close', () => {

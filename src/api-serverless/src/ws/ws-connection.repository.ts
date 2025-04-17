@@ -33,6 +33,17 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
     );
   }
 
+  public async updateWaveId(
+    params: { connectionId: string; waveId: string | null },
+    ctx: RequestContext
+  ) {
+    await this.db.execute(
+      `update ${WS_CONNECTIONS_TABLE} set wave_id = :waveId where connection_id = :connectionId`,
+      params,
+      { wrappedConnection: ctx.connection }
+    );
+  }
+
   public async deleteByConnectionId(connectionId: string, ctx: RequestContext) {
     await this.db.execute(
       `delete from ${WS_CONNECTIONS_TABLE} where connection_id = :connectionId`,
@@ -53,9 +64,11 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
   }
 
   async getCurrentlyOnlineCommunityMemberConnectionIds(
-    groupId: string | null,
+    { groupId, waveId }: { groupId: string | null; waveId: string },
     ctx: RequestContext
-  ): Promise<{ connectionId: string; profileId: string | null }[]> {
+  ): Promise<
+    { connectionId: string; profileId: string | null; wave_id: string | null }[]
+  > {
     ctx.timer?.start(
       `${this.constructor.name}->getCurrentlyOnlineCommunityMemberConnectionIds`
     );
@@ -64,15 +77,19 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
         .execute<{
           connection_id: string;
           profile_id: string | null;
+          wave_id: string | null;
         }>(
           `select
         ws.connection_id as connection_id,
-        ws.identity_id as profile_id
-      from ${WS_CONNECTIONS_TABLE} ws `
+        ws.identity_id as profile_id,
+        ws.wave_id as wave_id
+      from ${WS_CONNECTIONS_TABLE} ws where ws.wave_id = :waveId or ws.wave_id is null `,
+          { waveId }
         )
         .then((res) =>
           res.map((it) => ({
             connectionId: it.connection_id,
+            wave_id: it.wave_id,
             profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id
           }))
         );
@@ -95,7 +112,8 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       ${viewResult.sql} 
       select
         ws.connection_id as connection_id,
-        ws.identity_id as profile_id
+        ws.identity_id as profile_id,
+        ws.wave_id as wave_id
       from ${WS_CONNECTIONS_TABLE} ws
       join ${UserGroupsService.GENERATED_VIEW} cm
       on ws.identity_id = cm.profile_id
@@ -105,10 +123,12 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       .execute<{
         connection_id: string;
         profile_id: string | null;
+        wave_id: string | null;
       }>(sql, params)
       .then((res) =>
         res.map((it) => ({
           connectionId: it.connection_id,
+          wave_id: it.wave_id,
           profileId: it.profile_id === ANON_USER_ID ? null : it.profile_id
         }))
       );
@@ -189,6 +209,15 @@ export class WsConnectionRepository extends LazyDbAccessCompatibleService {
       acc[it] = res.find((r) => r.profile_id)?.credit_left ?? 0;
       return acc;
     }, {} as Record<string, number>);
+  }
+
+  async findAllByWaveId(waveId: string): Promise<WSConnectionEntity[]> {
+    return this.db.execute<WSConnectionEntity>(
+      `
+    select * from ${WS_CONNECTIONS_TABLE} where wave_id = :waveId
+    `,
+      { waveId }
+    );
   }
 }
 
