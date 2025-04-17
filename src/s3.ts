@@ -332,7 +332,7 @@ async function handleVideoScaling(
 
         ffstream.on('error', async (err) => {
           logger.error(`[SCALING FAILED ${scaledVideoKey}]`, err);
-          reject(err);
+          reject(err instanceof Error ? err : new Error(String(err)));
         });
 
         ffstream.on('end', async () => {
