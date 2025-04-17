@@ -12,8 +12,6 @@ import {
   userIsTypingMessage
 } from './ws-message';
 import { ApiDropWithoutWave } from '../generated/models/ApiDropWithoutWave';
-import { ApiDropType } from '../generated/models/ApiDropType';
-import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { Logger } from '../../../logging';
 import { Time } from '../../../time';
 import { identitiesDb } from '../../../identities/identities.db';
@@ -42,22 +40,12 @@ export class WsListenersNotifier {
           },
           ctx
         );
-
-      const creditLefts = await this.getCreditLeftsForOnlineProfiles(
-        onlineProfiles,
-        inputDrop
-      );
       await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) =>
+        onlineProfiles.map(({ connectionId }) =>
           this.appWebSockets.send({
             connectionId,
             message: JSON.stringify(
-              dropUpdateMessage(
-                this.removeDropsAuthRequestContext(
-                  inputDrop,
-                  profileId === null ? 0 : creditLefts[profileId] ?? 0
-                )
-              )
+              dropUpdateMessage(this.removeDropsAuthRequestContext(inputDrop))
             )
           })
         )
@@ -87,21 +75,12 @@ export class WsListenersNotifier {
           },
           ctx
         );
-      const creditLefts = await this.getCreditLeftsForOnlineProfiles(
-        onlineProfiles,
-        drop
-      );
       await Promise.all(
-        onlineProfiles.map(({ connectionId, profileId }) =>
+        onlineProfiles.map(({ connectionId }) =>
           this.appWebSockets.send({
             connectionId,
             message: JSON.stringify(
-              dropRatingUpdateMessage(
-                this.removeDropsAuthRequestContext(
-                  drop,
-                  profileId === null ? 0 : creditLefts[profileId] ?? 0
-                )
-              )
+              dropRatingUpdateMessage(this.removeDropsAuthRequestContext(drop))
             )
           })
         )
@@ -165,33 +144,6 @@ export class WsListenersNotifier {
     );
   }
 
-  private async getCreditLeftsForOnlineProfiles(
-    onlineProfiles: { connectionId: string; profileId: string | null }[],
-    inputDrop: ApiDrop
-  ) {
-    const profileIds = onlineProfiles
-      .map((p) => p.profileId)
-      .filter((it) => !!it) as string[];
-    let creditLefts: Record<string, number> = {};
-    if (inputDrop.drop_type === ApiDropType.Participatory) {
-      if (inputDrop.wave.voting_credit_type === ApiWaveCreditType.Rep) {
-        creditLefts =
-          await this.wsConnectionRepository.getCreditLeftForProfilesForRepBasedWave(
-            {
-              profileIds,
-              waveId: inputDrop.wave.id
-            }
-          );
-      } else {
-        creditLefts =
-          await this.wsConnectionRepository.getCreditLeftForProfilesForTdhBasedWave(
-            { waveId: inputDrop.wave.id, profileIds }
-          );
-      }
-    }
-    return creditLefts;
-  }
-
   async notifyAboutDropDelete(
     dropInfo: { drop_id: string; wave_id: string; drop_serial: number },
     visibility_group_id: string | null,
@@ -217,8 +169,7 @@ export class WsListenersNotifier {
   }
 
   private removeDropsAuthRequestContext(
-    drop: ApiDrop | ApiDropWithoutWave,
-    creditLeft: number
+    drop: ApiDrop | ApiDropWithoutWave
   ): ApiDrop {
     const modifiedDrop: ApiDrop = JSON.parse(JSON.stringify(drop));
     const maybeWave = (drop as ApiDrop).wave;
@@ -229,7 +180,7 @@ export class WsListenersNotifier {
         undefined;
       (modifiedWave as any).authenticated_user_eligible_to_chat = undefined;
       (modifiedWave as any).authenticated_user_admin = undefined;
-      (modifiedWave as any).credit_left = creditLeft;
+      (modifiedWave as any).credit_left = undefined;
       (modifiedDrop.wave as any) = modifiedWave;
       (modifiedDrop.author as any).subscribed_actions = undefined;
       (modifiedDrop as any).context_profile_context = undefined;
@@ -237,15 +188,13 @@ export class WsListenersNotifier {
     for (const part of modifiedDrop.parts) {
       if (part.quoted_drop?.drop) {
         part.quoted_drop.drop = this.removeDropsAuthRequestContext(
-          part.quoted_drop.drop,
-          creditLeft
+          part.quoted_drop.drop
         );
       }
     }
     if (modifiedDrop.reply_to?.drop) {
       modifiedDrop.reply_to.drop = this.removeDropsAuthRequestContext(
-        modifiedDrop.reply_to.drop,
-        creditLeft
+        modifiedDrop.reply_to.drop
       );
     }
     return modifiedDrop;
