@@ -47,7 +47,6 @@ on:
           - s3Loop
           - subscriptionsDaily
           - subscriptionsTopUpLoop
-          - tdhConsolidationsLoop
           - tdhHistoryLoop
           - tdhLoop
           - teamLoop
