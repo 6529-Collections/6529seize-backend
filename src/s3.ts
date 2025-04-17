@@ -109,7 +109,6 @@ export const persistS3 = async (nfts: NFT[]) => {
 };
 
 async function processNft(myBucket: string, n: NFT) {
-  console.log(`[PROCESSING ${n.contract} #${n.id}]`);
   let format: any;
   if (
     areEqualAddresses(n.contract, MEMES_CONTRACT) ||
