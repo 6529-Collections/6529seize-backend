@@ -9,10 +9,7 @@ let cloudfront: CloudFrontClient;
 const logger = Logger.get('CLOUDFRONT');
 
 const getCloudfront = () => {
-  if (!cloudfront) {
-    cloudfront = new CloudFrontClient({ region: 'us-east-1' });
-  }
-
+  cloudfront ??= new CloudFrontClient({ region: 'us-east-1' });
   return cloudfront;
 };
 

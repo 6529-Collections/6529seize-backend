@@ -23,8 +23,8 @@ axiosRetry(axios, {
   retryDelay: axiosRetry.exponentialDelay,
   retryCondition: (error) => {
     return (
-      axiosRetry.isNetworkError(error) ||
-      axiosRetry.isRetryableError(error) ||
+      axiosRetry.isNetworkError(error) ??
+      axiosRetry.isRetryableError(error) ??
       (error.response?.status ?? 0) >= 500
     );
   }
@@ -317,7 +317,7 @@ async function handleVideoScaling(
             `[resizedVideoStream] [SCALING FAILED ${scaledVideoKey}]`,
             err
           );
-          reject(err);
+          reject(new Error(err));
         });
 
         const ffstream = new Stream.PassThrough();
@@ -332,7 +332,7 @@ async function handleVideoScaling(
 
         ffstream.on('error', async (err) => {
           logger.error(`[SCALING FAILED ${scaledVideoKey}]`, err);
-          reject(err);
+          reject(new Error(err));
         });
 
         ffstream.on('end', async () => {
@@ -358,13 +358,13 @@ async function handleVideoScaling(
             resolve();
           } catch (e) {
             logger.error(`[UPLOAD FAILED ${scaledVideoKey}]`, e);
-            reject(e);
+            reject(new Error(e));
           }
         });
       })
       .catch((err) => {
         logger.error(`[scaleVideo FAILED] [${scaledVideoKey}]`, err);
-        reject(err);
+        reject(new Error(err));
       });
   });
 }
