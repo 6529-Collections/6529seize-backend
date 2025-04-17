@@ -2,6 +2,7 @@ import { Logger } from './logging';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
 import { prepEnvironment } from './env';
 import { DataSource } from 'typeorm';
+import * as s3Loop from './s3Loop';
 
 const logger = Logger.get('BACKEND');
 
@@ -33,6 +34,9 @@ async function start() {
     undefined as any,
     undefined as any
   );
+
+  await s3Loop.handler(undefined as any, undefined as any, undefined as any);
+
   process.exit(0);
 }
 
