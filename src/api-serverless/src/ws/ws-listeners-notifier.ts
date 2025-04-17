@@ -74,7 +74,7 @@ export class WsListenersNotifier {
   }
 
   async notifyAboutDropRatingUpdate(
-    inputDrop: ApiDrop,
+    drop: ApiDrop,
     ctx: RequestContext
   ): Promise<void> {
     ctx.timer?.start(`${this.constructor.name}->notifyAboutDropRatingUpdate`);
@@ -82,14 +82,14 @@ export class WsListenersNotifier {
       const onlineProfiles =
         await this.wsConnectionRepository.getCurrentlyOnlineCommunityMemberConnectionIds(
           {
-            groupId: inputDrop.wave.visibility_group_id,
-            waveId: inputDrop.wave.id
+            groupId: drop.wave.visibility_group_id,
+            waveId: drop.wave.id
           },
           ctx
         );
       const creditLefts = await this.getCreditLeftsForOnlineProfiles(
         onlineProfiles,
-        inputDrop
+        drop
       );
       await Promise.all(
         onlineProfiles.map(({ connectionId, profileId }) =>
@@ -98,7 +98,7 @@ export class WsListenersNotifier {
             message: JSON.stringify(
               dropRatingUpdateMessage(
                 this.removeDropsAuthRequestContext(
-                  inputDrop,
+                  drop,
                   profileId === null ? 0 : creditLefts[profileId] ?? 0
                 )
               )
@@ -109,7 +109,7 @@ export class WsListenersNotifier {
     } catch (e) {
       this.logger.error(
         `Sending data to websockets failed. Params: ${JSON.stringify(
-          inputDrop
+          drop
         )}. Error: ${JSON.stringify(e)}`
       );
     }
