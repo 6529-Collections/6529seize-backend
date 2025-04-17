@@ -317,7 +317,7 @@ async function handleVideoScaling(
             `[resizedVideoStream] [SCALING FAILED ${scaledVideoKey}]`,
             err
           );
-          reject(new Error(err));
+          reject(err instanceof Error ? err : new Error(String(err)));
         });
 
         const ffstream = new Stream.PassThrough();
@@ -332,7 +332,7 @@ async function handleVideoScaling(
 
         ffstream.on('error', async (err) => {
           logger.error(`[SCALING FAILED ${scaledVideoKey}]`, err);
-          reject(new Error(err));
+          reject(err);
         });
 
         ffstream.on('end', async () => {
@@ -358,13 +358,13 @@ async function handleVideoScaling(
             resolve();
           } catch (e) {
             logger.error(`[UPLOAD FAILED ${scaledVideoKey}]`, e);
-            reject(new Error(e));
+            reject(e instanceof Error ? e : new Error(String(e)));
           }
         });
       })
       .catch((err) => {
         logger.error(`[scaleVideo FAILED] [${scaledVideoKey}]`, err);
-        reject(new Error(err));
+        reject(err instanceof Error ? err : new Error(String(err)));
       });
   });
 }
