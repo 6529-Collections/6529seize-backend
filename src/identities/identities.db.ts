@@ -43,13 +43,23 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       { addresses },
       { wrappedConnection: connection }
     );
-    const identities = await this.db.execute<IdentityEntity>(
-      `select * from ${IDENTITIES_TABLE} identity where identity.consolidation_key in (
+    const identities = await this.db
+      .execute<IdentityEntity>(
+        `select * from ${IDENTITIES_TABLE} identity where identity.consolidation_key in (
       select distinct i.consolidation_key from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:addresses)
       )`,
-      { addresses },
-      { wrappedConnection: connection }
-    );
+        { addresses },
+        { wrappedConnection: connection }
+      )
+      .then((res) =>
+        res.map((it) => ({
+          ...it,
+          level_raw: +it.level_raw,
+          cic: +it.cic,
+          rep: +it.rep,
+          tdh: +it.tdh
+        }))
+      );
     const profiles = await this.db.execute<Profile>(
       `select p.* from ${PROFILES_TABLE} p where p.external_id in (
       select distinct i.profile_id from ${ADDRESS_CONSOLIDATION_KEY} a join ${IDENTITIES_TABLE} i on i.consolidation_key = a.consolidation_key where a.address in (:addresses) and i.handle is not null
