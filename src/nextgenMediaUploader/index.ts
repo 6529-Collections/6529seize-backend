@@ -72,9 +72,14 @@ async function uploadMissingNextgenMedia(item: number) {
   const imagePath = metadataPath.replace('/metadata/', '/png/');
   const htmlPath = metadataPath.replace('/metadata/', '/html/');
 
-  const metadataExists = await s3ObjectExists(NEXTGEN_BUCKET, metadataPath);
-  const imageExists = await s3ObjectExists(NEXTGEN_BUCKET, imagePath);
-  const htmlExists = await s3ObjectExists(NEXTGEN_BUCKET, htmlPath);
+  const txId = item.toString();
+  const metadataExists = await s3ObjectExists(
+    NEXTGEN_BUCKET,
+    metadataPath,
+    txId
+  );
+  const imageExists = await s3ObjectExists(NEXTGEN_BUCKET, imagePath, txId);
+  const htmlExists = await s3ObjectExists(NEXTGEN_BUCKET, htmlPath, txId);
 
   if (metadataExists && imageExists && htmlExists) {
     logger.info(

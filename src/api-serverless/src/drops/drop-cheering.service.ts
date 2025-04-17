@@ -81,12 +81,12 @@ export class DropCheeringService {
           default:
             assertUnreachable(dropType);
         }
-        return this.dropsService.findDropByIdOrThrow(
+        return await this.dropsService.findDropByIdOrThrow(
           {
             dropId,
             skipEligibilityCheck: true
           },
-          { timer: ctx.timer, connection: ctx.connection }
+          ctxWithConnection
         );
       }
     );

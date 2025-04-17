@@ -58,7 +58,9 @@ async function wsHandler(
       try {
         const message = JSON.parse(event.body || '{}');
         logger.info(
-          `WS $default. Identity: ${identityId}. Message: ${message}`
+          `WS $default. Identity: ${identityId}. Message: ${JSON.stringify(
+            message
+          )}`
         );
         switch (message.type) {
           case WsMessageType.SUBSCRIBE_TO_WAVE: {
