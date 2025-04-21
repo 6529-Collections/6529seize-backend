@@ -6,10 +6,20 @@ import { IdentityEntity } from '../../../entities/IIdentity';
 import { RequestContext } from '../../../request.context';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { getLevelFromScore } from '../../../profiles/profile-level';
+import { ConnectionWrapper } from '../../../sql-executor';
+import { ApiProfileMin } from '../generated/models/ApiProfileMin';
+import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
+import { resolveEnumOrThrow } from '../../../helpers';
+import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
+import {
+  identitySubscriptionsDb,
+  IdentitySubscriptionsDb
+} from '../identity-subscriptions/identity-subscriptions.db';
 
 export class IdentityFetcher {
   constructor(
     private readonly identitiesDb: IdentitiesDb,
+    private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
 
@@ -25,6 +35,87 @@ export class IdentityFetcher {
       return await this.getIdentityAndConsolidationsByWallet(identityKey, ctx);
     }
     return await this.getIdentityAndConsolidationsByHandle(identityKey, ctx);
+  }
+
+  public async getOverviewsByIds(
+    ids: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, ApiProfileMin>> {
+    const [identities, subscribedActions] = await Promise.all([
+      this.identitiesDb.getIdentitiesByIds(ids, ctx.connection),
+      this.getSubscribedActions({
+        authenticatedProfileId: ctx.authenticationContext?.getActingAsId(),
+        ids
+      })
+    ]);
+    const notFoundProfileIds = ids.filter(
+      (id) => !identities.find((p) => p.profile_id === id)
+    );
+    const notArchivedProfiles = identities.map<ApiProfileMin>((p) => ({
+      id: p.profile_id!,
+      handle: p.handle,
+      banner1_color: p.banner1,
+      banner2_color: p.banner2,
+      cic: p.cic,
+      rep: p.rep,
+      tdh: p.tdh,
+      level: getLevelFromScore(p.level_raw),
+      pfp: p.pfp,
+      archived: true,
+      subscribed_actions: subscribedActions[p.profile_id!] ?? []
+    }));
+    const archivedProfiles = await this.identitiesDb
+      .getNewestVersionHandlesOfArchivedProfiles(
+        notFoundProfileIds,
+        ctx.connection
+      )
+      .then((it) =>
+        it.map<ApiProfileMin>((p) => ({
+          id: p.external_id,
+          handle: p.handle,
+          banner1_color: p.banner1,
+          banner2_color: p.banner2,
+          cic: 0,
+          rep: 0,
+          tdh: 0,
+          level: 0,
+          pfp: null,
+          archived: true,
+          subscribed_actions: subscribedActions[p.external_id] ?? []
+        }))
+      );
+    return [...notArchivedProfiles, ...archivedProfiles].reduce((acc, it) => {
+      acc[it.id] = it;
+      return acc;
+    }, {} as Record<string, ApiProfileMin>);
+  }
+
+  private async getSubscribedActions(
+    {
+      authenticatedProfileId,
+      ids
+    }: { authenticatedProfileId?: string | null; ids: string[] },
+    connection?: ConnectionWrapper<any>
+  ) {
+    return authenticatedProfileId
+      ? await this.identitySubscriptionsDb
+          .findIdentitySubscriptionActionsOfTargets(
+            {
+              subscriber_id: authenticatedProfileId,
+              target_ids: ids,
+              target_type: ActivityEventTargetType.IDENTITY
+            },
+            connection
+          )
+          .then((result) =>
+            Object.entries(result).reduce((acc, [profileId, actions]) => {
+              acc[profileId] = actions.map((it) =>
+                resolveEnumOrThrow(ApiIdentitySubscriptionTargetAction, it)
+              );
+              return acc;
+            }, {} as Record<string, ApiIdentitySubscriptionTargetAction[]>)
+          )
+      : {};
   }
 
   private async getIdentityAndConsolidationsByHandle(
@@ -194,5 +285,6 @@ export class IdentityFetcher {
 
 export const identityFetcher = new IdentityFetcher(
   identitiesDb,
+  identitySubscriptionsDb,
   getAlchemyInstance
 );

@@ -34,10 +34,6 @@ import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
-import {
-  profilesApiService,
-  ProfilesApiService
-} from '../profiles/profiles.api.service';
 import { WaveMetricEntity } from '../../../entities/IWaveMetric';
 import { ApiWaveMetrics } from '../generated/models/ApiWaveMetrics';
 import { RequestContext } from '../../../request.context';
@@ -47,10 +43,14 @@ import { ApiWaveMetadataType } from '../generated/models/ApiWaveMetadataType';
 import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
 import { ApiWaveChatConfig } from '../generated/models/ApiWaveChatConfig';
 import { profilesService } from '../../../profiles/profiles.service';
+import {
+  identityFetcher,
+  IdentityFetcher
+} from '../identities/identity.fetcher';
 
 export class WavesMappers {
   constructor(
-    private readonly profilesApiService: ProfilesApiService,
+    private readonly identityFetcher: IdentityFetcher,
     private readonly userGroupsService: UserGroupsService,
     private readonly wavesApiDb: WavesApiDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
@@ -468,15 +468,10 @@ export class WavesMappers {
         .flat(),
       ...curationEntities.map((curationEntity) => curationEntity.created_by)
     ]);
-    const profileMins: Record<string, ApiProfileMin> =
-      await this.profilesApiService.getProfileMinsByIds(
-        {
-          ids: profileIds,
-          authenticatedProfileId: ctx.authenticationContext?.getActingAsId(),
-          timer: ctx.timer
-        },
-        ctx.connection
-      );
+    const profileMins = await this.identityFetcher.getOverviewsByIds(
+      profileIds,
+      ctx
+    );
     const curations: Record<string, ApiGroup> = curationEntities.reduce(
       (acc, curationEntity) => {
         const isHidden =
@@ -524,7 +519,7 @@ export class WavesMappers {
 }
 
 export const wavesMappers = new WavesMappers(
-  profilesApiService,
+  identityFetcher,
   userGroupsService,
   wavesApiDb,
   identitySubscriptionsDb

@@ -5062,6 +5062,7 @@ components:
           format: uuid
         handle:
           type: string
+          nullable: true
         pfp:
           type: string
           nullable: true

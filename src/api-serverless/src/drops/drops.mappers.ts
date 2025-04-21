@@ -31,10 +31,6 @@ import {
   userGroupsService,
   UserGroupsService
 } from '../community-members/user-groups.service';
-import {
-  profilesApiService,
-  ProfilesApiService
-} from '../profiles/profiles.api.service';
 import { dropsDb, DropsDb } from '../../../drops/drops.db';
 import { wavesApiDb, WavesApiDb } from '../waves/waves.api.db';
 import {
@@ -65,11 +61,15 @@ import { ApiWaveOutcomeSubType } from '../generated/models/ApiWaveOutcomeSubType
 import { ApiWaveOutcomeCredit } from '../generated/models/ApiWaveOutcomeCredit';
 import { WinnerDropVoterVoteEntity } from '../../../entities/IWinnerDropVoterVote';
 import { ApiDropContextProfileContext } from '../generated/models/ApiDropContextProfileContext';
+import {
+  identityFetcher,
+  IdentityFetcher
+} from '../identities/identity.fetcher';
 
 export class DropsMappers {
   constructor(
     private readonly userGroupsService: UserGroupsService,
-    private readonly profilesService: ProfilesApiService,
+    private readonly identityFetcher: IdentityFetcher,
     private readonly dropsDb: DropsDb,
     private readonly wavesApiDb: WavesApiDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
@@ -438,10 +438,14 @@ export class DropsMappers {
         .flat()
         .map((it) => it.voter_id)
     ]);
-    const profileMins = await this.profilesService.getProfileMinsByIds({
-      ids: allProfileIds,
-      authenticatedProfileId: contextProfileId
-    });
+    const profileMins = await this.identityFetcher.getOverviewsByIds(
+      allProfileIds,
+      {
+        authenticationContext: contextProfileId
+          ? AuthenticationContext.fromProfileId(contextProfileId)
+          : AuthenticationContext.notAuthenticated()
+      }
+    );
     const UNKNOWN_PROFILE: ApiProfileMin = {
       id: 'an-unknown-profile',
       handle: 'An unknown profile',
@@ -782,7 +786,7 @@ export class DropsMappers {
 
 export const dropsMappers = new DropsMappers(
   userGroupsService,
-  profilesApiService,
+  identityFetcher,
   dropsDb,
   wavesApiDb,
   identitySubscriptionsDb,

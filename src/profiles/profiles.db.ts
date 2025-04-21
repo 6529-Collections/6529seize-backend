@@ -22,7 +22,6 @@ import { Wallet } from '../entities/IWallet';
 import { Profile } from '../entities/IProfile';
 import { CreateOrUpdateProfileCommand } from './profile.types';
 import { areEqualAddresses, distinct } from '../helpers';
-import { getLevelFromScore } from './profile-level';
 import { RequestContext } from '../request.context';
 import { randomBytes } from 'crypto';
 import { RefreshToken } from '../entities/IRefreshToken';
@@ -566,53 +565,6 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async getProfileMinsByIds(
-    ids: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<ProfileOverview[]> {
-    if (!ids.length) {
-      return [];
-    }
-    return this.db
-      .execute(
-        `select profile_id as id, handle, pfp, cic, rep, tdh, banner1 as banner1_color, banner2 as banner2_color, level_raw as level from ${IDENTITIES_TABLE} where profile_id in (:ids)`,
-        { ids },
-        connection ? { wrappedConnection: connection } : undefined
-      )
-      .then((result) =>
-        result.map((it: ProfileOverview) => ({
-          ...it,
-          level: getLevelFromScore(it.level),
-          archived: false
-        }))
-      );
-  }
-
-  async getNewestVersionHandlesOfArchivedProfiles(
-    profileIds: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<
-    {
-      external_id: string;
-      handle: string;
-      banner1_color: string | null;
-      banner2_color: string | null;
-    }[]
-  > {
-    if (profileIds.length === 0) {
-      return [];
-    }
-    return this.db.execute(
-      `with prof_ids_w_latest_versions as (select external_id, max(id) as id from ${PROFILES_ARCHIVE_TABLE} group by 1)
-            select p.external_id as external_id, p.handle as handle, p.banner_1 as banner1_color, p.banner_2 as banner2_color
-            from ${PROFILES_ARCHIVE_TABLE} p
-                     join prof_ids_w_latest_versions l on p.id = l.id
-            where l.external_id in (:profileIds)`,
-      { profileIds },
-      connection ? { wrappedConnection: connection } : undefined
-    );
-  }
-
   async getProfileById(
     id: string,
     connection?: ConnectionWrapper<any>
@@ -739,19 +691,6 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
       )
       .then((res) => res.map((it) => it.wallet));
   }
-}
-
-export interface ProfileOverview {
-  id: string;
-  handle: string;
-  pfp: string | null;
-  cic: number;
-  rep: number;
-  tdh: number;
-  level: number;
-  banner1_color: string | null;
-  banner2_color: string | null;
-  archived: boolean;
 }
 
 export const profilesDb = new ProfilesDb(dbSupplier);

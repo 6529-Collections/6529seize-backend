@@ -9,6 +9,7 @@ import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   ENS_TABLE,
   IDENTITIES_TABLE,
+  PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
   WALLETS_TDH_TABLE
 } from '../constants';
@@ -598,6 +599,55 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       ens: results.find((row) => row.address.toLowerCase() === walletAddress)
         ?.ens
     }));
+  }
+
+  async getIdentitiesByIds(
+    ids: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<IdentityEntity[]> {
+    if (!ids.length) {
+      return [];
+    }
+    return this.db
+      .execute<IdentityEntity>(
+        `select * from ${IDENTITIES_TABLE} where profile_id in (:ids)`,
+        { ids },
+        connection ? { wrappedConnection: connection } : undefined
+      )
+      .then((result) =>
+        result.map((it) => ({
+          ...it,
+          level_raw: +it.level_raw,
+          rep: +it.rep,
+          cic: +it.cic,
+          tdh: +it.tdh
+        }))
+      );
+  }
+
+  async getNewestVersionHandlesOfArchivedProfiles(
+    profileIds: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<
+    {
+      external_id: string;
+      handle: string | null;
+      banner1: string | null;
+      banner2: string | null;
+    }[]
+  > {
+    if (profileIds.length === 0) {
+      return [];
+    }
+    return this.db.execute(
+      `with prof_ids_w_latest_versions as (select external_id, max(id) as id from ${PROFILES_ARCHIVE_TABLE} group by 1)
+            select p.external_id as external_id, p.handle as handle, p.banner_1 as banner1, p.banner_2 as banner2
+            from ${PROFILES_ARCHIVE_TABLE} p
+                     join prof_ids_w_latest_versions l on p.id = l.id
+            where l.external_id in (:profileIds)`,
+      { profileIds },
+      connection ? { wrappedConnection: connection } : undefined
+    );
   }
 }
 

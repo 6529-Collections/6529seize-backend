@@ -1,4 +1,4 @@
-import { ProfileOverview, profilesDb, ProfilesDb } from './profiles.db';
+import { profilesDb, ProfilesDb } from './profiles.db';
 import { UUID_REGEX, WALLET_REGEX } from '../constants';
 import { getAlchemyInstance } from '../alchemy';
 import { Alchemy } from 'alchemy-sdk';
@@ -1368,36 +1368,6 @@ export class ProfilesService {
       return `https://d3lqz0a4bldqgf.cloudfront.net/${key}?d=${Date.now()}`;
     }
     throw new Error('Failed to upload image');
-  }
-
-  async getProfileOverviewsByIds(
-    ids: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<ProfileOverview[]> {
-    const activeProfiles = await this.profilesDb.getProfileMinsByIds(
-      ids,
-      connection
-    );
-    const notFoundProfileIds = ids.filter(
-      (id) => !activeProfiles.find((p) => p.id === id)
-    );
-    const archivedProfiles: ProfileOverview[] = await this.profilesDb
-      .getNewestVersionHandlesOfArchivedProfiles(notFoundProfileIds, connection)
-      .then((it) =>
-        it.map<ProfileOverview>((p) => ({
-          id: p.external_id,
-          handle: p.handle,
-          banner1_color: p.banner1_color,
-          banner2_color: p.banner2_color,
-          cic: 0,
-          rep: 0,
-          tdh: 0,
-          level: 0,
-          pfp: null,
-          archived: true
-        }))
-      );
-    return [...activeProfiles, ...archivedProfiles];
   }
 
   public async updatePrimaryAddresses(addresses: Set<string>) {
