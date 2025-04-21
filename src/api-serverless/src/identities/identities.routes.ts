@@ -6,7 +6,11 @@ import {
 } from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
-import { BadRequestException, ForbiddenException } from '../../../exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '../../../exceptions';
 import { getValidatedByJoiOrThrow } from '../validation';
 import { ApiIdentitySubscriptionActions } from '../generated/models/ApiIdentitySubscriptionActions';
 import * as Joi from 'joi';
@@ -18,6 +22,7 @@ import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { Timer } from '../../../time';
 import { parseIntOrNull } from '../../../helpers';
 import { WALLET_REGEX } from '../../../constants';
+import { identityFetcher } from './identity.fetcher';
 
 const router = asyncRouter();
 
@@ -81,7 +86,34 @@ router.get(
     if (!WALLET_REGEX.test(wallet)) {
       throw new BadRequestException(`Invalid wallet ${wallet}`);
     }
-    const identity = await profilesService.getIdentityByWalletOrThrow(wallet);
+    const identity =
+      await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+        { identityKey: wallet },
+        { timer: Timer.getFromRequest(req) }
+      );
+    if (!identity) {
+      throw new NotFoundException(`Identity ${wallet} not found`);
+    }
+    res.send(identity);
+  }
+);
+
+router.get(
+  `/:identity_key`,
+  async function (
+    req: Request<{ identity_key: string }, any, any, any, any>,
+    res: Response<ApiResponse<ApiIdentity>>
+  ) {
+    const identityKey = req.params.identity_key.toLowerCase();
+    const timer = Timer.getFromRequest(req);
+    const identity =
+      await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+        { identityKey },
+        { timer }
+      );
+    if (!identity) {
+      throw new NotFoundException(`Identity ${identityKey} not found`);
+    }
     res.send(identity);
   }
 );

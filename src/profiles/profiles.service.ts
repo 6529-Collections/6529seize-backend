@@ -1585,40 +1585,23 @@ export class ProfilesService {
       ctx
     );
     return identityEntities.map<ApiIdentity>((it) => ({
-      id: it.profile_id!,
-      handle: it.handle!,
-      normalised_handle: it.normalised_handle!,
+      id: it.profile_id,
+      handle: it.handle,
+      normalised_handle: it.normalised_handle,
       pfp: it.pfp,
       primary_wallet: it.primary_address,
       rep: it.rep,
       cic: it.cic,
       level: getLevelFromScore(it.level_raw),
       tdh: it.tdh,
-      display: it.display ?? it.primary_address
+      display: it.display ?? it.primary_address,
+      banner1: it.banner1,
+      banner2: it.banner2
     }));
   }
 
   async getAllWalletsByProfileId(profileId: string): Promise<string[]> {
     return this.profilesDb.getAllWalletsByProfileId(profileId);
-  }
-
-  async getIdentityByWalletOrThrow(wallet: string): Promise<ApiIdentity> {
-    const identity = await this.identitiesDb.getIdentityByWallet(wallet);
-    if (!identity) {
-      throw new NotFoundException(`Identity for wallet ${wallet} not found`);
-    }
-    return {
-      id: identity.profile_id!,
-      handle: identity.handle!,
-      normalised_handle: identity.normalised_handle!,
-      pfp: identity.pfp,
-      primary_wallet: identity.primary_address,
-      rep: identity.rep,
-      cic: identity.cic,
-      level: getLevelFromScore(identity.level_raw),
-      tdh: identity.tdh,
-      display: identity.primary_address
-    };
   }
 }
 
