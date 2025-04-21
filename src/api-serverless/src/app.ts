@@ -104,7 +104,7 @@ import sitemapRoutes from './sitemap/sitemap.routes';
 import { randomUUID } from 'crypto';
 import {
   appWebSockets,
-  authenticateWebSocketJwt,
+  authenticateWebSocketJwtOrGetByConnectionId,
   mapHttpRequestToGatewayEvent
 } from './ws/ws';
 import { WsMessageType } from './ws/ws-message';
@@ -1058,7 +1058,8 @@ loadApi().then(async () => {
           connectionId,
           '$connect'
         );
-        const { identityId, jwtExpiry } = await authenticateWebSocketJwt(event);
+        const { identityId, jwtExpiry } =
+          await authenticateWebSocketJwtOrGetByConnectionId(event);
         await appWebSockets.register({
           identityId,
           connectionId,
