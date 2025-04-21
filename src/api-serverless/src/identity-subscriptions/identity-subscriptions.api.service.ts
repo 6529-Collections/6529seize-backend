@@ -5,10 +5,6 @@ import {
 import { waveApiService, WaveApiService } from '../waves/wave.api.service';
 import { DropsApiService, dropsService } from '../drops/drops.api.service';
 import {
-  profilesApiService,
-  ProfilesApiService
-} from '../profiles/profiles.api.service';
-import {
   IncomingIdentitySubscriptionsParams,
   OutgoingIdentitySubscriptionsParams
 } from './identity-subscriptions.routes';
@@ -24,13 +20,17 @@ import {
 } from '../community-members/user-groups.service';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 import { AuthenticationContext } from '../../../auth-context';
+import {
+  identityFetcher,
+  IdentityFetcher
+} from '../identities/identity.fetcher';
 
 export class IdentitySubscriptionsApiService {
   constructor(
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly wavesApiService: WaveApiService,
     private readonly dropsApiService: DropsApiService,
-    private readonly profilesApiService: ProfilesApiService,
+    private readonly identityFetcher: IdentityFetcher,
     private readonly userGroupsService: UserGroupsService
   ) {}
 
@@ -92,10 +92,10 @@ export class IdentitySubscriptionsApiService {
         break;
       }
       case ActivityEventTargetType.IDENTITY: {
-        const profiles = await this.profilesApiService.getProfileMinsByIds({
-          ids: entityIds,
-          authenticatedProfileId: authenticationContext.getActingAsId()
-        });
+        const profiles = await this.identityFetcher.getOverviewsByIds(
+          entityIds,
+          { authenticationContext }
+        );
         entities.push(
           ...Object.entries(idsAndActions)
             .map(([id, actions]) => ({
@@ -128,9 +128,10 @@ export class IdentitySubscriptionsApiService {
         params
       );
     const identityIds = Object.keys(identityIdsAndActions);
-    const profiles = await this.profilesApiService.getProfileMinsByIds({
-      ids: identityIds
-    });
+    const profiles = await this.identityFetcher.getOverviewsByIds(
+      identityIds,
+      {}
+    );
     const count =
       await this.identitySubscriptionsDb.countDistinctSubscriberIdsForTarget(
         params
@@ -160,6 +161,6 @@ export const identitySubscriptionsApiService =
     identitySubscriptionsDb,
     waveApiService,
     dropsService,
-    profilesApiService,
+    identityFetcher,
     userGroupsService
   );

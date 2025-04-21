@@ -47,13 +47,13 @@ import {
   ProfileActivityLogType
 } from '../../../entities/IProfileActivityLog';
 import { ApiProfileMin } from '../generated/models/ApiProfileMin';
-import {
-  profilesApiService,
-  ProfilesApiService
-} from '../profiles/profiles.api.service';
 import { ApiWaveVotersPage } from '../generated/models/ApiWaveVotersPage';
 import { ApiWaveVoter } from '../generated/models/ApiWaveVoter';
 import { ApiWaveCreditType as WaveCreditTypeApi } from '../generated/models/ApiWaveCreditType';
+import {
+  identityFetcher,
+  IdentityFetcher
+} from '../identities/identity.fetcher';
 
 export class DropsApiService {
   constructor(
@@ -62,7 +62,7 @@ export class DropsApiService {
     private readonly userGroupsService: UserGroupsService,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly clappingService: ClappingService,
-    private readonly profilesService: ProfilesApiService
+    private readonly identityFetcher: IdentityFetcher
   ) {}
 
   public async findDropByIdOrThrow(
@@ -689,11 +689,7 @@ export class DropsApiService {
         return ids;
       })
       .flat();
-    return this.profilesService.getProfileMinsByIds({
-      ids: relatedProfileIds,
-      authenticatedProfileId: ctx.authenticationContext?.getActingAsId(),
-      timer: ctx.timer
-    });
+    return this.identityFetcher.getOverviewsByIds(relatedProfileIds, ctx);
   }
 
   async findVotersInfo(
@@ -706,11 +702,10 @@ export class DropsApiService {
       this.dropsDb.findVotersInfo(params, ctx),
       this.dropsDb.countVoters(params, ctx)
     ]);
-    const voters = await this.profilesService.getProfileMinsByIds({
-      ids: data.map((it) => it.voter_id),
-      authenticatedProfileId: ctx.authenticationContext?.getActingAsId(),
-      timer: ctx.timer
-    });
+    const voters = await this.identityFetcher.getOverviewsByIds(
+      data.map((it) => it.voter_id),
+      ctx
+    );
     return {
       page: params.page,
       count: totalCount,
@@ -736,5 +731,5 @@ export const dropsService = new DropsApiService(
   userGroupsService,
   identitySubscriptionsDb,
   clappingService,
-  profilesApiService
+  identityFetcher
 );

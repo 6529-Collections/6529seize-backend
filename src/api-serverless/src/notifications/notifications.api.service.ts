@@ -13,10 +13,6 @@ import {
   resolveEnumOrThrow
 } from '../../../helpers';
 import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
-import {
-  profilesApiService,
-  ProfilesApiService
-} from '../profiles/profiles.api.service';
 import { DropsApiService, dropsService } from '../drops/drops.api.service';
 import { AuthenticationContext } from '../../../auth-context';
 import { ApiDrop } from '../generated/models/ApiDrop';
@@ -36,12 +32,16 @@ import { BadRequestException } from '../../../exceptions';
 import { seizeSettings } from '../api-constants';
 import { RequestContext } from '../../../request.context';
 import { Time } from '../../../time';
+import {
+  identityFetcher,
+  IdentityFetcher
+} from '../identities/identity.fetcher';
 
 export class NotificationsApiService {
   constructor(
     private readonly notificationsReader: UserNotificationsReader,
     private readonly userGroupsService: UserGroupsService,
-    private readonly profilesApiService: ProfilesApiService,
+    private readonly identityFetcher: IdentityFetcher,
     private readonly dropsService: DropsApiService,
     private readonly identityNotificationsDb: IdentityNotificationsDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb
@@ -129,9 +129,8 @@ export class NotificationsApiService {
     const { profileIds, dropIds } = this.getAllRelatedIds(notifications);
     const [drops, profiles] = await Promise.all([
       this.dropsService.findDropsByIdsOrThrow(dropIds, authenticationContext),
-      this.profilesApiService.getProfileMinsByIds({
-        ids: profileIds,
-        authenticatedProfileId: authenticationContext.getActingAsId()
+      this.identityFetcher.getOverviewsByIds(profileIds, {
+        authenticationContext
       })
     ]);
     return notifications.map((notification) =>
@@ -354,7 +353,7 @@ export class NotificationsApiService {
 export const notificationsApiService = new NotificationsApiService(
   userNotificationReader,
   userGroupsService,
-  profilesApiService,
+  identityFetcher,
   dropsService,
   identityNotificationsDb,
   identitySubscriptionsDb

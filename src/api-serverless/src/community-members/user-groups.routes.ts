@@ -8,7 +8,6 @@ import {
   maybeAuthenticatedUser,
   needsAuthenticatedUser
 } from '../auth/auth';
-import { profilesService } from '../../../profiles/profiles.service';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import { NewUserGroupEntity, userGroupsService } from './user-groups.service';
 import { ApiChangeGroupVisibility } from '../generated/models/ApiChangeGroupVisibility';
@@ -28,6 +27,7 @@ import {
 import { ApiCreateGroupDescription } from '../generated/models/ApiCreateGroupDescription';
 import { Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
+import { identityFetcher } from '../identities/identity.fetcher';
 
 const router = asyncRouter();
 
@@ -54,9 +54,10 @@ router.get(
     const createdAtLessThan = parseIntOrNull(req.query.created_at_less_than);
     let authorId: string | null = null;
     if (req.query.author_identity) {
-      authorId = await profilesService
-        .getProfileAndConsolidationsByIdentity(req.query.author_identity)
-        .then((result) => result?.profile?.external_id ?? null);
+      authorId = await identityFetcher.getProfileIdByIdentityKey(
+        { identityKey: req.query.author_identity },
+        {}
+      );
       if (!authorId) {
         res.send([]);
         return;
@@ -149,16 +150,18 @@ router.post(
     );
     const relatedIdentitiesMapped = await Promise.all(
       relatedIdentities.map(async (identity) => {
-        const profile =
-          await profilesService.getProfileAndConsolidationsByIdentity(identity);
-        if (!profile?.profile?.external_id) {
+        const profileId = await identityFetcher.getProfileIdByIdentityKey(
+          { identityKey: req.query.author_identity },
+          {}
+        );
+        if (!profileId) {
           throw new NotFoundException(
             `Profile with identity ${identity} does not exist.`
           );
         }
         return {
           given_identity: identity,
-          profile_id: profile.profile.external_id
+          profile_id: profileId
         };
       })
     );

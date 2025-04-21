@@ -38,7 +38,6 @@ import {
   ApiGroupOwnsNft,
   ApiGroupOwnsNftNameEnum
 } from '../generated/models/ApiGroupOwnsNft';
-import { profilesApiService } from '../profiles/profiles.api.service';
 import { Time, Timer } from '../../../time';
 import * as mcache from 'memory-cache';
 import { RequestContext } from '../../../request.context';
@@ -59,6 +58,7 @@ import {
   isProfileViolatingTotalSentCicCriteria,
   isProfileViolatingTotalSentRepCriteria
 } from '../../../groups/user-group-predicates';
+import { identityFetcher } from '../identities/identity.fetcher';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -1389,23 +1389,18 @@ export class UserGroupsService {
     ctx: RequestContext
   ): Promise<ApiGroupFull[]> {
     ctx.timer?.start('userGroupsService->mapForApi');
-    const relatedProfiles = await profilesApiService.getProfileMinsByIds(
-      {
-        ids: distinct(
-          groups
-            .map(
-              (it) =>
-                [it.created_by, it.rep_user, it.cic_user].filter(
-                  (it) => !!it
-                ) as string[]
-            )
-            .flat()
-        ),
-        authenticatedProfileId:
-          ctx.authenticationContext?.getActingAsId() ?? null,
-        timer: ctx.timer
-      },
-      ctx.connection
+    const relatedProfiles = await identityFetcher.getOverviewsByIds(
+      distinct(
+        groups
+          .map(
+            (it) =>
+              [it.created_by, it.rep_user, it.cic_user].filter(
+                (it) => !!it
+              ) as string[]
+          )
+          .flat()
+      ),
+      ctx
     );
     const groupsIdentityGroupsIdsAndIdentityCounts: Record<
       string,

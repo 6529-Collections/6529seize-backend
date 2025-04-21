@@ -72,6 +72,7 @@ export class ProfileActivityLogsApiService {
         params.rating_matter = ratingMatter as RateMatter;
       }
     }
+
     const foundLogs = await this.profileActivityLogsDb.searchLogs(params, ctx);
     const profileIdsInLogs = foundLogs.reduce((acc, log) => {
       acc.push(log.profile_id);
