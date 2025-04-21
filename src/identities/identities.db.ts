@@ -7,8 +7,10 @@ import { IdentityEntity } from '../entities/IIdentity';
 import {
   ADDRESS_CONSOLIDATION_KEY,
   CONSOLIDATED_WALLETS_TDH_TABLE,
+  ENS_TABLE,
   IDENTITIES_TABLE,
-  PROFILES_TABLE
+  PROFILES_TABLE,
+  WALLETS_TDH_TABLE
 } from '../constants';
 import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
@@ -16,6 +18,7 @@ import { randomUUID } from 'crypto';
 import { RequestContext } from '../request.context';
 import { UserGroupsService } from '../api-serverless/src/community-members/user-groups.service';
 import { Timer } from '../time';
+import { Wallet } from '../entities/IWallet';
 
 const mysql = require('mysql');
 
@@ -307,11 +310,45 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     id: string,
     connectionHolder?: ConnectionWrapper<any>
   ) {
-    return await this.db.oneOrNull<IdentityEntity>(
-      `select * from ${IDENTITIES_TABLE} where profile_id = :id`,
-      { id },
-      { wrappedConnection: connectionHolder }
-    );
+    return await this.db
+      .oneOrNull<IdentityEntity>(
+        `select * from ${IDENTITIES_TABLE} where profile_id = :id`,
+        { id },
+        { wrappedConnection: connectionHolder }
+      )
+      .then((it) => {
+        if (!it) {
+          return null;
+        }
+        return {
+          ...it,
+          level_raw: +it.level_raw,
+          rep: +it.rep,
+          cic: +it.cic,
+          tdh: +it.tdh
+        };
+      });
+  }
+
+  async getIdentityByHandle(handle: string, ctx: RequestContext) {
+    return await this.db
+      .oneOrNull<IdentityEntity>(
+        `select * from ${IDENTITIES_TABLE} where normalised_handle = :handle`,
+        { handle: handle.toLowerCase() },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((it) => {
+        if (!it) {
+          return null;
+        }
+        return {
+          ...it,
+          level_raw: +it.level_raw,
+          rep: +it.rep,
+          cic: +it.cic,
+          tdh: +it.tdh
+        };
+      });
   }
 
   async syncProfileAddressesFromIdentitiesToProfiles(
@@ -441,15 +478,126 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     wallet: string,
     connection?: ConnectionWrapper<any>
   ): Promise<IdentityEntity | null> {
-    return this.db.oneOrNull<IdentityEntity>(
-      `
+    return this.db
+      .oneOrNull<IdentityEntity>(
+        `
     select i.* from ${IDENTITIES_TABLE} i
     join ${ADDRESS_CONSOLIDATION_KEY} a on a.consolidation_key = i.consolidation_key
     where a.address = :wallet
     `,
-      { wallet },
-      { wrappedConnection: connection }
+        { wallet },
+        { wrappedConnection: connection }
+      )
+      .then((it) => {
+        if (!it) {
+          return null;
+        }
+        return {
+          ...it,
+          level_raw: +it.level_raw,
+          rep: +it.rep,
+          cic: +it.cic,
+          tdh: +it.tdh
+        };
+      });
+  }
+
+  public async getConsolidationInfoForAddress(
+    address: string,
+    connection?: ConnectionWrapper<any>
+  ): Promise<
+    {
+      blockNo: number;
+      consolidation_display: string | null;
+      balance: number;
+      wallets: string[];
+    }[]
+  > {
+    const opts = connection ? { wrappedConnection: connection } : undefined;
+    return this.db
+      .execute<{
+        balance: number;
+        consolidation_display: string;
+        block: number;
+        wallets: string;
+      }>(
+        `
+        SELECT 
+               t.balance,
+               t.consolidation_display,
+               t.block,
+               t.wallets
+        FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} t
+                 join ${ADDRESS_CONSOLIDATION_KEY} a on a.consolidation_key = t.consolidation_key
+        WHERE a.address = :address
+        `,
+        { address: address.toLowerCase() },
+        opts
+      )
+      .then((result) => {
+        return result.map((it) => ({
+          blockNo: it.block,
+          consolidation_display: it.consolidation_display,
+          balance: it.balance,
+          wallets: JSON.parse(it.wallets)
+        }));
+      });
+  }
+
+  public async getWalletsTdhs(
+    {
+      wallets,
+      blockNo
+    }: {
+      wallets: string[];
+      blockNo: number;
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    const normalisedWallets = wallets.map((w) => w.toLowerCase());
+    if (!normalisedWallets.length) {
+      return {};
+    }
+    const result: { wallet: string; tdh: number }[] = await this.db.execute(
+      `select lower(wallet) as wallet, boosted_tdh as tdh from ${WALLETS_TDH_TABLE} where block = :blockNo and lower(wallet) in (:wallets)`,
+      {
+        blockNo,
+        wallets: normalisedWallets
+      },
+      { wrappedConnection: ctx.connection }
     );
+    return normalisedWallets.reduce(
+      (acc: Record<string, number>, wallet: string) => {
+        acc[wallet.toLowerCase()] =
+          result.find((r) => r.wallet.toLowerCase() === wallet.toLowerCase())
+            ?.tdh ?? 0;
+        return acc;
+      },
+      {}
+    );
+  }
+
+  public async getPrediscoveredEnsNames(
+    walletAddresses: string[],
+    ctx: RequestContext
+  ): Promise<Wallet[]> {
+    if (!walletAddresses.length) {
+      return [];
+    }
+    const results: Wallet[] = await this.db.execute(
+      `SELECT wallet as address, display as ens FROM ${ENS_TABLE} WHERE LOWER(wallet) IN (:walletAddresses)`,
+      {
+        walletAddresses: walletAddresses.map((walletAddress) =>
+          walletAddress.toLowerCase()
+        )
+      },
+      { wrappedConnection: ctx.connection }
+    );
+    return walletAddresses.map((walletAddress) => ({
+      address: walletAddress,
+      ens: results.find((row) => row.address.toLowerCase() === walletAddress)
+        ?.ens
+    }));
   }
 }
 
