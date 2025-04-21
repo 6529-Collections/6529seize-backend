@@ -5,12 +5,14 @@ import type {
   APIGatewayProxyResult,
   Context
 } from 'aws-lambda';
-import { appWebSockets, authenticateWebSocketJwt } from './ws/ws';
+import {
+  appWebSockets,
+  authenticateWebSocketJwtOrGetByConnectionId
+} from './ws/ws';
 import { Logger } from '../../logging';
 import { WsMessageType } from './ws/ws-message';
 import { isValidUuid } from '../../helpers';
 import { wsListenersNotifier } from './ws/ws-listeners-notifier';
-import { logger } from 'ethers';
 
 const serverlessHttp = require('serverless-http');
 
@@ -33,7 +35,8 @@ async function wsHandler(
 ): Promise<APIGatewayProxyResult> {
   const wsHandlerLogger = Logger.get('wsHandler');
   const { routeKey, connectionId } = event.requestContext;
-  const { identityId, jwtExpiry } = await authenticateWebSocketJwt(event);
+  const { identityId, jwtExpiry } =
+    await authenticateWebSocketJwtOrGetByConnectionId(event);
   switch (routeKey) {
     case '$connect':
       try {
@@ -57,7 +60,7 @@ async function wsHandler(
     case '$default':
       try {
         const message = JSON.parse(event.body || '{}');
-        logger.info(
+        wsHandlerLogger.info(
           `WS $default. Identity: ${identityId}. Message: ${JSON.stringify(
             message
           )}`
