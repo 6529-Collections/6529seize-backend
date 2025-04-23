@@ -165,8 +165,7 @@ async function processNft(myBucket: string, n: NFT) {
     ]);
   }
 
-  const videoUrl =
-    n.animation ?? n.metadata.animation ?? n.metadata.animation_url;
+  const videoUrl = n.metadata.animation ?? n.metadata.animation_url;
   const animationDetails = n.metadata.animation_details;
 
   if (
@@ -260,7 +259,7 @@ async function handleImage({
     `[MISSING IMAGE FOR HEIGHT ${height ?? 'original'}] [KEY ${s3Key}]`
   );
 
-  const url = `${NFT_ORIGINAL_IMAGE_LINK}${nft.contract}/${nft.id}.${format}`;
+  const url = nft.metadata.image ?? nft.metadata.image_url;
   const blob = await fetchUrl(url);
   logger.info(`[DOWNLOADED FOR HEIGHT ${height ?? 'original'}] [KEY ${s3Key}]`);
 
