@@ -64,8 +64,16 @@ async function replay() {
 
     logger.info(`[BALANCE] ${balance.consolidation_key} ${balanceAfter}`);
 
-    // await getDataSource().query(
-    //   `UPDATE ${SUBSCRIPTIONS_BALANCES_TABLE} SET balance = ${balanceAfter} WHERE consolidation_key = '${balance.consolidation_key}'`
-    // );
+    await getDataSource().query(
+      `UPDATE ${SUBSCRIPTIONS_BALANCES_TABLE} SET balance = ${balanceAfter} WHERE consolidation_key = '${balance.consolidation_key}'`
+    );
   }
 }
+
+// top ups: 840.9179443168517
+// redeemed: 10918 * 0.06529 = 712.83622
+// balance: 128.08172431685
+// actual balance: 128.60404431680013
+
+// diff: -0.52232
+// diff cards: 0.52232 / 0.06529 = 8
