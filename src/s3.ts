@@ -165,8 +165,7 @@ async function processNft(myBucket: string, n: NFT) {
     ]);
   }
 
-  const videoUrl =
-    n.animation ?? n.metadata.animation ?? n.metadata.animation_url;
+  const videoUrl = n.metadata.animation ?? n.metadata.animation_url;
   const animationDetails = n.metadata.animation_details;
 
   if (
