@@ -2,6 +2,7 @@ import { Logger } from './logging';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
 import { prepEnvironment } from './env';
 import { DataSource } from 'typeorm';
+import * as customReplayLoop from './customReplayLoop';
 
 const logger = Logger.get('BACKEND');
 
@@ -26,13 +27,20 @@ async function syncAllEntities() {
 async function start() {
   logger.info(`[CONFIG ${process.env.NODE_ENV}] [EXECUTING START SCRIPT...]`);
 
-  await syncAllEntities();
+  // await syncAllEntities();
 
-  await dbMigrationsLoop.handler(
+  // await dbMigrationsLoop.handler(
+  //   undefined as any,
+  //   undefined as any,
+  //   undefined as any
+  // );
+
+  await customReplayLoop.handler(
     undefined as any,
     undefined as any,
     undefined as any
   );
+
   process.exit(0);
 }
 
