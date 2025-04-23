@@ -12,6 +12,9 @@ import {
 import { getTransactionLink } from '../helpers';
 import { sendDiscordUpdate } from '../notifier-discord';
 import { sqlExecutor } from '../sql-executor';
+import { Logger } from '../logging';
+
+const logger = Logger.get('SUBSCRIPTIONS_TOP_UP_DB');
 
 export async function persistTopUps(topUps: SubscriptionTopUp[]) {
   const processedTopUps: SubscriptionTopUp[] = [];
@@ -24,6 +27,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
     for (const topUp of topUps) {
       const isProcessed = await isTopUpProcessed(topUp.hash, manager);
       if (isProcessed) {
+        logger.info(`Top up ${topUp.hash} already processed`);
         continue;
       }
 
