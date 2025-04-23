@@ -84,13 +84,13 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
 
   for (const topUp of processedTopUps) {
     const seizeDomain =
-      process.env.NODE_ENV === 'development' ? 'staging.seize' : 'seize';
+      process.env.NODE_ENV === 'development' ? 'staging.6529' : '6529';
     let discordMessage = `🔝 Subscription Top Up of ${topUp.amount} ETH from ${topUp.from_wallet}.`;
     const link = getTransactionLink(
       parseInt(process.env.SUBSCRIPTIONS_CHAIN_ID ?? '1'),
       topUp.hash
     );
-    discordMessage += ` \n\n[View on Seize] \nhttps://${seizeDomain}.io/${topUp.from_wallet}/subscriptions`;
+    discordMessage += ` \n\n[View on 6529.io] \nhttps://${seizeDomain}.io/${topUp.from_wallet}/subscriptions`;
     discordMessage += ` \n\n[View on Etherscan] \n${link}`;
     await sendDiscordUpdate(
       process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
