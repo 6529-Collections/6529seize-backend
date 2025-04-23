@@ -64,8 +64,8 @@ async function replay() {
 
     logger.info(`[BALANCE] ${balance.consolidation_key} ${balanceAfter}`);
 
-    await getDataSource().query(
-      `UPDATE ${SUBSCRIPTIONS_BALANCES_TABLE} SET balance = ${balanceAfter} WHERE consolidation_key = '${balance.consolidation_key}'`
-    );
+    // await getDataSource().query(
+    //   `UPDATE ${SUBSCRIPTIONS_BALANCES_TABLE} SET balance = ${balanceAfter} WHERE consolidation_key = '${balance.consolidation_key}'`
+    // );
   }
 }
