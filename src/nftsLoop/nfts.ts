@@ -385,6 +385,15 @@ export const discoverNFTs = async (
     ) {
       return true;
     }
+
+    if (
+      m.metadata.image != n.metadata.image ||
+      m.metadata.image_url != n.metadata.image_url ||
+      m.metadata.animation != n.metadata.animation ||
+      m.metadata.animation_url != n.metadata.animation_url
+    ) {
+      return true;
+    }
     if (new Date(m?.mint_date).getTime() != new Date(n.mint_date).getTime()) {
       return true;
     }

@@ -802,6 +802,25 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ApiIdentity"
+  /identities/{identity_key}:
+    get:
+      tags:
+        - Identities
+      summary: Get identity by it's key. Key can be id, wallet, handle, ENS name, etc...
+      operationId: getIdentityByKey
+      parameters:
+        - name: identity_key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiIdentity"
   /identities/by-wallet/{wallet}:
     get:
       tags:
@@ -4411,13 +4430,18 @@ components:
         - tdh
         - display
         - primary_wallet
+        - banner1
+        - banner2
       properties:
         id:
           type: string
+          nullable: true
         handle:
           type: string
+          nullable: true
         normalised_handle:
           type: string
+          nullable: true
         pfp:
           type: string
           nullable: true
@@ -4437,6 +4461,19 @@ components:
           type: string
         primary_wallet:
           type: string
+        banner1:
+          type: string
+          nullable: true
+        banner2:
+          type: string
+          nullable: true
+        query:
+          type: string
+          nullable: true
+        wallets:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApiWallet"
     ApiIdentityAndSubscriptionActions:
       type: object
       required:
@@ -5525,6 +5562,20 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/ApiUploadItem"
+    ApiWallet:
+      type: object
+      required:
+        - wallet
+        - display
+        - tdh
+      properties:
+        wallet:
+          type: string
+        display:
+          type: string
+        tdh:
+          type: integer
+          format: int64
     ApiWave:
       type: object
       required:

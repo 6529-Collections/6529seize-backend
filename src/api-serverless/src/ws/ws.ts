@@ -15,6 +15,7 @@ import {
   DeleteConnectionCommand,
   PostToConnectionCommand
 } from '@aws-sdk/client-apigatewaymanagementapi';
+import { RequestContext } from '../../../request.context';
 
 export class SocketNotAvailableException extends Error {
   constructor() {
@@ -196,7 +197,8 @@ export class AppWebSockets {
       {
         identity_id: identityId,
         jwt_expiry: jwtExpiry,
-        connection_id: connectionId
+        connection_id: connectionId,
+        wave_id: null
       },
       {}
     );
@@ -207,15 +209,49 @@ export class AppWebSockets {
     await ClientConnections.Get().closeClient(connectionId);
     await this.wsConnectionRepository.deleteByConnectionId(connectionId, {});
   }
+
+  async updateActiveWaveForConnection(
+    {
+      connectionId,
+      activeWaveId
+    }: {
+      connectionId: string;
+      activeWaveId: string | null;
+    },
+    ctx: RequestContext
+  ) {
+    await this.wsConnectionRepository.updateWaveId(
+      {
+        connectionId,
+        waveId: activeWaveId
+      },
+      ctx
+    );
+  }
 }
 
 export const ANON_USER_ID = '$ANONONYMOUS_USER$';
 
-export async function authenticateWebSocketJwt(
+export async function authenticateWebSocketJwtOrGetByConnectionId(
   event: APIGatewayEvent
 ): Promise<{ identityId: string; jwtExpiry: number }> {
   const authorizationHeader =
     event.headers?.Authorization || event.headers?.authorization;
+  if (!authorizationHeader) {
+    const connectionId = event.requestContext.connectionId;
+    if (connectionId) {
+      const connection = await wsConnectionRepository.getByConnectionId(
+        connectionId,
+        {}
+      );
+      if (connection?.identity_id) {
+        return {
+          identityId: connection.identity_id,
+          jwtExpiry: connection.jwt_expiry
+        };
+      }
+    }
+  }
   let token: string | undefined;
   if (authorizationHeader?.startsWith('Bearer ')) {
     token = authorizationHeader.substring('Bearer '.length);

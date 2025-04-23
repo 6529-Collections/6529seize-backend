@@ -5,8 +5,14 @@ import type {
   APIGatewayProxyResult,
   Context
 } from 'aws-lambda';
-import { appWebSockets, authenticateWebSocketJwt } from './ws/ws';
+import {
+  appWebSockets,
+  authenticateWebSocketJwtOrGetByConnectionId
+} from './ws/ws';
 import { Logger } from '../../logging';
+import { WsMessageType } from './ws/ws-message';
+import { isValidUuid } from '../../helpers';
+import { wsListenersNotifier } from './ws/ws-listeners-notifier';
 
 const serverlessHttp = require('serverless-http');
 
@@ -29,7 +35,8 @@ async function wsHandler(
 ): Promise<APIGatewayProxyResult> {
   const wsHandlerLogger = Logger.get('wsHandler');
   const { routeKey, connectionId } = event.requestContext;
-  const { identityId, jwtExpiry } = await authenticateWebSocketJwt(event);
+  const { identityId, jwtExpiry } =
+    await authenticateWebSocketJwtOrGetByConnectionId(event);
   switch (routeKey) {
     case '$connect':
       try {
@@ -51,6 +58,61 @@ async function wsHandler(
       await appWebSockets.deregister({ connectionId: connectionId! });
       return { statusCode: 200, body: 'Disconnected' };
     case '$default':
+      try {
+        const message = JSON.parse(event.body || '{}');
+        wsHandlerLogger.info(
+          `WS $default. Identity: ${identityId}. Message: ${JSON.stringify(
+            message
+          )}`
+        );
+        switch (message.type) {
+          case WsMessageType.SUBSCRIBE_TO_WAVE: {
+            const waveId = message.wave_id?.toString() ?? null;
+            if (waveId && !isValidUuid(waveId)) {
+              return {
+                statusCode: 400,
+                body: JSON.stringify({ message: 'Invalid wave id' })
+              };
+            }
+            await appWebSockets.updateActiveWaveForConnection(
+              {
+                connectionId: connectionId!,
+                activeWaveId: waveId
+              },
+              {}
+            );
+            return {
+              statusCode: 200,
+              body: JSON.stringify({ message: 'OK' })
+            };
+          }
+          case WsMessageType.USER_IS_TYPING: {
+            const waveId = message.wave_id?.toString();
+            if (!waveId || !isValidUuid(waveId)) {
+              return {
+                statusCode: 400,
+                body: JSON.stringify({ message: 'Invalid wave id' })
+              };
+            } else {
+              await wsListenersNotifier.notifyAboutUserIsTyping({
+                identityId,
+                waveId
+              });
+            }
+            break;
+          }
+          default:
+            return {
+              statusCode: 400,
+              body: JSON.stringify({ message: 'Unrecognized action' })
+            };
+        }
+      } catch (err) {
+        return {
+          statusCode: 500,
+          body: JSON.stringify({ message: 'Failed to process message' })
+        };
+      }
       return { statusCode: 400, body: 'This websocket does not accept data' };
     default:
       return { statusCode: 400, body: 'Unknown routeKey' };

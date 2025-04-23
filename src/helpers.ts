@@ -465,6 +465,12 @@ export function getUniqueValuesWithKeys<K, V>(map: Map<K, V>): Map<V, K[]> {
   return valueToKeysMap;
 }
 
+export function isValidUuid(str: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+    str
+  );
+}
+
 export function isExperimentalModeOn() {
   return process.env.EXPERIMENTAL_MODE_ON === 'true';
 }

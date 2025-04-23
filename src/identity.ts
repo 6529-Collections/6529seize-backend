@@ -217,6 +217,7 @@ export async function syncIdentitiesWithTdhConsolidations(
       targetIdentity = {
         ...targetIdentity,
         consolidation_key: consolidationThatNeedsWork.consolidation_key,
+        tdh: consolidationThatNeedsWork.tdh,
         handle: mainProfileForNewConsolidation?.handle ?? null,
         normalised_handle:
           mainProfileForNewConsolidation?.normalised_handle ?? null,

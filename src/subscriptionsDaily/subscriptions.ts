@@ -59,9 +59,9 @@ export async function updateSubscriptions(reset?: boolean) {
   );
 
   const seizeDomain =
-    process.env.NODE_ENV === 'development' ? 'staging.seize' : 'seize';
+    process.env.NODE_ENV === 'development' ? 'staging.6529' : '6529';
   let discordMessage = `📋 Published provisional list of Subscriptions for The Memes Card #${nextMemeId}`;
-  discordMessage += ` \n\n[View on Seize] \nhttps://${seizeDomain}.io/open-data/meme-subscriptions`;
+  discordMessage += ` \n\n[View on 6529.io] \nhttps://${seizeDomain}.io/open-data/meme-subscriptions`;
   discordMessage += ` \n\n[View on Arweave] \n${uploadLink}`;
   await sendDiscordUpdate(
     process.env.SUBSCRIPTIONS_DISCORD_WEBHOOK as string,
