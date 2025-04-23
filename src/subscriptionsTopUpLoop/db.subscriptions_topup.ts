@@ -72,7 +72,7 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
         try {
           await updateSubscriptionMode(consolidationKey, true, qrHolder);
         } catch (e) {
-          console.warn(
+          logger.warn(
             `Error setting subscription mode to auto-subscribe for ${consolidationKey}: ${e}`
           );
         }
