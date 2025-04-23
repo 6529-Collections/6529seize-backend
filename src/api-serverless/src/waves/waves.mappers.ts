@@ -183,7 +183,8 @@ export class WavesMappers {
       subscribedActions,
       metrics,
       authenticatedUserMetrics,
-      yourParticipationDropsCountByWaveId
+      yourParticipationDropsCountByWaveId,
+      yourUnreadNotificationsCountByWaveId
     } = await this.getRelatedData(waveEntities, groupIdsUserIsEligibleFor, ctx);
     return waveEntities.map<ApiWave>((waveEntity) =>
       this.mapWaveEntityToApiWave({
@@ -198,7 +199,8 @@ export class WavesMappers {
         noRightToParticipate,
         metrics,
         authenticatedUserMetrics,
-        yourParticipationDropsCountByWaveId
+        yourParticipationDropsCountByWaveId,
+        yourUnreadNotificationsCountByWaveId
       })
     );
   }
@@ -215,7 +217,8 @@ export class WavesMappers {
     noRightToParticipate,
     metrics,
     authenticatedUserMetrics,
-    yourParticipationDropsCountByWaveId
+    yourParticipationDropsCountByWaveId,
+    yourUnreadNotificationsCountByWaveId
   }: {
     waveEntity: WaveEntity;
     profiles: Record<string, ApiProfileMin>;
@@ -235,6 +238,7 @@ export class WavesMappers {
     metrics: Record<string, WaveMetricEntity>;
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
     yourParticipationDropsCountByWaveId: Record<string, number>;
+    yourUnreadNotificationsCountByWaveId: Record<string, number>;
   }): ApiWave {
     const contributorsOverview: ApiWaveContributorOverview[] =
       contributors[waveEntity.id]?.map((it) => ({
@@ -344,7 +348,9 @@ export class WavesMappers {
         yourParticipationDropsCountByWaveId[waveEntity.id] ?? 0,
       you_have_unread_drops:
         waveAuthenticatedUserMetrics?.latest_read_timestamp <
-        waveMetrics.latest_drop_timestamp
+        waveMetrics.latest_drop_timestamp,
+      your_unread_notifications_count:
+        yourUnreadNotificationsCountByWaveId[waveEntity.id] ?? 0
     };
     return {
       id: waveEntity.id,
@@ -382,6 +388,7 @@ export class WavesMappers {
     metrics: Record<string, WaveMetricEntity>;
     authenticatedUserMetrics: Record<string, WaveDropperMetricEntity>;
     yourParticipationDropsCountByWaveId: Record<string, number>;
+    yourUnreadNotificationsCountByWaveId: Record<string, number>;
   }> {
     ctx.timer?.start('wavesMappers->getRelatedData');
     const waveIds = waveEntities.map((it) => it.id);
@@ -397,7 +404,8 @@ export class WavesMappers {
       contributorsOverViews,
       creationDropsByDropId,
       subscribedActions,
-      yourParticipationDropsCountByWaveId
+      yourParticipationDropsCountByWaveId,
+      yourUnreadNotificationsCountByWaveId
     ] = await Promise.all([
       this.userGroupsService.getByIds(
         waveEntities
@@ -452,6 +460,15 @@ export class WavesMappers {
         : Promise.resolve({} as Record<string, ActivityEventAction[]>),
       authenticatedUserId
         ? this.wavesApiDb.findIdentityParticipationDropsCountByWaveId(
+            {
+              identityId: authenticatedUserId,
+              waveIds
+            },
+            ctx
+          )
+        : Promise.resolve({} as Record<string, number>),
+      authenticatedUserId
+        ? this.wavesApiDb.findIdentityUnreadNotificationsCountByWaveId(
             {
               identityId: authenticatedUserId,
               waveIds
@@ -521,7 +538,8 @@ export class WavesMappers {
       ),
       metrics,
       authenticatedUserMetrics,
-      yourParticipationDropsCountByWaveId
+      yourParticipationDropsCountByWaveId,
+      yourUnreadNotificationsCountByWaveId
     };
   }
 }

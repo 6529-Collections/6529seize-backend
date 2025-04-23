@@ -1341,6 +1341,46 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
+  async findIdentityUnreadNotificationsCountByWaveId(
+    param: {
+      identityId: string;
+      waveIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!param.waveIds.length) {
+      return {};
+    }
+
+    const timerLabel = `${this.constructor.name}->findIdentityUnreadNotificationsCountByWaveId`;
+    ctx.timer?.start(timerLabel);
+
+    const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
+      `
+        SELECT m.wave_id AS wave_id, COUNT(n.id) AS cnt
+        FROM ${WAVE_DROPPER_METRICS_TABLE} m
+        JOIN ${IDENTITY_NOTIFICATIONS_TABLE} n
+          ON m.wave_id = n.wave_id
+        AND m.dropper_id = n.identity_id
+        WHERE m.dropper_id = :identityId
+          AND m.wave_id IN (:waveIds)
+          AND n.created_at > m.latest_read_timestamp
+        GROUP BY m.wave_id
+    `,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+
+    const result = dbresult.reduce((acc, row) => {
+      acc[row.wave_id] = row.cnt;
+      return acc;
+    }, {} as Record<string, number>);
+
+    ctx.timer?.stop(timerLabel);
+
+    return result;
+  }
+
   public async findWaveByGroupId(groupId: string, ctx: RequestContext) {
     const result = await this.db.execute<WaveEntity>(
       `SELECT * FROM ${WAVES_TABLE} WHERE admin_group_id = :groupId OR chat_group_id = :groupId OR voting_group_id = :groupId OR participation_group_id = :groupId ORDER BY created_at DESC LIMIT 1`,
