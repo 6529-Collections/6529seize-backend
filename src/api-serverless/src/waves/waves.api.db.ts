@@ -841,7 +841,8 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
             dropper_id: params.dropperId,
             drops_count: 0,
             participatory_drops_count: 0,
-            latest_drop_timestamp: 0
+            latest_drop_timestamp: 0,
+            latest_read_timestamp: 0
           };
           return acc;
         }, {} as Record<string, WaveDropperMetricEntity>)
@@ -1337,6 +1338,46 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ctx.timer?.stop(
       `${this.constructor.name}->findIdentityParticipationDropsCountByWaveId`
     );
+    return result;
+  }
+
+  async findIdentityUnreadNotificationsCountByWaveId(
+    param: {
+      identityId: string;
+      waveIds: string[];
+    },
+    ctx: RequestContext
+  ): Promise<Record<string, number>> {
+    if (!param.waveIds.length) {
+      return {};
+    }
+
+    const timerLabel = `${this.constructor.name}->findIdentityUnreadNotificationsCountByWaveId`;
+    ctx.timer?.start(timerLabel);
+
+    const dbresult = await this.db.execute<{ wave_id: string; cnt: number }>(
+      `
+        SELECT m.wave_id AS wave_id, COUNT(n.id) AS cnt
+        FROM ${WAVE_DROPPER_METRICS_TABLE} m
+        JOIN ${IDENTITY_NOTIFICATIONS_TABLE} n
+          ON m.wave_id = n.wave_id
+        AND m.dropper_id = n.identity_id
+        WHERE m.dropper_id = :identityId
+          AND m.wave_id IN (:waveIds)
+          AND n.created_at > m.latest_read_timestamp
+        GROUP BY m.wave_id
+    `,
+      param,
+      { wrappedConnection: ctx.connection }
+    );
+
+    const result = dbresult.reduce((acc, row) => {
+      acc[row.wave_id] = row.cnt;
+      return acc;
+    }, {} as Record<string, number>);
+
+    ctx.timer?.stop(timerLabel);
+
     return result;
   }
 

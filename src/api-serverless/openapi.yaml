@@ -806,7 +806,7 @@ paths:
     get:
       tags:
         - Identities
-      summary: Get identity by it's key. Key can be id, wallet, handle, ENS name, etc...
+      summary: Get identity by key. Key can be id, wallet, handle, ENS name, etc...
       operationId: getIdentityByKey
       parameters:
         - name: identity_key
@@ -5882,6 +5882,9 @@ components:
         - drops_count
         - latest_drop_timestamp
         - your_participation_drops_count
+        - your_latest_drop_timestamp
+        - you_have_unread_drops
+        - your_unread_notifications_count
       properties:
         subscribers_count:
           type: number
@@ -5899,6 +5902,11 @@ components:
           type: number
           format: int64
         your_latest_drop_timestamp:
+          type: number
+          format: int64
+        you_have_unread_drops:
+          type: boolean
+        your_unread_notifications_count:
           type: number
           format: int64
     ApiWaveMin:

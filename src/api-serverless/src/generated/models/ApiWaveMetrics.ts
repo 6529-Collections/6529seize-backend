@@ -18,7 +18,9 @@ export class ApiWaveMetrics {
     'latest_drop_timestamp': number;
     'your_drops_count'?: number;
     'your_participation_drops_count': number;
-    'your_latest_drop_timestamp'?: number;
+    'your_latest_drop_timestamp': number;
+    'you_have_unread_drops': boolean;
+    'your_unread_notifications_count': number;
 
     static readonly discriminator: string | undefined = undefined;
 
@@ -56,6 +58,18 @@ export class ApiWaveMetrics {
         {
             "name": "your_latest_drop_timestamp",
             "baseName": "your_latest_drop_timestamp",
+            "type": "number",
+            "format": "int64"
+        },
+        {
+            "name": "you_have_unread_drops",
+            "baseName": "you_have_unread_drops",
+            "type": "boolean",
+            "format": ""
+        },
+        {
+            "name": "your_unread_notifications_count",
+            "baseName": "your_unread_notifications_count",
             "type": "number",
             "format": "int64"
         }    ];
