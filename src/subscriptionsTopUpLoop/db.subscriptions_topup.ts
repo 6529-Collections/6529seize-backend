@@ -1,4 +1,4 @@
-import { QueryRunner } from 'typeorm';
+import { EntityManager, QueryRunner } from 'typeorm';
 import { updateSubscriptionMode } from '../api-serverless/src/subscriptions/api.subscriptions.db';
 import {
   ADDRESS_CONSOLIDATION_KEY,
@@ -14,6 +14,7 @@ import { sendDiscordUpdate } from '../notifier-discord';
 import { sqlExecutor } from '../sql-executor';
 
 export async function persistTopUps(topUps: SubscriptionTopUp[]) {
+  const processedTopUps: SubscriptionTopUp[] = [];
   await sqlExecutor.executeNativeQueriesInTransaction(async (qrHolder) => {
     const queryRunner = qrHolder.connection as QueryRunner;
     const manager = queryRunner.manager;
@@ -21,6 +22,11 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
     const topUpsRepo = manager.getRepository(SubscriptionTopUp);
 
     for (const topUp of topUps) {
+      const isProcessed = await isTopUpProcessed(topUp.hash, manager);
+      if (isProcessed) {
+        continue;
+      }
+
       let consolidationKey = (
         await manager.query(
           `SELECT consolidation_key FROM ${ADDRESS_CONSOLIDATION_KEY} WHERE address = '${topUp.from_wallet}'`
@@ -59,10 +65,12 @@ export async function persistTopUps(topUps: SubscriptionTopUp[]) {
           );
         }
       }
+
+      processedTopUps.push(topUp);
     }
   });
 
-  for (const topUp of topUps) {
+  for (const topUp of processedTopUps) {
     const seizeDomain =
       process.env.NODE_ENV === 'development' ? 'staging.seize' : 'seize';
     let discordMessage = `🔝 Subscription Top Up of ${topUp.amount} ETH from ${topUp.from_wallet}.`;
@@ -86,4 +94,17 @@ export async function getMaxSubscriptionTopUpBlock(): Promise<number> {
     `SELECT MAX(block) as max_block FROM ${SUBSCRIPTIONS_TOP_UP_TABLE}`
   );
   return result?.[0].max_block ?? 0;
+}
+
+async function isTopUpProcessed(
+  hash: string,
+  manager: EntityManager
+): Promise<boolean> {
+  const exists = await manager
+    .createQueryBuilder()
+    .select('1')
+    .from(SubscriptionTopUp, 'topup')
+    .where('topup.hash = :hash', { hash })
+    .getExists();
+  return exists;
 }
