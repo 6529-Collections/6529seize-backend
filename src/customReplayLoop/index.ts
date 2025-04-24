@@ -227,3 +227,10 @@ async function updateBalance(key: string, balance: number) {
 // 0xca67baf0f7e33ff1bc00bec9d6eb252644828f69 -> balance 0
 // 0xe375b00384ecbed3da6d2f8dec7b6784cf3693d9 -> balance 0
 // 0xefc26e228cda4085476fb6a98331ed6f504fcad2 -> balance 0
+
+// ----FINAL PROD
+// balance: 120.5063755592002;
+// top ups: 847.9022653168521
+// redeemed: 11141 * 0.06529 = 727.39589
+
+// diff: 847.9022653168521 - 727.39589 = 120.5063753168521
