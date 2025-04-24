@@ -194,10 +194,10 @@ async function withoutLatestRedeemed(
 }
 
 async function updateBalance(key: string, balance: number) {
-  // await getDataSource().query(
-  //   `UPDATE ${SUBSCRIPTIONS_BALANCES_TABLE} SET balance = ${balance} WHERE consolidation_key = '${key}'`
-  // );
   console.info(`WILL UPDATE BALANCE FOR ${key} TO ${balance}`);
+  await getDataSource().query(
+    `UPDATE ${SUBSCRIPTIONS_BALANCES_TABLE} SET balance = ${balance} WHERE consolidation_key = '${key}'`
+  );
 }
 
 // top ups: 840.9179443168517
