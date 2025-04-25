@@ -63,7 +63,10 @@ async function updateDistributionInfo() {
           contract: distribution.contract,
           cardId: distribution.card_id,
           cardName: nft.name,
-          mintDate: nft.mint_date.toISOString().slice(0, 19).replace('T', ' ')
+          mintDate: new Date(nft.mint_date)
+            .toISOString()
+            .slice(0, 19)
+            .replace('T', ' ')
         }
       );
     }
