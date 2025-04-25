@@ -99,7 +99,6 @@ export class ProfileActivityLogsDb extends LazyDbAccessCompatibleService {
     ctx: RequestContext
   ): Promise<ProfileActivityLog[]> {
     ctx.timer?.start(`${this.constructor.name}->searchLogs`);
-
     const page = params.pageRequest.page;
     const page_size =
       params.pageRequest.page_size < 1 || params.pageRequest.page_size > 2000

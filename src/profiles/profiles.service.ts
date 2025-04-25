@@ -1,4 +1,4 @@
-import { ProfileOverview, profilesDb, ProfilesDb } from './profiles.db';
+import { profilesDb, ProfilesDb } from './profiles.db';
 import { UUID_REGEX, WALLET_REGEX } from '../constants';
 import { getAlchemyInstance } from '../alchemy';
 import { Alchemy } from 'alchemy-sdk';
@@ -43,6 +43,7 @@ import {
   getWalletFromEns,
   isWallet,
   replaceEmojisWithHex,
+  resolveEnum,
   uniqueShortId
 } from '../helpers';
 import {
@@ -74,6 +75,7 @@ import { userGroupsService } from '../api-serverless/src/community-members/user-
 import { wavesApiDb } from '../api-serverless/src/waves/waves.api.db';
 import { ProfileProxyActionType } from '../entities/IProfileProxyAction';
 import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
+import { ApiProfileClassification } from '../api-serverless/src/generated/models/ApiProfileClassification';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -860,6 +862,17 @@ export class ProfilesService {
     connectionHolder: ConnectionWrapper<any>;
   }) {
     const logEvents: NewProfileActivityLog[] = [];
+    if (profileBeforeChange === null) {
+      logEvents.push({
+        profile_id: profileId,
+        target_id: null,
+        type: ProfileActivityLogType.PROFILE_CREATED,
+        contents: JSON.stringify({}),
+        proxy_id: null,
+        additional_data_1: null,
+        additional_data_2: null
+      });
+    }
     if (profileBeforeChange?.normalised_handle !== newHandle.toLowerCase()) {
       logEvents.push({
         profile_id: profileId,
@@ -1370,36 +1383,6 @@ export class ProfilesService {
     throw new Error('Failed to upload image');
   }
 
-  async getProfileOverviewsByIds(
-    ids: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<ProfileOverview[]> {
-    const activeProfiles = await this.profilesDb.getProfileMinsByIds(
-      ids,
-      connection
-    );
-    const notFoundProfileIds = ids.filter(
-      (id) => !activeProfiles.find((p) => p.id === id)
-    );
-    const archivedProfiles: ProfileOverview[] = await this.profilesDb
-      .getNewestVersionHandlesOfArchivedProfiles(notFoundProfileIds, connection)
-      .then((it) =>
-        it.map<ProfileOverview>((p) => ({
-          id: p.external_id,
-          handle: p.handle,
-          banner1_color: p.banner1_color,
-          banner2_color: p.banner2_color,
-          cic: 0,
-          rep: 0,
-          tdh: 0,
-          level: 0,
-          pfp: null,
-          archived: true
-        }))
-      );
-    return [...activeProfiles, ...archivedProfiles];
-  }
-
   public async updatePrimaryAddresses(addresses: Set<string>) {
     for (const address of Array.from(addresses)) {
       const profile = await this.getProfileByWallet(address);
@@ -1584,20 +1567,29 @@ export class ProfilesService {
       base,
       ctx
     );
-    return identityEntities.map<ApiIdentity>((it) => ({
-      id: it.profile_id,
-      handle: it.handle,
-      normalised_handle: it.normalised_handle,
-      pfp: it.pfp,
-      primary_wallet: it.primary_address,
-      rep: it.rep,
-      cic: it.cic,
-      level: getLevelFromScore(it.level_raw),
-      tdh: it.tdh,
-      display: it.display ?? it.primary_address,
-      banner1: it.banner1,
-      banner2: it.banner2
-    }));
+    return identityEntities.map<ApiIdentity>((it) => {
+      const classification = it.classification
+        ? resolveEnum(ApiProfileClassification, it.classification as string) ??
+          ApiProfileClassification.Pseudonym
+        : ApiProfileClassification.Pseudonym;
+      return {
+        id: it.profile_id,
+        handle: it.handle,
+        normalised_handle: it.normalised_handle,
+        pfp: it.pfp,
+        primary_wallet: it.primary_address,
+        rep: it.rep,
+        cic: it.cic,
+        level: getLevelFromScore(it.level_raw),
+        tdh: it.tdh,
+        display: it.display ?? it.primary_address,
+        banner1: it.banner1,
+        banner2: it.banner2,
+        consolidation_key: it.consolidation_key,
+        classification,
+        sub_classification: it.sub_classification
+      };
+    });
   }
 
   async getAllWalletsByProfileId(profileId: string): Promise<string[]> {

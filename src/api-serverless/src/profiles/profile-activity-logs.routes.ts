@@ -7,10 +7,10 @@ import {
 } from './profile-activity-logs-api.service';
 import { Request, Response } from 'express';
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
-import { profilesService } from '../../../profiles/profiles.service';
 import { CountlessPage } from '../page-request';
 import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
 import { Timer } from '../../../time';
+import { identityFetcher } from '../identities/identity.fetcher';
 
 const router = asyncRouter();
 
@@ -34,6 +34,7 @@ async function getBaseSearchRequest(
     any
   >
 ): Promise<ProfileActivityLogsSearchRequest> {
+  const timer = Timer.getFromRequest(req);
   const queryParams = req.query;
   const order = queryParams.order?.toLowerCase() === 'asc' ? 'asc' : 'desc';
   const profile = queryParams.profile;
@@ -43,14 +44,17 @@ async function getBaseSearchRequest(
   const ratingMatter = queryParams.rating_matter;
   let profileId = undefined;
   if (profile) {
-    profileId = await profilesService
-      .getProfileAndConsolidationsByIdentity(profile)
-      .then((result) => result?.profile?.external_id ?? '-');
+    profileId = await identityFetcher
+      .getProfileIdByIdentityKey({ identityKey: profile }, { timer })
+      .then((result) => result ?? '-');
   }
   const targetId = queryParams.target
-    ? await profilesService
-        .getProfileAndConsolidationsByIdentity(queryParams.target)
-        .then((result) => result?.profile?.external_id ?? queryParams.target)
+    ? await identityFetcher
+        .getProfileIdByIdentityKey(
+          { identityKey: queryParams.target },
+          { timer }
+        )
+        .then((result) => result ?? queryParams.target)
     : queryParams.target;
   const logType = queryParams.log_type
     ?.split(',')

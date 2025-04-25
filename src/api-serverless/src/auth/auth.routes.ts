@@ -17,6 +17,7 @@ import { profilesService } from '../../../profiles/profiles.service';
 import { profileProxyApiService } from '../proxies/proxy.api.service';
 import { ApiRedeemRefreshTokenRequest } from '../generated/models/ApiRedeemRefreshTokenRequest';
 import { ApiRedeemRefreshTokenResponse } from '../generated/models/ApiRedeemRefreshTokenResponse';
+import { identityFetcher } from '../identities/identity.fetcher';
 
 const router = asyncRouter();
 
@@ -87,9 +88,10 @@ router.post(
       } else if (!role) {
         chosenRole = signingProfile;
       } else {
-        const roleId = await profilesService
-          .getProfileAndConsolidationsByIdentity(role)
-          .then((profile) => profile?.profile?.external_id ?? null);
+        const roleId = await identityFetcher.getProfileIdByIdentityKey(
+          { identityKey: role },
+          {}
+        );
         if (!roleId) {
           throw new BadRequestException(`Role ${role} not found`);
         }

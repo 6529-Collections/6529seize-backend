@@ -17,7 +17,6 @@ import * as Joi from 'joi';
 import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
 import { identitiesService } from './identities.service';
 import { profilesService } from '../../../profiles/profiles.service';
-import { profilesApiService } from '../profiles/profiles.api.service';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { Timer } from '../../../time';
 import { parseIntOrNull } from '../../../helpers';
@@ -136,9 +135,8 @@ router.get(
     const activeActions = !profileId
       ? []
       : (
-          await profilesApiService.getProfileMinsByIds({
-            ids: [profileId],
-            authenticatedProfileId: authenticatedProfileId
+          await identityFetcher.getOverviewsByIds([profileId], {
+            authenticationContext
           })
         )[profileId]?.subscribed_actions ?? [];
     res.send({

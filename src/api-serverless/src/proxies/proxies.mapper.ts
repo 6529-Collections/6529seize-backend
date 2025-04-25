@@ -5,12 +5,12 @@ import {
 } from '../../../entities/IProfileProxyAction';
 import { distinct } from '../../../helpers';
 import { ApiProfileProxyActionType } from '../generated/models/ApiProfileProxyActionType';
-import { ApiProfileMin } from '../generated/models/ApiProfileMin';
 import { ApiProfileProxy } from '../generated/models/ApiProfileProxy';
+import { AuthenticationContext } from '../../../auth-context';
 import {
-  profilesApiService,
-  ProfilesApiService
-} from '../profiles/profiles.api.service';
+  IdentityFetcher,
+  identityFetcher
+} from '../identities/identity.fetcher';
 
 const ACTION_MAP: Record<ProfileProxyActionType, ApiProfileProxyActionType> = {
   [ProfileProxyActionType.ALLOCATE_REP]: ApiProfileProxyActionType.AllocateRep,
@@ -24,7 +24,7 @@ const ACTION_MAP: Record<ProfileProxyActionType, ApiProfileProxyActionType> = {
 };
 
 export class ProfileProxiesMapper {
-  constructor(private readonly profilesService: ProfilesApiService) {}
+  constructor(private readonly identityFetcher: IdentityFetcher) {}
 
   public async profileProxyEntitiesToApiProfileProxies(
     {
@@ -42,11 +42,14 @@ export class ProfileProxiesMapper {
         entity.created_by
       ])
     );
-    const profileMins: Record<string, ApiProfileMin> =
-      await this.profilesService.getProfileMinsByIds({
-        ids: profileIds,
-        authenticatedProfileId
-      });
+    const profileMins = await this.identityFetcher.getOverviewsByIds(
+      profileIds,
+      {
+        authenticationContext: authenticatedProfileId
+          ? AuthenticationContext.fromProfileId(authenticatedProfileId)
+          : AuthenticationContext.notAuthenticated()
+      }
+    );
 
     return profileProxyEntities.map<ApiProfileProxy>((entity) => ({
       id: entity.id,
@@ -63,6 +66,4 @@ export class ProfileProxiesMapper {
   }
 }
 
-export const profileProxiesMapper = new ProfileProxiesMapper(
-  profilesApiService
-);
+export const profileProxiesMapper = new ProfileProxiesMapper(identityFetcher);

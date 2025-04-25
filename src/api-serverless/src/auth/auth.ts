@@ -1,6 +1,5 @@
 import * as passport from 'passport';
 import { Request } from 'express';
-import { profilesService } from '../../../profiles/profiles.service';
 import {
   isProxyActionActive,
   profileProxyApiService
@@ -14,6 +13,7 @@ import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
 import { Time, Timer } from '../../../time';
 import * as mcache from 'memory-cache';
 import { identitiesDb } from '../../../identities/identities.db';
+import { identityFetcher } from '../identities/identity.fetcher';
 
 export function getJwtSecret() {
   const jwtsecret = process.env.JWT_SECRET;
@@ -60,9 +60,10 @@ export async function getAuthenticatedProfileIdOrNull(
   if (!authWallet) {
     return null;
   }
-  return profilesService
-    .getProfileAndConsolidationsByIdentity(authWallet)
-    .then((profile) => profile?.profile?.external_id ?? null);
+  return identityFetcher.getProfileIdByIdentityKey(
+    { identityKey: authWallet },
+    {}
+  );
 }
 
 export async function getAuthenticationContext(
