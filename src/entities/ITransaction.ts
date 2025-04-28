@@ -65,6 +65,9 @@ export class BaseTransaction {
 }
 
 @Entity('transactions')
+@Index('idx_transactions_contract_block', ['contract', 'block'])
+@Index('idx_transaction_date', ['transaction_date'])
+@Index('idx_transaction_block', ['block'])
 export class Transaction extends BaseTransaction {}
 
 export interface TransactionValue {

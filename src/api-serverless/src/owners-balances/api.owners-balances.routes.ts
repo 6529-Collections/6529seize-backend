@@ -88,7 +88,6 @@ router.get(
     res: Response<ApiResponse<ApiOwnerBalanceMemes>>
   ) {
     const consolidationKey = req.params.consolidation_key;
-
     const result = await fetchMemesOwnerBalancesForConsolidationKey(
       consolidationKey
     );
