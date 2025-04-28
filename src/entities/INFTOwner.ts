@@ -1,11 +1,12 @@
 import {
-  Entity,
   Column,
-  PrimaryColumn,
   CreateDateColumn,
+  Entity,
+  Index,
+  PrimaryColumn,
   UpdateDateColumn
 } from 'typeorm';
-import { NFT_OWNERS_TABLE, NFT_OWNERS_CONSOLIDATION_TABLE } from '../constants';
+import { NFT_OWNERS_CONSOLIDATION_TABLE, NFT_OWNERS_TABLE } from '../constants';
 
 class NFTOwnerBase {
   @CreateDateColumn()
@@ -25,6 +26,7 @@ class NFTOwnerBase {
 }
 
 @Entity(NFT_OWNERS_TABLE)
+@Index('idx_nft_owners_1', ['wallet', 'contract', 'token_id'])
 export class NFTOwner extends NFTOwnerBase {
   @PrimaryColumn({ type: 'varchar', length: 50 })
   wallet!: string;
