@@ -1094,7 +1094,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
           with given_tdh_votes as (select voter_id, wave_id, sum(abs(votes)) as total_given_votes
                                    from ${DROP_VOTER_STATE_TABLE}
                                    group by 1, 2)
-          select v.voter_id as voter_id, wave_id, i.tdh as tdh, v.total_given_votes as total_given_votes
+          select v.voter_id as profile_id, wave_id, i.tdh as tdh, v.total_given_votes as total_given_votes
                                from given_tdh_votes v
                                         join ${IDENTITIES_TABLE} i on v.voter_id = i.profile_id
                                         join ${WAVES_TABLE} w on v.wave_id = w.id
