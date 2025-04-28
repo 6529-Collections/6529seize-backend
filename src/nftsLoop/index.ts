@@ -30,9 +30,14 @@ async function nftsLoop() {
 async function updateDistributionInfo() {
   const missingInfoDistributions: { contract: string; card_id: number }[] =
     await getDataSource().manager.query(
-      `SELECT DISTINCT contract, card_id 
-      FROM ${DISTRIBUTION_NORMALIZED_TABLE} 
-      WHERE card_name is null OR card_name = '' OR mint_date is null;`
+      `SELECT DISTINCT contract, card_id
+        FROM (
+          SELECT contract, card_id, 1 AS tag  FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE card_name IS NULL
+        UNION ALL
+        SELECT contract, card_id, 2 AS tag  FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE card_name = 'RUGGED'
+        UNION ALL
+        SELECT contract, card_id, 3 AS tag  FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE mint_date IS NULL
+      ) AS u`
     );
 
   if (missingInfoDistributions.length === 0) {
