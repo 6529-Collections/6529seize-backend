@@ -6,7 +6,6 @@ import {
 } from '../constants';
 import { RateMatter } from '../entities/IRating';
 import { sum } from '../helpers';
-import { ProfileSimpleMetrics } from '../user-groups/user-groups.db';
 import { NEXTGEN_CORE_CONTRACT } from '../nextgen/nextgen_constants';
 import { Network } from 'alchemy-sdk';
 
@@ -587,3 +586,11 @@ export const isAnyGroupByTotalSentCicOrRepCriteria = (
       hasGroupGotTotalSentCicCriteria(it) || hasGroupGotTotalSentRepCriteria(it)
   );
 };
+
+export interface ProfileSimpleMetrics {
+  readonly profile_id: string;
+  readonly tdh: number;
+  readonly level: number;
+  readonly cic: number;
+  readonly rep: number;
+}

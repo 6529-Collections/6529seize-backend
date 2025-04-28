@@ -36,7 +36,8 @@ import {
   isProfileViolatingOwnsNextGenCriteria,
   isProfileViolatingTotalSentCicCriteria,
   isProfileViolatingTotalSentRepCriteria,
-  isRatingOutOfBounds
+  isRatingOutOfBounds,
+  ProfileSimpleMetrics
 } from './user-group-predicates';
 import { FilterDirection, UserGroupEntity } from '../entities/IUserGroup';
 import { Time } from '../time';
@@ -48,7 +49,6 @@ import {
   MEMES_CONTRACT
 } from '../constants';
 import { RateMatter } from '../entities/IRating';
-import { ProfileSimpleMetrics } from '../user-groups/user-groups.db';
 
 function aProfile({
   tdh,
