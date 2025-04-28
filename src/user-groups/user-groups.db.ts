@@ -17,8 +17,8 @@ import { RateMatter } from '../entities/IRating';
 import { randomUUID } from 'crypto';
 import { distinct } from '../helpers';
 import { identitiesDb } from '../identities/identities.db';
-import { calculateLevel, getLevelFromScore } from '../profiles/profile-level';
 import { RequestContext } from '../request.context';
+import { IdentityEntity } from '../entities/IIdentity';
 
 const mysql = require('mysql');
 
@@ -250,23 +250,24 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
     return result;
   }
 
-  async getProfileOverviewByProfileId(
+  async getIdentityByProfileId(
     profileId: string
-  ): Promise<ProfileSimpleMetrics> {
-    const res = await this.db
-      .execute<ProfileSimpleMetrics>(
-        `
-      select profile_id, tdh, level_raw as level, cic, rep from ${IDENTITIES_TABLE} where profile_id = :profileId
+  ): Promise<IdentityEntity | null> {
+    const res = await this.db.oneOrNull<IdentityEntity>(
+      `
+      select * from ${IDENTITIES_TABLE} where profile_id = :profileId
     `,
-        { profileId }
-      )
-      .then((res) => res[0] ?? null);
+      { profileId }
+    );
+    if (!res) {
+      return null;
+    }
     return {
-      profile_id: profileId,
-      level: getLevelFromScore(+res.level),
+      ...res,
       cic: +res.cic,
       rep: +res.rep,
-      tdh: +res.tdh
+      tdh: +res.tdh,
+      level_raw: +res.level_raw
     };
   }
 
@@ -333,53 +334,6 @@ export class UserGroupsDb extends LazyDbAccessCompatibleService {
       .then((res) => res.map((it) => it.group_id));
   }
 
-  async getGroupsMatchingConditions(param: {
-    level: number;
-    givenCic: number;
-    givenRep: number;
-    profileId: string | null;
-    tdh: number;
-    receivedCic: number;
-    receivedRep: number;
-    givenGroups?: string[];
-  }): Promise<UserGroupEntity[]> {
-    const sql = `
-    select cg.*
-from ${USER_GROUPS_TABLE} cg
-where
-    ${param.givenGroups ? `id in (:givenGroups) and ` : ``}
-    ((cg.cic_direction = 'RECEIVED' and (
-    (cg.cic_min is null or :receivedCic >= cg.cic_min) and
-    (cg.cic_max is null or :receivedCic >= cg.cic_max)
-    )) or (cg.cic_direction = 'SENT' and (
-    (cg.cic_min is null or :givenCic >= cg.cic_min) and
-    (cg.cic_max is null or :givenCic >= cg.cic_max) and
-    (cg.cic_user is null ${
-      param.profileId ? ` or cg.cic_user = :profileId ` : ``
-    })
-    )))
-  and ((cg.rep_direction = 'RECEIVED' and (
-    (cg.rep_min is null or :receivedRep >= cg.rep_min) and
-    (cg.rep_max is null or :receivedRep >= cg.rep_max)
-    )) or (cg.rep_direction = 'SENT' and (
-    (cg.rep_min is null or :givenRep >= cg.rep_min) and
-    (cg.rep_max is null or :givenRep >= cg.rep_max) and
-    (cg.rep_user is null ${
-      param.profileId ? ` or cg.rep_user = :profileId ` : ``
-    })
-    )))
-  and (cg.level_min is null or :level >= cg.level_min)
-  and (cg.level_max is null or :level <= cg.level_max)
-  and (cg.tdh_min is null or :tdh >= cg.tdh_min)
-  and (cg.tdh_max is null or :tdh <= cg.tdh_max)
-  and cg.visible = true`;
-    const level = calculateLevel({ tdh: param.tdh, rep: param.receivedRep });
-    return this.db.execute(sql, {
-      ...param,
-      level: level
-    });
-  }
-
   async getRatings(
     profileId: string,
     users: string[],
@@ -393,40 +347,66 @@ where
       rating: number;
     }[]
   > {
-    if (users.length === 0 && !categories.length) {
+    if (!users.length && !categories.length) {
       return [];
     }
+    const parts: string[] = [];
+    if (users.length) {
+      parts.push(`
+      SELECT rater_profile_id,
+             matter_target_id,
+             matter,
+             matter_category,
+             rating
+      FROM  ${RATINGS_TABLE}
+      WHERE rater_profile_id  = :profileId
+        AND matter_target_id IN (:users)
+    `);
+
+      parts.push(`
+      SELECT rater_profile_id,
+             matter_target_id,
+             matter,
+             matter_category,
+             rating
+      FROM  ${RATINGS_TABLE}
+      WHERE matter_target_id  = :profileId
+        AND rater_profile_id IN (:users)
+    `);
+    }
+    if (categories.length) {
+      parts.push(`
+      SELECT rater_profile_id,
+             matter_target_id,
+             matter,
+             matter_category,
+             rating
+      FROM  ${RATINGS_TABLE}
+      WHERE matter          = 'REP'
+        AND matter_category IN (:categories)
+        AND matter_target_id = :profileId
+    `);
+
+      parts.push(`
+      SELECT rater_profile_id,
+             matter_target_id,
+             matter,
+             matter_category,
+             rating
+      FROM  ${RATINGS_TABLE}
+      WHERE matter          = 'REP'
+        AND matter_category IN (:categories)
+        AND rater_profile_id = :profileId
+    `);
+    }
+    const sql = parts.join(' UNION ALL ');
     return this.db.execute<{
       rater_profile_id: string;
       matter_target_id: string;
       matter: RateMatter;
       matter_category: string;
       rating: number;
-    }>(
-      `select 
-      rater_profile_id, 
-      matter_target_id,
-      matter, 
-      matter_category,
-      rating as rating from ${RATINGS_TABLE} where 
-      ${
-        users.length
-          ? `
-      (rater_profile_id = :profileId and matter_target_id in (:users)) 
-      or (matter_target_id = :profileId and rater_profile_id in (:users))
-      `
-          : ``
-      }
-      ${users.length && categories.length ? `or` : ``}
-      ${
-        categories.length
-          ? `
-      (matter = 'REP' and matter_category in (:categories) and matter_target_id = :profileId or rater_profile_id = :profileId)
-      `
-          : ``
-      }`,
-      { profileId, users, categories }
-    );
+    }>(sql, { profileId, users, categories });
   }
 
   async migrateProfileIdsInGroups(
@@ -741,14 +721,6 @@ where
 
     return results[0] ?? null;
   }
-}
-
-export interface ProfileSimpleMetrics {
-  readonly profile_id: string;
-  readonly tdh: number;
-  readonly level: number;
-  readonly cic: number;
-  readonly rep: number;
 }
 
 export const userGroupsDb = new UserGroupsDb(dbSupplier);
