@@ -1,15 +1,16 @@
 import {
-  Entity,
   Column,
-  PrimaryColumn,
   CreateDateColumn,
+  Entity,
+  Index,
+  PrimaryColumn,
   UpdateDateColumn
 } from 'typeorm';
 import {
-  OWNERS_BALANCES_TABLE,
+  CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE,
   CONSOLIDATED_OWNERS_BALANCES_TABLE,
   OWNERS_BALANCES_MEMES_TABLE,
-  CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE
+  OWNERS_BALANCES_TABLE
 } from '../constants';
 
 export abstract class OwnerBalancesBase {
@@ -98,6 +99,8 @@ export class ConsolidatedOwnerBalances extends OwnerBalancesBase {
 }
 
 @Entity(CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE)
+@Index('obmc_ck_season_idx', ['consolidation_key', 'season'])
+@Index('obmc_season_balance_idx', ['season', 'balance'])
 export class ConsolidatedOwnerBalancesMemes extends OwnerBalancesMemesBase {
   @PrimaryColumn({ type: 'varchar', length: 200 })
   consolidation_key!: string;

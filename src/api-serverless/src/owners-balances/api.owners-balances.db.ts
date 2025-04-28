@@ -231,37 +231,23 @@ export async function fetchMemesOwnerBalancesForConsolidationKey(
   consolidationKey: string
 ): Promise<ApiOwnerBalanceMemes[]> {
   const sql = `
-    SELECT 
-      ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.*,
-      COALESCE(${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.boosted_tdh, 0) as boosted_tdh 
-    FROM ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} 
-    LEFT JOIN 
-      ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE} 
-      ON ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.consolidation_key = ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.consolidation_key 
-      AND ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.season = ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}.season 
-    WHERE ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}.consolidation_key = :consolidation_key 
+       SELECT  o.*,
+            COALESCE(t.boosted_tdh, 0)                           AS boosted_tdh,
+            1 + (
+                  SELECT COUNT(*)
+                  FROM   ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} x
+                  WHERE  x.season  = o.season
+                    AND  x.balance > o.balance
+                )                                               AS 'rank'
+    FROM   ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE} AS o
+    LEFT JOIN ${CONSOLIDATED_WALLETS_TDH_MEMES_TABLE}  AS t
+           ON  t.consolidation_key = o.consolidation_key
+           AND t.season            = o.season
+    WHERE  o.consolidation_key = :consolidation_key
   `;
-  const balancesResult: ApiOwnerBalanceMemes[] = await sqlExecutor.execute(
-    sql,
-    {
-      consolidation_key: consolidationKey
-    }
-  );
-
-  for (const balance of balancesResult) {
-    const rankSql = `
-      SELECT COUNT(DISTINCT consolidation_key) + 1 as season_rank
-      FROM ${CONSOLIDATED_OWNERS_BALANCES_MEMES_TABLE}
-      WHERE season = :season and balance > :balance
-    `;
-    const rank = await sqlExecutor.execute(rankSql, {
-      season: balance.season,
-      balance: balance.balance
-    });
-    balance.rank = rank?.[0].season_rank ?? 0;
-  }
-
-  return balancesResult;
+  return sqlExecutor.execute<ApiOwnerBalanceMemes>(sql, {
+    consolidation_key: consolidationKey
+  });
 }
 
 export async function fetchMemesOwnerBalancesForWallet(wallet: string) {
