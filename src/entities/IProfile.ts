@@ -73,6 +73,7 @@ export class Profile extends ProfileBase implements ProfileType {
 }
 
 @Entity(PROFILES_ARCHIVE_TABLE)
+@Index('idx_profile_a_external_id', ['external_id'])
 export class ProfileArchived extends ProfileBase implements ProfileType {
   @PrimaryGeneratedColumn('increment', { type: 'bigint' })
   id!: number;
