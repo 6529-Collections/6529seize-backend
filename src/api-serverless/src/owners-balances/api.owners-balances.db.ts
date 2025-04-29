@@ -252,37 +252,24 @@ export async function fetchMemesOwnerBalancesForConsolidationKey(
 
 export async function fetchMemesOwnerBalancesForWallet(wallet: string) {
   const sql = `
-    SELECT 
-      ${OWNERS_BALANCES_MEMES_TABLE}.*,
-      ${WALLETS_TDH_MEMES_TABLE}.tdh,
-      ${WALLETS_TDH_MEMES_TABLE}.boost,
-      ${WALLETS_TDH_MEMES_TABLE}.boosted_tdh,
-      ${WALLETS_TDH_MEMES_TABLE}.tdh__raw,
-      ${WALLETS_TDH_MEMES_TABLE}.tdh_rank,
-      ${WALLETS_TDH_MEMES_TABLE}.boost
-    FROM ${OWNERS_BALANCES_MEMES_TABLE} 
-    LEFT JOIN 
-      ${WALLETS_TDH_MEMES_TABLE} 
-      ON ${OWNERS_BALANCES_MEMES_TABLE}.wallet = ${WALLETS_TDH_MEMES_TABLE}.wallet 
-      AND ${OWNERS_BALANCES_MEMES_TABLE}.season = ${WALLETS_TDH_MEMES_TABLE}.season 
-    WHERE ${OWNERS_BALANCES_MEMES_TABLE}.wallet = :wallet 
+    SELECT  o.*,
+            COALESCE(t.tdh,          0)                      AS tdh,
+            COALESCE(t.boost,        0)                      AS boost,
+            COALESCE(t.boosted_tdh,  0)                      AS boosted_tdh,
+            COALESCE(t.tdh__raw,     0)                      AS tdh__raw,
+            COALESCE(t.tdh_rank,     0)                      AS tdh_rank,
+            1 + (
+                  SELECT COUNT(*)
+                  FROM   ${OWNERS_BALANCES_MEMES_TABLE} x
+                         USE INDEX (obm_season_balance_idx)
+                  WHERE  x.season  = o.season
+                    AND  x.balance > o.balance
+                )                                           AS 'rank'
+    FROM   ${OWNERS_BALANCES_MEMES_TABLE}  AS o
+    LEFT  JOIN ${WALLETS_TDH_MEMES_TABLE}  AS t
+           ON  t.wallet = o.wallet
+          AND  t.season = o.season
+    WHERE  o.wallet = :wallet;
   `;
-  const balancesResult = await sqlExecutor.execute(sql, {
-    wallet: wallet
-  });
-
-  for (const balance of balancesResult) {
-    const rankSql = `
-      SELECT COUNT(DISTINCT wallet) + 1 as season_rank
-      FROM ${OWNERS_BALANCES_MEMES_TABLE}
-      WHERE season = :season and balance > :balance
-    `;
-    const rank = await sqlExecutor.execute(rankSql, {
-      season: balance.season,
-      balance: balance.balance
-    });
-    balance.rank = rank?.[0].season_rank ?? 0;
-  }
-
-  return balancesResult;
+  return sqlExecutor.execute(sql, { wallet });
 }
