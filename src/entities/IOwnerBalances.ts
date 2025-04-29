@@ -87,6 +87,8 @@ export class OwnerBalances extends OwnerBalancesBase {
 }
 
 @Entity({ name: OWNERS_BALANCES_MEMES_TABLE })
+@Index('obm_wallet_season_idx', ['wallet', 'season'])
+@Index('obm_season_balance_idx', ['season', 'balance'])
 export class OwnerBalancesMemes extends OwnerBalancesMemesBase {
   @PrimaryColumn({ type: 'varchar', length: 50 })
   wallet!: string;
