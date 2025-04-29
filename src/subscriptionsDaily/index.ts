@@ -11,7 +11,6 @@ import {
   SubscriptionLog,
   SubscriptionMode
 } from '../entities/ISubscription';
-import { Profile } from '../entities/IProfile';
 
 const logger = Logger.get('SUBSCRIPTIONS_LOOP');
 
@@ -29,8 +28,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         NFTFinalSubscriptionUpload,
         SubscriptionLog,
         SubscriptionBalance,
-        RedeemedSubscription,
-        Profile
+        RedeemedSubscription
       ]
     }
   );

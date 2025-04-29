@@ -16,7 +16,6 @@ import { NFT } from '../entities/INFT';
 import * as notifier from '../notifier';
 import { Logger } from '../logging';
 import { Time } from '../time';
-import { Profile } from '../entities/IProfile';
 import * as sentryContext from '../sentry.context';
 import { NextGenTokenTDH } from '../entities/INextGen';
 import { MemesSeason } from '../entities/ISeason';
@@ -47,7 +46,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         NextGenTokenTDH,
         ConsolidatedTDHUpload,
         NFT,
-        Profile,
         MemesSeason,
         NFTOwner,
         NftTDH,

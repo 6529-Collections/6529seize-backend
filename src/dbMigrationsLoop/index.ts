@@ -78,7 +78,6 @@ const MANAGED_ENTITIES = [
   IdentitySubscriptionEntity,
   Prenode,
   Profile,
-  Profile,
   ProfileActivityLog,
   ProfileArchived,
   ProfileArchived,
