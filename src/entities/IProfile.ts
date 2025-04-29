@@ -1,4 +1,10 @@
-import { Column, Entity, PrimaryColumn, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  Index,
+  PrimaryColumn,
+  PrimaryGeneratedColumn
+} from 'typeorm';
 import { PROFILES_ARCHIVE_TABLE, PROFILES_TABLE } from '../constants';
 
 export interface ProfileType {
@@ -60,6 +66,7 @@ class ProfileBase implements Omit<ProfileType, 'normalised_handle'> {
 }
 
 @Entity(PROFILES_TABLE)
+@Index('idx_profile_external_id', ['external_id'])
 export class Profile extends ProfileBase implements ProfileType {
   @PrimaryColumn({ type: 'varchar', length: 100 })
   normalised_handle!: string;
