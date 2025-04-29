@@ -45,7 +45,13 @@ import {
   ProfileProxiesDb
 } from '../profile-proxies/profile-proxies.db';
 import { ApiBulkRateRequest } from '../api-serverless/src/generated/models/ApiBulkRateRequest';
-import { distinct, resolveEnum, uniqueShortId } from '../helpers';
+import {
+  AppFeature,
+  distinct,
+  isFeatureOn,
+  resolveEnum,
+  uniqueShortId
+} from '../helpers';
 import { ApiAvailableRatingCredit } from '../api-serverless/src/generated/models/ApiAvailableRatingCredit';
 import { ApiRatingWithProfileInfoAndLevel } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../api-serverless/src/generated/models/ApiRatingWithProfileInfoAndLevelPage';
@@ -331,6 +337,9 @@ export class RatingsService {
     matter: RateMatter,
     connection: ConnectionWrapper<any>
   ) {
+    if (!isFeatureOn(AppFeature.UPLOAD_CIC_REP_SNAPSHOTS_TO_ARWEAVE)) {
+      return;
+    }
     const now = Time.now();
     const latestSnaspshot = await this.ratingsDb.getLatestSnapshot(
       matter,

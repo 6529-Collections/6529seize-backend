@@ -474,3 +474,11 @@ export function isValidUuid(str: string): boolean {
 export function isExperimentalModeOn() {
   return process.env.EXPERIMENTAL_MODE_ON === 'true';
 }
+
+export enum AppFeature {
+  UPLOAD_CIC_REP_SNAPSHOTS_TO_ARWEAVE = 'UPLOAD_CIC_REP_SNAPSHOTS_TO_ARWEAVE'
+}
+
+export function isFeatureOn(feature: AppFeature) {
+  return process.env[`FEATURE_${feature}`] === 'true';
+}
