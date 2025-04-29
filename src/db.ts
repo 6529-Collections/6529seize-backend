@@ -18,6 +18,7 @@ import {
   MEMES_EXTENDED_DATA_TABLE,
   NFTS_MEME_LAB_TABLE,
   NFTS_TABLE,
+  PROFILES_TABLE,
   TDH_BLOCKS_TABLE,
   TRANSACTIONS_TABLE,
   UPLOADS_TABLE,
@@ -80,10 +81,10 @@ import {
 import { revokeTdhBasedDropWavesOverVotes } from './drops/participation-drops-over-vote-revocation';
 import { computeMerkleRoot } from './tdhLoop/tdh_merkle';
 import {
-  TDHHistory,
   GlobalTDHHistory,
   LatestGlobalTDHHistory,
-  LatestTDHHistory
+  LatestTDHHistory,
+  TDHHistory
 } from './entities/ITDHHistory';
 
 const mysql = require('mysql');
@@ -1215,8 +1216,7 @@ export async function fetchHasEns(wallets: string[]) {
 }
 
 export async function fetchAllProfiles(): Promise<Profile[]> {
-  const profiles = await AppDataSource.getRepository(Profile).find();
-  return profiles;
+  return await sqlExecutor.execute<Profile>(`select * from ${PROFILES_TABLE}`);
 }
 
 export async function deleteRememes(rememes: Rememe[]) {

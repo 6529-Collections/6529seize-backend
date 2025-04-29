@@ -29,7 +29,6 @@ import {
   TDHBlock,
   TDHMemes
 } from '../entities/ITDH';
-import { Profile } from '../entities/IProfile';
 import * as sentryContext from '../sentry.context';
 import { NextGenTokenTDH } from '../entities/INextGen';
 import { consolidateOwnerBalances } from '../ownersBalancesLoop/owners_balances';
@@ -89,7 +88,6 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         NextGenTokenTDH,
         TDHMemes,
         ConsolidatedTDHMemes,
-        Profile,
         MemesSeason,
         NFTOwner,
         ConsolidatedNFTOwner,
