@@ -1497,6 +1497,27 @@ paths:
                   $ref: "#/components/schemas/ApiOwnerBalanceMemes"
         "404":
           description: Memes Owner Balance for consolidation key not found
+  /profiles:
+    post:
+      tags:
+        - Profiles
+      summary: Create or update a profile
+      operationId: createOrUpdateProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApiCreateOrUpdateProfileRequest"
+      responses:
+        "201":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiIdentity"
+        "400":
+          description: Invalid request
   /profiles/{identity}/cic/rating:
     post:
       tags:
@@ -3678,6 +3699,33 @@ components:
           $ref: "#/components/schemas/ApiIntRange"
         forbid_negative_votes:
           type: boolean
+    ApiCreateOrUpdateProfileRequest:
+      type: object
+      required:
+        - handle
+        - classification
+        - sub_classification
+        - pfp_url
+      properties:
+        handle:
+          type: string
+        banner_1:
+          type: string
+          nullable: true
+        banner_2:
+          type: string
+          nullable: true
+        website:
+          type: string
+          nullable: true
+        classification:
+          $ref: "#/components/schemas/ApiProfileClassification"
+        sub_classification:
+          type: string
+          nullable: true
+        pfp_url:
+          type: string
+          nullable: true
     ApiCreateWaveConfig:
       type: object
       required:

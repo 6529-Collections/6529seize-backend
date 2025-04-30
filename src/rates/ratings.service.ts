@@ -9,7 +9,11 @@ import {
   UpdateRatingRequest
 } from './ratings.db';
 import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
-import { BadRequestException, ForbiddenException } from '../exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '../exceptions';
 import {
   ProfileActivityLog,
   ProfileActivityLogType
@@ -65,6 +69,7 @@ import {
 import { ProfileRepRatedEventData } from '../events/datatypes/profile-rep-rated.event-data';
 import { ProfileClassification } from '../entities/IProfile';
 import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
+import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
@@ -767,11 +772,17 @@ export class RatingsService {
       queryParams.order_by?.toLowerCase() === 'rating'
         ? 'rating'
         : 'last_modified';
-    const resolvedIdentity =
-      await profilesService.resolveIdentityOrThrowNotFound(identity);
+    const resolvedIdentity = await identityFetcher
+      .getIdentityAndConsolidationsByIdentityKey({ identityKey: identity }, {})
+      .then((it) => {
+        if (!it?.id) {
+          throw new NotFoundException(`Identity ${identity} not found`);
+        }
+        return it;
+      });
     return {
-      profileId: resolvedIdentity.profile_id,
-      wallet: resolvedIdentity.wallet,
+      profileId: resolvedIdentity.id!,
+      wallet: resolvedIdentity.primary_wallet,
       matter,
       given,
       page,
@@ -874,7 +885,7 @@ export class RatingsService {
                 creator_or_updater_wallet: address,
                 pfp_url: null
               },
-              connection
+              { connection }
             )
           )
         );

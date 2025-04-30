@@ -9,17 +9,29 @@ import {
 } from '../../../entities/IActivityEvent';
 import { identitiesDb, IdentitiesDb } from '../../../identities/identities.db';
 import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
-import { NotFoundException } from '../../../exceptions';
+import { BadRequestException, NotFoundException } from '../../../exceptions';
 import {
   userNotifier,
   UserNotifier
 } from '../../../notifications/user.notifier';
+import { IdentityFetcher, identityFetcher } from './identity.fetcher';
+import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
+import {
+  profileActivityLogsDb,
+  ProfileActivityLogsDb
+} from '../../../profileActivityLogs/profile-activity-logs.db';
+import { ConnectionWrapper } from '../../../sql-executor';
+import path from 'path';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { randomUUID } from 'crypto';
 
 export class IdentitiesService {
   constructor(
     private readonly identitiesDb: IdentitiesDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
-    private readonly userNotifier: UserNotifier
+    private readonly userNotifier: UserNotifier,
+    private readonly identityFetcher: IdentityFetcher,
+    private readonly profileActivityLogsDb: ProfileActivityLogsDb
   ) {}
 
   async addIdentitySubscriptionActions({
@@ -149,10 +161,128 @@ export class IdentitiesService {
       }
     );
   }
+
+  public async updateProfilePfp({
+    authenticatedWallet,
+    identity,
+    memeOrFile
+  }: {
+    authenticatedWallet: string;
+    identity: string;
+    memeOrFile: { file?: Express.Multer.File; meme?: number };
+  }): Promise<{ pfp_url: string }> {
+    const { meme, file } = memeOrFile;
+    if (!meme && !file) {
+      throw new BadRequestException('No PFP provided');
+    }
+    return await this.identitiesDb.executeNativeQueriesInTransaction(
+      async (connection) => {
+        const profile = await this.identityFetcher
+          .getIdentityAndConsolidationsByIdentityKey(
+            { identityKey: identity },
+            { connection }
+          )
+          .then((it) => {
+            if (it?.handle) {
+              const wallets = it.wallets!;
+              if (wallets.some((it) => it.wallet === authenticatedWallet)) {
+                return it;
+              }
+              throw new BadRequestException(`Not authorised to update profile`);
+            }
+            throw new BadRequestException(`Profile for ${identity} not found`);
+          });
+        const thumbnailUri = await this.getOrCreatePfpFileUri(
+          { meme, file },
+          connection
+        );
+
+        await this.identitiesDb.updateProfilePfpUri(
+          thumbnailUri,
+          profile.id!,
+          connection
+        );
+        if ((thumbnailUri ?? null) !== profile.pfp) {
+          await this.profileActivityLogsDb.insert(
+            {
+              profile_id: profile.id!,
+              target_id: null,
+              type: ProfileActivityLogType.PFP_EDIT,
+              contents: JSON.stringify({
+                authenticated_wallet: authenticatedWallet,
+                old_value: profile.pfp,
+                new_value: thumbnailUri
+              }),
+              proxy_id: null,
+              additional_data_1: null,
+              additional_data_2: null
+            },
+            connection
+          );
+        }
+        return { pfp_url: thumbnailUri };
+      }
+    );
+  }
+
+  private async getOrCreatePfpFileUri(
+    {
+      meme,
+      file
+    }: {
+      file?: Express.Multer.File;
+      meme?: number;
+    },
+    connection: ConnectionWrapper<any>
+  ): Promise<string> {
+    if (meme) {
+      return await this.identitiesDb
+        .getMemeThumbnailUriById(meme, connection)
+        .then((uri) => {
+          if (uri) {
+            return uri;
+          }
+          throw new BadRequestException(`Meme ${meme} not found`);
+        });
+    } else if (file) {
+      const extension = path.extname(file.originalname)?.toLowerCase();
+      if (!['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(extension)) {
+        throw new BadRequestException('Invalid file type');
+      }
+      return await this.uploadPfpToS3(file, extension);
+    } else {
+      throw new BadRequestException('No PFP provided');
+    }
+  }
+
+  private async uploadPfpToS3(file: any, fileExtension: string) {
+    const s3 = new S3Client({ region: 'eu-west-1' });
+
+    const myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
+
+    const keyExtension: string = fileExtension !== '.gif' ? 'webp' : 'gif';
+
+    const key = `pfp/${process.env.NODE_ENV}/${randomUUID()}.${keyExtension}`;
+
+    const uploadedScaledImage = await s3.send(
+      new PutObjectCommand({
+        Bucket: myBucket,
+        Key: key,
+        Body: file.buffer,
+        ContentType: `image/${keyExtension}`
+      })
+    );
+    if (uploadedScaledImage.$metadata.httpStatusCode == 200) {
+      return `https://d3lqz0a4bldqgf.cloudfront.net/${key}?d=${Date.now()}`;
+    }
+    throw new Error('Failed to upload image');
+  }
 }
 
 export const identitiesService = new IdentitiesService(
   identitiesDb,
   identitySubscriptionsDb,
-  userNotifier
+  userNotifier,
+  identityFetcher,
+  profileActivityLogsDb
 );

@@ -42,7 +42,6 @@ import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
 import { ApiWaveMetadataType } from '../generated/models/ApiWaveMetadataType';
 import { WaveDropperMetricEntity } from '../../../entities/IWaveDropperMetric';
 import { ApiWaveChatConfig } from '../generated/models/ApiWaveChatConfig';
-import { profilesService } from '../../../profiles/profiles.service';
 import {
   identityFetcher,
   IdentityFetcher
@@ -77,8 +76,11 @@ export class WavesMappers {
   }): Promise<InsertWaveEntity> {
     let creditorId = request.voting.creditor_id;
     if (creditorId) {
-      creditorId = await profilesService.resolveIdentityIdOrThrowNotFound(
-        creditorId
+      creditorId = await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+        {
+          identityKey: creditorId
+        },
+        {}
       );
     }
     return {

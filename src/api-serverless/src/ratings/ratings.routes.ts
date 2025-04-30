@@ -19,12 +19,13 @@ import { ApiRateMatter } from '../generated/models/ApiRateMatter';
 import { getAuthenticationContext, needsAuthenticatedUser } from '../auth/auth';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { WALLET_REGEX } from '../../../constants';
-import { profilesService } from '../../../profiles/profiles.service';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
 import { BadRequestException } from '../../../exceptions';
 import { ApiBulkRateResponse } from '../generated/models/ApiBulkRateResponse';
 import { ApiBulkRateRequest } from '../generated/models/ApiBulkRateRequest';
 import { ApiAvailableRatingCredit } from '../generated/models/ApiAvailableRatingCredit';
+import { identityFetcher } from '../identities/identity.fetcher';
+import { Timer } from '../../../time';
 
 const router = asyncRouter();
 
@@ -88,16 +89,15 @@ router.get(
     >,
     res: Response<ApiResponse<ApiAvailableRatingCredit>>
   ) {
+    const timer = Timer.getFromRequest(req);
     const request = getValidatedByJoiOrThrow(
       req.query,
       CreditLeftRequestSchema
     );
-    const rater_id =
-      (
-        await profilesService.getProfileAndConsolidationsByIdentity(
-          request.rater
-        )
-      )?.profile?.external_id ?? null;
+    const rater_id = await identityFetcher.getProfileIdByIdentityKey(
+      { identityKey: request.rater },
+      { timer }
+    );
     if (!rater_id) {
       res.send({
         cic_credit: 0,
@@ -107,12 +107,10 @@ router.get(
     }
     let rater_representative_id: string | null = null;
     if (request.rater_representative) {
-      rater_representative_id =
-        (
-          await profilesService.getProfileAndConsolidationsByIdentity(
-            request.rater_representative
-          )
-        )?.profile?.external_id ?? null;
+      rater_representative_id = await identityFetcher.getProfileIdByIdentityKey(
+        { identityKey: request.rater_representative },
+        { timer }
+      );
       if (!rater_representative_id) {
         res.send({
           cic_credit: 0,

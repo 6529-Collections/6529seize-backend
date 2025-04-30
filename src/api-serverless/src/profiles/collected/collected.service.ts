@@ -6,10 +6,6 @@ import {
 } from './collected.types';
 import { emptyPage, Page, PageSortDirection } from '../../page-request';
 import {
-  profilesService,
-  ProfilesService
-} from '../../../../profiles/profiles.service';
-import {
   MEME_8_EDITION_BURN_ADJUSTMENT,
   NULL_ADDRESS,
   WALLET_REGEX
@@ -27,10 +23,14 @@ import {
   distinct,
   parseNumberOrNull
 } from '../../../../helpers';
+import {
+  identityFetcher,
+  IdentityFetcher
+} from '../../identities/identity.fetcher';
 
 export class CollectedService {
   constructor(
-    private readonly profilesService: ProfilesService,
+    private readonly identityFetcher: IdentityFetcher,
     private readonly collectedDb: CollectedDb
   ) {}
 
@@ -45,25 +45,28 @@ export class CollectedService {
       return [];
     }
     const identity = query.identity;
-    const profileAndConsolidations =
-      await this.profilesService.getProfileAndConsolidationsByIdentity(
-        identity
+    const identityResponse =
+      await this.identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+        {
+          identityKey: identity
+        },
+        {}
       );
-    const consolidation = profileAndConsolidations?.consolidation;
-    if (!consolidation) {
+    if (!identityResponse) {
       return [];
     } else if (query.account_for_consolidations) {
-      return consolidation.wallets.map((w) => w.wallet.address.toLowerCase());
+      return identityResponse.wallets!.map((w) => w.wallet.toLowerCase());
     } else if (WALLET_REGEX.exec(identity)) {
       return [identity.toLowerCase()];
     } else if (identity.endsWith('.eth')) {
-      const walletAddress = consolidation.wallets
-        .find((w) => w.wallet.ens === identity.toLowerCase())
-        ?.wallet?.address?.toLowerCase();
+      const walletAddress = identityResponse
+        .wallets!.find(
+          (w) => w.display.toLowerCase() === identity.toLowerCase()
+        )
+        ?.wallet?.toLowerCase();
       return walletAddress ? [walletAddress.toLowerCase()] : [];
     } else {
-      const primaryWallet =
-        profileAndConsolidations?.profile?.primary_wallet?.toLowerCase();
+      const primaryWallet = identityResponse.primary_wallet;
       return primaryWallet ? [primaryWallet] : [];
     }
   }
@@ -325,6 +328,6 @@ export class CollectedService {
 }
 
 export const collectedService = new CollectedService(
-  profilesService,
+  identityFetcher,
   collectedDb
 );

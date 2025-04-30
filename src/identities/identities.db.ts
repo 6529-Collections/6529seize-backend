@@ -9,6 +9,8 @@ import {
   CONSOLIDATED_WALLETS_TDH_TABLE,
   ENS_TABLE,
   IDENTITIES_TABLE,
+  MEMES_CONTRACT,
+  NFTS_TABLE,
   PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
   WALLETS_TDH_TABLE
@@ -17,7 +19,7 @@ import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
 import { randomUUID } from 'crypto';
 import { RequestContext } from '../request.context';
-import { Timer } from '../time';
+import { Time, Timer } from '../time';
 import { Wallet } from '../entities/IWallet';
 
 const mysql = require('mysql');
@@ -330,7 +332,10 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       });
   }
 
-  async getIdentityByHandle(handle: string, ctx: RequestContext) {
+  async getIdentityByHandle(
+    handle: string,
+    ctx: RequestContext
+  ): Promise<IdentityEntity | null> {
     return await this.db
       .oneOrNull<IdentityEntity>(
         `select * from ${IDENTITIES_TABLE} where normalised_handle = :handle`,
@@ -646,6 +651,114 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
             where l.external_id in (:profileIds)`,
       { profileIds },
       connection ? { wrappedConnection: connection } : undefined
+    );
+  }
+
+  public async updateProfilePfpUri(
+    thumbnailUri: string,
+    profileId: string,
+    connection: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `update ${PROFILES_TABLE}
+       set pfp_url = :pfp
+       where external_id = :profileId`,
+      {
+        pfp: thumbnailUri,
+        profileId
+      },
+      { wrappedConnection: connection }
+    );
+    await this.db.execute(
+      `update ${IDENTITIES_TABLE}
+       set pfp = :pfp
+       where profile_id = :profileId`,
+      {
+        pfp: thumbnailUri,
+        profileId
+      },
+      { wrappedConnection: connection }
+    );
+    await this.getIdentityByProfileId(profileId, connection).then(
+      async (it) => {
+        if (it) {
+          await this.insertProfileArchiveRecord(it, connection);
+        }
+      }
+    );
+  }
+
+  public async getMemeThumbnailUriById(
+    id: number,
+    connection?: ConnectionWrapper<any>
+  ): Promise<string | null> {
+    const opts = connection ? { wrappedConnection: connection } : undefined;
+    const result = await this.db.execute(
+      `select thumbnail from ${NFTS_TABLE} where id = :id and contract = :contract order by id asc limit 1`,
+      {
+        id,
+        contract: MEMES_CONTRACT
+      },
+      opts
+    );
+    return result.at(0)?.thumbnail ?? null;
+  }
+
+  public async insertProfileArchiveRecord(
+    param: Omit<
+      IdentityEntity,
+      'cic' | 'rep' | 'tdh' | 'level_raw' | 'consolidation_key'
+    >,
+    connection: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `insert into ${PROFILES_ARCHIVE_TABLE}
+       (handle,
+        normalised_handle,
+        primary_wallet,
+        created_at,
+        created_by_wallet,
+        banner_1,
+        banner_2,
+        website,
+        classification,
+        updated_at,
+        updated_by_wallet,
+        external_id,
+        sub_classification,
+        pfp_url
+       )
+       values (:handle,
+               :normalisedHandle,
+               :primaryWallet,
+               :createdAt,
+               :createdByWallet,
+               :banner1,
+               :banner2,
+               :website,
+               :classification,
+               :updatedAt,
+               :updatedByWallet,
+               :externalId,
+               :subClassification,
+               :pfp_url)`,
+      {
+        handle: param.handle,
+        normalisedHandle: param.normalised_handle,
+        primaryWallet: param.primary_address,
+        createdAt: Time.currentMillis(),
+        createdByWallet: param.primary_address,
+        updatedAt: Time.currentMillis(),
+        updatedByWallet: param.primary_address,
+        banner1: param.banner1 ?? null,
+        banner2: param.banner2 ?? null,
+        website: null,
+        classification: param.classification,
+        externalId: param.profile_id,
+        subClassification: param.sub_classification ?? null,
+        pfp_url: param.pfp ?? null
+      },
+      { wrappedConnection: connection }
     );
   }
 }

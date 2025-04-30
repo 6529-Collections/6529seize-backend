@@ -11,7 +11,7 @@ import {
   abusivenessCheckService,
   AbusivenessCheckService
 } from '../profiles/abusiveness-check.service';
-import { Profile, ProfileClassification } from '../entities/IProfile';
+import { ProfileClassification } from '../entities/IProfile';
 
 const CIC_STATEMENT_GROUP_TO_PROFILE_ACTIVITY_LOG_TYPE: Record<
   CicStatementGroup,
@@ -222,7 +222,11 @@ export class CicService {
     profile
   }: {
     statement: Omit<CicStatement, 'id' | 'crated_at' | 'updated_at'>;
-    profile: Profile;
+    profile: {
+      handle: string;
+      profile_id: string;
+      classification: ProfileClassification | null;
+    };
   }) {
     this.validateCicStatement(statement);
     return await this.cicDb.executeNativeQueriesInTransaction(

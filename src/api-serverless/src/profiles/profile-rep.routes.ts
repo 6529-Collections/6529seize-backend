@@ -13,7 +13,6 @@ import { RateMatter } from '../../../entities/IRating';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { abusivenessCheckService } from '../../../profiles/abusiveness-check.service';
 import { getRaterInfoFromRequest, RateProfileRequest } from './rating.helper';
-import { profilesService } from '../../../profiles/profiles.service';
 import { RatingStats } from '../../../rates/ratings.db';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { ApiChangeProfileRepRating } from '../generated/models/ApiChangeProfileRepRating';
@@ -21,6 +20,8 @@ import { ApiChangeProfileRepRatingResponse } from '../generated/models/ApiChange
 import { ApiRepRating } from '../generated/models/ApiRepRating';
 import { ApiRatingWithProfileInfoAndLevel } from '../generated/models/ApiRatingWithProfileInfoAndLevel';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../generated/models/ApiRatingWithProfileInfoAndLevelPage';
+import { identityFetcher } from '../identities/identity.fetcher';
+import { Timer } from '../../../time';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -95,19 +96,21 @@ router.get(
   ) {
     const identity = req.params.identity.toLowerCase();
     const raterIdentity = req.query.rater?.toLowerCase() ?? null;
-
-    const targetIdentity = await profilesService.resolveIdentityOrThrowNotFound(
-      identity
-    );
-    const raterProfileAndConsolidations = !raterIdentity
+    const timer = Timer.getFromRequest(req);
+    const targetProfileId =
+      await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+        { identityKey: identity },
+        { timer }
+      );
+    const raterProfileId = !raterIdentity
       ? null
-      : await profilesService.getProfileAndConsolidationsByIdentity(
-          raterIdentity
+      : await identityFetcher.getProfileIdByIdentityKey(
+          { identityKey: raterIdentity },
+          { timer }
         );
-    const raterProfileId = raterProfileAndConsolidations?.profile?.external_id;
     const response = await getReceivedRatingsStats(
-      raterProfileId ?? null,
-      targetIdentity.profile_id
+      raterProfileId,
+      targetProfileId
     );
     res.send(response);
   }
@@ -127,24 +130,25 @@ router.get(
     >,
     res: Response<ApiResponse<ApiRatingWithProfileInfoAndLevel[]>>
   ) {
-    const targetIdendity = req.params.identity.toLowerCase();
+    const targetIdentity = req.params.identity.toLowerCase();
     const category = req.query.category;
     if (!category) {
       throw new BadRequestException(`Query parameter "category" is required`);
     }
-
-    const resolvedTargetIdentity =
-      await profilesService.resolveIdentityOrThrowNotFound(targetIdendity);
-    const response: ApiRatingWithProfileInfoAndLevel[] =
-      resolvedTargetIdentity.profile_id
-        ? await ratingsService.getRatingsForMatterAndCategoryOnProfileWithRatersInfo(
-            {
-              matter: RateMatter.REP,
-              matter_target_id: resolvedTargetIdentity.profile_id,
-              matter_category: category
-            }
-          )
-        : [];
+    const timer = Timer.getFromRequest(req);
+    const targetProfileId = await identityFetcher.getProfileIdByIdentityKey(
+      { identityKey: targetIdentity },
+      { timer }
+    );
+    const response: ApiRatingWithProfileInfoAndLevel[] = targetProfileId
+      ? await ratingsService.getRatingsForMatterAndCategoryOnProfileWithRatersInfo(
+          {
+            matter: RateMatter.REP,
+            matter_target_id: targetProfileId,
+            matter_category: category
+          }
+        )
+      : [];
     res.send(response);
   }
 );
@@ -202,21 +206,30 @@ router.get(
   ) {
     const identity = req.params.identity;
     const { category, from_identity } = req.query;
-    const [resolvedTargetIdentity, resolvedRaterIdentity] = await Promise.all([
-      profilesService.resolveIdentityOrThrowNotFound(identity),
-      from_identity
-        ? profilesService.resolveIdentityOrThrowNotFound(from_identity)
-        : null
-    ]);
+    const timer = Timer.getFromRequest(req);
+    const [resolvedTargetProfileId, resolvedRaterProfileId] = await Promise.all(
+      [
+        identityFetcher.getProfileIdByIdentityKeyOrThrow(
+          { identityKey: identity },
+          { timer }
+        ),
+        from_identity
+          ? identityFetcher.getProfileIdByIdentityKeyOrThrow(
+              { identityKey: from_identity },
+              { timer }
+            )
+          : null
+      ]
+    );
     if (
-      (from_identity && !resolvedRaterIdentity) ||
-      !resolvedTargetIdentity.profile_id
+      (from_identity && !resolvedRaterProfileId) ||
+      !resolvedTargetProfileId
     ) {
       res.send({ rating: 0 });
     } else {
       const repRating = await ratingsService.getRepRating({
-        rater_profile_id: resolvedRaterIdentity?.profile_id ?? null,
-        target_profile_id: resolvedTargetIdentity.profile_id,
+        rater_profile_id: resolvedRaterProfileId ?? null,
+        target_profile_id: resolvedTargetProfileId,
         category: category ?? null
       });
       res.send({

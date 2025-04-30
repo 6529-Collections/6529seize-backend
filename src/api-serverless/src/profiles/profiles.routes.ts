@@ -28,6 +28,13 @@ import profilePrimaryAddressRoutes from './profile-primary-address.routes';
 import profileProfileProxiesRoutes from './proxies/profile-proxies.routes';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { getProfileClassificationsBySubclassification } from './profile.helper';
+import { ApiIdentity } from '../generated/models/ApiIdentity';
+import { ApiCreateOrUpdateProfileRequest } from '../generated/models/ApiCreateOrUpdateProfileRequest';
+import { resolveEnum } from '../../../helpers';
+import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
+import { identitiesService } from '../identities/identities.service';
+import { identityFetcher } from '../identities/identity.fetcher';
+import { Timer } from '../../../time';
 
 const router = asyncRouter();
 
@@ -72,6 +79,7 @@ router.get(
     res: Response<ApiResponse<{ available: boolean; message: string }>>
   ) {
     const maybeAuthenticatedWallet = getAuthenticatedWalletOrNull(req);
+    const timer = Timer.getFromRequest(req);
     const proposedHandle = req.params.handle.toLowerCase();
     if (!proposedHandle.match(PROFILE_HANDLE_REGEX)) {
       return res.status(200).send({
@@ -91,15 +99,21 @@ router.get(
     }
     const authenticatedHandle = maybeAuthenticatedWallet
       ? (
-          await profilesService.getProfileAndConsolidationsByIdentity(
-            maybeAuthenticatedWallet
+          await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+            {
+              identityKey: maybeAuthenticatedWallet
+            },
+            { timer }
           )
-        )?.profile?.handle
+        )?.handle
       : null;
     if (proposedHandle.toLowerCase() !== authenticatedHandle?.toLowerCase()) {
       const profile =
-        await profilesService.getProfileAndConsolidationsByIdentity(
-          proposedHandle
+        await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+          {
+            identityKey: proposedHandle
+          },
+          { timer }
         );
       if (profile) {
         return res.status(200).send({
@@ -120,7 +134,7 @@ router.post(
   needsAuthenticatedUser(),
   async function (
     req: Request<any, any, ApiCreateOrUpdateProfileRequest, any, any>,
-    res: Response<ApiResponse<ProfileAndConsolidations>>
+    res: Response<ApiResponse<ApiIdentity>>
   ) {
     const {
       handle,
@@ -137,7 +151,12 @@ router.post(
     let subClassification = sub_classification;
     if (subClassification !== null) {
       const classifications =
-        getProfileClassificationsBySubclassification(subClassification);
+        resolveEnum(
+          ProfileClassification,
+          getProfileClassificationsBySubclassification(
+            subClassification
+          ).toString()
+        ) ?? ProfileClassification.PSEUDONYM;
       if (!classifications.includes(classification)) {
         subClassification = null;
       }
@@ -148,7 +167,9 @@ router.post(
       banner_2,
       website,
       creator_or_updater_wallet: getWalletOrThrow(req),
-      classification,
+      classification:
+        resolveEnum(ProfileClassification, classification.toString()) ??
+        ProfileClassification.PSEUDONYM,
       sub_classification: subClassification,
       pfp_url
     };
@@ -183,7 +204,7 @@ router.post(
       ApiUploadProfilePictureRequestSchema
     );
     const file = req.file;
-    const response = await profilesService.updateProfilePfp({
+    const response = await identitiesService.updateProfilePfp({
       authenticatedWallet,
       identity,
       memeOrFile: { file, meme }
@@ -192,16 +213,6 @@ router.post(
     res.status(201).send(response);
   }
 );
-
-interface ApiCreateOrUpdateProfileRequest {
-  readonly handle: string;
-  readonly banner_1?: string;
-  readonly banner_2?: string;
-  readonly website?: string;
-  readonly classification: ProfileClassification;
-  readonly sub_classification: string | null;
-  readonly pfp_url: string | null;
-}
 
 const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateProfileRequest> =
   Joi.object({
@@ -230,7 +241,7 @@ const ApiCreateOrUpdateProfileRequestSchema: Joi.ObjectSchema<ApiCreateOrUpdateP
       'string.uri': `Please enter a valid website link, starting with 'http://' or 'https://'.`
     }),
     classification: Joi.string()
-      .valid(...Object.values(ProfileClassification))
+      .valid(...Object.values(ApiProfileClassification))
       .required(),
     sub_classification: Joi.string().optional().allow(null).default(null),
     pfp_url: Joi.string()

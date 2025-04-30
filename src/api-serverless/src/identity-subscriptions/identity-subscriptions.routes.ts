@@ -6,10 +6,11 @@ import { getValidatedByJoiOrThrow } from '../validation';
 import { ActivityEventTargetType } from '../../../entities/IActivityEvent';
 import * as Joi from 'joi';
 import { ApiOutgoingIdentitySubscriptionsPage } from '../generated/models/ApiOutgoingIdentitySubscriptionsPage';
-import { ForbiddenException, NotFoundException } from '../../../exceptions';
+import { ForbiddenException } from '../../../exceptions';
 import { identitySubscriptionsApiService } from './identity-subscriptions.api.service';
 import { ApiIncomingIdentitySubscriptionsPage } from '../generated/models/ApiIncomingIdentitySubscriptionsPage';
-import { profilesService } from '../../../profiles/profiles.service';
+import { identityFetcher } from '../identities/identity.fetcher';
+import { Timer } from '../../../time';
 
 const router = asyncRouter();
 
@@ -60,12 +61,10 @@ router.get(
   ) => {
     let targetId: string | null = req.params.target_id;
     if (req.params.target_type === ActivityEventTargetType.IDENTITY) {
-      targetId = await profilesService
-        .resolveIdentityOrThrowNotFound(targetId)
-        .then((it) => it.profile_id);
-      if (!targetId) {
-        throw new NotFoundException(`Identity not found`);
-      }
+      targetId = await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+        { identityKey: targetId },
+        { timer: Timer.getFromRequest(req) }
+      );
     }
     const params = getValidatedByJoiOrThrow(
       {

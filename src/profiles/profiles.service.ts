@@ -15,7 +15,6 @@ import {
   ForbiddenException,
   NotFoundException
 } from '../exceptions';
-import * as path from 'path';
 import { ConnectionWrapper } from '../sql-executor';
 import { Logger } from '../logging';
 import { Time } from '../time';
@@ -35,13 +34,10 @@ import {
   RepService,
   repService
 } from '../api-serverless/src/profiles/rep.service';
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import {
   areEqualAddresses,
   distinct,
-  getWalletFromEns,
-  isWallet,
   replaceEmojisWithHex,
   resolveEnum,
   uniqueShortId
@@ -76,6 +72,7 @@ import { wavesApiDb } from '../api-serverless/src/waves/waves.api.db';
 import { ProfileProxyActionType } from '../entities/IProfileProxyAction';
 import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
 import { ApiProfileClassification } from '../api-serverless/src/generated/models/ApiProfileClassification';
+import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 
 export class ProfilesService {
   private readonly logger = Logger.get('PROFILES_SERVICE');
@@ -94,13 +91,6 @@ export class ProfilesService {
     private readonly dropVotingDb: DropVotingDb,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
-
-  public async getProfileById(
-    id: string,
-    connection?: ConnectionWrapper<any>
-  ): Promise<Profile | null> {
-    return this.profilesDb.getProfileById(id, connection);
-  }
 
   public async getProfileHandlesByPrimaryWallets(
     addresses: string[],
@@ -301,60 +291,6 @@ export class ProfilesService {
     return this.profilesDb.getProfilesByWallets(wallets, connection);
   }
 
-  public async resolveIdentityIdOrThrowNotFound(
-    identity: string
-  ): Promise<string> {
-    const resolveResponse = await this.resolveIdentityOrThrowNotFound(identity);
-    const identityId = resolveResponse.profile_id;
-    if (!identityId) {
-      throw new NotFoundException(`Identity ${identity} not found`);
-    }
-    return identityId;
-  }
-
-  public async resolveIdentityOrThrowNotFound(identity: string): Promise<{
-    wallet: string;
-    profile_id: string | null;
-    profile_and_consolidations: ProfileAndConsolidations | null;
-  }> {
-    const profileAndConsolidations =
-      await this.getProfileAndConsolidationsByIdentity(identity);
-    const profileId = profileAndConsolidations?.profile?.external_id ?? null;
-    const wallets = profileAndConsolidations?.consolidation?.wallets ?? [];
-    const wallet =
-      profileAndConsolidations?.profile?.primary_wallet ??
-      wallets.find(
-        (it) =>
-          it.wallet.address.toLowerCase() === identity ||
-          it.wallet.ens?.toLowerCase() === identity
-      )?.wallet?.address ??
-      wallets.at(0)?.wallet?.address ??
-      null;
-    if (profileId || wallet) {
-      return {
-        wallet: wallet!,
-        profile_id: profileId,
-        profile_and_consolidations: profileAndConsolidations
-      };
-    }
-    if (isWallet(identity)) {
-      return {
-        wallet: identity.toLowerCase(),
-        profile_id: null,
-        profile_and_consolidations: null
-      };
-    }
-    const resolvedWalletFromMaybeEns = await getWalletFromEns(identity);
-    if (resolvedWalletFromMaybeEns) {
-      return {
-        wallet: resolvedWalletFromMaybeEns.toLowerCase(),
-        profile_id: null,
-        profile_and_consolidations: null
-      };
-    }
-    throw new NotFoundException(`Unknown identity ${identity}`);
-  }
-
   public async getProfileAndConsolidationsByIdentity(
     identity: string,
     connection?: ConnectionWrapper<any>
@@ -432,7 +368,7 @@ export class ProfilesService {
     classification,
     sub_classification,
     pfp_url
-  }: CreateOrUpdateProfileCommand): Promise<ProfileAndConsolidations> {
+  }: CreateOrUpdateProfileCommand): Promise<ApiIdentity> {
     return await this.profilesDb.executeNativeQueriesInTransaction(
       async (connection) => {
         return await this.createOrUpdateProfileWithGivenTransaction(
@@ -446,7 +382,7 @@ export class ProfilesService {
             sub_classification,
             pfp_url
           },
-          connection
+          { connection }
         );
       }
     );
@@ -597,12 +533,12 @@ export class ProfilesService {
       sub_classification,
       pfp_url
     }: CreateOrUpdateProfileCommand,
-    connection: ConnectionWrapper<any>
-  ) {
+    ctx: RequestContext
+  ): Promise<ApiIdentity> {
     const identityResponse =
       await identitiesDb.getEverythingRelatedToIdentitiesByAddresses(
         [creator_or_updater_wallet],
-        connection
+        ctx.connection!
       );
     let creatorOrUpdatorIdentityResponse =
       identityResponse[creator_or_updater_wallet];
@@ -625,23 +561,23 @@ export class ProfilesService {
           classification: null,
           sub_classification: null
         },
-        connection
+        ctx.connection!
       );
       creatorOrUpdatorIdentityResponse = await identitiesDb
         .getEverythingRelatedToIdentitiesByAddresses(
           [creator_or_updater_wallet],
-          connection
+          ctx.connection!
         )
         .then((it) => it[creator_or_updater_wallet]);
     }
     const creatorOrUpdatorProfile = creatorOrUpdatorIdentityResponse?.profile;
-    const someoneElsesProfileWithSameHandle = await this.profilesDb
-      .getProfileByHandle(handle, connection)
+    const someoneElsesProfileWithSameHandle = await this.identitiesDb
+      .getIdentityByHandle(handle, ctx.connection!)
       .then((it) => {
         if (
           it &&
           creatorOrUpdatorProfile &&
-          it.external_id === creatorOrUpdatorProfile.external_id
+          it.profile_id === creatorOrUpdatorProfile.external_id
         ) {
           return null;
         }
@@ -667,17 +603,17 @@ export class ProfilesService {
         {
           command: createProfileCommand
         },
-        connection
+        ctx.connection!
       );
       await this.createProfileEditLogs({
         profileId: identityId,
         profileBeforeChange: null,
         newHandle: handle,
-        newBanner1: banner_1,
-        newBanner2: banner_2,
+        newBanner1: banner_1 ?? undefined,
+        newBanner2: banner_2 ?? undefined,
         authenticatedWallet: creator_or_updater_wallet,
         newClassification: classification,
-        connectionHolder: connection,
+        connectionHolder: ctx.connection!,
         newSubClassification: sub_classification,
         newPfpUrl: pfp_url
       });
@@ -697,19 +633,19 @@ export class ProfilesService {
             pfp_url
           }
         },
-        connection
+        ctx.connection!
       );
       await this.createProfileEditLogs({
         profileId: identityId,
         profileBeforeChange: creatorOrUpdatorProfile,
         newHandle: handle,
-        newBanner1: banner_1,
-        newBanner2: banner_2,
+        newBanner1: banner_1 ?? undefined,
+        newBanner2: banner_2 ?? undefined,
         newSubClassification: sub_classification,
         authenticatedWallet: creator_or_updater_wallet,
         newClassification: classification,
         newPfpUrl: pfp_url,
-        connectionHolder: connection
+        connectionHolder: ctx.connection!
       });
     }
     await identitiesDb.updateIdentityProfile(
@@ -724,13 +660,16 @@ export class ProfilesService {
         sub_classification: createProfileCommand.sub_classification,
         pfp: pfp_url
       },
-      connection
+      ctx.connection!
     );
-    const updatedProfile = await this.getProfileAndConsolidationsByIdentity(
-      handle,
-      connection
-    );
-    return updatedProfile!;
+    const updatedIdentity =
+      await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+        {
+          identityKey: handle
+        },
+        ctx
+      );
+    return updatedIdentity!;
   }
 
   async mergeProfileSet(
@@ -958,70 +897,6 @@ export class ProfilesService {
     }
   }
 
-  public async updateProfilePfp({
-    authenticatedWallet,
-    identity,
-    memeOrFile
-  }: {
-    authenticatedWallet: string;
-    identity: string;
-    memeOrFile: { file?: Express.Multer.File; meme?: number };
-  }): Promise<{ pfp_url: string }> {
-    const { meme, file } = memeOrFile;
-    if (!meme && !file) {
-      throw new BadRequestException('No PFP provided');
-    }
-    return await this.profilesDb.executeNativeQueriesInTransaction(
-      async (connection) => {
-        const profile = await this.getProfileAndConsolidationsByIdentity(
-          identity,
-          connection
-        ).then((it) => {
-          if (it?.profile) {
-            if (
-              it.consolidation.wallets.some(
-                (it) => it.wallet.address === authenticatedWallet
-              )
-            ) {
-              return it.profile;
-            }
-            throw new BadRequestException(`Not authorised to update profile`);
-          }
-          throw new BadRequestException(`Profile for ${identity} not found`);
-        });
-        const thumbnailUri = await this.getOrCreatePfpFileUri(
-          { meme, file },
-          connection
-        );
-
-        await this.profilesDb.updateProfilePfpUri(
-          thumbnailUri,
-          profile,
-          connection
-        );
-        if ((thumbnailUri ?? null) !== (profile.pfp_url ?? null)) {
-          await this.profileActivityLogsDb.insert(
-            {
-              profile_id: profile.external_id,
-              target_id: null,
-              type: ProfileActivityLogType.PFP_EDIT,
-              contents: JSON.stringify({
-                authenticated_wallet: authenticatedWallet,
-                old_value: profile.pfp_url ?? null,
-                new_value: thumbnailUri
-              }),
-              proxy_id: null,
-              additional_data_1: null,
-              additional_data_2: null
-            },
-            connection
-          );
-        }
-        return { pfp_url: thumbnailUri };
-      }
-    );
-  }
-
   private async getWalletsNewestProfile(
     wallet: string,
     connection?: ConnectionWrapper<any>
@@ -1097,36 +972,6 @@ export class ProfilesService {
           balance: result.balance
         };
       });
-  }
-
-  private async getOrCreatePfpFileUri(
-    {
-      meme,
-      file
-    }: {
-      file?: Express.Multer.File;
-      meme?: number;
-    },
-    connection: ConnectionWrapper<any>
-  ): Promise<string> {
-    if (meme) {
-      return await this.profilesDb
-        .getMemeThumbnailUriById(meme, connection)
-        .then((uri) => {
-          if (uri) {
-            return uri;
-          }
-          throw new BadRequestException(`Meme ${meme} not found`);
-        });
-    } else if (file) {
-      const extension = path.extname(file.originalname)?.toLowerCase();
-      if (!['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(extension)) {
-        throw new BadRequestException('Invalid file type');
-      }
-      return await this.uploadPfpToS3(file, extension);
-    } else {
-      throw new BadRequestException('No PFP provided');
-    }
   }
 
   private async mergeProfileStatements(
@@ -1358,29 +1203,6 @@ export class ProfilesService {
       { wallet, ensName: ensName ? replaceEmojisWithHex(ensName) : null },
       connection
     );
-  }
-
-  private async uploadPfpToS3(file: any, fileExtension: string) {
-    const s3 = new S3Client({ region: 'eu-west-1' });
-
-    const myBucket = process.env.AWS_6529_IMAGES_BUCKET_NAME!;
-
-    const keyExtension: string = fileExtension !== '.gif' ? 'webp' : 'gif';
-
-    const key = `pfp/${process.env.NODE_ENV}/${randomUUID()}.${keyExtension}`;
-
-    const uploadedScaledImage = await s3.send(
-      new PutObjectCommand({
-        Bucket: myBucket,
-        Key: key,
-        Body: file.buffer,
-        ContentType: `image/${keyExtension}`
-      })
-    );
-    if (uploadedScaledImage.$metadata.httpStatusCode == 200) {
-      return `https://d3lqz0a4bldqgf.cloudfront.net/${key}?d=${Date.now()}`;
-    }
-    throw new Error('Failed to upload image');
   }
 
   public async updatePrimaryAddresses(addresses: Set<string>) {

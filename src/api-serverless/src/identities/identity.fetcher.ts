@@ -16,6 +16,7 @@ import {
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
+import { NotFoundException } from '../../../exceptions';
 
 export class IdentityFetcher {
   constructor(
@@ -23,6 +24,19 @@ export class IdentityFetcher {
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly supplyAlchemy: () => Alchemy
   ) {}
+
+  public async getProfileIdByIdentityKeyOrThrow(
+    { identityKey }: { identityKey: string },
+    ctx: RequestContext
+  ): Promise<string> {
+    const id = await this.getProfileIdByIdentityKey({ identityKey }, ctx);
+    if (!id) {
+      throw new NotFoundException(
+        `Profile not found for identity ${identityKey}`
+      );
+    }
+    return id;
+  }
 
   public async getProfileIdByIdentityKey(
     { identityKey }: { identityKey: string },

@@ -52,7 +52,6 @@ import {
   DropVotingService
 } from '../drops/drop-voting.service';
 import { clappingService, ClappingService } from '../drops/clapping.service';
-import { profilesService } from '../../../profiles/profiles.service';
 import { ApiWaveDecisionsStrategy } from '../generated/models/ApiWaveDecisionsStrategy';
 import {
   userNotifier,
@@ -62,6 +61,10 @@ import { UserGroupEntity } from '../../../entities/IUserGroup';
 import { ApiGroupFull } from '../generated/models/ApiGroupFull';
 import { ApiWaveCreditType } from '../generated/models/ApiWaveCreditType';
 import { ApiWaveCreditScope } from '../generated/models/ApiWaveCreditScope';
+import {
+  IdentityFetcher,
+  identityFetcher
+} from '../identities/identity.fetcher';
 
 export class WaveApiService {
   constructor(
@@ -74,7 +77,8 @@ export class WaveApiService {
     private readonly dropsMappers: DropsMappers,
     private readonly dropVotingService: DropVotingService,
     private readonly clappingService: ClappingService,
-    private readonly userNotifier: UserNotifier
+    private readonly userNotifier: UserNotifier,
+    private readonly identityFetcher: IdentityFetcher
   ) {}
 
   public async createWave(
@@ -349,9 +353,17 @@ export class WaveApiService {
     }
     const referencedCreditorIdentity = request.voting.creditor_id;
     if (referencedCreditorIdentity) {
-      await profilesService.resolveIdentityIdOrThrowNotFound(
-        referencedCreditorIdentity
+      const profileId = await this.identityFetcher.getProfileIdByIdentityKey(
+        {
+          identityKey: referencedCreditorIdentity
+        },
+        ctx
       );
+      if (!profileId) {
+        throw new NotFoundException(
+          `${referencedCreditorIdentity} doesn't have a profile`
+        );
+      }
     }
     timer?.stop(`${this.constructor.name}->validateWaveRelations`);
   }
@@ -1081,5 +1093,6 @@ export const waveApiService = new WaveApiService(
   dropsMappers,
   dropVotingService,
   clappingService,
-  userNotifier
+  userNotifier,
+  identityFetcher
 );

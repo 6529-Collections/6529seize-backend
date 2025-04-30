@@ -12,15 +12,12 @@ import { when } from 'jest-when';
 import { uniqueShortId } from '../helpers';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { AbusivenessCheckService } from '../profiles/abusiveness-check.service';
-import { Profile } from '../entities/IProfile';
+import { ProfileClassification } from '../entities/IProfile';
 
-const aProfile: Profile = {
+const aProfile = {
   handle: 'Joe',
-  normalised_handle: 'joe',
-  external_id: 'pid',
-  primary_wallet: '0x0',
-  created_by_wallet: '0x0',
-  created_at: new Date()
+  classification: ProfileClassification.PSEUDONYM,
+  profile_id: 'pid'
 };
 
 describe('CicService', () => {

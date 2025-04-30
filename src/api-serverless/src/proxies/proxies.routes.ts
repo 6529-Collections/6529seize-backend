@@ -5,9 +5,8 @@ import { ApiResponse } from '../api-response';
 import { ApiCreateNewProfileProxy } from '../generated/models/ApiCreateNewProfileProxy';
 import * as Joi from 'joi';
 import { getValidatedByJoiOrThrow } from '../validation';
-import { profilesService } from '../../../profiles/profiles.service';
 import { profileProxyApiService } from './proxy.api.service';
-import { BadRequestException, ForbiddenException } from '../../../exceptions';
+import { BadRequestException } from '../../../exceptions';
 import { ProxyApiRequestAction } from './proxies.api.types';
 import { ApiCreateNewProfileProxyAllocateRepAction } from '../generated/models/ApiCreateNewProfileProxyAllocateRepAction';
 import { ApiCreateNewProfileProxyAllocateCicAction } from '../generated/models/ApiCreateNewProfileProxyAllocateCicAction';
@@ -23,6 +22,8 @@ import {
 } from '../generated/models/AcceptActionRequest';
 import { ProfileProxyActionEntity } from '../../../entities/IProfileProxyAction';
 import { ApiUpdateProxyActionRequest } from '../generated/models/ApiUpdateProxyActionRequest';
+import { identityFetcher } from '../identities/identity.fetcher';
+import { Timer } from '../../../time';
 
 const router = asyncRouter();
 
@@ -35,25 +36,23 @@ router.post(
   ) => {
     const { body } = req;
     const newProxy = getValidatedByJoiOrThrow(body, NewProfileProxySchema);
-    const grantorProfile = await profilesService
-      .getProfileAndConsolidationsByIdentity(getWalletOrThrow(req))
-      ?.then((result) => result?.profile ?? null);
-    if (!grantorProfile) {
-      throw new ForbiddenException(
-        'You need to create a profile before you can create a proxy'
+    const grantorProfileId = await identityFetcher.getProfileIdByIdentityKey(
+      { identityKey: getWalletOrThrow(req) },
+      { timer: Timer.getFromRequest(req) }
+    );
+    if (!grantorProfileId) {
+      throw new BadRequestException(
+        'You need to create a profile before you can manage a proxy'
       );
     }
 
-    if (
-      grantorProfile.external_id.toLowerCase() ===
-      newProxy.target_id.toLowerCase()
-    ) {
+    if (grantorProfileId.toLowerCase() === newProxy.target_id.toLowerCase()) {
       throw new BadRequestException('You cannot create a proxy to yourself');
     }
 
     const profileProxy = await profileProxyApiService.createProfileProxy({
       params: newProxy,
-      grantorProfile
+      grantorProfileId
     });
 
     res.send(profileProxy);
@@ -83,10 +82,11 @@ router.post(
     res: Response<ApiResponse<ProfileProxyActionEntity>>
   ) => {
     const { proxy_id } = req.params;
-    const requesterProfile = await profilesService
-      .getProfileAndConsolidationsByIdentity(getWalletOrThrow(req))
-      ?.then((result) => result?.profile ?? null);
-    if (!requesterProfile) {
+    const requesterProfileId = await identityFetcher.getProfileIdByIdentityKey(
+      { identityKey: getWalletOrThrow(req) },
+      { timer: Timer.getFromRequest(req) }
+    );
+    if (!requesterProfileId) {
       throw new BadRequestException(
         'You need to create a profile before you can create a proxy'
       );
@@ -96,7 +96,7 @@ router.post(
         proxy_id
       });
 
-    if (profileProxy.created_by.id !== requesterProfile.external_id) {
+    if (profileProxy.created_by.id !== requesterProfileId) {
       throw new BadRequestException('You are not the creator of this proxy');
     }
 
@@ -166,10 +166,11 @@ router.post(
     res: Response<ApiResponse<ProfileProxyActionEntity>>
   ) => {
     const { proxy_id, action_id } = req.params;
-    const requesterProfile = await profilesService
-      .getProfileAndConsolidationsByIdentity(getWalletOrThrow(req))
-      ?.then((result) => result?.profile ?? null);
-    if (!requesterProfile) {
+    const requesterProfileId = await identityFetcher.getProfileIdByIdentityKey(
+      { identityKey: getWalletOrThrow(req) },
+      { timer: Timer.getFromRequest(req) }
+    );
+    if (!requesterProfileId) {
       throw new BadRequestException(
         'You need to create a profile before you can manage a proxy'
       );
@@ -182,7 +183,7 @@ router.post(
       proxy_id,
       action_id,
       acceptance_type: validRequest.action,
-      profile_id: requesterProfile.external_id
+      profile_id: requesterProfileId
     });
 
     res.send(action);
@@ -203,10 +204,11 @@ router.put(
     res: Response<ApiResponse<ProfileProxyActionEntity>>
   ) => {
     const { proxy_id, action_id } = req.params;
-    const requesterProfile = await profilesService
-      .getProfileAndConsolidationsByIdentity(getWalletOrThrow(req))
-      ?.then((result) => result?.profile ?? null);
-    if (!requesterProfile) {
+    const requesterProfileId = await identityFetcher.getProfileIdByIdentityKey(
+      { identityKey: getWalletOrThrow(req) },
+      { timer: Timer.getFromRequest(req) }
+    );
+    if (!requesterProfileId) {
       throw new BadRequestException(
         'You need to create a profile before you can manage a proxy'
       );
@@ -220,7 +222,7 @@ router.put(
       action_id,
       credit_amount: validRequest.credit_amount,
       end_time: validRequest.end_time,
-      profile_id: requesterProfile.external_id
+      profile_id: requesterProfileId
     });
 
     res.send(action);

@@ -4,9 +4,9 @@ import { AggregatedCicRating } from '../rates/rates.types';
 
 export interface CreateOrUpdateProfileCommand {
   handle: string;
-  banner_1?: string;
-  banner_2?: string;
-  website?: string;
+  banner_1?: string | null;
+  banner_2?: string | null;
+  website?: string | null;
   creator_or_updater_wallet: string;
   classification: ProfileClassification;
   sub_classification: string | null;

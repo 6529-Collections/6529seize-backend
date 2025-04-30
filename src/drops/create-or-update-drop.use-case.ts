@@ -71,6 +71,7 @@ import {
   dropVotingDb,
   DropVotingDb
 } from '../api-serverless/src/drops/drop-voting.db';
+import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 
 export class CreateOrUpdateDropUseCase {
   public constructor(
@@ -99,8 +100,11 @@ export class CreateOrUpdateDropUseCase {
     if (!authorId) {
       const authorIdentity = model.author_identity;
       const resolvedAuthorId =
-        await this.profileService.resolveIdentityIdOrThrowNotFound(
-          authorIdentity
+        await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+          {
+            identityKey: authorIdentity
+          },
+          {}
         );
       return this.execute(
         { ...model, author_id: resolvedAuthorId },
@@ -110,8 +114,11 @@ export class CreateOrUpdateDropUseCase {
     } else if (proxyIdNecessary) {
       const proxyIdentity = model.proxy_identity;
       const resolvedProxyId =
-        await this.profileService.resolveIdentityIdOrThrowNotFound(
-          proxyIdentity
+        await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+          {
+            identityKey: proxyIdentity
+          },
+          {}
         );
       const hasRequiredProxyAction =
         await this.proxyService.hasActiveProxyAction({

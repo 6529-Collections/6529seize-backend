@@ -9,9 +9,6 @@ import {
   DROPS_TABLE,
   ENS_TABLE,
   IDENTITIES_TABLE,
-  MEMES_CONTRACT,
-  NFTS_TABLE,
-  PROFILES_ARCHIVE_TABLE,
   PROFILES_TABLE,
   REFRESH_TOKENS_TABLE,
   TDH_BLOCKS_TABLE,
@@ -25,6 +22,7 @@ import { areEqualAddresses, distinct } from '../helpers';
 import { RequestContext } from '../request.context';
 import { randomBytes } from 'crypto';
 import { RefreshToken } from '../entities/IRefreshToken';
+import { identitiesDb } from '../identities/identities.db';
 
 const mysql = require('mysql');
 
@@ -234,54 +232,19 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     param: Profile,
     connection: ConnectionWrapper<any>
   ) {
-    await this.db.execute(
-      `insert into ${PROFILES_ARCHIVE_TABLE}
-       (handle,
-        normalised_handle,
-        primary_wallet,
-        created_at,
-        created_by_wallet,
-        banner_1,
-        banner_2,
-        website,
-        classification,
-        updated_at,
-        updated_by_wallet,
-        external_id,
-        sub_classification,
-        pfp_url
-       )
-       values (:handle,
-               :normalisedHandle,
-               :primaryWallet,
-               :createdAt,
-               :createdByWallet,
-               :banner1,
-               :banner2,
-               :website,
-               :classification,
-               :updatedAt,
-               :updatedByWallet,
-               :externalId,
-               :subClassification,
-               :pfp_url)`,
+    await identitiesDb.insertProfileArchiveRecord(
       {
+        profile_id: param.external_id,
+        normalised_handle: param.normalised_handle,
         handle: param.handle,
-        normalisedHandle: param.normalised_handle,
-        primaryWallet: param.primary_wallet,
-        createdAt: new Date(param.created_at),
-        createdByWallet: param.created_by_wallet,
-        updatedAt: param.updated_at ? new Date(param.updated_at) : null,
-        updatedByWallet: param.updated_by_wallet,
+        pfp: param.pfp_url ?? null,
         banner1: param.banner_1 ?? null,
         banner2: param.banner_2 ?? null,
-        website: param.website ?? null,
-        classification: param.classification,
-        externalId: param.external_id,
-        subClassification: param.sub_classification ?? null,
-        pfp_url: param.pfp_url ?? null
+        classification: param.classification ?? null,
+        sub_classification: param.sub_classification ?? null,
+        primary_address: param.primary_wallet
       },
-      { wrappedConnection: connection }
+      { connection }
     );
   }
 
@@ -381,56 +344,6 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
     if (profile) {
       await this.insertProfileArchiveRecord(profile, connection);
     }
-  }
-
-  public async getMemeThumbnailUriById(
-    id: number,
-    connection?: ConnectionWrapper<any>
-  ): Promise<string | null> {
-    const opts = connection ? { wrappedConnection: connection } : undefined;
-    const result = await this.db.execute(
-      `select thumbnail from ${NFTS_TABLE} where id = :id and contract = :contract order by id asc limit 1`,
-      {
-        id,
-        contract: MEMES_CONTRACT
-      },
-      opts
-    );
-    return result.at(0)?.thumbnail ?? null;
-  }
-
-  public async updateProfilePfpUri(
-    thumbnailUri: string,
-    profile: Profile,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    await this.db.execute(
-      `update ${PROFILES_TABLE}
-       set pfp_url = :pfp
-       where normalised_handle = :handle`,
-      {
-        pfp: thumbnailUri,
-        handle: profile.normalised_handle
-      },
-      { wrappedConnection: connectionHolder }
-    );
-    await this.db.execute(
-      `update ${IDENTITIES_TABLE}
-       set pfp = :pfp
-       where normalised_handle = :handle`,
-      {
-        pfp: thumbnailUri,
-        handle: profile.normalised_handle
-      },
-      { wrappedConnection: connectionHolder }
-    );
-    await this.getProfileByHandle(profile.handle, connectionHolder).then(
-      async (it) => {
-        if (it) {
-          await this.insertProfileArchiveRecord(profile, connectionHolder);
-        }
-      }
-    );
   }
 
   async getProfileTdh(profileId: string): Promise<number> {

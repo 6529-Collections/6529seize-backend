@@ -1,11 +1,11 @@
 import { Request } from 'express';
 import { asyncRouter } from '../async.router';
 import {
-  MetricsCollector,
-  MetricsContent,
   fetchConsolidatedMetrics,
   fetchNftTdh,
-  fetchTDH
+  fetchTDH,
+  MetricsCollector,
+  MetricsContent
 } from './api.tdh.db';
 import { DEFAULT_PAGE_SIZE } from '../page-request';
 import {
@@ -138,7 +138,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {
@@ -168,7 +168,7 @@ router.get(
       },
       any,
       any,
-      {}
+      any
     >,
     res: any
   ) {
