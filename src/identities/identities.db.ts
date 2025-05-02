@@ -711,7 +711,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     >,
     connection: ConnectionWrapper<any>
   ) {
-    await this.db.execute(
+    await dbSupplier().execute(
       `insert into ${PROFILES_ARCHIVE_TABLE}
        (handle,
         normalised_handle,
