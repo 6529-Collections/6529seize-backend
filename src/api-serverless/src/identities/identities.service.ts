@@ -16,10 +16,7 @@ import {
 } from '../../../notifications/user.notifier';
 import { IdentityFetcher, identityFetcher } from './identity.fetcher';
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
-import {
-  profileActivityLogsDb,
-  ProfileActivityLogsDb
-} from '../../../profileActivityLogs/profile-activity-logs.db';
+import { profileActivityLogsDb } from '../../../profileActivityLogs/profile-activity-logs.db';
 import { ConnectionWrapper } from '../../../sql-executor';
 import path from 'path';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -30,8 +27,7 @@ export class IdentitiesService {
     private readonly identitiesDb: IdentitiesDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly userNotifier: UserNotifier,
-    private readonly identityFetcher: IdentityFetcher,
-    private readonly profileActivityLogsDb: ProfileActivityLogsDb
+    private readonly identityFetcher: IdentityFetcher
   ) {}
 
   async addIdentitySubscriptionActions({
@@ -203,7 +199,7 @@ export class IdentitiesService {
           connection
         );
         if ((thumbnailUri ?? null) !== profile.pfp) {
-          await this.profileActivityLogsDb.insert(
+          await profileActivityLogsDb.insert(
             {
               profile_id: profile.id!,
               target_id: null,
@@ -283,6 +279,5 @@ export const identitiesService = new IdentitiesService(
   identitiesDb,
   identitySubscriptionsDb,
   userNotifier,
-  identityFetcher,
-  profileActivityLogsDb
+  identityFetcher
 );

@@ -10,7 +10,6 @@ import {
   userGroupsService,
   UserGroupsService
 } from '../api-serverless/src/community-members/user-groups.service';
-import { profilesService, ProfilesService } from '../profiles/profiles.service';
 import {
   wavesApiDb,
   WavesApiDb
@@ -54,10 +53,7 @@ import {
   activityRecorder,
   ActivityRecorder
 } from '../activity/activity.recorder';
-import {
-  profileActivityLogsDb,
-  ProfileActivityLogsDb
-} from '../profileActivityLogs/profile-activity-logs.db';
+import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
 import {
   profileProxyApiService,
   ProfileProxyApiService
@@ -78,13 +74,11 @@ export class CreateOrUpdateDropUseCase {
     private readonly dropsDb: DropsDb,
     private readonly dropVotingDb: DropVotingDb,
     private readonly userGroupsService: UserGroupsService,
-    private readonly profileService: ProfilesService,
     private readonly profilesDb: ProfilesDb,
     private readonly wavesApiDb: WavesApiDb,
     private readonly userNotifier: UserNotifier,
     private readonly activityRecorder: ActivityRecorder,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
-    private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly proxyService: ProfileProxyApiService,
     private readonly deleteDropUseCase: DeleteDropUseCase
   ) {}
@@ -623,7 +617,7 @@ export class CreateOrUpdateDropUseCase {
         timer
       ),
       this.recordDropCreatedActivity({ model, wave }, { timer, connection }),
-      this.profileActivityLogsDb.insert(
+      profileActivityLogsDb.insert(
         {
           profile_id: authorId,
           target_id: dropId.toString(),
@@ -898,13 +892,11 @@ export const createOrUpdateDrop = new CreateOrUpdateDropUseCase(
   dropsDb,
   dropVotingDb,
   userGroupsService,
-  profilesService,
   profilesDb,
   wavesApiDb,
   userNotifier,
   activityRecorder,
   identitySubscriptionsDb,
-  profileActivityLogsDb,
   profileProxyApiService,
   deleteDrop
 );

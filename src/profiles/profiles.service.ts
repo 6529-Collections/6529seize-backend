@@ -20,8 +20,7 @@ import { Logger } from '../logging';
 import { Time } from '../time';
 import {
   NewProfileActivityLog,
-  profileActivityLogsDb,
-  ProfileActivityLogsDb
+  profileActivityLogsDb
 } from '../profileActivityLogs/profile-activity-logs.db';
 import {
   ProfileActivityLog,
@@ -81,7 +80,6 @@ export class ProfilesService {
     private readonly profilesDb: ProfilesDb,
     private readonly ratingsService: RatingsService,
     private readonly profileProxiesDb: ProfileProxiesDb,
-    private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly cicService: CicService,
     private readonly repService: RepService,
     private readonly userGroupsDb: UserGroupsDb,
@@ -494,7 +492,7 @@ export class ProfilesService {
     if (newProfileEntities.length) {
       await Promise.all([
         this.profilesDb.bulkInsertProfiles(newProfileEntities, ctx),
-        this.profileActivityLogsDb.bulkInsertProfileActivityLogs(
+        profileActivityLogsDb.bulkInsertProfileActivityLogs(
           newProfileCreationLogs,
           ctx
         )
@@ -732,7 +730,7 @@ export class ProfilesService {
             connectionHolder
           );
         }
-        await this.profileActivityLogsDb.changeSourceProfileIdInLogs(
+        await profileActivityLogsDb.changeSourceProfileIdInLogs(
           {
             oldSourceId: sourceIdentity,
             newSourceId: target
@@ -740,14 +738,14 @@ export class ProfilesService {
           connectionHolder
         );
 
-        await this.profileActivityLogsDb.changeTargetProfileIdInLogs(
+        await profileActivityLogsDb.changeTargetProfileIdInLogs(
           {
             oldSourceId: sourceIdentity,
             newSourceId: target
           },
           connectionHolder
         );
-        await this.profileActivityLogsDb.insert(
+        await profileActivityLogsDb.insert(
           {
             profile_id: sourceIdentity,
             target_id: null,
@@ -869,7 +867,7 @@ export class ProfilesService {
         authenticatedWallet
       );
     }
-    await this.profileActivityLogsDb.insertMany(logEvents, connectionHolder);
+    await profileActivityLogsDb.insertMany(logEvents, connectionHolder);
   }
 
   private addEventToArrayIfChanged(
@@ -1436,7 +1434,6 @@ export const profilesService = new ProfilesService(
   profilesDb,
   ratingsService,
   profileProxiesDb,
-  profileActivityLogsDb,
   cicService,
   repService,
   userGroupsDb,

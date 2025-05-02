@@ -144,7 +144,7 @@ export class ClappingService {
         },
         ctx
       ),
-      this.profileActivityLogsDb.insert(
+      profileActivityLogsDb.insert(
         {
           profile_id: clapper_id,
           type: ProfileActivityLogType.DROP_CLAPPED,

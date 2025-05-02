@@ -18,10 +18,7 @@ import {
   ProfileActivityLog,
   ProfileActivityLogType
 } from '../entities/IProfileActivityLog';
-import {
-  profileActivityLogsDb,
-  ProfileActivityLogsDb
-} from '../profileActivityLogs/profile-activity-logs.db';
+import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
 import {
   getMattersWhereTargetIsProfile,
   RateMatter,
@@ -78,7 +75,6 @@ export class RatingsService {
     private readonly ratingsDb: RatingsDb,
     private readonly profilesDb: ProfilesDb,
     private readonly repService: RepService,
-    private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly eventScheduler: EventScheduler,
     private readonly arweaveFileUploader: ArweaveFileUploader,
     private readonly profileProxiesDb: ProfileProxiesDb,
@@ -246,7 +242,7 @@ export class RatingsService {
     proxyContext: RatingProxyContext | null,
     connection: ConnectionWrapper<any>
   ) {
-    await this.profileActivityLogsDb.insert(
+    await profileActivityLogsDb.insert(
       {
         profile_id: request.rater_profile_id,
         target_id: request.matter_target_id,
@@ -475,7 +471,7 @@ export class RatingsService {
       newRating - oldRating.rating,
       connection
     );
-    await this.profileActivityLogsDb.insert(
+    await profileActivityLogsDb.insert(
       {
         profile_id: oldRating.rater_profile_id,
         target_id: oldRating.matter_target_id,
@@ -1188,7 +1184,7 @@ export class RatingsService {
             events,
             connection
           ),
-          this.profileActivityLogsDb.bulkInsertProfileActivityLogs(
+          profileActivityLogsDb.bulkInsertProfileActivityLogs(
             logs,
             ctxWithConnection
           ),
@@ -1300,7 +1296,6 @@ export const ratingsService: RatingsService = new RatingsService(
   ratingsDb,
   profilesDb,
   repService,
-  profileActivityLogsDb,
   eventScheduler,
   arweaveFileUploader,
   profileProxiesDb,
