@@ -28,6 +28,7 @@ import communityMembersRoutes from './community-members/community-members.routes
 import userGroupsRoutes from './community-members/user-groups.routes';
 import userGroupsImEligibleForRoutes from './community-members/user-groups-im-elgigible-for.routes';
 import dropsRoutes from './drops/drops.routes';
+import lightDropsRoutes from './drops/light-drops.routes';
 import nftOwnersRoutes from './nft-owners/api.nft-owners.routes';
 import dropsMediaRoutes from './drops/drops-media.routes';
 import profileSubClassificationsRoutes from './profiles/profiles-sub-classifications.routes';
@@ -1006,6 +1007,7 @@ loadApi().then(async () => {
   apiRouter.use(`/proxies`, proxiesRoutes);
   apiRouter.use(`/subscriptions`, subscriptionsRoutes);
   apiRouter.use(`/drops`, dropsRoutes);
+  apiRouter.use(`/light-drops`, lightDropsRoutes);
   apiRouter.use(`/nft-owners`, nftOwnersRoutes);
   apiRouter.use(`/drop-media`, dropsMediaRoutes);
   apiRouter.use(`/wave-media`, waveMediaRoutes);

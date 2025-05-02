@@ -84,6 +84,7 @@ export * from '../models/ApiIdentitySubscriptionTargetAction';
 export * from '../models/ApiIdentitySubscriptionTargetType';
 export * from '../models/ApiIncomingIdentitySubscriptionsPage';
 export * from '../models/ApiIntRange';
+export * from '../models/ApiLightDrop';
 export * from '../models/ApiLoginRequest';
 export * from '../models/ApiLoginResponse';
 export * from '../models/ApiNft';
@@ -252,6 +253,7 @@ import { ApiIdentitySubscriptionTargetAction } from '../models/ApiIdentitySubscr
 import { ApiIdentitySubscriptionTargetType } from '../models/ApiIdentitySubscriptionTargetType';
 import { ApiIncomingIdentitySubscriptionsPage } from '../models/ApiIncomingIdentitySubscriptionsPage';
 import { ApiIntRange } from '../models/ApiIntRange';
+import { ApiLightDrop          } from '../models/ApiLightDrop';
 import { ApiLoginRequest } from '../models/ApiLoginRequest';
 import { ApiLoginResponse } from '../models/ApiLoginResponse';
 import { ApiNft      , ApiNftTokenTypeEnum                               } from '../models/ApiNft';
@@ -454,6 +456,7 @@ let typeMap: {[index: string]: any} = {
     "ApiIdentitySubscriptionActions": ApiIdentitySubscriptionActions,
     "ApiIncomingIdentitySubscriptionsPage": ApiIncomingIdentitySubscriptionsPage,
     "ApiIntRange": ApiIntRange,
+    "ApiLightDrop": ApiLightDrop,
     "ApiLoginRequest": ApiLoginRequest,
     "ApiLoginResponse": ApiLoginResponse,
     "ApiNft": ApiNft,
