@@ -1,10 +1,11 @@
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
-import { profilesService } from '../../../profiles/profiles.service';
 import { asyncRouter } from '../async.router';
 import { NotFoundException } from '../../../exceptions';
 import { getHighestTdhAddressForConsolidationKey } from '../../../delegationsLoop/db.delegations';
 import { fetchEns } from '../../../db-api';
+import { identityFetcher } from '../identities/identity.fetcher';
+import { Timer } from '../../../time';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -21,11 +22,14 @@ router.get(
     res: Response<ApiResponse<AddressResult>>
   ) => {
     const identity = req.params.identity;
-    const consolidationKey = await profilesService
-      .getProfileAndConsolidationsByIdentity(identity)
-      .then((result) => result?.consolidation.consolidation_key);
+    const consolidationKey = await identityFetcher
+      .getIdentityAndConsolidationsByIdentityKey(
+        { identityKey: identity },
+        { timer: Timer.getFromRequest(req) }
+      )
+      .then((result) => result?.consolidation_key);
     if (!consolidationKey) {
-      throw new NotFoundException('Profile not found');
+      throw new NotFoundException(`Identity ${identity} not found`);
     }
     const highestTdhAddress = await getHighestTdhAddressForConsolidationKey(
       consolidationKey

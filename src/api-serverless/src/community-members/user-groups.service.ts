@@ -40,7 +40,6 @@ import * as mcache from 'memory-cache';
 import { RequestContext } from '../../../request.context';
 import { NEXTGEN_CORE_CONTRACT } from '../../../nextgen/nextgen_constants';
 import { Network } from 'alchemy-sdk';
-import { ApiProfile } from '../types/api.profile';
 import {
   hasGroupGotAnyNonIdentityConditions,
   isAnyGroupByOwningsCriteria,
@@ -57,6 +56,7 @@ import {
   ProfileSimpleMetrics
 } from '../../../groups/user-group-predicates';
 import { identityFetcher } from '../identities/identity.fetcher';
+import { ApiIdentity } from '../generated/models/ApiIdentity';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -129,7 +129,7 @@ export class UserGroupsService {
   }
 
   public async findOrCreateDirectMessageGroup(
-    creatorProfile: ApiProfile,
+    creatorProfile: ApiIdentity,
     identityAddresses: string[],
     ctx: RequestContext
   ): Promise<ApiGroupFull> {
@@ -184,7 +184,7 @@ export class UserGroupsService {
       is_direct_message: true
     };
 
-    return await this.save(userGroup, creatorProfile.external_id, ctx, true);
+    return await this.save(userGroup, creatorProfile.id!, ctx, true);
   }
 
   public async whichOfGivenGroupsIsUserEligibleFor(
@@ -631,9 +631,9 @@ export class UserGroupsService {
     ].filter((user) => !!user) as string[];
     const userIds = await Promise.all(
       filterUsers.map((user) =>
-        profilesService
-          .getProfileAndConsolidationsByIdentity(user)
-          .then((result) => result?.profile?.external_id ?? null)
+        identityFetcher
+          .getIdentityAndConsolidationsByIdentityKey({ identityKey: user }, ctx)
+          .then((result) => result?.id ?? null)
       )
     );
     if (userIds.some((it) => it === null)) {

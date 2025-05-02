@@ -125,18 +125,21 @@ router.get(
     res: Response<ApiResponse<ApiIdentitySubscriptionActions>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
     const authenticatedProfileId = authenticationContext.getActingAsId();
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
     }
-    const profileId = await profilesService
-      .resolveIdentityOrThrowNotFound(req.params.id)
-      .then((it) => it.profile_id);
+    const profileId = await identityFetcher.getProfileIdByIdentityKey(
+      { identityKey: req.params.id },
+      { authenticationContext, timer }
+    );
     const activeActions = !profileId
       ? []
       : (
           await identityFetcher.getOverviewsByIds([profileId], {
-            authenticationContext
+            authenticationContext,
+            timer
           })
         )[profileId]?.subscribed_actions ?? [];
     res.send({
@@ -153,6 +156,7 @@ router.post(
     res: Response<ApiResponse<ApiIdentitySubscriptionActions>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
     const authenticatedProfileId = authenticationContext.getActingAsId();
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
@@ -161,9 +165,16 @@ router.post(
       req.body,
       IdentintitySubscriptionActionsSchema
     );
-    const identityAddress = await profilesService
-      .resolveIdentityOrThrowNotFound(req.params.id)
-      .then((it) => it.wallet);
+    const identityKey = req.params.id;
+    const identityAddress = await identityFetcher
+      .getIdentityAndConsolidationsByIdentityKey(
+        { identityKey },
+        { timer, authenticationContext }
+      )
+      .then((it) => it?.primary_wallet);
+    if (!identityAddress) {
+      throw new NotFoundException(`Identity ${identityKey} not found`);
+    }
     const activeActions =
       await identitiesService.addIdentitySubscriptionActions({
         identityAddress: identityAddress,
@@ -184,6 +195,7 @@ router.delete(
     res: Response<ApiResponse<ApiIdentitySubscriptionActions>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
+    const timer = Timer.getFromRequest(req);
     const authenticatedProfileId = authenticationContext.getActingAsId();
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
@@ -192,9 +204,16 @@ router.delete(
       req.body,
       IdentintitySubscriptionActionsSchema
     );
-    const identityAddress = await profilesService
-      .resolveIdentityOrThrowNotFound(req.params.id)
-      .then((it) => it.wallet);
+    const identityKey = req.params.id;
+    const identityAddress = await identityFetcher
+      .getIdentityAndConsolidationsByIdentityKey(
+        { identityKey },
+        { timer, authenticationContext }
+      )
+      .then((it) => it?.primary_wallet);
+    if (!identityAddress) {
+      throw new NotFoundException(`Identity ${identityKey} not found`);
+    }
     const activeActions =
       await identitiesService.removeIdentitySubscriptionActions({
         identityAddress: identityAddress,

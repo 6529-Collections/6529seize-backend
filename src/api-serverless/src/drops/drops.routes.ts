@@ -15,13 +15,8 @@ import {
 } from '../../../exceptions';
 import { dropCreationService } from './drop-creation.api.service';
 import { dropsService } from './drops.api.service';
-import {
-  parseIntOrNull,
-  parseNumberOrNull,
-  resolveEnum
-} from '../../../helpers';
+import { parseNumberOrNull, resolveEnum } from '../../../helpers';
 import { dropCheeringService } from './drop-cheering.service';
-import { FullPageRequest, PageSortDirection } from '../page-request';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
 import { userGroupsService } from '../community-members/user-groups.service';
@@ -37,11 +32,11 @@ import { ApiDropSubscriptionActions } from '../generated/models/ApiDropSubscript
 import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
 import { Timer } from '../../../time';
 import { ApiUpdateDropRequest } from '../generated/models/ApiUpdateDropRequest';
-import { RequestContext } from '../../../request.context';
 import { ApiDropType } from '../generated/models/ApiDropType';
 import { wavesApiDb } from '../waves/waves.api.db';
 import { dropSignatureVerifier } from './drop-signature-verifier';
 import { dropsDb } from '../../../drops/drops.db';
+import { identityFetcher } from '../identities/identity.fetcher';
 
 const router = asyncRouter();
 
@@ -231,7 +226,7 @@ router.delete(
   needsAuthenticatedUser(),
   async (
     req: Request<{ drop_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<{}>>
+    res: Response<ApiResponse<any>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -416,15 +411,10 @@ export async function prepLatestDropsSearchQuery(
   const drop_type_str = (req.query.drop_type as string) ?? null;
   const drop_type_enum = resolveEnum(ApiDropType, drop_type_str) ?? null;
   const author_id = req.query.author
-    ? await profilesService
-        .resolveIdentityOrThrowNotFound(req.query.author)
-        .then((it) => {
-          const profileId = it.profile_id;
-          if (!profileId) {
-            throw new NotFoundException(`Author ${req.query.author} not found`);
-          }
-          return profileId;
-        })
+    ? await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+        { identityKey: req.query.author },
+        { timer: Timer.getFromRequest(req) }
+      )
     : null;
   return {
     limit,
@@ -434,59 +424,6 @@ export async function prepLatestDropsSearchQuery(
     include_replies,
     drop_type: drop_type_enum
   };
-}
-
-export async function prepDropPartQuery(
-  req: Request<
-    {
-      drop_id: string;
-      drop_part_id: string;
-      drop_type?: ApiDropType;
-    },
-    any,
-    any,
-    FullPageRequest<'created_at'>,
-    any
-  >,
-  ctx: RequestContext
-) {
-  const drop_type_str = (req.params.drop_type as string) ?? null;
-  const drop_type_enum = resolveEnum(ApiDropType, drop_type_str) ?? null;
-  const drop_part_id = parseIntOrNull(req.params.drop_part_id);
-  const drop_id = req.params.drop_id;
-  if (drop_part_id === null) {
-    throw new NotFoundException(
-      `Drop part ${drop_id}/${req.params.drop_part_id} not found`
-    );
-  }
-  await dropsService
-    .findDropByIdOrThrow(
-      {
-        dropId: drop_id
-      },
-      ctx
-    )
-    .then((drop) => {
-      if (drop.parts.length === 0) {
-        throw new NotFoundException(
-          `Drop part ${drop_id}/${req.params.drop_part_id} not found`
-        );
-      }
-    });
-  const query = getValidatedByJoiOrThrow(
-    req.query,
-    Joi.object<FullPageRequest<'created_at'> & { drop_type?: ApiDropType }>({
-      sort_direction: Joi.string()
-        .optional()
-        .default(PageSortDirection.DESC)
-        .valid(...Object.values(PageSortDirection)),
-      sort: Joi.string().optional().default('created_at').valid('created_at'),
-      page: Joi.number().integer().min(1).optional().default(1),
-      page_size: Joi.number().integer().min(1).max(50).optional().default(20),
-      drop_type: Joi.string().optional()
-    })
-  );
-  return { drop_part_id, drop_id, query, drop_type: drop_type_enum };
 }
 
 const DropSubscriptionActionsSchema = Joi.object<ApiDropSubscriptionActions>({

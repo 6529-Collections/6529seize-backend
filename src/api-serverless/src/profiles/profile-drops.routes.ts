@@ -1,9 +1,9 @@
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
-import { profilesService } from '../../../profiles/profiles.service';
 import { dropsService } from '../drops/drops.api.service';
 import { asyncRouter } from '../async.router';
-import { NotFoundException } from '../../../exceptions';
+import { identityFetcher } from '../identities/identity.fetcher';
+import { Timer } from '../../../time';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -14,12 +14,10 @@ router.get(
     res: Response<ApiResponse<{ available_credit_for_rating: number }>>
   ) => {
     const identity = req.params.identity;
-    const profileId = await profilesService
-      .getProfileAndConsolidationsByIdentity(identity)
-      .then((result) => result?.profile?.external_id ?? null);
-    if (!profileId) {
-      throw new NotFoundException('Profile not found');
-    }
+    const profileId = await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+      { identityKey: identity },
+      { timer: Timer.getFromRequest(req) }
+    );
     const rep = await dropsService.findAvailableCreditForRatingForProfile(
       profileId
     );

@@ -39,7 +39,6 @@ import { ApiWaveOutcomeCredit } from '../generated/models/ApiWaveOutcomeCredit';
 import { REP_CATEGORY_PATTERN } from '../../../entities/IAbusivenessDetectionResult';
 import { ApiWaveSubscriptionActions } from '../generated/models/ApiWaveSubscriptionActions';
 import { ApiWaveSubscriptionTargetAction } from '../generated/models/ApiWaveSubscriptionTargetAction';
-import { profilesService } from '../../../profiles/profiles.service';
 import { Time, Timer } from '../../../time';
 import { RequestContext } from '../../../request.context';
 import { ApiUpdateWaveRequest } from '../generated/models/ApiUpdateWaveRequest';
@@ -69,6 +68,7 @@ import {
   WaveDecisionsQuery,
   WaveDecisionsQuerySort
 } from './wave-decisions-api.service';
+import { identityFetcher } from '../identities/identity.fetcher';
 
 const router = asyncRouter();
 
@@ -137,9 +137,13 @@ router.post(
     if (!authenticatedProfileId) {
       throw new ForbiddenException(`Please create a profile first`);
     }
-    const creatorProfile = await profilesService.getProfileById(
-      authenticatedProfileId
-    );
+    const creatorProfile =
+      await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+        {
+          identityKey: authenticatedProfileId
+        },
+        { timer, authenticationContext }
+      );
     if (!creatorProfile) {
       throw new NotFoundException(`Profile not found`);
     }
@@ -264,7 +268,7 @@ router.delete(
   needsAuthenticatedUser(),
   async (
     req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<{}>>
+    res: Response<ApiResponse<any>>
   ) => {
     const { id } = req.params;
     const timer = Timer.getFromRequest(req);
@@ -811,15 +815,13 @@ export async function validateWavesSearchParams(
     })
   );
   if (validatedRequest.author) {
-    const authorIdentity = await profilesService.resolveIdentityOrThrowNotFound(
-      validatedRequest.author
+    const authorId = await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+      { identityKey: validatedRequest.author },
+      { timer: Timer.getFromRequest(req) }
     );
-    if (!authorIdentity.profile_id) {
-      throw new NotFoundException('Author not found');
-    }
     return {
       ...validatedRequest,
-      author: authorIdentity.profile_id
+      author: authorId
     };
   }
   return validatedRequest;

@@ -2,9 +2,9 @@ import { Request, Response } from 'express';
 import { asyncRouter } from '../../async.router';
 import { ApiResponse } from '../../api-response';
 import { profileProxyApiService } from '../../proxies/proxy.api.service';
-import { profilesService } from '../../../../profiles/profiles.service';
-import { NotFoundException } from '../../../../exceptions';
 import { ApiProfileProxy } from '../../generated/models/ApiProfileProxy';
+import { identityFetcher } from '../../identities/identity.fetcher';
+import { Timer } from '../../../../time';
 
 const router = asyncRouter({ mergeParams: true });
 
@@ -15,18 +15,14 @@ router.get(
     res: Response<ApiResponse<ApiProfileProxy[]>>
   ) => {
     const targetProfile =
-      await profilesService.getProfileAndConsolidationsByIdentity(
-        req.params.identity
+      await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+        { identityKey: req.params.identity },
+        { timer: Timer.getFromRequest(req) }
       );
-    if (!targetProfile?.profile) {
-      throw new NotFoundException(
-        `Profile with id ${req.params.identity} does not exist`
-      );
-    }
 
     const result =
       await profileProxyApiService.getProfileReceivedAndGrantedProxies({
-        profile_id: targetProfile.profile.external_id
+        profile_id: targetProfile
       });
     res.send(result);
   }
@@ -39,18 +35,14 @@ router.get(
     res: Response<ApiResponse<ApiProfileProxy[]>>
   ) => {
     const targetProfile =
-      await profilesService.getProfileAndConsolidationsByIdentity(
-        req.params.identity
+      await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+        { identityKey: req.params.identity },
+        { timer: Timer.getFromRequest(req) }
       );
-    if (!targetProfile?.profile) {
-      throw new NotFoundException(
-        `Profile with id ${req.params.identity} does not exist`
-      );
-    }
 
     const result =
       await profileProxyApiService.getProfileReceivedProfileProxies({
-        target_id: targetProfile.profile.external_id
+        target_id: targetProfile
       });
     res.send(result);
   }
@@ -63,18 +55,14 @@ router.get(
     res: Response<ApiResponse<ApiProfileProxy[]>>
   ) => {
     const targetProfile =
-      await profilesService.getProfileAndConsolidationsByIdentity(
-        req.params.identity
+      await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+        { identityKey: req.params.identity },
+        { timer: Timer.getFromRequest(req) }
       );
-    if (!targetProfile?.profile) {
-      throw new NotFoundException(
-        `Profile with id ${req.params.identity} does not exist`
-      );
-    }
 
     const result = await profileProxyApiService.getProfileGrantedProfileProxies(
       {
-        created_by: targetProfile.profile.external_id
+        created_by: targetProfile
       }
     );
     res.send(result);

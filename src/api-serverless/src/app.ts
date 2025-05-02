@@ -14,7 +14,6 @@ import authRoutes from './auth/auth.routes';
 import proxiesRoutes from './proxies/proxies.routes';
 import rememesRoutes from './rememes/rememes.routes';
 import nextgenRoutes from './nextgen/nextgen.routes';
-import analyticsRoutes from './analytics/analytics.routes';
 import royaltiesRoutes from './royalties/royalties.routes';
 import profileActivityLogsRoutes from './profiles/profile-activity-logs.routes';
 import repCategorySearchRoutes from './profiles/rep-category-search.routes';
@@ -989,7 +988,6 @@ loadApi().then(async () => {
   apiRouter.use(`/waves-overview`, wavesOverviewRoutes);
   apiRouter.use(`/identities`, identitiesRoutes);
   apiRouter.use(`/profiles`, profilesRoutes);
-  apiRouter.use(`/analytics`, analyticsRoutes);
   apiRouter.use(`/community-members`, communityMembersRoutes);
   apiRouter.use(`/groups`, userGroupsRoutes);
   apiRouter.use(`/groups_im_eligible_for`, userGroupsImEligibleForRoutes);

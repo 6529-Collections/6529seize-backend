@@ -2,9 +2,7 @@ import { asyncRouter } from '../async.router';
 import { getWalletOrThrow, needsAuthenticatedUser } from '../auth/auth';
 import { Request, Response } from 'express';
 import { ApiResponse } from '../api-response';
-import { ProfileAndConsolidations } from '../../../profiles/profile.types';
 import { getValidatedByJoiOrThrow } from '../validation';
-import { profilesService } from '../../../profiles/profiles.service';
 import { ForbiddenException, NotFoundException } from '../../../exceptions';
 import * as Joi from 'joi';
 import {
@@ -26,17 +24,22 @@ import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { ApiChangeProfileCicRating } from '../generated/models/ApiChangeProfileCicRating';
 import { ApiChangeProfileCicRatingResponse } from '../generated/models/ApiChangeProfileCicRatingResponse';
 import { ApiRatingWithProfileInfoAndLevelPage } from '../generated/models/ApiRatingWithProfileInfoAndLevelPage';
+import { identityFetcher } from '../identities/identity.fetcher';
+import { Timer } from '../../../time';
+import { ApiIdentity } from '../generated/models/ApiIdentity';
+import { resolveEnum } from '../../../helpers';
+import { ProfileClassification } from '../../../entities/IProfile';
 
 const router = asyncRouter({ mergeParams: true });
 
 function isAuthenticatedWalletProfileOwner(
   req: Request,
-  profileAndConsolidations: ProfileAndConsolidations | null
+  identity: ApiIdentity | null
 ) {
   const authenticatedWallet = getWalletOrThrow(req);
   return (
-    profileAndConsolidations?.consolidation?.wallets?.find(
-      (it) => it.wallet.address.toLowerCase() === authenticatedWallet
+    identity?.wallets?.find(
+      (it) => it.wallet.toLowerCase() === authenticatedWallet
     ) ?? false
   );
 }
@@ -47,28 +50,29 @@ router.get(
     req: GetRaterAggregatedRatingRequest,
     res: Response<ApiResponse<ApiProfileRaterCicState>>
   ) {
-    const identity = req.params.identity.toLowerCase();
-    const raterIdentity = req.params.raterIdentity.toLowerCase();
-    const profileAndConsolidationsOfTarget =
-      await profilesService.getProfileAndConsolidationsByIdentity(identity);
-    const targetProfile = profileAndConsolidationsOfTarget?.profile;
-    const profileAndConsolidationsOfRater =
-      await profilesService.getProfileAndConsolidationsByIdentity(
-        raterIdentity
-      );
-    const raterProfile = profileAndConsolidationsOfRater?.profile;
+    const timer = Timer.getFromRequest(req);
+    const targetIdentityKey = req.params.identity.toLowerCase();
+    const raterIdentityKey = req.params.raterIdentity.toLowerCase();
+    const targetProfileId = await identityFetcher.getProfileIdByIdentityKey(
+      { identityKey: targetIdentityKey },
+      { timer }
+    );
+    const raterProfileId = await identityFetcher.getProfileIdByIdentityKey(
+      { identityKey: raterIdentityKey },
+      { timer }
+    );
     const { rating: cicRatingByRater } =
-      targetProfile && raterProfile
+      targetProfileId && raterProfileId
         ? await ratingsService.getAggregatedRatingOnMatter({
-            rater_profile_id: raterProfile.external_id,
+            rater_profile_id: raterProfileId,
             matter: RateMatter.CIC,
             matter_category: RateMatter.CIC,
-            matter_target_id: targetProfile.external_id
+            matter_target_id: targetProfileId
           })
         : { rating: 0 };
-    const cicRatingsLeftToGiveByRater = raterProfile
+    const cicRatingsLeftToGiveByRater = raterProfileId
       ? await ratingsService.getRatesLeftOnMatterForProfile({
-          profile_id: raterProfile.external_id,
+          profile_id: raterProfileId,
           matter: RateMatter.CIC
         })
       : 0;
@@ -137,11 +141,13 @@ router.get(
     res: Response<ApiResponse<CicStatement[]>>
   ) {
     const identity = req.params.identity.toLowerCase();
-    const resolvedIdentity =
-      await profilesService.resolveIdentityOrThrowNotFound(identity);
-    if (resolvedIdentity.profile_id) {
+    const resolvedProfileId = await identityFetcher.getProfileIdByIdentityKey(
+      { identityKey: identity },
+      { timer: Timer.getFromRequest(req) }
+    );
+    if (resolvedProfileId) {
       const statements = await cicService.getCicStatementsByProfileId(
-        resolvedIdentity.profile_id
+        resolvedProfileId
       );
       res.status(200).send(statements);
     } else {
@@ -167,15 +173,14 @@ router.get(
   ) {
     const identity = req.params.identity.toLowerCase();
     const statementId = req.params.statementId;
-    const profileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByIdentity(identity);
-    const profileId = profileAndConsolidations?.profile?.external_id;
-    if (!profileId) {
-      throw new NotFoundException(`No profile found for ${identity}`);
-    }
+    const resolvedProfileId =
+      await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+        { identityKey: identity },
+        { timer: Timer.getFromRequest(req) }
+      );
     const statement = await cicService.getCicStatementByIdAndProfileIdOrThrow({
       id: statementId,
-      profile_id: profileId
+      profile_id: resolvedProfileId
     });
     res.status(200).send(statement);
   }
@@ -198,15 +203,18 @@ router.delete(
     res: Response
   ) {
     const identity = req.params.identity.toLowerCase();
-    const profileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByIdentity(identity);
-    if (!isAuthenticatedWalletProfileOwner(req, profileAndConsolidations)) {
+    const resolvedIdentity =
+      await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+        { identityKey: identity },
+        { timer: Timer.getFromRequest(req) }
+      );
+    if (!isAuthenticatedWalletProfileOwner(req, resolvedIdentity)) {
       throw new ForbiddenException(
         `User can only add statements to their own profile`
       );
     }
     const statementId = req.params.statementId;
-    const profileId = profileAndConsolidations?.profile?.external_id;
+    const profileId = resolvedIdentity?.id;
     if (!profileId) {
       throw new NotFoundException(`No profile found for ${identity}`);
     }
@@ -235,9 +243,12 @@ router.post(
     res: Response
   ) {
     const identity = req.params.identity.toLowerCase();
-    const profileAndConsolidations =
-      await profilesService.getProfileAndConsolidationsByIdentity(identity);
-    if (!isAuthenticatedWalletProfileOwner(req, profileAndConsolidations)) {
+    const resolvedIdentity =
+      await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+        { identityKey: identity },
+        { timer: Timer.getFromRequest(req) }
+      );
+    if (!isAuthenticatedWalletProfileOwner(req, resolvedIdentity)) {
       throw new ForbiddenException(
         `User can only add statements to its own profile`
       );
@@ -246,13 +257,18 @@ router.post(
       req.body,
       ApiCreateOrUpdateProfileCicStatementSchema
     );
-    const profile = profileAndConsolidations?.profile;
-    const profileId = profile?.external_id;
+    const profileId = resolvedIdentity?.id;
     if (!profileId) {
       throw new NotFoundException(`No profile found for ${identity}`);
     }
     const updatedStatement = await cicService.addCicStatement({
-      profile: profile,
+      profile: {
+        profile_id: profileId,
+        classification:
+          resolveEnum(ProfileClassification, resolvedIdentity.classification) ??
+          null,
+        handle: resolvedIdentity.handle!
+      },
       statement: {
         profile_id: profileId,
         ...requestPayload

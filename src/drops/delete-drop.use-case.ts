@@ -3,7 +3,11 @@ import { Time, Timer } from '../time';
 import { ConnectionWrapper } from '../sql-executor';
 import { DeleteDropModel } from './delete-drop.model';
 import { profilesService, ProfilesService } from '../profiles/profiles.service';
-import { BadRequestException, ForbiddenException } from '../exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '../exceptions';
 import {
   clappingService,
   ClappingService
@@ -15,6 +19,7 @@ import {
 import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
 import { WaveEntity } from '../entities/IWave';
 import { DropEntity } from '../entities/IDrop';
+import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 
 export class DeleteDropUseCase {
   public constructor(
@@ -37,9 +42,17 @@ export class DeleteDropUseCase {
     if (!deleterId) {
       const deleterIdentity = model.deleter_identity;
       const resolvedDeleterIdentity =
-        await this.profileService.resolveIdentityIdOrThrowNotFound(
-          deleterIdentity
+        await identityFetcher.getProfileIdByIdentityKey(
+          {
+            identityKey: deleterIdentity
+          },
+          {}
         );
+      if (!resolvedDeleterIdentity) {
+        throw new NotFoundException(
+          `${deleterIdentity} doesn't have a profile`
+        );
+      }
       return await this.execute(
         { ...model, deleter_id: resolvedDeleterIdentity },
         { timer, connection }

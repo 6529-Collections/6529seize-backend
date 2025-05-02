@@ -1,9 +1,4 @@
-import { Profile } from '../../../entities/IProfile';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
-import {
-  profilesService,
-  ProfilesService
-} from '../../../profiles/profiles.service';
 import { Time } from '../../../time';
 import { ApiCreateNewProfileProxy } from '../generated/models/ApiCreateNewProfileProxy';
 import { ProfileProxyEntity } from '../../../entities/IProfileProxy';
@@ -14,7 +9,6 @@ import {
   profileProxiesDb
 } from '../../../profile-proxies/profile-proxies.db';
 import { ConnectionWrapper } from '../../../sql-executor';
-import { ProfileAndConsolidations } from '../../../profiles/profile.types';
 
 import { ProxyApiRequestAction } from './proxies.api.types';
 import {
@@ -32,6 +26,11 @@ import {
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { ApiProfileProxyActionType } from '../generated/models/ApiProfileProxyActionType';
 import { ApiProfileProxyAction } from '../generated/models/ApiProfileProxyAction';
+import {
+  identityFetcher,
+  IdentityFetcher
+} from '../identities/identity.fetcher';
+import { ApiIdentity } from '../generated/models/ApiIdentity';
 
 const ACTION_MAP: Record<ApiProfileProxyActionType, ProfileProxyActionType> = {
   [ApiProfileProxyActionType.AllocateRep]: ProfileProxyActionType.ALLOCATE_REP,
@@ -61,7 +60,7 @@ interface CanDoAcceptancePayload {
 
 export class ProfileProxyApiService {
   constructor(
-    private readonly profilesService: ProfilesService,
+    private readonly identityFetcher: IdentityFetcher,
     private readonly profileProxiesDb: ProfileProxiesDb,
     private readonly profileProxiesMapper: ProfileProxiesMapper,
     private readonly profileActivityLogsDb: ProfileActivityLogsDb
@@ -71,17 +70,20 @@ export class ProfileProxyApiService {
     target_id
   }: {
     readonly target_id: string;
-  }): Promise<ProfileAndConsolidations> {
-    const targetProfile =
-      await this.profilesService.getProfileAndConsolidationsByIdentity(
-        target_id
+  }): Promise<ApiIdentity> {
+    const targetIdentity =
+      await this.identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+        {
+          identityKey: target_id
+        },
+        {}
       );
-    if (!targetProfile) {
+    if (!targetIdentity?.handle) {
       throw new NotFoundException(
         `Profile with id ${target_id} does not exist`
       );
     }
-    return targetProfile;
+    return targetIdentity;
   }
 
   private async targetNotAlreadyProxiedOrThrow({
@@ -171,30 +173,30 @@ export class ProfileProxyApiService {
 
   async createProfileProxy({
     params: { target_id },
-    grantorProfile: { external_id: created_by_profile_id }
+    grantorProfileId
   }: {
     readonly params: ApiCreateNewProfileProxy;
-    readonly grantorProfile: Profile;
+    readonly grantorProfileId: string;
   }): Promise<ApiProfileProxy> {
     const target = await this.getTargetOrThrow({
       target_id
     });
-    if (!target.profile?.handle) {
+    if (!target.handle) {
       throw new NotFoundException(
         `Profile with id ${target_id} does not exist`
       );
     }
     await this.targetNotAlreadyProxiedOrThrow({
       target_id,
-      created_by_profile_id,
-      target_handle: target.profile.handle
+      created_by_profile_id: grantorProfileId,
+      target_handle: target.handle
     });
 
     const createProfileProxyRequest: ProfileProxyEntity = {
       id: randomUUID(),
       target_id,
       created_at: Time.currentMillis(),
-      created_by: created_by_profile_id
+      created_by: grantorProfileId
     };
     return await this.persistProfileProxy({
       createProfileProxyRequest
@@ -840,7 +842,7 @@ export function isProxyActionActive(action: ApiProfileProxyAction): boolean {
 }
 
 export const profileProxyApiService = new ProfileProxyApiService(
-  profilesService,
+  identityFetcher,
   profileProxiesDb,
   profileProxiesMapper,
   profileActivityLogsDb

@@ -1,8 +1,7 @@
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService,
-  SqlExecutor
+  LazyDbAccessCompatibleService
 } from '../../../sql-executor';
 import { WaveEntity } from '../../../entities/IWave';
 import {
@@ -39,13 +38,6 @@ import { DropType } from '../../../entities/IDrop';
 import { Time } from '../../../time';
 
 export class WavesApiDb extends LazyDbAccessCompatibleService {
-  constructor(
-    supplyDb: () => SqlExecutor,
-    private readonly userGroupsService: UserGroupsService
-  ) {
-    super(supplyDb);
-  }
-
   public async findWaveById(
     id: string,
     connection?: ConnectionWrapper<any>
@@ -325,7 +317,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
     ) {
       return [];
     }
-    const sqlAndParams = await this.userGroupsService.getSqlAndParamsByGroupId(
+    const sqlAndParams = await userGroupsService.getSqlAndParamsByGroupId(
       searchParams.group_id ?? null,
       ctx
     );
@@ -1362,4 +1354,4 @@ export interface SearchWavesParams {
   readonly group_id?: string;
 }
 
-export const wavesApiDb = new WavesApiDb(dbSupplier, userGroupsService);
+export const wavesApiDb = new WavesApiDb(dbSupplier);

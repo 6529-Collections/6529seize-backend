@@ -150,15 +150,11 @@ router.post(
     );
     const relatedIdentitiesMapped = await Promise.all(
       relatedIdentities.map(async (identity) => {
-        const profileId = await identityFetcher.getProfileIdByIdentityKey(
-          { identityKey: req.query.author_identity },
-          {}
-        );
-        if (!profileId) {
-          throw new NotFoundException(
-            `Profile with identity ${identity} does not exist.`
+        const profileId =
+          await identityFetcher.getProfileIdByIdentityKeyOrThrow(
+            { identityKey: req.query.author_identity },
+            {}
           );
-        }
         return {
           given_identity: identity,
           profile_id: profileId

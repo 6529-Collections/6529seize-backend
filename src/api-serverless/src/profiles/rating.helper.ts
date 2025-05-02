@@ -6,6 +6,7 @@ import { ProfileClassification } from '../../../entities/IProfile';
 import { giveReadReplicaTimeToCatchUp } from '../api-helpers';
 import { Time } from '../../../time';
 import { getWalletFromEns, isWallet } from '../../../helpers';
+import { identityFetcher } from '../identities/identity.fetcher';
 
 export async function getRaterInfoFromRequest(
   req: Request<{ identity: string }, any, any, any, any>
@@ -13,8 +14,11 @@ export async function getRaterInfoFromRequest(
   const identity = req.params.identity.toLowerCase();
   const authContext = await getAuthenticationContext(req);
   let targetProfile =
-    await profilesService.getProfileAndConsolidationsByIdentity(identity);
-  if (!targetProfile?.profile) {
+    await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+      { identityKey: identity },
+      { authenticationContext: authContext }
+    );
+  if (!targetProfile?.id) {
     let wallet = identity.toLowerCase();
     if (!isWallet(wallet)) {
       wallet = await getWalletFromEns(identity).then((w) => {
@@ -38,7 +42,7 @@ export async function getRaterInfoFromRequest(
       `No profile found for authenticated user ${identity}`
     );
   }
-  const targetProfileId = targetProfile.profile!.external_id;
+  const targetProfileId = targetProfile.id!;
   return { authContext, targetProfileId: targetProfileId };
 }
 

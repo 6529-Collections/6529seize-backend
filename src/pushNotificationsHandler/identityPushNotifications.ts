@@ -2,18 +2,18 @@ import { Like } from 'typeorm';
 import { getDataSource } from '../db';
 import { DropEntity, DropPartEntity } from '../entities/IDrop';
 import {
-  IdentityNotificationEntity,
-  IdentityNotificationCause
+  IdentityNotificationCause,
+  IdentityNotificationEntity
 } from '../entities/IIdentityNotification';
 import { PushNotificationDevice } from '../entities/IPushNotification';
-import { profilesService } from '../profiles/profiles.service';
 import { sendMessage } from './sendPushNotifications';
 import { Logger } from '../logging';
-import { Profile } from '../entities/IProfile';
 import { IdentityNotificationsDb } from '../notifications/identity-notifications.db';
 import { dbSupplier } from '../sql-executor';
 import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
 import { WaveEntity } from '../entities/IWave';
+import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
+import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
 
 const logger = Logger.get('PUSH_NOTIFICATIONS_HANDLER_IDENTITY');
 
@@ -71,7 +71,7 @@ export async function sendIdentityNotification(id: number) {
           notification.id,
           data,
           badge,
-          imageUrl
+          imageUrl ?? undefined
         ).catch(async (error) => {
           if (
             error.code === 'messaging/registration-token-not-registered' ||
@@ -119,10 +119,10 @@ async function generateNotificationData(
   }
 }
 
-async function handleIdentitySubscribed(additionalEntity: Profile) {
+async function handleIdentitySubscribed(additionalEntity: ApiIdentity) {
   const title = `${additionalEntity.handle} is now following you`;
   const body = 'View profile';
-  const imageUrl = additionalEntity.pfp_url;
+  const imageUrl = additionalEntity.pfp;
   const data = {
     redirect: 'profile',
     handle: additionalEntity.normalised_handle
@@ -132,19 +132,21 @@ async function handleIdentitySubscribed(additionalEntity: Profile) {
 
 async function handleIdentityMentioned(
   notification: IdentityNotificationEntity,
-  additionalEntity: Profile
+  additionalEntity: ApiIdentity
 ) {
-  const userProfile = await profilesService.getProfileById(
-    notification.identity_id
-  );
-  if (!userProfile) {
+  const userProfile =
+    await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+      { identityKey: notification.identity_id },
+      {}
+    );
+  if (!userProfile?.id) {
     throw new Error(`[ID ${notification.id}] User profile not found`);
   }
-  const dropPartMention = await getDropPart(notification, userProfile.handle);
+  const dropPartMention = await getDropPart(notification, userProfile.handle!);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const title = `${additionalEntity.handle} mentioned you`;
   const body = dropPartMention?.content ?? 'View drop';
-  const imageUrl = additionalEntity.pfp_url;
+  const imageUrl = additionalEntity.pfp;
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
@@ -155,12 +157,12 @@ async function handleIdentityMentioned(
 
 async function handleDropQuoted(
   notification: IdentityNotificationEntity,
-  additionalEntity: Profile
+  additionalEntity: ApiIdentity
 ) {
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const title = `${additionalEntity.handle} quoted you`;
-  const imageUrl = additionalEntity.pfp_url;
+  const imageUrl = additionalEntity.pfp;
   const body = dropPart?.content ?? 'View drop';
   const data = {
     redirect: 'waves',
@@ -172,13 +174,13 @@ async function handleDropQuoted(
 
 async function handleDropReplied(
   notification: IdentityNotificationEntity,
-  additionalEntity: Profile
+  additionalEntity: ApiIdentity
 ) {
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const title = `${additionalEntity.handle} replied to your drop`;
   const body = dropPart?.content ?? 'View drop';
-  const imageUrl = additionalEntity.pfp_url;
+  const imageUrl = additionalEntity.pfp;
   const data = {
     redirect: 'waves',
     wave_id: notification.wave_id,
@@ -189,7 +191,7 @@ async function handleDropReplied(
 
 async function handleDropVoted(
   notification: IdentityNotificationEntity,
-  additionalEntity: Profile
+  additionalEntity: ApiIdentity
 ) {
   const vote = (notification.additional_data as any).vote;
   if (!vote) {
@@ -198,7 +200,7 @@ async function handleDropVoted(
   const title = `${additionalEntity.handle} rated your drop: ${
     vote > 0 ? '+' : '-'
   }${Math.abs(vote)}`;
-  const imageUrl = additionalEntity.pfp_url;
+  const imageUrl = additionalEntity.pfp;
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
   const body = dropPart?.content ?? 'View drop';
@@ -217,8 +219,14 @@ async function getAdditionalIdOrThrow(
   if (!additionalId) {
     throw new Error(`[ID ${notification.id}] Additional id not found`);
   }
-  const additionalProfile = await profilesService.getProfileById(additionalId);
-  if (!additionalProfile) {
+  const additionalProfile =
+    await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+      {
+        identityKey: additionalId
+      },
+      {}
+    );
+  if (!additionalProfile?.id) {
     throw new Error(`[ID ${notification.id}] Additional profile not found`);
   }
   return additionalProfile;
@@ -251,7 +259,7 @@ async function getDropSerialNo(dropId: string | null) {
 
 async function handleWaveCreated(
   notification: IdentityNotificationEntity,
-  additionalEntity: Profile
+  additionalEntity: ApiIdentity
 ) {
   const wave = await getWaveEntityOrThrow(
     notification.id,
@@ -286,7 +294,7 @@ async function getWaveEntityOrThrow(
 
 async function handleAllDrops(
   notification: IdentityNotificationEntity,
-  additionalEntity: Profile
+  additionalEntity: ApiIdentity
 ) {
   const wave = await getWaveEntityOrThrow(
     notification.id,
@@ -295,7 +303,7 @@ async function handleAllDrops(
   const isRating =
     typeof (notification.additional_data as any).vote === 'number';
 
-  let title = '';
+  let title;
   if (isRating) {
     const vote = (notification.additional_data as any).vote;
     title = `${additionalEntity.handle} rated a drop: ${
@@ -309,7 +317,7 @@ async function handleAllDrops(
 
   const dropPart = await getDropPart(notification);
   const dropSerialNo = await getDropSerialNo(notification.related_drop_id);
-  const imageUrl = wave.picture ?? additionalEntity.pfp_url;
+  const imageUrl = wave.picture ?? additionalEntity.pfp;
   const body = dropPart?.content ?? 'View drop';
   const data = {
     redirect: 'waves',
