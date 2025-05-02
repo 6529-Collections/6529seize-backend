@@ -100,7 +100,7 @@ export class RatingsService {
       profile_id,
       matter
     });
-    const tdh = await this.profilesDb.getProfileTdh(profile_id);
+    const tdh = await identitiesDb.getProfileTdh(profile_id);
     return tdh - ratesSpent;
   }
 
@@ -207,7 +207,7 @@ export class RatingsService {
           connection
         );
       }
-      const profileTdh = await this.profilesDb.getProfileTdh(profileId);
+      const profileTdh = await identitiesDb.getProfileTdh(profileId);
       if (totalTdhSpentOnMatter + tdhSpentOnThisRequest > profileTdh) {
         throw new BadRequestException(
           `Not enough TDH left to spend on this matter. Changing this vote would spend ${tdhSpentOnThisRequest} TDH, but profile only has ${
@@ -529,7 +529,7 @@ export class RatingsService {
     connectionHolder: ConnectionWrapper<any>
   ) {
     let page = 1;
-    const { sourceProfileHandle, targetProfileHandle } = await profilesDb
+    const { sourceProfileHandle, targetProfileHandle } = await identitiesDb
       .getProfileHandlesByIds([sourceProfileId, targetProfileId], {
         connection: connectionHolder
       })
@@ -655,23 +655,6 @@ export class RatingsService {
         skipLogCreation: true
       });
     }
-  }
-
-  async getSummedRatingsOnMatterByTargetIds({
-    matter_target_ids,
-    matter
-  }: {
-    matter_target_ids: string[];
-    matter: RateMatter;
-  }): Promise<Record<string, number>> {
-    const results = await this.ratingsDb.getSummedRatingsOnMatterByTargetIds({
-      matter_target_ids,
-      matter
-    });
-    return matter_target_ids.reduce((acc, id) => {
-      acc[id] = results.find((it) => it.matter_target_id === id)?.rating ?? 0;
-      return acc;
-    }, {} as Record<string, number>);
   }
 
   async getAllRatingsForMatterOnProfileGroupedByCategories(param: {
@@ -977,7 +960,7 @@ export class RatingsService {
     rater_id: string;
     rater_representative_id: string | null;
   }): Promise<ApiAvailableRatingCredit> {
-    const currentTdh = await this.profilesDb.getProfileTdh(rater_id);
+    const currentTdh = await identitiesDb.getProfileTdh(rater_id);
     const [repSpent, cicSpent] = await Promise.all([
       this.ratingsDb.getRatesSpentOnMatterByProfile({
         profile_id: rater_id,

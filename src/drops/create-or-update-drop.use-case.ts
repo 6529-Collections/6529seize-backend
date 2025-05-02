@@ -68,6 +68,7 @@ import {
   DropVotingDb
 } from '../api-serverless/src/drops/drop-voting.db';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
+import { identitiesDb } from '../identities/identities.db';
 
 export class CreateOrUpdateDropUseCase {
   public constructor(
@@ -792,7 +793,7 @@ export class CreateOrUpdateDropUseCase {
 
     const mentionedHandles = model.mentioned_users.map((it) => it.handle);
     const mentionedHandlesWithIds = Object.entries(
-      await this.profilesDb.getIdsByHandles(mentionedHandles, connection)
+      await identitiesDb.getIdsByHandles(mentionedHandles, connection)
     );
     const dropId = model.drop_id!;
     const waveId = model.wave_id;

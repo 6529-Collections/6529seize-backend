@@ -1,16 +1,9 @@
 import { ratingsDb, RatingsDb } from '../../../rates/ratings.db';
 import { RateMatter } from '../../../entities/IRating';
-import {
-  repScoreAggregationDb,
-  RepScoreAggregationDb
-} from '../../../aggregations/rep-score-aggregation.db';
 import { ConnectionWrapper } from '../../../sql-executor';
 
 export class RepService {
-  constructor(
-    private readonly ratingsDb: RatingsDb,
-    private readonly repScoreAggregationDb: RepScoreAggregationDb
-  ) {}
+  constructor(private readonly ratingsDb: RatingsDb) {}
 
   async getRepForProfiles(
     profileIds: string[],
@@ -32,20 +25,6 @@ export class RepService {
       };
     }, {} as Record<string, number>);
   }
-
-  async getRepForProfile(
-    profileId: string,
-    connection?: ConnectionWrapper<any>
-  ): Promise<number> {
-    const foundRatings = await this.ratingsDb.getRatingsForTargetsOnMatters(
-      {
-        targetIds: [profileId],
-        matter: RateMatter.REP
-      },
-      connection
-    );
-    return foundRatings.at(0)?.rating ?? 0;
-  }
 }
 
-export const repService = new RepService(ratingsDb, repScoreAggregationDb);
+export const repService = new RepService(ratingsDb);

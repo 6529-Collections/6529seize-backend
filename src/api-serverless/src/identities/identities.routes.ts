@@ -16,7 +16,6 @@ import { ApiIdentitySubscriptionActions } from '../generated/models/ApiIdentityS
 import * as Joi from 'joi';
 import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
 import { identitiesService } from './identities.service';
-import { profilesService } from '../../../profiles/profiles.service';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
 import { Timer } from '../../../time';
 import { parseIntOrNull } from '../../../helpers';
@@ -56,7 +55,7 @@ router.get(
     }
     const wave_id = req.query.wave_id ?? null;
     const group_id = req.query.group_id ?? null;
-    const profiles = await profilesService.searchIdentities(
+    const profiles = await identitiesService.searchIdentities(
       { handle, limit, wave_id, group_id },
       { authenticationContext, timer }
     );

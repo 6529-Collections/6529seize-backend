@@ -17,6 +17,7 @@ import {
 } from '../identity-subscriptions/identity-subscriptions.db';
 import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
 import { NotFoundException } from '../../../exceptions';
+import { ApiCommunityMemberMinimal } from '../generated/models/ApiCommunityMemberMinimal';
 
 export class IdentityFetcher {
   constructor(
@@ -52,14 +53,15 @@ export class IdentityFetcher {
     { identityKey }: { identityKey: string },
     ctx: RequestContext
   ): Promise<ApiIdentity | null> {
-    if (UUID_REGEX.exec(identityKey)) {
-      return this.getIdentityAndConsolidationsByProfileId(identityKey, ctx);
-    } else if (identityKey.endsWith('.eth')) {
-      return await this.getIdentityAndConsolidationsByEnsName(identityKey, ctx);
-    } else if (WALLET_REGEX.exec(identityKey)) {
-      return await this.getIdentityAndConsolidationsByWallet(identityKey, ctx);
+    const key = identityKey.toLowerCase();
+    if (UUID_REGEX.exec(key)) {
+      return this.getIdentityAndConsolidationsByProfileId(key, ctx);
+    } else if (key.endsWith('.eth')) {
+      return await this.getIdentityAndConsolidationsByEnsName(key, ctx);
+    } else if (WALLET_REGEX.exec(key)) {
+      return await this.getIdentityAndConsolidationsByWallet(key, ctx);
     }
-    return await this.getIdentityAndConsolidationsByHandle(identityKey, ctx);
+    return await this.getIdentityAndConsolidationsByHandle(key, ctx);
   }
 
   public async getOverviewsByIds(
@@ -316,6 +318,113 @@ export class IdentityFetcher {
       sub_classification: identity.sub_classification,
       consolidation_key: identity.consolidation_key,
       query: query
+    };
+  }
+
+  async searchCommunityMemberMinimalsOfClosestMatches({
+    param,
+    onlyProfileOwners,
+    limit
+  }: {
+    param: string;
+    onlyProfileOwners: boolean;
+    limit: number;
+  }): Promise<ApiCommunityMemberMinimal[]> {
+    if (param.length < 3 || param.length > 100) {
+      return [];
+    }
+    if (WALLET_REGEX.exec(param)) {
+      const communityMember = await this.searchCommunityMemberByWallet(
+        param,
+        onlyProfileOwners
+      );
+      return communityMember ? [communityMember] : [];
+    } else {
+      const membersByHandles =
+        await this.identitiesDb.searchCommunityMembersWhereHandleLike({
+          handle: param,
+          limit: limit * 3
+        });
+      const profilesByEnsNames =
+        await this.identitiesDb.searchCommunityMembersWhereEnsLike({
+          ensCandidate: param,
+          onlyProfileOwners,
+          limit: limit * 3
+        });
+      const members = [...membersByHandles, ...profilesByEnsNames]
+        .reduce((acc, prof) => {
+          const profDisplay = prof.handle ?? prof.ens ?? prof.primary_address;
+          if (
+            !acc.find((it) => {
+              const itDisplay = it.handle ?? it.ens ?? it.primary_address;
+              return itDisplay === profDisplay;
+            })
+          ) {
+            acc.push(prof);
+          }
+          return acc;
+        }, [] as (IdentityEntity & { ens: string })[])
+        .sort((a, d) => {
+          if (a.handle && !d.handle) {
+            return -1;
+          } else if (!a.handle && d.handle) {
+            return 1;
+          }
+          return d.tdh - a.tdh;
+        })
+        .slice(0, limit);
+      return members.map((member) => {
+        return {
+          profile_id: member.profile_id,
+          handle: member.handle,
+          normalised_handle: member.normalised_handle,
+          primary_wallet: member.primary_address,
+          tdh: +member.tdh,
+          level: getLevelFromScore(+member.level_raw),
+          cic_rating: +member.cic,
+          display: member.handle ?? member.ens ?? member.primary_address,
+          wallet: member.primary_address,
+          pfp: member.pfp
+        };
+      });
+    }
+  }
+
+  private async searchCommunityMemberByWallet(
+    wallet: string,
+    onlyProfileOwners: boolean
+  ): Promise<ApiCommunityMemberMinimal | null> {
+    const identity =
+      await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+        { identityKey: wallet },
+        {}
+      );
+    if (!identity || (onlyProfileOwners && !identity.id)) {
+      return null;
+    }
+    let display = identity.display;
+    if (!display && !identity.id) {
+      return null;
+    }
+    if (!display) {
+      const wallets = await this.identitiesDb.getPrediscoveredEnsNames(
+        [identity.primary_wallet],
+        {}
+      );
+      const walletResp = wallets.at(0);
+      display = walletResp?.ens ?? wallet;
+    }
+    return {
+      profile_id: identity.id,
+      handle: identity.handle,
+      normalised_handle: identity.normalised_handle,
+      primary_wallet: identity.primary_wallet,
+      tdh: identity.tdh,
+      level: identity.level,
+      cic_rating: identity.cic,
+      display: display,
+      pfp: identity.pfp,
+      wallet
     };
   }
 }

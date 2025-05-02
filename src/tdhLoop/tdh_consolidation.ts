@@ -20,12 +20,6 @@ import {
   getAdjustedMemesAndSeasons,
   getGenesisAndNaka
 } from './tdh';
-import {
-  ADDRESS_CONSOLIDATION_KEY,
-  CONSOLIDATED_WALLETS_TDH_TABLE,
-  WALLET_REGEX
-} from '../constants';
-import { ConnectionWrapper, sqlExecutor } from '../sql-executor';
 import { Logger } from '../logging';
 import { NextGenToken } from '../entities/INextGen';
 import { fetchNextgenTokens } from '../nextgen/nextgen.db';
@@ -33,55 +27,6 @@ import { calculateMemesTdh } from './tdh_memes';
 import { updateNftTDH } from './tdh_nft';
 
 const logger = Logger.get('TDH_CONSOLIDATION');
-
-export async function getWalletTdhAndConsolidatedWallets(
-  wallet: string,
-  connection?: ConnectionWrapper<any>
-): Promise<{
-  tdh: number;
-  consolidatedWallets: string[];
-  blockNo: number;
-  consolidation_key: string | null;
-  consolidation_display: string | null;
-  balance: number;
-}> {
-  if (!WALLET_REGEX.exec(wallet)) {
-    return {
-      tdh: 0,
-      consolidatedWallets: [],
-      blockNo: 0,
-      consolidation_display: null,
-      consolidation_key: null,
-      balance: 0
-    };
-  }
-  const opts = connection ? { wrappedConnection: connection } : {};
-  const tdhSqlResult = await sqlExecutor.execute(
-    `
-    select t.consolidation_key, t.consolidation_display, t.block, t.boosted_tdh as tdh, t.balance, t.wallets
-    from ${ADDRESS_CONSOLIDATION_KEY} a
-             join ${CONSOLIDATED_WALLETS_TDH_TABLE} t on t.consolidation_key = a.consolidation_key
-    where a.address = :wallet
-    `,
-    { wallet: wallet.toLowerCase() },
-    opts
-  );
-  const row = tdhSqlResult?.at(0);
-  const consolidatedWallets = JSON.parse(row?.wallets ?? '[]').map(
-    (w: string) => w.toLowerCase()
-  );
-  if (!consolidatedWallets.includes(wallet.toLowerCase())) {
-    consolidatedWallets.push(wallet.toLowerCase());
-  }
-  return {
-    consolidation_key: row?.consolidation_key ?? null,
-    consolidation_display: row?.consolidation_display ?? null,
-    tdh: row?.tdh ?? 0,
-    consolidatedWallets: consolidatedWallets,
-    blockNo: row?.block ?? 0,
-    balance: row?.balance ?? 0
-  };
-}
 
 export async function consolidateTDHForWallets(
   tdh: TDHENS[],

@@ -50,7 +50,6 @@ import {
   ConsolidatedAggregatedActivityMemes
 } from '../entities/IAggregatedActivity';
 import { consolidateSubscriptions } from '../subscriptionsDaily/subscriptions';
-import { profilesService } from '../profiles/profiles.service';
 import {
   syncIdentitiesMetrics,
   syncIdentitiesPrimaryWallets,
@@ -58,6 +57,7 @@ import {
 } from '../identity';
 import { doInDbContext } from '../secrets';
 import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
+import { identitiesService } from '../api-serverless/src/identities/identities.service';
 
 const logger = Logger.get('DELEGATIONS_LOOP');
 
@@ -237,6 +237,6 @@ async function updatePrimaryAddresses(events: DelegationEvent[]) {
     wallets.add(c.wallet1.toLowerCase());
   });
 
-  await profilesService.updatePrimaryAddresses(wallets);
+  await identitiesService.updatePrimaryAddresses(wallets);
   logger.info(`[UPDATED PRIMARY ADDRESSES FOR ${wallets.size} WALLETS]`);
 }

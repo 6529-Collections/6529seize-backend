@@ -27,7 +27,6 @@ import {
   NewDropSchema,
   UpdateDropSchema
 } from './drop.validator';
-import { profilesService } from '../../../profiles/profiles.service';
 import { ApiDropSubscriptionActions } from '../generated/models/ApiDropSubscriptionActions';
 import { ApiDropSubscriptionTargetAction } from '../generated/models/ApiDropSubscriptionTargetAction';
 import { Timer } from '../../../time';
@@ -449,9 +448,14 @@ async function assertDropIsCorrectlySigned(
       if (!signature) {
         throw new BadRequestException(`Drop is missing a signature`);
       }
-      const wallets = await profilesService.getAllWalletsByProfileId(
-        authorProfileId
-      );
+      const wallets = await identityFetcher
+        .getIdentityAndConsolidationsByIdentityKey(
+          {
+            identityKey: authorProfileId
+          },
+          {}
+        )
+        .then((it) => it?.wallets?.map((w) => w.wallet) ?? []);
       const isDropCorrectlySigned =
         dropSignatureVerifier.isDropSignedByAnyOfGivenWallets({
           wallets,

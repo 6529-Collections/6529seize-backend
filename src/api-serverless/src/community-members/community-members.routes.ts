@@ -10,10 +10,6 @@ import { getValidatedByJoiOrThrow } from '../validation';
 import * as Joi from 'joi';
 import { ApiResponse } from '../api-response';
 import {
-  CommunityMemberMinimal,
-  profilesService
-} from '../../../profiles/profiles.service';
-import {
   CommunityMemberOverview,
   CommunityMembersQuery,
   CommunityMembersSortOption
@@ -21,6 +17,8 @@ import {
 import { communityMembersService } from './community-members.service';
 import { getAuthenticationContext, maybeAuthenticatedUser } from '../auth/auth';
 import { Timer } from '../../../time';
+import { ApiCommunityMemberMinimal } from '../generated/models/ApiCommunityMemberMinimal';
+import { identityFetcher } from '../identities/identity.fetcher';
 
 const router = asyncRouter();
 
@@ -37,7 +35,7 @@ router.get(
       },
       any
     >,
-    res: Response<ApiResponse<CommunityMemberMinimal[]>>
+    res: Response<ApiResponse<ApiCommunityMemberMinimal[]>>
   ) {
     const param = req.query.param?.toLowerCase();
     const onlyProfileOwners = req.query.only_profile_owners === 'true';
@@ -46,7 +44,7 @@ router.get(
       res.send([]);
     } else {
       const results =
-        await profilesService.searchCommunityMemberMinimalsOfClosestMatches({
+        await identityFetcher.searchCommunityMemberMinimalsOfClosestMatches({
           param,
           onlyProfileOwners,
           limit: 10
