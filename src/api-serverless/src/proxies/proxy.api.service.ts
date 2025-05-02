@@ -19,10 +19,6 @@ import { assertUnreachable } from '../../../helpers';
 import { ApiProfileProxy } from '../generated/models/ApiProfileProxy';
 import { profileProxiesMapper, ProfileProxiesMapper } from './proxies.mapper';
 import { AcceptActionRequestActionEnum } from '../generated/models/AcceptActionRequest';
-import {
-  profileActivityLogsDb,
-  ProfileActivityLogsDb
-} from '../../../profileActivityLogs/profile-activity-logs.db';
 import { ProfileActivityLogType } from '../../../entities/IProfileActivityLog';
 import { ApiProfileProxyActionType } from '../generated/models/ApiProfileProxyActionType';
 import { ApiProfileProxyAction } from '../generated/models/ApiProfileProxyAction';
@@ -31,6 +27,7 @@ import {
   IdentityFetcher
 } from '../identities/identity.fetcher';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
+import { profileActivityLogsDb } from '../../../profileActivityLogs/profile-activity-logs.db';
 
 const ACTION_MAP: Record<ApiProfileProxyActionType, ProfileProxyActionType> = {
   [ApiProfileProxyActionType.AllocateRep]: ProfileProxyActionType.ALLOCATE_REP,
@@ -62,8 +59,7 @@ export class ProfileProxyApiService {
   constructor(
     private readonly identityFetcher: IdentityFetcher,
     private readonly profileProxiesDb: ProfileProxiesDb,
-    private readonly profileProxiesMapper: ProfileProxiesMapper,
-    private readonly profileActivityLogsDb: ProfileActivityLogsDb
+    private readonly profileProxiesMapper: ProfileProxiesMapper
   ) {}
 
   private async getTargetOrThrow({
@@ -149,7 +145,7 @@ export class ProfileProxyApiService {
           profileProxy: createProfileProxyRequest,
           connection
         });
-        await this.profileActivityLogsDb.insert(
+        await profileActivityLogsDb.insert(
           {
             profile_id: createProfileProxyRequest.created_by,
             contents: JSON.stringify({
@@ -366,7 +362,7 @@ export class ProfileProxyApiService {
             profileProxyAction,
             connection
           });
-        await this.profileActivityLogsDb.insert(
+        await profileActivityLogsDb.insert(
           {
             profile_id: proxy.created_by.id,
             contents: JSON.stringify({
@@ -580,7 +576,7 @@ export class ProfileProxyApiService {
           connection,
           is_active
         });
-        await this.profileActivityLogsDb.insert(
+        await profileActivityLogsDb.insert(
           {
             profile_id: proxy.granted_to.id,
             contents: JSON.stringify({
@@ -623,7 +619,7 @@ export class ProfileProxyApiService {
           action_id,
           connection
         });
-        await this.profileActivityLogsDb.insert(
+        await profileActivityLogsDb.insert(
           {
             profile_id: proxy.granted_to.id,
             contents: JSON.stringify({
@@ -666,7 +662,7 @@ export class ProfileProxyApiService {
           action_id,
           connection
         });
-        await this.profileActivityLogsDb.insert(
+        await profileActivityLogsDb.insert(
           {
             profile_id: proxy.created_by.id,
             contents: JSON.stringify({
@@ -711,7 +707,7 @@ export class ProfileProxyApiService {
           connection,
           is_active
         });
-        await this.profileActivityLogsDb.insert(
+        await profileActivityLogsDb.insert(
           {
             profile_id: proxy.created_by.id,
             contents: JSON.stringify({
@@ -803,7 +799,7 @@ export class ProfileProxyApiService {
           end_time,
           connection
         });
-        await this.profileActivityLogsDb.insert(
+        await profileActivityLogsDb.insert(
           {
             profile_id: profileProxy.created_by.id,
             contents: JSON.stringify({
@@ -844,6 +840,5 @@ export function isProxyActionActive(action: ApiProfileProxyAction): boolean {
 export const profileProxyApiService = new ProfileProxyApiService(
   identityFetcher,
   profileProxiesDb,
-  profileProxiesMapper,
-  profileActivityLogsDb
+  profileProxiesMapper
 );

@@ -1,10 +1,7 @@
 import { cicDb, CicDb } from './cic.db';
 import { CicStatement, CicStatementGroup } from '../entities/ICICStatement';
 import { BadRequestException, NotFoundException } from '../exceptions';
-import {
-  profileActivityLogsDb,
-  ProfileActivityLogsDb
-} from '../profileActivityLogs/profile-activity-logs.db';
+import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { ConnectionWrapper } from '../sql-executor';
 import {
@@ -171,7 +168,6 @@ export class CicService {
 
   constructor(
     private readonly cicDb: CicDb,
-    private readonly profileActivityLogsDb: ProfileActivityLogsDb,
     private readonly abusivenessCheckService: AbusivenessCheckService
   ) {}
 
@@ -282,7 +278,7 @@ export class CicService {
       connection
     );
     if (!skipLogCreation) {
-      await this.profileActivityLogsDb.insert(
+      await profileActivityLogsDb.insert(
         {
           profile_id: statement.profile_id,
           target_id: null,
@@ -319,7 +315,7 @@ export class CicService {
       connection
     );
     if (!skipLogCreation) {
-      await this.profileActivityLogsDb.insert(
+      await profileActivityLogsDb.insert(
         {
           profile_id: cicStatement.profile_id,
           target_id: null,
@@ -340,8 +336,4 @@ export class CicService {
   }
 }
 
-export const cicService = new CicService(
-  cicDb,
-  profileActivityLogsDb,
-  abusivenessCheckService
-);
+export const cicService = new CicService(cicDb, abusivenessCheckService);

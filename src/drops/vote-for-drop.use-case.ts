@@ -17,10 +17,7 @@ import {
   UserGroupsService
 } from '../api-serverless/src/community-members/user-groups.service';
 import { userNotifier, UserNotifier } from '../notifications/user.notifier';
-import {
-  profileActivityLogsDb,
-  ProfileActivityLogsDb
-} from '../profileActivityLogs/profile-activity-logs.db';
+import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-logs.db';
 import { WaveCreditType, WaveType } from '../entities/IWave';
 import { BadRequestException, ForbiddenException } from '../exceptions';
 import { DropType } from '../entities/IDrop';
@@ -34,8 +31,7 @@ export class VoteForDropUseCase {
     private readonly dropsDb: DropsDb,
     private readonly ratingsDb: RatingsDb,
     private readonly userGroupsService: UserGroupsService,
-    private readonly userNotifier: UserNotifier,
-    private readonly profileActivityLogsDb: ProfileActivityLogsDb
+    private readonly userNotifier: UserNotifier
   ) {}
 
   public async execute(
@@ -187,7 +183,7 @@ export class VoteForDropUseCase {
         },
         ctx
       ),
-      this.profileActivityLogsDb.insert(
+      profileActivityLogsDb.insert(
         {
           profile_id: voter_id,
           type: ProfileActivityLogType.DROP_VOTE_EDIT,
@@ -228,6 +224,5 @@ export const voteForDropUseCase = new VoteForDropUseCase(
   dropsDb,
   ratingsDb,
   userGroupsService,
-  userNotifier,
-  profileActivityLogsDb
+  userNotifier
 );
