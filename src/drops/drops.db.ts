@@ -439,6 +439,50 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     return this.db.execute(sql, params);
   }
 
+  async findLatestDropsWithPartsAndMedia(
+    {
+      min_serial_no,
+      max_serial_no,
+      group_ids_user_is_eligible_for,
+      wave_id
+    }: {
+      min_serial_no: number;
+      max_serial_no: number | null;
+      group_ids_user_is_eligible_for: string[];
+      wave_id: string | null;
+    },
+    ctx: RequestContext
+  ): Promise<DropWithMediaAndPart[]> {
+    const maxSerialNo = max_serial_no ?? Number.MAX_SAFE_INTEGER;
+    const sql = `select d.*, 
+    dp.drop_part_id as part_drop_part_id,
+    dp.content as part_content,
+    dp.quoted_drop_id as part_quoted_drop_id,
+    dm.id as media_id,
+    dm.drop_part_id as media_drop_part_id,
+    dm.url as media_url,
+    dm.mime_type as media_mime_type
+    from ${DROPS_TABLE} d
+         left join ${DROPS_PARTS_TABLE} dp on dp.drop_id = d.id
+         left join ${DROP_MEDIA_TABLE} dm on dm.drop_id = d.id
+         join ${WAVES_TABLE} w on d.wave_id = w.id and (${
+      group_ids_user_is_eligible_for.length
+        ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
+        : ``
+    } w.visibility_group_id is null) ${wave_id ? `and w.id = :wave_id` : ``}
+         where d.serial_no <= :maxSerialNo and d.serial_no >= :minSerialNo 
+          order by d.serial_no desc`;
+    const params: Record<string, any> = {
+      minSerialNo: min_serial_no,
+      maxSerialNo: maxSerialNo,
+      groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
+      wave_id
+    };
+    return this.db.execute<DropWithMediaAndPart>(sql, params, {
+      wrappedConnection: ctx.connection
+    });
+  }
+
   async findLatestDropsSimple(
     {
       amount,
@@ -1478,5 +1522,15 @@ export interface DropVotersStatsParams {
   readonly sort_direction: PageSortDirection;
   readonly sort: DropVotersStatsSort;
 }
+
+export type DropWithMediaAndPart = DropEntity & {
+  part_drop_part_id: number | null;
+  part_content: string | null;
+  part_quoted_drop_id: string | null;
+  media_id: number | null;
+  media_drop_part_id: number | null;
+  media_url: string | null;
+  media_mime_type: string | null;
+};
 
 export const dropsDb = new DropsDb(dbSupplier, userGroupsService);

@@ -229,6 +229,43 @@ paths:
                 $ref: "#/components/schemas/ApiRedeemRefreshTokenResponse"
         "400":
           description: Invalid request
+  /light-drops:
+    get:
+      tags:
+        - Drops
+      summary: Get light drops
+      operationId: getLightDrops
+      parameters:
+        - name: min_serial_no
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: max_serial_no
+          in: query
+          required: false
+          description: Latest message if null
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: wave_id
+          in: query
+          description: Drops in wave with given ID
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ApiLightDrop"
   /drops:
     get:
       tags:
@@ -3811,6 +3848,44 @@ components:
             - signature (+ wave.participation.terms if it exists))))
           type: string
           nullable: true
+    ApiLightDrop:
+      type: object
+      required:
+        - id
+        - serial_no
+        - drop_type
+        - part_1_text
+        - part_1_media_url
+        - part_1_media_mime_type
+        - has_quote
+        - is_reply_drop
+        - title
+      properties:
+        id:
+          type: string
+        serial_no:
+          description: Sequence number of the drop in Seize
+          type: number
+          format: int64
+        drop_type:
+          $ref: "#/components/schemas/ApiDropType"
+        title:
+          type: string
+          maxLength: 250
+          nullable: true
+        part_1_text:
+          type: string
+          nullable: true
+        part_1_media_url:
+          type: string
+          nullable: true
+        part_1_media_mime_type:
+          type: string
+          nullable: true
+        has_quote:
+          type: boolean
+        is_reply_drop:
+          type: boolean
     ApiDrop:
       type: object
       required:
