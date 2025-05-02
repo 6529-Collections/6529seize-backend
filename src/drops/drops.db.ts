@@ -404,7 +404,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     },
     ctx: RequestContext
   ): Promise<DropEntity[]> {
-    const sqlAndParams = await this.userGroupsService.getSqlAndParamsByGroupId(
+    const sqlAndParams = await userGroupsService.getSqlAndParamsByGroupId(
       group_id,
       ctx
     );
