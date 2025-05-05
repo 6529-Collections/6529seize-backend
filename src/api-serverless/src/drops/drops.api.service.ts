@@ -109,9 +109,9 @@ export class DropsApiService {
   public async findLatestLightDrops(
     {
       waveId,
-      min_serial_no,
+      limit,
       max_serial_no
-    }: { waveId: string; min_serial_no: number; max_serial_no: number | null },
+    }: { waveId: string; limit: number; max_serial_no: number | null },
     ctx: RequestContext
   ): Promise<ApiLightDrop[]> {
     const authenticationContext = ctx.authenticationContext;
@@ -124,7 +124,7 @@ export class DropsApiService {
       );
     const entities = await this.dropsDb.findLatestDropsWithPartsAndMedia(
       {
-        min_serial_no,
+        limit,
         max_serial_no,
         group_ids_user_is_eligible_for,
         wave_id: waveId
