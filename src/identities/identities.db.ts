@@ -768,8 +768,11 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     addresses: string[],
     connection?: ConnectionWrapper<any>
   ): Promise<string[]> {
+    if (!addresses.length) {
+      return [];
+    }
     const result = await this.db.execute(
-      `select handle from ${IDENTITIES_TABLE} where primary_wallet in (:addresses)`,
+      `select handle from ${IDENTITIES_TABLE} where primary_address in (:addresses)`,
       { addresses },
       { wrappedConnection: connection }
     );
@@ -838,8 +841,8 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       select i.*,
              e.display as display
       from ${IDENTITIES_TABLE} i
-               left join ${ADDRESS_CONSOLIDATION_KEY} c on c.address = lower(e.wallet)
-               join ${ENS_TABLE} e on i.primary_address = e.wallet
+               join ${ADDRESS_CONSOLIDATION_KEY} a on i.consolidation_key = a.consolidation_key
+               left join ${ENS_TABLE} e on a.address = lower(e.wallet)
       where e.display like concat('%', :ensCandidate ,'%') 
       ${onlyProfileOwners ? ' and i.profile_id is not null ' : ''}
       order by i.tdh desc
