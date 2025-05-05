@@ -859,7 +859,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     const sql = `
       select
           i.*,
-          e.ens as wallet
+          e.display as ens
       from ${IDENTITIES_TABLE} i
            left join ${ENS_TABLE} e on lower(e.wallet) = i.primary_address
       where i.normalised_handle like concat('%', lower(:handle), '%')
