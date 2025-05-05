@@ -441,12 +441,12 @@ export class DropsDb extends LazyDbAccessCompatibleService {
 
   async findLatestDropsWithPartsAndMedia(
     {
-      min_serial_no,
+      limit,
       max_serial_no,
       group_ids_user_is_eligible_for,
       wave_id
     }: {
-      min_serial_no: number;
+      limit: number;
       max_serial_no: number | null;
       group_ids_user_is_eligible_for: string[];
       wave_id: string | null;
@@ -470,10 +470,10 @@ export class DropsDb extends LazyDbAccessCompatibleService {
         ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
         : ``
     } w.visibility_group_id is null) ${wave_id ? `and w.id = :wave_id` : ``}
-         where d.serial_no <= :maxSerialNo and d.serial_no >= :minSerialNo 
-          order by d.serial_no desc`;
+         where d.serial_no <= :maxSerialNo 
+          order by d.serial_no desc limit :limit`;
     const params: Record<string, any> = {
-      minSerialNo: min_serial_no,
+      limit,
       maxSerialNo: maxSerialNo,
       groupsUserIsEligibleFor: group_ids_user_is_eligible_for,
       wave_id
