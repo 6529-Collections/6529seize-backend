@@ -839,7 +839,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
              e.display as display
       from ${IDENTITIES_TABLE} i
                left join ${ADDRESS_CONSOLIDATION_KEY} c on c.address = lower(e.wallet)
-               join ${ENS_TABLE} i on i.primary_address = e.wallet
+               join ${ENS_TABLE} e on i.primary_address = e.wallet
       where e.display like concat('%', :ensCandidate ,'%') 
       ${onlyProfileOwners ? ' and i.profile_id is not null ' : ''}
       order by i.tdh desc
