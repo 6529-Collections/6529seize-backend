@@ -34,7 +34,7 @@ async function updateDistributionInfo() {
         FROM (
           SELECT contract, card_id, 1 AS tag  FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE card_name IS NULL
         UNION ALL
-        SELECT contract, card_id, 2 AS tag  FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE card_name = 'RUGGED'
+        SELECT contract, card_id, 2 AS tag  FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE card_name = ''
         UNION ALL
         SELECT contract, card_id, 3 AS tag  FROM ${DISTRIBUTION_NORMALIZED_TABLE} WHERE mint_date IS NULL
       ) AS u`
