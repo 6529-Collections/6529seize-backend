@@ -639,6 +639,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       handle: string | null;
       banner1: string | null;
       banner2: string | null;
+      primary_address: string;
     }[]
   > {
     if (profileIds.length === 0) {
@@ -646,7 +647,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     }
     return this.db.execute(
       `with prof_ids_w_latest_versions as (select external_id, max(id) as id from ${PROFILES_ARCHIVE_TABLE} group by 1)
-            select p.external_id as external_id, p.handle as handle, p.banner_1 as banner1, p.banner_2 as banner2
+            select p.external_id as external_id, p.handle as handle, p.banner_1 as banner1, p.banner_2 as banner2, p.primary_wallet as primary_address
             from ${PROFILES_ARCHIVE_TABLE} p
                      join prof_ids_w_latest_versions l on p.id = l.id
             where l.external_id in (:profileIds)`,

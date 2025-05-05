@@ -146,7 +146,8 @@ export class WsListenersNotifier {
       rep: identityEntity.rep,
       tdh: identityEntity.tdh,
       level: getLevelFromScore(identityEntity.level_raw),
-      archived: false
+      archived: false,
+      primary_address: identityEntity.primary_address
     };
     const now = Time.currentMillis();
     await Promise.all(

@@ -89,7 +89,8 @@ export class IdentityFetcher {
       level: getLevelFromScore(p.level_raw),
       pfp: p.pfp,
       archived: true,
-      subscribed_actions: subscribedActions[p.profile_id!] ?? []
+      subscribed_actions: subscribedActions[p.profile_id!] ?? [],
+      primary_address: p.primary_address
     }));
     const archivedProfiles = await this.identitiesDb
       .getNewestVersionHandlesOfArchivedProfiles(
@@ -106,6 +107,7 @@ export class IdentityFetcher {
           rep: 0,
           tdh: 0,
           level: 0,
+          primary_address: p.primary_address,
           pfp: null,
           archived: true,
           subscribed_actions: subscribedActions[p.external_id] ?? []

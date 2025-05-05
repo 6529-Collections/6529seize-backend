@@ -5268,6 +5268,7 @@ components:
         - rep
         - tdh
         - level
+        - primary_address
         - banner1_color
         - banner2_color
         - subscribed_actions
@@ -5300,6 +5301,8 @@ components:
         level:
           type: number
           format: int64
+        primary_address:
+          type: string
         subscribed_actions:
           type: array
           items:
