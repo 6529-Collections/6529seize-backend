@@ -8,7 +8,6 @@ import {
   WsConnectionRepository
 } from './ws-connection.repository';
 import { Time } from '../../../time';
-import { profilesService } from '../../../profiles/profiles.service';
 import http from 'http';
 import {
   ApiGatewayManagementApiClient,
@@ -16,6 +15,7 @@ import {
   PostToConnectionCommand
 } from '@aws-sdk/client-apigatewaymanagementapi';
 import { RequestContext } from '../../../request.context';
+import { identityFetcher } from '../identities/identity.fetcher';
 
 export class SocketNotAvailableException extends Error {
   constructor() {
@@ -289,12 +289,14 @@ export async function authenticateWebSocketJwtOrGetByConnectionId(
             jwtExpiry: Time.now().plusDays(1).toMillis()
           });
         }
-        return profilesService.getProfileByWallet(user.wallet).then((it) =>
-          resolve({
-            identityId: it?.profile?.external_id ?? ANON_USER_ID,
-            jwtExpiry: user.exp ?? Time.now().plusDays(1).toMillis()
-          })
-        );
+        return identityFetcher
+          .getProfileIdByIdentityKey({ identityKey: user.wallet }, {})
+          .then((it) =>
+            resolve({
+              identityId: it ?? ANON_USER_ID,
+              jwtExpiry: user.exp ?? Time.now().plusDays(1).toMillis()
+            })
+          );
       }
     )(req, res, () => {
       return resolve({

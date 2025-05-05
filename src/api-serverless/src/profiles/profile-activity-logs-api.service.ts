@@ -12,6 +12,7 @@ import { CountlessPage, PageRequest } from '../page-request';
 import { profilesDb, ProfilesDb } from '../../../profiles/profiles.db';
 import { RateMatter } from '../../../entities/IRating';
 import { RequestContext } from '../../../request.context';
+import { identitiesDb } from '../../../identities/identities.db';
 
 export interface ProfileActivityLogsSearchRequest {
   profileId?: string;
@@ -89,7 +90,7 @@ export class ProfileActivityLogsApiService {
       }
       return acc;
     }, [] as string[]);
-    const profilesHandlesByIds = await this.profilesDb.getProfileHandlesByIds(
+    const profilesHandlesByIds = await identitiesDb.getProfileHandlesByIds(
       profileIdsInLogs,
       ctx
     );

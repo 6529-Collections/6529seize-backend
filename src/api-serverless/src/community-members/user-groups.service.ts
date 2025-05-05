@@ -8,7 +8,6 @@ import {
   PROFILE_GROUPS_TABLE,
   RATINGS_TABLE
 } from '../../../constants';
-import { profilesService } from '../../../profiles/profiles.service';
 import {
   getLevelComponentsBorderByLevel,
   getLevelFromScore
@@ -57,6 +56,7 @@ import {
 } from '../../../groups/user-group-predicates';
 import { identityFetcher } from '../identities/identity.fetcher';
 import { ApiIdentity } from '../generated/models/ApiIdentity';
+import { identitiesDb } from '../../../identities/identities.db';
 
 export type NewUserGroupEntity = Omit<
   UserGroupEntity,
@@ -140,7 +140,7 @@ export class UserGroupsService {
     if (existingGroup) {
       return (await this.mapForApi([existingGroup], ctx))[0];
     }
-    const handles = await profilesService.getProfileHandlesByPrimaryWallets(
+    const handles = await identitiesDb.getHandlesByPrimaryWallets(
       identityAddresses,
       ctx.connection
     );

@@ -6,7 +6,6 @@ import {
 import { RateMatter, Rating } from '../entities/IRating';
 import {
   IDENTITIES_TABLE,
-  PROFILES_TABLE,
   RATINGS_SNAPSHOTS_TABLE,
   RATINGS_TABLE
 } from '../constants';
@@ -522,14 +521,14 @@ from grouped_rates r
     return this.db.execute(
       `
       select
-       rater_profile.external_id as rater_profile_id,
+       rater_profile.profile_id as rater_profile_id,
        rater_profile.handle as rater_profile,
-       target_profile.external_id as target_profile_id,
+       target_profile.profile_id as target_profile_id,
        target_profile.handle as target_profile,
        r.rating as rating
       from ${RATINGS_TABLE} r
-               join ${PROFILES_TABLE} rater_profile on rater_profile.external_id = r.rater_profile_id
-               join ${PROFILES_TABLE} target_profile on target_profile.external_id = r.matter_target_id
+               join ${IDENTITIES_TABLE} rater_profile on rater_profile.profile_id = r.rater_profile_id
+               join ${IDENTITIES_TABLE} target_profile on target_profile.profile_id = r.matter_target_id
       where r.matter = :matter
         and r.rating <> 0
       order by 2
@@ -547,15 +546,15 @@ from grouped_rates r
     return this.db.execute(
       `
       select
-       rater_profile.external_id as rater_profile_id,
+       rater_profile.profile_id as rater_profile_id,
        rater_profile.handle as rater_profile,
-       target_profile.external_id as target_profile_id,
+       target_profile.profile_id as target_profile_id,
        target_profile.handle as target_profile,
        r.matter_category as category,
        r.rating as rating
       from ${RATINGS_TABLE} r
-               join ${PROFILES_TABLE} rater_profile on rater_profile.external_id = r.rater_profile_id
-               join ${PROFILES_TABLE} target_profile on target_profile.external_id = r.matter_target_id
+               join ${IDENTITIES_TABLE} rater_profile on rater_profile.profile_id = r.rater_profile_id
+               join ${IDENTITIES_TABLE} target_profile on target_profile.profile_id = r.matter_target_id
       where r.matter = :matter
         and r.rating <> 0
       order by 2

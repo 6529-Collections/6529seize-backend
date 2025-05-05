@@ -1,20 +1,10 @@
 import { profilesDb, ProfilesDb } from './profiles.db';
-import { UUID_REGEX, WALLET_REGEX } from '../constants';
-import { getAlchemyInstance } from '../alchemy';
-import { Alchemy } from 'alchemy-sdk';
 import {
   CreateOrUpdateProfileCommand,
   ProfileAndConsolidations
 } from './profile.types';
-import { calculateLevel, getLevelFromScore } from './profile-level';
 import { Profile, ProfileClassification } from '../entities/IProfile';
-import * as tdh_consolidation from '../tdhLoop/tdh_consolidation';
-import * as tdhs from '../tdhLoop/tdh';
-import {
-  BadRequestException,
-  ForbiddenException,
-  NotFoundException
-} from '../exceptions';
+import { BadRequestException } from '../exceptions';
 import { ConnectionWrapper } from '../sql-executor';
 import { Logger } from '../logging';
 import { Time } from '../time';
@@ -27,24 +17,9 @@ import {
   ProfileActivityLogType
 } from '../entities/IProfileActivityLog';
 import { ratingsService, RatingsService } from '../rates/ratings.service';
-import { RateMatter } from '../entities/IRating';
 import { cicService, CicService } from '../cic/cic.service';
-import {
-  RepService,
-  repService
-} from '../api-serverless/src/profiles/rep.service';
 import { randomUUID } from 'crypto';
-import {
-  areEqualAddresses,
-  distinct,
-  replaceEmojisWithHex,
-  resolveEnum,
-  uniqueShortId
-} from '../helpers';
-import {
-  getDelegationPrimaryAddressForConsolidation,
-  getHighestTdhAddressForConsolidationKey
-} from '../delegationsLoop/db.delegations';
+import { distinct, resolveEnum, uniqueShortId } from '../helpers';
 import {
   profileProxiesDb,
   ProfileProxiesDb
@@ -66,11 +41,7 @@ import {
   DropVotingDb
 } from '../api-serverless/src/drops/drop-voting.db';
 import { ApiIdentity } from '../api-serverless/src/generated/models/ApiIdentity';
-import { userGroupsService } from '../api-serverless/src/community-members/user-groups.service';
-import { wavesApiDb } from '../api-serverless/src/waves/waves.api.db';
-import { ProfileProxyActionType } from '../entities/IProfileProxyAction';
 import { identitySubscriptionsDb } from '../api-serverless/src/identity-subscriptions/identity-subscriptions.db';
-import { ApiProfileClassification } from '../api-serverless/src/generated/models/ApiProfileClassification';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
 
 export class ProfilesService {
@@ -81,280 +52,68 @@ export class ProfilesService {
     private readonly ratingsService: RatingsService,
     private readonly profileProxiesDb: ProfileProxiesDb,
     private readonly cicService: CicService,
-    private readonly repService: RepService,
     private readonly userGroupsDb: UserGroupsDb,
     private readonly identitiesDb: IdentitiesDb,
     private readonly notificationsDb: IdentityNotificationsDb,
     private readonly clappingDb: ClappingDb,
-    private readonly dropVotingDb: DropVotingDb,
-    private readonly supplyAlchemy: () => Alchemy
+    private readonly dropVotingDb: DropVotingDb
   ) {}
-
-  public async getProfileHandlesByPrimaryWallets(
-    addresses: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<string[]> {
-    return this.profilesDb.getHandlesByPrimaryWallets(addresses, connection);
-  }
-
-  private async getProfileAndConsolidationsById(
-    id: string,
-    connection?: ConnectionWrapper<any>
-  ): Promise<ProfileAndConsolidations | null> {
-    const profile = await this.profilesDb.getProfileById(id, connection);
-    if (!profile) {
-      return null;
-    }
-    const primaryWallet = profile.primary_wallet;
-    const {
-      consolidatedWallets,
-      tdh,
-      blockNo,
-      consolidation_key,
-      consolidation_display,
-      balance
-    } = await this.getWalletTdhBlockNoAndConsolidatedWallets(
-      primaryWallet,
-      connection
-    );
-    const walletTdhs = await this.profilesDb.getWalletsTdhs(
-      {
-        wallets: consolidatedWallets,
-        blockNo
-      },
-      connection
-    );
-    const wallets = await this.profilesDb.getPrediscoveredEnsNames(
-      consolidatedWallets,
-      connection
-    );
-    const cic = await this.getCic(profile, connection);
-    const rep = await this.repService.getRepForProfile(
-      profile.external_id,
-      connection
-    );
-    return {
-      profile: profile ?? null,
-      consolidation: {
-        consolidation_key,
-        consolidation_display,
-        wallets: wallets.map((w) => ({
-          wallet: w,
-          tdh: walletTdhs[w.address]
-        })),
-        tdh
-      },
-      level: calculateLevel({ tdh, rep }),
-      rep,
-      cic,
-      balance,
-      input_identity: id
-    };
-  }
-
-  public async getProfileByEnsName(
-    query: string,
-    connection?: ConnectionWrapper<any>
-  ): Promise<ProfileAndConsolidations | null> {
-    const wallet = await this.supplyAlchemy().core.resolveName(query);
-    if (!wallet) {
-      return null;
-    }
-    const {
-      consolidatedWallets,
-      tdh,
-      blockNo,
-      consolidation_key,
-      consolidation_display,
-      balance
-    } = await this.getWalletTdhBlockNoAndConsolidatedWallets(
-      wallet,
-      connection
-    );
-    if (consolidatedWallets.length === 0) {
-      return null;
-    }
-    const profile = await this.getWalletsNewestProfile(wallet, connection);
-    const walletTdhs = await this.profilesDb.getWalletsTdhs(
-      {
-        wallets: consolidatedWallets,
-        blockNo
-      },
-      connection
-    );
-    const wallets = await this.profilesDb.getPrediscoveredEnsNames(
-      consolidatedWallets,
-      connection
-    );
-    const cic = await this.getCic(profile, connection);
-    const rep = profile?.external_id
-      ? await this.repService.getRepForProfile(profile.external_id, connection)
-      : 0;
-    return {
-      profile: profile ?? null,
-      consolidation: {
-        consolidation_key,
-        consolidation_display,
-        wallets: wallets.map((w) => ({
-          wallet: w,
-          tdh: walletTdhs[w.address]
-        })),
-        tdh
-      },
-      level: calculateLevel({ tdh, rep }),
-      rep,
-      cic,
-      balance,
-      input_identity: query
-    };
-  }
-
-  private async getCic(
-    profile: Profile | undefined,
-    connection?: ConnectionWrapper<any>
-  ) {
-    const profileId = profile?.external_id;
-    return profileId
-      ? await this.ratingsService
-          .getAggregatedRatingOnMatter(
-            {
-              rater_profile_id: null,
-              matter: RateMatter.CIC,
-              matter_target_id: profileId,
-              matter_category: RateMatter.CIC
-            },
-            connection
-          )
-          .then((res) => ({
-            cic_rating: res.rating,
-            contributor_count: res.contributor_count
-          }))
-      : { cic_rating: 0, contributor_count: 0 };
-  }
-
-  public async getProfileByWallet(
-    query: string,
-    connection?: ConnectionWrapper<any>
-  ): Promise<ProfileAndConsolidations | null> {
-    const {
-      consolidatedWallets,
-      tdh,
-      blockNo,
-      consolidation_key,
-      consolidation_display,
-      balance
-    } = await this.getWalletTdhBlockNoAndConsolidatedWallets(query, connection);
-    if (consolidatedWallets.length === 0) {
-      return null;
-    }
-    const profile = await this.getWalletsNewestProfile(query, connection);
-    const walletTdhs = await this.profilesDb.getWalletsTdhs(
-      {
-        wallets: consolidatedWallets,
-        blockNo
-      },
-      connection
-    );
-    const wallets = await this.profilesDb.getPrediscoveredEnsNames(
-      consolidatedWallets,
-      connection
-    );
-    const cic = await this.getCic(profile, connection);
-    const rep = profile?.external_id
-      ? await this.repService.getRepForProfile(profile?.external_id, connection)
-      : 0;
-    return {
-      profile: profile ?? null,
-      consolidation: {
-        consolidation_display,
-        consolidation_key,
-        wallets: wallets.map((w) => ({
-          wallet: w,
-          tdh: walletTdhs[w.address]
-        })),
-        tdh
-      },
-      level: calculateLevel({ tdh, rep }),
-      cic,
-      rep,
-      balance,
-      input_identity: query
-    };
-  }
-
-  public async getProfilesByWallets(
-    wallets: string[],
-    connection?: ConnectionWrapper<any>
-  ): Promise<Profile[]> {
-    return this.profilesDb.getProfilesByWallets(wallets, connection);
-  }
 
   public async getProfileAndConsolidationsByIdentity(
     identity: string,
     connection?: ConnectionWrapper<any>
   ): Promise<ProfileAndConsolidations | null> {
-    const query = identity.toLowerCase();
-    if (UUID_REGEX.exec(query)) {
-      return this.getProfileAndConsolidationsById(query, connection);
-    } else if (query.endsWith('.eth')) {
-      return await this.getProfileByEnsName(query, connection);
-    } else if (WALLET_REGEX.exec(query)) {
-      return await this.getProfileByWallet(query, connection);
-    } else {
-      const profile = await this.profilesDb.getProfileByHandle(
-        query,
-        connection
+    const apiIdentity =
+      await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+        { identityKey: identity },
+        { connection }
       );
-      if (!profile) {
-        return null;
-      }
-      const {
-        consolidatedWallets,
-        tdh,
-        blockNo,
-        consolidation_key,
-        consolidation_display,
-        balance
-      } = await tdh_consolidation.getWalletTdhAndConsolidatedWallets(
-        profile.primary_wallet.toLowerCase(),
-        connection
-      );
-      const walletTdhs = await tdhs.getWalletsTdhs(
-        {
-          wallets: consolidatedWallets,
-          blockNo
-        },
-        connection
-      );
-      const wallets = await this.profilesDb.getPrediscoveredEnsNames(
-        consolidatedWallets,
-        connection
-      );
-      const cic = await this.getCic(profile, connection);
-      const rep = profile?.external_id
-        ? await this.repService.getRepForProfile(
-            profile?.external_id,
-            connection
-          )
-        : 0;
-      return {
-        profile: profile ?? null,
-        consolidation: {
-          wallets: wallets.map((w) => ({
-            wallet: w,
-            tdh: walletTdhs[w.address]
-          })),
-          tdh,
-          consolidation_key,
-          consolidation_display
-        },
-        level: calculateLevel({ tdh, rep }),
-        cic,
-        rep,
-        balance,
-        input_identity: identity
+    if (!apiIdentity) {
+      return null;
+    }
+    let profile: Profile | null = null;
+    if (apiIdentity.id) {
+      profile = {
+        external_id: apiIdentity.id,
+        handle: apiIdentity.handle!,
+        normalised_handle: apiIdentity.normalised_handle!,
+        primary_wallet: apiIdentity.primary_wallet,
+        created_at: new Date(),
+        created_by_wallet: apiIdentity.primary_wallet,
+        updated_at: null,
+        pfp_url: apiIdentity.pfp ?? undefined,
+        banner_1: apiIdentity.banner1 ?? undefined,
+        banner_2: apiIdentity.banner2 ?? undefined,
+        classification: apiIdentity.classification
+          ? resolveEnum(
+              ProfileClassification,
+              apiIdentity.classification.toString()
+            ) ?? ProfileClassification.PSEUDONYM
+          : ProfileClassification.PSEUDONYM,
+        sub_classification: apiIdentity.sub_classification
       };
     }
+    return {
+      profile,
+      consolidation: {
+        wallets:
+          apiIdentity.wallets?.map((it) => ({
+            tdh: it.tdh,
+            wallet: {
+              address: it.wallet,
+              ens: it.display.endsWith(`.eth`) ? it.display : undefined
+            }
+          })) ?? [],
+        tdh: apiIdentity.tdh,
+        consolidation_key: apiIdentity.consolidation_key,
+        consolidation_display: apiIdentity.display
+      },
+      level: apiIdentity.level,
+      cic: { cic_rating: apiIdentity.cic, contributor_count: 100 },
+      rep: apiIdentity.rep,
+      balance: 0,
+      input_identity: identity
+    };
   }
 
   public async createOrUpdateProfile({
@@ -775,6 +534,81 @@ export class ProfilesService {
     }
   }
 
+  private async mergeProfileGroups(
+    sourceIdentity: string,
+    targetIdentity: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    const sourceGroups =
+      await this.userGroupsDb.findProfileGroupsWhereProfileIdIn(
+        sourceIdentity,
+        connectionHolder
+      );
+    const targetGroups =
+      await this.userGroupsDb.findProfileGroupsWhereProfileIdIn(
+        targetIdentity,
+        connectionHolder
+      );
+    const distinctGroups = distinct([...sourceGroups, ...targetGroups]);
+    if (distinctGroups) {
+      await this.userGroupsDb.deleteProfileIdsInProfileGroups(
+        [sourceIdentity, targetIdentity],
+        connectionHolder
+      );
+      await this.userGroupsDb.insertProfileIdsInProfileGroups(
+        targetIdentity,
+        distinctGroups,
+        connectionHolder
+      );
+    }
+  }
+
+  private async mergeNotifications(
+    sourceIdentity: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.notificationsDb.updateIdentityIdsInNotifications(
+      sourceIdentity,
+      target,
+      connectionHolder
+    );
+  }
+
+  private async mergeIdentitySubscriptions(
+    sourceIdentity: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await identitySubscriptionsDb.updateIdentityIdsInSubscriptions(
+      sourceIdentity,
+      target,
+      connectionHolder
+    );
+  }
+
+  private async mergeClappingStuff(
+    sourceIdentity: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.clappingDb.mergeOnProfileIdChange(
+      { previous_id: sourceIdentity, new_id: target },
+      { connection: connectionHolder }
+    );
+  }
+
+  private async mergeVotingStuff(
+    sourceIdentity: string,
+    target: string,
+    connectionHolder: ConnectionWrapper<any>
+  ) {
+    await this.dropVotingDb.mergeOnProfileIdChange(
+      { previous_id: sourceIdentity, new_id: target },
+      { connection: connectionHolder }
+    );
+  }
+
   private async createProfileEditLogs({
     profileId,
     profileBeforeChange,
@@ -895,83 +729,6 @@ export class ProfilesService {
     }
   }
 
-  private async getWalletsNewestProfile(
-    wallet: string,
-    connection?: ConnectionWrapper<any>
-  ): Promise<Profile | undefined> {
-    const { consolidatedWallets } =
-      await this.getWalletTdhBlockNoAndConsolidatedWallets(wallet);
-    const profiles = await this.getProfilesByWallets(
-      consolidatedWallets,
-      connection
-    );
-    return profiles
-      .sort((a, d) => d.created_at.getTime() - a.created_at.getTime())
-      .at(0);
-  }
-
-  private async getWalletTdhBlockNoAndConsolidatedWallets(
-    wallet: string,
-    connection?: ConnectionWrapper<any>
-  ): Promise<{
-    tdh: number;
-    consolidatedWallets: string[];
-    blockNo: number;
-    consolidation_key: string | null;
-    consolidation_display: string | null;
-    block_date: Date | null;
-    raw_tdh: number;
-    balance: number;
-  }> {
-    const normalisedWallet = wallet.toLowerCase();
-    if (!WALLET_REGEX.exec(normalisedWallet)) {
-      return {
-        tdh: 0,
-        consolidatedWallets: [],
-        blockNo: 0,
-        consolidation_key: null,
-        consolidation_display: null,
-        block_date: null,
-        raw_tdh: 0,
-        balance: 0
-      };
-    }
-    return this.profilesDb
-      .getConsolidationInfoForWallet(normalisedWallet, connection)
-      .then((resultRows) => {
-        if (!resultRows.length) {
-          return {
-            tdh: 0,
-            consolidatedWallets: [normalisedWallet],
-            blockNo: 0,
-            consolidation_key: null,
-            consolidation_display: null,
-            block_date: null,
-            raw_tdh: 0,
-            balance: 0
-          };
-        }
-        const result = resultRows[0];
-        if (
-          !result.wallets
-            .map((it) => it.toLowerCase())
-            .includes(normalisedWallet.toLowerCase())
-        ) {
-          result.wallets.push(normalisedWallet.toLowerCase());
-        }
-        return {
-          tdh: result.tdh,
-          consolidatedWallets: result.wallets.map((it) => it.toLowerCase()),
-          blockNo: result.blockNo,
-          consolidation_key: result.consolidation_key,
-          consolidation_display: result.consolidation_display,
-          block_date: result.block_date,
-          raw_tdh: result.raw_tdh,
-          balance: result.balance
-        };
-      });
-  }
-
   private async mergeProfileStatements(
     source: string,
     target: string,
@@ -1032,7 +789,7 @@ export class ProfilesService {
 
   private async mergeProxies(
     sourceProfile: string,
-    targetProfile: string,
+    _: string,
     connectionHolder: ConnectionWrapper<any>
   ) {
     await this.profileProxiesDb.deleteAllProxiesAndActionsForProfile(
@@ -1076,358 +833,6 @@ export class ProfilesService {
       connectionHolder
     );
   }
-
-  async searchCommunityMemberMinimalsOfClosestMatches({
-    param,
-    onlyProfileOwners,
-    limit
-  }: {
-    param: string;
-    onlyProfileOwners: boolean;
-    limit: number;
-  }): Promise<CommunityMemberMinimal[]> {
-    if (param.length < 3 || param.length > 100) {
-      return [];
-    }
-    if (WALLET_REGEX.exec(param)) {
-      const communityMember = await this.searchCommunityMemberByWallet(
-        param,
-        onlyProfileOwners
-      );
-      return communityMember ? [communityMember] : [];
-    } else {
-      const membersByHandles =
-        await this.profilesDb.searchCommunityMembersWhereHandleLike({
-          handle: param,
-          limit: limit * 3
-        });
-      const profilesByEnsNames =
-        await this.profilesDb.searchCommunityMembersWhereEnsLike({
-          ensCandidate: param,
-          onlyProfileOwners,
-          limit: limit * 3
-        });
-      const members = [...membersByHandles, ...profilesByEnsNames]
-        .reduce((acc, prof) => {
-          if (!acc.find((it) => it.display === prof.display)) {
-            acc.push(prof);
-          }
-          return acc;
-        }, [] as (Profile & { display: string; tdh: number; wallet: string })[])
-        .sort((a, d) => {
-          if (a.handle && !d.handle) {
-            return -1;
-          } else if (!a.handle && d.handle) {
-            return 1;
-          }
-          return d.tdh - a.tdh;
-        })
-        .slice(0, limit);
-      const profileIds = members
-        .map((it) => it.external_id)
-        .filter((it) => !!it);
-      const foundProfilesCicsByProfileIds =
-        await this.ratingsService.getSummedRatingsOnMatterByTargetIds({
-          matter: RateMatter.CIC,
-          matter_target_ids: profileIds
-        });
-      const profileRepsByProfileIds = await this.repService.getRepForProfiles(
-        profileIds
-      );
-      return members.map((member) => {
-        const cic = foundProfilesCicsByProfileIds[member.external_id];
-        return {
-          profile_id: member.external_id,
-          handle: member.handle,
-          normalised_handle: member.normalised_handle,
-          primary_wallet: member.primary_wallet,
-          tdh: member.tdh,
-          level: calculateLevel({
-            tdh: member.tdh,
-            rep: profileRepsByProfileIds[member.external_id] ?? 0
-          }),
-          cic_rating: cic ?? 0,
-          display: member.display,
-          wallet: member.wallet,
-          pfp: member.pfp_url ?? null
-        };
-      });
-    }
-  }
-
-  private async searchCommunityMemberByWallet(
-    wallet: string,
-    onlyProfileOwners: boolean
-  ): Promise<CommunityMemberMinimal | null> {
-    const profileAndConsolidationsInfo = await this.getProfileByWallet(wallet);
-    if (
-      !profileAndConsolidationsInfo ||
-      (onlyProfileOwners && !profileAndConsolidationsInfo.profile)
-    ) {
-      return null;
-    }
-    const { profile, consolidation, cic, level } = profileAndConsolidationsInfo;
-    let display = consolidation.consolidation_display;
-    if (!display && !profile) {
-      return null;
-    }
-    if (!display) {
-      const wallets = await this.profilesDb.getPrediscoveredEnsNames([
-        profile!.primary_wallet.toLowerCase()
-      ]);
-      const walletResp = wallets.at(0);
-      display = walletResp?.ens ?? wallet;
-    }
-    return {
-      profile_id: profile?.external_id ?? null,
-      handle: profile?.handle ?? null,
-      normalised_handle: profile?.normalised_handle ?? null,
-      primary_wallet: profile?.primary_wallet ?? null,
-      tdh: consolidation.tdh,
-      level: level,
-      cic_rating: cic.cic_rating ?? 0,
-      display: display,
-      pfp: profile?.pfp_url ?? null,
-      wallet
-    };
-  }
-
-  private async refreshPrimaryWalletEns(
-    wallet: string,
-    connection?: ConnectionWrapper<any>
-  ) {
-    const ensName = await this.supplyAlchemy().core.lookupAddress(wallet);
-    await this.profilesDb.updateWalletsEnsName(
-      { wallet, ensName: ensName ? replaceEmojisWithHex(ensName) : null },
-      connection
-    );
-  }
-
-  public async updatePrimaryAddresses(addresses: Set<string>) {
-    for (const address of Array.from(addresses)) {
-      const profile = await this.getProfileByWallet(address);
-      if (profile?.profile && profile.consolidation.consolidation_key) {
-        const primaryAddress = await this.determinePrimaryAddress(
-          profile.consolidation.wallets.map((it) => it.wallet.address),
-          profile.consolidation.consolidation_key
-        );
-        const currentPrimaryAddress = profile.profile.primary_wallet;
-        if (!areEqualAddresses(primaryAddress, currentPrimaryAddress)) {
-          await this.updateProfilePrimaryAddress(
-            profile.profile.external_id,
-            primaryAddress
-          );
-        }
-      }
-    }
-  }
-
-  async determinePrimaryAddress(
-    wallets: string[],
-    consolidationKey: string
-  ): Promise<string> {
-    if (wallets.length === 1) {
-      return wallets[0];
-    }
-
-    const delegationPrimaryAddress =
-      await getDelegationPrimaryAddressForConsolidation(consolidationKey);
-    if (delegationPrimaryAddress) {
-      return delegationPrimaryAddress;
-    }
-
-    const highestTdhAddress = await getHighestTdhAddressForConsolidationKey(
-      consolidationKey
-    );
-    if (highestTdhAddress) {
-      return highestTdhAddress;
-    }
-
-    return wallets[0];
-  }
-
-  public async updateProfilePrimaryAddress(
-    profileId: string,
-    primaryAddress: string
-  ) {
-    await this.profilesDb.updatePrimaryAddress({
-      profileId,
-      primaryAddress
-    });
-    await this.refreshPrimaryWalletEns(primaryAddress);
-  }
-
-  private async mergeProfileGroups(
-    sourceIdentity: string,
-    targetIdentity: string,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    const sourceGroups =
-      await this.userGroupsDb.findProfileGroupsWhereProfileIdIn(
-        sourceIdentity,
-        connectionHolder
-      );
-    const targetGroups =
-      await this.userGroupsDb.findProfileGroupsWhereProfileIdIn(
-        targetIdentity,
-        connectionHolder
-      );
-    const distinctGroups = distinct([...sourceGroups, ...targetGroups]);
-    if (distinctGroups) {
-      await this.userGroupsDb.deleteProfileIdsInProfileGroups(
-        [sourceIdentity, targetIdentity],
-        connectionHolder
-      );
-      await this.userGroupsDb.insertProfileIdsInProfileGroups(
-        targetIdentity,
-        distinctGroups,
-        connectionHolder
-      );
-    }
-  }
-
-  private async mergeNotifications(
-    sourceIdentity: string,
-    target: string,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    await this.notificationsDb.updateIdentityIdsInNotifications(
-      sourceIdentity,
-      target,
-      connectionHolder
-    );
-  }
-
-  private async mergeIdentitySubscriptions(
-    sourceIdentity: string,
-    target: string,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    await identitySubscriptionsDb.updateIdentityIdsInSubscriptions(
-      sourceIdentity,
-      target,
-      connectionHolder
-    );
-  }
-
-  private async mergeClappingStuff(
-    sourceIdentity: string,
-    target: string,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    await this.clappingDb.mergeOnProfileIdChange(
-      { previous_id: sourceIdentity, new_id: target },
-      { connection: connectionHolder }
-    );
-  }
-
-  private async mergeVotingStuff(
-    sourceIdentity: string,
-    target: string,
-    connectionHolder: ConnectionWrapper<any>
-  ) {
-    await this.dropVotingDb.mergeOnProfileIdChange(
-      { previous_id: sourceIdentity, new_id: target },
-      { connection: connectionHolder }
-    );
-  }
-
-  public async retrieveOrGenerateRefreshToken(address: string) {
-    return this.profilesDb.retrieveOrGenerateRefreshToken(address);
-  }
-
-  public async redeemRefreshToken(address: string, refreshToken: string) {
-    return await this.profilesDb.redeemRefreshToken(address, refreshToken);
-  }
-
-  async searchIdentities(
-    param: {
-      limit: number;
-      handle: string;
-      wave_id: string | null;
-      group_id: string | null;
-    },
-    ctx: RequestContext
-  ): Promise<ApiIdentity[]> {
-    let context_group_id: string | null = null;
-    if (param.wave_id || param.group_id) {
-      const authenticationContext = ctx.authenticationContext;
-      const eligibleGroups = authenticationContext?.hasRightsTo(
-        ProfileProxyActionType.READ_WAVE
-      )
-        ? await userGroupsService.getGroupsUserIsEligibleFor(
-            authenticationContext?.authenticatedProfileId ?? null,
-            ctx.timer
-          )
-        : [];
-      if (param.wave_id) {
-        const givenWave = await wavesApiDb
-          .findWavesByIds([param.wave_id], eligibleGroups, ctx.connection)
-          .then((it) => it.at(0) ?? null);
-        if (!givenWave) {
-          throw new NotFoundException(`Wave ${param.wave_id} not found`);
-        }
-        context_group_id = givenWave.visibility_group_id;
-      } else if (param.group_id) {
-        if (eligibleGroups.includes(param.group_id)) {
-          context_group_id = param.group_id;
-        } else {
-          throw new ForbiddenException(
-            `You are not eligible to access this group`
-          );
-        }
-      }
-    }
-    const base = await userGroupsService.getSqlAndParamsByGroupId(
-      context_group_id,
-      ctx
-    );
-    const identityEntities = await identitiesDb.searchIdentitiesWithDisplays(
-      param,
-      base,
-      ctx
-    );
-    return identityEntities.map<ApiIdentity>((it) => {
-      const classification = it.classification
-        ? resolveEnum(ApiProfileClassification, it.classification as string) ??
-          ApiProfileClassification.Pseudonym
-        : ApiProfileClassification.Pseudonym;
-      return {
-        id: it.profile_id,
-        handle: it.handle,
-        normalised_handle: it.normalised_handle,
-        pfp: it.pfp,
-        primary_wallet: it.primary_address,
-        rep: it.rep,
-        cic: it.cic,
-        level: getLevelFromScore(it.level_raw),
-        tdh: it.tdh,
-        display: it.display ?? it.primary_address,
-        banner1: it.banner1,
-        banner2: it.banner2,
-        consolidation_key: it.consolidation_key,
-        classification,
-        sub_classification: it.sub_classification
-      };
-    });
-  }
-
-  async getAllWalletsByProfileId(profileId: string): Promise<string[]> {
-    return this.profilesDb.getAllWalletsByProfileId(profileId);
-  }
-}
-
-export interface CommunityMemberMinimal {
-  readonly profile_id: string | null;
-  readonly handle: string | null;
-  readonly normalised_handle: string | null;
-  readonly primary_wallet: string | null;
-  readonly display: string | null;
-  readonly tdh: number;
-  readonly level: number;
-  readonly cic_rating: number;
-  readonly wallet: string;
-  readonly pfp: string | null;
 }
 
 export const profilesService = new ProfilesService(
@@ -1435,11 +840,9 @@ export const profilesService = new ProfilesService(
   ratingsService,
   profileProxiesDb,
   cicService,
-  repService,
   userGroupsDb,
   identitiesDb,
   identityNotificationsDb,
   clappingDb,
-  dropVotingDb,
-  getAlchemyInstance
+  dropVotingDb
 );

@@ -13,6 +13,7 @@ import {
 } from './constants';
 import { randomUUID } from 'crypto';
 import { identitySubscriptionsDb } from './api-serverless/src/identity-subscriptions/identity-subscriptions.db';
+import { identitiesService } from './api-serverless/src/identities/identities.service';
 
 const logger = Logger.get('IDENTITIES');
 
@@ -142,7 +143,7 @@ export async function syncIdentitiesWithTdhConsolidations(
       );
     const brandNewIdentities: IdentityEntity[] = await Promise.all(
       brandNewConsolidations.map<Promise<IdentityEntity>>((consolidation) =>
-        profilesService
+        identitiesService
           .determinePrimaryAddress(
             consolidation.consolidation_key.split('-'),
             consolidation.consolidation_key
@@ -174,7 +175,7 @@ export async function syncIdentitiesWithTdhConsolidations(
     for (const consolidationThatNeedsWork of consolidationsThatNeedWork) {
       const walletsForConsolidationThatNeedsWork =
         consolidationThatNeedsWork.consolidation_key.split('-');
-      const newPrimaryAddress = await profilesService.determinePrimaryAddress(
+      const newPrimaryAddress = await identitiesService.determinePrimaryAddress(
         walletsForConsolidationThatNeedsWork,
         consolidationThatNeedsWork.consolidation_key
       );
@@ -280,7 +281,7 @@ export async function syncIdentitiesWithTdhConsolidations(
     );
     const identitiesToSave: IdentityEntity[] = await Promise.all(
       brandNewIdentities.map((it) =>
-        profilesService
+        identitiesService
           .determinePrimaryAddress(
             it.consolidation_key.split('-'),
             it.consolidation_key

@@ -21,6 +21,7 @@ export * from '../models/ApiChangeProfileCicRating';
 export * from '../models/ApiChangeProfileCicRatingResponse';
 export * from '../models/ApiChangeProfileRepRating';
 export * from '../models/ApiChangeProfileRepRatingResponse';
+export * from '../models/ApiCommunityMemberMinimal';
 export * from '../models/ApiCompleteMultipartUploadRequest';
 export * from '../models/ApiCompleteMultipartUploadRequestPart';
 export * from '../models/ApiCompleteMultipartUploadResponse';
@@ -190,6 +191,7 @@ import { ApiChangeProfileCicRating } from '../models/ApiChangeProfileCicRating';
 import { ApiChangeProfileCicRatingResponse } from '../models/ApiChangeProfileCicRatingResponse';
 import { ApiChangeProfileRepRating } from '../models/ApiChangeProfileRepRating';
 import { ApiChangeProfileRepRatingResponse } from '../models/ApiChangeProfileRepRatingResponse';
+import { ApiCommunityMemberMinimal } from '../models/ApiCommunityMemberMinimal';
 import { ApiCompleteMultipartUploadRequest } from '../models/ApiCompleteMultipartUploadRequest';
 import { ApiCompleteMultipartUploadRequestPart } from '../models/ApiCompleteMultipartUploadRequestPart';
 import { ApiCompleteMultipartUploadResponse } from '../models/ApiCompleteMultipartUploadResponse';
@@ -400,6 +402,7 @@ let typeMap: {[index: string]: any} = {
     "ApiChangeProfileCicRatingResponse": ApiChangeProfileCicRatingResponse,
     "ApiChangeProfileRepRating": ApiChangeProfileRepRating,
     "ApiChangeProfileRepRatingResponse": ApiChangeProfileRepRatingResponse,
+    "ApiCommunityMemberMinimal": ApiCommunityMemberMinimal,
     "ApiCompleteMultipartUploadRequest": ApiCompleteMultipartUploadRequest,
     "ApiCompleteMultipartUploadRequestPart": ApiCompleteMultipartUploadRequestPart,
     "ApiCompleteMultipartUploadResponse": ApiCompleteMultipartUploadResponse,

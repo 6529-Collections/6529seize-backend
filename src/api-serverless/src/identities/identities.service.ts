@@ -2,14 +2,23 @@ import {
   identitySubscriptionsDb,
   IdentitySubscriptionsDb
 } from '../identity-subscriptions/identity-subscriptions.db';
-import { resolveEnumOrThrow } from '../../../helpers';
+import {
+  areEqualAddresses,
+  replaceEmojisWithHex,
+  resolveEnum,
+  resolveEnumOrThrow
+} from '../../../helpers';
 import {
   ActivityEventAction,
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
 import { identitiesDb, IdentitiesDb } from '../../../identities/identities.db';
 import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
-import { BadRequestException, NotFoundException } from '../../../exceptions';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException
+} from '../../../exceptions';
 import {
   userNotifier,
   UserNotifier
@@ -21,13 +30,27 @@ import { ConnectionWrapper } from '../../../sql-executor';
 import path from 'path';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
+import {
+  getDelegationPrimaryAddressForConsolidation,
+  getHighestTdhAddressForConsolidationKey
+} from '../../../delegationsLoop/db.delegations';
+import { Alchemy } from 'alchemy-sdk';
+import { getAlchemyInstance } from '../../../alchemy';
+import { RequestContext } from '../../../request.context';
+import { ApiIdentity } from '../generated/models/ApiIdentity';
+import { ProfileProxyActionType } from '../../../entities/IProfileProxyAction';
+import { userGroupsService } from '../community-members/user-groups.service';
+import { wavesApiDb } from '../waves/waves.api.db';
+import { ApiProfileClassification } from '../generated/models/ApiProfileClassification';
+import { getLevelFromScore } from '../../../profiles/profile-level';
 
 export class IdentitiesService {
   constructor(
     private readonly identitiesDb: IdentitiesDb,
     private readonly identitySubscriptionsDb: IdentitySubscriptionsDb,
     private readonly userNotifier: UserNotifier,
-    private readonly identityFetcher: IdentityFetcher
+    private readonly identityFetcher: IdentityFetcher,
+    private readonly supplyAlchemy: () => Alchemy
   ) {}
 
   async addIdentitySubscriptionActions({
@@ -273,11 +296,157 @@ export class IdentitiesService {
     }
     throw new Error('Failed to upload image');
   }
+
+  public async updatePrimaryAddresses(addresses: Set<string>) {
+    for (const address of Array.from(addresses)) {
+      const identity =
+        await identityFetcher.getIdentityAndConsolidationsByIdentityKey(
+          {
+            identityKey: address
+          },
+          {}
+        );
+      if (identity?.id) {
+        const consolidationKey =
+          await this.identitiesDb.getConsolidationKeyFromTdhConsolidations(
+            address
+          );
+        if (consolidationKey) {
+          const wallets = consolidationKey.split('-');
+          const newPrimaryAddress = await this.determinePrimaryAddress(
+            wallets,
+            consolidationKey
+          );
+          const oldPrimaryAddress = identity.consolidation_key;
+          if (!areEqualAddresses(newPrimaryAddress, oldPrimaryAddress)) {
+            const ensName = await this.supplyAlchemy().core.lookupAddress(
+              newPrimaryAddress
+            );
+            await this.identitiesDb.executeNativeQueriesInTransaction(
+              async (connection) => {
+                await this.identitiesDb.updatePrimaryAddress(
+                  {
+                    profileId: identity.id!,
+                    primaryAddress: newPrimaryAddress
+                  },
+                  connection
+                );
+                await this.identitiesDb.updateWalletsEnsName(
+                  {
+                    wallet: newPrimaryAddress,
+                    ensName: ensName ? replaceEmojisWithHex(ensName) : null
+                  },
+                  connection
+                );
+              }
+            );
+          }
+        }
+      }
+    }
+  }
+
+  async determinePrimaryAddress(
+    wallets: string[],
+    consolidationKey: string
+  ): Promise<string> {
+    if (wallets.length === 1) {
+      return wallets[0];
+    }
+
+    const delegationPrimaryAddress =
+      await getDelegationPrimaryAddressForConsolidation(consolidationKey);
+    if (delegationPrimaryAddress) {
+      return delegationPrimaryAddress;
+    }
+
+    const highestTdhAddress = await getHighestTdhAddressForConsolidationKey(
+      consolidationKey
+    );
+    if (highestTdhAddress) {
+      return highestTdhAddress;
+    }
+
+    return wallets[0];
+  }
+
+  async searchIdentities(
+    param: {
+      limit: number;
+      handle: string;
+      wave_id: string | null;
+      group_id: string | null;
+    },
+    ctx: RequestContext
+  ): Promise<ApiIdentity[]> {
+    let context_group_id: string | null = null;
+    if (param.wave_id || param.group_id) {
+      const authenticationContext = ctx.authenticationContext;
+      const eligibleGroups = authenticationContext?.hasRightsTo(
+        ProfileProxyActionType.READ_WAVE
+      )
+        ? await userGroupsService.getGroupsUserIsEligibleFor(
+            authenticationContext?.authenticatedProfileId ?? null,
+            ctx.timer
+          )
+        : [];
+      if (param.wave_id) {
+        const givenWave = await wavesApiDb
+          .findWavesByIds([param.wave_id], eligibleGroups, ctx.connection)
+          .then((it) => it.at(0) ?? null);
+        if (!givenWave) {
+          throw new NotFoundException(`Wave ${param.wave_id} not found`);
+        }
+        context_group_id = givenWave.visibility_group_id;
+      } else if (param.group_id) {
+        if (eligibleGroups.includes(param.group_id)) {
+          context_group_id = param.group_id;
+        } else {
+          throw new ForbiddenException(
+            `You are not eligible to access this group`
+          );
+        }
+      }
+    }
+    const base = await userGroupsService.getSqlAndParamsByGroupId(
+      context_group_id,
+      ctx
+    );
+    const identityEntities = await identitiesDb.searchIdentitiesWithDisplays(
+      param,
+      base,
+      ctx
+    );
+    return identityEntities.map<ApiIdentity>((it) => {
+      const classification = it.classification
+        ? resolveEnum(ApiProfileClassification, it.classification as string) ??
+          ApiProfileClassification.Pseudonym
+        : ApiProfileClassification.Pseudonym;
+      return {
+        id: it.profile_id,
+        handle: it.handle,
+        normalised_handle: it.normalised_handle,
+        pfp: it.pfp,
+        primary_wallet: it.primary_address,
+        rep: it.rep,
+        cic: it.cic,
+        level: getLevelFromScore(it.level_raw),
+        tdh: it.tdh,
+        display: it.display ?? it.primary_address,
+        banner1: it.banner1,
+        banner2: it.banner2,
+        consolidation_key: it.consolidation_key,
+        classification,
+        sub_classification: it.sub_classification
+      };
+    });
+  }
 }
 
 export const identitiesService = new IdentitiesService(
   identitiesDb,
   identitySubscriptionsDb,
   userNotifier,
-  identityFetcher
+  identityFetcher,
+  getAlchemyInstance
 );

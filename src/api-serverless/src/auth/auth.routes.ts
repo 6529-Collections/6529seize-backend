@@ -13,11 +13,12 @@ import {
 } from '../../../exceptions';
 import { ApiNonceResponse } from '../generated/models/ApiNonceResponse';
 import { ApiLoginRequest } from '../generated/models/ApiLoginRequest';
-import { profilesService } from '../../../profiles/profiles.service';
 import { profileProxyApiService } from '../proxies/proxy.api.service';
 import { ApiRedeemRefreshTokenRequest } from '../generated/models/ApiRedeemRefreshTokenRequest';
 import { ApiRedeemRefreshTokenResponse } from '../generated/models/ApiRedeemRefreshTokenResponse';
 import { identityFetcher } from '../identities/identity.fetcher';
+import { Timer } from '../../../time';
+import { authDb } from './auth.db';
 
 const router = asyncRouter();
 
@@ -70,14 +71,16 @@ router.post(
     req: Request<any, any, ApiLoginRequest, any, any>,
     res: Response<ApiResponse<ApiLoginResponse>>
   ) {
+    const timer = Timer.getFromRequest(req);
     const loginRequest = getValidatedByJoiOrThrow(req.body, LoginRequestSchema);
     const { server_signature, client_signature, role } = loginRequest;
     try {
       const nonce = verifyServerSignature(server_signature);
       const signingAddress = verifyClientSignature(nonce, client_signature);
-      const signingProfile = await profilesService
-        .getProfileByWallet(signingAddress)
-        .then((profile) => profile?.profile?.external_id ?? null);
+      const signingProfile = await identityFetcher.getProfileIdByIdentityKey(
+        { identityKey: signingAddress },
+        { timer }
+      );
       let chosenRole = role;
       if (signingProfile == null) {
         if (role) {
@@ -108,7 +111,7 @@ router.post(
         chosenRole = roleId;
       }
       const accessToken = getAccessToken(signingAddress, chosenRole);
-      const refreshToken = await profilesService.retrieveOrGenerateRefreshToken(
+      const refreshToken = await authDb.retrieveOrGenerateRefreshToken(
         signingAddress
       );
       res.status(201).send({
@@ -133,7 +136,7 @@ router.post(
     if (!refreshToken) {
       throw new BadRequestException('Refresh token is required');
     }
-    const redeemed = await profilesService.redeemRefreshToken(
+    const redeemed = await authDb.redeemRefreshToken(
       tokenAddress,
       refreshToken
     );

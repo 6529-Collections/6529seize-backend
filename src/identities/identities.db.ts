@@ -21,6 +21,7 @@ import { randomUUID } from 'crypto';
 import { RequestContext } from '../request.context';
 import { Time, Timer } from '../time';
 import { Wallet } from '../entities/IWallet';
+import { distinct } from '../helpers';
 
 const mysql = require('mysql');
 
@@ -760,6 +761,176 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
       },
       { wrappedConnection: connection }
     );
+  }
+
+  async getHandlesByPrimaryWallets(
+    addresses: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<string[]> {
+    const result = await this.db.execute(
+      `select handle from ${IDENTITIES_TABLE} where primary_wallet in (:addresses)`,
+      { addresses },
+      { wrappedConnection: connection }
+    );
+    return result.map((it) => it.handle);
+  }
+
+  async getConsolidationKeyFromTdhConsolidations(
+    wallet: string
+  ): Promise<string | null> {
+    return this.db
+      .oneOrNull<{ consolidation_key: string }>(
+        `
+      SELECT consolidation_key FROM ${CONSOLIDATED_WALLETS_TDH_TABLE} where consolidation_key like :wallet
+      `,
+        { wallet: `%${wallet.toLowerCase()}%` }
+      )
+      .then((it) => it?.consolidation_key ?? null);
+  }
+
+  async updatePrimaryAddress(
+    param: {
+      profileId: string;
+      primaryAddress: string;
+    },
+    connection: ConnectionWrapper<any>
+  ) {
+    await Promise.all([
+      this.db.execute(
+        `update ${PROFILES_TABLE} set primary_wallet = :primaryAddress where external_id = :profileId`,
+        param,
+        { wrappedConnection: connection }
+      ),
+      this.db.execute(
+        `update ${IDENTITIES_TABLE} set primary_address = :primaryAddress where profile_id = :profileId`,
+        param,
+        { wrappedConnection: connection }
+      )
+    ]);
+  }
+
+  async updateWalletsEnsName(
+    param: { wallet: string; ensName: string | null },
+    connection: ConnectionWrapper<any>
+  ) {
+    await this.db.execute(
+      `insert into ${ENS_TABLE} (display, wallet, created_at) values (:ensName, :wallet, current_time) on duplicate key update display = :ensName`,
+      param,
+      { wrappedConnection: connection }
+    );
+  }
+
+  async searchCommunityMembersWhereEnsLike({
+    limit,
+    onlyProfileOwners,
+    ensCandidate
+  }: {
+    limit: number;
+    onlyProfileOwners: boolean;
+    ensCandidate: string;
+  }): Promise<(IdentityEntity & { ens: string })[]> {
+    if (ensCandidate.endsWith('eth') && ensCandidate.length <= 6) {
+      return [];
+    }
+    {
+      const sql = `
+      select i.*,
+             e.display as display
+      from ${IDENTITIES_TABLE} i
+               left join ${ADDRESS_CONSOLIDATION_KEY} c on c.address = lower(e.wallet)
+               join ${ENS_TABLE} i on i.primary_address = e.wallet
+      where e.display like concat('%', :ensCandidate ,'%') 
+      ${onlyProfileOwners ? ' and i.profile_id is not null ' : ''}
+      order by i.tdh desc
+      limit :limit
+    `;
+      return this.db.execute(sql, { ensCandidate: ensCandidate, limit });
+    }
+  }
+
+  async searchCommunityMembersWhereHandleLike({
+    limit,
+    handle
+  }: {
+    limit: number;
+    handle: string;
+  }): Promise<(IdentityEntity & { ens: string })[]> {
+    const sql = `
+      select
+          i.*,
+          e.ens as wallet
+      from ${IDENTITIES_TABLE} i
+           left join ${ENS_TABLE} e on lower(e.wallet) = i.primary_address
+      where i.normalised_handle like concat('%', lower(:handle), '%')
+      order by i.tdh desc
+      limit :limit
+    `;
+    return this.db.execute(sql, { handle, limit });
+  }
+
+  public async getIdsByHandles(
+    handles: string[],
+    connection?: ConnectionWrapper<any>
+  ): Promise<Record<string, string>> {
+    if (!handles.length) {
+      return {};
+    }
+    const opts = connection ? { wrappedConnection: connection } : undefined;
+    return this.db
+      .execute<{ profile_id: string; handle: string }>(
+        `select profile_id, handle from ${IDENTITIES_TABLE} where normalised_handle in (:handles)`,
+        { handles: handles.map((it) => it.toLowerCase()) },
+        opts
+      )
+      .then((result) =>
+        result.reduce((acc, it) => {
+          acc[it.handle] = it.profile_id;
+          return acc;
+        }, {} as Record<string, string>)
+      );
+  }
+
+  async getProfileTdh(profileId: string): Promise<number> {
+    return this.db
+      .oneOrNull<{ tdh: number }>(
+        `
+        select tdh from ${IDENTITIES_TABLE} where profile_id = :profileId`,
+        { profileId }
+      )
+      .then((result) => result?.tdh ?? 0);
+  }
+
+  async getProfileHandlesByIds(
+    profileIds: string[],
+    ctx: RequestContext
+  ): Promise<Record<string, string>> {
+    ctx.timer?.start(`${this.constructor.name}->getProfileHandlesByIds`);
+    const distinctProfileIds = distinct(profileIds);
+    if (!distinctProfileIds.length) {
+      return {};
+    }
+    const result = await this.db
+      .execute<{ profile_id: string; handle: string }>(
+        `select profile_id, handle from ${IDENTITIES_TABLE} where profile_id in (:profileIds)`,
+        {
+          profileIds: distinctProfileIds
+        },
+        { wrappedConnection: ctx.connection }
+      )
+      .then((result) =>
+        result.reduce(
+          (
+            acc: Record<string, string>,
+            it: { profile_id: string; handle: string }
+          ) => {
+            acc[it.profile_id] = it.handle;
+            return acc;
+          },
+          {}
+        )
+      );
+    ctx.timer?.stop(`${this.constructor.name}->getProfileHandlesByIds`);
+    return result;
   }
 }
 
