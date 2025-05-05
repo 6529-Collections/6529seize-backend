@@ -28,7 +28,7 @@ export class ProfilesDb extends LazyDbAccessCompatibleService {
         sub_classification: param.sub_classification ?? null,
         primary_address: param.primary_wallet
       },
-      { connection }
+      connection
     );
   }
 

@@ -19,7 +19,7 @@ import { Profile, ProfileClassification } from '../entities/IProfile';
 import { AddressConsolidationKey } from '../entities/IAddressConsolidationKey';
 import { randomUUID } from 'crypto';
 import { RequestContext } from '../request.context';
-import { Time, Timer } from '../time';
+import { Timer } from '../time';
 import { Wallet } from '../entities/IWallet';
 import { distinct } from '../helpers';
 
@@ -712,7 +712,7 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
     >,
     connection: ConnectionWrapper<any>
   ) {
-    await dbSupplier().execute(
+    await this.db.execute(
       `insert into ${PROFILES_ARCHIVE_TABLE}
        (handle,
         normalised_handle,
@@ -747,9 +747,9 @@ export class IdentitiesDb extends LazyDbAccessCompatibleService {
         handle: param.handle,
         normalisedHandle: param.normalised_handle,
         primaryWallet: param.primary_address,
-        createdAt: Time.currentMillis(),
+        createdAt: new Date(),
         createdByWallet: param.primary_address,
-        updatedAt: Time.currentMillis(),
+        updatedAt: new Date(),
         updatedByWallet: param.primary_address,
         banner1: param.banner1 ?? null,
         banner2: param.banner2 ?? null,
