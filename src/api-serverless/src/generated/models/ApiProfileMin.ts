@@ -23,6 +23,7 @@ export class ApiProfileMin {
     'rep': number;
     'tdh': number;
     'level': number;
+    'primary_address': string;
     'subscribed_actions': Array<ApiIdentitySubscriptionTargetAction>;
     'archived': boolean;
 
@@ -82,6 +83,12 @@ export class ApiProfileMin {
             "baseName": "level",
             "type": "number",
             "format": "int64"
+        },
+        {
+            "name": "primary_address",
+            "baseName": "primary_address",
+            "type": "string",
+            "format": ""
         },
         {
             "name": "subscribed_actions",

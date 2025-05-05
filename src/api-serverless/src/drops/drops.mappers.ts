@@ -457,7 +457,8 @@ export class DropsMappers {
       tdh: 0,
       level: 0,
       archived: true,
-      subscribed_actions: []
+      subscribed_actions: [],
+      primary_address: ''
     };
     const profilesByIds = allProfileIds.reduce((acc, profileId) => {
       acc[profileId] = profileMins[profileId] ?? UNKNOWN_PROFILE;
