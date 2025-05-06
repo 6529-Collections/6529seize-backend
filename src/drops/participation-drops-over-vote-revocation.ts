@@ -7,6 +7,7 @@ import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-l
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { Logger } from '../logging';
 import { dropVotingDb } from '../api-serverless/src/drops/drop-voting.db';
+import { AppFeature, isFeatureOn } from '../helpers';
 
 const logger = Logger.get('PARTICIPATION_DROPS_OVER_VOTE_REVOCATION');
 
@@ -113,6 +114,10 @@ async function reduceVotesForDrops(
   },
   ctx: RequestContext
 ) {
+  if (!isFeatureOn(AppFeature.DROP_VOTES_REVOCATION)) {
+    logger.info(`DROP_VOTES_REVOCATION is switched off`);
+    return;
+  }
   const dropsForWaves = await dropsDb.findDropVotesForWaves(
     {
       profile_id,
