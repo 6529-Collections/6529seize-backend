@@ -55,6 +55,7 @@ import {
   IdentityFetcher
 } from '../identities/identity.fetcher';
 import { ApiLightDrop } from '../generated/models/ApiLightDrop';
+import { ApiDropMedia } from '../generated/models/ApiDropMedia';
 
 export class DropsApiService {
   constructor(
@@ -131,32 +132,22 @@ export class DropsApiService {
       },
       ctx
     );
-    return Object.values(
+    const apiLightDrops = Object.values(
       entities.reduce((acc, it) => {
-        if (!acc[it.id]) {
-          acc[it.id] = {
-            id: it.id,
-            serial_no: it.serial_no,
-            drop_type: resolveEnumOrThrow(ApiDropType, it.drop_type.toString()),
-            title: it.title,
-            is_reply_drop: !!it.reply_to_drop_id,
-            part_1_media_mime_type: null,
-            part_1_media_url: null,
-            part_1_text: null,
-            has_quote: false
-          };
-        }
-        if (it.media_drop_part_id && +it.media_drop_part_id === 1) {
-          acc[it.id].part_1_media_url = it.media_url;
-          acc[it.id].part_1_media_mime_type = it.media_mime_type;
-        }
-        if (it.part_drop_part_id && +it.part_drop_part_id === 1) {
-          acc[it.id].part_1_text = it.part_content;
-          acc[it.id].has_quote = !!it.part_quoted_drop_id;
-        }
+        acc[it.id] = {
+          id: it.id,
+          serial_no: it.serial_no,
+          drop_type: resolveEnumOrThrow(ApiDropType, it.drop_type.toString()),
+          title: it.title,
+          is_reply_drop: !!it.reply_to_drop_id,
+          part_1_medias: JSON.parse(it.medias_json ?? `[]`) as ApiDropMedia[],
+          part_1_text: it.part_content,
+          has_quote: !!it.part_quoted_drop_id
+        };
         return acc;
       }, {} as Record<string, ApiLightDrop>)
-    ).sort((a, d) => a.serial_no - d.serial_no);
+    );
+    return apiLightDrops.sort((a, d) => a.serial_no - d.serial_no);
   }
 
   public async findLatestDrops(
