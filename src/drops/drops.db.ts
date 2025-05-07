@@ -1,8 +1,7 @@
 import {
   ConnectionWrapper,
   dbSupplier,
-  LazyDbAccessCompatibleService,
-  SqlExecutor
+  LazyDbAccessCompatibleService
 } from '../sql-executor';
 import {
   DropEntity,
@@ -18,7 +17,6 @@ import {
   DELETED_DROPS_TABLE,
   DROP_MEDIA_TABLE,
   DROP_METADATA_TABLE,
-  DROP_RANK_TABLE,
   DROP_REAL_VOTER_VOTE_IN_TIME_TABLE,
   DROP_REFERENCED_NFTS_TABLE,
   DROP_RELATIONS_TABLE,
@@ -57,13 +55,6 @@ import { WaveDecisionWinnerDropEntity } from '../entities/IWaveDecision';
 const mysql = require('mysql');
 
 export class DropsDb extends LazyDbAccessCompatibleService {
-  constructor(
-    supplyDb: () => SqlExecutor,
-    private readonly userGroupsService: UserGroupsService
-  ) {
-    super(supplyDb);
-  }
-
   async getDropsByIds(
     ids: string[],
     connection?: ConnectionWrapper<any>
@@ -1263,29 +1254,7 @@ export class DropsDb extends LazyDbAccessCompatibleService {
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.start(`${this.constructor.name}->findDropVotesForWaves`);
-    return results;
-  }
-
-  async updateDropVoterState(
-    param: { drop_id: string; profile_id: string; votes: number },
-    ctx: RequestContext
-  ) {
-    await this.db.execute(
-      `update ${DROP_VOTER_STATE_TABLE} set votes = :votes where drop_id = :drop_id and voter_id = :profile_id`,
-      param,
-      { wrappedConnection: ctx.connection }
-    );
-  }
-
-  async updateDropRank(
-    param: { drop_id: string; profile_id: string; change: number },
-    ctx: RequestContext
-  ) {
-    await this.db.execute(
-      `update ${DROP_RANK_TABLE} set vote = vote + :change where drop_id = :drop_id`,
-      param,
-      { wrappedConnection: ctx.connection }
-    );
+    return results.map((it) => ({ ...it, votes: +it.votes }));
   }
 
   async findCategoryRepAmountFromProfileForProfile(
@@ -1538,4 +1507,4 @@ export type DropWithMediaAndPart = DropEntity & {
   medias_json: string | null;
 };
 
-export const dropsDb = new DropsDb(dbSupplier, userGroupsService);
+export const dropsDb = new DropsDb(dbSupplier);

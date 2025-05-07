@@ -7,7 +7,6 @@ import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-l
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { Logger } from '../logging';
 import { dropVotingDb } from '../api-serverless/src/drops/drop-voting.db';
-import { AppFeature, isFeatureOn } from '../helpers';
 
 const logger = Logger.get('PARTICIPATION_DROPS_OVER_VOTE_REVOCATION');
 
@@ -114,10 +113,6 @@ async function reduceVotesForDrops(
   },
   ctx: RequestContext
 ) {
-  if (!isFeatureOn(AppFeature.DROP_VOTES_REVOCATION)) {
-    logger.info(`DROP_VOTES_REVOCATION is switched off`);
-    return;
-  }
   const dropsForWaves = await dropsDb.findDropVotesForWaves(
     {
       profile_id,
@@ -142,20 +137,25 @@ async function reduceVotesForDrops(
         votes_still_given
       })}`
     );
+    await dropVotingDb.getDropVoterStateForDrop(
+      { voterId: profile_id, drop_id },
+      ctx
+    );
     await Promise.all([
-      dropsDb.updateDropVoterState(
+      dropVotingDb.upsertState(
         {
-          profile_id,
+          voter_id: profile_id,
           drop_id,
-          votes: voteAfterRevocation
+          votes: voteAfterRevocation,
+          wave_id
         },
         ctx
       ),
-      dropsDb.updateDropRank(
+      dropVotingDb.upsertAggregateDropRank(
         {
-          profile_id,
           drop_id,
-          change: votes - voteAfterRevocation
+          change: voteAfterRevocation - votes,
+          wave_id: wave_id
         },
         ctx
       ),
@@ -180,23 +180,27 @@ async function reduceVotesForDrops(
             newVote: voteAfterRevocation,
             reason: 'CREDIT_OVERSPENT'
           }),
-          additional_data_1: null,
-          additional_data_2: null,
+          additional_data_1: drop.author_id,
+          additional_data_2: wave_id,
           proxy_id: null
         },
         ctx.connection!,
         ctx.timer
       )
     ]);
-    await dropVotingDb.snapShotDropsCurrentVote(drop_id, now, ctx);
-    await dropVotingDb.snapshotDropVotersVoteCurrentState(
-      {
-        voter_id: profile_id,
-        drop_id,
-        wave_id,
-        vote: votes,
-        timestamp: now
-      },
+    await Promise.all([
+      dropVotingDb.snapShotDropsRealVoteInTimeBasedOnRank(drop_id, now, ctx),
+      dropVotingDb.snapshotDropVotersRealVoteInTimeBasedOnVoterState(
+        {
+          voterId: profile_id,
+          dropId: drop_id,
+          now
+        },
+        ctx
+      )
+    ]);
+    await dropVotingDb.getDropVoterStateForDrop(
+      { voterId: profile_id, drop_id },
       ctx
     );
     if (votes_still_given <= credit_limit) {
