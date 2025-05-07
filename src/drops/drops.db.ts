@@ -458,13 +458,21 @@ export class DropsDb extends LazyDbAccessCompatibleService {
     dp.drop_part_id as part_drop_part_id,
     dp.content as part_content,
     dp.quoted_drop_id as part_quoted_drop_id,
-    dm.id as media_id,
-    dm.drop_part_id as media_drop_part_id,
-    dm.url as media_url,
-    dm.mime_type as media_mime_type
+    dm.medias_json as medias_json
     from ${DROPS_TABLE} d
-         left join ${DROPS_PARTS_TABLE} dp on dp.drop_id = d.id
-         left join ${DROP_MEDIA_TABLE} dm on dm.drop_id = d.id
+         left join ${DROPS_PARTS_TABLE} dp on dp.drop_id = d.id and dp.drop_part_id = 1
+         LEFT JOIN (
+            SELECT  drop_id,
+                    JSON_ARRAYAGG(
+                            JSON_OBJECT(
+                                    'url',       url,
+                                    'mime_type', mime_type
+                            )
+                    ) AS medias_json
+            FROM    ${DROP_MEDIA_TABLE}
+            WHERE   drop_part_id = 1
+            GROUP BY drop_id
+        ) dm ON dm.drop_id = d.id
          join ${WAVES_TABLE} w on d.wave_id = w.id and (${
       group_ids_user_is_eligible_for.length
         ? `w.visibility_group_id in (:groupsUserIsEligibleFor) or w.admin_group_id in (:groupsUserIsEligibleFor) or`
@@ -1527,10 +1535,7 @@ export type DropWithMediaAndPart = DropEntity & {
   part_drop_part_id: number | null;
   part_content: string | null;
   part_quoted_drop_id: string | null;
-  media_id: number | null;
-  media_drop_part_id: number | null;
-  media_url: string | null;
-  media_mime_type: string | null;
+  medias_json: string | null;
 };
 
 export const dropsDb = new DropsDb(dbSupplier, userGroupsService);
