@@ -161,6 +161,7 @@ async function processNFTsForType(
   }
 
   if (mode === NFT_MODE.DISCOVER) {
+    logger.info(`🔍 Discovering new ${EntityClass.name}s`);
     await discoverNewNFTs(
       contracts,
       contractMap,
@@ -169,10 +170,13 @@ async function processNFTsForType(
       EntityClass
     );
   } else {
+    logger.info(`🔄 Refreshing existing ${EntityClass.name}s`);
     await refreshExistingNFTs(nftMap, provider);
   }
 
+  logger.info(`🔄 Updating supply for ${EntityClass.name}s`);
   await updateSupply(nftMap, updateHodlRate);
+
   await updateMemeReferences(nftMap, EntityClass);
 
   const toSave = Array.from(nftMap.values())
@@ -448,6 +452,8 @@ async function updateMemeReferences(
   EntityClass: typeof NFT | typeof LabNFT
 ) {
   if (EntityClass !== LabNFT) return;
+
+  logger.info(`🔄 Updating meme references for ${EntityClass.name}s`);
 
   const memeNFTs: NFTWithExtendedData[] = await fetchMemesWithSeason();
 
