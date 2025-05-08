@@ -145,7 +145,7 @@ async function processNFTsForType(
 ) {
   const repo = getDataSource().getRepository(EntityClass);
   const existing = await repo.find();
-  const nftMap = new Map<string, { nft: any; changed: boolean }>();
+  const nftMap = new Map<string, { nft: NFT | LabNFT; changed: boolean }>();
 
   existing.forEach((n) =>
     nftMap.set(`${n.contract.toLowerCase()}-${n.id}`, {
@@ -194,7 +194,7 @@ async function processNFTsForType(
 async function discoverNewNFTs(
   contracts: ContractConfig[],
   contractMap: Map<string, number>,
-  nftMap: Map<string, { nft: any; changed: boolean }>,
+  nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
   provider: ethers.providers.JsonRpcProvider,
   EntityClass: typeof NFT | typeof LabNFT
 ) {
@@ -218,7 +218,7 @@ async function discoverNewNFTs(
 async function discoverForContract(
   config: ContractConfig,
   contractMap: Map<string, number>,
-  nftMap: Map<string, { nft: any; changed: boolean }>,
+  nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
   provider: ethers.providers.JsonRpcProvider,
   EntityClass: typeof NFT | typeof LabNFT,
   memeNFTs: NFTWithExtendedData[]
@@ -243,8 +243,7 @@ async function discoverForContract(
         tokenType,
         config,
         metadata,
-        EntityClass,
-        memeNFTs
+        EntityClass
       );
 
       nftMap.set(`${contract.toLowerCase()}-${nextId}`, {
@@ -295,9 +294,8 @@ async function buildBaseNft(
   tokenType: TokenType,
   config: ContractConfig,
   metadata: any,
-  EntityClass: typeof NFT | typeof LabNFT,
-  memeNFTs: NFTWithExtendedData[]
-): Promise<any> {
+  EntityClass: typeof NFT | typeof LabNFT
+): Promise<NFT | LabNFT> {
   const format = metadata.image_details?.format ?? 'WEBP';
   const tokenPathOriginal = `${contract}/${id}.${format}`;
   const tokenPath = getTokenPath(contract, id, format);
