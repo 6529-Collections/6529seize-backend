@@ -451,7 +451,7 @@ async function updateMemeReferences(
 
   const memeNFTs: NFTWithExtendedData[] = await fetchMemesWithSeason();
 
-  Array.from(nftMap.values()).map((entry) => {
+  Array.from(nftMap.values()).forEach((entry) => {
     const nft = entry.nft as LabNFT;
     const memeRefs = extractMemeRefs(nft.metadata, memeNFTs);
     if (JSON.stringify(memeRefs) !== JSON.stringify(nft.meme_references)) {
