@@ -7,7 +7,7 @@ import {
   persistArtists,
   fetchMemesWithSeason
 } from '../db';
-import { NFT, LabNFT, NFTWithExtendedData, BaseNFT } from '../entities/INFT';
+import { NFT, LabNFT, NFTWithExtendedData } from '../entities/INFT';
 import { NFTOwner } from '../entities/INFTOwner';
 import { TokenType } from '../enums';
 import { Logger } from '../logging';
@@ -173,6 +173,7 @@ async function processNFTsForType(
   }
 
   await updateSupply(nftMap, updateHodlRate);
+  await updateMemeReferences(nftMap, EntityClass);
 
   const toSave = Array.from(nftMap.values())
     .filter((entry) => entry.changed)
@@ -201,118 +202,167 @@ async function discoverNewNFTs(
     EntityClass === LabNFT ? await fetchMemesWithSeason() : [];
 
   await Promise.all(
-    contracts.map(async (config) => {
-      const contract = config.contract;
-      const instance = getContractInstance(contract, provider);
-      const method = config.tokenType === TokenType.ERC721 ? 'tokenURI' : 'uri';
-
-      let nextId = (contractMap.get(contract) ?? -1) + 1;
-      if (config.tokenType === TokenType.ERC1155 && !nextId) nextId = 1;
-
-      while (true) {
-        try {
-          const uri = await instance[method](nextId);
-          if (!isValidUrl(uri)) throw new Error('Invalid URI');
-
-          const metadata = await fetchMetadata(uri);
-          if (!metadata) throw new Error('Invalid Metadata');
-
-          const format = metadata.image_details?.format ?? 'WEBP';
-          const tokenPathOriginal = `${contract}/${nextId}.${format}`;
-          const tokenPath = getTokenPath(contract, nextId, format);
-          const { animation, compressedAnimation } = getAnimationPaths(
-            contract,
-            nextId,
-            metadata.animation_details
-          );
-
-          const artist =
-            metadata.attributes?.find((a: any) => a.trait_type === 'Artist')
-              ?.value ??
-            config.artist ??
-            '';
-          const artistSeizeHandle =
-            metadata.attributes?.find(
-              (a: any) => a.trait_type?.toUpperCase() === 'SEIZE ARTIST PROFILE'
-            )?.value ??
-            config.artistSeizeHandle ??
-            '';
-
-          const mintPrice = await getMintPrice(contract, nextId);
-          const mintDate = await getMintDate(contract, nextId);
-
-          const baseNft: any = {
-            id: nextId,
-            contract,
-            created_at: new Date(),
-            mint_date: mintDate,
-            mint_price: mintPrice,
-            supply: config.tokenType === TokenType.ERC721 ? 1 : 0,
-            name: metadata.name,
-            collection: config.collection,
-            token_type: config.tokenType,
-            description: replaceEmojisWithHex(metadata.description),
-            artist,
-            artist_seize_handle: artistSeizeHandle,
-            uri,
-            icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
-            thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
-            scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
-            image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
-            compressed_animation: compressedAnimation,
-            animation: animation,
-            metadata,
-            floor_price: 0,
-            floor_price_from: null,
-            market_cap: 0,
-            total_volume_last_24_hours: 0,
-            total_volume_last_7_days: 0,
-            total_volume_last_1_month: 0,
-            total_volume: 0,
-            highest_offer: 0,
-            highest_offer_from: null
-          };
-
-          if (EntityClass === LabNFT) {
-            baseNft.meme_references = extractMemeRefs(metadata, memeNFTs);
-          } else {
-            baseNft.hodl_rate = 0;
-            baseNft.boosted_tdh = 0;
-            baseNft.tdh = 0;
-            baseNft.tdh__raw = 0;
-            baseNft.tdh_rank = 0;
-          }
-
-          nftMap.set(`${contract.toLowerCase()}-${nextId}`, {
-            nft: Object.assign(new EntityClass(), baseNft),
-            changed: true
-          });
-
-          logger.info(`🆕 Discovered token for ${contract} #${nextId}: ${uri}`);
-          nextId++;
-        } catch (err: any) {
-          const msg = err.message.toLowerCase();
-          if (
-            msg.includes('invalid uri') ||
-            msg.includes('invalid token') ||
-            msg.includes('nonexistent token') // error from erc721
-          ) {
-            logger.info(
-              `🔚 Stopping Discovery for ${config.contract} at #${nextId}`
-            );
-            if (config.tokenType === TokenType.ERC1155 && !nextId) {
-              nextId = 1;
-              continue;
-            } else {
-              break;
-            }
-          } else {
-            throw err;
-          }
-        }
-      }
-    })
+    contracts.map((config) =>
+      discoverForContract(
+        config,
+        contractMap,
+        nftMap,
+        provider,
+        EntityClass,
+        memeNFTs
+      )
+    )
   );
+}
+
+async function discoverForContract(
+  config: ContractConfig,
+  contractMap: Map<string, number>,
+  nftMap: Map<string, { nft: any; changed: boolean }>,
+  provider: ethers.providers.JsonRpcProvider,
+  EntityClass: typeof NFT | typeof LabNFT,
+  memeNFTs: NFTWithExtendedData[]
+) {
+  const { contract, tokenType } = config;
+  const instance = getContractInstance(contract, provider);
+  const method = tokenType === TokenType.ERC721 ? 'tokenURI' : 'uri';
+  let nextId = (contractMap.get(contract) ?? -1) + 1;
+  if (tokenType === TokenType.ERC1155 && !nextId) nextId = 1;
+
+  while (true) {
+    try {
+      const uri = await instance[method](nextId);
+      validateUri(uri);
+
+      const metadata = await fetchMetadata(uri);
+      validateMetadata(metadata);
+
+      const baseNft = await buildBaseNft(
+        contract,
+        nextId,
+        tokenType,
+        config,
+        metadata,
+        EntityClass,
+        memeNFTs
+      );
+
+      nftMap.set(`${contract.toLowerCase()}-${nextId}`, {
+        nft: Object.assign(new EntityClass(), baseNft),
+        changed: true
+      });
+
+      logger.info(`🆕 Discovered token for ${contract} #${nextId}: ${uri}`);
+      nextId++;
+    } catch (err: any) {
+      if (shouldStopDiscovery(err.message)) {
+        logger.info(`🔚 Stopping Discovery for ${contract} at #${nextId}`);
+        if (tokenType === TokenType.ERC1155 && !nextId) {
+          nextId = 1;
+          continue;
+        }
+        break;
+      }
+      throw err;
+    }
+  }
+}
+
+function validateUri(uri: string) {
+  if (!isValidUrl(uri)) {
+    throw new Error('Invalid URI');
+  }
+}
+
+function validateMetadata(metadata: any) {
+  if (!metadata) {
+    throw new Error('Invalid Metadata');
+  }
+}
+
+function shouldStopDiscovery(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes('invalid uri') ||
+    lower.includes('invalid token') ||
+    lower.includes('nonexistent token')
+  );
+}
+
+async function buildBaseNft(
+  contract: string,
+  id: number,
+  tokenType: TokenType,
+  config: ContractConfig,
+  metadata: any,
+  EntityClass: typeof NFT | typeof LabNFT,
+  memeNFTs: NFTWithExtendedData[]
+): Promise<any> {
+  const format = metadata.image_details?.format ?? 'WEBP';
+  const tokenPathOriginal = `${contract}/${id}.${format}`;
+  const tokenPath = getTokenPath(contract, id, format);
+  const { animation, compressedAnimation } = getAnimationPaths(
+    contract,
+    id,
+    metadata.animation_details
+  );
+
+  const artist =
+    metadata.attributes?.find((a: any) => a.trait_type === 'Artist')?.value ??
+    config.artist ??
+    '';
+
+  const artistSeizeHandle =
+    metadata.attributes?.find(
+      (a: any) => a.trait_type?.toUpperCase() === 'SEIZE ARTIST PROFILE'
+    )?.value ??
+    config.artistSeizeHandle ??
+    '';
+
+  const mintPrice = await getMintPrice(contract, id);
+  const mintDate = await getMintDate(contract, id);
+
+  const baseNft: any = {
+    id,
+    contract,
+    created_at: new Date(),
+    mint_date: mintDate,
+    mint_price: mintPrice,
+    supply: tokenType === TokenType.ERC721 ? 1 : 0,
+    name: metadata.name,
+    collection: config.collection,
+    token_type: tokenType,
+    description: replaceEmojisWithHex(metadata.description),
+    artist,
+    artist_seize_handle: artistSeizeHandle,
+    uri: metadata.uri ?? '',
+    icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
+    thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
+    scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
+    image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
+    compressed_animation: compressedAnimation,
+    animation: animation,
+    metadata,
+    floor_price: 0,
+    floor_price_from: null,
+    market_cap: 0,
+    total_volume_last_24_hours: 0,
+    total_volume_last_7_days: 0,
+    total_volume_last_1_month: 0,
+    total_volume: 0,
+    highest_offer: 0,
+    highest_offer_from: null
+  };
+
+  if (EntityClass !== LabNFT) {
+    baseNft.hodl_rate = 0;
+    baseNft.boosted_tdh = 0;
+    baseNft.tdh = 0;
+    baseNft.tdh__raw = 0;
+    baseNft.tdh_rank = 0;
+  }
+
+  return baseNft;
 }
 
 function extractMemeRefs(
@@ -341,7 +391,7 @@ function extractMemeRefs(
 }
 
 async function refreshExistingNFTs(
-  nftMap: Map<string, { nft: BaseNFT; changed: boolean }>,
+  nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
   provider: ethers.providers.JsonRpcProvider
 ) {
   await Promise.all(
@@ -393,6 +443,27 @@ async function refreshExistingNFTs(
       }
     })
   );
+}
+
+async function updateMemeReferences(
+  nftMap: Map<string, { nft: any; changed: boolean }>,
+  EntityClass: typeof NFT | typeof LabNFT
+) {
+  if (EntityClass !== LabNFT) return;
+
+  const memeNFTs: NFTWithExtendedData[] = await fetchMemesWithSeason();
+
+  Array.from(nftMap.values()).map((entry) => {
+    const nft = entry.nft as LabNFT;
+    const memeRefs = extractMemeRefs(nft.metadata, memeNFTs);
+    if (JSON.stringify(memeRefs) !== JSON.stringify(nft.meme_references)) {
+      logger.info(
+        `🔄 ${nft.contract} #${nft.id} meme references updated from ${nft.meme_references} to ${memeRefs}`
+      );
+      nft.meme_references = memeRefs;
+      entry.changed = true;
+    }
+  });
 }
 
 async function updateSupply(
