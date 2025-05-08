@@ -213,13 +213,13 @@ export async function findMemesExtendedData() {
       }
     },
     getExtra: (nft) => {
-      const attrs = nft.metadata?.attributes || [];
+      const attrs = nft.metadata?.attributes ?? [];
       return {
         season: parseInt(
-          attrs.find((a: any) => a.trait_type === 'Type - Season')?.value || '0'
+          attrs.find((a: any) => a.trait_type === 'Type - Season')?.value ?? '0'
         ),
         meme: parseInt(
-          attrs.find((a: any) => a.trait_type === 'Type - Meme')?.value || '0'
+          attrs.find((a: any) => a.trait_type === 'Type - Meme')?.value ?? '0'
         ),
         meme_name: attrs.find((a: any) => a.trait_type === 'Meme Name')?.value
       };
@@ -256,7 +256,7 @@ export async function findMemeLabExtendedData() {
     getId: (nft) => nft.id,
     getName: (nft) => nft.name!,
     getExtra: (nft) => {
-      const attrs = nft.metadata?.attributes || [];
+      const attrs = nft.metadata?.attributes ?? [];
       return {
         meme_references: nft.meme_references,
         metadata_collection: attrs.find(

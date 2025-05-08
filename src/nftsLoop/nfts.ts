@@ -414,7 +414,7 @@ async function updateSupply(
           .where('owner.contract = :contract', { contract: nft.contract })
           .andWhere('owner.token_id = :token_id', { token_id: nft.id })
           .getRawOne()
-          .then((res) => Number(res.sum) ?? 0);
+          .then((res) => Number(res?.sum ?? 0));
 
         if (areEqualAddresses(nft.contract, MEMES_CONTRACT) && nft.id === 8) {
           supply += MEME_8_EDITION_BURN_ADJUSTMENT;

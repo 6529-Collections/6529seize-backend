@@ -1,4 +1,3 @@
-import { FindOptionsWhere } from 'typeorm';
 import { DISTRIBUTION_NORMALIZED_TABLE } from '../constants';
 import { getDataSource } from '../db';
 import { Logger } from '../logging';
@@ -7,7 +6,7 @@ import { BaseNFT } from '../entities/INFT';
 const logger = Logger.get('NFT_DISTRIBUTION');
 
 export async function updateDistributionInfoFor<T extends BaseNFT>(
-  entityClass: { new (): T },
+  entityClass: new () => T,
   table: string = DISTRIBUTION_NORMALIZED_TABLE
 ) {
   const missingInfo: { contract: string; card_id: number }[] =
