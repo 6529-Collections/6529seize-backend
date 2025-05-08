@@ -20,7 +20,6 @@ import { Time } from '../../../time';
 import { DropRealVoteInTimeWithoutId } from '../../../entities/IDropRealVoteInTime';
 import { WaveLeaderboardEntryEntity } from '../../../entities/IWaveLeaderboardEntry';
 import { DropType } from '../../../entities/IDrop';
-import { DropRealVoterVoteInTimeEntityWithoutId } from '../../../entities/IDropRealVoterVoteInTime';
 import { DbPoolName } from '../../../db-query.options';
 import { WinnerDropVoterVoteEntity } from '../../../entities/IWinnerDropVoterVote';
 
@@ -487,7 +486,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
                  RANK() OVER (
                      PARTITION BY d.wave_id
                      ORDER BY IFNULL(r.vote, 0) DESC,
-                         IFNULL(r.last_increased, d.created_at) ASC
+                         IFNULL(r.last_increased, d.created_at)
                      ) AS rnk
           FROM ${DROPS_TABLE} d
                    LEFT JOIN ${DROP_RANK_TABLE} r
@@ -629,7 +628,7 @@ export class DropVotingDb extends LazyDbAccessCompatibleService {
     );
   }
 
-  async snapShotDropsCurrentVote(
+  async snapShotDropsRealVoteInTimeBasedOnRank(
     dropId: string,
     time: number,
     ctx: RequestContext
@@ -692,8 +691,9 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
     ctx: RequestContext
   ): Promise<DropRealVoteInTimeWithoutId[]> {
     ctx.timer?.start(`${this.constructor.name}->getDropVoteStatesInTimespan`);
-    const states = await this.db.execute<DropRealVoteInTimeWithoutId>(
-      `
+    const states = await this.db
+      .execute<DropRealVoteInTimeWithoutId>(
+        `
       select drop_id, wave_id, timestamp, vote
       from ${DROP_REAL_VOTE_IN_TIME_TABLE}
       where drop_id = :dropId
@@ -709,9 +709,16 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
                      and timestamp <= :fromTime
       )
       `,
-      params,
-      { wrappedConnection: ctx.connection }
-    );
+        params,
+        { wrappedConnection: ctx.connection }
+      )
+      .then((res) =>
+        res.map((it) => ({
+          ...it,
+          vote: +it.vote,
+          timestamp: +it.timestamp
+        }))
+      );
     ctx.timer?.stop(`${this.constructor.name}->getDropVoteStatesInTimespan`);
     return states;
   }
@@ -934,114 +941,16 @@ where lvc.timestamp >= (ifnull(lb.timestamp, 0) - lvc.time_lock_ms)`,
     ]);
   }
 
-  async getAllVoteChangeLogsForGivenDropsInTimeframe(
-    params: {
-      fromTime: number;
-      toTime: number;
-      dropIds: string[];
-    },
-    ctx: RequestContext
-  ): Promise<DropRealVoterVoteInTimeEntityWithoutId[]> {
-    ctx.timer?.start(
-      `${this.constructor.name}->getAllVoteChangeLogsForGivenDropsInTimeframe`
-    );
-    if (!params.dropIds.length) {
-      return [];
-    }
-    const states =
-      await this.db.execute<DropRealVoterVoteInTimeEntityWithoutId>(
-        `
-      select drv_1.drop_id as drop_id, drv_1.wave_id as wave_id, drv_1.voter_id as voter_id, drv_1.timestamp as timestamp, drv_1.vote as vote
-      from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} drv_1
-      where drv_1.drop_id in (:dropIds)
-        and drv_1.timestamp > :fromTime
-        and drv_1.timestamp < :toTime
-      union all
-      select drv_2.drop_id as drop_id, drv_2.wave_id as wave_id, drv_2.voter_id as voter_id, :fromTime as timestamp, drv_2.vote as vote
-      from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} drv_2
-      where drv_2.id in (
-                     select max(drv_2_i.id) as id
-                     from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} drv_2_i
-                     where drv_2_i.drop_id in (:dropIds)
-                     and drv_2_i.timestamp <= :fromTime
-      )
-      `,
-        params,
-        { wrappedConnection: ctx.connection }
-      );
-    ctx.timer?.stop(
-      `${this.constructor.name}->getAllVoteChangeLogsForGivenDropsInTimeframe`
-    );
-    return Object.values(
-      states.reduce((acc, it) => {
-        const key = `${it.drop_id}_${it.voter_id}`;
-        if (!acc[key]) {
-          acc[key] = [];
-        }
-        acc[key].push(it);
-        return acc;
-      }, {} as Record<string, DropRealVoterVoteInTimeEntityWithoutId[]>)
-    )
-      .map((dropsStates) => {
-        if (dropsStates.find((it) => it.timestamp === params.fromTime)) {
-          return dropsStates;
-        }
-        const aDropState = dropsStates[0]!;
-        const zeroVote: DropRealVoterVoteInTimeEntityWithoutId = {
-          timestamp: params.fromTime,
-          vote: 0,
-          voter_id: aDropState.voter_id,
-          drop_id: aDropState.drop_id,
-          wave_id: aDropState.wave_id
-        };
-        return [...dropsStates, zeroVote];
-      })
-      .flat();
-  }
-
-  async updateLatestVoteValue(
-    {
-      dropId,
-      voterId,
-      endTime,
-      vote
-    }: { dropId: string; voterId: string; endTime: Time; vote: number },
-    ctx: RequestContext
-  ) {
-    ctx.timer?.start(`${this.constructor.name}->updateLatestVoteValue`);
-    const timestamp = await this.db
-      .oneOrNull<{ timestamp: number }>(
-        `
-    select max(v.timestamp) as timestamp
-                     from ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} v
-                     where v.drop_id = :dropId and v.voter_id = :voterId
-                     and v.timestamp <= :endTime
-    `,
-        { dropId, voterId, endTime: endTime.toMillis() },
-        { wrappedConnection: ctx.connection }
-      )
-      .then((it) => it?.timestamp ?? null);
-    if (timestamp) {
-      await this.db.execute(
-        `update ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} set vote = :vote where drop_id = :dropId and voter_id = :voterId and timestamp = :timestamp`,
-        { dropId, voterId, endTime: endTime.toMillis(), vote, timestamp },
-        { wrappedConnection: ctx.connection }
-      );
-    }
-    ctx.timer?.stop(`${this.constructor.name}->updateLatestVoteValue`);
-  }
-
-  public async snapshotDropVotersVoteCurrentState(
-    entity: DropRealVoterVoteInTimeEntityWithoutId,
+  public async snapshotDropVotersRealVoteInTimeBasedOnVoterState(
+    params: { dropId: string; voterId: string; now: number },
     ctx: RequestContext
   ) {
     ctx.timer?.start(`${this.constructor.name}->insertDropRealVoterVoteInTime`);
     await this.db.execute(
       `
       insert into ${DROP_REAL_VOTER_VOTE_IN_TIME_TABLE} (voter_id, drop_id, vote, wave_id, timestamp) 
-      values (:voter_id, :drop_id, :vote, :wave_id, :timestamp)
-    `,
-      entity,
+      select voter_id, drop_id, votes, wave_id, :now from ${DROP_VOTER_STATE_TABLE} where drop_id = :dropId and voter_id = :voterId`,
+      params,
       { wrappedConnection: ctx.connection }
     );
     ctx.timer?.stop(`${this.constructor.name}->insertDropRealVoterVoteInTime`);

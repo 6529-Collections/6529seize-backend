@@ -8,7 +8,6 @@ import {
   RatingStats,
   UpdateRatingRequest
 } from './ratings.db';
-import { profilesDb, ProfilesDb } from '../profiles/profiles.db';
 import {
   BadRequestException,
   ForbiddenException,
@@ -65,15 +64,14 @@ import {
 } from '../profiles/abusiveness-check.service';
 import { ProfileRepRatedEventData } from '../events/datatypes/profile-rep-rated.event-data';
 import { ProfileClassification } from '../entities/IProfile';
-import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
 import { identityFetcher } from '../api-serverless/src/identities/identity.fetcher';
+import { revokeTdhBasedDropWavesOverVotes } from '../drops/participation-drops-over-vote-revocation';
 
 export class RatingsService {
   private readonly logger = Logger.get('RATINGS_SERVICE');
 
   constructor(
     private readonly ratingsDb: RatingsDb,
-    private readonly profilesDb: ProfilesDb,
     private readonly repService: RepService,
     private readonly eventScheduler: EventScheduler,
     private readonly arweaveFileUploader: ArweaveFileUploader,
@@ -1277,7 +1275,6 @@ interface RatingProxyContext {
 
 export const ratingsService: RatingsService = new RatingsService(
   ratingsDb,
-  profilesDb,
   repService,
   eventScheduler,
   arweaveFileUploader,

@@ -146,6 +146,15 @@ export class VoteForDropUseCase {
       );
     }
     await Promise.all([
+      this.votingDb.upsertState(
+        {
+          voter_id: voter_id,
+          drop_id: drop_id,
+          wave_id: wave.id,
+          votes: newVote
+        },
+        ctx
+      ),
       this.votingDb.upsertAggregateDropRank(
         {
           drop_id,
@@ -153,23 +162,19 @@ export class VoteForDropUseCase {
           change
         },
         ctx
-      ),
-      this.votingDb.upsertState(
-        {
-          voter_id,
-          drop_id,
-          votes,
-          wave_id
-        },
+      )
+    ]);
+    await Promise.all([
+      this.votingDb.snapShotDropsRealVoteInTimeBasedOnRank(
+        drop_id,
+        now.toMillis(),
         ctx
       ),
-      this.votingDb.snapshotDropVotersVoteCurrentState(
+      this.votingDb.snapshotDropVotersRealVoteInTimeBasedOnVoterState(
         {
-          voter_id,
-          drop_id,
-          wave_id,
-          vote: votes,
-          timestamp: now.toMillis()
+          voterId: voter_id,
+          dropId: drop_id,
+          now: now.toMillis()
         },
         ctx
       ),
@@ -200,7 +205,6 @@ export class VoteForDropUseCase {
         ctx.timer
       )
     ]);
-    await this.votingDb.snapShotDropsCurrentVote(drop_id, now.toMillis(), ctx);
     if (drop.author_id !== voter_id) {
       await this.userNotifier.notifyOfDropVote(
         {
