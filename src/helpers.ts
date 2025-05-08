@@ -476,8 +476,7 @@ export function isExperimentalModeOn() {
 }
 
 export enum AppFeature {
-  UPLOAD_CIC_REP_SNAPSHOTS_TO_ARWEAVE = 'UPLOAD_CIC_REP_SNAPSHOTS_TO_ARWEAVE',
-  DROP_VOTES_REVOCATION = 'DROP_VOTES_REVOCATION'
+  UPLOAD_CIC_REP_SNAPSHOTS_TO_ARWEAVE = 'UPLOAD_CIC_REP_SNAPSHOTS_TO_ARWEAVE'
 }
 
 export function isFeatureOn(feature: AppFeature) {
