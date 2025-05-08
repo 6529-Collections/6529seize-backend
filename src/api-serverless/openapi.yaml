@@ -4883,6 +4883,7 @@ components:
         mint_date:
           type: string
           format: date-time
+          nullable: true
         boosted_tdh:
           type: number
           format: int64

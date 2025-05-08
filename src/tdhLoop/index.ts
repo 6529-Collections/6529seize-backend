@@ -58,11 +58,11 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
 });
 
 export async function tdhLoop(force?: boolean) {
-  const block = await tdh(force);
+  // const block = await tdh(force);
   await findNftTDH();
-  await uploadTDH(block, false, force);
-  await uploadTDH(block, true, force);
-  await notifier.notifyTdhCalculationsDone();
+  // await uploadTDH(block, false, force);
+  // await uploadTDH(block, true, force);
+  // await notifier.notifyTdhCalculationsDone();
 }
 
 async function tdh(force?: boolean) {

@@ -1,7 +1,10 @@
-import { nfts } from './nfts';
-import { findMemesExtendedData } from './memes_extended_data';
 import { doInDbContext } from '../secrets';
-import { MemesExtendedData, NFT } from '../entities/INFT';
+import {
+  LabExtendedData,
+  LabNFT,
+  MemesExtendedData,
+  NFT
+} from '../entities/INFT';
 import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { MemesSeason } from '../entities/ISeason';
@@ -9,22 +12,41 @@ import { NFTOwner } from '../entities/INFTOwner';
 import { getDataSource } from '../db';
 import { DISTRIBUTION_NORMALIZED_TABLE } from '../constants';
 import { sqlExecutor } from '../sql-executor';
-
+import { NFT_MODE, processNFTs } from './nfts';
+import { resolveEnumOrThrow } from '../helpers';
+import {
+  findMemesExtendedData,
+  findMemeLabExtendedData
+} from './nft_extended_data';
+import { Transaction } from '../entities/ITransaction';
 const logger = Logger.get('NFTS_LOOP');
 
-export const handler = sentryContext.wrapLambdaHandler(async () => {
+export const handler = sentryContext.wrapLambdaHandler(async (event) => {
   await doInDbContext(
     async () => {
-      await nftsLoop();
+      await nftsLoop(event?.mode);
     },
-    { logger, entities: [NFT, MemesExtendedData, MemesSeason, NFTOwner] }
+    {
+      logger,
+      entities: [
+        NFT,
+        MemesExtendedData,
+        MemesSeason,
+        NFTOwner,
+        LabNFT,
+        LabExtendedData,
+        Transaction
+      ]
+    }
   );
 });
 
-async function nftsLoop() {
-  await nfts();
+async function nftsLoop(mode?: string) {
+  const modeEnum = resolveEnumOrThrow(NFT_MODE, mode);
+  await processNFTs(modeEnum);
   await findMemesExtendedData();
   await updateDistributionInfo();
+  await findMemeLabExtendedData();
 }
 
 async function updateDistributionInfo() {
@@ -68,10 +90,12 @@ async function updateDistributionInfo() {
           contract: distribution.contract,
           cardId: distribution.card_id,
           cardName: nft.name,
-          mintDate: new Date(nft.mint_date)
-            .toISOString()
-            .slice(0, 19)
-            .replace('T', ' ')
+          mintDate: nft.mint_date
+            ? new Date(nft.mint_date)
+                .toISOString()
+                .slice(0, 19)
+                .replace('T', ' ')
+            : null
         }
       );
     }

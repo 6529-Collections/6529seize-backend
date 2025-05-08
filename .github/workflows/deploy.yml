@@ -28,7 +28,6 @@ on:
           - ethPriceLoop
           - marketStatsLoop
           - mediaResizerLoop
-          - memeLabLoop
           - nextgenContractLoop
           - nextgenMediaImageResolutions
           - nextgenMediaProxyInterceptor
