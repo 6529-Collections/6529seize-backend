@@ -25,7 +25,7 @@ functions:
           input:
             mode: 'discover'
       - schedule:
-          rate: rate(5 minutes)
+          rate: rate(10 minutes)
           input:
             mode: 'refresh'
 
