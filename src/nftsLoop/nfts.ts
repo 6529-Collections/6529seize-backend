@@ -407,10 +407,12 @@ async function refreshExistingNFTs(
         if ((uri && uri !== nft.uri && isValidUrl(uri)) || !nft.metadata) {
           const metadata = await fetchMetadata(uri);
           if (metadata) {
+            logger.info(
+              `♻️ ${nft.contract} #${nft.id} resetting URI from ${nft.uri} to ${uri}`
+            );
             nft.uri = uri;
             nft.metadata = metadata;
             entry.changed = true;
-            logger.info(`♻️ ${nft.contract} #${nft.id} refreshed URI`);
           }
         }
         if (!nft.mint_date) {
@@ -420,7 +422,7 @@ async function refreshExistingNFTs(
           const mintDate = await getMintDate(nft.contract, nft.id);
           if (mintDate) {
             logger.info(
-              `🔄 ${nft.contract} #${nft.id} mint date updated to ${mintDate}`
+              `♻️ ${nft.contract} #${nft.id} updating mint date from ${nft.mint_date} to ${mintDate}`
             );
             nft.mint_date = mintDate;
             entry.changed = true;
@@ -432,7 +434,7 @@ async function refreshExistingNFTs(
           const mintPrice = await getMintPrice(nft.contract, nft.id);
           if (mintPrice) {
             logger.info(
-              `🔄 ${nft.contract} #${nft.id} mint price updated to ${mintPrice}`
+              `♻️ ${nft.contract} #${nft.id} updating mint price from ${nft.mint_price} to ${mintPrice}`
             );
             nft.mint_price = mintPrice;
             entry.changed = true;
@@ -462,7 +464,7 @@ async function updateMemeReferences(
     const memeRefs = extractMemeRefs(nft.metadata, memeNFTs);
     if (JSON.stringify(memeRefs) !== JSON.stringify(nft.meme_references)) {
       logger.info(
-        `🔄 ${nft.contract} #${nft.id} meme references updated from ${nft.meme_references} to ${memeRefs}`
+        `♻️ ${nft.contract} #${nft.id} updating meme references from ${nft.meme_references} to ${memeRefs}`
       );
       nft.meme_references = memeRefs;
       entry.changed = true;
@@ -501,11 +503,11 @@ async function updateSupply(
       }
 
       if (supply !== nft.supply) {
+        logger.info(
+          `♻️ ${nft.contract} #${nft.id} updating supply from ${nft.supply} to ${supply}`
+        );
         nft.supply = supply;
         entry.changed = true;
-        logger.info(
-          `🔄 ${nft.contract} #${nft.id} supply updated to ${supply}`
-        );
       }
 
       maxSupply = Math.max(maxSupply, supply);
@@ -518,11 +520,11 @@ async function updateSupply(
       let newRate = maxSupply / nft.supply;
       if (!isFinite(newRate) || newRate < 1) newRate = 1;
       if (nft.hodl_rate !== newRate) {
+        logger.info(
+          `♻️ ${nft.contract} #${nft.id} updating hodl rate from ${nft.hodl_rate} to ${newRate}`
+        );
         nft.hodl_rate = newRate;
         entry.changed = true;
-        logger.info(
-          `🔄 ${nft.contract} #${nft.id} hodl rate updated to ${newRate}`
-        );
       }
     });
   }
