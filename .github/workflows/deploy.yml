@@ -127,7 +127,7 @@ jobs:
           sleep 10
           aws lambda invoke --function-name dbMigrationsLoop response.json
           cat response.json
-          if grep -q '"FunctionError"' response.json; then
+          if jq -e '.FunctionError' response.json > /dev/null; then
             echo "Lambda function threw an error"
             exit 1
           fi
