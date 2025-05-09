@@ -9,9 +9,6 @@ import { Logger } from '../logging';
 import * as sentryContext from '../sentry.context';
 import { MemesSeason } from '../entities/ISeason';
 import { NFTOwner } from '../entities/INFTOwner';
-import { getDataSource } from '../db';
-import { DISTRIBUTION_NORMALIZED_TABLE } from '../constants';
-import { sqlExecutor } from '../sql-executor';
 import { NFT_MODE, processNFTs } from './nfts';
 import { resolveEnumOrThrow } from '../helpers';
 import {
