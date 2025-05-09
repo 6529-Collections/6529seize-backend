@@ -11,8 +11,8 @@ export class BaseNFT {
   @Column({ type: 'timestamp' })
   created_at!: Date;
 
-  @Column({ type: 'timestamp' })
-  mint_date!: Date;
+  @Column({ type: 'timestamp', nullable: true })
+  mint_date?: Date;
 
   @Column({ type: 'double' })
   mint_price!: number;

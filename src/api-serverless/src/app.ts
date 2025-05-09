@@ -487,7 +487,8 @@ loadApi().then(async () => {
               },
               scaled: orig.scaled!,
               compressed_animation: orig.compressed_animation ?? null,
-              icon: orig.icon!
+              icon: orig.icon!,
+              mint_date: orig.mint_date ?? null
             };
           },
           result

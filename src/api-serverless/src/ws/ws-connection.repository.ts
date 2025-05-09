@@ -3,7 +3,7 @@ import {
   LazyDbAccessCompatibleService,
   SqlExecutor
 } from '../../../sql-executor';
-import { WSConnectionEntity } from '../../../entities/IWSConnectionEntity';
+import { WSConnectionEntity } from '../../../entities/IWSConnection';
 import {
   DROP_VOTER_STATE_TABLE,
   IDENTITIES_TABLE,

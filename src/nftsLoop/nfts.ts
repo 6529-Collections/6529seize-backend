@@ -1,468 +1,566 @@
-import { Alchemy, Nft, Utils } from 'alchemy-sdk';
+import { ethers } from 'ethers';
+import axios from 'axios';
+import { getRpcProvider } from '../rpc-provider';
 import {
-  ALCHEMY_SETTINGS,
-  GRADIENT_CONTRACT,
-  MANIFOLD,
-  MEME_8_EDITION_BURN_ADJUSTMENT,
-  MEMES_CONTRACT,
-  NFT_HTML_LINK,
-  NFT_ORIGINAL_IMAGE_LINK,
-  NFT_SCALED1000_IMAGE_LINK,
-  NFT_SCALED450_IMAGE_LINK,
-  NFT_SCALED60_IMAGE_LINK,
-  NFT_VIDEO_LINK,
-  NFTS_TABLE,
-  NULL_ADDRESS
-} from '../constants';
-import { NFT } from '../entities/INFT';
-import { Transaction } from '../entities/ITransaction';
-import {
-  areEqualAddresses,
-  isNullAddress,
-  replaceEmojisWithHex
-} from '../helpers';
-import {
-  fetchAllNFTs,
-  fetchAllTransactions,
+  getDataSource,
   fetchAllArtists,
   persistArtists,
-  persistNFTs
+  fetchMemesWithSeason
 } from '../db';
-import { processArtists } from '../artists';
-import { Artist } from '../entities/IArtist';
-import { RequestInfo, RequestInit } from 'node-fetch';
-import { sqlExecutor } from '../sql-executor';
-import { Logger } from '../logging';
+import { NFT, LabNFT, NFTWithExtendedData } from '../entities/INFT';
 import { NFTOwner } from '../entities/INFTOwner';
-import { fetchAllNftOwners } from '../nftOwnersLoop/db.nft_owners';
+import { TokenType } from '../enums';
+import { Logger } from '../logging';
+import {
+  MEMES_CONTRACT,
+  MEME_8_EDITION_BURN_ADJUSTMENT,
+  GRADIENT_CONTRACT,
+  MEMELAB_CONTRACT,
+  NFT_HTML_LINK,
+  NFT_ORIGINAL_IMAGE_LINK,
+  NFT_SCALED60_IMAGE_LINK,
+  NFT_SCALED450_IMAGE_LINK,
+  NFT_SCALED1000_IMAGE_LINK,
+  NFT_VIDEO_LINK,
+  MANIFOLD,
+  NULL_ADDRESS
+} from '../constants';
+import { areEqualAddresses, replaceEmojisWithHex } from '../helpers';
+import { processArtists } from '../artists';
+import { Transaction } from '../entities/ITransaction';
+import { In, MoreThan } from 'typeorm';
 
-const logger = Logger.get('NFTS');
+const logger = Logger.get('nfts');
 
-const fetch = (url: RequestInfo, init?: RequestInit) =>
-  import('node-fetch').then(({ default: fetch }) => fetch(url, init));
+export enum NFT_MODE {
+  DISCOVER = 'discover',
+  REFRESH = 'refresh'
+}
 
-let alchemy: Alchemy;
+const URI_ABI = [
+  'function tokenURI(uint256 tokenId) public view returns (string)',
+  'function uri(uint256 tokenId) public view returns (string)'
+];
 
-export async function getNFTResponse(
-  alchemy: Alchemy,
+const contractInstances = new Map<string, ethers.Contract>();
+function getContractInstance(
   contract: string,
-  key: any
+  provider: ethers.providers.JsonRpcProvider
 ) {
-  const settings = {
-    pageKey: undefined
-  };
-
-  if (key) {
-    settings.pageKey = key;
+  const key = ethers.utils.getAddress(contract);
+  if (!contractInstances.has(key)) {
+    contractInstances.set(key, new ethers.Contract(key, URI_ABI, provider));
   }
-
-  const response = await alchemy.nft.getNftsForContract(contract, settings);
-  return response;
+  return contractInstances.get(key)!;
 }
 
-async function getAllNFTs(
-  contract: string,
-  nfts: Nft[] = [],
-  key = ''
-): Promise<Nft[]> {
-  const response = await getNFTResponse(alchemy, contract, key);
-  const newKey = response.pageKey;
-  nfts = nfts.concat(response.nfts);
-
-  if (newKey) {
-    return getAllNFTs(contract, nfts, newKey);
-  }
-
-  return nfts;
-}
-
-const fetchTokenMetadata = async (tokenId: number, tokenUri: string) => {
-  const response = await fetch(tokenUri);
-  return response.json();
-};
-
-const calculateMintPrice = async (firstMintTransaction: Transaction | null) => {
-  if (!firstMintTransaction) return 0;
-  const mintTransaction = await alchemy.core.getTransaction(
-    firstMintTransaction.transaction
-  );
-  if (!mintTransaction) return 0;
-  return (
-    parseFloat(Utils.formatEther(mintTransaction.value)) /
-    firstMintTransaction.token_count
-  );
-};
-
-const getAnimationPaths = (tokenId: number, animationDetails: any) => {
-  let animation, compressedAnimation;
-  if (animationDetails) {
-    switch (animationDetails.format) {
-      case 'MP4':
-      case 'MOV':
-        animation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
-        compressedAnimation = `${NFT_VIDEO_LINK}${MEMES_CONTRACT}/scaledx750/${tokenId}.${animationDetails.format}`;
-        break;
-      case 'HTML':
-        animation = `${NFT_HTML_LINK}${MEMES_CONTRACT}/${tokenId}.${animationDetails.format}`;
-        break;
-    }
-  }
-  return { animation, compressedAnimation };
-};
-
-const getTokenPath = (contract: string, tokenId: number, format: string) => {
+function getTokenPath(contract: string, tokenId: number, format: string) {
   return format.toUpperCase() === 'GIF'
     ? `${contract}/${tokenId}.${format}`
     : `${contract}/${tokenId}.WEBP`;
-};
+}
 
-async function processMemes(startingNFTS: NFT[], transactions: Transaction[]) {
-  const startingMemes = [...startingNFTS].filter((nft) =>
-    areEqualAddresses(nft.contract, MEMES_CONTRACT)
-  );
+function getAnimationPaths(
+  contract: string,
+  tokenId: number,
+  animationDetails: any
+) {
+  const parsed =
+    typeof animationDetails === 'string'
+      ? JSON.parse(animationDetails)
+      : animationDetails;
+  if (!parsed) return {};
+  const ext = parsed.format;
+  const base = `${contract}/${tokenId}.${ext}`;
+  if (ext === 'HTML') {
+    return { animation: `${NFT_HTML_LINK}${base}` };
+  } else if (['MP4', 'MOV'].includes(ext)) {
+    return {
+      animation: `${NFT_VIDEO_LINK}${base}`,
+      compressedAnimation: `${NFT_VIDEO_LINK}${contract}/scaledx750/${tokenId}.${ext}`
+    };
+  }
+  return {};
+}
 
-  const allMemesNFTS = await getAllNFTs(MEMES_CONTRACT);
+function isValidUrl(uri: string): boolean {
+  try {
+    const u = new URL(uri);
+    return u.protocol === 'https:' || uri.startsWith('ipfs://');
+  } catch {
+    return false;
+  }
+}
 
-  logger.info(
-    `[MEMES] [DB ${startingMemes.length}] [CONTRACT ${allMemesNFTS.length}]`
-  );
+async function fetchMetadata(uri: string): Promise<any> {
+  try {
+    const url = uri.startsWith('ipfs://')
+      ? uri.replace('ipfs://', 'https://ipfs.6529.io/ipfs/')
+      : uri;
+    const res = await axios.get(url, { timeout: 10000 });
+    return res.data;
+  } catch (err: any) {
+    logger.warn(`❌ Failed to fetch metadata from ${uri}: ${err.message}`);
+    return null;
+  }
+}
 
-  const newNFTS: NFT[] = [];
+interface ContractConfig {
+  contract: string;
+  tokenType: TokenType;
+  collection: string;
+  artist?: string;
+  artistSeizeHandle?: string;
+}
 
-  const allOwners: NFTOwner[] = await fetchAllNftOwners([MEMES_CONTRACT]);
+const NFT_CONTRACTS: ContractConfig[] = [
+  {
+    contract: MEMES_CONTRACT,
+    tokenType: TokenType.ERC1155,
+    collection: 'The Memes by 6529'
+  },
+  {
+    contract: GRADIENT_CONTRACT,
+    tokenType: TokenType.ERC721,
+    collection: '6529 Gradient',
+    artist: '6529er',
+    artistSeizeHandle: '6529er'
+  }
+];
 
-  await Promise.all(
-    allMemesNFTS.map(async (mnft) => {
-      const tokenId = parseInt(mnft.tokenId);
-      const fullMetadata = await fetchTokenMetadata(
-        tokenId,
-        mnft.raw.tokenUri!
-      );
+const LABNFT_CONTRACTS: ContractConfig[] = [
+  {
+    contract: MEMELAB_CONTRACT,
+    tokenType: TokenType.ERC1155,
+    collection: 'Meme Lab by 6529'
+  }
+];
 
-      const format = fullMetadata.image_details.format;
-      const tokenPathOriginal = `${MEMES_CONTRACT}/${tokenId}.${format}`;
+async function processNFTsForType(
+  EntityClass: typeof NFT | typeof LabNFT,
+  contracts: ContractConfig[],
+  mode: NFT_MODE,
+  provider: ethers.providers.JsonRpcProvider,
+  updateHodlRate: boolean
+) {
+  const repo = getDataSource().getRepository(EntityClass);
+  const existing = await repo.find();
+  const nftMap = new Map<string, { nft: NFT | LabNFT; changed: boolean }>();
 
-      const { createdTransactions, firstMintTransaction } = transactions.reduce(
-        (acc, t) => {
-          if (
-            t.token_id == tokenId &&
-            areEqualAddresses(t.contract, MEMES_CONTRACT)
-          ) {
-            if (areEqualAddresses(NULL_ADDRESS, t.from_address))
-              acc.createdTransactions.push(t);
-            if (isNullAddress(t.to_address)) acc.burntTransactions.push(t);
-            if (
-              !acc.firstMintTransaction &&
-              t.value > 0 &&
-              (areEqualAddresses(MANIFOLD, t.from_address) ||
-                areEqualAddresses(NULL_ADDRESS, t.from_address))
-            ) {
-              acc.firstMintTransaction = t;
-            }
-          }
-          return acc;
-        },
-        {
-          createdTransactions: [] as Transaction[],
-          burntTransactions: [] as Transaction[],
-          firstMintTransaction: null as Transaction | null
-        }
-      );
-
-      const owners = allOwners.filter((o) => o.token_id == tokenId);
-      let supply = owners.reduce((acc, o) => acc + o.balance, 0);
-      if (tokenId === 8) {
-        supply += MEME_8_EDITION_BURN_ADJUSTMENT;
-      }
-
-      const mintPrice = await calculateMintPrice(firstMintTransaction);
-      const tokenPath = getTokenPath(
-        MEMES_CONTRACT,
-        tokenId,
-        fullMetadata.image_details.format
-      );
-      const { animation, compressedAnimation } = getAnimationPaths(
-        tokenId,
-        typeof fullMetadata.animation_details === 'string'
-          ? JSON.parse(fullMetadata.animation_details)
-          : fullMetadata.animation_details
-      );
-
-      const startingNft = startingNFTS.find(
-        (s) => s.id == tokenId && areEqualAddresses(s.contract, MEMES_CONTRACT)
-      );
-
-      const nft: NFT = {
-        id: tokenId,
-        contract: MEMES_CONTRACT,
-        created_at: new Date(),
-        mint_date: new Date(
-          createdTransactions[0]
-            ? createdTransactions[0].transaction_date
-            : new Date()
-        ),
-        mint_price: mintPrice,
-        supply: supply,
-        name: fullMetadata.name,
-        collection: 'The Memes by 6529',
-        token_type: 'ERC1155',
-        hodl_rate: 0,
-        description: replaceEmojisWithHex(fullMetadata.description),
-        artist: fullMetadata.attributes?.find(
-          (a: any) => a.trait_type === 'Artist'
-        )?.value,
-        artist_seize_handle:
-          fullMetadata.attributes?.find(
-            (a: any) => a.trait_type.toUpperCase() === 'SEIZE ARTIST PROFILE'
-          )?.value ?? '',
-        uri: fullMetadata.tokenUri?.raw,
-        icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
-        thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
-        scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
-        image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
-        compressed_animation: compressedAnimation,
-        animation: animation,
-        metadata: fullMetadata,
-        boosted_tdh: startingNft ? startingNft.boosted_tdh : 0,
-        tdh: startingNft ? startingNft.tdh : 0,
-        tdh__raw: startingNft ? startingNft.tdh__raw : 0,
-        tdh_rank: startingNft ? startingNft.tdh_rank : 0,
-        floor_price: startingNft ? startingNft.floor_price : 0,
-        floor_price_from: startingNft ? startingNft.floor_price_from : null,
-        market_cap: startingNft ? startingNft.market_cap : 0,
-        total_volume_last_24_hours: startingNft
-          ? startingNft.total_volume_last_24_hours
-          : 0,
-        total_volume_last_7_days: startingNft
-          ? startingNft.total_volume_last_7_days
-          : 0,
-        total_volume_last_1_month: startingNft
-          ? startingNft.total_volume_last_1_month
-          : 0,
-        total_volume: startingNft ? startingNft.total_volume : 0,
-        highest_offer: startingNft ? startingNft.highest_offer : 0,
-        highest_offer_from: startingNft ? startingNft.highest_offer_from : null
-      };
-
-      newNFTS.push(nft);
+  existing.forEach((n) =>
+    nftMap.set(`${n.contract.toLowerCase()}-${n.id}`, {
+      nft: n,
+      changed: false
     })
   );
 
-  logger.info(`[MEMES] [PROCESSED ${newNFTS.length} NEW NFTS]`);
-  return newNFTS;
+  const contractMap = new Map<string, number>();
+  for (const nft of existing) {
+    const maxId = contractMap.get(nft.contract) ?? -1;
+    if (nft.id > maxId) contractMap.set(nft.contract, nft.id);
+  }
+
+  if (mode === NFT_MODE.DISCOVER) {
+    logger.info(`🔍 Discovering new ${EntityClass.name}s`);
+    await discoverNewNFTs(
+      contracts,
+      contractMap,
+      nftMap,
+      provider,
+      EntityClass
+    );
+  } else {
+    logger.info(`🔄 Refreshing existing ${EntityClass.name}s`);
+    await refreshExistingNFTs(nftMap, provider);
+  }
+
+  logger.info(`🔄 Updating supply for ${EntityClass.name}s`);
+  await updateSupply(nftMap, updateHodlRate);
+
+  await updateMemeReferences(nftMap, EntityClass);
+
+  const toSave = Array.from(nftMap.values())
+    .filter((entry) => entry.changed)
+    .map((entry) => entry.nft);
+
+  if (toSave.length > 0) {
+    await repo.save(toSave);
+    logger.info(`✅ Saved ${toSave.length} ${EntityClass.name}s`);
+
+    const artists = await fetchAllArtists();
+    const newArtists = await processArtists(artists, toSave);
+    await persistArtists(newArtists);
+  } else {
+    logger.info(`✅ No changes detected for ${EntityClass.name}s`);
+  }
 }
 
-async function processGradients(
-  startingNFTS: NFT[],
-  transactions: Transaction[]
+async function discoverNewNFTs(
+  contracts: ContractConfig[],
+  contractMap: Map<string, number>,
+  nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
+  provider: ethers.providers.JsonRpcProvider,
+  EntityClass: typeof NFT | typeof LabNFT
 ) {
-  const startingGradients = [...startingNFTS].filter((nft) =>
-    areEqualAddresses(nft.contract, GRADIENT_CONTRACT)
-  );
-
-  const allGradientsNFTS = await getAllNFTs(GRADIENT_CONTRACT);
-
-  logger.info(
-    `[GRADIENTS] [DB ${startingGradients.length}] [CONTRACT ${allGradientsNFTS.length}]`
-  );
-
-  const newNFTS: NFT[] = [];
-  const fetchAndPrepareMetadata = async (tokenUri: string) => {
-    const fullMetadata = await fetch(tokenUri).then((response) =>
-      response.json()
-    );
-    const format = fullMetadata.image
-      ? fullMetadata.image.split('.').pop()
-      : 'WEBP';
-    return { fullMetadata, format };
-  };
-
-  const processGradientNFT = async (gnft: Nft, transactions: Transaction[]) => {
-    const tokenId = parseInt(gnft.tokenId);
-    const { fullMetadata, format } = await fetchAndPrepareMetadata(
-      gnft.raw.tokenUri!
-    );
-
-    if (!fullMetadata.image) return;
-
-    const createdTransactions = transactions.filter(
-      (t) =>
-        t.token_id == tokenId &&
-        areEqualAddresses(t.contract, GRADIENT_CONTRACT) &&
-        areEqualAddresses(NULL_ADDRESS, t.from_address)
-    );
-
-    const supply = allGradientsNFTS.length;
-    const tokenPath = getTokenPath(GRADIENT_CONTRACT, tokenId, format);
-    const tokenPathOriginal = `${GRADIENT_CONTRACT}/${tokenId}.${format}`;
-
-    const startingNft = startingNFTS.find(
-      (s) =>
-        s.id === tokenId && areEqualAddresses(s.contract, GRADIENT_CONTRACT)
-    );
-
-    const nft: NFT = {
-      id: tokenId,
-      contract: GRADIENT_CONTRACT,
-      created_at: new Date(),
-      mint_date: new Date(createdTransactions[0].transaction_date),
-      mint_price: 0,
-      supply: supply,
-      name: fullMetadata?.name,
-      collection: '6529 Gradient',
-      token_type: 'ERC721',
-      hodl_rate: 0,
-      description: replaceEmojisWithHex(fullMetadata.description),
-      artist: '6529er',
-      artist_seize_handle: '6529er',
-      uri: fullMetadata.tokenUri?.raw,
-      icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
-      thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
-      scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
-      image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
-      animation: undefined,
-      metadata: fullMetadata,
-      boosted_tdh: startingNft ? startingNft.boosted_tdh : 0,
-      tdh: startingNft ? startingNft.tdh : 0,
-      tdh__raw: startingNft ? startingNft.tdh__raw : 0,
-      tdh_rank: startingNft ? startingNft.tdh_rank : 0,
-      floor_price: startingNft ? startingNft.floor_price : 0,
-      floor_price_from: startingNft ? startingNft.floor_price_from : null,
-      market_cap: startingNft ? startingNft.market_cap : 0,
-      total_volume_last_24_hours: startingNft
-        ? startingNft.total_volume_last_24_hours
-        : 0,
-      total_volume_last_7_days: startingNft
-        ? startingNft.total_volume_last_7_days
-        : 0,
-      total_volume_last_1_month: startingNft
-        ? startingNft.total_volume_last_1_month
-        : 0,
-      total_volume: startingNft ? startingNft.total_volume : 0,
-      highest_offer: startingNft ? startingNft.highest_offer : 0,
-      highest_offer_from: startingNft ? startingNft.highest_offer_from : null
-    };
-
-    newNFTS.push(nft);
-  };
+  const memeNFTs: NFTWithExtendedData[] =
+    EntityClass === LabNFT ? await fetchMemesWithSeason() : [];
 
   await Promise.all(
-    allGradientsNFTS.map((gnft) => processGradientNFT(gnft, transactions))
+    contracts.map((config) =>
+      discoverForContract(
+        config,
+        contractMap,
+        nftMap,
+        provider,
+        EntityClass,
+        memeNFTs
+      )
+    )
   );
-
-  logger.info(`[GRADIENTS] [PROCESSED ${newNFTS.length} NEW NFTS]`);
-  return newNFTS;
 }
 
-export const discoverNFTs = async (
-  startingNFTS: NFT[],
-  transactions: Transaction[],
-  reset?: boolean
-) => {
-  const newMemes = await processMemes(startingNFTS, transactions);
-  const newGradients = await processGradients(startingNFTS, transactions);
+async function discoverForContract(
+  config: ContractConfig,
+  contractMap: Map<string, number>,
+  nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
+  provider: ethers.providers.JsonRpcProvider,
+  EntityClass: typeof NFT | typeof LabNFT,
+  memeNFTs: NFTWithExtendedData[]
+) {
+  const { contract, tokenType } = config;
+  const instance = getContractInstance(contract, provider);
+  const method = tokenType === TokenType.ERC721 ? 'tokenURI' : 'uri';
+  let nextId = (contractMap.get(contract) ?? -1) + 1;
+  if (tokenType === TokenType.ERC1155 && !nextId) nextId = 1;
 
-  const allNewNFTS = newMemes.concat(newGradients);
+  while (true) {
+    try {
+      const uri = await instance[method](nextId);
+      validateUri(uri);
 
-  let GLOBAL_HODL_INDEX_TOKEN = startingNFTS.find((a) => a.hodl_rate == 1);
-  const NEW_TOKENS_HODL_INDEX = Math.max(...allNewNFTS.map((o) => o.supply));
-  const nftChanged = allNewNFTS.some((n) => {
-    const m = startingNFTS.find(
-      (s) => areEqualAddresses(s.contract, n.contract) && s.id == n.id
-    );
-    if (m?.mint_price != n.mint_price) {
-      return true;
-    }
-    if (m?.supply != n.supply) {
-      return true;
-    }
-    if (m.uri != n.uri) {
-      return true;
-    }
-    if (
-      m.animation != n.animation ||
-      m.compressed_animation != n.compressed_animation
-    ) {
-      return true;
-    }
+      const metadata = await fetchMetadata(uri);
+      validateMetadata(metadata);
 
-    if (
-      m.metadata.image != n.metadata.image ||
-      m.metadata.image_url != n.metadata.image_url ||
-      m.metadata.animation != n.metadata.animation ||
-      m.metadata.animation_url != n.metadata.animation_url
-    ) {
-      return true;
+      const baseNft = await buildBaseNft(
+        contract,
+        nextId,
+        tokenType,
+        config,
+        metadata,
+        EntityClass
+      );
+
+      nftMap.set(`${contract.toLowerCase()}-${nextId}`, {
+        nft: Object.assign(new EntityClass(), baseNft),
+        changed: true
+      });
+
+      logger.info(`🆕 Discovered token for ${contract} #${nextId}: ${uri}`);
+      nextId++;
+    } catch (err: any) {
+      if (shouldStopDiscovery(err.message)) {
+        logger.info(`🔚 Stopping Discovery for ${contract} at #${nextId}`);
+        if (tokenType === TokenType.ERC1155 && !nextId) {
+          nextId = 1;
+          continue;
+        }
+        break;
+      }
+      throw err;
     }
-    if (new Date(m?.mint_date).getTime() != new Date(n.mint_date).getTime()) {
-      return true;
+  }
+}
+
+function validateUri(uri: string) {
+  if (!isValidUrl(uri)) {
+    throw new Error('Invalid URI');
+  }
+}
+
+function validateMetadata(metadata: any) {
+  if (!metadata) {
+    throw new Error('Invalid Metadata');
+  }
+}
+
+function shouldStopDiscovery(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes('invalid uri') ||
+    lower.includes('invalid token') ||
+    lower.includes('nonexistent token')
+  );
+}
+
+async function buildBaseNft(
+  contract: string,
+  id: number,
+  tokenType: TokenType,
+  config: ContractConfig,
+  metadata: any,
+  EntityClass: typeof NFT | typeof LabNFT
+): Promise<NFT | LabNFT> {
+  const format = metadata.image_details?.format ?? 'WEBP';
+  const tokenPathOriginal = `${contract}/${id}.${format}`;
+  const tokenPath = getTokenPath(contract, id, format);
+  const { animation, compressedAnimation } = getAnimationPaths(
+    contract,
+    id,
+    metadata.animation_details
+  );
+
+  const artist =
+    metadata.attributes?.find((a: any) => a.trait_type === 'Artist')?.value ??
+    config.artist ??
+    '';
+
+  const artistSeizeHandle =
+    metadata.attributes?.find(
+      (a: any) => a.trait_type?.toUpperCase() === 'SEIZE ARTIST PROFILE'
+    )?.value ??
+    config.artistSeizeHandle ??
+    '';
+
+  const mintPrice = await getMintPrice(contract, id);
+  const mintDate = await getMintDate(contract, id);
+
+  const baseNft: any = {
+    id,
+    contract,
+    created_at: new Date(),
+    mint_date: mintDate,
+    mint_price: mintPrice,
+    supply: tokenType === TokenType.ERC721 ? 1 : 0,
+    name: metadata.name,
+    collection: config.collection,
+    token_type: tokenType,
+    description: replaceEmojisWithHex(metadata.description),
+    artist,
+    artist_seize_handle: artistSeizeHandle,
+    uri: metadata.uri ?? '',
+    icon: `${NFT_SCALED60_IMAGE_LINK}${tokenPath}`,
+    thumbnail: `${NFT_SCALED450_IMAGE_LINK}${tokenPath}`,
+    scaled: `${NFT_SCALED1000_IMAGE_LINK}${tokenPath}`,
+    image: `${NFT_ORIGINAL_IMAGE_LINK}${tokenPathOriginal}`,
+    compressed_animation: compressedAnimation,
+    animation: animation,
+    metadata,
+    floor_price: 0,
+    floor_price_from: null,
+    market_cap: 0,
+    total_volume_last_24_hours: 0,
+    total_volume_last_7_days: 0,
+    total_volume_last_1_month: 0,
+    total_volume: 0,
+    highest_offer: 0,
+    highest_offer_from: null
+  };
+
+  if (EntityClass !== LabNFT) {
+    baseNft.hodl_rate = 0;
+    baseNft.boosted_tdh = 0;
+    baseNft.tdh = 0;
+    baseNft.tdh__raw = 0;
+    baseNft.tdh_rank = 0;
+  }
+
+  return baseNft;
+}
+
+function extractMemeRefs(
+  metadata: any,
+  memes: NFTWithExtendedData[]
+): number[] {
+  const refs: number[] = [];
+  metadata.attributes?.forEach((a: any) => {
+    const trait = a.trait_type?.toUpperCase();
+    const val = a.value?.toString().toUpperCase();
+    if (!trait?.startsWith('MEME CARD REFERENCE') || val === 'NONE') return;
+
+    if (val === 'ALL') {
+      refs.push(...memes.map((m) => m.id));
+    } else if (val.startsWith('ALL SZN')) {
+      const season = parseInt(val.split('SZN')[1], 10);
+      if (!isNaN(season)) {
+        refs.push(...memes.filter((m) => m.season === season).map((m) => m.id));
+      }
+    } else {
+      const match = memes.find((m) => m.name?.toUpperCase() === val);
+      if (match) refs.push(match.id);
     }
-    return false;
   });
+  return refs;
+}
 
-  logger.info(`[CHANGED ${nftChanged}] [RESET ${reset}]`);
+async function refreshExistingNFTs(
+  nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
+  provider: ethers.providers.JsonRpcProvider
+) {
+  await Promise.all(
+    Array.from(nftMap.values()).map(async (entry) => {
+      const { nft } = entry;
+      const contract = getContractInstance(nft.contract, provider);
+      const method = nft.token_type === TokenType.ERC721 ? 'tokenURI' : 'uri';
 
-  if (
-    reset ||
-    nftChanged ||
-    allNewNFTS.length > startingNFTS.length ||
-    !GLOBAL_HODL_INDEX_TOKEN ||
-    NEW_TOKENS_HODL_INDEX > GLOBAL_HODL_INDEX_TOKEN.supply
-  ) {
-    const allNFTS = allNewNFTS;
-    logger.info(
-      `[HODL INDEX CHANGED] [DB ${GLOBAL_HODL_INDEX_TOKEN?.supply}] [NEW ${NEW_TOKENS_HODL_INDEX}] [RECALCULATING]`
-    );
-    allNFTS.forEach((t) => {
-      if (
-        !GLOBAL_HODL_INDEX_TOKEN ||
-        t.supply > GLOBAL_HODL_INDEX_TOKEN.supply
-      ) {
-        GLOBAL_HODL_INDEX_TOKEN = t;
+      try {
+        const uri = await contract[method](nft.id);
+        if ((uri && uri !== nft.uri && isValidUrl(uri)) || !nft.metadata) {
+          const metadata = await fetchMetadata(uri);
+          if (metadata) {
+            logger.info(
+              `♻️ ${nft.contract} #${nft.id} resetting URI from ${
+                nft.uri ?? 'undefined'
+              } to ${uri}`
+            );
+            nft.uri = uri;
+            nft.metadata = metadata;
+            entry.changed = true;
+          }
+        }
+        if (!nft.mint_date) {
+          logger.info(
+            `🔄 ${nft.contract} #${nft.id} missing mint date, fetching...`
+          );
+          const mintDate = await getMintDate(nft.contract, nft.id);
+          if (mintDate) {
+            logger.info(
+              `♻️ ${nft.contract} #${nft.id} updating mint date from ${nft.mint_date} to ${mintDate}`
+            );
+            nft.mint_date = mintDate;
+            entry.changed = true;
+          } else {
+            logger.warn(`⚠️ ${nft.contract} #${nft.id} mint date not found`);
+          }
+        }
+        if (!nft.mint_price) {
+          const mintPrice = await getMintPrice(nft.contract, nft.id);
+          if (mintPrice) {
+            logger.info(
+              `♻️ ${nft.contract} #${nft.id} updating mint price from ${nft.mint_price} to ${mintPrice}`
+            );
+            nft.mint_price = mintPrice;
+            entry.changed = true;
+          }
+        }
+      } catch (err: any) {
+        logger.warn(
+          `⚠️ ${nft.contract} #${nft.id} refresh failed: ${err.message}`
+        );
+      }
+    })
+  );
+}
+
+async function updateMemeReferences(
+  nftMap: Map<string, { nft: any; changed: boolean }>,
+  EntityClass: typeof NFT | typeof LabNFT
+) {
+  if (EntityClass !== LabNFT) return;
+
+  logger.info(`🔄 Updating meme references for ${EntityClass.name}s`);
+
+  const memeNFTs: NFTWithExtendedData[] = await fetchMemesWithSeason();
+
+  Array.from(nftMap.values()).forEach((entry) => {
+    const nft = entry.nft as LabNFT;
+    const memeRefs = extractMemeRefs(nft.metadata, memeNFTs);
+    if (JSON.stringify(memeRefs) !== JSON.stringify(nft.meme_references)) {
+      logger.info(
+        `♻️ ${nft.contract} #${nft.id} updating meme references from ${nft.meme_references} to ${memeRefs}`
+      );
+      nft.meme_references = memeRefs;
+      entry.changed = true;
+    }
+  });
+}
+
+async function updateSupply(
+  nftMap: Map<string, { nft: any; changed: boolean }>,
+  updateHodlRate: boolean
+) {
+  let maxSupply = 0;
+
+  await Promise.all(
+    Array.from(nftMap.values()).map(async (entry) => {
+      const nft = entry.nft;
+      let supply = 0;
+
+      if (nft.token_type === TokenType.ERC1155) {
+        supply = await getDataSource()
+          .getRepository(NFTOwner)
+          .createQueryBuilder('owner')
+          .select('SUM(owner.balance)', 'sum')
+          .where('owner.contract = :contract', { contract: nft.contract })
+          .andWhere('owner.token_id = :token_id', { token_id: nft.id })
+          .getRawOne()
+          .then((res) => Number(res?.sum ?? 0));
+
+        if (areEqualAddresses(nft.contract, MEMES_CONTRACT) && nft.id === 8) {
+          supply += MEME_8_EDITION_BURN_ADJUSTMENT;
+        }
+      } else {
+        supply = Array.from(nftMap.values()).filter((e) =>
+          areEqualAddresses(e.nft.contract, nft.contract)
+        ).length;
+      }
+
+      if (supply !== nft.supply) {
+        logger.info(
+          `♻️ ${nft.contract} #${nft.id} updating supply from ${nft.supply} to ${supply}`
+        );
+        nft.supply = supply;
+        entry.changed = true;
+      }
+
+      maxSupply = Math.max(maxSupply, supply);
+    })
+  );
+
+  if (updateHodlRate) {
+    nftMap.forEach((entry) => {
+      const nft = entry.nft;
+      let newRate = maxSupply / nft.supply;
+      if (!isFinite(newRate) || newRate < 1) newRate = 1;
+      if (nft.hodl_rate !== newRate) {
+        logger.info(
+          `♻️ ${nft.contract} #${nft.id} updating hodl rate from ${nft.hodl_rate} to ${newRate}`
+        );
+        nft.hodl_rate = newRate;
+        entry.changed = true;
       }
     });
-    logger.info(
-      `[GLOBAL_HODL_INDEX_TOKEN SUPPLY ${GLOBAL_HODL_INDEX_TOKEN!.supply}]`
-    );
-    allNFTS.forEach((t) => {
-      const hodl = GLOBAL_HODL_INDEX_TOKEN!.supply / t.supply;
-      t.hodl_rate = isFinite(hodl) ? hodl : 1;
-    });
-    logger.info(`[HODL INDEX UPDATED]`);
-    return allNFTS;
-  } else {
-    logger.info(
-      `[NO NEW NFTS] [DB HODL_INDEX ${GLOBAL_HODL_INDEX_TOKEN?.supply}] [END]`
-    );
-    return startingNFTS;
   }
-};
-
-export async function nfts(reset?: boolean) {
-  alchemy = new Alchemy({
-    ...ALCHEMY_SETTINGS,
-    apiKey: process.env.ALCHEMY_API_KEY
-  });
-
-  const nfts: NFT[] = await fetchAllNFTs();
-  const transactions: Transaction[] = await fetchAllTransactions();
-  const artists: Artist[] = await fetchAllArtists();
-
-  const newNfts = await discoverNFTs(nfts, transactions, reset);
-  const newArtists = await processArtists(artists, newNfts);
-  await persistNFTs(newNfts);
-  await persistArtists(newArtists);
 }
 
-export async function getMemeThumbnailUriById(
-  id: number
-): Promise<string | undefined> {
-  const result = await sqlExecutor.execute(
-    `select thumbnail from ${NFTS_TABLE} where id = :id and contract = :contract order by id asc limit 1`,
-    {
-      id,
-      contract: MEMES_CONTRACT
-    }
-  );
-  return result.at(0)?.thumbnail;
+const getMintPrice = async (contract: string, tokenId: number) => {
+  const repo = getDataSource().getRepository(Transaction);
+  const firstMintTransaction = await repo.findOne({
+    where: {
+      contract,
+      token_id: tokenId,
+      from_address: In([NULL_ADDRESS, MANIFOLD]),
+      value: MoreThan(0)
+    },
+    order: { transaction_date: 'ASC' }
+  });
+  return firstMintTransaction?.value ?? 0;
+};
+
+const getMintDate = async (contract: string, tokenId: number) => {
+  const repo = getDataSource().getRepository(Transaction);
+  const firstTransaction = await repo.findOne({
+    where: {
+      contract,
+      token_id: tokenId,
+      from_address: In([NULL_ADDRESS, MANIFOLD])
+    },
+    order: { transaction_date: 'ASC' }
+  });
+  return firstTransaction?.transaction_date;
+};
+
+export async function processNFTs(mode: NFT_MODE) {
+  const provider = getRpcProvider();
+  await processNFTsForType(NFT, NFT_CONTRACTS, mode, provider, true);
+  await processNFTsForType(LabNFT, LABNFT_CONTRACTS, mode, provider, false);
 }

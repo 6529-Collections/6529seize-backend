@@ -104,7 +104,7 @@ export async function connect(entities: any[] = []) {
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
     entities: entities,
-    synchronize: true,
+    synchronize: false,
     logging: false,
     charset: 'utf8mb4',
     timezone: 'Etc/UTC'
