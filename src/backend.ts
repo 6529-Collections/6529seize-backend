@@ -2,7 +2,6 @@ import { Logger } from './logging';
 import * as dbMigrationsLoop from './dbMigrationsLoop';
 import { prepEnvironment } from './env';
 import { DataSource } from 'typeorm';
-import * as nftsLoop from './nftsLoop';
 
 const logger = Logger.get('BACKEND');
 
@@ -31,12 +30,6 @@ async function start() {
 
   await dbMigrationsLoop.handler(
     undefined as any,
-    undefined as any,
-    undefined as any
-  );
-
-  await nftsLoop.handler(
-    { mode: 'refresh' },
     undefined as any,
     undefined as any
   );

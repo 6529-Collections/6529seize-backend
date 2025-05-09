@@ -408,7 +408,9 @@ async function refreshExistingNFTs(
           const metadata = await fetchMetadata(uri);
           if (metadata) {
             logger.info(
-              `♻️ ${nft.contract} #${nft.id} resetting URI from ${nft.uri} to ${uri}`
+              `♻️ ${nft.contract} #${nft.id} resetting URI from ${
+                nft.uri ?? 'undefined'
+              } to ${uri}`
             );
             nft.uri = uri;
             nft.metadata = metadata;

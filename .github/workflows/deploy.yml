@@ -123,7 +123,14 @@ jobs:
           popd
       - name: Run lambda
         if: github.event.inputs.service == 'dbMigrationsLoop'
-        run: sleep 10 && aws lambda invoke --function-name dbMigrationsLoop out > /dev/null
+        run: |
+          sleep 10
+          aws lambda invoke --function-name dbMigrationsLoop response.json
+          cat response.json
+          if grep -q '"FunctionError"' response.json; then
+            echo "Lambda function threw an error"
+            exit 1
+          fi
       - name: Notify about failure
         uses: sarisia/actions-status-discord@v1
         if: failure()
