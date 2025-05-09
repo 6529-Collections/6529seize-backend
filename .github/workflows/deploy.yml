@@ -121,14 +121,21 @@ jobs:
           pushd src/nextgenMediaProxyInterceptor
           sh deploy.sh
           popd
-      - name: Run lambda
+      - name: Run lambda and validate result
         if: github.event.inputs.service == 'dbMigrationsLoop'
         run: |
           sleep 10
-          aws lambda invoke --function-name dbMigrationsLoop response.json
+
+          aws lambda invoke --function-name dbMigrationsLoop response.json > meta.json
+
+          echo "response.json:"
           cat response.json
-          if jq -e '.FunctionError' response.json > /dev/null; then
-            echo "Lambda function threw an error"
+
+          echo "meta.json:"
+          cat meta.json
+
+          if jq -e '.FunctionError == "Unhandled"' meta.json > /dev/null; then
+            echo "Lambda function threw an unhandled error"
             exit 1
           fi
       - name: Notify about failure
