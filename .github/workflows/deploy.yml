@@ -128,11 +128,13 @@ jobs:
 
           aws lambda invoke --function-name dbMigrationsLoop response.json > meta.json
 
+          echo
           echo "response.json:"
           cat response.json
-
+          echo
           echo "meta.json:"
           cat meta.json
+          echo
 
           if jq -e '.FunctionError == "Unhandled"' meta.json > /dev/null; then
             echo "Lambda function threw an unhandled error"
