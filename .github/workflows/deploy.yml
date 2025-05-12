@@ -28,7 +28,6 @@ on:
           - ethPriceLoop
           - marketStatsLoop
           - mediaResizerLoop
-          - memeLabLoop
           - nextgenContractLoop
           - nextgenMediaImageResolutions
           - nextgenMediaProxyInterceptor
@@ -122,9 +121,23 @@ jobs:
           pushd src/nextgenMediaProxyInterceptor
           sh deploy.sh
           popd
-      - name: Run lambda
+      - name: Run lambda and validate result
         if: github.event.inputs.service == 'dbMigrationsLoop'
-        run: sleep 10 && aws lambda invoke --function-name dbMigrationsLoop out > /dev/null
+        run: |
+          sleep 10
+
+          aws lambda invoke --function-name dbMigrationsLoop response.json > meta.json
+
+          printf "\nresponse.json:\n"
+          cat response.json
+          printf "\n\nmeta.json:\n"
+          cat meta.json
+          printf "\n"
+
+          if jq -e '.FunctionError == "Unhandled"' meta.json > /dev/null; then
+            echo "Lambda function threw an unhandled error"
+            exit 1
+          fi
       - name: Notify about failure
         uses: sarisia/actions-status-discord@v1
         if: failure()

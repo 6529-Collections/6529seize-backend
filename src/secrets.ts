@@ -3,19 +3,23 @@ import { prepEnvironment } from './env';
 import { Logger } from './logging';
 import { Time } from './time';
 
-async function loadEnv(entities: any[] = []) {
+async function loadEnv(entities: any[] = [], syncEntities: boolean = false) {
   await prepEnvironment();
-  await connect(entities);
+  await connect(entities, syncEntities);
 }
 
 export async function doInDbContext<T>(
   fn: () => Promise<T>,
-  opts?: { entities?: any[]; logger?: Logger }
+  opts?: {
+    entities?: any[];
+    logger?: Logger;
+    syncEntities?: boolean;
+  }
 ): Promise<T> {
   const start = Time.now();
   const logger = opts?.logger ?? Logger.get('MAIN');
   logger.info(`[RUNNING]`);
-  await loadEnv(opts?.entities ?? []);
+  await loadEnv(opts?.entities ?? [], opts?.syncEntities ?? false);
   try {
     return await fn();
   } finally {

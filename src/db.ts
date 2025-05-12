@@ -93,8 +93,13 @@ const logger = Logger.get('DB');
 
 let AppDataSource: DataSource;
 
-export async function connect(entities: any[] = []) {
-  logger.info(`[DB HOST ${process.env.DB_HOST}]`);
+export async function connect(
+  entities: any[] = [],
+  syncEntities: boolean = false
+) {
+  logger.info(
+    `[DB HOST ${process.env.DB_HOST}] [SYNC ENTITIES ${syncEntities}]`
+  );
 
   AppDataSource = new DataSource({
     type: 'mysql',
@@ -104,7 +109,7 @@ export async function connect(entities: any[] = []) {
     password: process.env.DB_PASS,
     database: process.env.DB_NAME,
     entities: entities,
-    synchronize: true,
+    synchronize: syncEntities,
     logging: false,
     charset: 'utf8mb4',
     timezone: 'Etc/UTC'

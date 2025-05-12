@@ -2,6 +2,9 @@ import fetch from 'node-fetch';
 import axios, { AxiosResponse } from 'axios';
 import {
   CONSOLIDATIONS_LIMIT,
+  GRADIENT_CONTRACT,
+  MEMELAB_CONTRACT,
+  MEMES_CONTRACT,
   NULL_ADDRESS,
   NULL_ADDRESS_DEAD,
   WALLET_REGEX
@@ -14,6 +17,7 @@ import { getAlchemyInstance } from './alchemy';
 import * as mcache from 'memory-cache';
 import { Time } from './time';
 import moment from 'moment-timezone';
+import { TokenType } from './enums';
 
 export function areEqualAddresses(w1: string, w2: string) {
   if (!w1 || !w2) {
@@ -481,4 +485,16 @@ export enum AppFeature {
 
 export function isFeatureOn(feature: AppFeature) {
   return process.env[`FEATURE_${feature}`] === 'true';
+}
+
+export function getTokenType(contract: string): TokenType {
+  switch (contract.toLowerCase()) {
+    case MEMES_CONTRACT.toLowerCase():
+    case MEMELAB_CONTRACT.toLowerCase():
+      return TokenType.ERC1155;
+    case GRADIENT_CONTRACT.toLowerCase():
+      return TokenType.ERC721;
+    default:
+      throw new Error(`Unknown contract: ${contract}`);
+  }
 }
