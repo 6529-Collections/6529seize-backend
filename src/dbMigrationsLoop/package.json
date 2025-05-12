@@ -21,6 +21,7 @@
     "memory-cache": "^0.2.0",
     "mysql": "^2.18.1",
     "reflect-metadata": "^0.1.13",
+    "short-uuid": "^4.2.2",
     "typeorm": "^0.3.12",
     "winston": "^3.11.0"
   }
