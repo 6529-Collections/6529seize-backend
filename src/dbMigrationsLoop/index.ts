@@ -17,7 +17,7 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
       });
       await dbmigrate.up();
     },
-    { logger, entities: [Entities], syncEntities: true }
+    { logger, entities: Object.values(Entities), syncEntities: true }
   );
 
   logger.info(`[FINISHED]`);
