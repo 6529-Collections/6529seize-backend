@@ -1,6 +1,7 @@
 import {
   MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMES_CONTRACT,
+  NULL_ADDRESS,
   SIX529_MUSEUM
 } from '../constants';
 import {
@@ -208,7 +209,7 @@ export async function findMemesExtendedData() {
       nft.metadata?.attributes?.find((a: any) => a.trait_type === 'Meme Name')
         ?.value,
     adjustBalances: (nft, owner) => {
-      if (nft.id === 8 && owner.wallet === '0x000...') {
+      if (nft.id === 8 && areEqualAddresses(owner.wallet, NULL_ADDRESS)) {
         owner.balance += MEME_8_EDITION_BURN_ADJUSTMENT;
       }
     },
