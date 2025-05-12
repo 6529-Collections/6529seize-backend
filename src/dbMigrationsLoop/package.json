@@ -6,7 +6,7 @@
   "scripts": {
     "prebuild": "rm -rf dist",
     "build": "esbuild index.ts --bundle --sourcemap --platform=node --target=es2020 --external:db-migrate --outfile=dist/index.js",
-    "postbuild": "cp ../../database.json dist/ && cp -r ../../migrations dist/ && mkdir -p dist/node_modules && cp -r node_modules/db-migrate dist/node_modules/ && cd dist && zip -r index.zip index.js* database.json migrations node_modules",
+    "postbuild": "cp ../../database.json dist/ && cp -r ../../migrations dist/ && cp -r node_modules dist/node_modules/ && cd dist && zip -r index.zip index.js* database.json migrations node_modules",
     "sls-deploy:prod": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=prod --region=us-east-1",
     "sls-deploy:staging": "node ../../node_modules/serverless/bin/serverless.js deploy --stage=staging --region=eu-west-1"
   },
