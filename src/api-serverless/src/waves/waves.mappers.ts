@@ -63,7 +63,8 @@ export class WavesMappers {
     request,
     created_by,
     descriptionDropId,
-    nextDecisionTime
+    nextDecisionTime,
+    isDirectMessage
   }: {
     id: string;
     serial_no: number | null;
@@ -73,6 +74,7 @@ export class WavesMappers {
     created_by: string;
     descriptionDropId: string;
     nextDecisionTime: number | null;
+    isDirectMessage: boolean;
   }): Promise<InsertWaveEntity> {
     let creditorId = request.voting.creditor_id;
     if (creditorId) {
@@ -134,7 +136,8 @@ export class WavesMappers {
         request.participation.signature_required,
       participation_terms: request.participation.terms,
       admin_drop_deletion_enabled: request.wave.admin_drop_deletion_enabled,
-      forbid_negative_votes: request.voting.forbid_negative_votes
+      forbid_negative_votes: request.voting.forbid_negative_votes,
+      is_direct_message: isDirectMessage
     };
   }
 

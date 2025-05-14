@@ -40,7 +40,8 @@ const WavesOverviewParamsSchema = Joi.object<WavesOverviewParams>({
     .allow(...Object.values(ApiWavesOverviewType)),
   only_waves_followed_by_authenticated_user: Joi.boolean()
     .optional()
-    .default(false)
+    .default(false),
+  direct_message: Joi.boolean().truthy('true').falsy('false').optional()
 });
 
 export default router;

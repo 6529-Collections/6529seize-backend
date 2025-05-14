@@ -109,7 +109,11 @@ router.post(
         }
       };
     }
-    const wave = await waveApiService.createWave(request, requestContext);
+    const wave = await waveApiService.createWave(
+      request,
+      false,
+      requestContext
+    );
     res.send(wave);
   }
 );
@@ -811,7 +815,8 @@ export async function validateWavesSearchParams(
       author: Joi.string().optional(),
       limit: Joi.number().integer().min(1).max(50).default(20),
       serial_no_less_than: Joi.number().integer().min(1).optional(),
-      group_id: Joi.string().optional().min(1)
+      group_id: Joi.string().optional().min(1),
+      direct_message: Joi.boolean().truthy('true').falsy('false').optional()
     })
   );
   if (validatedRequest.author) {
