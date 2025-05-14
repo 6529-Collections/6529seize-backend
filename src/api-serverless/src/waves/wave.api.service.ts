@@ -83,6 +83,7 @@ export class WaveApiService {
 
   public async createWave(
     createWaveRequest: ApiCreateNewWave,
+    isDirectMessage: boolean,
     ctx: RequestContext
   ): Promise<ApiWave> {
     const timer = ctx.timer!;
@@ -105,7 +106,8 @@ export class WaveApiService {
           nextDecisionTime: this.calculateNextDecisionTimeRelativeToNow(
             waveCreationTime,
             createWaveRequest.wave.decisions_strategy
-          )
+          ),
+          isDirectMessage
         });
         await this.wavesApiDb.insertWave(newEntity, ctxWithConnection);
         const authorId = authenticationContext.getActingAsId()!;
@@ -296,7 +298,7 @@ export class WaveApiService {
       outcomes: []
     };
 
-    return await this.createWave(waveRequest, ctx);
+    return await this.createWave(waveRequest, true, ctx);
   }
 
   private async validateWaveRelations(
@@ -687,7 +689,8 @@ export class WaveApiService {
       type,
       limit,
       offset,
-      only_waves_followed_by_authenticated_user
+      only_waves_followed_by_authenticated_user,
+      direct_message
     }: WavesOverviewParams,
     ctx: RequestContext
   ) {
@@ -726,6 +729,7 @@ export class WaveApiService {
       authenticatedUserId: authenticatedProfileId ?? null,
       eligibleGroups,
       only_waves_followed_by_authenticated_user,
+      direct_message,
       offset
     });
     const noRightToVote =
@@ -759,6 +763,7 @@ export class WaveApiService {
     authenticatedUserId,
     limit,
     only_waves_followed_by_authenticated_user,
+    direct_message,
     offset
   }: {
     eligibleGroups: string[];
@@ -767,6 +772,7 @@ export class WaveApiService {
     offset: number;
     only_waves_followed_by_authenticated_user: boolean;
     authenticatedUserId: string | null;
+    direct_message?: boolean;
   }): Promise<WaveEntity[]> {
     switch (type) {
       case ApiWavesOverviewType.Latest:
@@ -775,7 +781,8 @@ export class WaveApiService {
           authenticated_user_id: authenticatedUserId,
           eligibleGroups,
           limit,
-          offset
+          offset,
+          direct_message
         });
       case ApiWavesOverviewType.MostSubscribed:
         return await this.wavesApiDb.findMostSubscribedWaves({
@@ -783,7 +790,8 @@ export class WaveApiService {
           authenticated_user_id: authenticatedUserId,
           eligibleGroups,
           limit,
-          offset
+          offset,
+          direct_message
         });
       case ApiWavesOverviewType.HighLevelAuthor:
         return await this.wavesApiDb.findHighLevelAuthorWaves({
@@ -791,7 +799,8 @@ export class WaveApiService {
           authenticated_user_id: authenticatedUserId,
           eligibleGroups,
           limit,
-          offset
+          offset,
+          direct_message
         });
       case ApiWavesOverviewType.AuthorYouHaveRepped:
         return await this.wavesApiDb.findWavesByAuthorsYouHaveRepped({
@@ -799,7 +808,8 @@ export class WaveApiService {
           authenticatedUserId: authenticatedUserId!,
           only_waves_followed_by_authenticated_user,
           limit,
-          offset
+          offset,
+          direct_message
         });
       case ApiWavesOverviewType.MostDropped:
         return await this.wavesApiDb.findMostDroppedWaves({
@@ -807,7 +817,8 @@ export class WaveApiService {
           authenticated_user_id: authenticatedUserId,
           only_waves_followed_by_authenticated_user,
           limit,
-          offset
+          offset,
+          direct_message
         });
       case ApiWavesOverviewType.MostDroppedByYou:
         return await this.wavesApiDb.findMostDroppedWavesByYou({
@@ -816,7 +827,8 @@ export class WaveApiService {
           dropperId: authenticatedUserId!,
           authenticated_user_id: authenticatedUserId,
           limit,
-          offset
+          offset,
+          direct_message
         });
       case ApiWavesOverviewType.RecentlyDroppedTo:
         return await this.wavesApiDb.findRecentlyDroppedToWaves({
@@ -824,7 +836,8 @@ export class WaveApiService {
           only_waves_followed_by_authenticated_user,
           authenticated_user_id: authenticatedUserId,
           limit,
-          offset
+          offset,
+          direct_message
         });
       case ApiWavesOverviewType.RecentlyDroppedToByYou:
         return await this.wavesApiDb.findRecentlyDroppedToWavesByYou({
@@ -833,7 +846,8 @@ export class WaveApiService {
           eligibleGroups,
           dropperId: authenticatedUserId!,
           limit,
-          offset
+          offset,
+          direct_message
         });
       default:
         assertUnreachable(type);
@@ -984,7 +998,8 @@ export class WaveApiService {
           nextDecisionTime: this.calculateNextDecisionTimeRelativeToNow(
             waveUpdateTime,
             request.wave.decisions_strategy
-          )
+          ),
+          isDirectMessage: waveBeforeUpdate.is_direct_message ?? false
         });
 
         await this.wavesApiDb.insertWave(updatedEntity, ctxWithConnection);
@@ -1081,6 +1096,7 @@ export interface WavesOverviewParams {
   offset: number;
   type: ApiWavesOverviewType;
   only_waves_followed_by_authenticated_user: boolean;
+  direct_message?: boolean;
 }
 
 export const waveApiService = new WaveApiService(
