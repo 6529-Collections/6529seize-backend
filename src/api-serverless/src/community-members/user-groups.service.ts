@@ -1226,6 +1226,13 @@ export class UserGroupsService {
       ctx
     );
   }
+
+  async findIdentitiesInGroups(
+    groupIds: string[],
+    ctx: RequestContext
+  ): Promise<string[]> {
+    return await this.userGroupsDb.findIdentitiesInGroups(groupIds, ctx);
+  }
 }
 
 export const userGroupsService = new UserGroupsService(

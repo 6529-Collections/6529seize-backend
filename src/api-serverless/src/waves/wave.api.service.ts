@@ -140,7 +140,7 @@ export class WaveApiService {
             target_type: ActivityEventTargetType.WAVE,
             target_action: ActivityEventAction.DROP_CREATED,
             wave_id: id,
-            subscribed_to_all_drops: false
+            subscribed_to_all_drops: newEntity.is_direct_message
           },
           connection,
           timer
@@ -172,16 +172,24 @@ export class WaveApiService {
           },
           ctxWithConnection
         );
-        const followersInGroups =
-          await this.userGroupsService.findFollowersOfUserInGroups(
-            waveEntity.created_by,
+        let usersToNotify: string[];
+        if (waveEntity.is_direct_message) {
+          usersToNotify = await this.userGroupsService.findIdentitiesInGroups(
             waveGroups,
             ctxWithConnection
           );
+        } else {
+          usersToNotify =
+            await this.userGroupsService.findFollowersOfUserInGroups(
+              waveEntity.created_by,
+              waveGroups,
+              ctxWithConnection
+            );
+        }
         await this.userNotifier.notifyOfWaveCreated(
           waveEntity.id,
           waveEntity.created_by,
-          followersInGroups,
+          usersToNotify,
           ctxWithConnection
         );
 
