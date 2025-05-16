@@ -1400,7 +1400,7 @@ export class WavesApiDb extends LazyDbAccessCompatibleService {
 
 export interface InsertWaveEntity extends Omit<WaveEntity, 'serial_no'> {
   readonly serial_no: number | null;
-  readonly is_direct_message: boolean | null;
+  readonly is_direct_message: boolean;
 }
 
 export interface SearchWavesParams {
