@@ -7,6 +7,7 @@ import { profileActivityLogsDb } from '../profileActivityLogs/profile-activity-l
 import { ProfileActivityLogType } from '../entities/IProfileActivityLog';
 import { Logger } from '../logging';
 import { dropVotingDb } from '../api-serverless/src/drops/drop-voting.db';
+import { AppFeature, isFeatureOn } from '../helpers';
 
 const logger = Logger.get('PARTICIPATION_DROPS_OVER_VOTE_REVOCATION');
 
@@ -18,6 +19,10 @@ export async function revokeRepBasedDropOverVotes(
   },
   connection: ConnectionWrapper<any>
 ) {
+  if (!isFeatureOn(AppFeature.DROP_OVERVOTE_REVOCATION)) {
+    logger.warn(`Drop overvote revocation is disabled. Skipping.`);
+    return;
+  }
   const ctx = {
     timer: new Timer('revokeRepBasedDropOverVotes'),
     connection
@@ -71,6 +76,10 @@ export async function revokeRepBasedDropOverVotes(
 export async function revokeTdhBasedDropWavesOverVotes(
   connection: ConnectionWrapper<any>
 ) {
+  if (!isFeatureOn(AppFeature.DROP_OVERVOTE_REVOCATION)) {
+    logger.warn(`Drop overvote revocation is disabled. Skipping.`);
+    return;
+  }
   logger.info(`Revoking TDH-based waves overvotes`);
   const timer = new Timer('revokeTdhBasedWavesOverVotes');
   const ctx: RequestContext = { timer, connection };
