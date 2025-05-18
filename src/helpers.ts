@@ -289,7 +289,8 @@ export function buildConsolidationKey(wallets: string[]) {
   const sortedWallets = wallets
     .map((it) => it.toLowerCase())
     .slice()
-    .sort((a, b) => a.localeCompare(b));
+    .sort((a, b) => a.localeCompare(b))
+    .filter((it) => it !== '');
   return sortedWallets.join('-');
 }
 
