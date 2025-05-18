@@ -5,6 +5,8 @@ import { Time } from './time';
 
 let redis: Redis;
 
+export type TtlUnit = 'seconds' | 'milliseconds';
+
 export async function redisGet<T>(key: string): Promise<T | null> {
   if (!redis) {
     throw new Error('Redis client is not initialized');
@@ -40,28 +42,69 @@ export async function redisGetMany<T>(
   }
   const valuesFromRedisRaw = await redis.mGet(keys);
   return valuesFromRedisRaw.reduce((acc, value, index) => {
-    if (value) {
+    if (value !== null) {
       acc[keys[index]] = JSON.parse(value);
     }
     return acc;
   }, {} as Record<string, T>);
 }
 
+/**
+ * Caches a value in Redis.
+ * @param ttl  - Duration object.
+ * @param unit - 'seconds' for EX (default), 'milliseconds' for PX.
+ *
+ * NOTE: Passing milliseconds to EX will inflate TTL by ×1000.
+ */
+export async function redisCached<T>(
+  key: string,
+  ttl: Time,
+  unit: TtlUnit,
+  callback: () => Promise<T>
+): Promise<T | undefined>;
+// TODO(TECH-123): remove after all call-sites pass `unit`
 export async function redisCached<T>(
   key: string,
   ttl: Time,
   callback: () => Promise<T>
-): Promise<any> {
+): Promise<T | undefined>;
+export async function redisCached<T>(
+  key: string,
+  ttl: Time,
+  unitOrCallback: TtlUnit | (() => Promise<T>),
+  maybeCallback?: () => Promise<T>
+): Promise<T | undefined> {
+  const unit: TtlUnit =
+    typeof unitOrCallback === 'function' ? 'seconds' : unitOrCallback;
+  const callback: () => Promise<T> =
+    typeof unitOrCallback === 'function'
+      ? (unitOrCallback as () => Promise<T>)
+      : (maybeCallback as () => Promise<T>);
+  if (typeof unitOrCallback === 'function') {
+    logger.debug(
+      `redisCached called without unit; defaulting to seconds: ${key}`
+    );
+  }
   if (!redis) {
     throw new Error('Redis client is not initialized');
   }
   const cachedValue = await redis.get(key);
-  if (cachedValue) {
-    return JSON.parse(cachedValue);
+  if (cachedValue !== null) {
+    try {
+      return JSON.parse(cachedValue);
+    } catch {
+      logger.warn(`Corrupt JSON in Redis for key ${key}; evicting`);
+      await redis.del(key);
+    }
   }
   const value = await callback();
   if (value !== undefined) {
-    await redis.set(key, JSON.stringify(value), { EX: ttl.toMillis() });
+    const json = JSON.stringify(value);
+    if (unit === 'milliseconds') {
+      await redis.set(key, json, { PX: ttl.toMillis() });
+    } else {
+      await redis.set(key, json, { EX: Math.ceil(ttl.toSeconds()) });
+    }
   }
   return value;
 }
