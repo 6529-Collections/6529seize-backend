@@ -1,7 +1,7 @@
 import {
   AiBasedAbusivenessDetector,
   aiBasedAbusivenessDetector
-} from '../abusinveness/ai-based-abusiveness.detector';
+} from '../abusiveness/ai-based-abusiveness.detector';
 import { abusivenessCheckDb, AbusivenessCheckDb } from './abusiveness-check.db';
 import { BadRequestException } from '../exceptions';
 import {
