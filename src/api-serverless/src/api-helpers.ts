@@ -11,7 +11,7 @@ import {
   SORT_DIRECTIONS
 } from './api-constants';
 import { Time } from '../../time';
-import { parseNumberOrNull } from '../../helpers';
+import { parseIntOrNull } from '../../helpers';
 
 const converter = require('json-2-csv');
 
@@ -123,7 +123,7 @@ export function resolveIntParam(param: string | string[] | undefined) {
 export function giveReadReplicaTimeToCatchUp(millisToGive?: number | null) {
   const ms =
     millisToGive ??
-    parseNumberOrNull(process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE) ??
+    parseIntOrNull(process.env.REPLICA_CATCHUP_DELAY_AFTER_WRITE) ??
     500;
   return Time.millis(ms).sleep();
 }
