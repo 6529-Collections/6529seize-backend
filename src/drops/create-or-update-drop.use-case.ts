@@ -25,12 +25,7 @@ import {
   WaveRequiredMetadataItemType,
   WaveType
 } from '../entities/IWave';
-import {
-  assertUnreachable,
-  distinct,
-  parseIntOrNull,
-  parseNumberOrNull
-} from '../helpers';
+import { assertUnreachable, distinct, parseIntOrNull } from '../helpers';
 import { randomUUID } from 'crypto';
 import {
   DropMediaEntity,
@@ -451,9 +446,7 @@ export class CreateOrUpdateDropUseCase {
           );
         }
         if (requiredMetadata.type === WaveRequiredMetadataItemType.NUMBER) {
-          if (
-            !metadata.some((it) => parseNumberOrNull(it.data_value) !== null)
-          ) {
+          if (!metadata.some((it) => parseIntOrNull(it.data_value) !== null)) {
             throw new BadRequestException(
               `Wave requires metadata ${requiredMetadata.name} to be a number`
             );

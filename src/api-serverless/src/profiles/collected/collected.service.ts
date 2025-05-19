@@ -21,7 +21,7 @@ import {
   areEqualAddresses,
   assertUnreachable,
   distinct,
-  parseNumberOrNull
+  parseIntOrNull
 } from '../../../../helpers';
 import {
   identityFetcher,
@@ -110,8 +110,8 @@ export class CollectedService {
     const pageNo = query.page;
     return [...cards]
       .sort((a, b) => {
-        const val1 = parseNumberOrNull(a[query.sort]) ?? 0;
-        const val2 = parseNumberOrNull(b[query.sort]) ?? 0;
+        const val1 = parseIntOrNull(a[query.sort]) ?? 0;
+        const val2 = parseIntOrNull(b[query.sort]) ?? 0;
         switch (query.sort_direction) {
           case PageSortDirection.DESC: {
             return val2 - val1;
@@ -257,7 +257,7 @@ export class CollectedService {
       ...Object.keys(memesAndGradients.memes.tdhsAndBalances),
       ...Object.keys(memesLiveBalances)
     ]).forEach((id) => {
-      const tokenId = parseNumberOrNull(id);
+      const tokenId = parseIntOrNull(id);
       if (tokenId !== null) {
         const liveBalance = memesLiveBalances[tokenId] ?? 0;
         if (liveBalance === 0) {
@@ -274,7 +274,7 @@ export class CollectedService {
       ...Object.keys(memesAndGradients.gradients.tdhsAndBalances),
       ...Object.keys(gradientsLiveBalances)
     ]).forEach((id) => {
-      const tokenId = parseNumberOrNull(id);
+      const tokenId = parseIntOrNull(id);
       if (tokenId !== null) {
         const liveBalance = gradientsLiveBalances[tokenId] ?? 0;
         if (liveBalance === 0) {
@@ -291,7 +291,7 @@ export class CollectedService {
       ...Object.keys(nextgenStats.tdhsAndBalances),
       ...Object.keys(nextgenLiveBalances)
     ]).forEach((id) => {
-      const tokenId = parseNumberOrNull(id);
+      const tokenId = parseIntOrNull(id);
       if (tokenId !== null) {
         const liveBalance = nextgenLiveBalances[tokenId] ?? 0;
         if (liveBalance === 0) {
