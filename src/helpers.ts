@@ -365,17 +365,6 @@ export function batchArray<T>(items: T[], size: number): T[][] {
   return batched;
 }
 
-export function parseNumberOrNull(input: any): number | null {
-  if (input === null || input === undefined) {
-    return null;
-  }
-  const parsed = parseInt(input);
-  if (isNaN(parsed)) {
-    return null;
-  }
-  return parsed;
-}
-
 const INT_LIKE = /^[+-]?(?:0|[1-9]\d*)(?:\.0+)?$/;
 
 export function parseIntOrNull(value: any): number | null {
