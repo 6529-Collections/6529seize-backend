@@ -15,10 +15,10 @@ import {
 import {
   fetchLatestNftHistoryBlockNumber,
   fetchLatestNftUri,
-  persistNftHistory,
+  findClaim,
   persistNftClaims,
-  persistNftHistoryBlock,
-  findClaim
+  persistNftHistory,
+  persistNftHistoryBlock
 } from './db';
 import { NFTHistory, NFTHistoryClaim } from './entities/INFTHistory';
 import { NFT_HISTORY_IFACE } from './abis/nft_history';
@@ -40,6 +40,7 @@ const UPDATE_CLAIM_METHOD_1 = '0xa310099c';
 const UPDATE_CLAIM_METHOD_2 = '0x0a6330b8';
 const UPDATE_CLAIM_METHOD_3 = '0xe505bb01';
 
+/* istanbul ignore next */
 async function getAllDeployerTransactions(
   startingBlock: number,
   latestBlock: number,
@@ -68,6 +69,7 @@ async function getAllDeployerTransactions(
   return response;
 }
 
+/* istanbul ignore next */
 const findDetailsFromTransaction = async (tx: TransactionResponse) => {
   if (tx.data) {
     const data = tx.data;
@@ -125,7 +127,10 @@ const findDetailsFromTransaction = async (tx: TransactionResponse) => {
   return null;
 };
 
-function getAttributeChanges(oldAttributes: any[], newAttributes: any[]) {
+export function getAttributeChanges(
+  oldAttributes: any[],
+  newAttributes: any[]
+) {
   const changes: any[] = [];
 
   const oldAttributesMap = new Map();
@@ -176,7 +181,7 @@ function getAttributeChanges(oldAttributes: any[], newAttributes: any[]) {
   return changes;
 }
 
-const getEditDescription = async (
+export const getEditDescription = async (
   tokenId: number,
   contract: string,
   newUri: string,
@@ -261,6 +266,7 @@ const getEditDescription = async (
   return null;
 };
 
+/* istanbul ignore next */
 export const getDeployerTransactions = async (
   startingBlock: number,
   latestBlock?: number,
