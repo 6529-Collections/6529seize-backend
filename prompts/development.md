@@ -241,7 +241,7 @@ Below is a snapshot of what the `src/` folder contains:
 
 ```
 abis/
-abusinveness/
+abusiveness/
 activity/
 aggregatedActivityLoop/
 aggregations/
