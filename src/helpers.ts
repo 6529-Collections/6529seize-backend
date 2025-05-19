@@ -366,13 +366,24 @@ export function parseNumberOrNull(input: any): number | null {
   return parsed;
 }
 
-export function parseIntOrNull(input: any): number | null {
-  const num = parseNumberOrNull(input);
-  const int = parseInt(input);
-  if (num === int) {
-    return int;
+const INT_LIKE = /^[+-]?(?:0|[1-9]\d*)(?:\.0+)?$/;
+
+export function parseIntOrNull(value: any): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && Number.isInteger(value) ? value : null;
   }
-  return null;
+
+  // anything that isn’t a string is automatically rejected
+  if (typeof value !== 'string') return null;
+
+  // trim *all* whitespace (including NBSP, tabs, new lines…)
+  const trimmed = value.trim();
+
+  // string must match the regexp exactly
+  if (!INT_LIKE.test(trimmed)) return null;
+
+  // safe to convert – it’s an exact int
+  return Number(trimmed);
 }
 
 export function resolveEnum<T extends {}>(
