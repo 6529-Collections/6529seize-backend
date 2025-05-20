@@ -1,6 +1,11 @@
 import { DropHasher } from '../api-serverless/src/drops/drop-hasher';
 import { ApiCreateDropRequest } from '../api-serverless/src/generated/models/ApiCreateDropRequest';
 
+// js-sha256 is not installed in this environment; provide a simple mock
+jest.mock('js-sha256', () => ({ sha256: (input: any) => JSON.stringify(input) }), {
+  virtual: true
+});
+
 describe('DropHasher', () => {
   const dropHasher = new DropHasher();
 

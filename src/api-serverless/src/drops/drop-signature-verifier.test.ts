@@ -1,3 +1,8 @@
+// js-sha256 isn't available in this environment; mock it for tests
+jest.mock('js-sha256', () => ({ sha256: (input: any) => JSON.stringify(input) }), {
+  virtual: true
+});
+
 import { DropSignatureVerifier } from './drop-signature-verifier';
 import { DropHasher } from './drop-hasher';
 import { mock } from 'ts-jest-mocker';
