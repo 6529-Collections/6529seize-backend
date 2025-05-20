@@ -3,7 +3,7 @@ import { prepEnvironment } from './env';
 import { Logger } from './logging';
 import { Time } from './time';
 
-async function loadEnv(entities: any[] = [], syncEntities: boolean = false) {
+async function loadEnv(entities: any[] = [], syncEntities = false) {
   await prepEnvironment();
   await connect(entities, syncEntities);
 }

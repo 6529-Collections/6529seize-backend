@@ -369,7 +369,7 @@ const parseBlurLog = async (log: { data: string }) => {
 
     return { feeRate, feeRecipient };
   } catch (error) {
-    console.error('Error unpacking fee:', error);
+    logger.error(`Error unpacking fee: ${JSON.stringify(error)}`);
     return null;
   }
 };

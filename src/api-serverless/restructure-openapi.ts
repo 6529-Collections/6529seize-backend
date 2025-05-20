@@ -61,4 +61,5 @@ yamlString = yamlString.replace(/'/g, '"');
 // Write the sorted and formatted YAML back to the file
 fs.writeFileSync(filePath, yamlString, 'utf8');
 
+// eslint-disable-next-line
 console.log('OpenAPI YAML file restructured successfully.');
