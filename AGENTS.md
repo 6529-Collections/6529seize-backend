@@ -1,4 +1,2 @@
-# Contributor Guide
-
-## Commiting to Git
-1. Every time you commit something do it with -s flag so it would have a DCO signature.
+# Commiting to Git
+Every time you commit something add a DCO signature to footer with my name and the corresponding @users.noreply.github.com email address.
