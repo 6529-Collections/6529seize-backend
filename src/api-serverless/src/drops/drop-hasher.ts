@@ -1,5 +1,5 @@
 import { ApiCreateDropRequest } from '../generated/models/ApiCreateDropRequest';
-import { sha256 } from 'js-sha256';
+import crypto from 'crypto';
 
 export class DropHasher {
   public hash({
@@ -17,7 +17,7 @@ export class DropHasher {
     }
     delete obj.signature;
     const serialisedObj = this.canonicalJSONStringify(obj);
-    return sha256(serialisedObj);
+    return crypto.createHash('sha256').update(serialisedObj).digest('hex');
   }
 
   private canonicalJSONStringify(obj: any): string {
