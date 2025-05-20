@@ -4,7 +4,8 @@ import {
   GlobalTDHHistory,
   LatestGlobalTDHHistory,
   TDHHistory,
-  LatestTDHHistory
+  LatestTDHHistory,
+  RecentTDHHistory
 } from '../entities/ITDHHistory';
 import { TokenTDH } from '../entities/ITDH';
 import {
@@ -40,7 +41,8 @@ export const handler = sentryContext.wrapLambdaHandler(async () => {
         TDHHistory,
         GlobalTDHHistory,
         LatestTDHHistory,
-        LatestGlobalTDHHistory
+        LatestGlobalTDHHistory,
+        RecentTDHHistory
       ]
     }
   );
@@ -123,14 +125,19 @@ function hasMatchingWallet(d: any, yd: any) {
 
 async function tdhHistory(date: Date) {
   const dateString = formatDateAsString(date);
-  const uploads = await fetchUploads(dateString);
 
   logger.info(
     `[DATE ${date.toISOString().split('T')[0]}] [FETCHING UPLOADS...]`
   );
 
+  const uploads = await fetchUploads(dateString);
+
   const today = uploads[0];
   const yesterday = uploads[1];
+
+  if (today.date !== dateString) {
+    throw new Error(`Uploads not found for date ${dateString}`);
+  }
 
   logger.info({
     message: 'CALCULATING TDH CHANGE',
@@ -304,7 +311,7 @@ async function tdhHistory(date: Date) {
     }] [PERSISTING...]`
   );
 
-  await persistTDHHistory(tdhHistory);
+  await persistTDHHistory(date, tdhHistory);
 
   return {
     block: today.block,

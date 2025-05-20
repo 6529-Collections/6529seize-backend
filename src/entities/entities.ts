@@ -90,6 +90,13 @@ export {
   NftTDH,
   TDHBlock
 } from './ITDH';
+export {
+  GlobalTDHHistory,
+  TDHHistory,
+  LatestGlobalTDHHistory,
+  LatestTDHHistory,
+  RecentTDHHistory
+} from './ITDHHistory';
 export { Team } from './ITeam';
 export { Transaction } from './ITransaction';
 export {
