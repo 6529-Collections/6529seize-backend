@@ -1,3 +1,5 @@
+jest.mock('js-sha256', () => ({ sha256: jest.fn((msg: string) => `hash-${msg}`) }), { virtual: true });
+
 import { DropHasher } from '../api-serverless/src/drops/drop-hasher';
 import { ApiCreateDropRequest } from '../api-serverless/src/generated/models/ApiCreateDropRequest';
 

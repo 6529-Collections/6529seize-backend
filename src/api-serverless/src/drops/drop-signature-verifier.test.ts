@@ -1,3 +1,5 @@
+jest.mock('js-sha256', () => ({ sha256: jest.fn(() => 'hash') }), { virtual: true });
+
 import { DropSignatureVerifier } from './drop-signature-verifier';
 import { DropHasher } from './drop-hasher';
 import { mock } from 'ts-jest-mocker';
