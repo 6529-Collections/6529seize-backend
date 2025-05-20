@@ -1,1 +1,1 @@
-DELETE FROM recent_tdh_history;
+TRUNCATE TABLE recent_tdh_history;
