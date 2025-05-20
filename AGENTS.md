@@ -1,2 +1,2 @@
 # Commiting to Git
-Every time you commit something do it with -s flag so it would have a DCO signature.
+Every time you commit something add a DCO signature to footer with my name and email address
