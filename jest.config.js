@@ -4,7 +4,8 @@ module.exports = {
   transform: {
     '^.+\\.ts?$': 'ts-jest'
   },
-  transformIgnorePatterns: ['<rootDir>/node_modules/']
+  transformIgnorePatterns: ['<rootDir>/node_modules/'],
+  testPathIgnorePatterns: ['<rootDir>/build/']
 };
 
 process.env = Object.assign(process.env, {
