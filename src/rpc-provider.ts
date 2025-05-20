@@ -23,7 +23,7 @@ function getAlchemyUrl(networkId: number): string {
 }
 
 export function getRpcProvider(
-  networkId: number = 1
+  networkId = 1
 ): ethers.providers.JsonRpcProvider {
   if (!providers.has(networkId)) {
     const provider = new ethers.providers.JsonRpcProvider(

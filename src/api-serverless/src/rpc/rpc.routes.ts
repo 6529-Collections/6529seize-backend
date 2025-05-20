@@ -1,14 +1,17 @@
-import { Response, Request } from 'express';
+import { Request, Response } from 'express';
 import { asyncRouter } from '../async.router';
 import {
   GetNodeCommand,
   ManagedBlockchainClient
 } from '@aws-sdk/client-managedblockchain';
 import axios from 'axios';
+import { Logger } from '../../../logging';
 
 const router = asyncRouter();
 
 const aws4 = require('aws4');
+
+const logger = Logger.get('RPC_ROUTES');
 
 router.get('/test', async (req: Request, res: Response) => {
   try {
@@ -67,11 +70,10 @@ router.use('/:extraPath*?', async (req: Request, res: Response) => {
       });
       return response.data;
     } catch (error: any) {
-      console.error(
-        'Error making request:',
-        error.response?.data || error.message
+      logger.error(
+        `Error processing RPC request: ${error.response?.data ?? error.message}`
       );
-      return { error: error.response?.data || error.message, id: request.id };
+      return { error: error.response?.data ?? error.message, id: request.id };
     }
   };
 
@@ -81,7 +83,7 @@ router.use('/:extraPath*?', async (req: Request, res: Response) => {
     );
     res.status(200).json(isBatch ? results : results[0]);
   } catch (error: any) {
-    console.error('Error processing RPC request:', error.message);
+    logger.error(`Error processing RPC request: ${error.message}`);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

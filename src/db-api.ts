@@ -295,13 +295,6 @@ export async function fetchLatestTDHBlockNumber() {
   return r.length > 0 ? r[0].block_number : 0;
 }
 
-async function getTeamWallets() {
-  const sql = `SELECT wallet FROM ${TEAM_TABLE}`;
-  let results = await sqlExecutor.execute(sql);
-  results = results.map((r: { wallet: string }) => r.wallet);
-  return results;
-}
-
 export async function fetchPaginated<T = any>(
   table: string,
   params: any,
@@ -987,9 +980,7 @@ export async function fetchEns(address: string) {
 export async function fetchRanksForWallet(address: string) {
   const tdhBlock = await fetchLatestTDHBlockNumber();
   const sqlTdh = `SELECT * FROM ${WALLETS_TDH_TABLE} WHERE block=${tdhBlock} and wallet=:address`;
-  const ownerTdh = await sqlExecutor.execute(sqlTdh, { address: address });
-
-  return ownerTdh;
+  return await sqlExecutor.execute(sqlTdh, { address: address });
 }
 
 export async function fetchLabExtended(

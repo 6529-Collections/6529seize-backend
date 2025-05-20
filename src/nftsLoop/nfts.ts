@@ -2,27 +2,27 @@ import { ethers } from 'ethers';
 import axios from 'axios';
 import { getRpcProvider } from '../rpc-provider';
 import {
-  getDataSource,
   fetchAllArtists,
-  persistArtists,
-  fetchMemesWithSeason
+  fetchMemesWithSeason,
+  getDataSource,
+  persistArtists
 } from '../db';
-import { NFT, LabNFT, NFTWithExtendedData } from '../entities/INFT';
+import { LabNFT, NFT, NFTWithExtendedData } from '../entities/INFT';
 import { NFTOwner } from '../entities/INFTOwner';
 import { TokenType } from '../enums';
 import { Logger } from '../logging';
 import {
-  MEMES_CONTRACT,
-  MEME_8_EDITION_BURN_ADJUSTMENT,
   GRADIENT_CONTRACT,
+  MANIFOLD,
+  MEME_8_EDITION_BURN_ADJUSTMENT,
   MEMELAB_CONTRACT,
+  MEMES_CONTRACT,
   NFT_HTML_LINK,
   NFT_ORIGINAL_IMAGE_LINK,
-  NFT_SCALED60_IMAGE_LINK,
-  NFT_SCALED450_IMAGE_LINK,
   NFT_SCALED1000_IMAGE_LINK,
+  NFT_SCALED450_IMAGE_LINK,
+  NFT_SCALED60_IMAGE_LINK,
   NFT_VIDEO_LINK,
-  MANIFOLD,
   NULL_ADDRESS
 } from '../constants';
 import { areEqualAddresses, replaceEmojisWithHex } from '../helpers';
@@ -202,19 +202,9 @@ async function discoverNewNFTs(
   provider: ethers.providers.JsonRpcProvider,
   EntityClass: typeof NFT | typeof LabNFT
 ) {
-  const memeNFTs: NFTWithExtendedData[] =
-    EntityClass === LabNFT ? await fetchMemesWithSeason() : [];
-
   await Promise.all(
     contracts.map((config) =>
-      discoverForContract(
-        config,
-        contractMap,
-        nftMap,
-        provider,
-        EntityClass,
-        memeNFTs
-      )
+      discoverForContract(config, contractMap, nftMap, provider, EntityClass)
     )
   );
 }
@@ -224,8 +214,7 @@ async function discoverForContract(
   contractMap: Map<string, number>,
   nftMap: Map<string, { nft: NFT | LabNFT; changed: boolean }>,
   provider: ethers.providers.JsonRpcProvider,
-  EntityClass: typeof NFT | typeof LabNFT,
-  memeNFTs: NFTWithExtendedData[]
+  EntityClass: typeof NFT | typeof LabNFT
 ) {
   const { contract, tokenType } = config;
   const instance = getContractInstance(contract, provider);
@@ -483,7 +472,7 @@ async function updateSupply(
   await Promise.all(
     Array.from(nftMap.values()).map(async (entry) => {
       const nft = entry.nft;
-      let supply = 0;
+      let supply: number;
 
       if (nft.token_type === TokenType.ERC1155) {
         supply = await getDataSource()

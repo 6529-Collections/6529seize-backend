@@ -87,7 +87,7 @@ function buildUpload(
 ): TDHUpload {
   const tdhUpload: TDHUpload = tdh.map((tdh) => {
     let balance: OwnerBalances | ConsolidatedOwnerBalances | undefined;
-    let uniqueFields: any = {};
+    const uniqueFields: any = {};
     if (isConsolidation) {
       balance = ownerBalances.find((om) =>
         areEqualAddresses(
@@ -132,7 +132,7 @@ function buildUpload(
       totalBalance = balance.total_balance - balance.memelab_balance;
     }
 
-    let entry: UploadFieldsWallet | UploadFieldsConsolidation = {
+    const entry: UploadFieldsWallet | UploadFieldsConsolidation = {
       ...uniqueFields,
       block: tdh.block,
       date: dateString,

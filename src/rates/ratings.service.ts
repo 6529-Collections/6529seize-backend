@@ -1218,6 +1218,7 @@ export class RatingsService {
       ([profileId, changes]) => ({
         profileId,
         changes: Object.entries(changes)
+          // eslint-disable-next-line
           .filter(([_, it]) => it.oldRating !== it.newRating)
           .map(([category, { oldRating, newRating }]) => ({
             category,

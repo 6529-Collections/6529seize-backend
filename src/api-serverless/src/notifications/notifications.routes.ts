@@ -84,7 +84,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<any, any, any, any, any>,
-    res: Response<ApiResponse<{}>>
+    res: Response<ApiResponse<any>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);
@@ -109,7 +109,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<{}>>
+    res: Response<ApiResponse<any>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     if (!authenticationContext.getActingAsId()) {
@@ -140,7 +140,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<{ id: string }, any, any, any, any>,
-    res: Response<ApiResponse<{}>>
+    res: Response<ApiResponse<any>>
   ) => {
     const authenticationContext = await getAuthenticationContext(req);
     if (!authenticationContext.getActingAsId()) {
@@ -169,7 +169,7 @@ router.post(
   needsAuthenticatedUser(),
   async (
     req: Request<{ wave_id: string }, any, any, any, any>,
-    res: Response<ApiResponse<{}>>
+    res: Response<ApiResponse<any>>
   ) => {
     const timer = Timer.getFromRequest(req);
     const authenticationContext = await getAuthenticationContext(req, timer);

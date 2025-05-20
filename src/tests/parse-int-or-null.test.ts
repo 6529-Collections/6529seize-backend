@@ -1,5 +1,5 @@
 import fc from 'fast-check';
-import { parseIntOrNull } from './helpers';
+import { parseIntOrNull } from '../helpers';
 
 describe('parseIntOrNull', () => {
   const cases: Array<[unknown, number | null]> = [
