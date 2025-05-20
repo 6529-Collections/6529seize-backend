@@ -1274,8 +1274,16 @@ export async function persistTDHHistory(date: Date, tdhHistory: TDHHistory[]) {
         cutoff: cutoffDate
       })
       .execute();
-    await tdhHistoryRepo.save(tdhHistory);
-    await recentTdhHistoryRepo.save(tdhHistory);
+    await tdhHistoryRepo.upsert(tdhHistory, [
+      'date',
+      'consolidation_key',
+      'block'
+    ]);
+    await recentTdhHistoryRepo.upsert(tdhHistory, [
+      'date',
+      'consolidation_key',
+      'block'
+    ]);
 
     await resetRepository(
       transactionalEntityManager.getRepository(LatestTDHHistory),
