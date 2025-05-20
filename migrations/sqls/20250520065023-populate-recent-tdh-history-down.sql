@@ -1,0 +1,1 @@
+DELETE FROM recent_tdh_history;

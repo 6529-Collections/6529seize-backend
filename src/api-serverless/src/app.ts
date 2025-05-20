@@ -942,7 +942,7 @@ loadApi().then(async () => {
 
   apiRouter.get(`/tdh_history`, function (req: any, res: any) {
     const pageSize: number =
-      req.query.page_size && req.query.page_size < DISTRIBUTION_PAGE_SIZE
+      req.query.page_size && req.query.page_size < DEFAULT_PAGE_SIZE
         ? parseInt(req.query.page_size)
         : DEFAULT_PAGE_SIZE;
     const page: number = req.query.page ? parseInt(req.query.page) : 1;
@@ -959,6 +959,24 @@ loadApi().then(async () => {
       returnPaginatedResult(result, req, res);
     });
   });
+
+  apiRouter.get(
+    `/recent_tdh_history/:consolidation_key`,
+    function (req: any, res: any) {
+      const consolidationKey = req.params.consolidation_key;
+      db.fetchRecentTDHHistory(consolidationKey).then((result) => {
+        result.map((d: any) => {
+          d.wallets = JSON.parse(JSON.parse(d.wallets));
+          const date = new Date(d.date);
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          d.date = `${year}-${month}-${day}`;
+        });
+        returnJsonResult(result, req, res);
+      });
+    }
+  );
 
   apiRouter.get(``, async function (req: any, res: any) {
     const image = await db.fetchRandomImage();
