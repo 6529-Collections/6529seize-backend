@@ -1,7 +1,7 @@
 import { EntityManager } from 'typeorm';
 import { getDataSource } from '../db';
 import { NextGenToken, NextGenTokenListing } from '../entities/INextGen';
-import { batchArray, weiToEth } from '../helpers';
+import { weiToEth } from '../helpers';
 import { Logger } from '../logging';
 import {
   fetchNextgenTokens,
@@ -11,6 +11,7 @@ import { NEXTGEN_ROYALTIES_ADDRESS } from '../nextgen/nextgen_constants';
 import { getOpenseaResponse } from './nft_market_stats';
 import { Time } from '../time';
 import { equalIgnoreCase } from '../strings';
+import { collections } from '../collections';
 
 const logger = Logger.get('NEXTGEN_MARKET_STATS');
 
@@ -24,7 +25,7 @@ export const findNextgenMarketStats = async (contract: string) => {
   await dataSource.transaction(async (entityManager) => {
     const tokens: NextGenToken[] = await fetchNextgenTokens(entityManager);
     const sortedTokens = tokens.slice().sort((a, b) => a.id - b.id);
-    const batchedTokens = batchArray(sortedTokens, 30);
+    const batchedTokens = collections.chunkArray(sortedTokens, 30);
 
     for (const batch of batchedTokens) {
       await processBatch(

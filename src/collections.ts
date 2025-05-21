@@ -1,14 +1,34 @@
-export function getMapWithKeysAndValuesSwitched(
-  map: Map<string, string>
-): Map<string, string[]> {
-  return Array.from(map, ([name, value]) => ({ k: name, v: value })).reduce(
-    (acc, { k, v }) => {
-      if (!acc.has(v)) {
-        acc.set(v, []);
-      }
-      acc.get(v)!.push(k);
-      return acc;
-    },
-    new Map<string, string[]>()
-  );
+export class Collections {
+  public getMapWithKeysAndValuesSwitched(
+    map: Map<string, string>
+  ): Map<string, string[]> {
+    return Array.from(map, ([name, value]) => ({ k: name, v: value })).reduce(
+      (acc, { k, v }) => {
+        if (!acc.has(v)) {
+          acc.set(v, []);
+        }
+        acc.get(v)!.push(k);
+        return acc;
+      },
+      new Map<string, string[]>()
+    );
+  }
+
+  public chunkArray<T>(items: T[], size: number): T[][] {
+    if (size <= 0) {
+      throw new RangeError('size must be greater than 0');
+    }
+
+    const batchSize = Math.floor(size);
+    const batched: T[][] = [];
+
+    for (let index = 0; index < items.length; index += batchSize) {
+      const batch = items.slice(index, index + batchSize);
+      batched.push(batch);
+    }
+
+    return batched;
+  }
 }
+
+export const collections = new Collections();

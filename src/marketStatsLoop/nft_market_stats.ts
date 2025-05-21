@@ -1,4 +1,4 @@
-import { batchArray, weiToEth } from '../helpers';
+import { weiToEth } from '../helpers';
 import {
   fetchAllMemeLabNFTs,
   fetchNftsForContract,
@@ -10,6 +10,7 @@ import { MEMELAB_CONTRACT } from '../constants';
 import { Logger } from '../logging';
 import { Time } from '../time';
 import { equalIgnoreCase } from '../strings';
+import { collections } from '../collections';
 
 const logger = Logger.get('NFT_MARKET_STATS');
 
@@ -47,7 +48,7 @@ export const findNftMarketStats = async (contract: string) => {
     `[CONTRACT ${contract}] [PROCESSING STATS FOR ${nfts.length} NFTS]`
   );
 
-  const batchedTokens = batchArray(nfts, 30);
+  const batchedTokens = collections.chunkArray(nfts, 30);
 
   for (let i = 0; i < batchedTokens.length; i++) {
     const batch = batchedTokens[i];

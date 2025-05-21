@@ -38,7 +38,7 @@ import {
   persistSubscriptions
 } from './db.subscriptions';
 import converter from 'json-2-csv';
-import { getMapWithKeysAndValuesSwitched } from '../collections';
+import { collections } from '../collections';
 import { equalIgnoreCase } from '../strings';
 
 const logger = Logger.get('SUBSCRIPTIONS');
@@ -390,7 +390,7 @@ export async function consolidateSubscriptions(addresses: Set<string>) {
       }
     }
 
-    const uniqueValuesWithKeys = getMapWithKeysAndValuesSwitched(
+    const uniqueValuesWithKeys = collections.getMapWithKeysAndValuesSwitched(
       replaceConsolidations
     );
     for (const value of Array.from(uniqueValuesWithKeys.keys())) {

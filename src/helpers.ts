@@ -207,24 +207,3 @@ export function replaceEmojisWithHex(inputString: string) {
     }
   );
 }
-/**
- * Split an array into batches of at most `size` items.
- * Fractional sizes are floored.
- * Throws a RangeError when size <= 0.
- */
-
-export function batchArray<T>(items: T[], size: number): T[][] {
-  if (size <= 0) {
-    throw new RangeError('size must be greater than 0');
-  }
-
-  const batchSize = Math.floor(size);
-  const batched: T[][] = [];
-
-  for (let index = 0; index < items.length; index += batchSize) {
-    const batch = items.slice(index, index + batchSize);
-    batched.push(batch);
-  }
-
-  return batched;
-}
