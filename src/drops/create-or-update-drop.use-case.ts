@@ -25,7 +25,7 @@ import {
   WaveRequiredMetadataItemType,
   WaveType
 } from '../entities/IWave';
-import { assertUnreachable } from '../helpers';
+import { assertUnreachable } from '../assertions';
 import { randomUUID } from 'crypto';
 import {
   DropMediaEntity,

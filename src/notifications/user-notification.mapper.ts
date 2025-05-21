@@ -10,7 +10,7 @@ import {
   WaveCreatedNotification
 } from './user-notification.types';
 import { IdentityNotificationDeserialized } from './identity-notifications.db';
-import { assertUnreachable } from '../helpers';
+import { assertUnreachable } from '../assertions';
 import { numbers } from '../numbers';
 
 export class UserNotificationMapper {

@@ -17,7 +17,7 @@ import {
   NftData,
   NftsCollectionOwnershipData
 } from './collected.db';
-import { assertUnreachable } from '../../../../helpers';
+import { assertUnreachable } from '../../../../assertions';
 import {
   identityFetcher,
   IdentityFetcher

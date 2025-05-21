@@ -9,7 +9,7 @@ import {
   ActivityEventEntity,
   ActivityEventTargetType
 } from '../../../entities/IActivityEvent';
-import { assertUnreachable } from '../../../helpers';
+import { assertUnreachable } from '../../../assertions';
 import { ApiDrop } from '../generated/models/ApiDrop';
 import { ApiWave } from '../generated/models/ApiWave';
 import { dropsService } from '../drops/drops.api.service';

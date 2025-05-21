@@ -8,7 +8,7 @@ import {
   voteForDropUseCase,
   VoteForDropUseCase
 } from '../../../drops/vote-for-drop.use-case';
-import { assertUnreachable } from '../../../helpers';
+import { assertUnreachable } from '../../../assertions';
 import {
   wsListenersNotifier,
   WsListenersNotifier

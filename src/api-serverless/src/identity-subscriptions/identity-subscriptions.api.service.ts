@@ -11,7 +11,7 @@ import {
 import { ApiOutgoingIdentitySubscriptionsPage } from '../generated/models/ApiOutgoingIdentitySubscriptionsPage';
 import { ApiIncomingIdentitySubscriptionsPage } from '../generated/models/ApiIncomingIdentitySubscriptionsPage';
 import { ApiIdentityAndSubscriptionActions } from '../generated/models/ApiIdentityAndSubscriptionActions';
-import { assertUnreachable } from '../../../helpers';
+import { assertUnreachable } from '../../../assertions';
 import { ApiIdentitySubscriptionTargetAction } from '../generated/models/ApiIdentitySubscriptionTargetAction';
 import { ApiTargetAndSubscriptionActions } from '../generated/models/ApiTargetAndSubscriptionActions';
 import {

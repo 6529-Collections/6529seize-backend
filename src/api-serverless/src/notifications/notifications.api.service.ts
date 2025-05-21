@@ -7,7 +7,7 @@ import {
   UserGroupsService
 } from '../community-members/user-groups.service';
 import { UserNotification } from '../../../notifications/user-notification.types';
-import { assertUnreachable } from '../../../helpers';
+import { assertUnreachable } from '../../../assertions';
 import { IdentityNotificationCause } from '../../../entities/IIdentityNotification';
 import { DropsApiService, dropsService } from '../drops/drops.api.service';
 import { AuthenticationContext } from '../../../auth-context';

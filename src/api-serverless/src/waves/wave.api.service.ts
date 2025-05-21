@@ -1,7 +1,7 @@
 import { SearchWavesParams, wavesApiDb, WavesApiDb } from './waves.api.db';
 import { ApiCreateNewWave } from '../generated/models/ApiCreateNewWave';
 import { ApiWave } from '../generated/models/ApiWave';
-import { assertUnreachable } from '../../../helpers';
+import { assertUnreachable } from '../../../assertions';
 import {
   userGroupsService,
   UserGroupsService
